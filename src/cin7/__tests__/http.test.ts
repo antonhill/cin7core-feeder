@@ -73,4 +73,38 @@ describe("cin7Request", () => {
     mockFetchSequence([() => new Response(null, { status: 204 })]);
     await expect(cin7Request(creds, "/Product/123", { method: "DELETE" })).resolves.toBeUndefined();
   });
+
+  it("retries a raw network error (like 503) and eventually succeeds", async () => {
+    vi.useFakeTimers();
+    let call = 0;
+    const fn = vi.fn(async () => {
+      if (call++ < 2) throw new Error("fetch failed");
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fn);
+
+    const promise = cin7Request(creds, "/BillOfMaterials", { method: "PUT" });
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toEqual({ ok: true });
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
+
+  it("surfaces the underlying cause, method, and path after exhausting retries on a network error", async () => {
+    vi.useFakeTimers();
+    const fn = vi.fn(async () => {
+      throw new Error("fetch failed", { cause: new Error("ECONNRESET") });
+    });
+    vi.stubGlobal("fetch", fn);
+
+    const promise = cin7Request(creds, "/BillOfMaterials", { method: "PUT" });
+    const assertion = expect(promise).rejects.toMatchObject({
+      status: 0,
+      message: expect.stringContaining("PUT /BillOfMaterials"),
+    });
+    await vi.runAllTimersAsync();
+    await assertion;
+    await expect(promise).rejects.toMatchObject({ message: expect.stringContaining("ECONNRESET") });
+  });
 });

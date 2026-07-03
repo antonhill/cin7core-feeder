@@ -77,7 +77,24 @@ export async function cin7Request<T>(
         body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
       });
     } catch (e) {
-      throw new Cin7ApiError(0, `Network error: ${e instanceof Error ? e.message : "unknown"}`, true);
+      // Retry like a 503 — a raw fetch failure (DNS blip, connection reset,
+      // timeout) may well be transient. Node's fetch (undici) often carries
+      // the real underlying reason in `cause`, which was previously
+      // discarded — surfacing it here since a bare "fetch failed" gave no
+      // way to tell a transient network issue from a structural bug.
+      const cause = e instanceof Error && "cause" in e ? (e as { cause?: unknown }).cause : undefined;
+      const causeText = cause ? (cause instanceof Error ? cause.message : JSON.stringify(cause)) : undefined;
+      const detail = [e instanceof Error ? e.message : String(e), causeText].filter(Boolean).join(" | cause: ");
+
+      if (attempt < MAX_RETRIES) {
+        await sleep(RETRY_BASE_DELAY_MS * (attempt + 1));
+        continue;
+      }
+      throw new Cin7ApiError(
+        0,
+        `Network error on ${options.method ?? "GET"} ${path} after ${attempt + 1} attempt(s): ${detail}`,
+        true
+      );
     }
 
     if (response.status === 503) {

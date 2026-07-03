@@ -32,11 +32,19 @@ describe("toCin7ProductionBomPayload", () => {
     const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items);
     expect(payload.Operations).toHaveLength(2);
     const mixing = payload.Operations.find((o) => o.OperationSequence === "1")!;
-    expect(mixing.Components).toEqual([{ ComponentSKU: "RAW0001", Quantity: 200 }]);
-    expect(mixing.Resources).toEqual([{ ResourceCode: "LAB1", Quantity: 1 }]);
+    expect(mixing.Components).toEqual([{ Position: 1, ComponentSKU: "RAW0001", Quantity: 200 }]);
+    expect(mixing.Resources).toEqual([{ Position: 1, ResourceCode: "LAB1", Quantity: 1 }]);
     const blending = payload.Operations.find((o) => o.OperationSequence === "2")!;
     expect(blending.Components).toEqual([]);
-    expect(blending.Resources).toEqual([{ ResourceCode: "MACH002", Quantity: 1 }]);
+    expect(blending.Resources).toEqual([{ Position: 1, ResourceCode: "MACH002", Quantity: 1 }]);
+  });
+
+  it("gives every Operation, Component, and Resource a 1-indexed Position (required by Cin7)", () => {
+    const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items);
+    expect(payload.Operations.map((o) => o.Position)).toEqual([1, 2]);
+    const mixing = payload.Operations.find((o) => o.OperationSequence === "1")!;
+    expect(mixing.Components[0].Position).toBe(1);
+    expect(mixing.Resources[0].Position).toBe(1);
   });
 });
 

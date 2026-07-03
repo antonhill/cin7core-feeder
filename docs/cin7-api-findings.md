@@ -59,8 +59,14 @@ with a clear "no synced Cin7 ID yet" error rather than guessing.
 `{"ProductionBOMs": [...]}` — an array, matching `/BillOfMaterials`'s batch style — not a flat
 object as first assumed. `src/cin7/production-bom.ts` now wraps accordingly.
 
-**Still unverified:** the exact field-level payload shape *inside* one ProductionBOM entry
-(operations/routing/work-centres/resources) — the outer wrapper and ID-based addressing are
+**`Position` field confirmed 2026-07-03** via a further live 400 (`"Required property 'Position'
+not found"` on `Operations[0]`, `Operations[0].Components[0]`, and `Operations[0].Resources[0]`):
+every entry in the `Operations`, `Components`, and `Resources` arrays needs its own 1-indexed
+`Position` field — separate from our semantic `OperationSequence` string.
+
+**Still unverified:** whether there are further required fields inside one ProductionBOM entry
+beyond what's now confirmed (`ProductID`, `Version`, `Operations[].Position`,
+`Components[].Position`, `Resources[].Position`) — the outer wrapper and ID-based addressing are
 confirmed, but a 400 on the inner fields would surface the same way and hasn't been ruled out yet.
 Worth relaying back to the client/proposal conversation, since it changes what's actually
 possible vs. what was scoped.
@@ -87,6 +93,14 @@ delay rather than reading a header. `RATE_LIMIT_RPS=2` (~120/min) in `.env.examp
 
 ## 8. Response/error format — confirmed
 Success: JSON object(s). Errors: `{ "ErrorCode": <int>, "Exception": "<message>" }[]`.
+
+## 9. Raw network failures — `src/cin7/http.ts` now retries and surfaces the real cause
+A live test hit a recurring "Network error: fetch failed" on `/BillOfMaterials` with no further
+detail. Two fixes: (1) a raw fetch failure is now retried like a 503 (transient network issues
+get the same backoff chance a rate limit does), and (2) the final error, if retries are
+exhausted, includes the request's method/path and Node's underlying `cause` (e.g. `ECONNRESET`)
+instead of just "unknown" — a bare "fetch failed" gave no way to tell a transient blip from a
+structural bug.
 Documented status codes: 200, 400 (validation), 403 (auth failure), 404 (bad endpoint), 405
 (method not allowed), 500 (unexpected/parse error), 503 (rate limit).
 

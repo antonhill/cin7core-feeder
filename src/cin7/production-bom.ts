@@ -56,7 +56,11 @@ export function toCin7ProductionBomPayload(
     VersionName: version.version_name ?? undefined,
     QuantityToProduce: version.quantity_to_produce,
     OverwriteExistingProductionBOM: true,
-    Operations: operations.map((op) => ({
+    // Confirmed via a live 400 ("Required property 'Position' not found") on
+    // Operations, Components, and Resources — each needs its ordinal index
+    // within its own array, separate from our semantic OperationSequence.
+    Operations: operations.map((op, opIndex) => ({
+      Position: opIndex + 1,
       OperationSequence: op.operation_sequence,
       OperationType: op.operation_type,
       OperationName: op.operation_name ?? undefined,
@@ -64,10 +68,10 @@ export function toCin7ProductionBomPayload(
       WorkCentreCode: op.work_centre_code ?? undefined,
       Components: items
         .filter((i) => i.operation_sequence === op.operation_sequence && i.item_type === "Component")
-        .map((i) => ({ ComponentSKU: i.item_code, Quantity: i.quantity })),
+        .map((i, idx) => ({ Position: idx + 1, ComponentSKU: i.item_code, Quantity: i.quantity })),
       Resources: items
         .filter((i) => i.operation_sequence === op.operation_sequence && i.item_type === "Resource")
-        .map((i) => ({ ResourceCode: i.item_code, Quantity: i.quantity })),
+        .map((i, idx) => ({ Position: idx + 1, ResourceCode: i.item_code, Quantity: i.quantity })),
     })),
   };
 }
