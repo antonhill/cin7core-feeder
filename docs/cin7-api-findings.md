@@ -109,14 +109,26 @@ every entry in the `Operations`, `Components`, and `Resources` arrays needs its 
 integer alongside `Position`; operations also want a bare `Name` field (kept alongside
 `OperationName` since it's unverified which one Cin7 actually reads).
 
-**BLOCKING GAP — not yet resolved:** the same round of testing also revealed
-`Operations[].WorkCenterID` and `Operations[].Resources[].ResourceID` are **required GUID
-references** to Cin7's own Work Centre and Resource master data — not the text codes
-(`work_centre_code`, resource `item_code`) our schema stores. We have no lookup, matching, or
-sync for Work Centres/Resources at all. Until that's built, Production BOM pushes will keep
-failing on these two fields specifically. This is real, separate scope — a "find or create Work
-Centre by name" and "find or create Resource by name" flow, analogous to `findProductBySku` — not
-another quick field-name fix.
+**Work Centre/Resource lookup built 2026-07-03.** `Operations[].WorkCenterID` and
+`Operations[].Resources[].ResourceID` are required GUID references to Cin7's own Work Centre and
+Resource master data. Endpoints confirmed via the same two sources (github.com/nnhansg/dear-openapi,
+corroborated by github.com/FalconEyeSolutions/CIN7-DearInventory):
+- **Work Centre** — `GET /production/workcenters?Name=<code>` (list/search by name prefix; `Code`
+  returned so filter client-side), `POST /production/workcenters` (body `{"Workcenters":[...]}`)
+  to create. Creation is **safe to auto-do**: minimal required fields are just `Code`, `Name`,
+  `IsActive`, `IsCoMan: false`, `IsCoManPurchase: false`, `WorkCenterLocations: []`.
+  `src/cin7/work-centres.ts`'s `resolveWorkCentreId` looks up, auto-creates if missing.
+- **Resource** — `GET /production/resourceList?Name=<code>`, `POST /production/resource` (body
+  `{"Resources":[...]}`). Creation is **NOT auto-done** — required fields are `Name`,
+  `ResourceType` (`Labor`/`Machine`/`Other`), and `CycleDuration` (int seconds), none of which our
+  schema models, and critically: a `Labor`-type resource's `Name` must be a registered Cin7 user's
+  email, which can't be inferred from a code like `LAB1`. Guessing wrong risks creating a broken
+  or wrongly-typed resource in the customer's account. `src/cin7/resources.ts`'s
+  `resolveResourceId` only looks up — it throws a clear, actionable error ("create it manually in
+  Manufacturing > Resources") if the resource doesn't exist yet, rather than guessing.
+
+Both caches (`ProductionBomRefCaches`) are shared across a whole sync run in `run-sync.ts`, same
+pattern as the product-ID cache used for Assembly BOM component resolution.
 
 **Still unverified beyond the above:** whether there are further required fields once
 WorkCenterID/ResourceID are resolved.

@@ -1,5 +1,7 @@
 import type { Cin7Credentials } from "@/cin7/types";
 import { cin7Request } from "@/cin7/http";
+import { resolveWorkCentreId } from "@/cin7/work-centres";
+import { resolveResourceId } from "@/cin7/resources";
 
 export interface CanonicalProductionBomVersionRow {
   product_sku: string;
@@ -42,13 +44,10 @@ interface Cin7ProductionBomResponse {
  * which returns an HTML fallback page rather than a 404), and it's
  * addressed by the product's Cin7 **ID** (GUID), not SKU.
  *
- * KNOWN GAP: a live 400 revealed `Operations[].WorkCenterID` and
- * `Operations[].Resources[].ResourceID` are required GUID references to
- * Cin7's own Work Centre and Resource master data — not the text codes
- * (`work_centre_code`, `item_code`) our schema stores. We have no lookup or
- * sync for Work Centres/Resources yet, so `WorkCentreCode`/`ResourceCode`
- * below are sent but almost certainly won't satisfy Cin7 until that lookup
- * is built. See docs/cin7-api-findings.md.
+ * `Operations[].WorkCenterID` and `Operations[].Resources[].ResourceID` are
+ * required GUID references to Cin7's own Work Centre/Resource master data —
+ * resolved via work-centres.ts/resources.ts before this payload is built.
+ * See docs/cin7-api-findings.md.
  */
 const PRODUCTION_BOM_PATH = "/production/productionBOM";
 
@@ -56,7 +55,9 @@ export function toCin7ProductionBomPayload(
   cin7ProductId: string,
   version: CanonicalProductionBomVersionRow,
   operations: CanonicalProductionBomOperationRow[],
-  items: CanonicalProductionBomItemRow[]
+  items: CanonicalProductionBomItemRow[],
+  workCentreIdByCode: Map<string, string> = new Map(),
+  resourceIdByCode: Map<string, string> = new Map()
 ) {
   return {
     ProductID: cin7ProductId,
@@ -87,13 +88,17 @@ export function toCin7ProductionBomPayload(
       OperationName: op.operation_name ?? undefined,
       CycleTime: op.cycle_time ?? undefined,
       UnitsPerCycle: op.unit_per_cycle ?? undefined,
-      WorkCentreCode: op.work_centre_code ?? undefined,
+      WorkCenterID: op.work_centre_code ? workCentreIdByCode.get(op.work_centre_code) : undefined,
       Components: items
         .filter((i) => i.operation_sequence === op.operation_sequence && i.item_type === "Component")
         .map((i, idx) => ({ Position: idx + 1, ComponentSKU: i.item_code, Quantity: i.quantity })),
       Resources: items
         .filter((i) => i.operation_sequence === op.operation_sequence && i.item_type === "Resource")
-        .map((i, idx) => ({ Position: idx + 1, ResourceCode: i.item_code, Quantity: i.quantity })),
+        .map((i, idx) => ({
+          Position: idx + 1,
+          ResourceID: resourceIdByCode.get(i.item_code),
+          Quantity: i.quantity,
+        })),
     })),
   };
 }
@@ -107,6 +112,43 @@ async function findProductionBomVersion(creds: Cin7Credentials, cin7ProductId: s
 
 export type ProductionBomPushStatus = "created" | "updated";
 
+/** Shared, mutated-in-place lookup caches — reused across a whole sync run. */
+export interface ProductionBomRefCaches {
+  workCentres: Map<string, string | null | undefined>;
+  resources: Map<string, string | null | undefined>;
+}
+
+export function createProductionBomRefCaches(): ProductionBomRefCaches {
+  return { workCentres: new Map(), resources: new Map() };
+}
+
+/**
+ * Resolves every work centre code (auto-creating if missing — safe, see
+ * work-centres.ts) and resource code (never auto-created — throws a clear,
+ * actionable error if missing, see resources.ts) referenced by these
+ * operations/items.
+ */
+async function resolveReferences(
+  creds: Cin7Credentials,
+  operations: CanonicalProductionBomOperationRow[],
+  items: CanonicalProductionBomItemRow[],
+  caches: ProductionBomRefCaches
+): Promise<{ workCentreIdByCode: Map<string, string>; resourceIdByCode: Map<string, string> }> {
+  const workCentreIdByCode = new Map<string, string>();
+  const workCentreCodes = new Set(operations.map((o) => o.work_centre_code).filter((c): c is string => !!c));
+  for (const code of workCentreCodes) {
+    workCentreIdByCode.set(code, await resolveWorkCentreId(creds, code, caches.workCentres));
+  }
+
+  const resourceIdByCode = new Map<string, string>();
+  const resourceCodes = new Set(items.filter((i) => i.item_type === "Resource").map((i) => i.item_code));
+  for (const code of resourceCodes) {
+    resourceIdByCode.set(code, await resolveResourceId(creds, code, caches.resources));
+  }
+
+  return { workCentreIdByCode, resourceIdByCode };
+}
+
 /**
  * Pushes one Production BOM version. Requires the product's Cin7 ID (GUID)
  * — the product must already have been synced (and have a cin7_id on
@@ -117,9 +159,11 @@ export async function pushProductionBom(
   cin7ProductId: string,
   version: CanonicalProductionBomVersionRow,
   operations: CanonicalProductionBomOperationRow[],
-  items: CanonicalProductionBomItemRow[]
+  items: CanonicalProductionBomItemRow[],
+  refCaches: ProductionBomRefCaches = createProductionBomRefCaches()
 ): Promise<{ status: ProductionBomPushStatus }> {
-  const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items);
+  const { workCentreIdByCode, resourceIdByCode } = await resolveReferences(creds, operations, items, refCaches);
+  const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items, workCentreIdByCode, resourceIdByCode);
   const exists = await findProductionBomVersion(creds, cin7ProductId, version.version);
 
   // Confirmed via a live 400 ("Required attribute ProductionBOMs is not

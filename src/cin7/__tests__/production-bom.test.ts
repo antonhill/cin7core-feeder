@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { toCin7ProductionBomPayload, pushProductionBom } from "@/cin7/production-bom";
+import { toCin7ProductionBomPayload, pushProductionBom, type ProductionBomRefCaches } from "@/cin7/production-bom";
 import { cin7Request } from "@/cin7/http";
 
 vi.mock("@/cin7/http", () => ({ cin7Request: vi.fn() }));
@@ -24,30 +24,62 @@ const items = [
   { operation_sequence: "2", item_type: "Resource" as const, item_code: "MACH002", quantity: 1 },
 ];
 
+// Pre-populated so pushProductionBom's resolveReferences step finds
+// everything cached and never needs a live work-centre/resource API call —
+// keeps these tests focused on the productionBOM push itself.
+function preResolvedCaches(): ProductionBomRefCaches {
+  return {
+    workCentres: new Map([
+      ["MIXING", "wc-mixing"],
+      ["BLENDING", "wc-blending"],
+    ]),
+    resources: new Map([
+      ["LAB1", "res-lab1"],
+      ["MACH002", "res-mach002"],
+    ]),
+  };
+}
+
 beforeEach(() => {
   vi.mocked(cin7Request).mockReset();
 });
 
 describe("toCin7ProductionBomPayload", () => {
+  const workCentreIdByCode = new Map([
+    ["MIXING", "wc-mixing"],
+    ["BLENDING", "wc-blending"],
+  ]);
+  const resourceIdByCode = new Map([
+    ["LAB1", "res-lab1"],
+    ["MACH002", "res-mach002"],
+  ]);
+
   it("addresses the product by its Cin7 ID, not SKU", () => {
-    const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items);
+    const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items, workCentreIdByCode, resourceIdByCode);
     expect(payload.ProductID).toBe(cin7ProductId);
     expect(payload).not.toHaveProperty("SKU");
   });
 
-  it("groups components and resources under the right operation", () => {
-    const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items);
-    expect(payload.Operations).toHaveLength(2);
+  it("resolves WorkCenterID and ResourceID from the provided maps, not codes", () => {
+    const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items, workCentreIdByCode, resourceIdByCode);
+    const mixing = payload.Operations.find((o) => o.OperationSequence === "1")!;
+    expect(mixing.WorkCenterID).toBe("wc-mixing");
+    expect(mixing).not.toHaveProperty("WorkCentreCode");
+    expect(mixing.Resources).toEqual([{ Position: 1, ResourceID: "res-lab1", Quantity: 1 }]);
+    const blending = payload.Operations.find((o) => o.OperationSequence === "2")!;
+    expect(blending.WorkCenterID).toBe("wc-blending");
+  });
+
+  it("groups components under the right operation", () => {
+    const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items, workCentreIdByCode, resourceIdByCode);
     const mixing = payload.Operations.find((o) => o.OperationSequence === "1")!;
     expect(mixing.Components).toEqual([{ Position: 1, ComponentSKU: "RAW0001", Quantity: 200 }]);
-    expect(mixing.Resources).toEqual([{ Position: 1, ResourceCode: "LAB1", Quantity: 1 }]);
     const blending = payload.Operations.find((o) => o.OperationSequence === "2")!;
     expect(blending.Components).toEqual([]);
-    expect(blending.Resources).toEqual([{ Position: 1, ResourceCode: "MACH002", Quantity: 1 }]);
   });
 
   it("gives every Operation, Component, and Resource a 1-indexed Position (required by Cin7)", () => {
-    const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items);
+    const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items, workCentreIdByCode, resourceIdByCode);
     expect(payload.Operations.map((o) => o.Position)).toEqual([1, 2]);
     const mixing = payload.Operations.find((o) => o.OperationSequence === "1")!;
     expect(mixing.Components[0].Position).toBe(1);
@@ -55,7 +87,7 @@ describe("toCin7ProductionBomPayload", () => {
   });
 
   it("includes Order and UnitsPerCycle on operations, and OutputQuantity/BufferPercent/IsDefault at the top level (all required by Cin7)", () => {
-    const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items);
+    const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items, workCentreIdByCode, resourceIdByCode);
     expect(payload.OutputQuantity).toBe(1000);
     expect(payload.BufferPercent).toBe(5);
     expect(payload.IsDefault).toBe(true);
@@ -69,7 +101,7 @@ describe("pushProductionBom", () => {
   it("hits the confirmed /production/productionBOM path", async () => {
     vi.mocked(cin7Request).mockResolvedValueOnce({ ProductionBOMs: [] }).mockResolvedValueOnce({ ID: "new" });
 
-    await pushProductionBom(creds, cin7ProductId, version, operations, items);
+    await pushProductionBom(creds, cin7ProductId, version, operations, items, preResolvedCaches());
 
     expect(cin7Request).toHaveBeenNthCalledWith(1, creds, "/production/productionBOM", expect.anything());
     expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/production/productionBOM", expect.objectContaining({ method: "POST" }));
@@ -78,7 +110,7 @@ describe("pushProductionBom", () => {
   it("creates via POST when the version doesn't exist yet", async () => {
     vi.mocked(cin7Request).mockResolvedValueOnce({ ProductionBOMs: [] }).mockResolvedValueOnce({ ID: "new" });
 
-    const result = await pushProductionBom(creds, cin7ProductId, version, operations, items);
+    const result = await pushProductionBom(creds, cin7ProductId, version, operations, items, preResolvedCaches());
 
     expect(result).toEqual({ status: "created" });
   });
@@ -86,7 +118,7 @@ describe("pushProductionBom", () => {
   it("wraps the body in a ProductionBOMs array (confirmed via a live 400: 'Required attribute ProductionBOMs is not provided')", async () => {
     vi.mocked(cin7Request).mockResolvedValueOnce({ ProductionBOMs: [] }).mockResolvedValueOnce({ ID: "new" });
 
-    await pushProductionBom(creds, cin7ProductId, version, operations, items);
+    await pushProductionBom(creds, cin7ProductId, version, operations, items, preResolvedCaches());
 
     const [, , options] = vi.mocked(cin7Request).mock.calls[1];
     const body = options?.body as { ProductionBOMs: unknown[] };
@@ -100,9 +132,36 @@ describe("pushProductionBom", () => {
       .mockResolvedValueOnce({ ProductionBOMs: [{ Version: "1" }] })
       .mockResolvedValueOnce({ ID: "existing" });
 
-    const result = await pushProductionBom(creds, cin7ProductId, version, operations, items);
+    const result = await pushProductionBom(creds, cin7ProductId, version, operations, items, preResolvedCaches());
 
     expect(result).toEqual({ status: "updated" });
     expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/production/productionBOM", expect.objectContaining({ method: "PUT" }));
+  });
+
+  it("resolves work centres/resources live when the caches are empty", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ Workcenters: [{ WorkCenterID: "wc-mixing", Code: "MIXING" }] })
+      .mockResolvedValueOnce({ Workcenters: [{ WorkCenterID: "wc-blending", Code: "BLENDING" }] })
+      .mockResolvedValueOnce({ Resources: [{ ResourceID: "res-lab1", Code: "LAB1" }] })
+      .mockResolvedValueOnce({ Resources: [{ ResourceID: "res-mach002", Code: "MACH002" }] })
+      .mockResolvedValueOnce({ ProductionBOMs: [] })
+      .mockResolvedValueOnce({ ID: "new" });
+
+    await pushProductionBom(creds, cin7ProductId, version, operations, items);
+
+    const [, , createOptions] = vi.mocked(cin7Request).mock.calls[5];
+    const body = createOptions?.body as { ProductionBOMs: { Operations: { WorkCenterID: string }[] }[] };
+    expect(body.ProductionBOMs[0].Operations[0].WorkCenterID).toBe("wc-mixing");
+  });
+
+  it("fails clearly (not with a vague Cin7 400) when a resource doesn't exist", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ Workcenters: [{ WorkCenterID: "wc-mixing", Code: "MIXING" }] })
+      .mockResolvedValueOnce({ Workcenters: [{ WorkCenterID: "wc-blending", Code: "BLENDING" }] })
+      .mockResolvedValueOnce({ Resources: [] }); // LAB1 not found
+
+    await expect(pushProductionBom(creds, cin7ProductId, version, operations, items)).rejects.toThrow(
+      /Resource "LAB1" not found/
+    );
   });
 });

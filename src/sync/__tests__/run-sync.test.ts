@@ -5,7 +5,10 @@ import { pushProduct } from "@/cin7/products";
 import { pushProductionBom } from "@/cin7/production-bom";
 
 vi.mock("@/cin7/products", () => ({ pushProduct: vi.fn() }));
-vi.mock("@/cin7/production-bom", () => ({ pushProductionBom: vi.fn() }));
+vi.mock("@/cin7/production-bom", () => ({
+  pushProductionBom: vi.fn(),
+  createProductionBomRefCaches: () => ({ workCentres: new Map(), resources: new Map() }),
+}));
 vi.mock("@/cin7/crypto", () => ({ decrypt: (v: string) => `decrypted:${v}` }));
 
 /** Minimal in-memory stand-in for the chained query shapes run-sync.ts actually issues. */
@@ -170,6 +173,7 @@ describe("syncInstance", () => {
       expect.anything(),
       "cin7-guid-1",
       expect.objectContaining({ product_sku: "FACEBULK001" }),
+      expect.anything(),
       expect.anything(),
       expect.anything()
     );

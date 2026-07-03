@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { decrypt } from "@/cin7/crypto";
 import { pushProduct } from "@/cin7/products";
 import type { CanonicalAssemblyBomLineRow } from "@/cin7/assembly-bom";
-import { pushProductionBom } from "@/cin7/production-bom";
+import { pushProductionBom, createProductionBomRefCaches } from "@/cin7/production-bom";
 import { Cin7ApiError } from "@/cin7/http";
 
 export interface SyncRunSummary {
@@ -163,6 +163,10 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
     .select("product_sku, version, version_name, version_default, buffer_percent, quantity_to_produce")
     .eq("org_id", orgId);
 
+  // Shared across every version this run — a work centre/resource looked up
+  // for one product's BOM doesn't need a second call for the next.
+  const productionBomRefCaches = createProductionBomRefCaches();
+
   for (const version of versions ?? []) {
     try {
       const cin7ProductId = cin7IdBySku.get(version.product_sku);
@@ -186,7 +190,7 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
         .eq("product_sku", version.product_sku)
         .eq("version", version.version);
 
-      await pushProductionBom(creds, cin7ProductId, version, operations ?? [], items ?? []);
+      await pushProductionBom(creds, cin7ProductId, version, operations ?? [], items ?? [], productionBomRefCaches);
       summary.productionBomsPushed++;
     } catch (e) {
       const message = describeError(e);
