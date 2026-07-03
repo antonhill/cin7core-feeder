@@ -1,8 +1,4 @@
-export interface Cin7Credentials {
-  accountId: string;
-  applicationKey: string;
-  baseUrl: string;
-}
+import type { Cin7Credentials } from "@/cin7/types";
 
 export interface Cin7TestResult {
   ok: boolean;
