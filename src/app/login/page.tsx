@@ -38,7 +38,14 @@ export default function LoginPage() {
     setIsSubmitting(true);
     setError(null);
     const supabase = createBrowserSupabaseClient();
-    const { error: verifyError } = await supabase.auth.verifyOtp({ email, token: code, type: "email" });
+    // Confirmed live: type: "email" is rejected with "Verify requires a
+    // verification type" even though the request genuinely includes it —
+    // the token's underlying record was created via the magic-link code
+    // path (Supabase's signInWithOtp doesn't distinguish "link" vs "OTP" at
+    // request time, only in which email-template variable gets rendered),
+    // so it must be verified with the matching (deprecated but still
+    // functional) "magiclink" type instead of "email".
+    const { error: verifyError } = await supabase.auth.verifyOtp({ email, token: code, type: "magiclink" });
     setIsSubmitting(false);
     if (verifyError) {
       setError(verifyError.message);
