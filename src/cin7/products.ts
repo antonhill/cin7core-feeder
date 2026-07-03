@@ -61,10 +61,19 @@ export function toCin7ProductPayload(product: CanonicalProductRow, priceTiers: C
     Type: reverseCin7ProductType(product.type),
     CostingMethod: product.costing_method,
   };
+  let anyTierSet = false;
   for (const tier of priceTiers) {
     const index = Number(tier.tier_code.replace(/^Tier/, ""));
-    if (Number.isInteger(index) && index >= 1 && index <= 10) payload[`PriceTier${index}`] = tier.amount;
+    if (Number.isInteger(index) && index >= 1 && index <= 10) {
+      payload[`PriceTier${index}`] = tier.amount;
+      anyTierSet = true;
+    }
   }
+  // Cin7 rejects create with "PriceTiers value cannot be empty" if no
+  // PriceTierN field is present at all — confirmed live for components that
+  // only exist as BOM inputs and were never given a sale price. Default to 0
+  // rather than requiring every internal-only component to have one.
+  if (!anyTierSet) payload.PriceTier1 = 0;
   return payload;
 }
 

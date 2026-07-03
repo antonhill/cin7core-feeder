@@ -49,6 +49,11 @@ describe("toCin7ProductPayload", () => {
     expect(payload.PriceTier10).toBe(20);
     expect(payload).not.toHaveProperty("PriceTierNotATier");
   });
+
+  it("defaults PriceTier1 to 0 when the product has no price tiers — Cin7 rejects create with an empty PriceTiers set", () => {
+    const payload = toCin7ProductPayload(product, []);
+    expect(payload.PriceTier1).toBe(0);
+  });
 });
 
 describe("pushProduct", () => {
