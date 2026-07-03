@@ -40,6 +40,13 @@ describe("InventoryList (products) CSV", () => {
       expect(tiers.every((t) => t.amount > 0)).toBe(true);
     }
   });
+
+  it("keeps a Service row's Type verbatim in cin7_type — the internal `type` category collapses Stock/Service into one value", () => {
+    const { valid } = parseCsv(csv, productCsvRowSchema);
+    const row = valid.find((r) => r.data.Type === "Service")!;
+    const product = toCanonicalProduct(row.data);
+    expect(product.cin7_type).toBe("Service");
+  });
 });
 
 describe("AssemblyBOM CSV", () => {

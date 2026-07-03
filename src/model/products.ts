@@ -44,24 +44,6 @@ export function mapCin7ProductType(cin7Type: string): "raw" | "component" | "ass
   return CIN7_TYPE_MAP[cin7Type] ?? "component";
 }
 
-/**
- * Reverse of CIN7_TYPE_MAP — lossy (we collapsed Stock/Service/Non-Inventory/
- * BillOfMaterials down to 5 broad categories on import), but good enough to
- * push a valid Cin7 Type back on create/export. Single source of truth for
- * both the CSV template export and the live product push.
- */
-const CANONICAL_TO_CIN7_TYPE: Record<string, string> = {
-  raw: "Non-Inventory",
-  component: "Stock",
-  assembly: "BillOfMaterials",
-  finished: "Stock",
-  placeholder: "Stock",
-};
-
-export function reverseCin7ProductType(canonicalType: string): string {
-  return CANONICAL_TO_CIN7_TYPE[canonicalType] ?? "Stock";
-}
-
 export interface CanonicalProduct {
   sku: string;
   name: string;
@@ -85,6 +67,13 @@ export interface CanonicalProduct {
    * Every sample row in Cin7's own InventoryList export uses "FIFO".
    */
   costing_method: string;
+  /**
+   * The raw CSV Type value (e.g. "Stock", "Service", "Non-Inventory"),
+   * pushed to Cin7 verbatim — the `type` field above is lossy (Stock and
+   * Service both collapse to "component"), which silently turned Service
+   * products into Stock on every push. Same pattern as `status` vs `active`.
+   */
+  cin7_type: string;
 }
 
 export interface CanonicalPriceTier {
@@ -111,6 +100,7 @@ export function toCanonicalProduct(row: ProductCsvRow): CanonicalProduct {
     active: row.Status ? row.Status.toUpperCase() === "ACTIVE" : true,
     status: row.Status || "Active",
     costing_method: row.CostingMethod || "FIFO",
+    cin7_type: row.Type || "Stock",
   };
 }
 

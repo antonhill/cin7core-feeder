@@ -1,6 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { toCsv } from "@/export/csv-format";
-import { reverseCin7ProductType } from "@/model/products";
 
 const PRICE_TIER_INDEXES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
@@ -30,7 +29,7 @@ const HEADER = [
 export async function exportProductsCsv(db: SupabaseClient, orgId: string): Promise<string> {
   const { data: products, error } = await db
     .from("products")
-    .select("sku, name, category_code, uom_code, barcode, type, tax_code, status, description, costing_method")
+    .select("sku, name, category_code, uom_code, barcode, cin7_type, tax_code, status, description, costing_method")
     .eq("org_id", orgId)
     .order("sku");
   if (error) throw new Error(`products: ${error.message}`);
@@ -54,7 +53,7 @@ export async function exportProductsCsv(db: SupabaseClient, orgId: string): Prom
       p.sku,
       p.name,
       p.category_code ?? "",
-      reverseCin7ProductType(p.type),
+      p.cin7_type ?? "Stock",
       p.costing_method ?? "FIFO",
       p.barcode ?? "",
       p.uom_code ?? "",

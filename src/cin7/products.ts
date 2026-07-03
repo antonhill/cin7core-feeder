@@ -1,7 +1,6 @@
 import type { Cin7Credentials } from "@/cin7/types";
 import { cin7Request } from "@/cin7/http";
 import { toCin7BomFields, type CanonicalAssemblyBomLineRow } from "@/cin7/assembly-bom";
-import { reverseCin7ProductType } from "@/model/products";
 
 export interface CanonicalProductRow {
   sku: string;
@@ -12,7 +11,7 @@ export interface CanonicalProductRow {
   barcode: string | null;
   active: boolean;
   status: string;
-  type: string;
+  cin7_type: string;
   costing_method: string;
 }
 
@@ -58,7 +57,10 @@ export function toCin7ProductPayload(product: CanonicalProductRow, priceTiers: C
     // Both required on create — confirmed live via 400 "Required attribute
     // ... not provided" for brand-new SKUs (existing products update fine
     // without them, which is why this was missed until create traffic hit).
-    Type: reverseCin7ProductType(product.type),
+    // Type is sent verbatim (not reverse-mapped from our internal category)
+    // — reverse-mapping was lossy and silently turned Service products into
+    // Stock on every push, confirmed live.
+    Type: product.cin7_type,
     CostingMethod: product.costing_method,
   };
   let anyTierSet = false;

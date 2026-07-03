@@ -43,7 +43,7 @@ describe("exportProductsCsv", () => {
           category_code: "Widgets",
           uom_code: "Item",
           barcode: "12345",
-          type: "component",
+          cin7_type: "Service",
           tax_code: "VAT",
           status: "Active",
           description: "A widget",
@@ -61,7 +61,7 @@ describe("exportProductsCsv", () => {
 
     expect(dataLine).toContain('"SKU1"');
     expect(dataLine).toContain('"Widget"');
-    expect(dataLine).toContain('"Stock"'); // reverse-mapped from "component"
+    expect(dataLine).toContain('"Service"'); // verbatim, not reverse-mapped from an internal category
     expect(dataLine).toContain('"FIFO"');
     expect(dataLine).toContain('"Active"');
     expect(dataLine).toContain('"100"'); // PriceTier1
@@ -78,7 +78,7 @@ describe("exportProductsCsv", () => {
           category_code: null,
           uom_code: null,
           barcode: null,
-          type: "component",
+          cin7_type: "Stock",
           tax_code: null,
           status: "Active",
           description: null,

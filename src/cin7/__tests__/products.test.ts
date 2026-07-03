@@ -14,7 +14,7 @@ const product = {
   barcode: null,
   active: true,
   status: "Active",
-  type: "component",
+  cin7_type: "Stock",
   costing_method: "FIFO",
 };
 
@@ -35,8 +35,13 @@ describe("toCin7ProductPayload", () => {
 
   it("sends Type and CostingMethod — both required by Cin7 on create", () => {
     const payload = toCin7ProductPayload(product);
-    expect(payload.Type).toBe("Stock"); // reverse-mapped from "component"
+    expect(payload.Type).toBe("Stock");
     expect(payload.CostingMethod).toBe("FIFO");
+  });
+
+  it("sends Type verbatim, not reverse-mapped from an internal category — avoids collapsing Service into Stock", () => {
+    const payload = toCin7ProductPayload({ ...product, cin7_type: "Service" });
+    expect(payload.Type).toBe("Service");
   });
 
   it("only includes valid Tier1-10 price tiers", () => {
