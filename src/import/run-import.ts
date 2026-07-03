@@ -1,11 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { parseCsv } from "@/import/csv";
+import { parseCsv, type InvalidRow, type ParsedRow } from "@/import/csv";
 import { productCsvRowSchema } from "@/model/products";
-import { assemblyBomCsvRowSchema } from "@/model/assembly-bom";
-import { productionBomCsvRowSchema } from "@/model/production-bom";
+import { assemblyBomCsvRowSchema, type AssemblyBomCsvRow } from "@/model/assembly-bom";
+import { productionBomCsvRowSchema, type ProductionBomCsvRow } from "@/model/production-bom";
 import { commitProductRows } from "@/import/commit-products";
 import { commitAssemblyBomRows } from "@/import/commit-assembly-bom";
 import { commitProductionBomRows } from "@/import/commit-production-bom";
+import { checkAssemblyBomReferences, checkProductionBomReferences } from "@/import/validate-bom-references";
 
 export type ImportKind = "products" | "assembly_bom" | "production_bom";
 
@@ -38,7 +39,22 @@ export async function runImport(
   csvText: string
 ): Promise<RunImportResult> {
   const schema = SCHEMAS[kind];
-  const { valid, invalid } = parseCsv(csvText, schema as never);
+  const parsed = parseCsv(csvText, schema as never);
+  let valid: ParsedRow<unknown>[] = parsed.valid;
+  let invalid: InvalidRow[] = parsed.invalid;
+
+  // BOMs must reference products that already exist — no implicit creation.
+  // A row with an unknown parent/component SKU is rejected like any other
+  // validation failure, not silently patched over.
+  if (kind === "assembly_bom") {
+    const refCheck = await checkAssemblyBomReferences(db, orgId, valid as ParsedRow<AssemblyBomCsvRow>[]);
+    valid = refCheck.valid;
+    invalid = [...invalid, ...refCheck.invalid];
+  } else if (kind === "production_bom") {
+    const refCheck = await checkProductionBomReferences(db, orgId, valid as ParsedRow<ProductionBomCsvRow>[]);
+    valid = refCheck.valid;
+    invalid = [...invalid, ...refCheck.invalid];
+  }
 
   const { data: batch, error: batchError } = await db
     .from("import_batches")

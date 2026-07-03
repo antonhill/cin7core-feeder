@@ -6,23 +6,19 @@ import {
   toCanonicalVersion,
   type ProductionBomCsvRow,
 } from "@/model/production-bom";
-import { ensureProductStubs } from "@/import/product-stub";
 
 export interface CommitProductionBomSummary {
   versionsUpserted: number;
   operationsUpserted: number;
   itemsUpserted: number;
-  productStubsEnsured: number;
 }
 
+/** Assumes every row has already passed checkProductionBomReferences. */
 export async function commitProductionBomRows(
   db: SupabaseClient,
   orgId: string,
   rows: ProductionBomCsvRow[]
 ): Promise<CommitProductionBomSummary> {
-  const parentProducts = dedupeProducts(rows.map((r) => ({ sku: r.ProductSKU, name: r.ProductName })));
-  await ensureProductStubs(db, orgId, parentProducts);
-
   const versions = dedupeBy(rows.map(toCanonicalVersion), (v) => [v.product_sku, v.version]);
   const { error: versionsError } = await db
     .from("production_bom_versions")
@@ -54,12 +50,5 @@ export async function commitProductionBomRows(
     versionsUpserted: versions.length,
     operationsUpserted: operations.length,
     itemsUpserted: items.length,
-    productStubsEnsured: parentProducts.length,
   };
-}
-
-function dedupeProducts(products: { sku: string; name: string }[]) {
-  const seen = new Map<string, { sku: string; name: string }>();
-  for (const p of products) seen.set(p.sku, p);
-  return [...seen.values()];
 }
