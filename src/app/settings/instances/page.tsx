@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import {
   debugFindBomExample,
   debugProbeWorkCentrePaths,
@@ -10,13 +10,14 @@ import {
   upsertInstance,
   type InstanceRecord,
 } from "./actions";
+import { useOrgSession } from "@/lib/org-session";
 
 const DEFAULT_BASE_URL = "https://inventory.dearsystems.com/ExternalApi/v2";
 
 export default function InstancesSettingsPage() {
-  const [orgId, setOrgId] = useState("");
-  const [secret, setSecret] = useState("");
+  const { orgId, setOrgId, secret, setSecret } = useOrgSession();
   const [unlocked, setUnlocked] = useState(false);
+  const autoUnlockTried = useRef(false);
   const [instances, setInstances] = useState<InstanceRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   // null = closed, "new" = add-instance modal, otherwise the instance id being edited
@@ -37,6 +38,22 @@ export default function InstancesSettingsPage() {
       setUnlocked(true);
     });
   }
+
+  // If org ID + passphrase were already saved from another page (e.g. Import),
+  // unlock automatically instead of making the user retype/resubmit them.
+  // Silent on failure (e.g. a stale secret) — just leaves the normal unlock
+  // form showing, no scary error for something the user didn't initiate.
+  useEffect(() => {
+    if (autoUnlockTried.current || unlocked || !orgId || !secret) return;
+    autoUnlockTried.current = true;
+    startTransition(async () => {
+      const result = await listInstances(orgId, secret);
+      if (result.ok) {
+        setInstances(result.instances ?? []);
+        setUnlocked(true);
+      }
+    });
+  }, [orgId, secret, unlocked]);
 
   function handleSave(form: FormData, instanceId?: string) {
     setError(null);

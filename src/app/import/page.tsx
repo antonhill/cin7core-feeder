@@ -9,6 +9,7 @@ import {
   type ImportActionState,
   type InstancePickerItem,
 } from "./actions";
+import { useOrgSession } from "@/lib/org-session";
 
 const INITIAL_STATE: ImportActionState = { status: "idle" };
 
@@ -20,8 +21,7 @@ const KINDS = [
 
 export default function ImportPage() {
   const [state, formAction, isImportPending] = useActionState(importCsvAction, INITIAL_STATE);
-  const [orgId, setOrgId] = useState("");
-  const [secret, setSecret] = useState("");
+  const { orgId, setOrgId, secret, setSecret } = useOrgSession();
 
   const [instances, setInstances] = useState<InstancePickerItem[]>([]);
   const [instancesError, setInstancesError] = useState<string | null>(null);
