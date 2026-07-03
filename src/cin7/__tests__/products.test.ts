@@ -14,6 +14,8 @@ const product = {
   barcode: null,
   active: true,
   status: "Active",
+  type: "component",
+  costing_method: "FIFO",
 };
 
 beforeEach(() => {
@@ -29,6 +31,12 @@ describe("toCin7ProductPayload", () => {
   it("sends Status verbatim, not derived from active — supports Deprecated as the product-level soft-delete", () => {
     const payload = toCin7ProductPayload({ ...product, active: true, status: "Deprecated" });
     expect(payload.Status).toBe("Deprecated");
+  });
+
+  it("sends Type and CostingMethod — both required by Cin7 on create", () => {
+    const payload = toCin7ProductPayload(product);
+    expect(payload.Type).toBe("Stock"); // reverse-mapped from "component"
+    expect(payload.CostingMethod).toBe("FIFO");
   });
 
   it("only includes valid Tier1-10 price tiers", () => {

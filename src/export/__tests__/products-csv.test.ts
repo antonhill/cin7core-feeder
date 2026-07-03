@@ -29,7 +29,7 @@ describe("exportProductsCsv", () => {
     const csv = await exportProductsCsv(db, "org1");
     const firstLine = csv.split("\r\n")[0];
     expect(firstLine).toBe(
-      '"ProductCode","Name","Category","Type","Barcode","DefaultUnitOfMeasure","Status","Description","PurchaseTaxRule","SaleTaxRule","PriceTier1","PriceTier2","PriceTier3","PriceTier4","PriceTier5","PriceTier6","PriceTier7","PriceTier8","PriceTier9","PriceTier10"'
+      '"ProductCode","Name","Category","Type","CostingMethod","Barcode","DefaultUnitOfMeasure","Status","Description","PurchaseTaxRule","SaleTaxRule","PriceTier1","PriceTier2","PriceTier3","PriceTier4","PriceTier5","PriceTier6","PriceTier7","PriceTier8","PriceTier9","PriceTier10"'
     );
   });
 
@@ -47,6 +47,7 @@ describe("exportProductsCsv", () => {
           tax_code: "VAT",
           status: "Active",
           description: "A widget",
+          costing_method: "FIFO",
         },
       ],
       price_tiers: [
@@ -61,6 +62,7 @@ describe("exportProductsCsv", () => {
     expect(dataLine).toContain('"SKU1"');
     expect(dataLine).toContain('"Widget"');
     expect(dataLine).toContain('"Stock"'); // reverse-mapped from "component"
+    expect(dataLine).toContain('"FIFO"');
     expect(dataLine).toContain('"Active"');
     expect(dataLine).toContain('"100"'); // PriceTier1
     expect(dataLine).toContain('"90"'); // PriceTier3

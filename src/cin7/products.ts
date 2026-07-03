@@ -1,6 +1,7 @@
 import type { Cin7Credentials } from "@/cin7/types";
 import { cin7Request } from "@/cin7/http";
 import { toCin7BomFields, type CanonicalAssemblyBomLineRow } from "@/cin7/assembly-bom";
+import { reverseCin7ProductType } from "@/model/products";
 
 export interface CanonicalProductRow {
   sku: string;
@@ -11,6 +12,8 @@ export interface CanonicalProductRow {
   barcode: string | null;
   active: boolean;
   status: string;
+  type: string;
+  costing_method: string;
 }
 
 export interface CanonicalPriceTierRow {
@@ -52,6 +55,11 @@ export function toCin7ProductPayload(product: CanonicalProductRow, priceTiers: C
     // beyond Active/Inactive, e.g. "Deprecated" as the product-level
     // soft-delete mechanism, confirmed by the client.
     Status: product.status,
+    // Both required on create — confirmed live via 400 "Required attribute
+    // ... not provided" for brand-new SKUs (existing products update fine
+    // without them, which is why this was missed until create traffic hit).
+    Type: reverseCin7ProductType(product.type),
+    CostingMethod: product.costing_method,
   };
   for (const tier of priceTiers) {
     const index = Number(tier.tier_code.replace(/^Tier/, ""));

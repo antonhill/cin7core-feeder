@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { toCsv } from "@/export/csv-format";
+import { reverseCin7ProductType } from "@/model/products";
 
 const PRICE_TIER_INDEXES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
@@ -8,6 +9,7 @@ const HEADER = [
   "Name",
   "Category",
   "Type",
+  "CostingMethod",
   "Barcode",
   "DefaultUnitOfMeasure",
   "Status",
@@ -16,20 +18,6 @@ const HEADER = [
   "SaleTaxRule",
   ...PRICE_TIER_INDEXES.map((i) => `PriceTier${i}`),
 ];
-
-/**
- * Our internal product_type enum is lossy vs Cin7's own Type values (we
- * collapsed Stock/Service/Non-Inventory/BillOfMaterials down to 5 broad
- * categories on import) — this is a best-effort reverse mapping for a
- * readable re-importable export, not a perfect round-trip.
- */
-const REVERSE_TYPE_MAP: Record<string, string> = {
-  raw: "Non-Inventory",
-  component: "Stock",
-  assembly: "BillOfMaterials",
-  finished: "Stock",
-  placeholder: "Stock",
-};
 
 /**
  * Exports the org's current canonical products (+ price tiers) in the same
@@ -42,7 +30,7 @@ const REVERSE_TYPE_MAP: Record<string, string> = {
 export async function exportProductsCsv(db: SupabaseClient, orgId: string): Promise<string> {
   const { data: products, error } = await db
     .from("products")
-    .select("sku, name, category_code, uom_code, barcode, type, tax_code, status, description")
+    .select("sku, name, category_code, uom_code, barcode, type, tax_code, status, description, costing_method")
     .eq("org_id", orgId)
     .order("sku");
   if (error) throw new Error(`products: ${error.message}`);
@@ -66,7 +54,8 @@ export async function exportProductsCsv(db: SupabaseClient, orgId: string): Prom
       p.sku,
       p.name,
       p.category_code ?? "",
-      REVERSE_TYPE_MAP[p.type] ?? "Stock",
+      reverseCin7ProductType(p.type),
+      p.costing_method ?? "FIFO",
       p.barcode ?? "",
       p.uom_code ?? "",
       p.status ?? "Active",

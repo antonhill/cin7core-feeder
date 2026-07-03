@@ -11,6 +11,7 @@ export const productCsvRowSchema = z.object({
   Name: z.string().trim().min(1, "Name is required"),
   Category: z.string().trim().optional().default(""),
   Type: z.string().trim().optional().default(""),
+  CostingMethod: z.string().trim().optional().default(""),
   Barcode: z.string().trim().optional().default(""),
   DefaultUnitOfMeasure: z.string().trim().optional().default(""),
   Status: z.string().trim().optional().default(""),
@@ -43,6 +44,24 @@ export function mapCin7ProductType(cin7Type: string): "raw" | "component" | "ass
   return CIN7_TYPE_MAP[cin7Type] ?? "component";
 }
 
+/**
+ * Reverse of CIN7_TYPE_MAP — lossy (we collapsed Stock/Service/Non-Inventory/
+ * BillOfMaterials down to 5 broad categories on import), but good enough to
+ * push a valid Cin7 Type back on create/export. Single source of truth for
+ * both the CSV template export and the live product push.
+ */
+const CANONICAL_TO_CIN7_TYPE: Record<string, string> = {
+  raw: "Non-Inventory",
+  component: "Stock",
+  assembly: "BillOfMaterials",
+  finished: "Stock",
+  placeholder: "Stock",
+};
+
+export function reverseCin7ProductType(canonicalType: string): string {
+  return CANONICAL_TO_CIN7_TYPE[canonicalType] ?? "Stock";
+}
+
 export interface CanonicalProduct {
   sku: string;
   name: string;
@@ -60,6 +79,12 @@ export interface CanonicalProduct {
    * deriving just a boolean would lose that.
    */
   status: string;
+  /**
+   * Required by Cin7 on product create (POST /Product fails with "Required
+   * attribute 'CostingMethod' not provided" otherwise) — confirmed live.
+   * Every sample row in Cin7's own InventoryList export uses "FIFO".
+   */
+  costing_method: string;
 }
 
 export interface CanonicalPriceTier {
@@ -85,6 +110,7 @@ export function toCanonicalProduct(row: ProductCsvRow): CanonicalProduct {
     tax_code: row.SaleTaxRule || row.PurchaseTaxRule || null,
     active: row.Status ? row.Status.toUpperCase() === "ACTIVE" : true,
     status: row.Status || "Active",
+    costing_method: row.CostingMethod || "FIFO",
   };
 }
 
