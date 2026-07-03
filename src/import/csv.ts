@@ -22,7 +22,13 @@ export interface CsvParseResult<T> {
 export function parseCsv<T>(csvText: string, schema: ZodType<T>): CsvParseResult<T> {
   const { data, errors: papaErrors } = Papa.parse<Record<string, unknown>>(csvText, {
     header: true,
-    skipEmptyLines: true,
+    // "true" only skips lines with zero characters — a line of bare commas
+    // (every field empty, e.g. a trailing blank row left by opening the CSV
+    // in a spreadsheet app) still comes through as a row of empty strings,
+    // which then fails required-field validation. "greedy" treats an
+    // all-whitespace-or-delimiters line as blank too, matching what a human
+    // editing the file would consider an empty row.
+    skipEmptyLines: "greedy",
     dynamicTyping: false,
   });
 
