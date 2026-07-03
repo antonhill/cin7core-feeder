@@ -33,6 +33,13 @@ describe("InventoryList (products) CSV", () => {
     expect(product.status).toBe("ACTIVE");
   });
 
+  it("captures Brand — previously never modeled, so it silently never updated in Cin7", () => {
+    const { valid } = parseCsv(csv, productCsvRowSchema);
+    const row = valid.find((r) => r.data.ProductCode === "P34-300-HNSB-DEMO")!;
+    const product = toCanonicalProduct(row.data);
+    expect(product.brand).toBe("Prim Pipeworks");
+  });
+
   it("only emits price tiers with a positive amount", () => {
     const { valid } = parseCsv(csv, productCsvRowSchema);
     for (const row of valid) {

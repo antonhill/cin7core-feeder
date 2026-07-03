@@ -10,6 +10,7 @@ export const productCsvRowSchema = z.object({
   ProductCode: z.string().trim().min(1, "ProductCode is required"),
   Name: z.string().trim().min(1, "Name is required"),
   Category: z.string().trim().optional().default(""),
+  Brand: z.string().trim().optional().default(""),
   Type: z.string().trim().optional().default(""),
   CostingMethod: z.string().trim().optional().default(""),
   Barcode: z.string().trim().optional().default(""),
@@ -49,6 +50,7 @@ export interface CanonicalProduct {
   name: string;
   description: string | null;
   category_code: string | null;
+  brand: string | null;
   uom_code: string | null;
   barcode: string | null;
   type: "raw" | "component" | "assembly" | "finished" | "placeholder";
@@ -93,6 +95,7 @@ export function toCanonicalProduct(row: ProductCsvRow): CanonicalProduct {
     name: row.Name,
     description: row.Description || null,
     category_code: row.Category || null,
+    brand: row.Brand || null,
     uom_code: row.DefaultUnitOfMeasure || null,
     barcode: row.Barcode || null,
     type: mapCin7ProductType(row.Type),

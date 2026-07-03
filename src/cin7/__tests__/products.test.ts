@@ -10,6 +10,7 @@ const product = {
   name: "Widget",
   description: null,
   category_code: "Widgets",
+  brand: null,
   uom_code: "Item",
   barcode: null,
   active: true,
@@ -42,6 +43,11 @@ describe("toCin7ProductPayload", () => {
   it("sends Type verbatim, not reverse-mapped from an internal category — avoids collapsing Service into Stock", () => {
     const payload = toCin7ProductPayload({ ...product, cin7_type: "Service" });
     expect(payload.Type).toBe("Service");
+  });
+
+  it("sends Brand — previously never modeled at all, so it silently never updated in Cin7", () => {
+    const payload = toCin7ProductPayload({ ...product, brand: "Acme" });
+    expect(payload.Brand).toBe("Acme");
   });
 
   it("only includes valid Tier1-10 price tiers", () => {

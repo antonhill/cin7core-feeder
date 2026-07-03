@@ -8,6 +8,7 @@ export interface CanonicalProductRow {
   name: string;
   description: string | null;
   category_code: string | null;
+  brand: string | null;
   uom_code: string | null;
   barcode: string | null;
   active: boolean;
@@ -49,6 +50,7 @@ export function toCin7ProductPayload(product: CanonicalProductRow, priceTiers: C
     SKU: product.sku,
     Name: product.name,
     Category: product.category_code ?? undefined,
+    Brand: product.brand ?? undefined,
     UOM: product.uom_code ?? undefined,
     Barcode: product.barcode ?? undefined,
     // Sent verbatim (not derived from `active`) — Cin7 supports statuses

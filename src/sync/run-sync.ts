@@ -68,7 +68,7 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
 
   const { data: products, error: productsError } = await db
     .from("products")
-    .select("sku, name, description, category_code, uom_code, barcode, active, status, cin7_type, costing_method, content_hash")
+    .select("sku, name, description, category_code, brand, uom_code, barcode, active, status, cin7_type, costing_method, content_hash")
     .eq("org_id", orgId);
   if (productsError) throw new Error(productsError.message);
 

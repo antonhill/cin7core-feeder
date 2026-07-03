@@ -7,6 +7,7 @@ const HEADER = [
   "ProductCode",
   "Name",
   "Category",
+  "Brand",
   "Type",
   "CostingMethod",
   "Barcode",
@@ -29,7 +30,7 @@ const HEADER = [
 export async function exportProductsCsv(db: SupabaseClient, orgId: string): Promise<string> {
   const { data: products, error } = await db
     .from("products")
-    .select("sku, name, category_code, uom_code, barcode, cin7_type, tax_code, status, description, costing_method")
+    .select("sku, name, category_code, brand, uom_code, barcode, cin7_type, tax_code, status, description, costing_method")
     .eq("org_id", orgId)
     .order("sku");
   if (error) throw new Error(`products: ${error.message}`);
@@ -53,6 +54,7 @@ export async function exportProductsCsv(db: SupabaseClient, orgId: string): Prom
       p.sku,
       p.name,
       p.category_code ?? "",
+      p.brand ?? "",
       p.cin7_type ?? "Stock",
       p.costing_method ?? "FIFO",
       p.barcode ?? "",

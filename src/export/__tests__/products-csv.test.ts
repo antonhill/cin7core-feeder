@@ -29,7 +29,7 @@ describe("exportProductsCsv", () => {
     const csv = await exportProductsCsv(db, "org1");
     const firstLine = csv.split("\r\n")[0];
     expect(firstLine).toBe(
-      '"ProductCode","Name","Category","Type","CostingMethod","Barcode","DefaultUnitOfMeasure","Status","Description","PurchaseTaxRule","SaleTaxRule","PriceTier1","PriceTier2","PriceTier3","PriceTier4","PriceTier5","PriceTier6","PriceTier7","PriceTier8","PriceTier9","PriceTier10"'
+      '"ProductCode","Name","Category","Brand","Type","CostingMethod","Barcode","DefaultUnitOfMeasure","Status","Description","PurchaseTaxRule","SaleTaxRule","PriceTier1","PriceTier2","PriceTier3","PriceTier4","PriceTier5","PriceTier6","PriceTier7","PriceTier8","PriceTier9","PriceTier10"'
     );
   });
 
@@ -41,6 +41,7 @@ describe("exportProductsCsv", () => {
           sku: "SKU1",
           name: "Widget",
           category_code: "Widgets",
+          brand: "Acme",
           uom_code: "Item",
           barcode: "12345",
           cin7_type: "Service",
@@ -62,6 +63,7 @@ describe("exportProductsCsv", () => {
     expect(dataLine).toContain('"SKU1"');
     expect(dataLine).toContain('"Widget"');
     expect(dataLine).toContain('"Service"'); // verbatim, not reverse-mapped from an internal category
+    expect(dataLine).toContain('"Acme"');
     expect(dataLine).toContain('"FIFO"');
     expect(dataLine).toContain('"Active"');
     expect(dataLine).toContain('"100"'); // PriceTier1
