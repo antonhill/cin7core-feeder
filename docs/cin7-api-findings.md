@@ -203,6 +203,32 @@ push, not to resolve/store an ID. Implemented generically in `src/cin7/reference
   different thing entirely. If Product create ever rejects an unrecognized warranty name,
   that behaviour isn't documented anywhere researched so far — would need live testing.
 
+## 5b. Full InventoryList field coverage — added 2026-07-03
+Client feedback ("I am concerned that you are not being complete with the template") prompted
+a full audit: the canonical schema/CSV model only mapped ~12 of Cin7's ~96 InventoryList
+columns. Brand/CostingMethod being missed earlier were symptoms of this, not one-off misses.
+Added the remaining ~63 columns to `src/model/products.ts`/`src/cin7/products.ts`, split by
+confidence:
+
+- **Push-confirmed** (~36 fields — dimensions, carton info, weight/dimension units, reorder
+  levels, `AutoAssembly`/`AutoDisassembly`/`DropShipMode`, the 4 Account fields, attribute
+  set, 10 additional attributes, discount/tags/stock-locator, `PurchaseTaxRule`/`SaleTaxRule`
+  (previously collapsed into one lossy `tax_code` — same class of bug as `cin7_type`),
+  short description, `Sellable`, pick zones, always-show-quantity, internal note, HS code,
+  country of origin): every one of these has a confirmed field name from a real live
+  GET /Product response, and is now sent on every push. Two write-side field names differ
+  from their CSV column names — confirmed live: `DimensionsUnits` (API) vs `DimensionUnits`
+  (CSV), and `AttributeSet`/`DiscountRule`/`Tags` (API) vs `ProductAttributeSet`/
+  `DiscountName`/`CommaDelimitedTags` (CSV).
+- **Capture-only** (~27 fields — `FixedAssetType`, `CartonVolume`, the 4 Supplier fields,
+  `DropShipSupplier`, `AverageCost`, the 8 ProductFamily variant fields, `WarrantySetupName`,
+  `MakeToOrderBom`, `IsAccountingDimensionEnabled`, the 10 DimensionAttribute fields): stored
+  from CSV for round-trip export fidelity, but deliberately NOT sent to Cin7 yet — no field
+  ever observed in a real live GET /Product response, so the risk of guessing wrong (as
+  happened repeatedly with Work Centres/Production BOM) outweighs the benefit. `AverageCost`
+  specifically should likely never be pushed even once confirmed — it reads as a
+  Cin7-calculated value (from costing method + purchase history), not a settable field.
+
 ## 6. Pagination — confirmed
 `page` + `limit` query params (e.g. `/Product?page=5&limit=200`). Default page size 100,
 min 1, max 1000. Documented for Customers, Suppliers, Products, ProductFamilies,

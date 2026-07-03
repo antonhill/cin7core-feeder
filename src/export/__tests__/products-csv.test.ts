@@ -29,9 +29,14 @@ describe("exportProductsCsv", () => {
     const csv = await exportProductsCsv(db, "org1");
     const firstLine = csv.split("\r\n")[0];
     expect(firstLine).toBe(
-      '"ProductCode","Name","Category","Brand","Type","CostingMethod","Barcode","DefaultUnitOfMeasure","Status","Description","PurchaseTaxRule","SaleTaxRule","PriceTier1","PriceTier2","PriceTier3","PriceTier4","PriceTier5","PriceTier6","PriceTier7","PriceTier8","PriceTier9","PriceTier10"'
+      '"ProductCode","Name","Category","Brand","Type","FixedAssetType","CostingMethod","Length","Width","Height","Weight","CartonLength","CartonWidth","CartonHeight","CartonInnerQuantity","CartonQuantity","CartonVolume","WeightUnits","DimensionUnits","Barcode","MinimumBeforeReorder","ReorderQuantity","DefaultLocation","LastSuppliedBy","SupplierProductCode","SupplierProductName","SupplierFixedPrice","PriceTier1","PriceTier2","PriceTier3","PriceTier4","PriceTier5","PriceTier6","PriceTier7","PriceTier8","PriceTier9","PriceTier10","AutoAssemble","AutoDisassemble","DropShip","DropShipSupplier","AverageCost","DefaultUnitOfMeasure","InventoryAccount","RevenueAccount","ExpenseAccount","COGSAccount","ProductAttributeSet","AdditionalAttribute1","AdditionalAttribute2","AdditionalAttribute3","AdditionalAttribute4","AdditionalAttribute5","AdditionalAttribute6","AdditionalAttribute7","AdditionalAttribute8","AdditionalAttribute9","AdditionalAttribute10","DiscountName","ProductFamilySKU","ProductFamilyName","ProductFamilyOption1Name","ProductFamilyOption1Value","ProductFamilyOption2Name","ProductFamilyOption2Value","ProductFamilyOption3Name","ProductFamilyOption3Value","CommaDelimitedTags","StockLocator","PurchaseTaxRule","SaleTaxRule","Status","Description","ShortDescription","Sellable","PickZones","AlwaysShowQuantity","WarrantySetupName","InternalNote","MakeToOrderBom","IsAccountingDimensionEnabled","DimensionAttribute1","DimensionAttribute2","DimensionAttribute3","DimensionAttribute4","DimensionAttribute5","DimensionAttribute6","DimensionAttribute7","DimensionAttribute8","DimensionAttribute9","DimensionAttribute10","HSCode","CountryOfOrigin"'
     );
   });
+
+  /** Splits a quoted CSV data line back into its raw field values (test data never contains embedded commas). */
+  function parseDataLine(line: string): string[] {
+    return line.slice(1, -1).split('","');
+  }
 
   it("maps a product row and merges in its price tiers by index", async () => {
     const db = createFakeDb({
@@ -45,10 +50,14 @@ describe("exportProductsCsv", () => {
           uom_code: "Item",
           barcode: "12345",
           cin7_type: "Service",
-          tax_code: "VAT",
+          purchase_tax_rule: "Purchases 15%",
+          sale_tax_rule: "Sales 15%",
           status: "Active",
           description: "A widget",
           costing_method: "FIFO",
+          weight: 1.5,
+          auto_assemble: true,
+          sellable: true,
         },
       ],
       price_tiers: [
@@ -58,19 +67,22 @@ describe("exportProductsCsv", () => {
     });
 
     const csv = await exportProductsCsv(db, "org1");
-    const dataLine = csv.split("\r\n")[1];
+    const fields = parseDataLine(csv.split("\r\n")[1]);
 
-    expect(dataLine).toContain('"SKU1"');
-    expect(dataLine).toContain('"Widget"');
-    expect(dataLine).toContain('"Service"'); // verbatim, not reverse-mapped from an internal category
-    expect(dataLine).toContain('"Acme"');
-    expect(dataLine).toContain('"FIFO"');
-    expect(dataLine).toContain('"Active"');
-    expect(dataLine).toContain('"100"'); // PriceTier1
-    expect(dataLine).toContain('"90"'); // PriceTier3
+    expect(fields[0]).toBe("SKU1");
+    expect(fields[1]).toBe("Widget");
+    expect(fields[4]).toBe("Service"); // Type — verbatim, not reverse-mapped from an internal category
+    expect(fields[3]).toBe("Acme"); // Brand
+    expect(fields[10]).toBe("1.5"); // Weight
+    expect(fields[27]).toBe("100"); // PriceTier1
+    expect(fields[29]).toBe("90"); // PriceTier3
+    expect(fields[37]).toBe("Yes"); // AutoAssemble
+    expect(fields[69]).toBe("Purchases 15%"); // PurchaseTaxRule
+    expect(fields[70]).toBe("Sales 15%"); // SaleTaxRule
+    expect(fields[74]).toBe("Yes"); // Sellable
   });
 
-  it("defaults an unpopulated price tier to 0", async () => {
+  it("defaults an unpopulated price tier to 0, and unset booleans to No/Yes per their DB default", async () => {
     const db = createFakeDb({
       products: [
         {
@@ -81,16 +93,17 @@ describe("exportProductsCsv", () => {
           uom_code: null,
           barcode: null,
           cin7_type: "Stock",
-          tax_code: null,
           status: "Active",
           description: null,
+          auto_assemble: false,
+          sellable: true,
         },
       ],
       price_tiers: [],
     });
 
     const csv = await exportProductsCsv(db, "org1");
-    const dataLine = csv.split("\r\n")[1];
-    expect(dataLine.endsWith('"0","0","0","0","0","0","0","0","0","0"')).toBe(true);
+    const fields = parseDataLine(csv.split("\r\n")[1]);
+    expect(fields.slice(27, 37)).toEqual(Array(10).fill("0")); // PriceTier1-10
   });
 });

@@ -15,6 +15,50 @@ export interface CanonicalProductRow {
   status: string;
   cin7_type: string;
   costing_method: string;
+  length: number | null;
+  width: number | null;
+  height: number | null;
+  weight: number | null;
+  carton_length: number | null;
+  carton_width: number | null;
+  carton_height: number | null;
+  carton_inner_quantity: number | null;
+  carton_quantity: number | null;
+  weight_units: string | null;
+  dimension_units: string | null;
+  minimum_before_reorder: number | null;
+  reorder_quantity: number | null;
+  default_location: string | null;
+  auto_assemble: boolean;
+  auto_disassemble: boolean;
+  drop_ship: string | null;
+  inventory_account: string | null;
+  revenue_account: string | null;
+  expense_account: string | null;
+  cogs_account: string | null;
+  product_attribute_set: string | null;
+  additional_attribute_1: string | null;
+  additional_attribute_2: string | null;
+  additional_attribute_3: string | null;
+  additional_attribute_4: string | null;
+  additional_attribute_5: string | null;
+  additional_attribute_6: string | null;
+  additional_attribute_7: string | null;
+  additional_attribute_8: string | null;
+  additional_attribute_9: string | null;
+  additional_attribute_10: string | null;
+  discount_name: string | null;
+  comma_delimited_tags: string | null;
+  stock_locator: string | null;
+  purchase_tax_rule: string | null;
+  sale_tax_rule: string | null;
+  short_description: string | null;
+  sellable: boolean;
+  pick_zones: string | null;
+  always_show_quantity: number | null;
+  internal_note: string | null;
+  hs_code: string | null;
+  country_of_origin: string | null;
 }
 
 export interface CanonicalPriceTierRow {
@@ -65,6 +109,61 @@ export function toCin7ProductPayload(product: CanonicalProductRow, priceTiers: C
     // Stock on every push, confirmed live.
     Type: product.cin7_type,
     CostingMethod: product.costing_method,
+    // Everything below was confirmed against a real live GET /Product
+    // response before being added to the push payload — see
+    // src/model/products.ts's CanonicalProduct for the fields deliberately
+    // held back because their live field name isn't confirmed yet.
+    Length: product.length ?? undefined,
+    Width: product.width ?? undefined,
+    Height: product.height ?? undefined,
+    Weight: product.weight ?? undefined,
+    CartonLength: product.carton_length ?? undefined,
+    CartonWidth: product.carton_width ?? undefined,
+    CartonHeight: product.carton_height ?? undefined,
+    CartonInnerQuantity: product.carton_inner_quantity ?? undefined,
+    CartonQuantity: product.carton_quantity ?? undefined,
+    WeightUnits: product.weight_units ?? undefined,
+    // Cin7's write-side field is "DimensionsUnits" (with an "s") — differs
+    // from the CSV template's own "DimensionUnits" column name, confirmed
+    // from a real live GET /Product response.
+    DimensionsUnits: product.dimension_units ?? undefined,
+    MinimumBeforeReorder: product.minimum_before_reorder ?? undefined,
+    ReorderQuantity: product.reorder_quantity ?? undefined,
+    DefaultLocation: product.default_location ?? undefined,
+    AutoAssembly: product.auto_assemble,
+    AutoDisassembly: product.auto_disassemble,
+    DropShipMode: product.drop_ship ?? undefined,
+    // References an existing Chart of Accounts code — never auto-created
+    // (see docs/cin7-api-findings.md §5: Cin7 blocks account writes when
+    // Xero/QuickBooks integration is enabled). A rejection here is a real
+    // client config gap to surface, not something to paper over.
+    InventoryAccount: product.inventory_account ?? undefined,
+    RevenueAccount: product.revenue_account ?? undefined,
+    ExpenseAccount: product.expense_account ?? undefined,
+    COGSAccount: product.cogs_account ?? undefined,
+    AttributeSet: product.product_attribute_set ?? undefined,
+    AdditionalAttribute1: product.additional_attribute_1 ?? undefined,
+    AdditionalAttribute2: product.additional_attribute_2 ?? undefined,
+    AdditionalAttribute3: product.additional_attribute_3 ?? undefined,
+    AdditionalAttribute4: product.additional_attribute_4 ?? undefined,
+    AdditionalAttribute5: product.additional_attribute_5 ?? undefined,
+    AdditionalAttribute6: product.additional_attribute_6 ?? undefined,
+    AdditionalAttribute7: product.additional_attribute_7 ?? undefined,
+    AdditionalAttribute8: product.additional_attribute_8 ?? undefined,
+    AdditionalAttribute9: product.additional_attribute_9 ?? undefined,
+    AdditionalAttribute10: product.additional_attribute_10 ?? undefined,
+    DiscountRule: product.discount_name ?? undefined,
+    Tags: product.comma_delimited_tags ?? undefined,
+    StockLocator: product.stock_locator ?? undefined,
+    PurchaseTaxRule: product.purchase_tax_rule ?? undefined,
+    SaleTaxRule: product.sale_tax_rule ?? undefined,
+    ShortDescription: product.short_description ?? undefined,
+    Sellable: product.sellable,
+    PickZones: product.pick_zones ?? undefined,
+    AlwaysShowQuantity: product.always_show_quantity ?? undefined,
+    InternalNote: product.internal_note ?? undefined,
+    HSCode: product.hs_code ?? undefined,
+    CountryOfOrigin: product.country_of_origin ?? undefined,
   };
   let anyTierSet = false;
   for (const tier of priceTiers) {

@@ -48,6 +48,17 @@ describe("InventoryList (products) CSV", () => {
     }
   });
 
+  it("captures the full field set added in the completeness pass (dimensions, weight units, booleans)", () => {
+    const { valid } = parseCsv(csv, productCsvRowSchema);
+    const row = valid.find((r) => r.data.ProductCode === "AJFI-014286")!;
+    const product = toCanonicalProduct(row.data);
+    expect(product.weight).toBe(0.1);
+    expect(product.length).toBe(60);
+    expect(product.weight_units).toBe("kg");
+    expect(product.auto_assemble).toBe(false);
+    expect(product.sellable).toBe(true);
+  });
+
   it("keeps a Service row's Type verbatim in cin7_type — the internal `type` category collapses Stock/Service into one value", () => {
     const { valid } = parseCsv(csv, productCsvRowSchema);
     const row = valid.find((r) => r.data.Type === "Service")!;
