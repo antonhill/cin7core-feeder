@@ -6,7 +6,10 @@ fetch, so findings below are triangulated from Cin7's own Zendesk help articles
 (help.core.cin7.com) plus indexed snippets of the Apiary content. Confidence noted per item —
 **confirm anything marked "unverified" against a live sandbox account before relying on it.**
 
-## 1. Auth & base URL — confirmed
+## 1. Auth & base URL — confirmed, and live-tested (2026-07-03)
+`GET /Product?page=1&limit=1` with the two headers below succeeded (200) against a real Cin7
+Core sandbox account via the Settings UI's "Test connection" button (`src/cin7/client.ts`) —
+this is no longer just doc triangulation, it's a verified live call.
 Two required headers: `api-auth-accountid` and `api-auth-applicationkey` (set up under
 `/ExternalAPI` in the Cin7 Core UI — not OAuth, not Basic Auth).
 Base URL: `https://inventory.dearsystems.com/ExternalApi/v2/` — matches what's already
