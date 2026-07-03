@@ -8,8 +8,8 @@ const creds = { accountId: "a", applicationKey: "k", baseUrl: "https://example.t
 const cin7ProductId = "cin7-product-guid";
 const version = { product_sku: "FACEBULK001", version: "1", version_name: null, quantity_to_produce: 1000 };
 const operations = [
-  { operation_sequence: "1", operation_type: "Manufacturing", operation_name: "Mixing", cycle_time: 2700, work_centre_code: "MIXING" },
-  { operation_sequence: "2", operation_type: "Manufacturing", operation_name: "Blending", cycle_time: 1200, work_centre_code: "BLENDING" },
+  { operation_sequence: "1", operation_type: "Manufacturing", operation_name: "Mixing", cycle_time: 2700, unit_per_cycle: 1000, work_centre_code: "MIXING" },
+  { operation_sequence: "2", operation_type: "Manufacturing", operation_name: "Blending", cycle_time: 1200, unit_per_cycle: 1000, work_centre_code: "BLENDING" },
 ];
 const items = [
   { operation_sequence: "1", item_type: "Component" as const, item_code: "RAW0001", quantity: 200 },
@@ -45,6 +45,13 @@ describe("toCin7ProductionBomPayload", () => {
     const mixing = payload.Operations.find((o) => o.OperationSequence === "1")!;
     expect(mixing.Components[0].Position).toBe(1);
     expect(mixing.Resources[0].Position).toBe(1);
+  });
+
+  it("includes Order and UnitsPerCycle on operations, and OutputQuantity at the top level (all required by Cin7)", () => {
+    const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items);
+    expect(payload.OutputQuantity).toBe(1000);
+    expect(payload.Operations.map((o) => o.Order)).toEqual([1, 2]);
+    expect(payload.Operations[0].UnitsPerCycle).toBe(1000);
   });
 });
 

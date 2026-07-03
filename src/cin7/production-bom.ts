@@ -13,6 +13,7 @@ export interface CanonicalProductionBomOperationRow {
   operation_type: string;
   operation_name: string | null;
   cycle_time: number | null;
+  unit_per_cycle: number | null;
   work_centre_code: string | null;
 }
 
@@ -55,16 +56,23 @@ export function toCin7ProductionBomPayload(
     Version: version.version,
     VersionName: version.version_name ?? undefined,
     QuantityToProduce: version.quantity_to_produce,
+    // Confirmed via a live 400 ("Required property 'OutputQuantity' not
+    // found") — kept alongside QuantityToProduce since it's unclear if the
+    // latter is also used elsewhere, and extra fields are harmless.
+    OutputQuantity: version.quantity_to_produce,
     OverwriteExistingProductionBOM: true,
-    // Confirmed via a live 400 ("Required property 'Position' not found") on
-    // Operations, Components, and Resources — each needs its ordinal index
-    // within its own array, separate from our semantic OperationSequence.
+    // Confirmed via live 400s ("Required property 'Position'/'Order'/
+    // 'UnitsPerCycle' not found") on Operations, Components, and Resources —
+    // each needs its ordinal index (Position) plus an explicit Order,
+    // separate from our semantic OperationSequence.
     Operations: operations.map((op, opIndex) => ({
       Position: opIndex + 1,
+      Order: opIndex + 1,
       OperationSequence: op.operation_sequence,
       OperationType: op.operation_type,
       OperationName: op.operation_name ?? undefined,
       CycleTime: op.cycle_time ?? undefined,
+      UnitsPerCycle: op.unit_per_cycle ?? undefined,
       WorkCentreCode: op.work_centre_code ?? undefined,
       Components: items
         .filter((i) => i.operation_sequence === op.operation_sequence && i.item_type === "Component")

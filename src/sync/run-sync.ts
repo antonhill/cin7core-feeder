@@ -181,7 +181,7 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
 
       const { data: operations } = await db
         .from("production_bom_operations")
-        .select("operation_sequence, operation_type, operation_name, cycle_time, work_centre_code")
+        .select("operation_sequence, operation_type, operation_name, cycle_time, unit_per_cycle, work_centre_code")
         .eq("org_id", orgId)
         .eq("product_sku", version.product_sku)
         .eq("version", version.version);

@@ -107,7 +107,10 @@ export async function cin7Request<T>(
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      throw new Cin7ApiError(response.status, body.slice(0, 500) || response.statusText, false);
+      // Validation error arrays can list many missing fields at once — a
+      // short truncation was hiding all but the first one or two, forcing
+      // multiple slow round-trips to discover each subsequent field.
+      throw new Cin7ApiError(response.status, body.slice(0, 4000) || response.statusText, false);
     }
 
     if (response.status === 204) return undefined as T;
