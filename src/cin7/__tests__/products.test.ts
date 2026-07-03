@@ -68,30 +68,35 @@ describe("toCin7ProductPayload", () => {
 });
 
 const CATEGORY_EXISTS = { CategoryList: [{ ID: "cat-1", Name: "Widgets" }] };
+const UOM_EXISTS = { UnitList: [{ ID: "uom-1", Name: "Item" }] };
 
+// `product` has category_code + uom_code set but brand: null, so pushProduct
+// checks Category then UOM (Brand is skipped) before every product push.
 describe("pushProduct", () => {
   it("creates via POST when the SKU doesn't exist yet", async () => {
     vi.mocked(cin7Request)
-      .mockResolvedValueOnce(CATEGORY_EXISTS) // ensureCategoryExists
+      .mockResolvedValueOnce(CATEGORY_EXISTS)
+      .mockResolvedValueOnce(UOM_EXISTS)
       .mockResolvedValueOnce({ Products: [] }) // findProductBySku
       .mockResolvedValueOnce({ ID: "new-id" }); // create
 
     const result = await pushProduct(creds, product);
 
     expect(result).toEqual({ cin7Id: "new-id", status: "created" });
-    expect(cin7Request).toHaveBeenNthCalledWith(3, creds, "/Product", expect.objectContaining({ method: "POST" }));
+    expect(cin7Request).toHaveBeenNthCalledWith(4, creds, "/Product", expect.objectContaining({ method: "POST" }));
   });
 
   it("updates via PUT when the SKU already exists", async () => {
     vi.mocked(cin7Request)
       .mockResolvedValueOnce(CATEGORY_EXISTS)
+      .mockResolvedValueOnce(UOM_EXISTS)
       .mockResolvedValueOnce({ Products: [{ ID: "existing-id", SKU: "SKU1" }] })
       .mockResolvedValueOnce({ ID: "existing-id" });
 
     const result = await pushProduct(creds, product);
 
     expect(result).toEqual({ cin7Id: "existing-id", status: "updated" });
-    const [, , options] = vi.mocked(cin7Request).mock.calls[2];
+    const [, , options] = vi.mocked(cin7Request).mock.calls[3];
     expect(options).toMatchObject({ method: "PUT", body: expect.objectContaining({ ID: "existing-id" }) });
   });
 
@@ -100,18 +105,20 @@ describe("pushProduct", () => {
     // otherwise return an arbitrary product and get PUT-overwritten.
     vi.mocked(cin7Request)
       .mockResolvedValueOnce(CATEGORY_EXISTS)
+      .mockResolvedValueOnce(UOM_EXISTS)
       .mockResolvedValueOnce({ Products: [{ ID: "unrelated-id", SKU: "SOME-OTHER-SKU" }] })
       .mockResolvedValueOnce({ ID: "new-id" });
 
     const result = await pushProduct(creds, product);
 
     expect(result).toEqual({ cin7Id: "new-id", status: "created" });
-    expect(cin7Request).toHaveBeenNthCalledWith(3, creds, "/Product", expect.objectContaining({ method: "POST" }));
+    expect(cin7Request).toHaveBeenNthCalledWith(4, creds, "/Product", expect.objectContaining({ method: "POST" }));
   });
 
   it("throws with the raw response instead of silently returning a null cin7Id", async () => {
     vi.mocked(cin7Request)
       .mockResolvedValueOnce(CATEGORY_EXISTS)
+      .mockResolvedValueOnce(UOM_EXISTS)
       .mockResolvedValueOnce({ Products: [] })
       .mockResolvedValueOnce({ SomeOtherField: "value" } as never);
 
@@ -121,6 +128,7 @@ describe("pushProduct", () => {
   it("extracts the ID from a wrapped-list response (confirmed live shape: {Total, Page, Products})", async () => {
     vi.mocked(cin7Request)
       .mockResolvedValueOnce(CATEGORY_EXISTS)
+      .mockResolvedValueOnce(UOM_EXISTS)
       .mockResolvedValueOnce({ Products: [{ ID: "existing-id", SKU: "SKU1" }] })
       .mockResolvedValueOnce({ Total: 1, Page: 1, Products: [{ ID: "existing-id", SKU: "SKU1" }] } as never);
 
@@ -132,7 +140,8 @@ describe("pushProduct", () => {
   it("merges Assembly BOM fields into the same Product push (Cin7 has no separate BOM endpoint)", async () => {
     vi.mocked(cin7Request)
       .mockResolvedValueOnce({ Products: [{ ID: "comp-id", SKU: "COMP1" }] }) // resolveComponentIds -> find COMP1
-      .mockResolvedValueOnce(CATEGORY_EXISTS) // ensureCategoryExists
+      .mockResolvedValueOnce(CATEGORY_EXISTS)
+      .mockResolvedValueOnce(UOM_EXISTS)
       .mockResolvedValueOnce({ Products: [] }) // findProductBySku(SKU1) -> not found
       .mockResolvedValueOnce({ ID: "new-id" }); // create
 
@@ -151,7 +160,7 @@ describe("pushProduct", () => {
 
     await pushProduct(creds, product, [], bomLines);
 
-    const [, , options] = vi.mocked(cin7Request).mock.calls[3];
+    const [, , options] = vi.mocked(cin7Request).mock.calls[4];
     const body = options?.body as { BillOfMaterial: boolean; BillOfMaterialsProducts: unknown[] };
     expect(body.BillOfMaterial).toBe(true);
     expect(body.BillOfMaterialsProducts).toEqual([
@@ -163,6 +172,7 @@ describe("pushProduct", () => {
     vi.mocked(cin7Request)
       .mockResolvedValueOnce({ CategoryList: [] }) // category not found
       .mockResolvedValueOnce({ ID: "cat-new", Name: "Widgets" }) // category created
+      .mockResolvedValueOnce(UOM_EXISTS)
       .mockResolvedValueOnce({ Products: [] }) // findProductBySku
       .mockResolvedValueOnce({ ID: "new-id" }); // create
 
@@ -176,12 +186,31 @@ describe("pushProduct", () => {
     );
   });
 
-  it("skips the category check entirely when the product has no category", async () => {
+  it("creates a missing Brand before pushing the product — confirmed live: 'Brand ... was not found in reference book'", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce(CATEGORY_EXISTS)
+      .mockResolvedValueOnce({ BrandList: [] }) // brand not found
+      .mockResolvedValueOnce({ ID: "brand-new", Name: "Acme" }) // brand created
+      .mockResolvedValueOnce(UOM_EXISTS)
+      .mockResolvedValueOnce({ Products: [] })
+      .mockResolvedValueOnce({ ID: "new-id" });
+
+    await pushProduct(creds, { ...product, brand: "Acme" });
+
+    expect(cin7Request).toHaveBeenNthCalledWith(
+      3,
+      creds,
+      "/ref/brand",
+      expect.objectContaining({ method: "POST", body: { Name: "Acme" } })
+    );
+  });
+
+  it("skips the Category/Brand/UOM checks entirely when the product has none of them set", async () => {
     vi.mocked(cin7Request)
       .mockResolvedValueOnce({ Products: [] }) // findProductBySku
       .mockResolvedValueOnce({ ID: "new-id" }); // create
 
-    await pushProduct(creds, { ...product, category_code: null });
+    await pushProduct(creds, { ...product, category_code: null, brand: null, uom_code: null });
 
     expect(cin7Request).toHaveBeenCalledTimes(2);
   });

@@ -1,7 +1,7 @@
 import type { Cin7Credentials } from "@/cin7/types";
 import { cin7Request } from "@/cin7/http";
 import { toCin7BomFields, type CanonicalAssemblyBomLineRow } from "@/cin7/assembly-bom";
-import { ensureCategoryExists } from "@/cin7/categories";
+import { ensureReferenceExists, REF_BRAND_PATH, REF_CATEGORY_PATH, REF_UOM_PATH } from "@/cin7/reference-lookups";
 
 export interface CanonicalProductRow {
   sku: string;
@@ -169,7 +169,7 @@ export async function pushProduct(
   priceTiers: CanonicalPriceTierRow[] = [],
   bomLines: CanonicalAssemblyBomLineRow[] = [],
   cin7IdCache: Map<string, string | null | undefined> = new Map(),
-  categoryCache: Set<string> = new Set()
+  refCache: Set<string> = new Set()
 ): Promise<{ cin7Id: string; status: ProductPushStatus }> {
   if (bomLines.length) {
     await resolveComponentIds(
@@ -178,13 +178,16 @@ export async function pushProduct(
       cin7IdCache
     );
   }
-  // Confirmed live: POST/PUT /Product rejects an unrecognized Category with
-  // "Category not found." — unlike Cin7's own UI/CSV import, which
-  // auto-creates one. Create it first so the product push itself never
-  // needs to guess whether the category already exists.
-  if (product.category_code) {
-    await ensureCategoryExists(creds, product.category_code, categoryCache);
-  }
+  // Confirmed live: POST/PUT /Product rejects an unrecognized Category
+  // ("Category not found.") or Brand ("Brand '...' was not found in
+  // reference book") — unlike Cin7's own UI/CSV import, which auto-creates
+  // these. Create them first so the product push itself never needs to
+  // guess whether the reference-book entry already exists. UOM gets the
+  // same treatment pre-emptively, since it's the same kind of reference-book
+  // field even though it hasn't been observed failing live yet.
+  if (product.category_code) await ensureReferenceExists(creds, REF_CATEGORY_PATH, product.category_code, refCache);
+  if (product.brand) await ensureReferenceExists(creds, REF_BRAND_PATH, product.brand, refCache);
+  if (product.uom_code) await ensureReferenceExists(creds, REF_UOM_PATH, product.uom_code, refCache);
   const payload = { ...toCin7ProductPayload(product, priceTiers), ...toCin7BomFields(bomLines, cin7IdCache) };
   const existing = await findProductBySku(creds, product.sku);
 

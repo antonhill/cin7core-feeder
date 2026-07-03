@@ -167,30 +167,41 @@ WorkCenterID/ResourceID are resolved.
 Worth relaying back to the client/proposal conversation, since it changes what's actually
 possible vs. what was scoped.
 
-## 5. Categories — confirmed (2026-07-03); UOM/Price Tiers still partially unverified
-Confirmed live: POST/PUT `/Product` rejects an unrecognized `Category` string with
-`{"ErrorCode":404,"Exception":"Category not found."}` — unlike Cin7's own UI/CSV
-bulk-import, which auto-creates a new category on the fly, the JSON API does **not**.
-Category is a genuine CRUD resource at **`/ref/category`** (confirmed via
-github.com/nnhansg/dear-openapi's worked examples, corroborated by a real wired-up call in
-github.com/FalconEyeSolutions/CIN7-DearInventory's generated `ProductCategoriesApi.cs`):
-- `GET /ref/category?Page=&Limit=&Name=` → `{Total, Page, CategoryList: [{ID, Name}]}`
-- `POST /ref/category` with `{"Name": "..."}` → creates, returns `{ID, Name}`
-- `PUT /ref/category` with `{"ID": "...", "Name": "..."}` → updates
-- `DELETE /ref/category?ID=` → deletes
+## 5. Reference-book fields (Category/Brand/UOM) — confirmed (2026-07-03); Accounts/Tax confirmed NOT to auto-create
+Confirmed live: POST/PUT `/Product` rejects an unrecognized `Category` (`{"ErrorCode":404,
+"Exception":"Category not found."}`) or `Brand` (`{"ErrorCode":404,"Exception":"Brand '...'
+was not found in reference book"}`) — unlike Cin7's own UI/CSV bulk-import, which
+auto-creates these on the fly, the JSON API does **not**.
 
-`Category` on the Product payload is a plain Name string, not an ID reference — so the fix
-is to ensure the name exists (GET, then POST if missing) before referencing it on a product
-push, not to resolve/store an ID. Implemented in `src/cin7/categories.ts`
-(`ensureCategoryExists`), wired into `pushProduct`. `Name` caps at 50 chars on the category
-record itself even though the Product payload's own `Category` field allows up to 256 — a
-very long category name could still fail category creation.
+Category, Brand, and UOM are all genuine CRUD resources with an identical shape (confirmed
+via github.com/nnhansg/dear-openapi's worked examples, corroborated by real wired-up calls
+in github.com/FalconEyeSolutions/CIN7-DearInventory's generated client — `RefBrandPost`,
+`RefUnitPost`, etc., not just schema definitions):
+- **Category**: `/ref/category` — `GET ?Page=&Limit=&Name=` → `{Total, Page, CategoryList: [{ID, Name}]}`; `POST {"Name": "..."}` to create; `PUT {"ID", "Name"}`; `DELETE ?ID=`
+- **Brand**: `/ref/brand` — same shape, `Name` max 50 chars
+- **UOM**: `/ref/unit` — same shape, `Name` max 50 chars
 
-`ProductBrands`, `UnitsOfMeasure` appear as their own GET endpoints too, and also as embedded
-fields on the Product payload. `PriceTier` has its own endpoint (list all sale price tiers).
-**Still unverified:** whether UOM supports POST/PUT the same way Category now confirmed does,
-or is read-only. Confirm before assuming the sync engine can create a missing UOM on the fly
-the same way it now does for Category.
+Each is referenced on the Product payload as a plain Name string, not an ID — so the fix is
+to ensure the name exists (GET, then POST if missing) before referencing it on a product
+push, not to resolve/store an ID. Implemented generically in `src/cin7/reference-lookups.ts`
+(`ensureReferenceExists`, parameterized by path), wired into `pushProduct` for all three.
+
+**Deliberately NOT extended to every reference-book field.** Also researched and confirmed:
+- **Tax Rules** (`/ref/tax`) — CRUD exists, but creating one requires an existing liability
+  Account code (`Account`, `IsActive`, `TaxInclusive` all required) — too much implicit
+  business-logic risk to auto-create blindly.
+- **Chart of Accounts** (`/ref/account`, `InventoryAccount`/`RevenueAccount`/`ExpenseAccount`/
+  `COGSAccount` on the Product payload) — CRUD technically exists, but **Cin7's own spec
+  explicitly states account writes are blocked when Xero/QuickBooks integration is enabled**,
+  since the connected accounting system (not Cin7) is the source of truth there. Treat these
+  as must-already-exist; a rejection here is a real client config gap to flag, not something
+  to paper over by auto-creating a GL account.
+- **ProductAttributeSet** (`/ref/attributeset`) — CRUD exists (`Name` + up to 10 attribute
+  slots), not yet wired up — no live failure observed for this field yet.
+- **WarrantySetupName** — no CRUD endpoint found in either reference repo. Only a
+  `WarrantyRegistrationNumber` free-text field exists on fulfilment/packing lines, which is a
+  different thing entirely. If Product create ever rejects an unrecognized warranty name,
+  that behaviour isn't documented anywhere researched so far — would need live testing.
 
 ## 6. Pagination — confirmed
 `page` + `limit` query params (e.g. `/Product?page=5&limit=200`). Default page size 100,
