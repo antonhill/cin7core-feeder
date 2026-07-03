@@ -31,6 +31,10 @@ const product = {
   minimum_before_reorder: null,
   reorder_quantity: null,
   default_location: null,
+  last_supplied_by: null,
+  supplier_product_code: null,
+  supplier_product_name: null,
+  supplier_fixed_price: null,
   auto_assemble: false,
   auto_disassemble: false,
   drop_ship: null,
@@ -97,6 +101,29 @@ describe("toCin7ProductPayload", () => {
   it("sends Description — captured on import but never included in the push payload before", () => {
     const payload = toCin7ProductPayload({ ...product, description: "A fine widget." });
     expect(payload.Description).toBe("A fine widget.");
+  });
+
+  it("sends supplier data as a Suppliers array, using Cin7's real field names (SupplierInventoryCode, FixedCost)", () => {
+    const payload = toCin7ProductPayload({
+      ...product,
+      last_supplied_by: "Acme Supplies",
+      supplier_product_code: "AC-100",
+      supplier_product_name: "Acme Widget",
+      supplier_fixed_price: 4.5,
+    });
+    expect(payload.Suppliers).toEqual([
+      {
+        SupplierName: "Acme Supplies",
+        SupplierInventoryCode: "AC-100",
+        SupplierProductName: "Acme Widget",
+        FixedCost: 4.5,
+      },
+    ]);
+  });
+
+  it("omits Suppliers entirely when there's no supplier data", () => {
+    const payload = toCin7ProductPayload(product);
+    expect(payload).not.toHaveProperty("Suppliers");
   });
 
   it("sends the full field set added in the completeness pass, using confirmed live JSON field names", () => {

@@ -182,10 +182,20 @@ export interface CanonicalProduct {
   minimum_before_reorder: number | null; // push-confirmed
   reorder_quantity: number | null; // push-confirmed
   default_location: string | null; // push-confirmed
-  last_supplied_by: string | null; // capture-only (references a Supplier — separate entity, not modeled)
-  supplier_product_code: string | null; // capture-only
-  supplier_product_name: string | null; // capture-only
-  supplier_fixed_price: number | null; // capture-only
+  // push-confirmed (2026-07-03) — Cin7's Product resource carries a nested
+  // `Suppliers` array, sent in the same POST/PUT payload as everything
+  // else; an item is referenced by SupplierName (not a pre-resolved GUID —
+  // Cin7 accepts either). The CSV's flat single-supplier-per-row columns
+  // map onto that one array item: `last_supplied_by` is the supplier name
+  // itself (there's no separate "is this the default supplier" field in
+  // Cin7's model — the CSV format just assumes one supplier per row).
+  // Two of Cin7's real field names differ from the CSV column names:
+  // SupplierProductCode -> SupplierInventoryCode, SupplierFixedPrice ->
+  // FixedCost. See toCin7ProductPayload in cin7/products.ts.
+  last_supplied_by: string | null;
+  supplier_product_code: string | null;
+  supplier_product_name: string | null;
+  supplier_fixed_price: number | null;
   auto_assemble: boolean; // push-confirmed (Cin7 JSON field is "AutoAssembly")
   auto_disassemble: boolean; // push-confirmed (Cin7 JSON field is "AutoDisassembly")
   drop_ship: string | null; // push-confirmed (Cin7 JSON field is "DropShipMode"; a text enum like "No Drop Ship", not boolean)

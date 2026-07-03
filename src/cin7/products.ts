@@ -29,6 +29,10 @@ export interface CanonicalProductRow {
   minimum_before_reorder: number | null;
   reorder_quantity: number | null;
   default_location: string | null;
+  last_supplied_by: string | null;
+  supplier_product_code: string | null;
+  supplier_product_name: string | null;
+  supplier_fixed_price: number | null;
   auto_assemble: boolean;
   auto_disassemble: boolean;
   drop_ship: string | null;
@@ -166,6 +170,26 @@ export function toCin7ProductPayload(product: CanonicalProductRow, priceTiers: C
     HSCode: product.hs_code ?? undefined,
     CountryOfOrigin: product.country_of_origin ?? undefined,
   };
+  // Suppliers is a nested array on the Product resource, sent in the same
+  // POST/PUT payload — confirmed via a real wired-up call in the
+  // FalconEyeSolutions C# client's Product PUT request model, plus a
+  // populated Suppliers array in the .apib spec's own worked example.
+  // Referenced by SupplierName (a pre-resolved GUID isn't required — Cin7
+  // accepts either). The CSV's flat single-supplier-per-row format has no
+  // "is this the default supplier" flag in Cin7's own model, so
+  // last_supplied_by is treated as that one supplier's name. Two field
+  // names differ from the CSV columns: SupplierProductCode ->
+  // SupplierInventoryCode, SupplierFixedPrice -> FixedCost.
+  if (product.last_supplied_by) {
+    payload.Suppliers = [
+      {
+        SupplierName: product.last_supplied_by,
+        SupplierInventoryCode: product.supplier_product_code ?? undefined,
+        SupplierProductName: product.supplier_product_name ?? undefined,
+        FixedCost: product.supplier_fixed_price ?? undefined,
+      },
+    ];
+  }
   let anyTierSet = false;
   for (const tier of priceTiers) {
     const index = Number(tier.tier_code.replace(/^Tier/, ""));

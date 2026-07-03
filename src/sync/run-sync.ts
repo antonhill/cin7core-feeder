@@ -72,6 +72,7 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
       "sku, name, description, category_code, brand, uom_code, barcode, active, status, cin7_type, costing_method, \
 length, width, height, weight, carton_length, carton_width, carton_height, carton_inner_quantity, carton_quantity, \
 weight_units, dimension_units, minimum_before_reorder, reorder_quantity, default_location, \
+last_supplied_by, supplier_product_code, supplier_product_name, supplier_fixed_price, \
 auto_assemble, auto_disassemble, drop_ship, inventory_account, revenue_account, expense_account, cogs_account, \
 product_attribute_set, additional_attribute_1, additional_attribute_2, additional_attribute_3, additional_attribute_4, \
 additional_attribute_5, additional_attribute_6, additional_attribute_7, additional_attribute_8, additional_attribute_9, \

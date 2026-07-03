@@ -230,14 +230,40 @@ confidence:
   from their CSV column names — confirmed live: `DimensionsUnits` (API) vs `DimensionUnits`
   (CSV), and `AttributeSet`/`DiscountRule`/`Tags` (API) vs `ProductAttributeSet`/
   `DiscountName`/`CommaDelimitedTags` (CSV).
-- **Capture-only** (~27 fields — `FixedAssetType`, `CartonVolume`, the 4 Supplier fields,
-  `DropShipSupplier`, `AverageCost`, the 8 ProductFamily variant fields, `WarrantySetupName`,
-  `MakeToOrderBom`, `IsAccountingDimensionEnabled`, the 10 DimensionAttribute fields): stored
-  from CSV for round-trip export fidelity, but deliberately NOT sent to Cin7 yet — no field
-  ever observed in a real live GET /Product response, so the risk of guessing wrong (as
-  happened repeatedly with Work Centres/Production BOM) outweighs the benefit. `AverageCost`
-  specifically should likely never be pushed even once confirmed — it reads as a
-  Cin7-calculated value (from costing method + purchase history), not a settable field.
+- **Capture-only** (~23 fields — `FixedAssetType`, `CartonVolume`, `DropShipSupplier`,
+  `AverageCost`, the 8 ProductFamily variant fields, `WarrantySetupName`, `MakeToOrderBom`,
+  `IsAccountingDimensionEnabled`, the 10 DimensionAttribute fields): stored from CSV for
+  round-trip export fidelity, but deliberately NOT sent to Cin7 yet — no field ever observed
+  in a real live GET /Product response, so the risk of guessing wrong (as happened repeatedly
+  with Work Centres/Production BOM) outweighs the benefit. `AverageCost` specifically should
+  likely never be pushed even once confirmed — it reads as a Cin7-calculated value (from
+  costing method + purchase history), not a settable field.
+- **Also missing from the initial pass: `Description` itself** — captured on import and
+  already in `content_hash` since the first migration, but never actually included in
+  `toCin7ProductPayload` (only `ShortDescription` was). Fixed 2026-07-03; confirmed live
+  field name matches the CSV column exactly.
+
+## 5c. Supplier fields — confirmed push-confirmed (2026-07-03)
+The 4 Supplier CSV columns (`LastSuppliedBy`/`SupplierProductCode`/`SupplierProductName`/
+`SupplierFixedPrice`) were originally left capture-only because the live sample product had
+`"Suppliers": []` — an array, not flat fields. Researched (same two repos) and confirmed:
+Cin7's Product resource carries a nested `Suppliers[]` array, sent in the **same POST/PUT
+payload**, confirmed by a real wired-up call in the FalconEyeSolutions C# client's Product
+PUT request model (`ProductPutRequestSuppliersInner`), not just a schema definition. An item
+is referenced by `SupplierName` (a string) — `SupplierID` (GUID) is the alternative, but
+`SupplierName` alone is accepted, no pre-resolution needed. There's no separate
+"is-default-supplier" flag in Cin7's model; since the CSV format only supports one supplier
+per row anyway, `LastSuppliedBy` is treated as that one supplier's name.
+
+Two of Cin7's real field names differ from the CSV column names:
+- `SupplierProductCode` (CSV) → **`SupplierInventoryCode`** (API)
+- `SupplierFixedPrice` (CSV) → **`FixedCost`** (API)
+- `SupplierProductName` matches exactly on both sides.
+
+A separate dedicated `/product-suppliers` endpoint and a `/supplier` CRUD resource (for
+creating a brand-new Supplier/Contact entity) also exist, but aren't needed for this — a
+supplier referenced by name inline on the Product payload doesn't require a pre-existing
+Supplier record to be resolved first.
 
 ## 6. Pagination — confirmed
 `page` + `limit` query params (e.g. `/Product?page=5&limit=200`). Default page size 100,
