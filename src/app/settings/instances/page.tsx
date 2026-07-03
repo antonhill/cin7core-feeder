@@ -19,7 +19,8 @@ export default function InstancesSettingsPage() {
   const [unlocked, setUnlocked] = useState(false);
   const [instances, setInstances] = useState<InstanceRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  // null = closed, "new" = add-instance modal, otherwise the instance id being edited
+  const [modalTarget, setModalTarget] = useState<"new" | string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [isPending, startTransition] = useTransition();
 
@@ -55,7 +56,7 @@ export default function InstancesSettingsPage() {
         return;
       }
       setInstances(result.instances ?? []);
-      setEditingId(null);
+      setModalTarget(null);
     });
   }
 
@@ -130,125 +131,154 @@ export default function InstancesSettingsPage() {
     );
   }
 
+  const editingInstance = typeof modalTarget === "string" ? instances.find((i) => i.id === modalTarget) : undefined;
+
   return (
     <main className="mx-auto max-w-3xl p-8">
-      <h1 className="text-xl font-semibold">Cin7 Core Instances</h1>
-      <p className="mt-1 text-sm text-gray-500">Org {orgId}</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold">Cin7 Core Instances</h1>
+          <p className="mt-1 text-sm text-gray-500">Org {orgId}</p>
+        </div>
+        <button
+          onClick={() => setModalTarget("new")}
+          className="rounded bg-black px-4 py-2 text-sm text-white"
+        >
+          + Add instance
+        </button>
+      </div>
 
       {error && <p className="mt-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 
       <div className="mt-6 flex flex-col gap-3">
-        {instances.map((inst) =>
-          editingId === inst.id ? (
-            <InstanceForm
-              key={inst.id}
-              instance={inst}
-              isPending={isPending}
-              onCancel={() => setEditingId(null)}
-              onSubmit={(form) => handleSave(form, inst.id)}
-            />
-          ) : (
-            <div key={inst.id} className="rounded border p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium">
-                    {inst.name} {!inst.active && <span className="text-xs text-gray-400">(inactive)</span>}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    Account {inst.accountId} · Key ····{inst.keyLast4} · {inst.baseUrl}
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={() => handleTest(inst.id)} disabled={isPending} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
-                    Test connection
-                  </button>
-                  <button onClick={() => handleFindBomExample(inst.id)} disabled={isPending} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
-                    Fetch BOM example
-                  </button>
-                  <button onClick={() => handleProbeWorkCentrePaths(inst.id)} disabled={isPending} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
-                    Probe Work Centre paths
-                  </button>
-                  <button onClick={() => setEditingId(inst.id)} className="rounded border px-3 py-1 text-sm">
-                    Edit
-                  </button>
-                  <button onClick={() => handleDelete(inst.id)} className="rounded border px-3 py-1 text-sm text-red-700">
-                    Delete
-                  </button>
-                </div>
+        {instances.map((inst) => (
+          <div key={inst.id} className="rounded border p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium">
+                  {inst.name} {!inst.active && <span className="text-xs text-gray-400">(inactive)</span>}
+                </p>
+                <p className="text-xs text-gray-500">
+                  Account {inst.accountId} · Key ····{inst.keyLast4} · {inst.baseUrl}
+                </p>
               </div>
-              {testResults[inst.id] && (
-                <pre
-                  className={`mt-2 max-h-96 overflow-auto whitespace-pre-wrap text-xs ${testResults[inst.id].ok ? "text-green-700" : "text-red-700"}`}
-                >
-                  {testResults[inst.id].message}
-                </pre>
-              )}
+              <div className="flex flex-wrap justify-end gap-2">
+                <button onClick={() => handleTest(inst.id)} disabled={isPending} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
+                  Test connection
+                </button>
+                <button onClick={() => handleFindBomExample(inst.id)} disabled={isPending} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
+                  Fetch BOM example
+                </button>
+                <button onClick={() => handleProbeWorkCentrePaths(inst.id)} disabled={isPending} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
+                  Probe Work Centre paths
+                </button>
+                <button onClick={() => setModalTarget(inst.id)} className="rounded border px-3 py-1 text-sm">
+                  Edit
+                </button>
+                <button onClick={() => handleDelete(inst.id)} className="rounded border px-3 py-1 text-sm text-red-700">
+                  Delete
+                </button>
+              </div>
             </div>
-          )
-        )}
+            {testResults[inst.id] && (
+              <pre
+                className={`mt-2 max-h-96 overflow-auto whitespace-pre-wrap text-xs ${testResults[inst.id].ok ? "text-green-700" : "text-red-700"}`}
+              >
+                {testResults[inst.id].message}
+              </pre>
+            )}
+          </div>
+        ))}
         {instances.length === 0 && <p className="text-sm text-gray-500">No instances connected yet.</p>}
       </div>
 
-      <h2 className="mt-8 text-sm font-medium">Add an instance</h2>
-      <InstanceForm isPending={isPending} onSubmit={(form) => handleSave(form)} />
+      {modalTarget && (
+        <InstanceModal
+          instance={editingInstance}
+          isPending={isPending}
+          onClose={() => setModalTarget(null)}
+          onSubmit={(form) => handleSave(form, editingInstance?.id)}
+        />
+      )}
     </main>
   );
 }
 
-function InstanceForm({
+function InstanceModal({
   instance,
   isPending,
   onSubmit,
-  onCancel,
+  onClose,
 }: {
   instance?: InstanceRecord;
   isPending: boolean;
   onSubmit: (form: FormData) => void;
-  onCancel?: () => void;
+  onClose: () => void;
 }) {
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSubmit(new FormData(e.currentTarget));
-      }}
-      className="mt-3 flex flex-col gap-3 rounded border p-4"
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+      role="presentation"
     >
-      <label className="flex flex-col gap-1 text-sm">
-        Name
-        <input name="name" defaultValue={instance?.name} required className="rounded border px-3 py-2" />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Account ID
-        <input name="accountId" defaultValue={instance?.accountId} required className="rounded border px-3 py-2" />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Application key {instance && <span className="text-xs text-gray-400">(leave blank to keep current)</span>}
-        <input name="applicationKey" type="password" className="rounded border px-3 py-2" />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        Base URL
-        <input
-          name="baseUrl"
-          defaultValue={instance?.baseUrl ?? DEFAULT_BASE_URL}
-          required
-          className="rounded border px-3 py-2 font-mono text-xs"
-        />
-      </label>
-      <label className="flex items-center gap-2 text-sm">
-        <input name="active" type="checkbox" defaultChecked={instance?.active ?? true} />
-        Active
-      </label>
-      <div className="flex gap-2">
-        <button type="submit" disabled={isPending} className="rounded bg-black px-4 py-2 text-sm text-white disabled:opacity-50">
-          {isPending ? "Saving…" : instance ? "Save" : "Add"}
-        </button>
-        {onCancel && (
-          <button type="button" onClick={onCancel} className="rounded border px-4 py-2 text-sm">
-            Cancel
+      <div
+        className="w-full max-w-md rounded-lg border bg-white p-6 shadow-lg dark:bg-neutral-900"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="instance-modal-title"
+      >
+        <div className="flex items-center justify-between">
+          <h2 id="instance-modal-title" className="text-lg font-semibold">
+            {instance ? "Edit instance" : "Add an instance"}
+          </h2>
+          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-700">
+            ✕
           </button>
-        )}
+        </div>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit(new FormData(e.currentTarget));
+          }}
+          className="mt-4 flex flex-col gap-3"
+        >
+          <label className="flex flex-col gap-1 text-sm">
+            Name
+            <input name="name" defaultValue={instance?.name} required autoFocus className="rounded border px-3 py-2" />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            Account ID
+            <input name="accountId" defaultValue={instance?.accountId} required className="rounded border px-3 py-2" />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            Application key {instance && <span className="text-xs text-gray-400">(leave blank to keep current)</span>}
+            <input name="applicationKey" type="password" className="rounded border px-3 py-2" />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            Base URL
+            <input
+              name="baseUrl"
+              defaultValue={instance?.baseUrl ?? DEFAULT_BASE_URL}
+              required
+              className="rounded border px-3 py-2 font-mono text-xs"
+            />
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input name="active" type="checkbox" defaultChecked={instance?.active ?? true} />
+            Active
+          </label>
+          <div className="mt-2 flex gap-2">
+            <button type="submit" disabled={isPending} className="rounded bg-black px-4 py-2 text-sm text-white disabled:opacity-50">
+              {isPending ? "Saving…" : instance ? "Save" : "Add"}
+            </button>
+            <button type="button" onClick={onClose} className="rounded border px-4 py-2 text-sm">
+              Cancel
+            </button>
+          </div>
+        </form>
       </div>
-    </form>
+    </div>
   );
 }
