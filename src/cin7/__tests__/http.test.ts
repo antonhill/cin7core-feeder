@@ -107,4 +107,12 @@ describe("cin7Request", () => {
     await assertion;
     await expect(promise).rejects.toMatchObject({ message: expect.stringContaining("ECONNRESET") });
   });
+
+  it("names the method/path when a 200 response isn't valid JSON (usually a wrong path)", async () => {
+    mockFetchSequence([() => new Response("<!DOCTYPE html><html>...</html>", { status: 200 })]);
+
+    await expect(cin7Request(creds, "/production/workcenters", { method: "GET" })).rejects.toMatchObject({
+      message: expect.stringContaining("GET /production/workcenters"),
+    });
+  });
 });

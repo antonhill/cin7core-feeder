@@ -115,7 +115,20 @@ export async function cin7Request<T>(
 
     if (response.status === 204) return undefined as T;
     const text = await response.text();
-    return (text ? JSON.parse(text) : undefined) as T;
+    if (!text) return undefined as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      // A 200 with a non-JSON body (usually HTML) has twice now meant the
+      // path itself is wrong (Cin7 falls through to some default page
+      // rather than 404ing) — surfacing the method/path/body snippet here
+      // instead of a bare JSON.parse error with no request context.
+      throw new Cin7ApiError(
+        response.status,
+        `${options.method ?? "GET"} ${path} returned a 200 with a non-JSON body (likely wrong path): ${text.slice(0, 300)}`,
+        false
+      );
+    }
   }
 
   throw new Cin7ApiError(0, "Unreachable", false);
