@@ -72,10 +72,17 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
 
   const { data: syncStates } = await db
     .from("sync_state")
-    .select("sku, synced_hash")
+    .select("sku, synced_hash, cin7_id")
     .eq("org_id", orgId)
     .eq("instance_id", instanceId);
-  const syncedHashBySku = new Map((syncStates ?? []).map((s: { sku: string; synced_hash: string | null }) => [s.sku, s.synced_hash]));
+  const syncedHashBySku = new Map(
+    (syncStates ?? []).map((s: { sku: string; synced_hash: string | null }) => [s.sku, s.synced_hash])
+  );
+  // Production BOM addresses products by Cin7 ID, not SKU — tracked here so a
+  // product created earlier in this same run is immediately usable below.
+  const cin7IdBySku = new Map(
+    (syncStates ?? []).map((s: { sku: string; cin7_id: string | null }) => [s.sku, s.cin7_id])
+  );
 
   for (const product of products ?? []) {
     if (syncedHashBySku.has(product.sku) && syncedHashBySku.get(product.sku) === product.content_hash) {
@@ -128,6 +135,7 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
         { onConflict: "org_id,instance_id,sku" }
       );
 
+      cin7IdBySku.set(product.sku, pushResult.cin7Id);
       if (pushResult.status === "created") summary.productsCreated++;
       else summary.productsUpdated++;
     } catch (e) {
@@ -155,6 +163,13 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
 
   for (const version of versions ?? []) {
     try {
+      const cin7ProductId = cin7IdBySku.get(version.product_sku);
+      if (!cin7ProductId) {
+        throw new Error(
+          `Product "${version.product_sku}" has no synced Cin7 ID yet — it must be synced before its Production BOM can be pushed`
+        );
+      }
+
       const { data: operations } = await db
         .from("production_bom_operations")
         .select("operation_sequence, operation_type, operation_name, cycle_time, work_centre_code")
@@ -169,7 +184,7 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
         .eq("product_sku", version.product_sku)
         .eq("version", version.version);
 
-      await pushProductionBom(creds, version, operations ?? [], items ?? []);
+      await pushProductionBom(creds, cin7ProductId, version, operations ?? [], items ?? []);
       summary.productionBomsPushed++;
     } catch (e) {
       const message = describeError(e);

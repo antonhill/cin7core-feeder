@@ -32,20 +32,26 @@ interface Cin7ProductionBomResponse {
 }
 
 /**
- * Field names here are the LEAST verified of the three payload mappings —
- * Cin7's docs confirmed the ProductionBom resource's CRUD shape (GET/POST/
- * PUT/DELETE at product/product-family level) but not its exact field
- * schema. Treat this as a starting point to correct against a live sandbox
- * (400 responses should name the expected fields) before relying on it.
+ * Path and addressing confirmed 2026-07-03 against a primary-source
+ * transcription of Cin7's Apiary spec (github.com/nnhansg/dear-openapi,
+ * specification/dearinventory.apib): the resource lives at
+ * `/production/productionBOM` (nested, camelCase — NOT `/ProductionBom`,
+ * which returns an HTML fallback page rather than a 404), and it's
+ * addressed by the product's Cin7 **ID** (GUID), not SKU. The exact body
+ * field names for operations/routing/work-centres/resources below are
+ * still best-effort — only the path and ID-based addressing are confirmed.
  * See docs/cin7-api-findings.md.
  */
+const PRODUCTION_BOM_PATH = "/production/productionBOM";
+
 export function toCin7ProductionBomPayload(
+  cin7ProductId: string,
   version: CanonicalProductionBomVersionRow,
   operations: CanonicalProductionBomOperationRow[],
   items: CanonicalProductionBomItemRow[]
 ) {
   return {
-    SKU: version.product_sku,
+    ProductID: cin7ProductId,
     Version: version.version,
     VersionName: version.version_name ?? undefined,
     QuantityToProduce: version.quantity_to_produce,
@@ -66,25 +72,31 @@ export function toCin7ProductionBomPayload(
   };
 }
 
-async function findProductionBomVersion(creds: Cin7Credentials, sku: string, version: string): Promise<boolean> {
-  const response = await cin7Request<Cin7ProductionBomListResponse>(creds, "/ProductionBom", {
-    query: { SKU: sku },
+async function findProductionBomVersion(creds: Cin7Credentials, cin7ProductId: string, version: string): Promise<boolean> {
+  const response = await cin7Request<Cin7ProductionBomListResponse>(creds, PRODUCTION_BOM_PATH, {
+    query: { ProductID: cin7ProductId },
   });
   return (response.ProductionBOMs ?? []).some((v) => v.Version === version);
 }
 
 export type ProductionBomPushStatus = "created" | "updated";
 
+/**
+ * Pushes one Production BOM version. Requires the product's Cin7 ID (GUID)
+ * — the product must already have been synced (and have a cin7_id on
+ * record) before its Production BOM can be pushed.
+ */
 export async function pushProductionBom(
   creds: Cin7Credentials,
+  cin7ProductId: string,
   version: CanonicalProductionBomVersionRow,
   operations: CanonicalProductionBomOperationRow[],
   items: CanonicalProductionBomItemRow[]
 ): Promise<{ status: ProductionBomPushStatus }> {
-  const payload = toCin7ProductionBomPayload(version, operations, items);
-  const exists = await findProductionBomVersion(creds, version.product_sku, version.version);
+  const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items);
+  const exists = await findProductionBomVersion(creds, cin7ProductId, version.version);
 
-  await cin7Request<Cin7ProductionBomResponse>(creds, "/ProductionBom", {
+  await cin7Request<Cin7ProductionBomResponse>(creds, PRODUCTION_BOM_PATH, {
     method: exists ? "PUT" : "POST",
     body: payload,
   });

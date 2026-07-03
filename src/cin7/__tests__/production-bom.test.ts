@@ -5,6 +5,7 @@ import { cin7Request } from "@/cin7/http";
 vi.mock("@/cin7/http", () => ({ cin7Request: vi.fn() }));
 
 const creds = { accountId: "a", applicationKey: "k", baseUrl: "https://example.test" };
+const cin7ProductId = "cin7-product-guid";
 const version = { product_sku: "FACEBULK001", version: "1", version_name: null, quantity_to_produce: 1000 };
 const operations = [
   { operation_sequence: "1", operation_type: "Manufacturing", operation_name: "Mixing", cycle_time: 2700, work_centre_code: "MIXING" },
@@ -21,8 +22,14 @@ beforeEach(() => {
 });
 
 describe("toCin7ProductionBomPayload", () => {
+  it("addresses the product by its Cin7 ID, not SKU", () => {
+    const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items);
+    expect(payload.ProductID).toBe(cin7ProductId);
+    expect(payload).not.toHaveProperty("SKU");
+  });
+
   it("groups components and resources under the right operation", () => {
-    const payload = toCin7ProductionBomPayload(version, operations, items);
+    const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items);
     expect(payload.Operations).toHaveLength(2);
     const mixing = payload.Operations.find((o) => o.OperationSequence === "1")!;
     expect(mixing.Components).toEqual([{ ComponentSKU: "RAW0001", Quantity: 200 }]);
@@ -34,13 +41,21 @@ describe("toCin7ProductionBomPayload", () => {
 });
 
 describe("pushProductionBom", () => {
+  it("hits the confirmed /production/productionBOM path", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ ProductionBOMs: [] }).mockResolvedValueOnce({ ID: "new" });
+
+    await pushProductionBom(creds, cin7ProductId, version, operations, items);
+
+    expect(cin7Request).toHaveBeenNthCalledWith(1, creds, "/production/productionBOM", expect.anything());
+    expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/production/productionBOM", expect.objectContaining({ method: "POST" }));
+  });
+
   it("creates via POST when the version doesn't exist yet", async () => {
     vi.mocked(cin7Request).mockResolvedValueOnce({ ProductionBOMs: [] }).mockResolvedValueOnce({ ID: "new" });
 
-    const result = await pushProductionBom(creds, version, operations, items);
+    const result = await pushProductionBom(creds, cin7ProductId, version, operations, items);
 
     expect(result).toEqual({ status: "created" });
-    expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/ProductionBom", expect.objectContaining({ method: "POST" }));
   });
 
   it("updates via PUT when a matching version already exists", async () => {
@@ -48,9 +63,9 @@ describe("pushProductionBom", () => {
       .mockResolvedValueOnce({ ProductionBOMs: [{ Version: "1" }] })
       .mockResolvedValueOnce({ ID: "existing" });
 
-    const result = await pushProductionBom(creds, version, operations, items);
+    const result = await pushProductionBom(creds, cin7ProductId, version, operations, items);
 
     expect(result).toEqual({ status: "updated" });
-    expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/ProductionBom", expect.objectContaining({ method: "PUT" }));
+    expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/production/productionBOM", expect.objectContaining({ method: "PUT" }));
   });
 });

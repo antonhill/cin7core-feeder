@@ -40,17 +40,22 @@ one call per product.
 ## 4. Production BOM — confirmed available via API (important correction)
 The original client proposal (see `docs/Casa_das_Natas_Architecture_Proposal.docx` appendix)
 assumed *"Assembly BOMs will suffice for initial manufacturing"* and that advanced production
-wasn't scoped. **That assumption doesn't hold** — Cin7 exposes a `ProductionBom` resource at
-both the Product and Product Family level:
-- `GET` — list Production BOMs for a product/product family
-- `POST` — create (with an `OverwriteExistingProductionBOM` flag)
-- `PUT` — update
-- `DELETE` — remove
+wasn't scoped. **That assumption doesn't hold** — Cin7 exposes a Production BOM resource at
+both the Product and Product Family level: `GET`/`POST` (with an `OverwriteExistingProductionBOM`
+flag)/`PUT`/`DELETE`.
 
-So our `production_bom_versions`/`operations`/`items` schema **can** eventually sync out to
-Cin7, not just live in the hub. **Unverified:** the exact field-level payload shape for
-operations/routing/work-centres/resources — searches confirmed the CRUD surface but not a full
-field dump. Confirm against a sandbox before building `src/cin7/production-bom.ts`.
+**Path corrected 2026-07-03** after a live test against `/ProductionBom` returned an HTML 200
+(not JSON — the first sign the path was wrong). Confirmed via a primary-source transcription of
+Cin7's own Apiary spec (github.com/nnhansg/dear-openapi, `specification/dearinventory.apib`):
+the real path is **`/production/productionBOM`** (nested under `production/`, camelCase
+`productionBOM`), and it's addressed by the product's Cin7 **ID** (GUID) via a `ProductID` query
+param/body field — **not SKU**. `src/cin7/production-bom.ts` and `src/sync/run-sync.ts` now
+resolve a product's `cin7_id` from `sync_state` (set when the product itself was synced) before
+attempting its Production BOM push; if the product hasn't been synced yet, the BOM push fails
+with a clear "no synced Cin7 ID yet" error rather than guessing.
+
+**Still unverified:** the exact field-level payload shape for operations/routing/work-centres/
+resources within the body — only the path and ID-based addressing are confirmed.
 Worth relaying back to the client/proposal conversation, since it changes what's actually
 possible vs. what was scoped.
 

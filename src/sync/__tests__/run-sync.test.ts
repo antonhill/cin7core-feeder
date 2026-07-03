@@ -125,11 +125,13 @@ describe("syncInstance", () => {
     ]);
   });
 
-  it("pushes production BOM versions and tallies results", async () => {
+  it("pushes production BOM versions using the product's synced Cin7 ID", async () => {
     const { db } = createFakeDb({
       cin7_instances: [instanceRow],
       products: [],
-      sync_state: [],
+      sync_state: [
+        { org_id: "org1", instance_id: "inst-1", sku: "FACEBULK001", synced_hash: "h", cin7_id: "cin7-guid-1" },
+      ],
       price_tiers: [],
       assembly_bom_lines: [],
       production_bom_versions: [
@@ -144,6 +146,35 @@ describe("syncInstance", () => {
 
     expect(summary.productionBomsPushed).toBe(1);
     expect(summary.productionBomsFailed).toBe(0);
+    expect(pushProductionBom).toHaveBeenCalledWith(
+      expect.anything(),
+      "cin7-guid-1",
+      expect.objectContaining({ product_sku: "FACEBULK001" }),
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
+  it("fails a Production BOM push when the product has no synced Cin7 ID yet", async () => {
+    const { db } = createFakeDb({
+      cin7_instances: [instanceRow],
+      products: [],
+      sync_state: [],
+      price_tiers: [],
+      assembly_bom_lines: [],
+      production_bom_versions: [
+        { org_id: "org1", product_sku: "FACEBULK001", version: "1", quantity_to_produce: 1000 },
+      ],
+      production_bom_operations: [],
+      production_bom_items: [],
+    });
+
+    const summary = await syncInstance(db, "org1", "inst-1");
+
+    expect(summary.productionBomsPushed).toBe(0);
+    expect(summary.productionBomsFailed).toBe(1);
+    expect(pushProductionBom).not.toHaveBeenCalled();
+    expect(summary.errors[0].error).toMatch(/no synced Cin7 ID/);
   });
 
   it("throws if the instance is inactive", async () => {
