@@ -27,11 +27,15 @@ function isServiceLine(line: CanonicalAssemblyBomLineRow): boolean {
  * are set via the same POST/PUT /Product call used for the product's core
  * fields — see products.ts's pushProduct, which merges these fields in.
  *
- * Component references accept EITHER `ComponentProductID` (Cin7 GUID) or
- * `ProductCode` (SKU) — we use SKU, since it avoids needing the component's
- * own Cin7 ID resolved (and possibly not-yet-synced) first.
+ * Field names below are confirmed against the generated C# client's model
+ * classes (ProductPutRequestBillOfMaterialsProductsInner.cs /
+ * ...ServicesInner.cs) and the .apib spec's "Bill Of Material Product/Service
+ * Model" sections — not a guess. Two things the spec marks "required if
+ * BillOfMaterial is true" live on the parent Product payload itself
+ * (QuantityToProduce, AssemblyCostEstimationMethod) — merged in here since
+ * this is the only place that knows whether the product has a BOM at all.
  */
-export function toCin7BomFields(lines: CanonicalAssemblyBomLineRow[]) {
+export function toCin7BomFields(lines: CanonicalAssemblyBomLineRow[]): Record<string, unknown> {
   if (!lines.length) return {};
 
   const components = lines
@@ -39,22 +43,35 @@ export function toCin7BomFields(lines: CanonicalAssemblyBomLineRow[]) {
     .map((l) => ({
       ProductCode: l.component_sku,
       Quantity: l.quantity,
-      Wastage: l.wastage_quantity ?? undefined,
-      WastagePercentage: l.wastage_percent ?? undefined,
-      CostAllocationPercentage: l.cost_percentage ?? undefined,
+      WastageQuantity: l.wastage_quantity ?? undefined,
+      WastagePercent: l.wastage_percent ?? undefined,
+      CostPercentage: l.cost_percentage ?? undefined,
     }));
   const services = lines
     .filter(isServiceLine)
     .map((l) => ({
-      ProductCode: l.component_sku,
+      // The Service model's name field is "Name", not "ProductCode" (unlike
+      // the Product component model) — confirmed from the C# model class.
+      Name: l.component_sku,
       Quantity: l.quantity,
-      PriceTier: l.price_tier ?? undefined,
       ExpenseAccount: l.expense_account ?? undefined,
+      // PriceTier is documented as an integer on Cin7's side; we only store
+      // a tier name/string (e.g. "Retail in VAT"), so it's omitted here
+      // rather than sent as a type mismatch.
     }));
 
   return {
     BillOfMaterial: true,
-    BillOfMaterialsProducts: components,
-    BillOfMaterialsServices: services,
+    // Required when BillOfMaterial=true per the spec. Assembly BOMs produce
+    // 1 unit of the finished good (unlike Production BOM's batch quantity).
+    QuantityToProduce: 1,
+    // Required when BillOfMaterial=true per the spec; exact accepted values
+    // beyond this sample ("Average Cost") are unverified.
+    AssemblyCostEstimationMethod: "Average Cost",
+    // Omit rather than send an empty array — the spec doesn't require
+    // either array to exist, only conditionally requires fields within items
+    // that do.
+    ...(components.length ? { BillOfMaterialsProducts: components } : {}),
+    ...(services.length ? { BillOfMaterialsServices: services } : {}),
   };
 }

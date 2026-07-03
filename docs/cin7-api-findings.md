@@ -47,6 +47,25 @@ resolve a component's Cin7 ID first. `src/cin7/assembly-bom.ts` now just builds 
 a separate push step or 100-per-batch concern (each product's BOM travels with its own
 create/update call).
 
+**Exact field schema confirmed 2026-07-03** directly from the C# client's model source
+(`ProductPutRequestBillOfMaterialsProductsInner.cs`) and the `.apib` spec's "Bill Of Material
+Product/Service Model" sections — not inferred from a live error this time, since the earlier
+guess (`Wastage`/`WastagePercentage`/`CostAllocationPercentage`) was simply wrong and got a vague
+`"BillOfMaterialsProduct is invalid"` rather than a field-by-field breakdown:
+- `BillOfMaterialsProducts[]`: `ProductCode` or `ComponentProductID` (one required), `Quantity`
+  (required), `WastageQuantity`, `WastagePercent` (mutually exclusive), `CostPercentage`.
+- `BillOfMaterialsServices[]`: `Name` or `ComponentProductID` (one required — **`Name`, not
+  `ProductCode`**, unlike the Products model), `Quantity` (required), `ExpenseAccount`,
+  `PriceTier` (an **integer** on Cin7's side — we only store a tier name/string, so it's omitted
+  rather than sent with a type mismatch).
+- Parent Product fields **required when `BillOfMaterial: true`**: `QuantityToProduce` (we send
+  `1` — an assembly BOM produces one unit of the finished good) and
+  `AssemblyCostEstimationMethod` (sent as `"Average Cost"` per the spec's sample value; no enum
+  list given, so other accepted values are unverified). `BOMType` is documented **read-only** —
+  never send it.
+- Empty `BillOfMaterialsProducts`/`Services` arrays are omitted entirely rather than sent as
+  `[]`, per neither model requiring the array itself to exist.
+
 ## 4. Production BOM — confirmed available via API (important correction)
 The original client proposal (see `docs/Casa_das_Natas_Architecture_Proposal.docx` appendix)
 assumed *"Assembly BOMs will suffice for initial manufacturing"* and that advanced production
