@@ -1,14 +1,9 @@
 "use client";
 
 import { useActionState, useState, useTransition } from "react";
-import {
-  downloadTemplateAction,
-  importCsvAction,
-  listInstancesForPicker,
-  pushToCin7Action,
-  type ImportActionState,
-  type InstancePickerItem,
-} from "./actions";
+import { importCsvAction, pushToCin7Action, type ImportActionState } from "./actions";
+import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
+import type { InstanceSyncOutcome } from "@/sync/sync-org";
 import { useOrgSession } from "@/lib/org-session";
 
 const INITIAL_STATE: ImportActionState = { status: "idle" };
@@ -19,6 +14,40 @@ const KINDS = [
   { value: "production_bom", label: "Production BOM" },
 ];
 
+/** camelCase commit-summary key -> readable label, e.g. "productsUpserted" -> "Products upserted". */
+function humanizeKey(key: string): string {
+  const spaced = key.replace(/([A-Z])/g, " $1").toLowerCase();
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+function StepHeader({ step, title, done }: { step: number; title: string; done: boolean }) {
+  return (
+    <div className="flex items-center gap-3">
+      <span
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${
+          done ? "bg-indigo-600 text-white" : "bg-slate-200 text-slate-600"
+        }`}
+      >
+        {step}
+      </span>
+      <h2 className="text-xl font-semibold text-slate-900">{title}</h2>
+    </div>
+  );
+}
+
+function StatPill({ label, value, tone = "neutral" }: { label: string; value: number; tone?: "neutral" | "bad" }) {
+  if (!value) return null;
+  return (
+    <span
+      className={`rounded-full px-3 py-1 text-sm font-medium ${
+        tone === "bad" ? "bg-red-50 text-red-700" : "bg-slate-100 text-slate-700"
+      }`}
+    >
+      {value} {label}
+    </span>
+  );
+}
+
 export default function ImportPage() {
   const [state, formAction, isImportPending] = useActionState(importCsvAction, INITIAL_STATE);
   const { orgId, setOrgId, secret, setSecret } = useOrgSession();
@@ -26,13 +55,11 @@ export default function ImportPage() {
   const [instances, setInstances] = useState<InstancePickerItem[]>([]);
   const [instancesError, setInstancesError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [pushResult, setPushResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [isLoadingInstances, startLoadTransition] = useTransition();
-  const [isPushPending, startPushTransition] = useTransition();
 
-  const [downloadKind, setDownloadKind] = useState<"products" | "assembly_bom">("products");
-  const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [isDownloading, startDownloadTransition] = useTransition();
+  const [pushOutcomes, setPushOutcomes] = useState<InstanceSyncOutcome[] | null>(null);
+  const [pushError, setPushError] = useState<string | null>(null);
+  const [isPushPending, startPushTransition] = useTransition();
 
   function handleLoadInstances() {
     setInstancesError(null);
@@ -51,219 +78,246 @@ export default function ImportPage() {
   }
 
   function handlePush() {
-    setPushResult(null);
+    setPushError(null);
+    setPushOutcomes(null);
     startPushTransition(async () => {
       const result = await pushToCin7Action(orgId, secret, selectedIds);
       if (!result.ok) {
-        setPushResult({ ok: false, message: result.error ?? "Unknown error" });
+        setPushError(result.error ?? "Unknown error");
         return;
       }
-      setPushResult({ ok: true, message: JSON.stringify(result.outcomes, null, 2) });
-    });
-  }
-
-  function handleDownload() {
-    setDownloadError(null);
-    startDownloadTransition(async () => {
-      const result = await downloadTemplateAction(orgId, secret, downloadKind);
-      if (!result.ok || !result.csv) {
-        setDownloadError(result.error ?? "Unknown error");
-        return;
-      }
-      const blob = new Blob([result.csv], { type: "text/csv;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = result.filename ?? "export.csv";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      setPushOutcomes(result.outcomes ?? []);
     });
   }
 
   const activeInstances = instances.filter((i) => i.active);
 
   return (
-    <main className="mx-auto max-w-2xl p-8">
-      <h1 className="text-xl font-semibold">Import Cin7 Core CSV</h1>
-      <p className="mt-1 text-sm text-gray-500">
-        Upload a products, assembly BOM, or production BOM export. Valid rows are committed
-        immediately; invalid rows are skipped and listed below.
+    <main className="mx-auto max-w-3xl px-6 py-12">
+      <h1 className="text-3xl font-bold tracking-tight text-slate-900">Import &amp; Sync</h1>
+      <p className="mt-2 text-lg text-slate-500">
+        Import a CSV, choose where it goes, then push it to Cin7 Core.
       </p>
 
-      <form action={formAction} className="mt-6 flex flex-col gap-4">
-        <label className="flex flex-col gap-1 text-sm">
-          Organization ID
-          <input
-            name="orgId"
-            value={orgId}
-            onChange={(e) => setOrgId(e.target.value)}
-            required
-            className="rounded border px-3 py-2 font-mono text-xs"
-            placeholder="d776b8cc-4e6f-42bc-bbd1-3d910fd3aaef"
-          />
-        </label>
+      <div className="mt-10 flex flex-col gap-6">
+        {/* Step 1 — Import */}
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <StepHeader step={1} title="Import a CSV" done={state.status === "success"} />
 
-        <label className="flex flex-col gap-1 text-sm">
-          Import type
-          <select name="kind" required className="rounded border px-3 py-2">
-            {KINDS.map((k) => (
-              <option key={k.value} value={k.value}>
-                {k.label}
-              </option>
-            ))}
-          </select>
-        </label>
+          <form action={formAction} className="mt-5 flex flex-col gap-4">
+            <label className="flex flex-col gap-1.5 text-base">
+              <span className="font-medium text-slate-700">Organization ID</span>
+              <input
+                name="orgId"
+                value={orgId}
+                onChange={(e) => setOrgId(e.target.value)}
+                required
+                className="rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm focus:border-indigo-500 focus:outline-none"
+              />
+            </label>
 
-        <label className="flex flex-col gap-1 text-sm">
-          CSV file
-          <input name="file" type="file" accept=".csv,text/csv" required className="rounded border px-3 py-2" />
-        </label>
-
-        <label className="flex flex-col gap-1 text-sm">
-          Passphrase
-          <input
-            name="secret"
-            type="password"
-            value={secret}
-            onChange={(e) => setSecret(e.target.value)}
-            required
-            className="rounded border px-3 py-2"
-          />
-        </label>
-
-        <button
-          type="submit"
-          disabled={isImportPending}
-          className="rounded bg-black px-4 py-2 text-white disabled:opacity-50"
-        >
-          {isImportPending ? "Importing…" : "Import"}
-        </button>
-      </form>
-
-      {state.status === "error" && (
-        <p className="mt-6 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">{state.message}</p>
-      )}
-
-      {state.status === "success" && state.result && (
-        <div className="mt-6 rounded border border-green-300 bg-green-50 p-4 text-sm">
-          <p className="font-medium">
-            Batch {state.result.batchId}: {state.result.rowCount} rows, {state.result.errorCount} invalid,{" "}
-            {state.result.committed ? "committed" : "nothing to commit"}.
-          </p>
-          {state.result.commitSummary && (
-            <pre className="mt-2 whitespace-pre-wrap text-xs">{JSON.stringify(state.result.commitSummary, null, 2)}</pre>
-          )}
-          {state.result.invalidRows.length > 0 && (
-            <div className="mt-3">
-              <p className="font-medium text-red-700">Invalid rows:</p>
-              <ul className="mt-1 list-disc pl-5 text-xs text-red-700">
-                {state.result.invalidRows.map((r) => (
-                  <li key={r.rowNumber}>
-                    Row {r.rowNumber}: {r.errors.join("; ")}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
-
-      <section className="mt-8 border-t pt-6">
-        <h2 className="text-sm font-medium">Push to Cin7</h2>
-        <p className="mt-1 text-xs text-gray-500">
-          Push the org&apos;s current canonical data (products + Assembly BOM) to one or more connected instances.
-          Uses the Organization ID and Passphrase above.
-        </p>
-
-        <button
-          type="button"
-          onClick={handleLoadInstances}
-          disabled={isLoadingInstances || !orgId || !secret}
-          className="mt-3 rounded border px-3 py-1 text-sm disabled:opacity-50"
-        >
-          {isLoadingInstances ? "Loading…" : "Load instances"}
-        </button>
-
-        {instancesError && <p className="mt-2 text-xs text-red-700">{instancesError}</p>}
-
-        {instances.length > 0 && (
-          <div className="mt-3 flex flex-col gap-2">
-            {instances.map((inst) => (
-              <label key={inst.id} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={selectedIds.includes(inst.id)}
-                  onChange={() => toggleInstance(inst.id)}
-                  disabled={!inst.active}
-                />
-                {inst.name} {!inst.active && <span className="text-xs text-gray-400">(inactive — skipped)</span>}
+            <div className="grid grid-cols-2 gap-3">
+              <label className="flex flex-col gap-1.5 text-base">
+                <span className="font-medium text-slate-700">Import type</span>
+                <select
+                  name="kind"
+                  required
+                  className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none"
+                >
+                  {KINDS.map((k) => (
+                    <option key={k.value} value={k.value}>
+                      {k.label}
+                    </option>
+                  ))}
+                </select>
               </label>
-            ))}
 
-            <div className="mt-1 flex gap-3 text-xs">
-              <button type="button" onClick={() => setSelectedIds(activeInstances.map((i) => i.id))} className="underline">
-                Select all
-              </button>
-              <button type="button" onClick={() => setSelectedIds([])} className="underline">
-                Clear
-              </button>
+              <label className="flex flex-col gap-1.5 text-base">
+                <span className="font-medium text-slate-700">CSV file</span>
+                <input
+                  name="file"
+                  type="file"
+                  accept=".csv,text/csv"
+                  required
+                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+                />
+              </label>
             </div>
 
+            <label className="flex flex-col gap-1.5 text-base">
+              <span className="font-medium text-slate-700">Passphrase</span>
+              <input
+                name="secret"
+                type="password"
+                value={secret}
+                onChange={(e) => setSecret(e.target.value)}
+                required
+                className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none"
+              />
+            </label>
+
+            <button
+              type="submit"
+              disabled={isImportPending}
+              className="mt-1 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {isImportPending ? "Importing…" : "Import"}
+            </button>
+          </form>
+
+          {state.status === "error" && (
+            <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {state.message}
+            </p>
+          )}
+
+          {state.status === "success" && state.result && (
+            <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+              <p className="font-medium text-emerald-900">
+                {state.result.committed
+                  ? `Imported ${state.result.rowCount - state.result.errorCount} row${state.result.rowCount - state.result.errorCount === 1 ? "" : "s"}`
+                  : "Nothing to commit"}
+                {state.result.errorCount > 0 && ` — ${state.result.errorCount} invalid`}
+              </p>
+              {state.result.commitSummary && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {Object.entries(state.result.commitSummary).map(([key, value]) => (
+                    <StatPill key={key} label={humanizeKey(key).toLowerCase()} value={value} />
+                  ))}
+                </div>
+              )}
+              {state.result.invalidRows.length > 0 && (
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-sm font-medium text-emerald-900">
+                    {state.result.invalidRows.length} invalid row{state.result.invalidRows.length === 1 ? "" : "s"} — details
+                  </summary>
+                  <ul className="mt-2 list-disc pl-5 text-sm text-red-700">
+                    {state.result.invalidRows.map((r) => (
+                      <li key={r.rowNumber}>
+                        Row {r.rowNumber}: {r.errors.join("; ")}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
+          )}
+        </section>
+
+        {/* Step 2 — Choose instance(s) */}
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <StepHeader step={2} title="Choose instance(s)" done={selectedIds.length > 0} />
+          <p className="mt-1 pl-11 text-base text-slate-500">
+            Pushes the org&apos;s current canonical data (products + Assembly BOM) to whichever
+            instances you select here.
+          </p>
+
+          <div className="mt-5 pl-11">
+            <button
+              type="button"
+              onClick={handleLoadInstances}
+              disabled={isLoadingInstances || !orgId || !secret}
+              className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              {isLoadingInstances ? "Loading…" : "Load instances"}
+            </button>
+
+            {instancesError && <p className="mt-2 text-sm text-red-600">{instancesError}</p>}
+
+            {instances.length > 0 && (
+              <div className="mt-4 flex flex-col gap-2">
+                {instances.map((inst) => (
+                  <label key={inst.id} className="flex items-center gap-2 text-base">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(inst.id)}
+                      onChange={() => toggleInstance(inst.id)}
+                      disabled={!inst.active}
+                      className="h-4 w-4"
+                    />
+                    {inst.name} {!inst.active && <span className="text-sm text-slate-400">(inactive — skipped)</span>}
+                  </label>
+                ))}
+                <div className="mt-1 flex gap-3 text-sm text-indigo-600">
+                  <button type="button" onClick={() => setSelectedIds(activeInstances.map((i) => i.id))} className="hover:underline">
+                    Select all
+                  </button>
+                  <button type="button" onClick={() => setSelectedIds([])} className="hover:underline">
+                    Clear
+                  </button>
+                </div>
+              </div>
+            )}
+            {instances.length === 0 && !instancesError && (
+              <p className="mt-2 text-sm text-slate-400">No instances loaded yet.</p>
+            )}
+          </div>
+        </section>
+
+        {/* Step 3 — Push */}
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <StepHeader step={3} title="Push to Cin7 Core" done={pushOutcomes !== null} />
+
+          <div className="mt-5 pl-11">
             <button
               type="button"
               onClick={handlePush}
               disabled={isPushPending || selectedIds.length === 0}
-              className="mt-2 w-fit rounded bg-black px-4 py-2 text-sm text-white disabled:opacity-50"
+              className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
             >
               {isPushPending
                 ? "Pushing…"
-                : `Push to ${selectedIds.length} instance${selectedIds.length === 1 ? "" : "s"}`}
+                : `Push to ${selectedIds.length || ""} instance${selectedIds.length === 1 ? "" : "s"}`}
             </button>
+
+            {pushError && (
+              <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {pushError}
+              </p>
+            )}
+
+            {pushOutcomes && (
+              <div className="mt-4 flex flex-col gap-3">
+                {pushOutcomes.map((outcome) => (
+                  <div
+                    key={outcome.instanceId}
+                    className={`rounded-xl border p-4 ${outcome.ok ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}
+                  >
+                    <p className={`font-medium ${outcome.ok ? "text-emerald-900" : "text-red-900"}`}>
+                      {outcome.instanceName ?? outcome.instanceId}
+                    </p>
+                    {!outcome.ok && <p className="mt-1 text-sm text-red-700">{outcome.error}</p>}
+                    {outcome.ok && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <StatPill label="created" value={outcome.productsCreated ?? 0} />
+                        <StatPill label="updated" value={outcome.productsUpdated ?? 0} />
+                        <StatPill label="skipped (unchanged)" value={outcome.productsSkipped ?? 0} />
+                        <StatPill label="failed" value={outcome.productsFailed ?? 0} tone="bad" />
+                        <StatPill label="production BOMs pushed" value={outcome.productionBomsPushed ?? 0} />
+                        <StatPill label="production BOMs failed" value={outcome.productionBomsFailed ?? 0} tone="bad" />
+                      </div>
+                    )}
+                    {outcome.ok && outcome.errors && outcome.errors.length > 0 && (
+                      <details className="mt-3">
+                        <summary className="cursor-pointer text-sm font-medium text-red-900">
+                          {outcome.errors.length} error{outcome.errors.length === 1 ? "" : "s"} — details
+                        </summary>
+                        <ul className="mt-2 list-disc pl-5 text-sm text-red-700">
+                          {outcome.errors.map((e, i) => (
+                            <li key={i}>
+                              {e.sku}: {e.error}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
-        {instances.length === 0 && !instancesError && (
-          <p className="mt-2 text-xs text-gray-500">No instances loaded yet.</p>
-        )}
-
-        {pushResult && (
-          <pre
-            className={`mt-3 max-h-96 overflow-auto whitespace-pre-wrap text-xs ${pushResult.ok ? "text-green-700" : "text-red-700"}`}
-          >
-            {pushResult.message}
-          </pre>
-        )}
-      </section>
-
-      <section className="mt-8 border-t pt-6">
-        <h2 className="text-sm font-medium">Download template</h2>
-        <p className="mt-1 text-xs text-gray-500">
-          Download the org&apos;s current products or Assembly BOM as a CSV in the same format as
-          the import templates, to edit and reimport. This is the hub&apos;s canonical data (the
-          same source pushed to every instance), not a live pull from one specific instance.
-        </p>
-
-        <div className="mt-3 flex items-center gap-2">
-          <select
-            value={downloadKind}
-            onChange={(e) => setDownloadKind(e.target.value as "products" | "assembly_bom")}
-            className="rounded border px-3 py-2 text-sm"
-          >
-            <option value="products">Products (InventoryList)</option>
-            <option value="assembly_bom">Assembly BOM</option>
-          </select>
-          <button
-            type="button"
-            onClick={handleDownload}
-            disabled={isDownloading || !orgId || !secret}
-            className="rounded border px-3 py-1 text-sm disabled:opacity-50"
-          >
-            {isDownloading ? "Preparing…" : "Download CSV"}
-          </button>
-        </div>
-        {downloadError && <p className="mt-2 text-xs text-red-700">{downloadError}</p>}
-      </section>
+        </section>
+      </div>
     </main>
   );
 }

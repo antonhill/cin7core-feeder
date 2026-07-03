@@ -119,6 +119,25 @@ export async function resolveComponentIds(
   }
 }
 
+/**
+ * Fetches every product in this Cin7 instance, with BOM fields included, for
+ * a live full-fidelity export (as opposed to the hub's own trimmed canonical
+ * export). Paginates until a short page signals the end.
+ */
+export async function fetchAllProductsWithBom(creds: Cin7Credentials): Promise<Record<string, unknown>[]> {
+  const pageSize = 100;
+  const all: Record<string, unknown>[] = [];
+  for (let page = 1; ; page++) {
+    const response = await cin7Request<{ Products?: Record<string, unknown>[] }>(creds, "/Product", {
+      query: { page, limit: pageSize, IncludeBOM: "true" },
+    });
+    const products = response.Products ?? [];
+    all.push(...products);
+    if (products.length < pageSize) break;
+  }
+  return all;
+}
+
 export type ProductPushStatus = "created" | "updated";
 
 /**

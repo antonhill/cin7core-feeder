@@ -116,34 +116,40 @@ export default function InstancesSettingsPage() {
 
   if (!unlocked) {
     return (
-      <main className="mx-auto max-w-md p-8">
-        <h1 className="text-xl font-semibold">Cin7 Core Instances</h1>
-        <p className="mt-1 text-sm text-gray-500">Connect and manage the Cin7 Core instances this org syncs to.</p>
-        <form onSubmit={handleUnlock} className="mt-6 flex flex-col gap-4">
-          <label className="flex flex-col gap-1 text-sm">
-            Organization ID
+      <main className="mx-auto max-w-md px-6 py-12">
+        <h1 className="text-3xl font-bold tracking-tight text-slate-900">Cin7 Core Instances</h1>
+        <p className="mt-2 text-lg text-slate-500">Connect and manage the Cin7 Core instances this org syncs to.</p>
+        <form onSubmit={handleUnlock} className="mt-8 flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <label className="flex flex-col gap-1.5 text-base">
+            <span className="font-medium text-slate-700">Organization ID</span>
             <input
               value={orgId}
               onChange={(e) => setOrgId(e.target.value)}
               required
-              className="rounded border px-3 py-2 font-mono text-xs"
+              className="rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm focus:border-indigo-500 focus:outline-none"
             />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
-            Passphrase
+          <label className="flex flex-col gap-1.5 text-base">
+            <span className="font-medium text-slate-700">Passphrase</span>
             <input
               type="password"
               value={secret}
               onChange={(e) => setSecret(e.target.value)}
               required
-              className="rounded border px-3 py-2"
+              className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none"
             />
           </label>
-          <button type="submit" disabled={isPending} className="rounded bg-black px-4 py-2 text-white disabled:opacity-50">
+          <button
+            type="submit"
+            disabled={isPending}
+            className="mt-1 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
+          >
             {isPending ? "Loading…" : "Unlock"}
           </button>
         </form>
-        {error && <p className="mt-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+        {error && (
+          <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+        )}
       </main>
     );
   }
@@ -151,62 +157,64 @@ export default function InstancesSettingsPage() {
   const editingInstance = typeof modalTarget === "string" ? instances.find((i) => i.id === modalTarget) : undefined;
 
   return (
-    <main className="mx-auto max-w-3xl p-8">
+    <main className="mx-auto max-w-3xl px-6 py-12">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Cin7 Core Instances</h1>
-          <p className="mt-1 text-sm text-gray-500">Org {orgId}</p>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Cin7 Core Instances</h1>
+          <p className="mt-1 text-base text-slate-500">Org {orgId}</p>
         </div>
         <button
           onClick={() => setModalTarget("new")}
-          className="rounded bg-black px-4 py-2 text-sm text-white"
+          className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500"
         >
           + Add instance
         </button>
       </div>
 
-      {error && <p className="mt-4 rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+      {error && (
+        <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+      )}
 
       <div className="mt-6 flex flex-col gap-3">
         {instances.map((inst) => (
-          <div key={inst.id} className="rounded border p-4">
+          <div key={inst.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
-                <p className="font-medium">
-                  {inst.name} {!inst.active && <span className="text-xs text-gray-400">(inactive)</span>}
+                <p className="text-lg font-semibold text-slate-900">
+                  {inst.name} {!inst.active && <span className="text-sm font-normal text-slate-400">(inactive)</span>}
                 </p>
-                <p className="text-xs text-gray-500">
+                <p className="text-sm text-slate-500">
                   Account {inst.accountId} · Key ····{inst.keyLast4} · {inst.baseUrl}
                 </p>
               </div>
               <div className="flex flex-wrap justify-end gap-2">
-                <button onClick={() => handleTest(inst.id)} disabled={isPending} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
+                <button onClick={() => handleTest(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                   Test connection
                 </button>
-                <button onClick={() => handleFindBomExample(inst.id)} disabled={isPending} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
+                <button onClick={() => handleFindBomExample(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                   Fetch BOM example
                 </button>
-                <button onClick={() => handleProbeWorkCentrePaths(inst.id)} disabled={isPending} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
+                <button onClick={() => handleProbeWorkCentrePaths(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                   Probe Work Centre paths
                 </button>
-                <button onClick={() => setModalTarget(inst.id)} className="rounded border px-3 py-1 text-sm">
+                <button onClick={() => setModalTarget(inst.id)} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
                   Edit
                 </button>
-                <button onClick={() => handleDelete(inst.id)} className="rounded border px-3 py-1 text-sm text-red-700">
+                <button onClick={() => handleDelete(inst.id)} className="rounded-full border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50">
                   Delete
                 </button>
               </div>
             </div>
             {testResults[inst.id] && (
               <pre
-                className={`mt-2 max-h-96 overflow-auto whitespace-pre-wrap text-xs ${testResults[inst.id].ok ? "text-green-700" : "text-red-700"}`}
+                className={`mt-3 max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs ${testResults[inst.id].ok ? "text-emerald-700" : "text-red-700"}`}
               >
                 {testResults[inst.id].message}
               </pre>
             )}
           </div>
         ))}
-        {instances.length === 0 && <p className="text-sm text-gray-500">No instances connected yet.</p>}
+        {instances.length === 0 && <p className="text-base text-slate-500">No instances connected yet.</p>}
       </div>
 
       {modalTarget && (
@@ -234,22 +242,22 @@ function InstanceModal({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
       onClick={onClose}
       role="presentation"
     >
       <div
-        className="w-full max-w-md rounded-lg border bg-white p-6 shadow-lg dark:bg-neutral-900"
+        className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="instance-modal-title"
       >
         <div className="flex items-center justify-between">
-          <h2 id="instance-modal-title" className="text-lg font-semibold">
+          <h2 id="instance-modal-title" className="text-xl font-semibold text-slate-900">
             {instance ? "Edit instance" : "Add an instance"}
           </h2>
-          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-700">
+          <button onClick={onClose} aria-label="Close" className="text-slate-400 hover:text-slate-700">
             ✕
           </button>
         </div>
@@ -261,36 +269,38 @@ function InstanceModal({
           }}
           className="mt-4 flex flex-col gap-3"
         >
-          <label className="flex flex-col gap-1 text-sm">
-            Name
-            <input name="name" defaultValue={instance?.name} required autoFocus className="rounded border px-3 py-2" />
+          <label className="flex flex-col gap-1.5 text-base">
+            <span className="font-medium text-slate-700">Name</span>
+            <input name="name" defaultValue={instance?.name} required autoFocus className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none" />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
-            Account ID
-            <input name="accountId" defaultValue={instance?.accountId} required className="rounded border px-3 py-2" />
+          <label className="flex flex-col gap-1.5 text-base">
+            <span className="font-medium text-slate-700">Account ID</span>
+            <input name="accountId" defaultValue={instance?.accountId} required className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none" />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
-            Application key {instance && <span className="text-xs text-gray-400">(leave blank to keep current)</span>}
-            <input name="applicationKey" type="password" className="rounded border px-3 py-2" />
+          <label className="flex flex-col gap-1.5 text-base">
+            <span className="font-medium text-slate-700">
+              Application key {instance && <span className="text-sm font-normal text-slate-400">(leave blank to keep current)</span>}
+            </span>
+            <input name="applicationKey" type="password" className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none" />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
-            Base URL
+          <label className="flex flex-col gap-1.5 text-base">
+            <span className="font-medium text-slate-700">Base URL</span>
             <input
               name="baseUrl"
               defaultValue={instance?.baseUrl ?? DEFAULT_BASE_URL}
               required
-              className="rounded border px-3 py-2 font-mono text-xs"
+              className="rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm focus:border-indigo-500 focus:outline-none"
             />
           </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input name="active" type="checkbox" defaultChecked={instance?.active ?? true} />
+          <label className="flex items-center gap-2 text-base">
+            <input name="active" type="checkbox" defaultChecked={instance?.active ?? true} className="h-4 w-4" />
             Active
           </label>
           <div className="mt-2 flex gap-2">
-            <button type="submit" disabled={isPending} className="rounded bg-black px-4 py-2 text-sm text-white disabled:opacity-50">
+            <button type="submit" disabled={isPending} className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50">
               {isPending ? "Saving…" : instance ? "Save" : "Add"}
             </button>
-            <button type="button" onClick={onClose} className="rounded border px-4 py-2 text-sm">
+            <button type="button" onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2.5 text-base font-medium text-slate-700 hover:bg-slate-50">
               Cancel
             </button>
           </div>

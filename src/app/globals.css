@@ -1,8 +1,13 @@
 @import "tailwindcss";
 
+/*
+ * Always light — the previous Next.js-default dark-mode media query made the
+ * whole app render black on any OS set to dark mode, which read as "the app
+ * has a black theme" even though no component was actually styled for it.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f8fafc;
+  --foreground: #0f172a;
 }
 
 @theme inline {
@@ -12,15 +17,9 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+  font-size: 17px;
 }
