@@ -2,6 +2,7 @@
 
 import { useActionState, useState, useTransition } from "react";
 import {
+  downloadTemplateAction,
   importCsvAction,
   listInstancesForPicker,
   pushToCin7Action,
@@ -29,6 +30,10 @@ export default function ImportPage() {
   const [isLoadingInstances, startLoadTransition] = useTransition();
   const [isPushPending, startPushTransition] = useTransition();
 
+  const [downloadKind, setDownloadKind] = useState<"products" | "assembly_bom">("products");
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [isDownloading, startDownloadTransition] = useTransition();
+
   function handleLoadInstances() {
     setInstancesError(null);
     startLoadTransition(async () => {
@@ -54,6 +59,26 @@ export default function ImportPage() {
         return;
       }
       setPushResult({ ok: true, message: JSON.stringify(result.outcomes, null, 2) });
+    });
+  }
+
+  function handleDownload() {
+    setDownloadError(null);
+    startDownloadTransition(async () => {
+      const result = await downloadTemplateAction(orgId, secret, downloadKind);
+      if (!result.ok || !result.csv) {
+        setDownloadError(result.error ?? "Unknown error");
+        return;
+      }
+      const blob = new Blob([result.csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = result.filename ?? "export.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     });
   }
 
@@ -209,6 +234,35 @@ export default function ImportPage() {
             {pushResult.message}
           </pre>
         )}
+      </section>
+
+      <section className="mt-8 border-t pt-6">
+        <h2 className="text-sm font-medium">Download template</h2>
+        <p className="mt-1 text-xs text-gray-500">
+          Download the org&apos;s current products or Assembly BOM as a CSV in the same format as
+          the import templates, to edit and reimport. This is the hub&apos;s canonical data (the
+          same source pushed to every instance), not a live pull from one specific instance.
+        </p>
+
+        <div className="mt-3 flex items-center gap-2">
+          <select
+            value={downloadKind}
+            onChange={(e) => setDownloadKind(e.target.value as "products" | "assembly_bom")}
+            className="rounded border px-3 py-2 text-sm"
+          >
+            <option value="products">Products (InventoryList)</option>
+            <option value="assembly_bom">Assembly BOM</option>
+          </select>
+          <button
+            type="button"
+            onClick={handleDownload}
+            disabled={isDownloading || !orgId || !secret}
+            className="rounded border px-3 py-1 text-sm disabled:opacity-50"
+          >
+            {isDownloading ? "Preparing…" : "Download CSV"}
+          </button>
+        </div>
+        {downloadError && <p className="mt-2 text-xs text-red-700">{downloadError}</p>}
       </section>
     </main>
   );
