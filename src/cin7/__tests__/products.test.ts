@@ -61,27 +61,31 @@ describe("toCin7ProductPayload", () => {
   });
 });
 
+const CATEGORY_EXISTS = { CategoryList: [{ ID: "cat-1", Name: "Widgets" }] };
+
 describe("pushProduct", () => {
   it("creates via POST when the SKU doesn't exist yet", async () => {
     vi.mocked(cin7Request)
+      .mockResolvedValueOnce(CATEGORY_EXISTS) // ensureCategoryExists
       .mockResolvedValueOnce({ Products: [] }) // findProductBySku
       .mockResolvedValueOnce({ ID: "new-id" }); // create
 
     const result = await pushProduct(creds, product);
 
     expect(result).toEqual({ cin7Id: "new-id", status: "created" });
-    expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/Product", expect.objectContaining({ method: "POST" }));
+    expect(cin7Request).toHaveBeenNthCalledWith(3, creds, "/Product", expect.objectContaining({ method: "POST" }));
   });
 
   it("updates via PUT when the SKU already exists", async () => {
     vi.mocked(cin7Request)
+      .mockResolvedValueOnce(CATEGORY_EXISTS)
       .mockResolvedValueOnce({ Products: [{ ID: "existing-id", SKU: "SKU1" }] })
       .mockResolvedValueOnce({ ID: "existing-id" });
 
     const result = await pushProduct(creds, product);
 
     expect(result).toEqual({ cin7Id: "existing-id", status: "updated" });
-    const [, , options] = vi.mocked(cin7Request).mock.calls[1];
+    const [, , options] = vi.mocked(cin7Request).mock.calls[2];
     expect(options).toMatchObject({ method: "PUT", body: expect.objectContaining({ ID: "existing-id" }) });
   });
 
@@ -89,17 +93,19 @@ describe("pushProduct", () => {
     // Guards against a filter param Cin7 silently ignores, which would
     // otherwise return an arbitrary product and get PUT-overwritten.
     vi.mocked(cin7Request)
+      .mockResolvedValueOnce(CATEGORY_EXISTS)
       .mockResolvedValueOnce({ Products: [{ ID: "unrelated-id", SKU: "SOME-OTHER-SKU" }] })
       .mockResolvedValueOnce({ ID: "new-id" });
 
     const result = await pushProduct(creds, product);
 
     expect(result).toEqual({ cin7Id: "new-id", status: "created" });
-    expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/Product", expect.objectContaining({ method: "POST" }));
+    expect(cin7Request).toHaveBeenNthCalledWith(3, creds, "/Product", expect.objectContaining({ method: "POST" }));
   });
 
   it("throws with the raw response instead of silently returning a null cin7Id", async () => {
     vi.mocked(cin7Request)
+      .mockResolvedValueOnce(CATEGORY_EXISTS)
       .mockResolvedValueOnce({ Products: [] })
       .mockResolvedValueOnce({ SomeOtherField: "value" } as never);
 
@@ -108,6 +114,7 @@ describe("pushProduct", () => {
 
   it("extracts the ID from a wrapped-list response (confirmed live shape: {Total, Page, Products})", async () => {
     vi.mocked(cin7Request)
+      .mockResolvedValueOnce(CATEGORY_EXISTS)
       .mockResolvedValueOnce({ Products: [{ ID: "existing-id", SKU: "SKU1" }] })
       .mockResolvedValueOnce({ Total: 1, Page: 1, Products: [{ ID: "existing-id", SKU: "SKU1" }] } as never);
 
@@ -119,6 +126,7 @@ describe("pushProduct", () => {
   it("merges Assembly BOM fields into the same Product push (Cin7 has no separate BOM endpoint)", async () => {
     vi.mocked(cin7Request)
       .mockResolvedValueOnce({ Products: [{ ID: "comp-id", SKU: "COMP1" }] }) // resolveComponentIds -> find COMP1
+      .mockResolvedValueOnce(CATEGORY_EXISTS) // ensureCategoryExists
       .mockResolvedValueOnce({ Products: [] }) // findProductBySku(SKU1) -> not found
       .mockResolvedValueOnce({ ID: "new-id" }); // create
 
@@ -137,12 +145,39 @@ describe("pushProduct", () => {
 
     await pushProduct(creds, product, [], bomLines);
 
-    const [, , options] = vi.mocked(cin7Request).mock.calls[2];
+    const [, , options] = vi.mocked(cin7Request).mock.calls[3];
     const body = options?.body as { BillOfMaterial: boolean; BillOfMaterialsProducts: unknown[] };
     expect(body.BillOfMaterial).toBe(true);
     expect(body.BillOfMaterialsProducts).toEqual([
       expect.objectContaining({ ComponentProductID: "comp-id", ProductCode: "COMP1", Quantity: 2 }),
     ]);
+  });
+
+  it("creates a missing Category before pushing the product — confirmed live: POST/PUT /Product rejects an unrecognized Category", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ CategoryList: [] }) // category not found
+      .mockResolvedValueOnce({ ID: "cat-new", Name: "Widgets" }) // category created
+      .mockResolvedValueOnce({ Products: [] }) // findProductBySku
+      .mockResolvedValueOnce({ ID: "new-id" }); // create
+
+    await pushProduct(creds, product);
+
+    expect(cin7Request).toHaveBeenNthCalledWith(
+      2,
+      creds,
+      "/ref/category",
+      expect.objectContaining({ method: "POST", body: { Name: "Widgets" } })
+    );
+  });
+
+  it("skips the category check entirely when the product has no category", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ Products: [] }) // findProductBySku
+      .mockResolvedValueOnce({ ID: "new-id" }); // create
+
+    await pushProduct(creds, { ...product, category_code: null });
+
+    expect(cin7Request).toHaveBeenCalledTimes(2);
   });
 });
 

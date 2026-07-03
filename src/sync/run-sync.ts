@@ -85,6 +85,9 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
   const cin7IdBySku = new Map(
     (syncStates ?? []).map((s: { sku: string; cin7_id: string | null }) => [s.sku, s.cin7_id])
   );
+  // Shared across every product this run — a category confirmed/created for
+  // one product doesn't need a second lookup for the next with the same one.
+  const categoryCache = new Set<string>();
 
   for (const product of products ?? []) {
     if (syncedHashBySku.has(product.sku) && syncedHashBySku.get(product.sku) === product.content_hash) {
@@ -118,7 +121,7 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
         // cin7IdBySku doubles as the component-ID resolution cache for BOM
         // lines — a component synced earlier in this same run (or a prior
         // run) resolves without an extra API call.
-        pushResult = await pushProduct(creds, product, priceTiers ?? [], bomLinesTyped, cin7IdBySku);
+        pushResult = await pushProduct(creds, product, priceTiers ?? [], bomLinesTyped, cin7IdBySku, categoryCache);
       } catch (e) {
         throw new Error(`Product push failed: ${describeError(e)}`);
       }

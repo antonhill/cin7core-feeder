@@ -167,12 +167,30 @@ WorkCenterID/ResourceID are resolved.
 Worth relaying back to the client/proposal conversation, since it changes what's actually
 possible vs. what was scoped.
 
-## 5. Categories / UOM / Price Tiers — partially unverified
-`ProductCategories`, `ProductBrands`, `UnitsOfMeasure` appear as their own GET endpoints, and
-also as embedded fields on the Product payload. `PriceTier` has its own endpoint (list all
-sale price tiers). **Unverified:** whether Category/UOM support POST/PUT as first-class
-resources, or are read-only reference lookups you must match by name rather than create.
-Confirm before assuming the sync engine can create a missing category/UOM in Cin7 on the fly.
+## 5. Categories — confirmed (2026-07-03); UOM/Price Tiers still partially unverified
+Confirmed live: POST/PUT `/Product` rejects an unrecognized `Category` string with
+`{"ErrorCode":404,"Exception":"Category not found."}` — unlike Cin7's own UI/CSV
+bulk-import, which auto-creates a new category on the fly, the JSON API does **not**.
+Category is a genuine CRUD resource at **`/ref/category`** (confirmed via
+github.com/nnhansg/dear-openapi's worked examples, corroborated by a real wired-up call in
+github.com/FalconEyeSolutions/CIN7-DearInventory's generated `ProductCategoriesApi.cs`):
+- `GET /ref/category?Page=&Limit=&Name=` → `{Total, Page, CategoryList: [{ID, Name}]}`
+- `POST /ref/category` with `{"Name": "..."}` → creates, returns `{ID, Name}`
+- `PUT /ref/category` with `{"ID": "...", "Name": "..."}` → updates
+- `DELETE /ref/category?ID=` → deletes
+
+`Category` on the Product payload is a plain Name string, not an ID reference — so the fix
+is to ensure the name exists (GET, then POST if missing) before referencing it on a product
+push, not to resolve/store an ID. Implemented in `src/cin7/categories.ts`
+(`ensureCategoryExists`), wired into `pushProduct`. `Name` caps at 50 chars on the category
+record itself even though the Product payload's own `Category` field allows up to 256 — a
+very long category name could still fail category creation.
+
+`ProductBrands`, `UnitsOfMeasure` appear as their own GET endpoints too, and also as embedded
+fields on the Product payload. `PriceTier` has its own endpoint (list all sale price tiers).
+**Still unverified:** whether UOM supports POST/PUT the same way Category now confirmed does,
+or is read-only. Confirm before assuming the sync engine can create a missing UOM on the fly
+the same way it now does for Category.
 
 ## 6. Pagination — confirmed
 `page` + `limit` query params (e.g. `/Product?page=5&limit=200`). Default page size 100,

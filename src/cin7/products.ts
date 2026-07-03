@@ -1,6 +1,7 @@
 import type { Cin7Credentials } from "@/cin7/types";
 import { cin7Request } from "@/cin7/http";
 import { toCin7BomFields, type CanonicalAssemblyBomLineRow } from "@/cin7/assembly-bom";
+import { ensureCategoryExists } from "@/cin7/categories";
 
 export interface CanonicalProductRow {
   sku: string;
@@ -165,7 +166,8 @@ export async function pushProduct(
   product: CanonicalProductRow,
   priceTiers: CanonicalPriceTierRow[] = [],
   bomLines: CanonicalAssemblyBomLineRow[] = [],
-  cin7IdCache: Map<string, string | null | undefined> = new Map()
+  cin7IdCache: Map<string, string | null | undefined> = new Map(),
+  categoryCache: Set<string> = new Set()
 ): Promise<{ cin7Id: string; status: ProductPushStatus }> {
   if (bomLines.length) {
     await resolveComponentIds(
@@ -173,6 +175,13 @@ export async function pushProduct(
       bomLines.map((l) => l.component_sku),
       cin7IdCache
     );
+  }
+  // Confirmed live: POST/PUT /Product rejects an unrecognized Category with
+  // "Category not found." — unlike Cin7's own UI/CSV import, which
+  // auto-creates one. Create it first so the product push itself never
+  // needs to guess whether the category already exists.
+  if (product.category_code) {
+    await ensureCategoryExists(creds, product.category_code, categoryCache);
   }
   const payload = { ...toCin7ProductPayload(product, priceTiers), ...toCin7BomFields(bomLines, cin7IdCache) };
   const existing = await findProductBySku(creds, product.sku);
