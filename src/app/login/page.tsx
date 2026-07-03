@@ -1,44 +1,64 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { createBrowserSupabaseClient } from "@/supabase/browser";
 
+type Step = "email" | "code";
+
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
-  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [code, setCode] = useState("");
+  const [step, setStep] = useState<Step>("email");
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSendCode(e: React.FormEvent) {
     e.preventDefault();
-    setStatus("sending");
+    setIsSubmitting(true);
     setError(null);
     const supabase = createBrowserSupabaseClient();
-    const { error: signInError } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
-    });
+    // Deliberately no emailRedirectTo / clickable-link flow — Microsoft
+    // Defender's Safe Links (and similar corporate email scanners) pre-visit
+    // URLs in incoming mail to scan them, which silently consumes a
+    // one-time magic-link code before the user ever clicks it. A typed
+    // code has nothing for a scanner to click, so it isn't affected.
+    const { error: signInError } = await supabase.auth.signInWithOtp({ email });
+    setIsSubmitting(false);
     if (signInError) {
       setError(signInError.message);
-      setStatus("error");
       return;
     }
-    setStatus("sent");
+    setStep("code");
+  }
+
+  async function handleVerifyCode(e: React.FormEvent) {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setError(null);
+    const supabase = createBrowserSupabaseClient();
+    const { error: verifyError } = await supabase.auth.verifyOtp({ email, token: code, type: "email" });
+    setIsSubmitting(false);
+    if (verifyError) {
+      setError(verifyError.message);
+      return;
+    }
+    router.push("/");
+    router.refresh();
   }
 
   return (
     <main className="mx-auto flex min-h-[80vh] max-w-md flex-col justify-center px-6">
       <h1 className="text-3xl font-bold tracking-tight text-slate-900">Cin7 Core Feeder</h1>
-      <p className="mt-2 text-lg text-slate-500">Enter your email and we&apos;ll send you a sign-in link.</p>
+      <p className="mt-2 text-lg text-slate-500">
+        {step === "email"
+          ? "Enter your email and we'll send you a sign-in code."
+          : `Enter the 6-digit code we sent to ${email}.`}
+      </p>
 
-      {status === "sent" ? (
-        <div className="mt-8 rounded-2xl border border-emerald-200 bg-emerald-50 p-6">
-          <p className="font-medium text-emerald-900">Check your email</p>
-          <p className="mt-1 text-sm text-emerald-800">
-            We sent a sign-in link to <strong>{email}</strong>. Click it to continue.
-          </p>
-        </div>
-      ) : (
-        <form onSubmit={handleSubmit} className="mt-8 flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      {step === "email" ? (
+        <form onSubmit={handleSendCode} className="mt-8 flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <label className="flex flex-col gap-1.5 text-base">
             <span className="font-medium text-slate-700">Email</span>
             <input
@@ -53,12 +73,47 @@ export default function LoginPage() {
           </label>
           <button
             type="submit"
-            disabled={status === "sending"}
+            disabled={isSubmitting}
             className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
           >
-            {status === "sending" ? "Sending…" : "Send sign-in link"}
+            {isSubmitting ? "Sending…" : "Send sign-in code"}
           </button>
           {error && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+        </form>
+      ) : (
+        <form onSubmit={handleVerifyCode} className="mt-8 flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <label className="flex flex-col gap-1.5 text-base">
+            <span className="font-medium text-slate-700">6-digit code</span>
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              required
+              autoFocus
+              inputMode="numeric"
+              maxLength={6}
+              className="rounded-lg border border-slate-300 px-3 py-2 text-center font-mono text-lg tracking-widest focus:border-indigo-500 focus:outline-none"
+              placeholder="000000"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
+          >
+            {isSubmitting ? "Verifying…" : "Verify & sign in"}
+          </button>
+          {error && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+          <button
+            type="button"
+            onClick={() => {
+              setStep("email");
+              setCode("");
+              setError(null);
+            }}
+            className="text-sm text-slate-500 hover:underline"
+          >
+            Use a different email
+          </button>
         </form>
       )}
     </main>
