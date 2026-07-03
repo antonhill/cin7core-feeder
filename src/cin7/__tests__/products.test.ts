@@ -81,4 +81,14 @@ describe("pushProduct", () => {
 
     await expect(pushProduct(creds, product)).rejects.toThrow(/no ID field[\s\S]*SomeOtherField/);
   });
+
+  it("extracts the ID from a wrapped-list response (confirmed live shape: {Total, Page, Products})", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ Products: [{ ID: "existing-id", SKU: "SKU1" }] })
+      .mockResolvedValueOnce({ Total: 1, Page: 1, Products: [{ ID: "existing-id", SKU: "SKU1" }] } as never);
+
+    const result = await pushProduct(creds, product);
+
+    expect(result).toEqual({ cin7Id: "existing-id", status: "updated" });
+  });
 });

@@ -20,8 +20,15 @@ interface Cin7ProductListResponse {
   Products?: { ID: string; SKU?: string }[];
 }
 
+/**
+ * A live sandbox test showed PUT/POST /Product actually returns the same
+ * wrapped-list shape as GET ({Total, Page, Products: [...]}), not a bare
+ * {ID: ...} object as first assumed. Accept both shapes defensively since
+ * POST's exact response hasn't been separately confirmed.
+ */
 interface Cin7ProductResponse {
-  ID: string;
+  ID?: string;
+  Products?: { ID: string }[];
 }
 
 /**
@@ -78,10 +85,11 @@ export type ProductPushStatus = "created" | "updated";
  * storing cin7_id as null (which happened in a live test run).
  */
 function requireId(response: Cin7ProductResponse, action: string): string {
-  if (!response.ID) {
+  const id = response.ID ?? response.Products?.[0]?.ID;
+  if (!id) {
     throw new Error(`${action} response had no ID field — raw response: ${JSON.stringify(response).slice(0, 500)}`);
   }
-  return response.ID;
+  return id;
 }
 
 /** Create-or-update a product by SKU. Cin7 has no single upsert call — this does the GET-then-branch itself. */

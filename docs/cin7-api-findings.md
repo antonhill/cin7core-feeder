@@ -17,12 +17,18 @@ defaulted in `cin7_instances.base_url`, no schema change needed.
 v1 (`.../ExternalApi/` without version segment) is deprecated.
 
 ## 2. Products — confirmed, no single upsert
-`POST /Products` creates, `PUT /Products` updates (matched by `ID` GUID). **There is no
+`POST /Product` creates, `PUT /Product` updates (matched by `ID` GUID). **There is no
 create-or-update-in-one-call** — the caller must look up by SKU first (e.g. filter query) and
 branch POST vs PUT. This matches the sync engine design already in the README (match via
 `sync_state`, then create-if-absent / update-if-present) — no design change needed, just
 confirms the client can't shortcut it.
 Errors: array of `{ "ErrorCode": <int>, "Exception": "<message>" }`.
+
+**Live-tested (2026-07-03) and corrected:** `GET /Product?SKU=<sku>&page=1&limit=1` correctly
+filters by SKU (confirmed — the returned row's own SKU field matched what was requested).
+`PUT /Product` (and presumably `POST`) returns the **same wrapped-list shape as GET** —
+`{"Total":1,"Page":1,"Products":[{"ID":"...","SKU":"...",...}]}` — not a bare `{"ID": "..."}`
+object as first assumed. `src/cin7/products.ts` now reads the ID from `Products[0].ID`.
 
 ## 3. Assembly BOM — confirmed
 Dedicated `BillOfMaterials` endpoint (`/BillOfMaterials/{ProductID}` and bare
