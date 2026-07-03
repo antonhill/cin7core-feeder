@@ -129,18 +129,38 @@ corroborated by github.com/FalconEyeSolutions/CIN7-DearInventory):
   ("create it manually in Manufacturing > Resources") if the resource doesn't exist yet, rather
   than guessing.
 
-**Gotcha confirmed 2026-07-03 live:** both GET endpoints above **require explicit `Page` and
-`Limit` query params** — calling with only `Name` returns Cin7's branded "Page not found" SPA
-shell as an HTTP **200** (not a real 404 or 400), which looks exactly like a wrong-path bug (same
-signature as the earlier `/ProductionBom` and `/BillOfMaterials` path mistakes) but isn't one. This
-one cost real debugging time: confirmed the account's Manufacturing module *was* enabled (real
-Work Centres existed in the UI, visually verified) and the path was verified correct by two
-independent sources before finding the actual cause — Cin7's generated C# client always sends all
-three params together, never `Name` alone. `src/cin7/http.ts`'s "200 but non-JSON body" error
-(includes method/path in the message) is what made this diagnosable at all.
+Adding explicit `Page`/`Limit` query params (the generated C# client always sends all three
+together, never `Name` alone) was a reasonable next fix given the same "200 but HTML body"
+signature as the earlier `/ProductionBom`/`/BillOfMaterials` path mistakes — but it **did not**
+resolve it. `src/cin7/http.ts`'s "200 but non-JSON body" error (includes method/path) is what made
+all of this diagnosable at all.
 
-Both caches (`ProductionBomRefCaches`) are shared across a whole sync run in `run-sync.ts`, same
-pattern as the product-ID cache used for Assembly BOM component resolution.
+**PAUSED 2026-07-03 — likely an external limitation, not a bug in our code.** A live probe
+(`src/cin7/debug.ts`'s `probeWorkCentrePaths`) tried 8 casing/nesting variants
+(`/production/workcenters`, `/production/workCenters`, `/production/WorkCenters`,
+`/production/Workcenters`, `/production/workcentres`, `/production/workCentres`, `/WorkCenters`,
+`/Workcenters`) against a live account confirmed via screenshot to have real Work Centres
+configured (`MIXING`, `BLENDING`, `PACKING`, `CANNING LINE 1`) — **all 8 returned byte-identical
+"Page not found" HTML**, right next to `/production/productionBOM`, which works fine on the same
+account with the same auth. That rules out casing/path-guessing and deployment staleness (verified
+via a forced empty-commit redeploy) as explanations.
+
+Best working theory: `github.com/nnhansg/dear-openapi` and the generated C# client likely
+transcribe/target Cin7's **internal frontend API** (the one powering their own Work Centres
+settings screen) rather than the **public partner API** (`ExternalApi/v2`) we authenticate against
+with `api-auth-accountid`/`api-auth-applicationkey`. Work Centre/Resource management may simply not
+be exposed on the public API surface at all, even though ProductionBOM happens to be. If true, no
+path fix resolves this — it would need either Cin7 support confirming a real endpoint, or a manual
+GUID-mapping workaround (user pastes each Work Centre/Resource's Cin7 GUID once per instance,
+found via browser dev tools in the Cin7 UI, since we can't look it up ourselves).
+
+**Decision (2026-07-03):** paused again rather than pursued further — Products and Assembly BOM
+are fully working end-to-end, which is the core feeder goal. Revisit only if Cin7 support confirms
+API access, or the manual GUID-mapping route becomes worth the setup cost.
+
+Both caches (`ProductionBomRefCaches`) remain shared across a whole sync run in `run-sync.ts`, same
+pattern as the product-ID cache used for Assembly BOM component resolution — the plumbing is ready
+to use immediately if a real Work Centre/Resource lookup path is ever found.
 
 **Still unverified beyond the above:** whether there are further required fields once
 WorkCenterID/ResourceID are resolved.
