@@ -29,6 +29,19 @@ export async function middleware(request: NextRequest) {
     }
   );
 
+  // Handles the magic-link code landing on ANY path, not just /auth/callback
+  // — if Supabase's redirect-URL allowlist (Dashboard > Authentication > URL
+  // Configuration) doesn't include /auth/callback, it silently falls back to
+  // the bare Site URL, dropping ?code= on "/" instead. Exchanging it here,
+  // regardless of path, makes login work even before that's configured.
+  const code = request.nextUrl.searchParams.get("code");
+  if (code) {
+    await supabase.auth.exchangeCodeForSession(code);
+    const cleanUrl = request.nextUrl.clone();
+    cleanUrl.searchParams.delete("code");
+    return NextResponse.redirect(cleanUrl);
+  }
+
   const {
     data: { user },
   } = await supabase.auth.getUser();
