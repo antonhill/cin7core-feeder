@@ -94,6 +94,11 @@ describe("toCin7ProductPayload", () => {
     expect(payload.Brand).toBe("Acme");
   });
 
+  it("sends Description — captured on import but never included in the push payload before", () => {
+    const payload = toCin7ProductPayload({ ...product, description: "A fine widget." });
+    expect(payload.Description).toBe("A fine widget.");
+  });
+
   it("sends the full field set added in the completeness pass, using confirmed live JSON field names", () => {
     const payload = toCin7ProductPayload({
       ...product,

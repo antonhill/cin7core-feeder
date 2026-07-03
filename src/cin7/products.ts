@@ -109,6 +109,7 @@ export function toCin7ProductPayload(product: CanonicalProductRow, priceTiers: C
     // Stock on every push, confirmed live.
     Type: product.cin7_type,
     CostingMethod: product.costing_method,
+    Description: product.description ?? undefined,
     // Everything below was confirmed against a real live GET /Product
     // response before being added to the push payload — see
     // src/model/products.ts's CanonicalProduct for the fields deliberately
