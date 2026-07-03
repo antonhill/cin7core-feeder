@@ -157,7 +157,7 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
 
   const { data: versions } = await db
     .from("production_bom_versions")
-    .select("product_sku, version, version_name, quantity_to_produce")
+    .select("product_sku, version, version_name, version_default, buffer_percent, quantity_to_produce")
     .eq("org_id", orgId);
 
   for (const version of versions ?? []) {

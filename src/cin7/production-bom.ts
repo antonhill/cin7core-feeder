@@ -5,6 +5,8 @@ export interface CanonicalProductionBomVersionRow {
   product_sku: string;
   version: string;
   version_name: string | null;
+  version_default: boolean;
+  buffer_percent: number;
   quantity_to_produce: number;
 }
 
@@ -38,10 +40,15 @@ interface Cin7ProductionBomResponse {
  * specification/dearinventory.apib): the resource lives at
  * `/production/productionBOM` (nested, camelCase — NOT `/ProductionBom`,
  * which returns an HTML fallback page rather than a 404), and it's
- * addressed by the product's Cin7 **ID** (GUID), not SKU. The exact body
- * field names for operations/routing/work-centres/resources below are
- * still best-effort — only the path and ID-based addressing are confirmed.
- * See docs/cin7-api-findings.md.
+ * addressed by the product's Cin7 **ID** (GUID), not SKU.
+ *
+ * KNOWN GAP: a live 400 revealed `Operations[].WorkCenterID` and
+ * `Operations[].Resources[].ResourceID` are required GUID references to
+ * Cin7's own Work Centre and Resource master data — not the text codes
+ * (`work_centre_code`, `item_code`) our schema stores. We have no lookup or
+ * sync for Work Centres/Resources yet, so `WorkCentreCode`/`ResourceCode`
+ * below are sent but almost certainly won't satisfy Cin7 until that lookup
+ * is built. See docs/cin7-api-findings.md.
  */
 const PRODUCTION_BOM_PATH = "/production/productionBOM";
 
@@ -60,16 +67,23 @@ export function toCin7ProductionBomPayload(
     // found") — kept alongside QuantityToProduce since it's unclear if the
     // latter is also used elsewhere, and extra fields are harmless.
     OutputQuantity: version.quantity_to_produce,
+    // Confirmed via live 400s ("Required property 'BufferPercent'/
+    // 'IsDefault' not found") — both map to columns we already store.
+    BufferPercent: version.buffer_percent,
+    IsDefault: version.version_default,
     OverwriteExistingProductionBOM: true,
     // Confirmed via live 400s ("Required property 'Position'/'Order'/
-    // 'UnitsPerCycle' not found") on Operations, Components, and Resources —
-    // each needs its ordinal index (Position) plus an explicit Order,
-    // separate from our semantic OperationSequence.
+    // 'UnitsPerCycle' not found", and "The Name field is required") on
+    // Operations, Components, and Resources — each needs its ordinal index
+    // (Position) plus an explicit Order, separate from our semantic
+    // OperationSequence. Name is kept alongside OperationName since it's
+    // unclear which (or both) Cin7 actually reads.
     Operations: operations.map((op, opIndex) => ({
       Position: opIndex + 1,
       Order: opIndex + 1,
       OperationSequence: op.operation_sequence,
       OperationType: op.operation_type,
+      Name: op.operation_name ?? undefined,
       OperationName: op.operation_name ?? undefined,
       CycleTime: op.cycle_time ?? undefined,
       UnitsPerCycle: op.unit_per_cycle ?? undefined,

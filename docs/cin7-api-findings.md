@@ -74,10 +74,23 @@ not found"` on `Operations[0]`, `Operations[0].Components[0]`, and `Operations[0
 every entry in the `Operations`, `Components`, and `Resources` arrays needs its own 1-indexed
 `Position` field — separate from our semantic `OperationSequence` string.
 
-**Still unverified:** whether there are further required fields inside one ProductionBOM entry
-beyond what's now confirmed (`ProductID`, `Version`, `Operations[].Position`,
-`Components[].Position`, `Resources[].Position`) — the outer wrapper and ID-based addressing are
-confirmed, but a 400 on the inner fields would surface the same way and hasn't been ruled out yet.
+**`BufferPercent`/`IsDefault`/`Order`/operation `Name` confirmed 2026-07-03** via further live
+400s — `BufferPercent` and `IsDefault` map to columns we already store
+(`production_bom_versions.buffer_percent`/`version_default`); `Order` is a separate required
+integer alongside `Position`; operations also want a bare `Name` field (kept alongside
+`OperationName` since it's unverified which one Cin7 actually reads).
+
+**BLOCKING GAP — not yet resolved:** the same round of testing also revealed
+`Operations[].WorkCenterID` and `Operations[].Resources[].ResourceID` are **required GUID
+references** to Cin7's own Work Centre and Resource master data — not the text codes
+(`work_centre_code`, resource `item_code`) our schema stores. We have no lookup, matching, or
+sync for Work Centres/Resources at all. Until that's built, Production BOM pushes will keep
+failing on these two fields specifically. This is real, separate scope — a "find or create Work
+Centre by name" and "find or create Resource by name" flow, analogous to `findProductBySku` — not
+another quick field-name fix.
+
+**Still unverified beyond the above:** whether there are further required fields once
+WorkCenterID/ResourceID are resolved.
 Worth relaying back to the client/proposal conversation, since it changes what's actually
 possible vs. what was scoped.
 
