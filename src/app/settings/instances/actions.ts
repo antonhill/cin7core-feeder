@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
-import { findProductWithBom } from "@/cin7/debug";
+import { findProductWithBom, probeWorkCentrePaths } from "@/cin7/debug";
 
 export interface InstanceRecord {
   id: string;
@@ -195,6 +195,42 @@ export async function debugFindBomExample(
     });
     if (!result.found) return { ok: false, message: "No product with a configured BOM was found." };
     return { ok: true, message: JSON.stringify(result.product, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Diagnostic only: /production/workcenters keeps returning Cin7's branded
+ * "Page not found" page despite two independent sources confirming that
+ * path and the account genuinely having Work Centres configured. Tries
+ * several plausible casing/path variants live and reports which succeed.
+ */
+export async function debugProbeWorkCentrePaths(
+  orgId: string,
+  secret: string,
+  instanceId: string
+): Promise<TestConnectionResult> {
+  const secretError = checkSecret(secret);
+  if (secretError) return { ok: false, message: secretError };
+
+  try {
+    const db = createServiceRoleClient();
+    const { data, error } = await db
+      .from("cin7_instances")
+      .select("account_id, application_key_encrypted, base_url")
+      .eq("id", instanceId)
+      .eq("org_id", orgId)
+      .single();
+    if (error || !data) return { ok: false, message: error?.message ?? "Instance not found." };
+
+    const results = await probeWorkCentrePaths({
+      accountId: data.account_id,
+      applicationKey: decrypt(data.application_key_encrypted),
+      baseUrl: data.base_url,
+    });
+    const anySucceeded = results.some((r) => r.looksLikeJson);
+    return { ok: anySucceeded, message: JSON.stringify(results, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
   }

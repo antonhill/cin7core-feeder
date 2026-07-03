@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import {
   debugFindBomExample,
+  debugProbeWorkCentrePaths,
   deleteInstance,
   listInstances,
   testInstanceConnection,
@@ -70,6 +71,14 @@ export default function InstancesSettingsPage() {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Searching…" } }));
     startTransition(async () => {
       const result = await debugFindBomExample(orgId, secret, instanceId);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
+  function handleProbeWorkCentrePaths(instanceId: string) {
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Probing (~10s)…" } }));
+    startTransition(async () => {
+      const result = await debugProbeWorkCentrePaths(orgId, secret, instanceId);
       setTestResults((prev) => ({ ...prev, [instanceId]: result }));
     });
   }
@@ -155,6 +164,9 @@ export default function InstancesSettingsPage() {
                   </button>
                   <button onClick={() => handleFindBomExample(inst.id)} disabled={isPending} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
                     Fetch BOM example
+                  </button>
+                  <button onClick={() => handleProbeWorkCentrePaths(inst.id)} disabled={isPending} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
+                    Probe Work Centre paths
                   </button>
                   <button onClick={() => setEditingId(inst.id)} className="rounded border px-3 py-1 text-sm">
                     Edit
