@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decrypt } from "@/cin7/crypto";
 import { pushProduct } from "@/cin7/products";
-import { pushAssemblyBoms, type CanonicalAssemblyBomLineRow } from "@/cin7/assembly-bom";
+import type { CanonicalAssemblyBomLineRow } from "@/cin7/assembly-bom";
 import { pushProductionBom } from "@/cin7/production-bom";
 import { Cin7ApiError } from "@/cin7/http";
 
@@ -23,9 +23,11 @@ function describeError(e: unknown): string {
 }
 
 /**
- * Syncs one org's products (+ their Assembly BOM lines, whose changes are
- * already folded into products.content_hash) and every Production BOM
- * version to one Cin7 Core instance.
+ * Syncs one org's products (+ their Assembly BOM lines, merged into the same
+ * Product push since Cin7 has no separate BOM endpoint — see
+ * assembly-bom.ts — and already folded into products.content_hash for
+ * change detection) and every Production BOM version to one Cin7 Core
+ * instance.
  *
  * Change detection: a product is only pushed when its content_hash differs
  * from sync_state.synced_hash for this instance — a no-op re-run does zero
@@ -105,29 +107,17 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
         .eq("org_id", orgId)
         .eq("product_sku", product.sku);
 
+      // BOM lines are merged into the same Product push — Cin7 has no
+      // separate BOM endpoint (see assembly-bom.ts).
+      const bomLinesTyped = (bomLines ?? []).map(
+        (l: Record<string, unknown>) => ({ ...l, product_sku: product.sku }) as CanonicalAssemblyBomLineRow
+      );
+
       let pushResult;
       try {
-        pushResult = await pushProduct(creds, product, priceTiers ?? []);
+        pushResult = await pushProduct(creds, product, priceTiers ?? [], bomLinesTyped);
       } catch (e) {
         throw new Error(`Product push failed: ${describeError(e)}`);
-      }
-
-      if (bomLines?.length) {
-        const linesByProduct = new Map<string, CanonicalAssemblyBomLineRow[]>([
-          [
-            product.sku,
-            bomLines.map(
-              (l: Record<string, unknown>) => ({ ...l, product_sku: product.sku }) as CanonicalAssemblyBomLineRow
-            ),
-          ],
-        ]);
-        try {
-          const bomResults = await pushAssemblyBoms(creds, linesByProduct);
-          const failed = bomResults.find((r) => !r.ok);
-          if (failed) throw new Error(failed.error ?? "unknown error");
-        } catch (e) {
-          throw new Error(`Assembly BOM push failed: ${describeError(e)}`);
-        }
       }
 
       await db.from("sync_state").upsert(

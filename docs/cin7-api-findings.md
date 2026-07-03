@@ -30,12 +30,22 @@ filters by SKU (confirmed — the returned row's own SKU field matched what was 
 `{"Total":1,"Page":1,"Products":[{"ID":"...","SKU":"...",...}]}` — not a bare `{"ID": "..."}`
 object as first assumed. `src/cin7/products.ts` now reads the ID from `Products[0].ID`.
 
-## 3. Assembly BOM — confirmed
-Dedicated `BillOfMaterials` endpoint (`/BillOfMaterials/{ProductID}` and bare
-`/BillOfMaterials`). `PUT` batch-supports create/update/delete of BOM components and services
-for **up to 100 products per call**, keyed by SKU/ProductID. Response includes a per-product
-`OperationStatus` + `Errors` array — the sync engine should plan to batch by 100 rather than
-one call per product.
+## 3. Assembly BOM — corrected 2026-07-03: there is NO separate endpoint
+Originally assumed a dedicated `BillOfMaterials` endpoint per earlier indexed-search evidence.
+**That was wrong.** A live test against `PUT /BillOfMaterials` redirect-looped (never 404'd,
+which is what tipped us off — same signature as the earlier wrong `/ProductionBom` guess).
+Confirmed via two independent sources — a raw transcription of Cin7's Apiary spec
+(github.com/nnhansg/dear-openapi) and a generated C# client
+(github.com/FalconEyeSolutions/CIN7-DearInventory, whose `ProductApi.cs` has no BOM-specific
+file, only `Product`) — **BOM fields live directly on the `Product` resource** and are set via
+the same `POST`/`PUT /Product` call already used for the product's core fields:
+`BillOfMaterial: true`, `BillOfMaterialsProducts: [...]`, `BillOfMaterialsServices: [...]`,
+read back via `GET /Product?...&IncludeBOM=true`. Each BOM line's component may be referenced by
+either `ComponentProductID` (Cin7 GUID) or `ProductCode` (SKU) — we use SKU, avoiding the need to
+resolve a component's Cin7 ID first. `src/cin7/assembly-bom.ts` now just builds these fields;
+`src/cin7/products.ts`'s `pushProduct` merges them into the Product payload — there's no longer
+a separate push step or 100-per-batch concern (each product's BOM travels with its own
+create/update call).
 
 ## 4. Production BOM — confirmed available via API (important correction)
 The original client proposal (see `docs/Casa_das_Natas_Architecture_Proposal.docx` appendix)

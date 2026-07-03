@@ -91,4 +91,30 @@ describe("pushProduct", () => {
 
     expect(result).toEqual({ cin7Id: "existing-id", status: "updated" });
   });
+
+  it("merges Assembly BOM fields into the same Product push (Cin7 has no separate BOM endpoint)", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ Products: [] })
+      .mockResolvedValueOnce({ ID: "new-id" });
+
+    const bomLines = [
+      {
+        product_sku: "SKU1",
+        component_sku: "COMP1",
+        quantity: 2,
+        wastage_quantity: null,
+        wastage_percent: null,
+        cost_percentage: null,
+        price_tier: null,
+        expense_account: null,
+      },
+    ];
+
+    await pushProduct(creds, product, [], bomLines);
+
+    const [, , options] = vi.mocked(cin7Request).mock.calls[1];
+    const body = options?.body as { BillOfMaterial: boolean; BillOfMaterialsProducts: unknown[] };
+    expect(body.BillOfMaterial).toBe(true);
+    expect(body.BillOfMaterialsProducts).toEqual([expect.objectContaining({ ProductCode: "COMP1", Quantity: 2 })]);
+  });
 });

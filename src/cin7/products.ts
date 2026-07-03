@@ -1,5 +1,6 @@
 import type { Cin7Credentials } from "@/cin7/types";
 import { cin7Request } from "@/cin7/http";
+import { toCin7BomFields, type CanonicalAssemblyBomLineRow } from "@/cin7/assembly-bom";
 
 export interface CanonicalProductRow {
   sku: string;
@@ -92,13 +93,19 @@ function requireId(response: Cin7ProductResponse, action: string): string {
   return id;
 }
 
-/** Create-or-update a product by SKU. Cin7 has no single upsert call — this does the GET-then-branch itself. */
+/**
+ * Create-or-update a product by SKU. Cin7 has no single upsert call — this
+ * does the GET-then-branch itself. Assembly BOM lines (if any) are merged
+ * into the same payload — Cin7 has no separate BOM endpoint; BOM fields
+ * live directly on the Product resource. See assembly-bom.ts.
+ */
 export async function pushProduct(
   creds: Cin7Credentials,
   product: CanonicalProductRow,
-  priceTiers: CanonicalPriceTierRow[] = []
+  priceTiers: CanonicalPriceTierRow[] = [],
+  bomLines: CanonicalAssemblyBomLineRow[] = []
 ): Promise<{ cin7Id: string; status: ProductPushStatus }> {
-  const payload = toCin7ProductPayload(product, priceTiers);
+  const payload = { ...toCin7ProductPayload(product, priceTiers), ...toCin7BomFields(bomLines) };
   const existing = await findProductBySku(creds, product.sku);
 
   if (existing) {

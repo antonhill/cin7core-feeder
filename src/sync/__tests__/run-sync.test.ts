@@ -2,11 +2,9 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncInstance } from "@/sync/run-sync";
 import { pushProduct } from "@/cin7/products";
-import { pushAssemblyBoms } from "@/cin7/assembly-bom";
 import { pushProductionBom } from "@/cin7/production-bom";
 
 vi.mock("@/cin7/products", () => ({ pushProduct: vi.fn() }));
-vi.mock("@/cin7/assembly-bom", () => ({ pushAssemblyBoms: vi.fn() }));
 vi.mock("@/cin7/production-bom", () => ({ pushProductionBom: vi.fn() }));
 vi.mock("@/cin7/crypto", () => ({ decrypt: (v: string) => `decrypted:${v}` }));
 
@@ -45,7 +43,6 @@ function createFakeDb(tables: Record<string, Record<string, unknown>[]>) {
 
 beforeEach(() => {
   vi.mocked(pushProduct).mockReset();
-  vi.mocked(pushAssemblyBoms).mockReset();
   vi.mocked(pushProductionBom).mockReset();
 });
 
@@ -125,7 +122,7 @@ describe("syncInstance", () => {
     ]);
   });
 
-  it("attributes a failure to the Assembly BOM push specifically, distinct from the product push", async () => {
+  it("passes a product's Assembly BOM lines into the same pushProduct call (no separate BOM endpoint)", async () => {
     const { db } = createFakeDb({
       cin7_instances: [instanceRow],
       products: [{ org_id: "org1", sku: "PARENT", name: "Parent", content_hash: "h1" }],
@@ -135,12 +132,16 @@ describe("syncInstance", () => {
       production_bom_versions: [],
     });
     vi.mocked(pushProduct).mockResolvedValueOnce({ cin7Id: "cin7-1", status: "created" });
-    vi.mocked(pushAssemblyBoms).mockRejectedValueOnce(new Error("network blip"));
 
     const summary = await syncInstance(db, "org1", "inst-1");
 
-    expect(summary.productsFailed).toBe(1);
-    expect(summary.errors).toEqual([{ sku: "PARENT", error: "Assembly BOM push failed: network blip" }]);
+    expect(summary.productsCreated).toBe(1);
+    expect(pushProduct).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ sku: "PARENT" }),
+      expect.anything(),
+      [expect.objectContaining({ product_sku: "PARENT", component_sku: "COMP", quantity: 1 })]
+    );
   });
 
   it("pushes production BOM versions using the product's synced Cin7 ID", async () => {
