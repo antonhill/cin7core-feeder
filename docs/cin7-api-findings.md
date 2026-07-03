@@ -113,19 +113,31 @@ integer alongside `Position`; operations also want a bare `Name` field (kept alo
 `Operations[].Resources[].ResourceID` are required GUID references to Cin7's own Work Centre and
 Resource master data. Endpoints confirmed via the same two sources (github.com/nnhansg/dear-openapi,
 corroborated by github.com/FalconEyeSolutions/CIN7-DearInventory):
-- **Work Centre** — `GET /production/workcenters?Name=<code>` (list/search by name prefix; `Code`
-  returned so filter client-side), `POST /production/workcenters` (body `{"Workcenters":[...]}`)
-  to create. Creation is **safe to auto-do**: minimal required fields are just `Code`, `Name`,
-  `IsActive`, `IsCoMan: false`, `IsCoManPurchase: false`, `WorkCenterLocations: []`.
-  `src/cin7/work-centres.ts`'s `resolveWorkCentreId` looks up, auto-creates if missing.
-- **Resource** — `GET /production/resourceList?Name=<code>`, `POST /production/resource` (body
-  `{"Resources":[...]}`). Creation is **NOT auto-done** — required fields are `Name`,
-  `ResourceType` (`Labor`/`Machine`/`Other`), and `CycleDuration` (int seconds), none of which our
-  schema models, and critically: a `Labor`-type resource's `Name` must be a registered Cin7 user's
-  email, which can't be inferred from a code like `LAB1`. Guessing wrong risks creating a broken
-  or wrongly-typed resource in the customer's account. `src/cin7/resources.ts`'s
-  `resolveResourceId` only looks up — it throws a clear, actionable error ("create it manually in
-  Manufacturing > Resources") if the resource doesn't exist yet, rather than guessing.
+- **Work Centre** — `GET /production/workcenters?Page=1&Limit=100&Name=<code>` (list/search by
+  name prefix; `Code` returned so filter client-side), `POST /production/workcenters` (body
+  `{"Workcenters":[...]}`) to create. Creation is **safe to auto-do**: minimal required fields are
+  just `Code`, `Name`, `IsActive`, `IsCoMan: false`, `IsCoManPurchase: false`,
+  `WorkCenterLocations: []`. `src/cin7/work-centres.ts`'s `resolveWorkCentreId` looks up,
+  auto-creates if missing.
+- **Resource** — `GET /production/resourceList?Page=1&Limit=100&Name=<code>`,
+  `POST /production/resource` (body `{"Resources":[...]}`). Creation is **NOT auto-done** —
+  required fields are `Name`, `ResourceType` (`Labor`/`Machine`/`Other`), and `CycleDuration` (int
+  seconds), none of which our schema models, and critically: a `Labor`-type resource's `Name` must
+  be a registered Cin7 user's email, which can't be inferred from a code like `LAB1`. Guessing
+  wrong risks creating a broken or wrongly-typed resource in the customer's account.
+  `src/cin7/resources.ts`'s `resolveResourceId` only looks up — it throws a clear, actionable error
+  ("create it manually in Manufacturing > Resources") if the resource doesn't exist yet, rather
+  than guessing.
+
+**Gotcha confirmed 2026-07-03 live:** both GET endpoints above **require explicit `Page` and
+`Limit` query params** — calling with only `Name` returns Cin7's branded "Page not found" SPA
+shell as an HTTP **200** (not a real 404 or 400), which looks exactly like a wrong-path bug (same
+signature as the earlier `/ProductionBom` and `/BillOfMaterials` path mistakes) but isn't one. This
+one cost real debugging time: confirmed the account's Manufacturing module *was* enabled (real
+Work Centres existed in the UI, visually verified) and the path was verified correct by two
+independent sources before finding the actual cause — Cin7's generated C# client always sends all
+three params together, never `Name` alone. `src/cin7/http.ts`'s "200 but non-JSON body" error
+(includes method/path in the message) is what made this diagnosable at all.
 
 Both caches (`ProductionBomRefCaches`) are shared across a whole sync run in `run-sync.ts`, same
 pattern as the product-ID cache used for Assembly BOM component resolution.

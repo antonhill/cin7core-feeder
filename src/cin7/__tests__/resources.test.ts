@@ -21,6 +21,14 @@ describe("resolveResourceId", () => {
     expect(cache.get("MACH001")).toBe("res-1");
   });
 
+  it("always sends Page and Limit — same 'page not found' issue as Work Centres otherwise", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ Resources: [{ ResourceID: "res-1", Code: "MACH001" }] });
+    await resolveResourceId(creds, "MACH001", new Map());
+
+    const [, , options] = vi.mocked(cin7Request).mock.calls[0];
+    expect(options?.query).toMatchObject({ Page: 1, Limit: 100, Name: "MACH001" });
+  });
+
   it("throws a clear, actionable error instead of auto-creating a missing resource", async () => {
     vi.mocked(cin7Request).mockResolvedValueOnce({ Resources: [] });
     const cache = new Map<string, string | null | undefined>();

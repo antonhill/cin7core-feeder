@@ -22,6 +22,14 @@ describe("resolveWorkCentreId", () => {
     expect(cache.get("MIXING")).toBe("wc-1");
   });
 
+  it("always sends Page and Limit — a GET without them returns Cin7's branded 'page not found' page instead of a real 404", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ Workcenters: [{ WorkCenterID: "wc-1", Code: "MIXING" }] });
+    await resolveWorkCentreId(creds, "MIXING", new Map());
+
+    const [, , options] = vi.mocked(cin7Request).mock.calls[0];
+    expect(options?.query).toMatchObject({ Page: 1, Limit: 100, Name: "MIXING" });
+  });
+
   it("auto-creates a work centre that doesn't exist yet (safe per Cin7's docs)", async () => {
     vi.mocked(cin7Request)
       .mockResolvedValueOnce({ Workcenters: [] }) // not found

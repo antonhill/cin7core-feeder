@@ -29,8 +29,10 @@ interface Cin7ResourceListResponse {
 }
 
 async function findResourceByCode(creds: Cin7Credentials, code: string): Promise<{ id: string } | null> {
+  // Same fix as Work Centres: Cin7 returns its branded "Page not found" SPA
+  // shell (HTTP 200) for this endpoint without explicit Page/Limit params.
   const response = await cin7Request<Cin7ResourceListResponse>(creds, RESOURCE_LIST_PATH, {
-    query: { Name: code },
+    query: { Page: 1, Limit: 100, Name: code },
   });
   const match = (response.Resources ?? []).find((r) => r.Code === code || r.Name === code);
   return match?.ResourceID ? { id: match.ResourceID } : null;

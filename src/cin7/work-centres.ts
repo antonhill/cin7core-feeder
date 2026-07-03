@@ -29,8 +29,11 @@ function extractList(response: Cin7WorkCentresResponse): Cin7WorkCentre[] {
 }
 
 async function findWorkCentreByCode(creds: Cin7Credentials, code: string): Promise<{ id: string } | null> {
+  // Confirmed live: GET without Page/Limit returns Cin7's branded "Page not
+  // found" SPA shell (HTTP 200, not a real 404) instead of erroring — the
+  // generated C# client always sends all three params, never just Name.
   const response = await cin7Request<Cin7WorkCentresResponse>(creds, WORK_CENTRES_PATH, {
-    query: { Name: code },
+    query: { Page: 1, Limit: 100, Name: code },
   });
   const match = extractList(response).find((w) => w.Code === code || w.Name === code);
   return match?.WorkCenterID ? { id: match.WorkCenterID } : null;
