@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import {
+  debugFindBomExample,
   deleteInstance,
   listInstances,
   testInstanceConnection,
@@ -61,6 +62,14 @@ export default function InstancesSettingsPage() {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Testing…" } }));
     startTransition(async () => {
       const result = await testInstanceConnection(orgId, secret, instanceId);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
+  function handleFindBomExample(instanceId: string) {
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Searching…" } }));
+    startTransition(async () => {
+      const result = await debugFindBomExample(orgId, secret, instanceId);
       setTestResults((prev) => ({ ...prev, [instanceId]: result }));
     });
   }
@@ -144,6 +153,9 @@ export default function InstancesSettingsPage() {
                   <button onClick={() => handleTest(inst.id)} disabled={isPending} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
                     Test connection
                   </button>
+                  <button onClick={() => handleFindBomExample(inst.id)} disabled={isPending} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
+                    Fetch BOM example
+                  </button>
                   <button onClick={() => setEditingId(inst.id)} className="rounded border px-3 py-1 text-sm">
                     Edit
                   </button>
@@ -153,9 +165,11 @@ export default function InstancesSettingsPage() {
                 </div>
               </div>
               {testResults[inst.id] && (
-                <p className={`mt-2 text-xs ${testResults[inst.id].ok ? "text-green-700" : "text-red-700"}`}>
+                <pre
+                  className={`mt-2 max-h-96 overflow-auto whitespace-pre-wrap text-xs ${testResults[inst.id].ok ? "text-green-700" : "text-red-700"}`}
+                >
                   {testResults[inst.id].message}
-                </p>
+                </pre>
               )}
             </div>
           )
