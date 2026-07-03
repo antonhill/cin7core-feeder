@@ -46,8 +46,12 @@ export default function LoginPage() {
     // so it must be verified with the matching (deprecated but still
     // functional) "magiclink" type instead of "email".
     const { error: verifyError } = await supabase.auth.verifyOtp({ email, token: code, type: "magiclink" });
-    setIsSubmitting(false);
     if (verifyError) {
+      // Only re-enable the button on failure — on success, keep it disabled
+      // through the redirect below so an impatient second click can't
+      // resubmit the same (now-consumed) one-time code and show a confusing
+      // "invalid" error immediately after a real, successful sign-in.
+      setIsSubmitting(false);
       setError(verifyError.message);
       return;
     }

@@ -53,6 +53,17 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
+  // An already-signed-in user landing back on /login (e.g. after a
+  // successful sign-in the login form is still on screen, or a bookmark)
+  // would otherwise just see the form again — resubmitting a stale code
+  // there fails confusingly since one-time codes can't be reused, even
+  // though they're already logged in. Send them straight into the app.
+  if (user && request.nextUrl.pathname.startsWith("/login")) {
+    const homeUrl = request.nextUrl.clone();
+    homeUrl.pathname = "/";
+    return NextResponse.redirect(homeUrl);
+  }
+
   return response;
 }
 
