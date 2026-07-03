@@ -186,6 +186,16 @@ to ensure the name exists (GET, then POST if missing) before referencing it on a
 push, not to resolve/store an ID. Implemented generically in `src/cin7/reference-lookups.ts`
 (`ensureReferenceExists`, parameterized by path), wired into `pushProduct` for all three.
 
+**Confirmed live (2026-07-03): the uniqueness check is case-insensitive.** Creating UOM
+"hour" failed with `{"ErrorCode":400,"Exception":"This unit already exists. Unit name must
+be unique."}` even though the exists-check (GET, exact-case match) hadn't found it — an
+entry differing only in case (e.g. "Hour") was already there, and Cin7's own uniqueness
+check treats them as the same name. Fixed by making the exists-check case-insensitive, plus
+a belt-and-suspenders catch: any create rejection matching "already exists"/"must be
+unique" is now treated as success rather than propagated, since the desired end state (the
+entry exists) is already true regardless of the exact mismatch that caused the false
+negative.
+
 **Deliberately NOT extended to every reference-book field.** Also researched and confirmed:
 - **Tax Rules** (`/ref/tax`) — CRUD exists, but creating one requires an existing liability
   Account code (`Account`, `IsActive`, `TaxInclusive` all required) — too much implicit

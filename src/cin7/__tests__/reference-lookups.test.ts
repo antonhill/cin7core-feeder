@@ -1,8 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { ensureReferenceExists, REF_BRAND_PATH, REF_CATEGORY_PATH, REF_UOM_PATH } from "@/cin7/reference-lookups";
-import { cin7Request } from "@/cin7/http";
+import { cin7Request, Cin7ApiError } from "@/cin7/http";
 
-vi.mock("@/cin7/http", () => ({ cin7Request: vi.fn() }));
+vi.mock("@/cin7/http", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/cin7/http")>();
+  return { ...actual, cin7Request: vi.fn() };
+});
 
 const creds = { accountId: "a", applicationKey: "k", baseUrl: "https://example.test" };
 
@@ -52,7 +55,7 @@ describe("ensureReferenceExists", () => {
     expect(cin7Request).toHaveBeenCalledTimes(2);
   });
 
-  it("only treats an exact name match as existing", async () => {
+  it("doesn't treat a differently-named entry as a match", async () => {
     vi.mocked(cin7Request)
       .mockResolvedValueOnce({ CategoryList: [{ ID: "cat-1", Name: "Widgets Old" }] })
       .mockResolvedValueOnce({ ID: "cat-new", Name: "Widgets" });
@@ -63,5 +66,32 @@ describe("ensureReferenceExists", () => {
     expect(cin7Request).toHaveBeenCalledTimes(2);
     const [, , options] = vi.mocked(cin7Request).mock.calls[1];
     expect(options).toMatchObject({ method: "POST" });
+  });
+
+  it("matches an existing entry case-insensitively — confirmed live: Cin7's own uniqueness check is case-insensitive too", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ UnitList: [{ ID: "uom-1", Name: "Hour" }] });
+    const cache = new Set<string>();
+
+    await ensureReferenceExists(creds, REF_UOM_PATH, "hour", cache);
+
+    expect(cin7Request).toHaveBeenCalledTimes(1); // no create attempted — exact-case exists check alone would have missed this
+  });
+
+  it("treats Cin7's 'already exists' create rejection as success rather than an error", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ UnitList: [] }) // exists-check misses it (e.g. some other mismatch)
+      .mockRejectedValueOnce(new Cin7ApiError(400, "This unit already exists. Unit name must be unique.", false));
+    const cache = new Set<string>();
+
+    await expect(ensureReferenceExists(creds, REF_UOM_PATH, "hour", cache)).resolves.toBeUndefined();
+    expect(cache.has(`${REF_UOM_PATH}::hour`)).toBe(true);
+  });
+
+  it("still throws a create failure that isn't an 'already exists' conflict", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ UnitList: [] })
+      .mockRejectedValueOnce(new Cin7ApiError(400, "Name is required.", false));
+
+    await expect(ensureReferenceExists(creds, REF_UOM_PATH, "hour", new Set())).rejects.toThrow("Name is required.");
   });
 });

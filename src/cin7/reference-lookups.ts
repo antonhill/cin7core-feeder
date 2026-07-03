@@ -1,5 +1,5 @@
 import type { Cin7Credentials } from "@/cin7/types";
-import { cin7Request } from "@/cin7/http";
+import { cin7Request, Cin7ApiError } from "@/cin7/http";
 
 /**
  * Confirmed via github.com/nnhansg/dear-openapi's Apiary spec transcription
@@ -40,15 +40,35 @@ function extractEntries(response: Record<string, unknown>): Cin7RefEntry[] {
   return (arr as Cin7RefEntry[] | undefined) ?? [];
 }
 
+/**
+ * Case-insensitive: confirmed live that Cin7's own uniqueness check is
+ * case-insensitive too — a create of "hour" was rejected with "This unit
+ * already exists" when an entry differing only in case (e.g. "Hour") was
+ * already there. An exact-case comparison here would miss that match and
+ * attempt (and fail) to create a redundant entry.
+ */
 async function referenceExists(creds: Cin7Credentials, path: string, name: string): Promise<boolean> {
   const response = await cin7Request<Record<string, unknown>>(creds, path, {
     query: { Page: 1, Limit: 100, Name: name },
   });
-  return extractEntries(response).some((e) => e.Name === name);
+  const target = name.toLowerCase();
+  return extractEntries(response).some((e) => e.Name?.toLowerCase() === target);
 }
 
+/**
+ * Treats Cin7's own "already exists" rejection as success rather than an
+ * error — the desired end state (the entry exists) is already true. A
+ * belt-and-suspenders safety net alongside the case-insensitive existence
+ * check above, for any other mismatch (whitespace, a concurrent sync run)
+ * that could produce the same false negative.
+ */
 async function createReference(creds: Cin7Credentials, path: string, name: string): Promise<void> {
-  await cin7Request(creds, path, { method: "POST", body: { Name: name } });
+  try {
+    await cin7Request(creds, path, { method: "POST", body: { Name: name } });
+  } catch (e) {
+    if (e instanceof Cin7ApiError && /already exists|must be unique/i.test(e.message)) return;
+    throw e;
+  }
 }
 
 /**
