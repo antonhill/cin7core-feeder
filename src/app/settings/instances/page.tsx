@@ -1,7 +1,13 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { deleteInstance, listInstances, upsertInstance, type InstanceRecord } from "./actions";
+import {
+  deleteInstance,
+  listInstances,
+  testInstanceConnection,
+  upsertInstance,
+  type InstanceRecord,
+} from "./actions";
 
 const DEFAULT_BASE_URL = "https://inventory.dearsystems.com/ExternalApi/v2";
 
@@ -12,6 +18,7 @@ export default function InstancesSettingsPage() {
   const [instances, setInstances] = useState<InstanceRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [isPending, startTransition] = useTransition();
 
   function handleUnlock(e: React.FormEvent) {
@@ -47,6 +54,14 @@ export default function InstancesSettingsPage() {
       }
       setInstances(result.instances ?? []);
       setEditingId(null);
+    });
+  }
+
+  function handleTest(instanceId: string) {
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Testing…" } }));
+    startTransition(async () => {
+      const result = await testInstanceConnection(orgId, secret, instanceId);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
     });
   }
 
@@ -115,23 +130,33 @@ export default function InstancesSettingsPage() {
               onSubmit={(form) => handleSave(form, inst.id)}
             />
           ) : (
-            <div key={inst.id} className="flex items-center justify-between rounded border p-4">
-              <div>
-                <p className="font-medium">
-                  {inst.name} {!inst.active && <span className="text-xs text-gray-400">(inactive)</span>}
-                </p>
-                <p className="text-xs text-gray-500">
-                  Account {inst.accountId} · Key ····{inst.keyLast4} · {inst.baseUrl}
-                </p>
+            <div key={inst.id} className="rounded border p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-medium">
+                    {inst.name} {!inst.active && <span className="text-xs text-gray-400">(inactive)</span>}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Account {inst.accountId} · Key ····{inst.keyLast4} · {inst.baseUrl}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => handleTest(inst.id)} disabled={isPending} className="rounded border px-3 py-1 text-sm disabled:opacity-50">
+                    Test connection
+                  </button>
+                  <button onClick={() => setEditingId(inst.id)} className="rounded border px-3 py-1 text-sm">
+                    Edit
+                  </button>
+                  <button onClick={() => handleDelete(inst.id)} className="rounded border px-3 py-1 text-sm text-red-700">
+                    Delete
+                  </button>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <button onClick={() => setEditingId(inst.id)} className="rounded border px-3 py-1 text-sm">
-                  Edit
-                </button>
-                <button onClick={() => handleDelete(inst.id)} className="rounded border px-3 py-1 text-sm text-red-700">
-                  Delete
-                </button>
-              </div>
+              {testResults[inst.id] && (
+                <p className={`mt-2 text-xs ${testResults[inst.id].ok ? "text-green-700" : "text-red-700"}`}>
+                  {testResults[inst.id].message}
+                </p>
+              )}
             </div>
           )
         )}

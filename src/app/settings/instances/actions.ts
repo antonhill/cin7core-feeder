@@ -2,6 +2,7 @@
 
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
+import { testConnection } from "@/cin7/client";
 
 export interface InstanceRecord {
   id: string;
@@ -127,6 +128,40 @@ export async function upsertInstance(params: {
   }
 
   return listInstances(params.orgId, params.secret);
+}
+
+export interface TestConnectionResult {
+  ok: boolean;
+  message: string;
+}
+
+export async function testInstanceConnection(
+  orgId: string,
+  secret: string,
+  instanceId: string
+): Promise<TestConnectionResult> {
+  const secretError = checkSecret(secret);
+  if (secretError) return { ok: false, message: secretError };
+
+  try {
+    const db = createServiceRoleClient();
+    const { data, error } = await db
+      .from("cin7_instances")
+      .select("account_id, application_key_encrypted, base_url")
+      .eq("id", instanceId)
+      .eq("org_id", orgId)
+      .single();
+    if (error || !data) return { ok: false, message: error?.message ?? "Instance not found." };
+
+    const result = await testConnection({
+      accountId: data.account_id,
+      applicationKey: decrypt(data.application_key_encrypted),
+      baseUrl: data.base_url,
+    });
+    return { ok: result.ok, message: `[${result.status || "network"}] ${result.message}` };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
 }
 
 export async function deleteInstance(orgId: string, secret: string, instanceId: string): Promise<ActionResult> {
