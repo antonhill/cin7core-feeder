@@ -44,9 +44,23 @@ export async function middleware(request: NextRequest) {
 
   const {
     data: { user },
+    error: getUserError,
   } = await supabase.auth.getUser();
 
   const isPublic = PUBLIC_PATHS.some((p) => request.nextUrl.pathname.startsWith(p));
+
+  // getUser() validates the token against Supabase's Auth API on every
+  // request — under heavy testing volume (or any transient network blip)
+  // that call itself can be rate-limited/fail, which previously looked
+  // identical to "not logged in" and bounced a genuinely signed-in user
+  // back to /login. A rate-limit (429) specifically means "couldn't check",
+  // not "not authenticated" — fail open just for that narrow case rather
+  // than treating every possible error the same as a real logged-out user.
+  if (getUserError && getUserError.status === 429) {
+    console.error("middleware: getUser() rate-limited, allowing request through without a fresh check", getUserError);
+    return response;
+  }
+
   if (!user && !isPublic) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
