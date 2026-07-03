@@ -58,6 +58,18 @@ describe("pushProductionBom", () => {
     expect(result).toEqual({ status: "created" });
   });
 
+  it("wraps the body in a ProductionBOMs array (confirmed via a live 400: 'Required attribute ProductionBOMs is not provided')", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ ProductionBOMs: [] }).mockResolvedValueOnce({ ID: "new" });
+
+    await pushProductionBom(creds, cin7ProductId, version, operations, items);
+
+    const [, , options] = vi.mocked(cin7Request).mock.calls[1];
+    const body = options?.body as { ProductionBOMs: unknown[] };
+    expect(Array.isArray(body.ProductionBOMs)).toBe(true);
+    expect(body.ProductionBOMs).toHaveLength(1);
+    expect(body.ProductionBOMs[0]).toMatchObject({ ProductID: cin7ProductId });
+  });
+
   it("updates via PUT when a matching version already exists", async () => {
     vi.mocked(cin7Request)
       .mockResolvedValueOnce({ ProductionBOMs: [{ Version: "1" }] })

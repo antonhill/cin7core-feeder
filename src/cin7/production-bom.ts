@@ -96,9 +96,13 @@ export async function pushProductionBom(
   const payload = toCin7ProductionBomPayload(cin7ProductId, version, operations, items);
   const exists = await findProductionBomVersion(creds, cin7ProductId, version.version);
 
+  // Confirmed via a live 400 ("Required attribute ProductionBOMs is not
+  // provided"): the request body must be wrapped in a ProductionBOMs array,
+  // not a flat object — the endpoint apparently supports batching like
+  // /BillOfMaterials does.
   await cin7Request<Cin7ProductionBomResponse>(creds, PRODUCTION_BOM_PATH, {
     method: exists ? "PUT" : "POST",
-    body: payload,
+    body: { ProductionBOMs: [payload] },
   });
 
   return { status: exists ? "updated" : "created" };

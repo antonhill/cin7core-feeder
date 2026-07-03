@@ -54,8 +54,14 @@ resolve a product's `cin7_id` from `sync_state` (set when the product itself was
 attempting its Production BOM push; if the product hasn't been synced yet, the BOM push fails
 with a clear "no synced Cin7 ID yet" error rather than guessing.
 
-**Still unverified:** the exact field-level payload shape for operations/routing/work-centres/
-resources within the body — only the path and ID-based addressing are confirmed.
+**Body shape confirmed 2026-07-03** via a live 400 response: `{"ErrorCode":400,"Exception":
+"Required attribute ProductionBOMs is not provided."}`. The POST/PUT body must be wrapped as
+`{"ProductionBOMs": [...]}` — an array, matching `/BillOfMaterials`'s batch style — not a flat
+object as first assumed. `src/cin7/production-bom.ts` now wraps accordingly.
+
+**Still unverified:** the exact field-level payload shape *inside* one ProductionBOM entry
+(operations/routing/work-centres/resources) — the outer wrapper and ID-based addressing are
+confirmed, but a 400 on the inner fields would surface the same way and hasn't been ruled out yet.
 Worth relaying back to the client/proposal conversation, since it changes what's actually
 possible vs. what was scoped.
 
