@@ -30,6 +30,7 @@ describe("InventoryList (products) CSV", () => {
     expect(product.sku).toBe("P34-300-SWPC-DEMO");
     expect(product.barcode).toBe("810127745896");
     expect(product.active).toBe(true);
+    expect(product.status).toBe("ACTIVE");
   });
 
   it("only emits price tiers with a positive amount", () => {

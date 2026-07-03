@@ -53,6 +53,13 @@ export interface CanonicalProduct {
   type: "raw" | "component" | "assembly" | "finished" | "placeholder";
   tax_code: string | null;
   active: boolean;
+  /**
+   * The raw CSV Status value (e.g. "Active", "Inactive", "Deprecated"),
+   * pushed to Cin7 verbatim — Cin7 supports statuses beyond Active/Inactive
+   * (Deprecated is the confirmed soft-delete mechanism for products), so
+   * deriving just a boolean would lose that.
+   */
+  status: string;
 }
 
 export interface CanonicalPriceTier {
@@ -77,6 +84,7 @@ export function toCanonicalProduct(row: ProductCsvRow): CanonicalProduct {
     type: mapCin7ProductType(row.Type),
     tax_code: row.SaleTaxRule || row.PurchaseTaxRule || null,
     active: row.Status ? row.Status.toUpperCase() === "ACTIVE" : true,
+    status: row.Status || "Active",
   };
 }
 

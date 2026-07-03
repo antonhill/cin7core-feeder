@@ -13,6 +13,7 @@ const product = {
   uom_code: "Item",
   barcode: null,
   active: true,
+  status: "Active",
 };
 
 beforeEach(() => {
@@ -23,6 +24,11 @@ describe("toCin7ProductPayload", () => {
   it("maps core fields and Status", () => {
     const payload = toCin7ProductPayload(product);
     expect(payload).toMatchObject({ SKU: "SKU1", Name: "Widget", Category: "Widgets", UOM: "Item", Status: "Active" });
+  });
+
+  it("sends Status verbatim, not derived from active — supports Deprecated as the product-level soft-delete", () => {
+    const payload = toCin7ProductPayload({ ...product, active: true, status: "Deprecated" });
+    expect(payload.Status).toBe("Deprecated");
   });
 
   it("only includes valid Tier1-10 price tiers", () => {

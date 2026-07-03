@@ -10,6 +10,7 @@ export interface CanonicalProductRow {
   uom_code: string | null;
   barcode: string | null;
   active: boolean;
+  status: string;
 }
 
 export interface CanonicalPriceTierRow {
@@ -47,7 +48,10 @@ export function toCin7ProductPayload(product: CanonicalProductRow, priceTiers: C
     Category: product.category_code ?? undefined,
     UOM: product.uom_code ?? undefined,
     Barcode: product.barcode ?? undefined,
-    Status: product.active ? "Active" : "Inactive",
+    // Sent verbatim (not derived from `active`) — Cin7 supports statuses
+    // beyond Active/Inactive, e.g. "Deprecated" as the product-level
+    // soft-delete mechanism, confirmed by the client.
+    Status: product.status,
   };
   for (const tier of priceTiers) {
     const index = Number(tier.tier_code.replace(/^Tier/, ""));
