@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import {
   debugFindBomExample,
   debugProbeWorkCentrePaths,
@@ -10,57 +10,34 @@ import {
   upsertInstance,
   type InstanceRecord,
 } from "./actions";
-import { useOrgSession } from "@/lib/org-session";
 
 const DEFAULT_BASE_URL = "https://inventory.dearsystems.com/ExternalApi/v2";
 
 export default function InstancesSettingsPage() {
-  const { orgId, setOrgId, secret, setSecret } = useOrgSession();
-  const [unlocked, setUnlocked] = useState(false);
-  const autoUnlockTried = useRef(false);
   const [instances, setInstances] = useState<InstanceRecord[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // null = closed, "new" = add-instance modal, otherwise the instance id being edited
   const [modalTarget, setModalTarget] = useState<"new" | string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [isPending, startTransition] = useTransition();
 
-  function handleUnlock(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
+  useEffect(() => {
     startTransition(async () => {
-      const result = await listInstances(orgId, secret);
+      const result = await listInstances();
       if (!result.ok) {
         setError(result.error ?? "Unknown error");
         return;
       }
       setInstances(result.instances ?? []);
-      setUnlocked(true);
+      setLoaded(true);
     });
-  }
-
-  // If org ID + passphrase were already saved from another page (e.g. Import),
-  // unlock automatically instead of making the user retype/resubmit them.
-  // Silent on failure (e.g. a stale secret) — just leaves the normal unlock
-  // form showing, no scary error for something the user didn't initiate.
-  useEffect(() => {
-    if (autoUnlockTried.current || unlocked || !orgId || !secret) return;
-    autoUnlockTried.current = true;
-    startTransition(async () => {
-      const result = await listInstances(orgId, secret);
-      if (result.ok) {
-        setInstances(result.instances ?? []);
-        setUnlocked(true);
-      }
-    });
-  }, [orgId, secret, unlocked]);
+  }, []);
 
   function handleSave(form: FormData, instanceId?: string) {
     setError(null);
     startTransition(async () => {
       const result = await upsertInstance({
-        orgId,
-        secret,
         instanceId,
         name: String(form.get("name") ?? ""),
         accountId: String(form.get("accountId") ?? ""),
@@ -80,7 +57,7 @@ export default function InstancesSettingsPage() {
   function handleTest(instanceId: string) {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Testing…" } }));
     startTransition(async () => {
-      const result = await testInstanceConnection(orgId, secret, instanceId);
+      const result = await testInstanceConnection(instanceId);
       setTestResults((prev) => ({ ...prev, [instanceId]: result }));
     });
   }
@@ -88,7 +65,7 @@ export default function InstancesSettingsPage() {
   function handleFindBomExample(instanceId: string) {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Searching…" } }));
     startTransition(async () => {
-      const result = await debugFindBomExample(orgId, secret, instanceId);
+      const result = await debugFindBomExample(instanceId);
       setTestResults((prev) => ({ ...prev, [instanceId]: result }));
     });
   }
@@ -96,7 +73,7 @@ export default function InstancesSettingsPage() {
   function handleProbeWorkCentrePaths(instanceId: string) {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Probing (~10s)…" } }));
     startTransition(async () => {
-      const result = await debugProbeWorkCentrePaths(orgId, secret, instanceId);
+      const result = await debugProbeWorkCentrePaths(instanceId);
       setTestResults((prev) => ({ ...prev, [instanceId]: result }));
     });
   }
@@ -105,53 +82,13 @@ export default function InstancesSettingsPage() {
     if (!confirm("Delete this Cin7 Core instance connection?")) return;
     setError(null);
     startTransition(async () => {
-      const result = await deleteInstance(orgId, secret, instanceId);
+      const result = await deleteInstance(instanceId);
       if (!result.ok) {
         setError(result.error ?? "Unknown error");
         return;
       }
       setInstances(result.instances ?? []);
     });
-  }
-
-  if (!unlocked) {
-    return (
-      <main className="mx-auto max-w-md px-6 py-12">
-        <h1 className="text-3xl font-bold tracking-tight text-slate-900">Cin7 Core Instances</h1>
-        <p className="mt-2 text-lg text-slate-500">Connect and manage the Cin7 Core instances this org syncs to.</p>
-        <form onSubmit={handleUnlock} className="mt-8 flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <label className="flex flex-col gap-1.5 text-base">
-            <span className="font-medium text-slate-700">Organization ID</span>
-            <input
-              value={orgId}
-              onChange={(e) => setOrgId(e.target.value)}
-              required
-              className="rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm focus:border-indigo-500 focus:outline-none"
-            />
-          </label>
-          <label className="flex flex-col gap-1.5 text-base">
-            <span className="font-medium text-slate-700">Passphrase</span>
-            <input
-              type="password"
-              value={secret}
-              onChange={(e) => setSecret(e.target.value)}
-              required
-              className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none"
-            />
-          </label>
-          <button
-            type="submit"
-            disabled={isPending}
-            className="mt-1 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-          >
-            {isPending ? "Loading…" : "Unlock"}
-          </button>
-        </form>
-        {error && (
-          <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
-        )}
-      </main>
-    );
   }
 
   const editingInstance = typeof modalTarget === "string" ? instances.find((i) => i.id === modalTarget) : undefined;
@@ -161,7 +98,7 @@ export default function InstancesSettingsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-slate-900">Cin7 Core Instances</h1>
-          <p className="mt-1 text-base text-slate-500">Org {orgId}</p>
+          <p className="mt-1 text-base text-slate-500">Connect and manage the Cin7 Core instances your org syncs to.</p>
         </div>
         <button
           onClick={() => setModalTarget("new")}
@@ -214,7 +151,7 @@ export default function InstancesSettingsPage() {
             )}
           </div>
         ))}
-        {instances.length === 0 && <p className="text-base text-slate-500">No instances connected yet.</p>}
+        {loaded && instances.length === 0 && <p className="text-base text-slate-500">No instances connected yet.</p>}
       </div>
 
       {modalTarget && (

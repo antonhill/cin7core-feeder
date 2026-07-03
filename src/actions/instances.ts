@@ -1,7 +1,7 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { checkSecret } from "@/lib/check-secret";
+import { requireCurrentOrg } from "@/lib/current-org";
 
 export interface InstancePickerItem {
   id: string;
@@ -16,12 +16,9 @@ export interface ListInstancesForPickerResult {
 }
 
 /** Minimal instance list for an instance picker — no key/account details. Shared by the Import and Templates pages. */
-export async function listInstancesForPicker(orgId: string, secret: string): Promise<ListInstancesForPickerResult> {
-  const secretError = checkSecret(secret);
-  if (secretError) return { ok: false, error: secretError };
-  if (!orgId) return { ok: false, error: "Organization ID is required." };
-
+export async function listInstancesForPicker(): Promise<ListInstancesForPickerResult> {
   try {
+    const { orgId } = await requireCurrentOrg();
     const db = createServiceRoleClient();
     const { data, error } = await db
       .from("cin7_instances")

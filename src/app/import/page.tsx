@@ -4,7 +4,6 @@ import { useActionState, useState, useTransition } from "react";
 import { importCsvAction, pushToCin7Action, type ImportActionState } from "./actions";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import type { InstanceSyncOutcome } from "@/sync/sync-org";
-import { useOrgSession } from "@/lib/org-session";
 
 const INITIAL_STATE: ImportActionState = { status: "idle" };
 
@@ -50,7 +49,6 @@ function StatPill({ label, value, tone = "neutral" }: { label: string; value: nu
 
 export default function ImportPage() {
   const [state, formAction, isImportPending] = useActionState(importCsvAction, INITIAL_STATE);
-  const { orgId, setOrgId, secret, setSecret } = useOrgSession();
 
   const [instances, setInstances] = useState<InstancePickerItem[]>([]);
   const [instancesError, setInstancesError] = useState<string | null>(null);
@@ -64,7 +62,7 @@ export default function ImportPage() {
   function handleLoadInstances() {
     setInstancesError(null);
     startLoadTransition(async () => {
-      const result = await listInstancesForPicker(orgId, secret);
+      const result = await listInstancesForPicker();
       if (!result.ok) {
         setInstancesError(result.error ?? "Unknown error");
         return;
@@ -81,7 +79,7 @@ export default function ImportPage() {
     setPushError(null);
     setPushOutcomes(null);
     startPushTransition(async () => {
-      const result = await pushToCin7Action(orgId, secret, selectedIds);
+      const result = await pushToCin7Action(selectedIds);
       if (!result.ok) {
         setPushError(result.error ?? "Unknown error");
         return;
@@ -105,17 +103,6 @@ export default function ImportPage() {
           <StepHeader step={1} title="Import a CSV" done={state.status === "success"} />
 
           <form action={formAction} className="mt-5 flex flex-col gap-4">
-            <label className="flex flex-col gap-1.5 text-base">
-              <span className="font-medium text-slate-700">Organization ID</span>
-              <input
-                name="orgId"
-                value={orgId}
-                onChange={(e) => setOrgId(e.target.value)}
-                required
-                className="rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm focus:border-indigo-500 focus:outline-none"
-              />
-            </label>
-
             <div className="grid grid-cols-2 gap-3">
               <label className="flex flex-col gap-1.5 text-base">
                 <span className="font-medium text-slate-700">Import type</span>
@@ -143,18 +130,6 @@ export default function ImportPage() {
                 />
               </label>
             </div>
-
-            <label className="flex flex-col gap-1.5 text-base">
-              <span className="font-medium text-slate-700">Passphrase</span>
-              <input
-                name="secret"
-                type="password"
-                value={secret}
-                onChange={(e) => setSecret(e.target.value)}
-                required
-                className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none"
-              />
-            </label>
 
             <button
               type="submit"
@@ -208,7 +183,7 @@ export default function ImportPage() {
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <StepHeader step={2} title="Choose instance(s)" done={selectedIds.length > 0} />
           <p className="mt-1 pl-11 text-base text-slate-500">
-            Pushes the org&apos;s current canonical data (products + Assembly BOM) to whichever
+            Pushes your org&apos;s current canonical data (products + Assembly BOM) to whichever
             instances you select here.
           </p>
 
@@ -216,7 +191,7 @@ export default function ImportPage() {
             <button
               type="button"
               onClick={handleLoadInstances}
-              disabled={isLoadingInstances || !orgId || !secret}
+              disabled={isLoadingInstances}
               className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             >
               {isLoadingInstances ? "Loading…" : "Load instances"}

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { signOutAction } from "@/actions/auth";
 
 const LINKS = [
   { href: "/import", label: "Import & Sync" },
@@ -9,8 +10,12 @@ const LINKS = [
   { href: "/settings/instances", label: "Cin7 Instances" },
 ];
 
-export function AppNav() {
+export function AppNav({ userEmail, isSuperAdmin }: { userEmail: string | null; isSuperAdmin: boolean }) {
   const pathname = usePathname();
+
+  if (pathname.startsWith("/login") || pathname.startsWith("/auth")) return null;
+
+  const links = isSuperAdmin ? [...LINKS, { href: "/admin", label: "Admin" }] : LINKS;
 
   return (
     <nav className="border-b border-slate-200 bg-white">
@@ -21,8 +26,8 @@ export function AppNav() {
           </span>
           Cin7 Feeder
         </Link>
-        <div className="flex items-center gap-1">
-          {LINKS.map((link) => {
+        <div className="flex flex-1 items-center gap-1">
+          {links.map((link) => {
             const active = pathname.startsWith(link.href);
             return (
               <Link
@@ -37,6 +42,16 @@ export function AppNav() {
             );
           })}
         </div>
+        {userEmail && (
+          <div className="flex items-center gap-3 text-sm text-slate-500">
+            <span>{userEmail}</span>
+            <form action={signOutAction}>
+              <button type="submit" className="rounded-full border border-slate-300 px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50">
+                Sign out
+              </button>
+            </form>
+          </div>
+        )}
       </div>
     </nav>
   );

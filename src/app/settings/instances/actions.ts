@@ -4,6 +4,7 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
 import { findProductWithBom, probeWorkCentrePaths } from "@/cin7/debug";
+import { requireCurrentOrg } from "@/lib/current-org";
 
 export interface InstanceRecord {
   id: string;
@@ -19,13 +20,6 @@ export interface ActionResult {
   ok: boolean;
   error?: string;
   instances?: InstanceRecord[];
-}
-
-function checkSecret(secret: string): string | null {
-  const expected = process.env.SYNC_SHARED_SECRET;
-  if (!expected) return "SYNC_SHARED_SECRET is not configured on the server.";
-  if (secret !== expected) return "Incorrect passphrase.";
-  return null;
 }
 
 async function toRecord(row: {
@@ -55,12 +49,9 @@ async function toRecord(row: {
   };
 }
 
-export async function listInstances(orgId: string, secret: string): Promise<ActionResult> {
-  const secretError = checkSecret(secret);
-  if (secretError) return { ok: false, error: secretError };
-  if (!orgId) return { ok: false, error: "Organization ID is required." };
-
+export async function listInstances(): Promise<ActionResult> {
   try {
+    const { orgId } = await requireCurrentOrg();
     const db = createServiceRoleClient();
     const { data, error } = await db
       .from("cin7_instances")
@@ -76,8 +67,6 @@ export async function listInstances(orgId: string, secret: string): Promise<Acti
 }
 
 export async function upsertInstance(params: {
-  orgId: string;
-  secret: string;
   instanceId?: string;
   name: string;
   accountId: string;
@@ -85,9 +74,6 @@ export async function upsertInstance(params: {
   baseUrl: string;
   active: boolean;
 }): Promise<ActionResult> {
-  const secretError = checkSecret(params.secret);
-  if (secretError) return { ok: false, error: secretError };
-  if (!params.orgId) return { ok: false, error: "Organization ID is required." };
   if (!params.name.trim()) return { ok: false, error: "Name is required." };
   if (!params.accountId.trim()) return { ok: false, error: "Account ID is required." };
   if (!params.instanceId && !params.applicationKey) {
@@ -95,6 +81,7 @@ export async function upsertInstance(params: {
   }
 
   try {
+    const { orgId } = await requireCurrentOrg();
     const db = createServiceRoleClient();
 
     if (params.instanceId) {
@@ -111,11 +98,11 @@ export async function upsertInstance(params: {
         .from("cin7_instances")
         .update(update)
         .eq("id", params.instanceId)
-        .eq("org_id", params.orgId);
+        .eq("org_id", orgId);
       if (error) return { ok: false, error: error.message };
     } else {
       const { error } = await db.from("cin7_instances").insert({
-        org_id: params.orgId,
+        org_id: orgId,
         name: params.name.trim(),
         account_id: params.accountId.trim(),
         application_key_encrypted: encrypt(params.applicationKey!),
@@ -128,7 +115,7 @@ export async function upsertInstance(params: {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
 
-  return listInstances(params.orgId, params.secret);
+  return listInstances();
 }
 
 export interface TestConnectionResult {
@@ -136,29 +123,27 @@ export interface TestConnectionResult {
   message: string;
 }
 
-export async function testInstanceConnection(
-  orgId: string,
-  secret: string,
-  instanceId: string
-): Promise<TestConnectionResult> {
-  const secretError = checkSecret(secret);
-  if (secretError) return { ok: false, message: secretError };
+async function loadInstanceCreds(instanceId: string) {
+  const { orgId } = await requireCurrentOrg();
+  const db = createServiceRoleClient();
+  const { data, error } = await db
+    .from("cin7_instances")
+    .select("account_id, application_key_encrypted, base_url")
+    .eq("id", instanceId)
+    .eq("org_id", orgId)
+    .single();
+  if (error || !data) throw new Error(error?.message ?? "Instance not found.");
+  return {
+    accountId: data.account_id,
+    applicationKey: decrypt(data.application_key_encrypted),
+    baseUrl: data.base_url,
+  };
+}
 
+export async function testInstanceConnection(instanceId: string): Promise<TestConnectionResult> {
   try {
-    const db = createServiceRoleClient();
-    const { data, error } = await db
-      .from("cin7_instances")
-      .select("account_id, application_key_encrypted, base_url")
-      .eq("id", instanceId)
-      .eq("org_id", orgId)
-      .single();
-    if (error || !data) return { ok: false, message: error?.message ?? "Instance not found." };
-
-    const result = await testConnection({
-      accountId: data.account_id,
-      applicationKey: decrypt(data.application_key_encrypted),
-      baseUrl: data.base_url,
-    });
+    const creds = await loadInstanceCreds(instanceId);
+    const result = await testConnection(creds);
     return { ok: result.ok, message: `[${result.status || "network"}] ${result.message}` };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
@@ -170,29 +155,10 @@ export async function testInstanceConnection(
  * Bill of Materials configured and returns its raw JSON, so we can see
  * Cin7's own authoritative field shape instead of guessing further.
  */
-export async function debugFindBomExample(
-  orgId: string,
-  secret: string,
-  instanceId: string
-): Promise<TestConnectionResult> {
-  const secretError = checkSecret(secret);
-  if (secretError) return { ok: false, message: secretError };
-
+export async function debugFindBomExample(instanceId: string): Promise<TestConnectionResult> {
   try {
-    const db = createServiceRoleClient();
-    const { data, error } = await db
-      .from("cin7_instances")
-      .select("account_id, application_key_encrypted, base_url")
-      .eq("id", instanceId)
-      .eq("org_id", orgId)
-      .single();
-    if (error || !data) return { ok: false, message: error?.message ?? "Instance not found." };
-
-    const result = await findProductWithBom({
-      accountId: data.account_id,
-      applicationKey: decrypt(data.application_key_encrypted),
-      baseUrl: data.base_url,
-    });
+    const creds = await loadInstanceCreds(instanceId);
+    const result = await findProductWithBom(creds);
     if (!result.found) return { ok: false, message: "No product with a configured BOM was found." };
     return { ok: true, message: JSON.stringify(result.product, null, 2) };
   } catch (e) {
@@ -206,29 +172,10 @@ export async function debugFindBomExample(
  * path and the account genuinely having Work Centres configured. Tries
  * several plausible casing/path variants live and reports which succeed.
  */
-export async function debugProbeWorkCentrePaths(
-  orgId: string,
-  secret: string,
-  instanceId: string
-): Promise<TestConnectionResult> {
-  const secretError = checkSecret(secret);
-  if (secretError) return { ok: false, message: secretError };
-
+export async function debugProbeWorkCentrePaths(instanceId: string): Promise<TestConnectionResult> {
   try {
-    const db = createServiceRoleClient();
-    const { data, error } = await db
-      .from("cin7_instances")
-      .select("account_id, application_key_encrypted, base_url")
-      .eq("id", instanceId)
-      .eq("org_id", orgId)
-      .single();
-    if (error || !data) return { ok: false, message: error?.message ?? "Instance not found." };
-
-    const results = await probeWorkCentrePaths({
-      accountId: data.account_id,
-      applicationKey: decrypt(data.application_key_encrypted),
-      baseUrl: data.base_url,
-    });
+    const creds = await loadInstanceCreds(instanceId);
+    const results = await probeWorkCentrePaths(creds);
     const anySucceeded = results.some((r) => r.looksLikeJson);
     return { ok: anySucceeded, message: JSON.stringify(results, null, 2) };
   } catch (e) {
@@ -236,11 +183,9 @@ export async function debugProbeWorkCentrePaths(
   }
 }
 
-export async function deleteInstance(orgId: string, secret: string, instanceId: string): Promise<ActionResult> {
-  const secretError = checkSecret(secret);
-  if (secretError) return { ok: false, error: secretError };
-
+export async function deleteInstance(instanceId: string): Promise<ActionResult> {
   try {
+    const { orgId } = await requireCurrentOrg();
     const db = createServiceRoleClient();
     const { error } = await db.from("cin7_instances").delete().eq("id", instanceId).eq("org_id", orgId);
     if (error) return { ok: false, error: error.message };
@@ -248,5 +193,5 @@ export async function deleteInstance(orgId: string, secret: string, instanceId: 
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
 
-  return listInstances(orgId, secret);
+  return listInstances();
 }

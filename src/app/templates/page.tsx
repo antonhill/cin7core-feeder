@@ -3,7 +3,6 @@
 import { useState, useTransition } from "react";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import { downloadLiveTemplateAction, downloadTemplateAction } from "./actions";
-import { useOrgSession } from "@/lib/org-session";
 
 type Kind = "products" | "assembly_bom";
 type Source = "canonical" | "live";
@@ -21,7 +20,6 @@ function triggerDownload(csv: string, filename: string) {
 }
 
 export default function TemplatesPage() {
-  const { orgId, setOrgId, secret, setSecret } = useOrgSession();
   const [kind, setKind] = useState<Kind>("products");
   const [source, setSource] = useState<Source>("canonical");
 
@@ -37,7 +35,7 @@ export default function TemplatesPage() {
   function handleLoadInstances() {
     setInstancesError(null);
     startLoadTransition(async () => {
-      const result = await listInstancesForPicker(orgId, secret);
+      const result = await listInstancesForPicker();
       if (!result.ok) {
         setInstancesError(result.error ?? "Unknown error");
         return;
@@ -53,8 +51,8 @@ export default function TemplatesPage() {
     startDownloadTransition(async () => {
       const result =
         source === "canonical"
-          ? await downloadTemplateAction(orgId, secret, kind)
-          : await downloadLiveTemplateAction(orgId, secret, selectedInstanceId, kind);
+          ? await downloadTemplateAction(kind)
+          : await downloadLiveTemplateAction(selectedInstanceId, kind);
       if (!result.ok || !result.csv) {
         setDownloadError(result.error ?? "Unknown error");
         return;
@@ -64,7 +62,7 @@ export default function TemplatesPage() {
     });
   }
 
-  const canDownload = orgId && secret && (source === "canonical" || selectedInstanceId);
+  const canDownload = source === "canonical" || selectedInstanceId;
 
   return (
     <main className="mx-auto max-w-2xl px-6 py-12">
@@ -74,26 +72,7 @@ export default function TemplatesPage() {
       </p>
 
       <div className="mt-10 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <label className="flex flex-col gap-1.5 text-base">
-          <span className="font-medium text-slate-700">Organization ID</span>
-          <input
-            value={orgId}
-            onChange={(e) => setOrgId(e.target.value)}
-            className="rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm focus:border-indigo-500 focus:outline-none"
-          />
-        </label>
-
-        <label className="mt-4 flex flex-col gap-1.5 text-base">
-          <span className="font-medium text-slate-700">Passphrase</span>
-          <input
-            type="password"
-            value={secret}
-            onChange={(e) => setSecret(e.target.value)}
-            className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none"
-          />
-        </label>
-
-        <div className="mt-6 grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1.5 text-base">
             <span className="font-medium text-slate-700">Data</span>
             <select
@@ -139,7 +118,7 @@ export default function TemplatesPage() {
             <button
               type="button"
               onClick={handleLoadInstances}
-              disabled={isLoadingInstances || !orgId || !secret}
+              disabled={isLoadingInstances}
               className="mt-3 rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-white disabled:opacity-50"
             >
               {isLoadingInstances ? "Loading…" : "Load instances"}
