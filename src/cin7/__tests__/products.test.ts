@@ -51,7 +51,7 @@ describe("pushProduct", () => {
 
   it("updates via PUT when the SKU already exists", async () => {
     vi.mocked(cin7Request)
-      .mockResolvedValueOnce({ Products: [{ ID: "existing-id" }] })
+      .mockResolvedValueOnce({ Products: [{ ID: "existing-id", SKU: "SKU1" }] })
       .mockResolvedValueOnce({ ID: "existing-id" });
 
     const result = await pushProduct(creds, product);
@@ -59,5 +59,18 @@ describe("pushProduct", () => {
     expect(result).toEqual({ cin7Id: "existing-id", status: "updated" });
     const [, , options] = vi.mocked(cin7Request).mock.calls[1];
     expect(options).toMatchObject({ method: "PUT", body: expect.objectContaining({ ID: "existing-id" }) });
+  });
+
+  it("creates rather than overwrites when the lookup returns a non-matching SKU", async () => {
+    // Guards against a filter param Cin7 silently ignores, which would
+    // otherwise return an arbitrary product and get PUT-overwritten.
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ Products: [{ ID: "unrelated-id", SKU: "SOME-OTHER-SKU" }] })
+      .mockResolvedValueOnce({ ID: "new-id" });
+
+    const result = await pushProduct(creds, product);
+
+    expect(result).toEqual({ cin7Id: "new-id", status: "created" });
+    expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/Product", expect.objectContaining({ method: "POST" }));
   });
 });

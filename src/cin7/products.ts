@@ -17,7 +17,7 @@ export interface CanonicalPriceTierRow {
 }
 
 interface Cin7ProductListResponse {
-  Products?: { ID: string }[];
+  Products?: { ID: string; SKU?: string }[];
 }
 
 interface Cin7ProductResponse {
@@ -48,13 +48,25 @@ export function toCin7ProductPayload(product: CanonicalProductRow, priceTiers: C
   return payload;
 }
 
-/** Looks up a product by SKU. Returns null if it doesn't exist in this Cin7 instance yet. */
+/**
+ * Looks up a product by SKU. Returns null if it doesn't exist in this Cin7
+ * instance yet.
+ *
+ * SAFETY: the `SKU` query param name/behaviour on GET /Product is
+ * unverified — if Cin7 silently ignores an unrecognized filter param, this
+ * would return an arbitrary product instead of erroring, and treating that
+ * as "found" would make pushProduct overwrite the WRONG product via PUT.
+ * So a result only counts as a match if the returned row's own SKU field
+ * equals what we searched for — anything else is treated as not-found
+ * (falls through to create instead of silently corrupting another record).
+ */
 export async function findProductBySku(creds: Cin7Credentials, sku: string): Promise<{ id: string } | null> {
   const response = await cin7Request<Cin7ProductListResponse>(creds, "/Product", {
     query: { SKU: sku, page: 1, limit: 1 },
   });
   const first = response.Products?.[0];
-  return first ? { id: first.ID } : null;
+  if (!first || first.SKU !== sku) return null;
+  return { id: first.ID };
 }
 
 export type ProductPushStatus = "created" | "updated";
