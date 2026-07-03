@@ -29,7 +29,12 @@ See `supabase/migrations/0001_canonical_schema.sql`. Key tables: `organizations`
 
 ## Cin7 Core API
 
-Reference: https://dearinventory.docs.apiary.io/ — verify endpoints, auth scheme and rate limits against current docs before extending `src/cin7/` (do not assume from this README).
+Reference: https://dearinventory.docs.apiary.io/. See `docs/cin7-api-findings.md` for verified
+auth scheme, endpoints, pagination and rate limits — including that Production BOM push **is**
+supported via API (`ProductionBom` resource), correcting the original proposal's assumption that
+only Assembly BOMs would be needed. A few fields (Production BOM payload shape, Category/UOM
+write support) are still unverified against a live sandbox — confirm those before extending
+`src/cin7/`.
 
 ## Setup
 
