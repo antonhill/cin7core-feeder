@@ -71,6 +71,19 @@ export async function findProductBySku(creds: Cin7Credentials, sku: string): Pro
 
 export type ProductPushStatus = "created" | "updated";
 
+/**
+ * Extracts the created/updated record's ID, or throws with the actual
+ * response body if the "ID" field mapping assumption turns out to be wrong
+ * — surfacing the real shape via sync_state.last_error instead of silently
+ * storing cin7_id as null (which happened in a live test run).
+ */
+function requireId(response: Cin7ProductResponse, action: string): string {
+  if (!response.ID) {
+    throw new Error(`${action} response had no ID field — raw response: ${JSON.stringify(response).slice(0, 500)}`);
+  }
+  return response.ID;
+}
+
 /** Create-or-update a product by SKU. Cin7 has no single upsert call — this does the GET-then-branch itself. */
 export async function pushProduct(
   creds: Cin7Credentials,
@@ -85,12 +98,12 @@ export async function pushProduct(
       method: "PUT",
       body: { ID: existing.id, ...payload },
     });
-    return { cin7Id: updated.ID, status: "updated" };
+    return { cin7Id: requireId(updated, "PUT /Product"), status: "updated" };
   }
 
   const created = await cin7Request<Cin7ProductResponse>(creds, "/Product", {
     method: "POST",
     body: payload,
   });
-  return { cin7Id: created.ID, status: "created" };
+  return { cin7Id: requireId(created, "POST /Product"), status: "created" };
 }

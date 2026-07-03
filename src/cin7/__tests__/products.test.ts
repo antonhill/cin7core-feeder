@@ -73,4 +73,12 @@ describe("pushProduct", () => {
     expect(result).toEqual({ cin7Id: "new-id", status: "created" });
     expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/Product", expect.objectContaining({ method: "POST" }));
   });
+
+  it("throws with the raw response instead of silently returning a null cin7Id", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ Products: [] })
+      .mockResolvedValueOnce({ SomeOtherField: "value" } as never);
+
+    await expect(pushProduct(creds, product)).rejects.toThrow(/no ID field[\s\S]*SomeOtherField/);
+  });
 });
