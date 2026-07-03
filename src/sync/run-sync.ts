@@ -115,7 +115,10 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
 
       let pushResult;
       try {
-        pushResult = await pushProduct(creds, product, priceTiers ?? [], bomLinesTyped);
+        // cin7IdBySku doubles as the component-ID resolution cache for BOM
+        // lines — a component synced earlier in this same run (or a prior
+        // run) resolves without an extra API call.
+        pushResult = await pushProduct(creds, product, priceTiers ?? [], bomLinesTyped, cin7IdBySku);
       } catch (e) {
         throw new Error(`Product push failed: ${describeError(e)}`);
       }

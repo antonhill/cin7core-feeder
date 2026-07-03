@@ -27,20 +27,28 @@ function isServiceLine(line: CanonicalAssemblyBomLineRow): boolean {
  * are set via the same POST/PUT /Product call used for the product's core
  * fields — see products.ts's pushProduct, which merges these fields in.
  *
- * Field names below are confirmed against the generated C# client's model
- * classes (ProductPutRequestBillOfMaterialsProductsInner.cs /
- * ...ServicesInner.cs) and the .apib spec's "Bill Of Material Product/Service
- * Model" sections — not a guess. Two things the spec marks "required if
- * BillOfMaterial is true" live on the parent Product payload itself
- * (QuantityToProduce, AssemblyCostEstimationMethod) — merged in here since
- * this is the only place that knows whether the product has a BOM at all.
+ * Field names confirmed against the generated C# client's model classes and
+ * the .apib spec, THEN cross-checked 2026-07-03 against a real product with
+ * a working BOM fetched live (Settings UI's "Fetch BOM example" diagnostic):
+ * every component/service line in that real example carried BOTH
+ * `ComponentProductID` (Cin7 GUID) and `ProductCode`/`Name` (SKU) — sending
+ * SKU alone (what we did before) is what produced the vague "is invalid"
+ * error. `componentIdBySku` — resolved via products.ts's resolveComponentIds
+ * — supplies the GUID when the component has already been synced; if not
+ * yet resolvable, the line still carries ProductCode/Name alone as a
+ * fallback (spec says either should work, though the live example always
+ * had both).
  */
-export function toCin7BomFields(lines: CanonicalAssemblyBomLineRow[]): Record<string, unknown> {
+export function toCin7BomFields(
+  lines: CanonicalAssemblyBomLineRow[],
+  componentIdBySku: Map<string, string | null | undefined> = new Map()
+): Record<string, unknown> {
   if (!lines.length) return {};
 
   const components = lines
     .filter((l) => !isServiceLine(l))
     .map((l) => ({
+      ComponentProductID: componentIdBySku.get(l.component_sku) ?? undefined,
       ProductCode: l.component_sku,
       Quantity: l.quantity,
       WastageQuantity: l.wastage_quantity ?? undefined,
@@ -50,14 +58,15 @@ export function toCin7BomFields(lines: CanonicalAssemblyBomLineRow[]): Record<st
   const services = lines
     .filter(isServiceLine)
     .map((l) => ({
+      ComponentProductID: componentIdBySku.get(l.component_sku) ?? undefined,
       // The Service model's name field is "Name", not "ProductCode" (unlike
       // the Product component model) — confirmed from the C# model class.
       Name: l.component_sku,
       Quantity: l.quantity,
       ExpenseAccount: l.expense_account ?? undefined,
-      // PriceTier is documented as an integer on Cin7's side; we only store
-      // a tier name/string (e.g. "Retail in VAT"), so it's omitted here
-      // rather than sent as a type mismatch.
+      // PriceTier is documented (and confirmed live) as an integer on Cin7's
+      // side; we only store a tier name/string (e.g. "Retail in VAT"), so
+      // it's omitted here rather than sent as a type mismatch.
     }));
 
   return {
@@ -66,7 +75,7 @@ export function toCin7BomFields(lines: CanonicalAssemblyBomLineRow[]): Record<st
     // 1 unit of the finished good (unlike Production BOM's batch quantity).
     QuantityToProduce: 1,
     // Required when BillOfMaterial=true per the spec; exact accepted values
-    // beyond this sample ("Average Cost") are unverified.
+    // beyond this sample ("Average Cost", confirmed live too) are unverified.
     AssemblyCostEstimationMethod: "Average Cost",
     // Omit rather than send an empty array — the spec doesn't require
     // either array to exist, only conditionally requires fields within items

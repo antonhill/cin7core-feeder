@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { toCin7ProductPayload, pushProduct } from "@/cin7/products";
+import { toCin7ProductPayload, pushProduct, resolveComponentIds } from "@/cin7/products";
 import { cin7Request } from "@/cin7/http";
 
 vi.mock("@/cin7/http", () => ({ cin7Request: vi.fn() }));
@@ -94,8 +94,9 @@ describe("pushProduct", () => {
 
   it("merges Assembly BOM fields into the same Product push (Cin7 has no separate BOM endpoint)", async () => {
     vi.mocked(cin7Request)
-      .mockResolvedValueOnce({ Products: [] })
-      .mockResolvedValueOnce({ ID: "new-id" });
+      .mockResolvedValueOnce({ Products: [{ ID: "comp-id", SKU: "COMP1" }] }) // resolveComponentIds -> find COMP1
+      .mockResolvedValueOnce({ Products: [] }) // findProductBySku(SKU1) -> not found
+      .mockResolvedValueOnce({ ID: "new-id" }); // create
 
     const bomLines = [
       {
@@ -112,9 +113,41 @@ describe("pushProduct", () => {
 
     await pushProduct(creds, product, [], bomLines);
 
-    const [, , options] = vi.mocked(cin7Request).mock.calls[1];
+    const [, , options] = vi.mocked(cin7Request).mock.calls[2];
     const body = options?.body as { BillOfMaterial: boolean; BillOfMaterialsProducts: unknown[] };
     expect(body.BillOfMaterial).toBe(true);
-    expect(body.BillOfMaterialsProducts).toEqual([expect.objectContaining({ ProductCode: "COMP1", Quantity: 2 })]);
+    expect(body.BillOfMaterialsProducts).toEqual([
+      expect.objectContaining({ ComponentProductID: "comp-id", ProductCode: "COMP1", Quantity: 2 }),
+    ]);
+  });
+});
+
+describe("resolveComponentIds", () => {
+  it("resolves an unresolved SKU and stores it in the cache", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ Products: [{ ID: "comp-id", SKU: "COMP1" }] });
+    const cache = new Map<string, string | null | undefined>();
+
+    await resolveComponentIds(creds, ["COMP1"], cache);
+
+    expect(cache.get("COMP1")).toBe("comp-id");
+    expect(cin7Request).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips a SKU that's already cached (no extra API call)", async () => {
+    const cache = new Map<string, string | null | undefined>([["COMP1", "already-resolved"]]);
+
+    await resolveComponentIds(creds, ["COMP1"], cache);
+
+    expect(cin7Request).not.toHaveBeenCalled();
+    expect(cache.get("COMP1")).toBe("already-resolved");
+  });
+
+  it("leaves a SKU unresolved (no throw) if it doesn't exist in Cin7 yet", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ Products: [] });
+    const cache = new Map<string, string | null | undefined>();
+
+    await resolveComponentIds(creds, ["NOT-YET-SYNCED"], cache);
+
+    expect(cache.has("NOT-YET-SYNCED")).toBe(false);
   });
 });

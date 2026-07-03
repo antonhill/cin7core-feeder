@@ -66,6 +66,16 @@ guess (`Wastage`/`WastagePercentage`/`CostAllocationPercentage`) was simply wron
 - Empty `BillOfMaterialsProducts`/`Services` arrays are omitted entirely rather than sent as
   `[]`, per neither model requiring the array itself to exist.
 
+**Real root cause found 2026-07-03** via the Settings UI's "Fetch BOM example" diagnostic
+(fetches a live product with a working BOM via `GET /Product?...&IncludeBOM=true`): even after
+the field-name fix above, the vague `"BillOfMaterialsProduct(s) is invalid"` error persisted. The
+live example showed every `BillOfMaterialsProducts`/`Services` line carrying **both**
+`ComponentProductID` (Cin7 GUID) **and** `ProductCode`/`Name` (SKU) — we had only ever sent the
+SKU. `src/cin7/products.ts` now has `resolveComponentIds()`, which resolves each BOM line's
+component SKU to its Cin7 ID (via the same `findProductBySku` lookup, cached across a sync run —
+same pattern as Production BOM's `cin7IdBySku`) before building the payload. A component not yet
+synced to Cin7 simply falls back to SKU/Name alone, which the spec says should also work.
+
 ## 4. Production BOM — confirmed available via API (important correction)
 The original client proposal (see `docs/Casa_das_Natas_Architecture_Proposal.docx` appendix)
 assumed *"Assembly BOMs will suffice for initial manufacturing"* and that advanced production

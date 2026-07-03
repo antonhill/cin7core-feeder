@@ -140,7 +140,8 @@ describe("syncInstance", () => {
       expect.anything(),
       expect.objectContaining({ sku: "PARENT" }),
       expect.anything(),
-      [expect.objectContaining({ product_sku: "PARENT", component_sku: "COMP", quantity: 1 })]
+      [expect.objectContaining({ product_sku: "PARENT", component_sku: "COMP", quantity: 1 })],
+      expect.any(Map)
     );
   });
 

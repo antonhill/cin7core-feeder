@@ -77,6 +77,25 @@ export async function findProductBySku(creds: Cin7Credentials, sku: string): Pro
   return { id: first.ID };
 }
 
+/**
+ * Resolves each SKU's Cin7 product ID, mutating `cache` in place — reused
+ * across a whole sync run so a component looked up for one product's BOM
+ * doesn't need a second live call for the next. Skus that don't exist in
+ * this Cin7 instance yet are simply left unresolved (not an error): the BOM
+ * payload falls back to referencing them by SKU/Name alone in that case.
+ */
+export async function resolveComponentIds(
+  creds: Cin7Credentials,
+  skus: string[],
+  cache: Map<string, string | null | undefined>
+): Promise<void> {
+  for (const sku of new Set(skus)) {
+    if (cache.get(sku)) continue;
+    const found = await findProductBySku(creds, sku);
+    if (found) cache.set(sku, found.id);
+  }
+}
+
 export type ProductPushStatus = "created" | "updated";
 
 /**
@@ -103,9 +122,17 @@ export async function pushProduct(
   creds: Cin7Credentials,
   product: CanonicalProductRow,
   priceTiers: CanonicalPriceTierRow[] = [],
-  bomLines: CanonicalAssemblyBomLineRow[] = []
+  bomLines: CanonicalAssemblyBomLineRow[] = [],
+  cin7IdCache: Map<string, string | null | undefined> = new Map()
 ): Promise<{ cin7Id: string; status: ProductPushStatus }> {
-  const payload = { ...toCin7ProductPayload(product, priceTiers), ...toCin7BomFields(bomLines) };
+  if (bomLines.length) {
+    await resolveComponentIds(
+      creds,
+      bomLines.map((l) => l.component_sku),
+      cin7IdCache
+    );
+  }
+  const payload = { ...toCin7ProductPayload(product, priceTiers), ...toCin7BomFields(bomLines, cin7IdCache) };
   const existing = await findProductBySku(creds, product.sku);
 
   if (existing) {
