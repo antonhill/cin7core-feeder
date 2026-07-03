@@ -105,7 +105,12 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
         .eq("org_id", orgId)
         .eq("product_sku", product.sku);
 
-      const pushResult = await pushProduct(creds, product, priceTiers ?? []);
+      let pushResult;
+      try {
+        pushResult = await pushProduct(creds, product, priceTiers ?? []);
+      } catch (e) {
+        throw new Error(`Product push failed: ${describeError(e)}`);
+      }
 
       if (bomLines?.length) {
         const linesByProduct = new Map<string, CanonicalAssemblyBomLineRow[]>([
@@ -116,9 +121,13 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
             ),
           ],
         ]);
-        const bomResults = await pushAssemblyBoms(creds, linesByProduct);
-        const failed = bomResults.find((r) => !r.ok);
-        if (failed) throw new Error(`Assembly BOM push failed: ${failed.error}`);
+        try {
+          const bomResults = await pushAssemblyBoms(creds, linesByProduct);
+          const failed = bomResults.find((r) => !r.ok);
+          if (failed) throw new Error(failed.error ?? "unknown error");
+        } catch (e) {
+          throw new Error(`Assembly BOM push failed: ${describeError(e)}`);
+        }
       }
 
       await db.from("sync_state").upsert(

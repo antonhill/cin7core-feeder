@@ -118,11 +118,29 @@ describe("syncInstance", () => {
 
     expect(summary.productsFailed).toBe(1);
     expect(summary.productsCreated).toBe(1);
-    expect(summary.errors).toEqual([{ sku: "BAD", error: "boom" }]);
+    expect(summary.errors).toEqual([{ sku: "BAD", error: "Product push failed: boom" }]);
     expect(upserts.sync_state).toEqual([
-      expect.objectContaining({ sku: "BAD", last_status: "failed", last_error: "boom" }),
+      expect.objectContaining({ sku: "BAD", last_status: "failed", last_error: "Product push failed: boom" }),
       expect.objectContaining({ sku: "GOOD", last_status: "created" }),
     ]);
+  });
+
+  it("attributes a failure to the Assembly BOM push specifically, distinct from the product push", async () => {
+    const { db } = createFakeDb({
+      cin7_instances: [instanceRow],
+      products: [{ org_id: "org1", sku: "PARENT", name: "Parent", content_hash: "h1" }],
+      sync_state: [],
+      price_tiers: [],
+      assembly_bom_lines: [{ org_id: "org1", product_sku: "PARENT", component_sku: "COMP", quantity: 1 }],
+      production_bom_versions: [],
+    });
+    vi.mocked(pushProduct).mockResolvedValueOnce({ cin7Id: "cin7-1", status: "created" });
+    vi.mocked(pushAssemblyBoms).mockRejectedValueOnce(new Error("network blip"));
+
+    const summary = await syncInstance(db, "org1", "inst-1");
+
+    expect(summary.productsFailed).toBe(1);
+    expect(summary.errors).toEqual([{ sku: "PARENT", error: "Assembly BOM push failed: network blip" }]);
   });
 
   it("pushes production BOM versions using the product's synced Cin7 ID", async () => {
