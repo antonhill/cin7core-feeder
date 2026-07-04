@@ -3,6 +3,8 @@ import { decrypt } from "@/cin7/crypto";
 import { pushProduct } from "@/cin7/products";
 import type { CanonicalAssemblyBomLineRow } from "@/cin7/assembly-bom";
 import { pushProductionBom, createProductionBomRefCaches } from "@/cin7/production-bom";
+import { pushCustomer, type CanonicalCustomerAddressRow } from "@/cin7/customers";
+import { pushSupplier, type CanonicalSupplierAddressRow } from "@/cin7/suppliers";
 import { Cin7ApiError } from "@/cin7/http";
 
 export interface SyncRunSummary {
@@ -14,6 +16,14 @@ export interface SyncRunSummary {
   productsFailed: number;
   productionBomsPushed: number;
   productionBomsFailed: number;
+  customersCreated: number;
+  customersUpdated: number;
+  customersSkipped: number;
+  customersFailed: number;
+  suppliersCreated: number;
+  suppliersUpdated: number;
+  suppliersSkipped: number;
+  suppliersFailed: number;
   errors: { sku: string; error: string }[];
 }
 
@@ -63,6 +73,14 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
     productsFailed: 0,
     productionBomsPushed: 0,
     productionBomsFailed: 0,
+    customersCreated: 0,
+    customersUpdated: 0,
+    customersSkipped: 0,
+    customersFailed: 0,
+    suppliersCreated: 0,
+    suppliersUpdated: 0,
+    suppliersFailed: 0,
+    suppliersSkipped: 0,
     errors: [],
   };
 
@@ -210,6 +228,145 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
       const message = describeError(e);
       summary.productionBomsFailed++;
       summary.errors.push({ sku: `${version.product_sku}:${version.version}`, error: message });
+    }
+  }
+
+  const { data: customers } = await db
+    .from("customers")
+    .select(
+      "name, status, currency, payment_term, tax_rule, account_receivable, sale_account, price_tier, discount, \
+carrier, sales_representative, location, tax_number, tags, display_name, is_legal_entity, is_bill_parent, \
+attribute_set, additional_attribute_1, additional_attribute_2, additional_attribute_3, additional_attribute_4, \
+additional_attribute_5, additional_attribute_6, additional_attribute_7, additional_attribute_8, \
+additional_attribute_9, additional_attribute_10, comments, contact_name, job_title, phone, mobile_phone, fax, \
+email, website, contact_comment, contact_default, contact_include_in_email, content_hash"
+    )
+    .eq("org_id", orgId);
+
+  const { data: customerSyncStates } = await db
+    .from("customer_sync_state")
+    .select("name, synced_hash")
+    .eq("org_id", orgId)
+    .eq("instance_id", instanceId);
+  const syncedHashByCustomerName = new Map(
+    (customerSyncStates ?? []).map((s: { name: string; synced_hash: string | null }) => [s.name, s.synced_hash])
+  );
+
+  for (const customer of customers ?? []) {
+    if (syncedHashByCustomerName.has(customer.name) && syncedHashByCustomerName.get(customer.name) === customer.content_hash) {
+      summary.customersSkipped++;
+      continue;
+    }
+
+    try {
+      const { data: addresses } = await db
+        .from("customer_addresses")
+        .select("address_type, address_default_for_type, address_line_1, address_line_2, city, state, postcode, country")
+        .eq("org_id", orgId)
+        .eq("name", customer.name);
+
+      const pushResult = await pushCustomer(creds, customer, (addresses ?? []) as CanonicalCustomerAddressRow[]);
+
+      await db.from("customer_sync_state").upsert(
+        {
+          org_id: orgId,
+          instance_id: instanceId,
+          name: customer.name,
+          cin7_id: pushResult.cin7Id,
+          synced_hash: customer.content_hash,
+          last_synced_at: new Date().toISOString(),
+          last_status: pushResult.status,
+          last_error: null,
+        },
+        { onConflict: "org_id,instance_id,name" }
+      );
+
+      if (pushResult.status === "created") summary.customersCreated++;
+      else summary.customersUpdated++;
+    } catch (e) {
+      const message = describeError(e);
+      summary.customersFailed++;
+      summary.errors.push({ sku: customer.name, error: message });
+      await db.from("customer_sync_state").upsert(
+        {
+          org_id: orgId,
+          instance_id: instanceId,
+          name: customer.name,
+          last_synced_at: new Date().toISOString(),
+          last_status: "failed",
+          last_error: message,
+        },
+        { onConflict: "org_id,instance_id,name" }
+      );
+    }
+  }
+
+  const { data: suppliers } = await db
+    .from("suppliers")
+    .select(
+      "name, status, currency, payment_term, tax_rule, account_payable, discount, tax_number, attribute_set, \
+additional_attribute_1, additional_attribute_2, additional_attribute_3, additional_attribute_4, \
+additional_attribute_5, additional_attribute_6, additional_attribute_7, additional_attribute_8, \
+additional_attribute_9, additional_attribute_10, comments, contact_name, job_title, phone, mobile_phone, fax, \
+email, website, contact_comment, contact_default, contact_include_in_email, content_hash"
+    )
+    .eq("org_id", orgId);
+
+  const { data: supplierSyncStates } = await db
+    .from("supplier_sync_state")
+    .select("name, synced_hash")
+    .eq("org_id", orgId)
+    .eq("instance_id", instanceId);
+  const syncedHashBySupplierName = new Map(
+    (supplierSyncStates ?? []).map((s: { name: string; synced_hash: string | null }) => [s.name, s.synced_hash])
+  );
+
+  for (const supplier of suppliers ?? []) {
+    if (syncedHashBySupplierName.has(supplier.name) && syncedHashBySupplierName.get(supplier.name) === supplier.content_hash) {
+      summary.suppliersSkipped++;
+      continue;
+    }
+
+    try {
+      const { data: addresses } = await db
+        .from("supplier_addresses")
+        .select("address_type, address_default_for_type, address_line_1, address_line_2, city, state, postcode, country")
+        .eq("org_id", orgId)
+        .eq("name", supplier.name);
+
+      const pushResult = await pushSupplier(creds, supplier, (addresses ?? []) as CanonicalSupplierAddressRow[]);
+
+      await db.from("supplier_sync_state").upsert(
+        {
+          org_id: orgId,
+          instance_id: instanceId,
+          name: supplier.name,
+          cin7_id: pushResult.cin7Id,
+          synced_hash: supplier.content_hash,
+          last_synced_at: new Date().toISOString(),
+          last_status: pushResult.status,
+          last_error: null,
+        },
+        { onConflict: "org_id,instance_id,name" }
+      );
+
+      if (pushResult.status === "created") summary.suppliersCreated++;
+      else summary.suppliersUpdated++;
+    } catch (e) {
+      const message = describeError(e);
+      summary.suppliersFailed++;
+      summary.errors.push({ sku: supplier.name, error: message });
+      await db.from("supplier_sync_state").upsert(
+        {
+          org_id: orgId,
+          instance_id: instanceId,
+          name: supplier.name,
+          last_synced_at: new Date().toISOString(),
+          last_status: "failed",
+          last_error: message,
+        },
+        { onConflict: "org_id,instance_id,name" }
+      );
     }
   }
 

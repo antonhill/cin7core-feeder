@@ -295,3 +295,60 @@ Documented status codes: 200, 400 (validation), 403 (auth failure), 404 (bad end
 1. Get a Cin7 Core sandbox/trial account (per the original README's own recommendation).
 2. Confirm the Production BOM payload shape and the Category/UOM write behaviour against it.
 3. Build the rate limiter around 60/min + 503 handling, not 429/Retry-After.
+
+## 10. Customer & Supplier — confirmed live (2026-07-04), ahead of building push
+
+Researched via the same two community sources used throughout this doc, then confirmed with a
+real `GET /customer?page=1&limit=1` and `GET /supplier?page=1&limit=1` against the live "Spark
+Demo" sandbox (`src/cin7/debug.ts`'s `findCustomerAndSupplierExamples`, wired to a Settings UI
+button) before writing any push code — same rigor as Product/BOM.
+
+**Endpoints confirmed:** `GET/POST/PUT /customer` and `GET/POST/PUT /supplier` (both paths
+lowercase). List responses wrap as `{"Total","Page","CustomerList":[...]}` /
+`{"Total","Page","SupplierList":[...]}` — same convention as `Products`, different key name per
+resource. Matched by `ID` GUID on PUT — no upsert-in-one-call, same as Product.
+
+**Both resources carry nested `Addresses[]` and `Contacts[]` arrays in the same POST/PUT
+payload** — there is no separate address/contact endpoint to call. Confirmed live shape for
+`Addresses[]` (identical on both resources): `Line1`, `Line2`, `City`, `State`, `Postcode`,
+`Country`, `Type` (e.g. `"Billing"`/`"Shipping"`/`"Business"`), `DefaultForType` (bool), `ID`.
+Maps directly onto our `supplier_addresses`/`customer_addresses` columns.
+
+**Field name discrepancies vs the CSV column names (import already stores the CSV name
+verbatim; the push client must translate):**
+- Customer: `SaleAccount` (CSV) → **`RevenueAccount`** (API) — confirmed via a real value
+  (`"191"`) present under that key in the live response.
+- Customer `Contacts[]` has `JobTitle`; **Supplier `Contacts[]` does not** — confirmed by its
+  absence in a real Supplier contact object, matching the community-sourced model docs
+  (`SupplierPutRequestContactsInner` has no `JobTitle`, `CustomerPutRequestContactsInner` does).
+  Our CSV has a `JobTitle` column for both — harmless to send for Supplier if Cin7 just ignores
+  unknown fields, but don't rely on it round-tripping.
+- `MarketingConsent` is a **number** in Cin7's real model (seen as `1` live), not the CSV's
+  string values (`"Unknown"`/`"Opt in"`/`"Opt out"`) — **no enum mapping confirmed**, so leave
+  this capture-only (stored, not pushed) until a real write test (or Cin7 support) confirms which
+  integer means what, rather than guessing and silently corrupting a customer's consent flag.
+
+**Present in the live GET response but absent from the community-sourced PUT/POST request
+models — capture-only, not push-confirmed:**
+- Customer: `CreditLimit`, `IsOnCreditHold`, `CustomerParentID`/`CustomerParentName` (our CSV's
+  `ParentCustomer`) — plausible these need a different write path (e.g. a dedicated credit-limit
+  endpoint, or name-to-ID resolution for the parent link like Product's `Suppliers[]`), but
+  guessing here risks the same wasted round-trip Work Centres cost — confirm via a live 400/200
+  before wiring in.
+- Both resources: `Carrier` is documented+confirmed for Customer's write model but **absent
+  from Supplier's** — our Suppliers CSV has a `Carrier` column; don't send it for Suppliers.
+- Both resources: `IsAccountingDimensionEnabled`/`DimensionAttribute1-10` (our CSV has these for
+  both) **do not appear in either resource's request model at all** — likely a CSV-bulk-import-only
+  feature, same class of gap as Category/Brand auto-create being UI/CSV-only. Don't attempt to
+  push these; they're stored for round-trip export fidelity only.
+
+**Push-confirmed fields (safe to build now):**
+- Customer: `Name`, `DisplayName`, `Currency`, `PaymentTerm`, `Discount`, `TaxRule`, `Carrier`,
+  `SalesRepresentative`, `Location`, `Comments`, `AccountReceivable`, `RevenueAccount` (←
+  `SaleAccount`), `PriceTier`, `TaxNumber`, `AdditionalAttribute1-10`, `AttributeSet`, `Tags`,
+  `Status`, `IsLegalEntity`, `IsBillParent`, `Addresses[]`, `Contacts[]` (`Name`, `JobTitle`,
+  `Phone`, `MobilePhone`, `Fax`, `Email`, `Website`, `Default`, `Comment`, `IncludeInEmail`).
+- Supplier: `Name`, `Currency`, `PaymentTerm`, `TaxRule`, `Discount`, `Comments`,
+  `AccountPayable`, `TaxNumber`, `AdditionalAttribute1-10`, `AttributeSet`, `Status`,
+  `Addresses[]`, `Contacts[]` (`Name`, `Phone`, `MobilePhone`, `Fax`, `Email`, `Website`,
+  `Default`, `Comment`, `IncludeInEmail` — no `JobTitle`).

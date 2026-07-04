@@ -13,6 +13,14 @@ export interface InstanceSyncOutcome {
   productsFailed?: number;
   productionBomsPushed?: number;
   productionBomsFailed?: number;
+  customersCreated?: number;
+  customersUpdated?: number;
+  customersSkipped?: number;
+  customersFailed?: number;
+  suppliersCreated?: number;
+  suppliersUpdated?: number;
+  suppliersSkipped?: number;
+  suppliersFailed?: number;
   errors?: { sku: string; error: string }[];
 }
 

@@ -23,7 +23,8 @@ function createFakeDb(instances: Record<string, unknown>[]) {
       then: (resolve: (v: { data: unknown[]; error: null }) => void) => {
         const matching = instances.filter(
           (i) =>
-            filters.every(([col, val]) => i[col] === val) && (!inFilter || inFilter.values.includes(i[inFilter.col]))
+            filters.every(([col, val]) => i[col] === val) &&
+            (!inFilter || inFilter.values.includes(i[inFilter.col])),
         );
         resolve({ data: matching, error: null });
       },
@@ -52,6 +53,14 @@ describe("syncOrgInstances", () => {
       productsFailed: 0,
       productionBomsPushed: 0,
       productionBomsFailed: 0,
+      customersCreated: 0,
+      customersUpdated: 0,
+      customersSkipped: 0,
+      customersFailed: 0,
+      suppliersCreated: 0,
+      suppliersUpdated: 0,
+      suppliersSkipped: 0,
+      suppliersFailed: 0,
       errors: [],
     });
 
@@ -75,6 +84,14 @@ describe("syncOrgInstances", () => {
       productsFailed: 0,
       productionBomsPushed: 0,
       productionBomsFailed: 0,
+      customersCreated: 0,
+      customersUpdated: 0,
+      customersSkipped: 0,
+      customersFailed: 0,
+      suppliersCreated: 0,
+      suppliersUpdated: 0,
+      suppliersSkipped: 0,
+      suppliersFailed: 0,
       errors: [],
     });
 
@@ -100,14 +117,30 @@ describe("syncOrgInstances", () => {
         productsFailed: 0,
         productionBomsPushed: 0,
         productionBomsFailed: 0,
+        customersCreated: 0,
+        customersUpdated: 0,
+        customersSkipped: 0,
+        customersFailed: 0,
+        suppliersCreated: 0,
+        suppliersUpdated: 0,
+        suppliersSkipped: 0,
+        suppliersFailed: 0,
         errors: [],
       });
 
     const results = await syncOrgInstances(db, "org1");
 
     expect(results).toEqual([
-      expect.objectContaining({ ok: false, instanceId: "inst-1", error: "boom" }),
-      expect.objectContaining({ ok: true, instanceId: "inst-2", productsCreated: 1 }),
+      expect.objectContaining({
+        ok: false,
+        instanceId: "inst-1",
+        error: "boom",
+      }),
+      expect.objectContaining({
+        ok: true,
+        instanceId: "inst-2",
+        productsCreated: 1,
+      }),
     ]);
   });
 });

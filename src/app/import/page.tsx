@@ -187,8 +187,8 @@ export default function ImportPage() {
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <StepHeader step={2} title="Choose instance(s)" done={selectedIds.length > 0} />
           <p className="mt-1 pl-11 text-base text-slate-500">
-            Pushes your org&apos;s current canonical data (products + Assembly BOM) to whichever
-            instances you select here.
+            Pushes your org&apos;s current canonical data (products + Assembly BOM + Customers +
+            Suppliers, each with their addresses) to whichever instances you select here.
           </p>
 
           <div className="mt-5 pl-11">
@@ -268,12 +268,20 @@ export default function ImportPage() {
                     {!outcome.ok && <p className="mt-1 text-sm text-red-700">{outcome.error}</p>}
                     {outcome.ok && (
                       <div className="mt-2 flex flex-wrap gap-2">
-                        <StatPill label="created" value={outcome.productsCreated ?? 0} />
-                        <StatPill label="updated" value={outcome.productsUpdated ?? 0} />
-                        <StatPill label="skipped (unchanged)" value={outcome.productsSkipped ?? 0} />
-                        <StatPill label="failed" value={outcome.productsFailed ?? 0} tone="bad" />
+                        <StatPill label="products created" value={outcome.productsCreated ?? 0} />
+                        <StatPill label="products updated" value={outcome.productsUpdated ?? 0} />
+                        <StatPill label="products skipped (unchanged)" value={outcome.productsSkipped ?? 0} />
+                        <StatPill label="products failed" value={outcome.productsFailed ?? 0} tone="bad" />
                         <StatPill label="production BOMs pushed" value={outcome.productionBomsPushed ?? 0} />
                         <StatPill label="production BOMs failed" value={outcome.productionBomsFailed ?? 0} tone="bad" />
+                        <StatPill label="customers created" value={outcome.customersCreated ?? 0} />
+                        <StatPill label="customers updated" value={outcome.customersUpdated ?? 0} />
+                        <StatPill label="customers skipped (unchanged)" value={outcome.customersSkipped ?? 0} />
+                        <StatPill label="customers failed" value={outcome.customersFailed ?? 0} tone="bad" />
+                        <StatPill label="suppliers created" value={outcome.suppliersCreated ?? 0} />
+                        <StatPill label="suppliers updated" value={outcome.suppliersUpdated ?? 0} />
+                        <StatPill label="suppliers skipped (unchanged)" value={outcome.suppliersSkipped ?? 0} />
+                        <StatPill label="suppliers failed" value={outcome.suppliersFailed ?? 0} tone="bad" />
                       </div>
                     )}
                     {outcome.ok && outcome.errors && outcome.errors.length > 0 && (
