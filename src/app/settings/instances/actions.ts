@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
-import { findProductWithBom, probeWorkCentrePaths } from "@/cin7/debug";
+import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples } from "@/cin7/debug";
 import { requireCurrentOrg } from "@/lib/current-org";
 
 export interface InstanceRecord {
@@ -178,6 +178,21 @@ export async function debugProbeWorkCentrePaths(instanceId: string): Promise<Tes
     const results = await probeWorkCentrePaths(creds);
     const anySucceeded = results.some((r) => r.looksLikeJson);
     return { ok: anySucceeded, message: JSON.stringify(results, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Diagnostic only: confirms /customer and /supplier live, ahead of building
+ * a push client for the new Customer/Supplier import feature — same
+ * verify-before-building step used for Product/BOM.
+ */
+export async function debugFindCustomerSupplierExamples(instanceId: string): Promise<TestConnectionResult> {
+  try {
+    const creds = await loadInstanceCreds(instanceId);
+    const result = await findCustomerAndSupplierExamples(creds);
+    return { ok: true, message: JSON.stringify(result, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
   }

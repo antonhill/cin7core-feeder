@@ -94,3 +94,37 @@ export async function findProductWithBom(
   }
   return { found: false };
 }
+
+interface Cin7CustomerListResponse {
+  CustomerList?: Record<string, unknown>[];
+}
+interface Cin7SupplierListResponse {
+  SupplierList?: Record<string, unknown>[];
+}
+
+/**
+ * Diagnostic only: confirms /customer and /supplier exist and returns one
+ * real example of each, live, before building the push client — same
+ * "verify against a real response, not just community docs" step used for
+ * Product/BOM. Community-sourced docs (github.com/nnhansg/dear-openapi,
+ * github.com/FalconEyeSolutions/CIN7-DearInventory) say both endpoints
+ * return a top-level list keyed `CustomerList`/`SupplierList` (matching the
+ * `Products` convention) with `Addresses[]`/`Contacts[]` nested per record —
+ * unconfirmed until a real response is inspected.
+ */
+export async function findCustomerAndSupplierExamples(
+  creds: Cin7Credentials
+): Promise<{ customer?: Record<string, unknown>; supplier?: Record<string, unknown>; rawKeys: { customer: string[]; supplier: string[] } }> {
+  const customerRes = await cin7Request<Cin7CustomerListResponse & Record<string, unknown>>(creds, "/customer", {
+    query: { page: 1, limit: 1 },
+  });
+  const supplierRes = await cin7Request<Cin7SupplierListResponse & Record<string, unknown>>(creds, "/supplier", {
+    query: { page: 1, limit: 1 },
+  });
+
+  return {
+    customer: customerRes.CustomerList?.[0],
+    supplier: supplierRes.SupplierList?.[0],
+    rawKeys: { customer: Object.keys(customerRes), supplier: Object.keys(supplierRes) },
+  };
+}
