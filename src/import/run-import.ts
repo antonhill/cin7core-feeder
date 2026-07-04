@@ -3,12 +3,27 @@ import { parseCsv, type InvalidRow, type ParsedRow } from "@/import/csv";
 import { productCsvRowSchema } from "@/model/products";
 import { assemblyBomCsvRowSchema, type AssemblyBomCsvRow } from "@/model/assembly-bom";
 import { productionBomCsvRowSchema, type ProductionBomCsvRow } from "@/model/production-bom";
+import { supplierCsvRowSchema } from "@/model/suppliers";
+import { customerCsvRowSchema } from "@/model/customers";
+import { supplierAddressCsvRowSchema } from "@/model/supplier-addresses";
+import { customerAddressCsvRowSchema } from "@/model/customer-addresses";
 import { commitProductRows } from "@/import/commit-products";
 import { commitAssemblyBomRows } from "@/import/commit-assembly-bom";
 import { commitProductionBomRows } from "@/import/commit-production-bom";
+import { commitSupplierRows } from "@/import/commit-suppliers";
+import { commitCustomerRows } from "@/import/commit-customers";
+import { commitSupplierAddressRows } from "@/import/commit-supplier-addresses";
+import { commitCustomerAddressRows } from "@/import/commit-customer-addresses";
 import { checkAssemblyBomReferences, checkProductionBomReferences } from "@/import/validate-bom-references";
 
-export type ImportKind = "products" | "assembly_bom" | "production_bom";
+export type ImportKind =
+  | "products"
+  | "assembly_bom"
+  | "production_bom"
+  | "suppliers"
+  | "supplier_addresses"
+  | "customers"
+  | "customer_addresses";
 
 export interface RunImportResult {
   batchId: string;
@@ -24,6 +39,10 @@ const SCHEMAS = {
   products: productCsvRowSchema,
   assembly_bom: assemblyBomCsvRowSchema,
   production_bom: productionBomCsvRowSchema,
+  suppliers: supplierCsvRowSchema,
+  supplier_addresses: supplierAddressCsvRowSchema,
+  customers: customerCsvRowSchema,
+  customer_addresses: customerAddressCsvRowSchema,
 } as const;
 
 /**
@@ -96,8 +115,16 @@ export async function runImport(
         commitSummary = { ...(await commitProductRows(db, orgId, data as never)) };
       } else if (kind === "assembly_bom") {
         commitSummary = { ...(await commitAssemblyBomRows(db, orgId, data as never)) };
-      } else {
+      } else if (kind === "production_bom") {
         commitSummary = { ...(await commitProductionBomRows(db, orgId, data as never)) };
+      } else if (kind === "suppliers") {
+        commitSummary = { ...(await commitSupplierRows(db, orgId, data as never)) };
+      } else if (kind === "customers") {
+        commitSummary = { ...(await commitCustomerRows(db, orgId, data as never)) };
+      } else if (kind === "supplier_addresses") {
+        commitSummary = { ...(await commitSupplierAddressRows(db, orgId, data as never)) };
+      } else {
+        commitSummary = { ...(await commitCustomerAddressRows(db, orgId, data as never)) };
       }
       committed = true;
       await db

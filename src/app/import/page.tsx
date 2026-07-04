@@ -11,6 +11,10 @@ const KINDS = [
   { value: "products", label: "Products (InventoryList)" },
   { value: "assembly_bom", label: "Assembly BOM" },
   { value: "production_bom", label: "Production BOM" },
+  { value: "suppliers", label: "Suppliers" },
+  { value: "supplier_addresses", label: "Supplier Addresses" },
+  { value: "customers", label: "Customers" },
+  { value: "customer_addresses", label: "Customer Addresses" },
 ];
 
 /** camelCase commit-summary key -> readable label, e.g. "productsUpserted" -> "Products upserted". */

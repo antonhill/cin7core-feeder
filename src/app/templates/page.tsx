@@ -4,8 +4,10 @@ import { useState, useTransition } from "react";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import { downloadLiveTemplateAction, downloadTemplateAction } from "./actions";
 
-type Kind = "products" | "assembly_bom";
+type Kind = "products" | "assembly_bom" | "suppliers" | "supplier_addresses" | "customers" | "customer_addresses";
 type Source = "canonical" | "live";
+
+const LIVE_CAPABLE_KINDS: Kind[] = ["products", "assembly_bom"];
 
 function triggerDownload(csv: string, filename: string) {
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
@@ -77,11 +79,19 @@ export default function TemplatesPage() {
             <span className="font-medium text-slate-700">Data</span>
             <select
               value={kind}
-              onChange={(e) => setKind(e.target.value as Kind)}
+              onChange={(e) => {
+                const nextKind = e.target.value as Kind;
+                setKind(nextKind);
+                if (!LIVE_CAPABLE_KINDS.includes(nextKind)) setSource("canonical");
+              }}
               className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none"
             >
               <option value="products">Products (InventoryList)</option>
               <option value="assembly_bom">Assembly BOM</option>
+              <option value="suppliers">Suppliers</option>
+              <option value="supplier_addresses">Supplier Addresses</option>
+              <option value="customers">Customers</option>
+              <option value="customer_addresses">Customer Addresses</option>
             </select>
           </label>
 
@@ -97,15 +107,18 @@ export default function TemplatesPage() {
               className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none"
             >
               <option value="canonical">Hub canonical data</option>
-              <option value="live">Live from a Cin7 instance</option>
+              <option value="live" disabled={!LIVE_CAPABLE_KINDS.includes(kind)}>
+                Live from a Cin7 instance
+              </option>
             </select>
           </label>
         </div>
 
         {source === "canonical" && (
           <p className="mt-3 text-sm text-slate-500">
-            The hub&apos;s own data — the same source pushed to every connected instance, not a live
-            pull, and limited to the columns the hub tracks (~10 core fields).
+            {LIVE_CAPABLE_KINDS.includes(kind)
+              ? "The hub's own data — the same source pushed to every connected instance, not a live pull, and limited to the columns the hub tracks (~10 core fields)."
+              : "The hub's own data, with every column Cin7's own template has — not pushed to Cin7 yet, import-only for now."}
           </p>
         )}
 

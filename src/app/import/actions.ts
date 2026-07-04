@@ -11,7 +11,15 @@ export interface ImportActionState {
   result?: RunImportResult;
 }
 
-const VALID_KINDS: ImportKind[] = ["products", "assembly_bom", "production_bom"];
+const VALID_KINDS: ImportKind[] = [
+  "products",
+  "assembly_bom",
+  "production_bom",
+  "suppliers",
+  "supplier_addresses",
+  "customers",
+  "customer_addresses",
+];
 
 /**
  * Server Action backing the /import page. The org comes from the logged-in

@@ -4,6 +4,10 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { requireCurrentOrg } from "@/lib/current-org";
 import { exportProductsCsv } from "@/export/products-csv";
 import { exportAssemblyBomCsv } from "@/export/assembly-bom-csv";
+import { exportSuppliersCsv } from "@/export/suppliers-csv";
+import { exportCustomersCsv } from "@/export/customers-csv";
+import { exportSupplierAddressesCsv } from "@/export/supplier-addresses-csv";
+import { exportCustomerAddressesCsv } from "@/export/customer-addresses-csv";
 import { toFullInventoryListCsv } from "@/export/products-csv-live";
 import { toFullAssemblyBomCsv } from "@/export/assembly-bom-csv-live";
 import { fetchAllProductsWithBom } from "@/cin7/products";
@@ -16,8 +20,25 @@ export interface DownloadTemplateResult {
   filename?: string;
 }
 
-const TEMPLATE_KINDS = ["products", "assembly_bom"] as const;
+const TEMPLATE_KINDS = [
+  "products",
+  "assembly_bom",
+  "suppliers",
+  "supplier_addresses",
+  "customers",
+  "customer_addresses",
+] as const;
 type TemplateKind = (typeof TEMPLATE_KINDS)[number];
+
+// Live-pull-from-a-Cin7-instance only exists for products/assembly_bom so
+// far — Customers/Suppliers have no confirmed Cin7 API shape yet (push is a
+// follow-up), so those four only ever export the hub's own canonical data.
+const LIVE_TEMPLATE_KINDS = ["products", "assembly_bom"] as const;
+type LiveTemplateKind = (typeof LIVE_TEMPLATE_KINDS)[number];
+
+function isLiveTemplateKind(kind: TemplateKind): kind is LiveTemplateKind {
+  return (LIVE_TEMPLATE_KINDS as readonly string[]).includes(kind);
+}
 
 /**
  * Exports the org's current canonical data as a CSV in the same column
@@ -32,9 +53,26 @@ export async function downloadTemplateAction(kind: TemplateKind): Promise<Downlo
   try {
     const { orgId } = await requireCurrentOrg();
     const db = createServiceRoleClient();
-    const csv = kind === "products" ? await exportProductsCsv(db, orgId) : await exportAssemblyBomCsv(db, orgId);
-    const filename = kind === "products" ? "InventoryList_export.csv" : "AssemblyBOM_export.csv";
-    return { ok: true, csv, filename };
+
+    const EXPORTERS: Record<TemplateKind, () => Promise<string>> = {
+      products: () => exportProductsCsv(db, orgId),
+      assembly_bom: () => exportAssemblyBomCsv(db, orgId),
+      suppliers: () => exportSuppliersCsv(db, orgId),
+      supplier_addresses: () => exportSupplierAddressesCsv(db, orgId),
+      customers: () => exportCustomersCsv(db, orgId),
+      customer_addresses: () => exportCustomerAddressesCsv(db, orgId),
+    };
+    const FILENAMES: Record<TemplateKind, string> = {
+      products: "InventoryList_export.csv",
+      assembly_bom: "AssemblyBOM_export.csv",
+      suppliers: "Suppliers_export.csv",
+      supplier_addresses: "SupplierAddresses_export.csv",
+      customers: "Customers_export.csv",
+      customer_addresses: "CustomerAddresses_export.csv",
+    };
+
+    const csv = await EXPORTERS[kind]();
+    return { ok: true, csv, filename: FILENAMES[kind] };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
@@ -50,6 +88,9 @@ export async function downloadTemplateAction(kind: TemplateKind): Promise<Downlo
 export async function downloadLiveTemplateAction(instanceId: string, kind: TemplateKind): Promise<DownloadTemplateResult> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   if (!TEMPLATE_KINDS.includes(kind)) return { ok: false, error: `kind must be one of ${TEMPLATE_KINDS.join(", ")}` };
+  if (!isLiveTemplateKind(kind)) {
+    return { ok: false, error: "Live pull isn't available for this data type yet — use hub canonical data instead." };
+  }
 
   try {
     const { orgId } = await requireCurrentOrg();
