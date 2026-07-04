@@ -109,3 +109,46 @@ export async function createOrgAndInvite(orgName: string, email: string): Promis
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
 }
+
+/**
+ * Adds an additional member to an already-existing org. If the email has
+ * never signed up, sends the same Supabase invite as a brand-new org
+ * (magic link, no passphrase) — if the person already has an account
+ * (e.g. they belong to another org already), inviteUserByEmail correctly
+ * rejects as "already registered", so this falls back to looking them up
+ * by email and just adding the membership row.
+ */
+export async function inviteMemberToOrg(orgId: string, email: string): Promise<CreateOrgResult> {
+  const trimmedEmail = email.trim();
+  if (!trimmedEmail) return { ok: false, error: "Email is required." };
+
+  try {
+    await requireSuperAdmin();
+    const db = createServiceRoleClient();
+
+    const { data: invite, error: inviteError } = await db.auth.admin.inviteUserByEmail(trimmedEmail);
+
+    let userId: string;
+    if (inviteError) {
+      const { data: existing, error: listError } = await db.auth.admin.listUsers();
+      if (listError) return { ok: false, error: listError.message };
+      const match = existing.users.find((u) => u.email?.toLowerCase() === trimmedEmail.toLowerCase());
+      if (!match) return { ok: false, error: inviteError.message };
+      userId = match.id;
+    } else if (!invite.user) {
+      return { ok: false, error: "Invite succeeded but returned no user." };
+    } else {
+      userId = invite.user.id;
+    }
+
+    const { error: memberError } = await db.from("org_members").insert({ org_id: orgId, user_id: userId, role: "member" });
+    if (memberError) {
+      if (memberError.code === "23505") return { ok: false, error: "That person is already a member of this org." };
+      return { ok: false, error: memberError.message };
+    }
+
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}

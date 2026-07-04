@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { createOrgAndInvite, listOrgsForAdmin, type OrgSummary } from "./actions";
+import { createOrgAndInvite, inviteMemberToOrg, listOrgsForAdmin, type OrgSummary } from "./actions";
 
 export default function AdminPage() {
   const [orgs, setOrgs] = useState<OrgSummary[]>([]);
@@ -102,16 +102,7 @@ export default function AdminPage() {
         )}
         <div className="mt-4 flex flex-col gap-3">
           {orgs.map((org) => (
-            <div key={org.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <p className="text-lg font-semibold text-slate-900">{org.name}</p>
-              <p className="mt-1 text-sm text-slate-500">
-                {org.instanceCount} Cin7 instance{org.instanceCount === 1 ? "" : "s"} · created{" "}
-                {new Date(org.createdAt).toLocaleDateString()}
-              </p>
-              <p className="mt-2 text-sm text-slate-600">
-                {org.memberEmails.length > 0 ? org.memberEmails.join(", ") : "No members yet"}
-              </p>
-            </div>
+            <OrgCard key={org.id} org={org} onMemberAdded={refresh} />
           ))}
           {loaded && orgs.length === 0 && !loadError && (
             <p className="text-base text-slate-500">No organizations yet.</p>
@@ -120,5 +111,65 @@ export default function AdminPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+function OrgCard({ org, onMemberAdded }: { org: OrgSummary; onMemberAdded: () => void }) {
+  const [email, setEmail] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [isSubmitting, startTransition] = useTransition();
+
+  function handleAddMember(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    startTransition(async () => {
+      const result = await inviteMemberToOrg(org.id, email);
+      if (!result.ok) {
+        setError(result.error ?? "Unknown error");
+        return;
+      }
+      setSuccess(`Added ${email}.`);
+      setEmail("");
+      onMemberAdded();
+    });
+  }
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-lg font-semibold text-slate-900">{org.name}</p>
+      <p className="mt-1 text-sm text-slate-500">
+        {org.instanceCount} Cin7 instance{org.instanceCount === 1 ? "" : "s"} · created{" "}
+        {new Date(org.createdAt).toLocaleDateString()}
+      </p>
+      <p className="mt-2 text-sm text-slate-600">
+        {org.memberEmails.length > 0 ? org.memberEmails.join(", ") : "No members yet"}
+      </p>
+
+      <form onSubmit={handleAddMember} className="mt-4 flex gap-2">
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+          className="flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+          placeholder="colleague@example.com"
+        />
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+        >
+          {isSubmitting ? "Adding…" : "Add member"}
+        </button>
+      </form>
+      {error && <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-700">{error}</p>}
+      {success && (
+        <p className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm text-emerald-700">
+          {success}
+        </p>
+      )}
+    </div>
   );
 }
