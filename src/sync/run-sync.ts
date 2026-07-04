@@ -3,8 +3,8 @@ import { decrypt } from "@/cin7/crypto";
 import { pushProduct } from "@/cin7/products";
 import type { CanonicalAssemblyBomLineRow } from "@/cin7/assembly-bom";
 import { pushProductionBom, createProductionBomRefCaches } from "@/cin7/production-bom";
-import { pushCustomer, type CanonicalCustomerAddressRow } from "@/cin7/customers";
-import { pushSupplier, type CanonicalSupplierAddressRow } from "@/cin7/suppliers";
+import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
+import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { Cin7ApiError } from "@/cin7/http";
 
 export interface SyncRunSummary {
@@ -238,8 +238,7 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
 carrier, sales_representative, location, tax_number, tags, display_name, is_legal_entity, is_bill_parent, \
 attribute_set, additional_attribute_1, additional_attribute_2, additional_attribute_3, additional_attribute_4, \
 additional_attribute_5, additional_attribute_6, additional_attribute_7, additional_attribute_8, \
-additional_attribute_9, additional_attribute_10, comments, contact_name, job_title, phone, mobile_phone, fax, \
-email, website, contact_comment, contact_default, contact_include_in_email, content_hash"
+additional_attribute_9, additional_attribute_10, comments, content_hash"
     )
     .eq("org_id", orgId);
 
@@ -265,7 +264,18 @@ email, website, contact_comment, contact_default, contact_include_in_email, cont
         .eq("org_id", orgId)
         .eq("name", customer.name);
 
-      const pushResult = await pushCustomer(creds, customer, (addresses ?? []) as CanonicalCustomerAddressRow[]);
+      const { data: contacts } = await db
+        .from("customer_contacts")
+        .select("contact_name, job_title, phone, mobile_phone, fax, email, website, contact_comment, contact_default, contact_include_in_email")
+        .eq("org_id", orgId)
+        .eq("name", customer.name);
+
+      const pushResult = await pushCustomer(
+        creds,
+        customer,
+        (addresses ?? []) as CanonicalCustomerAddressRow[],
+        (contacts ?? []) as CanonicalCustomerContactRow[]
+      );
 
       await db.from("customer_sync_state").upsert(
         {
@@ -307,8 +317,7 @@ email, website, contact_comment, contact_default, contact_include_in_email, cont
       "name, status, currency, payment_term, tax_rule, account_payable, discount, tax_number, attribute_set, \
 additional_attribute_1, additional_attribute_2, additional_attribute_3, additional_attribute_4, \
 additional_attribute_5, additional_attribute_6, additional_attribute_7, additional_attribute_8, \
-additional_attribute_9, additional_attribute_10, comments, contact_name, job_title, phone, mobile_phone, fax, \
-email, website, contact_comment, contact_default, contact_include_in_email, content_hash"
+additional_attribute_9, additional_attribute_10, comments, content_hash"
     )
     .eq("org_id", orgId);
 
@@ -334,7 +343,18 @@ email, website, contact_comment, contact_default, contact_include_in_email, cont
         .eq("org_id", orgId)
         .eq("name", supplier.name);
 
-      const pushResult = await pushSupplier(creds, supplier, (addresses ?? []) as CanonicalSupplierAddressRow[]);
+      const { data: contacts } = await db
+        .from("supplier_contacts")
+        .select("contact_name, job_title, phone, mobile_phone, fax, email, website, contact_comment, contact_default, contact_include_in_email")
+        .eq("org_id", orgId)
+        .eq("name", supplier.name);
+
+      const pushResult = await pushSupplier(
+        creds,
+        supplier,
+        (addresses ?? []) as CanonicalSupplierAddressRow[],
+        (contacts ?? []) as CanonicalSupplierContactRow[]
+      );
 
       await db.from("supplier_sync_state").upsert(
         {

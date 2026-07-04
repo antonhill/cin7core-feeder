@@ -1,16 +1,29 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { toCanonicalCustomer, type CustomerCsvRow } from "@/model/customers";
+import { toCanonicalCustomer, toCanonicalCustomerContact, type CustomerCsvRow } from "@/model/customers";
 
 export interface CommitCustomersSummary {
   customersUpserted: number;
+  contactsUpserted: number;
 }
 
+/**
+ * Cin7's own Customers CSV can have several rows sharing the same Name, one
+ * per contact (a live customer with 10+ contacts confirmed this) — a plain
+ * upsert on (org_id, name) with the whole batch in one call crashes Postgres
+ * ("ON CONFLICT DO UPDATE command cannot affect row a second time") the
+ * moment two same-named rows land in the same import. The customer's own
+ * fields are deduped to one row per name (last row in the file wins — in
+ * practice these are identical across a customer's own repeated rows,
+ * only the contact differs), while every row's contact is kept via a full
+ * replace-per-name into customer_contacts, mirroring how addresses work.
+ */
 export async function commitCustomerRows(
   db: SupabaseClient,
   orgId: string,
   rows: CustomerCsvRow[]
 ): Promise<CommitCustomersSummary> {
-  const customers = rows.map(toCanonicalCustomer);
+  const customersByName = new Map(rows.map((r) => [r.Name, toCanonicalCustomer(r)]));
+  const customers = [...customersByName.values()];
 
   const { error } = await db
     .from("customers")
@@ -20,5 +33,19 @@ export async function commitCustomerRows(
     );
   if (error) throw new Error(`customers: ${error.message}`);
 
-  return { customersUpserted: customers.length };
+  const names = [...customersByName.keys()];
+  if (names.length) {
+    const { error: deleteError } = await db.from("customer_contacts").delete().eq("org_id", orgId).in("name", names);
+    if (deleteError) throw new Error(`customer_contacts delete: ${deleteError.message}`);
+  }
+
+  const contacts = rows.map(toCanonicalCustomerContact).filter((c) => c.contact_name);
+  if (contacts.length) {
+    const { error: insertError } = await db
+      .from("customer_contacts")
+      .insert(contacts.map((c) => ({ ...c, org_id: orgId })));
+    if (insertError) throw new Error(`customer_contacts insert: ${insertError.message}`);
+  }
+
+  return { customersUpserted: customers.length, contactsUpserted: contacts.length };
 }

@@ -22,16 +22,6 @@ export interface CanonicalSupplierRow {
   additional_attribute_9: string | null;
   additional_attribute_10: string | null;
   comments: string | null;
-  contact_name: string | null;
-  job_title: string | null;
-  phone: string | null;
-  mobile_phone: string | null;
-  fax: string | null;
-  email: string | null;
-  website: string | null;
-  contact_comment: string | null;
-  contact_default: boolean;
-  contact_include_in_email: boolean;
 }
 
 export interface CanonicalSupplierAddressRow {
@@ -45,6 +35,19 @@ export interface CanonicalSupplierAddressRow {
   country: string | null;
 }
 
+export interface CanonicalSupplierContactRow {
+  contact_name: string | null;
+  job_title: string | null;
+  phone: string | null;
+  mobile_phone: string | null;
+  fax: string | null;
+  email: string | null;
+  website: string | null;
+  contact_comment: string | null;
+  contact_default: boolean;
+  contact_include_in_email: boolean;
+}
+
 /**
  * Field mapping confirmed live 2026-07-04 against Cin7's real /supplier
  * response (see docs/cin7-api-findings.md §10). Two things our CSV carries
@@ -54,7 +57,11 @@ export interface CanonicalSupplierAddressRow {
  * `IsAccountingDimensionEnabled`/`DimensionAttribute*` aren't in Cin7's
  * request model at all — capture-only, never sent.
  */
-export function toCin7SupplierPayload(supplier: CanonicalSupplierRow, addresses: CanonicalSupplierAddressRow[] = []) {
+export function toCin7SupplierPayload(
+  supplier: CanonicalSupplierRow,
+  addresses: CanonicalSupplierAddressRow[] = [],
+  contacts: CanonicalSupplierContactRow[] = []
+) {
   const payload: Record<string, unknown> = {
     Name: supplier.name,
     Status: supplier.status || "Active",
@@ -91,20 +98,19 @@ export function toCin7SupplierPayload(supplier: CanonicalSupplierRow, addresses:
     }));
   }
 
-  if (supplier.contact_name) {
-    payload.Contacts = [
-      {
-        Name: supplier.contact_name,
-        Phone: supplier.phone || undefined,
-        MobilePhone: supplier.mobile_phone || undefined,
-        Fax: supplier.fax || undefined,
-        Email: supplier.email || undefined,
-        Website: supplier.website || undefined,
-        Comment: supplier.contact_comment || undefined,
-        Default: supplier.contact_default,
-        IncludeInEmail: supplier.contact_include_in_email,
-      },
-    ];
+  const namedContacts = contacts.filter((c) => c.contact_name);
+  if (namedContacts.length) {
+    payload.Contacts = namedContacts.map((c) => ({
+      Name: c.contact_name,
+      Phone: c.phone || undefined,
+      MobilePhone: c.mobile_phone || undefined,
+      Fax: c.fax || undefined,
+      Email: c.email || undefined,
+      Website: c.website || undefined,
+      Comment: c.contact_comment || undefined,
+      Default: c.contact_default,
+      IncludeInEmail: c.contact_include_in_email,
+    }));
   }
 
   return payload;
@@ -136,9 +142,10 @@ export type SupplierPushStatus = "created" | "updated";
 export async function pushSupplier(
   creds: Cin7Credentials,
   supplier: CanonicalSupplierRow,
-  addresses: CanonicalSupplierAddressRow[] = []
+  addresses: CanonicalSupplierAddressRow[] = [],
+  contacts: CanonicalSupplierContactRow[] = []
 ): Promise<{ cin7Id: string; status: SupplierPushStatus }> {
-  const payload = toCin7SupplierPayload(supplier, addresses);
+  const payload = toCin7SupplierPayload(supplier, addresses, contacts);
   const existing = await findSupplierByName(creds, supplier.name);
 
   if (existing) {

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { toCin7SupplierPayload, type CanonicalSupplierAddressRow, type CanonicalSupplierRow } from "@/cin7/suppliers";
+import {
+  toCin7SupplierPayload,
+  type CanonicalSupplierAddressRow,
+  type CanonicalSupplierContactRow,
+  type CanonicalSupplierRow,
+} from "@/cin7/suppliers";
 
 function supplier(overrides: Partial<CanonicalSupplierRow>): CanonicalSupplierRow {
   return {
@@ -23,7 +28,13 @@ function supplier(overrides: Partial<CanonicalSupplierRow>): CanonicalSupplierRo
     additional_attribute_9: null,
     additional_attribute_10: null,
     comments: null,
-    contact_name: null,
+    ...overrides,
+  };
+}
+
+function contact(overrides: Partial<CanonicalSupplierContactRow>): CanonicalSupplierContactRow {
+  return {
+    contact_name: "Peter Parker",
     job_title: null,
     phone: null,
     mobile_phone: null,
@@ -61,13 +72,21 @@ describe("toCin7SupplierPayload", () => {
   });
 
   it("builds a Contacts[] entry without JobTitle — confirmed absent from Cin7's real Supplier contact model", () => {
-    const payload = toCin7SupplierPayload(supplier({ contact_name: "Peter Parker", job_title: "Sales Director" }));
+    const payload = toCin7SupplierPayload(supplier({}), [], [contact({ job_title: "Sales Director" })]);
     expect(payload.Contacts).toEqual([expect.objectContaining({ Name: "Peter Parker" })]);
     expect((payload.Contacts as Record<string, unknown>[])[0]).not.toHaveProperty("JobTitle");
   });
 
   it("omits Contacts when there's no contact name", () => {
-    const payload = toCin7SupplierPayload(supplier({ contact_name: null }));
+    const payload = toCin7SupplierPayload(supplier({}), [], [contact({ contact_name: null })]);
     expect(payload.Contacts).toBeUndefined();
+  });
+
+  it("builds multiple Contacts[] entries — a supplier can have several contacts", () => {
+    const payload = toCin7SupplierPayload(supplier({}), [], [contact({ contact_name: "Peter" }), contact({ contact_name: "Mary Jane" })]);
+    expect(payload.Contacts).toEqual([
+      expect.objectContaining({ Name: "Peter" }),
+      expect.objectContaining({ Name: "Mary Jane" }),
+    ]);
   });
 });

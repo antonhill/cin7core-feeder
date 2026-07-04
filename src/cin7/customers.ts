@@ -31,16 +31,6 @@ export interface CanonicalCustomerRow {
   additional_attribute_9: string | null;
   additional_attribute_10: string | null;
   comments: string | null;
-  contact_name: string | null;
-  job_title: string | null;
-  phone: string | null;
-  mobile_phone: string | null;
-  fax: string | null;
-  email: string | null;
-  website: string | null;
-  contact_comment: string | null;
-  contact_default: boolean;
-  contact_include_in_email: boolean;
 }
 
 export interface CanonicalCustomerAddressRow {
@@ -52,6 +42,19 @@ export interface CanonicalCustomerAddressRow {
   state: string | null;
   postcode: string | null;
   country: string | null;
+}
+
+export interface CanonicalCustomerContactRow {
+  contact_name: string | null;
+  job_title: string | null;
+  phone: string | null;
+  mobile_phone: string | null;
+  fax: string | null;
+  email: string | null;
+  website: string | null;
+  contact_comment: string | null;
+  contact_default: boolean;
+  contact_include_in_email: boolean;
 }
 
 /**
@@ -66,7 +69,11 @@ export interface CanonicalCustomerAddressRow {
  * capture-only, never sent. `MarketingConsent` is a Cin7-side integer with
  * no confirmed mapping from our CSV's text values — also held back.
  */
-export function toCin7CustomerPayload(customer: CanonicalCustomerRow, addresses: CanonicalCustomerAddressRow[] = []) {
+export function toCin7CustomerPayload(
+  customer: CanonicalCustomerRow,
+  addresses: CanonicalCustomerAddressRow[] = [],
+  contacts: CanonicalCustomerContactRow[] = []
+) {
   const payload: Record<string, unknown> = {
     Name: customer.name,
     Status: customer.status || "Active",
@@ -112,21 +119,20 @@ export function toCin7CustomerPayload(customer: CanonicalCustomerRow, addresses:
     }));
   }
 
-  if (customer.contact_name) {
-    payload.Contacts = [
-      {
-        Name: customer.contact_name,
-        JobTitle: customer.job_title || undefined,
-        Phone: customer.phone || undefined,
-        MobilePhone: customer.mobile_phone || undefined,
-        Fax: customer.fax || undefined,
-        Email: customer.email || undefined,
-        Website: customer.website || undefined,
-        Comment: customer.contact_comment || undefined,
-        Default: customer.contact_default,
-        IncludeInEmail: customer.contact_include_in_email,
-      },
-    ];
+  const namedContacts = contacts.filter((c) => c.contact_name);
+  if (namedContacts.length) {
+    payload.Contacts = namedContacts.map((c) => ({
+      Name: c.contact_name,
+      JobTitle: c.job_title || undefined,
+      Phone: c.phone || undefined,
+      MobilePhone: c.mobile_phone || undefined,
+      Fax: c.fax || undefined,
+      Email: c.email || undefined,
+      Website: c.website || undefined,
+      Comment: c.contact_comment || undefined,
+      Default: c.contact_default,
+      IncludeInEmail: c.contact_include_in_email,
+    }));
   }
 
   return payload;
@@ -158,9 +164,10 @@ export type CustomerPushStatus = "created" | "updated";
 export async function pushCustomer(
   creds: Cin7Credentials,
   customer: CanonicalCustomerRow,
-  addresses: CanonicalCustomerAddressRow[] = []
+  addresses: CanonicalCustomerAddressRow[] = [],
+  contacts: CanonicalCustomerContactRow[] = []
 ): Promise<{ cin7Id: string; status: CustomerPushStatus }> {
-  const payload = toCin7CustomerPayload(customer, addresses);
+  const payload = toCin7CustomerPayload(customer, addresses, contacts);
   const existing = await findCustomerByName(creds, customer.name);
 
   if (existing) {

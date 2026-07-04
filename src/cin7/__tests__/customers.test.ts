@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { toCin7CustomerPayload, type CanonicalCustomerAddressRow, type CanonicalCustomerRow } from "@/cin7/customers";
+import {
+  toCin7CustomerPayload,
+  type CanonicalCustomerAddressRow,
+  type CanonicalCustomerContactRow,
+  type CanonicalCustomerRow,
+} from "@/cin7/customers";
 
 function customer(overrides: Partial<CanonicalCustomerRow>): CanonicalCustomerRow {
   return {
@@ -32,7 +37,13 @@ function customer(overrides: Partial<CanonicalCustomerRow>): CanonicalCustomerRo
     additional_attribute_9: null,
     additional_attribute_10: null,
     comments: null,
-    contact_name: null,
+    ...overrides,
+  };
+}
+
+function contact(overrides: Partial<CanonicalCustomerContactRow>): CanonicalCustomerContactRow {
+  return {
+    contact_name: "Frank",
     job_title: null,
     phone: null,
     mobile_phone: null,
@@ -62,7 +73,7 @@ describe("toCin7CustomerPayload", () => {
   });
 
   it("omits Addresses/Contacts when there are none", () => {
-    const payload = toCin7CustomerPayload(customer({}), []);
+    const payload = toCin7CustomerPayload(customer({}), [], []);
     expect(payload.Addresses).toBeUndefined();
     expect(payload.Contacts).toBeUndefined();
   });
@@ -93,13 +104,21 @@ describe("toCin7CustomerPayload", () => {
     ]);
   });
 
-  it("builds a single-element Contacts[] (including JobTitle) only when a contact name is set", () => {
-    const withContact = toCin7CustomerPayload(customer({ contact_name: "Frank", job_title: "Manager", contact_default: true }));
+  it("builds a Contacts[] entry (including JobTitle) per contact with a name set", () => {
+    const withContact = toCin7CustomerPayload(customer({}), [], [contact({ job_title: "Manager", contact_default: true })]);
     expect(withContact.Contacts).toEqual([
       expect.objectContaining({ Name: "Frank", JobTitle: "Manager", Default: true }),
     ]);
 
-    const withoutContact = toCin7CustomerPayload(customer({ contact_name: null }));
+    const withoutContact = toCin7CustomerPayload(customer({}), [], [contact({ contact_name: null })]);
     expect(withoutContact.Contacts).toBeUndefined();
+  });
+
+  it("builds multiple Contacts[] entries — a customer can have several contacts", () => {
+    const payload = toCin7CustomerPayload(customer({}), [], [contact({ contact_name: "John" }), contact({ contact_name: "Frank" })]);
+    expect(payload.Contacts).toEqual([
+      expect.objectContaining({ Name: "John" }),
+      expect.objectContaining({ Name: "Frank" }),
+    ]);
   });
 });

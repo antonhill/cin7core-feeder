@@ -92,17 +92,6 @@ export interface CanonicalCustomer {
   additional_attribute_9: string | null;
   additional_attribute_10: string | null;
   comments: string | null;
-  contact_name: string | null;
-  job_title: string | null;
-  phone: string | null;
-  mobile_phone: string | null;
-  fax: string | null;
-  email: string | null;
-  website: string | null;
-  contact_comment: string | null;
-  contact_default: boolean;
-  contact_include_in_email: boolean;
-  marketing_consent: string | null;
   is_accounting_dimension_enabled: boolean;
   dimension_attribute_1: string | null;
   dimension_attribute_2: string | null;
@@ -149,17 +138,6 @@ export function toCanonicalCustomer(row: CustomerCsvRow): CanonicalCustomer {
     additional_attribute_9: row.AdditionalAttribute9 || null,
     additional_attribute_10: row.AdditionalAttribute10 || null,
     comments: row.Comments || null,
-    contact_name: row.ContactName || null,
-    job_title: row.JobTitle || null,
-    phone: row.Phone || null,
-    mobile_phone: row.MobilePhone || null,
-    fax: row.Fax || null,
-    email: row.Email || null,
-    website: row.Website || null,
-    contact_comment: row.ContactComment || null,
-    contact_default: parseTrueFalse(row.ContactDefault),
-    contact_include_in_email: parseTrueFalse(row.ContactIncludeInEmail),
-    marketing_consent: row.MarketingConsent || null,
     is_accounting_dimension_enabled: parseTrueFalse(row.IsAccountingDimensionEnabled),
     dimension_attribute_1: row.DimensionAttribute1 || null,
     dimension_attribute_2: row.DimensionAttribute2 || null,
@@ -171,5 +149,43 @@ export function toCanonicalCustomer(row: CustomerCsvRow): CanonicalCustomer {
     dimension_attribute_8: row.DimensionAttribute8 || null,
     dimension_attribute_9: row.DimensionAttribute9 || null,
     dimension_attribute_10: row.DimensionAttribute10 || null,
+  };
+}
+
+/**
+ * A customer Name can repeat across several CSV rows, one per contact
+ * (confirmed live — some customers have 10+ contact rows) — this is why
+ * contacts are their own table, not columns on the customer row itself. See
+ * migration 0015 and commit-customers.ts.
+ */
+export interface CanonicalCustomerContact {
+  name: string;
+  contact_name: string | null;
+  job_title: string | null;
+  phone: string | null;
+  mobile_phone: string | null;
+  fax: string | null;
+  email: string | null;
+  website: string | null;
+  contact_comment: string | null;
+  contact_default: boolean;
+  contact_include_in_email: boolean;
+  marketing_consent: string | null;
+}
+
+export function toCanonicalCustomerContact(row: CustomerCsvRow): CanonicalCustomerContact {
+  return {
+    name: row.Name,
+    contact_name: row.ContactName || null,
+    job_title: row.JobTitle || null,
+    phone: row.Phone || null,
+    mobile_phone: row.MobilePhone || null,
+    fax: row.Fax || null,
+    email: row.Email || null,
+    website: row.Website || null,
+    contact_comment: row.ContactComment || null,
+    contact_default: parseTrueFalse(row.ContactDefault),
+    contact_include_in_email: parseTrueFalse(row.ContactIncludeInEmail),
+    marketing_consent: row.MarketingConsent || null,
   };
 }

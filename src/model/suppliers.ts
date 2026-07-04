@@ -71,16 +71,6 @@ export interface CanonicalSupplier {
   additional_attribute_9: string | null;
   additional_attribute_10: string | null;
   comments: string | null;
-  contact_name: string | null;
-  job_title: string | null;
-  phone: string | null;
-  mobile_phone: string | null;
-  fax: string | null;
-  email: string | null;
-  website: string | null;
-  contact_comment: string | null;
-  contact_default: boolean;
-  contact_include_in_email: boolean;
   is_accounting_dimension_enabled: boolean;
   dimension_attribute_1: string | null;
   dimension_attribute_2: string | null;
@@ -117,16 +107,6 @@ export function toCanonicalSupplier(row: SupplierCsvRow): CanonicalSupplier {
     additional_attribute_9: row.AdditionalAttribute9 || null,
     additional_attribute_10: row.AdditionalAttribute10 || null,
     comments: row.Comments || null,
-    contact_name: row.ContactName || null,
-    job_title: row.JobTitle || null,
-    phone: row.Phone || null,
-    mobile_phone: row.MobilePhone || null,
-    fax: row.Fax || null,
-    email: row.Email || null,
-    website: row.Website || null,
-    contact_comment: row.ContactComment || null,
-    contact_default: parseTrueFalse(row.ContactDefault),
-    contact_include_in_email: parseTrueFalse(row.ContactIncludeInEmail),
     is_accounting_dimension_enabled: parseTrueFalse(row.IsAccountingDimensionEnabled),
     dimension_attribute_1: row.DimensionAttribute1 || null,
     dimension_attribute_2: row.DimensionAttribute2 || null,
@@ -138,5 +118,36 @@ export function toCanonicalSupplier(row: SupplierCsvRow): CanonicalSupplier {
     dimension_attribute_8: row.DimensionAttribute8 || null,
     dimension_attribute_9: row.DimensionAttribute9 || null,
     dimension_attribute_10: row.DimensionAttribute10 || null,
+  };
+}
+
+/** A supplier Name can repeat across several CSV rows, one per contact — same reasoning as CanonicalCustomerContact. */
+export interface CanonicalSupplierContact {
+  name: string;
+  contact_name: string | null;
+  job_title: string | null;
+  phone: string | null;
+  mobile_phone: string | null;
+  fax: string | null;
+  email: string | null;
+  website: string | null;
+  contact_comment: string | null;
+  contact_default: boolean;
+  contact_include_in_email: boolean;
+}
+
+export function toCanonicalSupplierContact(row: SupplierCsvRow): CanonicalSupplierContact {
+  return {
+    name: row.Name,
+    contact_name: row.ContactName || null,
+    job_title: row.JobTitle || null,
+    phone: row.Phone || null,
+    mobile_phone: row.MobilePhone || null,
+    fax: row.Fax || null,
+    email: row.Email || null,
+    website: row.Website || null,
+    contact_comment: row.ContactComment || null,
+    contact_default: parseTrueFalse(row.ContactDefault),
+    contact_include_in_email: parseTrueFalse(row.ContactIncludeInEmail),
   };
 }

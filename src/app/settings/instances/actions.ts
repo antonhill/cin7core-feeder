@@ -4,8 +4,8 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
 import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples } from "@/cin7/debug";
-import { pushCustomer, type CanonicalCustomerAddressRow } from "@/cin7/customers";
-import { pushSupplier, type CanonicalSupplierAddressRow } from "@/cin7/suppliers";
+import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
+import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
 
 export interface InstanceRecord {
@@ -241,8 +241,18 @@ export async function debugPushOneCustomerAndSupplier(instanceId: string): Promi
         .select("address_type, address_default_for_type, address_line_1, address_line_2, city, state, postcode, country")
         .eq("org_id", orgId)
         .eq("name", customer.name);
+      const { data: contacts } = await db
+        .from("customer_contacts")
+        .select("contact_name, job_title, phone, mobile_phone, fax, email, website, contact_comment, contact_default, contact_include_in_email")
+        .eq("org_id", orgId)
+        .eq("name", customer.name);
       try {
-        const pushResult = await pushCustomer(creds, customer, (addresses ?? []) as CanonicalCustomerAddressRow[]);
+        const pushResult = await pushCustomer(
+          creds,
+          customer,
+          (addresses ?? []) as CanonicalCustomerAddressRow[],
+          (contacts ?? []) as CanonicalCustomerContactRow[]
+        );
         result.customer = { name: customer.name, ...pushResult };
       } catch (e) {
         result.customer = { name: customer.name, error: e instanceof Error ? e.message : "Unknown error" };
@@ -257,8 +267,18 @@ export async function debugPushOneCustomerAndSupplier(instanceId: string): Promi
         .select("address_type, address_default_for_type, address_line_1, address_line_2, city, state, postcode, country")
         .eq("org_id", orgId)
         .eq("name", supplier.name);
+      const { data: contacts } = await db
+        .from("supplier_contacts")
+        .select("contact_name, job_title, phone, mobile_phone, fax, email, website, contact_comment, contact_default, contact_include_in_email")
+        .eq("org_id", orgId)
+        .eq("name", supplier.name);
       try {
-        const pushResult = await pushSupplier(creds, supplier, (addresses ?? []) as CanonicalSupplierAddressRow[]);
+        const pushResult = await pushSupplier(
+          creds,
+          supplier,
+          (addresses ?? []) as CanonicalSupplierAddressRow[],
+          (contacts ?? []) as CanonicalSupplierContactRow[]
+        );
         result.supplier = { name: supplier.name, ...pushResult };
       } catch (e) {
         result.supplier = { name: supplier.name, error: e instanceof Error ? e.message : "Unknown error" };
