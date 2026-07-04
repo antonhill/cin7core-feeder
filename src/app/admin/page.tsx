@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { createOrgAndInvite, inviteMemberToOrg, listOrgsForAdmin, type OrgSummary } from "./actions";
+import { createOrgAndInvite, inviteMemberToOrg, listOrgsForAdmin, uploadOrgLogo, type OrgSummary } from "./actions";
 
 export default function AdminPage() {
   const [orgs, setOrgs] = useState<OrgSummary[]>([]);
@@ -120,6 +120,10 @@ function OrgCard({ org, onMemberAdded }: { org: OrgSummary; onMemberAdded: () =>
   const [success, setSuccess] = useState<string | null>(null);
   const [isSubmitting, startTransition] = useTransition();
 
+  const [logoUrl, setLogoUrl] = useState(org.logoUrl);
+  const [logoError, setLogoError] = useState<string | null>(null);
+  const [isUploadingLogo, startLogoTransition] = useTransition();
+
   function handleAddMember(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -136,16 +140,52 @@ function OrgCard({ org, onMemberAdded }: { org: OrgSummary; onMemberAdded: () =>
     });
   }
 
+  function handleLogoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setLogoError(null);
+    const formData = new FormData();
+    formData.set("logo", file);
+    startLogoTransition(async () => {
+      const result = await uploadOrgLogo(org.id, formData);
+      if (!result.ok) {
+        setLogoError(result.error ?? "Unknown error");
+        return;
+      }
+      setLogoUrl(result.logoUrl ?? null);
+    });
+  }
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <p className="text-lg font-semibold text-slate-900">{org.name}</p>
-      <p className="mt-1 text-sm text-slate-500">
-        {org.instanceCount} Cin7 instance{org.instanceCount === 1 ? "" : "s"} · created{" "}
-        {new Date(org.createdAt).toLocaleDateString()}
-      </p>
-      <p className="mt-2 text-sm text-slate-600">
-        {org.memberEmails.length > 0 ? org.memberEmails.join(", ") : "No members yet"}
-      </p>
+      <div className="flex items-start gap-4">
+        <label className="group relative flex h-14 w-14 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+          {logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element -- external per-org logo URL
+            <img src={logoUrl} alt={`${org.name} logo`} className="h-full w-full object-contain" />
+          ) : (
+            <span className="text-xs text-slate-400">Logo</span>
+          )}
+          <span className="absolute inset-0 flex items-center justify-center bg-slate-900/60 text-xs font-medium text-white opacity-0 transition group-hover:opacity-100">
+            {isUploadingLogo ? "Uploading…" : "Change"}
+          </span>
+          <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" onChange={handleLogoChange} disabled={isUploadingLogo} className="hidden" />
+        </label>
+        <div className="min-w-0 flex-1">
+          <p className="text-lg font-semibold text-slate-900">{org.name}</p>
+          <p className="mt-1 text-sm text-slate-500">
+            {org.instanceCount} Cin7 instance{org.instanceCount === 1 ? "" : "s"} · created{" "}
+            {new Date(org.createdAt).toLocaleDateString()}
+          </p>
+          <p className="mt-2 text-sm text-slate-600">
+            {org.memberEmails.length > 0 ? org.memberEmails.join(", ") : "No members yet"}
+          </p>
+        </div>
+      </div>
+      {logoError && (
+        <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-700">{logoError}</p>
+      )}
 
       <form onSubmit={handleAddMember} className="mt-4 flex gap-2">
         <input

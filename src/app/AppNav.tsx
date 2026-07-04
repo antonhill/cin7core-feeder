@@ -10,7 +10,17 @@ const LINKS = [
   { href: "/settings/instances", label: "Cin7 Instances" },
 ];
 
-export function AppNav({ userEmail, isSuperAdmin }: { userEmail: string | null; isSuperAdmin: boolean }) {
+export function AppNav({
+  userEmail,
+  isSuperAdmin,
+  orgName,
+  orgLogoUrl,
+}: {
+  userEmail: string | null;
+  isSuperAdmin: boolean;
+  orgName: string | null;
+  orgLogoUrl: string | null;
+}) {
   const pathname = usePathname();
 
   if (pathname.startsWith("/login") || pathname.startsWith("/auth")) return null;
@@ -21,10 +31,15 @@ export function AppNav({ userEmail, isSuperAdmin }: { userEmail: string | null; 
     <nav className="border-b border-slate-200 bg-white">
       <div className="mx-auto flex max-w-5xl items-center gap-2 px-6 py-4">
         <Link href="/" className="mr-6 flex items-center gap-2 text-lg font-bold text-slate-900">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-sm text-white">
-            C7
-          </span>
-          Cin7 Feeder
+          {orgLogoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element -- external, per-org logo URL; not worth configuring next/image remotePatterns for
+            <img src={orgLogoUrl} alt={orgName ?? "Organization logo"} className="h-8 w-8 rounded-lg object-contain" />
+          ) : (
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-sm text-white">
+              C7
+            </span>
+          )}
+          {orgName ?? "Cin7 Feeder"}
         </Link>
         <div className="flex flex-1 items-center gap-1">
           {links.map((link) => {
