@@ -5,6 +5,7 @@ import {
   debugFindBomExample,
   debugFindCustomerSupplierExamples,
   debugProbeWorkCentrePaths,
+  debugPushOneCustomerAndSupplier,
   deleteInstance,
   listInstances,
   testInstanceConnection,
@@ -87,6 +88,14 @@ export default function InstancesSettingsPage() {
     });
   }
 
+  function handlePushOneCustomerAndSupplier(instanceId: string) {
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Pushing…" } }));
+    startTransition(async () => {
+      const result = await debugPushOneCustomerAndSupplier(instanceId);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
   function handleDelete(instanceId: string) {
     if (!confirm("Delete this Cin7 Core instance connection?")) return;
     setError(null);
@@ -145,6 +154,9 @@ export default function InstancesSettingsPage() {
                 </button>
                 <button onClick={() => handleFindCustomerSupplierExamples(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                   Fetch Customer/Supplier example
+                </button>
+                <button onClick={() => handlePushOneCustomerAndSupplier(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                  Test push 1 customer + 1 supplier
                 </button>
                 <button onClick={() => setModalTarget(inst.id)} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
                   Edit

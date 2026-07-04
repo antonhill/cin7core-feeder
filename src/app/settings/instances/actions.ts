@@ -4,6 +4,8 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
 import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples } from "@/cin7/debug";
+import { pushCustomer, type CanonicalCustomerAddressRow } from "@/cin7/customers";
+import { pushSupplier, type CanonicalSupplierAddressRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
 
 export interface InstanceRecord {
@@ -192,6 +194,79 @@ export async function debugFindCustomerSupplierExamples(instanceId: string): Pro
   try {
     const creds = await loadInstanceCreds(instanceId);
     const result = await findCustomerAndSupplierExamples(creds);
+    return { ok: true, message: JSON.stringify(result, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Diagnostic only: pushes just ONE customer and ONE supplier (not the whole
+ * catalog) to confirm the new push client's payload shape actually works
+ * live, before trusting it on the full "Push to instances" flow — that
+ * button syncs every product/customer/supplier in one HTTP request, which
+ * with 175+ customer/supplier rows now in the hub would very likely exceed
+ * Vercel's 60s function timeout before we even learned whether the payload
+ * shape was right.
+ */
+export async function debugPushOneCustomerAndSupplier(instanceId: string): Promise<TestConnectionResult> {
+  try {
+    const { orgId } = await requireCurrentOrg();
+    const db = createServiceRoleClient();
+    const creds = await loadInstanceCreds(instanceId);
+
+    const { data: customer, error: customerError } = await db
+      .from("customers")
+      .select("*")
+      .eq("org_id", orgId)
+      .order("name")
+      .limit(1)
+      .maybeSingle();
+    if (customerError) throw new Error(`customers: ${customerError.message}`);
+
+    const { data: supplier, error: supplierError } = await db
+      .from("suppliers")
+      .select("*")
+      .eq("org_id", orgId)
+      .order("name")
+      .limit(1)
+      .maybeSingle();
+    if (supplierError) throw new Error(`suppliers: ${supplierError.message}`);
+
+    const result: Record<string, unknown> = {};
+
+    if (customer) {
+      const { data: addresses } = await db
+        .from("customer_addresses")
+        .select("address_type, address_default_for_type, address_line_1, address_line_2, city, state, postcode, country")
+        .eq("org_id", orgId)
+        .eq("name", customer.name);
+      try {
+        const pushResult = await pushCustomer(creds, customer, (addresses ?? []) as CanonicalCustomerAddressRow[]);
+        result.customer = { name: customer.name, ...pushResult };
+      } catch (e) {
+        result.customer = { name: customer.name, error: e instanceof Error ? e.message : "Unknown error" };
+      }
+    } else {
+      result.customer = "No customers imported yet.";
+    }
+
+    if (supplier) {
+      const { data: addresses } = await db
+        .from("supplier_addresses")
+        .select("address_type, address_default_for_type, address_line_1, address_line_2, city, state, postcode, country")
+        .eq("org_id", orgId)
+        .eq("name", supplier.name);
+      try {
+        const pushResult = await pushSupplier(creds, supplier, (addresses ?? []) as CanonicalSupplierAddressRow[]);
+        result.supplier = { name: supplier.name, ...pushResult };
+      } catch (e) {
+        result.supplier = { name: supplier.name, error: e instanceof Error ? e.message : "Unknown error" };
+      }
+    } else {
+      result.supplier = "No suppliers imported yet.";
+    }
+
     return { ok: true, message: JSON.stringify(result, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
