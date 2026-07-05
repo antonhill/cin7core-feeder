@@ -414,6 +414,16 @@ export default function ImportPage() {
                                   <li key={j}>{line}</li>
                                 ))}
                               </ul>
+                              {e.raw && (
+                                <details className="mt-1">
+                                  <summary className="cursor-pointer text-xs text-red-900/70 hover:text-red-900">
+                                    raw response
+                                  </summary>
+                                  <pre className="mt-1 overflow-x-auto rounded bg-red-900/5 p-2 text-xs text-red-900">
+                                    {e.raw}
+                                  </pre>
+                                </details>
+                              )}
                             </li>
                           ))}
                         </ul>

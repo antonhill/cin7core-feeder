@@ -21,7 +21,7 @@ export interface InstanceSyncOutcome {
   suppliersUpdated?: number;
   suppliersSkipped?: number;
   suppliersFailed?: number;
-  errors?: { sku: string; error: string[] }[];
+  errors?: { sku: string; error: string[]; raw?: string }[];
 }
 
 /**

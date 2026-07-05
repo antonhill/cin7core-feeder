@@ -37,17 +37,36 @@ export interface SyncRunSummary {
   suppliersUpdated: number;
   suppliersSkipped: number;
   suppliersFailed: number;
-  errors: { sku: string; error: string[] }[];
+  errors: { sku: string; error: string[]; raw?: string }[];
+}
+
+interface DescribedError {
+  lines: string[];
+  /**
+   * The untouched Cin7 response body, when this came from a Cin7ApiError
+   * anywhere in the chain — our own text-only parsing below only surfaces
+   * `Exception`/`Message`, so a case like "Account with specified ID not
+   * found" (ambiguous about which account field is wrong — this can
+   * originate from Cin7's Xero/QuickBooks sync layer rather than Cin7's own
+   * chart of accounts, which our pre-flight check has no visibility into)
+   * needs the raw body to have any chance of digging further, without a
+   * repeat round-trip through Vercel logs.
+   */
+  raw?: string;
 }
 
 /**
- * Carries a list of already-described error lines through a rethrow — e.g.
- * the product loop wants to prefix "Product push failed" ahead of whatever
- * pushProduct's own failure says, without collapsing Cin7's separate
- * validation issues back into one joined string in the process.
+ * Carries a list of already-described error lines (and the underlying raw
+ * Cin7 body, if any) through a rethrow — e.g. the product loop wants to
+ * prefix "Product push failed" ahead of whatever pushProduct's own failure
+ * says, without collapsing Cin7's separate validation issues back into one
+ * joined string in the process.
  */
 class MultilineError extends Error {
-  constructor(public readonly lines: string[]) {
+  constructor(
+    public readonly lines: string[],
+    public readonly raw?: string
+  ) {
     super(lines.join(" | "));
     this.name = "MultilineError";
   }
@@ -60,9 +79,11 @@ class MultilineError extends Error {
  * dump, not "here's exactly what's wrong". Extracts each issue's
  * human-readable message as its own line (rather than joining them into one
  * blob) so the UI can render one line per issue; falls back to the raw body
- * when it isn't the shape we expect (e.g. an HTML error page).
+ * when it isn't the shape we expect (e.g. an HTML error page). The raw body
+ * itself is always kept alongside, in case the friendly text alone is too
+ * vague to act on (see DescribedError above).
  */
-function describeCin7ErrorBody(e: Cin7ApiError): string[] {
+function describeCin7ErrorBody(e: Cin7ApiError): DescribedError {
   try {
     const parsed: unknown = JSON.parse(e.message);
     const issues = Array.isArray(parsed) ? parsed : [parsed];
@@ -76,18 +97,18 @@ function describeCin7ErrorBody(e: Cin7ApiError): string[] {
         return null;
       })
       .filter((m): m is string => m !== null);
-    if (messages.length) return messages;
+    if (messages.length) return { lines: messages, raw: e.message };
   } catch {
     // Not JSON (e.g. an HTML error page) — fall through to the raw body below.
   }
-  return [`[${e.status}] ${e.message}`];
+  return { lines: [`[${e.status}] ${e.message}`], raw: e.message };
 }
 
 /** Returns one array entry per distinct issue — never a single joined string — so callers can render each as its own line. */
-function describeError(e: unknown): string[] {
-  if (e instanceof MultilineError) return e.lines;
+function describeError(e: unknown): DescribedError {
+  if (e instanceof MultilineError) return { lines: e.lines, raw: e.raw };
   if (e instanceof Cin7ApiError) return describeCin7ErrorBody(e);
-  return [e instanceof Error ? e.message : "Unknown error"];
+  return { lines: [e instanceof Error ? e.message : "Unknown error"] };
 }
 
 /**
@@ -221,7 +242,8 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
         // run) resolves without an extra API call.
         pushResult = await pushProduct(creds, product, priceTiers ?? [], bomLinesTyped, cin7IdBySku, refCache);
       } catch (e) {
-        throw new MultilineError(["Product push failed", ...describeError(e)]);
+        const described = describeError(e);
+        throw new MultilineError(["Product push failed", ...described.lines], described.raw);
       }
 
       await db.from("sync_state").upsert(
@@ -242,9 +264,9 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
       if (pushResult.status === "created") summary.productsCreated++;
       else summary.productsUpdated++;
     } catch (e) {
-      const lines = describeError(e);
+      const { lines, raw } = describeError(e);
       summary.productsFailed++;
-      summary.errors.push({ sku: product.sku, error: lines });
+      summary.errors.push({ sku: product.sku, error: lines, raw });
       await db.from("sync_state").upsert(
         {
           org_id: orgId,
@@ -296,9 +318,9 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
       await pushProductionBom(creds, cin7ProductId, version, operations ?? [], items ?? [], productionBomRefCaches);
       summary.productionBomsPushed++;
     } catch (e) {
-      const lines = describeError(e);
+      const { lines, raw } = describeError(e);
       summary.productionBomsFailed++;
-      summary.errors.push({ sku: `${version.product_sku}:${version.version}`, error: lines });
+      summary.errors.push({ sku: `${version.product_sku}:${version.version}`, error: lines, raw });
     }
   }
 
@@ -403,9 +425,9 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
       if (pushResult.status === "created") summary.customersCreated++;
       else summary.customersUpdated++;
     } catch (e) {
-      const lines = describeError(e);
+      const { lines, raw } = describeError(e);
       summary.customersFailed++;
-      summary.errors.push({ sku: customer.name, error: lines });
+      summary.errors.push({ sku: customer.name, error: lines, raw });
       await db.from("customer_sync_state").upsert(
         {
           org_id: orgId,
@@ -506,9 +528,9 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
       if (pushResult.status === "created") summary.suppliersCreated++;
       else summary.suppliersUpdated++;
     } catch (e) {
-      const lines = describeError(e);
+      const { lines, raw } = describeError(e);
       summary.suppliersFailed++;
-      summary.errors.push({ sku: supplier.name, error: lines });
+      summary.errors.push({ sku: supplier.name, error: lines, raw });
       await db.from("supplier_sync_state").upsert(
         {
           org_id: orgId,

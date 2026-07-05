@@ -166,6 +166,7 @@ describe("syncInstance", () => {
           "Location 'Main Warehouse Nooo' was not found in Locations reference book",
           "Sales Representative 'Sparkie' was not found in Company Contacts reference book",
         ],
+        raw: body,
       },
     ]);
   });
@@ -184,7 +185,11 @@ describe("syncInstance", () => {
     const summary = await syncInstance(db, "org1", "inst-1");
 
     expect(summary.errors).toEqual([
-      { sku: "BAD", error: ["Product push failed", "[500] <html>Internal Server Error</html>"] },
+      {
+        sku: "BAD",
+        error: ["Product push failed", "[500] <html>Internal Server Error</html>"],
+        raw: "<html>Internal Server Error</html>",
+      },
     ]);
   });
 
@@ -301,6 +306,40 @@ describe("syncInstance", () => {
       expect(pushCustomer).toHaveBeenCalledTimes(1);
       expect(summary.customersCreated).toBe(1);
       expect(summary.customersFailed).toBe(0);
+    });
+
+    it("keeps the raw Cin7 body when pre-flight passes but the actual push still fails (e.g. a Xero/QuickBooks-sync error our reference checks can't see)", async () => {
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+        customers: [
+          {
+            org_id: "org1",
+            name: "Woolworths",
+            content_hash: "h1",
+            location: null,
+            sales_representative: null,
+            account_receivable: "610",
+            sale_account: "200",
+          },
+        ],
+        customer_sync_state: [],
+        customer_addresses: [],
+        customer_contacts: [],
+      });
+      const body = JSON.stringify([{ ErrorCode: 404, Exception: "Account with specified ID not found" }]);
+      vi.mocked(pushCustomer).mockRejectedValueOnce(new Cin7ApiError(400, body, false));
+
+      const summary = await syncInstance(db, "org1", "inst-1");
+
+      expect(summary.customersFailed).toBe(1);
+      expect(summary.errors).toEqual([
+        { sku: "Woolworths", error: ["Account with specified ID not found"], raw: body },
+      ]);
     });
 
     it("fails without attempting the push when Location and SalesRepresentative both don't exist — reporting both in one pass", async () => {
