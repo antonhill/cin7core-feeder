@@ -155,7 +155,11 @@ export default function AuditPage() {
   const [applyResult, setApplyResult] = useState<ApplyFixesResult | null>(null);
   const [applyError, setApplyError] = useState<string | null>(null);
 
-  const [categoryFilter, setCategoryFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
+
+  function toggleCategoryFilter(category: string) {
+    setCategoryFilter((prev) => (prev.includes(category) ? prev.filter((c) => c !== category) : [...prev, category]));
+  }
 
   function handleLoadInstances() {
     setInstancesError(null);
@@ -219,7 +223,7 @@ export default function AuditPage() {
   // Brand/pricing/inventory/GL account) — near-duplicate categories are
   // inherently a cross-category comparison, so that section always shows
   // everything regardless of this filter.
-  const filteredIssues = (result?.issues ?? []).filter((issue) => !categoryFilter || issue.category === categoryFilter);
+  const filteredIssues = (result?.issues ?? []).filter((issue) => categoryFilter.length === 0 || categoryFilter.includes(issue.category));
   const issuesByType = new Map<ProductAuditIssueType, ProductAuditIssue[]>();
   for (const issue of filteredIssues) {
     const list = issuesByType.get(issue.type) ?? [];
@@ -298,26 +302,31 @@ export default function AuditPage() {
       {result && (
         <section className="mt-6 flex flex-col gap-4">
           {result.categories.length > 0 && (
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-2 text-sm">
-                <span className="font-medium text-slate-700">Category</span>
-                <select
-                  value={categoryFilter}
-                  onChange={(e) => setCategoryFilter(e.target.value)}
-                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
-                >
-                  <option value="">All categories</option>
-                  {result.categories.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {categoryFilter && (
-                <span className="text-xs text-slate-400">
-                  Showing only &ldquo;{categoryFilter}&rdquo; — duplicate categories below are unaffected, since that check compares across categories.
-                </span>
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-slate-700">Category</p>
+                <div className="flex gap-3 text-xs text-indigo-600">
+                  <button type="button" onClick={() => setCategoryFilter(result.categories)} className="hover:underline">
+                    Select all
+                  </button>
+                  <button type="button" onClick={() => setCategoryFilter([])} className="hover:underline">
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <div className="mt-2 flex max-h-40 flex-col gap-1 overflow-y-auto text-sm">
+                {result.categories.map((cat) => (
+                  <label key={cat} className="flex items-center gap-2">
+                    <input type="checkbox" checked={categoryFilter.includes(cat)} onChange={() => toggleCategoryFilter(cat)} className="h-4 w-4" />
+                    {cat}
+                  </label>
+                ))}
+              </div>
+              {categoryFilter.length > 0 && (
+                <p className="mt-2 text-xs text-slate-400">
+                  Showing only {categoryFilter.map((c) => `"${c}"`).join(", ")} — duplicate categories below are unaffected, since
+                  that check compares across categories.
+                </p>
               )}
             </div>
           )}
@@ -335,7 +344,7 @@ export default function AuditPage() {
 
           {ISSUE_ORDER.filter((type) => issuesByType.has(type)).map((type) => (
             <IssueTypeSection
-              key={`${type}-${categoryFilter}`}
+              key={`${type}-${categoryFilter.join(",")}`}
               type={type}
               issues={issuesByType.get(type)!}
               onApply={handleApply}
@@ -345,7 +354,9 @@ export default function AuditPage() {
 
           {filteredIssues.length === 0 && result.duplicateCategories.length === 0 && (
             <p className="text-base text-slate-500">
-              {categoryFilter ? `No issues found for "${categoryFilter}".` : "No issues found — this catalog looks clean."}
+              {categoryFilter.length > 0
+                ? `No issues found for ${categoryFilter.map((c) => `"${c}"`).join(", ")}.`
+                : "No issues found — this catalog looks clean."}
             </p>
           )}
         </section>
