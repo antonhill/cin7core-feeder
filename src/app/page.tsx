@@ -22,6 +22,11 @@ const CARDS = [
     description: "Revenue, COGS, profit, and margin% per product sold, across every invoiced sale pulled from your connected Cin7 instances.",
   },
   {
+    href: "/audit",
+    title: "Data Audit",
+    description: "Scan a connected instance's products for consistency and accuracy gaps — missing Brand, no sales price, incomplete inventory setup, missing GL accounts, near-duplicate categories — and bulk-fix them.",
+  },
+  {
     href: "/settings/instances",
     title: "Cin7 Instances",
     description: "Connect, edit, or remove the Cin7 Core instances this organization syncs to.",

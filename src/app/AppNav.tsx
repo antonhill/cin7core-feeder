@@ -49,6 +49,14 @@ function InstancesIcon({ className }: IconProps) {
   );
 }
 
+function AuditIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M9 11.5 11 13.5 15.5 9M12 3l7 3v6c0 4.5-3 8.5-7 9-4-.5-7-4.5-7-9V6l7-3Z" />
+    </svg>
+  );
+}
+
 function AdminIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -62,6 +70,7 @@ const LINKS = [
   { href: "/templates", label: "Templates", Icon: TemplateIcon },
   { href: "/migrate", label: "Migrate", Icon: MigrateIcon },
   { href: "/reports", label: "Reports", Icon: ReportsIcon },
+  { href: "/audit", label: "Data Audit", Icon: AuditIcon },
   { href: "/settings/instances", label: "Cin7 Instances", Icon: InstancesIcon },
 ];
 
