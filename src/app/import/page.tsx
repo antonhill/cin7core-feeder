@@ -4,7 +4,6 @@ import { useActionState, useState, useTransition } from "react";
 import {
   importCsvAction,
   pushToCin7Action,
-  DEFAULT_PUSH_SCOPE_SELECTION,
   type ImportActionState,
   type PushScopeSelection,
   type ScopeMode,
@@ -13,6 +12,12 @@ import { listInstancesForPicker, type InstancePickerItem } from "@/actions/insta
 import type { InstanceSyncOutcome } from "@/sync/sync-org";
 
 const INITIAL_STATE: ImportActionState = { status: "idle" };
+
+// Kept in sync with pushToCin7Action's own default in actions.ts — a
+// "use server" file may only export async functions, so this can't be a
+// shared exported constant (that's what crashed every action in that file:
+// "A 'use server' file can only export async functions, found object").
+const DEFAULT_PUSH_SCOPE_SELECTION: PushScopeSelection = { products: "all", customers: "all", suppliers: "all" };
 
 const KINDS = [
   { value: "products", label: "Products (InventoryList)" },

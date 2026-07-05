@@ -67,12 +67,6 @@ export interface PushScopeSelection {
   suppliers: ScopeMode;
 }
 
-export const DEFAULT_PUSH_SCOPE_SELECTION: PushScopeSelection = {
-  products: "all",
-  customers: "all",
-  suppliers: "all",
-};
-
 /**
  * Pushes the org's current canonical data to the selected instance(s) only.
  * `scopeSelection` lets each data type independently scope to "just the
@@ -81,10 +75,16 @@ export const DEFAULT_PUSH_SCOPE_SELECTION: PushScopeSelection = {
  * product/customer/supplier (and any of their pre-existing failures) in the
  * same push. A kind set to "last_import" with no committed batch yet scopes
  * to nothing for that kind, rather than silently falling back to "all".
+ *
+ * Note: a "use server" file may only export async functions — the default
+ * scope value lives inline here (and duplicated as a local constant in
+ * page.tsx) rather than as an exported object constant, which broke every
+ * action in this file at once ("A 'use server' file can only export async
+ * functions, found object" — only caught at runtime, not by `next build`).
  */
 export async function pushToCin7Action(
   instanceIds: string[],
-  scopeSelection: PushScopeSelection = DEFAULT_PUSH_SCOPE_SELECTION
+  scopeSelection: PushScopeSelection = { products: "all", customers: "all", suppliers: "all" }
 ): Promise<PushToCin7Result> {
   if (!instanceIds.length) return { ok: false, error: "Select at least one instance to push to." };
 
