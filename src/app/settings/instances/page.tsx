@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import {
   debugCheckCustomerReferenceFields,
+  debugCheckSupplierReferenceFields,
   debugFetchCustomerByName,
   debugFindBomExample,
   debugFindCustomerSupplierExamples,
@@ -119,6 +120,16 @@ export default function InstancesSettingsPage() {
     });
   }
 
+  function handleCheckSupplierReferenceFields(instanceId: string) {
+    const name = (refCheckNames[instanceId] ?? "").trim();
+    if (!name) return;
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Checking…" } }));
+    startTransition(async () => {
+      const result = await debugCheckSupplierReferenceFields(instanceId, name);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
   function handleDelete(instanceId: string) {
     if (!confirm("Delete this Cin7 Core instance connection?")) return;
     setError(null);
@@ -192,7 +203,7 @@ export default function InstancesSettingsPage() {
             <div className="mt-3 flex items-center gap-2">
               <input
                 type="text"
-                placeholder="Customer name, e.g. Corefeeder Customer 4"
+                placeholder="Customer or supplier name"
                 value={refCheckNames[inst.id] ?? ""}
                 onChange={(e) => setRefCheckNames((prev) => ({ ...prev, [inst.id]: e.target.value }))}
                 className="w-64 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
@@ -203,6 +214,13 @@ export default function InstancesSettingsPage() {
                 className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Check customer&rsquo;s reference fields
+              </button>
+              <button
+                onClick={() => handleCheckSupplierReferenceFields(inst.id)}
+                disabled={isPending || !(refCheckNames[inst.id] ?? "").trim()}
+                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Check supplier&rsquo;s reference fields
               </button>
               <button
                 onClick={() => handleFetchCustomerByName(inst.id)}

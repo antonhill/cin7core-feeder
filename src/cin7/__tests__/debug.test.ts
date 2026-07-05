@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { checkCustomerReferenceFields } from "@/cin7/debug";
+import { checkCustomerReferenceFields, checkSupplierReferenceFields } from "@/cin7/debug";
 import { cin7Request, Cin7ApiError } from "@/cin7/http";
 
 vi.mock("@/cin7/http", async (importOriginal) => {
@@ -51,5 +51,32 @@ describe("checkCustomerReferenceFields", () => {
       checkError: "Rate limited",
     });
     expect(results.find((r) => r.field === "AccountReceivable")).toMatchObject({ exists: false });
+  });
+});
+
+describe("checkSupplierReferenceFields", () => {
+  it("checks only AccountPayable/TaxRule/PaymentTerm — no Location/SalesRepresentative/PriceTier on suppliers", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ AccountsList: [] }) // AccountPayable Code lookup: misses
+      .mockResolvedValueOnce({ AccountsList: [{ Code: "800", Name: "Accounts Payable" }] }) // Name lookup: also misses "801"
+      .mockResolvedValueOnce({ TaxRuleList: [] }) // TaxRule: misses
+      .mockResolvedValueOnce({ PaymentTermList: [] }); // PaymentTerm: misses
+
+    const results = await checkSupplierReferenceFields(creds, {
+      account_payable: "801",
+      tax_rule: "Standard Rate Purchases 1",
+      payment_term: "cashe",
+    });
+
+    expect(results).toHaveLength(3);
+    expect(results.find((r) => r.field === "AccountPayable")).toMatchObject({ value: "801", exists: false });
+    expect(results.find((r) => r.field === "TaxRule")).toMatchObject({ exists: false });
+    expect(results.find((r) => r.field === "PaymentTerm")).toMatchObject({ exists: false });
+  });
+
+  it("marks a blank field as 'not set'", async () => {
+    const results = await checkSupplierReferenceFields(creds, { account_payable: null, tax_rule: null, payment_term: null });
+    expect(results.every((r) => r.exists === "not set")).toBe(true);
+    expect(cin7Request).not.toHaveBeenCalled();
   });
 });

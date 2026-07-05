@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
-import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, findCustomerRawByName } from "@/cin7/debug";
+import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName } from "@/cin7/debug";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
@@ -318,6 +318,29 @@ export async function debugCheckCustomerReferenceFields(instanceId: string, cust
 
     const results = await checkCustomerReferenceFields(creds, customer);
     return { ok: true, message: JSON.stringify({ customer: customer.name, results }, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/** Supplier equivalent of debugCheckCustomerReferenceFields — same reasoning, AccountPayable/TaxRule/PaymentTerm only (no Location/SalesRepresentative/PriceTier on suppliers). */
+export async function debugCheckSupplierReferenceFields(instanceId: string, supplierName: string): Promise<TestConnectionResult> {
+  try {
+    const { orgId } = await requireCurrentOrg();
+    const db = createServiceRoleClient();
+    const creds = await loadInstanceCreds(instanceId);
+
+    const { data: supplier, error } = await db
+      .from("suppliers")
+      .select("name, account_payable, tax_rule, payment_term")
+      .eq("org_id", orgId)
+      .eq("name", supplierName)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!supplier) return { ok: false, message: `No supplier named "${supplierName}" found.` };
+
+    const results = await checkSupplierReferenceFields(creds, supplier);
+    return { ok: true, message: JSON.stringify({ supplier: supplier.name, results }, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
   }

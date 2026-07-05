@@ -176,21 +176,10 @@ export interface ReferenceFieldCheckResult {
  * model links every rule to a Chart-of-Accounts code, so an unresolvable
  * TaxRule could surface as an "Account ..." error without naming TaxRule.
  */
-export async function checkCustomerReferenceFields(
-  creds: Cin7Credentials,
-  fields: CustomerReferenceFieldsInput
+/** Shared by the customer/supplier variants below — runs each named check, tolerating one field's unexpected failure without hiding the rest. */
+async function runReferenceFieldChecks(
+  checks: { field: string; value: string | null; check: (v: string) => Promise<boolean> }[]
 ): Promise<ReferenceFieldCheckResult[]> {
-  const cache = new Map<string, boolean>();
-  const checks: { field: string; value: string | null; check: (v: string) => Promise<boolean> }[] = [
-    { field: "Location", value: fields.location, check: (v) => locationExists(creds, v, cache) },
-    { field: "SalesRepresentative", value: fields.sales_representative, check: (v) => companyContactExists(creds, v, cache) },
-    { field: "AccountReceivable", value: fields.account_receivable, check: (v) => accountExists(creds, v, cache) },
-    { field: "SaleAccount", value: fields.sale_account, check: (v) => accountExists(creds, v, cache) },
-    { field: "TaxRule", value: fields.tax_rule, check: (v) => taxRuleExists(creds, v, cache) },
-    { field: "PriceTier", value: fields.price_tier, check: (v) => priceTierExists(creds, v, cache) },
-    { field: "PaymentTerm", value: fields.payment_term, check: (v) => paymentTermExists(creds, v, cache) },
-  ];
-
   const results: ReferenceFieldCheckResult[] = [];
   for (const { field, value, check } of checks) {
     if (!value) {
@@ -209,4 +198,39 @@ export async function checkCustomerReferenceFields(
     }
   }
   return results;
+}
+
+export async function checkCustomerReferenceFields(
+  creds: Cin7Credentials,
+  fields: CustomerReferenceFieldsInput
+): Promise<ReferenceFieldCheckResult[]> {
+  const cache = new Map<string, boolean>();
+  return runReferenceFieldChecks([
+    { field: "Location", value: fields.location, check: (v) => locationExists(creds, v, cache) },
+    { field: "SalesRepresentative", value: fields.sales_representative, check: (v) => companyContactExists(creds, v, cache) },
+    { field: "AccountReceivable", value: fields.account_receivable, check: (v) => accountExists(creds, v, cache) },
+    { field: "SaleAccount", value: fields.sale_account, check: (v) => accountExists(creds, v, cache) },
+    { field: "TaxRule", value: fields.tax_rule, check: (v) => taxRuleExists(creds, v, cache) },
+    { field: "PriceTier", value: fields.price_tier, check: (v) => priceTierExists(creds, v, cache) },
+    { field: "PaymentTerm", value: fields.payment_term, check: (v) => paymentTermExists(creds, v, cache) },
+  ]);
+}
+
+export interface SupplierReferenceFieldsInput {
+  account_payable: string | null;
+  tax_rule: string | null;
+  payment_term: string | null;
+}
+
+/** Supplier equivalent — no Location/SalesRepresentative/PriceTier (those fields don't exist on suppliers). */
+export async function checkSupplierReferenceFields(
+  creds: Cin7Credentials,
+  fields: SupplierReferenceFieldsInput
+): Promise<ReferenceFieldCheckResult[]> {
+  const cache = new Map<string, boolean>();
+  return runReferenceFieldChecks([
+    { field: "AccountPayable", value: fields.account_payable, check: (v) => accountExists(creds, v, cache) },
+    { field: "TaxRule", value: fields.tax_rule, check: (v) => taxRuleExists(creds, v, cache) },
+    { field: "PaymentTerm", value: fields.payment_term, check: (v) => paymentTermExists(creds, v, cache) },
+  ]);
 }
