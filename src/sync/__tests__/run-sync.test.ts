@@ -119,9 +119,9 @@ describe("syncInstance", () => {
 
     expect(summary.productsFailed).toBe(1);
     expect(summary.productsCreated).toBe(1);
-    expect(summary.errors).toEqual([{ sku: "BAD", error: "Product push failed: boom" }]);
+    expect(summary.errors).toEqual([{ sku: "BAD", error: ["Product push failed", "boom"] }]);
     expect(upserts.sync_state).toEqual([
-      expect.objectContaining({ sku: "BAD", last_status: "failed", last_error: "Product push failed: boom" }),
+      expect.objectContaining({ sku: "BAD", last_status: "failed", last_error: "Product push failed; boom" }),
       expect.objectContaining({ sku: "GOOD", last_status: "created" }),
     ]);
   });
@@ -146,8 +146,11 @@ describe("syncInstance", () => {
     expect(summary.errors).toEqual([
       {
         sku: "BAD",
-        error:
-          "Product push failed: Location 'Main Warehouse Nooo' was not found in Locations reference book; Sales Representative 'Sparkie' was not found in Company Contacts reference book",
+        error: [
+          "Product push failed",
+          "Location 'Main Warehouse Nooo' was not found in Locations reference book",
+          "Sales Representative 'Sparkie' was not found in Company Contacts reference book",
+        ],
       },
     ]);
   });
@@ -166,7 +169,7 @@ describe("syncInstance", () => {
     const summary = await syncInstance(db, "org1", "inst-1");
 
     expect(summary.errors).toEqual([
-      { sku: "BAD", error: "Product push failed: [500] <html>Internal Server Error</html>" },
+      { sku: "BAD", error: ["Product push failed", "[500] <html>Internal Server Error</html>"] },
     ]);
   });
 
@@ -244,7 +247,7 @@ describe("syncInstance", () => {
     expect(summary.productionBomsPushed).toBe(0);
     expect(summary.productionBomsFailed).toBe(1);
     expect(pushProductionBom).not.toHaveBeenCalled();
-    expect(summary.errors[0].error).toMatch(/no synced Cin7 ID/);
+    expect(summary.errors[0].error[0]).toMatch(/no synced Cin7 ID/);
   });
 
   it("throws if the instance is inactive", async () => {

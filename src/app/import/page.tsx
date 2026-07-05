@@ -228,10 +228,15 @@ export default function ImportPage() {
                   <summary className="cursor-pointer text-sm font-medium text-emerald-900">
                     {state.result.invalidRows.length} invalid row{state.result.invalidRows.length === 1 ? "" : "s"} — details
                   </summary>
-                  <ul className="mt-2 list-disc pl-5 text-sm text-red-700">
+                  <ul className="mt-2 flex flex-col gap-1.5 text-sm text-red-700">
                     {state.result.invalidRows.map((r) => (
                       <li key={r.rowNumber}>
-                        Row {r.rowNumber}: {r.errors.join("; ")}
+                        <span className="font-medium">Row {r.rowNumber}:</span>
+                        <ul className="list-disc pl-5">
+                          {r.errors.map((err, i) => (
+                            <li key={i}>{err}</li>
+                          ))}
+                        </ul>
                       </li>
                     ))}
                   </ul>
@@ -400,10 +405,15 @@ export default function ImportPage() {
                         <summary className="cursor-pointer text-sm font-medium text-red-900">
                           {outcome.errors.length} error{outcome.errors.length === 1 ? "" : "s"} — details
                         </summary>
-                        <ul className="mt-2 list-disc pl-5 text-sm text-red-700">
+                        <ul className="mt-2 flex flex-col gap-1.5 text-sm text-red-700">
                           {outcome.errors.map((e, i) => (
                             <li key={i}>
-                              {e.sku}: {e.error}
+                              <span className="font-medium">{e.sku}:</span>
+                              <ul className="list-disc pl-5">
+                                {e.error.map((line, j) => (
+                                  <li key={j}>{line}</li>
+                                ))}
+                              </ul>
                             </li>
                           ))}
                         </ul>

@@ -36,18 +36,32 @@ export interface SyncRunSummary {
   suppliersUpdated: number;
   suppliersSkipped: number;
   suppliersFailed: number;
-  errors: { sku: string; error: string }[];
+  errors: { sku: string; error: string[] }[];
+}
+
+/**
+ * Carries a list of already-described error lines through a rethrow — e.g.
+ * the product loop wants to prefix "Product push failed" ahead of whatever
+ * pushProduct's own failure says, without collapsing Cin7's separate
+ * validation issues back into one joined string in the process.
+ */
+class MultilineError extends Error {
+  constructor(public readonly lines: string[]) {
+    super(lines.join(" | "));
+    this.name = "MultilineError";
+  }
 }
 
 /**
  * Cin7's validation error body is a raw JSON array/object (e.g.
  * `[{"ErrorCode":404,"Exception":"Location 'X' was not found in Locations
  * reference book"}]`) — showing that verbatim in the UI reads as a code
- * dump, not "here's exactly what's wrong". Extracts the human-readable
- * message(s) and joins them into one plain sentence; falls back to the raw
- * body when it isn't the shape we expect (e.g. an HTML error page).
+ * dump, not "here's exactly what's wrong". Extracts each issue's
+ * human-readable message as its own line (rather than joining them into one
+ * blob) so the UI can render one line per issue; falls back to the raw body
+ * when it isn't the shape we expect (e.g. an HTML error page).
  */
-function describeCin7ErrorBody(e: Cin7ApiError): string {
+function describeCin7ErrorBody(e: Cin7ApiError): string[] {
   try {
     const parsed: unknown = JSON.parse(e.message);
     const issues = Array.isArray(parsed) ? parsed : [parsed];
@@ -61,16 +75,18 @@ function describeCin7ErrorBody(e: Cin7ApiError): string {
         return null;
       })
       .filter((m): m is string => m !== null);
-    if (messages.length) return messages.join("; ");
+    if (messages.length) return messages;
   } catch {
     // Not JSON (e.g. an HTML error page) — fall through to the raw body below.
   }
-  return `[${e.status}] ${e.message}`;
+  return [`[${e.status}] ${e.message}`];
 }
 
-function describeError(e: unknown): string {
+/** Returns one array entry per distinct issue — never a single joined string — so callers can render each as its own line. */
+function describeError(e: unknown): string[] {
+  if (e instanceof MultilineError) return e.lines;
   if (e instanceof Cin7ApiError) return describeCin7ErrorBody(e);
-  return e instanceof Error ? e.message : "Unknown error";
+  return [e instanceof Error ? e.message : "Unknown error"];
 }
 
 /**
@@ -200,7 +216,7 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
         // run) resolves without an extra API call.
         pushResult = await pushProduct(creds, product, priceTiers ?? [], bomLinesTyped, cin7IdBySku, refCache);
       } catch (e) {
-        throw new Error(`Product push failed: ${describeError(e)}`);
+        throw new MultilineError(["Product push failed", ...describeError(e)]);
       }
 
       await db.from("sync_state").upsert(
@@ -221,9 +237,9 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
       if (pushResult.status === "created") summary.productsCreated++;
       else summary.productsUpdated++;
     } catch (e) {
-      const message = describeError(e);
+      const lines = describeError(e);
       summary.productsFailed++;
-      summary.errors.push({ sku: product.sku, error: message });
+      summary.errors.push({ sku: product.sku, error: lines });
       await db.from("sync_state").upsert(
         {
           org_id: orgId,
@@ -231,7 +247,7 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
           sku: product.sku,
           last_synced_at: new Date().toISOString(),
           last_status: "failed",
-          last_error: message,
+          last_error: lines.join("; "),
         },
         { onConflict: "org_id,instance_id,sku" }
       );
@@ -275,9 +291,9 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
       await pushProductionBom(creds, cin7ProductId, version, operations ?? [], items ?? [], productionBomRefCaches);
       summary.productionBomsPushed++;
     } catch (e) {
-      const message = describeError(e);
+      const lines = describeError(e);
       summary.productionBomsFailed++;
-      summary.errors.push({ sku: `${version.product_sku}:${version.version}`, error: message });
+      summary.errors.push({ sku: `${version.product_sku}:${version.version}`, error: lines });
     }
   }
 
@@ -346,9 +362,9 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
       if (pushResult.status === "created") summary.customersCreated++;
       else summary.customersUpdated++;
     } catch (e) {
-      const message = describeError(e);
+      const lines = describeError(e);
       summary.customersFailed++;
-      summary.errors.push({ sku: customer.name, error: message });
+      summary.errors.push({ sku: customer.name, error: lines });
       await db.from("customer_sync_state").upsert(
         {
           org_id: orgId,
@@ -356,7 +372,7 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
           name: customer.name,
           last_synced_at: new Date().toISOString(),
           last_status: "failed",
-          last_error: message,
+          last_error: lines.join("; "),
         },
         { onConflict: "org_id,instance_id,name" }
       );
@@ -427,9 +443,9 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
       if (pushResult.status === "created") summary.suppliersCreated++;
       else summary.suppliersUpdated++;
     } catch (e) {
-      const message = describeError(e);
+      const lines = describeError(e);
       summary.suppliersFailed++;
-      summary.errors.push({ sku: supplier.name, error: message });
+      summary.errors.push({ sku: supplier.name, error: lines });
       await db.from("supplier_sync_state").upsert(
         {
           org_id: orgId,
@@ -437,7 +453,7 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
           name: supplier.name,
           last_synced_at: new Date().toISOString(),
           last_status: "failed",
-          last_error: message,
+          last_error: lines.join("; "),
         },
         { onConflict: "org_id,instance_id,name" }
       );
