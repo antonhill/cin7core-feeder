@@ -31,9 +31,9 @@ export default async function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <body className="flex h-full min-h-screen flex-row">
         <AppNav userEmail={email} isSuperAdmin={isSuperAdmin} orgName={orgName} orgLogoUrl={orgLogoUrl} />
-        <div className="flex flex-1 flex-col">{children}</div>
+        <div className="flex flex-1 flex-col overflow-y-auto">{children}</div>
       </body>
     </html>
   );

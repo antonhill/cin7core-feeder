@@ -60,7 +60,7 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-[80vh] max-w-md flex-col justify-center px-6">
+    <main className="mx-auto flex min-h-[80vh] w-full max-w-md flex-col justify-center px-6">
       <h1 className="text-3xl font-bold tracking-tight text-slate-900">Cin7 Core Feeder</h1>
       <p className="mt-2 text-lg text-slate-500">
         {step === "email"
