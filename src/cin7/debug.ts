@@ -130,6 +130,22 @@ export async function findCustomerAndSupplierExamples(
   };
 }
 
+/**
+ * Diagnostic only: fetches one named customer's raw, current Cin7 record —
+ * built to check whether a push actually cleared a field (e.g. DisplayName/
+ * AttributeSet) rather than trusting what we *sent*. Cin7's list endpoint
+ * matches on an exact-Name filter server-side already (same pattern as
+ * `findCustomerByName` in customers.ts, but returning the whole record
+ * instead of just the ID).
+ */
+export async function findCustomerRawByName(creds: Cin7Credentials, name: string): Promise<Record<string, unknown> | null> {
+  const response = await cin7Request<Cin7CustomerListResponse>(creds, "/customer", {
+    query: { Name: name, page: 1, limit: 1 },
+  });
+  const first = response.CustomerList?.[0];
+  return first && first.Name === name ? first : null;
+}
+
 export interface CustomerReferenceFieldsInput {
   location: string | null;
   sales_representative: string | null;

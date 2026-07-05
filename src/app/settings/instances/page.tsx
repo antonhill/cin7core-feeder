@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import {
   debugCheckCustomerReferenceFields,
+  debugFetchCustomerByName,
   debugFindBomExample,
   debugFindCustomerSupplierExamples,
   debugProbeWorkCentrePaths,
@@ -108,6 +109,16 @@ export default function InstancesSettingsPage() {
     });
   }
 
+  function handleFetchCustomerByName(instanceId: string) {
+    const name = (refCheckNames[instanceId] ?? "").trim();
+    if (!name) return;
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Fetching…" } }));
+    startTransition(async () => {
+      const result = await debugFetchCustomerByName(instanceId, name);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
   function handleDelete(instanceId: string) {
     if (!confirm("Delete this Cin7 Core instance connection?")) return;
     setError(null);
@@ -192,6 +203,13 @@ export default function InstancesSettingsPage() {
                 className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Check customer&rsquo;s reference fields
+              </button>
+              <button
+                onClick={() => handleFetchCustomerByName(inst.id)}
+                disabled={isPending || !(refCheckNames[inst.id] ?? "").trim()}
+                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Fetch this customer from Cin7
               </button>
             </div>
             {testResults[inst.id] && (

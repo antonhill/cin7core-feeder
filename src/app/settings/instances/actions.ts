@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
-import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields } from "@/cin7/debug";
+import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, findCustomerRawByName } from "@/cin7/debug";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
@@ -318,6 +318,25 @@ export async function debugCheckCustomerReferenceFields(instanceId: string, cust
 
     const results = await checkCustomerReferenceFields(creds, customer);
     return { ok: true, message: JSON.stringify({ customer: customer.name, results }, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Diagnostic only: fetches a named customer's raw, current record directly
+ * from Cin7 — built to check whether a push actually cleared a field (e.g.
+ * DisplayName/AttributeSet showing a stale value) rather than trusting what
+ * our own payload *sent*. If Cin7 still shows a value after we sent "" for
+ * it, that's Cin7 ignoring/not-clearing on empty string, not a bug in what
+ * we transmitted.
+ */
+export async function debugFetchCustomerByName(instanceId: string, customerName: string): Promise<TestConnectionResult> {
+  try {
+    const creds = await loadInstanceCreds(instanceId);
+    const record = await findCustomerRawByName(creds, customerName);
+    if (!record) return { ok: false, message: `No customer named "${customerName}" found in Cin7.` };
+    return { ok: true, message: JSON.stringify(record, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
   }
