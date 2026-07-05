@@ -15,6 +15,8 @@ import {
   type SalesSyncStatus,
 } from "@/reports/query";
 import type { PivotGroupBy, PivotSourceRow } from "@/reports/pivot";
+import type { SheetExport } from "@/reports/export-xlsx";
+import { renderXlsxBase64 } from "@/reports/xlsx-writer";
 import { syncOrgSales, type SalesSyncSummary } from "@/sync/sync-sales";
 
 export interface ReportActionResult<T> {
@@ -73,6 +75,22 @@ export async function loadSalesSyncStatusAction(): Promise<ReportActionResult<Sa
     const { orgId } = await requireCurrentOrg();
     const db = createServiceRoleClient();
     return { ok: true, data: await getSalesSyncStatus(db, orgId) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Renders an already-built sheet (the client already has the report/pivot
+ * data in state — see reports/export-xlsx.ts's pure builders) into a real
+ * .xlsx file. Only the exceljs-specific rendering happens server-side; the
+ * data shaping stays client-side and reusable, and requireCurrentOrg just
+ * gates this to a logged-in org member like every other action here.
+ */
+export async function exportReportXlsxAction(sheet: SheetExport, sheetName: string): Promise<ReportActionResult<string>> {
+  try {
+    await requireCurrentOrg();
+    return { ok: true, data: await renderXlsxBase64(sheet, sheetName) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

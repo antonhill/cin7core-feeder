@@ -8,21 +8,28 @@ import {
   loadSaleLineDetailsAction,
   loadSalesSyncStatusAction,
   triggerSalesSyncAction,
+  exportReportXlsxAction,
 } from "./actions";
 import type { ReportFilterOptions, ProductSalesReportRow, SaleLineDetailRow, SalesSyncStatus } from "@/reports/query";
 import type { SalesReportFilters } from "@/reports/query";
-import { buildPivotGrid, type PivotCellValues, type PivotGroupBy, type PivotSourceRow } from "@/reports/pivot";
+import { buildPivotGrid, METRIC_COLUMNS, type PivotCellValues, type PivotGroupBy, type PivotSourceRow } from "@/reports/pivot";
+import { buildFlatReportSheet, buildPivotSheet } from "@/reports/export-xlsx";
 
 type GroupBySelection = "none" | PivotGroupBy;
 
-/** Every metric shown together per pivot column group, matching Cin7 Core's own native pivot report (Qty/Invoice/COGS/Profit side by side). */
-const METRIC_COLUMNS: { key: keyof PivotCellValues; label: string }[] = [
-  { key: "quantitySold", label: "Qty" },
-  { key: "revenue", label: "Revenue" },
-  { key: "cogs", label: "COGS" },
-  { key: "profit", label: "Profit" },
-  { key: "marginPercent", label: "Margin%" },
-];
+/** Decodes the base64 .xlsx bytes the server rendered and triggers a normal browser download — no server-side file storage involved. */
+function downloadBase64File(base64: string, filename: string, mimeType: string) {
+  const byteChars = atob(base64);
+  const bytes = new Uint8Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+  const blob = new Blob([bytes], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 function money(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
@@ -140,6 +147,8 @@ export default function ReportsPage() {
   const [isRunning, startRunTransition] = useTransition();
 
   const [groupBy, setGroupBy] = useState<GroupBySelection>("none");
+  const [isExporting, startExportTransition] = useTransition();
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const pivotGrid = useMemo(() => {
     if (groupBy === "none" || !pivotSourceRows) return null;
@@ -225,6 +234,25 @@ export default function ReportsPage() {
     startDetailsTransition(async () => {
       const result = await loadSaleLineDetailsAction({ ...currentFilters(), productSku: sku });
       if (result.ok) setDetails((prev) => ({ ...prev, [sku]: result.data ?? [] }));
+    });
+  }
+
+  function handleExport() {
+    const sheet = pivotGrid ? buildPivotSheet(pivotGrid) : rows ? buildFlatReportSheet(rows) : null;
+    if (!sheet) return;
+    setExportError(null);
+    startExportTransition(async () => {
+      const result = await exportReportXlsxAction(sheet, "Sales Report");
+      if (!result.ok || !result.data) {
+        setExportError(result.error ?? "Unknown error");
+        return;
+      }
+      const suffix = groupBy === "none" ? "" : `-by-${groupBy}`;
+      downloadBase64File(
+        result.data,
+        `sales-report${suffix}.xlsx`,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      );
     });
   }
 
@@ -351,9 +379,22 @@ export default function ReportsPage() {
 
       {rows && (
         <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="font-medium text-slate-900">
-            {rows.length} product{rows.length === 1 ? "" : "s"}
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="font-medium text-slate-900">
+              {rows.length} product{rows.length === 1 ? "" : "s"}
+            </p>
+            {rows.length > 0 && (
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={isExporting}
+                className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {isExporting ? "Exporting…" : "Export to Excel"}
+              </button>
+            )}
+          </div>
+          {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
           {rows.length === 0 && <p className="mt-2 text-sm text-slate-400">No invoiced sales match these filters.</p>}
 
           {rows.length > 0 && (
@@ -401,10 +442,23 @@ export default function ReportsPage() {
 
       {pivotGrid && (
         <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="font-medium text-slate-900">
-            {pivotGrid.rows.length} product{pivotGrid.rows.length === 1 ? "" : "s"} by{" "}
-            {groupBy === "both" ? "Location × Category" : groupBy === "location" ? "Location" : "Category"}
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="font-medium text-slate-900">
+              {pivotGrid.rows.length} product{pivotGrid.rows.length === 1 ? "" : "s"} by{" "}
+              {groupBy === "both" ? "Location × Category" : groupBy === "location" ? "Location" : "Category"}
+            </p>
+            {pivotGrid.rows.length > 0 && (
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={isExporting}
+                className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {isExporting ? "Exporting…" : "Export to Excel"}
+              </button>
+            )}
+          </div>
+          {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
           {pivotGrid.rows.length === 0 && <p className="mt-2 text-sm text-slate-400">No invoiced sales match these filters.</p>}
 
           {pivotGrid.rows.length > 0 && (

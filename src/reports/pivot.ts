@@ -57,6 +57,15 @@ export interface PivotGrid {
   grandTotal: PivotCellValues;
 }
 
+/** Shared column order/labels for every PivotCellValues rendering — the pivot grid UI and the Excel export both iterate this. */
+export const METRIC_COLUMNS: { key: keyof PivotCellValues; label: string }[] = [
+  { key: "quantitySold", label: "Qty" },
+  { key: "revenue", label: "Revenue" },
+  { key: "cogs", label: "COGS" },
+  { key: "profit", label: "Profit" },
+  { key: "marginPercent", label: "Margin%" },
+];
+
 const UNSPECIFIED = "(none)";
 const ZERO_TOTALS: RawTotals = { quantity: 0, revenue: 0, cogs: 0, profit: 0 };
 
