@@ -8,6 +8,7 @@ const LINKS = [
   { href: "/import", label: "Import & Sync" },
   { href: "/templates", label: "Templates" },
   { href: "/migrate", label: "Migrate" },
+  { href: "/reports", label: "Reports" },
   { href: "/settings/instances", label: "Cin7 Instances" },
 ];
 
