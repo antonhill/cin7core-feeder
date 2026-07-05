@@ -107,7 +107,7 @@ export function AppNav({
         ) : (
           <OrgPlaceholder orgName={orgName} />
         )}
-        <span className="truncate">{orgName ?? "Cin7 Feeder"}</span>
+        <span className="truncate">{orgName ?? "Cin7 Core Toolbox"}</span>
       </Link>
 
       <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-3">

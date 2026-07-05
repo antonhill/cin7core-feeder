@@ -51,7 +51,7 @@ export default function AdminPage() {
   return (
     <main className="mx-auto max-w-3xl px-6 py-12">
       <h1 className="text-3xl font-bold tracking-tight text-slate-900">Admin</h1>
-      <p className="mt-2 text-lg text-slate-500">Every organization using Cin7 Core Feeder.</p>
+      <p className="mt-2 text-lg text-slate-500">Every organization using Cin7 Core Toolbox.</p>
 
       <section className="mt-10 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-xl font-semibold text-slate-900">Create org &amp; invite first user</h2>

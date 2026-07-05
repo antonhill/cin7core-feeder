@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Cin7 Core Feeder",
-  description: "Master Product Hub feeder for Cin7 Core",
+  title: "Cin7 Core Toolbox",
+  description: "Do amazing things that you cannot do in Cin7 Core",
 };
 
 export default async function RootLayout({

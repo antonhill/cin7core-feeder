@@ -12,6 +12,16 @@ const CARDS = [
     description: "Download a CSV to edit and reimport — either the hub's own canonical data, or a full-fidelity export pulled live from a chosen instance.",
   },
   {
+    href: "/migrate",
+    title: "Migrate",
+    description: "Pull every Product, Assembly BOM, Customer, and Supplier live from one connected instance, then push the pulled data into another.",
+  },
+  {
+    href: "/reports",
+    title: "Reports",
+    description: "Revenue, COGS, profit, and margin% per product sold, across every invoiced sale pulled from your connected Cin7 instances.",
+  },
+  {
     href: "/settings/instances",
     title: "Cin7 Instances",
     description: "Connect, edit, or remove the Cin7 Core instances this organization syncs to.",
@@ -21,11 +31,8 @@ const CARDS = [
 export default function Home() {
   return (
     <main className="mx-auto max-w-5xl px-6 py-16">
-      <h1 className="text-4xl font-bold tracking-tight text-slate-900">Cin7 Core Feeder</h1>
-      <p className="mt-3 max-w-2xl text-lg text-slate-500">
-        Master Product Hub — import products and Assembly BOMs once, keep every connected Cin7 Core
-        instance in sync.
-      </p>
+      <h1 className="text-4xl font-bold tracking-tight text-slate-900">Cin7 Core Toolbox</h1>
+      <p className="mt-3 max-w-2xl text-lg text-slate-500">Do amazing things that you cannot do in Cin7 Core.</p>
 
       <div className="mt-12 grid gap-6 sm:grid-cols-3">
         {CARDS.map((card) => (

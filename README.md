@@ -1,4 +1,4 @@
-# Cin7 Core Feeder — Master Product Hub
+# Cin7 Core Toolbox — Do amazing things that you cannot do in Cin7 Core
 
 Import product/BOM data once via CSV, keep multiple Cin7 Core instances (and, later, other clients) in sync from a single canonical source.
 
