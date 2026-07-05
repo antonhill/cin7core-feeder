@@ -315,3 +315,52 @@ export async function paymentTermExists(creds: Cin7Credentials, name: string, ca
   cache.set(cacheKey, found);
   return found;
 }
+
+export const REF_ATTRIBUTE_SET_PATH = "/ref/attributeset";
+export const REF_DISCOUNT_PATH = "/reference/discount";
+
+/**
+ * A Product's ProductAttributeSet resolves against `/ref/attributeset` —
+ * same shape as Location/Tax (Name/Page/Limit, `AttributeSetList` wrapper),
+ * confirmed via the Apiary spec. No `IsActive` field exists on this
+ * resource, unlike PaymentTerm/DiscountRule, so the generic exists-only
+ * check applies unmodified.
+ */
+export function attributeSetExists(creds: Cin7Credentials, name: string, cache: Map<string, boolean>): Promise<boolean> {
+  return cachedFieldExists(creds, REF_ATTRIBUTE_SET_PATH, "Name", name, cache);
+}
+
+/**
+ * A Product's DiscountName resolves against `/reference/discount` — note the
+ * different path prefix (`/reference/*`, not `/ref/*`) confirmed via the
+ * Apiary spec. Unlike the other reference-book endpoints here, there's no
+ * exact-match `Name` query param — only `Search` (a substring match), so
+ * results are fetched by Search and filtered client-side for an exact
+ * case-insensitive match, same reasoning as `priceTierExists`' full-fetch.
+ * Cin7's own field docs for DiscountRule ("discount with this name must
+ * exist ... and should be active") mirror PaymentTerm's IsActive
+ * requirement, so a same-named but deactivated rule doesn't count either.
+ */
+export async function productDiscountExists(creds: Cin7Credentials, name: string, cache: Map<string, boolean>): Promise<boolean> {
+  const cacheKey = `${REF_DISCOUNT_PATH}::Name::${name}`;
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  let response: { DiscountRules?: { Name?: string; IsActive?: boolean }[] };
+  try {
+    response = await cin7Request<{ DiscountRules?: { Name?: string; IsActive?: boolean }[] }>(creds, REF_DISCOUNT_PATH, {
+      query: { Page: 1, Limit: 100, Search: name },
+    });
+  } catch (e) {
+    if (e instanceof Cin7ApiError && !e.retryable) {
+      cache.set(cacheKey, false);
+      return false;
+    }
+    throw e;
+  }
+
+  const target = name.toLowerCase();
+  const found = (response.DiscountRules ?? []).some((d) => d.Name?.toLowerCase() === target && d.IsActive !== false);
+  cache.set(cacheKey, found);
+  return found;
+}

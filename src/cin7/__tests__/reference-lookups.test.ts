@@ -9,6 +9,8 @@ import {
   REF_TAX_PATH,
   REF_PRICE_TIER_PATH,
   REF_PAYMENT_TERM_PATH,
+  REF_ATTRIBUTE_SET_PATH,
+  REF_DISCOUNT_PATH,
   locationExists,
   companyContactExists,
   accountExists,
@@ -17,6 +19,8 @@ import {
   taxRuleExists,
   priceTierExists,
   paymentTermExists,
+  attributeSetExists,
+  productDiscountExists,
 } from "@/cin7/reference-lookups";
 import { cin7Request, Cin7ApiError } from "@/cin7/http";
 
@@ -283,5 +287,50 @@ describe("locationExists / companyContactExists / accountExists (exists-only, no
   it("paymentTermExists treats a missing IsActive as active — Cin7's own docs say True is the default", async () => {
     vi.mocked(cin7Request).mockResolvedValueOnce({ PaymentTermList: [{ ID: "p-1", Name: "cash" }] });
     await expect(paymentTermExists(creds, "cash", new Map())).resolves.toBe(true);
+  });
+
+  it("attributeSetExists checks /ref/attributeset by Name", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ AttributeSetList: [{ ID: "as-1", Name: "Clothing" }] });
+
+    await expect(attributeSetExists(creds, "Clothing", new Map())).resolves.toBe(true);
+    const [, path, options] = vi.mocked(cin7Request).mock.calls[0];
+    expect(path).toBe(REF_ATTRIBUTE_SET_PATH);
+    expect(options).toMatchObject({ query: { Name: "Clothing" } });
+  });
+
+  it("attributeSetExists returns false for a set that isn't in the list", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ AttributeSetList: [] });
+    await expect(attributeSetExists(creds, "Clothing Nooo", new Map())).resolves.toBe(false);
+  });
+
+  it("productDiscountExists checks /reference/discount by Search, matched exactly client-side", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({
+      DiscountRules: [{ Name: "Bulk 10%", IsActive: true }, { Name: "Bulk 10% Extra", IsActive: true }],
+    });
+
+    await expect(productDiscountExists(creds, "Bulk 10%", new Map())).resolves.toBe(true);
+    const [, path, options] = vi.mocked(cin7Request).mock.calls[0];
+    expect(path).toBe(REF_DISCOUNT_PATH);
+    expect(options).toMatchObject({ query: { Search: "Bulk 10%" } });
+  });
+
+  it("productDiscountExists returns false for a discount that isn't in the list", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ DiscountRules: [] });
+    await expect(productDiscountExists(creds, "Bulk 10% Nooo", new Map())).resolves.toBe(false);
+  });
+
+  it("productDiscountExists returns false for a same-named discount that's been deactivated", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ DiscountRules: [{ Name: "Bulk 10%", IsActive: false }] });
+    await expect(productDiscountExists(creds, "Bulk 10%", new Map())).resolves.toBe(false);
+  });
+
+  it("productDiscountExists treats a missing IsActive as active", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ DiscountRules: [{ Name: "Bulk 10%" }] });
+    await expect(productDiscountExists(creds, "Bulk 10%", new Map())).resolves.toBe(true);
+  });
+
+  it("productDiscountExists returns false (not a crash) on a non-retryable error", async () => {
+    vi.mocked(cin7Request).mockRejectedValueOnce(new Cin7ApiError(400, "Bad request", false));
+    await expect(productDiscountExists(creds, "Bulk 10%", new Map())).resolves.toBe(false);
   });
 });

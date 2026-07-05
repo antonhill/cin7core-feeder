@@ -14,6 +14,8 @@ import {
   taxRuleExists,
   priceTierExists,
   paymentTermExists,
+  attributeSetExists,
+  productDiscountExists,
 } from "@/cin7/reference-lookups";
 import { Cin7ApiError } from "@/cin7/http";
 
@@ -33,6 +35,8 @@ vi.mock("@/cin7/reference-lookups", () => ({
   taxRuleExists: vi.fn(),
   priceTierExists: vi.fn(),
   paymentTermExists: vi.fn(),
+  attributeSetExists: vi.fn(),
+  productDiscountExists: vi.fn(),
 }));
 vi.mock("@/cin7/crypto", () => ({ decrypt: (v: string) => `decrypted:${v}` }));
 
@@ -82,6 +86,8 @@ beforeEach(() => {
   vi.mocked(taxRuleExists).mockReset().mockResolvedValue(true);
   vi.mocked(priceTierExists).mockReset().mockResolvedValue(true);
   vi.mocked(paymentTermExists).mockReset().mockResolvedValue(true);
+  vi.mocked(attributeSetExists).mockReset().mockResolvedValue(true);
+  vi.mocked(productDiscountExists).mockReset().mockResolvedValue(true);
 });
 
 const instanceRow = {
@@ -292,6 +298,108 @@ describe("syncInstance", () => {
   it("throws if the instance is inactive", async () => {
     const { db } = createFakeDb({ cin7_instances: [{ ...instanceRow, active: false }] });
     await expect(syncInstance(db, "org1", "inst-1")).rejects.toThrow("inactive");
+  });
+
+  describe("product reference-field pre-flight", () => {
+    it("pushes normally when every reference field the product sets is confirmed to exist", async () => {
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [
+          {
+            org_id: "org1",
+            sku: "SKU1",
+            name: "Widget",
+            content_hash: "h1",
+            default_location: "Main Warehouse",
+            purchase_tax_rule: "Standard Rate Purchases",
+            sale_tax_rule: "Standard Rate Sales",
+            inventory_account: "630",
+            revenue_account: "200",
+            expense_account: "500",
+            cogs_account: "310",
+            product_attribute_set: "Clothing",
+            discount_name: "Bulk 10%",
+          },
+        ],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+      });
+      vi.mocked(pushProduct).mockResolvedValueOnce({ cin7Id: "cin7-1", status: "created" });
+
+      const summary = await syncInstance(db, "org1", "inst-1");
+
+      expect(pushProduct).toHaveBeenCalledTimes(1);
+      expect(summary.productsCreated).toBe(1);
+      expect(summary.productsFailed).toBe(0);
+    });
+
+    it("catches a bad DefaultLocation, PurchaseTaxRule, SaleTaxRule, ProductAttributeSet and DiscountName in one pass", async () => {
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [
+          {
+            org_id: "org1",
+            sku: "SKU1",
+            name: "Widget",
+            content_hash: "h1",
+            default_location: "Main Warehouse Nooo",
+            purchase_tax_rule: "Made Up Purchase Rule",
+            sale_tax_rule: "Made Up Sale Rule",
+            product_attribute_set: "Not A Real Set",
+            discount_name: "Not A Real Discount",
+          },
+        ],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+      });
+      vi.mocked(locationExists).mockResolvedValueOnce(false);
+      vi.mocked(taxRuleExists).mockResolvedValueOnce(false).mockResolvedValueOnce(false);
+      vi.mocked(attributeSetExists).mockResolvedValueOnce(false);
+      vi.mocked(productDiscountExists).mockResolvedValueOnce(false);
+
+      const summary = await syncInstance(db, "org1", "inst-1");
+
+      expect(pushProduct).not.toHaveBeenCalled();
+      expect(summary.productsFailed).toBe(1);
+      expect(summary.errors).toEqual([
+        {
+          sku: "SKU1",
+          error: [
+            "DefaultLocation 'Main Warehouse Nooo' was not found in Locations reference book",
+            "PurchaseTaxRule 'Made Up Purchase Rule' was not found in the tax rules reference book",
+            "SaleTaxRule 'Made Up Sale Rule' was not found in the tax rules reference book",
+            "ProductAttributeSet 'Not A Real Set' was not found in the attribute sets reference book",
+            "DiscountName 'Not A Real Discount' was not found in the Product Discounts reference book",
+          ],
+        },
+      ]);
+    });
+
+    it("catches an account code that exists but isn't the special AccountPayable/Receivable-type account for InventoryAccount — plain accountExists applies, no special-account restriction documented for it", async () => {
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [
+          { org_id: "org1", sku: "SKU1", name: "Widget", content_hash: "h1", inventory_account: "999999" },
+        ],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+      });
+      vi.mocked(accountExists).mockResolvedValueOnce(false);
+
+      const summary = await syncInstance(db, "org1", "inst-1");
+
+      expect(pushProduct).not.toHaveBeenCalled();
+      expect(summary.productsFailed).toBe(1);
+      expect(summary.errors).toEqual([
+        { sku: "SKU1", error: ["InventoryAccount '999999' was not found in the chart of accounts"] },
+      ]);
+    });
   });
 
   describe("customer reference-field pre-flight", () => {

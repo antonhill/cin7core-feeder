@@ -378,3 +378,37 @@ Why this exists: confirmed live that Cin7's own `PUT /customer` only reports a h
   `AccountPayable`, `TaxNumber`, `AdditionalAttribute1-10`, `AttributeSet`, `Status`,
   `Addresses[]`, `Contacts[]` (`Name`, `Phone`, `MobilePhone`, `Fax`, `Email`, `Website`,
   `Default`, `Comment`, `IncludeInEmail` — no `JobTitle`).
+
+## 11. Product pre-flight reference checks — added 2026-07-05
+
+Same pre-flight-in-one-pass treatment as Customer/Supplier (§10), extended to Product. Anton
+pointed out first that most of Product's optional fields have real, Cin7-documented defaults
+when blank (`Type`→`Stock`, `CostingMethod`→`FIFO`, `DefaultUnitOfMeasure`→`Item`, `Sellable`→
+`Yes`/site default) — so blank isn't a data-quality problem worth flagging for those. What *is*
+still worth checking: values that are non-blank but wrong, since no default rescues those.
+
+**Accounts (`InventoryAccount`/`RevenueAccount`/`ExpenseAccount`/`COGSAccount`) use the plain
+`accountExists` check, not the special-account variant AccountPayable/AccountReceivable need** —
+confirmed via §5 above: Cin7's docs don't call any of these four a "special account" type, unlike
+AccountPayable/AccountReceivable's documented `SystemAccount` restriction. No live test found a
+counter-example. `DefaultLocation` reuses `locationExists`; `PurchaseTaxRule`/`SaleTaxRule` reuse
+`taxRuleExists` — both already-confirmed reference books, no new research needed.
+
+**`ProductAttributeSet` confirmed via `/ref/attributeset`** — same shape as Location/Tax
+(`Name`/`Page`/`Limit` params, `AttributeSetList` wrapper), no `IsActive` field on this resource.
+Added `attributeSetExists` using the existing generic `cachedFieldExists`.
+
+**`DiscountName` confirmed via `/reference/discount`** — a different path prefix (`/reference/*`,
+not `/ref/*`) than every other reference-book endpoint in this project. No exact-match `Name`
+query param exists here, only `Search` (substring match on Name), so `productDiscountExists`
+fetches by `Search` and filters client-side for an exact case-insensitive match (same approach as
+`priceTierExists`' full-fetch). The `DiscountRule` model has a required `IsActive` field and
+Cin7's own field docs say a discount "must exist ... and should be active" — same `IsActive`
+handling as `paymentTermExists`.
+
+**`PickZones` researched and confirmed to have NO reference-book/CRUD endpoint anywhere in the
+spec** — a comma-delimited free-text field with no list resource to validate against (searched
+for "Pick Zone" as a resource path; only found the unrelated `/reference/shipZones` and
+`/reference/shipZonesEnabled`, which are a different concept for shipping). Left unchecked
+rather than guessed, same call as Currency in §10. `WarrantySetupName` remains unchecked too, per
+§5's earlier finding (no CRUD endpoint at all, capture-only field).

@@ -8,11 +8,13 @@ import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierC
 import { Cin7ApiError } from "@/cin7/http";
 import {
   accountExists,
+  attributeSetExists,
   companyContactExists,
   locationExists,
   payableAccountExists,
   paymentTermExists,
   priceTierExists,
+  productDiscountExists,
   receivableAccountExists,
   taxRuleExists,
 } from "@/cin7/reference-lookups";
@@ -224,6 +226,63 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
     }
 
     try {
+      // Pre-flight: same reasoning as the customer/supplier blocks below —
+      // check every reference field this product sets against this
+      // instance's actual reference books before attempting the real push,
+      // so every problem surfaces in one pass. Accounts use the plain
+      // existence check (not the special-account variant AccountPayable/
+      // AccountReceivable need) — confirmed no equivalent "must be a special
+      // account type" restriction documented for Inventory/Revenue/Expense/
+      // COGS accounts (docs/cin7-api-findings.md §5). PickZones is
+      // deliberately NOT checked here — researched (same Apiary spec) and
+      // confirmed there's no reference-book/CRUD endpoint for pick zones
+      // anywhere, unlike ProductAttributeSet/DiscountName below; same
+      // "left unchecked rather than guessed" call as Currency.
+      const preflightIssues: string[] = [];
+      if (product.default_location && !(await locationExists(creds, product.default_location, refCheckCache))) {
+        preflightIssues.push(`DefaultLocation '${product.default_location}' was not found in Locations reference book`);
+      }
+      if (product.purchase_tax_rule && !(await taxRuleExists(creds, product.purchase_tax_rule, refCheckCache))) {
+        preflightIssues.push(`PurchaseTaxRule '${product.purchase_tax_rule}' was not found in the tax rules reference book`);
+      }
+      if (product.sale_tax_rule && !(await taxRuleExists(creds, product.sale_tax_rule, refCheckCache))) {
+        preflightIssues.push(`SaleTaxRule '${product.sale_tax_rule}' was not found in the tax rules reference book`);
+      }
+      if (product.inventory_account && !(await accountExists(creds, product.inventory_account, refCheckCache))) {
+        preflightIssues.push(`InventoryAccount '${product.inventory_account}' was not found in the chart of accounts`);
+      }
+      if (product.revenue_account && !(await accountExists(creds, product.revenue_account, refCheckCache))) {
+        preflightIssues.push(`RevenueAccount '${product.revenue_account}' was not found in the chart of accounts`);
+      }
+      if (product.expense_account && !(await accountExists(creds, product.expense_account, refCheckCache))) {
+        preflightIssues.push(`ExpenseAccount '${product.expense_account}' was not found in the chart of accounts`);
+      }
+      if (product.cogs_account && !(await accountExists(creds, product.cogs_account, refCheckCache))) {
+        preflightIssues.push(`COGSAccount '${product.cogs_account}' was not found in the chart of accounts`);
+      }
+      if (product.product_attribute_set && !(await attributeSetExists(creds, product.product_attribute_set, refCheckCache))) {
+        preflightIssues.push(`ProductAttributeSet '${product.product_attribute_set}' was not found in the attribute sets reference book`);
+      }
+      if (product.discount_name && !(await productDiscountExists(creds, product.discount_name, refCheckCache))) {
+        preflightIssues.push(`DiscountName '${product.discount_name}' was not found in the Product Discounts reference book`);
+      }
+      if (preflightIssues.length) {
+        summary.productsFailed++;
+        summary.errors.push({ sku: product.sku, error: preflightIssues });
+        await db.from("sync_state").upsert(
+          {
+            org_id: orgId,
+            instance_id: instanceId,
+            sku: product.sku,
+            last_synced_at: new Date().toISOString(),
+            last_status: "failed",
+            last_error: preflightIssues.join("; "),
+          },
+          { onConflict: "org_id,instance_id,sku" }
+        );
+        continue;
+      }
+
       const { data: priceTiers } = await db
         .from("price_tiers")
         .select("tier_code, amount")
