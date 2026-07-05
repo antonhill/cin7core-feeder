@@ -328,9 +328,18 @@ verbatim; the push client must translate):**
   this capture-only (stored, not pushed) until a real write test (or Cin7 support) confirms which
   integer means what, rather than guessing and silently corrupting a customer's consent flag.
 
+**Update 2026-07-05:** Anton pasted Cin7's own Customers CSV template documentation, which lists
+`CreditLimit` as a normal optional numeric field ("Credit limit applied to the customer sales on
+order/invoice authorisation... If left blank, then the 0 value is assumed") — that's sufficient
+confirmation to turn it on (see `toCin7CustomerPayload`), superseding the "held back" note below
+for `CreditLimit` specifically. `IsOnCreditHold` and `ParentCustomer` remain held back: the same
+docs list `ParentCustomer` too, but it's "Name of the parent customer" — i.e. still needs
+name-to-ID resolution before it can be sent, unlike CreditLimit's straight scalar pass-through, so
+it's a genuinely different (unconfirmed) code path, not just caution.
+
 **Present in the live GET response but absent from the community-sourced PUT/POST request
 models — capture-only, not push-confirmed:**
-- Customer: `CreditLimit`, `IsOnCreditHold`, `CustomerParentID`/`CustomerParentName` (our CSV's
+- Customer: `IsOnCreditHold`, `CustomerParentID`/`CustomerParentName` (our CSV's
   `ParentCustomer`) — plausible these need a different write path (e.g. a dedicated credit-limit
   endpoint, or name-to-ID resolution for the parent link like Product's `Suppliers[]`), but
   guessing here risks the same wasted round-trip Work Centres cost — confirm via a live 400/200

@@ -17,6 +17,7 @@ function customer(overrides: Partial<CanonicalCustomerRow>): CanonicalCustomerRo
     sale_account: "200",
     price_tier: "Retail in VAT",
     discount: 10,
+    credit_limit: null,
     carrier: "Post",
     sales_representative: "Anton Hill",
     location: null,
@@ -64,12 +65,25 @@ describe("toCin7CustomerPayload", () => {
     expect(payload).not.toHaveProperty("SaleAccount");
   });
 
-  it("omits CreditLimit/IsOnCreditHold/ParentCustomer entirely — not push-confirmed", () => {
-    const payload = toCin7CustomerPayload(customer({}));
-    expect(payload).not.toHaveProperty("CreditLimit");
+  it("sends CreditLimit (Cin7's own CSV docs confirm it's a normal writable field) but still omits IsOnCreditHold/ParentCustomer — those need ID resolution, not push-confirmed", () => {
+    const payload = toCin7CustomerPayload(customer({ credit_limit: 5000 }));
+    expect(payload.CreditLimit).toBe(5000);
     expect(payload).not.toHaveProperty("IsOnCreditHold");
     expect(payload).not.toHaveProperty("ParentCustomer");
     expect(payload).not.toHaveProperty("CustomerParentID");
+  });
+
+  it("omits CreditLimit when null rather than sending 0 and clobbering an existing limit", () => {
+    // JSON.stringify drops an undefined-valued key entirely, so this never
+    // reaches Cin7 at all — same convention as every other optional field
+    // here (see "omits Addresses/Contacts when there are none" above).
+    const payload = toCin7CustomerPayload(customer({ credit_limit: null }));
+    expect(payload.CreditLimit).toBeUndefined();
+  });
+
+  it("sends CreditLimit 0 verbatim — 0 is a meaningful value (\"not applied\"), not the same as blank", () => {
+    const payload = toCin7CustomerPayload(customer({ credit_limit: 0 }));
+    expect(payload.CreditLimit).toBe(0);
   });
 
   it("omits Addresses/Contacts when there are none", () => {

@@ -11,6 +11,7 @@ export interface CanonicalCustomerRow {
   sale_account: string | null;
   price_tier: string | null;
   discount: number | null;
+  credit_limit: number | null;
   carrier: string | null;
   sales_representative: string | null;
   location: string | null;
@@ -60,11 +61,13 @@ export interface CanonicalCustomerContactRow {
 /**
  * Field mapping confirmed live 2026-07-04 against Cin7's real /customer
  * response (see docs/cin7-api-findings.md §10) — `SaleAccount` (our CSV/DB
- * column name) is `RevenueAccount` on Cin7's side. `CreditLimit`,
- * `IsOnCreditHold`, and `ParentCustomer` (→ `CustomerParentID`) are
- * deliberately omitted: present in Cin7's GET response but absent from the
- * community-sourced write-model docs, so pushing them is unconfirmed and
- * held back per that doc's finding. `IsAccountingDimensionEnabled`/
+ * column name) is `RevenueAccount` on Cin7's side. `CreditLimit` is now sent
+ * — Cin7's own Customers CSV template docs (pasted by Anton 2026-07-05) list
+ * it as a normal optional numeric field, superseding the earlier "unconfirmed,
+ * held back" note. `IsOnCreditHold` and `ParentCustomer` (→ `CustomerParentID`)
+ * remain held back: unlike CreditLimit they need a value transformation
+ * (name → ID resolution, or a different write path entirely), not just a
+ * straight pass-through, so still unconfirmed. `IsAccountingDimensionEnabled`/
  * `DimensionAttribute*` don't appear in Cin7's request model at all —
  * capture-only, never sent. `MarketingConsent` is a Cin7-side integer with
  * no confirmed mapping from our CSV's text values — also held back.
@@ -84,6 +87,7 @@ export function toCin7CustomerPayload(
     RevenueAccount: customer.sale_account || undefined,
     PriceTier: customer.price_tier || undefined,
     Discount: customer.discount ?? undefined,
+    CreditLimit: customer.credit_limit ?? undefined,
     Carrier: customer.carrier || undefined,
     SalesRepresentative: customer.sales_representative || undefined,
     Location: customer.location || undefined,

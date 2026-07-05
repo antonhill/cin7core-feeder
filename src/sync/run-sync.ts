@@ -39,8 +39,37 @@ export interface SyncRunSummary {
   errors: { sku: string; error: string }[];
 }
 
+/**
+ * Cin7's validation error body is a raw JSON array/object (e.g.
+ * `[{"ErrorCode":404,"Exception":"Location 'X' was not found in Locations
+ * reference book"}]`) — showing that verbatim in the UI reads as a code
+ * dump, not "here's exactly what's wrong". Extracts the human-readable
+ * message(s) and joins them into one plain sentence; falls back to the raw
+ * body when it isn't the shape we expect (e.g. an HTML error page).
+ */
+function describeCin7ErrorBody(e: Cin7ApiError): string {
+  try {
+    const parsed: unknown = JSON.parse(e.message);
+    const issues = Array.isArray(parsed) ? parsed : [parsed];
+    const messages = issues
+      .map((issue) => {
+        if (issue && typeof issue === "object") {
+          const obj = issue as Record<string, unknown>;
+          const text = obj.Exception ?? obj.Message ?? obj.message;
+          if (typeof text === "string" && text.trim()) return text.trim();
+        }
+        return null;
+      })
+      .filter((m): m is string => m !== null);
+    if (messages.length) return messages.join("; ");
+  } catch {
+    // Not JSON (e.g. an HTML error page) — fall through to the raw body below.
+  }
+  return `[${e.status}] ${e.message}`;
+}
+
 function describeError(e: unknown): string {
-  if (e instanceof Cin7ApiError) return `[${e.status}] ${e.message}`;
+  if (e instanceof Cin7ApiError) return describeCin7ErrorBody(e);
   return e instanceof Error ? e.message : "Unknown error";
 }
 
@@ -256,7 +285,7 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
     .from("customers")
     .select(
       "name, status, currency, payment_term, tax_rule, account_receivable, sale_account, price_tier, discount, \
-carrier, sales_representative, location, tax_number, tags, display_name, is_legal_entity, is_bill_parent, \
+credit_limit, carrier, sales_representative, location, tax_number, tags, display_name, is_legal_entity, is_bill_parent, \
 attribute_set, additional_attribute_1, additional_attribute_2, additional_attribute_3, additional_attribute_4, \
 additional_attribute_5, additional_attribute_6, additional_attribute_7, additional_attribute_8, \
 additional_attribute_9, additional_attribute_10, comments, content_hash"

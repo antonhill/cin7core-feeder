@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { checkBlankCountry, checkBlankCustomerAccountCodes, checkBlankSupplierAccountPayable } from "@/import/warnings";
+import {
+  checkBlankCountry,
+  checkBlankCustomerAccountCodes,
+  checkBlankCustomerRequiredFields,
+  checkBlankSupplierAccountPayable,
+  checkContactMissingName,
+} from "@/import/warnings";
 import type { ParsedRow } from "@/import/csv";
 import type { SupplierAddressCsvRow } from "@/model/supplier-addresses";
 import type { CustomerCsvRow } from "@/model/customers";
@@ -165,5 +171,58 @@ describe("checkBlankCustomerAccountCodes", () => {
 
   it("does not warn when both are set", () => {
     expect(checkBlankCustomerAccountCodes([parsedRow(1, customerRow({}))])).toEqual([]);
+  });
+});
+
+describe("checkBlankCustomerRequiredFields", () => {
+  it("warns for each of PaymentTerm/TaxRule/PriceTier that's blank — Cin7's own docs list these as required", () => {
+    const warnings = checkBlankCustomerRequiredFields([
+      parsedRow(4, customerRow({ PaymentTerm: "", TaxRule: "", PriceTier: "" })),
+    ]);
+    expect(warnings).toEqual([
+      { rowNumber: 4, message: '"Woolworths": PaymentTerm is blank — Cin7 requires this for customers' },
+      { rowNumber: 4, message: '"Woolworths": TaxRule is blank — Cin7 requires this for customers' },
+      { rowNumber: 4, message: '"Woolworths": PriceTier is blank — Cin7 requires this for customers' },
+    ]);
+  });
+
+  it("does not warn when all three are set", () => {
+    expect(checkBlankCustomerRequiredFields([parsedRow(1, customerRow({}))])).toEqual([]);
+  });
+});
+
+describe("checkContactMissingName", () => {
+  it("warns when contact details are present but ContactName is blank — Cin7 rejects a nameless contact, and it's silently dropped on commit", () => {
+    const warnings = checkContactMissingName([
+      parsedRow(7, customerRow({ ContactName: "", Email: "joe@example.com" })),
+    ]);
+    expect(warnings).toEqual([
+      {
+        rowNumber: 7,
+        message: '"Woolworths": has contact details (e.g. Email/Phone) but no ContactName — Cin7 requires a name for a contact, so this contact will be dropped',
+      },
+    ]);
+  });
+
+  it("does not warn when ContactName is set", () => {
+    expect(
+      checkContactMissingName([parsedRow(1, customerRow({ ContactName: "Frank", Email: "frank@example.com" }))])
+    ).toEqual([]);
+  });
+
+  it("does not warn when there's no contact detail at all — a blank ContactName with nothing else is just no contact for this row", () => {
+    expect(checkContactMissingName([parsedRow(1, customerRow({ ContactName: "" }))])).toEqual([]);
+  });
+
+  it("works for Suppliers too — same contact column shape", () => {
+    const warnings = checkContactMissingName([
+      parsedRow(2, supplierRow({ ContactName: "", Phone: "0123456" })),
+    ]);
+    expect(warnings).toEqual([
+      {
+        rowNumber: 2,
+        message: '"ABC Suppliers": has contact details (e.g. Email/Phone) but no ContactName — Cin7 requires a name for a contact, so this contact will be dropped',
+      },
+    ]);
   });
 });

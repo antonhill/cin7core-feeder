@@ -52,3 +52,60 @@ export function checkBlankCustomerAccountCodes(rows: ParsedRow<CustomerCsvRow>[]
   }
   return warnings;
 }
+
+/**
+ * Cin7's own Customers CSV template docs (confirmed by Anton 2026-07-05) list
+ * Name, PaymentTerm, TaxRule and PriceTier as required — our schema leaves
+ * the latter three optional so a partial import can still commit for review,
+ * but a blank one here will fail on push, so it's worth flagging early. This
+ * is instance-independent (unlike account-code existence, which needs a real
+ * chart of accounts to check against — see the module comment above).
+ */
+export function checkBlankCustomerRequiredFields(rows: ParsedRow<CustomerCsvRow>[]): ImportWarning[] {
+  const warnings: ImportWarning[] = [];
+  for (const r of rows) {
+    if (!r.data.PaymentTerm.trim()) {
+      warnings.push({ rowNumber: r.rowNumber, message: `"${r.data.Name}": PaymentTerm is blank — Cin7 requires this for customers` });
+    }
+    if (!r.data.TaxRule.trim()) {
+      warnings.push({ rowNumber: r.rowNumber, message: `"${r.data.Name}": TaxRule is blank — Cin7 requires this for customers` });
+    }
+    if (!r.data.PriceTier.trim()) {
+      warnings.push({ rowNumber: r.rowNumber, message: `"${r.data.Name}": PriceTier is blank — Cin7 requires this for customers` });
+    }
+  }
+  return warnings;
+}
+
+/** The subset of Customer/Supplier CSV columns describing one contact — both templates share this exact shape. */
+interface ContactRowFields {
+  Name: string;
+  ContactName: string;
+  Phone: string;
+  MobilePhone: string;
+  Fax: string;
+  Email: string;
+  Website: string;
+  ContactComment: string;
+}
+
+/**
+ * Cin7 requires a contact Name whenever any other contact detail is present
+ * — our own commit step already silently drops a contact row with details
+ * but no name (see commit-customers.ts/commit-suppliers.ts), so without this
+ * warning that data just vanishes with no indication anything was lost.
+ */
+export function checkContactMissingName(rows: ParsedRow<ContactRowFields>[]): ImportWarning[] {
+  const warnings: ImportWarning[] = [];
+  for (const r of rows) {
+    const { Name, ContactName, Phone, MobilePhone, Fax, Email, Website, ContactComment } = r.data;
+    const hasContactDetail = [Phone, MobilePhone, Fax, Email, Website, ContactComment].some((v) => v.trim());
+    if (!ContactName.trim() && hasContactDetail) {
+      warnings.push({
+        rowNumber: r.rowNumber,
+        message: `"${Name}": has contact details (e.g. Email/Phone) but no ContactName — Cin7 requires a name for a contact, so this contact will be dropped`,
+      });
+    }
+  }
+  return warnings;
+}

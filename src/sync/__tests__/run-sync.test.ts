@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncInstance } from "@/sync/run-sync";
 import { pushProduct } from "@/cin7/products";
 import { pushProductionBom } from "@/cin7/production-bom";
+import { Cin7ApiError } from "@/cin7/http";
 
 vi.mock("@/cin7/products", () => ({ pushProduct: vi.fn() }));
 vi.mock("@/cin7/production-bom", () => ({
@@ -122,6 +123,50 @@ describe("syncInstance", () => {
     expect(upserts.sync_state).toEqual([
       expect.objectContaining({ sku: "BAD", last_status: "failed", last_error: "Product push failed: boom" }),
       expect.objectContaining({ sku: "GOOD", last_status: "created" }),
+    ]);
+  });
+
+  it("formats a Cin7 validation error body as plain text instead of a raw JSON dump", async () => {
+    const { db } = createFakeDb({
+      cin7_instances: [instanceRow],
+      products: [{ org_id: "org1", sku: "BAD", name: "Bad", content_hash: "h1" }],
+      sync_state: [],
+      price_tiers: [],
+      assembly_bom_lines: [],
+      production_bom_versions: [],
+    });
+    const body = JSON.stringify([
+      { ErrorCode: 404, Exception: "Location 'Main Warehouse Nooo' was not found in Locations reference book" },
+      { ErrorCode: 400, Exception: "Sales Representative 'Sparkie' was not found in Company Contacts reference book" },
+    ]);
+    vi.mocked(pushProduct).mockRejectedValueOnce(new Cin7ApiError(400, body, false));
+
+    const summary = await syncInstance(db, "org1", "inst-1");
+
+    expect(summary.errors).toEqual([
+      {
+        sku: "BAD",
+        error:
+          "Product push failed: Location 'Main Warehouse Nooo' was not found in Locations reference book; Sales Representative 'Sparkie' was not found in Company Contacts reference book",
+      },
+    ]);
+  });
+
+  it("falls back to the raw body when a Cin7 error isn't the expected JSON shape", async () => {
+    const { db } = createFakeDb({
+      cin7_instances: [instanceRow],
+      products: [{ org_id: "org1", sku: "BAD", name: "Bad", content_hash: "h1" }],
+      sync_state: [],
+      price_tiers: [],
+      assembly_bom_lines: [],
+      production_bom_versions: [],
+    });
+    vi.mocked(pushProduct).mockRejectedValueOnce(new Cin7ApiError(500, "<html>Internal Server Error</html>", false));
+
+    const summary = await syncInstance(db, "org1", "inst-1");
+
+    expect(summary.errors).toEqual([
+      { sku: "BAD", error: "Product push failed: [500] <html>Internal Server Error</html>" },
     ]);
   });
 
