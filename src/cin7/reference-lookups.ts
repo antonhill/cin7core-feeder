@@ -151,3 +151,35 @@ export async function accountExists(creds: Cin7Credentials, codeOrName: string, 
   if (await cachedFieldExists(creds, REF_ACCOUNT_PATH, "Code", codeOrName, cache)) return true;
   return cachedFieldExists(creds, REF_ACCOUNT_PATH, "Name", codeOrName, cache);
 }
+
+export const REF_TAX_PATH = "/ref/tax";
+export const REF_PRICE_TIER_PATH = "/ref/priceTier";
+
+/**
+ * A Customer's TaxRule resolves against `/ref/tax` — not yet part of the
+ * pre-flight check (Anton scoped that to fields that had actually failed at
+ * the time), but worth a standalone existence check for diagnosing a vague
+ * push error: Cin7's own Tax Rule model requires every tax rule to link to a
+ * Chart-of-Accounts liability code, so an unresolvable TaxRule could plausibly
+ * surface as an "Account ..." error rather than naming TaxRule directly.
+ */
+export function taxRuleExists(creds: Cin7Credentials, name: string, cache: Map<string, boolean>): Promise<boolean> {
+  return cachedFieldExists(creds, REF_TAX_PATH, "Name", name, cache);
+}
+
+/**
+ * PriceTier's list endpoint takes no filter params and is normally small
+ * (Cin7 ships 10 fixed tiers) — fetched once and matched client-side, unlike
+ * the other checks here which filter server-side.
+ */
+export async function priceTierExists(creds: Cin7Credentials, name: string, cache: Map<string, boolean>): Promise<boolean> {
+  const cacheKey = `${REF_PRICE_TIER_PATH}::Name::${name}`;
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const response = await cin7Request<{ PriceTiers?: { Code?: number; Name?: string }[] }>(creds, REF_PRICE_TIER_PATH);
+  const target = name.toLowerCase();
+  const found = (response.PriceTiers ?? []).some((t) => t.Name?.toLowerCase() === target);
+  cache.set(cacheKey, found);
+  return found;
+}

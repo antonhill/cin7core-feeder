@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
-import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples } from "@/cin7/debug";
+import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields } from "@/cin7/debug";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
@@ -288,6 +288,36 @@ export async function debugPushOneCustomerAndSupplier(instanceId: string): Promi
     }
 
     return { ok: true, message: JSON.stringify(result, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Diagnostic only: checks a named customer's Location/SalesRepresentative/
+ * AccountReceivable/SaleAccount/TaxRule/PriceTier against this instance's
+ * actual reference books, one call per field, and reports exists/missing
+ * for each — built to pin down a vague "Account with specified ID not
+ * found" push error once the regular pre-flight check (which covers the
+ * first four of these) had already passed.
+ */
+export async function debugCheckCustomerReferenceFields(instanceId: string, customerName: string): Promise<TestConnectionResult> {
+  try {
+    const { orgId } = await requireCurrentOrg();
+    const db = createServiceRoleClient();
+    const creds = await loadInstanceCreds(instanceId);
+
+    const { data: customer, error } = await db
+      .from("customers")
+      .select("name, location, sales_representative, account_receivable, sale_account, tax_rule, price_tier")
+      .eq("org_id", orgId)
+      .eq("name", customerName)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!customer) return { ok: false, message: `No customer named "${customerName}" found.` };
+
+    const results = await checkCustomerReferenceFields(creds, customer);
+    return { ok: true, message: JSON.stringify({ customer: customer.name, results }, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
   }

@@ -1,5 +1,6 @@
 import type { Cin7Credentials } from "@/cin7/types";
 import { cin7Request } from "@/cin7/http";
+import { accountExists, companyContactExists, locationExists, priceTierExists, taxRuleExists } from "@/cin7/reference-lookups";
 
 interface Cin7ProductListResponse {
   Products?: Record<string, unknown>[];
@@ -127,4 +128,56 @@ export async function findCustomerAndSupplierExamples(
     supplier: supplierRes.SupplierList?.[0],
     rawKeys: { customer: Object.keys(customerRes), supplier: Object.keys(supplierRes) },
   };
+}
+
+export interface CustomerReferenceFieldsInput {
+  location: string | null;
+  sales_representative: string | null;
+  account_receivable: string | null;
+  sale_account: string | null;
+  tax_rule: string | null;
+  price_tier: string | null;
+}
+
+export interface ReferenceFieldCheckResult {
+  field: string;
+  value: string;
+  exists: boolean | "not set";
+}
+
+/**
+ * Diagnostic only: checks every reference-style field on a customer against
+ * this instance's actual reference books, in one shot — built to diagnose a
+ * vague "Account with specified ID not found" push error where the
+ * pre-flight check (Location/SalesRepresentative/AccountReceivable/
+ * SaleAccount, see reference-lookups.ts) had already passed, ruling those
+ * four back in as the cause. Adds TaxRule and PriceTier, which aren't part
+ * of the pre-flight (deliberately scoped to fields that had actually failed
+ * at the time) but are plausible remaining suspects — Cin7's own Tax Rule
+ * model links every rule to a Chart-of-Accounts code, so an unresolvable
+ * TaxRule could surface as an "Account ..." error without naming TaxRule.
+ */
+export async function checkCustomerReferenceFields(
+  creds: Cin7Credentials,
+  fields: CustomerReferenceFieldsInput
+): Promise<ReferenceFieldCheckResult[]> {
+  const cache = new Map<string, boolean>();
+  const checks: { field: string; value: string | null; check: (v: string) => Promise<boolean> }[] = [
+    { field: "Location", value: fields.location, check: (v) => locationExists(creds, v, cache) },
+    { field: "SalesRepresentative", value: fields.sales_representative, check: (v) => companyContactExists(creds, v, cache) },
+    { field: "AccountReceivable", value: fields.account_receivable, check: (v) => accountExists(creds, v, cache) },
+    { field: "SaleAccount", value: fields.sale_account, check: (v) => accountExists(creds, v, cache) },
+    { field: "TaxRule", value: fields.tax_rule, check: (v) => taxRuleExists(creds, v, cache) },
+    { field: "PriceTier", value: fields.price_tier, check: (v) => priceTierExists(creds, v, cache) },
+  ];
+
+  const results: ReferenceFieldCheckResult[] = [];
+  for (const { field, value, check } of checks) {
+    if (!value) {
+      results.push({ field, value: "", exists: "not set" });
+      continue;
+    }
+    results.push({ field, value, exists: await check(value) });
+  }
+  return results;
 }

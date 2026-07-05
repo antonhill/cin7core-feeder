@@ -6,9 +6,13 @@ import {
   REF_UOM_PATH,
   REF_LOCATION_PATH,
   ME_CONTACTS_PATH,
+  REF_TAX_PATH,
+  REF_PRICE_TIER_PATH,
   locationExists,
   companyContactExists,
   accountExists,
+  taxRuleExists,
+  priceTierExists,
 } from "@/cin7/reference-lookups";
 import { cin7Request, Cin7ApiError } from "@/cin7/http";
 
@@ -162,5 +166,35 @@ describe("locationExists / companyContactExists / accountExists (exists-only, no
     await locationExists(creds, "Main Warehouse Nooo", cache);
 
     expect(cin7Request).toHaveBeenCalledTimes(1);
+  });
+
+  it("taxRuleExists checks /ref/tax by Name", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ TaxRuleList: [{ ID: "t-1", Name: "Standard Rate Sales", Account: "820" }] });
+
+    await expect(taxRuleExists(creds, "Standard Rate Sales", new Map())).resolves.toBe(true);
+    const [, path, options] = vi.mocked(cin7Request).mock.calls[0];
+    expect(path).toBe(REF_TAX_PATH);
+    expect(options).toMatchObject({ query: { Name: "Standard Rate Sales" } });
+  });
+
+  it("taxRuleExists returns false for a tax rule that isn't in the list", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ TaxRuleList: [] });
+    await expect(taxRuleExists(creds, "Standard Rate Sales1", new Map())).resolves.toBe(false);
+  });
+
+  it("priceTierExists fetches the full (unfiltered) list and matches client-side", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({
+      PriceTiers: [{ Code: 1, Name: "Retail in VAT" }, { Code: 2, Name: "Wholesale" }],
+    });
+
+    await expect(priceTierExists(creds, "Retail in VAT", new Map())).resolves.toBe(true);
+    const [, path, options] = vi.mocked(cin7Request).mock.calls[0];
+    expect(path).toBe(REF_PRICE_TIER_PATH);
+    expect(options).toBeUndefined();
+  });
+
+  it("priceTierExists returns false for a tier name that isn't in the list", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ PriceTiers: [{ Code: 1, Name: "Retail in VAT" }] });
+    await expect(priceTierExists(creds, "Retail in VAT wrong", new Map())).resolves.toBe(false);
   });
 });
