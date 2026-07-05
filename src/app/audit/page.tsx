@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { runProductAuditAction, applyProductFixesAction, mergeCategoryAction, type ApplyFixesResult } from "./actions";
+import { runProductAuditAction, applyProductFixesAction, mergeCategoryAction } from "./actions";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import type { CategoryDuplicateGroup, ProductAuditIssue, ProductAuditIssueType, ProductAuditResult } from "@/audit/product-audit";
+import type { ApplyFixesResult } from "@/audit/apply-fixes";
 
 const FIXABLE_CONFIG: Partial<Record<ProductAuditIssueType, { label: string; field: string; placeholder: string }>> = {
   missing_brand: { label: "Missing Brand", field: "Brand", placeholder: "e.g. Acme" },

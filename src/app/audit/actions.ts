@@ -7,8 +7,6 @@ import { fetchAllProductsWithBom } from "@/cin7/products";
 import { runProductAudit, type ProductAuditResult } from "@/audit/product-audit";
 import { applyProductFixes, mergeCategoryNames, type ApplyFixesResult, type ProductFix } from "@/audit/apply-fixes";
 
-export type { ApplyFixesResult, ProductFix };
-
 export interface AuditActionResult<T> {
   ok: boolean;
   error?: string;
