@@ -54,6 +54,13 @@ describe("toCin7SupplierPayload", () => {
     expect(payload).not.toHaveProperty("Carrier");
   });
 
+  it("sends blank optional fields as an explicit empty string, not omitted — same blank-clears-field rule as customers", () => {
+    const payload = toCin7SupplierPayload(supplier({ attribute_set: null, tax_number: null, comments: null }));
+    expect(payload.AttributeSet).toBe("");
+    expect(payload.TaxNumber).toBe("");
+    expect(payload.Comments).toBe("");
+  });
+
   it("builds Addresses[] with Cin7's real field names, same shape as Customer", () => {
     const address: CanonicalSupplierAddressRow = {
       address_type: "Billing",

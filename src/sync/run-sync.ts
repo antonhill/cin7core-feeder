@@ -488,10 +488,15 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
         .eq("org_id", orgId)
         .eq("name", supplier.name);
 
-      // Pre-flight, same reasoning as the customer loop above.
+      // Pre-flight, same reasoning as the customer loop above. Suppliers
+      // have no Location/SalesRepresentative/PriceTier fields, but do share
+      // AccountPayable and TaxRule with customers.
       const preflightIssues: string[] = [];
       if (supplier.account_payable && !(await accountExists(creds, supplier.account_payable, refCheckCache))) {
         preflightIssues.push(`AccountPayable '${supplier.account_payable}' was not found in the chart of accounts`);
+      }
+      if (supplier.tax_rule && !(await taxRuleExists(creds, supplier.tax_rule, refCheckCache))) {
+        preflightIssues.push(`TaxRule '${supplier.tax_rule}' was not found in the tax rules reference book`);
       }
       if (preflightIssues.length) {
         summary.suppliersFailed++;

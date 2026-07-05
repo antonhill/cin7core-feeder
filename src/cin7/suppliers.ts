@@ -56,6 +56,11 @@ export interface CanonicalSupplierContactRow {
  * on a contact — both omitted here rather than sent and silently dropped.
  * `IsAccountingDimensionEnabled`/`DimensionAttribute*` aren't in Cin7's
  * request model at all — capture-only, never sent.
+ *
+ * Blank-clears-field rule (same as customers.ts, confirmed by Anton
+ * 2026-07-06): every optional field is sent explicitly (`""` for text, `0`
+ * for numbers) rather than omitted when blank, so a blank CSV value actively
+ * clears whatever Cin7 already has instead of silently leaving it untouched.
  */
 export function toCin7SupplierPayload(
   supplier: CanonicalSupplierRow,
@@ -65,34 +70,34 @@ export function toCin7SupplierPayload(
   const payload: Record<string, unknown> = {
     Name: supplier.name,
     Status: supplier.status || "Active",
-    Currency: supplier.currency || undefined,
-    PaymentTerm: supplier.payment_term || undefined,
-    TaxRule: supplier.tax_rule || undefined,
-    AccountPayable: supplier.account_payable || undefined,
-    Discount: supplier.discount ?? undefined,
-    TaxNumber: supplier.tax_number || undefined,
-    AttributeSet: supplier.attribute_set || undefined,
-    AdditionalAttribute1: supplier.additional_attribute_1 || undefined,
-    AdditionalAttribute2: supplier.additional_attribute_2 || undefined,
-    AdditionalAttribute3: supplier.additional_attribute_3 || undefined,
-    AdditionalAttribute4: supplier.additional_attribute_4 || undefined,
-    AdditionalAttribute5: supplier.additional_attribute_5 || undefined,
-    AdditionalAttribute6: supplier.additional_attribute_6 || undefined,
-    AdditionalAttribute7: supplier.additional_attribute_7 || undefined,
-    AdditionalAttribute8: supplier.additional_attribute_8 || undefined,
-    AdditionalAttribute9: supplier.additional_attribute_9 || undefined,
-    AdditionalAttribute10: supplier.additional_attribute_10 || undefined,
-    Comments: supplier.comments || undefined,
+    Currency: supplier.currency ?? "",
+    PaymentTerm: supplier.payment_term ?? "",
+    TaxRule: supplier.tax_rule ?? "",
+    AccountPayable: supplier.account_payable ?? "",
+    Discount: supplier.discount ?? 0,
+    TaxNumber: supplier.tax_number ?? "",
+    AttributeSet: supplier.attribute_set ?? "",
+    AdditionalAttribute1: supplier.additional_attribute_1 ?? "",
+    AdditionalAttribute2: supplier.additional_attribute_2 ?? "",
+    AdditionalAttribute3: supplier.additional_attribute_3 ?? "",
+    AdditionalAttribute4: supplier.additional_attribute_4 ?? "",
+    AdditionalAttribute5: supplier.additional_attribute_5 ?? "",
+    AdditionalAttribute6: supplier.additional_attribute_6 ?? "",
+    AdditionalAttribute7: supplier.additional_attribute_7 ?? "",
+    AdditionalAttribute8: supplier.additional_attribute_8 ?? "",
+    AdditionalAttribute9: supplier.additional_attribute_9 ?? "",
+    AdditionalAttribute10: supplier.additional_attribute_10 ?? "",
+    Comments: supplier.comments ?? "",
   };
 
   if (addresses.length) {
     payload.Addresses = addresses.map((a) => ({
-      Line1: a.address_line_1 || undefined,
-      Line2: a.address_line_2 || undefined,
-      City: a.city || undefined,
-      State: a.state || undefined,
-      Postcode: a.postcode || undefined,
-      Country: a.country || undefined,
+      Line1: a.address_line_1 ?? "",
+      Line2: a.address_line_2 ?? "",
+      City: a.city ?? "",
+      State: a.state ?? "",
+      Postcode: a.postcode ?? "",
+      Country: a.country ?? "",
       Type: a.address_type,
       DefaultForType: a.address_default_for_type,
     }));
@@ -102,12 +107,12 @@ export function toCin7SupplierPayload(
   if (namedContacts.length) {
     payload.Contacts = namedContacts.map((c) => ({
       Name: c.contact_name,
-      Phone: c.phone || undefined,
-      MobilePhone: c.mobile_phone || undefined,
-      Fax: c.fax || undefined,
-      Email: c.email || undefined,
-      Website: c.website || undefined,
-      Comment: c.contact_comment || undefined,
+      Phone: c.phone ?? "",
+      MobilePhone: c.mobile_phone ?? "",
+      Fax: c.fax ?? "",
+      Email: c.email ?? "",
+      Website: c.website ?? "",
+      Comment: c.contact_comment ?? "",
       Default: c.contact_default,
       IncludeInEmail: c.contact_include_in_email,
     }));

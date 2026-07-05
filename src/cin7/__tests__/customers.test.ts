@@ -73,17 +73,21 @@ describe("toCin7CustomerPayload", () => {
     expect(payload).not.toHaveProperty("CustomerParentID");
   });
 
-  it("omits CreditLimit when null rather than sending 0 and clobbering an existing limit", () => {
-    // JSON.stringify drops an undefined-valued key entirely, so this never
-    // reaches Cin7 at all — same convention as every other optional field
-    // here (see "omits Addresses/Contacts when there are none" above).
+  it("sends CreditLimit as 0 (Cin7's own documented blank default) rather than omitting it — a blank field must actively clear whatever Cin7 already has", () => {
     const payload = toCin7CustomerPayload(customer({ credit_limit: null }));
-    expect(payload.CreditLimit).toBeUndefined();
+    expect(payload.CreditLimit).toBe(0);
   });
 
   it("sends CreditLimit 0 verbatim — 0 is a meaningful value (\"not applied\"), not the same as blank", () => {
     const payload = toCin7CustomerPayload(customer({ credit_limit: 0 }));
     expect(payload.CreditLimit).toBe(0);
+  });
+
+  it("sends blank optional text fields as an explicit empty string, not omitted — confirmed live 2026-07-06: omitting left a stale DisplayName/AttributeSet in Cin7 that no import had ever set", () => {
+    const payload = toCin7CustomerPayload(customer({ display_name: null, attribute_set: null, location: null }));
+    expect(payload.DisplayName).toBe("");
+    expect(payload.AttributeSet).toBe("");
+    expect(payload.Location).toBe("");
   });
 
   it("omits Addresses/Contacts when there are none", () => {
@@ -92,7 +96,7 @@ describe("toCin7CustomerPayload", () => {
     expect(payload.Contacts).toBeUndefined();
   });
 
-  it("builds Addresses[] with Cin7's real field names", () => {
+  it("builds Addresses[] with Cin7's real field names, blank optional lines sent as empty strings", () => {
     const address: CanonicalCustomerAddressRow = {
       address_type: "Billing",
       address_default_for_type: true,
@@ -107,7 +111,7 @@ describe("toCin7CustomerPayload", () => {
     expect(payload.Addresses).toEqual([
       {
         Line1: "1 Tree Lane",
-        Line2: undefined,
+        Line2: "",
         City: "Cape Town",
         State: "WC",
         Postcode: "8005",

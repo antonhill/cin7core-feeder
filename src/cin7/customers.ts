@@ -71,6 +71,15 @@ export interface CanonicalCustomerContactRow {
  * `DimensionAttribute*` don't appear in Cin7's request model at all —
  * capture-only, never sent. `MarketingConsent` is a Cin7-side integer with
  * no confirmed mapping from our CSV's text values — also held back.
+ *
+ * Blank-clears-field rule (confirmed by Anton 2026-07-06, testing against a
+ * real customer): every optional field is sent explicitly (`""` for text,
+ * `0` for numbers) rather than omitted when blank. A prior version omitted a
+ * blank field entirely (`|| undefined`, dropped by JSON.stringify), which
+ * left Cin7 holding whatever value it already had — confirmed live as the
+ * cause of a customer showing a DisplayName/AttributeSet ("Joe"/"Area") that
+ * had never been in any import, surviving every later push untouched. A
+ * blank field is now a deliberate instruction to clear, not "leave alone."
  */
 export function toCin7CustomerPayload(
   customer: CanonicalCustomerRow,
@@ -80,44 +89,44 @@ export function toCin7CustomerPayload(
   const payload: Record<string, unknown> = {
     Name: customer.name,
     Status: customer.status || "Active",
-    Currency: customer.currency || undefined,
-    PaymentTerm: customer.payment_term || undefined,
-    TaxRule: customer.tax_rule || undefined,
-    AccountReceivable: customer.account_receivable || undefined,
-    RevenueAccount: customer.sale_account || undefined,
-    PriceTier: customer.price_tier || undefined,
-    Discount: customer.discount ?? undefined,
-    CreditLimit: customer.credit_limit ?? undefined,
-    Carrier: customer.carrier || undefined,
-    SalesRepresentative: customer.sales_representative || undefined,
-    Location: customer.location || undefined,
-    TaxNumber: customer.tax_number || undefined,
-    Tags: customer.tags || undefined,
-    DisplayName: customer.display_name || undefined,
+    Currency: customer.currency ?? "",
+    PaymentTerm: customer.payment_term ?? "",
+    TaxRule: customer.tax_rule ?? "",
+    AccountReceivable: customer.account_receivable ?? "",
+    RevenueAccount: customer.sale_account ?? "",
+    PriceTier: customer.price_tier ?? "",
+    Discount: customer.discount ?? 0,
+    CreditLimit: customer.credit_limit ?? 0,
+    Carrier: customer.carrier ?? "",
+    SalesRepresentative: customer.sales_representative ?? "",
+    Location: customer.location ?? "",
+    TaxNumber: customer.tax_number ?? "",
+    Tags: customer.tags ?? "",
+    DisplayName: customer.display_name ?? "",
     IsLegalEntity: customer.is_legal_entity,
     IsBillParent: customer.is_bill_parent,
-    AttributeSet: customer.attribute_set || undefined,
-    AdditionalAttribute1: customer.additional_attribute_1 || undefined,
-    AdditionalAttribute2: customer.additional_attribute_2 || undefined,
-    AdditionalAttribute3: customer.additional_attribute_3 || undefined,
-    AdditionalAttribute4: customer.additional_attribute_4 || undefined,
-    AdditionalAttribute5: customer.additional_attribute_5 || undefined,
-    AdditionalAttribute6: customer.additional_attribute_6 || undefined,
-    AdditionalAttribute7: customer.additional_attribute_7 || undefined,
-    AdditionalAttribute8: customer.additional_attribute_8 || undefined,
-    AdditionalAttribute9: customer.additional_attribute_9 || undefined,
-    AdditionalAttribute10: customer.additional_attribute_10 || undefined,
-    Comments: customer.comments || undefined,
+    AttributeSet: customer.attribute_set ?? "",
+    AdditionalAttribute1: customer.additional_attribute_1 ?? "",
+    AdditionalAttribute2: customer.additional_attribute_2 ?? "",
+    AdditionalAttribute3: customer.additional_attribute_3 ?? "",
+    AdditionalAttribute4: customer.additional_attribute_4 ?? "",
+    AdditionalAttribute5: customer.additional_attribute_5 ?? "",
+    AdditionalAttribute6: customer.additional_attribute_6 ?? "",
+    AdditionalAttribute7: customer.additional_attribute_7 ?? "",
+    AdditionalAttribute8: customer.additional_attribute_8 ?? "",
+    AdditionalAttribute9: customer.additional_attribute_9 ?? "",
+    AdditionalAttribute10: customer.additional_attribute_10 ?? "",
+    Comments: customer.comments ?? "",
   };
 
   if (addresses.length) {
     payload.Addresses = addresses.map((a) => ({
-      Line1: a.address_line_1 || undefined,
-      Line2: a.address_line_2 || undefined,
-      City: a.city || undefined,
-      State: a.state || undefined,
-      Postcode: a.postcode || undefined,
-      Country: a.country || undefined,
+      Line1: a.address_line_1 ?? "",
+      Line2: a.address_line_2 ?? "",
+      City: a.city ?? "",
+      State: a.state ?? "",
+      Postcode: a.postcode ?? "",
+      Country: a.country ?? "",
       Type: a.address_type,
       DefaultForType: a.address_default_for_type,
     }));
@@ -127,13 +136,13 @@ export function toCin7CustomerPayload(
   if (namedContacts.length) {
     payload.Contacts = namedContacts.map((c) => ({
       Name: c.contact_name,
-      JobTitle: c.job_title || undefined,
-      Phone: c.phone || undefined,
-      MobilePhone: c.mobile_phone || undefined,
-      Fax: c.fax || undefined,
-      Email: c.email || undefined,
-      Website: c.website || undefined,
-      Comment: c.contact_comment || undefined,
+      JobTitle: c.job_title ?? "",
+      Phone: c.phone ?? "",
+      MobilePhone: c.mobile_phone ?? "",
+      Fax: c.fax ?? "",
+      Email: c.email ?? "",
+      Website: c.website ?? "",
+      Comment: c.contact_comment ?? "",
       Default: c.contact_default,
       IncludeInEmail: c.contact_include_in_email,
     }));
