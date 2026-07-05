@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { syncInstance } from "@/sync/run-sync";
+import { syncInstance, type PushScope } from "@/sync/run-sync";
 
 export interface InstanceSyncOutcome {
   ok: boolean;
@@ -34,7 +34,8 @@ export interface InstanceSyncOutcome {
 export async function syncOrgInstances(
   db: SupabaseClient,
   orgId?: string,
-  instanceIds?: string[]
+  instanceIds?: string[],
+  scope: PushScope = {}
 ): Promise<InstanceSyncOutcome[]> {
   let query = db.from("cin7_instances").select("id, org_id").eq("active", true);
   if (orgId) query = query.eq("org_id", orgId);
@@ -45,7 +46,7 @@ export async function syncOrgInstances(
   const results: InstanceSyncOutcome[] = [];
   for (const instance of instances ?? []) {
     try {
-      const summary = await syncInstance(db, instance.org_id, instance.id);
+      const summary = await syncInstance(db, instance.org_id, instance.id, scope);
       results.push({ ok: true, orgId: instance.org_id, ...summary });
     } catch (e) {
       results.push({

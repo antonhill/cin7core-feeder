@@ -98,7 +98,7 @@ describe("syncOrgInstances", () => {
     const results = await syncOrgInstances(db, "org1", ["inst-1"]);
 
     expect(results).toHaveLength(1);
-    expect(syncInstance).toHaveBeenCalledWith(db, "org1", "inst-1");
+    expect(syncInstance).toHaveBeenCalledWith(db, "org1", "inst-1", {});
   });
 
   it("catches a per-instance failure and continues, rather than aborting the whole run", async () => {

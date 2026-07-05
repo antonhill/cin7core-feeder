@@ -7,6 +7,18 @@ import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerC
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { Cin7ApiError } from "@/cin7/http";
 
+/**
+ * Scopes a sync run to specific rows instead of the whole org catalog — an
+ * omitted field means "all" for that kind, an array (including empty) means
+ * "just these". Production BOM follows the product scope, since a BOM is
+ * meaningless without its parent product.
+ */
+export interface PushScope {
+  productSkus?: string[];
+  customerNames?: string[];
+  supplierNames?: string[];
+}
+
 export interface SyncRunSummary {
   instanceId: string;
   instanceName: string;
@@ -48,7 +60,12 @@ function describeError(e: unknown): string {
  * Resilient: a failure on one product/version is recorded and the run
  * continues — one bad row never aborts the whole sync.
  */
-export async function syncInstance(db: SupabaseClient, orgId: string, instanceId: string): Promise<SyncRunSummary> {
+export async function syncInstance(
+  db: SupabaseClient,
+  orgId: string,
+  instanceId: string,
+  scope: PushScope = {}
+): Promise<SyncRunSummary> {
   const { data: instanceRow, error: instanceError } = await db
     .from("cin7_instances")
     .select("id, name, account_id, application_key_encrypted, base_url, active")
@@ -84,7 +101,7 @@ export async function syncInstance(db: SupabaseClient, orgId: string, instanceId
     errors: [],
   };
 
-  const { data: products, error: productsError } = await db
+  let productsQuery = db
     .from("products")
     .select(
       "sku, name, description, category_code, brand, uom_code, barcode, active, status, cin7_type, costing_method, \
@@ -98,6 +115,8 @@ additional_attribute_10, discount_name, comma_delimited_tags, stock_locator, pur
 short_description, sellable, pick_zones, always_show_quantity, internal_note, hs_code, country_of_origin, content_hash"
     )
     .eq("org_id", orgId);
+  if (scope.productSkus) productsQuery = productsQuery.in("sku", scope.productSkus);
+  const { data: products, error: productsError } = await productsQuery;
   if (productsError) throw new Error(productsError.message);
 
   const { data: syncStates } = await db
@@ -190,10 +209,12 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
     }
   }
 
-  const { data: versions } = await db
+  let versionsQuery = db
     .from("production_bom_versions")
     .select("product_sku, version, version_name, version_default, buffer_percent, quantity_to_produce")
     .eq("org_id", orgId);
+  if (scope.productSkus) versionsQuery = versionsQuery.in("product_sku", scope.productSkus);
+  const { data: versions } = await versionsQuery;
 
   // Shared across every version this run — a work centre/resource looked up
   // for one product's BOM doesn't need a second call for the next.
@@ -231,7 +252,7 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
     }
   }
 
-  const { data: customers } = await db
+  let customersQuery = db
     .from("customers")
     .select(
       "name, status, currency, payment_term, tax_rule, account_receivable, sale_account, price_tier, discount, \
@@ -241,6 +262,8 @@ additional_attribute_5, additional_attribute_6, additional_attribute_7, addition
 additional_attribute_9, additional_attribute_10, comments, content_hash"
     )
     .eq("org_id", orgId);
+  if (scope.customerNames) customersQuery = customersQuery.in("name", scope.customerNames);
+  const { data: customers } = await customersQuery;
 
   const { data: customerSyncStates } = await db
     .from("customer_sync_state")
@@ -311,7 +334,7 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
     }
   }
 
-  const { data: suppliers } = await db
+  let suppliersQuery = db
     .from("suppliers")
     .select(
       "name, status, currency, payment_term, tax_rule, account_payable, discount, tax_number, attribute_set, \
@@ -320,6 +343,8 @@ additional_attribute_5, additional_attribute_6, additional_attribute_7, addition
 additional_attribute_9, additional_attribute_10, comments, content_hash"
     )
     .eq("org_id", orgId);
+  if (scope.supplierNames) suppliersQuery = suppliersQuery.in("name", scope.supplierNames);
+  const { data: suppliers } = await suppliersQuery;
 
   const { data: supplierSyncStates } = await db
     .from("supplier_sync_state")

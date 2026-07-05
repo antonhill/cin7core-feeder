@@ -1,7 +1,14 @@
 "use client";
 
 import { useActionState, useState, useTransition } from "react";
-import { importCsvAction, pushToCin7Action, type ImportActionState } from "./actions";
+import {
+  importCsvAction,
+  pushToCin7Action,
+  DEFAULT_PUSH_SCOPE_SELECTION,
+  type ImportActionState,
+  type PushScopeSelection,
+  type ScopeMode,
+} from "./actions";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import type { InstanceSyncOutcome } from "@/sync/sync-org";
 
@@ -62,6 +69,7 @@ export default function ImportPage() {
   const [pushOutcomes, setPushOutcomes] = useState<InstanceSyncOutcome[] | null>(null);
   const [pushError, setPushError] = useState<string | null>(null);
   const [isPushPending, startPushTransition] = useTransition();
+  const [scopeSelection, setScopeSelection] = useState<PushScopeSelection>(DEFAULT_PUSH_SCOPE_SELECTION);
 
   function handleLoadInstances() {
     setInstancesError(null);
@@ -83,13 +91,17 @@ export default function ImportPage() {
     setPushError(null);
     setPushOutcomes(null);
     startPushTransition(async () => {
-      const result = await pushToCin7Action(selectedIds);
+      const result = await pushToCin7Action(selectedIds, scopeSelection);
       if (!result.ok) {
         setPushError(result.error ?? "Unknown error");
         return;
       }
       setPushOutcomes(result.outcomes ?? []);
     });
+  }
+
+  function setScopeFor(key: keyof PushScopeSelection, mode: ScopeMode) {
+    setScopeSelection((prev) => ({ ...prev, [key]: mode }));
   }
 
   const activeInstances = instances.filter((i) => i.active);
@@ -179,6 +191,20 @@ export default function ImportPage() {
                   </ul>
                 </details>
               )}
+              {state.result.warnings.length > 0 && (
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-sm font-medium text-amber-800">
+                    {state.result.warnings.length} warning{state.result.warnings.length === 1 ? "" : "s"} — fix before pushing
+                  </summary>
+                  <ul className="mt-2 list-disc pl-5 text-sm text-amber-700">
+                    {state.result.warnings.map((w, i) => (
+                      <li key={i}>
+                        Row {w.rowNumber}: {w.message}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
             </div>
           )}
         </section>
@@ -238,6 +264,41 @@ export default function ImportPage() {
           <StepHeader step={3} title="Push to Cin7 Core" done={pushOutcomes !== null} />
 
           <div className="mt-5 pl-11">
+            <p className="text-base font-medium text-slate-700">Scope</p>
+            <p className="mt-1 text-sm text-slate-500">
+              &ldquo;Just last import&rdquo; pushes only the rows from your most recent committed
+              import of that type, instead of the whole org catalog.
+            </p>
+            <div className="mt-3 flex flex-col gap-2">
+              {(
+                [
+                  ["products", "Products"],
+                  ["customers", "Customers"],
+                  ["suppliers", "Suppliers"],
+                ] as const
+              ).map(([key, label]) => (
+                <div key={key} className="flex items-center gap-3">
+                  <span className="w-24 text-sm font-medium text-slate-700">{label}</span>
+                  <div className="flex overflow-hidden rounded-full border border-slate-300">
+                    {(["all", "last_import"] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setScopeFor(key, mode)}
+                        className={`px-3 py-1 text-sm font-medium transition-colors ${
+                          scopeSelection[key] === mode
+                            ? "bg-indigo-600 text-white"
+                            : "bg-white text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        {mode === "all" ? "All" : "Just last import"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
             <button
               type="button"
               onClick={handlePush}

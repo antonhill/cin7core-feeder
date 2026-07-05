@@ -15,6 +15,16 @@ import { commitCustomerRows } from "@/import/commit-customers";
 import { commitSupplierAddressRows } from "@/import/commit-supplier-addresses";
 import { commitCustomerAddressRows } from "@/import/commit-customer-addresses";
 import { checkAssemblyBomReferences, checkProductionBomReferences } from "@/import/validate-bom-references";
+import {
+  checkBlankCountry,
+  checkBlankCustomerAccountCodes,
+  checkBlankSupplierAccountPayable,
+  type ImportWarning,
+} from "@/import/warnings";
+import type { SupplierAddressCsvRow } from "@/model/supplier-addresses";
+import type { CustomerAddressCsvRow } from "@/model/customer-addresses";
+import type { SupplierCsvRow } from "@/model/suppliers";
+import type { CustomerCsvRow } from "@/model/customers";
 
 export type ImportKind =
   | "products"
@@ -33,6 +43,7 @@ export interface RunImportResult {
   committed: boolean;
   commitSummary?: Record<string, number>;
   invalidRows: { rowNumber: number; errors: string[] }[];
+  warnings: ImportWarning[];
 }
 
 const SCHEMAS = {
@@ -73,6 +84,20 @@ export async function runImport(
     const refCheck = await checkProductionBomReferences(db, orgId, valid as ParsedRow<ProductionBomCsvRow>[]);
     valid = refCheck.valid;
     invalid = [...invalid, ...refCheck.invalid];
+  }
+
+  // Non-blocking data-quality warnings — the row still commits, but these
+  // are worth fixing before a push fails on them later. Only checks that
+  // don't depend on which Cin7 instance the data eventually pushes to (see
+  // warnings.ts) can live here; instance-specific checks (e.g. does this
+  // account code actually exist there) stay at push time.
+  let warnings: ImportWarning[] = [];
+  if (kind === "supplier_addresses" || kind === "customer_addresses") {
+    warnings = checkBlankCountry(valid as ParsedRow<SupplierAddressCsvRow | CustomerAddressCsvRow>[]);
+  } else if (kind === "suppliers") {
+    warnings = checkBlankSupplierAccountPayable(valid as ParsedRow<SupplierCsvRow>[]);
+  } else if (kind === "customers") {
+    warnings = checkBlankCustomerAccountCodes(valid as ParsedRow<CustomerCsvRow>[]);
   }
 
   const { data: batch, error: batchError } = await db
@@ -155,5 +180,6 @@ export async function runImport(
     committed,
     commitSummary,
     invalidRows: invalid.map((r) => ({ rowNumber: r.rowNumber, errors: r.errors })),
+    warnings,
   };
 }
