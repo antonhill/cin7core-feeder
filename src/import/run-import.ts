@@ -21,6 +21,7 @@ import {
   checkBlankCustomerAccountCodes,
   checkBlankCustomerRequiredFields,
   checkBlankSupplierAccountPayable,
+  checkBlankSupplierRequiredFields,
   checkContactMissingName,
   type ImportWarning,
 } from "@/import/warnings";
@@ -113,6 +114,7 @@ export async function runImport(
   } else if (kind === "suppliers") {
     warnings = [
       ...checkBlankSupplierAccountPayable(valid as ParsedRow<SupplierCsvRow>[]),
+      ...checkBlankSupplierRequiredFields(valid as ParsedRow<SupplierCsvRow>[]),
       ...checkContactMissingName(valid as ParsedRow<SupplierCsvRow>[]),
     ];
   } else if (kind === "customers") {

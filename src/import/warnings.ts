@@ -77,6 +77,25 @@ export function checkBlankCustomerRequiredFields(rows: ParsedRow<CustomerCsvRow>
   return warnings;
 }
 
+/**
+ * Cin7's own Suppliers CSV template docs (confirmed by Anton 2026-07-06) list
+ * Name, PaymentTerm and TaxRule as required — no PriceTier equivalent for
+ * suppliers (that field doesn't exist on the Supplier model at all). Same
+ * instance-independent blank check as the customer version above.
+ */
+export function checkBlankSupplierRequiredFields(rows: ParsedRow<SupplierCsvRow>[]): ImportWarning[] {
+  const warnings: ImportWarning[] = [];
+  for (const r of rows) {
+    if (!r.data.PaymentTerm.trim()) {
+      warnings.push({ rowNumber: r.rowNumber, message: `"${r.data.Name}": PaymentTerm is blank — Cin7 requires this for suppliers` });
+    }
+    if (!r.data.TaxRule.trim()) {
+      warnings.push({ rowNumber: r.rowNumber, message: `"${r.data.Name}": TaxRule is blank — Cin7 requires this for suppliers` });
+    }
+  }
+  return warnings;
+}
+
 /** The subset of Customer/Supplier CSV columns describing one contact — both templates share this exact shape. */
 interface ContactRowFields {
   Name: string;

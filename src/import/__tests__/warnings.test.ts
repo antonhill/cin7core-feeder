@@ -4,6 +4,7 @@ import {
   checkBlankCustomerAccountCodes,
   checkBlankCustomerRequiredFields,
   checkBlankSupplierAccountPayable,
+  checkBlankSupplierRequiredFields,
   checkContactMissingName,
 } from "@/import/warnings";
 import type { ParsedRow } from "@/import/csv";
@@ -100,6 +101,20 @@ describe("checkBlankSupplierAccountPayable", () => {
 
   it("does not warn when AccountPayable is set — existence against a real instance is a push-time check, not import-time", () => {
     expect(checkBlankSupplierAccountPayable([parsedRow(1, supplierRow({ AccountPayable: "999-does-not-exist" }))])).toEqual([]);
+  });
+});
+
+describe("checkBlankSupplierRequiredFields", () => {
+  it("warns for each of PaymentTerm/TaxRule that's blank — Cin7's own docs list these as required for suppliers", () => {
+    const warnings = checkBlankSupplierRequiredFields([parsedRow(4, supplierRow({ PaymentTerm: "", TaxRule: "" }))]);
+    expect(warnings).toEqual([
+      { rowNumber: 4, message: '"ABC Suppliers": PaymentTerm is blank — Cin7 requires this for suppliers' },
+      { rowNumber: 4, message: '"ABC Suppliers": TaxRule is blank — Cin7 requires this for suppliers' },
+    ]);
+  });
+
+  it("does not warn when both are set", () => {
+    expect(checkBlankSupplierRequiredFields([parsedRow(1, supplierRow({}))])).toEqual([]);
   });
 });
 
