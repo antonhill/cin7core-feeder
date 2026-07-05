@@ -22,6 +22,7 @@ describe("checkCustomerReferenceFields", () => {
       sale_account: null,
       tax_rule: null,
       price_tier: null,
+      payment_term: null,
     });
     expect(results.every((r) => r.exists === "not set")).toBe(true);
     expect(cin7Request).not.toHaveBeenCalled();
@@ -41,6 +42,7 @@ describe("checkCustomerReferenceFields", () => {
       sale_account: null,
       tax_rule: null,
       price_tier: null,
+      payment_term: null,
     });
 
     expect(results.find((r) => r.field === "Location")).toMatchObject({ exists: true });

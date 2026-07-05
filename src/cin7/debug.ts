@@ -1,6 +1,6 @@
 import type { Cin7Credentials } from "@/cin7/types";
 import { cin7Request } from "@/cin7/http";
-import { accountExists, companyContactExists, locationExists, priceTierExists, taxRuleExists } from "@/cin7/reference-lookups";
+import { accountExists, companyContactExists, locationExists, paymentTermExists, priceTierExists, taxRuleExists } from "@/cin7/reference-lookups";
 
 interface Cin7ProductListResponse {
   Products?: Record<string, unknown>[];
@@ -153,6 +153,7 @@ export interface CustomerReferenceFieldsInput {
   sale_account: string | null;
   tax_rule: string | null;
   price_tier: string | null;
+  payment_term: string | null;
 }
 
 export interface ReferenceFieldCheckResult {
@@ -187,6 +188,7 @@ export async function checkCustomerReferenceFields(
     { field: "SaleAccount", value: fields.sale_account, check: (v) => accountExists(creds, v, cache) },
     { field: "TaxRule", value: fields.tax_rule, check: (v) => taxRuleExists(creds, v, cache) },
     { field: "PriceTier", value: fields.price_tier, check: (v) => priceTierExists(creds, v, cache) },
+    { field: "PaymentTerm", value: fields.payment_term, check: (v) => paymentTermExists(creds, v, cache) },
   ];
 
   const results: ReferenceFieldCheckResult[] = [];

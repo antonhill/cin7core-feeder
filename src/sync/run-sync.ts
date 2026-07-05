@@ -6,7 +6,7 @@ import { pushProductionBom, createProductionBomRefCaches } from "@/cin7/producti
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { Cin7ApiError } from "@/cin7/http";
-import { accountExists, companyContactExists, locationExists, priceTierExists, taxRuleExists } from "@/cin7/reference-lookups";
+import { accountExists, companyContactExists, locationExists, paymentTermExists, priceTierExists, taxRuleExists } from "@/cin7/reference-lookups";
 
 /**
  * Scopes a sync run to specific rows instead of the whole org catalog — an
@@ -390,6 +390,9 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
       if (customer.price_tier && !(await priceTierExists(creds, customer.price_tier, refCheckCache))) {
         preflightIssues.push(`PriceTier '${customer.price_tier}' was not found in the price tiers reference book`);
       }
+      if (customer.payment_term && !(await paymentTermExists(creds, customer.payment_term, refCheckCache))) {
+        preflightIssues.push(`PaymentTerm '${customer.payment_term}' was not found in the payment terms reference book`);
+      }
       if (preflightIssues.length) {
         summary.customersFailed++;
         summary.errors.push({ sku: customer.name, error: preflightIssues });
@@ -490,13 +493,16 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
 
       // Pre-flight, same reasoning as the customer loop above. Suppliers
       // have no Location/SalesRepresentative/PriceTier fields, but do share
-      // AccountPayable and TaxRule with customers.
+      // AccountPayable, TaxRule and PaymentTerm with customers.
       const preflightIssues: string[] = [];
       if (supplier.account_payable && !(await accountExists(creds, supplier.account_payable, refCheckCache))) {
         preflightIssues.push(`AccountPayable '${supplier.account_payable}' was not found in the chart of accounts`);
       }
       if (supplier.tax_rule && !(await taxRuleExists(creds, supplier.tax_rule, refCheckCache))) {
         preflightIssues.push(`TaxRule '${supplier.tax_rule}' was not found in the tax rules reference book`);
+      }
+      if (supplier.payment_term && !(await paymentTermExists(creds, supplier.payment_term, refCheckCache))) {
+        preflightIssues.push(`PaymentTerm '${supplier.payment_term}' was not found in the payment terms reference book`);
       }
       if (preflightIssues.length) {
         summary.suppliersFailed++;

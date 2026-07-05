@@ -8,11 +8,13 @@ import {
   ME_CONTACTS_PATH,
   REF_TAX_PATH,
   REF_PRICE_TIER_PATH,
+  REF_PAYMENT_TERM_PATH,
   locationExists,
   companyContactExists,
   accountExists,
   taxRuleExists,
   priceTierExists,
+  paymentTermExists,
 } from "@/cin7/reference-lookups";
 import { cin7Request, Cin7ApiError } from "@/cin7/http";
 
@@ -219,5 +221,19 @@ describe("locationExists / companyContactExists / accountExists (exists-only, no
   it("priceTierExists returns false for a tier name that isn't in the list", async () => {
     vi.mocked(cin7Request).mockResolvedValueOnce({ PriceTiers: [{ Code: 1, Name: "Retail in VAT" }] });
     await expect(priceTierExists(creds, "Retail in VAT wrong", new Map())).resolves.toBe(false);
+  });
+
+  it("paymentTermExists checks /ref/paymentterm by Name", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ PaymentTermList: [{ ID: "p-1", Name: "Cash" }] });
+
+    await expect(paymentTermExists(creds, "Cash", new Map())).resolves.toBe(true);
+    const [, path, options] = vi.mocked(cin7Request).mock.calls[0];
+    expect(path).toBe(REF_PAYMENT_TERM_PATH);
+    expect(options).toMatchObject({ query: { Name: "Cash" } });
+  });
+
+  it("paymentTermExists returns false for a payment term that isn't in the list", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ PaymentTermList: [] });
+    await expect(paymentTermExists(creds, "cashe", new Map())).resolves.toBe(false);
   });
 });

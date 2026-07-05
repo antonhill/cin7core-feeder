@@ -309,7 +309,7 @@ export async function debugCheckCustomerReferenceFields(instanceId: string, cust
 
     const { data: customer, error } = await db
       .from("customers")
-      .select("name, location, sales_representative, account_receivable, sale_account, tax_rule, price_tier")
+      .select("name, location, sales_representative, account_receivable, sale_account, tax_rule, price_tier, payment_term")
       .eq("org_id", orgId)
       .eq("name", customerName)
       .maybeSingle();

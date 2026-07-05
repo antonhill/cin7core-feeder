@@ -176,6 +176,7 @@ export async function accountExists(creds: Cin7Credentials, codeOrName: string, 
 
 export const REF_TAX_PATH = "/ref/tax";
 export const REF_PRICE_TIER_PATH = "/ref/priceTier";
+export const REF_PAYMENT_TERM_PATH = "/ref/paymentterm";
 
 /**
  * A Customer's TaxRule resolves against `/ref/tax`. Originally added only for
@@ -205,4 +206,20 @@ export async function priceTierExists(creds: Cin7Credentials, name: string, cach
   const found = (response.PriceTiers ?? []).some((t) => t.Name?.toLowerCase() === target);
   cache.set(cacheKey, found);
   return found;
+}
+
+/**
+ * A Customer/Supplier's PaymentTerm resolves against `/ref/paymentterm`
+ * (confirmed via the same Apiary spec used throughout this file — matched by
+ * Name, same shape as Location/Tax). Added for parity with TaxRule once
+ * Anton flagged a fake-but-non-blank PaymentTerm ("cashe") that the blank
+ * check alone can't catch.
+ *
+ * No equivalent exists for Currency: searched the same spec end-to-end and
+ * there is no reference-book/list endpoint for currency codes anywhere —
+ * Currency is a free-text 3-character field everywhere it appears, with
+ * nothing to check it against live. Left unchecked rather than guessed.
+ */
+export function paymentTermExists(creds: Cin7Credentials, name: string, cache: Map<string, boolean>): Promise<boolean> {
+  return cachedFieldExists(creds, REF_PAYMENT_TERM_PATH, "Name", name, cache);
 }

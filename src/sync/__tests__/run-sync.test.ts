@@ -5,7 +5,7 @@ import { pushProduct } from "@/cin7/products";
 import { pushProductionBom } from "@/cin7/production-bom";
 import { pushCustomer } from "@/cin7/customers";
 import { pushSupplier } from "@/cin7/suppliers";
-import { locationExists, companyContactExists, accountExists, taxRuleExists, priceTierExists } from "@/cin7/reference-lookups";
+import { locationExists, companyContactExists, accountExists, taxRuleExists, priceTierExists, paymentTermExists } from "@/cin7/reference-lookups";
 import { Cin7ApiError } from "@/cin7/http";
 
 vi.mock("@/cin7/products", () => ({ pushProduct: vi.fn() }));
@@ -21,6 +21,7 @@ vi.mock("@/cin7/reference-lookups", () => ({
   accountExists: vi.fn(),
   taxRuleExists: vi.fn(),
   priceTierExists: vi.fn(),
+  paymentTermExists: vi.fn(),
 }));
 vi.mock("@/cin7/crypto", () => ({ decrypt: (v: string) => `decrypted:${v}` }));
 
@@ -67,6 +68,7 @@ beforeEach(() => {
   vi.mocked(accountExists).mockReset().mockResolvedValue(true);
   vi.mocked(taxRuleExists).mockReset().mockResolvedValue(true);
   vi.mocked(priceTierExists).mockReset().mockResolvedValue(true);
+  vi.mocked(paymentTermExists).mockReset().mockResolvedValue(true);
 });
 
 const instanceRow = {
@@ -353,6 +355,43 @@ describe("syncInstance", () => {
       ]);
     });
 
+    it("catches a bad PaymentTerm — added for parity once a fake-but-non-blank value ('cashe') was found to slip past the blank check", async () => {
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+        customers: [
+          {
+            org_id: "org1",
+            name: "Woolworths",
+            content_hash: "h1",
+            location: "Main Warehouse",
+            sales_representative: "Anton",
+            account_receivable: "610",
+            sale_account: "200",
+            tax_rule: "Standard Rate Sales",
+            price_tier: "Retail in VAT",
+            payment_term: "cashe",
+          },
+        ],
+        customer_sync_state: [],
+        customer_addresses: [],
+        customer_contacts: [],
+      });
+      vi.mocked(paymentTermExists).mockResolvedValueOnce(false);
+
+      const summary = await syncInstance(db, "org1", "inst-1");
+
+      expect(pushCustomer).not.toHaveBeenCalled();
+      expect(summary.customersFailed).toBe(1);
+      expect(summary.errors).toEqual([
+        { sku: "Woolworths", error: ["PaymentTerm 'cashe' was not found in the payment terms reference book"] },
+      ]);
+    });
+
     it("keeps the raw Cin7 body when pre-flight passes but the actual push still fails for a reason outside what these checks cover", async () => {
       const { db } = createFakeDb({
         cin7_instances: [instanceRow],
@@ -500,6 +539,30 @@ describe("syncInstance", () => {
 
       expect(pushSupplier).toHaveBeenCalledTimes(1);
       expect(summary.suppliersFailed).toBe(0);
+    });
+
+    it("catches a bad PaymentTerm — same real-world case ('cashe') found on the customer side, applied to suppliers for consistency", async () => {
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+        suppliers: [{ org_id: "org1", name: "XYZ Supplier", content_hash: "h1", account_payable: "800", payment_term: "cashe" }],
+        supplier_sync_state: [],
+        supplier_addresses: [],
+        supplier_contacts: [],
+      });
+      vi.mocked(paymentTermExists).mockResolvedValueOnce(false);
+
+      const summary = await syncInstance(db, "org1", "inst-1");
+
+      expect(pushSupplier).not.toHaveBeenCalled();
+      expect(summary.suppliersFailed).toBe(1);
+      expect(summary.errors).toEqual([
+        { sku: "XYZ Supplier", error: ["PaymentTerm 'cashe' was not found in the payment terms reference book"] },
+      ]);
     });
   });
 });
