@@ -27,6 +27,8 @@ export interface ProductAuditIssue {
   productId: string;
   sku: string;
   name: string;
+  /** Blank when the product itself has no Category set — still worth surfacing as its own filter option, not dropped. */
+  category: string;
 }
 
 export interface CategoryDuplicateGroup {
@@ -37,6 +39,8 @@ export interface CategoryDuplicateGroup {
 export interface ProductAuditResult {
   issues: ProductAuditIssue[];
   duplicateCategories: CategoryDuplicateGroup[];
+  /** Every distinct category seen across the whole catalog (not just ones with issues) — e.g. so "Finished Products" still appears as a filter option even if it currently has zero issues. */
+  categories: string[];
 }
 
 interface RawProduct {
@@ -54,8 +58,8 @@ interface RawProduct {
   [key: string]: unknown;
 }
 
-function productRef(p: RawProduct): { productId: string; sku: string; name: string } {
-  return { productId: p.ID ?? "", sku: p.SKU ?? "", name: p.Name ?? p.SKU ?? "" };
+function productRef(p: RawProduct): { productId: string; sku: string; name: string; category: string } {
+  return { productId: p.ID ?? "", sku: p.SKU ?? "", name: p.Name ?? p.SKU ?? "", category: p.Category?.trim() ?? "" };
 }
 
 /** Products with no Brand set at all. */
@@ -184,6 +188,8 @@ export function findDuplicateCategories(products: RawProduct[]): CategoryDuplica
 }
 
 export function runProductAudit(products: RawProduct[]): ProductAuditResult {
+  const categories = [...new Set(products.map((p) => p.Category?.trim()).filter((c): c is string => Boolean(c)))].sort();
+
   return {
     issues: [
       ...findMissingBrand(products),
@@ -192,5 +198,6 @@ export function runProductAudit(products: RawProduct[]): ProductAuditResult {
       ...findMissingGLAccounts(products),
     ],
     duplicateCategories: findDuplicateCategories(products),
+    categories,
   };
 }

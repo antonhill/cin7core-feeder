@@ -29,7 +29,7 @@ function product(overrides: Record<string, unknown>): Record<string, unknown> {
 describe("findMissingBrand", () => {
   it("flags a product with a blank Brand", () => {
     const issues = findMissingBrand([product({ SKU: "A", Brand: "" }), product({ SKU: "B", Brand: "Acme" })]);
-    expect(issues).toEqual([{ type: "missing_brand", productId: "id-1", sku: "A", name: "Widget" }]);
+    expect(issues).toEqual([{ type: "missing_brand", productId: "id-1", sku: "A", name: "Widget", category: "Widgets" }]);
   });
 
   it("treats a whitespace-only Brand as blank", () => {
@@ -40,7 +40,7 @@ describe("findMissingBrand", () => {
 describe("findMissingSalesPricing", () => {
   it("flags a product with every price tier blank or zero", () => {
     const issues = findMissingSalesPricing([product({ SKU: "A", PriceTier1: 0, PriceTier2: undefined })]);
-    expect(issues).toEqual([{ type: "missing_sales_pricing", productId: "id-1", sku: "A", name: "Widget" }]);
+    expect(issues).toEqual([{ type: "missing_sales_pricing", productId: "id-1", sku: "A", name: "Widget", category: "Widgets" }]);
   });
 
   it("does not flag a product with any positive tier, even a non-Tier-1 one", () => {
@@ -53,8 +53,8 @@ describe("findInventoryGaps", () => {
   it("flags a Stock product missing DefaultLocation, UOM, or InventoryAccount — one issue per missing field", () => {
     const issues = findInventoryGaps([product({ SKU: "A", DefaultLocation: "", UOM: "", InventoryAccount: "630" })]);
     expect(issues).toEqual([
-      { type: "missing_location", productId: "id-1", sku: "A", name: "Widget" },
-      { type: "missing_uom", productId: "id-1", sku: "A", name: "Widget" },
+      { type: "missing_location", productId: "id-1", sku: "A", name: "Widget", category: "Widgets" },
+      { type: "missing_uom", productId: "id-1", sku: "A", name: "Widget", category: "Widgets" },
     ]);
   });
 
@@ -71,7 +71,7 @@ describe("findInventoryGaps", () => {
 describe("findMissingGLAccounts", () => {
   it("flags RevenueAccount and COGSAccount independently", () => {
     const issues = findMissingGLAccounts([product({ SKU: "A", RevenueAccount: "", COGSAccount: "310" })]);
-    expect(issues).toEqual([{ type: "missing_revenue_account", productId: "id-1", sku: "A", name: "Widget" }]);
+    expect(issues).toEqual([{ type: "missing_revenue_account", productId: "id-1", sku: "A", name: "Widget", category: "Widgets" }]);
   });
 
   it("flags both when both are blank", () => {
@@ -131,5 +131,19 @@ describe("runProductAudit", () => {
     ]);
     expect(result.issues.some((i) => i.type === "missing_brand" && i.sku === "A")).toBe(true);
     expect(result.duplicateCategories).toHaveLength(1);
+  });
+
+  it("lists every distinct category seen, even ones with zero issues — so a fully-clean category still shows up as a filter option", () => {
+    const result = runProductAudit([
+      product({ SKU: "A", Category: "Finished Products" }), // fully configured, no issues
+      product({ SKU: "B", Category: "Raw Materials", Brand: "" }), // has an issue
+      product({ SKU: "C", Category: "" }), // blank category — excluded from the filter list
+    ]);
+    expect(result.categories).toEqual(["Finished Products", "Raw Materials"]);
+  });
+
+  it("tags each issue with the product's own category, so issues can be filtered by it", () => {
+    const result = runProductAudit([product({ SKU: "A", Category: "Finished Products", Brand: "" })]);
+    expect(result.issues[0].category).toBe("Finished Products");
   });
 });
