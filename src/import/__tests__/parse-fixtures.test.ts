@@ -65,6 +65,17 @@ describe("InventoryList (products) CSV", () => {
     const product = toCanonicalProduct(row.data);
     expect(product.cin7_type).toBe("Service");
   });
+
+  it("accepts both Yes/No (the live export's convention) and True/False (Cin7's own docs) for AutoAssemble/AutoDisassemble/Sellable", () => {
+    const { valid } = parseCsv(csv, productCsvRowSchema);
+    const base = valid[0].data;
+    expect(toCanonicalProduct({ ...base, AutoAssemble: "Yes" }).auto_assemble).toBe(true);
+    expect(toCanonicalProduct({ ...base, AutoAssemble: "True" }).auto_assemble).toBe(true);
+    expect(toCanonicalProduct({ ...base, AutoAssemble: "No" }).auto_assemble).toBe(false);
+    expect(toCanonicalProduct({ ...base, AutoAssemble: "False" }).auto_assemble).toBe(false);
+    expect(toCanonicalProduct({ ...base, Sellable: "true" }).sellable).toBe(true);
+    expect(toCanonicalProduct({ ...base, Sellable: "false" }).sellable).toBe(false);
+  });
 });
 
 describe("AssemblyBOM CSV", () => {

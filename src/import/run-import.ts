@@ -25,14 +25,19 @@ import {
   checkBlankSupplierAccountPayable,
   checkBlankSupplierRequiredFields,
   checkContactMissingName,
+  checkFixedAssetType,
   checkMultipleDefaultAddresses,
   checkMultipleDefaultContacts,
+  checkProductBooleanFields,
+  checkProductEnumFields,
   type ImportWarning,
 } from "@/import/warnings";
+import { checkProductSupplierReference } from "@/import/check-product-references";
 import type { SupplierAddressCsvRow } from "@/model/supplier-addresses";
 import type { CustomerAddressCsvRow } from "@/model/customer-addresses";
 import type { SupplierCsvRow } from "@/model/suppliers";
 import type { CustomerCsvRow } from "@/model/customers";
+import type { ProductCsvRow } from "@/model/products";
 
 export type ImportKind =
   | "products"
@@ -143,6 +148,13 @@ export async function runImport(
       ...checkBlankCustomerRequiredFields(valid as ParsedRow<CustomerCsvRow>[]),
       ...checkContactMissingName(valid as ParsedRow<CustomerCsvRow>[]),
       ...checkMultipleDefaultContacts(valid as ParsedRow<CustomerCsvRow>[]),
+    ];
+  } else if (kind === "products") {
+    warnings = [
+      ...checkProductEnumFields(valid as ParsedRow<ProductCsvRow>[]),
+      ...checkProductBooleanFields(valid as ParsedRow<ProductCsvRow>[]),
+      ...checkFixedAssetType(valid as ParsedRow<ProductCsvRow>[]),
+      ...(await checkProductSupplierReference(db, orgId, valid as ParsedRow<ProductCsvRow>[])),
     ];
   }
 

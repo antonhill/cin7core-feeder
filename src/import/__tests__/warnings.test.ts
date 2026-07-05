@@ -7,13 +7,17 @@ import {
   checkBlankSupplierAccountPayable,
   checkBlankSupplierRequiredFields,
   checkContactMissingName,
+  checkFixedAssetType,
   checkMultipleDefaultAddresses,
   checkMultipleDefaultContacts,
+  checkProductBooleanFields,
+  checkProductEnumFields,
 } from "@/import/warnings";
 import type { ParsedRow } from "@/import/csv";
 import type { SupplierAddressCsvRow } from "@/model/supplier-addresses";
 import type { CustomerCsvRow } from "@/model/customers";
 import type { SupplierCsvRow } from "@/model/suppliers";
+import type { ProductCsvRow } from "@/model/products";
 
 function parsedRow<T>(rowNumber: number, data: T): ParsedRow<T> {
   return { rowNumber, raw: {}, data };
@@ -292,6 +296,163 @@ describe("checkContactMissingName", () => {
         message: '"ABC Suppliers": has contact details (e.g. Email/Phone) but no ContactName — Cin7 requires a name for a contact, so this contact will be dropped',
       },
     ]);
+  });
+});
+
+function productRow(overrides: Partial<ProductCsvRow>): ProductCsvRow {
+  return {
+    ProductCode: "SKU-1",
+    Name: "Widget",
+    Category: "",
+    Brand: "",
+    Type: "",
+    FixedAssetType: "",
+    CostingMethod: "FIFO",
+    WeightUnits: "",
+    DimensionUnits: "",
+    Barcode: "",
+    DefaultLocation: "",
+    LastSuppliedBy: "",
+    SupplierProductCode: "",
+    SupplierProductName: "",
+    DefaultUnitOfMeasure: "",
+    Status: "",
+    Description: "",
+    PurchaseTaxRule: "",
+    SaleTaxRule: "",
+    AutoAssemble: "",
+    AutoDisassemble: "",
+    DropShip: "",
+    DropShipSupplier: "",
+    InventoryAccount: "",
+    RevenueAccount: "",
+    ExpenseAccount: "",
+    COGSAccount: "",
+    ProductAttributeSet: "",
+    AdditionalAttribute1: "",
+    AdditionalAttribute2: "",
+    AdditionalAttribute3: "",
+    AdditionalAttribute4: "",
+    AdditionalAttribute5: "",
+    AdditionalAttribute6: "",
+    AdditionalAttribute7: "",
+    AdditionalAttribute8: "",
+    AdditionalAttribute9: "",
+    AdditionalAttribute10: "",
+    DiscountName: "",
+    ProductFamilySKU: "",
+    ProductFamilyName: "",
+    ProductFamilyOption1Name: "",
+    ProductFamilyOption1Value: "",
+    ProductFamilyOption2Name: "",
+    ProductFamilyOption2Value: "",
+    ProductFamilyOption3Name: "",
+    ProductFamilyOption3Value: "",
+    CommaDelimitedTags: "",
+    StockLocator: "",
+    ShortDescription: "",
+    Sellable: "",
+    PickZones: "",
+    WarrantySetupName: "",
+    InternalNote: "",
+    MakeToOrderBom: "",
+    IsAccountingDimensionEnabled: "",
+    DimensionAttribute1: "",
+    DimensionAttribute2: "",
+    DimensionAttribute3: "",
+    DimensionAttribute4: "",
+    DimensionAttribute5: "",
+    DimensionAttribute6: "",
+    DimensionAttribute7: "",
+    DimensionAttribute8: "",
+    DimensionAttribute9: "",
+    DimensionAttribute10: "",
+    HSCode: "",
+    CountryOfOrigin: "",
+    ...overrides,
+  };
+}
+
+describe("checkProductEnumFields", () => {
+  it("does not warn when all fields are blank or valid", () => {
+    const rows = [
+      parsedRow(1, productRow({ CostingMethod: "FIFO - Batch", Type: "Service", DropShip: "Always Drop Ship", Status: "Deprecated" })),
+      parsedRow(2, productRow({ CostingMethod: "", Type: "", DropShip: "", Status: "" })),
+    ];
+    expect(checkProductEnumFields(rows)).toEqual([]);
+  });
+
+  it("warns on an unrecognized CostingMethod", () => {
+    const warnings = checkProductEnumFields([parsedRow(1, productRow({ CostingMethod: "Fifo" }))]);
+    expect(warnings).toEqual([{ rowNumber: 1, message: '"Widget": CostingMethod "Fifo" is not a recognized value' }]);
+  });
+
+  it("warns on an unrecognized Type", () => {
+    const warnings = checkProductEnumFields([parsedRow(1, productRow({ Type: "Sotck" }))]);
+    expect(warnings).toEqual([{ rowNumber: 1, message: '"Widget": Type "Sotck" is not a recognized value (expected Stock, Service or Fixed Asset)' }]);
+  });
+
+  it("does not warn on the code-supported legacy Type values Non-Inventory/BillOfMaterials", () => {
+    const rows = [parsedRow(1, productRow({ Type: "Non-Inventory" })), parsedRow(2, productRow({ Type: "BillOfMaterials" }))];
+    expect(checkProductEnumFields(rows)).toEqual([]);
+  });
+
+  it("warns on an unrecognized DropShip value", () => {
+    const warnings = checkProductEnumFields([parsedRow(1, productRow({ DropShip: "Sometimes" }))]);
+    expect(warnings).toEqual([
+      { rowNumber: 1, message: '"Widget": DropShip "Sometimes" is not a recognized value (expected No Drop Ship, Optional Drop Ship or Always Drop Ship)' },
+    ]);
+  });
+
+  it("warns on an unrecognized Status value", () => {
+    const warnings = checkProductEnumFields([parsedRow(1, productRow({ Status: "Discontinued" }))]);
+    expect(warnings).toEqual([{ rowNumber: 1, message: '"Widget": Status "Discontinued" is not a recognized value (expected Active or Deprecated)' }]);
+  });
+});
+
+describe("checkProductBooleanFields", () => {
+  it("does not warn for Yes/No or True/False, case-insensitively", () => {
+    const rows = [
+      parsedRow(1, productRow({ AutoAssemble: "Yes", AutoDisassemble: "no", Sellable: "TRUE" })),
+      parsedRow(2, productRow({ AutoAssemble: "false", AutoDisassemble: "", Sellable: "" })),
+    ];
+    expect(checkProductBooleanFields(rows)).toEqual([]);
+  });
+
+  it("warns on an unrecognized value", () => {
+    const warnings = checkProductBooleanFields([parsedRow(1, productRow({ Sellable: "Y" }))]);
+    expect(warnings).toEqual([{ rowNumber: 1, message: '"Widget": Sellable "Y" is not a recognized value (expected Yes/No or True/False)' }]);
+  });
+});
+
+describe("checkFixedAssetType", () => {
+  it("warns when Type is Fixed Asset but FixedAssetType is blank", () => {
+    const warnings = checkFixedAssetType([parsedRow(1, productRow({ Type: "Fixed Asset", FixedAssetType: "" }))]);
+    expect(warnings).toEqual([
+      { rowNumber: 1, message: '"Widget": Type is "Fixed Asset" but FixedAssetType is blank — Cin7 requires this for fixed assets' },
+    ]);
+  });
+
+  it("warns when FixedAssetType is set but Type isn't Fixed Asset", () => {
+    const warnings = checkFixedAssetType([parsedRow(1, productRow({ Type: "Stock", FixedAssetType: "Vehicle" }))]);
+    expect(warnings).toEqual([
+      { rowNumber: 1, message: '"Widget": FixedAssetType is set but Type is "Stock", not Fixed Asset — Cin7 expects this blank for non-fixed-asset products' },
+    ]);
+  });
+
+  it("treats a blank Type as the Stock default when deciding whether FixedAssetType should be blank", () => {
+    const warnings = checkFixedAssetType([parsedRow(1, productRow({ Type: "", FixedAssetType: "Vehicle" }))]);
+    expect(warnings).toEqual([
+      { rowNumber: 1, message: '"Widget": FixedAssetType is set but Type is "Stock", not Fixed Asset — Cin7 expects this blank for non-fixed-asset products' },
+    ]);
+  });
+
+  it("does not warn when Type is Fixed Asset and FixedAssetType is set", () => {
+    expect(checkFixedAssetType([parsedRow(1, productRow({ Type: "Fixed Asset", FixedAssetType: "Vehicle" }))])).toEqual([]);
+  });
+
+  it("does not warn when Type is Stock and FixedAssetType is blank", () => {
+    expect(checkFixedAssetType([parsedRow(1, productRow({ Type: "Stock", FixedAssetType: "" }))])).toEqual([]);
   });
 });
 

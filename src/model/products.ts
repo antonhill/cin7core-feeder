@@ -120,9 +120,17 @@ export function mapCin7ProductType(cin7Type: string): "raw" | "component" | "ass
   return CIN7_TYPE_MAP[cin7Type] ?? "component";
 }
 
-/** "Yes"/"No" (Cin7's own CSV boolean convention) -> real boolean. Case-insensitive; anything else defaults to false. */
+/**
+ * Boolean convention for AutoAssemble/AutoDisassemble/Sellable. A real live
+ * InventoryList export uses "Yes"/"No" (confirmed:
+ * docs/cin7-templates/InventoryList_2026-07-03.csv), but Cin7's own field
+ * docs describe "True"/"False" as the valid values for these same fields —
+ * both are accepted here so a hand-filled CSV following Cin7's docs isn't
+ * silently misparsed. Case-insensitive; anything else defaults to false.
+ */
 function parseYesNo(value: string): boolean {
-  return value.trim().toUpperCase() === "YES";
+  const v = value.trim().toUpperCase();
+  return v === "YES" || v === "TRUE";
 }
 
 export interface CanonicalProduct {

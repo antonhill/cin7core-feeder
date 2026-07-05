@@ -3,6 +3,7 @@ import type { SupplierAddressCsvRow } from "@/model/supplier-addresses";
 import type { CustomerAddressCsvRow } from "@/model/customer-addresses";
 import type { SupplierCsvRow } from "@/model/suppliers";
 import type { CustomerCsvRow } from "@/model/customers";
+import type { ProductCsvRow } from "@/model/products";
 import { parseTrueFalse } from "@/model/csv-helpers";
 
 export interface ImportWarning {
@@ -138,6 +139,103 @@ export function checkBlankSupplierRequiredFields(rows: ParsedRow<SupplierCsvRow>
     }
     if (!r.data.TaxRule.trim()) {
       warnings.push({ rowNumber: r.rowNumber, message: `"${r.data.Name}": TaxRule is blank — Cin7 requires this for suppliers` });
+    }
+  }
+  return warnings;
+}
+
+const PRODUCT_COSTING_METHODS = new Set([
+  "FIFO",
+  "FIFO - Serial number",
+  "FIFO - Batch",
+  "FEFO - Serial number",
+  "FEFO - Batch",
+  "Special - Serial number",
+  "Special - Batch",
+]);
+
+// Cin7's own InventoryList docs only list Stock/Service/Fixed Asset as valid
+// Type values, but `mapCin7ProductType` (model/products.ts) already handles
+// Non-Inventory/BillOfMaterials too — treated as valid here rather than
+// flagged, since the code deliberately supports them.
+const PRODUCT_TYPES = new Set(["Stock", "Service", "Fixed Asset", "Non-Inventory", "BillOfMaterials"]);
+const PRODUCT_DROP_SHIP_MODES = new Set(["No Drop Ship", "Optional Drop Ship", "Always Drop Ship"]);
+const PRODUCT_STATUSES = new Set(["Active", "Deprecated"]);
+
+/**
+ * CostingMethod/Type/DropShip/Status each have a fixed set of valid values
+ * per Cin7's own InventoryList docs. Blank is fine (each has a documented
+ * default), but an unrecognized value is very likely a typo that Cin7 will
+ * either reject on push or silently misinterpret (e.g. `mapCin7ProductType`
+ * collapses any unmapped Type to "component"), so it's worth flagging early.
+ */
+export function checkProductEnumFields(rows: ParsedRow<ProductCsvRow>[]): ImportWarning[] {
+  const warnings: ImportWarning[] = [];
+  for (const r of rows) {
+    const { Name, CostingMethod, Type, DropShip, Status } = r.data;
+    if (CostingMethod.trim() && !PRODUCT_COSTING_METHODS.has(CostingMethod.trim())) {
+      warnings.push({ rowNumber: r.rowNumber, message: `"${Name}": CostingMethod "${CostingMethod}" is not a recognized value` });
+    }
+    if (Type.trim() && !PRODUCT_TYPES.has(Type.trim())) {
+      warnings.push({ rowNumber: r.rowNumber, message: `"${Name}": Type "${Type}" is not a recognized value (expected Stock, Service or Fixed Asset)` });
+    }
+    if (DropShip.trim() && !PRODUCT_DROP_SHIP_MODES.has(DropShip.trim())) {
+      warnings.push({
+        rowNumber: r.rowNumber,
+        message: `"${Name}": DropShip "${DropShip}" is not a recognized value (expected No Drop Ship, Optional Drop Ship or Always Drop Ship)`,
+      });
+    }
+    if (Status.trim() && !PRODUCT_STATUSES.has(Status.trim())) {
+      warnings.push({ rowNumber: r.rowNumber, message: `"${Name}": Status "${Status}" is not a recognized value (expected Active or Deprecated)` });
+    }
+  }
+  return warnings;
+}
+
+/**
+ * AutoAssemble/AutoDisassemble/Sellable are boolean-like fields where Cin7's
+ * own field docs describe "True"/"False" as the valid values, but a real
+ * live InventoryList export uses "Yes"/"No" for the same fields (confirmed:
+ * docs/cin7-templates/InventoryList_2026-07-03.csv). Both conventions parse
+ * correctly (see parseYesNo in model/products.ts), so this only warns on a
+ * value that's neither — most likely a typo (e.g. "Ture").
+ */
+export function checkProductBooleanFields(rows: ParsedRow<ProductCsvRow>[]): ImportWarning[] {
+  const warnings: ImportWarning[] = [];
+  for (const r of rows) {
+    const { Name, AutoAssemble, AutoDisassemble, Sellable } = r.data;
+    const fields: [string, string][] = [
+      ["AutoAssemble", AutoAssemble],
+      ["AutoDisassemble", AutoDisassemble],
+      ["Sellable", Sellable],
+    ];
+    for (const [field, value] of fields) {
+      if (value.trim() && !["yes", "no", "true", "false"].includes(value.trim().toLowerCase())) {
+        warnings.push({ rowNumber: r.rowNumber, message: `"${Name}": ${field} "${value}" is not a recognized value (expected Yes/No or True/False)` });
+      }
+    }
+  }
+  return warnings;
+}
+
+/**
+ * FixedAssetType is documented as required when Type is "Fixed Asset" and
+ * must be left blank for every other type. Type falls back to "Stock" when
+ * blank (Cin7's own documented default), so the fallback is what's checked
+ * here rather than the raw (possibly blank) CSV value.
+ */
+export function checkFixedAssetType(rows: ParsedRow<ProductCsvRow>[]): ImportWarning[] {
+  const warnings: ImportWarning[] = [];
+  for (const r of rows) {
+    const { Name, Type, FixedAssetType } = r.data;
+    const effectiveType = Type.trim() || "Stock";
+    if (effectiveType === "Fixed Asset" && !FixedAssetType.trim()) {
+      warnings.push({ rowNumber: r.rowNumber, message: `"${Name}": Type is "Fixed Asset" but FixedAssetType is blank — Cin7 requires this for fixed assets` });
+    } else if (effectiveType !== "Fixed Asset" && FixedAssetType.trim()) {
+      warnings.push({
+        rowNumber: r.rowNumber,
+        message: `"${Name}": FixedAssetType is set but Type is "${effectiveType}", not Fixed Asset — Cin7 expects this blank for non-fixed-asset products`,
+      });
     }
   }
   return warnings;
