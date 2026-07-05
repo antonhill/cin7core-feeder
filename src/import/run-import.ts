@@ -25,6 +25,8 @@ import {
   checkBlankSupplierAccountPayable,
   checkBlankSupplierRequiredFields,
   checkContactMissingName,
+  checkMultipleDefaultAddresses,
+  checkMultipleDefaultContacts,
   type ImportWarning,
 } from "@/import/warnings";
 import type { SupplierAddressCsvRow } from "@/model/supplier-addresses";
@@ -126,18 +128,21 @@ export async function runImport(
     warnings = [
       ...checkBlankCountry(valid as ParsedRow<SupplierAddressCsvRow | CustomerAddressCsvRow>[]),
       ...checkBlankAddressLine1(valid as ParsedRow<SupplierAddressCsvRow | CustomerAddressCsvRow>[]),
+      ...checkMultipleDefaultAddresses(valid as ParsedRow<SupplierAddressCsvRow | CustomerAddressCsvRow>[]),
     ];
   } else if (kind === "suppliers") {
     warnings = [
       ...checkBlankSupplierAccountPayable(valid as ParsedRow<SupplierCsvRow>[]),
       ...checkBlankSupplierRequiredFields(valid as ParsedRow<SupplierCsvRow>[]),
       ...checkContactMissingName(valid as ParsedRow<SupplierCsvRow>[]),
+      ...checkMultipleDefaultContacts(valid as ParsedRow<SupplierCsvRow>[]),
     ];
   } else if (kind === "customers") {
     warnings = [
       ...checkBlankCustomerAccountCodes(valid as ParsedRow<CustomerCsvRow>[]),
       ...checkBlankCustomerRequiredFields(valid as ParsedRow<CustomerCsvRow>[]),
       ...checkContactMissingName(valid as ParsedRow<CustomerCsvRow>[]),
+      ...checkMultipleDefaultContacts(valid as ParsedRow<CustomerCsvRow>[]),
     ];
   }
 

@@ -7,6 +7,8 @@ import {
   checkBlankSupplierAccountPayable,
   checkBlankSupplierRequiredFields,
   checkContactMissingName,
+  checkMultipleDefaultAddresses,
+  checkMultipleDefaultContacts,
 } from "@/import/warnings";
 import type { ParsedRow } from "@/import/csv";
 import type { SupplierAddressCsvRow } from "@/model/supplier-addresses";
@@ -56,6 +58,44 @@ describe("checkBlankAddressLine1", () => {
 
   it("does not warn when AddressLine1 is set", () => {
     expect(checkBlankAddressLine1([parsedRow(1, supplierAddress({}))])).toEqual([]);
+  });
+});
+
+describe("checkMultipleDefaultAddresses", () => {
+  it("warns on every row when two Billing addresses for the same Name are both flagged default", () => {
+    const rows = [
+      parsedRow(1, supplierAddress({ AddressDefaultForType: "True" })),
+      parsedRow(2, supplierAddress({ AddressDefaultForType: "True" })),
+    ];
+    const warnings = checkMultipleDefaultAddresses(rows);
+    expect(warnings).toEqual([
+      { rowNumber: 1, message: '"ABC Suppliers" (Billing): more than one address is flagged default for this type (rows 1, 2) — only one should be' },
+      { rowNumber: 2, message: '"ABC Suppliers" (Billing): more than one address is flagged default for this type (rows 1, 2) — only one should be' },
+    ]);
+  });
+
+  it("does not warn when only one address of a type is flagged default", () => {
+    const rows = [
+      parsedRow(1, supplierAddress({ AddressDefaultForType: "True" })),
+      parsedRow(2, supplierAddress({ AddressDefaultForType: "False" })),
+    ];
+    expect(checkMultipleDefaultAddresses(rows)).toEqual([]);
+  });
+
+  it("does not warn when two defaults are for different address types", () => {
+    const rows = [
+      parsedRow(1, supplierAddress({ AddressType: "Billing", AddressDefaultForType: "True" })),
+      parsedRow(2, supplierAddress({ AddressType: "Shipping", AddressDefaultForType: "True" })),
+    ];
+    expect(checkMultipleDefaultAddresses(rows)).toEqual([]);
+  });
+
+  it("does not warn when two defaults are for different Names", () => {
+    const rows = [
+      parsedRow(1, supplierAddress({ Name: "ABC Suppliers", AddressDefaultForType: "True" })),
+      parsedRow(2, supplierAddress({ Name: "XYZ Suppliers", AddressDefaultForType: "True" })),
+    ];
+    expect(checkMultipleDefaultAddresses(rows)).toEqual([]);
   });
 });
 
@@ -252,5 +292,45 @@ describe("checkContactMissingName", () => {
         message: '"ABC Suppliers": has contact details (e.g. Email/Phone) but no ContactName — Cin7 requires a name for a contact, so this contact will be dropped',
       },
     ]);
+  });
+});
+
+describe("checkMultipleDefaultContacts", () => {
+  it("warns on every row when two contacts for the same Name are both flagged default — contacts have no Type, unlike addresses", () => {
+    const rows = [
+      parsedRow(1, customerRow({ ContactName: "Frank", ContactDefault: "True" })),
+      parsedRow(2, customerRow({ ContactName: "John", ContactDefault: "True" })),
+    ];
+    const warnings = checkMultipleDefaultContacts(rows);
+    expect(warnings).toEqual([
+      { rowNumber: 1, message: '"Woolworths": more than one contact is flagged default (rows 1, 2) — only one should be' },
+      { rowNumber: 2, message: '"Woolworths": more than one contact is flagged default (rows 1, 2) — only one should be' },
+    ]);
+  });
+
+  it("does not warn when only one contact is flagged default", () => {
+    const rows = [
+      parsedRow(1, customerRow({ ContactName: "Frank", ContactDefault: "True" })),
+      parsedRow(2, customerRow({ ContactName: "John", ContactDefault: "False" })),
+    ];
+    expect(checkMultipleDefaultContacts(rows)).toEqual([]);
+  });
+
+  it("does not warn when two defaults are for different Names", () => {
+    const rows = [
+      parsedRow(1, customerRow({ Name: "Woolworths", ContactName: "Frank", ContactDefault: "True" })),
+      parsedRow(2, customerRow({ Name: "Pick n Pay", ContactName: "John", ContactDefault: "True" })),
+    ];
+    expect(checkMultipleDefaultContacts(rows)).toEqual([]);
+  });
+
+  it("works for Suppliers too — same contact column shape", () => {
+    const rows = [
+      parsedRow(1, supplierRow({ ContactName: "Peter", ContactDefault: "True" })),
+      parsedRow(2, supplierRow({ ContactName: "Mary", ContactDefault: "True" })),
+    ];
+    const warnings = checkMultipleDefaultContacts(rows);
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0].message).toContain('"ABC Suppliers"');
   });
 });

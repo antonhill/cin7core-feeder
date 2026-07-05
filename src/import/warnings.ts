@@ -3,6 +3,7 @@ import type { SupplierAddressCsvRow } from "@/model/supplier-addresses";
 import type { CustomerAddressCsvRow } from "@/model/customer-addresses";
 import type { SupplierCsvRow } from "@/model/suppliers";
 import type { CustomerCsvRow } from "@/model/customers";
+import { parseTrueFalse } from "@/model/csv-helpers";
 
 export interface ImportWarning {
   rowNumber: number;
@@ -35,6 +36,40 @@ export function checkBlankAddressLine1(
   return rows
     .filter((r) => !r.data.AddressLine1.trim())
     .map((r) => ({ rowNumber: r.rowNumber, message: `"${r.data.Name}" (${r.data.AddressType}): AddressLine1 is blank` }));
+}
+
+/**
+ * Cin7's own `AddressDefaultForType` field means "the default address *for
+ * that Type*" (Billing/Shipping/Business) — a Name can have several
+ * addresses of the same Type (e.g. multiple Billing addresses), but only one
+ * of them should be flagged default. Two rows both flagged default for the
+ * same Name+AddressType is contradictory source data, worth catching before
+ * push rather than leaving it to whichever one Cin7 happens to pick.
+ */
+export function checkMultipleDefaultAddresses(
+  rows: ParsedRow<SupplierAddressCsvRow | CustomerAddressCsvRow>[]
+): ImportWarning[] {
+  const groups = new Map<string, ParsedRow<SupplierAddressCsvRow | CustomerAddressCsvRow>[]>();
+  for (const r of rows) {
+    if (!parseTrueFalse(r.data.AddressDefaultForType)) continue;
+    const key = `${r.data.Name}::${r.data.AddressType}`;
+    const group = groups.get(key) ?? [];
+    group.push(r);
+    groups.set(key, group);
+  }
+
+  const warnings: ImportWarning[] = [];
+  for (const group of groups.values()) {
+    if (group.length <= 1) continue;
+    const rowNumbers = group.map((r) => r.rowNumber).join(", ");
+    for (const r of group) {
+      warnings.push({
+        rowNumber: r.rowNumber,
+        message: `"${r.data.Name}" (${r.data.AddressType}): more than one address is flagged default for this type (rows ${rowNumbers}) — only one should be`,
+      });
+    }
+  }
+  return warnings;
 }
 
 /**
@@ -118,6 +153,7 @@ interface ContactRowFields {
   Email: string;
   Website: string;
   ContactComment: string;
+  ContactDefault: string;
 }
 
 /**
@@ -135,6 +171,35 @@ export function checkContactMissingName(rows: ParsedRow<ContactRowFields>[]): Im
       warnings.push({
         rowNumber: r.rowNumber,
         message: `"${Name}": has contact details (e.g. Email/Phone) but no ContactName — Cin7 requires a name for a contact, so this contact will be dropped`,
+      });
+    }
+  }
+  return warnings;
+}
+
+/**
+ * Unlike addresses, a Customer/Supplier contact has no Type dimension — the
+ * whole CSV template has just one `ContactDefault` flag per Name — so at
+ * most one contact row for a given Name should be flagged default, not one
+ * per some sub-category.
+ */
+export function checkMultipleDefaultContacts(rows: ParsedRow<ContactRowFields>[]): ImportWarning[] {
+  const groups = new Map<string, ParsedRow<ContactRowFields>[]>();
+  for (const r of rows) {
+    if (!parseTrueFalse(r.data.ContactDefault)) continue;
+    const group = groups.get(r.data.Name) ?? [];
+    group.push(r);
+    groups.set(r.data.Name, group);
+  }
+
+  const warnings: ImportWarning[] = [];
+  for (const group of groups.values()) {
+    if (group.length <= 1) continue;
+    const rowNumbers = group.map((r) => r.rowNumber).join(", ");
+    for (const r of group) {
+      warnings.push({
+        rowNumber: r.rowNumber,
+        message: `"${r.data.Name}": more than one contact is flagged default (rows ${rowNumbers}) — only one should be`,
       });
     }
   }
