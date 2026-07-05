@@ -11,16 +11,18 @@ import {
 } from "./actions";
 import type { ReportFilterOptions, ProductSalesReportRow, SaleLineDetailRow, SalesSyncStatus } from "@/reports/query";
 import type { SalesReportFilters } from "@/reports/query";
-import { buildPivotGrid, type PivotGroupBy, type PivotMetric, type PivotSourceRow } from "@/reports/pivot";
+import { buildPivotGrid, type PivotCellValues, type PivotGroupBy, type PivotSourceRow } from "@/reports/pivot";
 
 type GroupBySelection = "none" | PivotGroupBy;
 
-const METRIC_LABELS: Record<PivotMetric, string> = {
-  revenue: "Revenue",
-  cogs: "COGS",
-  profit: "Profit",
-  margin_percent: "Margin%",
-};
+/** Every metric shown together per pivot column group, matching Cin7 Core's own native pivot report (Qty/Invoice/COGS/Profit side by side). */
+const METRIC_COLUMNS: { key: keyof PivotCellValues; label: string }[] = [
+  { key: "quantitySold", label: "Qty" },
+  { key: "revenue", label: "Revenue" },
+  { key: "cogs", label: "COGS" },
+  { key: "profit", label: "Profit" },
+  { key: "marginPercent", label: "Margin%" },
+];
 
 function money(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
@@ -32,8 +34,36 @@ function percent(value: number | null | undefined): string {
   return `${value.toFixed(2)}%`;
 }
 
-function formatMetric(metric: PivotMetric, value: number | null | undefined): string {
-  return metric === "margin_percent" ? percent(value) : money(value);
+function formatCellMetric(key: keyof PivotCellValues, values: PivotCellValues): string {
+  if (key === "quantitySold") return values.quantitySold.toLocaleString();
+  if (key === "marginPercent") return percent(values.marginPercent);
+  return money(values[key] as number);
+}
+
+/** The 5 metric sub-header cells repeated under every pivot column group (and once more for the Total group). */
+function MetricHeaderCells() {
+  return (
+    <>
+      {METRIC_COLUMNS.map((col) => (
+        <th key={col.key} className="py-1 pr-4 text-right text-xs font-normal text-slate-400">
+          {col.label}
+        </th>
+      ))}
+    </>
+  );
+}
+
+/** The 5 metric value cells for one pivot cell (or the row/column/grand total) — null renders as a dash per metric, a genuine gap rather than 0. */
+function MetricCells({ values, bold }: { values: PivotCellValues | null; bold?: boolean }) {
+  return (
+    <>
+      {METRIC_COLUMNS.map((col) => (
+        <td key={col.key} className={`py-2 pr-4 text-right ${bold ? "font-semibold" : ""}`}>
+          {values ? formatCellMetric(col.key, values) : "—"}
+        </td>
+      ))}
+    </>
+  );
 }
 
 /** Shared invoice-line drill-down, used under both the flat table and the pivot grid — a row expands to this regardless of which view produced it. */
@@ -110,12 +140,11 @@ export default function ReportsPage() {
   const [isRunning, startRunTransition] = useTransition();
 
   const [groupBy, setGroupBy] = useState<GroupBySelection>("none");
-  const [metric, setMetric] = useState<PivotMetric>("revenue");
 
   const pivotGrid = useMemo(() => {
     if (groupBy === "none" || !pivotSourceRows) return null;
-    return buildPivotGrid(pivotSourceRows, groupBy, metric);
-  }, [pivotSourceRows, groupBy, metric]);
+    return buildPivotGrid(pivotSourceRows, groupBy);
+  }, [pivotSourceRows, groupBy]);
 
   const [expandedSku, setExpandedSku] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, SaleLineDetailRow[]>>({});
@@ -304,20 +333,7 @@ export default function ReportsPage() {
           </label>
 
           {groupBy !== "none" && (
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">Metric</span>
-              <select
-                value={metric}
-                onChange={(e) => setMetric(e.target.value as PivotMetric)}
-                className="rounded-lg border border-slate-300 px-3 py-2"
-              >
-                {(Object.entries(METRIC_LABELS) as [PivotMetric, string][]).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <p className="text-sm text-slate-500">Every metric (Qty/Revenue/COGS/Profit/Margin%) shows together per column.</p>
           )}
         </div>
 
@@ -386,7 +402,7 @@ export default function ReportsPage() {
       {pivotGrid && (
         <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <p className="font-medium text-slate-900">
-            {pivotGrid.rows.length} product{pivotGrid.rows.length === 1 ? "" : "s"} — {METRIC_LABELS[metric]} by{" "}
+            {pivotGrid.rows.length} product{pivotGrid.rows.length === 1 ? "" : "s"} by{" "}
             {groupBy === "both" ? "Location × Category" : groupBy === "location" ? "Location" : "Category"}
           </p>
           {pivotGrid.rows.length === 0 && <p className="mt-2 text-sm text-slate-400">No invoiced sales match these filters.</p>}
@@ -399,21 +415,34 @@ export default function ReportsPage() {
                     <tr className="text-slate-500">
                       <th className="py-1 pr-4" />
                       {pivotGrid.columnGroups.map((group) => (
-                        <th key={group.label} colSpan={group.span} className="border-b border-slate-100 py-1 pr-4 text-center">
+                        <th
+                          key={group.label}
+                          colSpan={group.span * METRIC_COLUMNS.length}
+                          className="border-b border-slate-100 py-1 pr-4 text-center font-medium"
+                        >
                           {group.label}
                         </th>
                       ))}
-                      <th className="border-b border-slate-100 py-1 pr-4" />
+                      <th colSpan={METRIC_COLUMNS.length} className="border-b border-slate-100 py-1 pr-4" />
                     </tr>
                   )}
-                  <tr className="border-b border-slate-200 text-slate-500">
-                    <th className="py-2 pr-4">Product</th>
+                  <tr className="text-slate-500">
+                    <th className="py-1 pr-4" />
                     {pivotGrid.columns.map((col) => (
-                      <th key={col.key} className="py-2 pr-4 text-right">
+                      <th key={col.key} colSpan={METRIC_COLUMNS.length} className="border-b border-slate-100 py-1 pr-4 text-center font-medium">
                         {col.label}
                       </th>
                     ))}
-                    <th className="py-2 pr-4 text-right font-semibold">Total</th>
+                    <th colSpan={METRIC_COLUMNS.length} className="border-b border-slate-100 py-1 pr-4 text-center font-semibold">
+                      Total
+                    </th>
+                  </tr>
+                  <tr className="border-b border-slate-200 text-slate-500">
+                    <th className="py-2 pr-4">Product</th>
+                    {pivotGrid.columns.map((col) => (
+                      <MetricHeaderCells key={col.key} />
+                    ))}
+                    <MetricHeaderCells />
                   </tr>
                 </thead>
                 <tbody>
@@ -428,15 +457,13 @@ export default function ReportsPage() {
                           <div className="text-xs text-slate-400">{row.productSku}</div>
                         </td>
                         {pivotGrid.columns.map((col) => (
-                          <td key={col.key} className="py-2 pr-4 text-right">
-                            {formatMetric(metric, row.cells[col.key])}
-                          </td>
+                          <MetricCells key={col.key} values={row.cells[col.key]} />
                         ))}
-                        <td className="py-2 pr-4 text-right font-semibold">{formatMetric(metric, row.total)}</td>
+                        <MetricCells values={row.total} bold />
                       </tr>
                       {expandedSku === row.productSku && (
                         <InvoiceLineDetail
-                          colSpan={pivotGrid.columns.length + 2}
+                          colSpan={1 + (pivotGrid.columns.length + 1) * METRIC_COLUMNS.length}
                           isLoading={isLoadingDetails}
                           lines={details[row.productSku]}
                         />
@@ -448,11 +475,9 @@ export default function ReportsPage() {
                   <tr className="border-t border-slate-200 font-semibold text-slate-700">
                     <td className="py-2 pr-4">Total</td>
                     {pivotGrid.columns.map((col) => (
-                      <td key={col.key} className="py-2 pr-4 text-right">
-                        {formatMetric(metric, pivotGrid.totals[col.key])}
-                      </td>
+                      <MetricCells key={col.key} values={pivotGrid.totals[col.key]} />
                     ))}
-                    <td className="py-2 pr-4 text-right">{formatMetric(metric, pivotGrid.grandTotal)}</td>
+                    <MetricCells values={pivotGrid.grandTotal} />
                   </tr>
                 </tfoot>
               </table>
