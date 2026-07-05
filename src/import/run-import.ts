@@ -15,6 +15,7 @@ import { commitCustomerRows } from "@/import/commit-customers";
 import { commitSupplierAddressRows } from "@/import/commit-supplier-addresses";
 import { commitCustomerAddressRows } from "@/import/commit-customer-addresses";
 import { checkAssemblyBomReferences, checkProductionBomReferences } from "@/import/validate-bom-references";
+import { checkSupplierAddressReferences, checkCustomerAddressReferences } from "@/import/validate-address-references";
 import { detectKindMismatch, IMPORT_KIND_LABELS } from "@/import/detect-kind";
 import {
   checkBlankAddressLine1,
@@ -100,6 +101,17 @@ export async function runImport(
     invalid = [...invalid, ...refCheck.invalid];
   } else if (kind === "production_bom") {
     const refCheck = await checkProductionBomReferences(db, orgId, valid as ParsedRow<ProductionBomCsvRow>[]);
+    valid = refCheck.valid;
+    invalid = [...invalid, ...refCheck.invalid];
+  } else if (kind === "supplier_addresses") {
+    // Same reasoning as BOMs — an address is always imported as its own
+    // step after the supplier/customer it belongs to, so a row whose Name
+    // doesn't match an already-imported one is rejected, not silently kept.
+    const refCheck = await checkSupplierAddressReferences(db, orgId, valid as ParsedRow<SupplierAddressCsvRow>[]);
+    valid = refCheck.valid;
+    invalid = [...invalid, ...refCheck.invalid];
+  } else if (kind === "customer_addresses") {
+    const refCheck = await checkCustomerAddressReferences(db, orgId, valid as ParsedRow<CustomerAddressCsvRow>[]);
     valid = refCheck.valid;
     invalid = [...invalid, ...refCheck.invalid];
   }
