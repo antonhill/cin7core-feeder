@@ -15,6 +15,7 @@ import { commitCustomerRows } from "@/import/commit-customers";
 import { commitSupplierAddressRows } from "@/import/commit-supplier-addresses";
 import { commitCustomerAddressRows } from "@/import/commit-customer-addresses";
 import { checkAssemblyBomReferences, checkProductionBomReferences } from "@/import/validate-bom-references";
+import { detectKindMismatch, IMPORT_KIND_LABELS } from "@/import/detect-kind";
 import {
   checkBlankCountry,
   checkBlankCustomerAccountCodes,
@@ -72,6 +73,19 @@ export async function runImport(
   const parsed = parseCsv(csvText, schema as never);
   let valid: ParsedRow<unknown>[] = parsed.valid;
   let invalid: InvalidRow[] = parsed.invalid;
+
+  // Catch a wrong "kind" selection before every row fails schema validation
+  // with confusing per-field errors — e.g. picking "Products" but uploading
+  // a Customers export. Compares the file's header row against every kind's
+  // known column set; only fires when another kind is a clearly better match
+  // than the one selected (see detect-kind.ts for the scoring/tie rules).
+  const mismatch = detectKindMismatch(parsed.fields, kind);
+  if (mismatch) {
+    const guesses = mismatch.bestKinds.map((k) => IMPORT_KIND_LABELS[k]).join(" or ");
+    throw new Error(
+      `This file's columns look like ${guesses} (${mismatch.bestScorePercent}% match), not ${IMPORT_KIND_LABELS[kind]} (${mismatch.selectedScorePercent}% match). Choose the matching import type, or check you selected the right file.`
+    );
+  }
 
   // BOMs must reference products that already exist — no implicit creation.
   // A row with an unknown parent/component SKU is rejected like any other

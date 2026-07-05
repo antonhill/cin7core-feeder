@@ -16,11 +16,13 @@ export interface InvalidRow {
 export interface CsvParseResult<T> {
   valid: ParsedRow<T>[];
   invalid: InvalidRow[];
+  /** Header row as parsed by Papaparse — used to sanity-check the file actually looks like the selected import kind (see detect-kind.ts). */
+  fields: string[];
 }
 
 /** Parses CSV text against a zod row schema. Never throws on row-level issues. */
 export function parseCsv<T>(csvText: string, schema: ZodType<T>): CsvParseResult<T> {
-  const { data, errors: papaErrors } = Papa.parse<Record<string, unknown>>(csvText, {
+  const { data, errors: papaErrors, meta } = Papa.parse<Record<string, unknown>>(csvText, {
     header: true,
     // "true" only skips lines with zero characters — a line of bare commas
     // (every field empty, e.g. a trailing blank row left by opening the CSV
@@ -58,5 +60,5 @@ export function parseCsv<T>(csvText: string, schema: ZodType<T>): CsvParseResult
     }
   });
 
-  return { valid, invalid };
+  return { valid, invalid, fields: meta.fields ?? [] };
 }
