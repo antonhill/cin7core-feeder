@@ -8,6 +8,7 @@ import {
   type PushScopeSelection,
   type ScopeMode,
 } from "./actions";
+import type { ImportKind } from "@/import/run-import";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import type { InstanceSyncOutcome } from "@/sync/sync-org";
 
@@ -18,6 +19,36 @@ const INITIAL_STATE: ImportActionState = { status: "idle" };
 // shared exported constant (that's what crashed every action in that file:
 // "A 'use server' file can only export async functions, found object").
 const DEFAULT_PUSH_SCOPE_SELECTION: PushScopeSelection = { products: "all", customers: "all", suppliers: "all" };
+
+// Only one kind is ever imported at a time. Which scope key that maps to —
+// BOM kinds follow the product scope, since a BOM is meaningless without its
+// parent product (same rule PushScope documents server-side).
+const SCOPE_KEY_FOR_KIND: Record<ImportKind, keyof PushScopeSelection> = {
+  products: "products",
+  assembly_bom: "products",
+  production_bom: "products",
+  suppliers: "suppliers",
+  supplier_addresses: "suppliers",
+  customers: "customers",
+  customer_addresses: "customers",
+};
+
+/**
+ * After a successful import, isolate the push to just that kind: the kind
+ * just imported scopes to "last_import", and the other two kinds are
+ * skipped ("none") so they can't sweep in an unrelated catalog (and its
+ * pre-existing failures) just because this push happened to run at the same
+ * time. Only one kind is ever imported at once, so there's never a reason
+ * for the other two to default to "all" here.
+ */
+function isolatedScopeFor(kind: ImportKind): PushScopeSelection {
+  const activeKey = SCOPE_KEY_FOR_KIND[kind];
+  return {
+    products: activeKey === "products" ? "last_import" : "none",
+    customers: activeKey === "customers" ? "last_import" : "none",
+    suppliers: activeKey === "suppliers" ? "last_import" : "none",
+  };
+}
 
 const KINDS = [
   { value: "products", label: "Products (InventoryList)" },
@@ -75,6 +106,16 @@ export default function ImportPage() {
   const [pushError, setPushError] = useState<string | null>(null);
   const [isPushPending, startPushTransition] = useTransition();
   const [scopeSelection, setScopeSelection] = useState<PushScopeSelection>(DEFAULT_PUSH_SCOPE_SELECTION);
+  // Tracks which committed batch the scope was last isolated for, so we only
+  // re-isolate once per new import rather than on every render — set during
+  // render itself (React's "adjust state when a prop changes" pattern), not
+  // in an effect, to avoid an extra render pass.
+  const [lastScopedBatchId, setLastScopedBatchId] = useState<string | null>(null);
+
+  if (state.status === "success" && state.result?.committed && state.result.batchId !== lastScopedBatchId) {
+    setLastScopedBatchId(state.result.batchId);
+    setScopeSelection(isolatedScopeFor(state.result.kind));
+  }
 
   function handleLoadInstances() {
     setInstancesError(null);
@@ -272,7 +313,11 @@ export default function ImportPage() {
             <p className="text-base font-medium text-slate-700">Scope</p>
             <p className="mt-1 text-sm text-slate-500">
               &ldquo;Just last import&rdquo; pushes only the rows from your most recent committed
-              import of that type, instead of the whole org catalog.
+              import of that type, instead of the whole org catalog. Since you only ever import one
+              type at a time, importing something automatically sets the other two types to
+              &ldquo;None&rdquo; so this push can&rsquo;t sweep in an unrelated catalog (or its
+              existing failures) — pick &ldquo;All&rdquo; on a type yourself if you do want a full
+              resync of it.
             </p>
             <div className="mt-3 flex flex-col gap-2">
               {(
@@ -285,7 +330,7 @@ export default function ImportPage() {
                 <div key={key} className="flex items-center gap-3">
                   <span className="w-24 text-sm font-medium text-slate-700">{label}</span>
                   <div className="flex overflow-hidden rounded-full border border-slate-300">
-                    {(["all", "last_import"] as const).map((mode) => (
+                    {(["all", "last_import", "none"] as const).map((mode) => (
                       <button
                         key={mode}
                         type="button"
@@ -296,7 +341,7 @@ export default function ImportPage() {
                             : "bg-white text-slate-600 hover:bg-slate-50"
                         }`}
                       >
-                        {mode === "all" ? "All" : "Just last import"}
+                        {mode === "all" ? "All" : mode === "last_import" ? "Just last import" : "None"}
                       </button>
                     ))}
                   </div>

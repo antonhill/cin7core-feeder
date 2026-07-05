@@ -59,7 +59,7 @@ export interface PushToCin7Result {
   outcomes?: InstanceSyncOutcome[];
 }
 
-export type ScopeMode = "all" | "last_import";
+export type ScopeMode = "all" | "last_import" | "none";
 
 export interface PushScopeSelection {
   products: ScopeMode;
@@ -70,11 +70,13 @@ export interface PushScopeSelection {
 /**
  * Pushes the org's current canonical data to the selected instance(s) only.
  * `scopeSelection` lets each data type independently scope to "just the
- * most recently imported batch of that kind" instead of the whole org
- * catalog — otherwise testing one small import sweeps in every other
- * product/customer/supplier (and any of their pre-existing failures) in the
- * same push. A kind set to "last_import" with no committed batch yet scopes
- * to nothing for that kind, rather than silently falling back to "all".
+ * most recently imported batch of that kind", or be skipped entirely
+ * ("none"), instead of always sweeping in the whole org catalog — since only
+ * one kind is ever imported at a time, the other two kinds should default to
+ * "none" so they can't interfere with a push that's really about the kind
+ * that was just imported (see page.tsx's auto-scoping on import success). A
+ * kind set to "last_import" with no committed batch yet also scopes to
+ * nothing, rather than silently falling back to "all".
  *
  * Note: a "use server" file may only export async functions — the default
  * scope value lives inline here (and duplicated as a local constant in
@@ -95,12 +97,18 @@ export async function pushToCin7Action(
     const scope: PushScope = {};
     if (scopeSelection.products === "last_import") {
       scope.productSkus = (await getLastImportKeys(db, orgId, "products")) ?? [];
+    } else if (scopeSelection.products === "none") {
+      scope.productSkus = [];
     }
     if (scopeSelection.customers === "last_import") {
       scope.customerNames = (await getLastImportKeys(db, orgId, "customers")) ?? [];
+    } else if (scopeSelection.customers === "none") {
+      scope.customerNames = [];
     }
     if (scopeSelection.suppliers === "last_import") {
       scope.supplierNames = (await getLastImportKeys(db, orgId, "suppliers")) ?? [];
+    } else if (scopeSelection.suppliers === "none") {
+      scope.supplierNames = [];
     }
 
     const outcomes = await syncOrgInstances(db, orgId, instanceIds, scope);
