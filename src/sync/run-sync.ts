@@ -6,7 +6,7 @@ import { pushProductionBom, createProductionBomRefCaches } from "@/cin7/producti
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { Cin7ApiError } from "@/cin7/http";
-import { accountExists, companyContactExists, locationExists } from "@/cin7/reference-lookups";
+import { accountExists, companyContactExists, locationExists, priceTierExists, taxRuleExists } from "@/cin7/reference-lookups";
 
 /**
  * Scopes a sync run to specific rows instead of the whole org catalog — an
@@ -383,6 +383,12 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
       }
       if (customer.sale_account && !(await accountExists(creds, customer.sale_account, refCheckCache))) {
         preflightIssues.push(`SaleAccount '${customer.sale_account}' was not found in the chart of accounts`);
+      }
+      if (customer.tax_rule && !(await taxRuleExists(creds, customer.tax_rule, refCheckCache))) {
+        preflightIssues.push(`TaxRule '${customer.tax_rule}' was not found in the tax rules reference book`);
+      }
+      if (customer.price_tier && !(await priceTierExists(creds, customer.price_tier, refCheckCache))) {
+        preflightIssues.push(`PriceTier '${customer.price_tier}' was not found in the price tiers reference book`);
       }
       if (preflightIssues.length) {
         summary.customersFailed++;

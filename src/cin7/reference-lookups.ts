@@ -178,12 +178,13 @@ export const REF_TAX_PATH = "/ref/tax";
 export const REF_PRICE_TIER_PATH = "/ref/priceTier";
 
 /**
- * A Customer's TaxRule resolves against `/ref/tax` — not yet part of the
- * pre-flight check (Anton scoped that to fields that had actually failed at
- * the time), but worth a standalone existence check for diagnosing a vague
- * push error: Cin7's own Tax Rule model requires every tax rule to link to a
- * Chart-of-Accounts liability code, so an unresolvable TaxRule could plausibly
- * surface as an "Account ..." error rather than naming TaxRule directly.
+ * A Customer's TaxRule resolves against `/ref/tax`. Originally added only for
+ * a standalone diagnostic (Cin7's own Tax Rule model requires every rule to
+ * link to a Chart-of-Accounts liability code, so an unresolvable TaxRule can
+ * surface as a generic "Account ..." error rather than naming TaxRule
+ * directly) — folded into the real customer pre-flight check in run-sync.ts
+ * once that diagnostic confirmed TaxRule/PriceTier are fields that actually
+ * fail in practice, same bar Anton originally set for the first four fields.
  */
 export function taxRuleExists(creds: Cin7Credentials, name: string, cache: Map<string, boolean>): Promise<boolean> {
   return cachedFieldExists(creds, REF_TAX_PATH, "Name", name, cache);

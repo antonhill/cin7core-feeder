@@ -5,7 +5,7 @@ import { pushProduct } from "@/cin7/products";
 import { pushProductionBom } from "@/cin7/production-bom";
 import { pushCustomer } from "@/cin7/customers";
 import { pushSupplier } from "@/cin7/suppliers";
-import { locationExists, companyContactExists, accountExists } from "@/cin7/reference-lookups";
+import { locationExists, companyContactExists, accountExists, taxRuleExists, priceTierExists } from "@/cin7/reference-lookups";
 import { Cin7ApiError } from "@/cin7/http";
 
 vi.mock("@/cin7/products", () => ({ pushProduct: vi.fn() }));
@@ -19,6 +19,8 @@ vi.mock("@/cin7/reference-lookups", () => ({
   locationExists: vi.fn(),
   companyContactExists: vi.fn(),
   accountExists: vi.fn(),
+  taxRuleExists: vi.fn(),
+  priceTierExists: vi.fn(),
 }));
 vi.mock("@/cin7/crypto", () => ({ decrypt: (v: string) => `decrypted:${v}` }));
 
@@ -63,6 +65,8 @@ beforeEach(() => {
   vi.mocked(locationExists).mockReset().mockResolvedValue(true);
   vi.mocked(companyContactExists).mockReset().mockResolvedValue(true);
   vi.mocked(accountExists).mockReset().mockResolvedValue(true);
+  vi.mocked(taxRuleExists).mockReset().mockResolvedValue(true);
+  vi.mocked(priceTierExists).mockReset().mockResolvedValue(true);
 });
 
 const instanceRow = {
@@ -293,6 +297,8 @@ describe("syncInstance", () => {
             sales_representative: "Anton",
             account_receivable: "610",
             sale_account: "200",
+            tax_rule: "Standard Rate Sales",
+            price_tier: "Retail in VAT",
           },
         ],
         customer_sync_state: [],
@@ -308,7 +314,46 @@ describe("syncInstance", () => {
       expect(summary.customersFailed).toBe(0);
     });
 
-    it("keeps the raw Cin7 body when pre-flight passes but the actual push still fails (e.g. a Xero/QuickBooks-sync error our reference checks can't see)", async () => {
+    it("catches a bad PriceTier alongside the other reference fields — the field that slipped through the first version of this pre-flight check", async () => {
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+        customers: [
+          {
+            org_id: "org1",
+            name: "Corefeeder Customer 4",
+            content_hash: "h1",
+            location: "Main Warehouse",
+            sales_representative: "Anton",
+            account_receivable: "610",
+            sale_account: "200",
+            tax_rule: "Standard Rate Sales",
+            price_tier: "Retail in VAT wrong",
+          },
+        ],
+        customer_sync_state: [],
+        customer_addresses: [],
+        customer_contacts: [],
+      });
+      vi.mocked(priceTierExists).mockResolvedValueOnce(false);
+
+      const summary = await syncInstance(db, "org1", "inst-1");
+
+      expect(pushCustomer).not.toHaveBeenCalled();
+      expect(summary.customersFailed).toBe(1);
+      expect(summary.errors).toEqual([
+        {
+          sku: "Corefeeder Customer 4",
+          error: ["PriceTier 'Retail in VAT wrong' was not found in the price tiers reference book"],
+        },
+      ]);
+    });
+
+    it("keeps the raw Cin7 body when pre-flight passes but the actual push still fails for a reason outside what these checks cover", async () => {
       const { db } = createFakeDb({
         cin7_instances: [instanceRow],
         products: [],
