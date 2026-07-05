@@ -6,6 +6,7 @@ import { pushProductionBom, createProductionBomRefCaches } from "@/cin7/producti
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { Cin7ApiError } from "@/cin7/http";
+import { accountExists, companyContactExists, locationExists } from "@/cin7/reference-lookups";
 
 /**
  * Scopes a sync run to specific rows instead of the whole org catalog — an
@@ -181,6 +182,10 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
   // confirmed/created for one product doesn't need a second lookup for the
   // next with the same one.
   const refCache = new Set<string>();
+  // Shared across the whole run (customers + suppliers) for the pre-flight
+  // Location/SalesRepresentative/Account existence checks below — the same
+  // wrong value is often repeated across many rows.
+  const refCheckCache = new Map<string, boolean>();
 
   for (const product of products ?? []) {
     if (syncedHashBySku.has(product.sku) && syncedHashBySku.get(product.sku) === product.content_hash) {
@@ -338,6 +343,42 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
         .eq("org_id", orgId)
         .eq("name", customer.name);
 
+      // Pre-flight: check every reference field this customer sets against
+      // this instance's actual reference books, before attempting the real
+      // push. Confirmed live that Cin7's own /customer PUT only reports a
+      // handful of validation issues per call — fixing the reported ones
+      // reveals a *different* set on the next push rather than everything
+      // at once — so this surfaces every problem in one pass instead.
+      const preflightIssues: string[] = [];
+      if (customer.location && !(await locationExists(creds, customer.location, refCheckCache))) {
+        preflightIssues.push(`Location '${customer.location}' was not found in Locations reference book`);
+      }
+      if (customer.sales_representative && !(await companyContactExists(creds, customer.sales_representative, refCheckCache))) {
+        preflightIssues.push(`Sales Representative '${customer.sales_representative}' was not found in Company Contacts reference book`);
+      }
+      if (customer.account_receivable && !(await accountExists(creds, customer.account_receivable, refCheckCache))) {
+        preflightIssues.push(`AccountReceivable '${customer.account_receivable}' was not found in the chart of accounts`);
+      }
+      if (customer.sale_account && !(await accountExists(creds, customer.sale_account, refCheckCache))) {
+        preflightIssues.push(`SaleAccount '${customer.sale_account}' was not found in the chart of accounts`);
+      }
+      if (preflightIssues.length) {
+        summary.customersFailed++;
+        summary.errors.push({ sku: customer.name, error: preflightIssues });
+        await db.from("customer_sync_state").upsert(
+          {
+            org_id: orgId,
+            instance_id: instanceId,
+            name: customer.name,
+            last_synced_at: new Date().toISOString(),
+            last_status: "failed",
+            last_error: preflightIssues.join("; "),
+          },
+          { onConflict: "org_id,instance_id,name" }
+        );
+        continue;
+      }
+
       const pushResult = await pushCustomer(
         creds,
         customer,
@@ -418,6 +459,28 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
         .select("contact_name, job_title, phone, mobile_phone, fax, email, website, contact_comment, contact_default, contact_include_in_email")
         .eq("org_id", orgId)
         .eq("name", supplier.name);
+
+      // Pre-flight, same reasoning as the customer loop above.
+      const preflightIssues: string[] = [];
+      if (supplier.account_payable && !(await accountExists(creds, supplier.account_payable, refCheckCache))) {
+        preflightIssues.push(`AccountPayable '${supplier.account_payable}' was not found in the chart of accounts`);
+      }
+      if (preflightIssues.length) {
+        summary.suppliersFailed++;
+        summary.errors.push({ sku: supplier.name, error: preflightIssues });
+        await db.from("supplier_sync_state").upsert(
+          {
+            org_id: orgId,
+            instance_id: instanceId,
+            name: supplier.name,
+            last_synced_at: new Date().toISOString(),
+            last_status: "failed",
+            last_error: preflightIssues.join("; "),
+          },
+          { onConflict: "org_id,instance_id,name" }
+        );
+        continue;
+      }
 
       const pushResult = await pushSupplier(
         creds,

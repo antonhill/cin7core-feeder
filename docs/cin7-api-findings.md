@@ -351,6 +351,13 @@ models — capture-only, not push-confirmed:**
   feature, same class of gap as Category/Brand auto-create being UI/CSV-only. Don't attempt to
   push these; they're stored for round-trip export fidelity only.
 
+**Update 2026-07-05 — pre-flight reference checks, ahead of building `src/cin7/reference-lookups.ts`'s exists-only helpers.** Confirmed via `github.com/nnhansg/dear-openapi`'s Apiary spec (same source used throughout this doc):
+- **Location** — `GET /ref/location?Name={Name}` → `{Total, Page, LocationList: [{ID, Name, ...}]}`. Matched by `Name` (a Customer's `Location` field references this by name, not ID).
+- **Company Contacts** (what a Customer's `SalesRepresentative` resolves against — Cin7's own error text literally says "...was not found in Company Contacts reference book") — `GET /me/contacts?Name={Name}` → `{Total, Page, MeContactsList: [{ContactID, Name, Type, ...}]}`. `Type` can be `Billing`/`Business`/`Sale`/`Shipping`/`Employee` — a `SalesRepresentative` should be a contact with `Type: "Sale"` per Cin7's own field docs ("your company contact with the type 'Sales' selected"), but the exists-check here only confirms the *name* exists, not that its Type is specifically `Sale` — a name that exists but isn't typed `Sale` would still pass this check yet could still fail push. Not hit live yet; revisit if it comes up.
+- **Chart of Accounts** — same `/ref/account` endpoint already confirmed above, `GET /ref/account?Code={Code}` or `?Name={Name}` → `{Total, Page, AccountsList: [{Code, Name, ...}]}`. Cin7's own docs say an account field accepts "code or name," so the exists-check tries `Code` first, then falls back to `Name`.
+
+Why this exists: confirmed live that Cin7's own `PUT /customer` only reports a handful of validation issues per request — fixing the reported ones (e.g. `Location`) revealed a *different* set on the next push (e.g. `AccountReceivable`) rather than everything at once. These exists-only checks (no auto-create — same "must already exist" treatment as Chart of Accounts elsewhere in this doc) run before the actual push, so every reference-field problem surfaces in one pass instead of a multi-round cycle.
+
 **Push-confirmed fields (safe to build now):**
 - Customer: `Name`, `DisplayName`, `Currency`, `PaymentTerm`, `Discount`, `TaxRule`, `Carrier`,
   `SalesRepresentative`, `Location`, `Comments`, `AccountReceivable`, `RevenueAccount` (←

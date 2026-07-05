@@ -32,6 +32,7 @@ export const REF_UOM_PATH = "/ref/unit";
 interface Cin7RefEntry {
   ID?: string;
   Name?: string;
+  Code?: string;
 }
 
 /** The list-wrapper key differs per resource (e.g. CategoryList) and isn't confirmed for Brand/UOM — just take whichever field holds the array. */
@@ -92,4 +93,61 @@ export async function ensureReferenceExists(
   }
   await createReference(creds, path, name);
   cache.add(cacheKey);
+}
+
+/**
+ * Exists-only checks (no auto-create) for reference fields Cin7 can't or
+ * won't auto-create on push — confirmed via the same Apiary spec used above:
+ * Location (`/ref/location`, matched by Name), Company Contacts
+ * (`/me/contacts`, matched by Name — this is what a Customer's
+ * SalesRepresentative resolves against, confirmed by Cin7's own error text
+ * "...was not found in Company Contacts reference book"), and Chart of
+ * Accounts (`/ref/account`, matched by Code OR Name per Cin7's own field
+ * docs — "Active account code or name from the chart of accounts").
+ *
+ * Why these run as a pre-flight check rather than just letting the push
+ * itself fail: confirmed live that Cin7's own /customer PUT only reports a
+ * handful of validation issues per request — fixing the reported ones
+ * reveals a *different* set on the next push, rather than everything at
+ * once. Checking every reference field up front (before attempting the
+ * actual push) surfaces every problem in one pass instead of a multi-round
+ * whack-a-mole cycle.
+ */
+export const REF_LOCATION_PATH = "/ref/location";
+export const REF_ACCOUNT_PATH = "/ref/account";
+export const ME_CONTACTS_PATH = "/me/contacts";
+
+/** Unlike `cache` above (Set — only ever records confirmed-exists), this records both outcomes: a wrong value is often repeated across many rows, so a negative result is worth caching too. */
+async function cachedFieldExists(
+  creds: Cin7Credentials,
+  path: string,
+  field: "Name" | "Code",
+  value: string,
+  cache: Map<string, boolean>
+): Promise<boolean> {
+  const cacheKey = `${path}::${field}::${value}`;
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const response = await cin7Request<Record<string, unknown>>(creds, path, {
+    query: { Page: 1, Limit: 100, [field]: value },
+  });
+  const target = value.toLowerCase();
+  const found = extractEntries(response).some((e) => (field === "Code" ? e.Code : e.Name)?.toLowerCase() === target);
+  cache.set(cacheKey, found);
+  return found;
+}
+
+export function locationExists(creds: Cin7Credentials, name: string, cache: Map<string, boolean>): Promise<boolean> {
+  return cachedFieldExists(creds, REF_LOCATION_PATH, "Name", name, cache);
+}
+
+export function companyContactExists(creds: Cin7Credentials, name: string, cache: Map<string, boolean>): Promise<boolean> {
+  return cachedFieldExists(creds, ME_CONTACTS_PATH, "Name", name, cache);
+}
+
+/** Tries Code first (the common case — CSV account fields are usually the numeric code), then Name, since Cin7 accepts either. */
+export async function accountExists(creds: Cin7Credentials, codeOrName: string, cache: Map<string, boolean>): Promise<boolean> {
+  if (await cachedFieldExists(creds, REF_ACCOUNT_PATH, "Code", codeOrName, cache)) return true;
+  return cachedFieldExists(creds, REF_ACCOUNT_PATH, "Name", codeOrName, cache);
 }

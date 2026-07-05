@@ -3,12 +3,22 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncInstance } from "@/sync/run-sync";
 import { pushProduct } from "@/cin7/products";
 import { pushProductionBom } from "@/cin7/production-bom";
+import { pushCustomer } from "@/cin7/customers";
+import { pushSupplier } from "@/cin7/suppliers";
+import { locationExists, companyContactExists, accountExists } from "@/cin7/reference-lookups";
 import { Cin7ApiError } from "@/cin7/http";
 
 vi.mock("@/cin7/products", () => ({ pushProduct: vi.fn() }));
 vi.mock("@/cin7/production-bom", () => ({
   pushProductionBom: vi.fn(),
   createProductionBomRefCaches: () => ({ workCentres: new Map(), resources: new Map() }),
+}));
+vi.mock("@/cin7/customers", () => ({ pushCustomer: vi.fn() }));
+vi.mock("@/cin7/suppliers", () => ({ pushSupplier: vi.fn() }));
+vi.mock("@/cin7/reference-lookups", () => ({
+  locationExists: vi.fn(),
+  companyContactExists: vi.fn(),
+  accountExists: vi.fn(),
 }));
 vi.mock("@/cin7/crypto", () => ({ decrypt: (v: string) => `decrypted:${v}` }));
 
@@ -48,6 +58,11 @@ function createFakeDb(tables: Record<string, Record<string, unknown>[]>) {
 beforeEach(() => {
   vi.mocked(pushProduct).mockReset();
   vi.mocked(pushProductionBom).mockReset();
+  vi.mocked(pushCustomer).mockReset();
+  vi.mocked(pushSupplier).mockReset();
+  vi.mocked(locationExists).mockReset().mockResolvedValue(true);
+  vi.mocked(companyContactExists).mockReset().mockResolvedValue(true);
+  vi.mocked(accountExists).mockReset().mockResolvedValue(true);
 });
 
 const instanceRow = {
@@ -253,5 +268,154 @@ describe("syncInstance", () => {
   it("throws if the instance is inactive", async () => {
     const { db } = createFakeDb({ cin7_instances: [{ ...instanceRow, active: false }] });
     await expect(syncInstance(db, "org1", "inst-1")).rejects.toThrow("inactive");
+  });
+
+  describe("customer reference-field pre-flight", () => {
+    it("pushes normally when every reference field the customer sets is confirmed to exist", async () => {
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+        customers: [
+          {
+            org_id: "org1",
+            name: "Woolworths",
+            content_hash: "h1",
+            location: "Main Warehouse",
+            sales_representative: "Anton",
+            account_receivable: "610",
+            sale_account: "200",
+          },
+        ],
+        customer_sync_state: [],
+        customer_addresses: [],
+        customer_contacts: [],
+      });
+      vi.mocked(pushCustomer).mockResolvedValueOnce({ cin7Id: "cin7-1", status: "created" });
+
+      const summary = await syncInstance(db, "org1", "inst-1");
+
+      expect(pushCustomer).toHaveBeenCalledTimes(1);
+      expect(summary.customersCreated).toBe(1);
+      expect(summary.customersFailed).toBe(0);
+    });
+
+    it("fails without attempting the push when Location and SalesRepresentative both don't exist — reporting both in one pass", async () => {
+      const { db, upserts } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+        customers: [
+          {
+            org_id: "org1",
+            name: "Corefeeder Customer 4",
+            content_hash: "h1",
+            location: "Main Warehouse Nooo",
+            sales_representative: "Sparkie",
+            account_receivable: null,
+            sale_account: null,
+          },
+        ],
+        customer_sync_state: [],
+        customer_addresses: [],
+        customer_contacts: [],
+      });
+      vi.mocked(locationExists).mockResolvedValueOnce(false);
+      vi.mocked(companyContactExists).mockResolvedValueOnce(false);
+
+      const summary = await syncInstance(db, "org1", "inst-1");
+
+      expect(pushCustomer).not.toHaveBeenCalled();
+      expect(summary.customersFailed).toBe(1);
+      expect(summary.errors).toEqual([
+        {
+          sku: "Corefeeder Customer 4",
+          error: [
+            "Location 'Main Warehouse Nooo' was not found in Locations reference book",
+            "Sales Representative 'Sparkie' was not found in Company Contacts reference book",
+          ],
+        },
+      ]);
+      expect(upserts.customer_sync_state).toEqual([
+        expect.objectContaining({ name: "Corefeeder Customer 4", last_status: "failed" }),
+      ]);
+    });
+
+    it("doesn't check a blank/unset reference field — nothing to validate", async () => {
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+        customers: [{ org_id: "org1", name: "Woolworths", content_hash: "h1", location: null, sales_representative: null, account_receivable: null, sale_account: null }],
+        customer_sync_state: [],
+        customer_addresses: [],
+        customer_contacts: [],
+      });
+      vi.mocked(pushCustomer).mockResolvedValueOnce({ cin7Id: "cin7-1", status: "created" });
+
+      const summary = await syncInstance(db, "org1", "inst-1");
+
+      expect(locationExists).not.toHaveBeenCalled();
+      expect(companyContactExists).not.toHaveBeenCalled();
+      expect(accountExists).not.toHaveBeenCalled();
+      expect(pushCustomer).toHaveBeenCalledTimes(1);
+      expect(summary.customersFailed).toBe(0);
+    });
+  });
+
+  describe("supplier reference-field pre-flight", () => {
+    it("fails without attempting the push when AccountPayable doesn't exist", async () => {
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+        suppliers: [{ org_id: "org1", name: "ABC Suppliers", content_hash: "h1", account_payable: "999" }],
+        supplier_sync_state: [],
+        supplier_addresses: [],
+        supplier_contacts: [],
+      });
+      vi.mocked(accountExists).mockResolvedValueOnce(false);
+
+      const summary = await syncInstance(db, "org1", "inst-1");
+
+      expect(pushSupplier).not.toHaveBeenCalled();
+      expect(summary.suppliersFailed).toBe(1);
+      expect(summary.errors).toEqual([
+        { sku: "ABC Suppliers", error: ["AccountPayable '999' was not found in the chart of accounts"] },
+      ]);
+    });
+
+    it("pushes normally when AccountPayable is confirmed to exist", async () => {
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+        suppliers: [{ org_id: "org1", name: "ABC Suppliers", content_hash: "h1", account_payable: "800" }],
+        supplier_sync_state: [],
+        supplier_addresses: [],
+        supplier_contacts: [],
+      });
+      vi.mocked(pushSupplier).mockResolvedValueOnce({ cin7Id: "cin7-1", status: "created" });
+
+      const summary = await syncInstance(db, "org1", "inst-1");
+
+      expect(pushSupplier).toHaveBeenCalledTimes(1);
+      expect(summary.suppliersFailed).toBe(0);
+    });
   });
 });

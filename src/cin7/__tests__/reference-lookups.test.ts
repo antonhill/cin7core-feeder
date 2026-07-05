@@ -1,5 +1,15 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { ensureReferenceExists, REF_BRAND_PATH, REF_CATEGORY_PATH, REF_UOM_PATH } from "@/cin7/reference-lookups";
+import {
+  ensureReferenceExists,
+  REF_BRAND_PATH,
+  REF_CATEGORY_PATH,
+  REF_UOM_PATH,
+  REF_LOCATION_PATH,
+  ME_CONTACTS_PATH,
+  locationExists,
+  companyContactExists,
+  accountExists,
+} from "@/cin7/reference-lookups";
 import { cin7Request, Cin7ApiError } from "@/cin7/http";
 
 vi.mock("@/cin7/http", async (importOriginal) => {
@@ -93,5 +103,64 @@ describe("ensureReferenceExists", () => {
       .mockRejectedValueOnce(new Cin7ApiError(400, "Name is required.", false));
 
     await expect(ensureReferenceExists(creds, REF_UOM_PATH, "hour", new Set())).rejects.toThrow("Name is required.");
+  });
+});
+
+describe("locationExists / companyContactExists / accountExists (exists-only, no auto-create)", () => {
+  it("locationExists checks /ref/location by Name", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ LocationList: [{ ID: "loc-1", Name: "Main Warehouse" }] });
+
+    await expect(locationExists(creds, "Main Warehouse", new Map())).resolves.toBe(true);
+    const [, path, options] = vi.mocked(cin7Request).mock.calls[0];
+    expect(path).toBe(REF_LOCATION_PATH);
+    expect(options).toMatchObject({ query: { Name: "Main Warehouse" } });
+  });
+
+  it("locationExists returns false for a location that isn't in the list", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ LocationList: [] });
+    await expect(locationExists(creds, "Main Warehouse Nooo", new Map())).resolves.toBe(false);
+  });
+
+  it("companyContactExists checks /me/contacts by Name", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ MeContactsList: [{ ContactID: "c-1", Name: "Anton" }] });
+
+    await expect(companyContactExists(creds, "Anton", new Map())).resolves.toBe(true);
+    const [, path] = vi.mocked(cin7Request).mock.calls[0];
+    expect(path).toBe(ME_CONTACTS_PATH);
+  });
+
+  it("accountExists tries Code first, then falls back to Name", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ AccountsList: [] }) // Code lookup misses
+      .mockResolvedValueOnce({ AccountsList: [{ Code: "610", Name: "Accounts Receivable" }] }); // Name lookup hits
+
+    await expect(accountExists(creds, "Accounts Receivable", new Map())).resolves.toBe(true);
+    expect(cin7Request).toHaveBeenCalledTimes(2);
+    const [, , codeOptions] = vi.mocked(cin7Request).mock.calls[0];
+    expect(codeOptions).toMatchObject({ query: { Code: "Accounts Receivable" } });
+    const [, , nameOptions] = vi.mocked(cin7Request).mock.calls[1];
+    expect(nameOptions).toMatchObject({ query: { Name: "Accounts Receivable" } });
+  });
+
+  it("accountExists matches by Code without a second call when the code lookup hits", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ AccountsList: [{ Code: "610", Name: "Accounts Receivable" }] });
+
+    await expect(accountExists(creds, "610", new Map())).resolves.toBe(true);
+    expect(cin7Request).toHaveBeenCalledTimes(1);
+  });
+
+  it("accountExists returns false when neither Code nor Name matches", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ AccountsList: [] }).mockResolvedValueOnce({ AccountsList: [] });
+    await expect(accountExists(creds, "6767676", new Map())).resolves.toBe(false);
+  });
+
+  it("caches a negative result too — a wrong value repeated across many rows shouldn't re-hit the API", async () => {
+    const cache = new Map<string, boolean>();
+    vi.mocked(cin7Request).mockResolvedValue({ LocationList: [] });
+
+    await locationExists(creds, "Main Warehouse Nooo", cache);
+    await locationExists(creds, "Main Warehouse Nooo", cache);
+
+    expect(cin7Request).toHaveBeenCalledTimes(1);
   });
 });
