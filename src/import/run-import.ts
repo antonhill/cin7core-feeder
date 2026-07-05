@@ -17,6 +17,7 @@ import { commitCustomerAddressRows } from "@/import/commit-customer-addresses";
 import { checkAssemblyBomReferences, checkProductionBomReferences } from "@/import/validate-bom-references";
 import { detectKindMismatch, IMPORT_KIND_LABELS } from "@/import/detect-kind";
 import {
+  checkBlankAddressLine1,
   checkBlankCountry,
   checkBlankCustomerAccountCodes,
   checkBlankCustomerRequiredFields,
@@ -110,7 +111,10 @@ export async function runImport(
   // account code actually exist there) stay at push time.
   let warnings: ImportWarning[] = [];
   if (kind === "supplier_addresses" || kind === "customer_addresses") {
-    warnings = checkBlankCountry(valid as ParsedRow<SupplierAddressCsvRow | CustomerAddressCsvRow>[]);
+    warnings = [
+      ...checkBlankCountry(valid as ParsedRow<SupplierAddressCsvRow | CustomerAddressCsvRow>[]),
+      ...checkBlankAddressLine1(valid as ParsedRow<SupplierAddressCsvRow | CustomerAddressCsvRow>[]),
+    ];
   } else if (kind === "suppliers") {
     warnings = [
       ...checkBlankSupplierAccountPayable(valid as ParsedRow<SupplierCsvRow>[]),

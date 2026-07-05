@@ -26,6 +26,18 @@ export function checkBlankCountry(
 }
 
 /**
+ * A blank AddressLine1 is a genuine data gap worth flagging early — same
+ * instance-independent, plain-presence reasoning as the Country check above.
+ */
+export function checkBlankAddressLine1(
+  rows: ParsedRow<SupplierAddressCsvRow | CustomerAddressCsvRow>[]
+): ImportWarning[] {
+  return rows
+    .filter((r) => !r.data.AddressLine1.trim())
+    .map((r) => ({ rowNumber: r.rowNumber, message: `"${r.data.Name}" (${r.data.AddressType}): AddressLine1 is blank` }));
+}
+
+/**
  * Whether an account CODE actually exists only means something against a
  * specific Cin7 instance's chart of accounts (confirmed: pushing an
  * AccountPayable/AccountReceivable/RevenueAccount code Cin7 doesn't

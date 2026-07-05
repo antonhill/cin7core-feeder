@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  checkBlankAddressLine1,
   checkBlankCountry,
   checkBlankCustomerAccountCodes,
   checkBlankCustomerRequiredFields,
@@ -43,6 +44,18 @@ describe("checkBlankCountry", () => {
 
   it("does not warn when Country is set", () => {
     expect(checkBlankCountry([parsedRow(1, supplierAddress({}))])).toEqual([]);
+  });
+});
+
+describe("checkBlankAddressLine1", () => {
+  it("warns when AddressLine1 is blank", () => {
+    const rows = [parsedRow(1, supplierAddress({ AddressLine1: "" })), parsedRow(2, supplierAddress({}))];
+    const warnings = checkBlankAddressLine1(rows);
+    expect(warnings).toEqual([{ rowNumber: 1, message: '"ABC Suppliers" (Billing): AddressLine1 is blank' }]);
+  });
+
+  it("does not warn when AddressLine1 is set", () => {
+    expect(checkBlankAddressLine1([parsedRow(1, supplierAddress({}))])).toEqual([]);
   });
 });
 
