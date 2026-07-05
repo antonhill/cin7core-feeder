@@ -143,6 +143,8 @@ export interface ReferenceFieldCheckResult {
   field: string;
   value: string;
   exists: boolean | "not set";
+  /** Set only if the check itself failed unexpectedly (e.g. a retryable Cin7 error) — the non-retryable "can't find it" case is already folded into `exists: false` by reference-lookups.ts. */
+  checkError?: string;
 }
 
 /**
@@ -177,7 +179,16 @@ export async function checkCustomerReferenceFields(
       results.push({ field, value: "", exists: "not set" });
       continue;
     }
-    results.push({ field, value, exists: await check(value) });
+    // One field's check unexpectedly failing (e.g. a rate-limit hit
+    // mid-diagnostic) shouldn't hide whatever the other fields already
+    // found — this is exactly the class of bug that made the original push
+    // failure look like a Xero mystery: one bad lookup crashing before the
+    // rest could even be evaluated.
+    try {
+      results.push({ field, value, exists: await check(value) });
+    } catch (e) {
+      results.push({ field, value, exists: "not set", checkError: e instanceof Error ? e.message : "Unknown error" });
+    }
   }
   return results;
 }

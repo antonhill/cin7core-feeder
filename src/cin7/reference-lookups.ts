@@ -129,9 +129,31 @@ async function cachedFieldExists(
   const cached = cache.get(cacheKey);
   if (cached !== undefined) return cached;
 
-  const response = await cin7Request<Record<string, unknown>>(creds, path, {
-    query: { Page: 1, Limit: 100, [field]: value },
-  });
+  let response: Record<string, unknown>;
+  try {
+    response = await cin7Request<Record<string, unknown>>(creds, path, {
+      query: { Page: 1, Limit: 100, [field]: value },
+    });
+  } catch (e) {
+    // Confirmed live (2026-07-06): GET /ref/account?Code=<value that doesn't
+    // exist> can itself return a 400 ("Account with specified ID not
+    // found") instead of an empty list — contrary to what the community
+    // spec's sample response implies. From an exists-check's perspective,
+    // "Cin7 says it can't find it" and "Cin7 errored trying to look it up"
+    // mean the same thing: not found. Without this, a genuinely-missing
+    // value crashes the whole pre-flight check before it can finish
+    // evaluating the *other* fields, and the crash surfaces as Cin7's raw
+    // (and unhelpfully vague) error text instead of our own clear message —
+    // exactly the bug that made this look like a Xero/QuickBooks-sync issue
+    // before the diagnostic tool proved otherwise. A retryable failure
+    // (rate limit, network) still propagates — that's a real infrastructure
+    // problem, not a "this value doesn't exist" signal.
+    if (e instanceof Cin7ApiError && !e.retryable) {
+      cache.set(cacheKey, false);
+      return false;
+    }
+    throw e;
+  }
   const target = value.toLowerCase();
   const found = extractEntries(response).some((e) => (field === "Code" ? e.Code : e.Name)?.toLowerCase() === target);
   cache.set(cacheKey, found);

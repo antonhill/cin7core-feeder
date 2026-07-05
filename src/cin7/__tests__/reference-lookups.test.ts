@@ -158,6 +158,29 @@ describe("locationExists / companyContactExists / accountExists (exists-only, no
     await expect(accountExists(creds, "6767676", new Map())).resolves.toBe(false);
   });
 
+  it("accountExists returns false (not a crash) when Cin7 itself errors on an unmatched Code — confirmed live, GET /ref/account?Code= can 400 instead of returning an empty list", async () => {
+    vi.mocked(cin7Request)
+      .mockRejectedValueOnce(new Cin7ApiError(400, '[{"ErrorCode":400,"Exception":"Account with specified ID not found"}]', false))
+      .mockResolvedValueOnce({ AccountsList: [] }); // Name lookup still runs, also misses
+
+    await expect(accountExists(creds, "3443434", new Map())).resolves.toBe(false);
+  });
+
+  it("still propagates a retryable Cin7ApiError (rate limit, network) rather than treating it as not-found", async () => {
+    vi.mocked(cin7Request).mockRejectedValueOnce(new Cin7ApiError(503, "Rate limited", true));
+    await expect(locationExists(creds, "Main Warehouse", new Map())).rejects.toThrow("Rate limited");
+  });
+
+  it("caches a non-retryable-error-derived false result too, so a repeated bad value doesn't re-hit a failing endpoint", async () => {
+    const cache = new Map<string, boolean>();
+    vi.mocked(cin7Request).mockRejectedValue(new Cin7ApiError(400, "Account with specified ID not found", false));
+
+    await locationExists(creds, "Main Warehouse Nooo", cache);
+    await locationExists(creds, "Main Warehouse Nooo", cache);
+
+    expect(cin7Request).toHaveBeenCalledTimes(1);
+  });
+
   it("caches a negative result too — a wrong value repeated across many rows shouldn't re-hit the API", async () => {
     const cache = new Map<string, boolean>();
     vi.mocked(cin7Request).mockResolvedValue({ LocationList: [] });
