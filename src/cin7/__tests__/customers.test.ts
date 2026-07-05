@@ -1,10 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
   toCin7CustomerPayload,
+  fetchAllCustomers,
   type CanonicalCustomerAddressRow,
   type CanonicalCustomerContactRow,
   type CanonicalCustomerRow,
 } from "@/cin7/customers";
+import { cin7Request } from "@/cin7/http";
+
+vi.mock("@/cin7/http", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/cin7/http")>();
+  return { ...actual, cin7Request: vi.fn() };
+});
+
+const creds = { accountId: "a", applicationKey: "k", baseUrl: "https://example.test" };
+
+beforeEach(() => {
+  vi.mocked(cin7Request).mockReset();
+});
 
 function customer(overrides: Partial<CanonicalCustomerRow>): CanonicalCustomerRow {
   return {
@@ -138,5 +151,29 @@ describe("toCin7CustomerPayload", () => {
       expect.objectContaining({ Name: "John" }),
       expect.objectContaining({ Name: "Frank" }),
     ]);
+  });
+});
+
+describe("fetchAllCustomers", () => {
+  it("paginates until a short page signals the end", async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ Name: `Customer ${i}` }));
+    const page2 = [{ Name: "Last Customer" }];
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ CustomerList: page1 })
+      .mockResolvedValueOnce({ CustomerList: page2 });
+
+    const all = await fetchAllCustomers(creds);
+
+    expect(all).toHaveLength(101);
+    expect(cin7Request).toHaveBeenCalledTimes(2);
+    expect(cin7Request).toHaveBeenNthCalledWith(1, creds, "/customer", { query: { page: 1, limit: 100 } });
+    expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/customer", { query: { page: 2, limit: 100 } });
+  });
+
+  it("stops after a single short page", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ CustomerList: [{ Name: "Only One" }] });
+    const all = await fetchAllCustomers(creds);
+    expect(all).toEqual([{ Name: "Only One" }]);
+    expect(cin7Request).toHaveBeenCalledTimes(1);
   });
 });

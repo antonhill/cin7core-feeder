@@ -135,6 +135,26 @@ export async function findSupplierByName(creds: Cin7Credentials, name: string): 
   return { id: first.ID };
 }
 
+/**
+ * Fetches every supplier in this Cin7 instance (with nested Addresses[]/
+ * Contacts[], per §10 in docs/cin7-api-findings.md) for a live full-fidelity
+ * pull — same page-until-short-page pagination as fetchAllProductsWithBom in
+ * products.ts.
+ */
+export async function fetchAllSuppliers(creds: Cin7Credentials): Promise<Record<string, unknown>[]> {
+  const pageSize = 100;
+  const all: Record<string, unknown>[] = [];
+  for (let page = 1; ; page++) {
+    const response = await cin7Request<{ SupplierList?: Record<string, unknown>[] }>(creds, "/supplier", {
+      query: { page, limit: pageSize },
+    });
+    const suppliers = response.SupplierList ?? [];
+    all.push(...suppliers);
+    if (suppliers.length < pageSize) break;
+  }
+  return all;
+}
+
 function requireId(response: Cin7SupplierResponse, action: string): string {
   const id = response.ID ?? response.SupplierList?.[0]?.ID;
   if (!id) throw new Error(`${action} response had no ID field — raw response: ${JSON.stringify(response).slice(0, 500)}`);

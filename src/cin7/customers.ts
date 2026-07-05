@@ -165,6 +165,26 @@ export async function findCustomerByName(creds: Cin7Credentials, name: string): 
   return { id: first.ID };
 }
 
+/**
+ * Fetches every customer in this Cin7 instance (with nested Addresses[]/
+ * Contacts[], per §10 in docs/cin7-api-findings.md) for a live full-fidelity
+ * pull — same page-until-short-page pagination as fetchAllProductsWithBom in
+ * products.ts.
+ */
+export async function fetchAllCustomers(creds: Cin7Credentials): Promise<Record<string, unknown>[]> {
+  const pageSize = 100;
+  const all: Record<string, unknown>[] = [];
+  for (let page = 1; ; page++) {
+    const response = await cin7Request<{ CustomerList?: Record<string, unknown>[] }>(creds, "/customer", {
+      query: { page, limit: pageSize },
+    });
+    const customers = response.CustomerList ?? [];
+    all.push(...customers);
+    if (customers.length < pageSize) break;
+  }
+  return all;
+}
+
 function requireId(response: Cin7CustomerResponse, action: string): string {
   const id = response.ID ?? response.CustomerList?.[0]?.ID;
   if (!id) throw new Error(`${action} response had no ID field — raw response: ${JSON.stringify(response).slice(0, 500)}`);

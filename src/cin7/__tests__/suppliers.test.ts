@@ -1,10 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
   toCin7SupplierPayload,
+  fetchAllSuppliers,
   type CanonicalSupplierAddressRow,
   type CanonicalSupplierContactRow,
   type CanonicalSupplierRow,
 } from "@/cin7/suppliers";
+import { cin7Request } from "@/cin7/http";
+
+vi.mock("@/cin7/http", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/cin7/http")>();
+  return { ...actual, cin7Request: vi.fn() };
+});
+
+const creds = { accountId: "a", applicationKey: "k", baseUrl: "https://example.test" };
+
+beforeEach(() => {
+  vi.mocked(cin7Request).mockReset();
+});
 
 function supplier(overrides: Partial<CanonicalSupplierRow>): CanonicalSupplierRow {
   return {
@@ -95,5 +108,29 @@ describe("toCin7SupplierPayload", () => {
       expect.objectContaining({ Name: "Peter" }),
       expect.objectContaining({ Name: "Mary Jane" }),
     ]);
+  });
+});
+
+describe("fetchAllSuppliers", () => {
+  it("paginates until a short page signals the end", async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ Name: `Supplier ${i}` }));
+    const page2 = [{ Name: "Last Supplier" }];
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ SupplierList: page1 })
+      .mockResolvedValueOnce({ SupplierList: page2 });
+
+    const all = await fetchAllSuppliers(creds);
+
+    expect(all).toHaveLength(101);
+    expect(cin7Request).toHaveBeenCalledTimes(2);
+    expect(cin7Request).toHaveBeenNthCalledWith(1, creds, "/supplier", { query: { page: 1, limit: 100 } });
+    expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/supplier", { query: { page: 2, limit: 100 } });
+  });
+
+  it("stops after a single short page", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ SupplierList: [{ Name: "Only One" }] });
+    const all = await fetchAllSuppliers(creds);
+    expect(all).toEqual([{ Name: "Only One" }]);
+    expect(cin7Request).toHaveBeenCalledTimes(1);
   });
 });

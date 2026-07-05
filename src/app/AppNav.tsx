@@ -7,6 +7,7 @@ import { signOutAction } from "@/actions/auth";
 const LINKS = [
   { href: "/import", label: "Import & Sync" },
   { href: "/templates", label: "Templates" },
+  { href: "/migrate", label: "Migrate" },
   { href: "/settings/instances", label: "Cin7 Instances" },
 ];
 
