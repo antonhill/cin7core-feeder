@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import {
   debugCheckCustomerReferenceFields,
   debugCheckSupplierReferenceFields,
+  debugCompareAccounts,
   debugFetchCustomerByName,
   debugFindBomExample,
   debugFindCustomerSupplierExamples,
@@ -26,6 +27,7 @@ export default function InstancesSettingsPage() {
   const [modalTarget, setModalTarget] = useState<"new" | string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [refCheckNames, setRefCheckNames] = useState<Record<string, string>>({});
+  const [accountCodes, setAccountCodes] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -130,6 +132,16 @@ export default function InstancesSettingsPage() {
     });
   }
 
+  function handleCompareAccounts(instanceId: string) {
+    const codes = (accountCodes[instanceId] ?? "").trim();
+    if (!codes) return;
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Fetching…" } }));
+    startTransition(async () => {
+      const result = await debugCompareAccounts(instanceId, codes);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
   function handleDelete(instanceId: string) {
     if (!confirm("Delete this Cin7 Core instance connection?")) return;
     setError(null);
@@ -228,6 +240,22 @@ export default function InstancesSettingsPage() {
                 className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Fetch this customer from Cin7
+              </button>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="Account codes, e.g. 800,801"
+                value={accountCodes[inst.id] ?? ""}
+                onChange={(e) => setAccountCodes((prev) => ({ ...prev, [inst.id]: e.target.value }))}
+                className="w-64 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+              />
+              <button
+                onClick={() => handleCompareAccounts(inst.id)}
+                disabled={isPending || !(accountCodes[inst.id] ?? "").trim()}
+                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Compare account codes
               </button>
             </div>
             {testResults[inst.id] && (

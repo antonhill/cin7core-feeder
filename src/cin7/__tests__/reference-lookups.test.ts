@@ -224,7 +224,7 @@ describe("locationExists / companyContactExists / accountExists (exists-only, no
   });
 
   it("paymentTermExists checks /ref/paymentterm by Name", async () => {
-    vi.mocked(cin7Request).mockResolvedValueOnce({ PaymentTermList: [{ ID: "p-1", Name: "Cash" }] });
+    vi.mocked(cin7Request).mockResolvedValueOnce({ PaymentTermList: [{ ID: "p-1", Name: "Cash", IsActive: true }] });
 
     await expect(paymentTermExists(creds, "Cash", new Map())).resolves.toBe(true);
     const [, path, options] = vi.mocked(cin7Request).mock.calls[0];
@@ -235,5 +235,15 @@ describe("locationExists / companyContactExists / accountExists (exists-only, no
   it("paymentTermExists returns false for a payment term that isn't in the list", async () => {
     vi.mocked(cin7Request).mockResolvedValueOnce({ PaymentTermList: [] });
     await expect(paymentTermExists(creds, "cashe", new Map())).resolves.toBe(false);
+  });
+
+  it("paymentTermExists returns false for a same-named payment term that's been deactivated — confirmed live: Cin7's own error text is \"Active payment term with name X was not found\", not just \"payment term\"", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ PaymentTermList: [{ ID: "p-1", Name: "cash", IsActive: false }] });
+    await expect(paymentTermExists(creds, "cash", new Map())).resolves.toBe(false);
+  });
+
+  it("paymentTermExists treats a missing IsActive as active — Cin7's own docs say True is the default", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ PaymentTermList: [{ ID: "p-1", Name: "cash" }] });
+    await expect(paymentTermExists(creds, "cash", new Map())).resolves.toBe(true);
   });
 });

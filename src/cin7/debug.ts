@@ -1,5 +1,5 @@
 import type { Cin7Credentials } from "@/cin7/types";
-import { cin7Request } from "@/cin7/http";
+import { cin7Request, Cin7ApiError } from "@/cin7/http";
 import { accountExists, companyContactExists, locationExists, paymentTermExists, priceTierExists, taxRuleExists } from "@/cin7/reference-lookups";
 
 interface Cin7ProductListResponse {
@@ -233,4 +233,39 @@ export async function checkSupplierReferenceFields(
     { field: "TaxRule", value: fields.tax_rule, check: (v) => taxRuleExists(creds, v, cache) },
     { field: "PaymentTerm", value: fields.payment_term, check: (v) => paymentTermExists(creds, v, cache) },
   ]);
+}
+
+/**
+ * Diagnostic only: fetches the full Chart-of-Accounts record(s) for one or
+ * more codes and returns them side by side — built to find the real
+ * distinguishing field between a code that genuinely works as
+ * AccountPayable/AccountReceivable (e.g. "800") and one that exists but
+ * still gets rejected by the real push (e.g. "801"), since our own
+ * `accountExists` only checks "does this code exist at all" and Cin7's own
+ * field docs say AccountPayable/AccountReceivable specifically require
+ * "special account [payable/receivable] accounts" — a narrower category
+ * than plain existence. `SystemAccount`/`Type`/`Class`/`Status` are the
+ * documented candidates; comparing real records settles which one matters
+ * instead of guessing.
+ */
+export async function findAccountsByCodes(creds: Cin7Credentials, codes: string[]): Promise<Record<string, Record<string, unknown> | null>> {
+  const results: Record<string, Record<string, unknown> | null> = {};
+  for (const code of codes) {
+    try {
+      const response = await cin7Request<{ AccountsList?: Record<string, unknown>[] }>(creds, "/ref/account", {
+        query: { Page: 1, Limit: 100, Code: code },
+      });
+      results[code] = (response.AccountsList ?? []).find((a) => a.Code === code) ?? null;
+    } catch (e) {
+      // Confirmed live: GET /ref/account?Code=<no match> can 400 instead of
+      // an empty list (see reference-lookups.ts) — treat that the same way
+      // as "not found" here rather than crashing the whole comparison.
+      if (e instanceof Cin7ApiError && !e.retryable) {
+        results[code] = null;
+        continue;
+      }
+      throw e;
+    }
+  }
+  return results;
 }

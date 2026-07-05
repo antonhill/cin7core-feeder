@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
-import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName } from "@/cin7/debug";
+import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes } from "@/cin7/debug";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
@@ -360,6 +360,30 @@ export async function debugFetchCustomerByName(instanceId: string, customerName:
     const record = await findCustomerRawByName(creds, customerName);
     if (!record) return { ok: false, message: `No customer named "${customerName}" found in Cin7.` };
     return { ok: true, message: JSON.stringify(record, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Diagnostic only: fetches the full Chart-of-Accounts record for each of a
+ * comma-separated list of codes and returns them side by side — built to
+ * find the real distinguishing field between an account code that works for
+ * AccountPayable/AccountReceivable and one that exists but is still rejected
+ * by the real push (Cin7's own docs: "only special account [payable/
+ * receivable] accounts are valid").
+ */
+export async function debugCompareAccounts(instanceId: string, codesInput: string): Promise<TestConnectionResult> {
+  try {
+    const creds = await loadInstanceCreds(instanceId);
+    const codes = codesInput
+      .split(",")
+      .map((c) => c.trim())
+      .filter(Boolean);
+    if (!codes.length) return { ok: false, message: "Enter one or more comma-separated account codes." };
+
+    const results = await findAccountsByCodes(creds, codes);
+    return { ok: true, message: JSON.stringify(results, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
   }

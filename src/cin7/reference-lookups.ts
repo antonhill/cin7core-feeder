@@ -215,11 +215,43 @@ export async function priceTierExists(creds: Cin7Credentials, name: string, cach
  * Anton flagged a fake-but-non-blank PaymentTerm ("cashe") that the blank
  * check alone can't catch.
  *
+ * Real bug found 2026-07-06: an early version used the generic
+ * `cachedFieldExists` (Name-only match), which said a payment term "existed"
+ * even when the real push rejected it — confirmed by Cin7's own error text,
+ * `"Active payment term with name cash was not found"`. The push requires an
+ * *active* payment term specifically; a same-named but deactivated one
+ * still shows up in the plain GET list. Now filters on `IsActive` too — a
+ * term with `IsActive` explicitly `false` doesn't count as a match, but a
+ * missing/undefined `IsActive` does (Cin7's own docs: "`True` as default").
+ *
+ * Doesn't reuse `cachedFieldExists` (Name/Code-only) since this needs the
+ * extra IsActive field from the response — bespoke, like priceTierExists.
+ *
  * No equivalent exists for Currency: searched the same spec end-to-end and
  * there is no reference-book/list endpoint for currency codes anywhere —
  * Currency is a free-text 3-character field everywhere it appears, with
  * nothing to check it against live. Left unchecked rather than guessed.
  */
-export function paymentTermExists(creds: Cin7Credentials, name: string, cache: Map<string, boolean>): Promise<boolean> {
-  return cachedFieldExists(creds, REF_PAYMENT_TERM_PATH, "Name", name, cache);
+export async function paymentTermExists(creds: Cin7Credentials, name: string, cache: Map<string, boolean>): Promise<boolean> {
+  const cacheKey = `${REF_PAYMENT_TERM_PATH}::Name::${name}`;
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  let response: { PaymentTermList?: { Name?: string; IsActive?: boolean }[] };
+  try {
+    response = await cin7Request<{ PaymentTermList?: { Name?: string; IsActive?: boolean }[] }>(creds, REF_PAYMENT_TERM_PATH, {
+      query: { Page: 1, Limit: 100, Name: name },
+    });
+  } catch (e) {
+    if (e instanceof Cin7ApiError && !e.retryable) {
+      cache.set(cacheKey, false);
+      return false;
+    }
+    throw e;
+  }
+
+  const target = name.toLowerCase();
+  const found = (response.PaymentTermList ?? []).some((t) => t.Name?.toLowerCase() === target && t.IsActive !== false);
+  cache.set(cacheKey, found);
+  return found;
 }
