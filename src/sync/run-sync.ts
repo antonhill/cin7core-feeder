@@ -6,7 +6,16 @@ import { pushProductionBom, createProductionBomRefCaches } from "@/cin7/producti
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { Cin7ApiError } from "@/cin7/http";
-import { accountExists, companyContactExists, locationExists, paymentTermExists, priceTierExists, taxRuleExists } from "@/cin7/reference-lookups";
+import {
+  accountExists,
+  companyContactExists,
+  locationExists,
+  payableAccountExists,
+  paymentTermExists,
+  priceTierExists,
+  receivableAccountExists,
+  taxRuleExists,
+} from "@/cin7/reference-lookups";
 
 /**
  * Scopes a sync run to specific rows instead of the whole org catalog — an
@@ -378,8 +387,8 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
       if (customer.sales_representative && !(await companyContactExists(creds, customer.sales_representative, refCheckCache))) {
         preflightIssues.push(`Sales Representative '${customer.sales_representative}' was not found in Company Contacts reference book`);
       }
-      if (customer.account_receivable && !(await accountExists(creds, customer.account_receivable, refCheckCache))) {
-        preflightIssues.push(`AccountReceivable '${customer.account_receivable}' was not found in the chart of accounts`);
+      if (customer.account_receivable && !(await receivableAccountExists(creds, customer.account_receivable, refCheckCache))) {
+        preflightIssues.push(`AccountReceivable '${customer.account_receivable}' was not found in the chart of accounts (as a special account receivable account)`);
       }
       if (customer.sale_account && !(await accountExists(creds, customer.sale_account, refCheckCache))) {
         preflightIssues.push(`SaleAccount '${customer.sale_account}' was not found in the chart of accounts`);
@@ -495,8 +504,8 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
       // have no Location/SalesRepresentative/PriceTier fields, but do share
       // AccountPayable, TaxRule and PaymentTerm with customers.
       const preflightIssues: string[] = [];
-      if (supplier.account_payable && !(await accountExists(creds, supplier.account_payable, refCheckCache))) {
-        preflightIssues.push(`AccountPayable '${supplier.account_payable}' was not found in the chart of accounts`);
+      if (supplier.account_payable && !(await payableAccountExists(creds, supplier.account_payable, refCheckCache))) {
+        preflightIssues.push(`AccountPayable '${supplier.account_payable}' was not found in the chart of accounts (as a special account payable account)`);
       }
       if (supplier.tax_rule && !(await taxRuleExists(creds, supplier.tax_rule, refCheckCache))) {
         preflightIssues.push(`TaxRule '${supplier.tax_rule}' was not found in the tax rules reference book`);

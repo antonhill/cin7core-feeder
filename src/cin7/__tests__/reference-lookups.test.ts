@@ -12,6 +12,8 @@ import {
   locationExists,
   companyContactExists,
   accountExists,
+  payableAccountExists,
+  receivableAccountExists,
   taxRuleExists,
   priceTierExists,
   paymentTermExists,
@@ -191,6 +193,42 @@ describe("locationExists / companyContactExists / accountExists (exists-only, no
     await locationExists(creds, "Main Warehouse Nooo", cache);
 
     expect(cin7Request).toHaveBeenCalledTimes(1);
+  });
+
+  it("payableAccountExists requires the matching SystemAccount, not just existence — confirmed live: code 801 (\"Unpaid Expense Claims\") exists but isn't a valid AccountPayable", async () => {
+    const account801 = { Code: "801", Name: "Unpaid Expense Claims", SystemAccount: "Unpaid expense claims" };
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ AccountsList: [account801] }) // Code lookup: matches "801" but wrong SystemAccount
+      .mockResolvedValueOnce({ AccountsList: [account801] }); // Name lookup fallback: same, still wrong SystemAccount
+    await expect(payableAccountExists(creds, "801", new Map())).resolves.toBe(false);
+  });
+
+  it("payableAccountExists returns true for the real special account payable account", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({
+      AccountsList: [{ Code: "800", Name: "Accounts Payable", SystemAccount: "Accounts payable" }],
+    });
+    await expect(payableAccountExists(creds, "800", new Map())).resolves.toBe(true);
+  });
+
+  it("payableAccountExists falls back to a Name lookup when the Code lookup misses", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ AccountsList: [] }) // Code lookup misses
+      .mockResolvedValueOnce({ AccountsList: [{ Code: "800", Name: "Accounts Payable", SystemAccount: "Accounts payable" }] });
+    await expect(payableAccountExists(creds, "Accounts Payable", new Map())).resolves.toBe(true);
+  });
+
+  it("receivableAccountExists requires SystemAccount 'Accounts receivable'", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({
+      AccountsList: [{ Code: "610", Name: "Accounts Receivable", SystemAccount: "Accounts receivable" }],
+    });
+    await expect(receivableAccountExists(creds, "610", new Map())).resolves.toBe(true);
+  });
+
+  it("payableAccountExists returns false (not a crash) when a lookup 400s on an unmatched Code", async () => {
+    vi.mocked(cin7Request)
+      .mockRejectedValueOnce(new Cin7ApiError(400, "Account with specified ID not found", false))
+      .mockResolvedValueOnce({ AccountsList: [] });
+    await expect(payableAccountExists(creds, "999999", new Map())).resolves.toBe(false);
   });
 
   it("taxRuleExists checks /ref/tax by Name", async () => {

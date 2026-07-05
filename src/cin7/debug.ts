@@ -1,6 +1,15 @@
 import type { Cin7Credentials } from "@/cin7/types";
 import { cin7Request, Cin7ApiError } from "@/cin7/http";
-import { accountExists, companyContactExists, locationExists, paymentTermExists, priceTierExists, taxRuleExists } from "@/cin7/reference-lookups";
+import {
+  accountExists,
+  companyContactExists,
+  locationExists,
+  payableAccountExists,
+  paymentTermExists,
+  priceTierExists,
+  receivableAccountExists,
+  taxRuleExists,
+} from "@/cin7/reference-lookups";
 
 interface Cin7ProductListResponse {
   Products?: Record<string, unknown>[];
@@ -208,7 +217,7 @@ export async function checkCustomerReferenceFields(
   return runReferenceFieldChecks([
     { field: "Location", value: fields.location, check: (v) => locationExists(creds, v, cache) },
     { field: "SalesRepresentative", value: fields.sales_representative, check: (v) => companyContactExists(creds, v, cache) },
-    { field: "AccountReceivable", value: fields.account_receivable, check: (v) => accountExists(creds, v, cache) },
+    { field: "AccountReceivable", value: fields.account_receivable, check: (v) => receivableAccountExists(creds, v, cache) },
     { field: "SaleAccount", value: fields.sale_account, check: (v) => accountExists(creds, v, cache) },
     { field: "TaxRule", value: fields.tax_rule, check: (v) => taxRuleExists(creds, v, cache) },
     { field: "PriceTier", value: fields.price_tier, check: (v) => priceTierExists(creds, v, cache) },
@@ -229,7 +238,7 @@ export async function checkSupplierReferenceFields(
 ): Promise<ReferenceFieldCheckResult[]> {
   const cache = new Map<string, boolean>();
   return runReferenceFieldChecks([
-    { field: "AccountPayable", value: fields.account_payable, check: (v) => accountExists(creds, v, cache) },
+    { field: "AccountPayable", value: fields.account_payable, check: (v) => payableAccountExists(creds, v, cache) },
     { field: "TaxRule", value: fields.tax_rule, check: (v) => taxRuleExists(creds, v, cache) },
     { field: "PaymentTerm", value: fields.payment_term, check: (v) => paymentTermExists(creds, v, cache) },
   ]);

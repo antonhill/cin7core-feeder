@@ -5,7 +5,16 @@ import { pushProduct } from "@/cin7/products";
 import { pushProductionBom } from "@/cin7/production-bom";
 import { pushCustomer } from "@/cin7/customers";
 import { pushSupplier } from "@/cin7/suppliers";
-import { locationExists, companyContactExists, accountExists, taxRuleExists, priceTierExists, paymentTermExists } from "@/cin7/reference-lookups";
+import {
+  locationExists,
+  companyContactExists,
+  accountExists,
+  payableAccountExists,
+  receivableAccountExists,
+  taxRuleExists,
+  priceTierExists,
+  paymentTermExists,
+} from "@/cin7/reference-lookups";
 import { Cin7ApiError } from "@/cin7/http";
 
 vi.mock("@/cin7/products", () => ({ pushProduct: vi.fn() }));
@@ -19,6 +28,8 @@ vi.mock("@/cin7/reference-lookups", () => ({
   locationExists: vi.fn(),
   companyContactExists: vi.fn(),
   accountExists: vi.fn(),
+  payableAccountExists: vi.fn(),
+  receivableAccountExists: vi.fn(),
   taxRuleExists: vi.fn(),
   priceTierExists: vi.fn(),
   paymentTermExists: vi.fn(),
@@ -66,6 +77,8 @@ beforeEach(() => {
   vi.mocked(locationExists).mockReset().mockResolvedValue(true);
   vi.mocked(companyContactExists).mockReset().mockResolvedValue(true);
   vi.mocked(accountExists).mockReset().mockResolvedValue(true);
+  vi.mocked(payableAccountExists).mockReset().mockResolvedValue(true);
+  vi.mocked(receivableAccountExists).mockReset().mockResolvedValue(true);
   vi.mocked(taxRuleExists).mockReset().mockResolvedValue(true);
   vi.mocked(priceTierExists).mockReset().mockResolvedValue(true);
   vi.mocked(paymentTermExists).mockReset().mockResolvedValue(true);
@@ -355,6 +368,80 @@ describe("syncInstance", () => {
       ]);
     });
 
+    it("catches an AccountReceivable that exists but isn't the special AccountReceivable-type account — same real distinction confirmed for AccountPayable", async () => {
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+        customers: [
+          {
+            org_id: "org1",
+            name: "Woolworths",
+            content_hash: "h1",
+            location: "Main Warehouse",
+            sales_representative: "Anton",
+            account_receivable: "801",
+            sale_account: "200",
+            tax_rule: "Standard Rate Sales",
+            price_tier: "Retail in VAT",
+          },
+        ],
+        customer_sync_state: [],
+        customer_addresses: [],
+        customer_contacts: [],
+      });
+      vi.mocked(receivableAccountExists).mockResolvedValueOnce(false);
+
+      const summary = await syncInstance(db, "org1", "inst-1");
+
+      expect(pushCustomer).not.toHaveBeenCalled();
+      expect(summary.customersFailed).toBe(1);
+      expect(summary.errors).toEqual([
+        {
+          sku: "Woolworths",
+          error: ["AccountReceivable '801' was not found in the chart of accounts (as a special account receivable account)"],
+        },
+      ]);
+    });
+
+    it("SaleAccount uses the plain existence check, not the special-account one — Cin7's docs don't call it a \"special\" account", async () => {
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+        customers: [
+          {
+            org_id: "org1",
+            name: "Woolworths",
+            content_hash: "h1",
+            location: "Main Warehouse",
+            sales_representative: "Anton",
+            account_receivable: "610",
+            sale_account: "200",
+            tax_rule: "Standard Rate Sales",
+            price_tier: "Retail in VAT",
+          },
+        ],
+        customer_sync_state: [],
+        customer_addresses: [],
+        customer_contacts: [],
+      });
+      vi.mocked(pushCustomer).mockResolvedValueOnce({ cin7Id: "cin7-1", status: "created" });
+
+      const summary = await syncInstance(db, "org1", "inst-1");
+
+      expect(accountExists).toHaveBeenCalledWith(expect.anything(), "200", expect.anything());
+      expect(receivableAccountExists).toHaveBeenCalledWith(expect.anything(), "610", expect.anything());
+      expect(pushCustomer).toHaveBeenCalledTimes(1);
+      expect(summary.customersFailed).toBe(0);
+    });
+
     it("catches a bad PaymentTerm — added for parity once a fake-but-non-blank value ('cashe') was found to slip past the blank check", async () => {
       const { db } = createFakeDb({
         cin7_instances: [instanceRow],
@@ -509,14 +596,38 @@ describe("syncInstance", () => {
         supplier_addresses: [],
         supplier_contacts: [],
       });
-      vi.mocked(accountExists).mockResolvedValueOnce(false);
+      vi.mocked(payableAccountExists).mockResolvedValueOnce(false);
 
       const summary = await syncInstance(db, "org1", "inst-1");
 
       expect(pushSupplier).not.toHaveBeenCalled();
       expect(summary.suppliersFailed).toBe(1);
       expect(summary.errors).toEqual([
-        { sku: "ABC Suppliers", error: ["AccountPayable '999' was not found in the chart of accounts"] },
+        { sku: "ABC Suppliers", error: ["AccountPayable '999' was not found in the chart of accounts (as a special account payable account)"] },
+      ]);
+    });
+
+    it("rejects an account code that exists but isn't the special AccountPayable-type account — confirmed live: code 801 (\"Unpaid Expense Claims\") exists but isn't valid for AccountPayable", async () => {
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+        suppliers: [{ org_id: "org1", name: "XYZ Supplier", content_hash: "h1", account_payable: "801" }],
+        supplier_sync_state: [],
+        supplier_addresses: [],
+        supplier_contacts: [],
+      });
+      vi.mocked(payableAccountExists).mockResolvedValueOnce(false);
+
+      const summary = await syncInstance(db, "org1", "inst-1");
+
+      expect(pushSupplier).not.toHaveBeenCalled();
+      expect(summary.suppliersFailed).toBe(1);
+      expect(summary.errors).toEqual([
+        { sku: "XYZ Supplier", error: ["AccountPayable '801' was not found in the chart of accounts (as a special account payable account)"] },
       ]);
     });
 

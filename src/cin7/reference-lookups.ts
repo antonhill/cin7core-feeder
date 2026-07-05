@@ -174,6 +174,66 @@ export async function accountExists(creds: Cin7Credentials, codeOrName: string, 
   return cachedFieldExists(creds, REF_ACCOUNT_PATH, "Name", codeOrName, cache);
 }
 
+interface Cin7AccountEntry {
+  Code?: string;
+  Name?: string;
+  SystemAccount?: string;
+}
+
+/**
+ * AccountPayable/AccountReceivable require a *specific system-designated*
+ * account, not just any existing one — confirmed live 2026-07-06 by
+ * comparing two real accounts that share the same Type/Class (CURRLIAB/
+ * LIABILITY): code "800" ("Accounts Payable", `SystemAccount: "Accounts
+ * payable"`) genuinely works for AccountPayable, but code "801" ("Unpaid
+ * Expense Claims", `SystemAccount: "Unpaid expense claims"`) exists and has
+ * the identical Type/Class yet is rejected by the real push — `SystemAccount`
+ * is the actual discriminator, matching Cin7's own field docs ("Only special
+ * account [payable/receivable] accounts are valid for this field"). Plain
+ * `accountExists` (Type/Class-blind existence only) can't tell these apart;
+ * this checks both existence *and* the matching SystemAccount value.
+ */
+async function specialAccountExists(
+  creds: Cin7Credentials,
+  codeOrName: string,
+  systemAccount: "Accounts payable" | "Accounts receivable",
+  cache: Map<string, boolean>
+): Promise<boolean> {
+  const cacheKey = `${REF_ACCOUNT_PATH}::special::${systemAccount}::${codeOrName}`;
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const target = codeOrName.toLowerCase();
+  for (const field of ["Code", "Name"] as const) {
+    try {
+      const response = await cin7Request<{ AccountsList?: Cin7AccountEntry[] }>(creds, REF_ACCOUNT_PATH, {
+        query: { Page: 1, Limit: 100, [field]: codeOrName },
+      });
+      const match = (response.AccountsList ?? []).some(
+        (a) => (field === "Code" ? a.Code?.toLowerCase() === target : a.Name?.toLowerCase() === target) && a.SystemAccount === systemAccount
+      );
+      if (match) {
+        cache.set(cacheKey, true);
+        return true;
+      }
+    } catch (e) {
+      // Same non-retryable-error-means-not-found handling as cachedFieldExists — try the next field instead of crashing.
+      if (!(e instanceof Cin7ApiError && !e.retryable)) throw e;
+    }
+  }
+
+  cache.set(cacheKey, false);
+  return false;
+}
+
+export function payableAccountExists(creds: Cin7Credentials, codeOrName: string, cache: Map<string, boolean>): Promise<boolean> {
+  return specialAccountExists(creds, codeOrName, "Accounts payable", cache);
+}
+
+export function receivableAccountExists(creds: Cin7Credentials, codeOrName: string, cache: Map<string, boolean>): Promise<boolean> {
+  return specialAccountExists(creds, codeOrName, "Accounts receivable", cache);
+}
+
 export const REF_TAX_PATH = "/ref/tax";
 export const REF_PRICE_TIER_PATH = "/ref/priceTier";
 export const REF_PAYMENT_TERM_PATH = "/ref/paymentterm";
