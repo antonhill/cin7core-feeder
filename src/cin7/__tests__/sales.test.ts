@@ -14,28 +14,54 @@ beforeEach(() => {
 });
 
 describe("fetchInvoicedSalesList", () => {
-  it("filters by CombinedInvoiceStatus=AUTHORISED and paginates until a short page", async () => {
-    const page1 = Array.from({ length: 100 }, (_, i) => ({ SaleID: `sale-${i}` }));
-    const page2 = [{ SaleID: "sale-last" }];
+  it("does not send a CombinedInvoiceStatus query param — /saleList only accepts one exact value, but several count as 'invoiced'", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ SaleList: [] });
+    await fetchInvoicedSalesList(creds);
+    const [, , options] = vi.mocked(cin7Request).mock.calls[0];
+    expect((options as { query: Record<string, unknown> }).query).not.toHaveProperty("CombinedInvoiceStatus");
+  });
+
+  it("paginates until a short page", async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ SaleID: `sale-${i}`, CombinedInvoiceStatus: "INVOICED" }));
+    const page2 = [{ SaleID: "sale-last", CombinedInvoiceStatus: "INVOICED" }];
     vi.mocked(cin7Request).mockResolvedValueOnce({ SaleList: page1 }).mockResolvedValueOnce({ SaleList: page2 });
 
     const all = await fetchInvoicedSalesList(creds);
 
     expect(all).toHaveLength(101);
     expect(cin7Request).toHaveBeenCalledTimes(2);
-    expect(cin7Request).toHaveBeenNthCalledWith(1, creds, "/saleList", {
-      query: { Page: 1, Limit: 100, CombinedInvoiceStatus: "AUTHORISED" },
+    expect(cin7Request).toHaveBeenNthCalledWith(1, creds, "/saleList", { query: { Page: 1, Limit: 100 } });
+    expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/saleList", { query: { Page: 2, Limit: 100 } });
+  });
+
+  it("keeps INVOICED, INVOICED / CREDITED and PARTIALLY INVOICED — confirmed live as the real values meaning 'has an invoice'", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({
+      SaleList: [
+        { SaleID: "s1", CombinedInvoiceStatus: "INVOICED" },
+        { SaleID: "s2", CombinedInvoiceStatus: "INVOICED / CREDITED" },
+        { SaleID: "s3", CombinedInvoiceStatus: "PARTIALLY INVOICED" },
+      ],
     });
-    expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/saleList", {
-      query: { Page: 2, Limit: 100, CombinedInvoiceStatus: "AUTHORISED" },
+    const all = await fetchInvoicedSalesList(creds);
+    expect(all.map((s) => s.SaleID)).toEqual(["s1", "s2", "s3"]);
+  });
+
+  it("drops NOT INVOICED and NOT AVAILABLE — confirmed these are real values on a live account, not documented ones", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({
+      SaleList: [
+        { SaleID: "s1", CombinedInvoiceStatus: "NOT INVOICED" },
+        { SaleID: "s2", CombinedInvoiceStatus: "NOT AVAILABLE" },
+      ],
     });
+    const all = await fetchInvoicedSalesList(creds);
+    expect(all).toEqual([]);
   });
 
   it("includes UpdatedSince when provided, for incremental sync", async () => {
     vi.mocked(cin7Request).mockResolvedValueOnce({ SaleList: [] });
     await fetchInvoicedSalesList(creds, "2026-01-01T00:00:00.000Z");
     expect(cin7Request).toHaveBeenCalledWith(creds, "/saleList", {
-      query: { Page: 1, Limit: 100, CombinedInvoiceStatus: "AUTHORISED", UpdatedSince: "2026-01-01T00:00:00.000Z" },
+      query: { Page: 1, Limit: 100, UpdatedSince: "2026-01-01T00:00:00.000Z" },
     });
   });
 
@@ -43,7 +69,6 @@ describe("fetchInvoicedSalesList", () => {
     vi.mocked(cin7Request).mockResolvedValueOnce({ SaleList: [] });
     await fetchInvoicedSalesList(creds);
     const [, , options] = vi.mocked(cin7Request).mock.calls[0];
-    expect(options).not.toHaveProperty("query.UpdatedSince");
     expect((options as { query: Record<string, unknown> }).query.UpdatedSince).toBeUndefined();
   });
 });
