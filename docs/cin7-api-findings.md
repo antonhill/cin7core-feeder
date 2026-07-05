@@ -412,3 +412,16 @@ for "Pick Zone" as a resource path; only found the unrelated `/reference/shipZon
 `/reference/shipZonesEnabled`, which are a different concept for shipping). Left unchecked
 rather than guessed, same call as Currency in §10. `WarrantySetupName` remains unchecked too, per
 §5's earlier finding (no CRUD endpoint at all, capture-only field).
+
+## 12. Product enum fields — casing doesn't match Cin7's own docs (confirmed 2026-07-06)
+
+Anton hit a false-positive warning on a genuine Cin7 export: `Status "ACTIVE" is not a recognized
+value (expected Active or Deprecated)`. Checked the real live sample already in this repo
+(`docs/cin7-templates/InventoryList_2026-07-03.csv`) rather than guess — its `Status` column is
+literally `ACTIVE` (all caps), not the `Active` (title case) Cin7's own field docs list as the
+valid value. Same class of doc-vs-real-export mismatch already found for the boolean fields
+(`AutoAssemble`/`Sellable` — docs say True/False, the real export uses Yes/No). Since Cin7's docs
+have now been wrong about casing twice, `checkProductEnumFields` (src/import/warnings.ts) compares
+all four enum fields (CostingMethod/Type/DropShip/Status) case-insensitively rather than trusting
+any one convention — not just patching Status, since there's no reason to assume the others are
+reliably cased either.

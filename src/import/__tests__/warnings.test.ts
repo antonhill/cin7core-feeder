@@ -383,8 +383,8 @@ describe("checkProductEnumFields", () => {
   });
 
   it("warns on an unrecognized CostingMethod", () => {
-    const warnings = checkProductEnumFields([parsedRow(1, productRow({ CostingMethod: "Fifo" }))]);
-    expect(warnings).toEqual([{ rowNumber: 1, message: '"Widget": CostingMethod "Fifo" is not a recognized value' }]);
+    const warnings = checkProductEnumFields([parsedRow(1, productRow({ CostingMethod: "Fifoo" }))]);
+    expect(warnings).toEqual([{ rowNumber: 1, message: '"Widget": CostingMethod "Fifoo" is not a recognized value' }]);
   });
 
   it("warns on an unrecognized Type", () => {
@@ -407,6 +407,17 @@ describe("checkProductEnumFields", () => {
   it("warns on an unrecognized Status value", () => {
     const warnings = checkProductEnumFields([parsedRow(1, productRow({ Status: "Discontinued" }))]);
     expect(warnings).toEqual([{ rowNumber: 1, message: '"Widget": Status "Discontinued" is not a recognized value (expected Active or Deprecated)' }]);
+  });
+
+  it("does not warn on a real Cin7 export's casing — confirmed live 2026-07-06: an InventoryList export renders Status as \"ACTIVE\" (all caps), not the \"Active\" its own field docs claim", () => {
+    const rows = [
+      parsedRow(1, productRow({ Status: "ACTIVE" })),
+      parsedRow(2, productRow({ Status: "active" })),
+      parsedRow(3, productRow({ CostingMethod: "fifo" })),
+      parsedRow(4, productRow({ Type: "STOCK" })),
+      parsedRow(5, productRow({ DropShip: "no drop ship" })),
+    ];
+    expect(checkProductEnumFields(rows)).toEqual([]);
   });
 });
 

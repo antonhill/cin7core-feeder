@@ -144,23 +144,30 @@ export function checkBlankSupplierRequiredFields(rows: ParsedRow<SupplierCsvRow>
   return warnings;
 }
 
+// Lowercased — confirmed live (2026-07-06) that a real InventoryList export
+// from Cin7 renders Status as "ACTIVE" (all caps), not the "Active" its own
+// field docs claim (docs/cin7-templates/InventoryList_2026-07-03.csv), the
+// same doc-vs-real-export mismatch already found for the Yes/No vs True/
+// False boolean fields. Every enum check here compares case-insensitively
+// rather than trusting any one casing convention, since Cin7's docs have
+// already been wrong about this more than once.
 const PRODUCT_COSTING_METHODS = new Set([
-  "FIFO",
-  "FIFO - Serial number",
-  "FIFO - Batch",
-  "FEFO - Serial number",
-  "FEFO - Batch",
-  "Special - Serial number",
-  "Special - Batch",
+  "fifo",
+  "fifo - serial number",
+  "fifo - batch",
+  "fefo - serial number",
+  "fefo - batch",
+  "special - serial number",
+  "special - batch",
 ]);
 
 // Cin7's own InventoryList docs only list Stock/Service/Fixed Asset as valid
 // Type values, but `mapCin7ProductType` (model/products.ts) already handles
 // Non-Inventory/BillOfMaterials too — treated as valid here rather than
 // flagged, since the code deliberately supports them.
-const PRODUCT_TYPES = new Set(["Stock", "Service", "Fixed Asset", "Non-Inventory", "BillOfMaterials"]);
-const PRODUCT_DROP_SHIP_MODES = new Set(["No Drop Ship", "Optional Drop Ship", "Always Drop Ship"]);
-const PRODUCT_STATUSES = new Set(["Active", "Deprecated"]);
+const PRODUCT_TYPES = new Set(["stock", "service", "fixed asset", "non-inventory", "billofmaterials"]);
+const PRODUCT_DROP_SHIP_MODES = new Set(["no drop ship", "optional drop ship", "always drop ship"]);
+const PRODUCT_STATUSES = new Set(["active", "deprecated"]);
 
 /**
  * CostingMethod/Type/DropShip/Status each have a fixed set of valid values
@@ -173,19 +180,19 @@ export function checkProductEnumFields(rows: ParsedRow<ProductCsvRow>[]): Import
   const warnings: ImportWarning[] = [];
   for (const r of rows) {
     const { Name, CostingMethod, Type, DropShip, Status } = r.data;
-    if (CostingMethod.trim() && !PRODUCT_COSTING_METHODS.has(CostingMethod.trim())) {
+    if (CostingMethod.trim() && !PRODUCT_COSTING_METHODS.has(CostingMethod.trim().toLowerCase())) {
       warnings.push({ rowNumber: r.rowNumber, message: `"${Name}": CostingMethod "${CostingMethod}" is not a recognized value` });
     }
-    if (Type.trim() && !PRODUCT_TYPES.has(Type.trim())) {
+    if (Type.trim() && !PRODUCT_TYPES.has(Type.trim().toLowerCase())) {
       warnings.push({ rowNumber: r.rowNumber, message: `"${Name}": Type "${Type}" is not a recognized value (expected Stock, Service or Fixed Asset)` });
     }
-    if (DropShip.trim() && !PRODUCT_DROP_SHIP_MODES.has(DropShip.trim())) {
+    if (DropShip.trim() && !PRODUCT_DROP_SHIP_MODES.has(DropShip.trim().toLowerCase())) {
       warnings.push({
         rowNumber: r.rowNumber,
         message: `"${Name}": DropShip "${DropShip}" is not a recognized value (expected No Drop Ship, Optional Drop Ship or Always Drop Ship)`,
       });
     }
-    if (Status.trim() && !PRODUCT_STATUSES.has(Status.trim())) {
+    if (Status.trim() && !PRODUCT_STATUSES.has(Status.trim().toLowerCase())) {
       warnings.push({ rowNumber: r.rowNumber, message: `"${Name}": Status "${Status}" is not a recognized value (expected Active or Deprecated)` });
     }
   }
