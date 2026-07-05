@@ -1,15 +1,26 @@
 "use client";
 
-import { Fragment, useState, useTransition, useEffect } from "react";
+import { Fragment, useMemo, useState, useTransition, useEffect } from "react";
 import {
   loadReportFilterOptionsAction,
   loadProductSalesReportAction,
+  loadProductSalesPivotAction,
   loadSaleLineDetailsAction,
   loadSalesSyncStatusAction,
   triggerSalesSyncAction,
 } from "./actions";
 import type { ReportFilterOptions, ProductSalesReportRow, SaleLineDetailRow, SalesSyncStatus } from "@/reports/query";
 import type { SalesReportFilters } from "@/reports/query";
+import { buildPivotGrid, type PivotGroupBy, type PivotMetric, type PivotSourceRow } from "@/reports/pivot";
+
+type GroupBySelection = "none" | PivotGroupBy;
+
+const METRIC_LABELS: Record<PivotMetric, string> = {
+  revenue: "Revenue",
+  cogs: "COGS",
+  profit: "Profit",
+  margin_percent: "Margin%",
+};
 
 function money(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
@@ -19,6 +30,64 @@ function money(value: number | null | undefined): string {
 function percent(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
   return `${value.toFixed(2)}%`;
+}
+
+function formatMetric(metric: PivotMetric, value: number | null | undefined): string {
+  return metric === "margin_percent" ? percent(value) : money(value);
+}
+
+/** Shared invoice-line drill-down, used under both the flat table and the pivot grid — a row expands to this regardless of which view produced it. */
+function InvoiceLineDetail({
+  colSpan,
+  isLoading,
+  lines,
+}: {
+  colSpan: number;
+  isLoading: boolean;
+  lines: SaleLineDetailRow[] | undefined;
+}) {
+  return (
+    <tr>
+      <td colSpan={colSpan} className="bg-slate-50 px-4 py-3">
+        {isLoading && !lines && <p className="text-sm text-slate-400">Loading invoice lines…</p>}
+        {lines && (
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="text-slate-500">
+                <th className="py-1 pr-4">Invoice #</th>
+                <th className="py-1 pr-4">Invoice date</th>
+                <th className="py-1 pr-4">Qty</th>
+                <th className="py-1 pr-4">Price</th>
+                <th className="py-1 pr-4">Total</th>
+                <th className="py-1 pr-4">Avg cost</th>
+                <th className="py-1 pr-4">Customer</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((line, i) => (
+                <tr key={i} className="border-t border-slate-200">
+                  <td className="py-1 pr-4">{line.invoiceNumber}</td>
+                  <td className="py-1 pr-4">{line.invoiceDate ?? "—"}</td>
+                  <td className="py-1 pr-4">{line.quantity ?? "—"}</td>
+                  <td className="py-1 pr-4">{money(line.price)}</td>
+                  <td className="py-1 pr-4">{money(line.total)}</td>
+                  <td className="py-1 pr-4">{money(line.averageCost)}</td>
+                  <td className="py-1 pr-4">{line.customerName ?? "—"}</td>
+                </tr>
+              ))}
+              {lines.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-2 text-slate-400">
+                    No matching invoice lines.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
+      </td>
+    </tr>
+  );
 }
 
 export default function ReportsPage() {
@@ -36,8 +105,17 @@ export default function ReportsPage() {
   const [dateTo, setDateTo] = useState("");
 
   const [rows, setRows] = useState<ProductSalesReportRow[] | null>(null);
+  const [pivotSourceRows, setPivotSourceRows] = useState<PivotSourceRow[] | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
   const [isRunning, startRunTransition] = useTransition();
+
+  const [groupBy, setGroupBy] = useState<GroupBySelection>("none");
+  const [metric, setMetric] = useState<PivotMetric>("revenue");
+
+  const pivotGrid = useMemo(() => {
+    if (groupBy === "none" || !pivotSourceRows) return null;
+    return buildPivotGrid(pivotSourceRows, groupBy, metric);
+  }, [pivotSourceRows, groupBy, metric]);
 
   const [expandedSku, setExpandedSku] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, SaleLineDetailRow[]>>({});
@@ -86,15 +164,25 @@ export default function ReportsPage() {
   function handleRunReport() {
     setReportError(null);
     setRows(null);
+    setPivotSourceRows(null);
     setExpandedSku(null);
     setDetails({});
     startRunTransition(async () => {
-      const result = await loadProductSalesReportAction(currentFilters());
+      if (groupBy === "none") {
+        const result = await loadProductSalesReportAction(currentFilters());
+        if (!result.ok) {
+          setReportError(result.error ?? "Unknown error");
+          return;
+        }
+        setRows(result.data ?? []);
+        return;
+      }
+      const result = await loadProductSalesPivotAction(currentFilters(), groupBy);
       if (!result.ok) {
         setReportError(result.error ?? "Unknown error");
         return;
       }
-      setRows(result.data ?? []);
+      setPivotSourceRows(result.data ?? []);
     });
   }
 
@@ -200,6 +288,39 @@ export default function ReportsPage() {
           </div>
         </div>
 
+        <div className="mt-4 flex flex-wrap items-end gap-4 border-t border-slate-100 pt-4">
+          <label className="flex flex-col gap-1.5 text-sm">
+            <span className="font-medium text-slate-700">Group columns by</span>
+            <select
+              value={groupBy}
+              onChange={(e) => setGroupBy(e.target.value as GroupBySelection)}
+              className="rounded-lg border border-slate-300 px-3 py-2"
+            >
+              <option value="none">None (today&rsquo;s flat table)</option>
+              <option value="location">Location</option>
+              <option value="category">Category</option>
+              <option value="both">Location × Category</option>
+            </select>
+          </label>
+
+          {groupBy !== "none" && (
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-slate-700">Metric</span>
+              <select
+                value={metric}
+                onChange={(e) => setMetric(e.target.value as PivotMetric)}
+                className="rounded-lg border border-slate-300 px-3 py-2"
+              >
+                {(Object.entries(METRIC_LABELS) as [PivotMetric, string][]).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+
         <button
           type="button"
           onClick={handleRunReport}
@@ -251,50 +372,89 @@ export default function ReportsPage() {
                         <td className="py-2 pr-4">{percent(row.margin_percent)}</td>
                       </tr>
                       {expandedSku === row.product_sku && (
-                        <tr key={`${row.product_sku}-detail`}>
-                          <td colSpan={6} className="bg-slate-50 px-4 py-3">
-                            {isLoadingDetails && !details[row.product_sku] && <p className="text-sm text-slate-400">Loading invoice lines…</p>}
-                            {details[row.product_sku] && (
-                              <table className="w-full text-left text-xs">
-                                <thead>
-                                  <tr className="text-slate-500">
-                                    <th className="py-1 pr-4">Invoice #</th>
-                                    <th className="py-1 pr-4">Invoice date</th>
-                                    <th className="py-1 pr-4">Qty</th>
-                                    <th className="py-1 pr-4">Price</th>
-                                    <th className="py-1 pr-4">Total</th>
-                                    <th className="py-1 pr-4">Avg cost</th>
-                                    <th className="py-1 pr-4">Customer</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {details[row.product_sku].map((line, i) => (
-                                    <tr key={i} className="border-t border-slate-200">
-                                      <td className="py-1 pr-4">{line.invoiceNumber}</td>
-                                      <td className="py-1 pr-4">{line.invoiceDate ?? "—"}</td>
-                                      <td className="py-1 pr-4">{line.quantity ?? "—"}</td>
-                                      <td className="py-1 pr-4">{money(line.price)}</td>
-                                      <td className="py-1 pr-4">{money(line.total)}</td>
-                                      <td className="py-1 pr-4">{money(line.averageCost)}</td>
-                                      <td className="py-1 pr-4">{line.customerName ?? "—"}</td>
-                                    </tr>
-                                  ))}
-                                  {details[row.product_sku].length === 0 && (
-                                    <tr>
-                                      <td colSpan={7} className="py-2 text-slate-400">
-                                        No matching invoice lines.
-                                      </td>
-                                    </tr>
-                                  )}
-                                </tbody>
-                              </table>
-                            )}
-                          </td>
-                        </tr>
+                        <InvoiceLineDetail colSpan={6} isLoading={isLoadingDetails} lines={details[row.product_sku]} />
                       )}
                     </Fragment>
                   ))}
                 </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {pivotGrid && (
+        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="font-medium text-slate-900">
+            {pivotGrid.rows.length} product{pivotGrid.rows.length === 1 ? "" : "s"} — {METRIC_LABELS[metric]} by{" "}
+            {groupBy === "both" ? "Location × Category" : groupBy === "location" ? "Location" : "Category"}
+          </p>
+          {pivotGrid.rows.length === 0 && <p className="mt-2 text-sm text-slate-400">No invoiced sales match these filters.</p>}
+
+          {pivotGrid.rows.length > 0 && (
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  {pivotGrid.columnGroups && (
+                    <tr className="text-slate-500">
+                      <th className="py-1 pr-4" />
+                      {pivotGrid.columnGroups.map((group) => (
+                        <th key={group.label} colSpan={group.span} className="border-b border-slate-100 py-1 pr-4 text-center">
+                          {group.label}
+                        </th>
+                      ))}
+                      <th className="border-b border-slate-100 py-1 pr-4" />
+                    </tr>
+                  )}
+                  <tr className="border-b border-slate-200 text-slate-500">
+                    <th className="py-2 pr-4">Product</th>
+                    {pivotGrid.columns.map((col) => (
+                      <th key={col.key} className="py-2 pr-4 text-right">
+                        {col.label}
+                      </th>
+                    ))}
+                    <th className="py-2 pr-4 text-right font-semibold">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pivotGrid.rows.map((row) => (
+                    <Fragment key={row.productSku}>
+                      <tr
+                        onClick={() => toggleExpand(row.productSku)}
+                        className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
+                      >
+                        <td className="py-2 pr-4">
+                          <div className="font-medium text-slate-900">{row.productName}</div>
+                          <div className="text-xs text-slate-400">{row.productSku}</div>
+                        </td>
+                        {pivotGrid.columns.map((col) => (
+                          <td key={col.key} className="py-2 pr-4 text-right">
+                            {formatMetric(metric, row.cells[col.key])}
+                          </td>
+                        ))}
+                        <td className="py-2 pr-4 text-right font-semibold">{formatMetric(metric, row.total)}</td>
+                      </tr>
+                      {expandedSku === row.productSku && (
+                        <InvoiceLineDetail
+                          colSpan={pivotGrid.columns.length + 2}
+                          isLoading={isLoadingDetails}
+                          lines={details[row.productSku]}
+                        />
+                      )}
+                    </Fragment>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t border-slate-200 font-semibold text-slate-700">
+                    <td className="py-2 pr-4">Total</td>
+                    {pivotGrid.columns.map((col) => (
+                      <td key={col.key} className="py-2 pr-4 text-right">
+                        {formatMetric(metric, pivotGrid.totals[col.key])}
+                      </td>
+                    ))}
+                    <td className="py-2 pr-4 text-right">{formatMetric(metric, pivotGrid.grandTotal)}</td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           )}

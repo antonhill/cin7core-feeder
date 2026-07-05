@@ -4,6 +4,7 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { requireCurrentOrg } from "@/lib/current-org";
 import {
   getProductSalesReport,
+  getProductSalesPivotData,
   getSaleLineDetails,
   getReportFilterOptions,
   getSalesSyncStatus,
@@ -13,6 +14,7 @@ import {
   type ReportFilterOptions,
   type SalesSyncStatus,
 } from "@/reports/query";
+import type { PivotGroupBy, PivotSourceRow } from "@/reports/pivot";
 import { syncOrgSales, type SalesSyncSummary } from "@/sync/sync-sales";
 
 export interface ReportActionResult<T> {
@@ -36,6 +38,19 @@ export async function loadProductSalesReportAction(filters: SalesReportFilters):
     const { orgId } = await requireCurrentOrg();
     const db = createServiceRoleClient();
     return { ok: true, data: await getProductSalesReport(db, orgId, filters) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+export async function loadProductSalesPivotAction(
+  filters: SalesReportFilters,
+  groupBy: PivotGroupBy
+): Promise<ReportActionResult<PivotSourceRow[]>> {
+  try {
+    const { orgId } = await requireCurrentOrg();
+    const db = createServiceRoleClient();
+    return { ok: true, data: await getProductSalesPivotData(db, orgId, filters, groupBy) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

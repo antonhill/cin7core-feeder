@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getProductSalesReport, getSaleLineDetails, getReportFilterOptions, getSalesSyncStatus } from "@/reports/query";
+import { getProductSalesReport, getProductSalesPivotData, getSaleLineDetails, getReportFilterOptions, getSalesSyncStatus } from "@/reports/query";
 
 describe("getProductSalesReport", () => {
   it("calls the report_sales_by_product RPC with null defaults for unset filters", async () => {
@@ -75,6 +75,46 @@ function makeSaleLinesChain(rows: unknown[]) {
   };
   return { chain, calls };
 }
+
+describe("getProductSalesPivotData", () => {
+  it("maps groupBy to the two boolean RPC params", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+
+    await getProductSalesPivotData(db, "org1", {}, "location");
+    expect(rpc).toHaveBeenCalledWith("report_sales_pivot", expect.objectContaining({ p_group_by_location: true, p_group_by_category: false }));
+
+    await getProductSalesPivotData(db, "org1", {}, "category");
+    expect(rpc).toHaveBeenCalledWith("report_sales_pivot", expect.objectContaining({ p_group_by_location: false, p_group_by_category: true }));
+
+    await getProductSalesPivotData(db, "org1", {}, "both");
+    expect(rpc).toHaveBeenCalledWith("report_sales_pivot", expect.objectContaining({ p_group_by_location: true, p_group_by_category: true }));
+  });
+
+  it("passes through filters the same way as getProductSalesReport", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+
+    await getProductSalesPivotData(db, "org1", { instanceIds: ["inst-1"], dateFrom: "2026-01-01", dateTo: "2026-06-30" }, "location");
+
+    expect(rpc).toHaveBeenCalledWith("report_sales_pivot", {
+      p_org_id: "org1",
+      p_instance_ids: ["inst-1"],
+      p_location: null,
+      p_category_code: null,
+      p_date_from: "2026-01-01",
+      p_date_to: "2026-06-30",
+      p_group_by_location: true,
+      p_group_by_category: false,
+    });
+  });
+
+  it("throws with the underlying error message on failure", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: "boom" } });
+    const db = { rpc } as unknown as SupabaseClient;
+    await expect(getProductSalesPivotData(db, "org1", {}, "location")).rejects.toThrow("report_sales_pivot: boom");
+  });
+});
 
 describe("getSaleLineDetails", () => {
   it("maps the joined sales.location/customer_name onto flat rows", async () => {

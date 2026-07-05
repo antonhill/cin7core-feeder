@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { PivotGroupBy, PivotSourceRow } from "@/reports/pivot";
 
 export interface SalesReportFilters {
   instanceIds?: string[];
@@ -35,6 +36,32 @@ export async function getProductSalesReport(
     p_date_to: filters.dateTo || null,
   });
   if (error) throw new Error(`report_sales_by_product: ${error.message}`);
+  return data ?? [];
+}
+
+/**
+ * Same filters and metrics as getProductSalesReport, but grouped down to
+ * (product, location?, category?) via report_sales_pivot (0020) so the app
+ * can pivot Location and/or Category into columns — see reports/pivot.ts for
+ * how this flat list turns into a grid.
+ */
+export async function getProductSalesPivotData(
+  db: SupabaseClient,
+  orgId: string,
+  filters: SalesReportFilters,
+  groupBy: PivotGroupBy
+): Promise<PivotSourceRow[]> {
+  const { data, error } = await db.rpc("report_sales_pivot", {
+    p_org_id: orgId,
+    p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
+    p_location: filters.location || null,
+    p_category_code: filters.categoryCode || null,
+    p_date_from: filters.dateFrom || null,
+    p_date_to: filters.dateTo || null,
+    p_group_by_location: groupBy === "location" || groupBy === "both",
+    p_group_by_category: groupBy === "category" || groupBy === "both",
+  });
+  if (error) throw new Error(`report_sales_pivot: ${error.message}`);
   return data ?? [];
 }
 
