@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import {
   debugCheckCustomerReferenceFields,
+  debugCheckSaleStatuses,
   debugCheckSupplierReferenceFields,
   debugCompareAccounts,
   debugFetchCustomerByName,
@@ -74,6 +75,14 @@ export default function InstancesSettingsPage() {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Searching…" } }));
     startTransition(async () => {
       const result = await debugFindBomExample(instanceId);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
+  function handleCheckSaleStatuses(instanceId: string) {
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Checking…" } }));
+    startTransition(async () => {
+      const result = await debugCheckSaleStatuses(instanceId);
       setTestResults((prev) => ({ ...prev, [instanceId]: result }));
     });
   }
@@ -203,6 +212,9 @@ export default function InstancesSettingsPage() {
                 </button>
                 <button onClick={() => handlePushOneCustomerAndSupplier(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                   Test push 1 customer + 1 supplier
+                </button>
+                <button onClick={() => handleCheckSaleStatuses(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                  Check sale statuses
                 </button>
                 <button onClick={() => setModalTarget(inst.id)} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
                   Edit

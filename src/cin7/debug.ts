@@ -278,3 +278,44 @@ export async function findAccountsByCodes(creds: Cin7Credentials, codes: string[
   }
   return results;
 }
+
+export interface SaleStatusCounts {
+  total: number;
+  statusCounts: Record<string, number>;
+  combinedInvoiceStatusCounts: Record<string, number>;
+  sample: Record<string, unknown>[];
+}
+
+/**
+ * Diagnostic only: the sales sync filters /saleList to
+ * CombinedInvoiceStatus=AUTHORISED (Anton confirmed this is what "invoiced"
+ * means), but a live sync against a real instance returned zero sales
+ * despite the org clearly having invoices. Rather than guess whether
+ * AUTHORISED is genuinely never used once an invoice is paid (Cin7's own
+ * spec lists AUTHORISED and PAID as distinct CombinedInvoiceStatus values —
+ * possibly a status *transition*, not an overlapping pair), this fetches
+ * /saleList with NO status filter and tallies what CombinedInvoiceStatus
+ * values actually appear on this instance's real sales.
+ */
+export async function checkSaleStatuses(creds: Cin7Credentials): Promise<SaleStatusCounts> {
+  const response = await cin7Request<{ Total?: number; SaleList?: Record<string, unknown>[] }>(creds, "/saleList", {
+    query: { Page: 1, Limit: 100 },
+  });
+  const sales = response.SaleList ?? [];
+
+  const statusCounts: Record<string, number> = {};
+  const combinedInvoiceStatusCounts: Record<string, number> = {};
+  for (const sale of sales) {
+    const status = String(sale.Status ?? "(none)");
+    const invoiceStatus = String(sale.CombinedInvoiceStatus ?? "(none)");
+    statusCounts[status] = (statusCounts[status] ?? 0) + 1;
+    combinedInvoiceStatusCounts[invoiceStatus] = (combinedInvoiceStatusCounts[invoiceStatus] ?? 0) + 1;
+  }
+
+  return {
+    total: response.Total ?? sales.length,
+    statusCounts,
+    combinedInvoiceStatusCounts,
+    sample: sales.slice(0, 3),
+  };
+}
