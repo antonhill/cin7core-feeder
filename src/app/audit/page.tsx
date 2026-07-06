@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import {
   runProductAuditAction,
   applyProductFixesAction,
@@ -56,12 +56,23 @@ function IssueTypeSection({
   onApply: (productIds: string[], field: string, value: string) => void;
   isApplying: boolean;
 }) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [rawSelected, setRawSelected] = useState<Set<string>>(new Set());
   const [value, setValue] = useState("");
   const config = FIXABLE_CONFIG[type];
 
+  // Derived, not synced via effect: drop any selected id that's fallen out of
+  // view (category/search narrowed) so a stale selection from a previous
+  // filter can't get silently fixed once it's no longer shown. This card is
+  // no longer remounted per filter change (that was the real perf cost —
+  // toggling a category checkbox used to unmount/remount every issue card),
+  // so `rawSelected` can otherwise outlive filter changes.
+  const selected = useMemo(() => {
+    const visibleIds = new Set(issues.map((i) => i.productId));
+    return new Set([...rawSelected].filter((id) => visibleIds.has(id)));
+  }, [rawSelected, issues]);
+
   function toggle(id: string) {
-    setSelected((prev) => {
+    setRawSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -70,7 +81,7 @@ function IssueTypeSection({
   }
 
   function toggleAll() {
-    setSelected((prev) => (prev.size === issues.length ? new Set() : new Set(issues.map((i) => i.productId))));
+    setRawSelected(selected.size === issues.length && issues.length > 0 ? new Set() : new Set(issues.map((i) => i.productId)));
   }
 
   return (
@@ -171,10 +182,20 @@ function AttributeGapCard({
   isApplying: boolean;
 }) {
   const [templateId, setTemplateId] = useState(group.templates[0]?.productId ?? "");
-  const [selected, setSelected] = useState<Set<string>>(new Set(group.products.map((p) => p.productId)));
+  const [rawSelected, setRawSelected] = useState<Set<string>>(new Set(group.products.map((p) => p.productId)));
+
+  // Derived, not synced via effect — same reasoning as IssueTypeSection:
+  // this card is no longer remounted per search keystroke, so drop any
+  // selected id that's fallen out of view instead of syncing state in an
+  // effect (which would just cause an extra cascading render for the same
+  // result).
+  const selected = useMemo(() => {
+    const visibleIds = new Set(group.products.map((p) => p.productId));
+    return new Set([...rawSelected].filter((id) => visibleIds.has(id)));
+  }, [rawSelected, group.products]);
 
   function toggle(id: string) {
-    setSelected((prev) => {
+    setRawSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -443,28 +464,41 @@ export default function AuditPage() {
   // must match the selected category set (if any) AND the search substring
   // (if any) to be shown/selectable. Near-duplicate Category/UOM/Tag groups
   // are inherently a cross-category comparison, so those sections always
-  // show everything regardless of either filter.
-  const filteredIssues = (result?.issues ?? []).filter(
-    (issue) => (categoryFilter.length === 0 || categoryFilter.includes(issue.category)) && matchesSearch(search, issue.sku, issue.name)
-  );
-  const issuesByType = new Map<ProductAuditIssueType, ProductAuditIssue[]>();
-  for (const issue of filteredIssues) {
-    const list = issuesByType.get(issue.type) ?? [];
-    list.push(issue);
-    issuesByType.set(issue.type, list);
-  }
+  // show everything regardless of either filter. Memoized so a large catalog
+  // isn't re-filtered/re-grouped on every unrelated re-render (e.g. isApplying
+  // flipping while a different section's fix is in flight).
+  const { filteredIssues, issuesByType } = useMemo(() => {
+    const filtered = (result?.issues ?? []).filter(
+      (issue) => (categoryFilter.length === 0 || categoryFilter.includes(issue.category)) && matchesSearch(search, issue.sku, issue.name)
+    );
+    const byType = new Map<ProductAuditIssueType, ProductAuditIssue[]>();
+    for (const issue of filtered) {
+      const list = byType.get(issue.type) ?? [];
+      list.push(issue);
+      byType.set(issue.type, list);
+    }
+    return { filteredIssues: filtered, issuesByType: byType };
+  }, [result, categoryFilter, search]);
 
-  const filteredProducts = (result?.products ?? []).filter(
-    (p) => (categoryFilter.length === 0 || categoryFilter.includes(p.category)) && matchesSearch(search, p.sku, p.name)
+  const filteredProducts = useMemo(
+    () =>
+      (result?.products ?? []).filter(
+        (p) => (categoryFilter.length === 0 || categoryFilter.includes(p.category)) && matchesSearch(search, p.sku, p.name)
+      ),
+    [result, categoryFilter, search]
   );
 
   // Attribute-gap groups are scoped to one category already, so the category
   // filter applies at the group level; search narrows each group's own
   // product list (a group with nothing left to search-match is dropped).
-  const filteredAttributeGaps = (result?.attributeGaps ?? [])
-    .filter((g) => categoryFilter.length === 0 || categoryFilter.includes(g.category))
-    .map((g) => ({ ...g, products: g.products.filter((p) => matchesSearch(search, p.sku, p.name)) }))
-    .filter((g) => g.products.length > 0);
+  const filteredAttributeGaps = useMemo(
+    () =>
+      (result?.attributeGaps ?? [])
+        .filter((g) => categoryFilter.length === 0 || categoryFilter.includes(g.category))
+        .map((g) => ({ ...g, products: g.products.filter((p) => matchesSearch(search, p.sku, p.name)) }))
+        .filter((g) => g.products.length > 0),
+    [result, categoryFilter, search]
+  );
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
@@ -627,12 +661,7 @@ export default function AuditPage() {
               </p>
               <div className="mt-3 flex flex-col gap-3">
                 {filteredAttributeGaps.map((group) => (
-                  <AttributeGapCard
-                    key={`${group.category}-${search}`}
-                    group={group}
-                    onApply={handleApplyAttributeTemplate}
-                    isApplying={isApplying}
-                  />
+                  <AttributeGapCard key={group.category} group={group} onApply={handleApplyAttributeTemplate} isApplying={isApplying} />
                 ))}
               </div>
             </div>
@@ -643,13 +672,7 @@ export default function AuditPage() {
           )}
 
           {ISSUE_ORDER.filter((type) => issuesByType.has(type)).map((type) => (
-            <IssueTypeSection
-              key={`${type}-${categoryFilter.join(",")}-${search}`}
-              type={type}
-              issues={issuesByType.get(type)!}
-              onApply={handleApply}
-              isApplying={isApplying}
-            />
+            <IssueTypeSection key={type} type={type} issues={issuesByType.get(type)!} onApply={handleApply} isApplying={isApplying} />
           ))}
 
           {filteredIssues.length === 0 &&
