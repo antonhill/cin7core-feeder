@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { createOrgAndInvite, inviteMemberToOrg, listOrgsForAdmin, uploadOrgLogo, type OrgSummary } from "./actions";
+import { createOrgAndInvite, inviteMemberToOrg, listOrgsForAdmin, removeMemberFromOrg, uploadOrgLogo, type OrgSummary } from "./actions";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { ADMIN_MODULE } from "@/app/module-nav";
 
@@ -103,7 +103,7 @@ export default function AdminPage() {
         )}
         <div className="mt-4 flex flex-col gap-3">
           {orgs.map((org) => (
-            <OrgCard key={org.id} org={org} onMemberAdded={refresh} />
+            <OrgCard key={org.id} org={org} onMembersChanged={refresh} />
           ))}
           {loaded && orgs.length === 0 && !loadError && (
             <p className="text-base text-slate-500">No organizations yet.</p>
@@ -115,7 +115,7 @@ export default function AdminPage() {
   );
 }
 
-function OrgCard({ org, onMemberAdded }: { org: OrgSummary; onMemberAdded: () => void }) {
+function OrgCard({ org, onMembersChanged }: { org: OrgSummary; onMembersChanged: () => void }) {
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -124,6 +124,10 @@ function OrgCard({ org, onMemberAdded }: { org: OrgSummary; onMemberAdded: () =>
   const [logoUrl, setLogoUrl] = useState(org.logoUrl);
   const [logoError, setLogoError] = useState<string | null>(null);
   const [isUploadingLogo, startLogoTransition] = useTransition();
+
+  const [removingUserId, setRemovingUserId] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [isRemoving, startRemoveTransition] = useTransition();
 
   function handleAddMember(e: React.FormEvent) {
     e.preventDefault();
@@ -137,7 +141,22 @@ function OrgCard({ org, onMemberAdded }: { org: OrgSummary; onMemberAdded: () =>
       }
       setSuccess(`Added ${email}.`);
       setEmail("");
-      onMemberAdded();
+      onMembersChanged();
+    });
+  }
+
+  function handleRemoveMember(userId: string, memberEmail: string) {
+    if (!confirm(`Remove ${memberEmail} from "${org.name}"? They keep their account — just this org's access.`)) return;
+    setRemoveError(null);
+    setRemovingUserId(userId);
+    startRemoveTransition(async () => {
+      const result = await removeMemberFromOrg(org.id, userId);
+      if (!result.ok) {
+        setRemoveError(result.error ?? "Unknown error");
+        setRemovingUserId(null);
+        return;
+      }
+      onMembersChanged(); // re-fetches the org list, same refresh callback used after adding a member
     });
   }
 
@@ -179,13 +198,32 @@ function OrgCard({ org, onMemberAdded }: { org: OrgSummary; onMemberAdded: () =>
             {org.instanceCount} Cin7 instance{org.instanceCount === 1 ? "" : "s"} · created{" "}
             {new Date(org.createdAt).toLocaleDateString()}
           </p>
-          <p className="mt-2 text-sm text-slate-600">
-            {org.memberEmails.length > 0 ? org.memberEmails.join(", ") : "No members yet"}
-          </p>
+          {org.members.length > 0 ? (
+            <ul className="mt-2 flex flex-col gap-1">
+              {org.members.map((member) => (
+                <li key={member.userId} className="flex items-center justify-between gap-2 text-sm text-slate-600">
+                  <span className="truncate">{member.email}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveMember(member.userId, member.email)}
+                    disabled={isRemoving && removingUserId === member.userId}
+                    className="shrink-0 rounded-full border border-red-200 px-2.5 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    {isRemoving && removingUserId === member.userId ? "Removing…" : "Remove"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2 text-sm text-slate-500">No members yet</p>
+          )}
         </div>
       </div>
       {logoError && (
         <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-700">{logoError}</p>
+      )}
+      {removeError && (
+        <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-700">{removeError}</p>
       )}
 
       <form onSubmit={handleAddMember} className="mt-4 flex gap-2">

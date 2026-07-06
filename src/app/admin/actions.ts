@@ -3,11 +3,16 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireSuperAdmin } from "@/lib/require-super-admin";
 
+export interface OrgMember {
+  userId: string;
+  email: string;
+}
+
 export interface OrgSummary {
   id: string;
   name: string;
   createdAt: string;
-  memberEmails: string[];
+  members: OrgMember[];
   instanceCount: number;
   logoUrl: string | null;
 }
@@ -49,19 +54,19 @@ export async function listOrgsForAdmin(): Promise<ListOrgsResult> {
       instanceCountByOrg.set(inst.org_id, (instanceCountByOrg.get(inst.org_id) ?? 0) + 1);
     }
 
-    const memberEmailsByOrg = new Map<string, string[]>();
+    const membersByOrg = new Map<string, OrgMember[]>();
     for (const m of members ?? []) {
-      const list = memberEmailsByOrg.get(m.org_id) ?? [];
+      const list = membersByOrg.get(m.org_id) ?? [];
       const email = emailByUserId.get(m.user_id);
-      if (email) list.push(email);
-      memberEmailsByOrg.set(m.org_id, list);
+      if (email) list.push({ userId: m.user_id, email });
+      membersByOrg.set(m.org_id, list);
     }
 
     const result: OrgSummary[] = (orgs ?? []).map((o) => ({
       id: o.id,
       name: o.name,
       createdAt: o.created_at,
-      memberEmails: memberEmailsByOrg.get(o.id) ?? [],
+      members: membersByOrg.get(o.id) ?? [],
       instanceCount: instanceCountByOrg.get(o.id) ?? 0,
       logoUrl: o.logo_url,
     }));
@@ -148,6 +153,27 @@ export async function inviteMemberToOrg(orgId: string, email: string): Promise<C
       if (memberError.code === "23505") return { ok: false, error: "That person is already a member of this org." };
       return { ok: false, error: memberError.message };
     }
+
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Removes a user's membership from an org — just the org_members row, not
+ * their Supabase Auth account, and not anything else the user might own
+ * (they may still belong to other orgs). Scoped to (org_id, user_id) so it
+ * can never remove a membership in the wrong org even if called with a
+ * stale/mismatched pair.
+ */
+export async function removeMemberFromOrg(orgId: string, userId: string): Promise<CreateOrgResult> {
+  try {
+    await requireSuperAdmin();
+    const db = createServiceRoleClient();
+
+    const { error } = await db.from("org_members").delete().eq("org_id", orgId).eq("user_id", userId);
+    if (error) return { ok: false, error: error.message };
 
     return { ok: true };
   } catch (e) {
