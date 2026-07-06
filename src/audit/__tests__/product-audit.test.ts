@@ -5,6 +5,8 @@ import {
   findInventoryGaps,
   findMissingGLAccounts,
   findDuplicateCategories,
+  findDuplicateUOMs,
+  findDuplicateTags,
   runProductAudit,
 } from "@/audit/product-audit";
 
@@ -22,6 +24,8 @@ function product(overrides: Record<string, unknown>): Record<string, unknown> {
     RevenueAccount: "200",
     COGSAccount: "310",
     PriceTier1: 10,
+    Tags: "",
+    Sellable: true,
     ...overrides,
   };
 }
@@ -123,6 +127,50 @@ describe("findDuplicateCategories", () => {
   });
 });
 
+describe("findDuplicateUOMs", () => {
+  it("groups a casing variant as a duplicate, same rule as categories", () => {
+    const groups = findDuplicateUOMs([product({ UOM: "Item" }), product({ UOM: "item" }), product({ UOM: "Item" })]);
+    expect(groups).toEqual([
+      {
+        names: expect.arrayContaining([
+          { name: "Item", productCount: 2 },
+          { name: "item", productCount: 1 },
+        ]),
+      },
+    ]);
+  });
+
+  it("ignores blank UOMs", () => {
+    expect(findDuplicateUOMs([product({ UOM: "" }), product({ UOM: undefined })])).toEqual([]);
+  });
+});
+
+describe("findDuplicateTags", () => {
+  it("splits each product's comma-delimited Tags and counts individual tokens across the catalog", () => {
+    const groups = findDuplicateTags([
+      product({ Tags: "giftset,fragile" }),
+      product({ Tags: "GIFTSET" }),
+      product({ Tags: "fragile" }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].names.map((n) => n.name).sort()).toEqual(["GIFTSET", "giftset"]);
+    // "fragile" appears on 2 products but has no near-duplicate variant, so it isn't part of any group.
+  });
+
+  it("ignores a product with no Tags at all", () => {
+    expect(findDuplicateTags([product({ Tags: "" }), product({ Tags: undefined })])).toEqual([]);
+  });
+
+  it("catches a leading-space token from a 'tag, tag' style list as a duplicate of the same tag written cleanly elsewhere", () => {
+    // "fragile, giftset".split(",") -> ["fragile", " giftset"] (untrimmed) — same
+    // deliberate not-trimmed-before-counting rule as categories, so this
+    // whitespace variant is exactly the kind of duplicate this check should catch.
+    const groups = findDuplicateTags([product({ Tags: "fragile, giftset" }), product({ Tags: "giftset" })]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].names.map((n) => n.name)).toEqual(expect.arrayContaining([" giftset", "giftset"]));
+  });
+});
+
 describe("runProductAudit", () => {
   it("aggregates every check into one result", () => {
     const result = runProductAudit([
@@ -145,5 +193,25 @@ describe("runProductAudit", () => {
   it("tags each issue with the product's own category, so issues can be filtered by it", () => {
     const result = runProductAudit([product({ SKU: "A", Category: "Finished Products", Brand: "" })]);
     expect(result.issues[0].category).toBe("Finished Products");
+  });
+
+  it("includes duplicateUOMs and duplicateTags alongside duplicateCategories", () => {
+    const result = runProductAudit([
+      product({ SKU: "A", UOM: "Item", Tags: "giftset" }),
+      product({ SKU: "B", UOM: "item", Tags: "GIFTSET" }),
+    ]);
+    expect(result.duplicateUOMs).toHaveLength(1);
+    expect(result.duplicateTags).toHaveLength(1);
+  });
+
+  it("builds a full product roster for the Sellable bulk-editor and search/filter, independent of any detected issue", () => {
+    const result = runProductAudit([
+      product({ SKU: "A", ID: "id-a", Name: "Widget A", Category: "Finished Products", Sellable: true }),
+      product({ SKU: "B", ID: "id-b", Name: "Widget B", Category: "Raw Materials", Sellable: false }),
+    ]);
+    expect(result.products).toEqual([
+      { productId: "id-a", sku: "A", name: "Widget A", category: "Finished Products", sellable: true },
+      { productId: "id-b", sku: "B", name: "Widget B", category: "Raw Materials", sellable: false },
+    ]);
   });
 });

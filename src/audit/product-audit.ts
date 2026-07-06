@@ -2,9 +2,9 @@
  * Data consistency/accuracy checks against a live Cin7 Core product catalog
  * (see fetchAllProductsWithBom) — flags gaps clients routinely struggle to
  * even find, let alone fix, in Cin7's own UI: missing Brand, no sales price
- * configured at all, incomplete inventory setup, and missing Revenue/COGS
- * GL accounts, plus near-duplicate category names. Scoped to products only
- * for now (Anton: "starting with the product data").
+ * configured at all, incomplete inventory setup, missing Revenue/COGS GL
+ * accounts, plus near-duplicate Category/UOM/Tag values. Scoped to products
+ * only for now (Anton: "starting with the product data").
  *
  * Fixes for the field-completeness issues are a straightforward "same value
  * for every selected product" bulk apply (see app/audit/actions.ts); missing
@@ -31,16 +31,28 @@ export interface ProductAuditIssue {
   category: string;
 }
 
-export interface CategoryDuplicateGroup {
-  /** Each near-duplicate spelling of what looks like the same category, with how many products currently sit under it. */
+/** A group of near-duplicate spellings of what's almost certainly the same value (Category, UOM, or Tag), with how many products currently carry each spelling. */
+export interface DuplicateNameGroup {
   names: { name: string; productCount: number }[];
+}
+
+/** Lightweight per-product roster (not tied to any issue) — backs the Sellable bulk-editor and the search/category filters, which need every scanned product, not just ones with a detected issue. */
+export interface ProductSummary {
+  productId: string;
+  sku: string;
+  name: string;
+  category: string;
+  sellable: boolean;
 }
 
 export interface ProductAuditResult {
   issues: ProductAuditIssue[];
-  duplicateCategories: CategoryDuplicateGroup[];
+  duplicateCategories: DuplicateNameGroup[];
+  duplicateUOMs: DuplicateNameGroup[];
+  duplicateTags: DuplicateNameGroup[];
   /** Every distinct category seen across the whole catalog (not just ones with issues) — e.g. so "Finished Products" still appears as a filter option even if it currently has zero issues. */
   categories: string[];
+  products: ProductSummary[];
 }
 
 interface RawProduct {
@@ -55,6 +67,8 @@ interface RawProduct {
   InventoryAccount?: string;
   RevenueAccount?: string;
   COGSAccount?: string;
+  Tags?: string;
+  Sellable?: boolean;
   [key: string]: unknown;
 }
 
@@ -128,8 +142,8 @@ function normalize(name: string): string {
 
 /**
  * Genuinely different spellings close enough to almost certainly be the same
- * category. Below 6 characters, fuzzy matching is skipped entirely (only
- * exact normalize-equality counts) — short names have too many legitimately
+ * value. Below 6 characters, fuzzy matching is skipped entirely (only exact
+ * normalize-equality counts) — short names have too many legitimately
  * different 1-edit-apart pairs ("Bar" vs "Car") for edit distance alone to
  * be reliable.
  */
@@ -147,23 +161,12 @@ function isNearDuplicate(a: string, b: string): boolean {
 }
 
 /**
- * Groups categories whose names look like data-entry variants of the same
- * thing (trailing whitespace, casing, a character or two off) rather than
- * genuinely distinct categories. Products are counted per exact raw Category
- * string, since that's what's actually stored on each product record.
+ * Groups raw values whose spelling looks like a data-entry variant of the
+ * same thing (trailing whitespace, casing, a character or two off) rather
+ * than genuinely distinct values. Shared by the Category/UOM/Tag duplicate
+ * checks below — each just supplies its own per-raw-value product count.
  */
-export function findDuplicateCategories(products: RawProduct[]): CategoryDuplicateGroup[] {
-  const countByName = new Map<string, number>();
-  for (const p of products) {
-    // Deliberately NOT trimmed here — the raw (untrimmed) string is the map
-    // key, since a trailing-whitespace variant is exactly the kind of
-    // duplicate this check exists to catch. Trimming first would silently
-    // collapse "Widgets" and "Widgets " into the same key before the
-    // near-duplicate comparison ever ran.
-    const category = p.Category;
-    if (!category || !category.trim()) continue;
-    countByName.set(category, (countByName.get(category) ?? 0) + 1);
-  }
+function buildDuplicateGroups(countByName: Map<string, number>): DuplicateNameGroup[] {
   const names = [...countByName.keys()];
 
   const groups: string[][] = [];
@@ -187,6 +190,55 @@ export function findDuplicateCategories(products: RawProduct[]): CategoryDuplica
   }));
 }
 
+/**
+ * Groups categories whose names look like data-entry variants of the same
+ * thing. Products are counted per exact raw Category string, since that's
+ * what's actually stored on each product record.
+ */
+export function findDuplicateCategories(products: RawProduct[]): DuplicateNameGroup[] {
+  const countByName = new Map<string, number>();
+  for (const p of products) {
+    // Deliberately NOT trimmed here — the raw (untrimmed) string is the map
+    // key, since a trailing-whitespace variant is exactly the kind of
+    // duplicate this check exists to catch. Trimming first would silently
+    // collapse "Widgets" and "Widgets " into the same key before the
+    // near-duplicate comparison ever ran.
+    const category = p.Category;
+    if (!category || !category.trim()) continue;
+    countByName.set(category, (countByName.get(category) ?? 0) + 1);
+  }
+  return buildDuplicateGroups(countByName);
+}
+
+/** Same idea as findDuplicateCategories, for DefaultUnitOfMeasure — e.g. "Item"/"item"/"Items" coexisting as separate values across the catalog. */
+export function findDuplicateUOMs(products: RawProduct[]): DuplicateNameGroup[] {
+  const countByName = new Map<string, number>();
+  for (const p of products) {
+    const uom = p.UOM;
+    if (!uom || !uom.trim()) continue;
+    countByName.set(uom, (countByName.get(uom) ?? 0) + 1);
+  }
+  return buildDuplicateGroups(countByName);
+}
+
+/**
+ * Same idea again, but Tags is a comma-delimited multi-value field (Cin7's
+ * own "CommaDelimitedTags") — each product can carry several tags, so this
+ * splits and counts individual tag tokens across the whole catalog rather
+ * than treating the whole field as one value the way Category/UOM are.
+ */
+export function findDuplicateTags(products: RawProduct[]): DuplicateNameGroup[] {
+  const countByName = new Map<string, number>();
+  for (const p of products) {
+    if (!p.Tags) continue;
+    for (const rawTag of p.Tags.split(",")) {
+      if (!rawTag.trim()) continue;
+      countByName.set(rawTag, (countByName.get(rawTag) ?? 0) + 1);
+    }
+  }
+  return buildDuplicateGroups(countByName);
+}
+
 export function runProductAudit(products: RawProduct[]): ProductAuditResult {
   const categories = [...new Set(products.map((p) => p.Category?.trim()).filter((c): c is string => Boolean(c)))].sort();
 
@@ -198,6 +250,9 @@ export function runProductAudit(products: RawProduct[]): ProductAuditResult {
       ...findMissingGLAccounts(products),
     ],
     duplicateCategories: findDuplicateCategories(products),
+    duplicateUOMs: findDuplicateUOMs(products),
+    duplicateTags: findDuplicateTags(products),
     categories,
+    products: products.map((p) => ({ ...productRef(p), sellable: Boolean(p.Sellable) })),
   };
 }

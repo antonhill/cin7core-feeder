@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { runProductAuditAction, applyProductFixesAction, mergeCategoryAction } from "./actions";
+import { runProductAuditAction, applyProductFixesAction, mergeCategoryAction, mergeUOMAction, mergeTagAction } from "./actions";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
-import type { CategoryDuplicateGroup, ProductAuditIssue, ProductAuditIssueType, ProductAuditResult } from "@/audit/product-audit";
+import type { DuplicateNameGroup, ProductAuditIssue, ProductAuditIssueType, ProductAuditResult, ProductSummary } from "@/audit/product-audit";
 import type { ApplyFixesResult } from "@/audit/apply-fixes";
 
 const FIXABLE_CONFIG: Partial<Record<ProductAuditIssueType, { label: string; field: string; placeholder: string }>> = {
@@ -24,6 +24,12 @@ const ISSUE_ORDER: ProductAuditIssueType[] = [
   "missing_revenue_account",
   "missing_cogs_account",
 ];
+
+function matchesSearch(search: string, sku: string, name: string): boolean {
+  if (!search.trim()) return true;
+  const needle = search.trim().toLowerCase();
+  return sku.toLowerCase().includes(needle) || name.toLowerCase().includes(needle);
+}
 
 function IssueTypeSection({
   type,
@@ -103,12 +109,12 @@ function IssueTypeSection({
   );
 }
 
-function CategoryDuplicateCard({
+function DuplicateGroupCard({
   group,
   onMerge,
   isApplying,
 }: {
-  group: CategoryDuplicateGroup;
+  group: DuplicateNameGroup;
   onMerge: (fromNames: string[], toName: string) => void;
   isApplying: boolean;
 }) {
@@ -141,6 +147,76 @@ function CategoryDuplicateCard({
   );
 }
 
+function SellableSection({
+  products,
+  onApply,
+  isApplying,
+}: {
+  products: ProductSummary[];
+  onApply: (productIds: string[], sellable: boolean) => void;
+  isApplying: boolean;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelected((prev) => (prev.size === products.length ? new Set() : new Set(products.map((p) => p.productId))));
+  }
+
+  return (
+    <details className="rounded-xl border border-slate-200 bg-white p-4">
+      <summary className="cursor-pointer font-medium text-slate-900">
+        Sellable — bulk set Yes/No ({products.length} product{products.length === 1 ? "" : "s"} shown)
+      </summary>
+
+      <div className="mt-3 flex flex-col gap-1.5 text-sm">
+        <label className="flex items-center gap-2 font-medium text-slate-700">
+          <input type="checkbox" checked={selected.size === products.length && products.length > 0} onChange={toggleAll} className="h-4 w-4" />
+          Select all
+        </label>
+        <div className="flex max-h-64 flex-col gap-1.5 overflow-y-auto">
+          {products.map((p) => (
+            <label key={p.productId} className="flex items-center gap-2 text-slate-700">
+              <input type="checkbox" checked={selected.has(p.productId)} onChange={() => toggle(p.productId)} className="h-4 w-4" />
+              {p.name} <span className="text-xs text-slate-400">({p.sku})</span>
+              <span className={`text-xs font-medium ${p.sellable ? "text-emerald-600" : "text-slate-400"}`}>
+                {p.sellable ? "Sellable" : "Not sellable"}
+              </span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={isApplying || selected.size === 0}
+          onClick={() => onApply([...selected], true)}
+          className="rounded-full bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+        >
+          Set Sellable: Yes ({selected.size || 0})
+        </button>
+        <button
+          type="button"
+          disabled={isApplying || selected.size === 0}
+          onClick={() => onApply([...selected], false)}
+          className="rounded-full bg-slate-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-500 disabled:opacity-50"
+        >
+          Set Sellable: No ({selected.size || 0})
+        </button>
+      </div>
+    </details>
+  );
+}
+
 export default function AuditPage() {
   const [instances, setInstances] = useState<InstancePickerItem[]>([]);
   const [instancesError, setInstancesError] = useState<string | null>(null);
@@ -156,6 +232,7 @@ export default function AuditPage() {
   const [applyError, setApplyError] = useState<string | null>(null);
 
   const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
+  const [search, setSearch] = useState("");
 
   function toggleCategoryFilter(category: string) {
     setCategoryFilter((prev) => (prev.includes(category) ? prev.filter((c) => c !== category) : [...prev, category]));
@@ -205,6 +282,23 @@ export default function AuditPage() {
     });
   }
 
+  function handleApplySellable(productIds: string[], sellable: boolean) {
+    if (!instanceId) return;
+    setApplyError(null);
+    startApplyTransition(async () => {
+      const res = await applyProductFixesAction(
+        instanceId,
+        productIds.map((productId) => ({ productId, fields: { Sellable: sellable } }))
+      );
+      if (!res.ok || !res.data) {
+        setApplyError(res.error ?? "Unknown error");
+        return;
+      }
+      setApplyResult(res.data);
+      handleScan(); // re-scan so the roster reflects the new Sellable values
+    });
+  }
+
   function handleMergeCategory(fromNames: string[], toName: string) {
     if (!instanceId) return;
     setApplyError(null);
@@ -219,11 +313,42 @@ export default function AuditPage() {
     });
   }
 
-  // Category filter only narrows the per-product issue sections (missing
-  // Brand/pricing/inventory/GL account) — near-duplicate categories are
-  // inherently a cross-category comparison, so that section always shows
-  // everything regardless of this filter.
-  const filteredIssues = (result?.issues ?? []).filter((issue) => categoryFilter.length === 0 || categoryFilter.includes(issue.category));
+  function handleMergeUOM(fromNames: string[], toName: string) {
+    if (!instanceId) return;
+    setApplyError(null);
+    startApplyTransition(async () => {
+      const res = await mergeUOMAction(instanceId, fromNames, toName);
+      if (!res.ok || !res.data) {
+        setApplyError(res.error ?? "Unknown error");
+        return;
+      }
+      setApplyResult(res.data);
+      handleScan(); // re-scan so the merged group drops out of the list
+    });
+  }
+
+  function handleMergeTag(fromNames: string[], toName: string) {
+    if (!instanceId) return;
+    setApplyError(null);
+    startApplyTransition(async () => {
+      const res = await mergeTagAction(instanceId, fromNames, toName);
+      if (!res.ok || !res.data) {
+        setApplyError(res.error ?? "Unknown error");
+        return;
+      }
+      setApplyResult(res.data);
+      handleScan(); // re-scan so the merged group drops out of the list
+    });
+  }
+
+  // Category filter and search compose with AND logic: an issue or product
+  // must match the selected category set (if any) AND the search substring
+  // (if any) to be shown/selectable. Near-duplicate Category/UOM/Tag groups
+  // are inherently a cross-category comparison, so those sections always
+  // show everything regardless of either filter.
+  const filteredIssues = (result?.issues ?? []).filter(
+    (issue) => (categoryFilter.length === 0 || categoryFilter.includes(issue.category)) && matchesSearch(search, issue.sku, issue.name)
+  );
   const issuesByType = new Map<ProductAuditIssueType, ProductAuditIssue[]>();
   for (const issue of filteredIssues) {
     const list = issuesByType.get(issue.type) ?? [];
@@ -231,14 +356,18 @@ export default function AuditPage() {
     issuesByType.set(issue.type, list);
   }
 
+  const filteredProducts = (result?.products ?? []).filter(
+    (p) => (categoryFilter.length === 0 || categoryFilter.includes(p.category)) && matchesSearch(search, p.sku, p.name)
+  );
+
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
       <h1 className="text-3xl font-bold tracking-tight text-slate-900">Data Audit</h1>
       <p className="mt-2 text-lg text-slate-500">
         Pulls every product live from a connected Cin7 instance and checks it for consistency and
         accuracy gaps — missing Brand, no sales price, incomplete inventory setup, missing Revenue/COGS
-        accounts, and near-duplicate categories. Fixes you approve are written straight back to that
-        instance. Products only, for now.
+        accounts, and near-duplicate categories, units of measure, and tags. Also lets you bulk-toggle
+        Sellable. Fixes you approve are written straight back to that instance. Products only, for now.
       </p>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -301,50 +430,94 @@ export default function AuditPage() {
 
       {result && (
         <section className="mt-6 flex flex-col gap-4">
-          {result.categories.length > 0 && (
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-slate-700">Category</p>
-                <div className="flex gap-3 text-xs text-indigo-600">
-                  <button type="button" onClick={() => setCategoryFilter(result.categories)} className="hover:underline">
-                    Select all
-                  </button>
-                  <button type="button" onClick={() => setCategoryFilter([])} className="hover:underline">
-                    Clear
-                  </button>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              {result.categories.length > 0 && (
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-slate-700">Category</p>
+                    <div className="flex gap-3 text-xs text-indigo-600">
+                      <button type="button" onClick={() => setCategoryFilter(result.categories)} className="hover:underline">
+                        Select all
+                      </button>
+                      <button type="button" onClick={() => setCategoryFilter([])} className="hover:underline">
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex max-h-40 flex-col gap-1 overflow-y-auto text-sm">
+                    {result.categories.map((cat) => (
+                      <label key={cat} className="flex items-center gap-2">
+                        <input type="checkbox" checked={categoryFilter.includes(cat)} onChange={() => toggleCategoryFilter(cat)} className="h-4 w-4" />
+                        {cat}
+                      </label>
+                    ))}
+                  </div>
                 </div>
-              </div>
-              <div className="mt-2 flex max-h-40 flex-col gap-1 overflow-y-auto text-sm">
-                {result.categories.map((cat) => (
-                  <label key={cat} className="flex items-center gap-2">
-                    <input type="checkbox" checked={categoryFilter.includes(cat)} onChange={() => toggleCategoryFilter(cat)} className="h-4 w-4" />
-                    {cat}
-                  </label>
-                ))}
-              </div>
-              {categoryFilter.length > 0 && (
-                <p className="mt-2 text-xs text-slate-400">
-                  Showing only {categoryFilter.map((c) => `"${c}"`).join(", ")} — duplicate categories below are unaffected, since
-                  that check compares across categories.
-                </p>
               )}
+
+              <div className="flex-1">
+                <p className="text-sm font-medium text-slate-700">Search</p>
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Part of a SKU or product name…"
+                  className="mt-2 w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                />
+              </div>
             </div>
-          )}
+
+            {(categoryFilter.length > 0 || search.trim()) && (
+              <p className="mt-3 text-xs text-slate-400">
+                {categoryFilter.length > 0 && `Category: ${categoryFilter.map((c) => `"${c}"`).join(", ")}. `}
+                {search.trim() && `Search: "${search.trim()}". `}
+                Near-duplicate category/UOM/tag groups below are unaffected, since those checks compare
+                across the whole catalog.
+              </p>
+            )}
+          </div>
 
           {result.duplicateCategories.length > 0 && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
               <p className="font-medium text-amber-900">Near-duplicate categories — {result.duplicateCategories.length} group{result.duplicateCategories.length === 1 ? "" : "s"}</p>
               <div className="mt-3 flex flex-col gap-3">
                 {result.duplicateCategories.map((group, i) => (
-                  <CategoryDuplicateCard key={i} group={group} onMerge={handleMergeCategory} isApplying={isApplying} />
+                  <DuplicateGroupCard key={i} group={group} onMerge={handleMergeCategory} isApplying={isApplying} />
                 ))}
               </div>
             </div>
           )}
 
+          {result.duplicateUOMs.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <p className="font-medium text-amber-900">Near-duplicate units of measure — {result.duplicateUOMs.length} group{result.duplicateUOMs.length === 1 ? "" : "s"}</p>
+              <div className="mt-3 flex flex-col gap-3">
+                {result.duplicateUOMs.map((group, i) => (
+                  <DuplicateGroupCard key={i} group={group} onMerge={handleMergeUOM} isApplying={isApplying} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {result.duplicateTags.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <p className="font-medium text-amber-900">Near-duplicate tags — {result.duplicateTags.length} group{result.duplicateTags.length === 1 ? "" : "s"}</p>
+              <div className="mt-3 flex flex-col gap-3">
+                {result.duplicateTags.map((group, i) => (
+                  <DuplicateGroupCard key={i} group={group} onMerge={handleMergeTag} isApplying={isApplying} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {result.products.length > 0 && (
+            <SellableSection products={filteredProducts} onApply={handleApplySellable} isApplying={isApplying} />
+          )}
+
           {ISSUE_ORDER.filter((type) => issuesByType.has(type)).map((type) => (
             <IssueTypeSection
-              key={`${type}-${categoryFilter.join(",")}`}
+              key={`${type}-${categoryFilter.join(",")}-${search}`}
               type={type}
               issues={issuesByType.get(type)!}
               onApply={handleApply}
@@ -352,10 +525,10 @@ export default function AuditPage() {
             />
           ))}
 
-          {filteredIssues.length === 0 && result.duplicateCategories.length === 0 && (
+          {filteredIssues.length === 0 && result.duplicateCategories.length === 0 && result.duplicateUOMs.length === 0 && result.duplicateTags.length === 0 && (
             <p className="text-base text-slate-500">
-              {categoryFilter.length > 0
-                ? `No issues found for ${categoryFilter.map((c) => `"${c}"`).join(", ")}.`
+              {categoryFilter.length > 0 || search.trim()
+                ? "No issues found for the current filter."
                 : "No issues found — this catalog looks clean."}
             </p>
           )}

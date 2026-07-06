@@ -4,7 +4,7 @@ import { fetchAllProductsWithBom } from "@/cin7/products";
 
 export interface ProductFix {
   productId: string;
-  fields: Record<string, string>;
+  fields: Record<string, string | boolean>;
 }
 
 export interface ApplyFixesResult {
@@ -39,21 +39,59 @@ export async function applyProductFixes(creds: Cin7Credentials, fixes: ProductFi
 }
 
 /**
- * Merges a group of near-duplicate category names into one: re-fetches the
- * live product list (rather than trusting IDs from an earlier scan, which
- * could be stale) and re-tags every product currently under any of
- * `fromNames` to `toName`. Doesn't touch the /ref/category reference-book
- * entry the old name(s) leave behind — Cin7's own UI makes deleting an
- * unused category straightforward, and doing it ourselves here risks
- * deleting a category something else still legitimately references.
+ * Merges a group of near-duplicate values in a single-value field (Category,
+ * DefaultUnitOfMeasure) into one: re-fetches the live product list (rather
+ * than trusting IDs from an earlier scan, which could be stale) and re-tags
+ * every product currently set to any of `fromValues` to `toValue`. Doesn't
+ * touch any reference-book entry the old value(s) leave behind — Cin7's own
+ * UI makes deleting an unused entry straightforward, and doing it ourselves
+ * here risks deleting something else still legitimately references.
  */
-export async function mergeCategoryNames(creds: Cin7Credentials, fromNames: string[], toName: string): Promise<ApplyFixesResult> {
+async function mergeFieldValue(
+  creds: Cin7Credentials,
+  field: string,
+  fromValues: string[],
+  toValue: string
+): Promise<ApplyFixesResult> {
   const products = await fetchAllProductsWithBom(creds);
-  const fromSet = new Set(fromNames);
-  const toFix = products.filter((p) => typeof p.Category === "string" && fromSet.has(p.Category) && p.Category !== toName);
+  const fromSet = new Set(fromValues);
+  const toFix = products.filter((p) => typeof p[field] === "string" && fromSet.has(p[field] as string) && p[field] !== toValue);
 
   return applyProductFixes(
     creds,
-    toFix.map((p) => ({ productId: String(p.ID ?? p.SKU ?? "?"), fields: { Category: toName } }))
+    toFix.map((p) => ({ productId: String(p.ID ?? p.SKU ?? "?"), fields: { [field]: toValue } }))
   );
+}
+
+export function mergeCategoryNames(creds: Cin7Credentials, fromNames: string[], toName: string): Promise<ApplyFixesResult> {
+  return mergeFieldValue(creds, "Category", fromNames, toName);
+}
+
+export function mergeUOMNames(creds: Cin7Credentials, fromNames: string[], toName: string): Promise<ApplyFixesResult> {
+  return mergeFieldValue(creds, "UOM", fromNames, toName);
+}
+
+/**
+ * Same merge idea, but Tags is a comma-delimited multi-value field — a
+ * product can carry several tags at once, so merging means rewriting each
+ * affected product's whole Tags string: replace any token matching one of
+ * `fromNames` with `toName`, dedupe, and rejoin. Only products that actually
+ * carry one of the from-names are touched.
+ */
+export async function mergeTagNames(creds: Cin7Credentials, fromNames: string[], toName: string): Promise<ApplyFixesResult> {
+  const products = await fetchAllProductsWithBom(creds);
+  const fromSet = new Set(fromNames);
+
+  const fixes: ProductFix[] = [];
+  for (const p of products) {
+    if (typeof p.Tags !== "string" || !p.Tags) continue;
+    const tokens = p.Tags.split(",");
+    if (!tokens.some((t) => fromSet.has(t))) continue;
+
+    const rewritten = tokens.map((t) => (fromSet.has(t) ? toName : t));
+    const deduped = [...new Set(rewritten)];
+    fixes.push({ productId: String(p.ID ?? p.SKU ?? "?"), fields: { Tags: deduped.join(",") } });
+  }
+
+  return applyProductFixes(creds, fixes);
 }
