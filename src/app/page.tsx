@@ -1,11 +1,18 @@
 import Link from "next/link";
-import { MODULES } from "@/app/module-nav";
+import { MODULES, ToolboxLogo } from "@/app/module-nav";
 
 export default function Home() {
   return (
     <main className="mx-auto max-w-5xl px-6 py-16">
-      <h1 className="text-4xl font-bold tracking-tight text-slate-900">Cin7 Core Toolbox</h1>
-      <p className="mt-3 max-w-2xl text-lg text-slate-500">Do amazing things that you cannot do in Cin7 Core.</p>
+      <div className="flex items-center gap-4">
+        <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-white shadow-md">
+          <ToolboxLogo className="h-9 w-9" />
+        </span>
+        <div>
+          <h1 className="text-4xl font-bold tracking-tight text-slate-900">Cin7 Core Toolbox</h1>
+          <p className="mt-1 max-w-2xl text-lg text-slate-500">Do amazing things that you cannot do in Cin7 Core.</p>
+        </div>
+      </div>
 
       <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {MODULES.map((module) => {
