@@ -23,6 +23,10 @@ export interface Cin7SaleListEntry {
   Updated?: string;
   CombinedInvoiceStatus?: string;
   OrderLocationID?: string;
+  /** Note the internal capitalization — Cin7's own JSON key is "FulFilmentStatus", not "FulfilmentStatus". Separate concept from CombinedInvoiceStatus: whether the goods have actually gone out, not whether it's been invoiced. */
+  FulFilmentStatus?: string;
+  /** The shipping deadline — confirmed live, distinct from InvoiceDueDate (a payment due date, unrelated to fulfillment). Null when no deadline was set on the order. */
+  ShipBy?: string | null;
 }
 
 /**
@@ -43,15 +47,14 @@ export interface Cin7SaleListEntry {
 const INVOICED_STATUSES = new Set(["INVOICED", "INVOICED / CREDITED", "PARTIALLY INVOICED"]);
 
 /**
- * Fetches every invoiced sale, optionally scoped to sales changed since a
- * given ISO timestamp for incremental sync. `/saleList`'s own
- * `CombinedInvoiceStatus` query param only accepts one exact value, so
- * filtering to the several statuses above happens client-side after an
- * unfiltered (but still UpdatedSince-scoped) fetch, rather than one API call
- * per status. Paginates until a short page signals the end, same pattern as
- * fetchAllProductsWithBom.
+ * Fetches every sale on the account, optionally scoped to sales changed
+ * since a given ISO timestamp. Paginates until a short page signals the
+ * end, same pattern as fetchAllProductsWithBom. Unfiltered — see
+ * fetchInvoicedSalesList for the invoiced-only subset used by the sales
+ * sync, and the System Health scorecard (src/health/system-health.ts) for
+ * a consumer that needs every sale regardless of invoice status.
  */
-export async function fetchInvoicedSalesList(creds: Cin7Credentials, updatedSince?: string): Promise<Cin7SaleListEntry[]> {
+export async function fetchAllSalesList(creds: Cin7Credentials, updatedSince?: string): Promise<Cin7SaleListEntry[]> {
   const pageSize = 100;
   const all: Cin7SaleListEntry[] = [];
   for (let page = 1; ; page++) {
@@ -62,6 +65,19 @@ export async function fetchInvoicedSalesList(creds: Cin7Credentials, updatedSinc
     all.push(...sales);
     if (sales.length < pageSize) break;
   }
+  return all;
+}
+
+/**
+ * Fetches every invoiced sale, optionally scoped to sales changed since a
+ * given ISO timestamp for incremental sync. `/saleList`'s own
+ * `CombinedInvoiceStatus` query param only accepts one exact value, so
+ * filtering to the several statuses above happens client-side after an
+ * unfiltered (but still UpdatedSince-scoped) fetch, rather than one API call
+ * per status.
+ */
+export async function fetchInvoicedSalesList(creds: Cin7Credentials, updatedSince?: string): Promise<Cin7SaleListEntry[]> {
+  const all = await fetchAllSalesList(creds, updatedSince);
   return all.filter((sale) => sale.CombinedInvoiceStatus && INVOICED_STATUSES.has(sale.CombinedInvoiceStatus));
 }
 

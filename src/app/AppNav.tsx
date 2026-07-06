@@ -57,6 +57,14 @@ function AuditIcon({ className }: IconProps) {
   );
 }
 
+function HealthIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M3 12h4l2-7 4 14 2-7h6" />
+    </svg>
+  );
+}
+
 function AdminIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -71,6 +79,7 @@ const LINKS = [
   { href: "/migrate", label: "Migrate", Icon: MigrateIcon },
   { href: "/reports", label: "Reports", Icon: ReportsIcon },
   { href: "/audit", label: "Data Audit", Icon: AuditIcon },
+  { href: "/health", label: "System Health", Icon: HealthIcon },
   { href: "/settings/instances", label: "Cin7 Instances", Icon: InstancesIcon },
 ];
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { fetchInvoicedSalesList, fetchSaleDetail } from "@/cin7/sales";
+import { fetchAllSalesList, fetchInvoicedSalesList, fetchSaleDetail } from "@/cin7/sales";
 import { cin7Request } from "@/cin7/http";
 
 vi.mock("@/cin7/http", async (importOriginal) => {
@@ -70,6 +70,27 @@ describe("fetchInvoicedSalesList", () => {
     await fetchInvoicedSalesList(creds);
     const [, , options] = vi.mocked(cin7Request).mock.calls[0];
     expect((options as { query: Record<string, unknown> }).query.UpdatedSince).toBeUndefined();
+  });
+});
+
+describe("fetchAllSalesList", () => {
+  it("returns every sale regardless of invoice status — unfiltered, unlike fetchInvoicedSalesList", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({
+      SaleList: [
+        { SaleID: "s1", CombinedInvoiceStatus: "NOT INVOICED", FulFilmentStatus: "NOT FULFILLED" },
+        { SaleID: "s2", CombinedInvoiceStatus: "INVOICED", FulFilmentStatus: "FULFILLED" },
+      ],
+    });
+    const all = await fetchAllSalesList(creds);
+    expect(all.map((s) => s.SaleID)).toEqual(["s1", "s2"]);
+  });
+
+  it("paginates until a short page", async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ SaleID: `sale-${i}` }));
+    const page2 = [{ SaleID: "sale-last" }];
+    vi.mocked(cin7Request).mockResolvedValueOnce({ SaleList: page1 }).mockResolvedValueOnce({ SaleList: page2 });
+    const all = await fetchAllSalesList(creds);
+    expect(all).toHaveLength(101);
   });
 });
 
