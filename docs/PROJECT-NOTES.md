@@ -38,6 +38,16 @@ prune/rewrite entries here rather than appending forever once something is fully
   pre-consumes link-based codes before the user clicks, so any future email-code auth on an M365
   tenant should go straight to OTP entry). `/admin` (gated by a `super_admins` table) lets Anton
   create orgs and invite users; no self-serve signup, no org ID ever shown to a client.
+- **System Health** (`/health`): live scorecard across 6 dimensions — Sales unfulfilled past
+  deadline (`FulFilmentStatus`/`ShipBy`), Purchases not received past deadline
+  (`CombinedReceivingStatus`/`RequiredBy`), Stock Transfers stuck in draft/ordered/in-transit,
+  Assemblies not completed, Production Orders due and behind (`RequiredByDate`, filtered to
+  `Type: "O"` to avoid double-counting routing sub-rows), and Product Data Health (reuses the Data
+  Audit's own findings, broken down by named check — duplicate categories/brands/UOMs/tags,
+  inconsistent attributes, missing Brand/pricing/inventory/GL — not one blended count). All 5
+  non-product checks needed brand-new Cin7 API research (`/purchaseList`, `/stockTransferList`,
+  `/finishedGoodsList`, `/production/orderList`) — see `src/health/system-health.ts` for the exact
+  live-verified field mapping. Same live-scan, read-only design as Data Audit.
 
 ## Standing rules (recurring bug classes — don't relitigate these)
 
@@ -85,6 +95,38 @@ Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas
 - **No privacy policy / DPA / subprocessor list** — needed before this can be pitched to
   third-party clients generally (POPIA since Spark is SA-based; GDPR too if a client's Cin7 data
   includes EU customers).
+
+## Scoped, not started (see Task tracking for current numbers)
+
+- **System Backup (backup-only, not restore)** — scoped 2026-07-06. Periodic, read-only snapshots
+  of live Cin7 data into this app's own Supabase DB, purely defensive ("in case there's ever a
+  problem" with the source instance) — explicitly NOT a restore/write-back feature, since Sales,
+  Purchases, Stock Transfers, Assemblies, and Production Orders have no push-to-Cin7 path in this
+  codebase today (only Products, Assembly BOM, Customers, Suppliers do) — building restore for the
+  other 5 would be a much larger, separate effort.
+  - **Scope**: full-fidelity snapshots (list + per-record detail call, e.g. `/sale?ID=` for
+    Invoices/Fulfilments/line items) — deliberately more thorough than `/health`'s list-only reads,
+    since a backup's whole value is fidelity. New tables: a `backup_runs` header row per snapshot
+    + `backup_records` (one row per record per run, raw JSONB — same "store the raw response, don't
+    lossily normalize" precedent as `import_rows.raw`).
+  - **Fetch design**: reuse the exact two-phase pattern already built for sales sync
+    (`src/sync/sync-sales.ts`) — cheap list scan first, then a rate-limited, resumable detail-fetch
+    phase — rather than reinventing the same "many detail calls behind Cin7's 60/min limit"
+    solution. Scheduled via a new `/api/backup` Vercel Cron endpoint, same bearer-secret auth
+    convention as `/api/sync`/`/api/sync-sales`.
+  - **Retention**: full snapshots (not incremental/delta — simpler to reason about "what did Cin7
+    look like on date X"), rolling window, e.g. last 30 daily runs kept then pruned. Adjustable.
+  - **Cost, checked 2026-07-06**: current DB is 18 MB for existing canonical data at this instance's
+    scale (~3,700 products, 560 sales). Full-fidelity JSONB snapshots would run larger per record;
+    rough estimate 50-150 MB per full snapshot at this scale, so ~1.5-4.5 GB for 30 retained daily
+    snapshots — still within Supabase Pro's included 8 GB (Pro is $25/mo base, 8 GB DB storage
+    included, then $0.125/GB/month — [supabase.com/pricing](https://supabase.com/pricing)). Real
+    cost driver would be much larger catalogs or multiple clients, not this instance today.
+  - **Explicitly deferred**: restore/write-back, incremental/delta storage, any UI beyond minimal
+    backup-run status visibility (no "browse backed-up records" UI planned yet).
+  - **Sharpens existing gaps**: storing meaningfully more sensitive client data at rest raises the
+    stakes on the two gaps already flagged just above (no RLS, no privacy policy/DPA) — treat that
+    hardening as a prerequisite once this moves from scoped to active, not an afterthought.
 
 ## Where to look next
 
