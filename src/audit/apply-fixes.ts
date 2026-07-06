@@ -71,6 +71,49 @@ export function mergeUOMNames(creds: Cin7Credentials, fromNames: string[], toNam
   return mergeFieldValue(creds, "UOM", fromNames, toName);
 }
 
+const ATTRIBUTE_SLOT_COUNT = 10;
+
+/**
+ * Copies a template product's filled-in AdditionalAttribute1-10 values onto
+ * a set of target products — but only into slots that are currently blank
+ * on each target, so an existing (possibly deliberately different) value on
+ * a target is never clobbered. Re-fetches live data, same reasoning as the
+ * other merge helpers: IDs/values from an earlier scan could be stale.
+ */
+export async function applyAttributeTemplate(
+  creds: Cin7Credentials,
+  templateProductId: string,
+  targetProductIds: string[]
+): Promise<ApplyFixesResult> {
+  const products = await fetchAllProductsWithBom(creds);
+  const template = products.find((p) => String(p.ID ?? "") === templateProductId);
+  if (!template) {
+    return { succeeded: 0, failed: targetProductIds.map((productId) => ({ productId, error: "Template product not found." })) };
+  }
+
+  const templateValues: Record<string, string> = {};
+  for (let slot = 1; slot <= ATTRIBUTE_SLOT_COUNT; slot++) {
+    const key = `AdditionalAttribute${slot}`;
+    const value = template[key];
+    if (typeof value === "string" && value.trim()) templateValues[key] = value;
+  }
+
+  const targetIdSet = new Set(targetProductIds);
+  const targets = products.filter((p) => targetIdSet.has(String(p.ID ?? "")));
+
+  const fixes: ProductFix[] = [];
+  for (const p of targets) {
+    const fields: Record<string, string> = {};
+    for (const [key, value] of Object.entries(templateValues)) {
+      const current = p[key];
+      if (typeof current !== "string" || !current.trim()) fields[key] = value;
+    }
+    if (Object.keys(fields).length > 0) fixes.push({ productId: String(p.ID ?? p.SKU ?? "?"), fields });
+  }
+
+  return applyProductFixes(creds, fixes);
+}
+
 /**
  * Same merge idea, but Tags is a comma-delimited multi-value field — a
  * product can carry several tags at once, so merging means rewriting each

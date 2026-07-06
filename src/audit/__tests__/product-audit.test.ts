@@ -7,6 +7,7 @@ import {
   findDuplicateCategories,
   findDuplicateUOMs,
   findDuplicateTags,
+  findAttributeGaps,
   runProductAudit,
 } from "@/audit/product-audit";
 
@@ -171,6 +172,57 @@ describe("findDuplicateTags", () => {
   });
 });
 
+describe("findAttributeGaps", () => {
+  it("flags a slot that's filled on most of a category's products but blank on one", () => {
+    const groups = findAttributeGaps([
+      product({ SKU: "A", ID: "id-a", Category: "T-Shirts", AdditionalAttribute1: "Small" }),
+      product({ SKU: "B", ID: "id-b", Category: "T-Shirts", AdditionalAttribute1: "Medium" }),
+      product({ SKU: "C", ID: "id-c", Category: "T-Shirts", AdditionalAttribute1: "" }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].category).toBe("T-Shirts");
+    expect(groups[0].slots).toEqual([1]);
+    expect(groups[0].products).toEqual([{ productId: "id-c", sku: "C", name: "Widget", missingSlots: [1] }]);
+    expect(groups[0].templates.map((t) => t.productId).sort()).toEqual(["id-a", "id-b"]);
+  });
+
+  it("does not flag a slot that's blank on most of the category — that's just an unused slot, not a gap", () => {
+    const groups = findAttributeGaps([
+      product({ Category: "Widgets", AdditionalAttribute1: "X" }),
+      product({ Category: "Widgets", AdditionalAttribute1: "" }),
+      product({ Category: "Widgets", AdditionalAttribute1: "" }),
+    ]);
+    expect(groups).toEqual([]);
+  });
+
+  it("does not flag a fully-consistent category, whether entirely filled or entirely blank", () => {
+    const groups = findAttributeGaps([
+      product({ Category: "Filled", AdditionalAttribute1: "X" }),
+      product({ Category: "Filled", AdditionalAttribute1: "Y" }),
+      product({ Category: "Blank", AdditionalAttribute1: "" }),
+      product({ Category: "Blank", AdditionalAttribute1: "" }),
+    ]);
+    expect(groups).toEqual([]);
+  });
+
+  it("skips products with no category — nothing to compare them against", () => {
+    expect(findAttributeGaps([product({ Category: "", AdditionalAttribute1: "" }), product({ Category: undefined })])).toEqual([]);
+  });
+
+  it("tracks multiple gappy slots independently within the same category", () => {
+    const groups = findAttributeGaps([
+      product({ SKU: "A", ID: "id-a", Category: "Widgets", AdditionalAttribute1: "X", AdditionalAttribute2: "Y" }),
+      product({ SKU: "B", ID: "id-b", Category: "Widgets", AdditionalAttribute1: "X", AdditionalAttribute2: "" }),
+      product({ SKU: "C", ID: "id-c", Category: "Widgets", AdditionalAttribute1: "", AdditionalAttribute2: "Y" }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].slots).toEqual([1, 2]);
+    expect(groups[0].products.find((p) => p.productId === "id-b")?.missingSlots).toEqual([2]);
+    expect(groups[0].products.find((p) => p.productId === "id-c")?.missingSlots).toEqual([1]);
+    expect(groups[0].templates).toEqual([{ productId: "id-a", sku: "A", name: "Widget" }]); // the only product with both gappy slots filled
+  });
+});
+
 describe("runProductAudit", () => {
   it("aggregates every check into one result", () => {
     const result = runProductAudit([
@@ -193,6 +245,16 @@ describe("runProductAudit", () => {
   it("tags each issue with the product's own category, so issues can be filtered by it", () => {
     const result = runProductAudit([product({ SKU: "A", Category: "Finished Products", Brand: "" })]);
     expect(result.issues[0].category).toBe("Finished Products");
+  });
+
+  it("includes attributeGaps alongside the duplicate checks", () => {
+    const result = runProductAudit([
+      product({ SKU: "A", Category: "Widgets", AdditionalAttribute1: "X" }),
+      product({ SKU: "B", Category: "Widgets", AdditionalAttribute1: "X" }),
+      product({ SKU: "C", Category: "Widgets", AdditionalAttribute1: "" }),
+    ]);
+    expect(result.attributeGaps).toHaveLength(1);
+    expect(result.attributeGaps[0].category).toBe("Widgets");
   });
 
   it("includes duplicateUOMs and duplicateTags alongside duplicateCategories", () => {

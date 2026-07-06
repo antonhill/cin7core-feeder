@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { applyProductFixes, mergeCategoryNames, mergeUOMNames, mergeTagNames } from "@/audit/apply-fixes";
+import { applyProductFixes, mergeCategoryNames, mergeUOMNames, mergeTagNames, applyAttributeTemplate } from "@/audit/apply-fixes";
 import { cin7Request } from "@/cin7/http";
 import { fetchAllProductsWithBom } from "@/cin7/products";
 
@@ -125,6 +125,44 @@ describe("mergeTagNames", () => {
     vi.mocked(fetchAllProductsWithBom).mockResolvedValueOnce([{ ID: "p1", SKU: "A", Tags: "fragile" }]);
     const result = await mergeTagNames(creds, ["GIFTSET"], "giftset");
     expect(result).toEqual({ succeeded: 0, failed: [] });
+    expect(cin7Request).not.toHaveBeenCalled();
+  });
+});
+
+describe("applyAttributeTemplate", () => {
+  it("copies only the template's filled slots, and only into slots that are blank on the target", async () => {
+    vi.mocked(fetchAllProductsWithBom).mockResolvedValueOnce([
+      { ID: "template", SKU: "T", AdditionalAttribute1: "Small", AdditionalAttribute2: "Red" },
+      { ID: "p1", SKU: "A", AdditionalAttribute1: "", AdditionalAttribute2: "Blue" }, // slot 2 already set — untouched
+    ]);
+    vi.mocked(cin7Request).mockResolvedValue({});
+
+    const result = await applyAttributeTemplate(creds, "template", ["p1"]);
+
+    expect(result.succeeded).toBe(1);
+    expect(cin7Request).toHaveBeenCalledWith(creds, "/Product", { method: "PUT", body: { ID: "p1", AdditionalAttribute1: "Small" } });
+  });
+
+  it("skips a target that's already fully filled for every slot the template has", async () => {
+    vi.mocked(fetchAllProductsWithBom).mockResolvedValueOnce([
+      { ID: "template", SKU: "T", AdditionalAttribute1: "Small" },
+      { ID: "p1", SKU: "A", AdditionalAttribute1: "Medium" },
+    ]);
+    const result = await applyAttributeTemplate(creds, "template", ["p1"]);
+    expect(result).toEqual({ succeeded: 0, failed: [] });
+    expect(cin7Request).not.toHaveBeenCalled();
+  });
+
+  it("fails every target with a clear error when the template product can't be found live", async () => {
+    vi.mocked(fetchAllProductsWithBom).mockResolvedValueOnce([{ ID: "p1", SKU: "A" }]);
+    const result = await applyAttributeTemplate(creds, "missing-template", ["p1", "p2"]);
+    expect(result).toEqual({
+      succeeded: 0,
+      failed: [
+        { productId: "p1", error: "Template product not found." },
+        { productId: "p2", error: "Template product not found." },
+      ],
+    });
     expect(cin7Request).not.toHaveBeenCalled();
   });
 });

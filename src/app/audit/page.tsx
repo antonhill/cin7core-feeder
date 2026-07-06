@@ -1,9 +1,23 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { runProductAuditAction, applyProductFixesAction, mergeCategoryAction, mergeUOMAction, mergeTagAction } from "./actions";
+import {
+  runProductAuditAction,
+  applyProductFixesAction,
+  mergeCategoryAction,
+  mergeUOMAction,
+  mergeTagAction,
+  applyAttributeTemplateAction,
+} from "./actions";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
-import type { DuplicateNameGroup, ProductAuditIssue, ProductAuditIssueType, ProductAuditResult, ProductSummary } from "@/audit/product-audit";
+import type {
+  AttributeGapGroup,
+  DuplicateNameGroup,
+  ProductAuditIssue,
+  ProductAuditIssueType,
+  ProductAuditResult,
+  ProductSummary,
+} from "@/audit/product-audit";
 import type { ApplyFixesResult } from "@/audit/apply-fixes";
 
 const FIXABLE_CONFIG: Partial<Record<ProductAuditIssueType, { label: string; field: string; placeholder: string }>> = {
@@ -143,6 +157,76 @@ function DuplicateGroupCard({
       >
         Merge the rest into &ldquo;{keep}&rdquo;
       </button>
+    </div>
+  );
+}
+
+function AttributeGapCard({
+  group,
+  onApply,
+  isApplying,
+}: {
+  group: AttributeGapGroup;
+  onApply: (templateProductId: string, targetProductIds: string[]) => void;
+  isApplying: boolean;
+}) {
+  const [templateId, setTemplateId] = useState(group.templates[0]?.productId ?? "");
+  const [selected, setSelected] = useState<Set<string>>(new Set(group.products.map((p) => p.productId)));
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  return (
+    <div className="rounded-lg border border-amber-200 bg-white p-3 text-sm">
+      <p className="font-medium text-amber-900">
+        {group.category} — slot{group.slots.length === 1 ? "" : "s"} {group.slots.join(", ")} look under-filled
+      </p>
+      <ul className="mt-2 flex flex-col gap-1.5">
+        {group.products.map((p) => (
+          <li key={p.productId} className="flex items-center gap-2 text-slate-800">
+            <input type="checkbox" checked={selected.has(p.productId)} onChange={() => toggle(p.productId)} className="h-4 w-4" />
+            {p.name}{" "}
+            <span className="text-xs text-slate-400">
+              ({p.sku}) — missing slot{p.missingSlots.length === 1 ? "" : "s"} {p.missingSlots.join(", ")}
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      {group.templates.length > 0 ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2 text-slate-700">
+            Copy from
+            <select
+              value={templateId}
+              onChange={(e) => setTemplateId(e.target.value)}
+              className="rounded-lg border border-slate-300 px-2 py-1 text-sm"
+            >
+              {group.templates.map((t) => (
+                <option key={t.productId} value={t.productId}>
+                  {t.name} ({t.sku})
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            disabled={isApplying || !templateId || selected.size === 0}
+            onClick={() => onApply(templateId, [...selected])}
+            className="rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+          >
+            Copy to {selected.size} selected
+          </button>
+        </div>
+      ) : (
+        <p className="mt-2 text-xs text-amber-700">No fully-filled example product in this category to copy from.</p>
+      )}
     </div>
   );
 }
@@ -341,6 +425,20 @@ export default function AuditPage() {
     });
   }
 
+  function handleApplyAttributeTemplate(templateProductId: string, targetProductIds: string[]) {
+    if (!instanceId) return;
+    setApplyError(null);
+    startApplyTransition(async () => {
+      const res = await applyAttributeTemplateAction(instanceId, templateProductId, targetProductIds);
+      if (!res.ok || !res.data) {
+        setApplyError(res.error ?? "Unknown error");
+        return;
+      }
+      setApplyResult(res.data);
+      handleScan(); // re-scan so the copied-into products drop out of the gap list
+    });
+  }
+
   // Category filter and search compose with AND logic: an issue or product
   // must match the selected category set (if any) AND the search substring
   // (if any) to be shown/selectable. Near-duplicate Category/UOM/Tag groups
@@ -360,14 +458,24 @@ export default function AuditPage() {
     (p) => (categoryFilter.length === 0 || categoryFilter.includes(p.category)) && matchesSearch(search, p.sku, p.name)
   );
 
+  // Attribute-gap groups are scoped to one category already, so the category
+  // filter applies at the group level; search narrows each group's own
+  // product list (a group with nothing left to search-match is dropped).
+  const filteredAttributeGaps = (result?.attributeGaps ?? [])
+    .filter((g) => categoryFilter.length === 0 || categoryFilter.includes(g.category))
+    .map((g) => ({ ...g, products: g.products.filter((p) => matchesSearch(search, p.sku, p.name)) }))
+    .filter((g) => g.products.length > 0);
+
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
       <h1 className="text-3xl font-bold tracking-tight text-slate-900">Data Audit</h1>
       <p className="mt-2 text-lg text-slate-500">
         Pulls every product live from a connected Cin7 instance and checks it for consistency and
         accuracy gaps — missing Brand, no sales price, incomplete inventory setup, missing Revenue/COGS
-        accounts, and near-duplicate categories, units of measure, and tags. Also lets you bulk-toggle
-        Sellable. Fixes you approve are written straight back to that instance. Products only, for now.
+        accounts, near-duplicate categories/units of measure/tags, and incomplete custom-attribute values
+        within a category (with a one-click copy from an existing well-filled-in product). Also lets you
+        bulk-toggle Sellable. Fixes you approve are written straight back to that instance. Products only,
+        for now.
       </p>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -473,7 +581,8 @@ export default function AuditPage() {
                 {categoryFilter.length > 0 && `Category: ${categoryFilter.map((c) => `"${c}"`).join(", ")}. `}
                 {search.trim() && `Search: "${search.trim()}". `}
                 Near-duplicate category/UOM/tag groups below are unaffected, since those checks compare
-                across the whole catalog.
+                across the whole catalog — attribute-completeness groups and the Sellable list do respect
+                these filters.
               </p>
             )}
           </div>
@@ -511,6 +620,24 @@ export default function AuditPage() {
             </div>
           )}
 
+          {filteredAttributeGaps.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <p className="font-medium text-amber-900">
+                Attribute completeness — {filteredAttributeGaps.length} categor{filteredAttributeGaps.length === 1 ? "y" : "ies"} with a gap
+              </p>
+              <div className="mt-3 flex flex-col gap-3">
+                {filteredAttributeGaps.map((group) => (
+                  <AttributeGapCard
+                    key={`${group.category}-${search}`}
+                    group={group}
+                    onApply={handleApplyAttributeTemplate}
+                    isApplying={isApplying}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
           {result.products.length > 0 && (
             <SellableSection products={filteredProducts} onApply={handleApplySellable} isApplying={isApplying} />
           )}
@@ -525,7 +652,11 @@ export default function AuditPage() {
             />
           ))}
 
-          {filteredIssues.length === 0 && result.duplicateCategories.length === 0 && result.duplicateUOMs.length === 0 && result.duplicateTags.length === 0 && (
+          {filteredIssues.length === 0 &&
+            filteredAttributeGaps.length === 0 &&
+            result.duplicateCategories.length === 0 &&
+            result.duplicateUOMs.length === 0 &&
+            result.duplicateTags.length === 0 && (
             <p className="text-base text-slate-500">
               {categoryFilter.length > 0 || search.trim()
                 ? "No issues found for the current filter."

@@ -10,6 +10,7 @@ import {
   mergeCategoryNames,
   mergeUOMNames,
   mergeTagNames,
+  applyAttributeTemplate,
   type ApplyFixesResult,
   type ProductFix,
 } from "@/audit/apply-fixes";
@@ -93,6 +94,24 @@ export async function mergeTagAction(
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     return { ok: true, data: await mergeTagNames(creds, fromNames, toName) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+export async function applyAttributeTemplateAction(
+  instanceId: string,
+  templateProductId: string,
+  targetProductIds: string[]
+): Promise<AuditActionResult<ApplyFixesResult>> {
+  if (!instanceId) return { ok: false, error: "Choose an instance." };
+  if (!templateProductId) return { ok: false, error: "Choose a product to copy attribute values from." };
+  if (!targetProductIds.length) return { ok: false, error: "Nothing to apply." };
+  try {
+    const { orgId } = await requireCurrentOrg();
+    const db = createServiceRoleClient();
+    const creds = await loadCin7Credentials(db, orgId, instanceId);
+    return { ok: true, data: await applyAttributeTemplate(creds, templateProductId, targetProductIds) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

@@ -45,11 +45,27 @@ export interface ProductSummary {
   sellable: boolean;
 }
 
+/**
+ * Within one category, one or more of Cin7's 10 generic "AdditionalAttribute"
+ * slots looks like it should be filled in (most products in the category
+ * have it) but isn't on some products — a completeness gap, not a spelling
+ * variant. `templates` are the products in this category with every flagged
+ * slot already filled — good candidates to copy attribute values *from*.
+ */
+export interface AttributeGapGroup {
+  category: string;
+  /** Which of the 10 AdditionalAttribute slots (1-10) look under-filled in this category. */
+  slots: number[];
+  products: { productId: string; sku: string; name: string; missingSlots: number[] }[];
+  templates: { productId: string; sku: string; name: string }[];
+}
+
 export interface ProductAuditResult {
   issues: ProductAuditIssue[];
   duplicateCategories: DuplicateNameGroup[];
   duplicateUOMs: DuplicateNameGroup[];
   duplicateTags: DuplicateNameGroup[];
+  attributeGaps: AttributeGapGroup[];
   /** Every distinct category seen across the whole catalog (not just ones with issues) — e.g. so "Finished Products" still appears as a filter option even if it currently has zero issues. */
   categories: string[];
   products: ProductSummary[];
@@ -239,6 +255,66 @@ export function findDuplicateTags(products: RawProduct[]): DuplicateNameGroup[] 
   return buildDuplicateGroups(countByName);
 }
 
+const ATTRIBUTE_SLOT_COUNT = 10;
+
+/**
+ * Within each category, if a given AdditionalAttribute slot is filled in on
+ * most products, the ones where it's blank are probably a data-entry gap
+ * rather than "doesn't apply here" — e.g. every other product in "T-Shirts"
+ * has AdditionalAttribute1 set to a size, but a few are blank. Products with
+ * no Category are skipped entirely — there's nothing to compare them
+ * against. A slot only counts as gappy when it's filled on a strict majority
+ * of the category's products AND blank on at least one — a category that's
+ * entirely blank on a slot just doesn't use it, and a lone filled-in product
+ * (e.g. 1 of 5) is more likely the outlier than the norm.
+ */
+export function findAttributeGaps(products: RawProduct[]): AttributeGapGroup[] {
+  const byCategory = new Map<string, RawProduct[]>();
+  for (const p of products) {
+    const category = p.Category?.trim();
+    if (!category) continue;
+    const list = byCategory.get(category) ?? [];
+    list.push(p);
+    byCategory.set(category, list);
+  }
+
+  const groups: AttributeGapGroup[] = [];
+  for (const [category, categoryProducts] of byCategory) {
+    const gappySlots: number[] = [];
+    for (let slot = 1; slot <= ATTRIBUTE_SLOT_COUNT; slot++) {
+      const key = `AdditionalAttribute${slot}`;
+      let filled = 0;
+      let blank = 0;
+      for (const p of categoryProducts) {
+        const value = p[key];
+        if (typeof value === "string" && value.trim()) filled++;
+        else blank++;
+      }
+      if (filled > blank && blank > 0) gappySlots.push(slot);
+    }
+    if (gappySlots.length === 0) continue;
+
+    const gapProducts: AttributeGapGroup["products"] = [];
+    const templates: AttributeGapGroup["templates"] = [];
+    for (const p of categoryProducts) {
+      const missingSlots = gappySlots.filter((slot) => {
+        const value = p[`AdditionalAttribute${slot}`];
+        return !(typeof value === "string" && value.trim());
+      });
+      const { productId, sku, name } = productRef(p);
+      if (missingSlots.length > 0) {
+        gapProducts.push({ productId, sku, name, missingSlots });
+      } else {
+        templates.push({ productId, sku, name });
+      }
+    }
+
+    groups.push({ category, slots: gappySlots, products: gapProducts, templates });
+  }
+
+  return groups.sort((a, b) => a.category.localeCompare(b.category));
+}
+
 export function runProductAudit(products: RawProduct[]): ProductAuditResult {
   const categories = [...new Set(products.map((p) => p.Category?.trim()).filter((c): c is string => Boolean(c)))].sort();
 
@@ -252,6 +328,7 @@ export function runProductAudit(products: RawProduct[]): ProductAuditResult {
     duplicateCategories: findDuplicateCategories(products),
     duplicateUOMs: findDuplicateUOMs(products),
     duplicateTags: findDuplicateTags(products),
+    attributeGaps: findAttributeGaps(products),
     categories,
     products: products.map((p) => ({ ...productRef(p), sellable: Boolean(p.Sellable) })),
   };
