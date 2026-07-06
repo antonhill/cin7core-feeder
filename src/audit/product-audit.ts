@@ -63,6 +63,7 @@ export interface AttributeGapGroup {
 export interface ProductAuditResult {
   issues: ProductAuditIssue[];
   duplicateCategories: DuplicateNameGroup[];
+  duplicateBrands: DuplicateNameGroup[];
   duplicateUOMs: DuplicateNameGroup[];
   duplicateTags: DuplicateNameGroup[];
   attributeGaps: AttributeGapGroup[];
@@ -226,6 +227,17 @@ export function findDuplicateCategories(products: RawProduct[]): DuplicateNameGr
   return buildDuplicateGroups(countByName);
 }
 
+/** Same idea as findDuplicateCategories, for Brand — e.g. "Acme"/"ACME"/"Acme " coexisting as separate values across the catalog. */
+export function findDuplicateBrands(products: RawProduct[]): DuplicateNameGroup[] {
+  const countByName = new Map<string, number>();
+  for (const p of products) {
+    const brand = p.Brand;
+    if (!brand || !brand.trim()) continue;
+    countByName.set(brand, (countByName.get(brand) ?? 0) + 1);
+  }
+  return buildDuplicateGroups(countByName);
+}
+
 /** Same idea as findDuplicateCategories, for DefaultUnitOfMeasure — e.g. "Item"/"item"/"Items" coexisting as separate values across the catalog. */
 export function findDuplicateUOMs(products: RawProduct[]): DuplicateNameGroup[] {
   const countByName = new Map<string, number>();
@@ -326,6 +338,7 @@ export function runProductAudit(products: RawProduct[]): ProductAuditResult {
       ...findMissingGLAccounts(products),
     ],
     duplicateCategories: findDuplicateCategories(products),
+    duplicateBrands: findDuplicateBrands(products),
     duplicateUOMs: findDuplicateUOMs(products),
     duplicateTags: findDuplicateTags(products),
     attributeGaps: findAttributeGaps(products),

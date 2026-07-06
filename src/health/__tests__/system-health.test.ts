@@ -12,7 +12,16 @@ import type { ProductAuditResult } from "@/audit/product-audit";
 const NOW = new Date("2026-07-06T00:00:00Z");
 
 function emptyAudit(): ProductAuditResult {
-  return { issues: [], duplicateCategories: [], duplicateUOMs: [], duplicateTags: [], attributeGaps: [], categories: [], products: [] };
+  return {
+    issues: [],
+    duplicateCategories: [],
+    duplicateBrands: [],
+    duplicateUOMs: [],
+    duplicateTags: [],
+    attributeGaps: [],
+    categories: [],
+    products: [],
+  };
 }
 
 describe("findOverdueSales", () => {
@@ -82,6 +91,11 @@ describe("findStuckTransfers", () => {
     expect(result.map((t) => t.taskId)).toEqual(["t1", "t2", "t3"]);
   });
 
+  it("carries LastModifiedOn through as the reference date — Cin7 exposes no true 'created' date on this endpoint", () => {
+    const result = findStuckTransfers([{ TaskID: "t1", Status: "DRAFT", LastModifiedOn: "2026-06-20T11:17:08.23Z" }]);
+    expect(result[0].lastModifiedOn).toBe("2026-06-20T11:17:08.23Z");
+  });
+
   it("does not flag COMPLETED or VOIDED", () => {
     const result = findStuckTransfers([
       { TaskID: "t1", Status: "COMPLETED" },
@@ -99,6 +113,11 @@ describe("findIncompleteAssemblies", () => {
       { TaskID: "f3", Status: "IN PROGRESS" },
     ]);
     expect(result).toHaveLength(3);
+  });
+
+  it("carries the build/start Date through — often blank on a fresh DRAFT that hasn't started yet", () => {
+    const result = findIncompleteAssemblies([{ TaskID: "f1", Status: "IN PROGRESS", Date: "2024-06-10T00:00:00" }]);
+    expect(result[0].date).toBe("2024-06-10T00:00:00");
   });
 
   it("does not flag COMPLETED or VOIDED", () => {
@@ -175,6 +194,48 @@ describe("runSystemHealth", () => {
     );
     expect(result.productData.flaggedCount).toBe(1); // one distinct product, not two issues
     expect(result.productData.totalScanned).toBe(2);
+  });
+
+  it("breaks product data health down into named checks mirroring the Data Audit tab, not a flat product list", () => {
+    const productAudit: ProductAuditResult = {
+      ...emptyAudit(),
+      issues: [
+        { type: "missing_brand", productId: "p1", sku: "A", name: "A", category: "" },
+        { type: "missing_revenue_account", productId: "p2", sku: "B", name: "B", category: "" },
+        { type: "missing_cogs_account", productId: "p2", sku: "B", name: "B", category: "" },
+      ],
+      duplicateCategories: [{ names: [{ name: "Widgets", productCount: 2 }, { name: "Widgets ", productCount: 1 }] }],
+      duplicateBrands: [{ names: [{ name: "Acme", productCount: 2 }, { name: "acme", productCount: 1 }] }],
+      products: [
+        { productId: "p1", sku: "A", name: "A", category: "", sellable: true },
+        { productId: "p2", sku: "B", name: "B", category: "", sellable: true },
+      ],
+    };
+    const result = runSystemHealth(
+      { sales: [], purchases: [], transfers: [], finishedGoods: [], productionOrders: [], productAudit },
+      NOW
+    );
+    expect(result.productData.items).toEqual([
+      { label: "Missing Brand", count: 1, unit: "products" },
+      { label: "Missing GL account mappings (Revenue/COGS)", count: 2, unit: "products" },
+      { label: "Duplicate categories", count: 1, unit: "groups" },
+      { label: "Duplicate brands", count: 1, unit: "groups" },
+    ]);
+  });
+
+  it("omits zero-count checks from the product data breakdown entirely, rather than listing every check at 0", () => {
+    const result = runSystemHealth(
+      {
+        sales: [],
+        purchases: [],
+        transfers: [],
+        finishedGoods: [],
+        productionOrders: [],
+        productAudit: { ...emptyAudit(), products: [{ productId: "p1", sku: "A", name: "A", category: "", sellable: true }] },
+      },
+      NOW
+    );
+    expect(result.productData.items).toEqual([]);
   });
 
   it("returns a green tone and 100 overall score when every dimension is clean", () => {

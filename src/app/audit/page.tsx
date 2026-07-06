@@ -5,6 +5,7 @@ import {
   runProductAuditAction,
   applyProductFixesAction,
   mergeCategoryAction,
+  mergeBrandAction,
   mergeUOMAction,
   mergeTagAction,
   applyAttributeTemplateAction,
@@ -418,6 +419,20 @@ export default function AuditPage() {
     });
   }
 
+  function handleMergeBrand(fromNames: string[], toName: string) {
+    if (!instanceId) return;
+    setApplyError(null);
+    startApplyTransition(async () => {
+      const res = await mergeBrandAction(instanceId, fromNames, toName);
+      if (!res.ok || !res.data) {
+        setApplyError(res.error ?? "Unknown error");
+        return;
+      }
+      setApplyResult(res.data);
+      handleScan(); // re-scan so the merged group drops out of the list
+    });
+  }
+
   function handleMergeUOM(fromNames: string[], toName: string) {
     if (!instanceId) return;
     setApplyError(null);
@@ -506,7 +521,7 @@ export default function AuditPage() {
       <p className="mt-2 text-lg text-slate-500">
         Pulls every product live from a connected Cin7 instance and checks it for consistency and
         accuracy gaps — missing Brand, no sales price, incomplete inventory setup, missing Revenue/COGS
-        accounts, near-duplicate categories/units of measure/tags, and incomplete custom-attribute values
+        accounts, near-duplicate categories/brands/units of measure/tags, and incomplete custom-attribute values
         within a category (with a one-click copy from an existing well-filled-in product). Also lets you
         bulk-toggle Sellable. Fixes you approve are written straight back to that instance. Products only,
         for now.
@@ -632,6 +647,17 @@ export default function AuditPage() {
             </div>
           )}
 
+          {result.duplicateBrands.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <p className="font-medium text-amber-900">Near-duplicate brands — {result.duplicateBrands.length} group{result.duplicateBrands.length === 1 ? "" : "s"}</p>
+              <div className="mt-3 flex flex-col gap-3">
+                {result.duplicateBrands.map((group, i) => (
+                  <DuplicateGroupCard key={i} group={group} onMerge={handleMergeBrand} isApplying={isApplying} />
+                ))}
+              </div>
+            </div>
+          )}
+
           {result.duplicateUOMs.length > 0 && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
               <p className="font-medium text-amber-900">Near-duplicate units of measure — {result.duplicateUOMs.length} group{result.duplicateUOMs.length === 1 ? "" : "s"}</p>
@@ -678,6 +704,7 @@ export default function AuditPage() {
           {filteredIssues.length === 0 &&
             filteredAttributeGaps.length === 0 &&
             result.duplicateCategories.length === 0 &&
+            result.duplicateBrands.length === 0 &&
             result.duplicateUOMs.length === 0 &&
             result.duplicateTags.length === 0 && (
             <p className="text-base text-slate-500">

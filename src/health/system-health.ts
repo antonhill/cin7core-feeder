@@ -48,6 +48,8 @@ export interface StuckTransfer {
   status: string;
   fromLocation: string;
   toLocation: string;
+  /** Not a true "created" timestamp — Cin7 doesn't expose one on this list endpoint, only last-modified. */
+  lastModifiedOn: string;
 }
 
 export interface IncompleteAssembly {
@@ -55,6 +57,14 @@ export interface IncompleteAssembly {
   assemblyNumber: string;
   productName: string;
   status: string;
+  /** The build/start date — often blank on a fresh DRAFT that hasn't been started yet (confirmed live). Not a deadline field. */
+  date: string;
+}
+
+export interface ProductDataBreakdownItem {
+  label: string;
+  count: number;
+  unit: "products" | "groups";
 }
 
 export interface BehindProductionOrder {
@@ -71,7 +81,7 @@ export interface SystemHealthResult {
   transfers: DimensionResult<StuckTransfer>;
   assemblies: DimensionResult<IncompleteAssembly>;
   productionOrders: DimensionResult<BehindProductionOrder>;
-  productData: DimensionResult<{ productId: string; sku: string; name: string }>;
+  productData: DimensionResult<ProductDataBreakdownItem>;
   overallScore: number;
 }
 
@@ -122,6 +132,7 @@ export function findStuckTransfers(transfers: Cin7StockTransferListEntry[]): Stu
       status: t.Status ?? "",
       fromLocation: t.FromLocation ?? "",
       toLocation: t.ToLocation ?? "",
+      lastModifiedOn: t.LastModifiedOn ?? "",
     }));
 }
 
@@ -136,6 +147,7 @@ export function findIncompleteAssemblies(finishedGoods: Cin7FinishedGoodsListEnt
       assemblyNumber: f.AssemblyNumber ?? "",
       productName: f.ProductName ?? "",
       status: f.Status ?? "",
+      date: f.Date ?? "",
     }));
 }
 
@@ -160,21 +172,52 @@ export function findBehindProductionOrders(orders: Cin7ProductionOrderListEntry[
     }));
 }
 
-/** Reuses the existing Data Audit's findings — counts distinct products with at least one issue against the full scanned roster. */
-function scoreProductData(auditResult: ProductAuditResult): { flagged: { productId: string; sku: string; name: string }[]; total: number } {
-  const flaggedIds = new Set(auditResult.issues.map((i) => i.productId));
-  const flagged = auditResult.products.filter((p) => flaggedIds.has(p.productId)).map((p) => ({ productId: p.productId, sku: p.sku, name: p.name }));
-  return { flagged, total: auditResult.products.length };
+/**
+ * Reuses the existing Data Audit's findings and breaks them down by the same
+ * named checks the /audit page itself surfaces (Anton: "so basically what
+ * the audit tab gives but just scoring it overall") — rather than a single
+ * blended "products affected" count, which wasn't specific enough to act on.
+ * Zero-count rows are dropped so a clean catalog shows an empty breakdown.
+ * `flaggedProducts` (distinct products with ≥1 issue) still drives the
+ * overall tone/score, matching how every other dimension is scored.
+ */
+function scoreProductData(auditResult: ProductAuditResult): { breakdown: ProductDataBreakdownItem[]; flaggedProducts: number; total: number } {
+  const countByType = new Map<string, number>();
+  for (const issue of auditResult.issues) {
+    countByType.set(issue.type, (countByType.get(issue.type) ?? 0) + 1);
+  }
+
+  const missingInventorySetup =
+    (countByType.get("missing_location") ?? 0) + (countByType.get("missing_uom") ?? 0) + (countByType.get("missing_inventory_account") ?? 0);
+  const missingGLAccounts = (countByType.get("missing_revenue_account") ?? 0) + (countByType.get("missing_cogs_account") ?? 0);
+
+  const breakdown: ProductDataBreakdownItem[] = (
+    [
+      { label: "Missing Brand", count: countByType.get("missing_brand") ?? 0, unit: "products" },
+      { label: "Missing sales pricing", count: countByType.get("missing_sales_pricing") ?? 0, unit: "products" },
+      { label: "Missing inventory setup (Location/UOM/Account)", count: missingInventorySetup, unit: "products" },
+      { label: "Missing GL account mappings (Revenue/COGS)", count: missingGLAccounts, unit: "products" },
+      { label: "Duplicate categories", count: auditResult.duplicateCategories.length, unit: "groups" },
+      { label: "Duplicate brands", count: auditResult.duplicateBrands.length, unit: "groups" },
+      { label: "Duplicate units of measure", count: auditResult.duplicateUOMs.length, unit: "groups" },
+      { label: "Duplicate tags", count: auditResult.duplicateTags.length, unit: "groups" },
+      { label: "Inconsistent attributes", count: auditResult.attributeGaps.length, unit: "groups" },
+    ] satisfies ProductDataBreakdownItem[]
+  ).filter((item) => item.count > 0);
+
+  const flaggedProducts = new Set(auditResult.issues.map((i) => i.productId)).size;
+  return { breakdown, flaggedProducts, total: auditResult.products.length };
 }
 
 /**
  * Severity heuristic — green when nothing's flagged, red once flagged items
  * exceed 15% of what was scanned, amber in between. A simple, adjustable
  * rule (no configured threshold requested); total=0 always yields green,
- * no divide-by-zero.
+ * no divide-by-zero. `flaggedCount` is passed explicitly rather than derived
+ * from `items.length` — Product Data Health's `items` is a named breakdown
+ * (up to 9 rows), not one row per affected product.
  */
-function toDimension<T>(key: string, label: string, items: T[], totalScanned: number): DimensionResult<T> {
-  const flaggedCount = items.length;
+function toDimension<T>(key: string, label: string, items: T[], flaggedCount: number, totalScanned: number): DimensionResult<T> {
   const percentFlagged = totalScanned > 0 ? flaggedCount / totalScanned : 0;
   const tone: HealthTone = flaggedCount === 0 ? "green" : percentFlagged <= 0.15 ? "amber" : "red";
   return { key, label, flaggedCount, totalScanned, tone, items };
@@ -190,28 +233,41 @@ export interface SystemHealthInput {
 }
 
 export function runSystemHealth(input: SystemHealthInput, now: Date = new Date()): SystemHealthResult {
-  const sales = toDimension("sales", "Sales unfulfilled past deadline", findOverdueSales(input.sales, now), input.sales.length);
+  const overdueSales = findOverdueSales(input.sales, now);
+  const sales = toDimension("sales", "Sales unfulfilled past deadline", overdueSales, overdueSales.length, input.sales.length);
+
+  const overduePurchases = findOverduePurchases(input.purchases, now);
   const purchases = toDimension(
     "purchases",
     "Purchases not received past deadline",
-    findOverduePurchases(input.purchases, now),
+    overduePurchases,
+    overduePurchases.length,
     input.purchases.length
   );
-  const transfers = toDimension("transfers", "Transfers stuck", findStuckTransfers(input.transfers), input.transfers.length);
+
+  const stuckTransfers = findStuckTransfers(input.transfers);
+  const transfers = toDimension("transfers", "Transfers stuck", stuckTransfers, stuckTransfers.length, input.transfers.length);
+
+  const incompleteAssemblies = findIncompleteAssemblies(input.finishedGoods);
   const assemblies = toDimension(
     "assemblies",
     "Assemblies not completed",
-    findIncompleteAssemblies(input.finishedGoods),
+    incompleteAssemblies,
+    incompleteAssemblies.length,
     input.finishedGoods.length
   );
+
+  const behindProductionOrders = findBehindProductionOrders(input.productionOrders, now);
   const productionOrders = toDimension(
     "productionOrders",
     "Production Orders due and behind",
-    findBehindProductionOrders(input.productionOrders, now),
+    behindProductionOrders,
+    behindProductionOrders.length,
     input.productionOrders.filter((o) => o.Type === "O").length
   );
-  const { flagged: productDataFlagged, total: productDataTotal } = scoreProductData(input.productAudit);
-  const productData = toDimension("productData", "Product data health", productDataFlagged, productDataTotal);
+
+  const { breakdown, flaggedProducts, total: productDataTotal } = scoreProductData(input.productAudit);
+  const productData = toDimension("productData", "Product data health", breakdown, flaggedProducts, productDataTotal);
 
   const dimensions = [sales, purchases, transfers, assemblies, productionOrders, productData];
   const averagePercentFlagged =

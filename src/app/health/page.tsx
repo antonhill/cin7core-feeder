@@ -17,13 +17,23 @@ function scoreTone(score: number): HealthTone {
   return "red";
 }
 
+/** Shows just the date portion of an ISO timestamp; blank input (no deadline/reference date set) stays blank rather than showing "Invalid Date" or "1970-01-01". */
+function dateOnly(value: string): string {
+  return value ? value.slice(0, 10) : "—";
+}
+
+interface Column<T> {
+  header: string;
+  render: (item: T) => React.ReactNode;
+}
+
 function DimensionCard<T>({
   dimension,
-  renderItem,
+  columns,
   footer,
 }: {
   dimension: DimensionResult<T>;
-  renderItem: (item: T) => React.ReactNode;
+  columns: Column<T>[];
   footer?: React.ReactNode;
 }) {
   const tone = TONE_STYLES[dimension.tone];
@@ -37,11 +47,30 @@ function DimensionCard<T>({
       </summary>
 
       {dimension.items.length > 0 ? (
-        <ul className="mt-3 flex flex-col gap-1.5 text-sm text-slate-700">
-          {dimension.items.map((item, i) => (
-            <li key={i}>{renderItem(item)}</li>
-          ))}
-        </ul>
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-left text-sm text-slate-700">
+            <thead>
+              <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
+                {columns.map((col) => (
+                  <th key={col.header} className="py-1.5 pr-4 font-medium">
+                    {col.header}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {dimension.items.map((item, i) => (
+                <tr key={i} className="border-b border-slate-100 last:border-0">
+                  {columns.map((col) => (
+                    <td key={col.header} className="py-1.5 pr-4 align-top">
+                      {col.render(item)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : (
         <p className="mt-2 text-sm text-slate-500">Nothing flagged.</p>
       )}
@@ -150,56 +179,58 @@ export default function SystemHealthPage() {
       )}
 
       {result && (
-        <section className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <section className="mt-6 flex flex-col gap-4">
           <DimensionCard
             dimension={result.sales}
-            renderItem={(s) => (
-              <>
-                {s.orderNumber} — {s.customer} <span className="text-xs text-slate-500">({s.fulfilmentStatus}, due {s.shipBy.slice(0, 10)})</span>
-              </>
-            )}
+            columns={[
+              { header: "Order #", render: (s) => s.orderNumber },
+              { header: "Customer", render: (s) => s.customer },
+              { header: "Fulfilment", render: (s) => s.fulfilmentStatus },
+              { header: "Ship by", render: (s) => dateOnly(s.shipBy) },
+            ]}
           />
           <DimensionCard
             dimension={result.purchases}
-            renderItem={(p) => (
-              <>
-                {p.orderNumber} — {p.supplier}{" "}
-                <span className="text-xs text-slate-500">({p.receivingStatus}, due {p.requiredBy.slice(0, 10)})</span>
-              </>
-            )}
+            columns={[
+              { header: "Order #", render: (p) => p.orderNumber },
+              { header: "Supplier", render: (p) => p.supplier },
+              { header: "Receiving status", render: (p) => p.receivingStatus },
+              { header: "Required by", render: (p) => dateOnly(p.requiredBy) },
+            ]}
           />
           <DimensionCard
             dimension={result.transfers}
-            renderItem={(t) => (
-              <>
-                {t.number} — {t.fromLocation} → {t.toLocation} <span className="text-xs text-slate-500">({t.status})</span>
-              </>
-            )}
+            columns={[
+              { header: "Number", render: (t) => t.number },
+              { header: "From → To", render: (t) => `${t.fromLocation} → ${t.toLocation}` },
+              { header: "Status", render: (t) => t.status },
+              { header: "Last modified", render: (t) => dateOnly(t.lastModifiedOn) },
+            ]}
           />
           <DimensionCard
             dimension={result.assemblies}
-            renderItem={(a) => (
-              <>
-                {a.assemblyNumber} — {a.productName} <span className="text-xs text-slate-500">({a.status})</span>
-              </>
-            )}
+            columns={[
+              { header: "Assembly #", render: (a) => a.assemblyNumber },
+              { header: "Product", render: (a) => a.productName },
+              { header: "Status", render: (a) => a.status },
+              { header: "Assembly date", render: (a) => dateOnly(a.date) },
+            ]}
           />
           <DimensionCard
             dimension={result.productionOrders}
-            renderItem={(o) => (
-              <>
-                {o.orderNumber} — {o.productName}{" "}
-                <span className="text-xs text-slate-500">({o.status}, due {o.requiredByDate.slice(0, 10)})</span>
-              </>
-            )}
+            columns={[
+              { header: "Order #", render: (o) => o.orderNumber },
+              { header: "Product", render: (o) => o.productName },
+              { header: "Status", render: (o) => o.status },
+              { header: "Required by", render: (o) => dateOnly(o.requiredByDate) },
+            ]}
           />
           <DimensionCard
             dimension={result.productData}
-            renderItem={(p) => (
-              <>
-                {p.name} <span className="text-xs text-slate-500">({p.sku})</span>
-              </>
-            )}
+            columns={[
+              { header: "Check", render: (i) => i.label },
+              { header: "Count", render: (i) => `${i.count} ${i.unit}` },
+            ]}
             footer={
               <a href="/audit" className="text-sm font-medium text-indigo-600 hover:underline">
                 Open Data Audit for full details →

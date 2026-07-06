@@ -18,6 +18,8 @@ export interface Cin7StockTransferListEntry {
   ToLocation?: string;
   DepartureDate?: string | null;
   CompletionDate?: string | null;
+  /** The closest available reference date on this list endpoint — Cin7 doesn't expose a true "created" timestamp here, only this last-modified one. */
+  LastModifiedOn?: string | null;
 }
 
 /** Fetches every stock transfer on the account. Paginates until a short page signals the end, same pattern as fetchAllSalesList. */

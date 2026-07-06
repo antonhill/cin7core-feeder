@@ -71,6 +71,10 @@ export function mergeUOMNames(creds: Cin7Credentials, fromNames: string[], toNam
   return mergeFieldValue(creds, "UOM", fromNames, toName);
 }
 
+export function mergeBrandNames(creds: Cin7Credentials, fromNames: string[], toName: string): Promise<ApplyFixesResult> {
+  return mergeFieldValue(creds, "Brand", fromNames, toName);
+}
+
 const ATTRIBUTE_SLOT_COUNT = 10;
 
 /**

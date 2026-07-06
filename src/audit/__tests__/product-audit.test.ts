@@ -5,6 +5,7 @@ import {
   findInventoryGaps,
   findMissingGLAccounts,
   findDuplicateCategories,
+  findDuplicateBrands,
   findDuplicateUOMs,
   findDuplicateTags,
   findAttributeGaps,
@@ -125,6 +126,24 @@ describe("findDuplicateCategories", () => {
 
   it("ignores blank categories", () => {
     expect(findDuplicateCategories([product({ Category: "" }), product({ Category: undefined })])).toEqual([]);
+  });
+});
+
+describe("findDuplicateBrands", () => {
+  it("groups a casing variant as a duplicate, same rule as categories", () => {
+    const groups = findDuplicateBrands([product({ Brand: "Acme" }), product({ Brand: "acme" }), product({ Brand: "Acme" })]);
+    expect(groups).toEqual([
+      {
+        names: expect.arrayContaining([
+          { name: "Acme", productCount: 2 },
+          { name: "acme", productCount: 1 },
+        ]),
+      },
+    ]);
+  });
+
+  it("ignores blank brands", () => {
+    expect(findDuplicateBrands([product({ Brand: "" }), product({ Brand: undefined })])).toEqual([]);
   });
 });
 
@@ -257,11 +276,12 @@ describe("runProductAudit", () => {
     expect(result.attributeGaps[0].category).toBe("Widgets");
   });
 
-  it("includes duplicateUOMs and duplicateTags alongside duplicateCategories", () => {
+  it("includes duplicateBrands, duplicateUOMs and duplicateTags alongside duplicateCategories", () => {
     const result = runProductAudit([
-      product({ SKU: "A", UOM: "Item", Tags: "giftset" }),
-      product({ SKU: "B", UOM: "item", Tags: "GIFTSET" }),
+      product({ SKU: "A", Brand: "Acme", UOM: "Item", Tags: "giftset" }),
+      product({ SKU: "B", Brand: "acme", UOM: "item", Tags: "GIFTSET" }),
     ]);
+    expect(result.duplicateBrands).toHaveLength(1);
     expect(result.duplicateUOMs).toHaveLength(1);
     expect(result.duplicateTags).toHaveLength(1);
   });

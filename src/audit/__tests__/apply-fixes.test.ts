@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { applyProductFixes, mergeCategoryNames, mergeUOMNames, mergeTagNames, applyAttributeTemplate } from "@/audit/apply-fixes";
+import { applyProductFixes, mergeCategoryNames, mergeUOMNames, mergeBrandNames, mergeTagNames, applyAttributeTemplate } from "@/audit/apply-fixes";
 import { cin7Request } from "@/cin7/http";
 import { fetchAllProductsWithBom } from "@/cin7/products";
 
@@ -94,6 +94,24 @@ describe("mergeUOMNames", () => {
     expect(result.succeeded).toBe(1);
     expect(cin7Request).toHaveBeenCalledTimes(1);
     expect(cin7Request).toHaveBeenCalledWith(creds, "/Product", { method: "PUT", body: { ID: "p2", UOM: "Item" } });
+  });
+});
+
+describe("mergeBrandNames", () => {
+  it("re-tags only products currently under one of the from-names, skipping ones already on the target name", async () => {
+    vi.mocked(fetchAllProductsWithBom).mockResolvedValueOnce([
+      { ID: "p1", SKU: "A", Brand: "Acme" },
+      { ID: "p2", SKU: "B", Brand: "acme" },
+      { ID: "p3", SKU: "C", Brand: "Acme" }, // already the target — no fix needed
+      { ID: "p4", SKU: "D", Brand: "Other" }, // unrelated value — untouched
+    ]);
+    vi.mocked(cin7Request).mockResolvedValue({});
+
+    const result = await mergeBrandNames(creds, ["acme"], "Acme");
+
+    expect(result.succeeded).toBe(1);
+    expect(cin7Request).toHaveBeenCalledTimes(1);
+    expect(cin7Request).toHaveBeenCalledWith(creds, "/Product", { method: "PUT", body: { ID: "p2", Brand: "Acme" } });
   });
 });
 
