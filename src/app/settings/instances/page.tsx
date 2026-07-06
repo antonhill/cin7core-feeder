@@ -17,6 +17,8 @@ import {
   upsertInstance,
   type InstanceRecord,
 } from "./actions";
+import { ModuleHeader } from "@/app/ModuleHeader";
+import { INSTANCES_MODULE } from "@/app/module-nav";
 
 const DEFAULT_BASE_URL = "https://inventory.dearsystems.com/ExternalApi/v2";
 
@@ -168,14 +170,11 @@ export default function InstancesSettingsPage() {
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-12">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Cin7 Core Instances</h1>
-          <p className="mt-1 text-base text-slate-500">Connect and manage the Cin7 Core instances your org syncs to.</p>
-        </div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <ModuleHeader module={INSTANCES_MODULE}>Connect and manage the Cin7 Core instances your org syncs to.</ModuleHeader>
         <button
           onClick={() => setModalTarget("new")}
-          className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500"
+          className="shrink-0 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500"
         >
           + Add instance
         </button>

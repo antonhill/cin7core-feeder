@@ -3,6 +3,8 @@
 import { useState, useTransition } from "react";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import { downloadLiveTemplateAction, downloadTemplateAction } from "./actions";
+import { ModuleHeader } from "@/app/ModuleHeader";
+import { TEMPLATES_MODULE } from "@/app/module-nav";
 
 type Kind = "products" | "assembly_bom" | "suppliers" | "supplier_addresses" | "customers" | "customer_addresses";
 type Source = "canonical" | "live";
@@ -68,10 +70,9 @@ export default function TemplatesPage() {
 
   return (
     <main className="mx-auto max-w-2xl px-6 py-12">
-      <h1 className="text-3xl font-bold tracking-tight text-slate-900">Templates</h1>
-      <p className="mt-2 text-lg text-slate-500">
+      <ModuleHeader module={TEMPLATES_MODULE}>
         Download a CSV to edit and reimport, in the same column format Cin7 Core itself uses.
-      </p>
+      </ModuleHeader>
 
       <div className="mt-10 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="grid grid-cols-2 gap-3">

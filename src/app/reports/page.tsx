@@ -13,6 +13,8 @@ import {
 import type { ReportFilterOptions, ProductSalesReportRow, SaleLineDetailRow, SalesSyncStatus } from "@/reports/query";
 import type { SalesReportFilters } from "@/reports/query";
 import { buildPivotGrid, METRIC_COLUMNS, type PivotCellValues, type PivotGroupBy, type PivotSourceRow } from "@/reports/pivot";
+import { ModuleHeader } from "@/app/ModuleHeader";
+import { REPORTS_MODULE } from "@/app/module-nav";
 import { buildFlatReportSheet, buildPivotSheet } from "@/reports/export-xlsx";
 
 type GroupBySelection = "none" | PivotGroupBy;
@@ -258,11 +260,10 @@ export default function ReportsPage() {
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-12">
-      <h1 className="text-3xl font-bold tracking-tight text-slate-900">Sales Report</h1>
-      <p className="mt-2 text-lg text-slate-500">
+      <ModuleHeader module={REPORTS_MODULE}>
         Revenue, COGS, profit and margin% per product sold, across every invoiced sale pulled from
         your connected Cin7 instances.
-      </p>
+      </ModuleHeader>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">

@@ -7,6 +7,8 @@ import { listInstancesForPicker, type InstancePickerItem } from "@/actions/insta
 import type { InstanceSyncOutcome } from "@/sync/sync-org";
 import type { PullInstanceResult } from "@/migrate/pull-instance";
 import type { ImportKind } from "@/import/run-import";
+import { ModuleHeader } from "@/app/ModuleHeader";
+import { MIGRATE_MODULE } from "@/app/module-nav";
 
 const KIND_LABELS: Record<string, string> = {
   products: "Products",
@@ -108,11 +110,10 @@ export default function MigratePage() {
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-12">
-      <h1 className="text-3xl font-bold tracking-tight text-slate-900">Instance Migrator</h1>
-      <p className="mt-2 text-lg text-slate-500">
+      <ModuleHeader module={MIGRATE_MODULE}>
         Pull every Product, Assembly BOM, Customer, and Supplier live from one connected instance,
         then push the pulled data into another.
-      </p>
+      </ModuleHeader>
 
       <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
         Pulling overwrites the org&apos;s canonical data for any product SKU or customer/supplier

@@ -11,6 +11,8 @@ import {
 import type { ImportKind } from "@/import/run-import";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import type { InstanceSyncOutcome } from "@/sync/sync-org";
+import { ModuleHeader } from "@/app/ModuleHeader";
+import { IMPORT_MODULE } from "@/app/module-nav";
 
 const INITIAL_STATE: ImportActionState = { status: "idle" };
 
@@ -154,10 +156,7 @@ export default function ImportPage() {
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-12">
-      <h1 className="text-3xl font-bold tracking-tight text-slate-900">Import &amp; Sync</h1>
-      <p className="mt-2 text-lg text-slate-500">
-        Import a CSV, choose where it goes, then push it to Cin7 Core.
-      </p>
+      <ModuleHeader module={IMPORT_MODULE}>Import a CSV, choose where it goes, then push it to Cin7 Core.</ModuleHeader>
 
       <div className="mt-10 flex flex-col gap-6">
         {/* Step 1 — Import */}

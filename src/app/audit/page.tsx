@@ -20,6 +20,8 @@ import type {
   ProductSummary,
 } from "@/audit/product-audit";
 import type { ApplyFixesResult } from "@/audit/apply-fixes";
+import { ModuleHeader } from "@/app/ModuleHeader";
+import { AUDIT_MODULE } from "@/app/module-nav";
 
 const FIXABLE_CONFIG: Partial<Record<ProductAuditIssueType, { label: string; field: string; placeholder: string }>> = {
   missing_brand: { label: "Missing Brand", field: "Brand", placeholder: "e.g. Acme" },
@@ -517,15 +519,14 @@ export default function AuditPage() {
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
-      <h1 className="text-3xl font-bold tracking-tight text-slate-900">Data Audit</h1>
-      <p className="mt-2 text-lg text-slate-500">
+      <ModuleHeader module={AUDIT_MODULE}>
         Pulls every product live from a connected Cin7 instance and checks it for consistency and
         accuracy gaps — missing Brand, no sales price, incomplete inventory setup, missing Revenue/COGS
         accounts, near-duplicate categories/brands/units of measure/tags, and incomplete custom-attribute values
         within a category (with a one-click copy from an existing well-filled-in product). Also lets you
         bulk-toggle Sellable. Fixes you approve are written straight back to that instance. Products only,
         for now.
-      </p>
+      </ModuleHeader>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <p className="font-medium text-slate-900">Instance</p>

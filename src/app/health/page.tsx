@@ -4,6 +4,8 @@ import { useState, useTransition } from "react";
 import { runSystemHealthAction } from "./actions";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import type { DimensionResult, HealthTone, SystemHealthResult } from "@/health/system-health";
+import { ModuleHeader } from "@/app/ModuleHeader";
+import { HEALTH_MODULE } from "@/app/module-nav";
 
 const TONE_STYLES: Record<HealthTone, { card: string; badge: string; label: string }> = {
   green: { card: "border-emerald-200 bg-emerald-50", badge: "bg-emerald-100 text-emerald-800", label: "Healthy" },
@@ -120,11 +122,10 @@ export default function SystemHealthPage() {
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
-      <h1 className="text-3xl font-bold tracking-tight text-slate-900">System Health</h1>
-      <p className="mt-2 text-lg text-slate-500">
+      <ModuleHeader module={HEALTH_MODULE}>
         Scans a connected Cin7 instance across Sales, Purchases, Stock Transfers, Assemblies, Production Orders, and
         product data quality, and scores each one — plus one overall health score. Read-only; nothing is written back.
-      </p>
+      </ModuleHeader>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <p className="font-medium text-slate-900">Instance</p>
