@@ -6,6 +6,12 @@ Import product/BOM data once via CSV, keep multiple Cin7 Core instances (and, la
 
 Built for Casa das Natas (see `docs/`), designed to be reused across clients — org-scoped from the start.
 
+## Project notes
+
+See `docs/PROJECT-NOTES.md` for the current feature inventory, standing rules for recurring bug
+classes, and known gaps — read this before starting work in a new session, especially on a
+different machine (Claude Code's own session memory is per-device and doesn't travel with the repo).
+
 ## Stack
 
 Next.js (App Router) + TypeScript on Vercel, Supabase (Postgres) for the canonical store, Vercel Cron for scheduled sync.
