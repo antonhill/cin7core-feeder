@@ -8,7 +8,7 @@ import { createServiceRoleClient } from "@/supabase/server";
 // middleware uses NextRequest's own cookie API instead.
 const IMPERSONATED_ORG_COOKIE = "impersonated_org_id";
 
-const PUBLIC_PATHS = ["/login", "/auth/callback", "/privacy"];
+const PUBLIC_PATHS = ["/login", "/auth/callback", "/privacy", "/signup"];
 
 /**
  * Refreshes the Supabase session cookie on every request (required — the

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   runProductAuditAction,
   applyProductFixesAction,
@@ -13,6 +13,7 @@ import {
   applyPartyFixesAction,
 } from "./actions";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
+import { getBillingStatusAction } from "@/actions/billing";
 import type {
   AttributeGapGroup,
   DuplicateNameGroup,
@@ -492,6 +493,18 @@ export default function AuditPage() {
   const [applyResult, setApplyResult] = useState<ApplyFixesResult | null>(null);
   const [applyError, setApplyError] = useState<string | null>(null);
 
+  // Optimistic default (true) so buttons aren't disabled during the brief
+  // window before this resolves — same convention as /import and /migrate.
+  const [canWrite, setCanWrite] = useState(true);
+  const [, startBillingTransition] = useTransition();
+  useEffect(() => {
+    startBillingTransition(async () => {
+      const res = await getBillingStatusAction();
+      if (res.ok && res.data) setCanWrite(res.data.canWrite);
+    });
+  }, []);
+  const writeDisabled = isApplying || !canWrite;
+
   const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
   const [search, setSearch] = useState("");
 
@@ -807,6 +820,12 @@ export default function AuditPage() {
         )}
       </section>
 
+      {!canWrite && (
+        <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Available on a paid plan — this trial is read-only, so scanning works but fixes/merges below are disabled.
+        </p>
+      )}
+
       {scope === "products" && applyResult && (
         <section className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
           <p className="font-medium text-emerald-900">{applyResult.succeeded} product{applyResult.succeeded === 1 ? "" : "s"} fixed</p>
@@ -902,7 +921,7 @@ export default function AuditPage() {
               <p className="font-medium text-amber-900">Near-duplicate categories — {result.duplicateCategories.length} group{result.duplicateCategories.length === 1 ? "" : "s"}</p>
               <div className="mt-3 flex flex-col gap-3">
                 {result.duplicateCategories.map((group, i) => (
-                  <DuplicateGroupCard key={i} group={group} onMerge={handleMergeCategory} isApplying={isApplying} />
+                  <DuplicateGroupCard key={i} group={group} onMerge={handleMergeCategory} isApplying={writeDisabled} />
                 ))}
               </div>
             </div>
@@ -913,7 +932,7 @@ export default function AuditPage() {
               <p className="font-medium text-amber-900">Near-duplicate brands — {result.duplicateBrands.length} group{result.duplicateBrands.length === 1 ? "" : "s"}</p>
               <div className="mt-3 flex flex-col gap-3">
                 {result.duplicateBrands.map((group, i) => (
-                  <DuplicateGroupCard key={i} group={group} onMerge={handleMergeBrand} isApplying={isApplying} />
+                  <DuplicateGroupCard key={i} group={group} onMerge={handleMergeBrand} isApplying={writeDisabled} />
                 ))}
               </div>
             </div>
@@ -924,7 +943,7 @@ export default function AuditPage() {
               <p className="font-medium text-amber-900">Near-duplicate units of measure — {result.duplicateUOMs.length} group{result.duplicateUOMs.length === 1 ? "" : "s"}</p>
               <div className="mt-3 flex flex-col gap-3">
                 {result.duplicateUOMs.map((group, i) => (
-                  <DuplicateGroupCard key={i} group={group} onMerge={handleMergeUOM} isApplying={isApplying} />
+                  <DuplicateGroupCard key={i} group={group} onMerge={handleMergeUOM} isApplying={writeDisabled} />
                 ))}
               </div>
             </div>
@@ -935,7 +954,7 @@ export default function AuditPage() {
               <p className="font-medium text-amber-900">Near-duplicate tags — {result.duplicateTags.length} group{result.duplicateTags.length === 1 ? "" : "s"}</p>
               <div className="mt-3 flex flex-col gap-3">
                 {result.duplicateTags.map((group, i) => (
-                  <DuplicateGroupCard key={i} group={group} onMerge={handleMergeTag} isApplying={isApplying} />
+                  <DuplicateGroupCard key={i} group={group} onMerge={handleMergeTag} isApplying={writeDisabled} />
                 ))}
               </div>
             </div>
@@ -948,18 +967,18 @@ export default function AuditPage() {
               </p>
               <div className="mt-3 flex flex-col gap-3">
                 {filteredAttributeGaps.map((group) => (
-                  <AttributeGapCard key={group.category} group={group} onApply={handleApplyAttributeTemplate} isApplying={isApplying} />
+                  <AttributeGapCard key={group.category} group={group} onApply={handleApplyAttributeTemplate} isApplying={writeDisabled} />
                 ))}
               </div>
             </div>
           )}
 
           {result.products.length > 0 && (
-            <SellableSection products={filteredProducts} onApply={handleApplySellable} isApplying={isApplying} />
+            <SellableSection products={filteredProducts} onApply={handleApplySellable} isApplying={writeDisabled} />
           )}
 
           {ISSUE_ORDER.filter((type) => issuesByType.has(type)).map((type) => (
-            <IssueTypeSection key={type} type={type} issues={issuesByType.get(type)!} onApply={handleApply} isApplying={isApplying} />
+            <IssueTypeSection key={type} type={type} issues={issuesByType.get(type)!} onApply={handleApply} isApplying={writeDisabled} />
           ))}
 
           {filteredIssues.length === 0 &&
@@ -997,7 +1016,7 @@ export default function AuditPage() {
               kind={scope === "customers" ? "customer" : "supplier"}
               issues={partyIssuesByType.get(type)!}
               onApply={handlePartyApply}
-              isApplying={isApplying}
+              isApplying={writeDisabled}
             />
           ))}
 

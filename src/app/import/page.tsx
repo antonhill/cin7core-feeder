@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState, useTransition } from "react";
+import { useActionState, useEffect, useState, useTransition } from "react";
 import {
   importCsvAction,
   pushToCin7Action,
@@ -10,6 +10,7 @@ import {
 } from "./actions";
 import type { ImportKind } from "@/import/run-import";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
+import { getBillingStatusAction } from "@/actions/billing";
 import type { InstanceSyncOutcome } from "@/sync/sync-org";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { IMPORT_MODULE } from "@/app/module-nav";
@@ -113,6 +114,18 @@ export default function ImportPage() {
   // render itself (React's "adjust state when a prop changes" pattern), not
   // in an effect, to avoid an extra render pass.
   const [lastScopedBatchId, setLastScopedBatchId] = useState<string | null>(null);
+
+  // Optimistic default (true) so the button isn't disabled during the brief
+  // window before this resolves — matches this codebase's existing
+  // fetch-once-on-mount convention (see OrgSwitcher.tsx).
+  const [canWrite, setCanWrite] = useState(true);
+  const [, startBillingTransition] = useTransition();
+  useEffect(() => {
+    startBillingTransition(async () => {
+      const res = await getBillingStatusAction();
+      if (res.ok && res.data) setCanWrite(res.data.canWrite);
+    });
+  }, []);
 
   if (state.status === "success" && state.result?.committed && state.result.batchId !== lastScopedBatchId) {
     setLastScopedBatchId(state.result.batchId);
@@ -356,13 +369,18 @@ export default function ImportPage() {
             <button
               type="button"
               onClick={handlePush}
-              disabled={isPushPending || selectedIds.length === 0}
+              disabled={isPushPending || selectedIds.length === 0 || !canWrite}
               className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
             >
               {isPushPending
                 ? "Pushing…"
                 : `Push to ${selectedIds.length || ""} instance${selectedIds.length === 1 ? "" : "s"}`}
             </button>
+            {!canWrite && (
+              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                Available on a paid plan — this trial is read-only.
+              </p>
+            )}
 
             {pushError && (
               <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">

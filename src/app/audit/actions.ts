@@ -2,6 +2,7 @@
 
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireCurrentOrg } from "@/lib/current-org";
+import { requireWriteAllowed } from "@/lib/billing";
 import { logActivity } from "@/lib/activity-log";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsWithBom } from "@/cin7/products";
@@ -51,6 +52,7 @@ export async function applyProductFixesAction(instanceId: string, fixes: Product
   if (!fixes.length) return { ok: false, error: "Nothing to apply." };
   try {
     const { orgId, userId, email } = await requireCurrentOrg();
+    await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const result = await applyProductFixes(creds, fixes);
@@ -84,6 +86,7 @@ async function mergeAction(
   if (!toName.trim()) return { ok: false, error: `Choose which ${fieldLabel} to keep.` };
   try {
     const { orgId, userId, email } = await requireCurrentOrg();
+    await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const result = await merge(creds, fromNames, toName);
@@ -133,6 +136,7 @@ export async function applyAttributeTemplateAction(
   if (!targetProductIds.length) return { ok: false, error: "Nothing to apply." };
   try {
     const { orgId, userId, email } = await requireCurrentOrg();
+    await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const result = await applyAttributeTemplate(creds, templateProductId, targetProductIds);
@@ -175,6 +179,7 @@ export async function applyPartyFixesAction(
   if (!fixes.length) return { ok: false, error: "Nothing to apply." };
   try {
     const { orgId, userId, email } = await requireCurrentOrg();
+    await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const result = await applyPartyFixes(creds, kind, fixes);

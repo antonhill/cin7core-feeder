@@ -39,7 +39,14 @@ export function AppNav({
 }) {
   const pathname = usePathname();
 
-  if (pathname.startsWith("/login") || pathname.startsWith("/auth") || pathname.startsWith("/mfa-challenge") || pathname.startsWith("/privacy")) return null;
+  if (
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/signup") ||
+    pathname.startsWith("/auth") ||
+    pathname.startsWith("/mfa-challenge") ||
+    pathname.startsWith("/privacy")
+  )
+    return null;
 
   // Admin isn't an org-toggleable module — it's a cross-org super-admin tool, not something a client org's own visibility settings apply to.
   const visibleModules = MODULES.filter((m) => !disabledModules.includes(m.href));

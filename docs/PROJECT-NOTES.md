@@ -86,7 +86,56 @@ prune/rewrite entries here rather than appending forever once something is fully
 - **Auth**: Supabase Auth via a typed 6-digit OTP code (not magic links — M365's Safe Links
   pre-consumes link-based codes before the user clicks, so any future email-code auth on an M365
   tenant should go straight to OTP entry). `/admin` (gated by a `super_admins` table) lets Anton
-  create orgs and invite users; no self-serve signup, no org ID ever shown to a client.
+  create orgs and invite users — that invite-only path still exists unchanged, alongside the new
+  self-serve signup below.
+- **Self-serve signup + 7-day trial, 2026-07-07 (Phases 1–2 only — no payment provider yet).**
+  `/signup` (public) is the same 2-step OTP UI as `/login` plus an org-name field, but **creates the
+  org only after OTP verification succeeds**, not before — creating it first would let an attacker
+  flood `organizations` with rows tied to unverified emails, each starting a real trial clock for
+  free. `createSelfServeOrgAction` (`src/app/signup/actions.ts`) is a new, separate action from
+  `admin/actions.ts`'s `createOrgAndInvite` (which stays super-admin-gated, invites *someone else*)
+  — this one is self-initiated by an already-verified user creating their own org.
+
+  Schema (migration `0023_billing_and_trials.sql`, applied live): `organizations` gains
+  `subscription_status` (enum: `trialing`/`active`/`past_due`/`canceled`), `trial_ends_at` (defaults
+  to `now() + 7 days`), `max_instances` (defaults to 1), and **provider-agnostic**
+  `billing_provider`/`billing_customer_id`/`billing_subscription_id` (deliberately no
+  `paystack_`/`stripe_` prefix — Paystack vs Lemon Squeezy vs other is not decided yet; whichever is
+  chosen later populates these without a schema rework). **The migration backfilled every
+  already-existing org (Casa das Natas, Spark Demo Test) to `active`/unlimited instances** — without
+  that, the new column defaults would have "expired" every real client the moment the migration
+  applied. Confirmed correct via `execute_sql` immediately after applying.
+
+  Feature gating (`src/lib/billing.ts` — `getBillingStatus`/`requireWriteAllowed`, both org-scoped,
+  no shared state with `requireCurrentOrg()` on purpose so read-only actions never have to opt out
+  of anything): **write-back-to-Cin7 actions are blocked for the entire trial**, not just once
+  `trial_ends_at` passes — `pushToCin7Action` (`src/app/import/actions.ts`, also what `/migrate`'s
+  push step calls) and all 7 of `src/app/audit/actions.ts`'s write actions (`applyProductFixesAction`,
+  the 4 merge actions, `applyAttributeTemplateAction`, `applyPartyFixesAction`) now call
+  `requireWriteAllowed(orgId)` right after `requireCurrentOrg()`. `past_due`/`canceled` reuse the
+  same gate as trial — a lapsed subscription degrades to the same read-only state, regardless of
+  which provider eventually reports the lapse. Read-only actions (audit/health scans, Reports,
+  Templates, Activity Log) are untouched. Instance cap enforced in
+  `settings/instances/actions.ts`'s `upsertInstance` insert branch (count vs. `max_instances`).
+
+  UI: `getCurrentUserInfo()` gained two scalar fields (`subscriptionStatus`/`trialEndsAt`, not a
+  nested object, to minimize churn on this widely-called function) so `layout.tsx` can show a
+  persistent amber trial banner ("Trial — N days left..."). `/import`, `/migrate`, `/audit` each
+  fetch billing status once via a new `getBillingStatusAction()` (`src/actions/billing.ts`) and
+  disable their write buttons + show an inline "Available on a paid plan" note — `/audit`
+  specifically has 8 separate write-button call sites (all already shared one `isApplying` prop, so
+  gating became `isApplying={isApplying || !canWrite}` at each site rather than threading a new prop
+  through every sub-component).
+
+  **Deliberately not built**: any payment provider integration, the `/pricing` marketing page (needs
+  real copy/price, which need the provider decision first), abuse prevention for the fully-public
+  `/signup` (rate limiting, disposable-email blocking — flagged as a real risk, not solved),
+  trial-expiry automation (a stale trial just stays `trialing`, blocked from writes, indefinitely —
+  fine for v1), and the `docs/legal/subprocessors.md` update (needs a real provider chosen first).
+  **Open item, not verifiable in this environment**: whether `signInWithOtp` on a genuinely
+  brand-new email implicitly creates the `auth.users` row before OTP verification, depending on this
+  Supabase project's Authentication → Providers → Email settings — check against the real project
+  before relying on the verify-then-create ordering being airtight.
 - **Org switcher, 2026-07-07**: a super-admin can view/act as **any** org, not just ones they're an
   explicit `org_members` row for — Anton's explicit ask ("access any organisation as the master
   user"), confirmed via `AskUserQuestion` over the alternative (member-only switching). Selection

@@ -20,12 +20,20 @@ export const metadata: Metadata = {
   description: "Do amazing things that you cannot do in Cin7 Core",
 };
 
+/** Outside the component body — Date.now() is an impure call the react-hooks/purity rule flags if made directly during render. */
+function daysUntil(dateIso: string): number {
+  return Math.max(0, Math.ceil((new Date(dateIso).getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+}
+
 export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const { email, isSuperAdmin, orgId, orgName, orgLogoUrl, isImpersonating, disabledModules } = await getCurrentUserInfo();
+  const { email, isSuperAdmin, orgId, orgName, orgLogoUrl, isImpersonating, disabledModules, subscriptionStatus, trialEndsAt } =
+    await getCurrentUserInfo();
+
+  const trialDaysLeft = subscriptionStatus === "trialing" && trialEndsAt ? daysUntil(trialEndsAt) : null;
 
   return (
     <html
@@ -50,6 +58,11 @@ export default async function RootLayout({
                   Exit
                 </button>
               </form>
+            </div>
+          )}
+          {trialDaysLeft !== null && (
+            <div className="bg-amber-100 px-4 py-2 text-center text-sm font-medium text-amber-900">
+              Trial — {trialDaysLeft} day{trialDaysLeft === 1 ? "" : "s"} left. Connect 1 instance, read-only until you subscribe.
             </div>
           )}
           {children}

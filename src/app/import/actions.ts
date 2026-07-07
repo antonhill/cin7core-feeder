@@ -6,6 +6,7 @@ import { syncOrgInstances, type InstanceSyncOutcome } from "@/sync/sync-org";
 import type { PushScope } from "@/sync/run-sync";
 import { getLastImportKeys } from "@/import/last-batch";
 import { requireCurrentOrg } from "@/lib/current-org";
+import { requireWriteAllowed } from "@/lib/billing";
 
 export interface ImportActionState {
   status: "idle" | "error" | "success";
@@ -92,6 +93,7 @@ export async function pushToCin7Action(
 
   try {
     const { orgId, userId, email } = await requireCurrentOrg();
+    await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
 
     const scope: PushScope = {};

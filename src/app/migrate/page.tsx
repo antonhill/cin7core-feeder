@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { pullInstanceDataAction } from "./actions";
 import { pushToCin7Action, type PushScopeSelection } from "@/app/import/actions";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
+import { getBillingStatusAction } from "@/actions/billing";
 import type { InstanceSyncOutcome } from "@/sync/sync-org";
 import type { PullInstanceResult } from "@/migrate/pull-instance";
 import type { ImportKind } from "@/import/run-import";
@@ -65,6 +66,17 @@ export default function MigratePage() {
   const [pushOutcomes, setPushOutcomes] = useState<InstanceSyncOutcome[] | null>(null);
   const [pushError, setPushError] = useState<string | null>(null);
   const [isPushPending, startPushTransition] = useTransition();
+
+  // Optimistic default (true) so the button isn't disabled during the brief
+  // window before this resolves — same convention as /import.
+  const [canWrite, setCanWrite] = useState(true);
+  const [, startBillingTransition] = useTransition();
+  useEffect(() => {
+    startBillingTransition(async () => {
+      const res = await getBillingStatusAction();
+      if (res.ok && res.data) setCanWrite(res.data.canWrite);
+    });
+  }, []);
 
   function handleLoadInstances() {
     setInstancesError(null);
@@ -253,11 +265,16 @@ export default function MigratePage() {
             <button
               type="button"
               onClick={handlePush}
-              disabled={isPushPending || targetIds.length === 0 || !pullResult?.ok}
+              disabled={isPushPending || targetIds.length === 0 || !pullResult?.ok || !canWrite}
               className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
             >
               {isPushPending ? "Pushing…" : `Push to ${targetIds.length || ""} instance${targetIds.length === 1 ? "" : "s"}`}
             </button>
+            {!canWrite && (
+              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                Available on a paid plan — this trial is read-only.
+              </p>
+            )}
 
             {pushError && (
               <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">

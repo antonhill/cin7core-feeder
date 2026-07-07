@@ -7,6 +7,7 @@ import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExampl
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
+import { getBillingStatus } from "@/lib/billing";
 
 export interface InstanceRecord {
   id: string;
@@ -103,6 +104,20 @@ export async function upsertInstance(params: {
         .eq("org_id", orgId);
       if (error) return { ok: false, error: error.message };
     } else {
+      const [{ count }, billing] = await Promise.all([
+        db.from("cin7_instances").select("id", { count: "exact", head: true }).eq("org_id", orgId),
+        getBillingStatus(orgId),
+      ]);
+      if ((count ?? 0) >= billing.maxInstances) {
+        return {
+          ok: false,
+          error:
+            billing.maxInstances === 1
+              ? "Your trial allows 1 connected instance — subscribe to connect another."
+              : `Your plan allows ${billing.maxInstances} connected instances.`,
+        };
+      }
+
       const { error } = await db.from("cin7_instances").insert({
         org_id: orgId,
         name: params.name.trim(),
