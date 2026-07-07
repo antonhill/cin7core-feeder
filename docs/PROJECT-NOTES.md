@@ -52,7 +52,23 @@ prune/rewrite entries here rather than appending forever once something is fully
     real example checked, though only against a `Quantity: 1` record, so the multiplication is the
     conventional reading, not independently verified against `Quantity > 1` — revisit if that ever
     looks wrong on real data. The page shows quantity + total cost per row plus a summed total
-    across the current filter.
+    across the current filter. **Per-assembly component detail added 2026-07-07**: clicking a row
+    expands it (on-demand `fetchFinishedGoodsDetail`/`/finishedgoods?TaskID=` call, only for that
+    one row — not fetched eagerly for the whole list, to avoid an N+1 rate-limit cost) showing two
+    tables — **Components (planned)**, from `OrderLines[]` (sums to the *estimated* cost), and
+    **Actual consumption**, from `PickLines[]` (`Quantity * Cost` per line sums to the *actual*
+    cost) — these two totals can genuinely differ if wastage or substitution happened during the
+    real build. **Resources/additional costs (labor, overhead) are NOT shown — not confirmed to
+    exist on this resource at all.** Product's Assembly BOM *definition* has a parallel
+    `BillOfMaterialsServices[]` (assembly-bom.ts), but whether a *built* assembly's own detail
+    response carries a matching services/resources array is unconfirmed — the one live example
+    checked had no services attached to its BOM, and Cin7 appears to omit empty arrays rather than
+    send them empty, so absence there doesn't prove absence generally. Added a new diagnostic,
+    `surveyFinishedGoodsFields` (`src/cin7/debug.ts`, "Survey Assembly fields (resources/services?)"
+    button on `/settings/instances`) — scans several assemblies across different products and
+    reports the union of every field seen, specifically to catch a services/resources key that only
+    shows up on some records. The UI's detail panel says this limitation out loud rather than
+    silently omitting it.
 - **Data Audit** (`/audit`): pulls a chosen instance's products live and flags missing
   Brand/sales-pricing/inventory-setup/GL-accounts, near-duplicate Category/UOM/Tag values
   (Levenshtein-based), incomplete `AdditionalAttribute1-10` values within a category (with a

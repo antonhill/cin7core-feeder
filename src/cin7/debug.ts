@@ -362,3 +362,84 @@ export async function findFinishedGoodsExample(creds: Cin7Credentials): Promise<
 
   return { listRecord, listKeys, detail, detailError };
 }
+
+export interface FinishedGoodsFieldSurvey {
+  recordsScanned: number;
+  detailsFetched: number;
+  detailFetchErrors: { taskId: string; error: string }[];
+  listKeys: string[];
+  detailKeys: string[];
+  /** One non-empty example value per detail key seen, so a newly-discovered key's real shape is visible without a second round trip. */
+  detailKeyExamples: Record<string, unknown>;
+}
+
+/**
+ * Diagnostic only: Anton asked for components + resources/additional costs
+ * per assembly, with an actual/estimated total. `OrderLines`/`PickLines` are
+ * confirmed (see Cin7FinishedGoodsDetail in finished-goods.ts), but whether a
+ * built assembly's detail response ever carries a services/resources/labor
+ * array (parallel to Product BOM's confirmed `BillOfMaterialsServices[]`) is
+ * NOT confirmed — the one example checked so far had no services attached,
+ * and Cin7 appears to omit empty arrays rather than send them empty, so
+ * absence there doesn't prove absence generally. Scans several list records
+ * and fetches detail for a handful of them (prioritizing different products,
+ * since different BOMs are more likely to expose a field only some records
+ * carry), then reports the UNION of every key seen — if a services/resources
+ * field exists on ANY scanned assembly, it'll show up here even though it
+ * didn't on the single-record diagnostic.
+ */
+export async function surveyFinishedGoodsFields(
+  creds: Cin7Credentials,
+  maxRecords = 25,
+  maxDetails = 6
+): Promise<FinishedGoodsFieldSurvey> {
+  const listRes = await cin7Request<{ FinishedGoods?: Record<string, unknown>[] }>(creds, "/finishedGoodsList", {
+    query: { Page: 1, Limit: maxRecords },
+  });
+  const records = listRes.FinishedGoods ?? [];
+
+  const listKeySet = new Set<string>();
+  for (const record of records) {
+    for (const key of Object.keys(record)) listKeySet.add(key);
+  }
+
+  // Prefer records for distinct products — a services/resources line is a
+  // property of that product's BOM, so different products are more likely to
+  // surface a field a single product's assemblies never would.
+  const seenProducts = new Set<string>();
+  const toFetch: Record<string, unknown>[] = [];
+  for (const record of records) {
+    const productCode = String(record.ProductCode ?? record.TaskID ?? "");
+    if (seenProducts.has(productCode)) continue;
+    seenProducts.add(productCode);
+    toFetch.push(record);
+    if (toFetch.length >= maxDetails) break;
+  }
+
+  const detailKeySet = new Set<string>();
+  const detailKeyExamples: Record<string, unknown> = {};
+  const detailFetchErrors: { taskId: string; error: string }[] = [];
+  for (const record of toFetch) {
+    const taskId = String(record.TaskID ?? "");
+    if (!taskId) continue;
+    try {
+      const detail = await cin7Request<Record<string, unknown>>(creds, "/finishedgoods", { query: { TaskID: taskId } });
+      for (const [key, value] of Object.entries(detail)) {
+        detailKeySet.add(key);
+        const isEmpty = value === null || value === undefined || (Array.isArray(value) && value.length === 0);
+        if (!isEmpty && detailKeyExamples[key] === undefined) detailKeyExamples[key] = value;
+      }
+    } catch (e) {
+      detailFetchErrors.push({ taskId, error: e instanceof Error ? e.message : "Unknown error" });
+    }
+  }
+
+  return {
+    recordsScanned: records.length,
+    detailsFetched: toFetch.length,
+    detailFetchErrors,
+    listKeys: [...listKeySet].sort(),
+    detailKeys: [...detailKeySet].sort(),
+    detailKeyExamples,
+  };
+}

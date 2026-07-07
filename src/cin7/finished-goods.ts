@@ -54,3 +54,66 @@ export async function fetchAllFinishedGoodsList(creds: Cin7Credentials): Promise
   }
   return all;
 }
+
+/** A planned BOM component line on the build — confirmed live 2026-07-07 (see debug.ts's findFinishedGoodsExample). `TotalCost` is the estimated/planned cost for this component across the whole build. */
+export interface Cin7FinishedGoodsOrderLine {
+  ProductID?: string;
+  ProductCode?: string;
+  Name?: string;
+  Quantity?: number;
+  Unit?: string;
+  WastagePercent?: number;
+  WastageQuantity?: number;
+  TotalQuantity?: number;
+  TotalCost?: number;
+}
+
+/** An actual picked/consumed batch line on the build — confirmed live 2026-07-07. `Cost` is per-unit; multiply by `Quantity` for this line's actual cost. */
+export interface Cin7FinishedGoodsPickLine {
+  ProductID?: string;
+  ProductCode?: string;
+  Name?: string;
+  BatchSN?: string | null;
+  Quantity?: number;
+  Unit?: string;
+  Cost?: number;
+  NonInventory?: boolean;
+}
+
+/**
+ * Full detail for one assembly build — confirmed live 2026-07-07 via
+ * `/finishedgoods?TaskID=` (lowercase-singular path, same pattern as Stock
+ * Transfer's confirmed detail endpoint). `OrderLines` are the BOM's planned
+ * components (their `TotalCost` sums to the build's *estimated* cost);
+ * `PickLines` are the actual batches consumed (`Quantity * Cost` per line
+ * sums to the build's *actual* cost) — these two totals can genuinely
+ * differ if wastage or substitution happened during the real build.
+ *
+ * **No confirmed "resources/additional costs" (labor/overhead) array on this
+ * resource yet.** Product's Assembly BOM *definition* has a parallel
+ * `BillOfMaterialsServices[]` (see assembly-bom.ts / docs/cin7-api-findings.md
+ * §3) for exactly this kind of non-product cost line, but whether a *built*
+ * assembly's own detail response carries a matching services/resources array
+ * hasn't been confirmed — the one live example checked had no services
+ * attached to its BOM, and Cin7 appears to omit empty arrays entirely rather
+ * than send them empty (same documented convention for the BOM definition),
+ * so its absence here doesn't prove the field doesn't exist. Needs a live
+ * check against an assembly whose product BOM actually has services
+ * configured — see `surveyFinishedGoodsFields` in debug.ts.
+ */
+export interface Cin7FinishedGoodsDetail {
+  TaskID: string;
+  AssemblyNumber?: string;
+  Status?: string;
+  ProductCode?: string;
+  ProductName?: string;
+  Location?: string;
+  Quantity?: number;
+  CompletionDate?: string | null;
+  OrderLines?: Cin7FinishedGoodsOrderLine[];
+  PickLines?: Cin7FinishedGoodsPickLine[];
+}
+
+export async function fetchFinishedGoodsDetail(creds: Cin7Credentials, taskId: string): Promise<Cin7FinishedGoodsDetail> {
+  return cin7Request<Cin7FinishedGoodsDetail>(creds, "/finishedgoods", { query: { TaskID: taskId } });
+}
