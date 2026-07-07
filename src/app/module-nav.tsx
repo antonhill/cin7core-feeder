@@ -109,6 +109,15 @@ export function ShieldIcon({ className }: IconProps) {
   );
 }
 
+export function AssemblyIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3Z" />
+      <path d="M4 7.5 12 12m0 0 8-4.5M12 12v9" />
+    </svg>
+  );
+}
+
 export interface ModuleConfig {
   href: string;
   label: string;
@@ -167,6 +176,14 @@ export const HEALTH_MODULE: ModuleConfig = {
   blurb: "A scorecard across Sales, Purchases, Stock Transfers, Assemblies, Production Orders, and product data quality — one overall health score per connected instance.",
 };
 
+export const ASSEMBLIES_MODULE: ModuleConfig = {
+  href: "/assemblies",
+  label: "Assemblies",
+  gradient: "from-orange-500 to-orange-700",
+  Icon: AssemblyIcon,
+  blurb: "Every assembly build pulled live from a connected instance, filterable by Draft, Authorised, In Progress, or Completed.",
+};
+
 export const INSTANCES_MODULE: ModuleConfig = {
   href: "/settings/instances",
   label: "Cin7 Instances",
@@ -210,6 +227,7 @@ export const MODULES: ModuleConfig[] = [
   REPORTS_MODULE,
   AUDIT_MODULE,
   HEALTH_MODULE,
+  ASSEMBLIES_MODULE,
   INSTANCES_MODULE,
   ACTIVITY_MODULE,
 ];

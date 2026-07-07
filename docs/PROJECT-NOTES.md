@@ -43,6 +43,14 @@ prune/rewrite entries here rather than appending forever once something is fully
   a bulk-fix control (`src/audit/apply-party-fixes.ts`, same "PUT just the ID + changed field(s)"
   convention as Product) — Contacts/Email/Phone/TaxNumber/address fields are inherently
   per-entity, so those stay report-only, same reasoning as Product's `missing_sales_pricing`.
+- **Assemblies** (`/assemblies`), added 2026-07-07: a new module — every assembly build pulled
+  live via the same `fetchAllFinishedGoodsList` already used by System Health, filterable by
+  Draft/Authorised/In Progress/Completed (checkboxes, all on by default) plus a name/number search.
+  **VOIDED is deliberately excluded from the filter set entirely, not just unchecked** — a real 5th
+  status Cin7 uses for cancelled assembly records, but this report is about builds still relevant
+  to the business, not a cancellation log. No new domain-logic module — unlike Audit/Health, there's
+  no flagging rule here worth unit-testing, just a live pull + client-side filter/search, so
+  `src/app/assemblies/actions.ts` fetches and `page.tsx` filters directly.
 - **Auth**: Supabase Auth via a typed 6-digit OTP code (not magic links — M365's Safe Links
   pre-consumes link-based codes before the user clicks, so any future email-code auth on an M365
   tenant should go straight to OTP entry). `/admin` (gated by a `super_admins` table) lets Anton
