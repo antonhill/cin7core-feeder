@@ -28,6 +28,20 @@ function dateOnly(value: string | null | undefined): string {
   return value ? value.slice(0, 10) : "—";
 }
 
+/**
+ * Quantity * UnitCost — both confirmed live on the list response itself (see
+ * finished-goods.ts), no per-record detail call needed. No currency symbol:
+ * Cin7 doesn't expose one on this resource, so this is shown as a plain
+ * formatted number rather than assuming a currency.
+ */
+function totalCost(entry: Cin7FinishedGoodsListEntry): number {
+  return (entry.Quantity ?? 0) * (entry.UnitCost ?? 0);
+}
+
+function formatNumber(value: number): string {
+  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
 function matchesSearch(search: string, entry: Cin7FinishedGoodsListEntry): boolean {
   if (!search.trim()) return true;
   const needle = search.trim().toLowerCase();
@@ -95,11 +109,21 @@ export default function AssembliesPage() {
     [assemblies, statusFilter, search]
   );
 
+  const totals = useMemo(
+    () =>
+      filtered.reduce(
+        (acc, a) => ({ quantity: acc.quantity + (a.Quantity ?? 0), cost: acc.cost + totalCost(a) }),
+        { quantity: 0, cost: 0 }
+      ),
+    [filtered]
+  );
+
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
       <ModuleHeader module={ASSEMBLIES_MODULE}>
         Pulls every assembly build live from a connected Cin7 instance — filter by Draft, Authorised, In
-        Progress, or Completed, and search by assembly number or product. Read-only; nothing is written back.
+        Progress, or Completed, search by assembly number or product, and see quantity plus total BOM cost per
+        assembly (and summed across the current filter). Read-only; nothing is written back.
       </ModuleHeader>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -173,9 +197,14 @@ export default function AssembliesPage() {
             </div>
           </div>
 
-          <p className="text-sm text-slate-500">
-            {filtered.length} of {assemblies.length} assembl{assemblies.length === 1 ? "y" : "ies"} shown
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
+            <p>
+              {filtered.length} of {assemblies.length} assembl{assemblies.length === 1 ? "y" : "ies"} shown
+            </p>
+            <p className="font-medium text-slate-700">
+              Total quantity: {formatNumber(totals.quantity)} · Total cost: {formatNumber(totals.cost)}
+            </p>
+          </div>
 
           {filtered.length > 0 ? (
             <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
@@ -186,6 +215,8 @@ export default function AssembliesPage() {
                     <th className="px-4 py-2 font-medium">Product</th>
                     <th className="px-4 py-2 font-medium">Status</th>
                     <th className="px-4 py-2 font-medium">Date</th>
+                    <th className="px-4 py-2 text-right font-medium">Quantity</th>
+                    <th className="px-4 py-2 text-right font-medium">Total Cost</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -203,6 +234,8 @@ export default function AssembliesPage() {
                           </span>
                         </td>
                         <td className="px-4 py-2 align-top">{dateOnly(a.Date)}</td>
+                        <td className="px-4 py-2 align-top text-right">{formatNumber(a.Quantity ?? 0)}</td>
+                        <td className="px-4 py-2 align-top text-right">{formatNumber(totalCost(a))}</td>
                       </tr>
                     );
                   })}

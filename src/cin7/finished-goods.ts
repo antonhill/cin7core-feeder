@@ -14,6 +14,20 @@ import { cin7Request } from "@/cin7/http";
  * every record checked; `Date`/`WIPDate`/`CompletionDate` are all
  * progress timestamps, not target dates) — confirmed, not a gap in this
  * client.
+ *
+ * Confirmed live (2026-07-07), via `findFinishedGoodsExample` in debug.ts,
+ * ahead of adding quantity/cost to the Assemblies report: **the list
+ * response already carries `Quantity` and `UnitCost`** — no per-record
+ * detail call needed (the detail endpoint, `/finishedgoods?TaskID=`, does
+ * also work, confirmed the same pass, but isn't used here — an N+1 detail
+ * call per assembly would be a real rate-limit cost for no gain once the
+ * total's already available on the list). On the one real example checked
+ * (`Quantity: 1`, `UnitCost: 2000`), `Quantity * UnitCost` exactly matched
+ * the detail endpoint's own `OrderLines[].TotalCost` sum (2000) — the
+ * standard unit-cost × quantity = total-cost reading, though only actually
+ * observed against a `Quantity: 1` example (so the multiplication itself is
+ * the conventional interpretation, not independently confirmed against a
+ * `Quantity > 1` record — revisit if that ever looks wrong on real data).
  */
 export interface Cin7FinishedGoodsListEntry {
   TaskID: string;
@@ -22,6 +36,8 @@ export interface Cin7FinishedGoodsListEntry {
   ProductName?: string;
   Status?: string;
   Date?: string | null;
+  Quantity?: number;
+  UnitCost?: number;
 }
 
 /** Fetches every finished-goods assembly record on the account. Paginates until a short page signals the end, same pattern as fetchAllSalesList. */

@@ -50,7 +50,16 @@ prune/rewrite entries here rather than appending forever once something is fully
   status Cin7 uses for cancelled assembly records, but this report is about builds still relevant
   to the business, not a cancellation log. No new domain-logic module — unlike Audit/Health, there's
   no flagging rule here worth unit-testing, just a live pull + client-side filter/search, so
-  `src/app/assemblies/actions.ts` fetches and `page.tsx` filters directly.
+  `src/app/assemblies/actions.ts` fetches and `page.tsx` filters directly. **Quantity + total BOM
+  cost added 2026-07-07** — confirmed live via a new diagnostic (`findFinishedGoodsExample` in
+  `src/cin7/debug.ts`, wired to a "Fetch Assembly (FinishedGoods) example" button on
+  `/settings/instances`) that both `Quantity` and `UnitCost` are already present on the **list**
+  response itself, no per-record detail call needed (avoids an N+1 rate-limit cost). Total cost =
+  `Quantity * UnitCost` — matched the detail endpoint's (`/finishedgoods?TaskID=`, also confirmed
+  live) `OrderLines[].TotalCost` sum exactly on the one real example checked, though only against a
+  `Quantity: 1` record, so the multiplication is the conventional reading, not independently
+  verified against `Quantity > 1` — revisit if that ever looks wrong on real data. The page shows
+  quantity + total cost per row plus a summed total across the current filter.
 - **Auth**: Supabase Auth via a typed 6-digit OTP code (not magic links — M365's Safe Links
   pre-consumes link-based codes before the user clicks, so any future email-code auth on an M365
   tenant should go straight to OTP entry). `/admin` (gated by a `super_admins` table) lets Anton

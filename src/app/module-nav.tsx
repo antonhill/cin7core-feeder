@@ -181,7 +181,7 @@ export const ASSEMBLIES_MODULE: ModuleConfig = {
   label: "Assemblies",
   gradient: "from-orange-500 to-orange-700",
   Icon: AssemblyIcon,
-  blurb: "Every assembly build pulled live from a connected instance, filterable by Draft, Authorised, In Progress, or Completed.",
+  blurb: "Every assembly build pulled live from a connected instance — quantity and total BOM cost per build, filterable by Draft, Authorised, In Progress, or Completed.",
 };
 
 export const INSTANCES_MODULE: ModuleConfig = {
