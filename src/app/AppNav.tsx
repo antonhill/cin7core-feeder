@@ -36,7 +36,7 @@ export function AppNav({
 }) {
   const pathname = usePathname();
 
-  if (pathname.startsWith("/login") || pathname.startsWith("/auth")) return null;
+  if (pathname.startsWith("/login") || pathname.startsWith("/auth") || pathname.startsWith("/mfa-challenge")) return null;
 
   // Admin isn't an org-toggleable module — it's a cross-org super-admin tool, not something a client org's own visibility settings apply to.
   const visibleModules = MODULES.filter((m) => !disabledModules.includes(m.href));
@@ -82,6 +82,16 @@ export function AppNav({
       {userEmail && (
         <div className="border-t border-sidebar-border px-3 py-4">
           <p className="truncate px-3 pb-2 text-sm text-sidebar-text">{userEmail}</p>
+          <Link
+            href="/settings/security"
+            className={`mb-2 block rounded-lg border px-3 py-2 text-center text-sm font-medium transition ${
+              pathname.startsWith("/settings/security")
+                ? "border-sidebar-bg-raised bg-sidebar-bg-raised text-sidebar-text-active"
+                : "border-sidebar-border text-sidebar-text hover:bg-sidebar-bg-raised hover:text-sidebar-text-active"
+            }`}
+          >
+            Security
+          </Link>
           <form action={signOutAction}>
             <button
               type="submit"

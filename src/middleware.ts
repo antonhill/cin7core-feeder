@@ -68,6 +68,33 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
+  // A signed-in user who's enrolled a verified TOTP factor but hasn't
+  // completed it yet this session (currentLevel aal1, nextLevel aal2) must
+  // clear /mfa-challenge before reaching anything else — email-code sign-in
+  // alone only ever proves aal1. Checked before the blocked-module logic
+  // below so a half-authenticated session can't route around MFA by hitting
+  // a disabled-module redirect first.
+  if (user) {
+    const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    const needsMfa = Boolean(aal && aal.nextLevel === "aal2" && aal.currentLevel !== aal.nextLevel);
+    const onMfaChallenge = request.nextUrl.pathname.startsWith("/mfa-challenge");
+
+    if (needsMfa && !onMfaChallenge) {
+      const mfaUrl = request.nextUrl.clone();
+      mfaUrl.pathname = "/mfa-challenge";
+      mfaUrl.search = "";
+      return NextResponse.redirect(mfaUrl);
+    }
+    // Already cleared (or never required) MFA — don't let a stale bookmark
+    // strand the user on the challenge page.
+    if (!needsMfa && onMfaChallenge) {
+      const homeUrl = request.nextUrl.clone();
+      homeUrl.pathname = "/";
+      homeUrl.search = "";
+      return NextResponse.redirect(homeUrl);
+    }
+  }
+
   // A module a super-admin has disabled for this org shouldn't just be
   // hidden from the nav — visiting the URL directly (bookmark, typed by
   // hand) must be blocked too, or "disabled" would only ever be cosmetic.

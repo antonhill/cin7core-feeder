@@ -38,6 +38,21 @@ prune/rewrite entries here rather than appending forever once something is fully
   pre-consumes link-based codes before the user clicks, so any future email-code auth on an M365
   tenant should go straight to OTP entry). `/admin` (gated by a `super_admins` table) lets Anton
   create orgs and invite users; no self-serve signup, no org ID ever shown to a client.
+- **MFA, 2026-07-07**: opt-in TOTP two-factor via Supabase Auth's built-in `auth.mfa` API — no new
+  infra. `/settings/security` (linked from the sidebar footer, next to Sign out) lets a user
+  enroll/remove an authenticator app factor (QR code + manual secret, matching `SECURITY_MODULE` in
+  `module-nav.tsx` — deliberately not in `MODULES`, so it's not an org-toggleable tile). The email
+  OTP sign-in only ever proves `aal1`; `middleware.ts` now also checks
+  `auth.mfa.getAuthenticatorAssuranceLevel()` and redirects to `/mfa-challenge` whenever a user has
+  a verified factor but hasn't cleared it this session — that page (plain layout like `/login`, no
+  sidebar) challenges + verifies the TOTP code, with a "sign out instead" escape hatch since the
+  main sidebar isn't rendered there. Deliberately **opt-in per user**, not org-wide mandatory —
+  matches the "small, Anton-invited user base" scale; revisit if that changes. Not yet tested against
+  a real authenticator app end-to-end (needs a real login, can't simulate OTP email delivery in this
+  environment) — verified instead via unauthenticated smoke checks (`Auth session missing!` renders
+  cleanly, no crash) plus a fresh `tsc`/`eslint`/`vitest`/`next build` pass. No backup-codes flow —
+  Supabase doesn't provide one out of the box, so a lost device today means Anton manually
+  unenrolling the user's factor via the service-role client.
 - **Visual language, 2026-07-07**: dark sidebar (new `--sidebar-*` CSS vars in `globals.css`,
   `#12172a` base) replacing the old white sidebar, to match a reference production-dashboard
   screenshot Anton shared. `ModuleHeader` slimmed from a big bordered banner card to a compact

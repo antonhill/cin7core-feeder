@@ -100,6 +100,15 @@ export function AdminIcon({ className }: IconProps) {
   );
 }
 
+export function ShieldIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M12 3 5 6v5c0 4.5 3 8.5 7 10 4-1.5 7-5.5 7-10V6l-7-3Z" />
+      <path d="m9.5 12 1.8 1.8L15 10" />
+    </svg>
+  );
+}
+
 export interface ModuleConfig {
   href: string;
   label: string;
@@ -180,6 +189,18 @@ export const ADMIN_MODULE: ModuleConfig = {
   gradient: "from-fuchsia-500 to-fuchsia-700",
   Icon: AdminIcon,
   blurb: "Create organizations, invite users, and manage org branding.",
+};
+
+// Per-user account settings, not an org-toggleable module — deliberately
+// left out of MODULES (no home tile, not listed in /admin's per-org
+// visibility toggle). Only used to give /settings/security's own
+// ModuleHeader the same visual language as everything else.
+export const SECURITY_MODULE: ModuleConfig = {
+  href: "/settings/security",
+  label: "Security",
+  gradient: "from-rose-500 to-rose-700",
+  Icon: ShieldIcon,
+  blurb: "Set up two-factor authentication with an authenticator app.",
 };
 
 export const MODULES: ModuleConfig[] = [
