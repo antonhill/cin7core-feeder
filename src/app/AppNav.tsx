@@ -26,17 +26,21 @@ export function AppNav({
   isSuperAdmin,
   orgName,
   orgLogoUrl,
+  disabledModules,
 }: {
   userEmail: string | null;
   isSuperAdmin: boolean;
   orgName: string | null;
   orgLogoUrl: string | null;
+  disabledModules: string[];
 }) {
   const pathname = usePathname();
 
   if (pathname.startsWith("/login") || pathname.startsWith("/auth")) return null;
 
-  const links = isSuperAdmin ? [...MODULES, ADMIN_MODULE] : MODULES;
+  // Admin isn't an org-toggleable module — it's a cross-org super-admin tool, not something a client org's own visibility settings apply to.
+  const visibleModules = MODULES.filter((m) => !disabledModules.includes(m.href));
+  const links = isSuperAdmin ? [...visibleModules, ADMIN_MODULE] : visibleModules;
 
   return (
     <nav className="flex h-full w-64 shrink-0 flex-col border-r border-slate-200 bg-white">

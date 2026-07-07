@@ -24,7 +24,7 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const { email, isSuperAdmin, orgName, orgLogoUrl } = await getCurrentUserInfo();
+  const { email, isSuperAdmin, orgName, orgLogoUrl, disabledModules } = await getCurrentUserInfo();
 
   return (
     <html
@@ -32,7 +32,13 @@ export default async function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="flex h-full min-h-screen flex-row">
-        <AppNav userEmail={email} isSuperAdmin={isSuperAdmin} orgName={orgName} orgLogoUrl={orgLogoUrl} />
+        <AppNav
+          userEmail={email}
+          isSuperAdmin={isSuperAdmin}
+          orgName={orgName}
+          orgLogoUrl={orgLogoUrl}
+          disabledModules={disabledModules}
+        />
         <div className="flex flex-1 flex-col overflow-y-auto">{children}</div>
       </body>
     </html>

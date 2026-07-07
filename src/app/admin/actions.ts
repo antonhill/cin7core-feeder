@@ -15,6 +15,8 @@ export interface OrgSummary {
   members: OrgMember[];
   instanceCount: number;
   logoUrl: string | null;
+  /** Module hrefs (e.g. "/reports") hidden from this org. Empty means every module is visible. */
+  disabledModules: string[];
 }
 
 export interface ListOrgsResult {
@@ -31,7 +33,7 @@ export async function listOrgsForAdmin(): Promise<ListOrgsResult> {
 
     const { data: orgs, error: orgsError } = await db
       .from("organizations")
-      .select("id, name, created_at, logo_url")
+      .select("id, name, created_at, logo_url, disabled_modules")
       .order("created_at", { ascending: false });
     if (orgsError) throw new Error(orgsError.message);
 
@@ -69,6 +71,7 @@ export async function listOrgsForAdmin(): Promise<ListOrgsResult> {
       members: membersByOrg.get(o.id) ?? [],
       instanceCount: instanceCountByOrg.get(o.id) ?? 0,
       logoUrl: o.logo_url,
+      disabledModules: o.disabled_modules ?? [],
     }));
 
     return { ok: true, orgs: result };
@@ -173,6 +176,28 @@ export async function removeMemberFromOrg(orgId: string, userId: string): Promis
     const db = createServiceRoleClient();
 
     const { error } = await db.from("org_members").delete().eq("org_id", orgId).eq("user_id", userId);
+    if (error) return { ok: false, error: error.message };
+
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Sets the full list of module hrefs hidden from an org — replaces
+ * whatever was there before rather than adding/removing one at a time,
+ * since the admin UI always sends the complete desired state after a
+ * checkbox toggle. Disabled modules are hidden from that org's nav/home
+ * tiles AND blocked at the URL level by middleware.ts — this isn't just
+ * cosmetic.
+ */
+export async function setOrgDisabledModules(orgId: string, disabledModules: string[]): Promise<CreateOrgResult> {
+  try {
+    await requireSuperAdmin();
+    const db = createServiceRoleClient();
+
+    const { error } = await db.from("organizations").update({ disabled_modules: disabledModules }).eq("id", orgId);
     if (error) return { ok: false, error: error.message };
 
     return { ok: true };

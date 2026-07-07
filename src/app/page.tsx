@@ -1,7 +1,13 @@
 import Link from "next/link";
 import { MODULES, ToolboxLogo } from "@/app/module-nav";
+import { getCurrentUserInfo } from "@/actions/auth";
 
-export default function Home() {
+export default async function Home({ searchParams }: { searchParams: Promise<{ blocked?: string }> }) {
+  const { disabledModules } = await getCurrentUserInfo();
+  const { blocked } = await searchParams;
+  const visibleModules = MODULES.filter((m) => !disabledModules.includes(m.href));
+  const blockedModule = blocked ? MODULES.find((m) => m.href === blocked) : undefined;
+
   return (
     <main className="mx-auto max-w-5xl px-6 py-16">
       <div className="flex items-center gap-4">
@@ -14,8 +20,14 @@ export default function Home() {
         </div>
       </div>
 
+      {blockedModule && (
+        <p className="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          {blockedModule.label} isn&rsquo;t enabled for your organization — ask your admin if you need access.
+        </p>
+      )}
+
       <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-        {MODULES.map((module) => {
+        {visibleModules.map((module) => {
           const Icon = module.Icon;
           return (
             <Link

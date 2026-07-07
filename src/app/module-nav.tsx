@@ -174,3 +174,13 @@ export const MODULES: ModuleConfig[] = [
   HEALTH_MODULE,
   INSTANCES_MODULE,
 ];
+
+/**
+ * If `pathname` falls under a module this org has disabled, returns that
+ * module (used by middleware.ts to block direct URL access, and by the
+ * home page to explain why it redirected here) — otherwise undefined.
+ * Pure and Next/Supabase-free so it's directly unit-testable.
+ */
+export function findBlockedModule(pathname: string, disabledModules: string[]): ModuleConfig | undefined {
+  return MODULES.find((m) => disabledModules.includes(m.href) && pathname.startsWith(m.href));
+}

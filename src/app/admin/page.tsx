@@ -1,9 +1,17 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { createOrgAndInvite, inviteMemberToOrg, listOrgsForAdmin, removeMemberFromOrg, uploadOrgLogo, type OrgSummary } from "./actions";
+import {
+  createOrgAndInvite,
+  inviteMemberToOrg,
+  listOrgsForAdmin,
+  removeMemberFromOrg,
+  setOrgDisabledModules,
+  uploadOrgLogo,
+  type OrgSummary,
+} from "./actions";
 import { ModuleHeader } from "@/app/ModuleHeader";
-import { ADMIN_MODULE } from "@/app/module-nav";
+import { ADMIN_MODULE, MODULES } from "@/app/module-nav";
 
 export default function AdminPage() {
   const [orgs, setOrgs] = useState<OrgSummary[]>([]);
@@ -129,6 +137,10 @@ function OrgCard({ org, onMembersChanged }: { org: OrgSummary; onMembersChanged:
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [isRemoving, startRemoveTransition] = useTransition();
 
+  const [disabledModules, setDisabledModules] = useState(org.disabledModules);
+  const [moduleError, setModuleError] = useState<string | null>(null);
+  const [isSavingModules, startModulesTransition] = useTransition();
+
   function handleAddMember(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -157,6 +169,20 @@ function OrgCard({ org, onMembersChanged }: { org: OrgSummary; onMembersChanged:
         return;
       }
       onMembersChanged(); // re-fetches the org list, same refresh callback used after adding a member
+    });
+  }
+
+  function handleToggleModule(href: string, enabled: boolean) {
+    const next = enabled ? disabledModules.filter((h) => h !== href) : [...disabledModules, href];
+    const previous = disabledModules;
+    setModuleError(null);
+    setDisabledModules(next); // optimistic — reverted below if the save fails
+    startModulesTransition(async () => {
+      const result = await setOrgDisabledModules(org.id, next);
+      if (!result.ok) {
+        setModuleError(result.error ?? "Unknown error");
+        setDisabledModules(previous);
+      }
     });
   }
 
@@ -249,6 +275,27 @@ function OrgCard({ org, onMembersChanged }: { org: OrgSummary; onMembersChanged:
           {success}
         </p>
       )}
+
+      <details className="mt-4 rounded-lg border border-slate-200 p-3">
+        <summary className="cursor-pointer text-sm font-medium text-slate-700">
+          Modules {disabledModules.length > 0 && <span className="text-slate-400">({disabledModules.length} hidden)</span>}
+        </summary>
+        <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+          {MODULES.map((module) => (
+            <label key={module.href} className="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={!disabledModules.includes(module.href)}
+                onChange={(e) => handleToggleModule(module.href, e.target.checked)}
+                disabled={isSavingModules}
+                className="h-4 w-4"
+              />
+              {module.label}
+            </label>
+          ))}
+        </div>
+        {moduleError && <p className="mt-2 text-sm text-red-700">{moduleError}</p>}
+      </details>
     </div>
   );
 }

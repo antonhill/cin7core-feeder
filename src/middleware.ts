@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { findBlockedModule } from "@/app/module-nav";
 
 const PUBLIC_PATHS = ["/login", "/auth/callback"];
 
@@ -65,6 +66,30 @@ export async function middleware(request: NextRequest) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     return NextResponse.redirect(loginUrl);
+  }
+
+  // A module a super-admin has disabled for this org shouldn't just be
+  // hidden from the nav — visiting the URL directly (bookmark, typed by
+  // hand) must be blocked too, or "disabled" would only ever be cosmetic.
+  // Redirects to home with the blocked module's href so the home page can
+  // show a small explanation. Not org-scoped by isSuperAdmin: a super-admin
+  // viewing through their own org membership is bound by that org's own
+  // settings too, same as anyone else — this is deliberate, since otherwise
+  // the block would never actually get exercised while testing it.
+  if (user && !isPublic) {
+    const { data: membership } = await supabase.from("org_members").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
+    if (membership) {
+      const { data: org } = await supabase.from("organizations").select("disabled_modules").eq("id", membership.org_id).maybeSingle();
+      const disabledModules: string[] = org?.disabled_modules ?? [];
+      const blockedModule = findBlockedModule(request.nextUrl.pathname, disabledModules);
+      if (blockedModule) {
+        const homeUrl = request.nextUrl.clone();
+        homeUrl.pathname = "/";
+        homeUrl.search = "";
+        homeUrl.searchParams.set("blocked", blockedModule.href);
+        return NextResponse.redirect(homeUrl);
+      }
+    }
   }
 
   // An already-signed-in user landing back on /login (e.g. after a
