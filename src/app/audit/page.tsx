@@ -126,7 +126,10 @@ function IssueTypeSection({
           <button
             type="button"
             disabled={isApplying || selected.size === 0 || !value.trim()}
-            onClick={() => onApply([...selected], config.field, value.trim())}
+            onClick={() => {
+              if (!confirm(`Set ${config.label} to "${value.trim()}" on ${selected.size} product(s)? This writes directly to Cin7.`)) return;
+              onApply([...selected], config.field, value.trim());
+            }}
             className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
             Apply to {selected.size || ""} selected
@@ -166,7 +169,11 @@ function DuplicateGroupCard({
       <button
         type="button"
         disabled={isApplying}
-        onClick={() => onMerge(group.names.map((n) => n.name).filter((name) => name !== keep), keep)}
+        onClick={() => {
+          const fromNames = group.names.map((n) => n.name).filter((name) => name !== keep);
+          if (!confirm(`Merge ${fromNames.length} other value(s) into "${keep}"? This writes directly to Cin7.`)) return;
+          onMerge(fromNames, keep);
+        }}
         className="mt-2 rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
       >
         Merge the rest into &ldquo;{keep}&rdquo;
@@ -242,7 +249,10 @@ function AttributeGapCard({
           <button
             type="button"
             disabled={isApplying || !templateId || selected.size === 0}
-            onClick={() => onApply(templateId, [...selected])}
+            onClick={() => {
+              if (!confirm(`Copy attribute values to ${selected.size} product(s)? This writes directly to Cin7.`)) return;
+              onApply(templateId, [...selected]);
+            }}
             className="rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
             Copy to {selected.size} selected
@@ -307,7 +317,10 @@ function SellableSection({
         <button
           type="button"
           disabled={isApplying || selected.size === 0}
-          onClick={() => onApply([...selected], true)}
+          onClick={() => {
+            if (!confirm(`Set Sellable to Yes on ${selected.size} product(s)? This writes directly to Cin7.`)) return;
+            onApply([...selected], true);
+          }}
           className="rounded-full bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
         >
           Set Sellable: Yes ({selected.size || 0})
@@ -315,7 +328,10 @@ function SellableSection({
         <button
           type="button"
           disabled={isApplying || selected.size === 0}
-          onClick={() => onApply([...selected], false)}
+          onClick={() => {
+            if (!confirm(`Set Sellable to No on ${selected.size} product(s)? This writes directly to Cin7.`)) return;
+            onApply([...selected], false);
+          }}
           className="rounded-full bg-slate-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-500 disabled:opacity-50"
         >
           Set Sellable: No ({selected.size || 0})
