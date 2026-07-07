@@ -55,6 +55,12 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const isPublic = PUBLIC_PATHS.some((p) => request.nextUrl.pathname.startsWith(p));
+  // The root path is public too, but can't just join PUBLIC_PATHS — that
+  // array is prefix-matched (startsWith), and "/" prefixes every path, which
+  // would make the whole app public. An exact-match check keeps this narrow:
+  // src/app/page.tsx itself decides marketing-page vs dashboard based on
+  // whether a session exists.
+  const isRoot = request.nextUrl.pathname === "/";
 
   // getUser() validates the token against Supabase's Auth API on every
   // request — under heavy testing volume (or any transient network blip)
@@ -68,7 +74,7 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  if (!user && !isPublic) {
+  if (!user && !isPublic && !isRoot) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     return NextResponse.redirect(loginUrl);

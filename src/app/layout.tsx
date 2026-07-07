@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AppNav } from "./AppNav";
+import TourGuide from "./tour-guide";
 import { getCurrentUserInfo } from "@/actions/auth";
 import { clearImpersonatedOrgAction } from "@/actions/org-switch";
 import "./globals.css";
@@ -41,14 +42,16 @@ export default async function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="flex h-full min-h-screen flex-row">
-        <AppNav
-          userEmail={email}
-          isSuperAdmin={isSuperAdmin}
-          orgId={orgId}
-          orgName={orgName}
-          orgLogoUrl={orgLogoUrl}
-          disabledModules={disabledModules}
-        />
+        {email && (
+          <AppNav
+            userEmail={email}
+            isSuperAdmin={isSuperAdmin}
+            orgId={orgId}
+            orgName={orgName}
+            orgLogoUrl={orgLogoUrl}
+            disabledModules={disabledModules}
+          />
+        )}
         <div className="flex flex-1 flex-col overflow-y-auto">
           {isImpersonating && (
             <div className="flex flex-wrap items-center justify-between gap-2 bg-amber-500 px-4 py-2 text-sm font-semibold text-white">
@@ -67,6 +70,7 @@ export default async function RootLayout({
           )}
           {children}
         </div>
+        {orgId && <TourGuide orgId={orgId} disabledModules={disabledModules} />}
       </body>
     </html>
   );

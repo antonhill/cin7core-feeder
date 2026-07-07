@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { Suspense, useEffect, useState, useTransition } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   debugCheckCustomerReferenceFields,
   debugCheckSaleStatuses,
@@ -25,6 +26,15 @@ import { INSTANCES_MODULE } from "@/app/module-nav";
 const DEFAULT_BASE_URL = "https://inventory.dearsystems.com/ExternalApi/v2";
 
 export default function InstancesSettingsPage() {
+  return (
+    <Suspense>
+      <InstancesSettingsPageInner />
+    </Suspense>
+  );
+}
+
+function InstancesSettingsPageInner() {
+  const searchParams = useSearchParams();
   const [instances, setInstances] = useState<InstanceRecord[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,6 +56,12 @@ export default function InstancesSettingsPage() {
       setLoaded(true);
     });
   }, []);
+
+  // Lets the onboarding checklist on "/" (onboarding-checklist.tsx) link
+  // straight into the Add Instance modal instead of just the bare page.
+  useEffect(() => {
+    if (searchParams.get("openAdd") === "1") startTransition(() => setModalTarget("new"));
+  }, [searchParams]);
 
   function handleSave(form: FormData, instanceId?: string) {
     setError(null);

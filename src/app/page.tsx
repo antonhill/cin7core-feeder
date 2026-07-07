@@ -2,6 +2,8 @@ import Link from "next/link";
 import { MODULES, ToolboxLogo, InstancesIcon, AdminIcon, ActivityIcon } from "@/app/module-nav";
 import { getCurrentUserInfo } from "@/actions/auth";
 import { createServiceRoleClient } from "@/supabase/server";
+import MarketingHome from "@/app/marketing-home";
+import OnboardingChecklist from "@/app/onboarding-checklist";
 
 interface HomeStats {
   activeInstances: number;
@@ -54,7 +56,9 @@ function StatCard({
 }
 
 export default async function Home({ searchParams }: { searchParams: Promise<{ blocked?: string }> }) {
-  const { orgId, disabledModules } = await getCurrentUserInfo();
+  const { email, orgId, disabledModules } = await getCurrentUserInfo();
+  if (!email) return <MarketingHome />;
+
   const { blocked } = await searchParams;
   const visibleModules = MODULES.filter((m) => !disabledModules.includes(m.href));
   const blockedModule = blocked ? MODULES.find((m) => m.href === blocked) : undefined;
@@ -77,6 +81,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ b
           {blockedModule.label} isn&rsquo;t enabled for your organization — ask your admin if you need access.
         </p>
       )}
+
+      {orgId && <OnboardingChecklist orgId={orgId} hasInstance={stats.activeInstances > 0} />}
 
       <div className="mt-10 grid gap-4 sm:grid-cols-3">
         <StatCard label="Active instances" value={stats.activeInstances} gradient="from-slate-500 to-slate-700" Icon={InstancesIcon} />
