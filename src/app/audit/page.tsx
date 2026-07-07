@@ -9,6 +9,8 @@ import {
   mergeUOMAction,
   mergeTagAction,
   applyAttributeTemplateAction,
+  runPartyAuditAction,
+  applyPartyFixesAction,
 } from "./actions";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import type {
@@ -20,8 +22,12 @@ import type {
   ProductSummary,
 } from "@/audit/product-audit";
 import type { ApplyFixesResult } from "@/audit/apply-fixes";
+import type { PartyAuditIssue, PartyAuditIssueType, PartyAuditResult, PartyKind } from "@/audit/party-audit";
+import type { ApplyPartyFixesResult } from "@/audit/apply-party-fixes";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { AUDIT_MODULE } from "@/app/module-nav";
+
+type AuditScope = "products" | "customers" | "suppliers";
 
 const FIXABLE_CONFIG: Partial<Record<ProductAuditIssueType, { label: string; field: string; placeholder: string }>> = {
   missing_brand: { label: "Missing Brand", field: "Brand", placeholder: "e.g. Acme" },
@@ -42,10 +48,52 @@ const ISSUE_ORDER: ProductAuditIssueType[] = [
   "missing_cogs_account",
 ];
 
+// Only Tags/SalesRep/Location get a bulk-fix control — the rest (contacts,
+// email, phone, tax number, address fields) are inherently per-entity, same
+// "no single value makes sense" reasoning as Product's missing_sales_pricing.
+const PARTY_FIXABLE_CONFIG: Partial<Record<PartyAuditIssueType, { label: string; field: string; placeholder: string }>> = {
+  missing_tags: { label: "Missing Tags", field: "Tags", placeholder: "e.g. vip" },
+  missing_sales_rep: { label: "Missing Sales Representative", field: "SalesRepresentative", placeholder: "e.g. Jane Doe" },
+  missing_location: { label: "Missing Default Location", field: "Location", placeholder: "e.g. Main Warehouse" },
+};
+
+const PARTY_ISSUE_LABELS: Record<PartyAuditIssueType, string> = {
+  no_contacts: "No Contacts",
+  missing_email: "Missing Email",
+  missing_phone: "Missing Phone Number",
+  missing_tax_number: "Missing Tax Number",
+  missing_address_country: "Missing Address Country",
+  missing_address_postcode: "Missing Address Postal Code",
+  missing_tags: "Missing Tags",
+  missing_sales_rep: "Missing Sales Representative",
+  missing_location: "Missing Default Location",
+};
+
+// Tags/SalesRep/Location naturally never appear for suppliers (see
+// party-audit.ts) — filtering by "does this scan actually have any issues of
+// this type" (same pattern as ISSUE_ORDER above) means this one order works
+// for both scopes without a separate supplier-specific list.
+const PARTY_ISSUE_ORDER: PartyAuditIssueType[] = [
+  "no_contacts",
+  "missing_email",
+  "missing_phone",
+  "missing_tax_number",
+  "missing_address_country",
+  "missing_address_postcode",
+  "missing_tags",
+  "missing_sales_rep",
+  "missing_location",
+];
+
 function matchesSearch(search: string, sku: string, name: string): boolean {
   if (!search.trim()) return true;
   const needle = search.trim().toLowerCase();
   return sku.toLowerCase().includes(needle) || name.toLowerCase().includes(needle);
+}
+
+function matchesNameSearch(search: string, name: string): boolean {
+  if (!search.trim()) return true;
+  return name.toLowerCase().includes(search.trim().toLowerCase());
 }
 
 function IssueTypeSection({
@@ -128,6 +176,95 @@ function IssueTypeSection({
             disabled={isApplying || selected.size === 0 || !value.trim()}
             onClick={() => {
               if (!confirm(`Set ${config.label} to "${value.trim()}" on ${selected.size} product(s)? This writes directly to Cin7.`)) return;
+              onApply([...selected], config.field, value.trim());
+            }}
+            className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+          >
+            Apply to {selected.size || ""} selected
+          </button>
+        </div>
+      )}
+    </details>
+  );
+}
+
+function PartyIssueSection({
+  type,
+  kind,
+  issues,
+  onApply,
+  isApplying,
+}: {
+  type: PartyAuditIssueType;
+  kind: PartyKind;
+  issues: PartyAuditIssue[];
+  onApply: (partyIds: string[], field: string, value: string) => void;
+  isApplying: boolean;
+}) {
+  const [rawSelected, setRawSelected] = useState<Set<string>>(new Set());
+  const [value, setValue] = useState("");
+  const config = PARTY_FIXABLE_CONFIG[type];
+  const noun = kind === "customer" ? "customer" : "supplier";
+
+  const selected = useMemo(() => {
+    const visibleIds = new Set(issues.map((i) => i.partyId));
+    return new Set([...rawSelected].filter((id) => visibleIds.has(id)));
+  }, [rawSelected, issues]);
+
+  function toggle(id: string) {
+    setRawSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setRawSelected(selected.size === issues.length && issues.length > 0 ? new Set() : new Set(issues.map((i) => i.partyId)));
+  }
+
+  return (
+    <details className="rounded-xl border border-amber-200 bg-amber-50 p-4" open={issues.length <= 5}>
+      <summary className="cursor-pointer font-medium text-amber-900">
+        {PARTY_ISSUE_LABELS[type]} — {issues.length} {noun}
+        {issues.length === 1 ? "" : "s"}
+      </summary>
+
+      {!config && (
+        <p className="mt-2 text-sm text-amber-800">
+          No bulk fix here — this is specific to each {noun}, so there&rsquo;s no single value that makes sense to
+          apply across all of them. Fix these individually in Cin7.
+        </p>
+      )}
+
+      <div className="mt-3 flex flex-col gap-1.5 text-sm">
+        <label className="flex items-center gap-2 font-medium text-amber-900">
+          <input type="checkbox" checked={selected.size === issues.length && issues.length > 0} onChange={toggleAll} className="h-4 w-4" />
+          Select all
+        </label>
+        {issues.map((issue) => (
+          <label key={issue.partyId} className="flex items-center gap-2 text-amber-800">
+            <input type="checkbox" checked={selected.has(issue.partyId)} onChange={() => toggle(issue.partyId)} className="h-4 w-4" />
+            {issue.name || "(unnamed)"}
+          </label>
+        ))}
+      </div>
+
+      {config && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder={config.placeholder}
+            className="w-56 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+          />
+          <button
+            type="button"
+            disabled={isApplying || selected.size === 0 || !value.trim()}
+            onClick={() => {
+              if (!confirm(`Set ${config.label} to "${value.trim()}" on ${selected.size} ${noun}(s)? This writes directly to Cin7.`)) return;
               onApply([...selected], config.field, value.trim());
             }}
             className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
@@ -358,8 +495,25 @@ export default function AuditPage() {
   const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
   const [search, setSearch] = useState("");
 
+  const [scope, setScope] = useState<AuditScope>("products");
+  const [partyResult, setPartyResult] = useState<PartyAuditResult | null>(null);
+  const [partyScanError, setPartyScanError] = useState<string | null>(null);
+  const [partyApplyResult, setPartyApplyResult] = useState<ApplyPartyFixesResult | null>(null);
+  const [partyApplyError, setPartyApplyError] = useState<string | null>(null);
+  const [partySearch, setPartySearch] = useState("");
+
   function toggleCategoryFilter(category: string) {
     setCategoryFilter((prev) => (prev.includes(category) ? prev.filter((c) => c !== category) : [...prev, category]));
+  }
+
+  function handleScopeChange(next: AuditScope) {
+    setScope(next);
+    setScanError(null);
+    setResult(null);
+    setApplyResult(null);
+    setPartyScanError(null);
+    setPartyResult(null);
+    setPartyApplyResult(null);
   }
 
   function handleLoadInstances() {
@@ -376,6 +530,23 @@ export default function AuditPage() {
 
   function handleScan() {
     if (!instanceId) return;
+
+    if (scope !== "products") {
+      const kind: PartyKind = scope === "customers" ? "customer" : "supplier";
+      setPartyScanError(null);
+      setPartyResult(null);
+      setPartyApplyResult(null);
+      startScanTransition(async () => {
+        const res = await runPartyAuditAction(instanceId, kind);
+        if (!res.ok) {
+          setPartyScanError(res.error ?? "Unknown error");
+          return;
+        }
+        setPartyResult(res.data ?? null);
+      });
+      return;
+    }
+
     setScanError(null);
     setResult(null);
     setApplyResult(null);
@@ -386,6 +557,25 @@ export default function AuditPage() {
         return;
       }
       setResult(res.data ?? null);
+    });
+  }
+
+  function handlePartyApply(partyIds: string[], field: string, value: string) {
+    if (!instanceId || scope === "products") return;
+    const kind: PartyKind = scope === "customers" ? "customer" : "supplier";
+    setPartyApplyError(null);
+    startApplyTransition(async () => {
+      const res = await applyPartyFixesAction(
+        instanceId,
+        kind,
+        partyIds.map((partyId) => ({ partyId, fields: { [field]: value } }))
+      );
+      if (!res.ok || !res.data) {
+        setPartyApplyError(res.error ?? "Unknown error");
+        return;
+      }
+      setPartyApplyResult(res.data);
+      handleScan(); // re-scan so fixed parties drop out of the list
     });
   }
 
@@ -533,18 +723,44 @@ export default function AuditPage() {
     [result, categoryFilter, search]
   );
 
+  const partyIssuesByType = useMemo(() => {
+    const filtered = (partyResult?.issues ?? []).filter((issue) => matchesNameSearch(partySearch, issue.name));
+    const byType = new Map<PartyAuditIssueType, PartyAuditIssue[]>();
+    for (const issue of filtered) {
+      const list = byType.get(issue.type) ?? [];
+      list.push(issue);
+      byType.set(issue.type, list);
+    }
+    return byType;
+  }, [partyResult, partySearch]);
+
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
       <ModuleHeader module={AUDIT_MODULE}>
-        Pulls every product live from a connected Cin7 instance and checks it for consistency and
-        accuracy gaps — missing Brand, no sales price, incomplete inventory setup, missing Revenue/COGS
-        accounts, near-duplicate categories/brands/units of measure/tags, and incomplete custom-attribute values
-        within a category (with a one-click copy from an existing well-filled-in product). Also lets you
-        bulk-toggle Sellable. Fixes you approve are written straight back to that instance. Products only,
-        for now.
+        Pulls every product, customer, or supplier live from a connected Cin7 instance and checks it for
+        consistency and accuracy gaps. Products: missing Brand, no sales price, incomplete inventory setup,
+        missing Revenue/COGS accounts, near-duplicate categories/brands/units of measure/tags, incomplete
+        custom-attribute values, and bulk Sellable toggling. Customers/Suppliers: no contacts, missing
+        email/phone/tax number, incomplete addresses, and (customers only) missing tags/sales rep/default
+        location. Fixes you approve are written straight back to that instance.
       </ModuleHeader>
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="mt-6 flex gap-2">
+        {(["products", "customers", "suppliers"] as const).map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => handleScopeChange(s)}
+            className={`rounded-full px-4 py-1.5 text-sm font-semibold capitalize transition ${
+              scope === s ? "bg-indigo-600 text-white" : "border border-slate-300 text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+
+      <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <p className="font-medium text-slate-900">Instance</p>
         <div className="mt-3">
           <button
@@ -581,12 +797,17 @@ export default function AuditPage() {
           disabled={isScanning || !instanceId}
           className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
         >
-          {isScanning ? "Scanning…" : "Scan products"}
+          {isScanning ? "Scanning…" : `Scan ${scope}`}
         </button>
-        {scanError && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{scanError}</p>}
+        {scope === "products" && scanError && (
+          <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{scanError}</p>
+        )}
+        {scope !== "products" && partyScanError && (
+          <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{partyScanError}</p>
+        )}
       </section>
 
-      {applyResult && (
+      {scope === "products" && applyResult && (
         <section className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
           <p className="font-medium text-emerald-900">{applyResult.succeeded} product{applyResult.succeeded === 1 ? "" : "s"} fixed</p>
           {applyResult.failed.length > 0 && (
@@ -600,9 +821,32 @@ export default function AuditPage() {
           )}
         </section>
       )}
-      {applyError && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{applyError}</p>}
+      {scope === "products" && applyError && (
+        <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{applyError}</p>
+      )}
 
-      {result && (
+      {scope !== "products" && partyApplyResult && (
+        <section className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+          <p className="font-medium text-emerald-900">
+            {partyApplyResult.succeeded} {scope === "customers" ? "customer" : "supplier"}
+            {partyApplyResult.succeeded === 1 ? "" : "s"} fixed
+          </p>
+          {partyApplyResult.failed.length > 0 && (
+            <ul className="mt-2 list-disc pl-5 text-sm text-red-700">
+              {partyApplyResult.failed.map((f, i) => (
+                <li key={i}>
+                  {f.partyId}: {f.error}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+      {scope !== "products" && partyApplyError && (
+        <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{partyApplyError}</p>
+      )}
+
+      {scope === "products" && result && (
         <section className="mt-6 flex flex-col gap-4">
           <div className="rounded-xl border border-slate-200 bg-white p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -728,6 +972,40 @@ export default function AuditPage() {
               {categoryFilter.length > 0 || search.trim()
                 ? "No issues found for the current filter."
                 : "No issues found — this catalog looks clean."}
+            </p>
+          )}
+        </section>
+      )}
+
+      {scope !== "products" && partyResult && (
+        <section className="mt-6 flex flex-col gap-4">
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-sm font-medium text-slate-700">Search</p>
+            <input
+              type="text"
+              value={partySearch}
+              onChange={(e) => setPartySearch(e.target.value)}
+              placeholder={`Part of a ${scope === "customers" ? "customer" : "supplier"} name…`}
+              className="mt-2 w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+            />
+          </div>
+
+          {PARTY_ISSUE_ORDER.filter((type) => partyIssuesByType.has(type)).map((type) => (
+            <PartyIssueSection
+              key={type}
+              type={type}
+              kind={scope === "customers" ? "customer" : "supplier"}
+              issues={partyIssuesByType.get(type)!}
+              onApply={handlePartyApply}
+              isApplying={isApplying}
+            />
+          ))}
+
+          {partyIssuesByType.size === 0 && (
+            <p className="text-base text-slate-500">
+              {partySearch.trim()
+                ? "No issues found for the current filter."
+                : `No issues found — these ${scope} look clean.`}
             </p>
           )}
         </section>

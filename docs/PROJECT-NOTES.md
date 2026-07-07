@@ -33,7 +33,16 @@ prune/rewrite entries here rather than appending forever once something is fully
   Brand/sales-pricing/inventory-setup/GL-accounts, near-duplicate Category/UOM/Tag values
   (Levenshtein-based), incomplete `AdditionalAttribute1-10` values within a category (with a
   copy-from-template bulk fix), and lets you bulk-toggle Sellable. All fixes write **directly to
-  the audited Cin7 instance** — no canonical-DB detour, by design.
+  the audited Cin7 instance** — no canonical-DB detour, by design. **Extended to
+  Customers/Suppliers, 2026-07-07** (`src/audit/party-audit.ts`): a Products/Customers/Suppliers
+  tab selector shares the same instance picker. Checks: no named contacts, no contact email, no
+  contact phone/mobile, missing TaxNumber, an existing address missing Country/Postcode (parties
+  with zero addresses aren't flagged — nothing to check yet), plus Tags/SalesRepresentative/
+  DefaultLocation **for Customers only** — confirmed absent from Supplier's real Cin7 field set
+  entirely (`docs/cin7-api-findings.md` §10), not just unchecked. Only Tags/SalesRep/Location get
+  a bulk-fix control (`src/audit/apply-party-fixes.ts`, same "PUT just the ID + changed field(s)"
+  convention as Product) — Contacts/Email/Phone/TaxNumber/address fields are inherently
+  per-entity, so those stay report-only, same reasoning as Product's `missing_sales_pricing`.
 - **Auth**: Supabase Auth via a typed 6-digit OTP code (not magic links — M365's Safe Links
   pre-consumes link-based codes before the user clicks, so any future email-code auth on an M365
   tenant should go straight to OTP entry). `/admin` (gated by a `super_admins` table) lets Anton

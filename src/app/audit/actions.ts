@@ -5,7 +5,10 @@ import { requireCurrentOrg } from "@/lib/current-org";
 import { logActivity } from "@/lib/activity-log";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsWithBom } from "@/cin7/products";
+import { fetchAllCustomers } from "@/cin7/customers";
+import { fetchAllSuppliers } from "@/cin7/suppliers";
 import { runProductAudit, type ProductAuditResult } from "@/audit/product-audit";
+import { runPartyAudit, type PartyAuditResult, type PartyKind } from "@/audit/party-audit";
 import {
   applyProductFixes,
   mergeCategoryNames,
@@ -16,6 +19,7 @@ import {
   type ApplyFixesResult,
   type ProductFix,
 } from "@/audit/apply-fixes";
+import { applyPartyFixes, type ApplyPartyFixesResult, type PartyFix } from "@/audit/apply-party-fixes";
 
 export interface AuditActionResult<T> {
   ok: boolean;
@@ -24,7 +28,7 @@ export interface AuditActionResult<T> {
 }
 
 /** "3 succeeded, 1 failed" / "3 succeeded" — the common suffix for every activity-log summary below. */
-function resultSuffix(result: ApplyFixesResult): string {
+function resultSuffix(result: { succeeded: number; failed: unknown[] }): string {
   return result.failed.length > 0 ? `${result.succeeded} succeeded, ${result.failed.length} failed` : `${result.succeeded} succeeded`;
 }
 
@@ -140,6 +144,49 @@ export async function applyAttributeTemplateAction(
       action: "audit.apply_attribute_template",
       summary: `Copied attribute values from one product to ${resultSuffix(result)}`,
       detail: { templateProductId, targetProductIds, failed: result.failed },
+    });
+
+    return { ok: true, data: result };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/** Pulls every customer or supplier live from the chosen instance and runs the consistency/accuracy checks — read-only, nothing is written. */
+export async function runPartyAuditAction(instanceId: string, kind: PartyKind): Promise<AuditActionResult<PartyAuditResult>> {
+  if (!instanceId) return { ok: false, error: "Choose an instance." };
+  try {
+    const { orgId } = await requireCurrentOrg();
+    const db = createServiceRoleClient();
+    const creds = await loadCin7Credentials(db, orgId, instanceId);
+    const parties = kind === "customer" ? await fetchAllCustomers(creds) : await fetchAllSuppliers(creds);
+    return { ok: true, data: runPartyAudit(parties, kind) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+export async function applyPartyFixesAction(
+  instanceId: string,
+  kind: PartyKind,
+  fixes: PartyFix[]
+): Promise<AuditActionResult<ApplyPartyFixesResult>> {
+  if (!instanceId) return { ok: false, error: "Choose an instance." };
+  if (!fixes.length) return { ok: false, error: "Nothing to apply." };
+  try {
+    const { orgId, userId, email } = await requireCurrentOrg();
+    const db = createServiceRoleClient();
+    const creds = await loadCin7Credentials(db, orgId, instanceId);
+    const result = await applyPartyFixes(creds, kind, fixes);
+
+    const fieldNames = [...new Set(fixes.flatMap((f) => Object.keys(f.fields)))];
+    await logActivity(db, {
+      orgId,
+      instanceId,
+      actor: { userId, email },
+      action: `audit.apply_${kind}_fixes`,
+      summary: `Set ${fieldNames.join(", ")} on ${resultSuffix(result)} ${kind}${result.succeeded === 1 ? "" : "s"}`,
+      detail: { fields: fieldNames, partyIds: fixes.map((f) => f.partyId), failed: result.failed },
     });
 
     return { ok: true, data: result };
