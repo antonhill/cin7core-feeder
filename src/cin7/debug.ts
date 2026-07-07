@@ -319,3 +319,46 @@ export async function checkSaleStatuses(creds: Cin7Credentials): Promise<SaleSta
     sample: sales.slice(0, 3),
   };
 }
+
+export interface FinishedGoodsExample {
+  listRecord?: Record<string, unknown>;
+  listKeys: string[];
+  detail?: Record<string, unknown>;
+  detailError?: string;
+}
+
+/**
+ * Diagnostic only: Anton asked for assembly quantity ("how many items
+ * planned/being built") and total BOM cost on the new Assemblies report —
+ * neither field is confirmed anywhere yet. `Cin7FinishedGoodsListEntry`
+ * (finished-goods.ts) only types TaskID/AssemblyNumber/ProductCode/
+ * ProductName/Status/Date, but the *real* list response may already carry
+ * more fields our narrow interface just doesn't expose — same class of gap
+ * that missed Product's Brand/CostingMethod early on (see
+ * docs/cin7-api-findings.md). This dumps one full raw list record (every
+ * key, not just the typed subset) AND attempts a plausible detail endpoint —
+ * `/finishedgoods?TaskID=`, guessing at the same lowercase-singular +
+ * `{Resource}ID`-param pattern already confirmed for Stock Transfer
+ * (`/stocktransfer?TaskID=`) — unconfirmed, so both are reported rather than
+ * guessed at blind.
+ */
+export async function findFinishedGoodsExample(creds: Cin7Credentials): Promise<FinishedGoodsExample> {
+  const listRes = await cin7Request<{ FinishedGoods?: Record<string, unknown>[] }>(creds, "/finishedGoodsList", {
+    query: { Page: 1, Limit: 1 },
+  });
+  const listRecord = listRes.FinishedGoods?.[0];
+  const listKeys = listRecord ? Object.keys(listRecord) : [];
+
+  let detail: Record<string, unknown> | undefined;
+  let detailError: string | undefined;
+  const taskId = listRecord?.TaskID;
+  if (taskId) {
+    try {
+      detail = await cin7Request<Record<string, unknown>>(creds, "/finishedgoods", { query: { TaskID: String(taskId) } });
+    } catch (e) {
+      detailError = e instanceof Error ? e.message : "Unknown error";
+    }
+  }
+
+  return { listRecord, listKeys, detail, detailError };
+}

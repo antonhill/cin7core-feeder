@@ -9,6 +9,7 @@ import {
   debugFetchCustomerByName,
   debugFindBomExample,
   debugFindCustomerSupplierExamples,
+  debugFindFinishedGoodsExample,
   debugProbeWorkCentrePaths,
   debugPushOneCustomerAndSupplier,
   deleteInstance,
@@ -101,6 +102,14 @@ export default function InstancesSettingsPage() {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Fetching…" } }));
     startTransition(async () => {
       const result = await debugFindCustomerSupplierExamples(instanceId);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
+  function handleFindFinishedGoodsExample(instanceId: string) {
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Fetching…" } }));
+    startTransition(async () => {
+      const result = await debugFindFinishedGoodsExample(instanceId);
       setTestResults((prev) => ({ ...prev, [instanceId]: result }));
     });
   }
@@ -208,6 +217,9 @@ export default function InstancesSettingsPage() {
                 </button>
                 <button onClick={() => handleFindCustomerSupplierExamples(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                   Fetch Customer/Supplier example
+                </button>
+                <button onClick={() => handleFindFinishedGoodsExample(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                  Fetch Assembly (FinishedGoods) example
                 </button>
                 <button onClick={() => handlePushOneCustomerAndSupplier(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                   Test push 1 customer + 1 supplier
