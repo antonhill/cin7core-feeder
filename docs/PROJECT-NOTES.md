@@ -25,10 +25,34 @@ prune/rewrite entries here rather than appending forever once something is fully
   management isn't exposed on the public partner API at all (only Cin7's internal frontend API),
   though this hasn't been confirmed by Cin7 support. Don't re-attempt path-guessing without new
   evidence.
-- **Reporting Consolidator** (`/reports`): two-phase sales sync (cheap paginated list scan queues
-  new/changed sales, then a rate-limited detail phase pulls line items + `AverageCost`, since
-  Cin7's Sale API has no bulk line-item endpoint) + a pivot grid matching Cin7's own native pivot
-  report layout + Excel export (`exceljs`, not `xlsx`/SheetJS — see below).
+- **Reporting hub** (`/reports`), restructured 2026-07-07 into a single org-toggleable "Reporting"
+  module covering multiple report types, each its own route under `src/app/reports/<name>/`, with a
+  shared `layout.tsx` (one `ModuleHeader` banner) + `ReportsNav.tsx` (secondary pill-tab nav,
+  active-tab logic keyed off `pathname`) so adding a report is just a new route + one line in
+  `REPORT_TABS` — no new top-level nav/home-tile entry needed, since disabling "Reporting" in
+  `/admin`'s per-org visibility now blocks every report under it in one place.
+  - **Sales** (`/reports`, the hub's default/index route): two-phase sales sync (cheap paginated
+    list scan queues new/changed sales, then a rate-limited detail phase pulls line items +
+    `AverageCost`, since Cin7's Sale API has no bulk line-item endpoint) + a pivot grid matching
+    Cin7's own native pivot report layout + Excel export (`exceljs`, not `xlsx`/SheetJS — see below).
+  - **Assemblies** (`/reports/assemblies`, moved here 2026-07-07 from a short-lived standalone
+    `/assemblies` module): every assembly build pulled live via the same `fetchAllFinishedGoodsList`
+    already used by System Health, filterable by Draft/Authorised/In Progress/Completed (checkboxes,
+    all on by default) plus a name/number search. **VOIDED is deliberately excluded from the filter
+    set entirely, not just unchecked** — a real 5th status Cin7 uses for cancelled assembly records,
+    but this report is about builds still relevant to the business, not a cancellation log. No
+    domain-logic module of its own — unlike Audit/Health, there's no flagging rule here worth
+    unit-testing, just a live pull + client-side filter/search, so `actions.ts` fetches and
+    `page.tsx` filters directly. **Quantity + total BOM cost**, confirmed live via a diagnostic
+    (`findFinishedGoodsExample` in `src/cin7/debug.ts`, wired to a "Fetch Assembly (FinishedGoods)
+    example" button on `/settings/instances`): both `Quantity` and `UnitCost` are already present
+    on the **list** response itself, no per-record detail call needed (avoids an N+1 rate-limit
+    cost). Total cost = `Quantity * UnitCost` — matched the detail endpoint's
+    (`/finishedgoods?TaskID=`, also confirmed live) `OrderLines[].TotalCost` sum exactly on the one
+    real example checked, though only against a `Quantity: 1` record, so the multiplication is the
+    conventional reading, not independently verified against `Quantity > 1` — revisit if that ever
+    looks wrong on real data. The page shows quantity + total cost per row plus a summed total
+    across the current filter.
 - **Data Audit** (`/audit`): pulls a chosen instance's products live and flags missing
   Brand/sales-pricing/inventory-setup/GL-accounts, near-duplicate Category/UOM/Tag values
   (Levenshtein-based), incomplete `AdditionalAttribute1-10` values within a category (with a
@@ -43,23 +67,6 @@ prune/rewrite entries here rather than appending forever once something is fully
   a bulk-fix control (`src/audit/apply-party-fixes.ts`, same "PUT just the ID + changed field(s)"
   convention as Product) — Contacts/Email/Phone/TaxNumber/address fields are inherently
   per-entity, so those stay report-only, same reasoning as Product's `missing_sales_pricing`.
-- **Assemblies** (`/assemblies`), added 2026-07-07: a new module — every assembly build pulled
-  live via the same `fetchAllFinishedGoodsList` already used by System Health, filterable by
-  Draft/Authorised/In Progress/Completed (checkboxes, all on by default) plus a name/number search.
-  **VOIDED is deliberately excluded from the filter set entirely, not just unchecked** — a real 5th
-  status Cin7 uses for cancelled assembly records, but this report is about builds still relevant
-  to the business, not a cancellation log. No new domain-logic module — unlike Audit/Health, there's
-  no flagging rule here worth unit-testing, just a live pull + client-side filter/search, so
-  `src/app/assemblies/actions.ts` fetches and `page.tsx` filters directly. **Quantity + total BOM
-  cost added 2026-07-07** — confirmed live via a new diagnostic (`findFinishedGoodsExample` in
-  `src/cin7/debug.ts`, wired to a "Fetch Assembly (FinishedGoods) example" button on
-  `/settings/instances`) that both `Quantity` and `UnitCost` are already present on the **list**
-  response itself, no per-record detail call needed (avoids an N+1 rate-limit cost). Total cost =
-  `Quantity * UnitCost` — matched the detail endpoint's (`/finishedgoods?TaskID=`, also confirmed
-  live) `OrderLines[].TotalCost` sum exactly on the one real example checked, though only against a
-  `Quantity: 1` record, so the multiplication is the conventional reading, not independently
-  verified against `Quantity > 1` — revisit if that ever looks wrong on real data. The page shows
-  quantity + total cost per row plus a summed total across the current filter.
 - **Auth**: Supabase Auth via a typed 6-digit OTP code (not magic links — M365's Safe Links
   pre-consumes link-based codes before the user clicks, so any future email-code auth on an M365
   tenant should go straight to OTP entry). `/admin` (gated by a `super_admins` table) lets Anton

@@ -4,8 +4,6 @@ import { useMemo, useState, useTransition } from "react";
 import { listAssembliesAction } from "./actions";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import type { Cin7FinishedGoodsListEntry } from "@/cin7/finished-goods";
-import { ModuleHeader } from "@/app/ModuleHeader";
-import { ASSEMBLIES_MODULE } from "@/app/module-nav";
 
 /**
  * The 4 statuses Anton asked to filter by. VOIDED is deliberately left out —
@@ -119,14 +117,8 @@ export default function AssembliesPage() {
   );
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-12">
-      <ModuleHeader module={ASSEMBLIES_MODULE}>
-        Pulls every assembly build live from a connected Cin7 instance — filter by Draft, Authorised, In
-        Progress, or Completed, search by assembly number or product, and see quantity plus total BOM cost per
-        assembly (and summed across the current filter). Read-only; nothing is written back.
-      </ModuleHeader>
-
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <>
+      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <p className="font-medium text-slate-900">Instance</p>
         <div className="mt-3">
           <button
@@ -247,6 +239,6 @@ export default function AssembliesPage() {
           )}
         </section>
       )}
-    </main>
+    </>
   );
 }

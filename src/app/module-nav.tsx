@@ -109,15 +109,6 @@ export function ShieldIcon({ className }: IconProps) {
   );
 }
 
-export function AssemblyIcon({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3Z" />
-      <path d="M4 7.5 12 12m0 0 8-4.5M12 12v9" />
-    </svg>
-  );
-}
-
 export interface ModuleConfig {
   href: string;
   label: string;
@@ -154,10 +145,10 @@ export const MIGRATE_MODULE: ModuleConfig = {
 
 export const REPORTS_MODULE: ModuleConfig = {
   href: "/reports",
-  label: "Reports",
+  label: "Reporting",
   gradient: "from-amber-500 to-amber-600",
   Icon: ReportsIcon,
-  blurb: "Revenue, COGS, profit, and margin% per product sold, across every invoiced sale pulled from your connected Cin7 instances.",
+  blurb: "A growing hub of reports pulled from your connected Cin7 instances — Sales (revenue/COGS/profit/margin%) and Assemblies (quantity + BOM cost), with more to come.",
 };
 
 export const AUDIT_MODULE: ModuleConfig = {
@@ -174,14 +165,6 @@ export const HEALTH_MODULE: ModuleConfig = {
   gradient: "from-emerald-500 to-emerald-700",
   Icon: HealthIcon,
   blurb: "A scorecard across Sales, Purchases, Stock Transfers, Assemblies, Production Orders, and product data quality — one overall health score per connected instance.",
-};
-
-export const ASSEMBLIES_MODULE: ModuleConfig = {
-  href: "/assemblies",
-  label: "Assemblies",
-  gradient: "from-orange-500 to-orange-700",
-  Icon: AssemblyIcon,
-  blurb: "Every assembly build pulled live from a connected instance — quantity and total BOM cost per build, filterable by Draft, Authorised, In Progress, or Completed.",
 };
 
 export const INSTANCES_MODULE: ModuleConfig = {
@@ -227,7 +210,6 @@ export const MODULES: ModuleConfig[] = [
   REPORTS_MODULE,
   AUDIT_MODULE,
   HEALTH_MODULE,
-  ASSEMBLIES_MODULE,
   INSTANCES_MODULE,
   ACTIVITY_MODULE,
 ];
