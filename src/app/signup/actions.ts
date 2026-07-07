@@ -1,6 +1,5 @@
 "use server";
 
-import { redirect } from "next/navigation";
 import { createSessionClient } from "@/supabase/server-session";
 import { createServiceRoleClient } from "@/supabase/server";
 
@@ -32,11 +31,13 @@ export async function createSelfServeOrgAction(orgName: string): Promise<CreateS
 
     const db = createServiceRoleClient();
 
-    // Re-visiting /signup after already converting shouldn't create a second org.
+    // Re-visiting /signup after already converting shouldn't create a second
+    // org — treat it as success (not a redirect() call: that throws
+    // internally and this whole block is wrapped in a try/catch below, which
+    // would silently swallow it as a generic error instead of navigating).
+    // The caller (signup/page.tsx) redirects home on any ok:true result.
     const { data: existingMembership } = await db.from("org_members").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
-    if (existingMembership) {
-      redirect("/");
-    }
+    if (existingMembership) return { ok: true };
 
     const { data: org, error: orgError } = await db.from("organizations").insert({ name: orgName.trim() }).select("id").single();
     if (orgError) return { ok: false, error: orgError.message };

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createBrowserSupabaseClient } from "@/supabase/browser";
 import { createSelfServeOrgAction } from "./actions";
@@ -9,7 +8,6 @@ import { createSelfServeOrgAction } from "./actions";
 type Step = "details" | "code";
 
 export default function SignupPage() {
-  const router = useRouter();
   const [orgName, setOrgName] = useState("");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -55,8 +53,12 @@ export default function SignupPage() {
       return;
     }
 
-    router.push("/");
-    router.refresh();
+    // A hard navigation, not router.push()/router.refresh() — right after
+    // establishing a brand-new session, a client-side soft transition can
+    // render before the fresh session cookie is reliably picked up by
+    // middleware, which looked like the page "hanging" on Verifying… until a
+    // manual refresh. A full reload always goes through middleware fresh.
+    window.location.href = "/";
   }
 
   return (

@@ -136,6 +136,26 @@ prune/rewrite entries here rather than appending forever once something is fully
   brand-new email implicitly creates the `auth.users` row before OTP verification, depending on this
   Supabase project's Authentication → Providers → Email settings — check against the real project
   before relying on the verify-then-create ordering being airtight.
+
+  **Real bug, found by Anton's first live test (2026-07-07): signup looked "stuck on Verifying…"
+  even though the org was actually created — only a manual refresh showed it worked.** Two issues,
+  both fixed:
+  1. `createSelfServeOrgAction` called `redirect("/")` for the "already a member" edge case
+     **inside a try/catch** — `redirect()` throws internally, and that catch block silently
+     swallowed it as a generic error instead of navigating. Not what Anton actually hit (he was a
+     first-time signup, a different branch), but a real landmine for anyone re-visiting `/signup`
+     after already converting. Fixed by removing `redirect()` entirely — that branch now just
+     returns `{ ok: true }`, since the client already redirects home on any successful result.
+  2. **The actual cause**: both `/signup` and `/login` redirected after a fresh sign-in with
+     `router.push("/"); router.refresh();` — a client-side soft transition. Right after
+     establishing a brand-new session, this doesn't reliably pick up the just-set session cookie
+     before rendering (a known Next.js App Router + Supabase SSR rough edge) — the page looks
+     stuck because middleware/the layout still see an unauthenticated state until something forces
+     a real request. A manual refresh does exactly that, which is why it "worked after refreshing."
+     Fixed on **both** pages by switching to a hard navigation, `window.location.href = "/"` —
+     forces a full request through middleware with the cookie already set, no ambiguity. `/login`
+     had the identical latent bug (same pattern) even though it wasn't the one reported; fixed for
+     consistency since the underlying fragility was the same.
 - **Org switcher, 2026-07-07**: a super-admin can view/act as **any** org, not just ones they're an
   explicit `org_members` row for — Anton's explicit ask ("access any organisation as the master
   user"), confirmed via `AskUserQuestion` over the alternative (member-only switching). Selection
