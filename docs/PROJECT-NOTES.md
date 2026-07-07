@@ -53,6 +53,15 @@ prune/rewrite entries here rather than appending forever once something is fully
   cleanly, no crash) plus a fresh `tsc`/`eslint`/`vitest`/`next build` pass. No backup-codes flow —
   Supabase doesn't provide one out of the box, so a lost device today means Anton manually
   unenrolling the user's factor via the service-role client.
+- **Public Privacy Policy page, 2026-07-07**: `/privacy` (added to `PUBLIC_PATHS` in
+  `middleware.ts`, no sidebar — same standalone treatment as `/login`) renders a client-safe copy
+  of `docs/legal/privacy-policy.md`, with a visible "Draft — pending legal review" banner. This is
+  a **separate, hand-written copy**, not a live render of the `.md` file — the `.md` file is the
+  internal working draft for attorney review and still has bracketed placeholder notes (retention
+  period, cross-border-transfer justification) that read as unfinished TODOs; the live page phrases
+  those honestly as "still being finalized" instead. Keep both in sync by substance when either
+  changes — the `.md` file remains the source of truth for anything not yet decided. Linked from
+  the login page footer and the sidebar footer (below Sign out).
 - **Visual language, 2026-07-07**: dark sidebar (new `--sidebar-*` CSS vars in `globals.css`,
   `#12172a` base) replacing the old white sidebar, to match a reference production-dashboard
   screenshot Anton shared. `ModuleHeader` slimmed from a big bordered banner card to a compact

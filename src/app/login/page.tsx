@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { createBrowserSupabaseClient } from "@/supabase/browser";
 
 type Step = "email" | "code";
@@ -127,6 +128,10 @@ export default function LoginPage() {
           </button>
         </form>
       )}
+
+      <Link href="/privacy" className="mt-6 self-center text-sm text-slate-500 hover:underline">
+        Privacy Policy
+      </Link>
     </main>
   );
 }

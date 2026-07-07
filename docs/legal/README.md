@@ -7,7 +7,10 @@ This folder contains draft starting points for three documents Anton asked for
 as part of client-readiness hardening (Task #33):
 
 - [`privacy-policy.md`](privacy-policy.md) — public-facing, explains what
-  personal information the app processes and why.
+  personal information the app processes and why. A client-safe rendered copy
+  (with a visible draft banner) is live in the app at `/privacy`
+  (`src/app/privacy/page.tsx`) — that page is hand-written, not a live render
+  of this file, so keep both in sync by substance when either changes.
 - [`data-processing-agreement.md`](data-processing-agreement.md) — the
   contract between Spark Consulting (as operator) and a client (as the entity
   whose Cin7 data, including any customer/personal information in it, is
