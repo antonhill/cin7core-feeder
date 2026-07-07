@@ -87,6 +87,27 @@ prune/rewrite entries here rather than appending forever once something is fully
   pre-consumes link-based codes before the user clicks, so any future email-code auth on an M365
   tenant should go straight to OTP entry). `/admin` (gated by a `super_admins` table) lets Anton
   create orgs and invite users; no self-serve signup, no org ID ever shown to a client.
+- **Org switcher, 2026-07-07**: a super-admin can view/act as **any** org, not just ones they're an
+  explicit `org_members` row for — Anton's explicit ask ("access any organisation as the master
+  user"), confirmed via `AskUserQuestion` over the alternative (member-only switching). Selection
+  is a cookie (`impersonated_org_id`, `src/lib/org-switch.ts`), always re-verified against a real
+  `super_admins` check before being honored — the cookie is only ever a "which org" hint, never an
+  authorization grant on its own, so tampering with it as a non-super-admin gains nothing.
+  `requireCurrentOrg()` (`src/lib/current-org.ts`) and `getCurrentUserInfo()` (`src/actions/auth.ts`)
+  both check impersonation first, falling back to the normal `org_members` lookup. **`middleware.ts`'s
+  disabled-module block-check also had to be updated** — it derives its own `org_id` independently
+  (doesn't call `requireCurrentOrg()`), so without this fix a super-admin impersonating org B would've
+  had org A's (their real membership's) module-visibility settings wrongly applied while viewing org
+  B. UI: `OrgSwitcher.tsx` (a `<select>` in the sidebar, super-admin only, lazy-loads the full org
+  list once per page load) + a persistent amber "Viewing as X (master user)" banner with an Exit
+  button (`clearImpersonatedOrgAction`) in the root layout — deliberately prominent, since this lets
+  live writes reach a client's actual Cin7 instance while impersonating and losing track of which
+  org you're in would be a real mistake to make invisible. **Not fully exercised live in this
+  session** (no real super-admin session available in the sandbox) — verified via `tsc`/`eslint`/
+  `vitest`/`next build` plus an actual production-server request (`next start` + curl), which
+  confirms both touched `"use server"` files evaluate cleanly at runtime, not just at build time
+  (this codebase's standing rule — a bad export crashes the whole module only at request time).
+  Worth Anton clicking through the real switcher once deployed to confirm the UI itself.
 - **MFA, 2026-07-07**: opt-in TOTP two-factor via Supabase Auth's built-in `auth.mfa` API — no new
   infra. `/settings/security` (linked from the sidebar footer, next to Sign out) lets a user
   enroll/remove an authenticator app factor (QR code + manual secret, matching `SECURITY_MODULE` in

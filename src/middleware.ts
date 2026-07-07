@@ -1,6 +1,12 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { findBlockedModule } from "@/app/module-nav";
+import { createServiceRoleClient } from "@/supabase/server";
+
+// Must match src/lib/org-switch.ts's IMPERSONATED_ORG_COOKIE — duplicated
+// rather than imported, since that module calls next/headers' cookies() and
+// middleware uses NextRequest's own cookie API instead.
+const IMPERSONATED_ORG_COOKIE = "impersonated_org_id";
 
 const PUBLIC_PATHS = ["/login", "/auth/callback", "/privacy"];
 
@@ -102,11 +108,31 @@ export async function middleware(request: NextRequest) {
   // show a small explanation. Not org-scoped by isSuperAdmin: a super-admin
   // viewing through their own org membership is bound by that org's own
   // settings too, same as anyone else — this is deliberate, since otherwise
-  // the block would never actually get exercised while testing it.
+  // the block would never actually get exercised while testing it. A
+  // super-admin currently "viewing as" another org (see
+  // src/actions/org-switch.ts) is bound by THAT org's settings instead —
+  // otherwise this check would silently apply the wrong org's module
+  // visibility while impersonating.
   if (user && !isPublic) {
-    const { data: membership } = await supabase.from("org_members").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
-    if (membership) {
-      const { data: org } = await supabase.from("organizations").select("disabled_modules").eq("id", membership.org_id).maybeSingle();
+    const db = createServiceRoleClient();
+    let orgId: string | null = null;
+
+    const { data: superAdminRow } = await db.from("super_admins").select("user_id").eq("user_id", user.id).maybeSingle();
+    if (superAdminRow) {
+      const impersonatedOrgId = request.cookies.get(IMPERSONATED_ORG_COOKIE)?.value;
+      if (impersonatedOrgId) {
+        const { data: org } = await db.from("organizations").select("id").eq("id", impersonatedOrgId).maybeSingle();
+        if (org) orgId = org.id;
+      }
+    }
+
+    if (!orgId) {
+      const { data: membership } = await supabase.from("org_members").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
+      orgId = membership?.org_id ?? null;
+    }
+
+    if (orgId) {
+      const { data: org } = await db.from("organizations").select("disabled_modules").eq("id", orgId).maybeSingle();
       const disabledModules: string[] = org?.disabled_modules ?? [];
       const blockedModule = findBlockedModule(request.nextUrl.pathname, disabledModules);
       if (blockedModule) {

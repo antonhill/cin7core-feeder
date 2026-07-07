@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AppNav } from "./AppNav";
 import { getCurrentUserInfo } from "@/actions/auth";
+import { clearImpersonatedOrgAction } from "@/actions/org-switch";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -24,7 +25,7 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const { email, isSuperAdmin, orgName, orgLogoUrl, disabledModules } = await getCurrentUserInfo();
+  const { email, isSuperAdmin, orgId, orgName, orgLogoUrl, isImpersonating, disabledModules } = await getCurrentUserInfo();
 
   return (
     <html
@@ -35,11 +36,24 @@ export default async function RootLayout({
         <AppNav
           userEmail={email}
           isSuperAdmin={isSuperAdmin}
+          orgId={orgId}
           orgName={orgName}
           orgLogoUrl={orgLogoUrl}
           disabledModules={disabledModules}
         />
-        <div className="flex flex-1 flex-col overflow-y-auto">{children}</div>
+        <div className="flex flex-1 flex-col overflow-y-auto">
+          {isImpersonating && (
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-amber-500 px-4 py-2 text-sm font-semibold text-white">
+              <span>Viewing as {orgName ?? "another organization"} (master user)</span>
+              <form action={clearImpersonatedOrgAction}>
+                <button type="submit" className="rounded-full border border-white/60 px-3 py-0.5 text-xs font-semibold hover:bg-white/10">
+                  Exit
+                </button>
+              </form>
+            </div>
+          )}
+          {children}
+        </div>
       </body>
     </html>
   );

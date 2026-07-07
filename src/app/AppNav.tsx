@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOutAction } from "@/actions/auth";
 import { MODULES, ADMIN_MODULE } from "@/app/module-nav";
+import { OrgSwitcher } from "@/app/OrgSwitcher";
 
 /** Two-letter fallback avatar shown when an org has no logo uploaded yet. */
 function OrgPlaceholder({ orgName }: { orgName: string | null }) {
@@ -24,12 +25,14 @@ function OrgPlaceholder({ orgName }: { orgName: string | null }) {
 export function AppNav({
   userEmail,
   isSuperAdmin,
+  orgId,
   orgName,
   orgLogoUrl,
   disabledModules,
 }: {
   userEmail: string | null;
   isSuperAdmin: boolean;
+  orgId: string | null;
   orgName: string | null;
   orgLogoUrl: string | null;
   disabledModules: string[];
@@ -53,6 +56,8 @@ export function AppNav({
         )}
         <span className="truncate">{orgName ?? "Cin7 Core Toolbox"}</span>
       </Link>
+
+      {isSuperAdmin && <OrgSwitcher currentOrgId={orgId} />}
 
       <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-4">
         {links.map((link) => {
