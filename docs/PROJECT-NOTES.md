@@ -86,10 +86,14 @@ prune/rewrite entries here rather than appending forever once something is fully
 ## Known gaps (scoped, not yet started — see Task #33 in project tracking)
 
 Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas):
-- **No Row-Level Security anywhere** in `supabase/migrations/` — tenant isolation is enforced
-  entirely by `requireCurrentOrg()` checks in each server action (the service-role client bypasses
-  RLS regardless, so RLS would only be defense-in-depth, but there's currently no DB-level backstop
-  if a future action forgets to scope a query by `org_id`).
+- ~~No Row-Level Security anywhere~~ — **correction, same day**: this was wrong. Every table
+  across `supabase/migrations/` has `ENABLE ROW LEVEL SECURITY` plus org-scoped policies
+  (`is_org_member(org_id)`), confirmed by grepping all 27 tables. The original finding used a
+  case-sensitive search that missed this codebase's lowercase `enable row level security`
+  convention — a real defense-in-depth layer already exists underneath the app-level
+  `requireCurrentOrg()` checks (the service-role client still bypasses RLS, so app-level scoping
+  is still the primary enforcement, but there IS a DB-level backstop, contrary to what was
+  recorded here before). Not a gap — removed from the task list.
 - **No activity/audit log** on live-write actions (Data Audit fixes/merges, sync push) — nothing
   persists who changed what, when, on a client's live instance.
 - **No privacy policy / DPA / subprocessor list** — needed before this can be pitched to
@@ -97,6 +101,36 @@ Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas
   includes EU customers).
 
 ## Scoped, not started (see Task tracking for current numbers)
+
+- **Per-instance price markup** — scoped 2026-07-06 for a new client running a two-instance
+  inter-company trading structure: a Procurement instance buys from suppliers at BEEE-negotiated
+  rates and "sells" (inter-company) to a Selling instance at a markup, which then sells to end
+  customers. **Today, `price_tiers` is keyed `(org_id, product_sku, tier_code)` — one canonical
+  price per SKU per org, pushed identically to every connected instance.** There's no way for the
+  same SKU to carry a different sell price per instance. Note: the inter-company
+  Procurement→Selling leg itself (Sales Order in one instance, Purchase Order in the other) is
+  Cin7's own native Sales/Purchases workflow — this app doesn't push Sales or Purchases at all, so
+  there's nothing to build there; the gap is specifically the Selling instance's end-customer
+  PriceTier values needing to differ from whatever's on the product record elsewhere.
+  - **Chosen approach: a markup percentage configured per instance**, not full per-instance price
+    overrides — matches the client's stated "cost + markup" formula directly (change the base
+    canonical price once, every instance's push price updates correctly), versus a full override
+    table which would allow arbitrary per-SKU pricing per instance but need ongoing manual upkeep.
+    Revisit if the client's real markup turns out to vary by category/product rather than being
+    one flat instance-wide %.
+  - **Schema**: add `price_markup_percent numeric(7,4) not null default 0` to `cin7_instances` —
+    default 0 is a no-op (existing instances/clients push canonical prices unchanged, fully
+    backward compatible).
+  - **Code path**: `Cin7Credentials` (`src/cin7/types.ts`) gains `priceMarkupPercent`, populated by
+    `loadCin7Credentials`. New pure `applyPriceMarkup(priceTiers, markupPercent)` helper in
+    `src/cin7/products.ts` (alongside `toCin7ProductPayload`) — applied in `run-sync.ts` right
+    before the existing `pushProduct(creds, product, priceTiers, ...)` call (line ~311), so
+    `pushProduct`/`toCin7ProductPayload` themselves stay simple "push this exact data" functions,
+    not instance-aware.
+  - **UI**: add a "Price markup %" field to the Add/Edit Instance modal on
+    `/settings/instances`, alongside the existing Account ID/Application Key/Base URL fields.
+  - **Scope boundary**: markup applies uniformly to every PriceTier field being pushed for that
+    instance — no per-tier or per-category markup rules in v1.
 
 - **System Backup (backup-only, not restore)** — scoped 2026-07-06. Periodic, read-only snapshots
   of live Cin7 data into this app's own Supabase DB, purely defensive ("in case there's ever a
