@@ -156,6 +156,18 @@ prune/rewrite entries here rather than appending forever once something is fully
      forces a full request through middleware with the cookie already set, no ambiguity. `/login`
      had the identical latent bug (same pattern) even though it wasn't the one reported; fixed for
      consistency since the underlying fragility was the same.
+
+  **Second real bug, same day, found immediately after re-testing the fix above**: Anton went to
+  `/signup` a second time (to start a "new" trial) while still signed in from the first — the
+  *previous* org's trial banner rendered on top of the fresh signup form, and
+  `createSelfServeOrgAction` would have silently discarded the org name he typed and reused his
+  existing membership instead (per the fix in item 1 above — "already a member" just returns
+  success and redirects home to the *old* org). **Root cause: `/signup` never checked whether the
+  visitor was already signed in.** `/login` already redirects an authenticated user straight home
+  rather than showing the form again — `/signup` needed the identical treatment. Fixed in
+  `middleware.ts` by folding `/signup` into that same existing redirect-home check. You can't have
+  two accounts active in one browser session; signing out first is the correct way to test a
+  second trial, not re-visiting `/signup` while still logged in.
 - **Org switcher, 2026-07-07**: a super-admin can view/act as **any** org, not just ones they're an
   explicit `org_members` row for — Anton's explicit ask ("access any organisation as the master
   user"), confirmed via `AskUserQuestion` over the alternative (member-only switching). Selection

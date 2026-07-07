@@ -150,7 +150,14 @@ export async function middleware(request: NextRequest) {
   // would otherwise just see the form again — resubmitting a stale code
   // there fails confusingly since one-time codes can't be reused, even
   // though they're already logged in. Send them straight into the app.
-  if (user && request.nextUrl.pathname.startsWith("/login")) {
+  // Same treatment for /signup — an already-signed-in user re-visiting it
+  // (e.g. to start a "new" trial without signing out first) would otherwise
+  // see their *previous* org's trial banner rendered on top of the signup
+  // form (confirmed live 2026-07-07), and createSelfServeOrgAction would
+  // silently discard the org name they typed and reuse their existing
+  // membership instead — confusing either way. You can't have two accounts
+  // in one session; sign out first to genuinely start a second trial.
+  if (user && (request.nextUrl.pathname.startsWith("/login") || request.nextUrl.pathname.startsWith("/signup"))) {
     const homeUrl = request.nextUrl.clone();
     homeUrl.pathname = "/";
     return NextResponse.redirect(homeUrl);
