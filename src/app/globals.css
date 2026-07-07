@@ -8,11 +8,24 @@
 :root {
   --background: #f8fafc;
   --foreground: #0f172a;
+  /* Dark sidebar palette — deliberately separate from the light content-area
+     tokens above, since the sidebar is the one part of the UI that stays
+     dark regardless of the (light-only, see note below) page theme. */
+  --sidebar-bg: #12172a;
+  --sidebar-bg-raised: #1a2038;
+  --sidebar-border: #262c47;
+  --sidebar-text: #aab0c6;
+  --sidebar-text-active: #ffffff;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-sidebar-bg: var(--sidebar-bg);
+  --color-sidebar-bg-raised: var(--sidebar-bg-raised);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-text: var(--sidebar-text);
+  --color-sidebar-text-active: var(--sidebar-text-active);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }

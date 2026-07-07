@@ -43,8 +43,8 @@ export function AppNav({
   const links = isSuperAdmin ? [...visibleModules, ADMIN_MODULE] : visibleModules;
 
   return (
-    <nav className="flex h-full w-64 shrink-0 flex-col border-r border-slate-200 bg-white">
-      <Link href="/" className="flex items-center gap-3 whitespace-nowrap px-5 py-6 text-lg font-bold text-slate-900">
+    <nav className="flex h-full w-64 shrink-0 flex-col bg-sidebar-bg">
+      <Link href="/" className="flex items-center gap-3 whitespace-nowrap border-b border-sidebar-border px-5 py-6 text-lg font-bold text-sidebar-text-active">
         {orgLogoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element -- external, per-org logo URL; not worth configuring next/image remotePatterns for
           <img src={orgLogoUrl} alt={orgName ?? "Organization logo"} className="h-10 w-10 shrink-0 rounded-lg object-contain" />
@@ -54,7 +54,7 @@ export function AppNav({
         <span className="truncate">{orgName ?? "Cin7 Core Toolbox"}</span>
       </Link>
 
-      <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-3">
+      <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-4">
         {links.map((link) => {
           const active = pathname.startsWith(link.href);
           const Icon = link.Icon;
@@ -63,7 +63,7 @@ export function AppNav({
               key={link.href}
               href={link.href}
               className={`group flex items-center gap-3 rounded-xl px-2.5 py-2 text-base font-medium transition-all ${
-                active ? "bg-white text-slate-900 shadow-md ring-1 ring-slate-200" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                active ? "bg-sidebar-bg-raised text-sidebar-text-active shadow-sm" : "text-sidebar-text hover:bg-sidebar-bg-raised/60 hover:text-sidebar-text-active"
               }`}
             >
               <span
@@ -80,12 +80,12 @@ export function AppNav({
       </div>
 
       {userEmail && (
-        <div className="border-t border-slate-200 px-3 py-4">
-          <p className="truncate px-3 pb-2 text-sm text-slate-500">{userEmail}</p>
+        <div className="border-t border-sidebar-border px-3 py-4">
+          <p className="truncate px-3 pb-2 text-sm text-sidebar-text">{userEmail}</p>
           <form action={signOutAction}>
             <button
               type="submit"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              className="w-full rounded-lg border border-sidebar-border px-3 py-2 text-sm font-medium text-sidebar-text hover:bg-sidebar-bg-raised hover:text-sidebar-text-active"
             >
               Sign out
             </button>

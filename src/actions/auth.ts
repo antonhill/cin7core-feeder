@@ -13,6 +13,7 @@ export async function signOutAction() {
 export interface CurrentUserInfo {
   email: string | null;
   isSuperAdmin: boolean;
+  orgId: string | null;
   orgName: string | null;
   orgLogoUrl: string | null;
   /** Module hrefs (e.g. "/reports") hidden from this org — set by a super-admin on /admin. Empty means every module is visible. */
@@ -25,7 +26,7 @@ export async function getCurrentUserInfo(): Promise<CurrentUserInfo> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return { email: null, isSuperAdmin: false, orgName: null, orgLogoUrl: null, disabledModules: [] };
+  if (!user) return { email: null, isSuperAdmin: false, orgId: null, orgName: null, orgLogoUrl: null, disabledModules: [] };
 
   const db = createServiceRoleClient();
   const { data: superAdminRow } = await db.from("super_admins").select("user_id").eq("user_id", user.id).maybeSingle();
@@ -44,5 +45,5 @@ export async function getCurrentUserInfo(): Promise<CurrentUserInfo> {
     disabledModules = org?.disabled_modules ?? [];
   }
 
-  return { email: user.email ?? null, isSuperAdmin: Boolean(superAdminRow), orgName, orgLogoUrl, disabledModules };
+  return { email: user.email ?? null, isSuperAdmin: Boolean(superAdminRow), orgId: membership?.org_id ?? null, orgName, orgLogoUrl, disabledModules };
 }

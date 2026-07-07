@@ -38,6 +38,16 @@ prune/rewrite entries here rather than appending forever once something is fully
   pre-consumes link-based codes before the user clicks, so any future email-code auth on an M365
   tenant should go straight to OTP entry). `/admin` (gated by a `super_admins` table) lets Anton
   create orgs and invite users; no self-serve signup, no org ID ever shown to a client.
+- **Visual language, 2026-07-07**: dark sidebar (new `--sidebar-*` CSS vars in `globals.css`,
+  `#12172a` base) replacing the old white sidebar, to match a reference production-dashboard
+  screenshot Anton shared. `ModuleHeader` slimmed from a big bordered banner card to a compact
+  title bar (icon chip + title + one-line blurb, bottom-border only) so it reads like a dashboard
+  title rather than its own content block. Home page gained a 3-card KPI row (active instances,
+  team members, activity in the last 7 days) via cheap `count: "exact", head: true` Supabase
+  queries — no live Cin7 calls — added in `getHomeStats()`; `getCurrentUserInfo()` now also
+  returns `orgId` to support this. Module tiles/icons (gradient chips per module in
+  `module-nav.tsx`) were kept as-is, just tightened in spacing — they already matched the
+  colorful-icon-square look being aimed for.
 - **System Health** (`/health`): live scorecard across 6 dimensions — Sales unfulfilled past
   deadline (`FulFilmentStatus`/`ShipBy`), Purchases not received past deadline
   (`CombinedReceivingStatus`/`RequiredBy`), Stock Transfers stuck in draft/ordered/in-transit,
@@ -94,11 +104,22 @@ Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas
   `requireCurrentOrg()` checks (the service-role client still bypasses RLS, so app-level scoping
   is still the primary enforcement, but there IS a DB-level backstop, contrary to what was
   recorded here before). Not a gap — removed from the task list.
-- **No activity/audit log** on live-write actions (Data Audit fixes/merges, sync push) — nothing
-  persists who changed what, when, on a client's live instance.
-- **No privacy policy / DPA / subprocessor list** — needed before this can be pitched to
-  third-party clients generally (POPIA since Spark is SA-based; GDPR too if a client's Cin7 data
-  includes EU customers).
+- ~~No activity/audit log~~ — **shipped 2026-07-05**: `activity_log` table + `/activity` page
+  records every live write this app makes (Data Audit fixes/merges, sync push), with who/when.
+  See `src/lib/activity-log.ts`.
+- ~~No confirmation before bulk fixes/merges in Data Audit~~ — **shipped 2026-07-07**:
+  `window.confirm()` gates before every Data Audit write (bulk field-set, merge, attribute-copy,
+  Sellable toggle) in `src/app/audit/page.tsx`, matching the existing confirm-before-delete
+  pattern elsewhere in the app.
+- ~~No privacy policy / DPA / subprocessor list~~ — **drafted 2026-07-07**: see
+  `docs/legal/privacy-policy.md`, `docs/legal/data-processing-agreement.md`,
+  `docs/legal/subprocessors.md`. These are **drafts only** — grounded in this repo's actual
+  architecture (Supabase `eu-west-1`, Vercel, AES-256-GCM credential encryption, RLS isolation,
+  activity log) but explicitly require real attorney review before use with any client; several
+  sections (retention period, liability/governing law, breach-notification window) are left as
+  placeholders because they're business/legal decisions, not something to invent. POPIA is the
+  primary framework (Spark is SA-based); GDPR is called out as conditional — only relevant if a
+  specific client's Cin7 data includes EU/UK personal information.
 
 ## Scoped, not started (see Task tracking for current numbers)
 
@@ -159,8 +180,9 @@ Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas
   - **Explicitly deferred**: restore/write-back, incremental/delta storage, any UI beyond minimal
     backup-run status visibility (no "browse backed-up records" UI planned yet).
   - **Sharpens existing gaps**: storing meaningfully more sensitive client data at rest raises the
-    stakes on the two gaps already flagged just above (no RLS, no privacy policy/DPA) — treat that
-    hardening as a prerequisite once this moves from scoped to active, not an afterthought.
+    stakes on data retention — the privacy policy/DPA drafts above explicitly flag "no retention
+    policy" as unresolved; settle that before this feature goes from scoped to active, since a
+    backup feature multiplies exactly the data volume that policy needs to cover.
 
 ## Where to look next
 
