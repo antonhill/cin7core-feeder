@@ -136,6 +136,9 @@ export async function middleware(request: NextRequest) {
 // api/sync and api/import authenticate themselves via a bearer token
 // (assertInternalAuth) for external/Cron callers with no browser session —
 // they must never be intercepted by the session-cookie redirect below.
+// icon.svg is Next's file-convention favicon route — it must be reachable
+// with no session too, or the browser's (unauthenticated) request for it
+// gets swallowed by the login redirect and the favicon never loads.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/sync|api/import).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|api/sync|api/import).*)"],
 };
