@@ -3,6 +3,7 @@ import { createSessionClient } from "@/supabase/server-session";
 export interface CurrentOrg {
   userId: string;
   orgId: string;
+  email: string | null;
 }
 
 /**
@@ -32,5 +33,5 @@ export async function requireCurrentOrg(): Promise<CurrentOrg> {
   if (error) throw new Error(error.message);
   if (!membership) throw new Error("Your account isn't linked to an organization yet — ask your admin to invite you.");
 
-  return { userId: user.id, orgId: membership.org_id };
+  return { userId: user.id, orgId: membership.org_id, email: user.email ?? null };
 }

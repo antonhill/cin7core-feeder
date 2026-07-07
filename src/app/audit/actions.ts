@@ -2,6 +2,7 @@
 
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireCurrentOrg } from "@/lib/current-org";
+import { logActivity } from "@/lib/activity-log";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsWithBom } from "@/cin7/products";
 import { runProductAudit, type ProductAuditResult } from "@/audit/product-audit";
@@ -22,6 +23,11 @@ export interface AuditActionResult<T> {
   data?: T;
 }
 
+/** "3 succeeded, 1 failed" / "3 succeeded" — the common suffix for every activity-log summary below. */
+function resultSuffix(result: ApplyFixesResult): string {
+  return result.failed.length > 0 ? `${result.succeeded} succeeded, ${result.failed.length} failed` : `${result.succeeded} succeeded`;
+}
+
 /** Pulls every product live from the chosen instance and runs the consistency/accuracy checks — read-only, nothing is written. */
 export async function runProductAuditAction(instanceId: string): Promise<AuditActionResult<ProductAuditResult>> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
@@ -40,81 +46,77 @@ export async function applyProductFixesAction(instanceId: string, fixes: Product
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   if (!fixes.length) return { ok: false, error: "Nothing to apply." };
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId, userId, email } = await requireCurrentOrg();
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
-    return { ok: true, data: await applyProductFixes(creds, fixes) };
+    const result = await applyProductFixes(creds, fixes);
+
+    const fieldNames = [...new Set(fixes.flatMap((f) => Object.keys(f.fields)))];
+    await logActivity(db, {
+      orgId,
+      instanceId,
+      actor: { userId, email },
+      action: "audit.apply_fixes",
+      summary: `Set ${fieldNames.join(", ")} on ${resultSuffix(result)}`,
+      detail: { fields: fieldNames, productIds: fixes.map((f) => f.productId), failed: result.failed },
+    });
+
+    return { ok: true, data: result };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
 }
 
-export async function mergeCategoryAction(
+/** Shared by the 4 near-duplicate-value merge actions below — same request shape, same activity-log entry shape. */
+async function mergeAction(
   instanceId: string,
   fromNames: string[],
-  toName: string
+  toName: string,
+  fieldLabel: string,
+  action: string,
+  merge: (creds: Awaited<ReturnType<typeof loadCin7Credentials>>, fromNames: string[], toName: string) => Promise<ApplyFixesResult>
 ): Promise<AuditActionResult<ApplyFixesResult>> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
-  if (!toName.trim()) return { ok: false, error: "Choose which category name to keep." };
+  if (!toName.trim()) return { ok: false, error: `Choose which ${fieldLabel} to keep.` };
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId, userId, email } = await requireCurrentOrg();
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
-    return { ok: true, data: await mergeCategoryNames(creds, fromNames, toName) };
+    const result = await merge(creds, fromNames, toName);
+
+    await logActivity(db, {
+      orgId,
+      instanceId,
+      actor: { userId, email },
+      action,
+      summary: `Merged ${fieldLabel}s ${fromNames.map((n) => `"${n}"`).join(", ")} into "${toName}" (${resultSuffix(result)})`,
+      detail: { fromNames, toName, failed: result.failed },
+    });
+
+    return { ok: true, data: result };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
 }
 
-export async function mergeBrandAction(
-  instanceId: string,
-  fromNames: string[],
-  toName: string
-): Promise<AuditActionResult<ApplyFixesResult>> {
-  if (!instanceId) return { ok: false, error: "Choose an instance." };
-  if (!toName.trim()) return { ok: false, error: "Choose which brand name to keep." };
-  try {
-    const { orgId } = await requireCurrentOrg();
-    const db = createServiceRoleClient();
-    const creds = await loadCin7Credentials(db, orgId, instanceId);
-    return { ok: true, data: await mergeBrandNames(creds, fromNames, toName) };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
-  }
+// Standing rule for this codebase: a "use server" file may only export async
+// functions (see docs/PROJECT-NOTES.md) — these delegate to mergeAction but
+// are still declared `async function`, not a plain function returning a
+// Promise, to stay unambiguously inside that rule.
+export async function mergeCategoryAction(instanceId: string, fromNames: string[], toName: string): Promise<AuditActionResult<ApplyFixesResult>> {
+  return mergeAction(instanceId, fromNames, toName, "category", "audit.merge_category", mergeCategoryNames);
 }
 
-export async function mergeUOMAction(
-  instanceId: string,
-  fromNames: string[],
-  toName: string
-): Promise<AuditActionResult<ApplyFixesResult>> {
-  if (!instanceId) return { ok: false, error: "Choose an instance." };
-  if (!toName.trim()) return { ok: false, error: "Choose which UOM to keep." };
-  try {
-    const { orgId } = await requireCurrentOrg();
-    const db = createServiceRoleClient();
-    const creds = await loadCin7Credentials(db, orgId, instanceId);
-    return { ok: true, data: await mergeUOMNames(creds, fromNames, toName) };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
-  }
+export async function mergeBrandAction(instanceId: string, fromNames: string[], toName: string): Promise<AuditActionResult<ApplyFixesResult>> {
+  return mergeAction(instanceId, fromNames, toName, "brand", "audit.merge_brand", mergeBrandNames);
 }
 
-export async function mergeTagAction(
-  instanceId: string,
-  fromNames: string[],
-  toName: string
-): Promise<AuditActionResult<ApplyFixesResult>> {
-  if (!instanceId) return { ok: false, error: "Choose an instance." };
-  if (!toName.trim()) return { ok: false, error: "Choose which tag to keep." };
-  try {
-    const { orgId } = await requireCurrentOrg();
-    const db = createServiceRoleClient();
-    const creds = await loadCin7Credentials(db, orgId, instanceId);
-    return { ok: true, data: await mergeTagNames(creds, fromNames, toName) };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
-  }
+export async function mergeUOMAction(instanceId: string, fromNames: string[], toName: string): Promise<AuditActionResult<ApplyFixesResult>> {
+  return mergeAction(instanceId, fromNames, toName, "UOM", "audit.merge_uom", mergeUOMNames);
+}
+
+export async function mergeTagAction(instanceId: string, fromNames: string[], toName: string): Promise<AuditActionResult<ApplyFixesResult>> {
+  return mergeAction(instanceId, fromNames, toName, "tag", "audit.merge_tag", mergeTagNames);
 }
 
 export async function applyAttributeTemplateAction(
@@ -126,10 +128,21 @@ export async function applyAttributeTemplateAction(
   if (!templateProductId) return { ok: false, error: "Choose a product to copy attribute values from." };
   if (!targetProductIds.length) return { ok: false, error: "Nothing to apply." };
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId, userId, email } = await requireCurrentOrg();
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
-    return { ok: true, data: await applyAttributeTemplate(creds, templateProductId, targetProductIds) };
+    const result = await applyAttributeTemplate(creds, templateProductId, targetProductIds);
+
+    await logActivity(db, {
+      orgId,
+      instanceId,
+      actor: { userId, email },
+      action: "audit.apply_attribute_template",
+      summary: `Copied attribute values from one product to ${resultSuffix(result)}`,
+      detail: { templateProductId, targetProductIds, failed: result.failed },
+    });
+
+    return { ok: true, data: result };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

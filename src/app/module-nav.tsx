@@ -82,6 +82,15 @@ export function HealthIcon({ className }: IconProps) {
   );
 }
 
+export function ActivityIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3.5 2" />
+    </svg>
+  );
+}
+
 export function AdminIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -157,6 +166,14 @@ export const INSTANCES_MODULE: ModuleConfig = {
   blurb: "Connect, edit, or remove the Cin7 Core instances this organization syncs to.",
 };
 
+export const ACTIVITY_MODULE: ModuleConfig = {
+  href: "/activity",
+  label: "Activity Log",
+  gradient: "from-teal-500 to-teal-700",
+  Icon: ActivityIcon,
+  blurb: "Every live write this app has made to your connected Cin7 instances — Data Audit fixes/merges and sync pushes — with who triggered it and when.",
+};
+
 export const ADMIN_MODULE: ModuleConfig = {
   href: "/admin",
   label: "Admin",
@@ -173,6 +190,7 @@ export const MODULES: ModuleConfig[] = [
   AUDIT_MODULE,
   HEALTH_MODULE,
   INSTANCES_MODULE,
+  ACTIVITY_MODULE,
 ];
 
 /**

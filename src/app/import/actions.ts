@@ -91,7 +91,7 @@ export async function pushToCin7Action(
   if (!instanceIds.length) return { ok: false, error: "Select at least one instance to push to." };
 
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId, userId, email } = await requireCurrentOrg();
     const db = createServiceRoleClient();
 
     const scope: PushScope = {};
@@ -111,7 +111,7 @@ export async function pushToCin7Action(
       scope.supplierNames = [];
     }
 
-    const outcomes = await syncOrgInstances(db, orgId, instanceIds, scope);
+    const outcomes = await syncOrgInstances(db, orgId, instanceIds, scope, { userId, email });
     return { ok: true, outcomes };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };

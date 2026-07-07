@@ -2,8 +2,13 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncOrgInstances } from "@/sync/sync-org";
 import { syncInstance } from "@/sync/run-sync";
+import { logActivity } from "@/lib/activity-log";
 
 vi.mock("@/sync/run-sync", () => ({ syncInstance: vi.fn() }));
+// The fake db below only implements the select/eq/in/then chain syncOrgInstances'
+// own query needs — logActivity's own insert() call is mocked separately here
+// rather than teaching the fake db to support inserts too.
+vi.mock("@/lib/activity-log", () => ({ logActivity: vi.fn() }));
 
 /** Minimal in-memory stand-in for the chained query shape syncOrgInstances issues. */
 function createFakeDb(instances: Record<string, unknown>[]) {
@@ -36,6 +41,7 @@ function createFakeDb(instances: Record<string, unknown>[]) {
 
 beforeEach(() => {
   vi.mocked(syncInstance).mockReset();
+  vi.mocked(logActivity).mockReset();
 });
 
 describe("syncOrgInstances", () => {
@@ -142,5 +148,86 @@ describe("syncOrgInstances", () => {
         productsCreated: 1,
       }),
     ]);
+  });
+
+  it("logs a sync.push activity entry per successful instance, defaulting to a 'system' actor", async () => {
+    const db = createFakeDb([{ id: "inst-1", org_id: "org1", active: true }]);
+    vi.mocked(syncInstance).mockResolvedValue({
+      instanceId: "inst-1",
+      instanceName: "X",
+      productsCreated: 2,
+      productsUpdated: 1,
+      productsSkipped: 0,
+      productsFailed: 0,
+      productionBomsPushed: 0,
+      productionBomsFailed: 0,
+      customersCreated: 0,
+      customersUpdated: 0,
+      customersSkipped: 0,
+      customersFailed: 0,
+      suppliersCreated: 0,
+      suppliersUpdated: 0,
+      suppliersSkipped: 0,
+      suppliersFailed: 0,
+      errors: [],
+    });
+
+    await syncOrgInstances(db, "org1");
+
+    expect(logActivity).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        orgId: "org1",
+        instanceId: "inst-1",
+        actor: "system",
+        action: "sync.push",
+        summary: "Pushed 3 products",
+      })
+    );
+  });
+
+  it("passes through a real user as the actor when given one, for a manually-triggered push", async () => {
+    const db = createFakeDb([{ id: "inst-1", org_id: "org1", active: true }]);
+    vi.mocked(syncInstance).mockResolvedValue({
+      instanceId: "inst-1",
+      instanceName: "X",
+      productsCreated: 0,
+      productsUpdated: 0,
+      productsSkipped: 5,
+      productsFailed: 0,
+      productionBomsPushed: 0,
+      productionBomsFailed: 0,
+      customersCreated: 0,
+      customersUpdated: 0,
+      customersSkipped: 0,
+      customersFailed: 0,
+      suppliersCreated: 0,
+      suppliersUpdated: 0,
+      suppliersSkipped: 0,
+      suppliersFailed: 0,
+      errors: [],
+    });
+
+    await syncOrgInstances(db, "org1", undefined, {}, { userId: "u1", email: "anton@sparkconsulting.co.za" });
+
+    expect(logActivity).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        actor: { userId: "u1", email: "anton@sparkconsulting.co.za" },
+        summary: "No changes needed",
+      })
+    );
+  });
+
+  it("logs a sync.push_failed entry (not sync.push) when the instance sync throws", async () => {
+    const db = createFakeDb([{ id: "inst-1", org_id: "org1", active: true }]);
+    vi.mocked(syncInstance).mockRejectedValueOnce(new Error("boom"));
+
+    await syncOrgInstances(db, "org1");
+
+    expect(logActivity).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ action: "sync.push_failed", summary: "Sync failed: boom" })
+    );
   });
 });
