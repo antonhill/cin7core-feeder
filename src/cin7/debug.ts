@@ -721,3 +721,94 @@ export async function surveyProductionBomFields(
     resourceKeyExamples,
   };
 }
+
+export interface ProductionBomSkuCheck {
+  sku: string;
+  found: boolean;
+  bomType?: string;
+  versionCount: number;
+  error?: string;
+}
+
+export interface ProductionBomSkuSurvey {
+  checks: ProductionBomSkuCheck[];
+  versionKeys: string[];
+  operationKeys: string[];
+  componentKeys: string[];
+  resourceKeys: string[];
+  versionKeyExamples: Record<string, unknown>;
+  operationKeyExamples: Record<string, unknown>;
+  componentKeyExamples: Record<string, unknown>;
+  resourceKeyExamples: Record<string, unknown>;
+}
+
+/**
+ * Diagnostic only: unlike surveyProductionBomFields (which discovers
+ * candidates by paginating the bulk list), this checks specific SKUs
+ * directly — for when the candidates are already known (e.g. from Cin7's
+ * own InventoryList CSV export, whose `ProductionBOM` Yes/No column is the
+ * same signal as the live API's `BOMType === "Production"`, just easier to
+ * search across a full catalog export than to paginate live). Confirmed
+ * live 2026-07-08: out of 3669 real products, only 3 actually had
+ * `ProductionBOM=Yes` in the CSV — rare enough that a 300-product live
+ * bulk-list scan can genuinely miss all of them by chance.
+ */
+export async function surveyProductionBomForSkus(creds: Cin7Credentials, skus: string[]): Promise<ProductionBomSkuSurvey> {
+  const versionKeySet = new Set<string>();
+  const operationKeySet = new Set<string>();
+  const componentKeySet = new Set<string>();
+  const resourceKeySet = new Set<string>();
+  const versionKeyExamples: Record<string, unknown> = {};
+  const operationKeyExamples: Record<string, unknown> = {};
+  const componentKeyExamples: Record<string, unknown> = {};
+  const resourceKeyExamples: Record<string, unknown> = {};
+  const checks: ProductionBomSkuCheck[] = [];
+
+  for (const sku of skus) {
+    try {
+      const productResponse = await cin7Request<Cin7ProductListResponse>(creds, "/Product", {
+        query: { SKU: sku, page: 1, limit: 1 },
+      });
+      const product = productResponse.Products?.[0] as Record<string, unknown> | undefined;
+      if (!product || product.SKU !== sku) {
+        checks.push({ sku, found: false, versionCount: 0, error: "Not found in this instance" });
+        continue;
+      }
+
+      const productId = String(product.ID ?? "");
+      const bomType = typeof product.BOMType === "string" ? product.BOMType : undefined;
+      if (!productId) {
+        checks.push({ sku, found: false, versionCount: 0, bomType, error: "Product has no ID" });
+        continue;
+      }
+
+      const bomResponse = await cin7Request<Cin7ProductionBomListResponse>(creds, "/production/productionBOM", {
+        query: { ProductID: productId },
+      });
+      const boms = bomResponse.ProductionBOMs ?? [];
+      checks.push({ sku, found: true, bomType, versionCount: boms.length });
+
+      collectKeys(boms, versionKeySet, versionKeyExamples);
+      const operations = boms.flatMap((b) => (Array.isArray(b.Operations) ? (b.Operations as Record<string, unknown>[]) : []));
+      collectKeys(operations, operationKeySet, operationKeyExamples);
+      const components = operations.flatMap((o) => (Array.isArray(o.Components) ? (o.Components as Record<string, unknown>[]) : []));
+      collectKeys(components, componentKeySet, componentKeyExamples);
+      const resources = operations.flatMap((o) => (Array.isArray(o.Resources) ? (o.Resources as Record<string, unknown>[]) : []));
+      collectKeys(resources, resourceKeySet, resourceKeyExamples);
+    } catch (e) {
+      checks.push({ sku, found: false, versionCount: 0, error: e instanceof Error ? e.message : "Unknown error" });
+    }
+  }
+
+  return {
+    checks,
+    versionKeys: [...versionKeySet].sort(),
+    operationKeys: [...operationKeySet].sort(),
+    componentKeys: [...componentKeySet].sort(),
+    resourceKeys: [...resourceKeySet].sort(),
+    versionKeyExamples,
+    operationKeyExamples,
+    componentKeyExamples,
+    resourceKeyExamples,
+  };
+}

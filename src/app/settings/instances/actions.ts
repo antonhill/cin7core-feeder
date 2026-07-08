@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
-import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields } from "@/cin7/debug";
+import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus } from "@/cin7/debug";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
@@ -278,6 +278,30 @@ export async function debugSurveyProductionBomFields(instanceId: string): Promis
   try {
     const creds = await loadInstanceCreds(instanceId);
     const result = await surveyProductionBomFields(creds);
+    return { ok: true, message: JSON.stringify(result, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Diagnostic only: checks specific SKUs directly rather than discovering
+ * candidates by paginating the bulk list — for when the candidates are
+ * already known (e.g. from Cin7's own InventoryList CSV export's
+ * `ProductionBOM` Yes/No column, confirmed 2026-07-08 to be the same signal
+ * as the live API's `BOMType === "Production"`, and easier to search across
+ * a full catalog export than to paginate live for a rare flag).
+ */
+export async function debugCheckProductionBomForSkus(instanceId: string, skusInput: string): Promise<TestConnectionResult> {
+  try {
+    const creds = await loadInstanceCreds(instanceId);
+    const skus = skusInput
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!skus.length) return { ok: false, message: "Enter one or more comma-separated SKUs." };
+
+    const result = await surveyProductionBomForSkus(creds, skus);
     return { ok: true, message: JSON.stringify(result, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };

@@ -14,6 +14,7 @@ import {
   debugSurveyFinishedGoodsFields,
   debugSurveyCostBasisFields,
   debugSurveyProductionBomFields,
+  debugCheckProductionBomForSkus,
   debugProbeWorkCentrePaths,
   debugPushOneCustomerAndSupplier,
   deleteInstance,
@@ -46,6 +47,7 @@ function InstancesSettingsPageInner() {
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [refCheckNames, setRefCheckNames] = useState<Record<string, string>>({});
   const [accountCodes, setAccountCodes] = useState<Record<string, string>>({});
+  const [productionBomSkus, setProductionBomSkus] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -206,6 +208,16 @@ function InstancesSettingsPageInner() {
     });
   }
 
+  function handleCheckProductionBomForSkus(instanceId: string) {
+    const skus = (productionBomSkus[instanceId] ?? "").trim();
+    if (!skus) return;
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Checking…" } }));
+    startTransition(async () => {
+      const result = await debugCheckProductionBomForSkus(instanceId, skus);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
   function handleDelete(instanceId: string) {
     if (!confirm("Delete this Cin7 Core instance connection?")) return;
     setError(null);
@@ -332,6 +344,22 @@ function InstancesSettingsPageInner() {
                 className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Compare account codes
+              </button>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="SKUs to check, e.g. F12-CPL-SBEP-DEMO,F12-CPL-SZPC-DEMO"
+                value={productionBomSkus[inst.id] ?? ""}
+                onChange={(e) => setProductionBomSkus((prev) => ({ ...prev, [inst.id]: e.target.value }))}
+                className="w-80 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+              />
+              <button
+                onClick={() => handleCheckProductionBomForSkus(inst.id)}
+                disabled={isPending || !(productionBomSkus[inst.id] ?? "").trim()}
+                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Check Production BOM for SKUs
               </button>
             </div>
             {testResults[inst.id] && (
