@@ -3,40 +3,68 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+interface ReportLink {
+  href: string;
+  label: string;
+}
+
+interface ReportCategory {
+  label: string;
+  links: ReportLink[];
+}
+
 /**
- * Secondary nav for the Reporting hub — one entry per report type. Add a new
- * report by adding a route under src/app/reports/<name>/ and a line here;
- * everything else (the ModuleHeader banner, page width, org-visibility
- * gating on the whole "Reporting" module) is already shared via layout.tsx.
+ * Grouped sidebar nav for the Reporting hub — mirrors Cin7 Core's own
+ * reporting module (a category sidebar: Sale reports / Purchase reports /
+ * Inventory reports / etc.) rather than a flat pill row, which stops
+ * scaling once there are more than a handful of reports. Add a new report
+ * by adding a route under src/app/reports/<name>/ and a link here, under
+ * whichever category it belongs to (or a new category if none fits yet) —
+ * everything else (the ModuleHeader banner, org-visibility gating on the
+ * whole "Reporting" module) is already shared via layout.tsx.
  */
-const REPORT_TABS = [
-  { href: "/reports", label: "Sales" },
-  { href: "/reports/assemblies", label: "Current Assembly Costs" },
-  { href: "/reports/cost-estimator", label: "Production Cost Estimator" },
+const REPORT_CATEGORIES: ReportCategory[] = [
+  { label: "Sales", links: [{ href: "/reports", label: "Sales" }] },
+  {
+    label: "Costing",
+    links: [
+      { href: "/reports/assemblies", label: "Current Assembly Costs" },
+      { href: "/reports/cost-estimator", label: "Production Cost Estimator" },
+    ],
+  },
 ];
 
 export function ReportsNav() {
   const pathname = usePathname();
 
   return (
-    <div className="mt-6 flex gap-2 border-b border-slate-200 pb-4">
-      {REPORT_TABS.map((tab) => {
-        // "/reports" itself must match exactly — every other report's route
-        // also starts with "/reports", which would otherwise make the Sales
-        // tab look active everywhere.
-        const active = tab.href === "/reports" ? pathname === "/reports" : pathname.startsWith(tab.href);
-        return (
-          <Link
-            key={tab.href}
-            href={tab.href}
-            className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${
-              active ? "bg-indigo-600 text-white" : "border border-slate-300 text-slate-600 hover:bg-slate-50"
-            }`}
-          >
-            {tab.label}
-          </Link>
-        );
-      })}
-    </div>
+    <nav className="w-56 shrink-0">
+      <div className="flex flex-col gap-6">
+        {REPORT_CATEGORIES.map((category) => (
+          <div key={category.label}>
+            <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-slate-400">{category.label}</p>
+            <div className="flex flex-col gap-0.5">
+              {category.links.map((link) => {
+                // "/reports" itself must match exactly — every other report's
+                // route also starts with "/reports", which would otherwise make
+                // the Sales link look active everywhere.
+                const active = link.href === "/reports" ? pathname === "/reports" : pathname.startsWith(link.href);
+                return (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
+                      active ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    {link.label}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </nav>
   );
 }
