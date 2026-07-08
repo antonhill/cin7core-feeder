@@ -36,6 +36,18 @@ export default function Pricing() {
             One plan. Everything included.
           </h2>
           <p className="mt-4 text-lg text-slate-500">7 days free, then a single plan with everything unlocked.</p>
+          <p className="mt-3 text-sm text-slate-500">
+            Requires your own Cin7 Core account with API access enabled — check{" "}
+            <a
+              href="https://www.cin7.com/pricing/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-slate-700 underline hover:text-slate-900"
+            >
+              Cin7 Core&rsquo;s own pricing
+            </a>{" "}
+            for plan requirements.
+          </p>
         </Reveal>
 
         <Reveal className="mt-10 flex justify-center">
