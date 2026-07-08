@@ -52,7 +52,7 @@ export default async function RootLayout({
             disabledModules={disabledModules}
           />
         )}
-        <div className="flex flex-1 flex-col overflow-y-auto">
+        <div className="flex flex-1 flex-col overflow-x-hidden overflow-y-auto">
           {isImpersonating && (
             <div className="flex flex-wrap items-center justify-between gap-2 bg-amber-500 px-4 py-2 text-sm font-semibold text-white">
               <span>Viewing as {orgName ?? "another organization"} (master user)</span>
