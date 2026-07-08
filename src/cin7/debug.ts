@@ -443,3 +443,74 @@ export async function surveyFinishedGoodsFields(
     detailKeyExamples,
   };
 }
+
+export interface CostBasisFieldSurvey {
+  productsScanned: number;
+  averageCostSeenCount: number;
+  exampleAverageCost?: unknown;
+  suppliersArrayPresentCount: number;
+  suppliersNonEmptyCount: number;
+  supplierKeys: string[];
+  supplierKeyExamples: Record<string, unknown>;
+}
+
+/**
+ * Diagnostic only: the cost estimator's toggleable basis (Average / Latest /
+ * Fixed) needs `AverageCost` on Product and `Suppliers[].Cost`/`FixedCost`.
+ * `AverageCost` has only ever been confirmed via CSV import in this codebase
+ * (see docs/cin7-api-findings.md's "Capture-only" section) — never on a live
+ * GET /Product response — and the one live product checked so far had an
+ * empty `Suppliers: []` array, so those sub-fields are unconfirmed too.
+ * Scans several real products (`IncludeBOM=true`, same query shape as
+ * fetchAllProductsWithBom) and reports whether each field actually shows up
+ * populated on real data, rather than assuming Cin7's official Product
+ * Supplier Model doc's field names apply unchanged to this account's live
+ * responses — same discipline as every other survey* function here.
+ */
+export async function surveyCostBasisFields(creds: Cin7Credentials, maxRecords = 50): Promise<CostBasisFieldSurvey> {
+  const response = await cin7Request<Cin7ProductListResponse>(creds, "/Product", {
+    query: { page: 1, limit: maxRecords, IncludeBOM: "true" },
+  });
+  const products = response.Products ?? [];
+
+  let averageCostSeenCount = 0;
+  let exampleAverageCost: unknown;
+  let suppliersArrayPresentCount = 0;
+  let suppliersNonEmptyCount = 0;
+  const supplierKeySet = new Set<string>();
+  const supplierKeyExamples: Record<string, unknown> = {};
+
+  for (const product of products) {
+    const averageCost = (product as Record<string, unknown>).AverageCost;
+    if (averageCost !== null && averageCost !== undefined) {
+      averageCostSeenCount++;
+      if (exampleAverageCost === undefined) exampleAverageCost = averageCost;
+    }
+
+    if ("Suppliers" in product) {
+      suppliersArrayPresentCount++;
+      const suppliers = (product as Record<string, unknown>).Suppliers;
+      if (Array.isArray(suppliers) && suppliers.length > 0) {
+        suppliersNonEmptyCount++;
+        for (const supplier of suppliers) {
+          if (!supplier || typeof supplier !== "object") continue;
+          for (const [key, value] of Object.entries(supplier as Record<string, unknown>)) {
+            supplierKeySet.add(key);
+            const isEmpty = value === null || value === undefined;
+            if (!isEmpty && supplierKeyExamples[key] === undefined) supplierKeyExamples[key] = value;
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    productsScanned: products.length,
+    averageCostSeenCount,
+    exampleAverageCost,
+    suppliersArrayPresentCount,
+    suppliersNonEmptyCount,
+    supplierKeys: [...supplierKeySet].sort(),
+    supplierKeyExamples,
+  };
+}
