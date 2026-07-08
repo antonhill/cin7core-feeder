@@ -15,6 +15,7 @@ import {
   debugSurveyCostBasisFields,
   debugSurveyProductionBomFields,
   debugCheckProductionBomForSkus,
+  debugFetchProductionOrderDetail,
   debugProbeWorkCentrePaths,
   debugPushOneCustomerAndSupplier,
   deleteInstance,
@@ -48,6 +49,7 @@ function InstancesSettingsPageInner() {
   const [refCheckNames, setRefCheckNames] = useState<Record<string, string>>({});
   const [accountCodes, setAccountCodes] = useState<Record<string, string>>({});
   const [productionBomSkus, setProductionBomSkus] = useState<Record<string, string>>({});
+  const [productionOrderNumbers, setProductionOrderNumbers] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -218,6 +220,16 @@ function InstancesSettingsPageInner() {
     });
   }
 
+  function handleFetchProductionOrderDetail(instanceId: string) {
+    const orderNumber = (productionOrderNumbers[instanceId] ?? "").trim();
+    if (!orderNumber) return;
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Fetching…" } }));
+    startTransition(async () => {
+      const result = await debugFetchProductionOrderDetail(instanceId, orderNumber);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
   function handleDelete(instanceId: string) {
     if (!confirm("Delete this Cin7 Core instance connection?")) return;
     setError(null);
@@ -360,6 +372,22 @@ function InstancesSettingsPageInner() {
                 className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Check Production BOM for SKUs
+              </button>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="Manufacture Order number, e.g. MO-00036"
+                value={productionOrderNumbers[inst.id] ?? ""}
+                onChange={(e) => setProductionOrderNumbers((prev) => ({ ...prev, [inst.id]: e.target.value }))}
+                className="w-80 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+              />
+              <button
+                onClick={() => handleFetchProductionOrderDetail(inst.id)}
+                disabled={isPending || !(productionOrderNumbers[inst.id] ?? "").trim()}
+                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Fetch Production Order detail
               </button>
             </div>
             {testResults[inst.id] && (

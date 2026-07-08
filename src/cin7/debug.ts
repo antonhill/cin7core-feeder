@@ -10,6 +10,7 @@ import {
   receivableAccountExists,
   taxRuleExists,
 } from "@/cin7/reference-lookups";
+import { fetchAllProductionOrdersList } from "@/cin7/production-orders";
 
 interface Cin7ProductListResponse {
   Products?: Record<string, unknown>[];
@@ -811,4 +812,60 @@ export async function surveyProductionBomForSkus(creds: Cin7Credentials, skus: s
     componentKeyExamples,
     resourceKeyExamples,
   };
+}
+
+export interface ProductionOrderDetailSurvey {
+  orderNumber: string;
+  found: boolean;
+  productionOrderId?: string;
+  operationCount?: number;
+  componentCount?: number;
+  resourceCount?: number;
+  raw?: unknown;
+  error?: string;
+}
+
+/**
+ * Confirmed via FalconEyeSolutions/CIN7-DearInventory's generated client
+ * (ProductionApi.cs, GET /production/order): a completed Manufacture
+ * Order's detail returns full nested Operations -> Components/Resources,
+ * each carrying real cost fields (Component: Cost/ProductCost/TotalCost;
+ * Resource: Cost/ResourceCost/TotalCost) — unlike /production/productionBOM
+ * (the BOM *definition*), which surveyProductionBomForSkus found never
+ * returns any version/cost data at all on this account. Not yet confirmed
+ * live against a real instance — this is that probe, targeting one known
+ * order number (e.g. "MO-00036") rather than guessing a SKU/ProductID.
+ */
+export async function surveyProductionOrderDetail(creds: Cin7Credentials, orderNumber: string): Promise<ProductionOrderDetailSurvey> {
+  try {
+    const orders = await fetchAllProductionOrdersList(creds);
+    const match = orders.find((o) => o.Type === "O" && (o.OrderNumber ?? "").toUpperCase() === orderNumber.toUpperCase());
+    if (!match?.ProductionOrderID) {
+      return {
+        orderNumber,
+        found: false,
+        error: "No matching Manufacture Order (Type \"O\") found in this instance's production order list",
+      };
+    }
+
+    const response = await cin7Request<{ ProductionOrders?: Record<string, unknown>[] }>(creds, "/production/order", {
+      query: { ProductionOrderID: match.ProductionOrderID, ReturnAttachmentsContent: "false" },
+    });
+    const order = response.ProductionOrders?.[0];
+    const operations = Array.isArray(order?.Operations) ? (order.Operations as Record<string, unknown>[]) : [];
+    const components = operations.flatMap((o) => (Array.isArray(o.Components) ? (o.Components as unknown[]) : []));
+    const resources = operations.flatMap((o) => (Array.isArray(o.Resources) ? (o.Resources as unknown[]) : []));
+
+    return {
+      orderNumber,
+      found: true,
+      productionOrderId: match.ProductionOrderID,
+      operationCount: operations.length,
+      componentCount: components.length,
+      resourceCount: resources.length,
+      raw: response,
+    };
+  } catch (e) {
+    return { orderNumber, found: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
 }

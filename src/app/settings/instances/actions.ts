@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
-import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus } from "@/cin7/debug";
+import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail } from "@/cin7/debug";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
@@ -302,6 +302,28 @@ export async function debugCheckProductionBomForSkus(instanceId: string, skusInp
     if (!skus.length) return { ok: false, message: "Enter one or more comma-separated SKUs." };
 
     const result = await surveyProductionBomForSkus(creds, skus);
+    return { ok: true, message: JSON.stringify(result, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Diagnostic only: fetches a completed Manufacture Order's full detail
+ * (Operations -> Components/Resources) by its order number (e.g.
+ * "MO-00036") — a genuinely different Cin7 resource from
+ * /production/productionBOM (the BOM *definition*, confirmed to never carry
+ * cost data on this account). A completed order's Components/Resources are
+ * expected to carry real Cost/TotalCost fields per the community client
+ * spec; this confirms that live.
+ */
+export async function debugFetchProductionOrderDetail(instanceId: string, orderNumber: string): Promise<TestConnectionResult> {
+  try {
+    const creds = await loadInstanceCreds(instanceId);
+    const trimmed = orderNumber.trim();
+    if (!trimmed) return { ok: false, message: "Enter a Manufacture Order number, e.g. MO-00036." };
+
+    const result = await surveyProductionOrderDetail(creds, trimmed);
     return { ok: true, message: JSON.stringify(result, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
