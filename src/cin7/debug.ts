@@ -447,11 +447,25 @@ export async function surveyFinishedGoodsFields(
 export interface CostBasisFieldSurvey {
   productsScanned: number;
   averageCostSeenCount: number;
-  exampleAverageCost?: unknown;
+  averageCostNonZeroCount: number;
+  averageCostMin?: number;
+  averageCostMax?: number;
   suppliersArrayPresentCount: number;
   suppliersNonEmptyCount: number;
   supplierKeys: string[];
   supplierKeyExamples: Record<string, unknown>;
+  /** Hypothesis: like IncludeBOM, maybe Suppliers needs an explicit include flag on the bulk list call. */
+  includeSuppliersVariant: {
+    productsScanned: number;
+    suppliersNonEmptyCount: number;
+  };
+  /** Hypothesis: maybe a single-product fetch (filtered by SKU, same shape findProductBySku already uses) returns richer data than a bulk list row for the same product. */
+  detailCheckSamples: {
+    sku: string;
+    bulkListSuppliersLength: number;
+    detailSuppliersLength: number;
+    detailKeys: string[];
+  }[];
 }
 
 /**
@@ -459,13 +473,13 @@ export interface CostBasisFieldSurvey {
  * Fixed) needs `AverageCost` on Product and `Suppliers[].Cost`/`FixedCost`.
  * `AverageCost` has only ever been confirmed via CSV import in this codebase
  * (see docs/cin7-api-findings.md's "Capture-only" section) — never on a live
- * GET /Product response — and the one live product checked so far had an
- * empty `Suppliers: []` array, so those sub-fields are unconfirmed too.
- * Scans several real products (`IncludeBOM=true`, same query shape as
- * fetchAllProductsWithBom) and reports whether each field actually shows up
- * populated on real data, rather than assuming Cin7's official Product
- * Supplier Model doc's field names apply unchanged to this account's live
- * responses — same discipline as every other survey* function here.
+ * GET /Product response — and a first pass of this survey found `Suppliers`
+ * empty on every one of 50 scanned products. That's ambiguous: either this
+ * account genuinely has no supplier records set up yet, or (same pattern as
+ * `IncludeBOM=true`) the bulk list call omits related data unless explicitly
+ * asked for. This version tests both explanations directly instead of
+ * guessing further from official docs alone (which 403'd when fetched) —
+ * same discipline as every other survey* function here.
  */
 export async function surveyCostBasisFields(creds: Cin7Credentials, maxRecords = 50): Promise<CostBasisFieldSurvey> {
   const response = await cin7Request<Cin7ProductListResponse>(creds, "/Product", {
@@ -474,43 +488,88 @@ export async function surveyCostBasisFields(creds: Cin7Credentials, maxRecords =
   const products = response.Products ?? [];
 
   let averageCostSeenCount = 0;
-  let exampleAverageCost: unknown;
+  let averageCostNonZeroCount = 0;
+  let averageCostMin: number | undefined;
+  let averageCostMax: number | undefined;
   let suppliersArrayPresentCount = 0;
   let suppliersNonEmptyCount = 0;
   const supplierKeySet = new Set<string>();
   const supplierKeyExamples: Record<string, unknown> = {};
+  const bulkSuppliersLengthBySku = new Map<string, number>();
 
   for (const product of products) {
-    const averageCost = (product as Record<string, unknown>).AverageCost;
+    const raw = product as Record<string, unknown>;
+    const sku = String(raw.SKU ?? "");
+    const averageCost = raw.AverageCost;
     if (averageCost !== null && averageCost !== undefined) {
       averageCostSeenCount++;
-      if (exampleAverageCost === undefined) exampleAverageCost = averageCost;
+      if (typeof averageCost === "number") {
+        if (averageCost !== 0) averageCostNonZeroCount++;
+        averageCostMin = averageCostMin === undefined ? averageCost : Math.min(averageCostMin, averageCost);
+        averageCostMax = averageCostMax === undefined ? averageCost : Math.max(averageCostMax, averageCost);
+      }
     }
 
-    if ("Suppliers" in product) {
-      suppliersArrayPresentCount++;
-      const suppliers = (product as Record<string, unknown>).Suppliers;
-      if (Array.isArray(suppliers) && suppliers.length > 0) {
-        suppliersNonEmptyCount++;
-        for (const supplier of suppliers) {
-          if (!supplier || typeof supplier !== "object") continue;
-          for (const [key, value] of Object.entries(supplier as Record<string, unknown>)) {
-            supplierKeySet.add(key);
-            const isEmpty = value === null || value === undefined;
-            if (!isEmpty && supplierKeyExamples[key] === undefined) supplierKeyExamples[key] = value;
-          }
+    if ("Suppliers" in raw) suppliersArrayPresentCount++;
+    const suppliers = raw.Suppliers;
+    const bulkLen = Array.isArray(suppliers) ? suppliers.length : 0;
+    if (sku) bulkSuppliersLengthBySku.set(sku, bulkLen);
+    if (bulkLen > 0) {
+      suppliersNonEmptyCount++;
+      for (const supplier of suppliers as unknown[]) {
+        if (!supplier || typeof supplier !== "object") continue;
+        for (const [key, value] of Object.entries(supplier as Record<string, unknown>)) {
+          supplierKeySet.add(key);
+          const isEmpty = value === null || value === undefined;
+          if (!isEmpty && supplierKeyExamples[key] === undefined) supplierKeyExamples[key] = value;
         }
       }
+    }
+  }
+
+  const variantResponse = await cin7Request<Cin7ProductListResponse>(creds, "/Product", {
+    query: { page: 1, limit: maxRecords, IncludeBOM: "true", IncludeSuppliers: "true" },
+  });
+  const variantProducts = variantResponse.Products ?? [];
+  const includeSuppliersVariantNonEmptyCount = variantProducts.filter((p) => {
+    const s = (p as Record<string, unknown>).Suppliers;
+    return Array.isArray(s) && s.length > 0;
+  }).length;
+
+  const sampleSkus = [...bulkSuppliersLengthBySku.keys()].slice(0, 5);
+  const detailCheckSamples: CostBasisFieldSurvey["detailCheckSamples"] = [];
+  for (const sku of sampleSkus) {
+    try {
+      const detailResponse = await cin7Request<Cin7ProductListResponse>(creds, "/Product", {
+        query: { SKU: sku, page: 1, limit: 1 },
+      });
+      const detail = detailResponse.Products?.[0] as Record<string, unknown> | undefined;
+      const detailSuppliers = detail?.Suppliers;
+      detailCheckSamples.push({
+        sku,
+        bulkListSuppliersLength: bulkSuppliersLengthBySku.get(sku) ?? 0,
+        detailSuppliersLength: Array.isArray(detailSuppliers) ? detailSuppliers.length : 0,
+        detailKeys: detail ? Object.keys(detail).sort() : [],
+      });
+    } catch {
+      // Diagnostic only — one bad SKU shouldn't block reporting the others.
     }
   }
 
   return {
     productsScanned: products.length,
     averageCostSeenCount,
-    exampleAverageCost,
+    averageCostNonZeroCount,
+    averageCostMin,
+    averageCostMax,
     suppliersArrayPresentCount,
     suppliersNonEmptyCount,
     supplierKeys: [...supplierKeySet].sort(),
     supplierKeyExamples,
+    includeSuppliersVariant: {
+      productsScanned: variantProducts.length,
+      suppliersNonEmptyCount: includeSuppliersVariantNonEmptyCount,
+    },
+    detailCheckSamples,
   };
 }
