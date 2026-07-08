@@ -4,7 +4,7 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { requireCurrentOrg } from "@/lib/current-org";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllFinishedGoodsList, fetchFinishedGoodsDetail, type Cin7FinishedGoodsListEntry, type Cin7FinishedGoodsDetail } from "@/cin7/finished-goods";
-import { buildAssembliesSheet } from "@/reports/assemblies-export";
+import { buildAssembliesSheet, buildAssembliesDetailSheet, type AssemblyWithDetail } from "@/reports/assemblies-export";
 import { renderXlsxBase64 } from "@/reports/xlsx-writer";
 
 export interface AssembliesActionResult<T> {
@@ -52,6 +52,25 @@ export async function exportAssembliesXlsxAction(entries: Cin7FinishedGoodsListE
     await requireCurrentOrg();
     const sheet = buildAssembliesSheet(entries);
     return { ok: true, data: await renderXlsxBase64(sheet, "Assemblies") };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Renders per-component detail + estimated/actual totals into a real .xlsx
+ * file. Takes already-fetched detail (see page.tsx's handleExportDetail,
+ * which fetches each assembly's detail one at a time via
+ * getAssemblyDetailAction before calling this) rather than fetching it
+ * itself — looping N detail calls inside one server action would very
+ * likely exceed Vercel's function timeout for anything but a small assembly
+ * count, same class of concern already documented on pushToCin7Action.
+ */
+export async function exportAssembliesDetailXlsxAction(rows: AssemblyWithDetail[]): Promise<AssembliesActionResult<string>> {
+  try {
+    await requireCurrentOrg();
+    const sheet = buildAssembliesDetailSheet(rows);
+    return { ok: true, data: await renderXlsxBase64(sheet, "Assemblies Detail") };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

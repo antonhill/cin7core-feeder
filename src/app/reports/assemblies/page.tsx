@@ -1,10 +1,12 @@
 "use client";
 
 import { Fragment, useMemo, useState, useTransition } from "react";
-import { listAssembliesAction, getAssemblyDetailAction, exportAssembliesXlsxAction } from "./actions";
+import { listAssembliesAction, getAssemblyDetailAction, exportAssembliesXlsxAction, exportAssembliesDetailXlsxAction } from "./actions";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import type { Cin7FinishedGoodsListEntry, Cin7FinishedGoodsDetail } from "@/cin7/finished-goods";
+import type { AssemblyWithDetail } from "@/reports/assemblies-export";
 import { Spinner } from "@/app/Spinner";
+import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 
 /** Decodes the base64 .xlsx bytes the server rendered and triggers a normal browser download — same pattern as reports/page.tsx's downloadBase64File. */
 function downloadBase64File(base64: string, filename: string, mimeType: string) {
@@ -202,6 +204,13 @@ export default function AssembliesPage() {
   const [exportError, setExportError] = useState<string | null>(null);
   const [isExporting, startExportTransition] = useTransition();
 
+  // Deliberately its own state, not shared with isExporting above — a shared
+  // flag would light up both export buttons on either one's click (the same
+  // bug already fixed elsewhere this session, see PageLoadingIndicator).
+  const [isExportingDetail, setIsExportingDetail] = useState(false);
+  const [detailExportError, setDetailExportError] = useState<string | null>(null);
+  const [detailExportProgress, setDetailExportProgress] = useState<{ done: number; total: number } | null>(null);
+
   function toggleStatus(value: string) {
     setStatusFilter((prev) => {
       const next = new Set(prev);
@@ -302,8 +311,62 @@ export default function AssembliesPage() {
     });
   }
 
+  /**
+   * Fetches each currently-filtered assembly's detail one request at a time
+   * (reusing already-cached ones from expanded rows) rather than looping
+   * inside a single server action — the Cin7 client self-throttles to 60
+   * calls/min, so a large filtered set could take well over a minute, which
+   * would risk hitting Vercel's function timeout if done as one server-side
+   * loop. Sequencing it from here keeps every individual request quick.
+   */
+  async function handleExportDetail() {
+    if (!instanceId || filtered.length === 0) return;
+    setDetailExportError(null);
+    setIsExportingDetail(true);
+    setDetailExportProgress({ done: 0, total: filtered.length });
+
+    const rows: AssemblyWithDetail[] = [];
+    const newDetails: Record<string, Cin7FinishedGoodsDetail> = {};
+    const newErrors: Record<string, string> = {};
+
+    for (let i = 0; i < filtered.length; i++) {
+      const entry = filtered[i];
+      let detail = detailsById[entry.TaskID];
+      let detailError = detailErrors[entry.TaskID];
+      if (!detail) {
+        const res = await getAssemblyDetailAction(instanceId, entry.TaskID);
+        if (res.ok && res.data) {
+          detail = res.data;
+          newDetails[entry.TaskID] = res.data;
+        } else {
+          detailError = res.error ?? "Unknown error";
+          newErrors[entry.TaskID] = detailError;
+        }
+      }
+      rows.push({ entry, detail, detailError });
+      setDetailExportProgress({ done: i + 1, total: filtered.length });
+    }
+
+    // Share newly-fetched details/errors with the on-screen expand cache too, so expanding a row this export just fetched doesn't re-fetch it.
+    if (Object.keys(newDetails).length > 0) setDetailsById((prev) => ({ ...prev, ...newDetails }));
+    if (Object.keys(newErrors).length > 0) setDetailErrors((prev) => ({ ...prev, ...newErrors }));
+
+    const result = await exportAssembliesDetailXlsxAction(rows);
+    setIsExportingDetail(false);
+    setDetailExportProgress(null);
+    if (!result.ok || !result.data) {
+      setDetailExportError(result.error ?? "Unknown error");
+      return;
+    }
+    downloadBase64File(result.data, "assemblies-detail.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  }
+
   return (
     <>
+      <PageLoadingIndicator
+        show={isExportingDetail}
+        label={detailExportProgress ? `Fetching component details… (${detailExportProgress.done} of ${detailExportProgress.total})` : "Preparing detail export…"}
+      />
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <p className="font-medium text-slate-900">Instance</p>
         <div className="mt-3">
@@ -394,9 +457,19 @@ export default function AssembliesPage() {
                 {isExporting && <Spinner className="mr-1.5" />}
                 {isExporting ? "Exporting…" : "Export .xlsx"}
               </button>
+              <button
+                type="button"
+                onClick={handleExportDetail}
+                disabled={isExportingDetail || filtered.length === 0}
+                className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                title="Includes every component line and the estimated (planned) vs actual (as-built) total per assembly."
+              >
+                Export detail (planned vs actual) .xlsx
+              </button>
             </div>
           </div>
           {exportError && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{exportError}</p>}
+          {detailExportError && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{detailExportError}</p>}
 
           {filtered.length > 0 ? (
             <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
