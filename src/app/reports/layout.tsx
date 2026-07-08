@@ -15,9 +15,9 @@ export default function ReportsLayout({ children }: { children: React.ReactNode 
     <main className="mx-auto max-w-5xl px-6 py-12">
       <ModuleHeader module={REPORTS_MODULE}>
         A hub for every report pulled from your connected Cin7 instances — Sales
-        (revenue/COGS/profit/margin%, pivotable, exportable), Assemblies (quantity + total BOM cost,
-        filterable by status), and Cost Estimator (re-prices every Assembly Build&rsquo;s components under
-        Average/Latest/Fixed cost, exportable), with more report types to come.
+        (revenue/COGS/profit/margin%, pivotable, exportable), Current Assembly Costs (quantity + total BOM cost,
+        filterable by status), and Production Cost Estimator (re-prices every Assembly or Production BOM&rsquo;s
+        components under Average/Latest/Fixed cost, exportable), with more report types to come.
       </ModuleHeader>
       <ReportsNav />
       <div className="mt-6">{children}</div>

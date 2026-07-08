@@ -11,8 +11,8 @@ import { usePathname } from "next/navigation";
  */
 const REPORT_TABS = [
   { href: "/reports", label: "Sales" },
-  { href: "/reports/assemblies", label: "Assemblies" },
-  { href: "/reports/cost-estimator", label: "Cost Estimator" },
+  { href: "/reports/assemblies", label: "Current Assembly Costs" },
+  { href: "/reports/cost-estimator", label: "Production Cost Estimator" },
 ];
 
 export function ReportsNav() {
