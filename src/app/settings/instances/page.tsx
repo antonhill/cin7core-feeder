@@ -13,6 +13,7 @@ import {
   debugFindFinishedGoodsExample,
   debugSurveyFinishedGoodsFields,
   debugSurveyCostBasisFields,
+  debugSurveyProductionBomFields,
   debugProbeWorkCentrePaths,
   debugPushOneCustomerAndSupplier,
   deleteInstance,
@@ -149,6 +150,14 @@ function InstancesSettingsPageInner() {
     });
   }
 
+  function handleSurveyProductionBomFields(instanceId: string) {
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Surveying Production BOM fields (multiple calls)…" } }));
+    startTransition(async () => {
+      const result = await debugSurveyProductionBomFields(instanceId);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
   function handlePushOneCustomerAndSupplier(instanceId: string) {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Pushing…" } }));
     startTransition(async () => {
@@ -261,6 +270,9 @@ function InstancesSettingsPageInner() {
                 </button>
                 <button onClick={() => handleSurveyCostBasisFields(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                   Survey cost basis fields (Average/Latest/Fixed)
+                </button>
+                <button onClick={() => handleSurveyProductionBomFields(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                  Survey Production BOM fields
                 </button>
                 <button onClick={() => handlePushOneCustomerAndSupplier(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
                   Test push 1 customer + 1 supplier

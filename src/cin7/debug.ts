@@ -584,3 +584,114 @@ export async function surveyCostBasisFields(creds: Cin7Credentials, maxRecords =
     detailCheckSamples,
   };
 }
+
+interface Cin7ProductionBomListResponse {
+  ProductionBOMs?: Record<string, unknown>[];
+}
+
+export interface ProductionBomFieldSurvey {
+  productsScanned: number;
+  bomTypeValuesSeen: string[];
+  candidatesProbed: number;
+  productsWithProductionBom: { sku: string; productId: string; versionCount: number }[];
+  productionBomFetchErrors: { sku: string; error: string }[];
+  versionKeys: string[];
+  operationKeys: string[];
+  componentKeys: string[];
+  resourceKeys: string[];
+  versionKeyExamples: Record<string, unknown>;
+  operationKeyExamples: Record<string, unknown>;
+  componentKeyExamples: Record<string, unknown>;
+  resourceKeyExamples: Record<string, unknown>;
+}
+
+function collectKeys(records: Record<string, unknown>[], keySet: Set<string>, examples: Record<string, unknown>) {
+  for (const record of records) {
+    for (const [key, value] of Object.entries(record)) {
+      keySet.add(key);
+      const isEmpty = value === null || value === undefined || (Array.isArray(value) && value.length === 0);
+      if (!isEmpty && examples[key] === undefined) examples[key] = value;
+    }
+  }
+}
+
+/**
+ * Diagnostic only: extending the cost estimator to Production BOMs needs to
+ * know two things neither this codebase nor docs/cin7-api-findings.md has
+ * confirmed yet — (1) how to cheaply find WHICH products have a Production
+ * BOM at all across a catalog (Assembly BOM has `BillOfMaterial: true` on
+ * the bulk list for free; Production BOM has no confirmed equivalent), and
+ * (2) what a real `GET /production/productionBOM?ProductID=` response's full
+ * Operations/Components/Resources shape looks like — `findProductionBomVersion`
+ * (production-bom.ts) already calls this live and reads back `.Version`, so
+ * the endpoint itself is confirmed reachable; this just looks at everything
+ * else in that same response instead of discarding it. Resource-level cost
+ * (labor/machine rate) is the biggest unknown — Resources may only echo back
+ * `ResourceID`/`Quantity` with no rate field, which would mean Production
+ * BOM estimates can only ever cover material Components, not labor.
+ */
+export async function surveyProductionBomFields(creds: Cin7Credentials, maxCandidates = 20): Promise<ProductionBomFieldSurvey> {
+  const listResponse = await cin7Request<Cin7ProductListResponse>(creds, "/Product", {
+    query: { page: 1, limit: maxCandidates, IncludeBOM: "true" },
+  });
+  const products = (listResponse.Products ?? []) as Record<string, unknown>[];
+
+  const bomTypeValues = new Set<string>();
+  for (const p of products) {
+    if (typeof p.BOMType === "string" && p.BOMType) bomTypeValues.add(p.BOMType);
+  }
+
+  const versionKeySet = new Set<string>();
+  const operationKeySet = new Set<string>();
+  const componentKeySet = new Set<string>();
+  const resourceKeySet = new Set<string>();
+  const versionKeyExamples: Record<string, unknown> = {};
+  const operationKeyExamples: Record<string, unknown> = {};
+  const componentKeyExamples: Record<string, unknown> = {};
+  const resourceKeyExamples: Record<string, unknown> = {};
+  const productsWithProductionBom: ProductionBomFieldSurvey["productsWithProductionBom"] = [];
+  const productionBomFetchErrors: ProductionBomFieldSurvey["productionBomFetchErrors"] = [];
+
+  for (const p of products) {
+    const productId = String(p.ID ?? "");
+    const sku = String(p.SKU ?? "");
+    if (!productId) continue;
+    try {
+      const response = await cin7Request<Cin7ProductionBomListResponse>(creds, "/production/productionBOM", {
+        query: { ProductID: productId },
+      });
+      const boms = response.ProductionBOMs ?? [];
+      if (boms.length === 0) continue;
+
+      productsWithProductionBom.push({ sku, productId, versionCount: boms.length });
+      collectKeys(boms, versionKeySet, versionKeyExamples);
+
+      const operations = boms.flatMap((b) => (Array.isArray(b.Operations) ? (b.Operations as Record<string, unknown>[]) : []));
+      collectKeys(operations, operationKeySet, operationKeyExamples);
+
+      const components = operations.flatMap((o) => (Array.isArray(o.Components) ? (o.Components as Record<string, unknown>[]) : []));
+      collectKeys(components, componentKeySet, componentKeyExamples);
+
+      const resources = operations.flatMap((o) => (Array.isArray(o.Resources) ? (o.Resources as Record<string, unknown>[]) : []));
+      collectKeys(resources, resourceKeySet, resourceKeyExamples);
+    } catch (e) {
+      productionBomFetchErrors.push({ sku, error: e instanceof Error ? e.message : "Unknown error" });
+    }
+  }
+
+  return {
+    productsScanned: products.length,
+    bomTypeValuesSeen: [...bomTypeValues].sort(),
+    candidatesProbed: products.length,
+    productsWithProductionBom,
+    productionBomFetchErrors,
+    versionKeys: [...versionKeySet].sort(),
+    operationKeys: [...operationKeySet].sort(),
+    componentKeys: [...componentKeySet].sort(),
+    resourceKeys: [...resourceKeySet].sort(),
+    versionKeyExamples,
+    operationKeyExamples,
+    componentKeyExamples,
+    resourceKeyExamples,
+  };
+}
