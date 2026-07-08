@@ -63,3 +63,27 @@ export function buildCostEstimateSheet(estimates: AssemblyCostEstimate[]): Sheet
 
   return { data, merges: [], headerRowCount: 1 };
 }
+
+const SUMMARY_HEADER = ["Assembly SKU", "Assembly Name", "Cost Basis", "Components", "Total Production Cost", "Cost Available?"];
+
+/**
+ * One row per finished good — just the assembly-level total, no component
+ * breakdown. For someone who only wants "what does each finished good cost
+ * to produce" without the per-line audit trail buildCostEstimateSheet gives.
+ */
+export function buildCostEstimateSummarySheet(estimates: AssemblyCostEstimate[]): SheetExport {
+  const data: (string | number)[][] = [SUMMARY_HEADER];
+
+  for (const estimate of estimates) {
+    data.push([
+      estimate.assemblySku,
+      estimate.assemblyName,
+      BASIS_LABEL[estimate.basis],
+      estimate.lines.length,
+      estimate.totalCost ?? "N/A",
+      estimate.complete ? "Yes" : `Incomplete (${estimate.missingCostCount} missing)`,
+    ]);
+  }
+
+  return { data, merges: [], headerRowCount: 1 };
+}

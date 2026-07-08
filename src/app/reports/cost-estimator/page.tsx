@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useState, useTransition } from "react";
-import { getCostEstimatesAction, exportCostEstimatesAction } from "./actions";
+import { getCostEstimatesAction, exportCostEstimatesAction, exportCostEstimatesSummaryAction } from "./actions";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import { COST_BASIS_OPTIONS, type CostBasis, type AssemblyCostEstimate } from "@/costing/estimate";
 
@@ -79,16 +79,22 @@ export default function CostEstimatorPage() {
     });
   }
 
-  function handleExport() {
+  function handleExport(kind: "detail" | "summary") {
     if (!estimates) return;
     setExportError(null);
     startExportTransition(async () => {
-      const result = await exportCostEstimatesAction(estimates);
+      const action = kind === "detail" ? exportCostEstimatesAction : exportCostEstimatesSummaryAction;
+      const result = await action(estimates);
       if (!result.ok || !result.data) {
         setExportError(result.error ?? "Unknown error");
         return;
       }
-      downloadBase64File(result.data, `cost-estimate-${basis}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      const suffix = kind === "summary" ? "-summary" : "";
+      downloadBase64File(
+        result.data,
+        `cost-estimate-${basis}${suffix}.xlsx`,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      );
     });
   }
 
@@ -165,11 +171,19 @@ export default function CostEstimatorPage() {
               <p className="text-sm font-medium text-slate-700">Total across all: {formatNumber(totalAcrossAssemblies)}</p>
               <button
                 type="button"
-                onClick={handleExport}
+                onClick={() => handleExport("summary")}
                 disabled={isExporting || estimates.length === 0}
                 className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
-                {isExporting ? "Exporting…" : "Export .xlsx"}
+                {isExporting ? "Exporting…" : "Export summary .xlsx"}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleExport("detail")}
+                disabled={isExporting || estimates.length === 0}
+                className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {isExporting ? "Exporting…" : "Export detail .xlsx"}
               </button>
             </div>
           </div>

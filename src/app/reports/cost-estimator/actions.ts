@@ -5,7 +5,7 @@ import { requireCurrentOrg } from "@/lib/current-org";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsForCosting } from "@/cin7/product-cost";
 import { estimateAssemblyCost, type CostBasis, type AssemblyCostEstimate, type ComponentCostInfo } from "@/costing/estimate";
-import { buildCostEstimateSheet } from "@/reports/cost-estimator-export";
+import { buildCostEstimateSheet, buildCostEstimateSummarySheet } from "@/reports/cost-estimator-export";
 import { renderXlsxBase64 } from "@/reports/xlsx-writer";
 
 export interface CostEstimatorActionResult<T> {
@@ -49,11 +49,23 @@ export async function getCostEstimatesAction(
   }
 }
 
+/** Full per-assembly-per-component detail, with a TOTAL subtotal row per assembly. */
 export async function exportCostEstimatesAction(estimates: AssemblyCostEstimate[]): Promise<CostEstimatorActionResult<string>> {
   try {
     await requireCurrentOrg();
     const sheet = buildCostEstimateSheet(estimates);
     return { ok: true, data: await renderXlsxBase64(sheet, "Cost Estimate") };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/** One row per finished good — just its total production cost, no component breakdown. */
+export async function exportCostEstimatesSummaryAction(estimates: AssemblyCostEstimate[]): Promise<CostEstimatorActionResult<string>> {
+  try {
+    await requireCurrentOrg();
+    const sheet = buildCostEstimateSummarySheet(estimates);
+    return { ok: true, data: await renderXlsxBase64(sheet, "Cost Estimate Summary") };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
