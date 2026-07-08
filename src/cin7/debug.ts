@@ -458,6 +458,8 @@ export interface CostBasisFieldSurvey {
   includeSuppliersVariant: {
     productsScanned: number;
     suppliersNonEmptyCount: number;
+    supplierKeys: string[];
+    supplierKeyExamples: Record<string, unknown>;
   };
   /** Hypothesis: maybe a single-product fetch (filtered by SKU, same shape findProductBySku already uses) returns richer data than a bulk list row for the same product. */
   detailCheckSamples: {
@@ -481,40 +483,21 @@ export interface CostBasisFieldSurvey {
  * guessing further from official docs alone (which 403'd when fetched) —
  * same discipline as every other survey* function here.
  */
-export async function surveyCostBasisFields(creds: Cin7Credentials, maxRecords = 50): Promise<CostBasisFieldSurvey> {
-  const response = await cin7Request<Cin7ProductListResponse>(creds, "/Product", {
-    query: { page: 1, limit: maxRecords, IncludeBOM: "true" },
-  });
-  const products = response.Products ?? [];
-
-  let averageCostSeenCount = 0;
-  let averageCostNonZeroCount = 0;
-  let averageCostMin: number | undefined;
-  let averageCostMax: number | undefined;
+function scanSupplierFields(products: Record<string, unknown>[], bulkSuppliersLengthBySku?: Map<string, number>) {
   let suppliersArrayPresentCount = 0;
   let suppliersNonEmptyCount = 0;
   const supplierKeySet = new Set<string>();
   const supplierKeyExamples: Record<string, unknown> = {};
-  const bulkSuppliersLengthBySku = new Map<string, number>();
 
-  for (const product of products) {
-    const raw = product as Record<string, unknown>;
-    const sku = String(raw.SKU ?? "");
-    const averageCost = raw.AverageCost;
-    if (averageCost !== null && averageCost !== undefined) {
-      averageCostSeenCount++;
-      if (typeof averageCost === "number") {
-        if (averageCost !== 0) averageCostNonZeroCount++;
-        averageCostMin = averageCostMin === undefined ? averageCost : Math.min(averageCostMin, averageCost);
-        averageCostMax = averageCostMax === undefined ? averageCost : Math.max(averageCostMax, averageCost);
-      }
-    }
-
+  for (const raw of products) {
     if ("Suppliers" in raw) suppliersArrayPresentCount++;
     const suppliers = raw.Suppliers;
-    const bulkLen = Array.isArray(suppliers) ? suppliers.length : 0;
-    if (sku) bulkSuppliersLengthBySku.set(sku, bulkLen);
-    if (bulkLen > 0) {
+    const len = Array.isArray(suppliers) ? suppliers.length : 0;
+    if (bulkSuppliersLengthBySku) {
+      const sku = String(raw.SKU ?? "");
+      if (sku) bulkSuppliersLengthBySku.set(sku, len);
+    }
+    if (len > 0) {
       suppliersNonEmptyCount++;
       for (const supplier of suppliers as unknown[]) {
         if (!supplier || typeof supplier !== "object") continue;
@@ -527,14 +510,40 @@ export async function surveyCostBasisFields(creds: Cin7Credentials, maxRecords =
     }
   }
 
+  return { suppliersArrayPresentCount, suppliersNonEmptyCount, supplierKeySet, supplierKeyExamples };
+}
+
+export async function surveyCostBasisFields(creds: Cin7Credentials, maxRecords = 50): Promise<CostBasisFieldSurvey> {
+  const response = await cin7Request<Cin7ProductListResponse>(creds, "/Product", {
+    query: { page: 1, limit: maxRecords, IncludeBOM: "true" },
+  });
+  const products = (response.Products ?? []) as Record<string, unknown>[];
+
+  let averageCostSeenCount = 0;
+  let averageCostNonZeroCount = 0;
+  let averageCostMin: number | undefined;
+  let averageCostMax: number | undefined;
+
+  for (const raw of products) {
+    const averageCost = raw.AverageCost;
+    if (averageCost !== null && averageCost !== undefined) {
+      averageCostSeenCount++;
+      if (typeof averageCost === "number") {
+        if (averageCost !== 0) averageCostNonZeroCount++;
+        averageCostMin = averageCostMin === undefined ? averageCost : Math.min(averageCostMin, averageCost);
+        averageCostMax = averageCostMax === undefined ? averageCost : Math.max(averageCostMax, averageCost);
+      }
+    }
+  }
+
+  const bulkSuppliersLengthBySku = new Map<string, number>();
+  const bulkScan = scanSupplierFields(products, bulkSuppliersLengthBySku);
+
   const variantResponse = await cin7Request<Cin7ProductListResponse>(creds, "/Product", {
     query: { page: 1, limit: maxRecords, IncludeBOM: "true", IncludeSuppliers: "true" },
   });
-  const variantProducts = variantResponse.Products ?? [];
-  const includeSuppliersVariantNonEmptyCount = variantProducts.filter((p) => {
-    const s = (p as Record<string, unknown>).Suppliers;
-    return Array.isArray(s) && s.length > 0;
-  }).length;
+  const variantProducts = (variantResponse.Products ?? []) as Record<string, unknown>[];
+  const variantScan = scanSupplierFields(variantProducts);
 
   const sampleSkus = [...bulkSuppliersLengthBySku.keys()].slice(0, 5);
   const detailCheckSamples: CostBasisFieldSurvey["detailCheckSamples"] = [];
@@ -562,13 +571,15 @@ export async function surveyCostBasisFields(creds: Cin7Credentials, maxRecords =
     averageCostNonZeroCount,
     averageCostMin,
     averageCostMax,
-    suppliersArrayPresentCount,
-    suppliersNonEmptyCount,
-    supplierKeys: [...supplierKeySet].sort(),
-    supplierKeyExamples,
+    suppliersArrayPresentCount: bulkScan.suppliersArrayPresentCount,
+    suppliersNonEmptyCount: bulkScan.suppliersNonEmptyCount,
+    supplierKeys: [...bulkScan.supplierKeySet].sort(),
+    supplierKeyExamples: bulkScan.supplierKeyExamples,
     includeSuppliersVariant: {
       productsScanned: variantProducts.length,
-      suppliersNonEmptyCount: includeSuppliersVariantNonEmptyCount,
+      suppliersNonEmptyCount: variantScan.suppliersNonEmptyCount,
+      supplierKeys: [...variantScan.supplierKeySet].sort(),
+      supplierKeyExamples: variantScan.supplierKeyExamples,
     },
     detailCheckSamples,
   };
