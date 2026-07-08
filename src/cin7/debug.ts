@@ -592,8 +592,10 @@ interface Cin7ProductionBomListResponse {
 export interface ProductionBomFieldSurvey {
   productsScanned: number;
   bomTypeValuesSeen: string[];
+  /** Products whose BOMType wasn't one of the already-known non-production values ("Assembly", "None") — these are what actually got probed, not every scanned product. */
+  candidateSkusFound: string[];
   candidatesProbed: number;
-  productsWithProductionBom: { sku: string; productId: string; versionCount: number }[];
+  productsWithProductionBom: { sku: string; productId: string; bomType: string; versionCount: number }[];
   productionBomFetchErrors: { sku: string; error: string }[];
   versionKeys: string[];
   operationKeys: string[];
@@ -604,6 +606,9 @@ export interface ProductionBomFieldSurvey {
   componentKeyExamples: Record<string, unknown>;
   resourceKeyExamples: Record<string, unknown>;
 }
+
+/** BOMType values already confirmed to mean "not a Production BOM" — anything else seen on a scanned product is treated as a candidate worth the extra live probe. */
+const KNOWN_NON_PRODUCTION_BOM_TYPES = new Set(["Assembly", "None"]);
 
 function collectKeys(records: Record<string, unknown>[], keySet: Set<string>, examples: Record<string, unknown>) {
   for (const record of records) {
@@ -618,28 +623,47 @@ function collectKeys(records: Record<string, unknown>[], keySet: Set<string>, ex
 /**
  * Diagnostic only: extending the cost estimator to Production BOMs needs to
  * know two things neither this codebase nor docs/cin7-api-findings.md has
- * confirmed yet — (1) how to cheaply find WHICH products have a Production
- * BOM at all across a catalog (Assembly BOM has `BillOfMaterial: true` on
- * the bulk list for free; Production BOM has no confirmed equivalent), and
- * (2) what a real `GET /production/productionBOM?ProductID=` response's full
- * Operations/Components/Resources shape looks like — `findProductionBomVersion`
- * (production-bom.ts) already calls this live and reads back `.Version`, so
- * the endpoint itself is confirmed reachable; this just looks at everything
- * else in that same response instead of discarding it. Resource-level cost
- * (labor/machine rate) is the biggest unknown — Resources may only echo back
+ * confirmed yet — (1) what a real `GET /production/productionBOM?ProductID=`
+ * response's full Operations/Components/Resources shape looks like —
+ * `findProductionBomVersion` (production-bom.ts) already calls this live and
+ * reads back `.Version`, so the endpoint itself is confirmed reachable; this
+ * just looks at everything else in that same response instead of discarding
+ * it — and (2), now narrowed by a first live pass (2026-07-08): `BOMType` on
+ * the bulk `/Product` list is confirmed to distinguish BOM kind per product,
+ * but only "Assembly"/"None" showed up among the first 20 scanned — the
+ * production-indicating value itself is still unobserved. Rather than guess
+ * at it, this scans a much larger page for ANY BOMType outside those two
+ * known values and only live-probes those specific candidates (not every
+ * scanned product) — keeping the expensive per-product call bounded even as
+ * the cheap bulk scan widens. Resource-level cost (labor/machine rate) is
+ * the biggest remaining unknown — Resources may only echo back
  * `ResourceID`/`Quantity` with no rate field, which would mean Production
  * BOM estimates can only ever cover material Components, not labor.
  */
-export async function surveyProductionBomFields(creds: Cin7Credentials, maxCandidates = 20): Promise<ProductionBomFieldSurvey> {
-  const listResponse = await cin7Request<Cin7ProductListResponse>(creds, "/Product", {
-    query: { page: 1, limit: maxCandidates, IncludeBOM: "true" },
-  });
-  const products = (listResponse.Products ?? []) as Record<string, unknown>[];
+export async function surveyProductionBomFields(
+  creds: Cin7Credentials,
+  maxProductsToScan = 300,
+  maxCandidatesToProbe = 15
+): Promise<ProductionBomFieldSurvey> {
+  const pageSize = 100;
+  const products: Record<string, unknown>[] = [];
+  for (let page = 1; products.length < maxProductsToScan; page++) {
+    const response = await cin7Request<Cin7ProductListResponse>(creds, "/Product", {
+      query: { page, limit: pageSize, IncludeBOM: "true" },
+    });
+    const pageProducts = (response.Products ?? []) as Record<string, unknown>[];
+    products.push(...pageProducts);
+    if (pageProducts.length < pageSize) break;
+  }
 
   const bomTypeValues = new Set<string>();
   for (const p of products) {
     if (typeof p.BOMType === "string" && p.BOMType) bomTypeValues.add(p.BOMType);
   }
+
+  const candidates = products
+    .filter((p) => typeof p.BOMType === "string" && p.BOMType && !KNOWN_NON_PRODUCTION_BOM_TYPES.has(p.BOMType))
+    .slice(0, maxCandidatesToProbe);
 
   const versionKeySet = new Set<string>();
   const operationKeySet = new Set<string>();
@@ -652,9 +676,10 @@ export async function surveyProductionBomFields(creds: Cin7Credentials, maxCandi
   const productsWithProductionBom: ProductionBomFieldSurvey["productsWithProductionBom"] = [];
   const productionBomFetchErrors: ProductionBomFieldSurvey["productionBomFetchErrors"] = [];
 
-  for (const p of products) {
+  for (const p of candidates) {
     const productId = String(p.ID ?? "");
     const sku = String(p.SKU ?? "");
+    const bomType = String(p.BOMType ?? "");
     if (!productId) continue;
     try {
       const response = await cin7Request<Cin7ProductionBomListResponse>(creds, "/production/productionBOM", {
@@ -663,7 +688,7 @@ export async function surveyProductionBomFields(creds: Cin7Credentials, maxCandi
       const boms = response.ProductionBOMs ?? [];
       if (boms.length === 0) continue;
 
-      productsWithProductionBom.push({ sku, productId, versionCount: boms.length });
+      productsWithProductionBom.push({ sku, productId, bomType, versionCount: boms.length });
       collectKeys(boms, versionKeySet, versionKeyExamples);
 
       const operations = boms.flatMap((b) => (Array.isArray(b.Operations) ? (b.Operations as Record<string, unknown>[]) : []));
@@ -682,7 +707,8 @@ export async function surveyProductionBomFields(creds: Cin7Credentials, maxCandi
   return {
     productsScanned: products.length,
     bomTypeValuesSeen: [...bomTypeValues].sort(),
-    candidatesProbed: products.length,
+    candidateSkusFound: candidates.map((p) => String(p.SKU ?? "")),
+    candidatesProbed: candidates.length,
     productsWithProductionBom,
     productionBomFetchErrors,
     versionKeys: [...versionKeySet].sort(),
