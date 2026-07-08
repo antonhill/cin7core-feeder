@@ -15,6 +15,7 @@ import type { SalesReportFilters } from "@/reports/query";
 import { buildPivotGrid, METRIC_COLUMNS, type PivotCellValues, type PivotGroupBy, type PivotSourceRow } from "@/reports/pivot";
 import { buildFlatReportSheet, buildPivotSheet } from "@/reports/export-xlsx";
 import { Spinner } from "@/app/Spinner";
+import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 
 type GroupBySelection = "none" | PivotGroupBy;
 
@@ -264,6 +265,7 @@ export default function ReportsPage() {
 
   return (
     <>
+      <PageLoadingIndicator show={isExporting} label="Exporting to Excel…" />
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -392,7 +394,6 @@ export default function ReportsPage() {
                 disabled={isExporting}
                 className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
-                {isExporting && <Spinner className="mr-1.5" />}
                 {isExporting ? "Exporting…" : "Export to Excel"}
               </button>
             )}
@@ -457,7 +458,6 @@ export default function ReportsPage() {
                 disabled={isExporting}
                 className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
-                {isExporting && <Spinner className="mr-1.5" />}
                 {isExporting ? "Exporting…" : "Export to Excel"}
               </button>
             )}

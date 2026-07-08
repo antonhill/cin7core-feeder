@@ -5,6 +5,7 @@ import { getCostEstimatesAction, exportCostEstimatesAction, exportCostEstimatesS
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import { COST_BASIS_OPTIONS, type CostBasis, type AssemblyCostEstimate } from "@/costing/estimate";
 import { Spinner } from "@/app/Spinner";
+import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 
 /** Decodes the base64 .xlsx bytes the server rendered and triggers a normal browser download — same pattern as reports/page.tsx's downloadBase64File. */
 function downloadBase64File(base64: string, filename: string, mimeType: string) {
@@ -104,6 +105,7 @@ export default function CostEstimatorPage() {
 
   return (
     <>
+      <PageLoadingIndicator show={isExporting} label="Exporting to Excel…" />
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <p className="font-medium text-slate-900">Instance</p>
         <div className="mt-3">
@@ -178,7 +180,6 @@ export default function CostEstimatorPage() {
                 disabled={isExporting || estimates.length === 0}
                 className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
-                {isExporting && <Spinner className="mr-1.5" />}
                 {isExporting ? "Exporting…" : "Export summary .xlsx"}
               </button>
               <button
@@ -187,7 +188,6 @@ export default function CostEstimatorPage() {
                 disabled={isExporting || estimates.length === 0}
                 className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
-                {isExporting && <Spinner className="mr-1.5" />}
                 {isExporting ? "Exporting…" : "Export detail .xlsx"}
               </button>
             </div>

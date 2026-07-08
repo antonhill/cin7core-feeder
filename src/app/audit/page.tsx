@@ -28,6 +28,7 @@ import type { ApplyPartyFixesResult } from "@/audit/apply-party-fixes";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { AUDIT_MODULE } from "@/app/module-nav";
 import { Spinner } from "@/app/Spinner";
+import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 
 type AuditScope = "products" | "customers" | "suppliers";
 
@@ -182,7 +183,6 @@ function IssueTypeSection({
             }}
             className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
-            {isApplying && <Spinner className="mr-1.5" />}
             Apply to {selected.size || ""} selected
           </button>
         </div>
@@ -272,7 +272,6 @@ function PartyIssueSection({
             }}
             className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
-            {isApplying && <Spinner className="mr-1.5" />}
             Apply to {selected.size || ""} selected
           </button>
         </div>
@@ -317,7 +316,6 @@ function DuplicateGroupCard({
         }}
         className="mt-2 rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
       >
-        {isApplying && <Spinner className="mr-1.5" />}
         Merge the rest into &ldquo;{keep}&rdquo;
       </button>
     </div>
@@ -397,7 +395,6 @@ function AttributeGapCard({
             }}
             className="rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
-            {isApplying && <Spinner className="mr-1.5" />}
             Copy to {selected.size} selected
           </button>
         </div>
@@ -466,7 +463,6 @@ function SellableSection({
           }}
           className="rounded-full bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
         >
-          {isApplying && <Spinner className="mr-1.5" />}
           Set Sellable: Yes ({selected.size || 0})
         </button>
         <button
@@ -478,7 +474,6 @@ function SellableSection({
           }}
           className="rounded-full bg-slate-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-500 disabled:opacity-50"
         >
-          {isApplying && <Spinner className="mr-1.5" />}
           Set Sellable: No ({selected.size || 0})
         </button>
       </div>
@@ -756,6 +751,7 @@ export default function AuditPage() {
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
+      <PageLoadingIndicator show={isApplying} label="Applying changes to Cin7…" />
       <ModuleHeader module={AUDIT_MODULE}>
         Pulls every product, customer, or supplier live from a connected Cin7 instance and checks it for
         consistency and accuracy gaps. Products: missing Brand, no sales price, incomplete inventory setup,
