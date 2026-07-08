@@ -2,6 +2,7 @@ import Link from "next/link";
 import { MODULES, ToolboxLogo, type ModuleConfig } from "@/app/module-nav";
 import Reveal from "@/app/marketing-reveal";
 import HealthScorecard from "@/app/marketing-health-scorecard";
+import Pricing from "@/app/marketing-pricing";
 
 /**
  * Public landing page shown at "/" to a visitor with no session (see
@@ -50,6 +51,9 @@ export default function MarketingHome() {
             </a>
             <a href="#who" className="text-sm font-medium text-sidebar-text hover:text-white">
               Who it&rsquo;s for
+            </a>
+            <a href="#pricing" className="text-sm font-medium text-sidebar-text hover:text-white">
+              Pricing
             </a>
           </div>
           <div className="flex items-center gap-4">
@@ -239,35 +243,8 @@ export default function MarketingHome() {
         </div>
       </section>
 
-      {/* CTA */}
-      <section className="border-t border-slate-200 bg-slate-50 py-24 text-center">
-        <div className="mx-auto max-w-6xl px-6">
-          <Reveal>
-            <p className="font-mono text-xs font-medium uppercase tracking-wide text-indigo-600">Start free</p>
-            <h2 className="mx-auto mt-4 max-w-xl text-3xl font-bold leading-tight tracking-tight text-slate-900 sm:text-4xl">
-              See it on your own data.
-            </h2>
-            <p className="mt-4 text-lg text-slate-500">
-              Connect one Cin7 instance and see everything — health score, audit gaps and reports — in minutes.
-            </p>
-            <div className="mt-7 flex flex-wrap justify-center gap-3">
-              <Link
-                href={CTA_HREF}
-                className="rounded-lg bg-indigo-600 px-5 py-3 font-semibold text-white shadow-sm transition hover:-translate-y-px hover:bg-indigo-500"
-              >
-                {TRIAL_LABEL} →
-              </Link>
-              <Link
-                href="/login"
-                className="rounded-lg border border-slate-200 px-5 py-3 font-semibold text-slate-700 transition hover:-translate-y-px hover:border-slate-300"
-              >
-                Sign in
-              </Link>
-            </div>
-            <p className="mt-5 font-mono text-xs text-slate-500">No card required. Connect 1 Cin7 instance and see everything.</p>
-          </Reveal>
-        </div>
-      </section>
+      {/* PRICING — replaces the old generic closing CTA; itself the closing CTA now */}
+      <Pricing />
 
       {/* FOOTER */}
       <footer className="border-t border-sidebar-border bg-sidebar-bg py-9 text-sidebar-text">
