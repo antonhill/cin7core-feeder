@@ -592,7 +592,7 @@ interface Cin7ProductionBomListResponse {
 export interface ProductionBomFieldSurvey {
   productsScanned: number;
   bomTypeValuesSeen: string[];
-  /** Products whose BOMType wasn't one of the already-known non-production values ("Assembly", "None") — these are what actually got probed, not every scanned product. */
+  /** Products whose BOMType is exactly "Production" — these are what actually got probed, not every scanned product. */
   candidateSkusFound: string[];
   candidatesProbed: number;
   productsWithProductionBom: { sku: string; productId: string; bomType: string; versionCount: number }[];
@@ -607,8 +607,14 @@ export interface ProductionBomFieldSurvey {
   resourceKeyExamples: Record<string, unknown>;
 }
 
-/** BOMType values already confirmed to mean "not a Production BOM" — anything else seen on a scanned product is treated as a candidate worth the extra live probe. */
-const KNOWN_NON_PRODUCTION_BOM_TYPES = new Set(["Assembly", "None"]);
+/**
+ * Confirmed via Cin7's own official API docs (screenshot reviewed 2026-07-08):
+ * `BOMType` is a read-only String with exactly 4 valid values — "Assembly",
+ * "Production", "Make to Order", "None". Only "Production" is what this
+ * survey (and later, the cost estimator's Production BOM extension) cares
+ * about; "Make to Order" is a distinct BOM kind, not yet investigated.
+ */
+const PRODUCTION_BOM_TYPE = "Production";
 
 function collectKeys(records: Record<string, unknown>[], keySet: Set<string>, examples: Record<string, unknown>) {
   for (const record of records) {
@@ -621,24 +627,20 @@ function collectKeys(records: Record<string, unknown>[], keySet: Set<string>, ex
 }
 
 /**
- * Diagnostic only: extending the cost estimator to Production BOMs needs to
- * know two things neither this codebase nor docs/cin7-api-findings.md has
- * confirmed yet — (1) what a real `GET /production/productionBOM?ProductID=`
- * response's full Operations/Components/Resources shape looks like —
- * `findProductionBomVersion` (production-bom.ts) already calls this live and
- * reads back `.Version`, so the endpoint itself is confirmed reachable; this
- * just looks at everything else in that same response instead of discarding
- * it — and (2), now narrowed by a first live pass (2026-07-08): `BOMType` on
- * the bulk `/Product` list is confirmed to distinguish BOM kind per product,
- * but only "Assembly"/"None" showed up among the first 20 scanned — the
- * production-indicating value itself is still unobserved. Rather than guess
- * at it, this scans a much larger page for ANY BOMType outside those two
- * known values and only live-probes those specific candidates (not every
- * scanned product) — keeping the expensive per-product call bounded even as
- * the cheap bulk scan widens. Resource-level cost (labor/machine rate) is
- * the biggest remaining unknown — Resources may only echo back
- * `ResourceID`/`Quantity` with no rate field, which would mean Production
- * BOM estimates can only ever cover material Components, not labor.
+ * Diagnostic only: the last unconfirmed piece before extending the cost
+ * estimator to Production BOMs is what a real
+ * `GET /production/productionBOM?ProductID=` response's full Operations/
+ * Components/Resources shape looks like — `findProductionBomVersion`
+ * (production-bom.ts) already calls this live and reads back `.Version`, so
+ * the endpoint itself is confirmed reachable; this just looks at everything
+ * else in that same response instead of discarding it. Which products to
+ * probe is no longer a guess — `BOMType === "Production"` (confirmed via
+ * Cin7's own official API docs) filters the bulk `/Product` scan cheaply,
+ * same as `BillOfMaterial: true` already does for Assembly BOM. Resource-
+ * level cost (labor/machine rate) is the biggest remaining unknown —
+ * Resources may only echo back `ResourceID`/`Quantity` with no rate field,
+ * which would mean Production BOM estimates can only ever cover material
+ * Components, not labor.
  */
 export async function surveyProductionBomFields(
   creds: Cin7Credentials,
@@ -661,9 +663,7 @@ export async function surveyProductionBomFields(
     if (typeof p.BOMType === "string" && p.BOMType) bomTypeValues.add(p.BOMType);
   }
 
-  const candidates = products
-    .filter((p) => typeof p.BOMType === "string" && p.BOMType && !KNOWN_NON_PRODUCTION_BOM_TYPES.has(p.BOMType))
-    .slice(0, maxCandidatesToProbe);
+  const candidates = products.filter((p) => p.BOMType === PRODUCTION_BOM_TYPE).slice(0, maxCandidatesToProbe);
 
   const versionKeySet = new Set<string>();
   const operationKeySet = new Set<string>();
