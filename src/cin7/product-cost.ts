@@ -24,6 +24,8 @@ export interface CostEstimatorProduct {
   sku: string;
   name: string;
   isAssembly: boolean;
+  /** Confirmed 2026-07-08: a read-only enum with exactly 4 values — "Assembly", "Production", "Make to Order", "None". Read from the same combined /Product call (no extra fetch) to detect Production BOM SKUs for the Production Cost Estimator. */
+  bomType: string | undefined;
   bomLines: CostEstimatorBomLine[];
   averageCost: number | null;
   suppliers: Cin7ProductSupplier[];
@@ -38,13 +40,24 @@ export interface CostEstimatorProduct {
  * cost per component SKU (same "no N+1 detail calls" discipline already
  * applied in reports/assemblies/actions.ts).
  */
-export async function fetchAllProductsForCosting(creds: Cin7Credentials): Promise<CostEstimatorProduct[]> {
+export async function fetchAllProductsForCosting(
+  creds: Cin7Credentials,
+): Promise<CostEstimatorProduct[]> {
   const pageSize = 100;
   const all: CostEstimatorProduct[] = [];
   for (let page = 1; ; page++) {
-    const response = await cin7Request<Cin7ProductListResponse>(creds, "/Product", {
-      query: { page, limit: pageSize, IncludeBOM: "true", IncludeSuppliers: "true" },
-    });
+    const response = await cin7Request<Cin7ProductListResponse>(
+      creds,
+      "/Product",
+      {
+        query: {
+          page,
+          limit: pageSize,
+          IncludeBOM: "true",
+          IncludeSuppliers: "true",
+        },
+      },
+    );
     const products = response.Products ?? [];
     for (const raw of products) all.push(toCostEstimatorProduct(raw));
     if (products.length < pageSize) break;
@@ -52,15 +65,21 @@ export async function fetchAllProductsForCosting(creds: Cin7Credentials): Promis
   return all;
 }
 
-function toCostEstimatorProduct(raw: Record<string, unknown>): CostEstimatorProduct {
-  const bomLines = ((raw.BillOfMaterialsProducts as Record<string, unknown>[] | undefined) ?? []).map((line) => ({
+function toCostEstimatorProduct(
+  raw: Record<string, unknown>,
+): CostEstimatorProduct {
+  const bomLines = (
+    (raw.BillOfMaterialsProducts as Record<string, unknown>[] | undefined) ?? []
+  ).map((line) => ({
     componentSku: String(line.ProductCode ?? ""),
     componentName: String(line.Name ?? ""),
     quantity: Number(line.Quantity ?? 0),
     wastageQuantity: Number(line.WastageQuantity ?? 0),
   }));
 
-  const suppliers = ((raw.Suppliers as Record<string, unknown>[] | undefined) ?? []).map((s) => ({
+  const suppliers = (
+    (raw.Suppliers as Record<string, unknown>[] | undefined) ?? []
+  ).map((s) => ({
     cost: typeof s.Cost === "number" ? s.Cost : null,
     fixedCost: typeof s.FixedCost === "number" ? s.FixedCost : null,
     lastSupplied: typeof s.LastSupplied === "string" ? s.LastSupplied : null,
@@ -70,6 +89,7 @@ function toCostEstimatorProduct(raw: Record<string, unknown>): CostEstimatorProd
     sku: String(raw.SKU ?? ""),
     name: String(raw.Name ?? ""),
     isAssembly: raw.BillOfMaterial === true,
+    bomType: typeof raw.BOMType === "string" ? raw.BOMType : undefined,
     bomLines,
     averageCost: typeof raw.AverageCost === "number" ? raw.AverageCost : null,
     suppliers,
