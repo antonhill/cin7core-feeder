@@ -4,6 +4,8 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { requireCurrentOrg } from "@/lib/current-org";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllFinishedGoodsList, fetchFinishedGoodsDetail, type Cin7FinishedGoodsListEntry, type Cin7FinishedGoodsDetail } from "@/cin7/finished-goods";
+import { buildAssembliesSheet } from "@/reports/assemblies-export";
+import { renderXlsxBase64 } from "@/reports/xlsx-writer";
 
 export interface AssembliesActionResult<T> {
   ok: boolean;
@@ -39,6 +41,17 @@ export async function getAssemblyDetailAction(instanceId: string, taskId: string
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const detail = await fetchFinishedGoodsDetail(creds, taskId);
     return { ok: true, data: detail };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/** Renders whatever's currently filtered/searched on screen (the client already has that list — see page.tsx's `filtered`) into a real .xlsx file. */
+export async function exportAssembliesXlsxAction(entries: Cin7FinishedGoodsListEntry[]): Promise<AssembliesActionResult<string>> {
+  try {
+    await requireCurrentOrg();
+    const sheet = buildAssembliesSheet(entries);
+    return { ok: true, data: await renderXlsxBase64(sheet, "Assemblies") };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

@@ -1,10 +1,24 @@
 "use client";
 
 import { Fragment, useMemo, useState, useTransition } from "react";
-import { listAssembliesAction, getAssemblyDetailAction } from "./actions";
+import { listAssembliesAction, getAssemblyDetailAction, exportAssembliesXlsxAction } from "./actions";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import type { Cin7FinishedGoodsListEntry, Cin7FinishedGoodsDetail } from "@/cin7/finished-goods";
 import { Spinner } from "@/app/Spinner";
+
+/** Decodes the base64 .xlsx bytes the server rendered and triggers a normal browser download — same pattern as reports/page.tsx's downloadBase64File. */
+function downloadBase64File(base64: string, filename: string, mimeType: string) {
+  const byteChars = atob(base64);
+  const bytes = new Uint8Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+  const blob = new Blob([bytes], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 /**
  * The 4 statuses Anton asked to filter by. VOIDED is deliberately left out —
@@ -185,6 +199,9 @@ export default function AssembliesPage() {
   const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
   const [loadingDetailIds, setLoadingDetailIds] = useState<Set<string>>(new Set());
 
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [isExporting, startExportTransition] = useTransition();
+
   function toggleStatus(value: string) {
     setStatusFilter((prev) => {
       const next = new Set(prev);
@@ -272,6 +289,19 @@ export default function AssembliesPage() {
     [filtered]
   );
 
+  function handleExport() {
+    if (filtered.length === 0) return;
+    setExportError(null);
+    startExportTransition(async () => {
+      const result = await exportAssembliesXlsxAction(filtered);
+      if (!result.ok || !result.data) {
+        setExportError(result.error ?? "Unknown error");
+        return;
+      }
+      downloadBase64File(result.data, "assemblies.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    });
+  }
+
   return (
     <>
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -351,10 +381,22 @@ export default function AssembliesPage() {
             <p>
               {filtered.length} of {assemblies.length} assembl{assemblies.length === 1 ? "y" : "ies"} shown
             </p>
-            <p className="font-medium text-slate-700">
-              Total quantity: {formatNumber(totals.quantity)} · Total cost: {formatNumber(totals.cost)}
-            </p>
+            <div className="flex items-center gap-3">
+              <p className="font-medium text-slate-700">
+                Total quantity: {formatNumber(totals.quantity)} · Total cost: {formatNumber(totals.cost)}
+              </p>
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={isExporting || filtered.length === 0}
+                className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {isExporting && <Spinner className="mr-1.5" />}
+                {isExporting ? "Exporting…" : "Export .xlsx"}
+              </button>
+            </div>
           </div>
+          {exportError && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{exportError}</p>}
 
           {filtered.length > 0 ? (
             <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
