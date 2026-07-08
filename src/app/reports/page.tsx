@@ -14,6 +14,7 @@ import type { ReportFilterOptions, ProductSalesReportRow, SaleLineDetailRow, Sal
 import type { SalesReportFilters } from "@/reports/query";
 import { buildPivotGrid, METRIC_COLUMNS, type PivotCellValues, type PivotGroupBy, type PivotSourceRow } from "@/reports/pivot";
 import { buildFlatReportSheet, buildPivotSheet } from "@/reports/export-xlsx";
+import { Spinner } from "@/app/Spinner";
 
 type GroupBySelection = "none" | PivotGroupBy;
 
@@ -86,7 +87,12 @@ function InvoiceLineDetail({
   return (
     <tr>
       <td colSpan={colSpan} className="bg-slate-50 px-4 py-3">
-        {isLoading && !lines && <p className="text-sm text-slate-400">Loading invoice lines…</p>}
+        {isLoading && !lines && (
+          <p className="text-sm text-slate-400">
+            <Spinner className="mr-1.5" />
+            Loading invoice lines…
+          </p>
+        )}
         {lines && (
           <table className="w-full text-left text-xs">
             <thead>
@@ -276,6 +282,7 @@ export default function ReportsPage() {
             disabled={isSyncing}
             className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           >
+            {isSyncing && <Spinner className="mr-1.5" />}
             {isSyncing ? "Syncing…" : "Sync sales now"}
           </button>
         </div>
@@ -365,6 +372,7 @@ export default function ReportsPage() {
           disabled={isRunning}
           className="mt-5 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
         >
+          {isRunning && <Spinner className="mr-1.5" />}
           {isRunning ? "Running…" : "Run report"}
         </button>
 
@@ -384,6 +392,7 @@ export default function ReportsPage() {
                 disabled={isExporting}
                 className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
+                {isExporting && <Spinner className="mr-1.5" />}
                 {isExporting ? "Exporting…" : "Export to Excel"}
               </button>
             )}
@@ -448,6 +457,7 @@ export default function ReportsPage() {
                 disabled={isExporting}
                 className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
+                {isExporting && <Spinner className="mr-1.5" />}
                 {isExporting ? "Exporting…" : "Export to Excel"}
               </button>
             )}

@@ -4,6 +4,7 @@ import { Fragment, useMemo, useState, useTransition } from "react";
 import { listAssembliesAction, getAssemblyDetailAction } from "./actions";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import type { Cin7FinishedGoodsListEntry, Cin7FinishedGoodsDetail } from "@/cin7/finished-goods";
+import { Spinner } from "@/app/Spinner";
 
 /**
  * The 4 statuses Anton asked to filter by. VOIDED is deliberately left out —
@@ -69,7 +70,13 @@ function AssemblyDetailPanel({
   isLoading: boolean;
   error: string | undefined;
 }) {
-  if (isLoading) return <p className="px-4 py-3 text-sm text-slate-500">Loading components…</p>;
+  if (isLoading)
+    return (
+      <p className="px-4 py-3 text-sm text-slate-500">
+        <Spinner className="mr-1.5" />
+        Loading components…
+      </p>
+    );
   if (error) return <p className="px-4 py-3 text-sm text-red-700">{error}</p>;
   if (!detail) return null;
 
@@ -276,6 +283,7 @@ export default function AssembliesPage() {
             disabled={isLoadingInstances}
             className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           >
+            {isLoadingInstances && <Spinner className="mr-1.5" />}
             {isLoadingInstances ? "Loading…" : "Load instances"}
           </button>
           {instancesError && <p className="mt-2 text-sm text-red-600">{instancesError}</p>}
@@ -304,6 +312,7 @@ export default function AssembliesPage() {
           disabled={isScanning || !instanceId}
           className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
         >
+          {isScanning && <Spinner className="mr-1.5" />}
           {isScanning ? "Scanning…" : "Scan assemblies"}
         </button>
         {scanError && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{scanError}</p>}

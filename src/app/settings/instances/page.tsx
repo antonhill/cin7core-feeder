@@ -23,6 +23,7 @@ import {
 } from "./actions";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { INSTANCES_MODULE } from "@/app/module-nav";
+import { Spinner } from "@/app/Spinner";
 
 const DEFAULT_BASE_URL = "https://inventory.dearsystems.com/ExternalApi/v2";
 
@@ -414,6 +415,7 @@ function InstanceModal({
           </label>
           <div className="mt-2 flex gap-2">
             <button type="submit" disabled={isPending} className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50">
+              {isPending && <Spinner className="mr-1.5" />}
               {isPending ? "Saving…" : instance ? "Save" : "Add"}
             </button>
             <button type="button" onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2.5 text-base font-medium text-slate-700 hover:bg-slate-50">

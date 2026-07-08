@@ -27,6 +27,7 @@ import type { PartyAuditIssue, PartyAuditIssueType, PartyAuditResult, PartyKind 
 import type { ApplyPartyFixesResult } from "@/audit/apply-party-fixes";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { AUDIT_MODULE } from "@/app/module-nav";
+import { Spinner } from "@/app/Spinner";
 
 type AuditScope = "products" | "customers" | "suppliers";
 
@@ -181,6 +182,7 @@ function IssueTypeSection({
             }}
             className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
+            {isApplying && <Spinner className="mr-1.5" />}
             Apply to {selected.size || ""} selected
           </button>
         </div>
@@ -270,6 +272,7 @@ function PartyIssueSection({
             }}
             className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
+            {isApplying && <Spinner className="mr-1.5" />}
             Apply to {selected.size || ""} selected
           </button>
         </div>
@@ -314,6 +317,7 @@ function DuplicateGroupCard({
         }}
         className="mt-2 rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
       >
+        {isApplying && <Spinner className="mr-1.5" />}
         Merge the rest into &ldquo;{keep}&rdquo;
       </button>
     </div>
@@ -393,6 +397,7 @@ function AttributeGapCard({
             }}
             className="rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
+            {isApplying && <Spinner className="mr-1.5" />}
             Copy to {selected.size} selected
           </button>
         </div>
@@ -461,6 +466,7 @@ function SellableSection({
           }}
           className="rounded-full bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
         >
+          {isApplying && <Spinner className="mr-1.5" />}
           Set Sellable: Yes ({selected.size || 0})
         </button>
         <button
@@ -472,6 +478,7 @@ function SellableSection({
           }}
           className="rounded-full bg-slate-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-500 disabled:opacity-50"
         >
+          {isApplying && <Spinner className="mr-1.5" />}
           Set Sellable: No ({selected.size || 0})
         </button>
       </div>
@@ -782,6 +789,7 @@ export default function AuditPage() {
             disabled={isLoadingInstances}
             className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           >
+            {isLoadingInstances && <Spinner className="mr-1.5" />}
             {isLoadingInstances ? "Loading…" : "Load instances"}
           </button>
           {instancesError && <p className="mt-2 text-sm text-red-600">{instancesError}</p>}
@@ -810,6 +818,7 @@ export default function AuditPage() {
           disabled={isScanning || !instanceId}
           className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
         >
+          {isScanning && <Spinner className="mr-1.5" />}
           {isScanning ? "Scanning…" : `Scan ${scope}`}
         </button>
         {scope === "products" && scanError && (

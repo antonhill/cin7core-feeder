@@ -14,6 +14,7 @@ import { getBillingStatusAction } from "@/actions/billing";
 import type { InstanceSyncOutcome } from "@/sync/sync-org";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { IMPORT_MODULE } from "@/app/module-nav";
+import { Spinner } from "@/app/Spinner";
 
 const INITIAL_STATE: ImportActionState = { status: "idle" };
 
@@ -210,6 +211,7 @@ export default function ImportPage() {
               disabled={isImportPending}
               className="mt-1 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
             >
+              {isImportPending && <Spinner className="mr-1.5" />}
               {isImportPending ? "Importing…" : "Import"}
             </button>
           </form>
@@ -287,6 +289,7 @@ export default function ImportPage() {
               disabled={isLoadingInstances}
               className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             >
+              {isLoadingInstances && <Spinner className="mr-1.5" />}
               {isLoadingInstances ? "Loading…" : "Load instances"}
             </button>
 
@@ -372,6 +375,7 @@ export default function ImportPage() {
               disabled={isPushPending || selectedIds.length === 0 || !canWrite}
               className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
             >
+              {isPushPending && <Spinner className="mr-1.5" />}
               {isPushPending
                 ? "Pushing…"
                 : `Push to ${selectedIds.length || ""} instance${selectedIds.length === 1 ? "" : "s"}`}

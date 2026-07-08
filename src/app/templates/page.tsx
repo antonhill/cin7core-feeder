@@ -5,6 +5,7 @@ import { listInstancesForPicker, type InstancePickerItem } from "@/actions/insta
 import { downloadLiveTemplateAction, downloadTemplateAction } from "./actions";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { TEMPLATES_MODULE } from "@/app/module-nav";
+import { Spinner } from "@/app/Spinner";
 
 type Kind = "products" | "assembly_bom" | "suppliers" | "supplier_addresses" | "customers" | "customer_addresses";
 type Source = "canonical" | "live";
@@ -135,6 +136,7 @@ export default function TemplatesPage() {
               disabled={isLoadingInstances}
               className="mt-3 rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-white disabled:opacity-50"
             >
+              {isLoadingInstances && <Spinner className="mr-1.5" />}
               {isLoadingInstances ? "Loading…" : "Load instances"}
             </button>
             {instancesError && <p className="mt-2 text-sm text-red-600">{instancesError}</p>}
@@ -161,6 +163,7 @@ export default function TemplatesPage() {
           disabled={isDownloading || !canDownload}
           className="mt-6 w-full rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
         >
+          {isDownloading && <Spinner className="mr-1.5" />}
           {isDownloading ? "Preparing…" : "Download CSV"}
         </button>
 

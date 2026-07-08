@@ -12,6 +12,7 @@ import {
 } from "./actions";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { ADMIN_MODULE, MODULES } from "@/app/module-nav";
+import { Spinner } from "@/app/Spinner";
 
 export default function AdminPage() {
   const [orgs, setOrgs] = useState<OrgSummary[]>([]);
@@ -91,6 +92,7 @@ export default function AdminPage() {
             disabled={isSubmitting}
             className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
           >
+            {isSubmitting && <Spinner className="mr-1.5" />}
             {isSubmitting ? "Creating…" : "Create org & send invite"}
           </button>
           {formError && (
@@ -214,6 +216,7 @@ function OrgCard({ org, onMembersChanged }: { org: OrgSummary; onMembersChanged:
             <span className="text-xs text-slate-400">Logo</span>
           )}
           <span className="absolute inset-0 flex items-center justify-center bg-slate-900/60 text-xs font-medium text-white opacity-0 transition group-hover:opacity-100">
+            {isUploadingLogo && <Spinner className="mr-1.5" />}
             {isUploadingLogo ? "Uploading…" : "Change"}
           </span>
           <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" onChange={handleLogoChange} disabled={isUploadingLogo} className="hidden" />
@@ -235,6 +238,7 @@ function OrgCard({ org, onMembersChanged }: { org: OrgSummary; onMembersChanged:
                     disabled={isRemoving && removingUserId === member.userId}
                     className="shrink-0 rounded-full border border-red-200 px-2.5 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
                   >
+                    {isRemoving && removingUserId === member.userId && <Spinner className="mr-1.5" />}
                     {isRemoving && removingUserId === member.userId ? "Removing…" : "Remove"}
                   </button>
                 </li>
@@ -266,6 +270,7 @@ function OrgCard({ org, onMembersChanged }: { org: OrgSummary; onMembersChanged:
           disabled={isSubmitting}
           className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
         >
+          {isSubmitting && <Spinner className="mr-1.5" />}
           {isSubmitting ? "Adding…" : "Add member"}
         </button>
       </form>

@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { createBrowserSupabaseClient } from "@/supabase/browser";
 import { createSelfServeOrgAction } from "./actions";
+import { Spinner } from "@/app/Spinner";
 
 type Step = "details" | "code";
 
@@ -100,6 +101,7 @@ export default function SignupPage() {
             disabled={isSubmitting}
             className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
           >
+            {isSubmitting && <Spinner className="mr-1.5" />}
             {isSubmitting ? "Sending…" : "Send sign-in code"}
           </button>
           {error && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
@@ -124,6 +126,7 @@ export default function SignupPage() {
             disabled={isSubmitting}
             className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
           >
+            {isSubmitting && <Spinner className="mr-1.5" />}
             {isSubmitting ? "Verifying…" : "Verify & start trial"}
           </button>
           {error && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}

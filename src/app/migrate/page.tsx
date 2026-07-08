@@ -6,6 +6,7 @@ import { pushToCin7Action, type PushScopeSelection } from "@/app/import/actions"
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import { getBillingStatusAction } from "@/actions/billing";
 import type { InstanceSyncOutcome } from "@/sync/sync-org";
+import { Spinner } from "@/app/Spinner";
 import type { PullInstanceResult } from "@/migrate/pull-instance";
 import type { ImportKind } from "@/import/run-import";
 import { ModuleHeader } from "@/app/ModuleHeader";
@@ -145,6 +146,7 @@ export default function MigratePage() {
               disabled={isLoadingInstances}
               className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             >
+              {isLoadingInstances && <Spinner className="mr-1.5" />}
               {isLoadingInstances ? "Loading…" : "Load instances"}
             </button>
 
@@ -177,6 +179,7 @@ export default function MigratePage() {
               disabled={isPullPending || !sourceId}
               className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
             >
+              {isPullPending && <Spinner className="mr-1.5" />}
               {isPullPending ? "Pulling…" : "Pull all data"}
             </button>
 
@@ -268,6 +271,7 @@ export default function MigratePage() {
               disabled={isPushPending || targetIds.length === 0 || !pullResult?.ok || !canWrite}
               className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
             >
+              {isPushPending && <Spinner className="mr-1.5" />}
               {isPushPending ? "Pushing…" : `Push to ${targetIds.length || ""} instance${targetIds.length === 1 ? "" : "s"}`}
             </button>
             {!canWrite && (

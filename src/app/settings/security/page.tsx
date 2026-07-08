@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { createBrowserSupabaseClient } from "@/supabase/browser";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { SECURITY_MODULE } from "@/app/module-nav";
+import { Spinner } from "@/app/Spinner";
 
 interface MfaFactor {
   id: string;
@@ -201,6 +202,7 @@ export default function SecurityPage() {
                 disabled={isSubmitting}
                 className="flex-1 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
               >
+                {isSubmitting && <Spinner className="mr-1.5" />}
                 {isSubmitting ? "Verifying…" : "Verify & enable"}
               </button>
               <button

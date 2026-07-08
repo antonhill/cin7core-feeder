@@ -4,6 +4,7 @@ import { Fragment, useState, useTransition } from "react";
 import { getCostEstimatesAction, exportCostEstimatesAction, exportCostEstimatesSummaryAction } from "./actions";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import { COST_BASIS_OPTIONS, type CostBasis, type AssemblyCostEstimate } from "@/costing/estimate";
+import { Spinner } from "@/app/Spinner";
 
 /** Decodes the base64 .xlsx bytes the server rendered and triggers a normal browser download — same pattern as reports/page.tsx's downloadBase64File. */
 function downloadBase64File(base64: string, filename: string, mimeType: string) {
@@ -112,6 +113,7 @@ export default function CostEstimatorPage() {
             disabled={isLoadingInstances}
             className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           >
+            {isLoadingInstances && <Spinner className="mr-1.5" />}
             {isLoadingInstances ? "Loading…" : "Load instances"}
           </button>
           {instancesError && <p className="mt-2 text-sm text-red-600">{instancesError}</p>}
@@ -156,6 +158,7 @@ export default function CostEstimatorPage() {
           disabled={isScanning || !instanceId}
           className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
         >
+          {isScanning && <Spinner className="mr-1.5" />}
           {isScanning ? "Estimating…" : "Estimate costs"}
         </button>
         {scanError && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{scanError}</p>}
@@ -175,6 +178,7 @@ export default function CostEstimatorPage() {
                 disabled={isExporting || estimates.length === 0}
                 className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
+                {isExporting && <Spinner className="mr-1.5" />}
                 {isExporting ? "Exporting…" : "Export summary .xlsx"}
               </button>
               <button
@@ -183,6 +187,7 @@ export default function CostEstimatorPage() {
                 disabled={isExporting || estimates.length === 0}
                 className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
+                {isExporting && <Spinner className="mr-1.5" />}
                 {isExporting ? "Exporting…" : "Export detail .xlsx"}
               </button>
             </div>
