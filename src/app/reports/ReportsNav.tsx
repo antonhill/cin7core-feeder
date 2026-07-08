@@ -38,23 +38,30 @@ export function ReportsNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="w-56 shrink-0">
+    <nav className="sticky top-6 w-56 shrink-0">
       <div className="flex flex-col gap-6">
         {REPORT_CATEGORIES.map((category) => (
           <div key={category.label}>
-            <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-slate-400">{category.label}</p>
+            <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+              {category.label}
+            </p>
             <div className="flex flex-col gap-0.5">
               {category.links.map((link) => {
                 // "/reports" itself must match exactly — every other report's
                 // route also starts with "/reports", which would otherwise make
                 // the Sales link look active everywhere.
-                const active = link.href === "/reports" ? pathname === "/reports" : pathname.startsWith(link.href);
+                const active =
+                  link.href === "/reports"
+                    ? pathname === "/reports"
+                    : pathname.startsWith(link.href);
                 return (
                   <Link
                     key={link.href}
                     href={link.href}
                     className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
-                      active ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:bg-slate-50"
+                      active
+                        ? "bg-indigo-50 text-indigo-700"
+                        : "text-slate-600 hover:bg-slate-50"
                     }`}
                   >
                     {link.label}

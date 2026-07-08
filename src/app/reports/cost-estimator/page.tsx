@@ -738,6 +738,12 @@ export default function CostEstimatorPage() {
                                           <th className="py-1 pr-4 font-medium">
                                             Resource
                                           </th>
+                                          <th className="py-1 pr-4 font-medium">
+                                            Step
+                                          </th>
+                                          <th className="py-1 pr-4 font-medium">
+                                            Cost Type
+                                          </th>
                                           <th className="py-1 pr-4 text-right font-medium">
                                             Quantity
                                           </th>
@@ -761,6 +767,13 @@ export default function CostEstimatorPage() {
                                                 <span className="text-xs text-slate-400">
                                                   ({line.resourceCode})
                                                 </span>
+                                              </td>
+                                              <td className="py-1 pr-4 text-slate-500">
+                                                {line.stepName || "—"}
+                                              </td>
+                                              <td className="py-1 pr-4 text-slate-500">
+                                                {line.costCalculationType ||
+                                                  "—"}
                                               </td>
                                               <td className="py-1 pr-4 text-right">
                                                 {formatNumber(line.quantity)}

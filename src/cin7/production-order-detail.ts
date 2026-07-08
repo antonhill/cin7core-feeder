@@ -53,6 +53,10 @@ export interface ProductionResourceLine {
   /** As reported by the source order — Cin7's own "0 means missing" sentinel applies (see estimate.ts's nonZero), so a 0/absent value reads as no cost recorded, not free. */
   cost: number | null;
   totalCost: number | null;
+  /** The operation/step this resource line belongs to (WorkCenterName, e.g. "Mixing"/"Blending" — falls back to the operation's own Name if no work centre is set). Confirmed 2026-07-08 against a real order (MO-00041): the same resource code can legitimately appear once per operation with different costs, so this is what disambiguates otherwise-identical-looking rows, matching Cin7's own native report's per-step grouping. */
+  stepName: string;
+  /** Best-effort field name from the community client spec (e.g. "Cost per finished product" / "Cost per unit of time") — not yet confirmed against a raw live response, only inferred by matching Cin7's own report UI for the same order. Null if absent/wrong-cased on this account. */
+  costCalculationType: string | null;
 }
 
 export interface ProductionOrderDetail {
@@ -118,6 +122,7 @@ export async function fetchProductionOrderDetail(
       }
     }
 
+    const stepName = String(operation.WorkCenterName ?? operation.Name ?? "");
     const rawResources = Array.isArray(operation.Resources)
       ? (operation.Resources as Record<string, unknown>[])
       : [];
@@ -135,6 +140,11 @@ export async function fetchProductionOrderDetail(
         quantity: Number(r.Quantity ?? 0),
         cost,
         totalCost,
+        stepName,
+        costCalculationType:
+          typeof r.CostCalculationType === "string"
+            ? r.CostCalculationType
+            : null,
       });
     }
   }

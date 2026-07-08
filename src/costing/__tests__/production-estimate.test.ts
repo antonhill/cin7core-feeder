@@ -77,6 +77,8 @@ describe("estimateProductionCost", () => {
         quantity: 1,
         cost: 20,
         totalCost: 20,
+        stepName: "Mixing",
+        costCalculationType: "Cost per finished product",
       },
       {
         resourceCode: "MACH1",
@@ -84,6 +86,8 @@ describe("estimateProductionCost", () => {
         quantity: 2,
         cost: null,
         totalCost: null,
+        stepName: "Blending",
+        costCalculationType: null,
       },
     ];
     const estimate = estimateProductionCost(
