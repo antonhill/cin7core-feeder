@@ -27,6 +27,12 @@ export const SALES_SOURCE: ReportSourceConfig<SalesFactRow> = {
     { key: "revenue", label: "Revenue", getValue: (r) => r.revenue ?? 0 },
     { key: "cogs", label: "COGS", getValue: (r) => r.cogs ?? 0 },
     { key: "profit", label: "Profit", getValue: (r) => r.profit ?? 0 },
+    {
+      key: "margin_percent",
+      label: "Margin %",
+      dependsOn: ["revenue", "profit"],
+      compute: (sums) => (sums.revenue ? Math.round((sums.profit / sums.revenue) * 10000) / 100 : null),
+    },
   ],
 };
 

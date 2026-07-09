@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireCurrentOrg } from "@/lib/current-org";
 import { getSalesFacts, getInventoryMovementFacts, type CustomReportFilters } from "@/reports/custom/facts";
-import { aggregateCustomReport, type CustomReportResult, type DimensionDef, type MeasureDef } from "@/reports/custom/aggregate";
+import { aggregateCustomReport, type CustomReportResult, type DimensionDef } from "@/reports/custom/aggregate";
 import { SALES_SOURCE, INVENTORY_MOVEMENT_SOURCE, type ReportSourceConfig, type ReportSourceKey } from "@/reports/custom/sources";
 import { buildCustomReportSheet } from "@/reports/custom-export";
 import { renderXlsxBase64 } from "@/reports/xlsx-writer";
@@ -40,11 +40,14 @@ function pickDimensions<Row>(source: ReportSourceConfig<Row>, keys: string[]): D
   return keys.map((k) => source.dimensions.find((d) => d.key === k)).filter((d): d is DimensionDef<Row> => Boolean(d));
 }
 
-function pickMeasures<Row>(source: ReportSourceConfig<Row>, keys: string[]): MeasureDef<Row>[] {
-  return keys.map((k) => source.measures.find((m) => m.key === k)).filter((m): m is MeasureDef<Row> => Boolean(m));
-}
-
-/** Fetches this source's facts, then aggregates server-side (small response, same "aggregate before sending to the client" discipline as every other report here) by whichever dimensions/measures the client chose. */
+/**
+ * Fetches this source's facts, then aggregates server-side (small response,
+ * same "aggregate before sending to the client" discipline as every other
+ * report here). The FULL measure list for the source is passed to
+ * aggregateCustomReport, not just the selected ones — a ratio measure like
+ * Margin % needs its dependencies (Revenue/Profit) summed even if the client
+ * didn't pick those as their own output columns.
+ */
 export async function runCustomReportAction(
   sourceKey: ReportSourceKey,
   dimensionKeys: string[],
@@ -57,13 +60,13 @@ export async function runCustomReportAction(
 
     if (sourceKey === "sales") {
       const rows = await getSalesFacts(db, orgId, filters);
-      return { ok: true, data: aggregateCustomReport(rows, pickDimensions(SALES_SOURCE, dimensionKeys), pickMeasures(SALES_SOURCE, measureKeys)) };
+      return { ok: true, data: aggregateCustomReport(rows, pickDimensions(SALES_SOURCE, dimensionKeys), SALES_SOURCE.measures, measureKeys) };
     }
     if (sourceKey === "inventory_movement") {
       const rows = await getInventoryMovementFacts(db, orgId, filters);
       return {
         ok: true,
-        data: aggregateCustomReport(rows, pickDimensions(INVENTORY_MOVEMENT_SOURCE, dimensionKeys), pickMeasures(INVENTORY_MOVEMENT_SOURCE, measureKeys)),
+        data: aggregateCustomReport(rows, pickDimensions(INVENTORY_MOVEMENT_SOURCE, dimensionKeys), INVENTORY_MOVEMENT_SOURCE.measures, measureKeys),
       };
     }
     return { ok: false, error: "Unknown report source" };

@@ -7,16 +7,21 @@ import type { CustomReportResult } from "@/reports/custom/aggregate";
  * (dimensionLabels first, then measureLabels), same SheetExport shape as
  * everything else.
  */
+/** A ratio measure (e.g. Margin %) reports null rather than 0 when it can't be meaningfully computed (see RatioMeasureDef) — rendered as a blank cell, not a false "0". */
+function cell(value: number | null): string | number {
+  return value ?? "";
+}
+
 export function buildCustomReportSheet(dimensionLabels: string[], measureLabels: string[], result: CustomReportResult): SheetExport {
   const data: (string | number)[][] = [[...dimensionLabels, ...measureLabels]];
 
   for (const row of result.rows) {
-    data.push([...row.dimensionValues, ...row.measureValues]);
+    data.push([...row.dimensionValues, ...row.measureValues.map(cell)]);
   }
 
   const totalRow: (string | number)[] = dimensionLabels.length
-    ? ["Total", ...Array(dimensionLabels.length - 1).fill(""), ...result.totals]
-    : ["Total", ...result.totals];
+    ? ["Total", ...Array(dimensionLabels.length - 1).fill(""), ...result.totals.map(cell)]
+    : ["Total", ...result.totals.map(cell)];
   data.push(totalRow);
 
   return { data, merges: [], headerRowCount: 1 };

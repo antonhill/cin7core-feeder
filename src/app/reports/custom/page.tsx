@@ -31,7 +31,8 @@ function downloadBase64File(base64: string, filename: string, mimeType: string) 
   URL.revokeObjectURL(url);
 }
 
-function formatMeasure(value: number): string {
+function formatMeasure(value: number | null): string {
+  if (value === null) return "—";
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 

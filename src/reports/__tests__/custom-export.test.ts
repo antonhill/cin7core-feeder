@@ -39,4 +39,14 @@ describe("buildCustomReportSheet", () => {
       ["Total", "", 5],
     ]);
   });
+
+  it("renders a null measure value (e.g. Margin % with zero revenue) as a blank cell, not 0", () => {
+    const result: CustomReportResult = { rows: [{ dimensionValues: ["Widget"], measureValues: [null] }], totals: [null] };
+    const sheet = buildCustomReportSheet(["Product"], ["Margin %"], result);
+    expect(sheet.data).toEqual([
+      ["Product", "Margin %"],
+      ["Widget", ""],
+      ["Total", ""],
+    ]);
+  });
 });

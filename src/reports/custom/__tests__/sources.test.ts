@@ -1,11 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { SALES_SOURCE, INVENTORY_MOVEMENT_SOURCE } from "@/reports/custom/sources";
+import type { MeasureDef, SumMeasureDef, RatioMeasureDef } from "@/reports/custom/aggregate";
 import type { InventoryMovementFactRow } from "@/reports/custom/facts";
 
-function findMeasure(key: string) {
+function asSumMeasure<Row>(m: MeasureDef<Row>): SumMeasureDef<Row> {
+  if (!("getValue" in m)) throw new Error(`measure ${m.key} is a ratio measure, not a sum measure`);
+  return m;
+}
+
+function asRatioMeasure<Row>(m: MeasureDef<Row>): RatioMeasureDef {
+  if (!("compute" in m)) throw new Error(`measure ${m.key} is a sum measure, not a ratio measure`);
+  return m;
+}
+
+function findMeasure(key: string): SumMeasureDef<InventoryMovementFactRow> {
   const measure = INVENTORY_MOVEMENT_SOURCE.measures.find((m) => m.key === key);
   if (!measure) throw new Error(`missing measure ${key}`);
-  return measure;
+  return asSumMeasure(measure);
 }
 
 function factRow(overrides: Partial<InventoryMovementFactRow>): InventoryMovementFactRow {
@@ -67,5 +78,21 @@ describe("SALES_SOURCE dimensions", () => {
     expect(category.getGroupKey(row)).toBe("Uncategorized");
     expect(location.getGroupKey(row)).toBe("Unknown");
     expect(customer.getGroupKey(row)).toBe("Unknown");
+  });
+});
+
+describe("SALES_SOURCE margin_percent (ratio measure)", () => {
+  const margin = () => asRatioMeasure(SALES_SOURCE.measures.find((m) => m.key === "margin_percent")!);
+
+  it("depends on revenue and profit", () => {
+    expect(margin().dependsOn).toEqual(["revenue", "profit"]);
+  });
+
+  it("computes profit/revenue as a percentage, rounded to 2 decimal places", () => {
+    expect(margin().compute({ revenue: 300, profit: 110 })).toBe(36.67);
+  });
+
+  it("returns null rather than dividing by zero", () => {
+    expect(margin().compute({ revenue: 0, profit: 0 })).toBeNull();
   });
 });
