@@ -18,7 +18,7 @@ export default function ReportsLayout({
   children: React.ReactNode;
 }) {
   return (
-    <main className="mx-auto max-w-7xl px-6 py-12">
+    <main className="mx-auto w-full max-w-7xl px-6 py-12">
       <ModuleHeader module={REPORTS_MODULE}>
         A hub for every report pulled from your connected Cin7 instances — Sales
         (revenue/COGS/profit/margin%, pivotable, exportable), Current Assembly

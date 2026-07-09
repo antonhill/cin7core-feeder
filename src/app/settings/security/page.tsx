@@ -123,7 +123,7 @@ export default function SecurityPage() {
   const verifiedFactors = factors.filter((f) => f.status === "verified");
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-12">
+    <main className="mx-auto w-full max-w-2xl px-6 py-12">
       <ModuleHeader module={SECURITY_MODULE}>
         Add a second step to sign-in using an authenticator app (Google Authenticator, Authy, 1Password, etc.) — after
         your email code, you&rsquo;ll also enter a 6-digit code from the app.

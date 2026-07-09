@@ -24,7 +24,7 @@ export default function ActivityPage() {
   }, []);
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-12">
+    <main className="mx-auto w-full max-w-4xl px-6 py-12">
       <ModuleHeader module={ACTIVITY_MODULE}>
         Every live write this app has made to your connected Cin7 instances — Data Audit fixes/merges and sync
         pushes — with who triggered it and when. The most recent 100 entries.

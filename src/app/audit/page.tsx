@@ -750,7 +750,7 @@ export default function AuditPage() {
   }, [partyResult, partySearch]);
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-12">
+    <main className="mx-auto w-full max-w-4xl px-6 py-12">
       <PageLoadingIndicator show={isApplying} label="Applying changes to Cin7…" />
       <ModuleHeader module={AUDIT_MODULE}>
         Pulls every product, customer, or supplier live from a connected Cin7 instance and checks it for

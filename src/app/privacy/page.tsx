@@ -14,7 +14,7 @@ import Link from "next/link";
  */
 export default function PrivacyPolicyPage() {
   return (
-    <main className="mx-auto max-w-2xl px-6 py-12">
+    <main className="mx-auto w-full max-w-2xl px-6 py-12">
       <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
         <strong>Draft — pending legal review.</strong> This policy is being finalized and hasn&rsquo;t yet been
         reviewed by an attorney. If you have questions about how your data is handled in the meantime, contact{" "}

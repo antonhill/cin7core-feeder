@@ -122,7 +122,7 @@ export default function SystemHealthPage() {
   const overallTone = result ? scoreTone(result.overallScore) : null;
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-12">
+    <main className="mx-auto w-full max-w-4xl px-6 py-12">
       <ModuleHeader module={HEALTH_MODULE}>
         Scans a connected Cin7 instance across Sales, Purchases, Stock Transfers, Assemblies, Production Orders, and
         product data quality, and scores each one — plus one overall health score. Read-only; nothing is written back.
