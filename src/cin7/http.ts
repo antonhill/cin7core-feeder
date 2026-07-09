@@ -107,10 +107,25 @@ export async function cin7Request<T>(
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
+
+      // Confirmed live 2026-07-09: /purchase and /advanced-purchase signal
+      // the 60-calls-per-60-seconds limit via a non-503 status with this
+      // exact message, unlike /saleList etc which use a real 503 — the same
+      // underlying condition, just reported differently by this endpoint
+      // family. Retried the same way as a 503, since self-throttling only
+      // paces calls *within* one invocation; a concurrent cron run (e.g.
+      // /api/sync firing at the same time) can still push the account's
+      // shared 60/min ceiling over the top from combined call volume.
+      const isRateLimitedNonStandard = /reached 60 calls per 60 seconds/i.test(body);
+      if (isRateLimitedNonStandard && attempt < MAX_RETRIES) {
+        await sleep(RETRY_BASE_DELAY_MS * (attempt + 1));
+        continue;
+      }
+
       // Validation error arrays can list many missing fields at once — a
       // short truncation was hiding all but the first one or two, forcing
       // multiple slow round-trips to discover each subsequent field.
-      throw new Cin7ApiError(response.status, body.slice(0, 4000) || response.statusText, false);
+      throw new Cin7ApiError(response.status, body.slice(0, 4000) || response.statusText, isRateLimitedNonStandard);
     }
 
     if (response.status === 204) return undefined as T;

@@ -69,6 +69,33 @@ describe("cin7Request", () => {
     await assertion;
   });
 
+  it("retries a non-503 rate-limit response ('...60 calls per 60 seconds...') and eventually succeeds", async () => {
+    vi.useFakeTimers();
+    const fn = mockFetchSequence([
+      () => new Response('[{"ErrorCode":400,"Exception":"You have reached 60 calls per 60 seconds API limit."}]', { status: 400 }),
+      () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    ]);
+
+    const promise = cin7Request(creds, "/purchase");
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result).toEqual({ ok: true });
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives up after exhausting retries on a persistent non-503 rate-limit response, marking it retryable", async () => {
+    vi.useFakeTimers();
+    mockFetchSequence([
+      () => new Response('[{"ErrorCode":400,"Exception":"You have reached 60 calls per 60 seconds API limit."}]', { status: 400 }),
+    ]);
+
+    const promise = cin7Request(creds, "/purchase");
+    const assertion = expect(promise).rejects.toMatchObject({ status: 400, retryable: true });
+    await vi.runAllTimersAsync();
+    await assertion;
+  });
+
   it("returns undefined for a 204 response", async () => {
     mockFetchSequence([() => new Response(null, { status: 204 })]);
     await expect(cin7Request(creds, "/Product/123", { method: "DELETE" })).resolves.toBeUndefined();
