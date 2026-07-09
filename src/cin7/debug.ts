@@ -11,6 +11,7 @@ import {
   taxRuleExists,
 } from "@/cin7/reference-lookups";
 import { fetchAllProductionOrdersList } from "@/cin7/production-orders";
+import { fetchAllPurchasesList } from "@/cin7/purchases";
 
 interface Cin7ProductListResponse {
   Products?: Record<string, unknown>[];
@@ -868,4 +869,93 @@ export async function surveyProductionOrderDetail(creds: Cin7Credentials, orderN
   } catch (e) {
     return { orderNumber, found: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
+}
+
+export interface PurchaseDetailCheck {
+  orderNumber: string;
+  purchaseId: string;
+  combinedReceivingStatus?: string;
+  orderLineCount: number;
+  stockReceivedLineCount: number;
+  error?: string;
+}
+
+export interface PurchaseDetailSurvey {
+  probed: number;
+  checks: PurchaseDetailCheck[];
+  orderLineKeys: string[];
+  orderLineKeyExamples: Record<string, unknown>;
+  stockReceivedLineKeys: string[];
+  stockReceivedLineKeyExamples: Record<string, unknown>;
+  /** The first successfully-probed purchase's full raw response, for close inspection beyond the aggregated key survey above. */
+  rawExample?: unknown;
+}
+
+/**
+ * Diagnostic only: /purchaseList (already synced for status/dates via
+ * fetchAllPurchasesList) has no line-item quantities at all — the "in" side
+ * of a planned Inventory Movement report needs the detail endpoint's actual
+ * receiving events. Confirmed via FalconEyeSolutions/CIN7-DearInventory's
+ * generated client that GET /purchase?ID=<id> has BOTH Order.Lines[]
+ * (ordered qty) and a separate StockReceived.Lines[] (actual received qty +
+ * its own Date per line, distinct from the PO's single OrderDate) —
+ * StockReceived is what a real movement report should use, mirroring how
+ * Assembly's PickLines (actual) differ from OrderLines (planned). Not yet
+ * confirmed live — this probes a handful of purchases that have actually
+ * received at least partially (CombinedReceivingStatus != "NOT RECEIVED").
+ */
+export async function surveyPurchaseDetailFields(creds: Cin7Credentials, maxToProbe = 5): Promise<PurchaseDetailSurvey> {
+  const purchases = await fetchAllPurchasesList(creds);
+  const candidates = purchases.filter((p) => p.CombinedReceivingStatus && p.CombinedReceivingStatus !== "NOT RECEIVED").slice(0, maxToProbe);
+
+  const orderLineKeySet = new Set<string>();
+  const orderLineKeyExamples: Record<string, unknown> = {};
+  const stockReceivedLineKeySet = new Set<string>();
+  const stockReceivedLineKeyExamples: Record<string, unknown> = {};
+  const checks: PurchaseDetailCheck[] = [];
+  let rawExample: unknown;
+
+  for (const purchase of candidates) {
+    try {
+      const response = await cin7Request<Record<string, unknown>>(creds, "/purchase", {
+        query: { ID: purchase.ID, CombineAdditionalCharges: "false" },
+      });
+      const order = response.Order as Record<string, unknown> | undefined;
+      const orderLines = Array.isArray(order?.Lines) ? (order.Lines as Record<string, unknown>[]) : [];
+      collectKeys(orderLines, orderLineKeySet, orderLineKeyExamples);
+
+      const stockReceived = response.StockReceived as Record<string, unknown> | undefined;
+      const stockReceivedLines = Array.isArray(stockReceived?.Lines) ? (stockReceived.Lines as Record<string, unknown>[]) : [];
+      collectKeys(stockReceivedLines, stockReceivedLineKeySet, stockReceivedLineKeyExamples);
+
+      if (rawExample === undefined) rawExample = response;
+
+      checks.push({
+        orderNumber: purchase.OrderNumber ?? purchase.ID,
+        purchaseId: purchase.ID,
+        combinedReceivingStatus: purchase.CombinedReceivingStatus,
+        orderLineCount: orderLines.length,
+        stockReceivedLineCount: stockReceivedLines.length,
+      });
+    } catch (e) {
+      checks.push({
+        orderNumber: purchase.OrderNumber ?? purchase.ID,
+        purchaseId: purchase.ID,
+        combinedReceivingStatus: purchase.CombinedReceivingStatus,
+        orderLineCount: 0,
+        stockReceivedLineCount: 0,
+        error: e instanceof Error ? e.message : "Unknown error",
+      });
+    }
+  }
+
+  return {
+    probed: checks.length,
+    checks,
+    orderLineKeys: [...orderLineKeySet].sort(),
+    orderLineKeyExamples,
+    stockReceivedLineKeys: [...stockReceivedLineKeySet].sort(),
+    stockReceivedLineKeyExamples,
+    rawExample,
+  };
 }

@@ -16,6 +16,7 @@ import {
   debugSurveyProductionBomFields,
   debugCheckProductionBomForSkus,
   debugFetchProductionOrderDetail,
+  debugSurveyPurchaseDetailFields,
   debugProbeWorkCentrePaths,
   debugPushOneCustomerAndSupplier,
   deleteInstance,
@@ -230,6 +231,14 @@ function InstancesSettingsPageInner() {
     });
   }
 
+  function handleSurveyPurchaseDetailFields(instanceId: string) {
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Surveying purchase detail fields (multiple calls)…" } }));
+    startTransition(async () => {
+      const result = await debugSurveyPurchaseDetailFields(instanceId);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
   function handleDelete(instanceId: string) {
     if (!confirm("Delete this Cin7 Core instance connection?")) return;
     setError(null);
@@ -388,6 +397,15 @@ function InstancesSettingsPageInner() {
                 className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Fetch Production Order detail
+              </button>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                onClick={() => handleSurveyPurchaseDetailFields(inst.id)}
+                disabled={isPending}
+                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Survey purchase detail fields (Inventory Movement Phase 1)
               </button>
             </div>
             {testResults[inst.id] && (
