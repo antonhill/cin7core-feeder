@@ -53,7 +53,7 @@ export function AppNav({
   const links = isSuperAdmin ? [...visibleModules, ADMIN_MODULE] : visibleModules;
 
   return (
-    <nav className="flex h-full w-64 shrink-0 flex-col bg-sidebar-bg">
+    <nav className="flex h-full w-64 shrink-0 flex-col bg-sidebar-bg print:hidden">
       <Link href="/" className="flex items-center gap-3 whitespace-nowrap border-b border-sidebar-border px-5 py-6 text-lg font-bold text-sidebar-text-active">
         {orgLogoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element -- external, per-org logo URL; not worth configuring next/image remotePatterns for

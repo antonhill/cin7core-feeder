@@ -54,7 +54,7 @@ export default async function RootLayout({
         )}
         <div className="flex flex-1 flex-col overflow-x-hidden overflow-y-auto">
           {isImpersonating && (
-            <div className="flex flex-wrap items-center justify-between gap-2 bg-amber-500 px-4 py-2 text-sm font-semibold text-white">
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-amber-500 px-4 py-2 text-sm font-semibold text-white print:hidden">
               <span>Viewing as {orgName ?? "another organization"} (master user)</span>
               <form action={clearImpersonatedOrgAction}>
                 <button type="submit" className="rounded-full border border-white/60 px-3 py-0.5 text-xs font-semibold hover:bg-white/10">
@@ -64,7 +64,7 @@ export default async function RootLayout({
             </div>
           )}
           {trialDaysLeft !== null && (
-            <div className="bg-amber-100 px-4 py-2 text-center text-sm font-medium text-amber-900">
+            <div className="bg-amber-100 px-4 py-2 text-center text-sm font-medium text-amber-900 print:hidden">
               Trial — {trialDaysLeft} day{trialDaysLeft === 1 ? "" : "s"} left. Connect 1 instance, read-only until you subscribe.
             </div>
           )}

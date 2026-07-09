@@ -18,22 +18,26 @@ export default function ReportsLayout({
   children: React.ReactNode;
 }) {
   return (
-    <main className="mx-auto w-full max-w-7xl px-6 py-12">
-      <ModuleHeader module={REPORTS_MODULE}>
-        A hub for every report pulled from your connected Cin7 instances — Sales
-        (revenue/COGS/profit/margin%, pivotable, exportable), Current Assembly
-        Costs (quantity + total BOM cost, filterable by status), Production
-        Cost Estimator (re-prices every Assembly or Production BOM&rsquo;s
-        components under Average/Latest/Fixed cost, exportable), Inventory
-        Movement (in/out per product over an adjustable period, with a
-        Fast/Medium/Slow mover classification), Stock Health (current
-        stock levels combined with velocity — days of cover, excess/stockout
-        flagging), and Order Fulfillment (a working pick/ship-today
-        dashboard, order and product-level detail together), with more
-        report types to come.
-      </ModuleHeader>
-      <div className="mt-6 flex items-start gap-8">
-        <ReportsNav />
+    <main className="mx-auto w-full max-w-7xl px-6 py-12 print:max-w-none print:p-0">
+      <div className="print:hidden">
+        <ModuleHeader module={REPORTS_MODULE}>
+          A hub for every report pulled from your connected Cin7 instances — Sales
+          (revenue/COGS/profit/margin%, pivotable, exportable), Current Assembly
+          Costs (quantity + total BOM cost, filterable by status), Production
+          Cost Estimator (re-prices every Assembly or Production BOM&rsquo;s
+          components under Average/Latest/Fixed cost, exportable), Inventory
+          Movement (in/out per product over an adjustable period, with a
+          Fast/Medium/Slow mover classification), Stock Health (current
+          stock levels combined with velocity — days of cover, excess/stockout
+          flagging), and Order Fulfillment (a working pick/ship-today
+          dashboard, order and product-level detail together), with more
+          report types to come.
+        </ModuleHeader>
+      </div>
+      <div className="mt-6 flex items-start gap-8 print:mt-0 print:block">
+        <div className="print:hidden">
+          <ReportsNav />
+        </div>
         <div className="min-w-0 flex-1">{children}</div>
       </div>
     </main>
