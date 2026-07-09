@@ -5,6 +5,7 @@ import { loadReportFilterOptionsAction, loadSalesSyncStatusAction, triggerSalesS
 import { loadOrderFulfillmentAction, exportOrderFulfillmentXlsxAction, loadSaleAttachmentsAction } from "./actions";
 import type { ReportFilterOptions, OrderFulfillmentRow, OrderFulfillmentLineRow, SalesSyncStatus } from "@/reports/query";
 import type { Cin7SaleAttachment } from "@/cin7/sales";
+import { buildBatchPickList } from "@/reports/order-fulfillment/pick-list";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
@@ -85,6 +86,18 @@ export default function OrderFulfillmentPage() {
   const [attachmentsBySaleId, setAttachmentsBySaleId] = useState<Record<string, Cin7SaleAttachment[]>>({});
   const [attachmentsError, setAttachmentsError] = useState<string | null>(null);
   const [isLoadingAttachments, startAttachmentsTransition] = useTransition();
+
+  const [selectedSaleIds, setSelectedSaleIds] = useState<Set<string>>(new Set());
+  const [showPickList, setShowPickList] = useState(false);
+
+  function toggleSelected(saleId: string) {
+    setSelectedSaleIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(saleId)) next.delete(saleId);
+      else next.add(saleId);
+      return next;
+    });
+  }
 
   function refreshSyncStatus() {
     loadSalesSyncStatusAction().then((result) => {
@@ -196,6 +209,9 @@ export default function OrderFulfillmentPage() {
     ? { pick: orders.filter((o) => o.is_pick_today).length, ship: orders.filter((o) => o.is_ship_today).length, all: orders.length }
     : null;
 
+  const selectedOrders = useMemo(() => (orders ?? []).filter((o) => selectedSaleIds.has(o.cin7_sale_id)), [orders, selectedSaleIds]);
+  const pickList = useMemo(() => buildBatchPickList(selectedOrders, linesBySaleId), [selectedOrders, linesBySaleId]);
+
   function handleExport() {
     setExportError(null);
     startExportTransition(async () => {
@@ -210,6 +226,7 @@ export default function OrderFulfillmentPage() {
 
   return (
     <>
+      <div className="print:hidden">
       <ReportDescription title="Order Fulfillment">
         A working dashboard for pick/pack/ship/invoice/payment — not just a status report.
         <strong> Pick Today</strong> and <strong>Ship Today</strong> are priority queues (overdue orders first,
@@ -354,11 +371,53 @@ export default function OrderFulfillmentPage() {
 
           {visibleRows.length === 0 && <p className="mt-4 text-sm text-slate-400">Nothing matches these filters.</p>}
 
+          {selectedSaleIds.size > 0 && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2.5">
+              <span className="text-sm font-medium text-indigo-900">
+                {selectedSaleIds.size} order{selectedSaleIds.size === 1 ? "" : "s"} selected for picking
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowPickList(true)}
+                  className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+                >
+                  Generate batch pick list
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedSaleIds(new Set())}
+                  className="rounded-full border border-indigo-300 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-100"
+                >
+                  Clear selection
+                </button>
+              </div>
+            </div>
+          )}
+
           {visibleRows.length > 0 && (
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 text-slate-500">
+                    <th className="py-2 pr-4">
+                      <input
+                        type="checkbox"
+                        title="Select all visible orders"
+                        checked={visibleRows.every((r) => selectedSaleIds.has(r.cin7_sale_id))}
+                        onChange={(e) => {
+                          setSelectedSaleIds((prev) => {
+                            const next = new Set(prev);
+                            for (const r of visibleRows) {
+                              if (e.target.checked) next.add(r.cin7_sale_id);
+                              else next.delete(r.cin7_sale_id);
+                            }
+                            return next;
+                          });
+                        }}
+                        className="h-4 w-4"
+                      />
+                    </th>
                     <th className="py-2 pr-4">Order</th>
                     <th className="py-2 pr-4">Ship By</th>
                     <th className="py-2 pr-4">Picking</th>
@@ -377,6 +436,14 @@ export default function OrderFulfillmentPage() {
                         onClick={() => setExpandedSaleId(expandedSaleId === row.cin7_sale_id ? null : row.cin7_sale_id)}
                         className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
                       >
+                        <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedSaleIds.has(row.cin7_sale_id)}
+                            onChange={() => toggleSelected(row.cin7_sale_id)}
+                            className="h-4 w-4"
+                          />
+                        </td>
                         <td className="py-2 pr-4">
                           <div className="font-medium text-slate-900">{row.order_number ?? row.cin7_sale_id}</div>
                           <div className="text-xs text-slate-400">{row.customer_name}</div>
@@ -415,7 +482,7 @@ export default function OrderFulfillmentPage() {
                       </tr>
                       {expandedSaleId === row.cin7_sale_id && (
                         <tr>
-                          <td colSpan={9} className="bg-slate-50 px-4 py-3">
+                          <td colSpan={10} className="bg-slate-50 px-4 py-3">
                             <div className="mb-3 flex items-center justify-between">
                               <button
                                 type="button"
@@ -498,6 +565,88 @@ export default function OrderFulfillmentPage() {
             </div>
           )}
         </section>
+      )}
+      </div>
+
+      {showPickList && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 print:static print:bg-transparent print:overflow-visible">
+          <div className="mx-auto my-8 max-w-3xl rounded-2xl bg-white p-8 shadow-xl print:my-0 print:max-w-none print:rounded-none print:shadow-none">
+            <div className="mb-6 flex items-center justify-between print:hidden">
+              <h2 className="text-lg font-semibold text-slate-900">Batch Pick List</h2>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+                >
+                  Print
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowPickList(false)}
+                  className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <h1 className="hidden text-xl font-semibold text-slate-900 print:block">Batch Pick List</h1>
+            <p className="mt-1 text-sm text-slate-500">
+              {selectedOrders.length} order{selectedOrders.length === 1 ? "" : "s"}: {selectedOrders.map((o) => o.order_number ?? o.cin7_sale_id).join(", ")}
+            </p>
+
+            <h3 className="mt-6 mb-2 text-sm font-semibold text-slate-700">Consolidated pick sheet</h3>
+            {pickList.consolidated.length === 0 ? (
+              <p className="text-sm text-slate-400">Nothing currently pickable across the selected orders.</p>
+            ) : (
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 text-slate-500">
+                    <th className="py-1.5 pr-4">Location</th>
+                    <th className="py-1.5 pr-4">Product</th>
+                    <th className="py-1.5 pr-4 text-right">Qty to Pick</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pickList.consolidated.map((row) => (
+                    <tr key={`${row.instanceId}::${row.productSku}`} className="border-b border-slate-100">
+                      <td className="py-1.5 pr-4">{row.suggestedPickLocation ?? <span className="text-slate-300">—</span>}</td>
+                      <td className="py-1.5 pr-4">
+                        <div className="font-medium text-slate-900">{row.productName ?? row.productSku}</div>
+                        <div className="text-xs text-slate-400">{row.productSku}</div>
+                      </td>
+                      <td className="py-1.5 pr-4 text-right font-medium">{qty(row.totalQty)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            <h3 className="mt-8 mb-2 text-sm font-semibold text-slate-700">Per-order breakdown (for packing)</h3>
+            {selectedOrders.map((order) => {
+              const orderLines = pickList.orders.find((o) => o.cin7SaleId === order.cin7_sale_id);
+              return (
+                <div key={order.cin7_sale_id} className="mb-4 break-inside-avoid">
+                  <p className="text-sm font-medium text-slate-900">
+                    {order.order_number ?? order.cin7_sale_id} — {order.customer_name}
+                  </p>
+                  {!orderLines || orderLines.lines.length === 0 ? (
+                    <p className="text-xs text-slate-400">Nothing currently pickable on this order.</p>
+                  ) : (
+                    <ul className="mt-1 text-xs text-slate-600">
+                      {orderLines.lines.map((line, i) => (
+                        <li key={i}>
+                          {qty(line.qty)} × {line.productName ?? line.productSku} ({line.productSku})
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
     </>
   );
