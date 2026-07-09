@@ -7,6 +7,7 @@ import type { Cin7FinishedGoodsListEntry, Cin7FinishedGoodsDetail } from "@/cin7
 import type { AssemblyWithDetail } from "@/reports/assemblies-export";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
+import { ReportDescription } from "../ReportDescription";
 
 /** Decodes the base64 .xlsx bytes the server rendered and triggers a normal browser download — same pattern as reports/page.tsx's downloadBase64File. */
 function downloadBase64File(base64: string, filename: string, mimeType: string) {
@@ -363,6 +364,12 @@ export default function AssembliesPage() {
 
   return (
     <>
+      <ReportDescription title="Current Assembly Costs">
+        Every Assembly Build on this instance, with its quantity and total BOM cost, filterable by status. Cin7 Core
+        shows this one build at a time — this lists every assembly at once so you can spot incomplete or failed
+        builds, audit costs across the whole catalog, and export the full picture (or just planned-vs-actual detail)
+        to Excel in one pass.
+      </ReportDescription>
       <PageLoadingIndicator
         show={isExportingDetail}
         label={detailExportProgress ? `Fetching component details… (${detailExportProgress.done} of ${detailExportProgress.total})` : "Preparing detail export…"}

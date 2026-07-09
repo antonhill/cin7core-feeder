@@ -21,6 +21,7 @@ import {
 } from "@/costing/estimate";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
+import { ReportDescription } from "../ReportDescription";
 
 /** Decodes the base64 .xlsx bytes the server rendered and triggers a normal browser download — same pattern as reports/page.tsx's downloadBase64File. */
 function downloadBase64File(
@@ -217,6 +218,12 @@ export default function CostEstimatorPage() {
 
   return (
     <>
+      <ReportDescription title="Production Cost Estimator">
+        Re-prices every Assembly or Production BOM&rsquo;s components under Average, Latest, or Fixed cost — not
+        whatever cost happened to be baked in when the BOM was last built. Cin7 Core&rsquo;s own costing reflects
+        historical build-time costs; this shows what an assembly or production run would cost to build today, which
+        is what actually drives selling-price decisions.
+      </ReportDescription>
       <div className="mb-6 flex gap-2">
         {BOM_KIND_TABS.map((tab) => (
           <button

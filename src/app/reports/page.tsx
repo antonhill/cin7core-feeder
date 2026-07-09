@@ -16,6 +16,7 @@ import { buildPivotGrid, METRIC_COLUMNS, type PivotCellValues, type PivotGroupBy
 import { buildFlatReportSheet, buildPivotSheet } from "@/reports/export-xlsx";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
+import { ReportDescription } from "./ReportDescription";
 
 type GroupBySelection = "none" | PivotGroupBy;
 
@@ -265,6 +266,11 @@ export default function ReportsPage() {
 
   return (
     <>
+      <ReportDescription title="Sales">
+        Revenue, COGS, profit, and margin % for every sale — pivotable by location and category, and exportable to
+        Excel. Cin7 Core shows sales and costs separately; this pulls both into one view so you can see actual
+        profitability per product, category, or location at a glance, not just revenue.
+      </ReportDescription>
       <PageLoadingIndicator show={isExporting} label="Exporting to Excel…" />
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
