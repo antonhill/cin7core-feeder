@@ -246,7 +246,7 @@ function InstancesSettingsPageInner() {
   const editingInstance = typeof modalTarget === "string" ? instances.find((i) => i.id === modalTarget) : undefined;
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-6 py-12">
+    <main className="mx-auto w-full max-w-4xl px-6 py-12">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <ModuleHeader module={INSTANCES_MODULE}>Connect and manage the Cin7 Core instances your org syncs to.</ModuleHeader>
         <button

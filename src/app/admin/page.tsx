@@ -60,7 +60,7 @@ export default function AdminPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-6 py-12">
+    <main className="mx-auto w-full max-w-4xl px-6 py-12">
       <ModuleHeader module={ADMIN_MODULE}>Every organization using Cin7 Core Toolbox.</ModuleHeader>
 
       <section className="mt-10 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

@@ -169,7 +169,7 @@ export default function ImportPage() {
   const activeInstances = instances.filter((i) => i.active);
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-6 py-12">
+    <main className="mx-auto w-full max-w-4xl px-6 py-12">
       <ModuleHeader module={IMPORT_MODULE}>Import a CSV, choose where it goes, then push it to Cin7 Core.</ModuleHeader>
 
       <div className="mt-10 flex flex-col gap-6">

@@ -65,7 +65,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ b
   const stats = await getHomeStats(orgId);
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-6 py-12">
+    <main className="mx-auto w-full max-w-4xl px-6 py-12">
       <div className="flex items-center gap-4">
         <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-white shadow-md">
           <ToolboxLogo className="h-8 w-8" />

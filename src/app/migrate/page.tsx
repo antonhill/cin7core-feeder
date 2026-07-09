@@ -122,7 +122,7 @@ export default function MigratePage() {
   const targetChoices = activeInstances.filter((i) => i.id !== sourceId);
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-6 py-12">
+    <main className="mx-auto w-full max-w-4xl px-6 py-12">
       <ModuleHeader module={MIGRATE_MODULE}>
         Pull every Product, Assembly BOM, Customer, and Supplier live from one connected instance,
         then push the pulled data into another.
