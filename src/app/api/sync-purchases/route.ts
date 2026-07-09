@@ -7,8 +7,12 @@ import { assertInternalAuth, UnauthorizedError } from "@/lib/internal-auth";
 // sync is its own two-phase, queue-based process (see sync/sync-purchases.ts)
 // that can take several runs to catch up on a backlog — isolating it means a
 // slow purchase backfill can't delay or crowd out the other syncs' own time
-// budget, same reasoning as sales.
-export const maxDuration = 60;
+// budget, same reasoning as sales. Confirmed live 2026-07-09 (same as
+// /api/sync) that 60s isn't enough — a first-run backfill detail-fetches up
+// to DETAIL_FETCH_BATCH_SIZE purchases, each needing 1-2 rate-limited Cin7
+// calls (Advanced-purchase orders need a second call for the fallback), so
+// 300s (Vercel Pro's serverless ceiling) buys real headroom.
+export const maxDuration = 300;
 
 /** GET — Vercel Cron entry point, same auth convention as /api/sync. */
 export async function GET(req: Request) {
