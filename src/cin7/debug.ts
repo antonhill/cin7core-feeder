@@ -875,6 +875,8 @@ export interface PurchaseDetailCheck {
   orderNumber: string;
   purchaseId: string;
   combinedReceivingStatus?: string;
+  /** Which endpoint actually served this purchase — see the function comment for why both exist. */
+  source?: "purchase" | "advanced-purchase";
   orderLineCount: number;
   stockReceivedLineCount: number;
   error?: string;
@@ -887,8 +889,21 @@ export interface PurchaseDetailSurvey {
   orderLineKeyExamples: Record<string, unknown>;
   stockReceivedLineKeys: string[];
   stockReceivedLineKeyExamples: Record<string, unknown>;
-  /** The first successfully-probed purchase's full raw response, for close inspection beyond the aggregated key survey above. */
+  /** The first successfully-probed "classic" /purchase response, for close inspection beyond the aggregated key survey above. */
   rawExample?: unknown;
+  /** The first successfully-probed /advanced-purchase response — a genuinely different shape (StockReceived is an array of receipt events, each with its own Lines[], not one object), worth inspecting separately. */
+  rawExampleAdvanced?: unknown;
+}
+
+/** Extracts every StockReceived line regardless of which shape served it: classic /purchase has one `{Lines: [...]}` object, /advanced-purchase has an array of receipt events each with their own `Lines[]`. */
+function extractStockReceivedLines(stockReceived: unknown): Record<string, unknown>[] {
+  if (Array.isArray(stockReceived)) {
+    return stockReceived.flatMap((receipt) =>
+      receipt && Array.isArray((receipt as Record<string, unknown>).Lines) ? ((receipt as Record<string, unknown>).Lines as Record<string, unknown>[]) : []
+    );
+  }
+  const lines = (stockReceived as Record<string, unknown> | undefined)?.Lines;
+  return Array.isArray(lines) ? (lines as Record<string, unknown>[]) : [];
 }
 
 /**
@@ -900,9 +915,14 @@ export interface PurchaseDetailSurvey {
  * (ordered qty) and a separate StockReceived.Lines[] (actual received qty +
  * its own Date per line, distinct from the PO's single OrderDate) —
  * StockReceived is what a real movement report should use, mirroring how
- * Assembly's PickLines (actual) differ from OrderLines (planned). Not yet
- * confirmed live — this probes a handful of purchases that have actually
- * received at least partially (CombinedReceivingStatus != "NOT RECEIVED").
+ * Assembly's PickLines (actual) differ from OrderLines (planned).
+ *
+ * Confirmed live 2026-07-09: the plain /purchase endpoint rejects "Advanced
+ * Purchase"/"Service Purchase" orders with a 400 ("...Please use
+ * AdvancedPurchase endpoint") — 3 of the first 5 real purchases on this
+ * account were this type, so it's not a rare edge case. Falls back to
+ * GET /advanced-purchase?ID=<id> (same ID/CombineAdditionalCharges params,
+ * confirmed via the same community client) when that specific error occurs.
  */
 export async function surveyPurchaseDetailFields(creds: Cin7Credentials, maxToProbe = 5): Promise<PurchaseDetailSurvey> {
   const purchases = await fetchAllPurchasesList(creds);
@@ -914,26 +934,40 @@ export async function surveyPurchaseDetailFields(creds: Cin7Credentials, maxToPr
   const stockReceivedLineKeyExamples: Record<string, unknown> = {};
   const checks: PurchaseDetailCheck[] = [];
   let rawExample: unknown;
+  let rawExampleAdvanced: unknown;
 
   for (const purchase of candidates) {
+    let source: "purchase" | "advanced-purchase" = "purchase";
     try {
-      const response = await cin7Request<Record<string, unknown>>(creds, "/purchase", {
-        query: { ID: purchase.ID, CombineAdditionalCharges: "false" },
-      });
+      let response: Record<string, unknown>;
+      try {
+        response = await cin7Request<Record<string, unknown>>(creds, "/purchase", {
+          query: { ID: purchase.ID, CombineAdditionalCharges: "false" },
+        });
+      } catch (e) {
+        const isAdvancedPurchaseOnly = e instanceof Cin7ApiError && /Advanced Purchase/i.test(e.message);
+        if (!isAdvancedPurchaseOnly) throw e;
+        source = "advanced-purchase";
+        response = await cin7Request<Record<string, unknown>>(creds, "/advanced-purchase", {
+          query: { ID: purchase.ID, CombineAdditionalCharges: "false" },
+        });
+      }
+
       const order = response.Order as Record<string, unknown> | undefined;
       const orderLines = Array.isArray(order?.Lines) ? (order.Lines as Record<string, unknown>[]) : [];
       collectKeys(orderLines, orderLineKeySet, orderLineKeyExamples);
 
-      const stockReceived = response.StockReceived as Record<string, unknown> | undefined;
-      const stockReceivedLines = Array.isArray(stockReceived?.Lines) ? (stockReceived.Lines as Record<string, unknown>[]) : [];
+      const stockReceivedLines = extractStockReceivedLines(response.StockReceived);
       collectKeys(stockReceivedLines, stockReceivedLineKeySet, stockReceivedLineKeyExamples);
 
-      if (rawExample === undefined) rawExample = response;
+      if (source === "purchase" && rawExample === undefined) rawExample = response;
+      if (source === "advanced-purchase" && rawExampleAdvanced === undefined) rawExampleAdvanced = response;
 
       checks.push({
         orderNumber: purchase.OrderNumber ?? purchase.ID,
         purchaseId: purchase.ID,
         combinedReceivingStatus: purchase.CombinedReceivingStatus,
+        source,
         orderLineCount: orderLines.length,
         stockReceivedLineCount: stockReceivedLines.length,
       });
@@ -957,5 +991,6 @@ export async function surveyPurchaseDetailFields(creds: Cin7Credentials, maxToPr
     stockReceivedLineKeys: [...stockReceivedLineKeySet].sort(),
     stockReceivedLineKeyExamples,
     rawExample,
+    rawExampleAdvanced,
   };
 }
