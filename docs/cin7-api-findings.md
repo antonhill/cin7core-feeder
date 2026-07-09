@@ -425,3 +425,118 @@ have now been wrong about casing twice, `checkProductEnumFields` (src/import/war
 all four enum fields (CostingMethod/Type/DropShip/Status) case-insensitively rather than trusting
 any one convention — not just patching Status, since there's no reason to assume the others are
 reliably cased either.
+
+## 13. Future reporting — unexplored resources (2026-07-09, desk research only, NOT yet live-verified)
+
+Ahead of the next reporting feature request, a pass through `github.com/nnhansg/dear-openapi`'s
+full spec transcription (same primary source used throughout this doc) for resources this project
+hasn't touched yet, specifically ones relevant to reporting. **Every item below is desk research
+only** — same discipline as everywhere else in this doc: confirm live before building, since this
+project has repeatedly found the community spec wrong (Work Centres §4, BOM endpoint §3).
+
+**13a. `Movements[]` on the Product resource — potentially the single biggest find here.**
+`GET /product?ID={ID}&...&IncludeMovements={IncludeMovements}` returns a `Movements[]` array
+right on the Product response, modeled as `{TaskID, Type, Date, Number, Status, Quantity, Amount,
+Location, BatchSN, ExpiryDate, FromTo}`. `Type` is a rich enum covering **every** movement kind
+Cin7 tracks internally: `Purchase`, `Sale`/`SaleMultiple`, `Restock`/`RestockMultiple`,
+`Adjustment`, `Stocktake`, `Transfer In`/`Transfer Out`, `Finished Goods`, `Disassembly`,
+`Inventory Write-Off`, plus a `*Cost Change` variant of each. If this holds up live, it's a
+single per-product call that could cover Stock Adjustments/Stock Takes/Transfers/Disassembly/
+Write-Offs (13c-13e below) all at once, instead of syncing 4+ separate list+detail resource pairs
+the way Purchases/Assembly Builds were each built this session. **Caveats to verify before relying
+on it:** (1) it's per-product (`ID=` one SKU at a time) — a full-catalog historical movement sync
+would still be one rate-limited call per SKU, the same N+1 cost class as Purchases/Assembly Builds'
+detail phase, not a free lunch; (2) whether `Amount`/`Quantity` sign convention matches "in
+positive, out negative" or needs `Type` to determine direction is unconfirmed; (3) whether old
+movements page/truncate on this field the way `OrderLines`/`PickLines` don't is unconfirmed.
+**Recommended first live test** if this becomes the next piece of work: one `IncludeMovements=true`
+call against a real product with known adjustment/transfer history, diffed against what's already
+in `assembly_builds`/`purchase_receipt_lines`/`sale_lines` for the same SKU to confirm the shapes
+line up.
+
+**13b. Product Availability (`/ref/productavailability`) — real on-hand stock levels, a genuine
+gap in this app today.** Every report built so far (Sales, Assemblies, Cost Estimator, Inventory
+Movement) is movement-based — this app has **zero** live on-hand-quantity data anywhere. This
+endpoint returns exactly that, per product/location/batch: `OnHand`, `Allocated`, `Available`,
+`OnOrder`, `StockOnHand`, `InTransit`, `NextDeliveryDate`, plus `Location`/`Bin`/`Batch`/
+`ExpiryDate`. Paginated, filterable by `Location`/`Batch`/`Category`/`Sku`/`Name` — looks like a
+normal list endpoint, not a detail-per-product one, so a full-catalog sync should be a cheap list
+scan like `/saleList`, not an N+1 detail cost. **This is the natural next report** (current stock
+levels, reorder points, days-of-cover) and would also sharpen the existing Inventory Movement
+report's Fast/Medium/Slow classification — right now it's velocity-only (outbound qty), with real
+on-hand data it could become a proper turnover ratio (velocity ÷ stock held), which is what "slow
+mover" usually means in practice (high stock, low movement) rather than just "low movement."
+
+**13c. Stock Adjustments (`/stockadjustmentList?Status=`, `/stockadjustment?TaskID=`) — a real
+missing "in/out" source for the Inventory Movement report.** Write-offs, stock takes, damage,
+and manual corrections all flow through here and aren't captured by Purchases/Assembly
+Builds/Sales at all — meaning the current Inventory Movement report can show a product's net
+change looking wrong (doesn't reconcile to what Cin7 itself would show) whenever a business has
+had any manual stock corrections in the period. **Important quirk, different from every movement
+source built so far:** a Stock Adjustment's line (`ExistingStockLineModel`/`NewStockLineModel`)
+carries `Quantity`/`QuantityOnHand` as the **new absolute on-hand value**, not a delta — Sales/
+Purchases/Assembly Builds all give a movement quantity directly, this one requires computing
+`new − previous` to get an actual in/out amount, which means either tracking a running on-hand
+total ourselves or reading the paired `Adjustment` field (also present, described as "New value
+for QuantityOnHand" — needs live confirmation of what it actually contains, name is ambiguous
+against `QuantityOnHand`).
+
+**13d. Stock Takes (`/stockTakeList`, `/stocktake?...`) — same underlying line models as Stock
+Adjustment** (`ExistingStockLineModel`/`NewStockLineModel` are shared/reused per the spec), just a
+different top-level resource/workflow (a full physical count reconciliation vs. an ad hoc
+correction). Whether a completed Stock Take produces its *own* Adjustment-type movement (i.e.
+whether 13c already covers this) or is genuinely separate is unconfirmed — check both together,
+not independently, to avoid double-counting the same physical event.
+
+**13e. Stock Transfers (`/stockTransferList?Status=`, `/stockTransfer?TaskID=`) — location-to-
+location movement, doesn't change org-wide total in/out.** A `Transfer Out` at one location is
+always matched by a `Transfer In` at another (confirmed by both appearing as a pair in 13a's
+`Type` enum) — net-neutral for a single combined Inventory Movement report, but necessary for any
+future **per-location** breakdown (the current report already has instance-level filtering; a
+future location dimension would need this). Two-stage: `Status` can be `DRAFT`/`IN TRANSIT`/
+`COMPLETED`/`VOIDED`, with a separate `Order` sub-resource (`/stockTransfer/order`) for tracking
+stock that's left the source but hasn't arrived yet — relevant if a future report wants an
+"in transit" figure alongside on-hand (13b already surfaces `InTransit` too, worth reconciling
+which is authoritative if both get built).
+
+**13f. Sale/Purchase Credit Notes (`/saleCreditNoteList`, `/sale/creditnote`;
+`/purchaseCreditNoteList`, `/purchase/creditnote`) — returns/refunds, not currently netted out
+anywhere.** The Sales report's revenue/COGS/profit today only reads `sale_lines`
+(invoice lines) — a heavily-returned product would look more profitable than it really is since
+nothing in this app currently subtracts credit notes. Same two-endpoint-kind split already found
+for Purchases (classic vs. Advanced — §Phase 1 migration comments) likely applies here too,
+unverified. Field shape (`SaleCreditNoteModel`): `CreditNoteInvoiceNumber` (links back to the
+original invoice), `Status` (`DRAFT`/`AUTHORISED`/`VOIDED`/`NOT AVAILABLE`), `Lines[]` (same
+`SaleInvoiceLineModel` as regular invoice lines), `Total`/`Tax`/`TotalBeforeTax`.
+
+**13g. Backorders — no separate endpoint, likely the cheapest possible future report.**
+`BackorderQuantity` is a plain field directly on `SaleOrderLineModel` — i.e. it should already be
+present in the same `GET /sale?ID=` detail response `sync-sales.ts`'s Phase 2 already fetches for
+every sale. A "what's currently on backorder" or "fill rate" report might need **zero new Cin7
+calls**, just adding this field to `sale_lines` and reading it — worth checking the raw response
+`sync-sales.ts` already receives before assuming a new sync pipeline is needed.
+
+**13h. Sale Quotes (`/sale/quote`) — pipeline/forecast reporting, a distinct resource from Sale
+Orders.** Own `Status` lifecycle (values not yet confirmed — referenced as `QuoteStatuses` in the
+spec but not read this pass). Relevant only if a future ask is forward-looking ("what's in the
+pipeline") rather than historical movement, which is what everything built so far answers.
+
+**13i. Webhooks (`/webhooks`) — real-time alternative to the polling model every sync in this
+project uses today.** **Requires Cin7's separate "automation module" add-on** — the spec says so
+explicitly, meaning **this can't be assumed present on any given client's account** and must be
+confirmed per-instance before ever being relied on (same "must already exist, don't guess" caution
+as Tax Rules/Chart of Accounts in §5). Max 5 webhooks of the same type at once; failed deliveries
+retry 6 times over ~76 minutes then auto-deactivate. Most reporting-relevant types:
+`Stock/AvailableStockLevelChanged`, `Sale/InvoiceAuthorised`, `Sale/CreditNoteAuthorised`,
+`Purchase/StockReceivedAuthorised`, `Purchase/CreditNoteAuthorised`, `Sale/Backordered`. Would
+shift this app from "polls every 15 minutes" to "reacts within ~1 minute," but is a genuinely
+bigger architectural change (a public callback endpoint, signature/auth handling, no fallback if
+the add-on isn't enabled) — not a drop-in improvement to the current sync model, a parallel one.
+
+**Suggested live-verification order, if/when this becomes real work:** Product Availability (13b)
+first — biggest single unlock, plain list endpoint, no delta-math ambiguity. Then Stock
+Adjustments + Stock Takes together (13c/13d, check both at once to avoid double-counting). Then
+Backorders (13g) — practically free, just confirm the field's really in the existing `/sale?ID=`
+response. Credit Notes (13f) next for accurate Sales report profit. Quotes (13h) and Webhooks
+(13i) only if a future ask specifically calls for pipeline reporting or real-time updates — both
+are a materially bigger lift than the others here.

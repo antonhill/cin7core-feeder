@@ -36,6 +36,10 @@ const REPORT_CATEGORIES: ReportCategory[] = [
     label: "Inventory",
     links: [{ href: "/reports/inventory-movement", label: "Inventory Movement" }],
   },
+  {
+    label: "Custom",
+    links: [{ href: "/reports/custom", label: "Custom Reports" }],
+  },
 ];
 
 export function ReportsNav() {
