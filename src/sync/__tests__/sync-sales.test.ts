@@ -2,10 +2,10 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncInstanceSales, syncOrgSales } from "@/sync/sync-sales";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
-import { fetchInvoicedSalesList, fetchSaleDetail } from "@/cin7/sales";
+import { fetchAllSalesList, fetchSaleDetail } from "@/cin7/sales";
 
 vi.mock("@/cin7/load-credentials", () => ({ loadCin7Credentials: vi.fn() }));
-vi.mock("@/cin7/sales", () => ({ fetchInvoicedSalesList: vi.fn(), fetchSaleDetail: vi.fn() }));
+vi.mock("@/cin7/sales", () => ({ fetchAllSalesList: vi.fn(), fetchSaleDetail: vi.fn() }));
 
 const creds = { accountId: "a", applicationKey: "k", baseUrl: "https://example.test" };
 
@@ -50,6 +50,19 @@ function makeFakeDb(opts: FakeDbOptions) {
     return obj;
   }
 
+  function deleteInsertTable(table: string) {
+    return {
+      delete: () => {
+        calls.push({ table, op: "delete", args: [] });
+        return chain(table, () => ({ error: null }));
+      },
+      insert: (rows: unknown) => {
+        calls.push({ table, op: "insert", args: [rows] });
+        return Promise.resolve({ error: null });
+      },
+    };
+  }
+
   const db = {
     from: (table: string) => {
       if (table === "sales_sync_state") {
@@ -78,17 +91,8 @@ function makeFakeDb(opts: FakeDbOptions) {
           },
         };
       }
-      if (table === "sale_lines") {
-        return {
-          delete: () => {
-            calls.push({ table, op: "delete", args: [] });
-            return chain(table, () => ({ error: null }));
-          },
-          insert: (rows: unknown) => {
-            calls.push({ table, op: "insert", args: [rows] });
-            return Promise.resolve({ error: null });
-          },
-        };
+      if (table === "sale_lines" || table === "sale_order_lines" || table === "sale_pick_pack_lines") {
+        return deleteInsertTable(table);
       }
       throw new Error(`Unhandled table in fake db: ${table}`);
     },
@@ -99,13 +103,13 @@ function makeFakeDb(opts: FakeDbOptions) {
 
 beforeEach(() => {
   vi.mocked(loadCin7Credentials).mockReset().mockResolvedValue({ ...creds, name: "Spark Demo" });
-  vi.mocked(fetchInvoicedSalesList).mockReset().mockResolvedValue([]);
+  vi.mocked(fetchAllSalesList).mockReset().mockResolvedValue([]);
   vi.mocked(fetchSaleDetail).mockReset();
 });
 
 describe("syncInstanceSales — list phase", () => {
   it("queues a brand-new sale for detail sync (detail_synced_at cleared)", async () => {
-    vi.mocked(fetchInvoicedSalesList).mockResolvedValue([
+    vi.mocked(fetchAllSalesList).mockResolvedValue([
       { SaleID: "sale-1", OrderNumber: "SO-1", InvoiceNumber: "INV-1", InvoiceDate: "2026-06-01T00:00:00", Customer: "Acme", Updated: "2026-06-01T01:00:00.000Z", CombinedInvoiceStatus: "AUTHORISED" },
     ]);
     const { db, calls } = makeFakeDb({ syncState: null, existingSales: [], pendingSales: [] });
@@ -119,7 +123,7 @@ describe("syncInstanceSales — list phase", () => {
   });
 
   it("does not requeue an unchanged sale — keeps its existing detail_synced_at", async () => {
-    vi.mocked(fetchInvoicedSalesList).mockResolvedValue([
+    vi.mocked(fetchAllSalesList).mockResolvedValue([
       { SaleID: "sale-1", Updated: "2026-06-01T01:00:00.000Z" },
     ]);
     const { db, calls } = makeFakeDb({
@@ -136,7 +140,7 @@ describe("syncInstanceSales — list phase", () => {
   });
 
   it("re-queues a sale whose Updated timestamp changed", async () => {
-    vi.mocked(fetchInvoicedSalesList).mockResolvedValue([{ SaleID: "sale-1", Updated: "2026-06-05T00:00:00.000Z" }]);
+    vi.mocked(fetchAllSalesList).mockResolvedValue([{ SaleID: "sale-1", Updated: "2026-06-05T00:00:00.000Z" }]);
     const { db, calls } = makeFakeDb({
       syncState: { last_list_synced_at: "2026-05-01T00:00:00.000Z" },
       existingSales: [{ cin7_sale_id: "sale-1", cin7_updated_at: "2026-06-01T01:00:00.000Z", detail_synced_at: "2026-06-02T00:00:00.000Z" }],
@@ -154,7 +158,7 @@ describe("syncInstanceSales — list phase", () => {
     const { db } = makeFakeDb({ syncState: null, existingSales: [], pendingSales: [] });
     await syncInstanceSales(db, "org1", "inst-1");
 
-    const [, updatedSince] = vi.mocked(fetchInvoicedSalesList).mock.calls[0];
+    const [, updatedSince] = vi.mocked(fetchAllSalesList).mock.calls[0];
     const expected = new Date();
     expected.setMonth(expected.getMonth() - 12);
     const diffMs = Math.abs(new Date(updatedSince as string).getTime() - expected.getTime());
@@ -164,7 +168,47 @@ describe("syncInstanceSales — list phase", () => {
   it("passes the stored watermark as UpdatedSince on a subsequent run", async () => {
     const { db } = makeFakeDb({ syncState: { last_list_synced_at: "2026-05-01T00:00:00.000Z" }, existingSales: [], pendingSales: [] });
     await syncInstanceSales(db, "org1", "inst-1");
-    expect(fetchInvoicedSalesList).toHaveBeenCalledWith(expect.objectContaining(creds), "2026-05-01T00:00:00.000Z");
+    expect(fetchAllSalesList).toHaveBeenCalledWith(expect.objectContaining(creds), "2026-05-01T00:00:00.000Z");
+  });
+
+  it("stores the Order Fulfillment Dashboard's fields (Combined statuses, ShipBy, PaidAmount, etc.) alongside the existing ones", async () => {
+    vi.mocked(fetchAllSalesList).mockResolvedValue([
+      {
+        SaleID: "sale-1",
+        OrderStatus: "AUTHORISED",
+        CombinedInvoiceStatus: "INVOICED",
+        CombinedPickingStatus: "PICKED",
+        CombinedPackingStatus: "NOT PACKED",
+        CombinedShippingStatus: "NOT SHIPPED",
+        CombinedPaymentStatus: "UNPAID",
+        FulFilmentStatus: "NOT FULFILLED",
+        ShipBy: "2026-10-26T00:00:00",
+        Carrier: "Post",
+        CombinedTrackingNumbers: "TRACK123",
+        PaidAmount: 0,
+        SaleInvoicesTotalAmount: 4608.04,
+      },
+    ]);
+    const { db, calls } = makeFakeDb({ syncState: null, existingSales: [], pendingSales: [] });
+
+    await syncInstanceSales(db, "org1", "inst-1");
+
+    const upsertCall = calls.find((c) => c.table === "sales" && c.op === "upsert");
+    const rows = upsertCall?.args[0] as Record<string, unknown>[];
+    expect(rows[0]).toMatchObject({
+      order_status: "AUTHORISED",
+      combined_invoice_status: "INVOICED",
+      combined_picking_status: "PICKED",
+      combined_packing_status: "NOT PACKED",
+      combined_shipping_status: "NOT SHIPPED",
+      combined_payment_status: "UNPAID",
+      fulfilment_status: "NOT FULFILLED",
+      ship_by: "2026-10-26",
+      carrier: "Post",
+      tracking_numbers: "TRACK123",
+      paid_amount: 0,
+      invoice_amount: 4608.04,
+    });
   });
 });
 
@@ -219,6 +263,80 @@ describe("syncInstanceSales — detail phase", () => {
 
     expect(summary.detailSynced).toBe(1);
     expect(calls.find((c) => c.table === "sale_lines" && c.op === "insert")).toBeUndefined();
+  });
+
+  it("stores Order.Lines[] (with BackorderQuantity) into sale_order_lines", async () => {
+    vi.mocked(fetchSaleDetail).mockResolvedValueOnce({
+      ID: "sale-1",
+      Invoices: [],
+      Order: {
+        SaleOrderNumber: "SO-1",
+        Lines: [
+          { SKU: "SKU-A", Name: "Widget", Quantity: 2, BackorderQuantity: 0 },
+          { SKU: "SKU-B", Name: "Gadget", Quantity: 3, BackorderQuantity: 1 },
+        ],
+      },
+    });
+    const { db, calls } = makeFakeDb({ syncState: { last_list_synced_at: null }, existingSales: [], pendingSales: [{ cin7_sale_id: "sale-1" }] });
+
+    await syncInstanceSales(db, "org1", "inst-1");
+
+    const insertCall = calls.find((c) => c.table === "sale_order_lines" && c.op === "insert");
+    const rows = insertCall?.args[0] as { product_sku: string; quantity: number; backorder_quantity: number; line_number: number }[];
+    expect(rows).toEqual([
+      expect.objectContaining({ product_sku: "SKU-A", quantity: 2, backorder_quantity: 0, line_number: 0 }),
+      expect.objectContaining({ product_sku: "SKU-B", quantity: 3, backorder_quantity: 1, line_number: 1 }),
+    ]);
+  });
+
+  it("skips sale_order_lines insert when Order.Lines[] is empty or Order itself is absent (confirmed live on older sales)", async () => {
+    vi.mocked(fetchSaleDetail).mockResolvedValueOnce({ ID: "sale-1", Invoices: [] });
+    const { db, calls } = makeFakeDb({ syncState: { last_list_synced_at: null }, existingSales: [], pendingSales: [{ cin7_sale_id: "sale-1" }] });
+
+    await syncInstanceSales(db, "org1", "inst-1");
+
+    expect(calls.find((c) => c.table === "sale_order_lines" && c.op === "delete")).toBeDefined();
+    expect(calls.find((c) => c.table === "sale_order_lines" && c.op === "insert")).toBeUndefined();
+  });
+
+  it("flattens Pick/Pack lines across multiple Fulfilments[] entries into independently-numbered stage sequences", async () => {
+    vi.mocked(fetchSaleDetail).mockResolvedValueOnce({
+      ID: "sale-1",
+      Invoices: [],
+      Fulfilments: [
+        {
+          TaskID: "f1",
+          Pick: { Status: "AUTHORISED", Lines: [{ SKU: "SKU-A", Name: "Widget", Quantity: 2 }] },
+          Pack: { Status: "NOT AVAILABLE", Lines: [] },
+        },
+        {
+          TaskID: "f2",
+          Pick: { Status: "AUTHORISED", Lines: [{ SKU: "SKU-B", Name: "Gadget", Quantity: 1 }] },
+          Pack: { Status: "AUTHORISED", Lines: [{ SKU: "SKU-B", Name: "Gadget", Quantity: 1 }] },
+        },
+      ],
+    });
+    const { db, calls } = makeFakeDb({ syncState: { last_list_synced_at: null }, existingSales: [], pendingSales: [{ cin7_sale_id: "sale-1" }] });
+
+    await syncInstanceSales(db, "org1", "inst-1");
+
+    const insertCall = calls.find((c) => c.table === "sale_pick_pack_lines" && c.op === "insert");
+    const rows = insertCall?.args[0] as { stage: string; product_sku: string; line_number: number }[];
+    expect(rows).toEqual([
+      expect.objectContaining({ stage: "pick", product_sku: "SKU-A", line_number: 0 }),
+      expect.objectContaining({ stage: "pick", product_sku: "SKU-B", line_number: 1 }),
+      expect.objectContaining({ stage: "pack", product_sku: "SKU-B", line_number: 0 }),
+    ]);
+  });
+
+  it("skips sale_pick_pack_lines insert when there are no fulfilments yet", async () => {
+    vi.mocked(fetchSaleDetail).mockResolvedValueOnce({ ID: "sale-1", Invoices: [] });
+    const { db, calls } = makeFakeDb({ syncState: { last_list_synced_at: null }, existingSales: [], pendingSales: [{ cin7_sale_id: "sale-1" }] });
+
+    await syncInstanceSales(db, "org1", "inst-1");
+
+    expect(calls.find((c) => c.table === "sale_pick_pack_lines" && c.op === "delete")).toBeDefined();
+    expect(calls.find((c) => c.table === "sale_pick_pack_lines" && c.op === "insert")).toBeUndefined();
   });
 });
 

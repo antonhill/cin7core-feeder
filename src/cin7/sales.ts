@@ -27,32 +27,35 @@ export interface Cin7SaleListEntry {
   FulFilmentStatus?: string;
   /** The shipping deadline — confirmed live, distinct from InvoiceDueDate (a payment due date, unrelated to fulfillment). Null when no deadline was set on the order. */
   ShipBy?: string | null;
+  /**
+   * Confirmed live 2026-07-09 (surveySaleFulfillmentFields) for the Order
+   * Fulfillment Dashboard — all present on /saleList already, no new API
+   * calls needed. Real observed values matched the community spec exactly
+   * this time (unlike CombinedInvoiceStatus's own earlier surprise):
+   * CombinedPickingStatus/CombinedPackingStatus/CombinedShippingStatus are
+   * each `VOIDED`/`NOT AVAILABLE`/<verb>ED/<verb>ING/`NOT <verb>ED`/
+   * `PARTIALLY <verb>ED`; CombinedPaymentStatus is `NOT REFUNDED`/`PREPAID`/
+   * `PARTIALLY PAID`/`UNPAID`/`PAID`/`VOIDED`.
+   */
+  OrderStatus?: string;
+  CombinedPickingStatus?: string;
+  CombinedPackingStatus?: string;
+  CombinedShippingStatus?: string;
+  CombinedPaymentStatus?: string;
+  CombinedTrackingNumbers?: string | null;
+  Carrier?: string | null;
+  /** Real amount paid so far — confirmed live, reliable enough to answer "what's been paid" directly from the list scan, no per-order detail call needed. */
+  PaidAmount?: number;
+  SaleInvoicesTotalAmount?: number;
 }
-
-/**
- * The values actually present on a real live account's CombinedInvoiceStatus
- * field (confirmed 2026-07-06 via the "Check sale statuses" diagnostic,
- * Settings > Cin7 Instances) are `INVOICED`, `INVOICED / CREDITED`,
- * `NOT INVOICED`, `PARTIALLY INVOICED`, `NOT AVAILABLE` — not the
- * `VOIDED`/`DRAFT`/`AUTHORISED`/`NOT AVAILABLE`/`PAID` the community Apiary
- * spec's field-level doc table claims. A first version filtered server-side
- * on `CombinedInvoiceStatus=AUTHORISED`, which matched nothing on a real
- * account with 560 sales — this is the corrected set of statuses that mean
- * "has at least one real invoice attached" (a PARTIALLY INVOICED sale still
- * has real, already-issued invoice lines worth reporting on; a credit note
- * against an invoice doesn't retroactively make the original invoice not
- * have happened, though netting credit notes off revenue isn't handled yet
- * — a known scope boundary, not a bug).
- */
-const INVOICED_STATUSES = new Set(["INVOICED", "INVOICED / CREDITED", "PARTIALLY INVOICED"]);
 
 /**
  * Fetches every sale on the account, optionally scoped to sales changed
  * since a given ISO timestamp. Paginates until a short page signals the
- * end, same pattern as fetchAllProductsWithBom. Unfiltered — see
- * fetchInvoicedSalesList for the invoiced-only subset used by the sales
- * sync, and the System Health scorecard (src/health/system-health.ts) for
- * a consumer that needs every sale regardless of invoice status.
+ * end, same pattern as fetchAllProductsWithBom. Used by both the sales sync
+ * (which needs every sale regardless of invoice status, so the Order
+ * Fulfillment Dashboard can see pre-invoice orders too — see
+ * sync/sync-sales.ts) and the System Health scorecard.
  */
 export async function fetchAllSalesList(creds: Cin7Credentials, updatedSince?: string): Promise<Cin7SaleListEntry[]> {
   const pageSize = 100;
@@ -66,19 +69,6 @@ export async function fetchAllSalesList(creds: Cin7Credentials, updatedSince?: s
     if (sales.length < pageSize) break;
   }
   return all;
-}
-
-/**
- * Fetches every invoiced sale, optionally scoped to sales changed since a
- * given ISO timestamp for incremental sync. `/saleList`'s own
- * `CombinedInvoiceStatus` query param only accepts one exact value, so
- * filtering to the several statuses above happens client-side after an
- * unfiltered (but still UpdatedSince-scoped) fetch, rather than one API call
- * per status.
- */
-export async function fetchInvoicedSalesList(creds: Cin7Credentials, updatedSince?: string): Promise<Cin7SaleListEntry[]> {
-  const all = await fetchAllSalesList(creds, updatedSince);
-  return all.filter((sale) => sale.CombinedInvoiceStatus && INVOICED_STATUSES.has(sale.CombinedInvoiceStatus));
 }
 
 export interface Cin7SaleInvoiceLine {
@@ -100,12 +90,47 @@ export interface Cin7SaleInvoice {
   Lines?: Cin7SaleInvoiceLine[];
 }
 
+/** One Order line — confirmed live 2026-07-09. BackorderQuantity is what's NOT currently available to pick; Order.Lines[] itself is sometimes empty on older/legacy sales even when Fulfilments[] has real data, so its absence means "no backorder data available," not "zero backordered." */
+export interface Cin7SaleOrderLine {
+  SKU?: string;
+  Name?: string;
+  Quantity?: number;
+  BackorderQuantity?: number;
+}
+
+export interface Cin7SaleOrder {
+  SaleOrderNumber?: string;
+  Lines?: Cin7SaleOrderLine[];
+}
+
+/** A Pick or Pack line — the ACTUAL quantity picked/packed so far, distinct from Order.Lines[]'s planned quantity (same "planned vs actual" split already used for Assembly Builds' OrderLines vs PickLines). */
+export interface Cin7SaleFulfilmentPickPackLine {
+  SKU?: string;
+  Name?: string;
+  Quantity?: number;
+}
+
+export interface Cin7SaleFulfilmentPickPack {
+  Status?: string;
+  Lines?: Cin7SaleFulfilmentPickPackLine[];
+}
+
+/** Confirmed live 2026-07-09: Fulfilments is a genuine array — a sale can have more than one (e.g. split picks), so "already picked/packed" must sum across every entry, not just read index 0. */
+export interface Cin7SaleFulfilment {
+  TaskID?: string;
+  FulFilmentStatus?: string;
+  Pick?: Cin7SaleFulfilmentPickPack;
+  Pack?: Cin7SaleFulfilmentPickPack;
+}
+
 export interface Cin7SaleDetail {
   ID: string;
   /** "Default location to pick stock from" — the only place Location is exposed; /saleList only has a Location GUID (OrderLocationID). */
   Location?: string;
   /** An array because a single Sale can be invoiced more than once over its life (e.g. partial shipments) — each with its own InvoiceNumber/InvoiceDate/Lines. */
   Invoices?: Cin7SaleInvoice[];
+  Order?: Cin7SaleOrder;
+  Fulfilments?: Cin7SaleFulfilment[];
 }
 
 /**

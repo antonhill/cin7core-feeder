@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { fetchAllSalesList, fetchInvoicedSalesList, fetchSaleDetail } from "@/cin7/sales";
+import { fetchAllSalesList, fetchSaleDetail } from "@/cin7/sales";
 import { cin7Request } from "@/cin7/http";
 
 vi.mock("@/cin7/http", async (importOriginal) => {
@@ -13,68 +13,8 @@ beforeEach(() => {
   vi.mocked(cin7Request).mockReset();
 });
 
-describe("fetchInvoicedSalesList", () => {
-  it("does not send a CombinedInvoiceStatus query param — /saleList only accepts one exact value, but several count as 'invoiced'", async () => {
-    vi.mocked(cin7Request).mockResolvedValueOnce({ SaleList: [] });
-    await fetchInvoicedSalesList(creds);
-    const [, , options] = vi.mocked(cin7Request).mock.calls[0];
-    expect((options as { query: Record<string, unknown> }).query).not.toHaveProperty("CombinedInvoiceStatus");
-  });
-
-  it("paginates until a short page", async () => {
-    const page1 = Array.from({ length: 100 }, (_, i) => ({ SaleID: `sale-${i}`, CombinedInvoiceStatus: "INVOICED" }));
-    const page2 = [{ SaleID: "sale-last", CombinedInvoiceStatus: "INVOICED" }];
-    vi.mocked(cin7Request).mockResolvedValueOnce({ SaleList: page1 }).mockResolvedValueOnce({ SaleList: page2 });
-
-    const all = await fetchInvoicedSalesList(creds);
-
-    expect(all).toHaveLength(101);
-    expect(cin7Request).toHaveBeenCalledTimes(2);
-    expect(cin7Request).toHaveBeenNthCalledWith(1, creds, "/saleList", { query: { Page: 1, Limit: 100 } });
-    expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/saleList", { query: { Page: 2, Limit: 100 } });
-  });
-
-  it("keeps INVOICED, INVOICED / CREDITED and PARTIALLY INVOICED — confirmed live as the real values meaning 'has an invoice'", async () => {
-    vi.mocked(cin7Request).mockResolvedValueOnce({
-      SaleList: [
-        { SaleID: "s1", CombinedInvoiceStatus: "INVOICED" },
-        { SaleID: "s2", CombinedInvoiceStatus: "INVOICED / CREDITED" },
-        { SaleID: "s3", CombinedInvoiceStatus: "PARTIALLY INVOICED" },
-      ],
-    });
-    const all = await fetchInvoicedSalesList(creds);
-    expect(all.map((s) => s.SaleID)).toEqual(["s1", "s2", "s3"]);
-  });
-
-  it("drops NOT INVOICED and NOT AVAILABLE — confirmed these are real values on a live account, not documented ones", async () => {
-    vi.mocked(cin7Request).mockResolvedValueOnce({
-      SaleList: [
-        { SaleID: "s1", CombinedInvoiceStatus: "NOT INVOICED" },
-        { SaleID: "s2", CombinedInvoiceStatus: "NOT AVAILABLE" },
-      ],
-    });
-    const all = await fetchInvoicedSalesList(creds);
-    expect(all).toEqual([]);
-  });
-
-  it("includes UpdatedSince when provided, for incremental sync", async () => {
-    vi.mocked(cin7Request).mockResolvedValueOnce({ SaleList: [] });
-    await fetchInvoicedSalesList(creds, "2026-01-01T00:00:00.000Z");
-    expect(cin7Request).toHaveBeenCalledWith(creds, "/saleList", {
-      query: { Page: 1, Limit: 100, UpdatedSince: "2026-01-01T00:00:00.000Z" },
-    });
-  });
-
-  it("omits UpdatedSince entirely when not provided — first-run backfill", async () => {
-    vi.mocked(cin7Request).mockResolvedValueOnce({ SaleList: [] });
-    await fetchInvoicedSalesList(creds);
-    const [, , options] = vi.mocked(cin7Request).mock.calls[0];
-    expect((options as { query: Record<string, unknown> }).query.UpdatedSince).toBeUndefined();
-  });
-});
-
 describe("fetchAllSalesList", () => {
-  it("returns every sale regardless of invoice status — unfiltered, unlike fetchInvoicedSalesList", async () => {
+  it("returns every sale regardless of invoice status — unfiltered, since the Order Fulfillment Dashboard needs pre-invoice orders too", async () => {
     vi.mocked(cin7Request).mockResolvedValueOnce({
       SaleList: [
         { SaleID: "s1", CombinedInvoiceStatus: "NOT INVOICED", FulFilmentStatus: "NOT FULFILLED" },
@@ -91,6 +31,41 @@ describe("fetchAllSalesList", () => {
     vi.mocked(cin7Request).mockResolvedValueOnce({ SaleList: page1 }).mockResolvedValueOnce({ SaleList: page2 });
     const all = await fetchAllSalesList(creds);
     expect(all).toHaveLength(101);
+    expect(cin7Request).toHaveBeenNthCalledWith(1, creds, "/saleList", { query: { Page: 1, Limit: 100 } });
+    expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/saleList", { query: { Page: 2, Limit: 100 } });
+  });
+
+  it("includes UpdatedSince when provided, for incremental sync", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ SaleList: [] });
+    await fetchAllSalesList(creds, "2026-01-01T00:00:00.000Z");
+    expect(cin7Request).toHaveBeenCalledWith(creds, "/saleList", {
+      query: { Page: 1, Limit: 100, UpdatedSince: "2026-01-01T00:00:00.000Z" },
+    });
+  });
+
+  it("omits UpdatedSince entirely when not provided — first-run backfill", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ SaleList: [] });
+    await fetchAllSalesList(creds);
+    const [, , options] = vi.mocked(cin7Request).mock.calls[0];
+    expect((options as { query: Record<string, unknown> }).query.UpdatedSince).toBeUndefined();
+  });
+
+  it("passes through the Order Fulfillment Dashboard's confirmed-live fields (Combined statuses, PaidAmount, Carrier, etc.)", async () => {
+    const entry = {
+      SaleID: "s1",
+      OrderStatus: "AUTHORISED",
+      CombinedPickingStatus: "PICKED",
+      CombinedPackingStatus: "NOT PACKED",
+      CombinedShippingStatus: "NOT SHIPPED",
+      CombinedPaymentStatus: "UNPAID",
+      CombinedTrackingNumbers: "",
+      Carrier: "",
+      PaidAmount: 0,
+      SaleInvoicesTotalAmount: 4608.04,
+    };
+    vi.mocked(cin7Request).mockResolvedValueOnce({ SaleList: [entry] });
+    const all = await fetchAllSalesList(creds);
+    expect(all[0]).toEqual(entry);
   });
 });
 
@@ -100,5 +75,24 @@ describe("fetchSaleDetail", () => {
     const detail = await fetchSaleDetail(creds, "sale-1");
     expect(detail).toEqual({ ID: "sale-1", Invoices: [] });
     expect(cin7Request).toHaveBeenCalledWith(creds, "/sale", { query: { ID: "sale-1" } });
+  });
+
+  it("passes through Order.Lines[] (with BackorderQuantity) and Fulfilments[] (with Pick/Pack lines) when present", async () => {
+    const raw = {
+      ID: "sale-1",
+      Invoices: [],
+      Order: { SaleOrderNumber: "SO-1", Lines: [{ SKU: "SKU-A", Name: "Widget", Quantity: 2, BackorderQuantity: 1 }] },
+      Fulfilments: [
+        {
+          TaskID: "f1",
+          FulFilmentStatus: "NOT FULFILLED",
+          Pick: { Status: "AUTHORISED", Lines: [{ SKU: "SKU-A", Name: "Widget", Quantity: 1 }] },
+          Pack: { Status: "NOT AVAILABLE", Lines: [] },
+        },
+      ],
+    };
+    vi.mocked(cin7Request).mockResolvedValueOnce(raw);
+    const detail = await fetchSaleDetail(creds, "sale-1");
+    expect(detail).toEqual(raw);
   });
 });
