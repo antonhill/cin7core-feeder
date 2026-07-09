@@ -203,6 +203,58 @@ export async function getInventoryMovementReport(
   return data ?? [];
 }
 
+export interface StockHealthFilters {
+  instanceIds?: string[];
+  /** Velocity lookback window used for days-of-cover/mover classification — "YYYY-MM-DD", inclusive. */
+  velocityDateFrom?: string;
+  velocityDateTo?: string;
+}
+
+export interface StockHealthRow {
+  product_sku: string;
+  product_name: string | null;
+  on_hand: number;
+  available: number;
+  stock_value: number;
+  total_out: number;
+  days_of_cover: number | null;
+  mover_category: "Fast" | "Medium" | "Slow" | "No movement";
+  status: "Stockout risk" | "Excess" | "Healthy";
+}
+
+/**
+ * Current stock levels (product_availability, 0030) combined with outbound
+ * velocity (reusing report_inventory_movement_lines, 0028) to surface days
+ * of cover and excess/stockout flags per product — see report_stock_health
+ * (0031) for the full combination logic.
+ */
+export async function getStockHealthReport(db: SupabaseClient, orgId: string, filters: StockHealthFilters): Promise<StockHealthRow[]> {
+  const { data, error } = await db.rpc("report_stock_health", {
+    p_org_id: orgId,
+    p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
+    p_velocity_date_from: filters.velocityDateFrom || null,
+    p_velocity_date_to: filters.velocityDateTo || null,
+  });
+  if (error) throw new Error(`report_stock_health: ${error.message}`);
+  return data ?? [];
+}
+
+export interface ProductAvailabilitySyncStatus {
+  totalRows: number;
+  lastSyncedAt: string | null;
+}
+
+/** Lets the report page show when stock levels were last refreshed — this is a full snapshot replace, not an incremental sync, so "last synced" is simply the newest synced_at across every row. */
+export async function getProductAvailabilitySyncStatus(db: SupabaseClient, orgId: string): Promise<ProductAvailabilitySyncStatus> {
+  const [countRes, latestRes] = await Promise.all([
+    db.from("product_availability").select("*", { count: "exact", head: true }).eq("org_id", orgId),
+    db.from("product_availability").select("synced_at").eq("org_id", orgId).order("synced_at", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  if (countRes.error) throw new Error(countRes.error.message);
+  if (latestRes.error) throw new Error(latestRes.error.message);
+  return { totalRows: countRes.count ?? 0, lastSyncedAt: latestRes.data?.synced_at ?? null };
+}
+
 export interface SalesSyncStatus {
   totalSales: number;
   pendingDetail: number;

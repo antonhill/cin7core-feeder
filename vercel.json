@@ -4,6 +4,7 @@
     { "path": "/api/sync-sales", "schedule": "*/15 * * * *" },
     { "path": "/api/sync-purchases", "schedule": "*/15 * * * *" },
     { "path": "/api/sync-assembly-builds", "schedule": "*/15 * * * *" },
+    { "path": "/api/sync-product-availability", "schedule": "*/15 * * * *" },
     { "path": "/api/delete-expired-trials", "schedule": "0 3 * * *" }
   ]
 }

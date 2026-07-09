@@ -7,6 +7,8 @@ import {
   getReportFilterOptions,
   getSalesSyncStatus,
   getInventoryMovementReport,
+  getStockHealthReport,
+  getProductAvailabilitySyncStatus,
 } from "@/reports/query";
 
 describe("getProductSalesReport", () => {
@@ -282,5 +284,72 @@ describe("getSalesSyncStatus", () => {
 
     const status = await getSalesSyncStatus(db, "org1");
     expect(status).toEqual({ totalSales: 10, pendingDetail: 3 });
+  });
+});
+
+describe("getStockHealthReport", () => {
+  it("calls the report_stock_health RPC with null defaults for unset filters", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [{ product_sku: "SKU-1", status: "Healthy" }], error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+
+    const rows = await getStockHealthReport(db, "org1", {});
+
+    expect(rows).toEqual([{ product_sku: "SKU-1", status: "Healthy" }]);
+    expect(rpc).toHaveBeenCalledWith("report_stock_health", {
+      p_org_id: "org1",
+      p_instance_ids: null,
+      p_velocity_date_from: null,
+      p_velocity_date_to: null,
+    });
+  });
+
+  it("passes through every provided filter", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+
+    await getStockHealthReport(db, "org1", { instanceIds: ["inst-1"], velocityDateFrom: "2026-01-01", velocityDateTo: "2026-06-30" });
+
+    expect(rpc).toHaveBeenCalledWith("report_stock_health", {
+      p_org_id: "org1",
+      p_instance_ids: ["inst-1"],
+      p_velocity_date_from: "2026-01-01",
+      p_velocity_date_to: "2026-06-30",
+    });
+  });
+
+  it("throws with the underlying error message on failure", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: "boom" } });
+    const db = { rpc } as unknown as SupabaseClient;
+    await expect(getStockHealthReport(db, "org1", {})).rejects.toThrow("report_stock_health: boom");
+  });
+});
+
+describe("getProductAvailabilitySyncStatus", () => {
+  it("returns the total row count and the most recent synced_at", async () => {
+    const chain: Record<string, unknown> = {
+      eq: () => chain,
+      order: () => chain,
+      limit: () => chain,
+      maybeSingle: () => Promise.resolve({ data: { synced_at: "2026-07-09T10:00:00.000Z" }, error: null }),
+      then: (resolve: (v: unknown) => void) => resolve({ count: 42, error: null }),
+    };
+    const db = { from: () => ({ select: () => chain }) } as unknown as SupabaseClient;
+
+    const status = await getProductAvailabilitySyncStatus(db, "org1");
+    expect(status).toEqual({ totalRows: 42, lastSyncedAt: "2026-07-09T10:00:00.000Z" });
+  });
+
+  it("returns null lastSyncedAt when there are no rows yet", async () => {
+    const chain: Record<string, unknown> = {
+      eq: () => chain,
+      order: () => chain,
+      limit: () => chain,
+      maybeSingle: () => Promise.resolve({ data: null, error: null }),
+      then: (resolve: (v: unknown) => void) => resolve({ count: 0, error: null }),
+    };
+    const db = { from: () => ({ select: () => chain }) } as unknown as SupabaseClient;
+
+    const status = await getProductAvailabilitySyncStatus(db, "org1");
+    expect(status).toEqual({ totalRows: 0, lastSyncedAt: null });
   });
 });
