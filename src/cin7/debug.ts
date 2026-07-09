@@ -1076,3 +1076,109 @@ export async function surveyProductAvailabilityFields(creds: Cin7Credentials, li
     multiRowSkuExample: multiSkuEntry ? { sku: multiSkuEntry[0], rows: multiSkuEntry[1] } : undefined,
   };
 }
+
+export interface SaleFulfillmentDetailCheck {
+  saleId: string;
+  orderNumber?: string;
+  hasOrder: boolean;
+  orderLineCount: number;
+  fulfilmentCount: number;
+  error?: string;
+}
+
+export interface SaleFulfillmentSurvey {
+  probed: number;
+  /** Every key seen on real /saleList entries — confirms whether CombinedPickingStatus/CombinedPackingStatus/CombinedShippingStatus/CombinedPaymentStatus/Carrier/CombinedTrackingNumbers (documented in the community spec, never fetched by this codebase) actually exist. */
+  listKeys: string[];
+  listKeyExamples: Record<string, unknown>;
+  detailChecks: SaleFulfillmentDetailCheck[];
+  orderLineKeys: string[];
+  orderLineKeyExamples: Record<string, unknown>;
+  fulfilmentKeys: string[];
+  fulfilmentKeyExamples: Record<string, unknown>;
+  pickPackShipLineKeys: string[];
+  pickPackShipLineKeyExamples: Record<string, unknown>;
+  /** The first probed detail response that actually had a non-empty Fulfilments[] — most useful for close inspection since it exercises the Pick/Pack/Ship nesting, not just Order. */
+  rawDetailExample?: unknown;
+}
+
+/**
+ * Diagnostic only, blocking Step 0 for the Order Fulfillment Dashboard —
+ * neither `Order`/`Fulfilments[]` on GET /sale, nor CombinedPickingStatus/
+ * CombinedPackingStatus/CombinedShippingStatus/CombinedPaymentStatus/
+ * Carrier/CombinedTrackingNumbers on /saleList have ever been fetched by
+ * this codebase. The community spec documents all of them, but this
+ * project has repeatedly found that spec wrong or incomplete (Purchases'
+ * StockReceived/PutAway split, Product Availability's StockValue/Category
+ * not existing at all and StockOnHand meaning something completely
+ * different from its name) — including CombinedInvoiceStatus specifically,
+ * whose real live values already turned out to differ from the spec's
+ * claimed set (2026-07-06). Samples evenly across the full sale list
+ * (not just the most recent page) for variety across different lifecycle
+ * stages, rather than assuming the first few rows are representative.
+ */
+export async function surveySaleFulfillmentFields(creds: Cin7Credentials, maxToProbe = 10): Promise<SaleFulfillmentSurvey> {
+  const listResponse = await cin7Request<{ SaleList?: Record<string, unknown>[] }>(creds, "/saleList", { query: { Page: 1, Limit: 100 } });
+  const listEntries = listResponse.SaleList ?? [];
+
+  const listKeySet = new Set<string>();
+  const listKeyExamples: Record<string, unknown> = {};
+  collectKeys(listEntries, listKeySet, listKeyExamples);
+
+  const step = Math.max(1, Math.floor(listEntries.length / maxToProbe));
+  const candidates = listEntries.filter((_, i) => i % step === 0).slice(0, maxToProbe);
+
+  const orderLineKeySet = new Set<string>();
+  const orderLineKeyExamples: Record<string, unknown> = {};
+  const fulfilmentKeySet = new Set<string>();
+  const fulfilmentKeyExamples: Record<string, unknown> = {};
+  const pickPackShipLineKeySet = new Set<string>();
+  const pickPackShipLineKeyExamples: Record<string, unknown> = {};
+  const detailChecks: SaleFulfillmentDetailCheck[] = [];
+  let rawDetailExample: unknown;
+
+  for (const entry of candidates) {
+    const saleId = entry.SaleID as string | undefined;
+    const orderNumber = entry.OrderNumber as string | undefined;
+    if (!saleId) continue;
+
+    try {
+      const detail = await cin7Request<Record<string, unknown>>(creds, "/sale", { query: { ID: saleId } });
+
+      const order = detail.Order as Record<string, unknown> | undefined;
+      const orderLines = Array.isArray(order?.Lines) ? (order!.Lines as Record<string, unknown>[]) : [];
+      collectKeys(orderLines, orderLineKeySet, orderLineKeyExamples);
+
+      const fulfilments = Array.isArray(detail.Fulfilments) ? (detail.Fulfilments as Record<string, unknown>[]) : [];
+      collectKeys(fulfilments, fulfilmentKeySet, fulfilmentKeyExamples);
+
+      for (const fulfilment of fulfilments) {
+        for (const stage of ["Pick", "Pack", "Ship"] as const) {
+          const stageObj = fulfilment[stage] as Record<string, unknown> | undefined;
+          const lines = Array.isArray(stageObj?.Lines) ? (stageObj!.Lines as Record<string, unknown>[]) : [];
+          collectKeys(lines, pickPackShipLineKeySet, pickPackShipLineKeyExamples);
+        }
+      }
+
+      if (rawDetailExample === undefined && fulfilments.length) rawDetailExample = detail;
+
+      detailChecks.push({ saleId, orderNumber, hasOrder: Boolean(order), orderLineCount: orderLines.length, fulfilmentCount: fulfilments.length });
+    } catch (e) {
+      detailChecks.push({ saleId, orderNumber, hasOrder: false, orderLineCount: 0, fulfilmentCount: 0, error: e instanceof Error ? e.message : "Unknown error" });
+    }
+  }
+
+  return {
+    probed: detailChecks.length,
+    listKeys: [...listKeySet].sort(),
+    listKeyExamples,
+    detailChecks,
+    orderLineKeys: [...orderLineKeySet].sort(),
+    orderLineKeyExamples,
+    fulfilmentKeys: [...fulfilmentKeySet].sort(),
+    fulfilmentKeyExamples,
+    pickPackShipLineKeys: [...pickPackShipLineKeySet].sort(),
+    pickPackShipLineKeyExamples,
+    rawDetailExample,
+  };
+}

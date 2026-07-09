@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
-import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail, surveyPurchaseDetailFields, surveyProductAvailabilityFields } from "@/cin7/debug";
+import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail, surveyPurchaseDetailFields, surveyProductAvailabilityFields, surveySaleFulfillmentFields } from "@/cin7/debug";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
@@ -351,6 +351,17 @@ export async function debugSurveyProductAvailabilityFields(instanceId: string): 
   try {
     const creds = await loadInstanceCreds(instanceId);
     const result = await surveyProductAvailabilityFields(creds);
+    return { ok: true, message: JSON.stringify(result, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/** Blocking Step 0 for the Order Fulfillment Dashboard — confirms whether CombinedPickingStatus/CombinedPackingStatus/CombinedShippingStatus/CombinedPaymentStatus/Carrier/CombinedTrackingNumbers actually appear on /saleList, and whether GET /sale?ID= really returns Order.Lines[].BackorderQuantity + Fulfilments[].Pick/Pack/Ship as the community spec documents, before any schema/sync is built around them. */
+export async function debugSurveySaleFulfillmentFields(instanceId: string): Promise<TestConnectionResult> {
+  try {
+    const creds = await loadInstanceCreds(instanceId);
+    const result = await surveySaleFulfillmentFields(creds);
     return { ok: true, message: JSON.stringify(result, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
