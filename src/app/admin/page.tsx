@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import {
   createOrgAndInvite,
+  deleteOrganization,
   inviteMemberToOrg,
   listOrgsForAdmin,
   removeMemberFromOrg,
@@ -13,6 +14,50 @@ import {
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { ADMIN_MODULE, MODULES } from "@/app/module-nav";
 import { Spinner } from "@/app/Spinner";
+import { isEligibleForTrialAutoDeletion, trialAutoDeletionDate } from "@/lib/trial-expiry";
+
+/** Small status badge: trial countdown (or "past grace, will auto-delete soon"), or the plain subscription status once an org has converted. */
+function SubscriptionBadge({ status, trialEndsAt }: { status: string; trialEndsAt: string | null }) {
+  if (status !== "trialing") {
+    const tone =
+      status === "active"
+        ? "bg-emerald-100 text-emerald-800"
+        : status === "past_due"
+          ? "bg-amber-100 text-amber-800"
+          : "bg-slate-100 text-slate-600";
+    return <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${tone}`}>{status}</span>;
+  }
+
+  if (!trialEndsAt) return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">trialing</span>;
+
+  const now = new Date();
+  const eligible = isEligibleForTrialAutoDeletion(status, trialEndsAt, now);
+  if (eligible) {
+    return (
+      <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-800">
+        trial expired — eligible for auto-delete
+      </span>
+    );
+  }
+
+  const trialEnd = new Date(trialEndsAt);
+  if (trialEnd.getTime() > now.getTime()) {
+    const daysLeft = Math.ceil((trialEnd.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+    return (
+      <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-800">
+        trial · {daysLeft} day{daysLeft === 1 ? "" : "s"} left
+      </span>
+    );
+  }
+
+  const deleteDate = trialAutoDeletionDate(trialEndsAt);
+  const daysUntilDelete = Math.ceil((deleteDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+  return (
+    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+      trial ended · auto-deletes in {daysUntilDelete} day{daysUntilDelete === 1 ? "" : "s"}
+    </span>
+  );
+}
 
 export default function AdminPage() {
   const [orgs, setOrgs] = useState<OrgSummary[]>([]);
@@ -139,6 +184,10 @@ function OrgCard({ org, onMembersChanged }: { org: OrgSummary; onMembersChanged:
   const [removeError, setRemoveError] = useState<string | null>(null);
   const [isRemoving, startRemoveTransition] = useTransition();
 
+  const [confirmDeleteName, setConfirmDeleteName] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeleting, startDeleteTransition] = useTransition();
+
   const [disabledModules, setDisabledModules] = useState(org.disabledModules);
   const [moduleError, setModuleError] = useState<string | null>(null);
   const [isSavingModules, startModulesTransition] = useTransition();
@@ -188,6 +237,20 @@ function OrgCard({ org, onMembersChanged }: { org: OrgSummary; onMembersChanged:
     });
   }
 
+  function handleDeleteOrg() {
+    if (confirmDeleteName.trim() !== org.name) return;
+    if (!confirm(`Permanently delete "${org.name}" and everything in it — instances, products, sales, everything? This cannot be undone.`)) return;
+    setDeleteError(null);
+    startDeleteTransition(async () => {
+      const result = await deleteOrganization(org.id, confirmDeleteName);
+      if (!result.ok) {
+        setDeleteError(result.error ?? "Unknown error");
+        return;
+      }
+      onMembersChanged(); // re-fetches the org list — the deleted org just won't be in it anymore
+    });
+  }
+
   function handleLogoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -222,7 +285,10 @@ function OrgCard({ org, onMembersChanged }: { org: OrgSummary; onMembersChanged:
           <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" onChange={handleLogoChange} disabled={isUploadingLogo} className="hidden" />
         </label>
         <div className="min-w-0 flex-1">
-          <p className="text-lg font-semibold text-slate-900">{org.name}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-lg font-semibold text-slate-900">{org.name}</p>
+            <SubscriptionBadge status={org.subscriptionStatus} trialEndsAt={org.trialEndsAt} />
+          </div>
           <p className="mt-1 text-sm text-slate-500">
             {org.instanceCount} Cin7 instance{org.instanceCount === 1 ? "" : "s"} · created{" "}
             {new Date(org.createdAt).toLocaleDateString()}
@@ -300,6 +366,35 @@ function OrgCard({ org, onMembersChanged }: { org: OrgSummary; onMembersChanged:
           ))}
         </div>
         {moduleError && <p className="mt-2 text-sm text-red-700">{moduleError}</p>}
+      </details>
+
+      <details className="mt-4 rounded-lg border border-red-200 p-3">
+        <summary className="cursor-pointer text-sm font-medium text-red-700">Danger zone</summary>
+        <div className="mt-3 flex flex-col gap-2">
+          <p className="text-sm text-slate-600">
+            Permanently deletes <strong>{org.name}</strong> and everything in it — Cin7 instances, products,
+            customers, suppliers, sales, sync history, everything. This cannot be undone. Type the organization name
+            to confirm.
+          </p>
+          <div className="flex gap-2">
+            <input
+              value={confirmDeleteName}
+              onChange={(e) => setConfirmDeleteName(e.target.value)}
+              placeholder={org.name}
+              className="flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-red-500 focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={handleDeleteOrg}
+              disabled={isDeleting || confirmDeleteName.trim() !== org.name}
+              className="shrink-0 rounded-lg bg-red-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-red-500 disabled:opacity-50"
+            >
+              {isDeleting && <Spinner className="mr-1.5" />}
+              {isDeleting ? "Deleting…" : "Delete organization"}
+            </button>
+          </div>
+          {deleteError && <p className="text-sm text-red-700">{deleteError}</p>}
+        </div>
       </details>
     </div>
   );

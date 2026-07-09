@@ -172,12 +172,15 @@ export async function middleware(request: NextRequest) {
   return response;
 }
 
-// api/sync and api/import authenticate themselves via a bearer token
-// (assertInternalAuth) for external/Cron callers with no browser session —
-// they must never be intercepted by the session-cookie redirect below.
+// api/sync (and api/sync-sales, matched by the same "api/sync" prefix),
+// api/import, and api/delete-expired-trials all authenticate themselves via
+// a bearer token (assertInternalAuth) for external/Cron callers with no
+// browser session — they must never be intercepted by the session-cookie
+// redirect below, or Vercel Cron's bearer-token request just gets bounced to
+// /login and the job silently never runs.
 // icon.svg is Next's file-convention favicon route — it must be reachable
 // with no session too, or the browser's (unauthenticated) request for it
 // gets swallowed by the login redirect and the favicon never loads.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|api/sync|api/import).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|api/sync|api/import|api/delete-expired-trials).*)"],
 };

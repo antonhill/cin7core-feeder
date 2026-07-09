@@ -2,6 +2,7 @@
 
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireSuperAdmin } from "@/lib/require-super-admin";
+import { deleteOrganizationById } from "@/lib/delete-organization";
 
 export interface OrgMember {
   userId: string;
@@ -17,6 +18,8 @@ export interface OrgSummary {
   logoUrl: string | null;
   /** Module hrefs (e.g. "/reports") hidden from this org. Empty means every module is visible. */
   disabledModules: string[];
+  subscriptionStatus: string;
+  trialEndsAt: string | null;
 }
 
 export interface ListOrgsResult {
@@ -33,7 +36,7 @@ export async function listOrgsForAdmin(): Promise<ListOrgsResult> {
 
     const { data: orgs, error: orgsError } = await db
       .from("organizations")
-      .select("id, name, created_at, logo_url, disabled_modules")
+      .select("id, name, created_at, logo_url, disabled_modules, subscription_status, trial_ends_at")
       .order("created_at", { ascending: false });
     if (orgsError) throw new Error(orgsError.message);
 
@@ -72,6 +75,8 @@ export async function listOrgsForAdmin(): Promise<ListOrgsResult> {
       instanceCount: instanceCountByOrg.get(o.id) ?? 0,
       logoUrl: o.logo_url,
       disabledModules: o.disabled_modules ?? [],
+      subscriptionStatus: o.subscription_status,
+      trialEndsAt: o.trial_ends_at,
     }));
 
     return { ok: true, orgs: result };
@@ -252,6 +257,29 @@ export async function uploadOrgLogo(orgId: string, formData: FormData): Promise<
     if (updateError) return { ok: false, error: updateError.message };
 
     return { ok: true, logoUrl };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Permanently deletes an organization and every row scoped to it (cascades
+ * — see deleteOrganizationById). Irreversible, so the caller must pass the
+ * org's exact current name as confirmation — checked server-side against a
+ * fresh read (not trusted from the client), so this can't be bypassed by
+ * calling the action directly without going through the UI's own
+ * type-the-name-to-confirm step.
+ */
+export async function deleteOrganization(orgId: string, confirmName: string): Promise<CreateOrgResult> {
+  try {
+    await requireSuperAdmin();
+    const db = createServiceRoleClient();
+
+    const { data: org, error: fetchError } = await db.from("organizations").select("name").eq("id", orgId).single();
+    if (fetchError) return { ok: false, error: fetchError.message };
+    if (confirmName.trim() !== org.name) return { ok: false, error: "Organization name didn't match — nothing was deleted." };
+
+    return await deleteOrganizationById(db, orgId);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
