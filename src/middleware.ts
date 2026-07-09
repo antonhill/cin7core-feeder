@@ -172,13 +172,13 @@ export async function middleware(request: NextRequest) {
   return response;
 }
 
-// api/sync (and api/sync-sales, api/sync-purchases — matched by the same
-// "api/sync" prefix), api/import, and api/delete-expired-trials all
-// authenticate themselves via a bearer token (assertInternalAuth) for
-// external/Cron callers with no browser session — they must never be
-// intercepted by the session-cookie redirect below, or Vercel Cron's
-// bearer-token request just gets bounced to /login and the job silently
-// never runs.
+// api/sync (and api/sync-sales, api/sync-purchases, api/sync-assembly-builds
+// — all matched by the same "api/sync" prefix), api/import, and
+// api/delete-expired-trials all authenticate themselves via a bearer token
+// (assertInternalAuth) for external/Cron callers with no browser session —
+// they must never be intercepted by the session-cookie redirect below, or
+// Vercel Cron's bearer-token request just gets bounced to /login and the
+// job silently never runs.
 // icon.svg is Next's file-convention favicon route — it must be reachable
 // with no session too, or the browser's (unauthenticated) request for it
 // gets swallowed by the login redirect and the favicon never loads.
