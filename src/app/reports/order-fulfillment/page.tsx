@@ -74,7 +74,7 @@ export default function OrderFulfillmentPage() {
   const [paymentFilter, setPaymentFilter] = useState("");
   const [shipByFrom, setShipByFrom] = useState("");
   const [shipByTo, setShipByTo] = useState("");
-  const [fullyFulfillableOnly, setFullyFulfillableOnly] = useState(false);
+  const [backorderFilter, setBackorderFilter] = useState<"all" | "fulfillable" | "backorder">("all");
 
   const [isExporting, startExportTransition] = useTransition();
   const [exportError, setExportError] = useState<string | null>(null);
@@ -200,10 +200,11 @@ export default function OrderFulfillmentPage() {
     if (paymentFilter) rows = rows.filter((o) => o.combined_payment_status === paymentFilter);
     if (shipByFrom) rows = rows.filter((o) => o.ship_by !== null && o.ship_by >= shipByFrom);
     if (shipByTo) rows = rows.filter((o) => o.ship_by !== null && o.ship_by <= shipByTo);
-    if (fullyFulfillableOnly) rows = rows.filter((o) => o.total_backorder_qty === 0);
+    if (backorderFilter === "fulfillable") rows = rows.filter((o) => o.total_backorder_qty === 0);
+    else if (backorderFilter === "backorder") rows = rows.filter((o) => o.total_backorder_qty > 0);
 
     return rows;
-  }, [orders, tab, search, paymentFilter, shipByFrom, shipByTo, fullyFulfillableOnly]);
+  }, [orders, tab, search, paymentFilter, shipByFrom, shipByTo, backorderFilter]);
 
   const counts = orders
     ? { pick: orders.filter((o) => o.is_pick_today).length, ship: orders.filter((o) => o.is_ship_today).length, all: orders.length }
@@ -343,16 +344,19 @@ export default function OrderFulfillmentPage() {
               <span className="font-medium text-slate-700">Ship by to</span>
               <input type="date" value={shipByTo} onChange={(e) => setShipByTo(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2" />
             </label>
-            <label className="flex items-center gap-2 pb-2 text-sm">
-              <input
-                type="checkbox"
-                checked={fullyFulfillableOnly}
-                onChange={(e) => setFullyFulfillableOnly(e.target.checked)}
-                className="h-4 w-4"
-              />
-              <span className="font-medium text-slate-700">Fully fulfillable only (no backorders)</span>
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-slate-700">Backorders</span>
+              <select
+                value={backorderFilter}
+                onChange={(e) => setBackorderFilter(e.target.value as "all" | "fulfillable" | "backorder")}
+                className="rounded-lg border border-slate-300 px-3 py-2"
+              >
+                <option value="all">All orders</option>
+                <option value="fulfillable">Fully fulfillable only (no backorders)</option>
+                <option value="backorder">Has backorders only</option>
+              </select>
             </label>
-            {(search || paymentFilter || shipByFrom || shipByTo || fullyFulfillableOnly) && (
+            {(search || paymentFilter || shipByFrom || shipByTo || backorderFilter !== "all") && (
               <button
                 type="button"
                 onClick={() => {
@@ -360,7 +364,7 @@ export default function OrderFulfillmentPage() {
                   setPaymentFilter("");
                   setShipByFrom("");
                   setShipByTo("");
-                  setFullyFulfillableOnly(false);
+                  setBackorderFilter("all");
                 }}
                 className="rounded-full border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
               >
