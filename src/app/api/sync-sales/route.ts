@@ -7,8 +7,12 @@ import { assertInternalAuth, UnauthorizedError } from "@/lib/internal-auth";
 // process (see sync/sync-sales.ts) that can take several runs to catch up on
 // a backlog, rather than always finishing the whole org catalog in one pass
 // — isolating it means a slow sales backfill can't delay or crowd out the
-// product/customer/supplier sync's own time budget.
-export const maxDuration = 60;
+// product/customer/supplier sync's own time budget. 300s (not 60s) — bumped
+// 2026-07-09 after a real FUNCTION_INVOCATION_TIMEOUT on a full-scope
+// backfill (sync-sales.ts now fetches every sale, not just invoiced ones,
+// for the Order Fulfillment Dashboard), same fix every other sync route
+// already needed (/api/sync, /api/sync-purchases).
+export const maxDuration = 300;
 
 /** GET — Vercel Cron entry point, same auth convention as /api/sync. */
 export async function GET(req: Request) {
