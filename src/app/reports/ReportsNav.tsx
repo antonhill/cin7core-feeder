@@ -24,7 +24,13 @@ interface ReportCategory {
  * whole "Reporting" module) is already shared via layout.tsx.
  */
 const REPORT_CATEGORIES: ReportCategory[] = [
-  { label: "Fulfillment", links: [{ href: "/reports/order-fulfillment", label: "Order Fulfillment" }] },
+  {
+    label: "Fulfillment",
+    links: [
+      { href: "/reports/order-fulfillment", label: "Order Fulfillment" },
+      { href: "/reports/fulfillment-cleanup", label: "Fulfillment Cleanup Helper" },
+    ],
+  },
   { label: "Sales", links: [{ href: "/reports", label: "Sales" }] },
   {
     label: "Costing",

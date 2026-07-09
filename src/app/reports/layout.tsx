@@ -29,8 +29,10 @@ export default function ReportsLayout({
           Movement (in/out per product over an adjustable period, with a
           Fast/Medium/Slow mover classification), Stock Health (current
           stock levels combined with velocity — days of cover, excess/stockout
-          flagging), and Order Fulfillment (a working pick/ship-today
-          dashboard, order and product-level detail together), with more
+          flagging), Order Fulfillment (a working pick/ship-today
+          dashboard, order and product-level detail together), and the
+          Fulfillment Cleanup Helper (a completed Bulk Stock Adjustment CSV
+          for every oversold SKU, ready to import into Cin7), with more
           report types to come.
         </ModuleHeader>
       </div>
