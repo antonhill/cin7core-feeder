@@ -994,3 +994,58 @@ export async function surveyPurchaseDetailFields(creds: Cin7Credentials, maxToPr
     rawExampleAdvanced,
   };
 }
+
+export interface ProductAvailabilitySurvey {
+  probed: number;
+  /** Whichever top-level response key actually held the record array — not assumed, since this endpoint has never been called live before. */
+  listKey: string | null;
+  keys: string[];
+  keyExamples: Record<string, unknown>;
+  rawResponseKeys: string[];
+  rawExample?: unknown;
+}
+
+/**
+ * Diagnostic only: /ref/productavailability has never been called live in
+ * this codebase — the community spec (github.com/nnhansg/dear-openapi)
+ * documents fields (OnHand/Available/Allocated/OnOrder/StockOnHand/
+ * InTransit/NextDeliveryDate/StockValue/Location/Bin/Batch/ExpiryDate) but
+ * its sample response body is truncated before showing the actual list
+ * array's key name, and this project has repeatedly found the community
+ * spec wrong about real API shapes (Purchases' PutAway vs StockReceived,
+ * Work Centres being unreachable entirely) — so this doesn't assume a key
+ * name, it discovers whichever top-level property in the real response
+ * actually holds an array of records. Also deliberately does NOT filter to
+ * non-zero quantities, to confirm whether a fully-stocked-out product still
+ * appears in the list at all (the Stock Health report's stockout-detection
+ * design depends on the answer).
+ */
+export async function surveyProductAvailabilityFields(creds: Cin7Credentials, limit = 25): Promise<ProductAvailabilitySurvey> {
+  const response = await cin7Request<Record<string, unknown>>(creds, "/ref/productavailability", {
+    query: { Page: 1, Limit: limit },
+  });
+
+  const rawResponseKeys = Object.keys(response);
+  let listKey: string | null = null;
+  let records: Record<string, unknown>[] = [];
+  for (const [key, value] of Object.entries(response)) {
+    if (Array.isArray(value)) {
+      listKey = key;
+      records = value as Record<string, unknown>[];
+      break;
+    }
+  }
+
+  const keySet = new Set<string>();
+  const keyExamples: Record<string, unknown> = {};
+  collectKeys(records, keySet, keyExamples);
+
+  return {
+    probed: records.length,
+    listKey,
+    keys: [...keySet].sort(),
+    keyExamples,
+    rawResponseKeys,
+    rawExample: records[0],
+  };
+}
