@@ -31,13 +31,15 @@ function toDateOnly(value: string | null | undefined): string | null {
  * lower than sales volume; revisit if that stops being true. A purchase is
  * queued for phase 2 (detail_synced_at cleared) when it's new, or its
  * CombinedReceivingStatus changed since the last detail fetch (catching
- * partial -> fully received transitions) — an order that's never received
- * anything ("NOT RECEIVED") is skipped entirely, since there's nothing to
- * receive yet.
+ * partial -> fully received transitions). Previously skipped orders that had
+ * never received anything ("NOT RECEIVED") entirely — widened 2026-07-10 for
+ * the backorder-ETA feature, which specifically needs to reference open POs
+ * with zero receipts yet; only a VOIDED order (Status, the workflow field —
+ * not CombinedReceivingStatus) is excluded now.
  */
 async function syncPurchasesList(db: SupabaseClient, orgId: string, instanceId: string, creds: Cin7Credentials): Promise<number> {
   const entries = await fetchAllPurchasesList(creds);
-  const relevant = entries.filter((e) => e.CombinedReceivingStatus && e.CombinedReceivingStatus !== "NOT RECEIVED");
+  const relevant = entries.filter((e) => e.CombinedReceivingStatus && e.Status !== "VOIDED");
   if (!relevant.length) return 0;
 
   const ids = relevant.map((e) => e.ID);
@@ -66,6 +68,7 @@ async function syncPurchasesList(db: SupabaseClient, orgId: string, instanceId: 
       status: e.Status ?? null,
       combined_receiving_status: e.CombinedReceivingStatus ?? null,
       order_date: toDateOnly(e.OrderDate),
+      required_by: toDateOnly(e.RequiredBy),
       detail_synced_at: changed ? null : (prior?.detail_synced_at ?? null),
       updated_at: new Date().toISOString(),
     };
@@ -132,9 +135,31 @@ async function syncPurchaseDetails(
         if (insertError) throw new Error(`purchase_receipt_lines insert: ${insertError.message}`);
       }
 
+      const { error: orderLinesDeleteError } = await db
+        .from("purchase_order_lines")
+        .delete()
+        .eq("org_id", orgId)
+        .eq("instance_id", instanceId)
+        .eq("cin7_purchase_id", row.cin7_purchase_id);
+      if (orderLinesDeleteError) throw new Error(`purchase_order_lines delete: ${orderLinesDeleteError.message}`);
+
+      const orderLineRows = detail.orderLines.map((line, i) => ({
+        org_id: orgId,
+        instance_id: instanceId,
+        cin7_purchase_id: row.cin7_purchase_id,
+        line_number: i,
+        product_sku: line.productSku,
+        product_name: line.productName,
+        quantity: line.quantity,
+      }));
+      if (orderLineRows.length) {
+        const { error: orderLinesInsertError } = await db.from("purchase_order_lines").insert(orderLineRows);
+        if (orderLinesInsertError) throw new Error(`purchase_order_lines insert: ${orderLinesInsertError.message}`);
+      }
+
       const { error: updateError } = await db
         .from("purchases")
-        .update({ source: detail.source, detail_synced_at: new Date().toISOString() })
+        .update({ source: detail.source, is_drop_ship: detail.isDropShip, detail_synced_at: new Date().toISOString() })
         .eq("org_id", orgId)
         .eq("instance_id", instanceId)
         .eq("cin7_purchase_id", row.cin7_purchase_id);

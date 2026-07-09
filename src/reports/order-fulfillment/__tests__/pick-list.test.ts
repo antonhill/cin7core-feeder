@@ -43,6 +43,9 @@ function line(overrides: Partial<OrderFulfillmentLineRow>): OrderFulfillmentLine
     picked_from_locations: null,
     suggested_pick_location: null,
     suggested_pick_location_on_hand: null,
+    backorder_po_number: null,
+    backorder_eta: null,
+    backorder_po_outstanding_qty: null,
     ...overrides,
   };
 }

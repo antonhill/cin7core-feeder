@@ -530,6 +530,7 @@ export default function OrderFulfillmentPage() {
                                     <th className="py-1 pr-4 text-right">Pickable Now</th>
                                     <th className="py-1 pr-4">Picked From</th>
                                     <th className="py-1 pr-4">Suggested Pick Location</th>
+                                    <th className="py-1 pr-4">Backorder ETA</th>
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -549,6 +550,17 @@ export default function OrderFulfillmentPage() {
                                         {line.suggested_pick_location
                                           ? `${line.suggested_pick_location} (${qty(line.suggested_pick_location_on_hand ?? 0)} on hand)`
                                           : "—"}
+                                      </td>
+                                      <td className="py-1 pr-4 text-slate-500">
+                                        {line.backorder_qty <= 0 ? (
+                                          "—"
+                                        ) : line.backorder_po_number ? (
+                                          <>
+                                            {line.backorder_po_number} — {line.backorder_eta ?? "no ETA given"}
+                                          </>
+                                        ) : (
+                                          "No open PO found"
+                                        )}
                                       </td>
                                     </tr>
                                   ))}

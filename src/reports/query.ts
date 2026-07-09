@@ -315,6 +315,11 @@ export interface OrderFulfillmentLineRow {
   /** Forward guidance for a still-outstanding line — the real stock location currently holding the most on-hand for this SKU (from Stock Health's product_availability), not a record of where anything was actually picked from. */
   suggested_pick_location: string | null;
   suggested_pick_location_on_hand: number | null;
+  /** Which open (non-voided, non-drop-ship) purchase order this backordered SKU is expected on, if any — null when no open PO currently carries it. */
+  backorder_po_number: string | null;
+  /** The PO's RequiredBy date — confirmed live to be the ONLY ETA Cin7 exposes at all (no per-line date field exists); frequently null even on open orders, shown as-is rather than hidden. */
+  backorder_eta: string | null;
+  backorder_po_outstanding_qty: number | null;
 }
 
 /**

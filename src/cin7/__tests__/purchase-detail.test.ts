@@ -72,4 +72,35 @@ describe("fetchPurchaseDetail", () => {
 
     expect(result.receiptLines).toEqual([]);
   });
+
+  it("extracts Order.Lines[] as orderLines, on both classic and Advanced-purchase responses", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({
+      StockReceived: { Lines: [] },
+      Order: { Lines: [{ SKU: "SKU-A", Name: "Widget", Quantity: 10 }] },
+    });
+
+    const result = await fetchPurchaseDetail(creds, "po-5");
+
+    expect(result.orderLines).toEqual([{ productSku: "SKU-A", productName: "Widget", quantity: 10 }]);
+  });
+
+  it("flags a drop-shipment when RelatedDropShipSaleTask is present", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({
+      StockReceived: { Lines: [] },
+      RelatedDropShipSaleTask: "af215596-2479-49d4-93ad-7db3dc1ca9f3",
+    });
+
+    const result = await fetchPurchaseDetail(creds, "po-6");
+
+    expect(result.isDropShip).toBe(true);
+  });
+
+  it("defaults isDropShip to false and orderLines to [] when absent", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ StockReceived: { Lines: [] } });
+
+    const result = await fetchPurchaseDetail(creds, "po-7");
+
+    expect(result.isDropShip).toBe(false);
+    expect(result.orderLines).toEqual([]);
+  });
 });
