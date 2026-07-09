@@ -26,9 +26,11 @@ export default function ReportsLayout({
         Cost Estimator (re-prices every Assembly or Production BOM&rsquo;s
         components under Average/Latest/Fixed cost, exportable), Inventory
         Movement (in/out per product over an adjustable period, with a
-        Fast/Medium/Slow mover classification), and Stock Health (current
+        Fast/Medium/Slow mover classification), Stock Health (current
         stock levels combined with velocity — days of cover, excess/stockout
-        flagging), with more report types to come.
+        flagging), and Order Fulfillment (a working pick/ship-today
+        dashboard, order and product-level detail together), with more
+        report types to come.
       </ModuleHeader>
       <div className="mt-6 flex items-start gap-8">
         <ReportsNav />

@@ -270,3 +270,68 @@ export async function getSalesSyncStatus(db: SupabaseClient, orgId: string): Pro
   if (pendingRes.error) throw new Error(pendingRes.error.message);
   return { totalSales: totalRes.count ?? 0, pendingDetail: pendingRes.count ?? 0 };
 }
+
+export interface OrderFulfillmentFilters {
+  instanceIds?: string[];
+}
+
+export interface OrderFulfillmentRow {
+  cin7_sale_id: string;
+  order_number: string | null;
+  customer_name: string | null;
+  ship_by: string | null;
+  is_overdue: boolean;
+  order_status: string | null;
+  combined_picking_status: string | null;
+  combined_packing_status: string | null;
+  combined_shipping_status: string | null;
+  combined_invoice_status: string | null;
+  combined_payment_status: string | null;
+  paid_amount: number;
+  invoice_amount: number;
+  total_ordered_qty: number;
+  total_backorder_qty: number;
+  total_pickable_qty: number;
+  total_picked_qty: number;
+  is_pick_today: boolean;
+  is_ship_today: boolean;
+}
+
+export interface OrderFulfillmentLineRow {
+  cin7_sale_id: string;
+  product_sku: string;
+  product_name: string | null;
+  ordered_qty: number;
+  backorder_qty: number;
+  picked_qty: number;
+  packed_qty: number;
+  pickable_qty: number;
+}
+
+/**
+ * One row per order (report_order_fulfillment, 0033) — the Combined status
+ * fields Phase 1 synced, plus is_pick_today/is_ship_today (plain booleans,
+ * not a forced single "stage" label — confirmed live pick/pack/ship/invoice
+ * don't gate each other in a fixed sequence on this account). "Today" is a
+ * priority queue, not a strict date filter: overdue orders and undated
+ * orders both stay in scope (sorted first / last respectively), not
+ * excluded — nothing that needs action drops out of sight.
+ */
+export async function getOrderFulfillmentReport(db: SupabaseClient, orgId: string, filters: OrderFulfillmentFilters): Promise<OrderFulfillmentRow[]> {
+  const { data, error } = await db.rpc("report_order_fulfillment", {
+    p_org_id: orgId,
+    p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
+  });
+  if (error) throw new Error(`report_order_fulfillment: ${error.message}`);
+  return data ?? [];
+}
+
+/** Per-SKU detail behind an order's row (report_order_fulfillment_lines, 0033) — fetched for every order in the current result set up front (a plain DB read, not a rate-limited Cin7 call), so expanding a row is instant. */
+export async function getOrderFulfillmentLines(db: SupabaseClient, orgId: string, filters: OrderFulfillmentFilters): Promise<OrderFulfillmentLineRow[]> {
+  const { data, error } = await db.rpc("report_order_fulfillment_lines", {
+    p_org_id: orgId,
+    p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
+  });
+  if (error) throw new Error(`report_order_fulfillment_lines: ${error.message}`);
+  return data ?? [];
+}

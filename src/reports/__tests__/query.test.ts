@@ -9,6 +9,8 @@ import {
   getInventoryMovementReport,
   getStockHealthReport,
   getProductAvailabilitySyncStatus,
+  getOrderFulfillmentReport,
+  getOrderFulfillmentLines,
 } from "@/reports/query";
 
 describe("getProductSalesReport", () => {
@@ -351,5 +353,48 @@ describe("getProductAvailabilitySyncStatus", () => {
 
     const status = await getProductAvailabilitySyncStatus(db, "org1");
     expect(status).toEqual({ totalRows: 0, lastSyncedAt: null });
+  });
+});
+
+describe("getOrderFulfillmentReport", () => {
+  it("calls the report_order_fulfillment RPC with null defaults for unset filters", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [{ cin7_sale_id: "s1", is_pick_today: true }], error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+
+    const rows = await getOrderFulfillmentReport(db, "org1", {});
+
+    expect(rows).toEqual([{ cin7_sale_id: "s1", is_pick_today: true }]);
+    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment", { p_org_id: "org1", p_instance_ids: null });
+  });
+
+  it("passes through the instance filter", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+    await getOrderFulfillmentReport(db, "org1", { instanceIds: ["inst-1"] });
+    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment", { p_org_id: "org1", p_instance_ids: ["inst-1"] });
+  });
+
+  it("throws with the underlying error message on failure", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: "boom" } });
+    const db = { rpc } as unknown as SupabaseClient;
+    await expect(getOrderFulfillmentReport(db, "org1", {})).rejects.toThrow("report_order_fulfillment: boom");
+  });
+});
+
+describe("getOrderFulfillmentLines", () => {
+  it("calls the report_order_fulfillment_lines RPC with null defaults for unset filters", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [{ cin7_sale_id: "s1", product_sku: "SKU-1", pickable_qty: 2 }], error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+
+    const rows = await getOrderFulfillmentLines(db, "org1", {});
+
+    expect(rows).toEqual([{ cin7_sale_id: "s1", product_sku: "SKU-1", pickable_qty: 2 }]);
+    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment_lines", { p_org_id: "org1", p_instance_ids: null });
+  });
+
+  it("throws with the underlying error message on failure", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: "boom" } });
+    const db = { rpc } as unknown as SupabaseClient;
+    await expect(getOrderFulfillmentLines(db, "org1", {})).rejects.toThrow("report_order_fulfillment_lines: boom");
   });
 });
