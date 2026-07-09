@@ -46,6 +46,8 @@ function extractPickPackLineRows(orgId: string, instanceId: string, saleId: stri
     product_sku: string | null;
     product_name: string | null;
     quantity: number | null;
+    location: string | null;
+    batch_sn: string | null;
   }[] = [];
 
   let pickLineNumber = 0;
@@ -61,6 +63,8 @@ function extractPickPackLineRows(orgId: string, instanceId: string, saleId: stri
         product_sku: line.SKU ?? null,
         product_name: line.Name ?? null,
         quantity: line.Quantity ?? null,
+        location: line.Location ?? null,
+        batch_sn: line.BatchSN ?? null,
       });
     }
     for (const line of fulfilment.Pack?.Lines ?? []) {
@@ -73,6 +77,8 @@ function extractPickPackLineRows(orgId: string, instanceId: string, saleId: stri
         product_sku: line.SKU ?? null,
         product_name: line.Name ?? null,
         quantity: line.Quantity ?? null,
+        location: line.Location ?? null,
+        batch_sn: line.BatchSN ?? null,
       });
     }
   }
@@ -134,6 +140,7 @@ async function syncSalesList(
         instance_id: instanceId,
         cin7_sale_id: e.SaleID,
         order_number: e.OrderNumber ?? null,
+        order_date: toDateOnly(e.OrderDate),
         invoice_number: e.InvoiceNumber ?? null,
         invoice_date: toDateOnly(e.InvoiceDate),
         customer_name: e.Customer ?? null,

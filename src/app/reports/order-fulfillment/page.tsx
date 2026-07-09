@@ -1,9 +1,10 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useState, useTransition } from "react";
-import { loadReportFilterOptionsAction } from "../actions";
-import { loadOrderFulfillmentAction, exportOrderFulfillmentXlsxAction } from "./actions";
-import type { ReportFilterOptions, OrderFulfillmentRow, OrderFulfillmentLineRow } from "@/reports/query";
+import { loadReportFilterOptionsAction, loadSalesSyncStatusAction, triggerSalesSyncAction } from "../actions";
+import { loadOrderFulfillmentAction, exportOrderFulfillmentXlsxAction, loadSaleAttachmentsAction } from "./actions";
+import type { ReportFilterOptions, OrderFulfillmentRow, OrderFulfillmentLineRow, SalesSyncStatus } from "@/reports/query";
+import type { Cin7SaleAttachment } from "@/cin7/sales";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
@@ -15,6 +16,9 @@ const TABS: { value: Tab; label: string }[] = [
   { value: "ship", label: "Ship Today" },
   { value: "all", label: "All Orders" },
 ];
+
+/** An order open this many days or more without being fully picked is probably stuck, not just "next in line" — a plain default, not meant to be precisely tuned. */
+const STUCK_AFTER_DAYS = 7;
 
 /** Every Combined* status this app tracks shares the same shape (NOT AVAILABLE/VOIDED, NOT <verb>ED, <verb>ING, PARTIALLY <verb>ED, <verb>ED) — one classifier covers all of them rather than an exhaustive per-value map. */
 function statusBadgeClass(status: string | null): string {
@@ -74,6 +78,46 @@ export default function OrderFulfillmentPage() {
   const [isExporting, startExportTransition] = useTransition();
   const [exportError, setExportError] = useState<string | null>(null);
 
+  const [syncStatus, setSyncStatus] = useState<SalesSyncStatus | null>(null);
+  const [isSyncing, startSyncTransition] = useTransition();
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  const [attachmentsBySaleId, setAttachmentsBySaleId] = useState<Record<string, Cin7SaleAttachment[]>>({});
+  const [attachmentsError, setAttachmentsError] = useState<string | null>(null);
+  const [isLoadingAttachments, startAttachmentsTransition] = useTransition();
+
+  function refreshSyncStatus() {
+    loadSalesSyncStatusAction().then((result) => {
+      if (result.ok) setSyncStatus(result.data ?? null);
+    });
+  }
+
+  function handleSync() {
+    setSyncError(null);
+    startSyncTransition(async () => {
+      const result = await triggerSalesSyncAction();
+      if (!result.ok) {
+        setSyncError(result.error ?? "Unknown error");
+        return;
+      }
+      refreshSyncStatus();
+      runLoad();
+    });
+  }
+
+  function handleViewDocuments(instanceId: string, saleId: string) {
+    if (attachmentsBySaleId[saleId]) return;
+    setAttachmentsError(null);
+    startAttachmentsTransition(async () => {
+      const result = await loadSaleAttachmentsAction(instanceId, saleId);
+      if (!result.ok) {
+        setAttachmentsError(result.error ?? "Unknown error");
+        return;
+      }
+      setAttachmentsBySaleId((prev) => ({ ...prev, [saleId]: result.data ?? [] }));
+    });
+  }
+
   function runLoad() {
     setLoadError(null);
     startLoadTransition(async () => {
@@ -91,6 +135,9 @@ export default function OrderFulfillmentPage() {
     loadReportFilterOptionsAction().then((result) => {
       if (!result.ok) setOptionsError(result.error ?? "Unknown error");
       else setOptions(result.data ?? null);
+    });
+    loadSalesSyncStatusAction().then((result) => {
+      if (result.ok) setSyncStatus(result.data ?? null);
     });
     // Initial load happens directly here (not via runLoad/startTransition) so
     // every setState stays inside a .then() callback rather than running
@@ -185,18 +232,36 @@ export default function OrderFulfillmentPage() {
               ))}
               {options && options.instances.length === 0 && <p className="text-sm text-slate-400">No instances connected.</p>}
             </div>
+            {syncStatus && (
+              <p className="mt-2 text-xs text-slate-400">
+                {syncStatus.totalSales.toLocaleString()} sale{syncStatus.totalSales === 1 ? "" : "s"} synced
+                {syncStatus.pendingDetail > 0 && ` — ${syncStatus.pendingDetail.toLocaleString()} still catching up on line detail`}
+              </p>
+            )}
           </div>
-          <button
-            type="button"
-            onClick={runLoad}
-            disabled={isLoading}
-            className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          >
-            {isLoading && <Spinner className="mr-1.5" />}
-            {isLoading ? "Loading…" : "Refresh"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSync}
+              disabled={isSyncing}
+              className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              {isSyncing && <Spinner className="mr-1.5" />}
+              {isSyncing ? "Syncing…" : "Sync sales now"}
+            </button>
+            <button
+              type="button"
+              onClick={runLoad}
+              disabled={isLoading}
+              className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              {isLoading && <Spinner className="mr-1.5" />}
+              {isLoading ? "Loading…" : "Refresh"}
+            </button>
+          </div>
         </div>
         {loadError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>}
+        {syncError && <p className="mt-2 text-sm text-red-600">{syncError}</p>}
         {optionsError && <p className="mt-2 text-sm text-red-600">{optionsError}</p>}
       </section>
 
@@ -319,6 +384,14 @@ export default function OrderFulfillmentPage() {
                         <td className="py-2 pr-4">
                           {row.ship_by ?? <span className="text-slate-300">—</span>}
                           {row.is_overdue && <span className="ml-1.5 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">Overdue</span>}
+                          {!row.is_overdue && row.is_pick_today && (row.days_open ?? 0) >= STUCK_AFTER_DAYS && (
+                            <span
+                              title={`Open ${row.days_open} days without being fully picked`}
+                              className="ml-1.5 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"
+                            >
+                              Stuck ({row.days_open}d)
+                            </span>
+                          )}
                         </td>
                         <td className="py-2 pr-4">
                           <StatusBadge status={row.combined_picking_status} />
@@ -343,6 +416,39 @@ export default function OrderFulfillmentPage() {
                       {expandedSaleId === row.cin7_sale_id && (
                         <tr>
                           <td colSpan={9} className="bg-slate-50 px-4 py-3">
+                            <div className="mb-3 flex items-center justify-between">
+                              <button
+                                type="button"
+                                onClick={() => handleViewDocuments(row.instance_id, row.cin7_sale_id)}
+                                disabled={isLoadingAttachments}
+                                className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                              >
+                                {isLoadingAttachments && !attachmentsBySaleId[row.cin7_sale_id] ? "Loading documents…" : "View documents"}
+                              </button>
+                            </div>
+                            {attachmentsError && <p className="mb-2 text-xs text-red-600">{attachmentsError}</p>}
+                            {attachmentsBySaleId[row.cin7_sale_id] && (
+                              <div className="mb-3">
+                                {attachmentsBySaleId[row.cin7_sale_id].length === 0 ? (
+                                  <p className="text-xs text-slate-400">No documents attached to this order.</p>
+                                ) : (
+                                  <ul className="flex flex-wrap gap-2">
+                                    {attachmentsBySaleId[row.cin7_sale_id].map((att, i) => (
+                                      <li key={att.ID ?? i}>
+                                        <a
+                                          href={att.DownloadUrl}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                                        >
+                                          {att.FileName ?? "Document"}
+                                        </a>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            )}
                             {(linesBySaleId.get(row.cin7_sale_id) ?? []).length === 0 ? (
                               <p className="text-sm text-slate-400">No line detail synced for this order yet.</p>
                             ) : (
@@ -355,6 +461,8 @@ export default function OrderFulfillmentPage() {
                                     <th className="py-1 pr-4 text-right">Picked</th>
                                     <th className="py-1 pr-4 text-right">Packed</th>
                                     <th className="py-1 pr-4 text-right">Pickable Now</th>
+                                    <th className="py-1 pr-4">Picked From</th>
+                                    <th className="py-1 pr-4">Suggested Pick Location</th>
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -369,6 +477,12 @@ export default function OrderFulfillmentPage() {
                                       <td className="py-1 pr-4 text-right">{qty(line.picked_qty)}</td>
                                       <td className="py-1 pr-4 text-right">{qty(line.packed_qty)}</td>
                                       <td className="py-1 pr-4 text-right font-medium">{qty(line.pickable_qty)}</td>
+                                      <td className="py-1 pr-4 text-slate-500">{line.picked_from_locations ?? "—"}</td>
+                                      <td className="py-1 pr-4 text-slate-500">
+                                        {line.suggested_pick_location
+                                          ? `${line.suggested_pick_location} (${qty(line.suggested_pick_location_on_hand ?? 0)} on hand)`
+                                          : "—"}
+                                      </td>
                                     </tr>
                                   ))}
                                 </tbody>

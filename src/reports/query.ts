@@ -277,8 +277,12 @@ export interface OrderFulfillmentFilters {
 
 export interface OrderFulfillmentRow {
   cin7_sale_id: string;
+  instance_id: string;
   order_number: string | null;
   customer_name: string | null;
+  order_date: string | null;
+  /** Null when order_date itself is unknown — distinct from 0, which means "opened today." */
+  days_open: number | null;
   ship_by: string | null;
   is_overdue: boolean;
   order_status: string | null;
@@ -306,6 +310,11 @@ export interface OrderFulfillmentLineRow {
   picked_qty: number;
   packed_qty: number;
   pickable_qty: number;
+  /** Where this SKU was actually picked from so far on this order (audit trail) — comma-joined, null if nothing's been picked yet. */
+  picked_from_locations: string | null;
+  /** Forward guidance for a still-outstanding line — the real stock location currently holding the most on-hand for this SKU (from Stock Health's product_availability), not a record of where anything was actually picked from. */
+  suggested_pick_location: string | null;
+  suggested_pick_location_on_hand: number | null;
 }
 
 /**

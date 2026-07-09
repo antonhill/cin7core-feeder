@@ -103,11 +103,14 @@ export interface Cin7SaleOrder {
   Lines?: Cin7SaleOrderLine[];
 }
 
-/** A Pick or Pack line — the ACTUAL quantity picked/packed so far, distinct from Order.Lines[]'s planned quantity (same "planned vs actual" split already used for Assembly Builds' OrderLines vs PickLines). */
+/** A Pick or Pack line — the ACTUAL quantity picked/packed so far, distinct from Order.Lines[]'s planned quantity (same "planned vs actual" split already used for Assembly Builds' OrderLines vs PickLines). Location/Bin/BatchSN confirmed present live 2026-07-09 — where a completed pick actually came from, an audit trail (not forward guidance — see report_order_fulfillment_lines' cross-reference against product_availability for "where to pick a still-outstanding line from" instead). */
 export interface Cin7SaleFulfilmentPickPackLine {
   SKU?: string;
   Name?: string;
   Quantity?: number;
+  Location?: string;
+  LocationID?: string;
+  BatchSN?: string;
 }
 
 export interface Cin7SaleFulfilmentPickPack {
@@ -123,6 +126,21 @@ export interface Cin7SaleFulfilment {
   Pack?: Cin7SaleFulfilmentPickPack;
 }
 
+/**
+ * A file attached to the sale — confirmed live 2026-07-09 (a real order had
+ * an auto-generated "Expanded Pick List" PDF here). `DownloadUrl` carries a
+ * `timeStamp` query param that looks like a signed/expiring link, so this is
+ * deliberately never synced/stored — always fetched fresh via
+ * fetchSaleDetail at the moment a user wants to open a document, not cached
+ * for later use.
+ */
+export interface Cin7SaleAttachment {
+  ID?: string;
+  ContentType?: string;
+  FileName?: string;
+  DownloadUrl?: string;
+}
+
 export interface Cin7SaleDetail {
   ID: string;
   /** "Default location to pick stock from" — the only place Location is exposed; /saleList only has a Location GUID (OrderLocationID). */
@@ -131,6 +149,7 @@ export interface Cin7SaleDetail {
   Invoices?: Cin7SaleInvoice[];
   Order?: Cin7SaleOrder;
   Fulfilments?: Cin7SaleFulfilment[];
+  Attachments?: Cin7SaleAttachment[];
 }
 
 /**

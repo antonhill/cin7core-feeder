@@ -5,8 +5,11 @@ import type { OrderFulfillmentRow } from "@/reports/query";
 function row(overrides: Partial<OrderFulfillmentRow>): OrderFulfillmentRow {
   return {
     cin7_sale_id: "sale-1",
+    instance_id: "instance-1",
     order_number: "SO-1",
     customer_name: "Acme",
+    order_date: null,
+    days_open: null,
     ship_by: null,
     is_overdue: false,
     order_status: "AUTHORISED",

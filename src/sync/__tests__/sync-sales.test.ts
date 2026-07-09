@@ -175,6 +175,7 @@ describe("syncInstanceSales — list phase", () => {
     vi.mocked(fetchAllSalesList).mockResolvedValue([
       {
         SaleID: "sale-1",
+        OrderDate: "2026-06-20T00:00:00",
         OrderStatus: "AUTHORISED",
         CombinedInvoiceStatus: "INVOICED",
         CombinedPickingStatus: "PICKED",
@@ -196,6 +197,7 @@ describe("syncInstanceSales — list phase", () => {
     const upsertCall = calls.find((c) => c.table === "sales" && c.op === "upsert");
     const rows = upsertCall?.args[0] as Record<string, unknown>[];
     expect(rows[0]).toMatchObject({
+      order_date: "2026-06-20",
       order_status: "AUTHORISED",
       combined_invoice_status: "INVOICED",
       combined_picking_status: "PICKED",
@@ -306,12 +308,12 @@ describe("syncInstanceSales — detail phase", () => {
       Fulfilments: [
         {
           TaskID: "f1",
-          Pick: { Status: "AUTHORISED", Lines: [{ SKU: "SKU-A", Name: "Widget", Quantity: 2 }] },
+          Pick: { Status: "AUTHORISED", Lines: [{ SKU: "SKU-A", Name: "Widget", Quantity: 2, Location: "Main Warehouse", BatchSN: "BATCH-1" }] },
           Pack: { Status: "NOT AVAILABLE", Lines: [] },
         },
         {
           TaskID: "f2",
-          Pick: { Status: "AUTHORISED", Lines: [{ SKU: "SKU-B", Name: "Gadget", Quantity: 1 }] },
+          Pick: { Status: "AUTHORISED", Lines: [{ SKU: "SKU-B", Name: "Gadget", Quantity: 1, Location: "Overflow" }] },
           Pack: { Status: "AUTHORISED", Lines: [{ SKU: "SKU-B", Name: "Gadget", Quantity: 1 }] },
         },
       ],
@@ -321,11 +323,11 @@ describe("syncInstanceSales — detail phase", () => {
     await syncInstanceSales(db, "org1", "inst-1");
 
     const insertCall = calls.find((c) => c.table === "sale_pick_pack_lines" && c.op === "insert");
-    const rows = insertCall?.args[0] as { stage: string; product_sku: string; line_number: number }[];
+    const rows = insertCall?.args[0] as { stage: string; product_sku: string; line_number: number; location: string | null; batch_sn: string | null }[];
     expect(rows).toEqual([
-      expect.objectContaining({ stage: "pick", product_sku: "SKU-A", line_number: 0 }),
-      expect.objectContaining({ stage: "pick", product_sku: "SKU-B", line_number: 1 }),
-      expect.objectContaining({ stage: "pack", product_sku: "SKU-B", line_number: 0 }),
+      expect.objectContaining({ stage: "pick", product_sku: "SKU-A", line_number: 0, location: "Main Warehouse", batch_sn: "BATCH-1" }),
+      expect.objectContaining({ stage: "pick", product_sku: "SKU-B", line_number: 1, location: "Overflow", batch_sn: null }),
+      expect.objectContaining({ stage: "pack", product_sku: "SKU-B", line_number: 0, location: null, batch_sn: null }),
     ]);
   });
 
