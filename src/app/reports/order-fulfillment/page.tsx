@@ -65,6 +65,11 @@ export default function OrderFulfillmentPage() {
   const [tab, setTab] = useState<Tab>("pick");
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
 
+  const [search, setSearch] = useState("");
+  const [paymentFilter, setPaymentFilter] = useState("");
+  const [shipByFrom, setShipByFrom] = useState("");
+  const [shipByTo, setShipByTo] = useState("");
+
   const [isExporting, startExportTransition] = useTransition();
   const [exportError, setExportError] = useState<string | null>(null);
 
@@ -114,12 +119,29 @@ export default function OrderFulfillmentPage() {
     return map;
   }, [lines]);
 
+  const paymentStatusOptions = useMemo(() => {
+    if (!orders) return [];
+    return [...new Set(orders.map((o) => o.combined_payment_status).filter((s): s is string => Boolean(s)))].sort();
+  }, [orders]);
+
   const visibleRows = useMemo(() => {
     if (!orders) return [];
-    if (tab === "pick") return orders.filter((o) => o.is_pick_today);
-    if (tab === "ship") return orders.filter((o) => o.is_ship_today);
-    return orders;
-  }, [orders, tab]);
+    let rows = orders;
+    if (tab === "pick") rows = rows.filter((o) => o.is_pick_today);
+    else if (tab === "ship") rows = rows.filter((o) => o.is_ship_today);
+
+    const searchLower = search.trim().toLowerCase();
+    if (searchLower) {
+      rows = rows.filter(
+        (o) => (o.order_number ?? "").toLowerCase().includes(searchLower) || (o.customer_name ?? "").toLowerCase().includes(searchLower)
+      );
+    }
+    if (paymentFilter) rows = rows.filter((o) => o.combined_payment_status === paymentFilter);
+    if (shipByFrom) rows = rows.filter((o) => o.ship_by !== null && o.ship_by >= shipByFrom);
+    if (shipByTo) rows = rows.filter((o) => o.ship_by !== null && o.ship_by <= shipByTo);
+
+    return rows;
+  }, [orders, tab, search, paymentFilter, shipByFrom, shipByTo]);
 
   const counts = orders
     ? { pick: orders.filter((o) => o.is_pick_today).length, ship: orders.filter((o) => o.is_ship_today).length, all: orders.length }
@@ -207,7 +229,53 @@ export default function OrderFulfillmentPage() {
           </div>
           {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
 
-          {visibleRows.length === 0 && <p className="mt-4 text-sm text-slate-400">Nothing here right now.</p>}
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-slate-700">Search</span>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Order # or customer"
+                className="w-56 rounded-lg border border-slate-300 px-3 py-2"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-slate-700">Payment</span>
+              <select value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2">
+                <option value="">All</option>
+                {paymentStatusOptions.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-slate-700">Ship by from</span>
+              <input type="date" value={shipByFrom} onChange={(e) => setShipByFrom(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2" />
+            </label>
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-slate-700">Ship by to</span>
+              <input type="date" value={shipByTo} onChange={(e) => setShipByTo(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2" />
+            </label>
+            {(search || paymentFilter || shipByFrom || shipByTo) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  setPaymentFilter("");
+                  setShipByFrom("");
+                  setShipByTo("");
+                }}
+                className="rounded-full border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+
+          {visibleRows.length === 0 && <p className="mt-4 text-sm text-slate-400">Nothing matches these filters.</p>}
 
           {visibleRows.length > 0 && (
             <div className="mt-4 overflow-x-auto">
