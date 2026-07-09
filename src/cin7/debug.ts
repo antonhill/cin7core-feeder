@@ -1003,6 +1003,17 @@ export interface ProductAvailabilitySurvey {
   keyExamples: Record<string, unknown>;
   rawResponseKeys: string[];
   rawExample?: unknown;
+  /**
+   * All rows for the first SKU that appears more than once among the probed
+   * records (different Location/Bin/Batch) — settles whether `OnHand` is the
+   * real per-row quantity and `StockOnHand` a repeated per-SKU rollup, or the
+   * other way round. Confirmed live 2026-07-09 that the two fields carry
+   * very different magnitudes for the same row (OnHand=2 vs StockOnHand=660)
+   * with no spec explanation of which is which — summing the wrong one
+   * across a product's multiple location rows would badly over- or
+   * under-count total stock, so this can't be guessed.
+   */
+  multiRowSkuExample?: { sku: string; rows: Record<string, unknown>[] };
 }
 
 /**
@@ -1019,8 +1030,13 @@ export interface ProductAvailabilitySurvey {
  * non-zero quantities, to confirm whether a fully-stocked-out product still
  * appears in the list at all (the Stock Health report's stockout-detection
  * design depends on the answer).
+ *
+ * Confirmed live 2026-07-09: `StockValue` and `Category` (assumed from the
+ * spec) do NOT actually appear on this account's real response at all —
+ * dropped from the planned schema. `keys` is the authoritative field list,
+ * not the spec's.
  */
-export async function surveyProductAvailabilityFields(creds: Cin7Credentials, limit = 25): Promise<ProductAvailabilitySurvey> {
+export async function surveyProductAvailabilityFields(creds: Cin7Credentials, limit = 200): Promise<ProductAvailabilitySurvey> {
   const response = await cin7Request<Record<string, unknown>>(creds, "/ref/productavailability", {
     query: { Page: 1, Limit: limit },
   });
@@ -1040,6 +1056,16 @@ export async function surveyProductAvailabilityFields(creds: Cin7Credentials, li
   const keyExamples: Record<string, unknown> = {};
   collectKeys(records, keySet, keyExamples);
 
+  const rowsBySku = new Map<string, Record<string, unknown>[]>();
+  for (const record of records) {
+    const sku = typeof record.SKU === "string" ? record.SKU : undefined;
+    if (!sku) continue;
+    const existing = rowsBySku.get(sku);
+    if (existing) existing.push(record);
+    else rowsBySku.set(sku, [record]);
+  }
+  const multiSkuEntry = [...rowsBySku.entries()].find(([, rows]) => rows.length > 1);
+
   return {
     probed: records.length,
     listKey,
@@ -1047,5 +1073,6 @@ export async function surveyProductAvailabilityFields(creds: Cin7Credentials, li
     keyExamples,
     rawResponseKeys,
     rawExample: records[0],
+    multiRowSkuExample: multiSkuEntry ? { sku: multiSkuEntry[0], rows: multiSkuEntry[1] } : undefined,
   };
 }
