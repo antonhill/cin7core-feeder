@@ -161,6 +161,48 @@ export async function getReportFilterOptions(db: SupabaseClient, orgId: string):
   };
 }
 
+export interface InventoryMovementFilters {
+  instanceIds?: string[];
+  /** "YYYY-MM-DD" — inclusive. */
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+export interface InventoryMovementRow {
+  product_sku: string;
+  product_name: string | null;
+  qty_in_purchases: number;
+  qty_in_assemblies: number;
+  qty_out_sales: number;
+  qty_out_consumption: number;
+  total_in: number;
+  total_out: number;
+  net_change: number;
+  mover_category: "Fast" | "Medium" | "Slow" | "No movement";
+}
+
+/**
+ * Per-product in/out movement over a period (report_inventory_movement, 0027)
+ * — combines Purchases + Assembly Builds (in) with Sales + Assembly
+ * Consumption (out) and classifies each product Fast/Medium/Slow/No movement
+ * by outbound velocity, same "aggregate in Postgres" convention as the sales
+ * report RPCs.
+ */
+export async function getInventoryMovementReport(
+  db: SupabaseClient,
+  orgId: string,
+  filters: InventoryMovementFilters
+): Promise<InventoryMovementRow[]> {
+  const { data, error } = await db.rpc("report_inventory_movement", {
+    p_org_id: orgId,
+    p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
+    p_date_from: filters.dateFrom || null,
+    p_date_to: filters.dateTo || null,
+  });
+  if (error) throw new Error(`report_inventory_movement: ${error.message}`);
+  return data ?? [];
+}
+
 export interface SalesSyncStatus {
   totalSales: number;
   pendingDetail: number;

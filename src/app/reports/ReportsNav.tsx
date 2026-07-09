@@ -32,6 +32,10 @@ const REPORT_CATEGORIES: ReportCategory[] = [
       { href: "/reports/cost-estimator", label: "Production Cost Estimator" },
     ],
   },
+  {
+    label: "Inventory",
+    links: [{ href: "/reports/inventory-movement", label: "Inventory Movement" }],
+  },
 ];
 
 export function ReportsNav() {

@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getProductSalesReport, getProductSalesPivotData, getSaleLineDetails, getReportFilterOptions, getSalesSyncStatus } from "@/reports/query";
+import {
+  getProductSalesReport,
+  getProductSalesPivotData,
+  getSaleLineDetails,
+  getReportFilterOptions,
+  getSalesSyncStatus,
+  getInventoryMovementReport,
+} from "@/reports/query";
 
 describe("getProductSalesReport", () => {
   it("calls the report_sales_by_product RPC with null defaults for unset filters", async () => {
@@ -216,6 +223,47 @@ describe("getReportFilterOptions", () => {
     expect(options.instances).toEqual([{ id: "inst-1", name: "Spark Demo" }]);
     expect(options.locations).toEqual(["Main Warehouse", "Secondary"]);
     expect(options.categories).toEqual([{ code: "WIDGETS", name: "Widgets" }]);
+  });
+});
+
+describe("getInventoryMovementReport", () => {
+  it("calls the report_inventory_movement RPC with null defaults for unset filters", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [{ product_sku: "SKU-1", total_out: 10 }], error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+
+    const rows = await getInventoryMovementReport(db, "org1", {});
+
+    expect(rows).toEqual([{ product_sku: "SKU-1", total_out: 10 }]);
+    expect(rpc).toHaveBeenCalledWith("report_inventory_movement", {
+      p_org_id: "org1",
+      p_instance_ids: null,
+      p_date_from: null,
+      p_date_to: null,
+    });
+  });
+
+  it("passes through every provided filter", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+
+    await getInventoryMovementReport(db, "org1", {
+      instanceIds: ["inst-1", "inst-2"],
+      dateFrom: "2026-01-01",
+      dateTo: "2026-06-30",
+    });
+
+    expect(rpc).toHaveBeenCalledWith("report_inventory_movement", {
+      p_org_id: "org1",
+      p_instance_ids: ["inst-1", "inst-2"],
+      p_date_from: "2026-01-01",
+      p_date_to: "2026-06-30",
+    });
+  });
+
+  it("throws with the underlying error message on failure", async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: "boom" } });
+    const db = { rpc } as unknown as SupabaseClient;
+    await expect(getInventoryMovementReport(db, "org1", {})).rejects.toThrow("report_inventory_movement: boom");
   });
 });
 

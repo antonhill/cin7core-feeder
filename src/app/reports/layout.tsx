@@ -22,10 +22,11 @@ export default function ReportsLayout({
       <ModuleHeader module={REPORTS_MODULE}>
         A hub for every report pulled from your connected Cin7 instances — Sales
         (revenue/COGS/profit/margin%, pivotable, exportable), Current Assembly
-        Costs (quantity + total BOM cost, filterable by status), and Production
+        Costs (quantity + total BOM cost, filterable by status), Production
         Cost Estimator (re-prices every Assembly or Production BOM&rsquo;s
-        components under Average/Latest/Fixed cost, exportable), with more
-        report types to come.
+        components under Average/Latest/Fixed cost, exportable), and Inventory
+        Movement (in/out per product over an adjustable period, with a
+        Fast/Medium/Slow mover classification), with more report types to come.
       </ModuleHeader>
       <div className="mt-6 flex items-start gap-8">
         <ReportsNav />
