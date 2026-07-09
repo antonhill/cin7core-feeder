@@ -157,216 +157,221 @@ export default function CustomReportPage() {
       </ReportDescription>
       <PageLoadingIndicator show={isExporting} label="Exporting to Excel…" />
 
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
-        <aside className="w-full shrink-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:w-64">
-          <p className="font-medium text-slate-900">Saved reports</p>
-          {savedError && <p className="mt-2 text-sm text-red-600">{savedError}</p>}
-          {savedReports.length === 0 && <p className="mt-2 text-sm text-slate-400">None saved yet.</p>}
-          <div className="mt-3 flex flex-col gap-2">
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <p className="font-medium text-slate-900">Saved reports</p>
+        {savedError && <p className="mt-2 text-sm text-red-600">{savedError}</p>}
+        {savedReports.length === 0 && <p className="mt-2 text-sm text-slate-400">None saved yet.</p>}
+        {savedReports.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2">
             {savedReports.map((saved) => (
-              <div key={saved.id} className="rounded-lg border border-slate-100 p-2.5">
-                <button type="button" onClick={() => handleLoadSaved(saved)} className="block text-left text-sm font-medium text-indigo-700 hover:underline">
+              <div key={saved.id} className="flex items-center gap-2 rounded-full border border-slate-200 py-1 pl-3.5 pr-2 text-sm">
+                <button type="button" onClick={() => handleLoadSaved(saved)} className="font-medium text-indigo-700 hover:underline">
                   {saved.name}
                 </button>
-                <p className="mt-0.5 text-xs text-slate-400">{REPORT_SOURCES[saved.source].label}</p>
-                <button type="button" onClick={() => handleDeleteSaved(saved.id)} className="mt-1 text-xs text-slate-400 hover:text-red-600">
-                  Delete
+                <span className="text-xs text-slate-400">{REPORT_SOURCES[saved.source].label}</span>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteSaved(saved.id)}
+                  className="rounded-full px-1.5 text-xs text-slate-400 hover:bg-slate-100 hover:text-red-600"
+                  aria-label={`Delete ${saved.name}`}
+                >
+                  ×
                 </button>
               </div>
             ))}
           </div>
-        </aside>
+        )}
+      </section>
 
-        <div className="min-w-0 flex-1">
-          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="font-medium text-slate-900">Build a report</p>
+      <div className="mt-6">
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="font-medium text-slate-900">Build a report</p>
 
-            <label className="mt-4 flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">Data source</span>
-              <select
-                value={source}
-                onChange={(e) => {
-                  setSource(e.target.value as ReportSourceKey);
-                  setDimensionKeys([]);
-                  setMeasureKeys([]);
-                  setResult(null);
-                }}
-                className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2"
-              >
-                {REPORT_SOURCE_KEYS.map((key) => (
-                  <option key={key} value={key}>
-                    {REPORT_SOURCES[key].label}
-                  </option>
+          <label className="mt-4 flex flex-col gap-1.5 text-sm">
+            <span className="font-medium text-slate-700">Data source</span>
+            <select
+              value={source}
+              onChange={(e) => {
+                setSource(e.target.value as ReportSourceKey);
+                setDimensionKeys([]);
+                setMeasureKeys([]);
+                setResult(null);
+              }}
+              className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2"
+            >
+              {REPORT_SOURCE_KEYS.map((key) => (
+                <option key={key} value={key}>
+                  {REPORT_SOURCES[key].label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <span className="text-sm font-medium text-slate-700">Group by (dimensions)</span>
+              <div className="mt-2 flex flex-col gap-1.5">
+                {sourceConfig.dimensions.map((dim) => (
+                  <label key={dim.key} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={dimensionKeys.includes(dim.key)}
+                      onChange={() => setDimensionKeys((prev) => toggleInArray(prev, dim.key))}
+                      className="h-4 w-4"
+                    />
+                    {dim.label}
+                  </label>
                 ))}
-              </select>
-            </label>
-
-            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <span className="text-sm font-medium text-slate-700">Group by (dimensions)</span>
-                <div className="mt-2 flex flex-col gap-1.5">
-                  {sourceConfig.dimensions.map((dim) => (
-                    <label key={dim.key} className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={dimensionKeys.includes(dim.key)}
-                        onChange={() => setDimensionKeys((prev) => toggleInArray(prev, dim.key))}
-                        className="h-4 w-4"
-                      />
-                      {dim.label}
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <span className="text-sm font-medium text-slate-700">Measures</span>
-                <div className="mt-2 flex flex-col gap-1.5">
-                  {sourceConfig.measures.map((measure) => (
-                    <label key={measure.key} className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={measureKeys.includes(measure.key)}
-                        onChange={() => setMeasureKeys((prev) => toggleInArray(prev, measure.key))}
-                        className="h-4 w-4"
-                      />
-                      {measure.label}
-                    </label>
-                  ))}
-                </div>
               </div>
             </div>
 
-            <div className="mt-4 grid grid-cols-1 gap-4 border-t border-slate-100 pt-4 sm:grid-cols-2">
-              <div>
-                <span className="text-sm font-medium text-slate-700">Instance(s)</span>
-                <div className="mt-2 flex flex-col gap-1.5">
-                  {(options?.instances ?? []).map((inst) => (
-                    <label key={inst.id} className="flex items-center gap-2 text-sm">
-                      <input type="checkbox" checked={instanceIds.includes(inst.id)} onChange={() => toggleInstance(inst.id)} className="h-4 w-4" />
-                      {inst.name}
-                    </label>
-                  ))}
-                  {options && options.instances.length === 0 && <p className="text-sm text-slate-400">No instances connected.</p>}
-                </div>
+            <div>
+              <span className="text-sm font-medium text-slate-700">Measures</span>
+              <div className="mt-2 flex flex-col gap-1.5">
+                {sourceConfig.measures.map((measure) => (
+                  <label key={measure.key} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={measureKeys.includes(measure.key)}
+                      onChange={() => setMeasureKeys((prev) => toggleInArray(prev, measure.key))}
+                      className="h-4 w-4"
+                    />
+                    {measure.label}
+                  </label>
+                ))}
               </div>
+            </div>
+          </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <label className="flex flex-col gap-1.5 text-sm">
-                  <span className="font-medium text-slate-700">From</span>
-                  <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2" />
-                </label>
-                <label className="flex flex-col gap-1.5 text-sm">
-                  <span className="font-medium text-slate-700">To</span>
-                  <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2" />
-                </label>
+          <div className="mt-4 grid grid-cols-1 gap-4 border-t border-slate-100 pt-4 sm:grid-cols-2">
+            <div>
+              <span className="text-sm font-medium text-slate-700">Instance(s)</span>
+              <div className="mt-2 flex flex-col gap-1.5">
+                {(options?.instances ?? []).map((inst) => (
+                  <label key={inst.id} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={instanceIds.includes(inst.id)} onChange={() => toggleInstance(inst.id)} className="h-4 w-4" />
+                    {inst.name}
+                  </label>
+                ))}
+                {options && options.instances.length === 0 && <p className="text-sm text-slate-400">No instances connected.</p>}
               </div>
             </div>
 
-            <div className="mt-5 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={handleRunReport}
-                disabled={isRunning || (!dimensionKeys.length && !measureKeys.length)}
-                className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-              >
-                {isRunning && <Spinner className="mr-1.5" />}
-                {isRunning ? "Running…" : "Run report"}
-              </button>
-
-              <input
-                type="text"
-                value={reportName}
-                onChange={(e) => setReportName(e.target.value)}
-                placeholder="Name this report to save it"
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={isSaving || !reportName.trim()}
-                className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                {isSaving ? "Saving…" : "Save"}
-              </button>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="flex flex-col gap-1.5 text-sm">
+                <span className="font-medium text-slate-700">From</span>
+                <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2" />
+              </label>
+              <label className="flex flex-col gap-1.5 text-sm">
+                <span className="font-medium text-slate-700">To</span>
+                <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2" />
+              </label>
             </div>
+          </div>
 
-            {reportError && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{reportError}</p>}
-            {saveError && <p className="mt-2 text-sm text-red-600">{saveError}</p>}
-            {optionsError && <p className="mt-2 text-sm text-red-600">{optionsError}</p>}
-          </section>
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={handleRunReport}
+              disabled={isRunning || (!dimensionKeys.length && !measureKeys.length)}
+              className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {isRunning && <Spinner className="mr-1.5" />}
+              {isRunning ? "Running…" : "Run report"}
+            </button>
 
-          {result && (
-            <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="font-medium text-slate-900">
-                  {result.rows.length} row{result.rows.length === 1 ? "" : "s"}
-                </p>
-                {result.rows.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleExport}
-                    disabled={isExporting}
-                    className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    {isExporting ? "Exporting…" : "Export to Excel"}
-                  </button>
-                )}
-              </div>
-              {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
-              {result.rows.length === 0 && <p className="mt-2 text-sm text-slate-400">No data matches these filters.</p>}
+            <input
+              type="text"
+              value={reportName}
+              onChange={(e) => setReportName(e.target.value)}
+              placeholder="Name this report to save it"
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            />
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={isSaving || !reportName.trim()}
+              className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              {isSaving ? "Saving…" : "Save"}
+            </button>
+          </div>
 
+          {reportError && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{reportError}</p>}
+          {saveError && <p className="mt-2 text-sm text-red-600">{saveError}</p>}
+          {optionsError && <p className="mt-2 text-sm text-red-600">{optionsError}</p>}
+        </section>
+
+        {result && (
+          <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="font-medium text-slate-900">
+                {result.rows.length} row{result.rows.length === 1 ? "" : "s"}
+              </p>
               {result.rows.length > 0 && (
-                <div className="mt-4 overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-slate-500">
-                        {dimensionLabels.map((label) => (
-                          <th key={label} className="py-2 pr-4">
-                            {label}
-                          </th>
-                        ))}
-                        {measureLabels.map((label) => (
-                          <th key={label} className="py-2 pr-4 text-right">
-                            {label}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.rows.map((row, i) => (
-                        <tr key={i} className="border-b border-slate-100">
-                          {row.dimensionValues.map((value, j) => (
-                            <td key={j} className="py-2 pr-4">
-                              {value}
-                            </td>
-                          ))}
-                          {row.measureValues.map((value, j) => (
-                            <td key={j} className="py-2 pr-4 text-right">
-                              {formatMeasure(value)}
-                            </td>
-                          ))}
-                        </tr>
+                <button
+                  type="button"
+                  onClick={handleExport}
+                  disabled={isExporting}
+                  className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {isExporting ? "Exporting…" : "Export to Excel"}
+                </button>
+              )}
+            </div>
+            {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
+            {result.rows.length === 0 && <p className="mt-2 text-sm text-slate-400">No data matches these filters.</p>}
+
+            {result.rows.length > 0 && (
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-slate-500">
+                      {dimensionLabels.map((label) => (
+                        <th key={label} className="py-2 pr-4">
+                          {label}
+                        </th>
                       ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t border-slate-200 font-semibold text-slate-700">
-                        <td className="py-2 pr-4" colSpan={Math.max(dimensionLabels.length, 1)}>
-                          Total
-                        </td>
-                        {result.totals.map((value, j) => (
+                      {measureLabels.map((label) => (
+                        <th key={label} className="py-2 pr-4 text-right">
+                          {label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.rows.map((row, i) => (
+                      <tr key={i} className="border-b border-slate-100">
+                        {row.dimensionValues.map((value, j) => (
+                          <td key={j} className="py-2 pr-4">
+                            {value}
+                          </td>
+                        ))}
+                        {row.measureValues.map((value, j) => (
                           <td key={j} className="py-2 pr-4 text-right">
                             {formatMeasure(value)}
                           </td>
                         ))}
                       </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              )}
-            </section>
-          )}
-        </div>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t border-slate-200 font-semibold text-slate-700">
+                      <td className="py-2 pr-4" colSpan={Math.max(dimensionLabels.length, 1)}>
+                        Total
+                      </td>
+                      {result.totals.map((value, j) => (
+                        <td key={j} className="py-2 pr-4 text-right">
+                          {formatMeasure(value)}
+                        </td>
+                      ))}
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
       </div>
     </>
   );
