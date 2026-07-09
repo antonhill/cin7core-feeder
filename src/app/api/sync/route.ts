@@ -4,8 +4,13 @@ import { syncOrgInstances } from "@/sync/sync-org";
 import { assertInternalAuth, UnauthorizedError } from "@/lib/internal-auth";
 
 // Cin7's own limit is 60 calls/min; a catalogue with real volume can take
-// well over the default function timeout to sync at 1 req/sec.
-export const maxDuration = 60;
+// well over the default function timeout to sync at 1 req/sec. Confirmed
+// live 2026-07-09 (Vercel logs) that the previous 60s cap was too low —
+// every org/instance syncs in one unscoped pass here, so 300s (Vercel Pro's
+// serverless function ceiling) buys real headroom. If data volume grows
+// enough that even this isn't sufficient, the durable fix is scoping this
+// to one org per invocation rather than raising the ceiling further.
+export const maxDuration = 300;
 
 /**
  * GET — the Vercel Cron entry point (crons always call GET and Vercel
