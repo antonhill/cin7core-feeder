@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
-import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail, surveyPurchaseDetailFields, surveyProductAvailabilityFields, surveySaleFulfillmentFields } from "@/cin7/debug";
+import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail, surveyPurchaseDetailFields, surveyProductAvailabilityFields, surveySaleFulfillmentFields, surveyBackorderEtaFields } from "@/cin7/debug";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
@@ -362,6 +362,17 @@ export async function debugSurveySaleFulfillmentFields(instanceId: string): Prom
   try {
     const creds = await loadInstanceCreds(instanceId);
     const result = await surveySaleFulfillmentFields(creds);
+    return { ok: true, message: JSON.stringify(result, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/** Blocking Step 0 for a possible "backorder ETA" feature — confirms whether GET /purchase (or /advanced-purchase)'s Order.Lines[] carries any per-line expected-date field, or whether the purchase-order-level RequiredBy (already synced) is the only ETA Cin7 exposes at all, before designing any schema/UI around it. */
+export async function debugSurveyBackorderEtaFields(instanceId: string): Promise<TestConnectionResult> {
+  try {
+    const creds = await loadInstanceCreds(instanceId);
+    const result = await surveyBackorderEtaFields(creds);
     return { ok: true, message: JSON.stringify(result, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };

@@ -19,6 +19,7 @@ import {
   debugSurveyPurchaseDetailFields,
   debugSurveyProductAvailabilityFields,
   debugSurveySaleFulfillmentFields,
+  debugSurveyBackorderEtaFields,
   debugProbeWorkCentrePaths,
   debugPushOneCustomerAndSupplier,
   deleteInstance,
@@ -257,6 +258,14 @@ function InstancesSettingsPageInner() {
     });
   }
 
+  function handleSurveyBackorderEtaFields(instanceId: string) {
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Surveying backorder ETA fields (multiple calls)…" } }));
+    startTransition(async () => {
+      const result = await debugSurveyBackorderEtaFields(instanceId);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
   function handleDelete(instanceId: string) {
     if (!confirm("Delete this Cin7 Core instance connection?")) return;
     setError(null);
@@ -438,6 +447,13 @@ function InstancesSettingsPageInner() {
                 className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Survey sale fulfillment fields (Order Fulfillment Dashboard)
+              </button>
+              <button
+                onClick={() => handleSurveyBackorderEtaFields(inst.id)}
+                disabled={isPending}
+                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Survey backorder ETA fields (Order Fulfillment Dashboard)
               </button>
             </div>
             {testResults[inst.id] && (

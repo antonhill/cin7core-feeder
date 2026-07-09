@@ -1182,3 +1182,101 @@ export async function surveySaleFulfillmentFields(creds: Cin7Credentials, maxToP
     rawDetailExample,
   };
 }
+
+export interface BackorderEtaCheck {
+  orderNumber: string;
+  purchaseId: string;
+  combinedReceivingStatus?: string;
+  /** The order-level ETA already synced via fetchAllPurchasesList — captured here for side-by-side comparison against whatever (if anything) turns up per-line below. */
+  requiredBy?: string | null;
+  source?: "purchase" | "advanced-purchase";
+  orderLineCount: number;
+  error?: string;
+}
+
+export interface BackorderEtaSurvey {
+  probed: number;
+  checks: BackorderEtaCheck[];
+  orderLineKeys: string[];
+  orderLineKeyExamples: Record<string, unknown>;
+  /** The first probed response from a genuinely NOT RECEIVED order (zero received so far) — the one case surveyPurchaseDetailFields never checked, since it filtered those out (nothing to see in StockReceived there). A fully open PO is exactly what a backorder-ETA feature needs to reference for a still-fully-outstanding line, so it's worth confirming the response shape holds up here too rather than assuming it generalizes from partially-received orders. */
+  rawExampleNotReceived?: unknown;
+}
+
+/**
+ * Diagnostic only. The open question for a possible "backorder ETA"
+ * dashboard feature (surface which open purchase order a backordered sale
+ * line's stock is expected on, and when): does GET /purchase (or
+ * /advanced-purchase)'s Order.Lines[] carry any PER-LINE expected-date
+ * field, or is `RequiredBy` (already synced at the purchase-order level via
+ * fetchAllPurchasesList) the only ETA Cin7 exposes at all? If it's
+ * order-level only, every SKU on that PO simply shares one ETA — not
+ * actually a blocker, just a coarser feature than a per-line date would
+ * allow. surveyPurchaseDetailFields already confirmed Order.Lines[] exists
+ * with SKU/Quantity, but only checked partially/fully-received orders
+ * (irrelevant to StockReceived's own survey); this specifically probes
+ * NOT RECEIVED / PARTIALLY RECEIVED orders instead, and reports the
+ * order-level RequiredBy alongside each check for direct comparison.
+ */
+export async function surveyBackorderEtaFields(creds: Cin7Credentials, maxToProbe = 8): Promise<BackorderEtaSurvey> {
+  const purchases = await fetchAllPurchasesList(creds);
+  const candidates = purchases
+    .filter((p) => p.CombinedReceivingStatus === "NOT RECEIVED" || p.CombinedReceivingStatus === "PARTIALLY RECEIVED")
+    .slice(0, maxToProbe);
+
+  const orderLineKeySet = new Set<string>();
+  const orderLineKeyExamples: Record<string, unknown> = {};
+  const checks: BackorderEtaCheck[] = [];
+  let rawExampleNotReceived: unknown;
+
+  for (const purchase of candidates) {
+    let source: "purchase" | "advanced-purchase" = "purchase";
+    try {
+      let response: Record<string, unknown>;
+      try {
+        response = await cin7Request<Record<string, unknown>>(creds, "/purchase", {
+          query: { ID: purchase.ID, CombineAdditionalCharges: "false" },
+        });
+      } catch (e) {
+        const isAdvancedPurchaseOnly = e instanceof Cin7ApiError && /Advanced Purchase/i.test(e.message);
+        if (!isAdvancedPurchaseOnly) throw e;
+        source = "advanced-purchase";
+        response = await cin7Request<Record<string, unknown>>(creds, "/advanced-purchase", {
+          query: { ID: purchase.ID, CombineAdditionalCharges: "false" },
+        });
+      }
+
+      const order = response.Order as Record<string, unknown> | undefined;
+      const orderLines = Array.isArray(order?.Lines) ? (order.Lines as Record<string, unknown>[]) : [];
+      collectKeys(orderLines, orderLineKeySet, orderLineKeyExamples);
+
+      if (rawExampleNotReceived === undefined && purchase.CombinedReceivingStatus === "NOT RECEIVED") rawExampleNotReceived = response;
+
+      checks.push({
+        orderNumber: purchase.OrderNumber ?? purchase.ID,
+        purchaseId: purchase.ID,
+        combinedReceivingStatus: purchase.CombinedReceivingStatus,
+        requiredBy: purchase.RequiredBy,
+        source,
+        orderLineCount: orderLines.length,
+      });
+    } catch (e) {
+      checks.push({
+        orderNumber: purchase.OrderNumber ?? purchase.ID,
+        purchaseId: purchase.ID,
+        combinedReceivingStatus: purchase.CombinedReceivingStatus,
+        requiredBy: purchase.RequiredBy,
+        orderLineCount: 0,
+        error: e instanceof Error ? e.message : "Unknown error",
+      });
+    }
+  }
+
+  return {
+    probed: checks.length,
+    checks,
+    orderLineKeys: [...orderLineKeySet].sort(),
+    orderLineKeyExamples,
+    rawExampleNotReceived,
+  };
+}
