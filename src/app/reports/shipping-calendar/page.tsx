@@ -42,21 +42,17 @@ function qty(value: number): string {
 
 function OrderCard({
   order,
-  lines,
-  isExpanded,
   effectiveShipBy,
   isPending,
   error,
-  onToggleExpand,
+  onOpenDetail,
   onReschedule,
 }: {
   order: OrderFulfillmentRow;
-  lines: OrderFulfillmentLineRow[];
-  isExpanded: boolean;
   effectiveShipBy: string;
   isPending: boolean;
   error?: string;
-  onToggleExpand: (saleId: string) => void;
+  onOpenDetail: (saleId: string) => void;
   onReschedule: (saleId: string, newDate: string) => void;
 }) {
   const level = readiness(order);
@@ -67,8 +63,8 @@ function OrderCard({
         e.dataTransfer.setData("text/plain", order.cin7_sale_id);
         e.dataTransfer.effectAllowed = "move";
       }}
-      onClick={() => onToggleExpand(order.cin7_sale_id)}
-      className={`rounded-lg border bg-white p-2 text-xs shadow-sm transition ${
+      onClick={() => onOpenDetail(order.cin7_sale_id)}
+      className={`min-w-0 overflow-hidden rounded-lg border bg-white p-1.5 text-[11px] shadow-sm transition ${
         isPending ? "opacity-50" : "cursor-grab active:cursor-grabbing"
       } ${error ? "border-rose-300" : "border-slate-200"}`}
     >
@@ -97,37 +93,16 @@ function OrderCard({
           Failed — reverted
         </div>
       )}
-      <label className="mt-1.5 flex items-center gap-1 text-slate-400" onClick={(e) => e.stopPropagation()}>
-        Move to
+      <label className="mt-1.5 flex flex-col gap-0.5 text-slate-400" onClick={(e) => e.stopPropagation()}>
+        <span>Move to</span>
         <input
           type="date"
           value={effectiveShipBy}
           disabled={isPending}
           onChange={(e) => e.target.value && onReschedule(order.cin7_sale_id, e.target.value)}
-          className="rounded border border-slate-200 px-1 py-0.5 text-slate-600 disabled:opacity-50"
+          className="w-full min-w-0 rounded border border-slate-200 px-1 py-0.5 text-[11px] text-slate-600 disabled:opacity-50"
         />
       </label>
-      {isExpanded && (
-        <div className="mt-1.5 border-t border-slate-100 pt-1.5" onClick={(e) => e.stopPropagation()}>
-          {lines.length === 0 ? (
-            <p className="text-slate-400">No line detail synced for this order yet.</p>
-          ) : (
-            <ul className="flex flex-col gap-0.5">
-              {lines.map((line, i) => (
-                <li key={i} className="flex items-baseline justify-between gap-2 text-slate-600">
-                  <span className="truncate">
-                    {line.product_sku} {line.product_name ? `— ${line.product_name}` : ""}
-                  </span>
-                  <span className="shrink-0 whitespace-nowrap">
-                    {qty(line.ordered_qty)}
-                    {line.backorder_qty > 0 && <span className="ml-1 text-rose-500">({qty(line.backorder_qty)} bo)</span>}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -135,13 +110,11 @@ function OrderCard({
 function DayColumn({
   day,
   orders,
-  linesBySaleId,
   isToday,
   isDraggedOver,
-  expandedSaleId,
   onDragOverDay,
   onDragLeaveDay,
-  onToggleExpand,
+  onOpenDetail,
   onReschedule,
   shipByOverrides,
   pendingSaleIds,
@@ -149,13 +122,11 @@ function DayColumn({
 }: {
   day: string;
   orders: OrderFulfillmentRow[];
-  linesBySaleId: Map<string, OrderFulfillmentLineRow[]>;
   isToday: boolean;
   isDraggedOver: boolean;
-  expandedSaleId: string | null;
   onDragOverDay: (day: string) => void;
   onDragLeaveDay: (day: string) => void;
-  onToggleExpand: (saleId: string) => void;
+  onOpenDetail: (saleId: string) => void;
   onReschedule: (saleId: string, newDate: string) => void;
   shipByOverrides: Record<string, string>;
   pendingSaleIds: Set<string>;
@@ -174,7 +145,7 @@ function DayColumn({
         onDragLeaveDay(day);
         if (saleId) onReschedule(saleId, day);
       }}
-      className={`flex min-h-[220px] flex-col gap-1.5 rounded-xl border p-2 ${
+      className={`flex min-h-[220px] min-w-0 flex-col gap-1.5 overflow-hidden rounded-xl border p-2 ${
         isDraggedOver ? "border-indigo-400 bg-indigo-50" : isToday ? "border-indigo-200 bg-indigo-50/40" : "border-slate-200 bg-slate-50"
       }`}
     >
@@ -186,15 +157,87 @@ function DayColumn({
         <OrderCard
           key={order.cin7_sale_id}
           order={order}
-          lines={linesBySaleId.get(order.cin7_sale_id) ?? []}
-          isExpanded={expandedSaleId === order.cin7_sale_id}
           effectiveShipBy={shipByOverrides[order.cin7_sale_id] ?? order.ship_by ?? day}
           isPending={pendingSaleIds.has(order.cin7_sale_id)}
           error={writeErrors[order.cin7_sale_id]}
-          onToggleExpand={onToggleExpand}
+          onOpenDetail={onOpenDetail}
           onReschedule={onReschedule}
         />
       ))}
+    </div>
+  );
+}
+
+/** Order detail (all 5 Combined*Status fields + full line-level SKU table) doesn't fit readably inside a ~180px kanban card at any font size — shown full-width in a modal instead, same pattern as Order Fulfillment's own Batch Pick List modal. */
+function OrderDetailModal({
+  order,
+  lines,
+  onClose,
+}: {
+  order: OrderFulfillmentRow;
+  lines: OrderFulfillmentLineRow[];
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50" onClick={onClose}>
+      <div className="mx-auto my-8 max-w-2xl rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">{order.order_number ?? order.cin7_sale_id}</h2>
+            <p className="text-sm text-slate-500">{order.customer_name}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="flex flex-wrap gap-1.5">
+          <StatusBadge status={order.combined_picking_status} />
+          <StatusBadge status={order.combined_packing_status} />
+          <StatusBadge status={order.combined_shipping_status} />
+          <StatusBadge status={order.combined_invoice_status} />
+          <StatusBadge status={order.combined_payment_status} />
+        </div>
+
+        <p className="mt-3 text-sm text-slate-600">
+          Ship By: <span className="font-medium text-slate-900">{order.ship_by ?? "—"}</span>
+          {order.is_overdue && (
+            <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">Overdue</span>
+          )}
+        </p>
+
+        <h3 className="mt-6 mb-2 text-sm font-semibold text-slate-700">Order lines</h3>
+        {lines.length === 0 ? (
+          <p className="text-sm text-slate-400">No line detail synced for this order yet.</p>
+        ) : (
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 text-slate-500">
+                <th className="py-1.5 pr-4">SKU</th>
+                <th className="py-1.5 pr-4">Product</th>
+                <th className="py-1.5 pr-4 text-right">Ordered</th>
+                <th className="py-1.5 pr-4 text-right">Backorder</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((line, i) => (
+                <tr key={i} className="border-b border-slate-100 last:border-0">
+                  <td className="py-1.5 pr-4">{line.product_sku}</td>
+                  <td className="py-1.5 pr-4">{line.product_name ?? "—"}</td>
+                  <td className="py-1.5 pr-4 text-right">{qty(line.ordered_qty)}</td>
+                  <td className="py-1.5 pr-4 text-right">
+                    {line.backorder_qty > 0 ? <span className="font-semibold text-rose-600">{qty(line.backorder_qty)}</span> : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   );
 }
@@ -207,7 +250,7 @@ export default function ShippingCalendarPage() {
   const [isLoading, startLoadTransition] = useTransition();
 
   const [search, setSearch] = useState("");
-  const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
+  const [detailSaleId, setDetailSaleId] = useState<string | null>(null);
 
   // Applied instantly on drop so the card visibly moves before the Cin7
   // write-back round-trip resolves; reverted if the write fails.
@@ -262,6 +305,7 @@ export default function ShippingCalendarPage() {
   }, [searchedOrders, days, shipByOverrides]);
 
   const unscheduledCount = searchedOrders.filter((o) => !o.ship_by).length;
+  const detailOrder = detailSaleId ? (orders ?? []).find((o) => o.cin7_sale_id === detailSaleId) : undefined;
 
   /** Shared by both the drag-drop and the per-card date picker — a drop target is always a day already on screen, but the date picker can name any date, including one in a different week (jumped to below so the moved card is visible right away). */
   function handleReschedule(saleId: string, newDate: string) {
@@ -295,10 +339,6 @@ export default function ShippingCalendarPage() {
         setWriteErrors((prev) => ({ ...prev, [saleId]: result.error ?? "Unknown error" }));
       }
     });
-  }
-
-  function handleToggleExpand(saleId: string) {
-    setExpandedSaleId((cur) => (cur === saleId ? null : saleId));
   }
 
   return (
@@ -363,13 +403,11 @@ export default function ShippingCalendarPage() {
                 key={day}
                 day={day}
                 orders={ordersByDay.get(day) ?? []}
-                linesBySaleId={linesBySaleId}
                 isToday={day === today}
                 isDraggedOver={draggedOverDay === day}
-                expandedSaleId={expandedSaleId}
                 onDragOverDay={setDraggedOverDay}
                 onDragLeaveDay={(d) => setDraggedOverDay((cur) => (cur === d ? null : cur))}
-                onToggleExpand={handleToggleExpand}
+                onOpenDetail={setDetailSaleId}
                 onReschedule={handleReschedule}
                 shipByOverrides={shipByOverrides}
                 pendingSaleIds={pendingSaleIds}
@@ -379,6 +417,14 @@ export default function ShippingCalendarPage() {
           </div>
         )}
       </section>
+
+      {detailOrder && (
+        <OrderDetailModal
+          order={detailOrder}
+          lines={linesBySaleId.get(detailOrder.cin7_sale_id) ?? []}
+          onClose={() => setDetailSaleId(null)}
+        />
+      )}
     </>
   );
 }
