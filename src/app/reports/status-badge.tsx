@@ -20,7 +20,14 @@ export function statusBadgeClass(status: string | null): string {
   return "bg-emerald-100 text-emerald-700";
 }
 
-export function StatusBadge({ status }: { status: string | null }) {
+export function StatusBadge({ status, wrap = false }: { status: string | null; wrap?: boolean }) {
   if (!status) return <span className="text-xs text-slate-300">—</span>;
-  return <span className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold ${statusBadgeClass(status)}`}>{status}</span>;
+  // Table cells are wide enough that a status pill should never wrap (whitespace-nowrap keeps it tidy); a kanban card is not, and its overflow-hidden was silently clipping the tail of a long status instead of showing it — wrap lets the text break onto a second line in that context instead.
+  return (
+    <span
+      className={`inline-block max-w-full rounded-full px-2 py-0.5 text-xs font-semibold ${wrap ? "whitespace-normal break-words" : "whitespace-nowrap"} ${statusBadgeClass(status)}`}
+    >
+      {status}
+    </span>
+  );
 }

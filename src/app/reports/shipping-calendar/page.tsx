@@ -43,20 +43,16 @@ function qty(value: number): string {
 function OrderCard({
   order,
   instanceName,
-  effectiveShipBy,
   isPending,
   error,
   onOpenDetail,
-  onReschedule,
 }: {
   order: OrderFulfillmentRow;
   /** Only passed when more than one instance is connected — a single-instance org has no need for the label. */
   instanceName?: string;
-  effectiveShipBy: string;
   isPending: boolean;
   error?: string;
   onOpenDetail: (saleId: string) => void;
-  onReschedule: (saleId: string, newDate: string) => void;
 }) {
   const level = readiness(order);
   return (
@@ -83,8 +79,8 @@ function OrderCard({
         </div>
       </div>
       <div className="mt-1 flex flex-wrap gap-1">
-        <StatusBadge status={order.combined_invoice_status} />
-        <StatusBadge status={order.combined_payment_status} />
+        <StatusBadge status={order.combined_invoice_status} wrap />
+        <StatusBadge status={order.combined_payment_status} wrap />
       </div>
       {order.is_overdue && <div className="mt-1 font-semibold text-rose-600">Overdue</div>}
       {isPending && (
@@ -97,16 +93,6 @@ function OrderCard({
           Failed — reverted
         </div>
       )}
-      <label className="mt-1.5 flex flex-col gap-0.5 text-slate-400" onClick={(e) => e.stopPropagation()}>
-        <span>Move to</span>
-        <input
-          type="date"
-          value={effectiveShipBy}
-          disabled={isPending}
-          onChange={(e) => e.target.value && onReschedule(order.cin7_sale_id, e.target.value)}
-          className="w-full min-w-0 rounded border border-slate-200 px-1 py-0.5 text-[11px] text-slate-600 disabled:opacity-50"
-        />
-      </label>
     </div>
   );
 }
@@ -122,7 +108,6 @@ function DayColumn({
   onDragLeaveDay,
   onOpenDetail,
   onReschedule,
-  shipByOverrides,
   pendingSaleIds,
   writeErrors,
 }: {
@@ -136,7 +121,6 @@ function DayColumn({
   onDragLeaveDay: (day: string) => void;
   onOpenDetail: (saleId: string) => void;
   onReschedule: (saleId: string, newDate: string) => void;
-  shipByOverrides: Record<string, string>;
   pendingSaleIds: Set<string>;
   writeErrors: Record<string, string>;
 }) {
@@ -166,25 +150,38 @@ function DayColumn({
           key={order.cin7_sale_id}
           order={order}
           instanceName={showInstanceName ? instanceNameById.get(order.instance_id) : undefined}
-          effectiveShipBy={shipByOverrides[order.cin7_sale_id] ?? order.ship_by ?? day}
           isPending={pendingSaleIds.has(order.cin7_sale_id)}
           error={writeErrors[order.cin7_sale_id]}
           onOpenDetail={onOpenDetail}
-          onReschedule={onReschedule}
         />
       ))}
     </div>
   );
 }
 
-/** Order detail (all 5 Combined*Status fields + full line-level SKU table) doesn't fit readably inside a ~180px kanban card at any font size — shown full-width in a modal instead, same pattern as Order Fulfillment's own Batch Pick List modal. */
+/**
+ * Order detail (all 5 Combined*Status fields + full line-level SKU table)
+ * doesn't fit readably inside a ~180px kanban card at any font size — shown
+ * full-width in a modal instead, same pattern as Order Fulfillment's own
+ * Batch Pick List modal. The "Move to" date picker lives here too, not on
+ * the card — a native date input has its own browser-enforced minimum
+ * width that a week-view column (there are always 7 of them, at any screen
+ * size) can't reliably give it without either clipping a digit or forcing
+ * the whole grid wider than intended.
+ */
 function OrderDetailModal({
   order,
   lines,
+  effectiveShipBy,
+  isPending,
+  onReschedule,
   onClose,
 }: {
   order: OrderFulfillmentRow;
   lines: OrderFulfillmentLineRow[];
+  effectiveShipBy: string;
+  isPending: boolean;
+  onReschedule: (saleId: string, newDate: string) => void;
   onClose: () => void;
 }) {
   return (
@@ -212,12 +209,25 @@ function OrderDetailModal({
           <StatusBadge status={order.combined_payment_status} />
         </div>
 
-        <p className="mt-3 text-sm text-slate-600">
-          Ship By: <span className="font-medium text-slate-900">{order.ship_by ?? "—"}</span>
-          {order.is_overdue && (
-            <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">Overdue</span>
-          )}
-        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <p className="text-sm text-slate-600">
+            Ship By: <span className="font-medium text-slate-900">{order.ship_by ?? "—"}</span>
+            {order.is_overdue && (
+              <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">Overdue</span>
+            )}
+          </p>
+          <label className="flex items-center gap-1.5 text-sm text-slate-500">
+            Move to
+            <input
+              type="date"
+              value={effectiveShipBy}
+              disabled={isPending}
+              onChange={(e) => e.target.value && onReschedule(order.cin7_sale_id, e.target.value)}
+              className="rounded border border-slate-300 px-2 py-1 text-sm text-slate-700 disabled:opacity-50"
+            />
+            {isPending && <Spinner className="h-3 w-3" />}
+          </label>
+        </div>
 
         <h3 className="mt-6 mb-2 text-sm font-semibold text-slate-700">Order lines</h3>
         {lines.length === 0 ? (
@@ -371,8 +381,8 @@ export default function ShippingCalendarPage() {
     <>
       <ReportDescription title="Shipping Calendar">
         Every open order with a Ship By date, laid out on a week grid. Drag a card to a different day within the
-        visible week, or use its <strong>Move to</strong> date picker to jump it to any date — either way, the new
-        date is written straight back to Cin7 Core, not just changed here. Click a card to see its SKUs; the dot
+        visible week, or click it to open its detail and use the <strong>Move to</strong> date picker to jump it to
+        any date — either way, the new date is written straight back to Cin7 Core, not just changed here. The dot
         shows whether it&rsquo;s actually ready to ship yet.
       </ReportDescription>
 
@@ -449,7 +459,6 @@ export default function ShippingCalendarPage() {
                 onDragLeaveDay={(d) => setDraggedOverDay((cur) => (cur === d ? null : cur))}
                 onOpenDetail={setDetailSaleId}
                 onReschedule={handleReschedule}
-                shipByOverrides={shipByOverrides}
                 pendingSaleIds={pendingSaleIds}
                 writeErrors={writeErrors}
               />
@@ -462,6 +471,9 @@ export default function ShippingCalendarPage() {
         <OrderDetailModal
           order={detailOrder}
           lines={linesBySaleId.get(detailOrder.cin7_sale_id) ?? []}
+          effectiveShipBy={shipByOverrides[detailOrder.cin7_sale_id] ?? detailOrder.ship_by ?? today}
+          isPending={pendingSaleIds.has(detailOrder.cin7_sale_id)}
+          onReschedule={handleReschedule}
           onClose={() => setDetailSaleId(null)}
         />
       )}
