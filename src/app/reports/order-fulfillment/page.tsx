@@ -210,19 +210,28 @@ export default function OrderFulfillmentPage() {
     loadSalesSyncStatusAction().then((result) => {
       if (result.ok) setSyncStatus(result.data ?? null);
     });
-    // Initial load happens directly here (not via runLoad/startTransition) so
-    // every setState stays inside a .then() callback rather than running
-    // synchronously in the effect body — runLoad is for the "Refresh"
-    // button, a real user event, where that's fine.
-    loadOrderFulfillmentAction({}).then((result) => {
+  }, []);
+
+  // Keyed on instanceIds so toggling a checkbox reloads on its own — it
+  // used to silently do nothing until the separate "Refresh" button was
+  // clicked, which read as the filter being broken (it wasn't; nothing was
+  // just re-fetching). Runs on mount too (instanceIds starts as []), which
+  // is also why the previous separate initial-load call was removed rather
+  // than kept alongside this one. Direct .then() here (not runLoad/
+  // startTransition) so every setState stays inside a .then() callback
+  // rather than running synchronously in the effect body — runLoad is for
+  // the "Refresh" button, a real user event, where that's fine.
+  useEffect(() => {
+    loadOrderFulfillmentAction({ instanceIds: instanceIds.length ? instanceIds : undefined }).then((result) => {
       if (!result.ok) {
         setLoadError(result.error ?? "Unknown error");
         return;
       }
+      setLoadError(null);
       setOrders(result.data?.orders ?? []);
       setLines(result.data?.lines ?? []);
     });
-  }, []);
+  }, [instanceIds]);
 
   function toggleInstance(id: string) {
     setInstanceIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));

@@ -4,7 +4,14 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { requireCurrentOrg } from "@/lib/current-org";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { updateSaleShipBy } from "@/cin7/sales";
-import { getOrderFulfillmentReport, getOrderFulfillmentLines, type OrderFulfillmentRow, type OrderFulfillmentLineRow } from "@/reports/query";
+import {
+  getOrderFulfillmentReport,
+  getOrderFulfillmentLines,
+  getReportFilterOptions,
+  type OrderFulfillmentRow,
+  type OrderFulfillmentLineRow,
+  type OrderFulfillmentFilters,
+} from "@/reports/query";
 
 export interface ShippingCalendarActionResult<T> {
   ok: boolean;
@@ -15,15 +22,20 @@ export interface ShippingCalendarActionResult<T> {
 export interface ShippingCalendarData {
   orders: OrderFulfillmentRow[];
   lines: OrderFulfillmentLineRow[];
+  instances: { id: string; name: string }[];
 }
 
-/** Every order (+ per-SKU line detail, for the click-to-expand card view) across every connected instance — the calendar itself filters down to ones with a ship_by date set, so no instance picker is needed here (unlike Order Fulfillment, which also drives a per-instance sync button). */
-export async function loadShippingCalendarOrdersAction(): Promise<ShippingCalendarActionResult<ShippingCalendarData>> {
+/** Every order (+ per-SKU line detail, for the click-to-expand card view), optionally scoped to a subset of connected instances — same instanceIds filter Order Fulfillment uses, since a multi-instance org needs the same ability to isolate one instance's shipments here. */
+export async function loadShippingCalendarOrdersAction(filters: OrderFulfillmentFilters = {}): Promise<ShippingCalendarActionResult<ShippingCalendarData>> {
   try {
     const { orgId } = await requireCurrentOrg();
     const db = createServiceRoleClient();
-    const [orders, lines] = await Promise.all([getOrderFulfillmentReport(db, orgId, {}), getOrderFulfillmentLines(db, orgId, {})]);
-    return { ok: true, data: { orders, lines } };
+    const [orders, lines, options] = await Promise.all([
+      getOrderFulfillmentReport(db, orgId, filters),
+      getOrderFulfillmentLines(db, orgId, filters),
+      getReportFilterOptions(db, orgId),
+    ]);
+    return { ok: true, data: { orders, lines, instances: options.instances } };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

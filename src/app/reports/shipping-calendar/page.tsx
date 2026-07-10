@@ -42,6 +42,7 @@ function qty(value: number): string {
 
 function OrderCard({
   order,
+  instanceName,
   effectiveShipBy,
   isPending,
   error,
@@ -49,6 +50,8 @@ function OrderCard({
   onReschedule,
 }: {
   order: OrderFulfillmentRow;
+  /** Only passed when more than one instance is connected — a single-instance org has no need for the label. */
+  instanceName?: string;
   effectiveShipBy: string;
   isPending: boolean;
   error?: string;
@@ -76,6 +79,7 @@ function OrderCard({
         <div className="min-w-0 flex-1">
           <div className="truncate font-medium text-slate-900">{order.order_number ?? order.cin7_sale_id}</div>
           <div className="truncate text-slate-500">{order.customer_name}</div>
+          {instanceName && <div className="truncate text-slate-400">{instanceName}</div>}
         </div>
       </div>
       <div className="mt-1 flex flex-wrap gap-1">
@@ -110,6 +114,8 @@ function OrderCard({
 function DayColumn({
   day,
   orders,
+  instanceNameById,
+  showInstanceName,
   isToday,
   isDraggedOver,
   onDragOverDay,
@@ -122,6 +128,8 @@ function DayColumn({
 }: {
   day: string;
   orders: OrderFulfillmentRow[];
+  instanceNameById: Map<string, string>;
+  showInstanceName: boolean;
   isToday: boolean;
   isDraggedOver: boolean;
   onDragOverDay: (day: string) => void;
@@ -157,6 +165,7 @@ function DayColumn({
         <OrderCard
           key={order.cin7_sale_id}
           order={order}
+          instanceName={showInstanceName ? instanceNameById.get(order.instance_id) : undefined}
           effectiveShipBy={shipByOverrides[order.cin7_sale_id] ?? order.ship_by ?? day}
           isPending={pendingSaleIds.has(order.cin7_sale_id)}
           error={writeErrors[order.cin7_sale_id]}
@@ -246,6 +255,8 @@ export default function ShippingCalendarPage() {
   const [weekStart, setWeekStart] = useState(currentWeekStart);
   const [orders, setOrders] = useState<OrderFulfillmentRow[] | null>(null);
   const [lines, setLines] = useState<OrderFulfillmentLineRow[]>([]);
+  const [instances, setInstances] = useState<{ id: string; name: string }[]>([]);
+  const [instanceIds, setInstanceIds] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, startLoadTransition] = useTransition();
 
@@ -259,20 +270,35 @@ export default function ShippingCalendarPage() {
   const [writeErrors, setWriteErrors] = useState<Record<string, string>>({});
   const [draggedOverDay, setDraggedOverDay] = useState<string | null>(null);
 
+  // Keyed on instanceIds so toggling a checkbox reloads on its own, rather
+  // than silently doing nothing until some other action happens to trigger
+  // a refetch — that gap is exactly what made Order Fulfillment's own
+  // instance filter look broken (2026-07-10). Runs on mount too
+  // (instanceIds starts as []). Direct .then() here, not startTransition,
+  // and setLoadError(null) only happens inside the callback (not as its own
+  // statement ahead of the fetch) — a setState call directly in the effect
+  // body, even before an async call, still trips
+  // react-hooks/set-state-in-effect.
   useEffect(() => {
-    startLoadTransition(async () => {
-      const result = await loadShippingCalendarOrdersAction();
+    loadShippingCalendarOrdersAction({ instanceIds: instanceIds.length ? instanceIds : undefined }).then((result) => {
       if (!result.ok || !result.data) {
         setLoadError(result.error ?? "Unknown error");
         return;
       }
+      setLoadError(null);
       setOrders(result.data.orders.filter(isSchedulable));
       setLines(result.data.lines);
+      setInstances(result.data.instances);
     });
-  }, []);
+  }, [instanceIds]);
+
+  function toggleInstance(id: string) {
+    setInstanceIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
 
   const today = useMemo(() => currentWeekStart(), []);
   const days = useMemo(() => Array.from({ length: DAY_COUNT }, (_, i) => addDays(weekStart, i)), [weekStart]);
+  const instanceNameById = useMemo(() => new Map(instances.map((i) => [i.id, i.name])), [instances]);
 
   const linesBySaleId = useMemo(() => {
     const map = new Map<string, OrderFulfillmentLineRow[]>();
@@ -351,6 +377,18 @@ export default function ShippingCalendarPage() {
       </ReportDescription>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        {instances.length > 0 && (
+          <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-slate-100 pb-4">
+            <span className="text-sm font-medium text-slate-700">Instance(s)</span>
+            {instances.map((inst) => (
+              <label key={inst.id} className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={instanceIds.includes(inst.id)} onChange={() => toggleInstance(inst.id)} className="h-4 w-4" />
+                {inst.name}
+              </label>
+            ))}
+            <span className="text-xs text-slate-400">(none checked = all instances)</span>
+          </div>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <button
@@ -403,6 +441,8 @@ export default function ShippingCalendarPage() {
                 key={day}
                 day={day}
                 orders={ordersByDay.get(day) ?? []}
+                instanceNameById={instanceNameById}
+                showInstanceName={instances.length > 1}
                 isToday={day === today}
                 isDraggedOver={draggedOverDay === day}
                 onDragOverDay={setDraggedOverDay}
