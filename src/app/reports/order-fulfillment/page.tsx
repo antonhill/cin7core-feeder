@@ -38,7 +38,7 @@ const ORDER_TABLE_COLUMNS: OrderTableColumn[] = [
 const ORDER_TABLE_DEFAULT_WIDTHS: Record<OrderTableColumn, number> = {
   select: 40,
   order: 180,
-  shipBy: 150,
+  shipBy: 100,
   picking: 130,
   packing: 130,
   shipping: 130,
@@ -439,7 +439,7 @@ export default function OrderFulfillmentPage() {
 
           {visibleRows.length > 0 && (
             <div className="mt-4 overflow-x-auto">
-              <table className="w-full table-fixed text-left text-sm">
+              <table className="w-full table-fixed text-left text-xs">
                 <ColGroup columns={ORDER_TABLE_COLUMNS} widths={columnWidths} />
                 <thead>
                   <tr className="border-b border-slate-200 text-slate-500">
@@ -492,16 +492,16 @@ export default function OrderFulfillmentPage() {
                           <div className="truncate text-xs text-slate-400">{row.customer_name}</div>
                         </td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4">
-                          {row.ship_by ?? <span className="text-slate-300">—</span>}
+                          <div>{row.ship_by ?? <span className="text-slate-300">—</span>}</div>
                           {row.is_overdue && (
-                            <span className="ml-1.5 whitespace-nowrap rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">
+                            <span className="mt-0.5 inline-block whitespace-nowrap rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">
                               Overdue
                             </span>
                           )}
                           {!row.is_overdue && row.is_pick_today && (row.days_open ?? 0) >= STUCK_AFTER_DAYS && (
                             <span
                               title={`Open ${row.days_open} days without being fully picked`}
-                              className="ml-1.5 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"
+                              className="mt-0.5 inline-block whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"
                             >
                               Stuck ({row.days_open}d)
                             </span>

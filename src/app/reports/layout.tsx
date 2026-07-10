@@ -20,8 +20,10 @@ export const maxDuration = 300;
  * entry; it doesn't need its own ModuleHeader or top-level nav/home-tile
  * entry, since "Reporting" (module-nav.tsx's REPORTS_MODULE) is the single
  * org-toggleable module covering all of them. Wider than most module shells
- * (max-w-7xl, not max-w-5xl) to make room for the sidebar alongside a
- * report's own content.
+ * (max-w-[1800px], not max-w-5xl) to make room for the sidebar alongside a
+ * report's own content — report tables (Order Fulfillment especially) have
+ * enough columns to benefit from using more of a large monitor's width
+ * rather than being centered in a narrower column (Anton, 2026-07-10).
  */
 export default function ReportsLayout({
   children,
@@ -29,7 +31,7 @@ export default function ReportsLayout({
   children: React.ReactNode;
 }) {
   return (
-    <main className="mx-auto w-full max-w-7xl px-6 py-12 print:max-w-none print:p-0">
+    <main className="mx-auto w-full max-w-[1800px] px-6 py-12 print:max-w-none print:p-0">
       <div className="print:hidden">
         <ModuleHeader module={REPORTS_MODULE}>
           A hub for every report pulled from your connected Cin7 instances — Sales
