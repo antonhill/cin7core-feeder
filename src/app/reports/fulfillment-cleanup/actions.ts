@@ -4,11 +4,19 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { requireCurrentOrg } from "@/lib/current-org";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsForCosting } from "@/cin7/product-cost";
-import { getOrderFulfillmentReport, getOrderFulfillmentLines, getProductAvailabilitySyncStatus, type ProductAvailabilitySyncStatus } from "@/reports/query";
+import {
+  getOrderFulfillmentReport,
+  getOrderFulfillmentLines,
+  getProductAvailabilitySyncStatus,
+  getSalesSyncStatus,
+  type ProductAvailabilitySyncStatus,
+  type SalesSyncStatus,
+} from "@/reports/query";
 import type { NegativeAvailabilityRow, BackorderDemandRow, FulfillmentCleanupLine } from "@/reports/fulfillment-cleanup/build";
 import { buildFulfillmentCleanupCsv } from "@/export/fulfillment-cleanup-csv";
 import { buildIncludedSalesCsv } from "@/export/fulfillment-cleanup-included-sales-csv";
 import { syncOrgProductAvailability, type ProductAvailabilitySyncSummary } from "@/sync/sync-product-availability";
+import { syncOrgSales, type SalesSyncSummary } from "@/sync/sync-sales";
 
 export interface FulfillmentCleanupActionResult<T> {
   ok: boolean;
@@ -138,7 +146,7 @@ export async function downloadIncludedSalesCsvAction(sales: BackorderedSale[]): 
 }
 
 /** Scoped to this one instance (unlike Stock Health's org-wide status) — the cleanup list only ever comes from one instance at a time, and an org-wide "last synced" could mask this specific instance being stale behind another that happened to sync more recently. */
-export async function loadFulfillmentCleanupSyncStatusAction(instanceId: string): Promise<FulfillmentCleanupActionResult<ProductAvailabilitySyncStatus>> {
+export async function loadFulfillmentCleanupStockSyncStatusAction(instanceId: string): Promise<FulfillmentCleanupActionResult<ProductAvailabilitySyncStatus>> {
   try {
     const { orgId } = await requireCurrentOrg();
     const db = createServiceRoleClient();
@@ -149,11 +157,41 @@ export async function loadFulfillmentCleanupSyncStatusAction(instanceId: string)
 }
 
 /** On-demand stock-level sync for just this one instance — same direct-call pattern as Stock Health's own trigger action, scoped down via syncOrgProductAvailability's instanceIds filter so it doesn't also re-sync every other instance on the org. */
-export async function triggerFulfillmentCleanupSyncAction(instanceId: string): Promise<FulfillmentCleanupActionResult<ProductAvailabilitySyncSummary[]>> {
+export async function triggerFulfillmentCleanupStockSyncAction(instanceId: string): Promise<FulfillmentCleanupActionResult<ProductAvailabilitySyncSummary[]>> {
   try {
     const { orgId } = await requireCurrentOrg();
     const db = createServiceRoleClient();
     return { ok: true, data: await syncOrgProductAvailability(db, orgId, [instanceId]) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Sales detail-sync progress for this one instance — a user excluding or
+ * verifying a specific order (e.g. checking a new test order's customer
+ * reference/backorder line shows up) needs to know exactly how many sales
+ * still haven't had their line detail synced, rather than guessing whether
+ * to wait or re-sync. Separate from the stock-level sync status above:
+ * this tracks sales.detail_synced_at (sync-sales.ts's rate-limited detail
+ * phase), not product_availability's snapshot.
+ */
+export async function loadFulfillmentCleanupSalesSyncStatusAction(instanceId: string): Promise<FulfillmentCleanupActionResult<SalesSyncStatus>> {
+  try {
+    const { orgId } = await requireCurrentOrg();
+    const db = createServiceRoleClient();
+    return { ok: true, data: await getSalesSyncStatus(db, orgId, instanceId) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/** On-demand sales sync for just this one instance — same direct-call pattern as Order Fulfillment's own "Sync sales now" button, scoped down via syncOrgSales's instanceIds filter. */
+export async function triggerFulfillmentCleanupSalesSyncAction(instanceId: string): Promise<FulfillmentCleanupActionResult<SalesSyncSummary[]>> {
+  try {
+    const { orgId } = await requireCurrentOrg();
+    const db = createServiceRoleClient();
+    return { ok: true, data: await syncOrgSales(db, orgId, [instanceId]) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

@@ -263,12 +263,23 @@ export interface SalesSyncStatus {
   pendingDetail: number;
 }
 
-/** Lets the report page explain why very recent invoices might not have revenue/COGS yet — detail fetch is rate-limited and queued (see sync/sync-sales.ts). */
-export async function getSalesSyncStatus(db: SupabaseClient, orgId: string): Promise<SalesSyncStatus> {
-  const [totalRes, pendingRes] = await Promise.all([
-    db.from("sales").select("*", { count: "exact", head: true }).eq("org_id", orgId),
-    db.from("sales").select("*", { count: "exact", head: true }).eq("org_id", orgId).is("detail_synced_at", null),
-  ]);
+/**
+ * Lets the report page explain why very recent invoices might not have
+ * revenue/COGS yet — detail fetch is rate-limited and queued (see
+ * sync/sync-sales.ts). Scoped to one instance when given — the Fulfillment
+ * Cleanup Helper needs this so a user isn't left guessing whether a
+ * specific test order's customer_reference/backorder line has synced yet,
+ * without an org-wide count (which could span several instances) masking
+ * how close THIS instance's queue is to done.
+ */
+export async function getSalesSyncStatus(db: SupabaseClient, orgId: string, instanceId?: string): Promise<SalesSyncStatus> {
+  let totalQuery = db.from("sales").select("*", { count: "exact", head: true }).eq("org_id", orgId);
+  let pendingQuery = db.from("sales").select("*", { count: "exact", head: true }).eq("org_id", orgId).is("detail_synced_at", null);
+  if (instanceId) {
+    totalQuery = totalQuery.eq("instance_id", instanceId);
+    pendingQuery = pendingQuery.eq("instance_id", instanceId);
+  }
+  const [totalRes, pendingRes] = await Promise.all([totalQuery, pendingQuery]);
   if (totalRes.error) throw new Error(totalRes.error.message);
   if (pendingRes.error) throw new Error(pendingRes.error.message);
   return { totalSales: totalRes.count ?? 0, pendingDetail: pendingRes.count ?? 0 };

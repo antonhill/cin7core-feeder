@@ -287,6 +287,27 @@ describe("getSalesSyncStatus", () => {
     const status = await getSalesSyncStatus(db, "org1");
     expect(status).toEqual({ totalSales: 10, pendingDetail: 3 });
   });
+
+  it("scopes by instance_id when given, e.g. for the Fulfillment Cleanup Helper's per-instance status", async () => {
+    const eqCalls: unknown[][] = [];
+    const chain: Record<string, unknown> = {
+      eq: (...args: unknown[]) => {
+        eqCalls.push(args);
+        return chain;
+      },
+      is: (...args: unknown[]) => {
+        eqCalls.push(["is", ...args]);
+        return chain;
+      },
+      then: (resolve: (v: unknown) => void) => resolve({ count: 7, error: null }),
+    };
+    const db = { from: () => ({ select: () => chain }) } as unknown as SupabaseClient;
+
+    const status = await getSalesSyncStatus(db, "org1", "inst-1");
+
+    expect(status).toEqual({ totalSales: 7, pendingDetail: 7 });
+    expect(eqCalls).toContainEqual(["instance_id", "inst-1"]);
+  });
 });
 
 describe("getStockHealthReport", () => {
