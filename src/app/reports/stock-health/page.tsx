@@ -9,6 +9,7 @@ import {
   triggerProductAvailabilitySyncAction,
 } from "./actions";
 import type { ReportFilterOptions, StockHealthRow, ProductAvailabilitySyncStatus } from "@/reports/query";
+import { SNAPSHOT_STALE_HOURS, hoursSince, StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
@@ -110,6 +111,9 @@ export default function StockHealthPage() {
     });
   }
 
+  // Full snapshot-replace sync (see sync-product-availability.ts) — stale once too much time has passed since the one "last synced" timestamp, not a pending-count signal.
+  const isStockStale = Boolean(syncStatus) && (!syncStatus?.lastSyncedAt || hoursSince(syncStatus.lastSyncedAt) > SNAPSHOT_STALE_HOURS);
+
   function toggleInstance(id: string) {
     setInstanceIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
@@ -174,15 +178,13 @@ export default function StockHealthPage() {
               </p>
             )}
           </div>
-          <button
-            type="button"
-            onClick={handleSync}
-            disabled={isSyncing}
-            className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          >
-            {isSyncing && <Spinner className="mr-1.5" />}
-            {isSyncing ? "Syncing…" : "Sync stock levels now"}
-          </button>
+          <div className="flex items-center gap-3">
+            {isStockStale && <StaleBadge label="Stale — sync recommended" />}
+            <button type="button" onClick={handleSync} disabled={isSyncing} className={staleSyncButtonClass(isStockStale, "sm")}>
+              {isSyncing && <Spinner className="mr-1.5" />}
+              {isSyncing ? "Syncing…" : "Sync stock levels now"}
+            </button>
+          </div>
         </div>
         {syncError && <p className="mt-2 text-sm text-red-600">{syncError}</p>}
         {optionsError && <p className="mt-2 text-sm text-red-600">{optionsError}</p>}

@@ -15,28 +15,12 @@ import {
 } from "./actions";
 import type { ReportFilterOptions, ProductAvailabilitySyncStatus, SalesSyncStatus } from "@/reports/query";
 import { buildFulfillmentCleanupLines } from "@/reports/fulfillment-cleanup/build";
+import { SNAPSHOT_STALE_HOURS, hoursSince, StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
 
 type BackorderedSaleSortColumn = "orderNumber" | "customerName" | "customerReference" | "orderDate" | "totalBackorderQty";
-
-/** Past this many hours since the last stock-level sync, the negative-availability list this whole tool is built on could no longer reflect reality — a plain default, not meant to be precisely tuned. */
-const STOCK_STALE_HOURS = 4;
-
-/** Outside the component body — Date.now() is an impure call the react-hooks/purity rule flags if made directly during render. */
-function hoursSince(iso: string): number {
-  return (Date.now() - new Date(iso).getTime()) / (1000 * 60 * 60);
-}
-
-/** A pulsing badge, not just a static color change — this tool generates a real inventory adjustment, so stale source data needs to actually catch the eye rather than blend into the rest of the page. */
-function StaleBadge({ label }: { label: string }) {
-  return (
-    <span className="inline-flex animate-pulse items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
-      ⚠ {label}
-    </span>
-  );
-}
 
 /** Nulls sort last regardless of direction — a missing reference/date shouldn't jump to the top just because asc treats it as "smallest". */
 function compareNullable(a: string | number | null, b: string | number | null): number {
@@ -119,7 +103,7 @@ export default function FulfillmentCleanupPage() {
   // wrong. Sales detail is "stale" whenever anything is still queued —
   // there's no safe time threshold for it, since even one un-synced order
   // could be the one a user is trying to exclude/verify right now.
-  const isStockStale = Boolean(stockSyncStatus) && (!stockSyncStatus?.lastSyncedAt || hoursSince(stockSyncStatus.lastSyncedAt) > STOCK_STALE_HOURS);
+  const isStockStale = Boolean(stockSyncStatus) && (!stockSyncStatus?.lastSyncedAt || hoursSince(stockSyncStatus.lastSyncedAt) > SNAPSHOT_STALE_HOURS);
   const isSalesStale = Boolean(salesSyncStatus) && (salesSyncStatus?.pendingDetail ?? 0) > 0;
 
   const [previewData, setPreviewData] = useState<FulfillmentCleanupPreviewData | null>(null);
@@ -379,16 +363,7 @@ export default function FulfillmentCleanupPage() {
                     .
                   </p>
                   {isStockStale && <StaleBadge label="Stale — sync recommended" />}
-                  <button
-                    type="button"
-                    onClick={handleStockSync}
-                    disabled={isStockSyncing}
-                    className={`rounded-full border px-3 py-1 text-xs font-medium disabled:opacity-50 ${
-                      isStockStale
-                        ? "animate-pulse border-amber-300 bg-amber-100 text-amber-800 hover:bg-amber-200"
-                        : "border-slate-300 text-slate-700 hover:bg-slate-50"
-                    }`}
-                  >
+                  <button type="button" onClick={handleStockSync} disabled={isStockSyncing} className={staleSyncButtonClass(isStockStale)}>
                     {isStockSyncing && <Spinner className="mr-1.5" />}
                     {isStockSyncing ? "Syncing…" : "Sync stock levels now"}
                   </button>
@@ -404,16 +379,7 @@ export default function FulfillmentCleanupPage() {
                     .
                   </p>
                   {isSalesStale && <StaleBadge label="Behind — sync recommended" />}
-                  <button
-                    type="button"
-                    onClick={handleSalesSync}
-                    disabled={isSalesSyncing}
-                    className={`rounded-full border px-3 py-1 text-xs font-medium disabled:opacity-50 ${
-                      isSalesStale
-                        ? "animate-pulse border-amber-300 bg-amber-100 text-amber-800 hover:bg-amber-200"
-                        : "border-slate-300 text-slate-700 hover:bg-slate-50"
-                    }`}
-                  >
+                  <button type="button" onClick={handleSalesSync} disabled={isSalesSyncing} className={staleSyncButtonClass(isSalesStale)}>
                     {isSalesSyncing && <Spinner className="mr-1.5" />}
                     {isSalesSyncing ? "Syncing…" : "Sync sales now"}
                   </button>

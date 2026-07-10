@@ -6,6 +6,7 @@ import { loadOrderFulfillmentAction, exportOrderFulfillmentXlsxAction, loadSaleA
 import type { ReportFilterOptions, OrderFulfillmentRow, OrderFulfillmentLineRow, SalesSyncStatus } from "@/reports/query";
 import type { Cin7SaleAttachment } from "@/cin7/sales";
 import { buildBatchPickList } from "@/reports/order-fulfillment/pick-list";
+import { StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
@@ -82,6 +83,8 @@ export default function OrderFulfillmentPage() {
   const [syncStatus, setSyncStatus] = useState<SalesSyncStatus | null>(null);
   const [isSyncing, startSyncTransition] = useTransition();
   const [syncError, setSyncError] = useState<string | null>(null);
+  // Rate-limited queued/detail-phase sync — stale whenever anything at all is still pending, not a time-based signal (backorder/pickable-qty accuracy depends on this).
+  const isSalesStale = Boolean(syncStatus) && (syncStatus?.pendingDetail ?? 0) > 0;
 
   const [attachmentsBySaleId, setAttachmentsBySaleId] = useState<Record<string, Cin7SaleAttachment[]>>({});
   const [attachmentsError, setAttachmentsError] = useState<string | null>(null);
@@ -258,12 +261,8 @@ export default function OrderFulfillmentPage() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleSync}
-              disabled={isSyncing}
-              className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
+            {isSalesStale && <StaleBadge label="Behind — sync recommended" />}
+            <button type="button" onClick={handleSync} disabled={isSyncing} className={staleSyncButtonClass(isSalesStale, "sm")}>
               {isSyncing && <Spinner className="mr-1.5" />}
               {isSyncing ? "Syncing…" : "Sync sales now"}
             </button>
