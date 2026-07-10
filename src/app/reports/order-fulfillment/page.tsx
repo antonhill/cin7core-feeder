@@ -455,7 +455,7 @@ export default function OrderFulfillmentPage() {
                             className="h-4 w-4"
                           />
                         </td>
-                        <td className="py-2 pr-4">
+                        <td className="whitespace-nowrap py-2 pr-4">
                           <div className="font-medium text-slate-900">{row.order_number ?? row.cin7_sale_id}</div>
                           <div className="text-xs text-slate-400">{row.customer_name}</div>
                         </td>
@@ -551,22 +551,22 @@ export default function OrderFulfillmentPage() {
                                 <tbody>
                                   {(linesBySaleId.get(row.cin7_sale_id) ?? []).map((line, i) => (
                                     <tr key={i} className="border-t border-slate-200">
-                                      <td className="py-1 pr-4">
+                                      <td className="whitespace-nowrap py-1 pr-4">
                                         <div className="font-medium text-slate-900">{line.product_name ?? line.product_sku}</div>
                                         <div className="text-slate-400">{line.product_sku}</div>
                                       </td>
-                                      <td className="py-1 pr-4 text-right">{qty(line.ordered_qty)}</td>
-                                      <td className="py-1 pr-4 text-right">{qty(line.backorder_qty)}</td>
-                                      <td className="py-1 pr-4 text-right">{qty(line.picked_qty)}</td>
-                                      <td className="py-1 pr-4 text-right">{qty(line.packed_qty)}</td>
-                                      <td className="py-1 pr-4 text-right font-medium">{qty(line.pickable_qty)}</td>
-                                      <td className="py-1 pr-4 text-slate-500">{line.picked_from_locations ?? "—"}</td>
-                                      <td className="py-1 pr-4 text-slate-500">
+                                      <td className="whitespace-nowrap py-1 pr-4 text-right">{qty(line.ordered_qty)}</td>
+                                      <td className="whitespace-nowrap py-1 pr-4 text-right">{qty(line.backorder_qty)}</td>
+                                      <td className="whitespace-nowrap py-1 pr-4 text-right">{qty(line.picked_qty)}</td>
+                                      <td className="whitespace-nowrap py-1 pr-4 text-right">{qty(line.packed_qty)}</td>
+                                      <td className="whitespace-nowrap py-1 pr-4 text-right font-medium">{qty(line.pickable_qty)}</td>
+                                      <td className="whitespace-nowrap py-1 pr-4 text-slate-500">{line.picked_from_locations ?? "—"}</td>
+                                      <td className="whitespace-nowrap py-1 pr-4 text-slate-500">
                                         {line.suggested_pick_location
                                           ? `${line.suggested_pick_location} (${qty(line.suggested_pick_location_on_hand ?? 0)} on hand)`
                                           : "—"}
                                       </td>
-                                      <td className="py-1 pr-4 text-slate-500">
+                                      <td className="whitespace-nowrap py-1 pr-4 text-slate-500">
                                         {line.backorder_qty <= 0 ? (
                                           "—"
                                         ) : line.backorder_po_number ? (
