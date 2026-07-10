@@ -306,11 +306,12 @@ export default function OrderFulfillmentPage() {
     <>
       <div className="print:hidden">
       <ReportDescription title="Order Fulfillment">
-        A working dashboard for pick/pack/ship/invoice/payment — not just a status report.
-        <strong> Pick Today</strong> and <strong>Ship Today</strong> are priority queues (overdue orders first,
-        undated orders last, nothing dropped just because it&rsquo;s late or has no ship-by date), each order
-        expandable to the exact SKUs and quantities still needed. <strong>All Orders</strong> shows the complete
-        picture across every stage.
+        A working dashboard for pick/pack/ship/invoice/payment — not just a status report.{" "}
+        <strong>Pick Today</strong>{" "}
+        and <strong>Ship Today</strong>{" "}
+        are priority queues (overdue orders first, undated orders last, nothing dropped just because it&rsquo;s late
+        or has no ship-by date), each order expandable to the exact SKUs and quantities still needed.{" "}
+        <strong>All Orders</strong> shows the complete picture across every stage.
       </ReportDescription>
       <PageLoadingIndicator show={isExporting} label="Exporting to Excel…" />
 

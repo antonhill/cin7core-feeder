@@ -381,9 +381,9 @@ export default function ShippingCalendarPage() {
     <>
       <ReportDescription title="Shipping Calendar">
         Every open order with a Ship By date, laid out on a week grid. Drag a card to a different day within the
-        visible week, or click it to open its detail and use the <strong>Move to</strong> date picker to jump it to
-        any date — either way, the new date is written straight back to Cin7 Core, not just changed here. The dot
-        shows whether it&rsquo;s actually ready to ship yet.
+        visible week, or click it to open its detail and use the <strong>Move to</strong>{" "}
+        date picker to jump it to any date — either way, the new date is written straight back to Cin7 Core, not just
+        changed here. The dot shows whether it&rsquo;s actually ready to ship yet.
       </ReportDescription>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

@@ -274,9 +274,11 @@ export default function FulfillmentCleanupPage() {
         Generates a completed Cin7 Bulk Stock Adjustment CSV for every product currently oversold (negative
         availability) on one instance — the exact backlog blocking <Link href="/reports/order-fulfillment" className="underline">Order Fulfillment</Link>&rsquo;s
         Pick Today queue. Each line brings that SKU&rsquo;s availability back to zero; lines with no stock on hand at
-        all are marked <strong>Zero</strong> with a cost filled in from the product&rsquo;s current average cost,
-        lines that still have some stock on hand are marked <strong>NonZero</strong> and left for Cin7 to cost from
-        its own existing average. Some backordered sales should legitimately stay unfulfilled — exclude them below
+        all are marked <strong>Zero</strong>{" "}
+        with a cost filled in from the product&rsquo;s current average cost, lines that still have some stock on
+        hand are marked <strong>NonZero</strong>{" "}
+        and left for Cin7 to cost from its own existing average. Some backordered sales should legitimately stay
+        unfulfilled — exclude them below
         and their share of each SKU&rsquo;s correction is removed. This only builds the file — review it and import
         it into Cin7 yourself when you&rsquo;re ready; nothing here writes to Cin7.
       </ReportDescription>
