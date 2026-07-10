@@ -5,9 +5,16 @@
  * resizable table should still get its own `overflow-hidden` so oversized
  * content clips at the column boundary instead of bleeding into the next
  * column when a user drags a column narrower than its content.
+ *
+ * `ResizableTh` optionally doubles as a sort header (pass sortColumn/
+ * sortDirection/onSort) — the click target is the label button, the resize
+ * handle is a separate absolutely-positioned strip at the header's right
+ * edge, so dragging to resize and clicking to sort don't fight over the
+ * same hit area.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { SortDirection } from "./sortable-table";
 
 const MIN_COLUMN_WIDTH = 60;
 
@@ -60,15 +67,34 @@ export function ResizableTh<TColumn extends string>({
   label,
   align = "left",
   onResizeStart,
+  sortColumn,
+  sortDirection,
+  onSort,
 }: {
   column: TColumn;
   label: string;
   align?: "left" | "right";
   onResizeStart: (column: TColumn) => (e: React.MouseEvent) => void;
+  /** Omit all three to render a plain (non-sortable) header — for columns with no sensible single sort value. */
+  sortColumn?: TColumn | null;
+  sortDirection?: SortDirection;
+  onSort?: (column: TColumn) => void;
 }) {
+  const active = Boolean(onSort) && sortColumn === column;
   return (
     <th className={`relative overflow-hidden py-2 pr-4 ${align === "right" ? "text-right" : "text-left"}`}>
-      <span className="block truncate">{label}</span>
+      {onSort ? (
+        <button
+          type="button"
+          onClick={() => onSort(column)}
+          className={`inline-flex max-w-full items-center gap-1 font-medium hover:text-slate-700 ${active ? "text-slate-700" : "text-slate-500"}`}
+        >
+          <span className="truncate">{label}</span>
+          <span className="shrink-0 text-slate-400">{active ? (sortDirection === "asc" ? "▲" : "▼") : ""}</span>
+        </button>
+      ) : (
+        <span className="block truncate">{label}</span>
+      )}
       <div
         onMouseDown={onResizeStart(column)}
         className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize select-none hover:bg-indigo-300 active:bg-indigo-400"

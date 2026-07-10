@@ -8,6 +8,7 @@ import type { Cin7SaleAttachment } from "@/cin7/sales";
 import { buildBatchPickList } from "@/reports/order-fulfillment/pick-list";
 import { StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { useResizableColumns, ColGroup, ResizableTh } from "../resizable-columns";
+import { compareNullable, type SortDirection } from "../sortable-table";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
@@ -47,6 +48,32 @@ const ORDER_TABLE_DEFAULT_WIDTHS: Record<OrderTableColumn, number> = {
   pickableNow: 120,
   paidInvoice: 140,
 };
+
+/** The "select" checkbox column has no sensible sort value; every other column maps to one field (or, for Order, falls back to customer name so an order with no number still sorts sensibly). */
+function orderTableSortValue(column: OrderTableColumn, row: OrderFulfillmentRow): string | number | null {
+  switch (column) {
+    case "order":
+      return row.order_number ?? row.customer_name;
+    case "shipBy":
+      return row.ship_by;
+    case "picking":
+      return row.combined_picking_status;
+    case "packing":
+      return row.combined_packing_status;
+    case "shipping":
+      return row.combined_shipping_status;
+    case "invoice":
+      return row.combined_invoice_status;
+    case "payment":
+      return row.combined_payment_status;
+    case "pickableNow":
+      return row.total_pickable_qty;
+    case "paidInvoice":
+      return row.paid_amount;
+    default:
+      return null;
+  }
+}
 
 /** An order open this many days or more without being fully picked is probably stuck, not just "next in line" — a plain default, not meant to be precisely tuned. */
 const STUCK_AFTER_DAYS = 7;
@@ -97,6 +124,17 @@ function money(value: number): string {
 
 export default function OrderFulfillmentPage() {
   const { widths: columnWidths, startResize } = useResizableColumns<OrderTableColumn>(ORDER_TABLE_DEFAULT_WIDTHS);
+
+  const [sortColumn, setSortColumn] = useState<OrderTableColumn | null>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+
+  function handleSort(column: OrderTableColumn) {
+    if (column === sortColumn) setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+  }
 
   const [options, setOptions] = useState<ReportFilterOptions | null>(null);
   const [optionsError, setOptionsError] = useState<string | null>(null);
@@ -247,6 +285,16 @@ export default function OrderFulfillmentPage() {
 
     return rows;
   }, [orders, tab, search, paymentFilter, shipByFrom, shipByTo, backorderFilter]);
+
+  const sortedRows = useMemo(() => {
+    if (!sortColumn) return visibleRows;
+    const copy = [...visibleRows];
+    copy.sort((a, b) => {
+      const cmp = compareNullable(orderTableSortValue(sortColumn, a), orderTableSortValue(sortColumn, b));
+      return sortDirection === "asc" ? cmp : -cmp;
+    });
+    return copy;
+  }, [visibleRows, sortColumn, sortDirection]);
 
   const counts = orders
     ? { pick: orders.filter((o) => o.is_pick_today).length, ship: orders.filter((o) => o.is_ship_today).length, all: orders.length }
@@ -461,19 +509,19 @@ export default function OrderFulfillmentPage() {
                         className="h-4 w-4"
                       />
                     </th>
-                    <ResizableTh column="order" label="Order" onResizeStart={startResize} />
-                    <ResizableTh column="shipBy" label="Ship By" onResizeStart={startResize} />
-                    <ResizableTh column="picking" label="Picking" onResizeStart={startResize} />
-                    <ResizableTh column="packing" label="Packing" onResizeStart={startResize} />
-                    <ResizableTh column="shipping" label="Shipping" onResizeStart={startResize} />
-                    <ResizableTh column="invoice" label="Invoice" onResizeStart={startResize} />
-                    <ResizableTh column="payment" label="Payment" onResizeStart={startResize} />
-                    <ResizableTh column="pickableNow" label="Pickable Now" align="right" onResizeStart={startResize} />
-                    <ResizableTh column="paidInvoice" label="Paid / Invoice" align="right" onResizeStart={startResize} />
+                    <ResizableTh column="order" label="Order" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <ResizableTh column="shipBy" label="Ship By" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <ResizableTh column="picking" label="Picking" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <ResizableTh column="packing" label="Packing" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <ResizableTh column="shipping" label="Shipping" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <ResizableTh column="invoice" label="Invoice" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <ResizableTh column="payment" label="Payment" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <ResizableTh column="pickableNow" label="Pickable Now" align="right" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <ResizableTh column="paidInvoice" label="Paid / Invoice" align="right" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleRows.map((row) => (
+                  {sortedRows.map((row) => (
                     <Fragment key={row.cin7_sale_id}>
                       <tr
                         onClick={() => setExpandedSaleId(expandedSaleId === row.cin7_sale_id ? null : row.cin7_sale_id)}
