@@ -2,6 +2,17 @@ import { ModuleHeader } from "@/app/ModuleHeader";
 import { REPORTS_MODULE } from "@/app/module-nav";
 import { ReportsNav } from "./ReportsNav";
 
+// Route segment config applies to every Server Action invoked from any page
+// under /reports/* (Order Fulfillment's "Sync sales now", Stock Health's
+// "Sync stock levels now", Fulfillment Cleanup Helper's sync trigger and
+// preview build, etc.) — confirmed live 2026-07-10 that one of these (a
+// single-instance product availability sync) hit Vercel's default function
+// duration limit. The equivalent standalone routes (/api/sync-sales,
+// /api/sync-product-availability, ...) were already raised to 300s; nothing
+// under /reports/* had been, since Server Actions don't automatically pick
+// up a sibling route's maxDuration.
+export const maxDuration = 300;
+
 /**
  * Shared shell for every report under /reports — the ModuleHeader banner and
  * category sidebar (ReportsNav) render once here rather than being
