@@ -19,6 +19,47 @@ import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
 
+type BackorderedSaleSortColumn = "orderNumber" | "customerName" | "customerReference" | "orderDate" | "totalBackorderQty";
+
+/** Nulls sort last regardless of direction — a missing reference/date shouldn't jump to the top just because asc treats it as "smallest". */
+function compareNullable(a: string | number | null, b: string | number | null): number {
+  if (a === null && b === null) return 0;
+  if (a === null) return 1;
+  if (b === null) return -1;
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  return String(a).localeCompare(String(b));
+}
+
+function SortHeader({
+  label,
+  column,
+  align = "left",
+  sortColumn,
+  sortDirection,
+  onSort,
+}: {
+  label: string;
+  column: BackorderedSaleSortColumn;
+  align?: "left" | "right";
+  sortColumn: BackorderedSaleSortColumn;
+  sortDirection: "asc" | "desc";
+  onSort: (column: BackorderedSaleSortColumn) => void;
+}) {
+  const active = sortColumn === column;
+  return (
+    <th className={`py-2 pr-4 ${align === "right" ? "text-right" : "text-left"}`}>
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        className={`inline-flex items-center gap-1 font-medium hover:text-slate-700 ${active ? "text-slate-700" : "text-slate-500"}`}
+      >
+        {label}
+        <span className="text-slate-400">{active ? (sortDirection === "asc" ? "▲" : "▼") : ""}</span>
+      </button>
+    </th>
+  );
+}
+
 function triggerCsvDownload(csv: string, filename: string) {
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -61,6 +102,16 @@ export default function FulfillmentCleanupPage() {
   const [isLoadingPreview, startPreviewTransition] = useTransition();
 
   const [excludedSaleIds, setExcludedSaleIds] = useState<Set<string>>(new Set());
+  const [sortColumn, setSortColumn] = useState<BackorderedSaleSortColumn>("orderNumber");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+
+  function handleSort(column: BackorderedSaleSortColumn) {
+    if (column === sortColumn) setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+  }
 
   const [isDownloading, startDownloadTransition] = useTransition();
   const [downloadError, setDownloadError] = useState<string | null>(null);
@@ -94,6 +145,16 @@ export default function FulfillmentCleanupPage() {
     if (!previewData) return [];
     return previewData.backorderedSales.filter((s) => !excludedSaleIds.has(s.cin7SaleId));
   }, [previewData, excludedSaleIds]);
+
+  const sortedBackorderedSales = useMemo(() => {
+    if (!previewData) return [];
+    const rows = [...previewData.backorderedSales];
+    rows.sort((a, b) => {
+      const cmp = compareNullable(a[sortColumn], b[sortColumn]);
+      return sortDirection === "asc" ? cmp : -cmp;
+    });
+    return rows;
+  }, [previewData, sortColumn, sortDirection]);
 
   function handleLoadInstances() {
     setOptionsError(null);
@@ -350,22 +411,45 @@ export default function FulfillmentCleanupPage() {
             Ticking a sale removes its share of each SKU&rsquo;s correction below — the rest of that SKU&rsquo;s
             backlog (from sales you haven&rsquo;t excluded) is still cleaned up.
           </p>
-          <div className="mt-4 flex flex-col gap-1">
-            {previewData.backorderedSales.map((sale) => (
-              <label key={sale.cin7SaleId} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-slate-50">
-                <input
-                  type="checkbox"
-                  checked={excludedSaleIds.has(sale.cin7SaleId)}
-                  onChange={() => toggleExcluded(sale.cin7SaleId)}
-                  className="h-4 w-4"
-                />
-                <span className="font-medium text-slate-900">{sale.orderNumber ?? sale.cin7SaleId}</span>
-                <span className="text-slate-400">{sale.customerName}</span>
-                {sale.customerReference && <span className="text-xs text-slate-400">Ref: {sale.customerReference}</span>}
-                <span className="text-xs text-slate-400">{sale.orderDate ?? "—"}</span>
-                <span className="ml-auto text-xs text-slate-400">{qty(sale.totalBackorderQty)} backordered</span>
-              </label>
-            ))}
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200">
+                  <th className="py-2 pr-4"></th>
+                  <SortHeader label="Order #" column="orderNumber" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                  <SortHeader label="Customer" column="customerName" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                  <SortHeader label="Reference" column="customerReference" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                  <SortHeader label="Order Date" column="orderDate" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                  <SortHeader
+                    label="Backordered"
+                    column="totalBackorderQty"
+                    align="right"
+                    sortColumn={sortColumn}
+                    sortDirection={sortDirection}
+                    onSort={handleSort}
+                  />
+                </tr>
+              </thead>
+              <tbody>
+                {sortedBackorderedSales.map((sale) => (
+                  <tr key={sale.cin7SaleId} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="py-1.5 pr-4">
+                      <input
+                        type="checkbox"
+                        checked={excludedSaleIds.has(sale.cin7SaleId)}
+                        onChange={() => toggleExcluded(sale.cin7SaleId)}
+                        className="h-4 w-4"
+                      />
+                    </td>
+                    <td className="py-1.5 pr-4 font-medium text-slate-900">{sale.orderNumber ?? sale.cin7SaleId}</td>
+                    <td className="py-1.5 pr-4 text-slate-600">{sale.customerName ?? <span className="text-slate-300">—</span>}</td>
+                    <td className="py-1.5 pr-4 text-slate-500">{sale.customerReference ?? <span className="text-slate-300">—</span>}</td>
+                    <td className="py-1.5 pr-4 text-slate-500">{sale.orderDate ?? <span className="text-slate-300">—</span>}</td>
+                    <td className="py-1.5 pr-4 text-right text-slate-500">{qty(sale.totalBackorderQty)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </section>
       )}
