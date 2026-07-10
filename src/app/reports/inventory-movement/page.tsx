@@ -1,13 +1,30 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { loadReportFilterOptionsAction } from "../actions";
 import { loadInventoryMovementReportAction, exportInventoryMovementXlsxAction } from "./actions";
 import type { ReportFilterOptions } from "@/reports/query";
 import type { InventoryMovementRow } from "@/reports/query";
+import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
+
+type MovementSortColumn =
+  | "product"
+  | "qty_in_purchases"
+  | "qty_in_assemblies"
+  | "total_in"
+  | "qty_out_sales"
+  | "qty_out_consumption"
+  | "total_out"
+  | "net_change"
+  | "mover_category";
+
+function movementSortValue(row: InventoryMovementRow, column: MovementSortColumn): string | number | null {
+  if (column === "product") return row.product_name ?? row.product_sku;
+  return row[column];
+}
 
 type Period = "1m" | "3m" | "6m" | "12m";
 
@@ -65,6 +82,27 @@ export default function InventoryMovementPage() {
 
   const [isExporting, startExportTransition] = useTransition();
   const [exportError, setExportError] = useState<string | null>(null);
+
+  const [sortColumn, setSortColumn] = useState<MovementSortColumn>("total_out");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+
+  function handleSort(column: MovementSortColumn) {
+    if (column === sortColumn) setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+  }
+
+  const sortedRows = useMemo(() => {
+    if (!rows) return [];
+    const copy = [...rows];
+    copy.sort((a, b) => {
+      const cmp = compareNullable(movementSortValue(a, sortColumn), movementSortValue(b, sortColumn));
+      return sortDirection === "asc" ? cmp : -cmp;
+    });
+    return copy;
+  }, [rows, sortColumn, sortDirection]);
 
   useEffect(() => {
     loadReportFilterOptionsAction().then((result) => {
@@ -201,19 +239,54 @@ export default function InventoryMovementPage() {
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 text-slate-500">
-                    <th className="py-2 pr-4">Product</th>
-                    <th className="py-2 pr-4 text-right">Purchased In</th>
-                    <th className="py-2 pr-4 text-right">Assembly In</th>
-                    <th className="py-2 pr-4 text-right">Total In</th>
-                    <th className="py-2 pr-4 text-right">Sold Out</th>
-                    <th className="py-2 pr-4 text-right">Consumed Out</th>
-                    <th className="py-2 pr-4 text-right">Total Out</th>
-                    <th className="py-2 pr-4 text-right">Net Change</th>
-                    <th className="py-2 pr-4">Mover</th>
+                    <SortHeader label="Product" column="product" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <SortHeader
+                      label="Purchased In"
+                      column="qty_in_purchases"
+                      align="right"
+                      sortColumn={sortColumn}
+                      sortDirection={sortDirection}
+                      onSort={handleSort}
+                    />
+                    <SortHeader
+                      label="Assembly In"
+                      column="qty_in_assemblies"
+                      align="right"
+                      sortColumn={sortColumn}
+                      sortDirection={sortDirection}
+                      onSort={handleSort}
+                    />
+                    <SortHeader label="Total In" column="total_in" align="right" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <SortHeader
+                      label="Sold Out"
+                      column="qty_out_sales"
+                      align="right"
+                      sortColumn={sortColumn}
+                      sortDirection={sortDirection}
+                      onSort={handleSort}
+                    />
+                    <SortHeader
+                      label="Consumed Out"
+                      column="qty_out_consumption"
+                      align="right"
+                      sortColumn={sortColumn}
+                      sortDirection={sortDirection}
+                      onSort={handleSort}
+                    />
+                    <SortHeader label="Total Out" column="total_out" align="right" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <SortHeader
+                      label="Net Change"
+                      column="net_change"
+                      align="right"
+                      sortColumn={sortColumn}
+                      sortDirection={sortDirection}
+                      onSort={handleSort}
+                    />
+                    <SortHeader label="Mover" column="mover_category" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
+                  {sortedRows.map((row) => (
                     <tr key={row.product_sku} className="border-b border-slate-100">
                       <td className="py-2 pr-4">
                         <div className="font-medium text-slate-900">{row.product_name ?? row.product_sku}</div>

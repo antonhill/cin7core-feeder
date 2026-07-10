@@ -15,11 +15,19 @@ import type { SalesReportFilters } from "@/reports/query";
 import { buildPivotGrid, METRIC_COLUMNS, type PivotCellValues, type PivotGroupBy, type PivotSourceRow } from "@/reports/pivot";
 import { buildFlatReportSheet, buildPivotSheet } from "@/reports/export-xlsx";
 import { StaleBadge, staleSyncButtonClass } from "./sync-staleness";
+import { compareNullable, SortHeader, type SortDirection } from "./sortable-table";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "./ReportDescription";
 
 type GroupBySelection = "none" | PivotGroupBy;
+
+type ProductSalesSortColumn = "product" | "quantity_sold" | "revenue" | "cogs" | "profit" | "margin_percent";
+
+function productSalesSortValue(row: ProductSalesReportRow, column: ProductSalesSortColumn): string | number | null {
+  if (column === "product") return row.product_name ?? row.product_sku;
+  return row[column];
+}
 
 /** Decodes the base64 .xlsx bytes the server rendered and triggers a normal browser download — no server-side file storage involved. */
 function downloadBase64File(base64: string, filename: string, mimeType: string) {
@@ -169,6 +177,27 @@ export default function ReportsPage() {
   const [expandedSku, setExpandedSku] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, SaleLineDetailRow[]>>({});
   const [isLoadingDetails, startDetailsTransition] = useTransition();
+
+  const [sortColumn, setSortColumn] = useState<ProductSalesSortColumn>("revenue");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+
+  function handleSort(column: ProductSalesSortColumn) {
+    if (column === sortColumn) setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+  }
+
+  const sortedRows = useMemo(() => {
+    if (!rows) return [];
+    const copy = [...rows];
+    copy.sort((a, b) => {
+      const cmp = compareNullable(productSalesSortValue(a, sortColumn), productSalesSortValue(b, sortColumn));
+      return sortDirection === "asc" ? cmp : -cmp;
+    });
+    return copy;
+  }, [rows, sortColumn, sortDirection]);
 
   function refreshOptionsAndStatus() {
     loadReportFilterOptionsAction().then((result) => {
@@ -413,16 +442,16 @@ export default function ReportsPage() {
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 text-slate-500">
-                    <th className="py-2 pr-4">Product</th>
-                    <th className="py-2 pr-4">Qty sold</th>
-                    <th className="py-2 pr-4">Revenue</th>
-                    <th className="py-2 pr-4">COGS</th>
-                    <th className="py-2 pr-4">Profit</th>
-                    <th className="py-2 pr-4">Margin%</th>
+                    <SortHeader label="Product" column="product" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <SortHeader label="Qty sold" column="quantity_sold" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <SortHeader label="Revenue" column="revenue" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <SortHeader label="COGS" column="cogs" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <SortHeader label="Profit" column="profit" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <SortHeader label="Margin%" column="margin_percent" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
+                  {sortedRows.map((row) => (
                     <Fragment key={row.product_sku}>
                       <tr
                         key={row.product_sku}

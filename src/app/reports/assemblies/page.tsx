@@ -5,9 +5,29 @@ import { listAssembliesAction, getAssemblyDetailAction, exportAssembliesXlsxActi
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import type { Cin7FinishedGoodsListEntry, Cin7FinishedGoodsDetail } from "@/cin7/finished-goods";
 import type { AssemblyWithDetail } from "@/reports/assemblies-export";
+import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
+
+type AssemblySortColumn = "assemblyNumber" | "product" | "status" | "date" | "quantity" | "totalCost";
+
+function assemblySortValue(entry: Cin7FinishedGoodsListEntry, column: AssemblySortColumn): string | number | null {
+  switch (column) {
+    case "assemblyNumber":
+      return entry.AssemblyNumber ?? null;
+    case "product":
+      return entry.ProductName ?? entry.ProductCode ?? null;
+    case "status":
+      return entry.Status ?? null;
+    case "date":
+      return entry.Date ?? null;
+    case "quantity":
+      return entry.Quantity ?? 0;
+    case "totalCost":
+      return totalCost(entry);
+  }
+}
 
 /** Decodes the base64 .xlsx bytes the server rendered and triggers a normal browser download — same pattern as reports/page.tsx's downloadBase64File. */
 function downloadBase64File(base64: string, filename: string, mimeType: string) {
@@ -281,14 +301,31 @@ export default function AssembliesPage() {
     });
   }
 
+  const [sortColumn, setSortColumn] = useState<AssemblySortColumn>("date");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+
+  function handleSort(column: AssemblySortColumn) {
+    if (column === sortColumn) setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+  }
+
   const filtered = useMemo(
-    () =>
-      (assemblies ?? [])
-        .filter((a) => statusFilter.has((a.Status ?? "").trim().toUpperCase()))
-        .filter((a) => matchesSearch(search, a))
-        .sort((a, b) => (b.Date ?? "").localeCompare(a.Date ?? "")),
+    () => (assemblies ?? []).filter((a) => statusFilter.has((a.Status ?? "").trim().toUpperCase())).filter((a) => matchesSearch(search, a)),
     [assemblies, statusFilter, search]
   );
+
+  // Newest-first (date desc) is the default, matching this report's previous fixed order — sortColumn/sortDirection let the user override it.
+  const sortedFiltered = useMemo(() => {
+    const copy = [...filtered];
+    copy.sort((a, b) => {
+      const cmp = compareNullable(assemblySortValue(a, sortColumn), assemblySortValue(b, sortColumn));
+      return sortDirection === "asc" ? cmp : -cmp;
+    });
+    return copy;
+  }, [filtered, sortColumn, sortDirection]);
 
   const totals = useMemo(
     () =>
@@ -303,7 +340,7 @@ export default function AssembliesPage() {
     if (filtered.length === 0) return;
     setExportError(null);
     startExportTransition(async () => {
-      const result = await exportAssembliesXlsxAction(filtered);
+      const result = await exportAssembliesXlsxAction(sortedFiltered);
       if (!result.ok || !result.data) {
         setExportError(result.error ?? "Unknown error");
         return;
@@ -330,8 +367,8 @@ export default function AssembliesPage() {
     const newDetails: Record<string, Cin7FinishedGoodsDetail> = {};
     const newErrors: Record<string, string> = {};
 
-    for (let i = 0; i < filtered.length; i++) {
-      const entry = filtered[i];
+    for (let i = 0; i < sortedFiltered.length; i++) {
+      const entry = sortedFiltered[i];
       let detail = detailsById[entry.TaskID];
       let detailError = detailErrors[entry.TaskID];
       if (!detail) {
@@ -484,16 +521,39 @@ export default function AssembliesPage() {
                 <thead>
                   <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
                     <th className="w-8 px-2 py-2"></th>
-                    <th className="px-4 py-2 font-medium">Assembly #</th>
-                    <th className="px-4 py-2 font-medium">Product</th>
-                    <th className="px-4 py-2 font-medium">Status</th>
-                    <th className="px-4 py-2 font-medium">Date</th>
-                    <th className="px-4 py-2 text-right font-medium">Quantity</th>
-                    <th className="px-4 py-2 text-right font-medium">Total Cost</th>
+                    <SortHeader
+                      label="Assembly #"
+                      column="assemblyNumber"
+                      thClassName="px-4 py-2"
+                      sortColumn={sortColumn}
+                      sortDirection={sortDirection}
+                      onSort={handleSort}
+                    />
+                    <SortHeader label="Product" column="product" thClassName="px-4 py-2" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <SortHeader label="Status" column="status" thClassName="px-4 py-2" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <SortHeader label="Date" column="date" thClassName="px-4 py-2" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <SortHeader
+                      label="Quantity"
+                      column="quantity"
+                      align="right"
+                      thClassName="px-4 py-2"
+                      sortColumn={sortColumn}
+                      sortDirection={sortDirection}
+                      onSort={handleSort}
+                    />
+                    <SortHeader
+                      label="Total Cost"
+                      column="totalCost"
+                      align="right"
+                      thClassName="px-4 py-2"
+                      sortColumn={sortColumn}
+                      sortDirection={sortDirection}
+                      onSort={handleSort}
+                    />
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((a) => {
+                  {sortedFiltered.map((a) => {
                     const statusOption = STATUS_OPTIONS.find((s) => s.value === (a.Status ?? "").trim().toUpperCase());
                     const isExpanded = expandedIds.has(a.TaskID);
                     return (

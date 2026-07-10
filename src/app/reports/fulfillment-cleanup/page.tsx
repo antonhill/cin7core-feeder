@@ -16,50 +16,12 @@ import {
 import type { ReportFilterOptions, ProductAvailabilitySyncStatus, SalesSyncStatus } from "@/reports/query";
 import { buildFulfillmentCleanupLines } from "@/reports/fulfillment-cleanup/build";
 import { SNAPSHOT_STALE_HOURS, hoursSince, StaleBadge, staleSyncButtonClass } from "../sync-staleness";
+import { compareNullable, SortHeader } from "../sortable-table";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
 
 type BackorderedSaleSortColumn = "orderNumber" | "customerName" | "customerReference" | "orderDate" | "totalBackorderQty";
-
-/** Nulls sort last regardless of direction — a missing reference/date shouldn't jump to the top just because asc treats it as "smallest". */
-function compareNullable(a: string | number | null, b: string | number | null): number {
-  if (a === null && b === null) return 0;
-  if (a === null) return 1;
-  if (b === null) return -1;
-  if (typeof a === "number" && typeof b === "number") return a - b;
-  return String(a).localeCompare(String(b));
-}
-
-function SortHeader({
-  label,
-  column,
-  align = "left",
-  sortColumn,
-  sortDirection,
-  onSort,
-}: {
-  label: string;
-  column: BackorderedSaleSortColumn;
-  align?: "left" | "right";
-  sortColumn: BackorderedSaleSortColumn;
-  sortDirection: "asc" | "desc";
-  onSort: (column: BackorderedSaleSortColumn) => void;
-}) {
-  const active = sortColumn === column;
-  return (
-    <th className={`py-2 pr-4 ${align === "right" ? "text-right" : "text-left"}`}>
-      <button
-        type="button"
-        onClick={() => onSort(column)}
-        className={`inline-flex items-center gap-1 font-medium hover:text-slate-700 ${active ? "text-slate-700" : "text-slate-500"}`}
-      >
-        {label}
-        <span className="text-slate-400">{active ? (sortDirection === "asc" ? "▲" : "▼") : ""}</span>
-      </button>
-    </th>
-  );
-}
 
 function triggerCsvDownload(csv: string, filename: string) {
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });

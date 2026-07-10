@@ -19,9 +19,42 @@ import {
   type CostBasis,
   type AssemblyCostEstimate,
 } from "@/costing/estimate";
+import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
+
+type AssemblySortColumn = "assembly" | "components" | "totalCost" | "status";
+
+function assemblyEstimateSortValue(e: AssemblyCostEstimate, column: AssemblySortColumn): string | number | null {
+  switch (column) {
+    case "assembly":
+      return e.assemblyName || e.assemblySku;
+    case "components":
+      return e.lines.length;
+    case "totalCost":
+      return e.totalCost;
+    case "status":
+      return e.missingCostCount;
+  }
+}
+
+type ProductionSortColumn = "product" | "components" | "resources" | "totalCost" | "status";
+
+function productionEstimateSortValue(e: ProductionCostEstimatorResult["estimates"][number], column: ProductionSortColumn): string | number | null {
+  switch (column) {
+    case "product":
+      return e.productName || e.productSku;
+    case "components":
+      return e.componentLines.length;
+    case "resources":
+      return e.resourceLines.length;
+    case "totalCost":
+      return e.totalCost;
+    case "status":
+      return e.missingCostCount;
+  }
+}
 
 /** Decodes the base64 .xlsx bytes the server rendered and triggers a normal browser download — same pattern as reports/page.tsx's downloadBase64File. */
 function downloadBase64File(
@@ -87,6 +120,28 @@ export default function CostEstimatorPage() {
   >(null);
   const [isExportingProduction, startExportProductionTransition] =
     useTransition();
+
+  const [sortColumn, setSortColumn] = useState<AssemblySortColumn>("assembly");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+
+  function handleSort(column: AssemblySortColumn) {
+    if (column === sortColumn) setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+  }
+
+  const [productionSortColumn, setProductionSortColumn] = useState<ProductionSortColumn>("product");
+  const [productionSortDirection, setProductionSortDirection] = useState<SortDirection>("asc");
+
+  function handleProductionSort(column: ProductionSortColumn) {
+    if (column === productionSortColumn) setProductionSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setProductionSortColumn(column);
+      setProductionSortDirection("asc");
+    }
+  }
 
   function handleLoadInstances() {
     setInstancesError(null);
@@ -165,7 +220,7 @@ export default function CostEstimatorPage() {
         kind === "detail"
           ? exportCostEstimatesAction
           : exportCostEstimatesSummaryAction;
-      const result = await action(estimates);
+      const result = await action(sortedEstimates);
       if (!result.ok || !result.data) {
         setExportError(result.error ?? "Unknown error");
         return;
@@ -187,7 +242,7 @@ export default function CostEstimatorPage() {
         kind === "detail"
           ? exportProductionCostEstimatesAction
           : exportProductionCostEstimatesSummaryAction;
-      const result = await action(productionResult.estimates);
+      const result = await action(sortedProductionEstimates);
       if (!result.ok || !result.data) {
         setProductionExportError(result.error ?? "Unknown error");
         return;
@@ -207,6 +262,16 @@ export default function CostEstimatorPage() {
   );
   const incompleteCount = (estimates ?? []).filter((e) => !e.complete).length;
 
+  // Plain derived values, not useMemo — this page only re-renders on user
+  // actions (scan/sort clicks), not continuously, so re-sorting each render
+  // is negligible; the React Compiler couldn't preserve manual memoization
+  // here anyway (some other pre-existing pattern in this large file blocks
+  // its auto-optimization pass).
+  const sortedEstimates = [...(estimates ?? [])].sort((a, b) => {
+    const cmp = compareNullable(assemblyEstimateSortValue(a, sortColumn), assemblyEstimateSortValue(b, sortColumn));
+    return sortDirection === "asc" ? cmp : -cmp;
+  });
+
   const productionEstimates = productionResult?.estimates ?? [];
   const totalAcrossProduction = productionEstimates.reduce(
     (sum, e) => sum + (e.totalCost ?? 0),
@@ -215,6 +280,11 @@ export default function CostEstimatorPage() {
   const incompleteProductionCount = productionEstimates.filter(
     (e) => !e.complete,
   ).length;
+
+  const sortedProductionEstimates = [...productionEstimates].sort((a, b) => {
+    const cmp = compareNullable(productionEstimateSortValue(a, productionSortColumn), productionEstimateSortValue(b, productionSortColumn));
+    return productionSortDirection === "asc" ? cmp : -cmp;
+  });
 
   return (
     <>
@@ -373,18 +443,30 @@ export default function CostEstimatorPage() {
                     <thead>
                       <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
                         <th className="w-8 px-2 py-2"></th>
-                        <th className="px-4 py-2 font-medium">Assembly</th>
-                        <th className="px-4 py-2 text-right font-medium">
-                          Components
-                        </th>
-                        <th className="px-4 py-2 text-right font-medium">
-                          Total Cost
-                        </th>
-                        <th className="px-4 py-2 font-medium">Status</th>
+                        <SortHeader label="Assembly" column="assembly" thClassName="px-4 py-2" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                        <SortHeader
+                          label="Components"
+                          column="components"
+                          align="right"
+                          thClassName="px-4 py-2"
+                          sortColumn={sortColumn}
+                          sortDirection={sortDirection}
+                          onSort={handleSort}
+                        />
+                        <SortHeader
+                          label="Total Cost"
+                          column="totalCost"
+                          align="right"
+                          thClassName="px-4 py-2"
+                          sortColumn={sortColumn}
+                          sortDirection={sortDirection}
+                          onSort={handleSort}
+                        />
+                        <SortHeader label="Status" column="status" thClassName="px-4 py-2" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                       </tr>
                     </thead>
                     <tbody>
-                      {estimates.map((estimate) => {
+                      {sortedEstimates.map((estimate) => {
                         const isExpanded = expandedSkus.has(
                           estimate.assemblySku,
                         );
@@ -608,21 +690,53 @@ export default function CostEstimatorPage() {
                     <thead>
                       <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
                         <th className="w-8 px-2 py-2"></th>
-                        <th className="px-4 py-2 font-medium">Product</th>
-                        <th className="px-4 py-2 text-right font-medium">
-                          Components
-                        </th>
-                        <th className="px-4 py-2 text-right font-medium">
-                          Resources
-                        </th>
-                        <th className="px-4 py-2 text-right font-medium">
-                          Total Cost
-                        </th>
-                        <th className="px-4 py-2 font-medium">Status</th>
+                        <SortHeader
+                          label="Product"
+                          column="product"
+                          thClassName="px-4 py-2"
+                          sortColumn={productionSortColumn}
+                          sortDirection={productionSortDirection}
+                          onSort={handleProductionSort}
+                        />
+                        <SortHeader
+                          label="Components"
+                          column="components"
+                          align="right"
+                          thClassName="px-4 py-2"
+                          sortColumn={productionSortColumn}
+                          sortDirection={productionSortDirection}
+                          onSort={handleProductionSort}
+                        />
+                        <SortHeader
+                          label="Resources"
+                          column="resources"
+                          align="right"
+                          thClassName="px-4 py-2"
+                          sortColumn={productionSortColumn}
+                          sortDirection={productionSortDirection}
+                          onSort={handleProductionSort}
+                        />
+                        <SortHeader
+                          label="Total Cost"
+                          column="totalCost"
+                          align="right"
+                          thClassName="px-4 py-2"
+                          sortColumn={productionSortColumn}
+                          sortDirection={productionSortDirection}
+                          onSort={handleProductionSort}
+                        />
+                        <SortHeader
+                          label="Status"
+                          column="status"
+                          thClassName="px-4 py-2"
+                          sortColumn={productionSortColumn}
+                          sortDirection={productionSortDirection}
+                          onSort={handleProductionSort}
+                        />
                       </tr>
                     </thead>
                     <tbody>
-                      {productionEstimates.map((estimate) => {
+                      {sortedProductionEstimates.map((estimate) => {
                         const isExpanded = expandedProductionSkus.has(
                           estimate.productSku,
                         );

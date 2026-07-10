@@ -14,9 +14,20 @@ import type { ReportFilterOptions } from "@/reports/query";
 import type { CustomReportResult } from "@/reports/custom/aggregate";
 import { REPORT_SOURCES, REPORT_SOURCE_KEYS, type ReportSourceKey } from "@/reports/custom/sources";
 import type { CustomReportFilters } from "@/reports/custom/facts";
+import type { CustomReportRow } from "@/reports/custom/aggregate";
+import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
+
+/** "dim:<index>" or "measure:<index>" — a plain string rather than a fixed union, since dimensions/measures are user-chosen and vary per source. Unlike every other report here, aggregateCustomReport has no fixed row order at all (Map iteration order), so sorting matters more on this page than anywhere else. */
+type CustomSortColumn = string;
+
+function customSortValue(row: CustomReportRow, column: CustomSortColumn): string | number | null {
+  if (column.startsWith("dim:")) return row.dimensionValues[Number(column.slice(4))] ?? null;
+  if (column.startsWith("measure:")) return row.measureValues[Number(column.slice(8))];
+  return null;
+}
 
 function downloadBase64File(base64: string, filename: string, mimeType: string) {
   const byteChars = atob(base64);
@@ -65,6 +76,28 @@ export default function CustomReportPage() {
   const [isExporting, startExportTransition] = useTransition();
   const [exportError, setExportError] = useState<string | null>(null);
 
+  const [sortColumn, setSortColumn] = useState<CustomSortColumn | null>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+
+  function handleSort(column: CustomSortColumn) {
+    if (column === sortColumn) setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+  }
+
+  const sortedRows = useMemo(() => {
+    if (!result) return [];
+    if (!sortColumn) return result.rows;
+    const rows = [...result.rows];
+    rows.sort((a, b) => {
+      const cmp = compareNullable(customSortValue(a, sortColumn), customSortValue(b, sortColumn));
+      return sortDirection === "asc" ? cmp : -cmp;
+    });
+    return rows;
+  }, [result, sortColumn, sortDirection]);
+
   const sourceConfig = REPORT_SOURCES[source];
 
   function refreshSavedReports() {
@@ -93,6 +126,7 @@ export default function CustomReportPage() {
   function handleRunReport() {
     setReportError(null);
     setResult(null);
+    setSortColumn(null);
     startRunTransition(async () => {
       const res = await runCustomReportAction(source, dimensionKeys, measureKeys, currentFilters());
       if (!res.ok) {
@@ -328,20 +362,31 @@ export default function CustomReportPage() {
                 <table className="w-full text-left text-sm">
                   <thead>
                     <tr className="border-b border-slate-200 text-slate-500">
-                      {dimensionLabels.map((label) => (
-                        <th key={label} className="py-2 pr-4">
-                          {label}
-                        </th>
+                      {dimensionLabels.map((label, i) => (
+                        <SortHeader
+                          key={label}
+                          label={label}
+                          column={`dim:${i}`}
+                          sortColumn={sortColumn ?? ""}
+                          sortDirection={sortDirection}
+                          onSort={handleSort}
+                        />
                       ))}
-                      {measureLabels.map((label) => (
-                        <th key={label} className="py-2 pr-4 text-right">
-                          {label}
-                        </th>
+                      {measureLabels.map((label, i) => (
+                        <SortHeader
+                          key={label}
+                          label={label}
+                          column={`measure:${i}`}
+                          align="right"
+                          sortColumn={sortColumn ?? ""}
+                          sortDirection={sortDirection}
+                          onSort={handleSort}
+                        />
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {result.rows.map((row, i) => (
+                    {sortedRows.map((row, i) => (
                       <tr key={i} className="border-b border-slate-100">
                         {row.dimensionValues.map((value, j) => (
                           <td key={j} className="py-2 pr-4">

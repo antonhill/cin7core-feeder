@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { loadReportFilterOptionsAction } from "../actions";
 import {
   loadStockHealthReportAction,
@@ -10,9 +10,17 @@ import {
 } from "./actions";
 import type { ReportFilterOptions, StockHealthRow, ProductAvailabilitySyncStatus } from "@/reports/query";
 import { SNAPSHOT_STALE_HOURS, hoursSince, StaleBadge, staleSyncButtonClass } from "../sync-staleness";
+import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
+
+type StockHealthSortColumn = "product" | "on_hand" | "available" | "stock_value" | "total_out" | "days_of_cover" | "mover_category" | "status";
+
+function stockHealthSortValue(row: StockHealthRow, column: StockHealthSortColumn): string | number | null {
+  if (column === "product") return row.product_name ?? row.product_sku;
+  return row[column];
+}
 
 type Period = "1m" | "3m" | "6m" | "12m";
 
@@ -84,6 +92,27 @@ export default function StockHealthPage() {
 
   const [isExporting, startExportTransition] = useTransition();
   const [exportError, setExportError] = useState<string | null>(null);
+
+  const [sortColumn, setSortColumn] = useState<StockHealthSortColumn>("stock_value");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+
+  function handleSort(column: StockHealthSortColumn) {
+    if (column === sortColumn) setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+  }
+
+  const sortedRows = useMemo(() => {
+    if (!rows) return [];
+    const copy = [...rows];
+    copy.sort((a, b) => {
+      const cmp = compareNullable(stockHealthSortValue(a, sortColumn), stockHealthSortValue(b, sortColumn));
+      return sortDirection === "asc" ? cmp : -cmp;
+    });
+    return copy;
+  }, [rows, sortColumn, sortDirection]);
 
   function refreshOptionsAndStatus() {
     loadReportFilterOptionsAction().then((result) => {
@@ -263,18 +292,32 @@ export default function StockHealthPage() {
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 text-slate-500">
-                    <th className="py-2 pr-4">Product</th>
-                    <th className="py-2 pr-4 text-right">On Hand</th>
-                    <th className="py-2 pr-4 text-right">Available</th>
-                    <th className="py-2 pr-4 text-right">Stock Value</th>
-                    <th className="py-2 pr-4 text-right">Total Out</th>
-                    <th className="py-2 pr-4 text-right">Days of Cover</th>
-                    <th className="py-2 pr-4">Mover</th>
-                    <th className="py-2 pr-4">Status</th>
+                    <SortHeader label="Product" column="product" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <SortHeader label="On Hand" column="on_hand" align="right" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <SortHeader label="Available" column="available" align="right" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <SortHeader
+                      label="Stock Value"
+                      column="stock_value"
+                      align="right"
+                      sortColumn={sortColumn}
+                      sortDirection={sortDirection}
+                      onSort={handleSort}
+                    />
+                    <SortHeader label="Total Out" column="total_out" align="right" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <SortHeader
+                      label="Days of Cover"
+                      column="days_of_cover"
+                      align="right"
+                      sortColumn={sortColumn}
+                      sortDirection={sortDirection}
+                      onSort={handleSort}
+                    />
+                    <SortHeader label="Mover" column="mover_category" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <SortHeader label="Status" column="status" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
+                  {sortedRows.map((row) => (
                     <tr key={row.product_sku} className="border-b border-slate-100">
                       <td className="py-2 pr-4">
                         <div className="font-medium text-slate-900">{row.product_name ?? row.product_sku}</div>
