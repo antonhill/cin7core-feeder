@@ -189,16 +189,16 @@ async function getAllCategories(db: SupabaseClient, orgId: string): Promise<{ co
 }
 
 /**
- * The instance-scoped path derives categories from `sale_lines` (product_sku
- * → products.category_code → categories) — but `sale_lines` only has rows
- * for sales whose line-item detail sync has already finished, which is
- * rate-limited and can lag well behind the cheap header-level `sales` sync
- * (confirmed live 2026-07-11: with most of an org's sales still awaiting
- * detail sync, this came back completely empty rather than just partial).
- * Falls back to the full org-wide list in that case — an occasionally
- * too-broad category list is a far smaller problem than an unusably empty
- * dropdown, and this naturally tightens up as detail sync catches up over
- * time with no further change needed here.
+ * Scopes categories via `category_instances` (0037) — recorded directly at
+ * sync time (each instance's own `GET /ref/category` call, per
+ * src/sync/sync-sales.ts's syncCategories), not derived after the fact from
+ * `sale_lines`. An earlier version tried the `sale_lines` derivation
+ * (product_sku → products.category_code → categories), but that table only
+ * has rows for sales whose line-item detail sync has already finished —
+ * rate-limited, and confirmed live 2026-07-11 to lag behind badly enough
+ * (most of an org's sales still pending) that the derivation came back
+ * empty and fell back to the full org-wide list every time, silently
+ * defeating the whole point of scoping by instance.
  */
 async function getCategoriesForInstances(
   db: SupabaseClient,
@@ -207,22 +207,12 @@ async function getCategoriesForInstances(
 ): Promise<{ code: string; name: string }[]> {
   if (!scopedInstanceIds) return getAllCategories(db, orgId);
 
-  const skusRes = await db
-    .from("sale_lines")
-    .select("product_sku")
-    .eq("org_id", orgId)
-    .in("instance_id", scopedInstanceIds)
-    .not("product_sku", "is", null);
-  if (skusRes.error) throw new Error(skusRes.error.message);
-  const skus = [...new Set((skusRes.data ?? []).map((r: { product_sku: string }) => r.product_sku))];
-  if (skus.length === 0) return getAllCategories(db, orgId);
+  const codesRes = await db.from("category_instances").select("code").eq("org_id", orgId).in("instance_id", scopedInstanceIds);
+  if (codesRes.error) throw new Error(codesRes.error.message);
+  const codes = [...new Set((codesRes.data ?? []).map((r: { code: string }) => r.code))];
+  if (codes.length === 0) return getAllCategories(db, orgId);
 
-  const productsRes = await db.from("products").select("category_code").eq("org_id", orgId).in("sku", skus).not("category_code", "is", null);
-  if (productsRes.error) throw new Error(productsRes.error.message);
-  const categoryCodes = [...new Set((productsRes.data ?? []).map((r: { category_code: string }) => r.category_code))];
-  if (categoryCodes.length === 0) return getAllCategories(db, orgId);
-
-  const categoriesRes = await db.from("categories").select("code, name").eq("org_id", orgId).in("code", categoryCodes).order("name");
+  const categoriesRes = await db.from("categories").select("code, name").eq("org_id", orgId).in("code", codes).order("name");
   if (categoriesRes.error) throw new Error(categoriesRes.error.message);
   const categories = categoriesRes.data ?? [];
   return categories.length > 0 ? categories : getAllCategories(db, orgId);

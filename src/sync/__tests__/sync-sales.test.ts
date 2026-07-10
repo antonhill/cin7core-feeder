@@ -96,7 +96,7 @@ function makeFakeDb(opts: FakeDbOptions) {
       if (table === "sale_lines" || table === "sale_order_lines" || table === "sale_pick_pack_lines") {
         return deleteInsertTable(table);
       }
-      if (table === "categories") {
+      if (table === "categories" || table === "category_instances") {
         return {
           upsert: (rows: unknown, conflictOpts: unknown) => {
             calls.push({ table, op: "upsert", args: [rows, conflictOpts] });

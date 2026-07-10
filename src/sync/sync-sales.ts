@@ -299,24 +299,36 @@ async function syncSaleDetails(
  * populated only incidentally, from whatever a product CSV import happened
  * to mention. Upserts by `code = Name` (Anton, 2026-07-11: merge same-named
  * categories across instances into one org-wide row rather than adding
- * instance_id — two different Cin7 accounts having their own separate
- * "Accessories" is an edge case worth accepting for the simpler shape).
- * Failures here don't fail the whole sales sync — a category-list hiccup
- * shouldn't block the sales data this run actually cares about.
+ * instance_id to `categories` itself — two different Cin7 accounts having
+ * their own separate "Accessories" is an edge case worth accepting for the
+ * simpler shape). ALSO records which instance reported it in
+ * `category_instances` (0037) — captured here, at the one point this app
+ * actually knows it, rather than trying to reconstruct it later from
+ * `sale_lines` (only populated once a sale's rate-limited detail sync has
+ * finished, which can lag behind by most of an org's sales history — a
+ * derivation that unreliable defeated the entire point of scoping by
+ * instance). Failures here don't fail the whole sales sync — a
+ * category-list hiccup shouldn't block the sales data this run cares about.
  */
-async function syncCategories(db: SupabaseClient, orgId: string, creds: Cin7Credentials): Promise<void> {
+async function syncCategories(db: SupabaseClient, orgId: string, instanceId: string, creds: Cin7Credentials): Promise<void> {
   const categories = await fetchAllCategories(creds);
-  if (!categories.length) return;
-  const rows = categories.filter((c) => c.Name).map((c) => ({ org_id: orgId, code: c.Name, name: c.Name }));
-  const { error } = await db.from("categories").upsert(rows, { onConflict: "org_id,code" });
-  if (error) throw new Error(`categories: ${error.message}`);
+  const names = categories.filter((c) => c.Name).map((c) => c.Name);
+  if (!names.length) return;
+
+  const categoryRows = names.map((name) => ({ org_id: orgId, code: name, name }));
+  const { error: categoriesError } = await db.from("categories").upsert(categoryRows, { onConflict: "org_id,code" });
+  if (categoriesError) throw new Error(`categories: ${categoriesError.message}`);
+
+  const instanceRows = names.map((name) => ({ org_id: orgId, code: name, instance_id: instanceId }));
+  const { error: instancesError } = await db.from("category_instances").upsert(instanceRows, { onConflict: "org_id,code,instance_id" });
+  if (instancesError) throw new Error(`category_instances: ${instancesError.message}`);
 }
 
 /** Runs both sync phases for one instance, plus a lightweight pull of this instance's own category list. */
 export async function syncInstanceSales(db: SupabaseClient, orgId: string, instanceId: string): Promise<SalesSyncSummary> {
   const creds = await loadCin7Credentials(db, orgId, instanceId);
   try {
-    await syncCategories(db, orgId, creds);
+    await syncCategories(db, orgId, instanceId, creds);
   } catch {
     // Best-effort — see syncCategories' own comment; the sales sync below is what actually matters for this run.
   }
