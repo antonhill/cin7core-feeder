@@ -12,6 +12,7 @@ import {
 } from "@/cin7/reference-lookups";
 import { fetchAllProductionOrdersList } from "@/cin7/production-orders";
 import { fetchAllPurchasesList } from "@/cin7/purchases";
+import { updateSaleShipBy } from "@/cin7/sales";
 
 interface Cin7ProductListResponse {
   Products?: Record<string, unknown>[];
@@ -1279,4 +1280,65 @@ export async function surveyBackorderEtaFields(creds: Cin7Credentials, maxToProb
     orderLineKeyExamples,
     rawExampleNotReceived,
   };
+}
+
+export interface SaleShipByWriteTest {
+  saleId: string;
+  orderNumber: string;
+  shipByTested: string | null;
+  putSucceeded: boolean;
+  putError?: string;
+  /** Fields that differ between the before/after GET, other than ones Cin7 stamps on any write (LastModifiedOn) — a non-empty list here means the round-trip write isn't safe to trust for a real ShipBy change yet. */
+  unexpectedChanges: { field: string; before: unknown; after: unknown }[];
+}
+
+/** Cin7 stamps this on every write regardless of what changed — its presence here isn't a sign the round-trip corrupted anything. */
+const SALE_FIELDS_EXPECTED_TO_CHANGE_ON_ANY_WRITE = new Set(["LastModifiedOn"]);
+
+/**
+ * Diagnostic only, blocking Step 0 for the shipping calendar's
+ * drag-to-reschedule feature. Finds a real sale by its Order Number (e.g.
+ * "SO-00583" — safer for Anton to target a known test order by than an
+ * internal Sale GUID), performs a genuine no-op `PUT /sale` round-trip via
+ * updateSaleShipBy (writes back the sale's own current ShipBy, unchanged),
+ * then diffs a fresh GET against the original. This confirms both that Cin7
+ * actually accepts the write AND that nothing else on the sale silently
+ * changed as a side effect, before trusting this mechanism for a real
+ * drag-triggered date change.
+ */
+export async function testSaleShipByWriteBack(creds: Cin7Credentials, orderNumber: string): Promise<SaleShipByWriteTest> {
+  const listResponse = await cin7Request<{ SaleList?: Record<string, unknown>[] }>(creds, "/saleList", {
+    query: { Page: 1, Limit: 5, Search: orderNumber },
+  });
+  const match = (listResponse.SaleList ?? []).find((entry) => entry.OrderNumber === orderNumber);
+  if (!match?.SaleID) throw new Error(`No sale found with Order Number "${orderNumber}"`);
+  const saleId = match.SaleID as string;
+
+  const before = await cin7Request<Record<string, unknown>>(creds, "/sale", { query: { ID: saleId } });
+  const shipByTested = (before.ShipBy as string | null) ?? null;
+
+  try {
+    await updateSaleShipBy(creds, saleId, shipByTested);
+  } catch (e) {
+    return {
+      saleId,
+      orderNumber,
+      shipByTested,
+      putSucceeded: false,
+      putError: e instanceof Cin7ApiError ? `[${e.status}] ${e.message}` : e instanceof Error ? e.message : "Unknown error",
+      unexpectedChanges: [],
+    };
+  }
+
+  const after = await cin7Request<Record<string, unknown>>(creds, "/sale", { query: { ID: saleId } });
+
+  const unexpectedChanges: { field: string; before: unknown; after: unknown }[] = [];
+  for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    if (SALE_FIELDS_EXPECTED_TO_CHANGE_ON_ANY_WRITE.has(key)) continue;
+    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+      unexpectedChanges.push({ field: key, before: before[key], after: after[key] });
+    }
+  }
+
+  return { saleId, orderNumber, shipByTested, putSucceeded: true, unexpectedChanges };
 }

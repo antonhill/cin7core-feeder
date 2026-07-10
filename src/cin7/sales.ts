@@ -2,6 +2,43 @@ import type { Cin7Credentials } from "@/cin7/types";
 import { cin7Request } from "@/cin7/http";
 
 /**
+ * Fields Cin7's own Apiary spec (`nnhansg/dear-openapi`, `specification/
+ * dearinventory.apib`, checked directly 2026-07-10 — the JS-rendered mirror
+ * this project usually has to work around) documents as writable via
+ * `PUT /sale`, distinct from read-only fields also present on `GET /sale`
+ * (`BaseCurrency`, `CustomerCurrency`, `COGSAmount`, `Status`, every
+ * `Combined*Status`, `Type`, `ServiceOnly`, `SourceChannel`) and from
+ * `Quote`/`Order`/`Fulfilments`/`Invoices`/`CreditNotes`, which are nested
+ * sub-resources with their own dedicated endpoints and aren't accepted here.
+ */
+const SALE_WRITABLE_FIELDS = [
+  "ID",
+  "Customer",
+  "CustomerID",
+  "Contact",
+  "Phone",
+  "Email",
+  "DefaultAccount",
+  "SkipQuote",
+  "BillingAddress",
+  "ShippingAddress",
+  "ShippingNotes",
+  "TaxRule",
+  "Terms",
+  "PriceTier",
+  "ShipBy",
+  "Location",
+  "SaleOrderDate",
+  "Note",
+  "CustomerReference",
+  "SalesRepresentative",
+  "Carrier",
+  "CurrencyRate",
+  "ExternalID",
+  "AdditionalAttributes",
+] as const;
+
+/**
  * Confirmed via the Apiary spec: /saleList is header-only (no line items) but
  * cheap and paginated — this is phase 1 of the sales sync (see
  * sync/sync-sales.ts). Unlike /Product or /customer/supplier (which use
@@ -168,4 +205,30 @@ export interface Cin7SaleDetail {
  */
 export async function fetchSaleDetail(creds: Cin7Credentials, saleId: string): Promise<Cin7SaleDetail> {
   return cin7Request<Cin7SaleDetail>(creds, "/sale", { query: { ID: saleId } });
+}
+
+/**
+ * Updates a Sale's ShipBy date in Cin7 Core (e.g. dragging a card to a new
+ * day on the shipping calendar). `PUT /sale` requires the full writable
+ * field set on every call, not a partial patch — Cin7's own spec marks
+ * `Location` as unconditionally required, and `Customer`/`CustomerID` as
+ * required if the other isn't present — so this re-fetches the sale fresh
+ * immediately beforehand and round-trips every other writable field
+ * unchanged. The live GET is used rather than this app's own synced `sales`
+ * table, since that table only carries what reporting needs (order number,
+ * customer name, Combined*Status columns), not the full writable set
+ * (BillingAddress, TaxRule, Terms, PriceTier, ...).
+ */
+export async function updateSaleShipBy(creds: Cin7Credentials, saleId: string, shipBy: string | null): Promise<void> {
+  const current = await cin7Request<Record<string, unknown>>(creds, "/sale", { query: { ID: saleId } });
+
+  const body: Record<string, unknown> = {};
+  for (const field of SALE_WRITABLE_FIELDS) {
+    if (current[field] !== undefined) body[field] = current[field];
+  }
+  body.ShipBy = shipBy;
+  // GET returns TaxCalculation ("Inclusive"/"Exclusive"); PUT expects the boolean TaxInclusive instead — same field, different shape on read vs write.
+  if (current.TaxCalculation !== undefined) body.TaxInclusive = current.TaxCalculation === "Inclusive";
+
+  await cin7Request(creds, "/sale", { method: "PUT", body });
 }

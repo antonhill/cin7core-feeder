@@ -43,10 +43,12 @@ export default function ReportsLayout({
           Fast/Medium/Slow mover classification), Stock Health (current
           stock levels combined with velocity — days of cover, excess/stockout
           flagging), Order Fulfillment (a working pick/ship-today
-          dashboard, order and product-level detail together), and the
-          Fulfillment Cleanup Helper (a completed Bulk Stock Adjustment CSV
-          for every oversold SKU, ready to import into Cin7), with more
-          report types to come.
+          dashboard, order and product-level detail together), Shipping
+          Calendar (a drag-to-reschedule week view — moving a card writes the
+          new Ship By date straight back to Cin7 Core), and the Fulfillment
+          Cleanup Helper (a completed Bulk Stock Adjustment CSV for every
+          oversold SKU, ready to import into Cin7), with more report types to
+          come.
         </ModuleHeader>
       </div>
       <div className="mt-6 flex items-start gap-8 print:mt-0 print:block">

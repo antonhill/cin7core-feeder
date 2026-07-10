@@ -20,6 +20,7 @@ import {
   debugSurveyProductAvailabilityFields,
   debugSurveySaleFulfillmentFields,
   debugSurveyBackorderEtaFields,
+  debugTestSaleShipByWriteBack,
   debugProbeWorkCentrePaths,
   debugPushOneCustomerAndSupplier,
   deleteInstance,
@@ -54,6 +55,7 @@ function InstancesSettingsPageInner() {
   const [accountCodes, setAccountCodes] = useState<Record<string, string>>({});
   const [productionBomSkus, setProductionBomSkus] = useState<Record<string, string>>({});
   const [productionOrderNumbers, setProductionOrderNumbers] = useState<Record<string, string>>({});
+  const [shipByTestOrderNumbers, setShipByTestOrderNumbers] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -266,6 +268,16 @@ function InstancesSettingsPageInner() {
     });
   }
 
+  function handleTestSaleShipByWriteBack(instanceId: string) {
+    const orderNumber = (shipByTestOrderNumbers[instanceId] ?? "").trim();
+    if (!orderNumber) return;
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Writing (no-op ShipBy round-trip)…" } }));
+    startTransition(async () => {
+      const result = await debugTestSaleShipByWriteBack(instanceId, orderNumber);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
   function handleDelete(instanceId: string) {
     if (!confirm("Delete this Cin7 Core instance connection?")) return;
     setError(null);
@@ -454,6 +466,23 @@ function InstancesSettingsPageInner() {
                 className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Survey backorder ETA fields (Order Fulfillment Dashboard)
+              </button>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="Order Number to test-write against, e.g. SO-00583"
+                value={shipByTestOrderNumbers[inst.id] ?? ""}
+                onChange={(e) => setShipByTestOrderNumbers((prev) => ({ ...prev, [inst.id]: e.target.value }))}
+                className="w-80 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+              />
+              <button
+                onClick={() => handleTestSaleShipByWriteBack(inst.id)}
+                disabled={isPending || !(shipByTestOrderNumbers[inst.id] ?? "").trim()}
+                className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                title="Performs a real PUT against this order in Cin7 — a no-op (writes back its own current ShipBy unchanged) but a genuine write, not a read-only survey. Use a real test order, not a live customer's."
+              >
+                Test ShipBy write-back (WRITES to Cin7 — no-op test)
               </button>
             </div>
             {testResults[inst.id] && (
