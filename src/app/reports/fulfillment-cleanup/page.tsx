@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { loadReportFilterOptionsAction } from "../actions";
-import { loadFulfillmentCleanupPreviewAction, downloadFulfillmentCleanupCsvAction } from "./actions";
+import { loadFulfillmentCleanupPreviewAction, downloadFulfillmentCleanupCsvAction, type FulfillmentCleanupPreviewData } from "./actions";
 import type { ReportFilterOptions } from "@/reports/query";
-import type { FulfillmentCleanupLine } from "@/reports/fulfillment-cleanup/build";
+import { buildFulfillmentCleanupLines } from "@/reports/fulfillment-cleanup/build";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
@@ -32,14 +32,34 @@ export default function FulfillmentCleanupPage() {
   const [isLoadingOptions, startOptionsTransition] = useTransition();
   const [instanceId, setInstanceId] = useState("");
 
-  const [lines, setLines] = useState<FulfillmentCleanupLine[] | null>(null);
-  const [missingCostSkus, setMissingCostSkus] = useState<string[]>([]);
+  const [previewData, setPreviewData] = useState<FulfillmentCleanupPreviewData | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [isLoadingPreview, startPreviewTransition] = useTransition();
+
+  const [excludedSaleIds, setExcludedSaleIds] = useState<Set<string>>(new Set());
 
   const [isDownloading, startDownloadTransition] = useTransition();
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [downloadedFilename, setDownloadedFilename] = useState<string | null>(null);
+
+  // Recomputed instantly whenever a sale is excluded/included — no server
+  // round trip, since buildFulfillmentCleanupLines is a pure function and
+  // the action already handed over every raw ingredient it needs.
+  const lines = useMemo(() => {
+    if (!previewData) return null;
+    return buildFulfillmentCleanupLines(
+      previewData.negativeAvailabilityRows,
+      new Map(previewData.averageCostEntries.map((e) => [e.sku, e.averageCost])),
+      previewData.todayIso,
+      previewData.backorderDemand,
+      excludedSaleIds
+    );
+  }, [previewData, excludedSaleIds]);
+
+  const missingCostSkus = useMemo(() => {
+    if (!lines) return [];
+    return [...new Set(lines.filter((l) => l.action === "Zero" && l.unitCost === null).map((l) => l.productSku))];
+  }, [lines]);
 
   function handleLoadInstances() {
     setOptionsError(null);
@@ -58,14 +78,23 @@ export default function FulfillmentCleanupPage() {
     if (!instanceId) return;
     setPreviewError(null);
     setDownloadedFilename(null);
+    setExcludedSaleIds(new Set());
     startPreviewTransition(async () => {
       const result = await loadFulfillmentCleanupPreviewAction(instanceId);
       if (!result.ok) {
         setPreviewError(result.error ?? "Unknown error");
         return;
       }
-      setLines(result.data?.lines ?? []);
-      setMissingCostSkus(result.data?.missingCostSkus ?? []);
+      setPreviewData(result.data ?? null);
+    });
+  }
+
+  function toggleExcluded(saleId: string) {
+    setExcludedSaleIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(saleId)) next.delete(saleId);
+      else next.add(saleId);
+      return next;
     });
   }
 
@@ -91,8 +120,9 @@ export default function FulfillmentCleanupPage() {
         Pick Today queue. Each line brings that SKU&rsquo;s availability back to zero; lines with no stock on hand at
         all are marked <strong>Zero</strong> with a cost filled in from the product&rsquo;s current average cost,
         lines that still have some stock on hand are marked <strong>NonZero</strong> and left for Cin7 to cost from
-        its own existing average. This only builds the file — review it and import it into Cin7 yourself when
-        you&rsquo;re ready; nothing here writes to Cin7.
+        its own existing average. Some backordered sales should legitimately stay unfulfilled — exclude them below
+        and their share of each SKU&rsquo;s correction is removed. This only builds the file — review it and import
+        it into Cin7 yourself when you&rsquo;re ready; nothing here writes to Cin7.
       </ReportDescription>
       <PageLoadingIndicator show={isDownloading} label="Preparing CSV…" />
 
@@ -148,12 +178,38 @@ export default function FulfillmentCleanupPage() {
         {previewError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{previewError}</p>}
       </section>
 
+      {previewData && previewData.backorderedSales.length > 0 && (
+        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <p className="font-medium text-slate-900">Exclude sales that should legitimately stay unfulfilled</p>
+          <p className="mt-1 text-sm text-slate-500">
+            Ticking a sale removes its share of each SKU&rsquo;s correction below — the rest of that SKU&rsquo;s
+            backlog (from sales you haven&rsquo;t excluded) is still cleaned up.
+          </p>
+          <div className="mt-4 flex flex-col gap-1">
+            {previewData.backorderedSales.map((sale) => (
+              <label key={sale.cin7SaleId} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-slate-50">
+                <input
+                  type="checkbox"
+                  checked={excludedSaleIds.has(sale.cin7SaleId)}
+                  onChange={() => toggleExcluded(sale.cin7SaleId)}
+                  className="h-4 w-4"
+                />
+                <span className="font-medium text-slate-900">{sale.orderNumber ?? sale.cin7SaleId}</span>
+                <span className="text-slate-400">{sale.customerName}</span>
+                <span className="ml-auto text-xs text-slate-400">{qty(sale.totalBackorderQty)} backordered</span>
+              </label>
+            ))}
+          </div>
+        </section>
+      )}
+
       {lines && (
         <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <p className="font-medium text-slate-900">
               {lines.length} line{lines.length === 1 ? "" : "s"} — {lines.filter((l) => l.action === "Zero").length} Zero,{" "}
               {lines.filter((l) => l.action === "NonZero").length} NonZero
+              {excludedSaleIds.size > 0 && ` (${excludedSaleIds.size} sale${excludedSaleIds.size === 1 ? "" : "s"} excluded)`}
             </p>
             {lines.length > 0 && (
               <button
@@ -180,7 +236,13 @@ export default function FulfillmentCleanupPage() {
             </p>
           )}
 
-          {lines.length === 0 && <p className="mt-4 text-sm text-slate-400">Nothing is currently oversold on this instance.</p>}
+          {lines.length === 0 && (
+            <p className="mt-4 text-sm text-slate-400">
+              {excludedSaleIds.size > 0
+                ? "Nothing left to correct — every remaining shortfall was covered by excluded sales."
+                : "Nothing is currently oversold on this instance."}
+            </p>
+          )}
 
           {lines.length > 0 && (
             <div className="mt-4 overflow-x-auto">
