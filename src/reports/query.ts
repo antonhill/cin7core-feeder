@@ -280,6 +280,8 @@ export interface OrderFulfillmentRow {
   instance_id: string;
   order_number: string | null;
   customer_name: string | null;
+  /** The customer's own PO/reference number for this sale, if they gave one — often the clearest way for a human to recognize an order (e.g. in the Fulfillment Cleanup Helper's exclusion checklist). */
+  customer_reference: string | null;
   order_date: string | null;
   /** Null when order_date itself is unknown — distinct from 0, which means "opened today." */
   days_open: number | null;

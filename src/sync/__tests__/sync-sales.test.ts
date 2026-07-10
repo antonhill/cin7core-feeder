@@ -219,6 +219,7 @@ describe("syncInstanceSales — detail phase", () => {
     vi.mocked(fetchSaleDetail).mockResolvedValueOnce({
       ID: "sale-1",
       Location: "Main Warehouse",
+      CustomerReference: "PO-98765",
       Invoices: [
         { InvoiceNumber: "INV-1", InvoiceDate: "2026-06-01T00:00:00", Lines: [{ SKU: "SKU-A", Name: "Widget", Quantity: 2, Price: 10, Total: 20, AverageCost: 4 }] },
         { InvoiceNumber: "INV-2", InvoiceDate: "2026-06-15T00:00:00", Lines: [{ SKU: "SKU-B", Name: "Gadget", Quantity: 1, Price: 30, Total: 30, AverageCost: 12 }] },
@@ -237,7 +238,7 @@ describe("syncInstanceSales — detail phase", () => {
       expect.objectContaining({ invoice_number: "INV-2", product_sku: "SKU-B", line_number: 0 }),
     ]);
     const updateCall = calls.find((c) => c.table === "sales" && c.op === "update");
-    expect(updateCall?.args[0]).toMatchObject({ location: "Main Warehouse" });
+    expect(updateCall?.args[0]).toMatchObject({ location: "Main Warehouse", customer_reference: "PO-98765" });
   });
 
   it("records a per-sale failure without aborting the rest of the batch", async () => {

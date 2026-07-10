@@ -3,7 +3,12 @@
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { loadReportFilterOptionsAction } from "../actions";
-import { loadFulfillmentCleanupPreviewAction, downloadFulfillmentCleanupCsvAction, type FulfillmentCleanupPreviewData } from "./actions";
+import {
+  loadFulfillmentCleanupPreviewAction,
+  downloadFulfillmentCleanupCsvAction,
+  downloadIncludedSalesCsvAction,
+  type FulfillmentCleanupPreviewData,
+} from "./actions";
 import type { ReportFilterOptions } from "@/reports/query";
 import { buildFulfillmentCleanupLines } from "@/reports/fulfillment-cleanup/build";
 import { Spinner } from "@/app/Spinner";
@@ -42,6 +47,10 @@ export default function FulfillmentCleanupPage() {
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [downloadedFilename, setDownloadedFilename] = useState<string | null>(null);
 
+  const [isDownloadingIncludedSales, startIncludedSalesTransition] = useTransition();
+  const [includedSalesError, setIncludedSalesError] = useState<string | null>(null);
+  const [includedSalesFilename, setIncludedSalesFilename] = useState<string | null>(null);
+
   // Recomputed instantly whenever a sale is excluded/included — no server
   // round trip, since buildFulfillmentCleanupLines is a pure function and
   // the action already handed over every raw ingredient it needs.
@@ -61,6 +70,12 @@ export default function FulfillmentCleanupPage() {
     return [...new Set(lines.filter((l) => l.action === "Zero" && l.unitCost === null).map((l) => l.productSku))];
   }, [lines]);
 
+  // Every backordered sale the user did NOT exclude — the audit-trail export answers "which orders was this cleanup run meant to unblock?"
+  const includedSales = useMemo(() => {
+    if (!previewData) return [];
+    return previewData.backorderedSales.filter((s) => !excludedSaleIds.has(s.cin7SaleId));
+  }, [previewData, excludedSaleIds]);
+
   function handleLoadInstances() {
     setOptionsError(null);
     startOptionsTransition(async () => {
@@ -78,6 +93,7 @@ export default function FulfillmentCleanupPage() {
     if (!instanceId) return;
     setPreviewError(null);
     setDownloadedFilename(null);
+    setIncludedSalesFilename(null);
     setExcludedSaleIds(new Set());
     startPreviewTransition(async () => {
       const result = await loadFulfillmentCleanupPreviewAction(instanceId);
@@ -109,6 +125,19 @@ export default function FulfillmentCleanupPage() {
       }
       triggerCsvDownload(result.data, "BulkUpdateStockAdjustment.csv");
       setDownloadedFilename("BulkUpdateStockAdjustment.csv");
+    });
+  }
+
+  function handleDownloadIncludedSales() {
+    setIncludedSalesError(null);
+    startIncludedSalesTransition(async () => {
+      const result = await downloadIncludedSalesCsvAction(includedSales);
+      if (!result.ok || !result.data) {
+        setIncludedSalesError(result.error ?? "Unknown error");
+        return;
+      }
+      triggerCsvDownload(result.data, "FulfillmentCleanup_IncludedSales.csv");
+      setIncludedSalesFilename("FulfillmentCleanup_IncludedSales.csv");
     });
   }
 
@@ -196,6 +225,8 @@ export default function FulfillmentCleanupPage() {
                 />
                 <span className="font-medium text-slate-900">{sale.orderNumber ?? sale.cin7SaleId}</span>
                 <span className="text-slate-400">{sale.customerName}</span>
+                {sale.customerReference && <span className="text-xs text-slate-400">Ref: {sale.customerReference}</span>}
+                <span className="text-xs text-slate-400">{sale.orderDate ?? "—"}</span>
                 <span className="ml-auto text-xs text-slate-400">{qty(sale.totalBackorderQty)} backordered</span>
               </label>
             ))}
@@ -212,20 +243,36 @@ export default function FulfillmentCleanupPage() {
               {excludedSaleIds.size > 0 && ` (${excludedSaleIds.size} sale${excludedSaleIds.size === 1 ? "" : "s"} excluded)`}
             </p>
             {lines.length > 0 && (
-              <button
-                type="button"
-                onClick={handleDownload}
-                disabled={isDownloading}
-                className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                {isDownloading ? "Preparing…" : "Download CSV"}
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleDownloadIncludedSales}
+                  disabled={isDownloadingIncludedSales || includedSales.length === 0}
+                  className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {isDownloadingIncludedSales ? "Preparing…" : "Export included sales"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownload}
+                  disabled={isDownloading}
+                  className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {isDownloading ? "Preparing…" : "Download CSV"}
+                </button>
+              </div>
             )}
           </div>
           {downloadError && <p className="mt-2 text-sm text-red-600">{downloadError}</p>}
           {downloadedFilename && (
             <p className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
               Downloaded {downloadedFilename} — review it, then import it into Cin7&rsquo;s Bulk Stock Adjustment screen yourself.
+            </p>
+          )}
+          {includedSalesError && <p className="mt-2 text-sm text-red-600">{includedSalesError}</p>}
+          {includedSalesFilename && (
+            <p className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+              Downloaded {includedSalesFilename} — {includedSales.length} sale{includedSales.length === 1 ? "" : "s"} this cleanup run assumed would become fulfillable.
             </p>
           )}
 

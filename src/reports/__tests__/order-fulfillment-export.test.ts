@@ -8,6 +8,7 @@ function row(overrides: Partial<OrderFulfillmentRow>): OrderFulfillmentRow {
     instance_id: "instance-1",
     order_number: "SO-1",
     customer_name: "Acme",
+    customer_reference: null,
     order_date: null,
     days_open: null,
     ship_by: null,

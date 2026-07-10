@@ -7,6 +7,7 @@ import { fetchAllProductsForCosting } from "@/cin7/product-cost";
 import { getOrderFulfillmentReport, getOrderFulfillmentLines } from "@/reports/query";
 import type { NegativeAvailabilityRow, BackorderDemandRow, FulfillmentCleanupLine } from "@/reports/fulfillment-cleanup/build";
 import { buildFulfillmentCleanupCsv } from "@/export/fulfillment-cleanup-csv";
+import { buildIncludedSalesCsv } from "@/export/fulfillment-cleanup-included-sales-csv";
 
 export interface FulfillmentCleanupActionResult<T> {
   ok: boolean;
@@ -19,6 +20,9 @@ export interface BackorderedSale {
   cin7SaleId: string;
   orderNumber: string | null;
   customerName: string | null;
+  /** The customer's own PO/reference number, if given — often the clearest way to recognize which order to exclude. */
+  customerReference: string | null;
+  orderDate: string | null;
   totalBackorderQty: number;
 }
 
@@ -81,6 +85,8 @@ export async function loadFulfillmentCleanupPreviewAction(instanceId: string): P
         cin7SaleId: o.cin7_sale_id,
         orderNumber: o.order_number,
         customerName: o.customer_name,
+        customerReference: o.customer_reference,
+        orderDate: o.order_date,
         totalBackorderQty: o.total_backorder_qty,
       }));
 
@@ -115,6 +121,16 @@ export async function downloadFulfillmentCleanupCsvAction(lines: FulfillmentClea
   try {
     await requireCurrentOrg();
     return { ok: true, data: buildFulfillmentCleanupCsv(lines) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/** An audit-trail export (not a Cin7 import file): every backordered sale the user did NOT exclude from this cleanup run — a record of exactly which orders a given Bulk Stock Adjustment import was meant to unblock. */
+export async function downloadIncludedSalesCsvAction(sales: BackorderedSale[]): Promise<FulfillmentCleanupActionResult<string>> {
+  try {
+    await requireCurrentOrg();
+    return { ok: true, data: buildIncludedSalesCsv(sales) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
