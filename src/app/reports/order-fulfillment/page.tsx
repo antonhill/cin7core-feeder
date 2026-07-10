@@ -22,19 +22,27 @@ const TABS: { value: Tab; label: string }[] = [
 /** An order open this many days or more without being fully picked is probably stuck, not just "next in line" — a plain default, not meant to be precisely tuned. */
 const STUCK_AFTER_DAYS = 7;
 
-/** Every Combined* status this app tracks shares the same shape (NOT AVAILABLE/VOIDED, NOT <verb>ED, <verb>ING, PARTIALLY <verb>ED, <verb>ED) — one classifier covers all of them rather than an exhaustive per-value map. */
+/**
+ * Every Combined* status this app tracks shares the same shape (NOT
+ * AVAILABLE/VOIDED, NOT <verb>ED, <verb>ING, PARTIALLY <verb>ED, <verb>ED) —
+ * one classifier covers all of them rather than an exhaustive per-value map.
+ * A "NOT <verb>ED" status is neutral (Anton, 2026-07-10): a brand-new order
+ * hasn't been picked/packed/shipped/invoiced yet by definition, which isn't
+ * a problem worth flashing red for — that's reserved for the Overdue/Stuck
+ * badges and genuinely-unpaid orders, which actually need attention.
+ */
 function statusBadgeClass(status: string | null): string {
   if (!status) return "bg-slate-100 text-slate-500";
   const s = status.toUpperCase();
-  if (s === "NOT AVAILABLE" || s === "VOIDED") return "bg-slate-100 text-slate-500";
-  if (s.startsWith("NOT ") || s === "UNPAID") return "bg-rose-100 text-rose-700";
+  if (s === "UNPAID") return "bg-rose-100 text-rose-700";
+  if (s === "VOIDED" || s.startsWith("NOT ")) return "bg-slate-100 text-slate-500";
   if (s.startsWith("PARTIALLY") || s.endsWith("ING")) return "bg-amber-100 text-amber-700";
   return "bg-emerald-100 text-emerald-700";
 }
 
 function StatusBadge({ status }: { status: string | null }) {
   if (!status) return <span className="text-xs text-slate-300">—</span>;
-  return <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusBadgeClass(status)}`}>{status}</span>;
+  return <span className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold ${statusBadgeClass(status)}`}>{status}</span>;
 }
 
 function downloadBase64File(base64: string, filename: string, mimeType: string) {
@@ -451,13 +459,17 @@ export default function OrderFulfillmentPage() {
                           <div className="font-medium text-slate-900">{row.order_number ?? row.cin7_sale_id}</div>
                           <div className="text-xs text-slate-400">{row.customer_name}</div>
                         </td>
-                        <td className="py-2 pr-4">
+                        <td className="whitespace-nowrap py-2 pr-4">
                           {row.ship_by ?? <span className="text-slate-300">—</span>}
-                          {row.is_overdue && <span className="ml-1.5 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">Overdue</span>}
+                          {row.is_overdue && (
+                            <span className="ml-1.5 whitespace-nowrap rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">
+                              Overdue
+                            </span>
+                          )}
                           {!row.is_overdue && row.is_pick_today && (row.days_open ?? 0) >= STUCK_AFTER_DAYS && (
                             <span
                               title={`Open ${row.days_open} days without being fully picked`}
-                              className="ml-1.5 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"
+                              className="ml-1.5 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"
                             >
                               Stuck ({row.days_open}d)
                             </span>
@@ -478,8 +490,8 @@ export default function OrderFulfillmentPage() {
                         <td className="py-2 pr-4">
                           <StatusBadge status={row.combined_payment_status} />
                         </td>
-                        <td className="py-2 pr-4 text-right font-medium">{qty(row.total_pickable_qty)}</td>
-                        <td className="py-2 pr-4 text-right">
+                        <td className="whitespace-nowrap py-2 pr-4 text-right font-medium">{qty(row.total_pickable_qty)}</td>
+                        <td className="whitespace-nowrap py-2 pr-4 text-right">
                           {money(row.paid_amount)} / {money(row.invoice_amount)}
                         </td>
                       </tr>
