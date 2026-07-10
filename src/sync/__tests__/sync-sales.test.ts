@@ -3,9 +3,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncInstanceSales, syncOrgSales } from "@/sync/sync-sales";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllSalesList, fetchSaleDetail } from "@/cin7/sales";
+import { fetchAllCategories } from "@/cin7/categories";
 
 vi.mock("@/cin7/load-credentials", () => ({ loadCin7Credentials: vi.fn() }));
 vi.mock("@/cin7/sales", () => ({ fetchAllSalesList: vi.fn(), fetchSaleDetail: vi.fn() }));
+vi.mock("@/cin7/categories", () => ({ fetchAllCategories: vi.fn() }));
 
 const creds = { accountId: "a", applicationKey: "k", baseUrl: "https://example.test" };
 
@@ -94,6 +96,14 @@ function makeFakeDb(opts: FakeDbOptions) {
       if (table === "sale_lines" || table === "sale_order_lines" || table === "sale_pick_pack_lines") {
         return deleteInsertTable(table);
       }
+      if (table === "categories") {
+        return {
+          upsert: (rows: unknown, conflictOpts: unknown) => {
+            calls.push({ table, op: "upsert", args: [rows, conflictOpts] });
+            return Promise.resolve({ error: null });
+          },
+        };
+      }
       throw new Error(`Unhandled table in fake db: ${table}`);
     },
   };
@@ -105,6 +115,7 @@ beforeEach(() => {
   vi.mocked(loadCin7Credentials).mockReset().mockResolvedValue({ ...creds, name: "Spark Demo" });
   vi.mocked(fetchAllSalesList).mockReset().mockResolvedValue([]);
   vi.mocked(fetchSaleDetail).mockReset();
+  vi.mocked(fetchAllCategories).mockReset().mockResolvedValue([]);
 });
 
 describe("syncInstanceSales — list phase", () => {

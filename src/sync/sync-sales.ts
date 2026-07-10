@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllSalesList, fetchSaleDetail, type Cin7SaleFulfilment } from "@/cin7/sales";
+import { fetchAllCategories } from "@/cin7/categories";
 import type { Cin7Credentials } from "@/cin7/types";
 
 const DEFAULT_BACKFILL_MONTHS = 12;
@@ -292,9 +293,33 @@ async function syncSaleDetails(
   return { synced, failed: errors.length, errors };
 }
 
-/** Runs both sync phases for one instance. */
+/**
+ * Cin7's own categories (`GET /ref/category`, ID + Name — no "code" of its
+ * own) have never been pulled into this app before; `categories` was
+ * populated only incidentally, from whatever a product CSV import happened
+ * to mention. Upserts by `code = Name` (Anton, 2026-07-11: merge same-named
+ * categories across instances into one org-wide row rather than adding
+ * instance_id — two different Cin7 accounts having their own separate
+ * "Accessories" is an edge case worth accepting for the simpler shape).
+ * Failures here don't fail the whole sales sync — a category-list hiccup
+ * shouldn't block the sales data this run actually cares about.
+ */
+async function syncCategories(db: SupabaseClient, orgId: string, creds: Cin7Credentials): Promise<void> {
+  const categories = await fetchAllCategories(creds);
+  if (!categories.length) return;
+  const rows = categories.filter((c) => c.Name).map((c) => ({ org_id: orgId, code: c.Name, name: c.Name }));
+  const { error } = await db.from("categories").upsert(rows, { onConflict: "org_id,code" });
+  if (error) throw new Error(`categories: ${error.message}`);
+}
+
+/** Runs both sync phases for one instance, plus a lightweight pull of this instance's own category list. */
 export async function syncInstanceSales(db: SupabaseClient, orgId: string, instanceId: string): Promise<SalesSyncSummary> {
   const creds = await loadCin7Credentials(db, orgId, instanceId);
+  try {
+    await syncCategories(db, orgId, creds);
+  } catch {
+    // Best-effort — see syncCategories' own comment; the sales sync below is what actually matters for this run.
+  }
   const listSynced = await syncSalesList(db, orgId, instanceId, creds);
   const { synced, failed, errors } = await syncSaleDetails(db, orgId, instanceId, creds);
   return { instanceId, listSynced, detailSynced: synced, detailFailed: failed, errors };
