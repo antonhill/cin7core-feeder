@@ -22,10 +22,12 @@ export function statusBadgeClass(status: string | null): string {
 
 export function StatusBadge({ status, wrap = false }: { status: string | null; wrap?: boolean }) {
   if (!status) return <span className="text-xs text-slate-300">—</span>;
-  // Table cells are wide enough that a status pill should never wrap (whitespace-nowrap keeps it tidy); a kanban card is not, and its overflow-hidden was silently clipping the tail of a long status instead of showing it — wrap lets the text break onto a second line in that context instead.
+  // Table cells are wide enough that a status pill should never wrap (whitespace-nowrap keeps it tidy) and can afford a normal-sized pill; a kanban card is neither — smaller text (also less likely to need the second line at all) plus tighter padding fits the card's own compact scale.
   return (
     <span
-      className={`inline-block max-w-full rounded-full px-2 py-0.5 text-xs font-semibold ${wrap ? "whitespace-normal break-words" : "whitespace-nowrap"} ${statusBadgeClass(status)}`}
+      className={`inline-block max-w-full rounded-full font-semibold ${
+        wrap ? "px-1.5 py-0.5 text-[10px] whitespace-normal break-words" : "px-2 py-0.5 text-xs whitespace-nowrap"
+      } ${statusBadgeClass(status)}`}
     >
       {status}
     </span>
