@@ -4,7 +4,7 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { requireCurrentOrg } from "@/lib/current-org";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { updateSaleShipBy } from "@/cin7/sales";
-import { getOrderFulfillmentReport, type OrderFulfillmentRow } from "@/reports/query";
+import { getOrderFulfillmentReport, getOrderFulfillmentLines, type OrderFulfillmentRow, type OrderFulfillmentLineRow } from "@/reports/query";
 
 export interface ShippingCalendarActionResult<T> {
   ok: boolean;
@@ -12,13 +12,18 @@ export interface ShippingCalendarActionResult<T> {
   data?: T;
 }
 
-/** Every order across every connected instance — the calendar itself filters down to ones with a ship_by date set, so no instance picker is needed here (unlike Order Fulfillment, which also drives a per-instance sync button). */
-export async function loadShippingCalendarOrdersAction(): Promise<ShippingCalendarActionResult<OrderFulfillmentRow[]>> {
+export interface ShippingCalendarData {
+  orders: OrderFulfillmentRow[];
+  lines: OrderFulfillmentLineRow[];
+}
+
+/** Every order (+ per-SKU line detail, for the click-to-expand card view) across every connected instance — the calendar itself filters down to ones with a ship_by date set, so no instance picker is needed here (unlike Order Fulfillment, which also drives a per-instance sync button). */
+export async function loadShippingCalendarOrdersAction(): Promise<ShippingCalendarActionResult<ShippingCalendarData>> {
   try {
     const { orgId } = await requireCurrentOrg();
     const db = createServiceRoleClient();
-    const orders = await getOrderFulfillmentReport(db, orgId, {});
-    return { ok: true, data: orders };
+    const [orders, lines] = await Promise.all([getOrderFulfillmentReport(db, orgId, {}), getOrderFulfillmentLines(db, orgId, {})]);
+    return { ok: true, data: { orders, lines } };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
