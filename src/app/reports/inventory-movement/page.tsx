@@ -111,6 +111,30 @@ export default function InventoryMovementPage() {
     });
   }, []);
 
+  // Keeps an ALREADY-shown report in sync when the instance selection
+  // changes, rather than letting it silently go stale until "Run report" is
+  // clicked again — matches the fix already applied to Order Fulfillment/
+  // Shipping Calendar (2026-07-10). Skips entirely if no report has been
+  // generated yet, since every other filter here (period) still stays
+  // manual-apply via Run report; an instance toggle is the one exception.
+  useEffect(() => {
+    if (rows === null) return;
+    const months = PERIOD_OPTIONS.find((p) => p.value === period)!.months;
+    loadInventoryMovementReportAction({
+      instanceIds: instanceIds.length ? instanceIds : undefined,
+      dateFrom: monthsAgoIso(months),
+      dateTo: todayIso(),
+    }).then((result) => {
+      if (!result.ok) {
+        setReportError(result.error ?? "Unknown error");
+        return;
+      }
+      setReportError(null);
+      setRows(result.data ?? []);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberately scoped to instanceIds only; period stays manual-apply via Run report
+  }, [instanceIds]);
+
   function toggleInstance(id: string) {
     setInstanceIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }

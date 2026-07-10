@@ -200,7 +200,7 @@ export default function ReportsPage() {
   }, [rows, sortColumn, sortDirection]);
 
   function refreshOptionsAndStatus() {
-    loadReportFilterOptionsAction().then((result) => {
+    loadReportFilterOptionsAction(instanceIds.length ? instanceIds : undefined).then((result) => {
       if (!result.ok) setOptionsError(result.error ?? "Unknown error");
       else setOptions(result.data ?? null);
     });
@@ -210,8 +210,53 @@ export default function ReportsPage() {
   }
 
   useEffect(() => {
-    refreshOptionsAndStatus();
+    loadSalesSyncStatusAction().then((result) => {
+      if (result.ok) setSyncStatus(result.data ?? null);
+    });
   }, []);
+
+  // Location/Category options are instance-scoped (see getReportFilterOptions)
+  // so they must refresh whenever the instance selection changes, not just
+  // once at mount (this effect covers mount too, since instanceIds starts as
+  // []) — otherwise a category/location only present in an unchecked
+  // instance stays listed. Also keeps an ALREADY-shown report in sync with
+  // the new instance selection rather than letting it silently go stale;
+  // skips re-running if no report has been generated yet, matching this
+  // page's own "set filters, then Run report" convention for every other
+  // filter (an instance toggle is the one exception that self-applies).
+  useEffect(() => {
+    loadReportFilterOptionsAction(instanceIds.length ? instanceIds : undefined).then((result) => {
+      if (!result.ok) {
+        setOptionsError(result.error ?? "Unknown error");
+        return;
+      }
+      setOptionsError(null);
+      setOptions(result.data ?? null);
+    });
+
+    if (rows === null && pivotSourceRows === null) return;
+    const filters = currentFilters();
+    if (groupBy === "none") {
+      loadProductSalesReportAction(filters).then((result) => {
+        if (!result.ok) {
+          setReportError(result.error ?? "Unknown error");
+          return;
+        }
+        setReportError(null);
+        setRows(result.data ?? []);
+      });
+    } else {
+      loadProductSalesPivotAction(filters, groupBy).then((result) => {
+        if (!result.ok) {
+          setReportError(result.error ?? "Unknown error");
+          return;
+        }
+        setReportError(null);
+        setPivotSourceRows(result.data ?? []);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deliberately scoped to instanceIds only; other filters (location/category/dates/groupBy) stay manual-apply via the Run report button
+  }, [instanceIds]);
 
   function handleSync() {
     setSyncError(null);

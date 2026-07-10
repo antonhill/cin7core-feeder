@@ -141,24 +141,76 @@ export interface ReportFilterOptions {
   categories: { code: string; name: string }[];
 }
 
-/** Options for the report's filter dropdowns — every connected instance, every distinct location a synced sale carries, and every known category. */
-export async function getReportFilterOptions(db: SupabaseClient, orgId: string): Promise<ReportFilterOptions> {
-  const [instancesRes, locationsRes, categoriesRes] = await Promise.all([
+/**
+ * Options for the report's filter dropdowns — every connected instance,
+ * plus every distinct location/category actually present among the
+ * selected instance(s)' own synced data. `instanceIds` is optional (every
+ * caller that only needs `.instances` for its own picker, e.g. Order
+ * Fulfillment/Stock Health/Inventory Movement/Custom Reports, can keep
+ * omitting it) — only the Sales report surfaces Location/Category
+ * dropdowns, so it's the only caller that needs to pass it through.
+ *
+ * Location comes straight off `sales` (already has `instance_id`), a plain
+ * filtered query. Category has no `instance_id` of its own — the
+ * `categories` table is a canonical org-wide taxonomy, not per-instance
+ * data — so instead of an instance-blind "every category the org has ever
+ * defined," this derives categories from products that actually appear in
+ * a `sale_line` synced from the selected instance(s) (product_sku →
+ * products.category_code → categories), so an ETEC-only view doesn't list
+ * categories that only ever showed up in Spark Demo's test data.
+ */
+export async function getReportFilterOptions(db: SupabaseClient, orgId: string, instanceIds?: string[]): Promise<ReportFilterOptions> {
+  const scopedInstanceIds = instanceIds?.length ? instanceIds : null;
+
+  let locationsQuery = db.from("sales").select("location").eq("org_id", orgId).not("location", "is", null);
+  if (scopedInstanceIds) locationsQuery = locationsQuery.in("instance_id", scopedInstanceIds);
+
+  const [instancesRes, locationsRes] = await Promise.all([
     db.from("cin7_instances").select("id, name").eq("org_id", orgId).order("name"),
-    db.from("sales").select("location").eq("org_id", orgId).not("location", "is", null),
-    db.from("categories").select("code, name").eq("org_id", orgId).order("name"),
+    locationsQuery,
   ]);
   if (instancesRes.error) throw new Error(instancesRes.error.message);
   if (locationsRes.error) throw new Error(locationsRes.error.message);
-  if (categoriesRes.error) throw new Error(categoriesRes.error.message);
 
   const locations = [...new Set((locationsRes.data ?? []).map((r: { location: string }) => r.location).filter(Boolean))].sort();
+  const categories = await getCategoriesForInstances(db, orgId, scopedInstanceIds);
 
   return {
     instances: instancesRes.data ?? [],
     locations,
-    categories: categoriesRes.data ?? [],
+    categories,
   };
+}
+
+async function getCategoriesForInstances(
+  db: SupabaseClient,
+  orgId: string,
+  scopedInstanceIds: string[] | null
+): Promise<{ code: string; name: string }[]> {
+  if (!scopedInstanceIds) {
+    const categoriesRes = await db.from("categories").select("code, name").eq("org_id", orgId).order("name");
+    if (categoriesRes.error) throw new Error(categoriesRes.error.message);
+    return categoriesRes.data ?? [];
+  }
+
+  const skusRes = await db
+    .from("sale_lines")
+    .select("product_sku")
+    .eq("org_id", orgId)
+    .in("instance_id", scopedInstanceIds)
+    .not("product_sku", "is", null);
+  if (skusRes.error) throw new Error(skusRes.error.message);
+  const skus = [...new Set((skusRes.data ?? []).map((r: { product_sku: string }) => r.product_sku))];
+  if (skus.length === 0) return [];
+
+  const productsRes = await db.from("products").select("category_code").eq("org_id", orgId).in("sku", skus).not("category_code", "is", null);
+  if (productsRes.error) throw new Error(productsRes.error.message);
+  const categoryCodes = [...new Set((productsRes.data ?? []).map((r: { category_code: string }) => r.category_code))];
+  if (categoryCodes.length === 0) return [];
+
+  const categoriesRes = await db.from("categories").select("code, name").eq("org_id", orgId).in("code", categoryCodes).order("name");
+  if (categoriesRes.error) throw new Error(categoriesRes.error.message);
+  return categoriesRes.data ?? [];
 }
 
 export interface InventoryMovementFilters {

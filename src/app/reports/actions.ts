@@ -25,11 +25,12 @@ export interface ReportActionResult<T> {
   data?: T;
 }
 
-export async function loadReportFilterOptionsAction(): Promise<ReportActionResult<ReportFilterOptions>> {
+/** instanceIds is optional — only the Sales report's Location/Category dropdowns need it; every other caller just wants `.instances` for its own picker and can omit it (org-wide, unaffected). */
+export async function loadReportFilterOptionsAction(instanceIds?: string[]): Promise<ReportActionResult<ReportFilterOptions>> {
   try {
     const { orgId } = await requireCurrentOrg();
     const db = createServiceRoleClient();
-    return { ok: true, data: await getReportFilterOptions(db, orgId) };
+    return { ok: true, data: await getReportFilterOptions(db, orgId, instanceIds) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
