@@ -7,6 +7,7 @@ import type { ReportFilterOptions, OrderFulfillmentRow, OrderFulfillmentLineRow,
 import type { Cin7SaleAttachment } from "@/cin7/sales";
 import { buildBatchPickList } from "@/reports/order-fulfillment/pick-list";
 import { StaleBadge, staleSyncButtonClass } from "../sync-staleness";
+import { useResizableColumns, ColGroup, ResizableTh } from "../resizable-columns";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
@@ -18,6 +19,34 @@ const TABS: { value: Tab; label: string }[] = [
   { value: "ship", label: "Ship Today" },
   { value: "all", label: "All Orders" },
 ];
+
+type OrderTableColumn = "select" | "order" | "shipBy" | "picking" | "packing" | "shipping" | "invoice" | "payment" | "pickableNow" | "paidInvoice";
+
+const ORDER_TABLE_COLUMNS: OrderTableColumn[] = [
+  "select",
+  "order",
+  "shipBy",
+  "picking",
+  "packing",
+  "shipping",
+  "invoice",
+  "payment",
+  "pickableNow",
+  "paidInvoice",
+];
+
+const ORDER_TABLE_DEFAULT_WIDTHS: Record<OrderTableColumn, number> = {
+  select: 40,
+  order: 180,
+  shipBy: 150,
+  picking: 130,
+  packing: 130,
+  shipping: 130,
+  invoice: 130,
+  payment: 130,
+  pickableNow: 120,
+  paidInvoice: 140,
+};
 
 /** An order open this many days or more without being fully picked is probably stuck, not just "next in line" — a plain default, not meant to be precisely tuned. */
 const STUCK_AFTER_DAYS = 7;
@@ -67,6 +96,8 @@ function money(value: number): string {
 }
 
 export default function OrderFulfillmentPage() {
+  const { widths: columnWidths, startResize } = useResizableColumns<OrderTableColumn>(ORDER_TABLE_DEFAULT_WIDTHS);
+
   const [options, setOptions] = useState<ReportFilterOptions | null>(null);
   const [optionsError, setOptionsError] = useState<string | null>(null);
   const [instanceIds, setInstanceIds] = useState<string[]>([]);
@@ -408,10 +439,11 @@ export default function OrderFulfillmentPage() {
 
           {visibleRows.length > 0 && (
             <div className="mt-4 overflow-x-auto">
-              <table className="w-full text-left text-sm">
+              <table className="w-full table-fixed text-left text-sm">
+                <ColGroup columns={ORDER_TABLE_COLUMNS} widths={columnWidths} />
                 <thead>
                   <tr className="border-b border-slate-200 text-slate-500">
-                    <th className="py-2 pr-4">
+                    <th className="overflow-hidden py-2 pr-4">
                       <input
                         type="checkbox"
                         title="Select all visible orders"
@@ -429,15 +461,15 @@ export default function OrderFulfillmentPage() {
                         className="h-4 w-4"
                       />
                     </th>
-                    <th className="py-2 pr-4">Order</th>
-                    <th className="py-2 pr-4">Ship By</th>
-                    <th className="py-2 pr-4">Picking</th>
-                    <th className="py-2 pr-4">Packing</th>
-                    <th className="py-2 pr-4">Shipping</th>
-                    <th className="py-2 pr-4">Invoice</th>
-                    <th className="py-2 pr-4">Payment</th>
-                    <th className="py-2 pr-4 text-right">Pickable Now</th>
-                    <th className="py-2 pr-4 text-right">Paid / Invoice</th>
+                    <ResizableTh column="order" label="Order" onResizeStart={startResize} />
+                    <ResizableTh column="shipBy" label="Ship By" onResizeStart={startResize} />
+                    <ResizableTh column="picking" label="Picking" onResizeStart={startResize} />
+                    <ResizableTh column="packing" label="Packing" onResizeStart={startResize} />
+                    <ResizableTh column="shipping" label="Shipping" onResizeStart={startResize} />
+                    <ResizableTh column="invoice" label="Invoice" onResizeStart={startResize} />
+                    <ResizableTh column="payment" label="Payment" onResizeStart={startResize} />
+                    <ResizableTh column="pickableNow" label="Pickable Now" align="right" onResizeStart={startResize} />
+                    <ResizableTh column="paidInvoice" label="Paid / Invoice" align="right" onResizeStart={startResize} />
                   </tr>
                 </thead>
                 <tbody>
@@ -447,7 +479,7 @@ export default function OrderFulfillmentPage() {
                         onClick={() => setExpandedSaleId(expandedSaleId === row.cin7_sale_id ? null : row.cin7_sale_id)}
                         className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
                       >
-                        <td className="py-2 pr-4" onClick={(e) => e.stopPropagation()}>
+                        <td className="overflow-hidden py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                           <input
                             type="checkbox"
                             checked={selectedSaleIds.has(row.cin7_sale_id)}
@@ -455,11 +487,11 @@ export default function OrderFulfillmentPage() {
                             className="h-4 w-4"
                           />
                         </td>
-                        <td className="whitespace-nowrap py-2 pr-4">
-                          <div className="font-medium text-slate-900">{row.order_number ?? row.cin7_sale_id}</div>
-                          <div className="text-xs text-slate-400">{row.customer_name}</div>
+                        <td className="overflow-hidden whitespace-nowrap py-2 pr-4">
+                          <div className="truncate font-medium text-slate-900">{row.order_number ?? row.cin7_sale_id}</div>
+                          <div className="truncate text-xs text-slate-400">{row.customer_name}</div>
                         </td>
-                        <td className="whitespace-nowrap py-2 pr-4">
+                        <td className="overflow-hidden whitespace-nowrap py-2 pr-4">
                           {row.ship_by ?? <span className="text-slate-300">—</span>}
                           {row.is_overdue && (
                             <span className="ml-1.5 whitespace-nowrap rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">
@@ -475,23 +507,23 @@ export default function OrderFulfillmentPage() {
                             </span>
                           )}
                         </td>
-                        <td className="py-2 pr-4">
+                        <td className="overflow-hidden py-2 pr-4">
                           <StatusBadge status={row.combined_picking_status} />
                         </td>
-                        <td className="py-2 pr-4">
+                        <td className="overflow-hidden py-2 pr-4">
                           <StatusBadge status={row.combined_packing_status} />
                         </td>
-                        <td className="py-2 pr-4">
+                        <td className="overflow-hidden py-2 pr-4">
                           <StatusBadge status={row.combined_shipping_status} />
                         </td>
-                        <td className="py-2 pr-4">
+                        <td className="overflow-hidden py-2 pr-4">
                           <StatusBadge status={row.combined_invoice_status} />
                         </td>
-                        <td className="py-2 pr-4">
+                        <td className="overflow-hidden py-2 pr-4">
                           <StatusBadge status={row.combined_payment_status} />
                         </td>
-                        <td className="whitespace-nowrap py-2 pr-4 text-right font-medium">{qty(row.total_pickable_qty)}</td>
-                        <td className="whitespace-nowrap py-2 pr-4 text-right">
+                        <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium">{qty(row.total_pickable_qty)}</td>
+                        <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right">
                           {money(row.paid_amount)} / {money(row.invoice_amount)}
                         </td>
                       </tr>
