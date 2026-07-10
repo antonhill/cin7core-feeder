@@ -1,12 +1,20 @@
 "use client";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { loadShippingCalendarOrdersAction, updateOrderShipByAction } from "./actions";
-import { currentWeekStart, mondayOf, addDays, formatDayLabel } from "./date-utils";
+import { loadShippingCalendarOrdersAction, updateOrderShipByAction, loadCarriersAction, markOrderShippedAction } from "./actions";
+import { currentWeekStart, mondayOf, addDays, formatDayLabel, todayIso } from "./date-utils";
 import type { OrderFulfillmentRow, OrderFulfillmentLineRow } from "@/reports/query";
+import type { MarkShippedInput } from "@/cin7/sales";
 import { ReportDescription } from "../ReportDescription";
 import { StatusBadge } from "../status-badge";
 import { Spinner } from "@/app/Spinner";
+
+/** What the page's onMarkShipped callback resolves to — enough for MarkAsShippedSection to render success/error itself, without needing the full ShippingCalendarActionResult shape. */
+interface MarkShippedOutcome {
+  ok: boolean;
+  error?: string;
+  cin7WebUrl?: string;
+}
 
 const DAY_COUNT = 7;
 
@@ -38,6 +46,130 @@ const READINESS_LABEL: Record<Readiness, string> = {
 
 function qty(value: number): string {
   return value.toLocaleString();
+}
+
+/**
+ * The "mark as shipped" form + its own submit/success/error state, split
+ * out of OrderDetailModal since it's genuinely self-contained (carrier
+ * list, date/carrier/tracking inputs, one submit action) and the modal
+ * itself doesn't need to know any of that mid-submission state.
+ */
+function MarkAsShippedSection({
+  order,
+  onMarkShipped,
+}: {
+  order: OrderFulfillmentRow;
+  onMarkShipped: (saleId: string, instanceId: string, input: MarkShippedInput) => Promise<MarkShippedOutcome>;
+}) {
+  const [shipmentDate, setShipmentDate] = useState(todayIso);
+  const [carrier, setCarrier] = useState("");
+  const [trackingNumber, setTrackingNumber] = useState("");
+  const [carrierOptions, setCarrierOptions] = useState<string[]>([]);
+  const [isSubmitting, startSubmitTransition] = useTransition();
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [shippedResult, setShippedResult] = useState<{ cin7WebUrl: string } | null>(null);
+
+  useEffect(() => {
+    loadCarriersAction(order.instance_id).then((result) => {
+      if (result.ok) setCarrierOptions(result.data ?? []);
+    });
+  }, [order.instance_id]);
+
+  const level = readiness(order);
+
+  if (shippedResult) {
+    return (
+      <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+        <p className="font-medium">Marked as shipped in Cin7.</p>
+        <p className="mt-1">
+          Cin7&rsquo;s API has no box-label endpoint —{" "}
+          <a href={shippedResult.cin7WebUrl} target="_blank" rel="noopener noreferrer" className="underline">
+            open Cin7 Core
+          </a>{" "}
+          to print it from there.
+        </p>
+      </div>
+    );
+  }
+
+  if (level !== "ready") {
+    return (
+      <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        Not ready to ship yet — Cin7 requires this order to be fully packed first ({READINESS_LABEL[level]}).
+      </p>
+    );
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitError(null);
+    startSubmitTransition(async () => {
+      const result = await onMarkShipped(order.cin7_sale_id, order.instance_id, {
+        shipmentDate,
+        carrier,
+        trackingNumber: trackingNumber || undefined,
+      });
+      if (!result.ok) {
+        setSubmitError(result.error ?? "Unknown error");
+        return;
+      }
+      setShippedResult({ cin7WebUrl: result.cin7WebUrl ?? "" });
+    });
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-4 flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <label className="flex flex-col gap-1 text-sm text-slate-600">
+        Shipment date
+        <input
+          type="date"
+          value={shipmentDate}
+          onChange={(e) => setShipmentDate(e.target.value)}
+          required
+          disabled={isSubmitting}
+          className="rounded border border-slate-300 px-2 py-1 text-sm disabled:opacity-50"
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-sm text-slate-600">
+        Carrier
+        <input
+          type="text"
+          list="shipping-calendar-carriers"
+          value={carrier}
+          onChange={(e) => setCarrier(e.target.value)}
+          required
+          disabled={isSubmitting}
+          placeholder="e.g. DEFAULT Carrier"
+          className="w-48 rounded border border-slate-300 px-2 py-1 text-sm disabled:opacity-50"
+        />
+        <datalist id="shipping-calendar-carriers">
+          {carrierOptions.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
+      </label>
+      <label className="flex flex-col gap-1 text-sm text-slate-600">
+        Tracking number
+        <input
+          type="text"
+          value={trackingNumber}
+          onChange={(e) => setTrackingNumber(e.target.value)}
+          placeholder="Optional"
+          disabled={isSubmitting}
+          className="w-40 rounded border border-slate-300 px-2 py-1 text-sm disabled:opacity-50"
+        />
+      </label>
+      <button
+        type="submit"
+        disabled={isSubmitting || !carrier.trim()}
+        className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+      >
+        {isSubmitting && <Spinner className="mr-1.5" />}
+        {isSubmitting ? "Marking shipped…" : "Mark as Shipped"}
+      </button>
+      {submitError && <p className="w-full text-sm text-rose-600">{submitError}</p>}
+    </form>
+  );
 }
 
 function OrderCard({
@@ -175,6 +307,7 @@ function OrderDetailModal({
   effectiveShipBy,
   isPending,
   onReschedule,
+  onMarkShipped,
   onClose,
 }: {
   order: OrderFulfillmentRow;
@@ -182,6 +315,7 @@ function OrderDetailModal({
   effectiveShipBy: string;
   isPending: boolean;
   onReschedule: (saleId: string, newDate: string) => void;
+  onMarkShipped: (saleId: string, instanceId: string, input: MarkShippedInput) => Promise<MarkShippedOutcome>;
   onClose: () => void;
 }) {
   return (
@@ -228,6 +362,8 @@ function OrderDetailModal({
             {isPending && <Spinner className="h-3 w-3" />}
           </label>
         </div>
+
+        <MarkAsShippedSection order={order} onMarkShipped={onMarkShipped} />
 
         <h3 className="mt-6 mb-2 text-sm font-semibold text-slate-700">Order lines</h3>
         {lines.length === 0 ? (
@@ -332,6 +468,10 @@ export default function ShippingCalendarPage() {
     const map = new Map<string, OrderFulfillmentRow[]>();
     for (const day of days) map.set(day, []);
     for (const order of searchedOrders) {
+      // Re-checked here (not just at load time) so an order just marked
+      // shipped from this page disappears from the grid immediately,
+      // rather than waiting for the next full reload.
+      if (!isSchedulable(order)) continue;
       const shipBy = shipByOverrides[order.cin7_sale_id] ?? order.ship_by;
       if (!shipBy) continue;
       const bucket = map.get(shipBy.slice(0, 10));
@@ -375,6 +515,16 @@ export default function ShippingCalendarPage() {
         setWriteErrors((prev) => ({ ...prev, [saleId]: result.error ?? "Unknown error" }));
       }
     });
+  }
+
+  /** Marks the order shipped in Cin7, then updates the local copy's status so ordersByDay's isSchedulable check drops it from the grid right away — MarkAsShippedSection renders the actual success/error state itself from what this resolves to. */
+  async function handleMarkShipped(saleId: string, instanceId: string, input: MarkShippedInput): Promise<MarkShippedOutcome> {
+    const result = await markOrderShippedAction(instanceId, saleId, input);
+    if (!result.ok || !result.data) {
+      return { ok: false, error: result.error ?? "Unknown error" };
+    }
+    setOrders((prev) => (prev ? prev.map((o) => (o.cin7_sale_id === saleId ? { ...o, combined_shipping_status: "SHIPPED" } : o)) : prev));
+    return { ok: true, cin7WebUrl: result.data.cin7WebUrl };
   }
 
   return (
@@ -474,6 +624,7 @@ export default function ShippingCalendarPage() {
           effectiveShipBy={shipByOverrides[detailOrder.cin7_sale_id] ?? detailOrder.ship_by ?? today}
           isPending={pendingSaleIds.has(detailOrder.cin7_sale_id)}
           onReschedule={handleReschedule}
+          onMarkShipped={handleMarkShipped}
           onClose={() => setDetailSaleId(null)}
         />
       )}

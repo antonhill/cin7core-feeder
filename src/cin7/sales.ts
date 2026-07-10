@@ -140,7 +140,7 @@ export interface Cin7SaleOrder {
   Lines?: Cin7SaleOrderLine[];
 }
 
-/** A Pick or Pack line — the ACTUAL quantity picked/packed so far, distinct from Order.Lines[]'s planned quantity (same "planned vs actual" split already used for Assembly Builds' OrderLines vs PickLines). Location/Bin/BatchSN confirmed present live 2026-07-09 — where a completed pick actually came from, an audit trail (not forward guidance — see report_order_fulfillment_lines' cross-reference against product_availability for "where to pick a still-outstanding line from" instead). */
+/** A Pick or Pack line — the ACTUAL quantity picked/packed so far, distinct from Order.Lines[]'s planned quantity (same "planned vs actual" split already used for Assembly Builds' OrderLines vs PickLines). Location/Bin/BatchSN confirmed present live 2026-07-09 — where a completed pick actually came from, an audit trail (not forward guidance — see report_order_fulfillment_lines' cross-reference against product_availability for "where to pick a still-outstanding line from" instead). `Box` (Pack lines only, per Cin7's own Apiary spec) is the box label a packed line was assigned to — the same label the Ship Line's `Box`/`Boxes` field must reference when marking the order shipped. */
 export interface Cin7SaleFulfilmentPickPackLine {
   SKU?: string;
   Name?: string;
@@ -148,11 +148,36 @@ export interface Cin7SaleFulfilmentPickPackLine {
   Location?: string;
   LocationID?: string;
   BatchSN?: string;
+  Box?: string;
 }
 
 export interface Cin7SaleFulfilmentPickPack {
   Status?: string;
   Lines?: Cin7SaleFulfilmentPickPackLine[];
+}
+
+export interface Cin7SaleFulfilmentShipLine {
+  ID?: string;
+  ShipmentDate?: string;
+  Carrier?: string;
+  Boxes?: string;
+  TrackingNumber?: string;
+  TrackingURL?: string;
+  IsShipped?: boolean;
+}
+
+/**
+ * Ship's own Status uses a DIFFERENT enum (`NOT AVAILABLE`/`DRAFT`/
+ * `PARTIALLY AUTHORISED`/`AUTHORISED`/`VOIDED`) than the sale-level
+ * `CombinedShippingStatus` field (`NOT SHIPPED`/`SHIPPING`/`SHIPPED`/...) —
+ * same underlying concept, different naming at the fulfilment vs.
+ * rolled-up-sale level, confirmed via Cin7's own Apiary spec. Same split
+ * applies to `Pack.Status` here vs. the sale-level `CombinedPackingStatus`.
+ */
+export interface Cin7SaleFulfilmentShip {
+  Status?: string;
+  RequireBy?: string | null;
+  Lines?: Cin7SaleFulfilmentShipLine[];
 }
 
 /** Confirmed live 2026-07-09: Fulfilments is a genuine array — a sale can have more than one (e.g. split picks), so "already picked/packed" must sum across every entry, not just read index 0. */
@@ -161,6 +186,7 @@ export interface Cin7SaleFulfilment {
   FulFilmentStatus?: string;
   Pick?: Cin7SaleFulfilmentPickPack;
   Pack?: Cin7SaleFulfilmentPickPack;
+  Ship?: Cin7SaleFulfilmentShip;
 }
 
 /**
@@ -231,4 +257,65 @@ export async function updateSaleShipBy(creds: Cin7Credentials, saleId: string, s
   if (current.TaxCalculation !== undefined) body.TaxInclusive = current.TaxCalculation === "Inclusive";
 
   await cin7Request(creds, "/sale", { method: "PUT", body });
+}
+
+export interface Cin7Carrier {
+  CarrierID: string;
+  Description: string;
+}
+
+/** Every carrier this Cin7 instance already has on file (`/ref/carrier`) — used to offer a pick-list for "mark as shipped" rather than free-typing a name that might not match Cin7's own record. */
+export async function fetchCarriers(creds: Cin7Credentials): Promise<Cin7Carrier[]> {
+  const response = await cin7Request<{ CarrierList?: Cin7Carrier[] }>(creds, "/ref/carrier", { query: { Page: 1, Limit: 100 } });
+  return response.CarrierList ?? [];
+}
+
+export interface MarkShippedInput {
+  /** "YYYY-MM-DD" */
+  shipmentDate: string;
+  carrier: string;
+  trackingNumber?: string;
+}
+
+/**
+ * Marks a sale's ready-to-ship fulfilment as shipped — `POST /sale/
+ * fulfilment/ship` with `Status: "AUTHORISED"`, confirmed via Cin7's own
+ * Apiary spec. Cin7 rejects this unless that SAME fulfilment's own
+ * `Pack.Status` is already `AUTHORISED` (fully packed) — not the sale-level
+ * `CombinedPackingStatus`, a different field — so this picks the first
+ * fulfilment whose Pack is authorised and whose Ship isn't already
+ * authorised/partially-authorised. A sale with more than one fulfilment
+ * (split shipments) ships them one at a time; call this again for the next.
+ * The Ship Line's `Box` must reference the same box label(s) already
+ * assigned during packing (Cin7's own constraint) — collected here from
+ * that fulfilment's `Pack.Lines[].Box`, comma-joined for multiple boxes.
+ */
+export async function markSaleShipped(creds: Cin7Credentials, saleId: string, input: MarkShippedInput): Promise<void> {
+  const sale = await cin7Request<{ Fulfilments?: Cin7SaleFulfilment[] }>(creds, "/sale", { query: { ID: saleId } });
+  const fulfilments = sale.Fulfilments ?? [];
+  const target = fulfilments.find(
+    (f) => f.Pack?.Status === "AUTHORISED" && f.Ship?.Status !== "AUTHORISED" && f.Ship?.Status !== "PARTIALLY AUTHORISED"
+  );
+  if (!target?.TaskID) {
+    throw new Error("No fulfilment on this sale is packed and ready to ship — Cin7 requires the Pack stage to be fully authorised first.");
+  }
+
+  const boxes = [...new Set((target.Pack?.Lines ?? []).map((line) => line.Box).filter((box): box is string => Boolean(box)))];
+
+  await cin7Request(creds, "/sale/fulfilment/ship", {
+    method: "POST",
+    body: {
+      TaskID: target.TaskID,
+      Status: "AUTHORISED",
+      Lines: [
+        {
+          ShipmentDate: input.shipmentDate,
+          Carrier: input.carrier,
+          Box: boxes.join(","),
+          TrackingNumber: input.trackingNumber ?? "",
+          IsShipped: true,
+        },
+      ],
+    },
+  });
 }

@@ -25,6 +25,11 @@ export function currentWeekStart(): string {
   return mondayOf(isoDateOnly(new Date()));
 }
 
+/** Same impure-read caveat as currentWeekStart — only ever call this via a useState initializer (e.g. the "mark as shipped" form's default Shipment Date), never inline during render. */
+export function todayIso(): string {
+  return isoDateOnly(new Date());
+}
+
 export function addDays(dateIso: string, days: number): string {
   const d = new Date(`${dateIso}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
