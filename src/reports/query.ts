@@ -182,16 +182,30 @@ export async function getReportFilterOptions(db: SupabaseClient, orgId: string, 
   };
 }
 
+async function getAllCategories(db: SupabaseClient, orgId: string): Promise<{ code: string; name: string }[]> {
+  const categoriesRes = await db.from("categories").select("code, name").eq("org_id", orgId).order("name");
+  if (categoriesRes.error) throw new Error(categoriesRes.error.message);
+  return categoriesRes.data ?? [];
+}
+
+/**
+ * The instance-scoped path derives categories from `sale_lines` (product_sku
+ * → products.category_code → categories) — but `sale_lines` only has rows
+ * for sales whose line-item detail sync has already finished, which is
+ * rate-limited and can lag well behind the cheap header-level `sales` sync
+ * (confirmed live 2026-07-11: with most of an org's sales still awaiting
+ * detail sync, this came back completely empty rather than just partial).
+ * Falls back to the full org-wide list in that case — an occasionally
+ * too-broad category list is a far smaller problem than an unusably empty
+ * dropdown, and this naturally tightens up as detail sync catches up over
+ * time with no further change needed here.
+ */
 async function getCategoriesForInstances(
   db: SupabaseClient,
   orgId: string,
   scopedInstanceIds: string[] | null
 ): Promise<{ code: string; name: string }[]> {
-  if (!scopedInstanceIds) {
-    const categoriesRes = await db.from("categories").select("code, name").eq("org_id", orgId).order("name");
-    if (categoriesRes.error) throw new Error(categoriesRes.error.message);
-    return categoriesRes.data ?? [];
-  }
+  if (!scopedInstanceIds) return getAllCategories(db, orgId);
 
   const skusRes = await db
     .from("sale_lines")
@@ -201,16 +215,17 @@ async function getCategoriesForInstances(
     .not("product_sku", "is", null);
   if (skusRes.error) throw new Error(skusRes.error.message);
   const skus = [...new Set((skusRes.data ?? []).map((r: { product_sku: string }) => r.product_sku))];
-  if (skus.length === 0) return [];
+  if (skus.length === 0) return getAllCategories(db, orgId);
 
   const productsRes = await db.from("products").select("category_code").eq("org_id", orgId).in("sku", skus).not("category_code", "is", null);
   if (productsRes.error) throw new Error(productsRes.error.message);
   const categoryCodes = [...new Set((productsRes.data ?? []).map((r: { category_code: string }) => r.category_code))];
-  if (categoryCodes.length === 0) return [];
+  if (categoryCodes.length === 0) return getAllCategories(db, orgId);
 
   const categoriesRes = await db.from("categories").select("code, name").eq("org_id", orgId).in("code", categoryCodes).order("name");
   if (categoriesRes.error) throw new Error(categoriesRes.error.message);
-  return categoriesRes.data ?? [];
+  const categories = categoriesRes.data ?? [];
+  return categories.length > 0 ? categories : getAllCategories(db, orgId);
 }
 
 export interface InventoryMovementFilters {
