@@ -95,6 +95,16 @@ export function AppNav({
         <div className="border-t border-sidebar-border px-3 py-4">
           <p className="truncate px-3 pb-2 text-sm text-sidebar-text">{userEmail}</p>
           <Link
+            href="/settings/billing"
+            className={`mb-2 block rounded-lg border px-3 py-2 text-center text-sm font-medium transition ${
+              pathname.startsWith("/settings/billing")
+                ? "border-sidebar-bg-raised bg-sidebar-bg-raised text-sidebar-text-active"
+                : "border-sidebar-border text-sidebar-text hover:bg-sidebar-bg-raised hover:text-sidebar-text-active"
+            }`}
+          >
+            Billing
+          </Link>
+          <Link
             href="/settings/security"
             className={`mb-2 block rounded-lg border px-3 py-2 text-center text-sm font-medium transition ${
               pathname.startsWith("/settings/security")

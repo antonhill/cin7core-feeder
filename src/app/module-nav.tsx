@@ -109,6 +109,16 @@ export function ShieldIcon({ className }: IconProps) {
   );
 }
 
+export function BillingIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M3 9h18" />
+      <path d="M7 14h4" />
+    </svg>
+  );
+}
+
 export interface ModuleConfig {
   href: string;
   label: string;
@@ -201,6 +211,17 @@ export const SECURITY_MODULE: ModuleConfig = {
   gradient: "from-rose-500 to-rose-700",
   Icon: ShieldIcon,
   blurb: "Set up two-factor authentication with an authenticator app.",
+};
+
+// Same "not an org-toggleable module" reasoning as SECURITY_MODULE above —
+// billing status is per-org but the settings page itself isn't something
+// /admin's per-org visibility toggle should ever hide.
+export const BILLING_MODULE: ModuleConfig = {
+  href: "/settings/billing",
+  label: "Billing",
+  gradient: "from-emerald-500 to-emerald-700",
+  Icon: BillingIcon,
+  blurb: "Trial status and subscription — managed through Lemon Squeezy.",
 };
 
 export const MODULES: ModuleConfig[] = [

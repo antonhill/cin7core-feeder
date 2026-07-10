@@ -179,9 +179,15 @@ export async function middleware(request: NextRequest) {
 // they must never be intercepted by the session-cookie redirect below, or
 // Vercel Cron's bearer-token request just gets bounced to /login and the
 // job silently never runs.
+// api/webhooks (Lemon Squeezy's subscription webhook) is the same problem
+// from a different caller — Lemon Squeezy's server-to-server POST has no
+// browser session either, and authenticates itself via its own HMAC
+// signature (verifyWebhookSignature), not a Supabase cookie. Confirmed live
+// 2026-07-11: without this exclusion the request 307-redirected to /login
+// before ever reaching the route handler, so the webhook silently never ran.
 // icon.svg is Next's file-convention favicon route — it must be reachable
 // with no session too, or the browser's (unauthenticated) request for it
 // gets swallowed by the login redirect and the favicon never loads.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|api/sync|api/import|api/delete-expired-trials).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|api/sync|api/import|api/delete-expired-trials|api/webhooks).*)"],
 };
