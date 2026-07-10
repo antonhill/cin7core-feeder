@@ -354,6 +354,26 @@ describe("getProductAvailabilitySyncStatus", () => {
     const status = await getProductAvailabilitySyncStatus(db, "org1");
     expect(status).toEqual({ totalRows: 0, lastSyncedAt: null });
   });
+
+  it("scopes by instance_id when given, e.g. for the Fulfillment Cleanup Helper's per-instance status", async () => {
+    const eqCalls: unknown[][] = [];
+    const chain: Record<string, unknown> = {
+      eq: (...args: unknown[]) => {
+        eqCalls.push(args);
+        return chain;
+      },
+      order: () => chain,
+      limit: () => chain,
+      maybeSingle: () => Promise.resolve({ data: { synced_at: "2026-07-10T09:00:00.000Z" }, error: null }),
+      then: (resolve: (v: unknown) => void) => resolve({ count: 5, error: null }),
+    };
+    const db = { from: () => ({ select: () => chain }) } as unknown as SupabaseClient;
+
+    const status = await getProductAvailabilitySyncStatus(db, "org1", "inst-1");
+
+    expect(status).toEqual({ totalRows: 5, lastSyncedAt: "2026-07-10T09:00:00.000Z" });
+    expect(eqCalls).toContainEqual(["instance_id", "inst-1"]);
+  });
 });
 
 describe("getOrderFulfillmentReport", () => {

@@ -244,12 +244,15 @@ export interface ProductAvailabilitySyncStatus {
   lastSyncedAt: string | null;
 }
 
-/** Lets the report page show when stock levels were last refreshed — this is a full snapshot replace, not an incremental sync, so "last synced" is simply the newest synced_at across every row. */
-export async function getProductAvailabilitySyncStatus(db: SupabaseClient, orgId: string): Promise<ProductAvailabilitySyncStatus> {
-  const [countRes, latestRes] = await Promise.all([
-    db.from("product_availability").select("*", { count: "exact", head: true }).eq("org_id", orgId),
-    db.from("product_availability").select("synced_at").eq("org_id", orgId).order("synced_at", { ascending: false }).limit(1).maybeSingle(),
-  ]);
+/** Lets the report page show when stock levels were last refreshed — this is a full snapshot replace, not an incremental sync, so "last synced" is simply the newest synced_at across every row. Scoped to one instance when given (e.g. the Fulfillment Cleanup Helper, which only ever works against a single chosen instance) — an org-wide "last synced" would otherwise mask one stale instance behind another that happened to sync more recently. */
+export async function getProductAvailabilitySyncStatus(db: SupabaseClient, orgId: string, instanceId?: string): Promise<ProductAvailabilitySyncStatus> {
+  let countQuery = db.from("product_availability").select("*", { count: "exact", head: true }).eq("org_id", orgId);
+  let latestQuery = db.from("product_availability").select("synced_at").eq("org_id", orgId);
+  if (instanceId) {
+    countQuery = countQuery.eq("instance_id", instanceId);
+    latestQuery = latestQuery.eq("instance_id", instanceId);
+  }
+  const [countRes, latestRes] = await Promise.all([countQuery, latestQuery.order("synced_at", { ascending: false }).limit(1).maybeSingle()]);
   if (countRes.error) throw new Error(countRes.error.message);
   if (latestRes.error) throw new Error(latestRes.error.message);
   return { totalRows: countRes.count ?? 0, lastSyncedAt: latestRes.data?.synced_at ?? null };

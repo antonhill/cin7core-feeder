@@ -4,10 +4,11 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { requireCurrentOrg } from "@/lib/current-org";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsForCosting } from "@/cin7/product-cost";
-import { getOrderFulfillmentReport, getOrderFulfillmentLines } from "@/reports/query";
+import { getOrderFulfillmentReport, getOrderFulfillmentLines, getProductAvailabilitySyncStatus, type ProductAvailabilitySyncStatus } from "@/reports/query";
 import type { NegativeAvailabilityRow, BackorderDemandRow, FulfillmentCleanupLine } from "@/reports/fulfillment-cleanup/build";
 import { buildFulfillmentCleanupCsv } from "@/export/fulfillment-cleanup-csv";
 import { buildIncludedSalesCsv } from "@/export/fulfillment-cleanup-included-sales-csv";
+import { syncOrgProductAvailability, type ProductAvailabilitySyncSummary } from "@/sync/sync-product-availability";
 
 export interface FulfillmentCleanupActionResult<T> {
   ok: boolean;
@@ -131,6 +132,28 @@ export async function downloadIncludedSalesCsvAction(sales: BackorderedSale[]): 
   try {
     await requireCurrentOrg();
     return { ok: true, data: buildIncludedSalesCsv(sales) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/** Scoped to this one instance (unlike Stock Health's org-wide status) — the cleanup list only ever comes from one instance at a time, and an org-wide "last synced" could mask this specific instance being stale behind another that happened to sync more recently. */
+export async function loadFulfillmentCleanupSyncStatusAction(instanceId: string): Promise<FulfillmentCleanupActionResult<ProductAvailabilitySyncStatus>> {
+  try {
+    const { orgId } = await requireCurrentOrg();
+    const db = createServiceRoleClient();
+    return { ok: true, data: await getProductAvailabilitySyncStatus(db, orgId, instanceId) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/** On-demand stock-level sync for just this one instance — same direct-call pattern as Stock Health's own trigger action, scoped down via syncOrgProductAvailability's instanceIds filter so it doesn't also re-sync every other instance on the org. */
+export async function triggerFulfillmentCleanupSyncAction(instanceId: string): Promise<FulfillmentCleanupActionResult<ProductAvailabilitySyncSummary[]>> {
+  try {
+    const { orgId } = await requireCurrentOrg();
+    const db = createServiceRoleClient();
+    return { ok: true, data: await syncOrgProductAvailability(db, orgId, [instanceId]) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

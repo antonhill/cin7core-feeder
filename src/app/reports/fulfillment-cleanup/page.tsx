@@ -1,15 +1,17 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { loadReportFilterOptionsAction } from "../actions";
 import {
   loadFulfillmentCleanupPreviewAction,
   downloadFulfillmentCleanupCsvAction,
   downloadIncludedSalesCsvAction,
+  loadFulfillmentCleanupSyncStatusAction,
+  triggerFulfillmentCleanupSyncAction,
   type FulfillmentCleanupPreviewData,
 } from "./actions";
-import type { ReportFilterOptions } from "@/reports/query";
+import type { ReportFilterOptions, ProductAvailabilitySyncStatus } from "@/reports/query";
 import { buildFulfillmentCleanupLines } from "@/reports/fulfillment-cleanup/build";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
@@ -36,6 +38,11 @@ export default function FulfillmentCleanupPage() {
   const [optionsError, setOptionsError] = useState<string | null>(null);
   const [isLoadingOptions, startOptionsTransition] = useTransition();
   const [instanceId, setInstanceId] = useState("");
+
+  const [syncStatus, setSyncStatus] = useState<ProductAvailabilitySyncStatus | null>(null);
+  const [syncStatusError, setSyncStatusError] = useState<string | null>(null);
+  const [isSyncing, startSyncTransition] = useTransition();
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   const [previewData, setPreviewData] = useState<FulfillmentCleanupPreviewData | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -86,6 +93,50 @@ export default function FulfillmentCleanupPage() {
       }
       setOptions(result.data ?? null);
       if (result.data?.instances.length === 1) setInstanceId(result.data.instances[0].id);
+    });
+  }
+
+  function refreshSyncStatus(forInstanceId: string) {
+    setSyncStatusError(null);
+    loadFulfillmentCleanupSyncStatusAction(forInstanceId).then((result) => {
+      if (!result.ok) {
+        setSyncStatusError(result.error ?? "Unknown error");
+        return;
+      }
+      setSyncStatus(result.data ?? null);
+    });
+  }
+
+  // Refetch whenever the chosen instance changes — stock levels are synced
+  // per instance, so an instance switch means the previous instance's
+  // "last synced" no longer applies. No setState runs synchronously in the
+  // effect body (only inside the .then() callback) — when instanceId is
+  // cleared this just skips the fetch rather than clearing syncStatus
+  // directly; the JSX below only ever renders the sync status while
+  // instanceId is set, so a stale value from a previous instance never
+  // shows regardless. refreshSyncStatus (used by handleSync) does the same
+  // fetch from a real click handler, where a synchronous setState is fine.
+  useEffect(() => {
+    if (!instanceId) return;
+    loadFulfillmentCleanupSyncStatusAction(instanceId).then((result) => {
+      if (!result.ok) {
+        setSyncStatusError(result.error ?? "Unknown error");
+        return;
+      }
+      setSyncStatus(result.data ?? null);
+    });
+  }, [instanceId]);
+
+  function handleSync() {
+    if (!instanceId) return;
+    setSyncError(null);
+    startSyncTransition(async () => {
+      const result = await triggerFulfillmentCleanupSyncAction(instanceId);
+      if (!result.ok) {
+        setSyncError(result.error ?? "Unknown error");
+        return;
+      }
+      refreshSyncStatus(instanceId);
     });
   }
 
@@ -185,13 +236,30 @@ export default function FulfillmentCleanupPage() {
               )}
             </div>
             {options && options.instances.length === 0 && <p className="mt-2 text-sm text-slate-400">No instances connected.</p>}
-            <p className="mt-2 text-xs text-slate-400">
-              Reads from Stock Health&rsquo;s already-synced stock levels — if it&rsquo;s been a while,{" "}
-              <Link href="/reports/stock-health" className="underline">
-                sync stock levels
-              </Link>{" "}
-              first so this reflects the current backlog.
-            </p>
+            {instanceId && (
+              <div className="mt-2 flex items-center gap-3">
+                <p className="text-xs text-slate-400">
+                  Reads from Stock Health&rsquo;s already-synced stock levels
+                  {syncStatus?.lastSyncedAt
+                    ? ` — last synced ${new Date(syncStatus.lastSyncedAt).toLocaleString()}`
+                    : syncStatus
+                      ? " — never synced yet"
+                      : ""}
+                  .
+                </p>
+                <button
+                  type="button"
+                  onClick={handleSync}
+                  disabled={isSyncing}
+                  className="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {isSyncing && <Spinner className="mr-1.5" />}
+                  {isSyncing ? "Syncing…" : "Sync stock levels now"}
+                </button>
+              </div>
+            )}
+            {syncStatusError && <p className="mt-2 text-xs text-red-600">{syncStatusError}</p>}
+            {syncError && <p className="mt-2 text-xs text-red-600">{syncError}</p>}
           </div>
           <button
             type="button"
