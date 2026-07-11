@@ -32,18 +32,27 @@ function minIntervalMs(): number {
 
 // Module-level so pacing holds across every call within (and across warm
 // invocations of) a single sync run — Cin7's limit is per API application,
-// not per request.
-let lastCallAt = 0;
+// not per request. Keyed by accountId (not baseUrl+accountId): accountId is
+// the real per-tenant identity Cin7 enforces its 60/min ceiling against, so
+// two Cin7Credentials sharing an accountId genuinely share the same upstream
+// quota bucket regardless of hostname — throttling them together is
+// correct, not a bug to guard against. Confirmed live 2026-07-11 this was
+// previously a SINGLE global gate shared across every instance, needlessly
+// serializing two completely independent Cin7 accounts' own 60/min budgets
+// through one combined 1/sec pace — this is what let per-instance
+// concurrency (sync-org.ts) actually speed anything up.
+const lastCallAtByAccount = new Map<string, number>();
 
-async function throttle() {
+async function throttle(accountId: string) {
+  const lastCallAt = lastCallAtByAccount.get(accountId) ?? 0;
   const wait = lastCallAt + minIntervalMs() - Date.now();
   if (wait > 0) await sleep(wait);
-  lastCallAt = Date.now();
+  lastCallAtByAccount.set(accountId, Date.now());
 }
 
-/** Test-only: fake timers can leave lastCallAt referencing a stale fake clock. */
+/** Test-only: fake timers can leave lastCallAtByAccount referencing a stale fake clock. */
 export function __resetRateLimiterForTests() {
-  lastCallAt = 0;
+  lastCallAtByAccount.clear();
 }
 
 /**
@@ -62,7 +71,7 @@ export async function cin7Request<T>(
   }
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    await throttle();
+    await throttle(creds.accountId);
 
     let response: Response;
     try {

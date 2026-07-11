@@ -142,4 +142,49 @@ describe("cin7Request", () => {
       message: expect.stringContaining("GET /production/workcenters"),
     });
   });
+
+  describe("per-account rate limiting", () => {
+    const credsB = { accountId: "acct-2", applicationKey: "key-2", baseUrl: "https://example.test/v2" };
+
+    it("does not block a different account's call behind another account's pacing", async () => {
+      process.env.RATE_LIMIT_RPS = "1";
+      vi.useFakeTimers();
+      const fn = mockFetchSequence([
+        () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+        () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      ]);
+
+      const promiseA = cin7Request(creds, "/Product");
+      const promiseB = cin7Request(credsB, "/Product");
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Both went through without either waiting on the other's pacing —
+      // under the old shared-global limiter, the second call here would
+      // still be asleep at this point.
+      expect(fn).toHaveBeenCalledTimes(2);
+      await Promise.all([promiseA, promiseB]);
+    });
+
+    it("still paces two calls for the same account at least one interval apart", async () => {
+      process.env.RATE_LIMIT_RPS = "1";
+      vi.useFakeTimers();
+      const fn = mockFetchSequence([
+        () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+        () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      ]);
+
+      const promiseA = cin7Request(creds, "/Product");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fn).toHaveBeenCalledTimes(1);
+
+      const promiseB = cin7Request(creds, "/Product");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fn).toHaveBeenCalledTimes(1); // still paced behind the first call
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(fn).toHaveBeenCalledTimes(2);
+
+      await Promise.all([promiseA, promiseB]);
+    });
+  });
 });
