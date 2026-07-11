@@ -119,6 +119,28 @@ export function BillingIcon({ className }: IconProps) {
   );
 }
 
+/** Home page's "Ready to ship today" Overview widget — not a module tile, just a shared icon. */
+export function ShipTodayIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M3 7h11v8H3z" />
+      <path d="M14 10h4l3 3v2h-7z" />
+      <circle cx="7" cy="17" r="1.5" />
+      <circle cx="17" cy="17" r="1.5" />
+    </svg>
+  );
+}
+
+/** Home page's Stock Health breakdown Overview widget — not a module tile, just a shared icon. */
+export function StockLevelsIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M21 8 12 3 3 8v8l9 5 9-5V8Z" />
+      <path d="M3 8l9 5 9-5M12 13v8" />
+    </svg>
+  );
+}
+
 export interface ModuleConfig {
   href: string;
   label: string;

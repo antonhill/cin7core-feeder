@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useState, useTransition } from "react";
+import { useSearchParams } from "next/navigation";
 import { loadReportFilterOptionsAction, loadSalesSyncStatusAction, triggerSalesSyncAction } from "../actions";
 import { loadOrderFulfillmentAction, exportOrderFulfillmentXlsxAction, loadSaleAttachmentsAction } from "./actions";
 import type { ReportFilterOptions, OrderFulfillmentRow, OrderFulfillmentLineRow, SalesSyncStatus } from "@/reports/query";
@@ -123,7 +124,15 @@ export default function OrderFulfillmentPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, startLoadTransition] = useTransition();
 
-  const [tab, setTab] = useState<Tab>("pick");
+  // Lazy initializer so a deep link like /reports/order-fulfillment?tab=ship
+  // (e.g. from the home page's Ship Today widget) opens straight into that
+  // tab — read once, not kept in sync afterward, same as this file's other
+  // one-time-read patterns.
+  const searchParams = useSearchParams();
+  const [tab, setTab] = useState<Tab>(() => {
+    const requested = searchParams.get("tab");
+    return requested === "ship" || requested === "all" ? requested : "pick";
+  });
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
