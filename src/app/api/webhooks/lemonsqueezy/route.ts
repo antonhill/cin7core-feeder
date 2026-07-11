@@ -35,6 +35,7 @@ interface LemonSqueezyWebhookPayload {
       customer_id: number;
       renews_at: string | null;
       ends_at: string | null;
+      updated_at: string;
     };
   };
 }
@@ -74,8 +75,13 @@ export async function POST(req: Request) {
   }
 
   const status = mapSubscriptionStatus(payload.data.attributes.status);
+  const eventAt = payload.data.attributes.updated_at;
   const db = createServiceRoleClient();
-  const { error } = await db
+  // Guards against an out-of-order delivery (retry, or a "Simulate event"
+  // test click) silently clobbering a newer real status — the WHERE clause
+  // makes the freshness check atomic with the write instead of a separate
+  // read-then-write that could itself race.
+  const { data: updated, error } = await db
     .from("organizations")
     .update({
       subscription_status: status,
@@ -83,9 +89,15 @@ export async function POST(req: Request) {
       billing_customer_id: String(payload.data.attributes.customer_id),
       billing_subscription_id: payload.data.id,
       subscription_current_period_end: payload.data.attributes.renews_at ?? payload.data.attributes.ends_at,
+      subscription_event_at: eventAt,
     })
-    .eq("id", orgId);
+    .eq("id", orgId)
+    .or(`subscription_event_at.is.null,subscription_event_at.lt.${eventAt}`)
+    .select("id");
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!updated || updated.length === 0) {
+    return NextResponse.json({ ok: true, skipped: "stale event" });
+  }
   return NextResponse.json({ ok: true });
 }
