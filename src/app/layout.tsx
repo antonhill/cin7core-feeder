@@ -45,6 +45,7 @@ export default async function RootLayout({
       <body className="flex h-full min-h-screen flex-row">
         {email && (
           <AppNav
+            key={orgId}
             userEmail={email}
             isSuperAdmin={isSuperAdmin}
             orgId={orgId}

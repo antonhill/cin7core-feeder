@@ -81,6 +81,16 @@ export function AppNav({
   showBilling: boolean;
 }) {
   const pathname = usePathname();
+  // Real bug found 2026-07-11: this state's initial value only applies on
+  // mount — if AppNav itself doesn't remount, switching orgs (e.g. the
+  // super-admin org switcher) left the sidebar showing the PREVIOUS org's
+  // logo, since orgLogoUrl updating as a prop doesn't reach state already
+  // initialized from it. Layout.tsx now remounts this whole component on an
+  // org switch (`key={orgId}`) specifically so this initializer re-runs with
+  // the new org's real logo — don't "fix" that by syncing via a useEffect
+  // instead (React's own lint rule here flags setState-in-effect as the
+  // wrong tool for this; a key-based remount is the correct pattern for
+  // "reset state when this identity changes").
   const [logoUrl, setLogoUrl] = useState(orgLogoUrl);
   const [logoError, setLogoError] = useState<string | null>(null);
   const [isUploadingLogo, startLogoTransition] = useTransition();
