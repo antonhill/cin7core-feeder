@@ -152,6 +152,17 @@ export function BillingIcon({ className }: IconProps) {
   );
 }
 
+export function TeamIcon({ className }: IconProps) {
+  return (
+    <GradientIcon className={className} from="#2563eb" to="#1d4ed8">
+      <circle cx="9" cy="8" r="3" />
+      <path d="M3.5 20a5.5 5.5 0 0 1 11 0" />
+      <circle cx="17" cy="8.5" r="2.4" />
+      <path d="M15.5 20a4.5 4.5 0 0 1 5.5-4.4" />
+    </GradientIcon>
+  );
+}
+
 /** Sidebar's compact icon-button row — not a module tile, just a shared icon. Neutral slate, not a brand color, since signing out isn't a section of the app. */
 export function SignOutIcon({ className }: IconProps) {
   return (
@@ -309,6 +320,17 @@ export const BILLING_MODULE: ModuleConfig = {
   blurb: "Trial status and subscription — managed through Lemon Squeezy.",
 };
 
+// Same "not an org-toggleable module" reasoning as SECURITY_MODULE above —
+// gated by requireOrgAdmin() in settings/members/layout.tsx (an org's own
+// owner/admin, or a super-admin), not by /admin's per-org visibility toggle.
+export const TEAM_MEMBERS_MODULE: ModuleConfig = {
+  href: "/settings/members",
+  label: "Team",
+  gradient: SELF_COLORED_ICON_BADGE,
+  Icon: TeamIcon,
+  blurb: "Invite teammates and choose which modules each one can access.",
+};
+
 export const MODULES: ModuleConfig[] = [
   IMPORT_MODULE,
   TEMPLATES_MODULE,
@@ -328,4 +350,32 @@ export const MODULES: ModuleConfig[] = [
  */
 export function findBlockedModule(pathname: string, disabledModules: string[]): ModuleConfig | undefined {
   return MODULES.find((m) => disabledModules.includes(m.href) && pathname.startsWith(m.href));
+}
+
+/**
+ * Merges the org-wide module gate (organizations.disabled_modules, set by a
+ * super-admin) with one user's own allow-list (org_members.allowed_modules,
+ * set by that org's own owner/admin on /settings/members) into the single
+ * flat "modules this request can't see" list every consumer already expects
+ * (middleware.ts, AppNav.tsx, page.tsx, tour-guide.tsx) — none of them need
+ * to change, only the two places that *compute* this value do (see
+ * getCurrentUserInfo() and middleware.ts's own independent copy).
+ *
+ * `userAllowedModules === null` means unrestricted — the user sees
+ * everything the org itself allows (every existing user's default, and any
+ * newly-invited one, until an owner/admin deliberately narrows them down).
+ * A non-null array (including an empty one, meaning "denied everything") is
+ * an explicit allow-list; the org's own disabled_modules always wins even
+ * for a module the user's allow-list explicitly includes — a client can't
+ * grant back something disabled org-wide.
+ *
+ * NOTE: if a module's href is ever renamed, any already-persisted
+ * allowed_modules array referencing the old href silently stops matching
+ * (the user just loses access to the renamed module until re-granted) — a
+ * rename would need a data migration to update existing arrays too.
+ */
+export function computeEffectiveDisabledModules(orgDisabledModules: string[], userAllowedModules: string[] | null): string[] {
+  if (userAllowedModules === null) return orgDisabledModules;
+  const userDenied = MODULES.filter((m) => !userAllowedModules.includes(m.href)).map((m) => m.href);
+  return [...new Set([...orgDisabledModules, ...userDenied])];
 }

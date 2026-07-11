@@ -1,6 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { findBlockedModule } from "@/app/module-nav";
+import { findBlockedModule, computeEffectiveDisabledModules } from "@/app/module-nav";
 import { createServiceRoleClient } from "@/supabase/server";
 
 // Must match src/lib/org-switch.ts's IMPERSONATED_ORG_COOKIE — duplicated
@@ -122,9 +122,14 @@ export async function middleware(request: NextRequest) {
   if (user && !isPublic) {
     const db = createServiceRoleClient();
     let orgId: string | null = null;
+    // A super-admin's own module access is never restricted by a per-user
+    // allow-list, whether or not they're currently impersonating — mirrors
+    // getCurrentUserInfo()'s same guard in src/actions/auth.ts.
+    let allowedModules: string[] | null = null;
 
     const { data: superAdminRow } = await db.from("super_admins").select("user_id").eq("user_id", user.id).maybeSingle();
-    if (superAdminRow) {
+    const isSuperAdmin = Boolean(superAdminRow);
+    if (isSuperAdmin) {
       const impersonatedOrgId = request.cookies.get(IMPERSONATED_ORG_COOKIE)?.value;
       if (impersonatedOrgId) {
         const { data: org } = await db.from("organizations").select("id").eq("id", impersonatedOrgId).maybeSingle();
@@ -133,13 +138,19 @@ export async function middleware(request: NextRequest) {
     }
 
     if (!orgId) {
-      const { data: membership } = await supabase.from("org_members").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
+      const { data: membership } = await supabase
+        .from("org_members")
+        .select("org_id, allowed_modules")
+        .eq("user_id", user.id)
+        .limit(1)
+        .maybeSingle();
       orgId = membership?.org_id ?? null;
+      if (!isSuperAdmin) allowedModules = membership?.allowed_modules ?? null;
     }
 
     if (orgId) {
       const { data: org } = await db.from("organizations").select("disabled_modules").eq("id", orgId).maybeSingle();
-      const disabledModules: string[] = org?.disabled_modules ?? [];
+      const disabledModules = computeEffectiveDisabledModules(org?.disabled_modules ?? [], allowedModules);
       const blockedModule = findBlockedModule(request.nextUrl.pathname, disabledModules);
       if (blockedModule) {
         const homeUrl = request.nextUrl.clone();

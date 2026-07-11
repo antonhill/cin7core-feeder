@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOutAction } from "@/actions/auth";
 import { uploadCurrentOrgLogo } from "@/actions/org-logo";
-import { MODULES, ADMIN_MODULE, BillingIcon, ShieldIcon, DiagnosticsIcon, SignOutIcon } from "@/app/module-nav";
+import { MODULES, ADMIN_MODULE, BillingIcon, ShieldIcon, DiagnosticsIcon, TeamIcon, SignOutIcon } from "@/app/module-nav";
 import { OrgSwitcher } from "@/app/OrgSwitcher";
 import { Spinner } from "@/app/Spinner";
 
@@ -65,6 +65,7 @@ function NavIconButton({
 export function AppNav({
   userEmail,
   isSuperAdmin,
+  isOrgAdmin,
   orgId,
   orgName,
   orgLogoUrl,
@@ -73,6 +74,8 @@ export function AppNav({
 }: {
   userEmail: string | null;
   isSuperAdmin: boolean;
+  /** True for a super-admin, or an org_members row with role 'owner'/'admin' — shows the Team settings icon. */
+  isOrgAdmin: boolean;
   orgId: string | null;
   orgName: string | null;
   orgLogoUrl: string | null;
@@ -197,6 +200,11 @@ export function AppNav({
             <NavIconButton href="/settings/security" label="Security" active={pathname.startsWith("/settings/security")}>
               <ShieldIcon className="h-5 w-5" />
             </NavIconButton>
+            {isOrgAdmin && (
+              <NavIconButton href="/settings/members" label="Team" active={pathname.startsWith("/settings/members")}>
+                <TeamIcon className="h-5 w-5" />
+              </NavIconButton>
+            )}
             {isSuperAdmin && (
               <NavIconButton href="/settings/diagnostics" label="Diagnostics" active={pathname.startsWith("/settings/diagnostics")}>
                 <DiagnosticsIcon className="h-5 w-5" />

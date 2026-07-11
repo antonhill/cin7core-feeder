@@ -188,11 +188,11 @@ function StockHealthCard({ summary, activeInstances }: { summary: StockHealthSum
   );
 }
 
-export default async function Home({ searchParams }: { searchParams: Promise<{ blocked?: string }> }) {
+export default async function Home({ searchParams }: { searchParams: Promise<{ blocked?: string; teamAccessDenied?: string }> }) {
   const { email, orgId, disabledModules } = await getCurrentUserInfo();
   if (!email) return <MarketingHome />;
 
-  const { blocked } = await searchParams;
+  const { blocked, teamAccessDenied } = await searchParams;
   const visibleModules = MODULES.filter((m) => !disabledModules.includes(m.href));
   const blockedModule = blocked ? MODULES.find((m) => m.href === blocked) : undefined;
   const [stats, shipToday, stockHealth] = await Promise.all([getHomeStats(orgId), getShipTodayCount(orgId), getStockHealthSummary(orgId)]);
@@ -212,6 +212,12 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ b
       {blockedModule && (
         <p className="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           {blockedModule.label} isn&rsquo;t enabled for your organization — ask your admin if you need access.
+        </p>
+      )}
+
+      {teamAccessDenied && (
+        <p className="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Only your organization&rsquo;s owner or admin can manage team access.
         </p>
       )}
 

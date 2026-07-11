@@ -32,7 +32,7 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const { email, isSuperAdmin, orgId, orgName, orgLogoUrl, isImpersonating, disabledModules, subscriptionStatus, trialEndsAt } =
+  const { email, isSuperAdmin, isOrgAdmin, orgId, orgName, orgLogoUrl, isImpersonating, disabledModules, subscriptionStatus, trialEndsAt } =
     await getCurrentUserInfo();
 
   const trialDaysLeft = subscriptionStatus === "trialing" && trialEndsAt ? daysUntil(trialEndsAt) : null;
@@ -48,6 +48,7 @@ export default async function RootLayout({
             key={orgId}
             userEmail={email}
             isSuperAdmin={isSuperAdmin}
+            isOrgAdmin={isOrgAdmin}
             orgId={orgId}
             orgName={orgName}
             orgLogoUrl={orgLogoUrl}

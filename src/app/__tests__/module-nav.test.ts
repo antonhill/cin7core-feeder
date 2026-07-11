@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findBlockedModule, MODULES } from "@/app/module-nav";
+import { findBlockedModule, computeEffectiveDisabledModules, MODULES } from "@/app/module-nav";
 
 describe("findBlockedModule", () => {
   it("returns undefined when nothing is disabled", () => {
@@ -35,5 +35,32 @@ describe("findBlockedModule", () => {
   it("every module in MODULES has a unique href — a prerequisite for prefix matching to be unambiguous", () => {
     const hrefs = MODULES.map((m) => m.href);
     expect(new Set(hrefs).size).toBe(hrefs.length);
+  });
+});
+
+describe("computeEffectiveDisabledModules", () => {
+  it("returns the org's own disabled list unchanged when the user is unrestricted (null allow-list)", () => {
+    expect(computeEffectiveDisabledModules(["/reports"], null)).toEqual(["/reports"]);
+  });
+
+  it("denies every module not in the user's own allow-list", () => {
+    const result = computeEffectiveDisabledModules([], ["/import"]);
+    const expectedDenied = MODULES.map((m) => m.href).filter((href) => href !== "/import");
+    expect(new Set(result)).toEqual(new Set(expectedDenied));
+  });
+
+  it("keeps an org-disabled module denied even when the user's own allow-list explicitly includes it — org-level disable always wins", () => {
+    const result = computeEffectiveDisabledModules(["/reports"], ["/reports", "/import"]);
+    expect(result).toContain("/reports");
+  });
+
+  it("an empty (non-null) allow-list denies every module — a real, intentional 'restricted from everything' state, not coerced to unrestricted", () => {
+    const result = computeEffectiveDisabledModules([], []);
+    expect(new Set(result)).toEqual(new Set(MODULES.map((m) => m.href)));
+  });
+
+  it("doesn't produce duplicate hrefs when the org-disabled and user-denied sets overlap", () => {
+    const result = computeEffectiveDisabledModules(["/reports"], []);
+    expect(result.filter((href) => href === "/reports")).toHaveLength(1);
   });
 });
