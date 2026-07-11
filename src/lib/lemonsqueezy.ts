@@ -18,8 +18,12 @@ function requireEnv(name: string): string {
  */
 export function buildCheckoutUrl(orgId: string, email: string | null): string {
   const storeSlug = requireEnv("LEMONSQUEEZY_STORE_SLUG");
-  const variantId = requireEnv("LEMONSQUEEZY_VARIANT_ID");
-  const url = new URL(`https://${storeSlug}.lemonsqueezy.com/buy/${variantId}`);
+  // Confirmed live 2026-07-11: this is the product's "Buy Link" ID (Products
+  // > [product] > Share button in the LS dashboard), a UUID — NOT the
+  // variant ID or product ID shown elsewhere in the dashboard UI, and the
+  // path must include /checkout/. Both other combinations 404.
+  const buyLinkId = requireEnv("LEMONSQUEEZY_BUY_LINK_ID");
+  const url = new URL(`https://${storeSlug}.lemonsqueezy.com/checkout/buy/${buyLinkId}`);
   url.searchParams.set("checkout[custom][org_id]", orgId);
   if (email) url.searchParams.set("checkout[email]", email);
   return url.toString();

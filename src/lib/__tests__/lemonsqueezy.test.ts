@@ -6,7 +6,7 @@ const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
   process.env.LEMONSQUEEZY_STORE_SLUG = "cin7toolbox";
-  process.env.LEMONSQUEEZY_VARIANT_ID = "12345";
+  process.env.LEMONSQUEEZY_BUY_LINK_ID = "5e595f34-1efa-4025-8203-4789a221ec33";
   process.env.LEMONSQUEEZY_WEBHOOK_SECRET = "test-secret";
 });
 
@@ -15,10 +15,10 @@ afterEach(() => {
 });
 
 describe("buildCheckoutUrl", () => {
-  it("points at the store's hosted checkout for the configured variant", () => {
+  it("points at the store's hosted checkout for the configured buy link", () => {
     const url = buildCheckoutUrl("org-1", "anton@sparkconsulting.co.za");
     expect(url).toBe(
-      "https://cin7toolbox.lemonsqueezy.com/buy/12345?checkout%5Bcustom%5D%5Borg_id%5D=org-1&checkout%5Bemail%5D=anton%40sparkconsulting.co.za"
+      "https://cin7toolbox.lemonsqueezy.com/checkout/buy/5e595f34-1efa-4025-8203-4789a221ec33?checkout%5Bcustom%5D%5Borg_id%5D=org-1&checkout%5Bemail%5D=anton%40sparkconsulting.co.za"
     );
   });
 
