@@ -320,23 +320,19 @@ export async function pushProduct(
   if (product.last_supplied_by) {
     const supplierId = await resolveSupplierId(creds, product.last_supplied_by, supplierIdCache);
     if (supplierId) {
-      // FixedCost also (still confirmed live 2026-07-11) needs to be a real
-      // JSON number, not a numeric-looking string — Postgres `numeric`
-      // columns come back from Supabase as strings, and unlike top-level
-      // product fields (length/weight/etc., which Cin7 tolerates as
-      // strings), this nested Suppliers array is validated more strictly:
-      // a string FixedCost also triggers "Suppliers is invalid", the exact
-      // same error as the missing-ID case above.
-      const fixedCost = product.supplier_fixed_price != null ? Number(product.supplier_fixed_price) : undefined;
-      payload.Suppliers = [
-        {
-          ID: supplierId,
-          SupplierName: product.last_supplied_by,
-          SupplierInventoryCode: product.supplier_product_code ?? undefined,
-          SupplierProductName: product.supplier_product_name ?? undefined,
-          FixedCost: fixedCost,
-        },
-      ];
+      // Confirmed live 2026-07-11 (Casa das Natas, 23/60 real products, not
+      // just a sample): `{ID, SupplierName}` is the ONLY shape ever actually
+      // live-tested and confirmed to work. `SupplierInventoryCode`/
+      // `SupplierProductName`/`FixedCost` were added speculatively from a
+      // third-party community client's schema (docs/cin7-api-findings.md
+      // §5c) without a live write test — and turned out to be wrong, same
+      // as that doc's `SupplierID` field-name claim already was. Coercing
+      // FixedCost from string to number (tried first) did NOT fix it: every
+      // failure has a non-null supplier_fixed_price and every success
+      // doesn't, regardless of type, so Cin7 rejects the field outright in
+      // this nested context. Left capture-only (still stored in our own DB
+      // for reporting) until independently confirmed live.
+      payload.Suppliers = [{ ID: supplierId, SupplierName: product.last_supplied_by }];
     }
   }
   const existing = await findProductBySku(creds, product.sku);

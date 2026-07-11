@@ -324,11 +324,16 @@ describe("pushProduct", () => {
     expect(cin7Request).toHaveBeenCalledTimes(2);
   });
 
-  it("resolves the named supplier's real ID and sends it under the generic `ID` key (not `SupplierID`)", async () => {
+  it("resolves the named supplier's real ID and sends only `{ID, SupplierName}` — the one shape ever confirmed live", async () => {
     // Confirmed live 2026-07-11: Cin7 rejects a Suppliers entry with only
     // SupplierName ("Suppliers is invalid"), and separately rejects one with
     // SupplierID ("Required attribute 'ID' not provided") — only a plain
-    // `ID` field succeeded.
+    // `ID` field succeeded. A later live check (same day, across 23 real
+    // products) found `FixedCost` also triggers "Suppliers is invalid"
+    // regardless of whether it's a string or a real number — it, along with
+    // SupplierInventoryCode/SupplierProductName, was added speculatively
+    // from a third-party client's schema and never actually confirmed; all
+    // three are left out until independently live-tested.
     vi.mocked(cin7Request)
       .mockResolvedValueOnce(CATEGORY_EXISTS)
       .mockResolvedValueOnce(UOM_EXISTS)
@@ -346,15 +351,7 @@ describe("pushProduct", () => {
 
     const [, , options] = vi.mocked(cin7Request).mock.calls[4];
     const body = options?.body as { Suppliers: unknown };
-    expect(body.Suppliers).toEqual([
-      {
-        ID: "supplier-1",
-        SupplierName: "Acme Supplies",
-        SupplierInventoryCode: "AC-100",
-        SupplierProductName: "Acme Widget",
-        FixedCost: 4.5,
-      },
-    ]);
+    expect(body.Suppliers).toEqual([{ ID: "supplier-1", SupplierName: "Acme Supplies" }]);
   });
 
   it("omits Suppliers rather than sending a doomed request when the named supplier doesn't exist in Cin7 yet", async () => {
@@ -373,32 +370,6 @@ describe("pushProduct", () => {
     const [, , options] = vi.mocked(cin7Request).mock.calls[4];
     const body = options?.body as Record<string, unknown>;
     expect(body).not.toHaveProperty("Suppliers");
-  });
-
-  it("coerces FixedCost to a real number even when Postgres hands back a numeric-looking string", async () => {
-    // Real bug found 2026-07-11 (Casa das Natas): Supabase returns `numeric`
-    // columns as strings (e.g. "65.4"), and the CanonicalProductRow type's
-    // `number | null` annotation doesn't reflect that at runtime. Cin7
-    // rejected the whole Suppliers array with "Suppliers is invalid" when
-    // FixedCost was a string, even though the same string-typed values are
-    // tolerated fine on top-level product fields (length/weight/etc.).
-    vi.mocked(cin7Request)
-      .mockResolvedValueOnce(CATEGORY_EXISTS)
-      .mockResolvedValueOnce(UOM_EXISTS)
-      .mockResolvedValueOnce({ SupplierList: [{ ID: "supplier-1", Name: "Acme Supplies" }] })
-      .mockResolvedValueOnce({ Products: [] })
-      .mockResolvedValueOnce({ ID: "new-id" });
-
-    await pushProduct(creds, {
-      ...product,
-      last_supplied_by: "Acme Supplies",
-      supplier_fixed_price: "65.4" as unknown as number,
-    });
-
-    const [, , options] = vi.mocked(cin7Request).mock.calls[4];
-    const body = options?.body as { Suppliers: { FixedCost: unknown }[] };
-    expect(body.Suppliers[0].FixedCost).toBe(65.4);
-    expect(typeof body.Suppliers[0].FixedCost).toBe("number");
   });
 
   it("caches a resolved supplier ID across multiple products in the same run", async () => {
