@@ -219,6 +219,60 @@ describe("syncOrgInstances", () => {
     );
   });
 
+  it("starts every instance's sync concurrently rather than waiting for each to finish first", async () => {
+    const db = createFakeDb([
+      { id: "inst-1", org_id: "org1", active: true },
+      { id: "inst-2", org_id: "org1", active: true },
+    ]);
+
+    // Deferred promises so we control exactly when each instance "finishes" —
+    // under the old serial for-loop, inst-2's syncInstance() call wouldn't
+    // even happen until inst-1's promise above resolved.
+    let rejectInst1!: (e: unknown) => void;
+    let resolveInst2!: (v: unknown) => void;
+    const deferred1 = new Promise((_resolve, reject) => {
+      rejectInst1 = reject;
+    });
+    const deferred2 = new Promise((resolve) => {
+      resolveInst2 = resolve;
+    });
+    vi.mocked(syncInstance).mockImplementation((_db, _orgId, instanceId) =>
+      (instanceId === "inst-1" ? deferred1 : deferred2) as ReturnType<typeof syncInstance>
+    );
+
+    const resultsPromise = syncOrgInstances(db, "org1");
+
+    // Both instances' syncs must already be in flight before either resolves.
+    await vi.waitFor(() => expect(syncInstance).toHaveBeenCalledTimes(2));
+
+    rejectInst1(new Error("boom"));
+    resolveInst2({
+      instanceId: "inst-2",
+      instanceName: "Good",
+      productsCreated: 1,
+      productsUpdated: 0,
+      productsSkipped: 0,
+      productsFailed: 0,
+      productionBomsPushed: 0,
+      productionBomsFailed: 0,
+      customersCreated: 0,
+      customersUpdated: 0,
+      customersSkipped: 0,
+      customersFailed: 0,
+      suppliersCreated: 0,
+      suppliersUpdated: 0,
+      suppliersSkipped: 0,
+      suppliersFailed: 0,
+      errors: [],
+    });
+    const results = await resultsPromise;
+
+    expect(results).toEqual([
+      expect.objectContaining({ ok: false, instanceId: "inst-1", error: "boom" }),
+      expect.objectContaining({ ok: true, instanceId: "inst-2", productsCreated: 1 }),
+    ]);
+  });
+
   it("logs a sync.push_failed entry (not sync.push) when the instance sync throws", async () => {
     const db = createFakeDb([{ id: "inst-1", org_id: "org1", active: true }]);
     vi.mocked(syncInstance).mockRejectedValueOnce(new Error("boom"));
