@@ -21,6 +21,7 @@ import {
   debugSurveySaleFulfillmentFields,
   debugSurveyBackorderEtaFields,
   debugTestSaleShipByWriteBack,
+  debugTestProductSupplierLink,
   debugProbeWorkCentrePaths,
   debugPushOneCustomerAndSupplier,
   deleteInstance,
@@ -56,6 +57,7 @@ function InstancesSettingsPageInner() {
   const [productionBomSkus, setProductionBomSkus] = useState<Record<string, string>>({});
   const [productionOrderNumbers, setProductionOrderNumbers] = useState<Record<string, string>>({});
   const [shipByTestOrderNumbers, setShipByTestOrderNumbers] = useState<Record<string, string>>({});
+  const [supplierLinkTests, setSupplierLinkTests] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -278,6 +280,16 @@ function InstancesSettingsPageInner() {
     });
   }
 
+  function handleTestProductSupplierLink(instanceId: string) {
+    const input = (supplierLinkTests[instanceId] ?? "").trim();
+    if (!input) return;
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Writing (resolving SupplierID, testing product PUT)…" } }));
+    startTransition(async () => {
+      const result = await debugTestProductSupplierLink(instanceId, input);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
   function handleDelete(instanceId: string) {
     if (!confirm("Delete this Cin7 Core instance connection?")) return;
     setError(null);
@@ -483,6 +495,23 @@ function InstancesSettingsPageInner() {
                 title="Performs a real PUT against this order in Cin7 — a no-op (writes back its own current ShipBy unchanged) but a genuine write, not a read-only survey. Use a real test order, not a live customer's."
               >
                 Test ShipBy write-back (WRITES to Cin7 — no-op test)
+              </button>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="text"
+                placeholder='"SKU,Supplier Name" e.g. Cardboard80,Box Shop Packaging'
+                value={supplierLinkTests[inst.id] ?? ""}
+                onChange={(e) => setSupplierLinkTests((prev) => ({ ...prev, [inst.id]: e.target.value }))}
+                className="w-96 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+              />
+              <button
+                onClick={() => handleTestProductSupplierLink(inst.id)}
+                disabled={isPending || !(supplierLinkTests[inst.id] ?? "").trim()}
+                className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                title="Performs a real PUT against this product in Cin7, adding a resolved SupplierID to its Suppliers array — a genuine write, not a no-op. Only safe to use on a product whose supplier link is currently missing/failing anyway."
+              >
+                Test product-supplier link with resolved SupplierID (WRITES to Cin7)
               </button>
             </div>
             {testResults[inst.id] && (

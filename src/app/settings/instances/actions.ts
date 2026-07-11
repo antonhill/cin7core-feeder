@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
-import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail, surveyPurchaseDetailFields, surveyProductAvailabilityFields, surveySaleFulfillmentFields, surveyBackorderEtaFields, testSaleShipByWriteBack } from "@/cin7/debug";
+import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail, surveyPurchaseDetailFields, surveyProductAvailabilityFields, surveySaleFulfillmentFields, surveyBackorderEtaFields, testSaleShipByWriteBack, testProductSupplierLink } from "@/cin7/debug";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
@@ -390,6 +390,29 @@ export async function debugTestSaleShipByWriteBack(instanceId: string, orderNumb
   try {
     const creds = await loadInstanceCreds(instanceId);
     const result = await testSaleShipByWriteBack(creds, orderNumber);
+    return { ok: true, message: JSON.stringify(result, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Diagnostic only: confirms whether a product's Suppliers array needs a
+ * resolved SupplierID (not just SupplierName) to be accepted — see
+ * testProductSupplierLink's own comment. `input` is "SKU,Supplier Name"
+ * (the supplier name itself may contain commas were it not for the fact
+ * every real one seen so far doesn't — split on the first comma only).
+ */
+export async function debugTestProductSupplierLink(instanceId: string, input: string): Promise<TestConnectionResult> {
+  try {
+    const commaIndex = input.indexOf(",");
+    if (commaIndex < 0) return { ok: false, message: 'Enter "SKU,Supplier Name", e.g. Cardboard80,Box Shop Packaging' };
+    const sku = input.slice(0, commaIndex).trim();
+    const supplierName = input.slice(commaIndex + 1).trim();
+    if (!sku || !supplierName) return { ok: false, message: 'Enter "SKU,Supplier Name", e.g. Cardboard80,Box Shop Packaging' };
+
+    const creds = await loadInstanceCreds(instanceId);
+    const result = await testProductSupplierLink(creds, sku, supplierName);
     return { ok: true, message: JSON.stringify(result, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };

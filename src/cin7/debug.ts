@@ -1342,3 +1342,65 @@ export async function testSaleShipByWriteBack(creds: Cin7Credentials, orderNumbe
 
   return { saleId, orderNumber, shipByTested, putSucceeded: true, unexpectedChanges };
 }
+
+export interface ProductSupplierLinkTest {
+  sku: string;
+  supplierName: string;
+  supplierFound: boolean;
+  supplierId?: string;
+  putSucceeded: boolean;
+  putError?: string;
+}
+
+/**
+ * Diagnostic only. Confirmed live 2026-07-11: pushProduct's Suppliers array
+ * (products.ts, sent as `{ SupplierName, SupplierInventoryCode,
+ * SupplierProductName, FixedCost }` per the community client spec's worked
+ * example, no SupplierID) is rejected with "Suppliers is invalid" — across
+ * many different supplier names, including ones already confirmed to exist
+ * as real Cin7 supplier records (created moments earlier via this same
+ * app's own supplier push), so it isn't a per-row name-matching issue.
+ * Suspect Cin7 actually requires a resolved SupplierID, unlike Category/
+ * Brand/UOM's own reference-book endpoints which do accept a bare name/code.
+ *
+ * Tests that directly: resolves the named supplier's real ID via GET
+ * /supplier, fetches the target product's own current full record (not a
+ * reconstructed payload — same safety reasoning as testSaleShipByWriteBack,
+ * a real PUT needs the product's actual current data, not a guessed one),
+ * and PUTs it back changing only Suppliers to include the resolved
+ * SupplierID alongside SupplierName. This both diagnoses the cause and, if
+ * it succeeds, is the actual fix already applied to that one product live —
+ * safe to do since the product currently has no supplier link at all (this
+ * exact push already fails today), not a case of overwriting a working one.
+ */
+export async function testProductSupplierLink(creds: Cin7Credentials, sku: string, supplierName: string): Promise<ProductSupplierLinkTest> {
+  const supplierRes = await cin7Request<{ SupplierList?: Record<string, unknown>[] }>(creds, "/supplier", {
+    query: { Name: supplierName, page: 1, limit: 1 },
+  });
+  const supplier = supplierRes.SupplierList?.find((s) => s.Name === supplierName);
+  const supplierId = supplier?.ID as string | undefined;
+
+  const listRes = await cin7Request<Cin7ProductListResponse>(creds, "/Product", {
+    query: { SKU: sku, page: 1, limit: 1 },
+  });
+  const match = listRes.Products?.find((p) => p.SKU === sku);
+  if (!match?.ID) throw new Error(`No product found with SKU "${sku}"`);
+  const full = await cin7Request<Record<string, unknown>>(creds, "/Product", { query: { ID: match.ID as string } });
+
+  try {
+    await cin7Request(creds, "/Product", {
+      method: "PUT",
+      body: { ...full, Suppliers: [{ SupplierID: supplierId, SupplierName: supplierName }] },
+    });
+    return { sku, supplierName, supplierFound: Boolean(supplier), supplierId, putSucceeded: true };
+  } catch (e) {
+    return {
+      sku,
+      supplierName,
+      supplierFound: Boolean(supplier),
+      supplierId,
+      putSucceeded: false,
+      putError: e instanceof Cin7ApiError ? `[${e.status}] ${e.message}` : e instanceof Error ? e.message : "Unknown error",
+    };
+  }
+}
