@@ -2,6 +2,7 @@ import type { Cin7Credentials } from "@/cin7/types";
 import { cin7Request } from "@/cin7/http";
 import { toCin7BomFields, type CanonicalAssemblyBomLineRow } from "@/cin7/assembly-bom";
 import { ensureReferenceExists, REF_BRAND_PATH, REF_CATEGORY_PATH, REF_UOM_PATH } from "@/cin7/reference-lookups";
+import { findSupplierByName } from "@/cin7/suppliers";
 
 export interface CanonicalProductRow {
   sku: string;
@@ -170,26 +171,10 @@ export function toCin7ProductPayload(product: CanonicalProductRow, priceTiers: C
     HSCode: product.hs_code ?? undefined,
     CountryOfOrigin: product.country_of_origin ?? undefined,
   };
-  // Suppliers is a nested array on the Product resource, sent in the same
-  // POST/PUT payload — confirmed via a real wired-up call in the
-  // FalconEyeSolutions C# client's Product PUT request model, plus a
-  // populated Suppliers array in the .apib spec's own worked example.
-  // Referenced by SupplierName (a pre-resolved GUID isn't required — Cin7
-  // accepts either). The CSV's flat single-supplier-per-row format has no
-  // "is this the default supplier" flag in Cin7's own model, so
-  // last_supplied_by is treated as that one supplier's name. Two field
-  // names differ from the CSV columns: SupplierProductCode ->
-  // SupplierInventoryCode, SupplierFixedPrice -> FixedCost.
-  if (product.last_supplied_by) {
-    payload.Suppliers = [
-      {
-        SupplierName: product.last_supplied_by,
-        SupplierInventoryCode: product.supplier_product_code ?? undefined,
-        SupplierProductName: product.supplier_product_name ?? undefined,
-        FixedCost: product.supplier_fixed_price ?? undefined,
-      },
-    ];
-  }
+  // Suppliers is deliberately NOT built here even though it's a plain field
+  // on the Product resource like everything else above — it needs a live
+  // supplier-name -> ID lookup (see pushProduct's own comment), which this
+  // function can't do since it's a pure, synchronous mapping with no I/O.
   let anyTierSet = false;
   for (const tier of priceTiers) {
     const index = Number(tier.tier_code.replace(/^Tier/, ""));
@@ -287,13 +272,23 @@ function requireId(response: Cin7ProductResponse, action: string): string {
  * into the same payload — Cin7 has no separate BOM endpoint; BOM fields
  * live directly on the Product resource. See assembly-bom.ts.
  */
+/** Resolves a supplier's real Cin7 ID by name, caching both hits and misses so a supplier referenced by many product rows only needs one live lookup per sync run. */
+async function resolveSupplierId(creds: Cin7Credentials, name: string, cache: Map<string, string | null>): Promise<string | null> {
+  if (cache.has(name)) return cache.get(name) ?? null;
+  const found = await findSupplierByName(creds, name);
+  const id = found?.id ?? null;
+  cache.set(name, id);
+  return id;
+}
+
 export async function pushProduct(
   creds: Cin7Credentials,
   product: CanonicalProductRow,
   priceTiers: CanonicalPriceTierRow[] = [],
   bomLines: CanonicalAssemblyBomLineRow[] = [],
   cin7IdCache: Map<string, string | null | undefined> = new Map(),
-  refCache: Set<string> = new Set()
+  refCache: Set<string> = new Set(),
+  supplierIdCache: Map<string, string | null> = new Map()
 ): Promise<{ cin7Id: string; status: ProductPushStatus }> {
   if (bomLines.length) {
     await resolveComponentIds(
@@ -313,6 +308,29 @@ export async function pushProduct(
   if (product.brand) await ensureReferenceExists(creds, REF_BRAND_PATH, product.brand, refCache);
   if (product.uom_code) await ensureReferenceExists(creds, REF_UOM_PATH, product.uom_code, refCache);
   const payload = { ...toCin7ProductPayload(product, priceTiers), ...toCin7BomFields(bomLines, cin7IdCache) };
+  // Confirmed live 2026-07-11 (Casa das Natas): unlike Category/Brand/UOM,
+  // Cin7 rejects a Suppliers entry with just SupplierName ("Suppliers is
+  // invalid") — it needs a resolved supplier ID under the generic key `ID`
+  // (not `SupplierID`, despite that being the name a community client's
+  // documented example used). A supplier that hasn't been pushed yet in
+  // this same sync run (suppliers are their own later step — see
+  // run-sync.ts) simply can't be resolved; skip Suppliers for now rather
+  // than send a request already known to fail — a later sync run picks it
+  // up once the supplier exists.
+  if (product.last_supplied_by) {
+    const supplierId = await resolveSupplierId(creds, product.last_supplied_by, supplierIdCache);
+    if (supplierId) {
+      payload.Suppliers = [
+        {
+          ID: supplierId,
+          SupplierName: product.last_supplied_by,
+          SupplierInventoryCode: product.supplier_product_code ?? undefined,
+          SupplierProductName: product.supplier_product_name ?? undefined,
+          FixedCost: product.supplier_fixed_price ?? undefined,
+        },
+      ];
+    }
+  }
   const existing = await findProductBySku(creds, product.sku);
 
   if (existing) {

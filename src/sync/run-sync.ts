@@ -214,6 +214,10 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
   // confirmed/created for one product doesn't need a second lookup for the
   // next with the same one.
   const refCache = new Set<string>();
+  // Shared across every product this run — a supplier referenced by many
+  // rows (e.g. one distributor supplying dozens of SKUs) only needs one
+  // live GET /supplier lookup, not one per row.
+  const supplierIdCache = new Map<string, string | null>();
   // Shared across the whole run (customers + suppliers) for the pre-flight
   // Location/SalesRepresentative/Account existence checks below — the same
   // wrong value is often repeated across many rows.
@@ -308,7 +312,7 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
         // cin7IdBySku doubles as the component-ID resolution cache for BOM
         // lines — a component synced earlier in this same run (or a prior
         // run) resolves without an extra API call.
-        pushResult = await pushProduct(creds, product, priceTiers ?? [], bomLinesTyped, cin7IdBySku, refCache);
+        pushResult = await pushProduct(creds, product, priceTiers ?? [], bomLinesTyped, cin7IdBySku, refCache, supplierIdCache);
       } catch (e) {
         const described = describeError(e);
         throw new MultilineError(["Product push failed", ...described.lines], described.raw);

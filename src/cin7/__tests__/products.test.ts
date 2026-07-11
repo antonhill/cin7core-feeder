@@ -103,7 +103,10 @@ describe("toCin7ProductPayload", () => {
     expect(payload.Description).toBe("A fine widget.");
   });
 
-  it("sends supplier data as a Suppliers array, using Cin7's real field names (SupplierInventoryCode, FixedCost)", () => {
+  // Suppliers is deliberately NOT built here — it needs a live supplier-name
+  // -> ID lookup, which this pure/synchronous function can't do. See
+  // pushProduct's own "resolves and includes a Suppliers entry" tests below.
+  it("never includes Suppliers — that needs an async ID lookup only pushProduct can do", () => {
     const payload = toCin7ProductPayload({
       ...product,
       last_supplied_by: "Acme Supplies",
@@ -111,18 +114,6 @@ describe("toCin7ProductPayload", () => {
       supplier_product_name: "Acme Widget",
       supplier_fixed_price: 4.5,
     });
-    expect(payload.Suppliers).toEqual([
-      {
-        SupplierName: "Acme Supplies",
-        SupplierInventoryCode: "AC-100",
-        SupplierProductName: "Acme Widget",
-        FixedCost: 4.5,
-      },
-    ]);
-  });
-
-  it("omits Suppliers entirely when there's no supplier data", () => {
-    const payload = toCin7ProductPayload(product);
     expect(payload).not.toHaveProperty("Suppliers");
   });
 
@@ -331,6 +322,77 @@ describe("pushProduct", () => {
     await pushProduct(creds, { ...product, category_code: null, brand: null, uom_code: null });
 
     expect(cin7Request).toHaveBeenCalledTimes(2);
+  });
+
+  it("resolves the named supplier's real ID and sends it under the generic `ID` key (not `SupplierID`)", async () => {
+    // Confirmed live 2026-07-11: Cin7 rejects a Suppliers entry with only
+    // SupplierName ("Suppliers is invalid"), and separately rejects one with
+    // SupplierID ("Required attribute 'ID' not provided") — only a plain
+    // `ID` field succeeded.
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce(CATEGORY_EXISTS)
+      .mockResolvedValueOnce(UOM_EXISTS)
+      .mockResolvedValueOnce({ SupplierList: [{ ID: "supplier-1", Name: "Acme Supplies" }] })
+      .mockResolvedValueOnce({ Products: [] }) // findProductBySku
+      .mockResolvedValueOnce({ ID: "new-id" }); // create
+
+    await pushProduct(creds, {
+      ...product,
+      last_supplied_by: "Acme Supplies",
+      supplier_product_code: "AC-100",
+      supplier_product_name: "Acme Widget",
+      supplier_fixed_price: 4.5,
+    });
+
+    const [, , options] = vi.mocked(cin7Request).mock.calls[4];
+    const body = options?.body as { Suppliers: unknown };
+    expect(body.Suppliers).toEqual([
+      {
+        ID: "supplier-1",
+        SupplierName: "Acme Supplies",
+        SupplierInventoryCode: "AC-100",
+        SupplierProductName: "Acme Widget",
+        FixedCost: 4.5,
+      },
+    ]);
+  });
+
+  it("omits Suppliers rather than sending a doomed request when the named supplier doesn't exist in Cin7 yet", async () => {
+    // Suppliers are pushed in their own later step (see run-sync.ts) — a
+    // product referencing one not yet created in this same run can't
+    // resolve it, so this isn't an error case, just "not yet".
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce(CATEGORY_EXISTS)
+      .mockResolvedValueOnce(UOM_EXISTS)
+      .mockResolvedValueOnce({ SupplierList: [] }) // supplier not found
+      .mockResolvedValueOnce({ Products: [] })
+      .mockResolvedValueOnce({ ID: "new-id" });
+
+    await pushProduct(creds, { ...product, last_supplied_by: "Not Yet Created Supplier" });
+
+    const [, , options] = vi.mocked(cin7Request).mock.calls[4];
+    const body = options?.body as Record<string, unknown>;
+    expect(body).not.toHaveProperty("Suppliers");
+  });
+
+  it("caches a resolved supplier ID across multiple products in the same run", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce(CATEGORY_EXISTS)
+      .mockResolvedValueOnce(UOM_EXISTS)
+      .mockResolvedValueOnce({ SupplierList: [{ ID: "supplier-1", Name: "Acme Supplies" }] })
+      .mockResolvedValueOnce({ Products: [] })
+      .mockResolvedValueOnce({ ID: "new-id-1" })
+      .mockResolvedValueOnce(CATEGORY_EXISTS)
+      .mockResolvedValueOnce(UOM_EXISTS)
+      .mockResolvedValueOnce({ Products: [] })
+      .mockResolvedValueOnce({ ID: "new-id-2" });
+
+    const supplierIdCache = new Map<string, string | null>();
+    await pushProduct(creds, { ...product, last_supplied_by: "Acme Supplies" }, [], [], new Map(), new Set(), supplierIdCache);
+    await pushProduct(creds, { ...product, sku: "SKU2", last_supplied_by: "Acme Supplies" }, [], [], new Map(), new Set(), supplierIdCache);
+
+    // 9 calls total, not 10 — the second product's supplier lookup was served from cache.
+    expect(cin7Request).toHaveBeenCalledTimes(9);
   });
 });
 
