@@ -180,7 +180,7 @@ export interface ModuleConfig {
 // colored gradient badge behind any of them would double up the color
 // treatment (and risk poor contrast where the icon's own color is close to
 // the badge's). Every module below shares this one plain, neutral badge.
-const SELF_COLORED_ICON_BADGE = "from-slate-50 to-slate-100";
+export const SELF_COLORED_ICON_BADGE = "from-slate-50 to-slate-100";
 
 export const IMPORT_MODULE: ModuleConfig = {
   href: "/import",

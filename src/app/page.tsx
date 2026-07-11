@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MODULES, ToolboxLogo, InstancesIcon, AdminIcon, ActivityIcon, ShipTodayIcon, StockLevelsIcon } from "@/app/module-nav";
+import { MODULES, ToolboxLogo, InstancesIcon, AdminIcon, ActivityIcon, ShipTodayIcon, StockLevelsIcon, SELF_COLORED_ICON_BADGE } from "@/app/module-nav";
 import { getCurrentUserInfo } from "@/actions/auth";
 import { createServiceRoleClient } from "@/supabase/server";
 import { getOrderFulfillmentReport, getStockHealthReport, getProductAvailabilitySyncStatus } from "@/reports/query";
@@ -222,9 +222,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ b
       {orgId && <OnboardingChecklist orgId={orgId} hasInstance={stats.activeInstances > 0} />}
 
       <div className="mt-10 grid gap-4 sm:grid-cols-3">
-        <StatCard label="Active instances" value={stats.activeInstances} gradient="from-slate-500 to-slate-700" Icon={InstancesIcon} />
-        <StatCard label="Team members" value={stats.teamMembers} gradient="from-fuchsia-500 to-fuchsia-700" Icon={AdminIcon} />
-        <StatCard label="Activity, last 7 days" value={stats.recentActivity} gradient="from-teal-500 to-teal-700" Icon={ActivityIcon} />
+        <StatCard label="Active instances" value={stats.activeInstances} gradient={SELF_COLORED_ICON_BADGE} Icon={InstancesIcon} />
+        <StatCard label="Team members" value={stats.teamMembers} gradient={SELF_COLORED_ICON_BADGE} Icon={AdminIcon} />
+        <StatCard label="Activity, last 7 days" value={stats.recentActivity} gradient={SELF_COLORED_ICON_BADGE} Icon={ActivityIcon} />
       </div>
 
       {orgId && (
