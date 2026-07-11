@@ -5,7 +5,25 @@
  * icon/gradient never has to be hand-copied into three places.
  */
 
+import Image from "next/image";
+
 type IconProps = { className?: string };
+
+/**
+ * Six of the module icons below (Import/Templates/Migrate/Reports/Audit/
+ * Health) render one of these designed PNGs instead of an inline SVG —
+ * confirmed 2026-07-11 to stay legible even at a true, unsmoothed 32px
+ * (unlike an earlier glassy-illustration draft, which didn't). `next/image`
+ * (not a plain <img>) since these are ~0.9MB source files requested on every
+ * authenticated page via the sidebar nav — its optimizer serves a properly
+ * sized/compressed version instead of the full original each time. width/
+ * height are just the intrinsic aspect ratio (all square); the `className`
+ * each call site already passes (e.g. "h-5 w-5") controls the actual
+ * rendered size, same contract every other icon component here already has.
+ */
+function ModuleImageIcon({ src, className }: { src: string; className?: string }) {
+  return <Image src={src} alt="" width={64} height={64} className={className} />;
+}
 
 /**
  * The product's own mark — a toolbox whose latch is drawn as a "7", a quiet
@@ -24,36 +42,19 @@ export function ToolboxLogo({ className }: IconProps) {
 }
 
 export function ImportIcon({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
-    </svg>
-  );
+  return <ModuleImageIcon src="/icons/import.png" className={className} />;
 }
 
 export function TemplateIcon({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M7 3h10a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
-      <path d="M9 8h6M9 12h6M9 16h3" />
-    </svg>
-  );
+  return <ModuleImageIcon src="/icons/templates.png" className={className} />;
 }
 
 export function MigrateIcon({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="m7 8-4 4 4 4M3 12h13.5M17 4l4 4-4 4M21 8H7.5" />
-    </svg>
-  );
+  return <ModuleImageIcon src="/icons/migrate.png" className={className} />;
 }
 
 export function ReportsIcon({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M4 20V10m6 10V4m6 16v-7" />
-    </svg>
-  );
+  return <ModuleImageIcon src="/icons/reports.png" className={className} />;
 }
 
 export function InstancesIcon({ className }: IconProps) {
@@ -67,19 +68,11 @@ export function InstancesIcon({ className }: IconProps) {
 }
 
 export function AuditIcon({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M9 11.5 11 13.5 15.5 9M12 3l7 3v6c0 4.5-3 8.5-7 9-4-.5-7-4.5-7-9V6l7-3Z" />
-    </svg>
-  );
+  return <ModuleImageIcon src="/icons/audit.png" className={className} />;
 }
 
 export function HealthIcon({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M3 12h4l2-7 4 14 2-7h6" />
-    </svg>
-  );
+  return <ModuleImageIcon src="/icons/health.png" className={className} />;
 }
 
 export function ActivityIcon({ className }: IconProps) {
@@ -151,10 +144,18 @@ export interface ModuleConfig {
   blurb: string;
 }
 
+// These six modules' icons are now designed PNGs that already carry their
+// own color (see ModuleImageIcon above) — a colored gradient badge behind
+// them would double up the color treatment (and risk poor contrast where
+// the icon's own color is close to the badge's), so their badge is a plain,
+// neutral tile instead. The other modules' icons are still plain-stroke
+// SVGs that need a colored gradient background to read as anything.
+const IMAGE_ICON_BADGE = "from-slate-50 to-slate-100";
+
 export const IMPORT_MODULE: ModuleConfig = {
   href: "/import",
   label: "Import & Sync",
-  gradient: "from-indigo-500 to-indigo-700",
+  gradient: IMAGE_ICON_BADGE,
   Icon: ImportIcon,
   blurb: "Upload a Products, Assembly BOM, or Production BOM CSV, then push it to one or more connected Cin7 Core instances.",
 };
@@ -162,7 +163,7 @@ export const IMPORT_MODULE: ModuleConfig = {
 export const TEMPLATES_MODULE: ModuleConfig = {
   href: "/templates",
   label: "Templates",
-  gradient: "from-violet-500 to-violet-700",
+  gradient: IMAGE_ICON_BADGE,
   Icon: TemplateIcon,
   blurb: "Download a CSV to edit and reimport — either the hub's own canonical data, or a full-fidelity export pulled live from a chosen instance.",
 };
@@ -170,7 +171,7 @@ export const TEMPLATES_MODULE: ModuleConfig = {
 export const MIGRATE_MODULE: ModuleConfig = {
   href: "/migrate",
   label: "Migrate",
-  gradient: "from-cyan-500 to-cyan-700",
+  gradient: IMAGE_ICON_BADGE,
   Icon: MigrateIcon,
   blurb: "Pull every Product, Assembly BOM, Customer, and Supplier live from one connected instance, then push the pulled data into another.",
 };
@@ -178,7 +179,7 @@ export const MIGRATE_MODULE: ModuleConfig = {
 export const REPORTS_MODULE: ModuleConfig = {
   href: "/reports",
   label: "Reporting",
-  gradient: "from-amber-500 to-amber-600",
+  gradient: IMAGE_ICON_BADGE,
   Icon: ReportsIcon,
   blurb: "A growing hub of reports pulled from your connected Cin7 instances — Sales (revenue/COGS/profit/margin%) and Assemblies (quantity + BOM cost), with more to come.",
 };
@@ -186,7 +187,7 @@ export const REPORTS_MODULE: ModuleConfig = {
 export const AUDIT_MODULE: ModuleConfig = {
   href: "/audit",
   label: "Data Audit",
-  gradient: "from-rose-500 to-rose-700",
+  gradient: IMAGE_ICON_BADGE,
   Icon: AuditIcon,
   blurb: "Scan a connected instance's products for consistency and accuracy gaps — missing Brand, no sales price, incomplete inventory setup, missing GL accounts, near-duplicate categories — and bulk-fix them.",
 };
@@ -194,7 +195,7 @@ export const AUDIT_MODULE: ModuleConfig = {
 export const HEALTH_MODULE: ModuleConfig = {
   href: "/health",
   label: "System Health",
-  gradient: "from-emerald-500 to-emerald-700",
+  gradient: IMAGE_ICON_BADGE,
   Icon: HealthIcon,
   blurb: "A scorecard across Sales, Purchases, Stock Transfers, Assemblies, Production Orders, and product data quality — one overall health score per connected instance.",
 };

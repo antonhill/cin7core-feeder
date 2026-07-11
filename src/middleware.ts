@@ -193,8 +193,12 @@ export async function middleware(request: NextRequest) {
 // request for it 307-redirected to /login, which Next's image optimizer
 // then reported as "isn't a valid image" since it got an HTML redirect back
 // instead of image bytes, not an obviously auth-related error.
+// icons/ (public/icons/*, the module icon PNGs — module-nav.tsx's
+// ModuleImageIcon) is the same problem again, this time hit via the
+// logged-out marketing page's Features section, which renders the same
+// module icons the authenticated app's sidebar/tiles use.
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|icon.svg|marketing/|api/sync|api/import|api/delete-expired-trials|api/webhooks).*)",
+    "/((?!_next/static|_next/image|favicon.ico|icon.svg|marketing/|icons/|api/sync|api/import|api/delete-expired-trials|api/webhooks).*)",
   ],
 };
