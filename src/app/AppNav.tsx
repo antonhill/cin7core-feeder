@@ -81,8 +81,9 @@ export function AppNav({
                 active ? "bg-sidebar-bg-raised text-sidebar-text-active shadow-sm" : "text-sidebar-text hover:bg-sidebar-bg-raised/60 hover:text-sidebar-text-active"
               }`}
             >
+              {/* Every module icon now carries its own color (see module-nav.tsx's SELF_COLORED_ICON_BADGE) — link.gradient is the same neutral value for all of them, which read as a stark white square against this sidebar's dark background (confirmed live 2026-07-11). bg-sidebar-bg-raised (already used for the active/hover state just below) gives the chip a background native to this dark palette instead. */}
               <span
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-white transition-transform ${link.gradient} ${
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-bg-raised transition-transform ${
                   active ? "shadow-sm" : "opacity-90 group-hover:scale-105 group-hover:opacity-100"
                 }`}
               >
