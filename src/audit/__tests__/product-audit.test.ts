@@ -4,6 +4,8 @@ import {
   findMissingSalesPricing,
   findInventoryGaps,
   findMissingGLAccounts,
+  findMissingSupplier,
+  findProductsWithBom,
   findDuplicateCategories,
   findDuplicateBrands,
   findDuplicateUOMs,
@@ -83,6 +85,39 @@ describe("findMissingGLAccounts", () => {
   it("flags both when both are blank", () => {
     const issues = findMissingGLAccounts([product({ RevenueAccount: "", COGSAccount: "" })]);
     expect(issues.map((i) => i.type)).toEqual(["missing_revenue_account", "missing_cogs_account"]);
+  });
+});
+
+describe("findMissingSupplier", () => {
+  it("flags a product with no Suppliers array at all", () => {
+    const issues = findMissingSupplier([product({ SKU: "A" })]);
+    expect(issues).toEqual([{ type: "missing_supplier", productId: "id-1", sku: "A", name: "Widget", category: "Widgets" }]);
+  });
+
+  it("flags a product with an empty Suppliers array", () => {
+    expect(findMissingSupplier([product({ Suppliers: [] })])).toHaveLength(1);
+  });
+
+  it("does not flag a product that already has a supplier", () => {
+    const issues = findMissingSupplier([product({ Suppliers: [{ ID: "s1", SupplierName: "Acme Supplies" }] })]);
+    expect(issues).toEqual([]);
+  });
+});
+
+describe("findProductsWithBom", () => {
+  it("only includes products where BillOfMaterial is true", () => {
+    const result = findProductsWithBom([
+      product({ SKU: "A", BillOfMaterial: true, AutoAssembly: true, AutoDisassembly: false }),
+      product({ SKU: "B", BillOfMaterial: false }),
+    ]);
+    expect(result).toEqual([
+      { productId: "id-1", sku: "A", name: "Widget", category: "Widgets", autoAssembly: true, autoDisassembly: false },
+    ]);
+  });
+
+  it("defaults autoAssembly/autoDisassembly to false when Cin7 omits them", () => {
+    const result = findProductsWithBom([product({ BillOfMaterial: true, AutoAssembly: undefined, AutoDisassembly: undefined })]);
+    expect(result).toEqual([{ productId: "id-1", sku: "SKU-1", name: "Widget", category: "Widgets", autoAssembly: false, autoDisassembly: false }]);
   });
 });
 
@@ -295,5 +330,26 @@ describe("runProductAudit", () => {
       { productId: "id-a", sku: "A", name: "Widget A", category: "Finished Products", sellable: true },
       { productId: "id-b", sku: "B", name: "Widget B", category: "Raw Materials", sellable: false },
     ]);
+  });
+
+  it("includes missing_supplier in issues and productsWithBom as its own roster", () => {
+    const result = runProductAudit([
+      product({ SKU: "A", ID: "id-a", Suppliers: [] }),
+      product({ SKU: "B", ID: "id-b", BillOfMaterial: true, AutoAssembly: true }),
+    ]);
+    expect(result.issues.some((i) => i.type === "missing_supplier" && i.sku === "A")).toBe(true);
+    expect(result.productsWithBom).toEqual([
+      { productId: "id-b", sku: "B", name: "Widget", category: "Widgets", autoAssembly: true, autoDisassembly: false },
+    ]);
+  });
+
+  it("passes supplierNames straight through from the caller", () => {
+    const result = runProductAudit([product({ SKU: "A" })], ["Acme Supplies", "Global Traders"]);
+    expect(result.supplierNames).toEqual(["Acme Supplies", "Global Traders"]);
+  });
+
+  it("defaults supplierNames to an empty array when not provided", () => {
+    const result = runProductAudit([product({ SKU: "A" })]);
+    expect(result.supplierNames).toEqual([]);
   });
 });

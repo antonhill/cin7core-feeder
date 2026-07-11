@@ -20,7 +20,8 @@ export type ProductAuditIssueType =
   | "missing_uom"
   | "missing_inventory_account"
   | "missing_revenue_account"
-  | "missing_cogs_account";
+  | "missing_cogs_account"
+  | "missing_supplier";
 
 export interface ProductAuditIssue {
   type: ProductAuditIssueType;
@@ -60,6 +61,16 @@ export interface AttributeGapGroup {
   templates: { productId: string; sku: string; name: string }[];
 }
 
+/** Products with at least one Assembly BOM line (Cin7's own `BillOfMaterial` flag) — not a data-quality issue on its own, just the roster the bulk Auto-Assembly/Auto-Disassembly toggle needs, same "every scanned product regardless of issue status" reasoning as ProductSummary. */
+export interface ProductWithBom {
+  productId: string;
+  sku: string;
+  name: string;
+  category: string;
+  autoAssembly: boolean;
+  autoDisassembly: boolean;
+}
+
 export interface ProductAuditResult {
   issues: ProductAuditIssue[];
   duplicateCategories: DuplicateNameGroup[];
@@ -70,6 +81,9 @@ export interface ProductAuditResult {
   /** Every distinct category seen across the whole catalog (not just ones with issues) — e.g. so "Finished Products" still appears as a filter option even if it currently has zero issues. */
   categories: string[];
   products: ProductSummary[];
+  productsWithBom: ProductWithBom[];
+  /** Every supplier name in this Cin7 instance — populates the dropdown for bulk-assigning a supplier to products missing one. Passed in from the action layer (fetchAllSuppliers is its own live call, see actions.ts), not derived from the product list itself. */
+  supplierNames: string[];
 }
 
 interface RawProduct {
@@ -86,6 +100,11 @@ interface RawProduct {
   COGSAccount?: string;
   Tags?: string;
   Sellable?: boolean;
+  /** Confirmed live 2026-07-11 (Casa das Natas): the actual GET /Product field names — `BillOfMaterial` (singular) flags whether an Assembly BOM exists at all, `AutoDisassembly` (not "AutoDisassemble", despite the DB column's own name). Suppliers is an array of {ID, SupplierName, ...}, not a flat "LastSuppliedBy" string field — that's only the CSV import column name mapping to our own DB column, never a real Cin7 API field. */
+  BillOfMaterial?: boolean;
+  AutoAssembly?: boolean;
+  AutoDisassembly?: boolean;
+  Suppliers?: { SupplierName?: string }[];
   [key: string]: unknown;
 }
 
@@ -137,6 +156,21 @@ export function findMissingGLAccounts(products: RawProduct[]): ProductAuditIssue
     if (!p.COGSAccount?.trim()) issues.push({ type: "missing_cogs_account", ...ref });
   }
   return issues;
+}
+
+/** Products with no supplier at all (empty Suppliers array) — nothing to buy them from on record, which also blocks reordering workflows that key off the default supplier. */
+export function findMissingSupplier(products: RawProduct[]): ProductAuditIssue[] {
+  return products.filter((p) => !p.Suppliers || p.Suppliers.length === 0).map((p) => ({ type: "missing_supplier", ...productRef(p) }));
+}
+
+/** Every product that has at least one Assembly BOM line — not an issue by itself, just the roster for the bulk Auto-Assembly/Auto-Disassembly toggle below it on the page. */
+export function findProductsWithBom(products: RawProduct[]): ProductWithBom[] {
+  return products
+    .filter((p) => p.BillOfMaterial === true)
+    .map((p) => {
+      const { productId, sku, name, category } = productRef(p);
+      return { productId, sku, name, category, autoAssembly: Boolean(p.AutoAssembly), autoDisassembly: Boolean(p.AutoDisassembly) };
+    });
 }
 
 /** Classic dynamic-programming edit distance — no dependency needed for a well-known ~15-line algorithm. */
@@ -327,7 +361,7 @@ export function findAttributeGaps(products: RawProduct[]): AttributeGapGroup[] {
   return groups.sort((a, b) => a.category.localeCompare(b.category));
 }
 
-export function runProductAudit(products: RawProduct[]): ProductAuditResult {
+export function runProductAudit(products: RawProduct[], supplierNames: string[] = []): ProductAuditResult {
   const categories = [...new Set(products.map((p) => p.Category?.trim()).filter((c): c is string => Boolean(c)))].sort();
 
   return {
@@ -336,6 +370,7 @@ export function runProductAudit(products: RawProduct[]): ProductAuditResult {
       ...findMissingSalesPricing(products),
       ...findInventoryGaps(products),
       ...findMissingGLAccounts(products),
+      ...findMissingSupplier(products),
     ],
     duplicateCategories: findDuplicateCategories(products),
     duplicateBrands: findDuplicateBrands(products),
@@ -344,5 +379,7 @@ export function runProductAudit(products: RawProduct[]): ProductAuditResult {
     attributeGaps: findAttributeGaps(products),
     categories,
     products: products.map((p) => ({ ...productRef(p), sellable: Boolean(p.Sellable) })),
+    productsWithBom: findProductsWithBom(products),
+    supplierNames,
   };
 }

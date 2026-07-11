@@ -21,6 +21,8 @@ function emptyAudit(): ProductAuditResult {
     attributeGaps: [],
     categories: [],
     products: [],
+    productsWithBom: [],
+    supplierNames: [],
   };
 }
 

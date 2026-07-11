@@ -17,6 +17,7 @@ import {
   mergeUOMNames,
   mergeTagNames,
   applyAttributeTemplate,
+  applySupplierAssignment,
   type ApplyFixesResult,
   type ProductFix,
 } from "@/audit/apply-fixes";
@@ -33,15 +34,16 @@ function resultSuffix(result: { succeeded: number; failed: unknown[] }): string 
   return result.failed.length > 0 ? `${result.succeeded} succeeded, ${result.failed.length} failed` : `${result.succeeded} succeeded`;
 }
 
-/** Pulls every product live from the chosen instance and runs the consistency/accuracy checks — read-only, nothing is written. */
+/** Pulls every product live from the chosen instance and runs the consistency/accuracy checks — read-only, nothing is written. Also pulls the supplier list (a second, separate live call — suppliers aren't nested in the product response) purely to populate the "assign an existing supplier" dropdown for the missing_supplier issue type. */
 export async function runProductAuditAction(instanceId: string): Promise<AuditActionResult<ProductAuditResult>> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   try {
     const { orgId } = await requireCurrentOrg();
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
-    const products = await fetchAllProductsWithBom(creds);
-    return { ok: true, data: runProductAudit(products) };
+    const [products, suppliers] = await Promise.all([fetchAllProductsWithBom(creds), fetchAllSuppliers(creds)]);
+    const supplierNames = [...new Set(suppliers.map((s) => s.Name).filter((n): n is string => typeof n === "string" && n.trim().length > 0))].sort();
+    return { ok: true, data: runProductAudit(products, supplierNames) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
@@ -148,6 +150,36 @@ export async function applyAttributeTemplateAction(
       action: "audit.apply_attribute_template",
       summary: `Copied attribute values from one product to ${resultSuffix(result)}`,
       detail: { templateProductId, targetProductIds, failed: result.failed },
+    });
+
+    return { ok: true, data: result };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+export async function applySupplierAssignmentAction(
+  instanceId: string,
+  supplierName: string,
+  targetProductIds: string[]
+): Promise<AuditActionResult<ApplyFixesResult>> {
+  if (!instanceId) return { ok: false, error: "Choose an instance." };
+  if (!supplierName.trim()) return { ok: false, error: "Choose a supplier." };
+  if (!targetProductIds.length) return { ok: false, error: "Nothing to apply." };
+  try {
+    const { orgId, userId, email } = await requireCurrentOrg();
+    await requireWriteAllowed(orgId);
+    const db = createServiceRoleClient();
+    const creds = await loadCin7Credentials(db, orgId, instanceId);
+    const result = await applySupplierAssignment(creds, supplierName, targetProductIds);
+
+    await logActivity(db, {
+      orgId,
+      instanceId,
+      actor: { userId, email },
+      action: "audit.apply_supplier_assignment",
+      summary: `Assigned supplier "${supplierName}" to ${resultSuffix(result)}`,
+      detail: { supplierName, targetProductIds, failed: result.failed },
     });
 
     return { ok: true, data: result };

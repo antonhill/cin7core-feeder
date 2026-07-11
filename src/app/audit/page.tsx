@@ -9,6 +9,7 @@ import {
   mergeUOMAction,
   mergeTagAction,
   applyAttributeTemplateAction,
+  applySupplierAssignmentAction,
   runPartyAuditAction,
   applyPartyFixesAction,
 } from "./actions";
@@ -21,6 +22,7 @@ import type {
   ProductAuditIssueType,
   ProductAuditResult,
   ProductSummary,
+  ProductWithBom,
 } from "@/audit/product-audit";
 import type { ApplyFixesResult } from "@/audit/apply-fixes";
 import type { PartyAuditIssue, PartyAuditIssueType, PartyAuditResult, PartyKind } from "@/audit/party-audit";
@@ -481,6 +483,190 @@ function SellableSection({
   );
 }
 
+function BomAssemblySection({
+  products,
+  onApply,
+  isApplying,
+}: {
+  products: ProductWithBom[];
+  onApply: (productIds: string[], field: "AutoAssembly" | "AutoDisassembly", value: boolean) => void;
+  isApplying: boolean;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelected((prev) => (prev.size === products.length ? new Set() : new Set(products.map((p) => p.productId))));
+  }
+
+  function apply(field: "AutoAssembly" | "AutoDisassembly", value: boolean, label: string) {
+    if (!confirm(`Set ${label} to ${value ? "Yes" : "No"} on ${selected.size} product(s)? This writes directly to Cin7.`)) return;
+    onApply([...selected], field, value);
+  }
+
+  return (
+    <details className="rounded-xl border border-slate-200 bg-white p-4">
+      <summary className="cursor-pointer font-medium text-slate-900">
+        Products with an Assembly BOM — bulk Auto-Assembly/Auto-Disassembly ({products.length} product{products.length === 1 ? "" : "s"})
+      </summary>
+
+      <div className="mt-3 flex flex-col gap-1.5 text-sm">
+        <label className="flex items-center gap-2 font-medium text-slate-700">
+          <input type="checkbox" checked={selected.size === products.length && products.length > 0} onChange={toggleAll} className="h-4 w-4" />
+          Select all
+        </label>
+        <div className="flex max-h-64 flex-col gap-1.5 overflow-y-auto">
+          {products.map((p) => (
+            <label key={p.productId} className="flex items-center gap-2 text-slate-700">
+              <input type="checkbox" checked={selected.has(p.productId)} onChange={() => toggle(p.productId)} className="h-4 w-4" />
+              {p.name} <span className="text-xs text-slate-400">({p.sku})</span>
+              <span className="text-xs text-slate-400">
+                Auto-Assembly: {p.autoAssembly ? "Yes" : "No"} · Auto-Disassembly: {p.autoDisassembly ? "Yes" : "No"}
+              </span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Auto-Assembly</span>
+          <button
+            type="button"
+            disabled={isApplying || selected.size === 0}
+            onClick={() => apply("AutoAssembly", true, "Auto-Assembly")}
+            className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+          >
+            Yes ({selected.size || 0})
+          </button>
+          <button
+            type="button"
+            disabled={isApplying || selected.size === 0}
+            onClick={() => apply("AutoAssembly", false, "Auto-Assembly")}
+            className="rounded-full bg-slate-600 px-3 py-1 text-xs font-semibold text-white hover:bg-slate-500 disabled:opacity-50"
+          >
+            No ({selected.size || 0})
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Auto-Disassembly</span>
+          <button
+            type="button"
+            disabled={isApplying || selected.size === 0}
+            onClick={() => apply("AutoDisassembly", true, "Auto-Disassembly")}
+            className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+          >
+            Yes ({selected.size || 0})
+          </button>
+          <button
+            type="button"
+            disabled={isApplying || selected.size === 0}
+            onClick={() => apply("AutoDisassembly", false, "Auto-Disassembly")}
+            className="rounded-full bg-slate-600 px-3 py-1 text-xs font-semibold text-white hover:bg-slate-500 disabled:opacity-50"
+          >
+            No ({selected.size || 0})
+          </button>
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function MissingSupplierSection({
+  issues,
+  supplierNames,
+  onApply,
+  isApplying,
+}: {
+  issues: ProductAuditIssue[];
+  supplierNames: string[];
+  onApply: (productIds: string[], supplierName: string) => void;
+  isApplying: boolean;
+}) {
+  const [rawSelected, setRawSelected] = useState<Set<string>>(new Set());
+  const [supplierName, setSupplierName] = useState(supplierNames[0] ?? "");
+
+  // Same reasoning as IssueTypeSection: drop any selected id that's fallen out of view (category/search narrowed) rather than syncing via effect.
+  const selected = useMemo(() => {
+    const visibleIds = new Set(issues.map((i) => i.productId));
+    return new Set([...rawSelected].filter((id) => visibleIds.has(id)));
+  }, [rawSelected, issues]);
+
+  function toggle(id: string) {
+    setRawSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setRawSelected(selected.size === issues.length && issues.length > 0 ? new Set() : new Set(issues.map((i) => i.productId)));
+  }
+
+  return (
+    <details className="rounded-xl border border-amber-200 bg-amber-50 p-4" open={issues.length <= 5}>
+      <summary className="cursor-pointer font-medium text-amber-900">
+        Missing Supplier — {issues.length} product{issues.length === 1 ? "" : "s"}
+      </summary>
+
+      <div className="mt-3 flex flex-col gap-1.5 text-sm">
+        <label className="flex items-center gap-2 font-medium text-amber-900">
+          <input type="checkbox" checked={selected.size === issues.length && issues.length > 0} onChange={toggleAll} className="h-4 w-4" />
+          Select all
+        </label>
+        {issues.map((issue) => (
+          <label key={issue.productId} className="flex items-center gap-2 text-amber-800">
+            <input type="checkbox" checked={selected.has(issue.productId)} onChange={() => toggle(issue.productId)} className="h-4 w-4" />
+            {issue.name} <span className="text-xs text-amber-600">({issue.sku})</span>
+          </label>
+        ))}
+      </div>
+
+      {supplierNames.length > 0 ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2 text-amber-900">
+            Assign
+            <select
+              value={supplierName}
+              onChange={(e) => setSupplierName(e.target.value)}
+              className="rounded-lg border border-slate-300 px-2 py-1 text-sm"
+            >
+              {supplierNames.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            disabled={isApplying || selected.size === 0 || !supplierName}
+            onClick={() => {
+              if (!confirm(`Assign supplier "${supplierName}" to ${selected.size} product(s)? This writes directly to Cin7.`)) return;
+              onApply([...selected], supplierName);
+            }}
+            className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+          >
+            Assign to {selected.size || 0} selected
+          </button>
+        </div>
+      ) : (
+        <p className="mt-2 text-xs text-amber-700">No suppliers exist in this Cin7 instance yet — nothing to assign.</p>
+      )}
+    </details>
+  );
+}
+
 export default function AuditPage() {
   const [instances, setInstances] = useState<InstancePickerItem[]>([]);
   const [instancesError, setInstancesError] = useState<string | null>(null);
@@ -698,6 +884,37 @@ export default function AuditPage() {
     });
   }
 
+  function handleApplyBom(productIds: string[], field: "AutoAssembly" | "AutoDisassembly", value: boolean) {
+    if (!instanceId) return;
+    setApplyError(null);
+    startApplyTransition(async () => {
+      const res = await applyProductFixesAction(
+        instanceId,
+        productIds.map((productId) => ({ productId, fields: { [field]: value } }))
+      );
+      if (!res.ok || !res.data) {
+        setApplyError(res.error ?? "Unknown error");
+        return;
+      }
+      setApplyResult(res.data);
+      handleScan(); // re-scan so the roster reflects the new Auto-Assembly/Auto-Disassembly values
+    });
+  }
+
+  function handleApplySupplierAssignment(productIds: string[], supplierName: string) {
+    if (!instanceId) return;
+    setApplyError(null);
+    startApplyTransition(async () => {
+      const res = await applySupplierAssignmentAction(instanceId, supplierName, productIds);
+      if (!res.ok || !res.data) {
+        setApplyError(res.error ?? "Unknown error");
+        return;
+      }
+      setApplyResult(res.data);
+      handleScan(); // re-scan so the assigned products drop out of the missing_supplier list
+    });
+  }
+
   // Category filter and search compose with AND logic: an issue or product
   // must match the selected category set (if any) AND the search substring
   // (if any) to be shown/selectable. Near-duplicate Category/UOM/Tag groups
@@ -721,6 +938,14 @@ export default function AuditPage() {
   const filteredProducts = useMemo(
     () =>
       (result?.products ?? []).filter(
+        (p) => (categoryFilter.length === 0 || categoryFilter.includes(p.category)) && matchesSearch(search, p.sku, p.name)
+      ),
+    [result, categoryFilter, search]
+  );
+
+  const filteredProductsWithBom = useMemo(
+    () =>
+      (result?.productsWithBom ?? []).filter(
         (p) => (categoryFilter.length === 0 || categoryFilter.includes(p.category)) && matchesSearch(search, p.sku, p.name)
       ),
     [result, categoryFilter, search]
@@ -755,10 +980,11 @@ export default function AuditPage() {
       <ModuleHeader module={AUDIT_MODULE}>
         Pulls every product, customer, or supplier live from a connected Cin7 instance and checks it for
         consistency and accuracy gaps. Products: missing Brand, no sales price, incomplete inventory setup,
-        missing Revenue/COGS accounts, near-duplicate categories/brands/units of measure/tags, incomplete
-        custom-attribute values, and bulk Sellable toggling. Customers/Suppliers: no contacts, missing
-        email/phone/tax number, incomplete addresses, and (customers only) missing tags/sales rep/default
-        location. Fixes you approve are written straight back to that instance.
+        missing Revenue/COGS accounts, missing supplier, near-duplicate categories/brands/units of
+        measure/tags, incomplete custom-attribute values, bulk Sellable toggling, and bulk Auto-Assembly/
+        Auto-Disassembly toggling for products with an Assembly BOM. Customers/Suppliers: no contacts,
+        missing email/phone/tax number, incomplete addresses, and (customers only) missing tags/sales
+        rep/default location. Fixes you approve are written straight back to that instance.
       </ModuleHeader>
 
       <div className="mt-6 flex gap-2">
@@ -980,6 +1206,19 @@ export default function AuditPage() {
 
           {result.products.length > 0 && (
             <SellableSection products={filteredProducts} onApply={handleApplySellable} isApplying={writeDisabled} />
+          )}
+
+          {result.productsWithBom.length > 0 && (
+            <BomAssemblySection products={filteredProductsWithBom} onApply={handleApplyBom} isApplying={writeDisabled} />
+          )}
+
+          {issuesByType.has("missing_supplier") && (
+            <MissingSupplierSection
+              issues={issuesByType.get("missing_supplier")!}
+              supplierNames={result.supplierNames}
+              onApply={handleApplySupplierAssignment}
+              isApplying={writeDisabled}
+            />
           )}
 
           {ISSUE_ORDER.filter((type) => issuesByType.has(type)).map((type) => (

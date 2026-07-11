@@ -1,5 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { applyProductFixes, mergeCategoryNames, mergeUOMNames, mergeBrandNames, mergeTagNames, applyAttributeTemplate } from "@/audit/apply-fixes";
+import {
+  applyProductFixes,
+  mergeCategoryNames,
+  mergeUOMNames,
+  mergeBrandNames,
+  mergeTagNames,
+  applyAttributeTemplate,
+  applySupplierAssignment,
+} from "@/audit/apply-fixes";
 import { cin7Request } from "@/cin7/http";
 import { fetchAllProductsWithBom } from "@/cin7/products";
 
@@ -182,5 +190,41 @@ describe("applyAttributeTemplate", () => {
       ],
     });
     expect(cin7Request).not.toHaveBeenCalled();
+  });
+});
+
+describe("applySupplierAssignment", () => {
+  it("resolves the supplier name to an ID once, then sends the {ID, SupplierName} Suppliers shape to every target", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ SupplierList: [{ ID: "supplier-1", Name: "Acme Supplies" }] }) // findSupplierByName
+      .mockResolvedValueOnce({ ID: "p1" })
+      .mockResolvedValueOnce({ ID: "p2" });
+
+    const result = await applySupplierAssignment(creds, "Acme Supplies", ["p1", "p2"]);
+
+    expect(result.succeeded).toBe(2);
+    expect(cin7Request).toHaveBeenCalledWith(creds, "/Product", {
+      method: "PUT",
+      body: { ID: "p1", Suppliers: [{ ID: "supplier-1", SupplierName: "Acme Supplies" }] },
+    });
+    expect(cin7Request).toHaveBeenCalledWith(creds, "/Product", {
+      method: "PUT",
+      body: { ID: "p2", Suppliers: [{ ID: "supplier-1", SupplierName: "Acme Supplies" }] },
+    });
+  });
+
+  it("fails every target with a clear reason when the supplier name doesn't resolve, without touching any product", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ SupplierList: [] });
+
+    const result = await applySupplierAssignment(creds, "Nonexistent Co", ["p1", "p2"]);
+
+    expect(result).toEqual({
+      succeeded: 0,
+      failed: [
+        { productId: "p1", error: 'Supplier "Nonexistent Co" was not found in this Cin7 instance.' },
+        { productId: "p2", error: 'Supplier "Nonexistent Co" was not found in this Cin7 instance.' },
+      ],
+    });
+    expect(cin7Request).toHaveBeenCalledTimes(1); // just the lookup, no product PUTs
   });
 });

@@ -1,10 +1,12 @@
 import type { Cin7Credentials } from "@/cin7/types";
 import { cin7Request } from "@/cin7/http";
 import { fetchAllProductsWithBom } from "@/cin7/products";
+import { findSupplierByName } from "@/cin7/suppliers";
 
 export interface ProductFix {
   productId: string;
-  fields: Record<string, string | boolean>;
+  /** Suppliers takes the array shape (see products.ts's pushProduct — `{ID, SupplierName}` is the one shape confirmed live to work), everything else is a plain scalar. */
+  fields: Record<string, string | boolean | { ID: string; SupplierName: string }[]>;
 }
 
 export interface ApplyFixesResult {
@@ -141,4 +143,35 @@ export async function mergeTagNames(creds: Cin7Credentials, fromNames: string[],
   }
 
   return applyProductFixes(creds, fixes);
+}
+
+/**
+ * Assigns an existing supplier (by name) to a set of products that currently
+ * have none — resolves the name to Cin7's own supplier ID once (same
+ * `{ID, SupplierName}` shape confirmed live 2026-07-11 in products.ts's
+ * pushProduct — no other shape has ever worked), then applies it as one
+ * Suppliers-array fix per target product. If the name doesn't resolve, every
+ * target fails with the same clear reason rather than silently doing
+ * nothing.
+ */
+export async function applySupplierAssignment(
+  creds: Cin7Credentials,
+  supplierName: string,
+  targetProductIds: string[]
+): Promise<ApplyFixesResult> {
+  const supplier = await findSupplierByName(creds, supplierName);
+  if (!supplier) {
+    return {
+      succeeded: 0,
+      failed: targetProductIds.map((productId) => ({ productId, error: `Supplier "${supplierName}" was not found in this Cin7 instance.` })),
+    };
+  }
+
+  return applyProductFixes(
+    creds,
+    targetProductIds.map((productId) => ({
+      productId,
+      fields: { Suppliers: [{ ID: supplier.id, SupplierName: supplierName }] },
+    }))
+  );
 }
