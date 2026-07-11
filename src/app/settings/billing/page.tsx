@@ -114,30 +114,36 @@ export default function BillingPage() {
               {status.status === "canceled" && "Your subscription has ended. Subscribe again to restore write access."}
             </p>
 
-            <div className="mt-5 flex items-center gap-3">
-              {status.status === "active" ? (
-                <button
-                  type="button"
-                  onClick={handleManage}
-                  disabled={isRedirecting}
-                  className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-                >
-                  {isRedirecting && <Spinner className="mr-1.5" />}
-                  Manage subscription
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleSubscribe}
-                  disabled={isRedirecting}
-                  className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-                >
-                  {isRedirecting && <Spinner className="mr-1.5" />}
-                  {status.status === "past_due" ? "Update payment" : status.status === "canceled" ? "Subscribe again" : "Subscribe"}
-                </button>
-              )}
-            </div>
-            {redirectError && <p className="mt-3 text-sm text-rose-600">{redirectError}</p>}
+            {status.checkoutAvailable ? (
+              <>
+                <div className="mt-5 flex items-center gap-3">
+                  {status.status === "active" ? (
+                    <button
+                      type="button"
+                      onClick={handleManage}
+                      disabled={isRedirecting}
+                      className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                    >
+                      {isRedirecting && <Spinner className="mr-1.5" />}
+                      Manage subscription
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleSubscribe}
+                      disabled={isRedirecting}
+                      className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                    >
+                      {isRedirecting && <Spinner className="mr-1.5" />}
+                      {status.status === "past_due" ? "Update payment" : status.status === "canceled" ? "Subscribe again" : "Subscribe"}
+                    </button>
+                  )}
+                </div>
+                {redirectError && <p className="mt-3 text-sm text-rose-600">{redirectError}</p>}
+              </>
+            ) : (
+              <p className="mt-3 text-sm text-slate-500">Subscriptions aren&apos;t open yet — check back soon.</p>
+            )}
           </>
         )}
       </section>

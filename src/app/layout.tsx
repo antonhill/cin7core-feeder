@@ -4,6 +4,7 @@ import { AppNav } from "./AppNav";
 import TourGuide from "./tour-guide";
 import { getCurrentUserInfo } from "@/actions/auth";
 import { clearImpersonatedOrgAction } from "@/actions/org-switch";
+import { checkoutAvailableFor } from "@/lib/billing";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -50,6 +51,7 @@ export default async function RootLayout({
             orgName={orgName}
             orgLogoUrl={orgLogoUrl}
             disabledModules={disabledModules}
+            showBilling={checkoutAvailableFor(subscriptionStatus)}
           />
         )}
         <div className="flex flex-1 flex-col overflow-x-hidden overflow-y-auto">

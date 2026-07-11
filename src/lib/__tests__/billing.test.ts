@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { toBillingStatus } from "@/lib/billing";
+import { describe, expect, it, afterEach } from "vitest";
+import { toBillingStatus, checkoutAvailableFor } from "@/lib/billing";
+
+const ORIGINAL_STORE_ACTIVE = process.env.LEMONSQUEEZY_STORE_ACTIVE;
+
+afterEach(() => {
+  process.env.LEMONSQUEEZY_STORE_ACTIVE = ORIGINAL_STORE_ACTIVE;
+});
 
 describe("toBillingStatus", () => {
   it("blocks writes for the entire trial, not just once trial_ends_at passes", () => {
@@ -24,5 +30,25 @@ describe("toBillingStatus", () => {
     expect(status.status).toBe("trialing");
     expect(status.trialEndsAt).toBe("2026-07-14T00:00:00Z");
     expect(status.maxInstances).toBe(1);
+  });
+});
+
+describe("checkoutAvailableFor", () => {
+  it("hides checkout for a never-subscribed trial while the LS store isn't active", () => {
+    process.env.LEMONSQUEEZY_STORE_ACTIVE = "false";
+    expect(checkoutAvailableFor("trialing")).toBe(false);
+    expect(checkoutAvailableFor(null)).toBe(false);
+  });
+
+  it("shows checkout for a trial too once the store is active", () => {
+    process.env.LEMONSQUEEZY_STORE_ACTIVE = "true";
+    expect(checkoutAvailableFor("trialing")).toBe(true);
+  });
+
+  it("always shows checkout for an org that has ever had a real subscription, regardless of store activation", () => {
+    process.env.LEMONSQUEEZY_STORE_ACTIVE = "false";
+    expect(checkoutAvailableFor("active")).toBe(true);
+    expect(checkoutAvailableFor("past_due")).toBe(true);
+    expect(checkoutAvailableFor("canceled")).toBe(true);
   });
 });

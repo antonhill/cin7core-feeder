@@ -29,6 +29,7 @@ export function AppNav({
   orgName,
   orgLogoUrl,
   disabledModules,
+  showBilling,
 }: {
   userEmail: string | null;
   isSuperAdmin: boolean;
@@ -36,6 +37,8 @@ export function AppNav({
   orgName: string | null;
   orgLogoUrl: string | null;
   disabledModules: string[];
+  /** False while Lemon Squeezy's store isn't yet activated and this org has never subscribed — see checkoutAvailableFor in src/lib/billing.ts. */
+  showBilling: boolean;
 }) {
   const pathname = usePathname();
 
@@ -94,16 +97,18 @@ export function AppNav({
       {userEmail && (
         <div className="border-t border-sidebar-border px-3 py-4">
           <p className="truncate px-3 pb-2 text-sm text-sidebar-text">{userEmail}</p>
-          <Link
-            href="/settings/billing"
-            className={`mb-2 block rounded-lg border px-3 py-2 text-center text-sm font-medium transition ${
-              pathname.startsWith("/settings/billing")
-                ? "border-sidebar-bg-raised bg-sidebar-bg-raised text-sidebar-text-active"
-                : "border-sidebar-border text-sidebar-text hover:bg-sidebar-bg-raised hover:text-sidebar-text-active"
-            }`}
-          >
-            Billing
-          </Link>
+          {showBilling && (
+            <Link
+              href="/settings/billing"
+              className={`mb-2 block rounded-lg border px-3 py-2 text-center text-sm font-medium transition ${
+                pathname.startsWith("/settings/billing")
+                  ? "border-sidebar-bg-raised bg-sidebar-bg-raised text-sidebar-text-active"
+                  : "border-sidebar-border text-sidebar-text hover:bg-sidebar-bg-raised hover:text-sidebar-text-active"
+              }`}
+            >
+              Billing
+            </Link>
+          )}
           <Link
             href="/settings/security"
             className={`mb-2 block rounded-lg border px-3 py-2 text-center text-sm font-medium transition ${

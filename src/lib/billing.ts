@@ -1,4 +1,5 @@
 import { createServiceRoleClient } from "@/supabase/server";
+import { isStoreActive } from "@/lib/lemonsqueezy";
 
 export type SubscriptionStatus = "trialing" | "active" | "past_due" | "canceled";
 
@@ -13,9 +14,24 @@ export interface BillingStatus {
    * once status is "active".
    */
   canWrite: boolean;
+  /** See checkoutAvailableFor below. */
+  checkoutAvailable: boolean;
 }
 
 const WRITE_ALLOWED_STATUSES = new Set<SubscriptionStatus>(["active"]);
+
+/**
+ * Lemon Squeezy's checkout/customer-portal pages 404 for anyone but the
+ * store owner until the store finishes activation (see isStoreActive) — so
+ * an org that's never subscribed (still on its original trial) would hit a
+ * broken "Subscribe" button. An org whose status has ever moved off
+ * "trialing" already has a real subscription id and got there before this
+ * gate mattered, so it stays visible regardless — this only hides the
+ * Billing section for brand-new trial signups until the store goes live.
+ */
+export function checkoutAvailableFor(status: SubscriptionStatus | null): boolean {
+  return isStoreActive() || (status !== null && status !== "trialing");
+}
 
 /** Pure — no I/O, easy to unit test independently of the DB row shape. */
 export function toBillingStatus(row: { subscription_status: SubscriptionStatus; trial_ends_at: string; max_instances: number }): BillingStatus {
@@ -24,6 +40,7 @@ export function toBillingStatus(row: { subscription_status: SubscriptionStatus; 
     trialEndsAt: row.trial_ends_at,
     maxInstances: row.max_instances,
     canWrite: WRITE_ALLOWED_STATUSES.has(row.subscription_status),
+    checkoutAvailable: checkoutAvailableFor(row.subscription_status),
   };
 }
 

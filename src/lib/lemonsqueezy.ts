@@ -10,6 +10,18 @@ function requireEnv(name: string): string {
 }
 
 /**
+ * Whether Lemon Squeezy has finished activating this store (tax
+ * verification) — until then, both the hosted checkout and the customer
+ * portal 404/403 for anyone who isn't already logged into the LS dashboard
+ * as the store owner. Flip LEMONSQUEEZY_STORE_ACTIVE to "true" once that's
+ * done; see checkoutAvailableFor in src/lib/billing.ts for how this gates
+ * the Billing UI for orgs that haven't subscribed yet.
+ */
+export function isStoreActive(): boolean {
+  return process.env.LEMONSQUEEZY_STORE_ACTIVE === "true";
+}
+
+/**
  * Lemon Squeezy's hosted checkout — no API call needed, just a URL.
  * `checkout[custom][org_id]` is echoed back verbatim in every subsequent
  * webhook (`meta.custom_data.org_id`), which is how the webhook handler
