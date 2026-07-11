@@ -23,8 +23,15 @@ const FEATURE_HREFS = ["/import", "/migrate", "/audit", "/health", "/reports", "
 const FEATURES: ModuleConfig[] = FEATURE_HREFS.map((href) => MODULES.find((m) => m.href === href)).filter(
   (m): m is ModuleConfig => Boolean(m)
 );
-// Data Audit and Templates have the longest blurbs — read best as full-width cards in the 2-col grid.
-const WIDE_HREFS = new Set(["/audit", "/templates"]);
+// public/marketing/*.png — one designed illustration per feature card.
+const FEATURE_IMAGE: Record<string, string> = {
+  "/import": "/marketing/importsync.png",
+  "/migrate": "/marketing/migrate.png",
+  "/audit": "/marketing/audit.png",
+  "/health": "/marketing/health.png",
+  "/reports": "/marketing/report.png",
+  "/templates": "/marketing/templates.png",
+};
 
 const CTA_HREF = "/signup";
 const TRIAL_LABEL = "Start your free 7-day trial";
@@ -174,19 +181,22 @@ export default async function MarketingHome() {
               Cin7 Core administration.
             </p>
           </Reveal>
-          <div className="grid gap-5 sm:grid-cols-2">
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {FEATURES.map((m) => {
               const Icon = m.Icon;
               return (
-                <Reveal key={m.href} className={WIDE_HREFS.has(m.href) ? "sm:col-span-2" : ""}>
-                  <div className="h-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-lg">
-                    <span
-                      className={`flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm ${m.gradient}`}
-                    >
-                      <Icon className="h-5 w-5" />
-                    </span>
-                    <h3 className="mt-4 text-lg font-semibold tracking-tight text-slate-900">{m.label}</h3>
-                    <p className="mt-2 text-sm leading-relaxed text-slate-500">{m.blurb}</p>
+                <Reveal key={m.href}>
+                  <div className="h-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-lg">
+                    <Image src={FEATURE_IMAGE[m.href]} alt="" aria-hidden width={1254} height={1254} className="aspect-square w-full object-cover" />
+                    <div className="p-6">
+                      <span
+                        className={`flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm ${m.gradient}`}
+                      >
+                        <Icon className="h-5 w-5" />
+                      </span>
+                      <h3 className="mt-4 text-lg font-semibold tracking-tight text-slate-900">{m.label}</h3>
+                      <p className="mt-2 text-sm leading-relaxed text-slate-500">{m.blurb}</p>
+                    </div>
                   </div>
                 </Reveal>
               );
