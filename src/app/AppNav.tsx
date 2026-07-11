@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOutAction } from "@/actions/auth";
-import { MODULES, ADMIN_MODULE } from "@/app/module-nav";
+import { MODULES, ADMIN_MODULE, BillingIcon, ShieldIcon, DiagnosticsIcon, SignOutIcon } from "@/app/module-nav";
 import { OrgSwitcher } from "@/app/OrgSwitcher";
 
 /** Two-letter fallback avatar shown when an org has no logo uploaded yet. */
@@ -99,49 +99,60 @@ export function AppNav({
 
       {userEmail && (
         <div className="border-t border-sidebar-border px-3 py-4">
-          <p className="truncate px-3 pb-2 text-sm text-sidebar-text">{userEmail}</p>
-          {showBilling && (
+          <p className="truncate px-3 pb-3 text-sm text-sidebar-text">{userEmail}</p>
+          {/* Compact icon-button row instead of stacked full-width text links — same active/hover treatment, just laid out horizontally to reclaim vertical space at the bottom of the sidebar. */}
+          <div className="flex items-center justify-center gap-2">
+            {showBilling && (
+              <Link
+                href="/settings/billing"
+                title="Billing"
+                aria-label="Billing"
+                className={`flex h-10 w-10 items-center justify-center rounded-lg border transition ${
+                  pathname.startsWith("/settings/billing")
+                    ? "border-sidebar-bg-raised bg-sidebar-bg-raised"
+                    : "border-sidebar-border hover:bg-sidebar-bg-raised"
+                }`}
+              >
+                <BillingIcon className="h-5 w-5" />
+              </Link>
+            )}
             <Link
-              href="/settings/billing"
-              className={`mb-2 block rounded-lg border px-3 py-2 text-center text-sm font-medium transition ${
-                pathname.startsWith("/settings/billing")
-                  ? "border-sidebar-bg-raised bg-sidebar-bg-raised text-sidebar-text-active"
-                  : "border-sidebar-border text-sidebar-text hover:bg-sidebar-bg-raised hover:text-sidebar-text-active"
+              href="/settings/security"
+              title="Security"
+              aria-label="Security"
+              className={`flex h-10 w-10 items-center justify-center rounded-lg border transition ${
+                pathname.startsWith("/settings/security")
+                  ? "border-sidebar-bg-raised bg-sidebar-bg-raised"
+                  : "border-sidebar-border hover:bg-sidebar-bg-raised"
               }`}
             >
-              Billing
+              <ShieldIcon className="h-5 w-5" />
             </Link>
-          )}
-          <Link
-            href="/settings/security"
-            className={`mb-2 block rounded-lg border px-3 py-2 text-center text-sm font-medium transition ${
-              pathname.startsWith("/settings/security")
-                ? "border-sidebar-bg-raised bg-sidebar-bg-raised text-sidebar-text-active"
-                : "border-sidebar-border text-sidebar-text hover:bg-sidebar-bg-raised hover:text-sidebar-text-active"
-            }`}
-          >
-            Security
-          </Link>
-          {isSuperAdmin && (
-            <Link
-              href="/settings/diagnostics"
-              className={`mb-2 block rounded-lg border px-3 py-2 text-center text-sm font-medium transition ${
-                pathname.startsWith("/settings/diagnostics")
-                  ? "border-sidebar-bg-raised bg-sidebar-bg-raised text-sidebar-text-active"
-                  : "border-sidebar-border text-sidebar-text hover:bg-sidebar-bg-raised hover:text-sidebar-text-active"
-              }`}
-            >
-              Diagnostics
-            </Link>
-          )}
-          <form action={signOutAction}>
-            <button
-              type="submit"
-              className="w-full rounded-lg border border-sidebar-border px-3 py-2 text-sm font-medium text-sidebar-text hover:bg-sidebar-bg-raised hover:text-sidebar-text-active"
-            >
-              Sign out
-            </button>
-          </form>
+            {isSuperAdmin && (
+              <Link
+                href="/settings/diagnostics"
+                title="Diagnostics"
+                aria-label="Diagnostics"
+                className={`flex h-10 w-10 items-center justify-center rounded-lg border transition ${
+                  pathname.startsWith("/settings/diagnostics")
+                    ? "border-sidebar-bg-raised bg-sidebar-bg-raised"
+                    : "border-sidebar-border hover:bg-sidebar-bg-raised"
+                }`}
+              >
+                <DiagnosticsIcon className="h-5 w-5" />
+              </Link>
+            )}
+            <form action={signOutAction}>
+              <button
+                type="submit"
+                title="Sign out"
+                aria-label="Sign out"
+                className="flex h-10 w-10 items-center justify-center rounded-lg border border-sidebar-border transition hover:bg-sidebar-bg-raised"
+              >
+                <SignOutIcon className="h-5 w-5" />
+              </button>
+            </form>
+          </div>
           <Link href="/privacy" className="mt-3 block text-center text-xs text-sidebar-text/70 hover:text-sidebar-text-active hover:underline">
             Privacy Policy
           </Link>

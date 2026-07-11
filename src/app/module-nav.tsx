@@ -152,6 +152,17 @@ export function BillingIcon({ className }: IconProps) {
   );
 }
 
+/** Sidebar's compact icon-button row — not a module tile, just a shared icon. Neutral slate, not a brand color, since signing out isn't a section of the app. */
+export function SignOutIcon({ className }: IconProps) {
+  return (
+    <GradientIcon className={className} from="#64748b" to="#334155">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <path d="M16 17l5-5-5-5" />
+      <path d="M21 12H9" />
+    </GradientIcon>
+  );
+}
+
 /** Home page's "Ready to ship today" Overview widget — not a module tile, just a shared icon. Self-colored like every other icon (see SELF_COLORED_ICON_BADGE below), not a plain currentColor stroke meant for a colored badge behind it. */
 export function ShipTodayIcon({ className }: IconProps) {
   return (
