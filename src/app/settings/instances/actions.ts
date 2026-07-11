@@ -8,6 +8,7 @@ import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerC
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
 import { getBillingStatus } from "@/lib/billing";
+import { requireSuperAdmin } from "@/lib/require-super-admin";
 
 export interface InstanceRecord {
   id: string;
@@ -388,6 +389,10 @@ export async function debugSurveyBackorderEtaFields(instanceId: string): Promise
  */
 export async function debugTestSaleShipByWriteBack(instanceId: string, orderNumber: string): Promise<TestConnectionResult> {
   try {
+    // Defense in depth — a genuine write against a live customer's Cin7
+    // account, matching the same re-check /admin/actions.ts's own writes
+    // already do even though the page itself is also gated (settings/diagnostics/layout.tsx).
+    await requireSuperAdmin();
     const creds = await loadInstanceCreds(instanceId);
     const result = await testSaleShipByWriteBack(creds, orderNumber);
     return { ok: true, message: JSON.stringify(result, null, 2) };
@@ -405,6 +410,8 @@ export async function debugTestSaleShipByWriteBack(instanceId: string, orderNumb
  */
 export async function debugTestProductSupplierLink(instanceId: string, input: string): Promise<TestConnectionResult> {
   try {
+    // Defense in depth — see debugTestSaleShipByWriteBack's own comment.
+    await requireSuperAdmin();
     const commaIndex = input.indexOf(",");
     if (commaIndex < 0) return { ok: false, message: 'Enter "SKU,Supplier Name", e.g. Cardboard80,Box Shop Packaging' };
     const sku = input.slice(0, commaIndex).trim();
@@ -430,6 +437,8 @@ export async function debugTestProductSupplierLink(instanceId: string, input: st
  */
 export async function debugPushOneCustomerAndSupplier(instanceId: string): Promise<TestConnectionResult> {
   try {
+    // Defense in depth — see debugTestSaleShipByWriteBack's own comment.
+    await requireSuperAdmin();
     const { orgId } = await requireCurrentOrg();
     const db = createServiceRoleClient();
     const creds = await loadInstanceCreds(instanceId);

@@ -120,6 +120,18 @@ export function AppNav({
           >
             Security
           </Link>
+          {isSuperAdmin && (
+            <Link
+              href="/settings/diagnostics"
+              className={`mb-2 block rounded-lg border px-3 py-2 text-center text-sm font-medium transition ${
+                pathname.startsWith("/settings/diagnostics")
+                  ? "border-sidebar-bg-raised bg-sidebar-bg-raised text-sidebar-text-active"
+                  : "border-sidebar-border text-sidebar-text hover:bg-sidebar-bg-raised hover:text-sidebar-text-active"
+              }`}
+            >
+              Diagnostics
+            </Link>
+          )}
           <form action={signOutAction}>
             <button
               type="submit"

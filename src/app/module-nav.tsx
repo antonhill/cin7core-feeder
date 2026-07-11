@@ -133,6 +133,15 @@ export function ShieldIcon({ className }: IconProps) {
   );
 }
 
+export function DiagnosticsIcon({ className }: IconProps) {
+  return (
+    <GradientIcon className={className} from="#f59e0b" to="#b45309">
+      <path d="M14.5 3.5a3 3 0 0 0-4.2 4.2L4 14l2 2 6.3-6.3a3 3 0 0 0 4.2-4.2l-2.1 2.1-1.4-1.4 1.5-2.1Z" />
+      <path d="m14 10 6 6-2 2-6-6" />
+    </GradientIcon>
+  );
+}
+
 export function BillingIcon({ className }: IconProps) {
   return (
     <GradientIcon className={className} from="#10b981" to="#047857">
@@ -264,6 +273,18 @@ export const SECURITY_MODULE: ModuleConfig = {
   gradient: SELF_COLORED_ICON_BADGE,
   Icon: ShieldIcon,
   blurb: "Set up two-factor authentication with an authenticator app.",
+};
+
+// Same "not an org-toggleable module" reasoning as SECURITY_MODULE above —
+// gated by requireSuperAdmin() in settings/diagnostics/layout.tsx, not by
+// /admin's per-org visibility toggle, since it's not something any org
+// (including a super-admin's own org) should ever be able to turn on/off.
+export const DIAGNOSTICS_MODULE: ModuleConfig = {
+  href: "/settings/diagnostics",
+  label: "Diagnostics",
+  gradient: SELF_COLORED_ICON_BADGE,
+  Icon: DiagnosticsIcon,
+  blurb: "Live debugging and field-discovery tools against a connected instance — super-admin only.",
 };
 
 // Same "not an org-toggleable module" reasoning as SECURITY_MODULE above —
