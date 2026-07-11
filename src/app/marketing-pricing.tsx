@@ -3,16 +3,20 @@
 import { useState } from "react";
 import Link from "next/link";
 import Reveal from "@/app/marketing-reveal";
+import type { ForeignCurrency, PriceEstimates } from "@/lib/fx";
 
-type Currency = "USD" | "ZAR";
+type Currency = ForeignCurrency | "ZAR";
+
+const CURRENCY_SYMBOL: Record<Currency, string> = { USD: "$", EUR: "€", GBP: "£", ZAR: "R" };
 
 // ZAR 799 is the one real price (what Lemon Squeezy's product is actually
-// configured with — see src/lib/fx.ts). The USD figure is only ever an
-// estimate: Lemon Squeezy auto-localizes the real ZAR price to whatever
-// currency a customer's browser suggests at checkout, so nothing this app
-// shows here is the literal amount that gets charged — it's computed from a
-// live rate (getUsdPriceEstimate) specifically so it doesn't visibly drift
-// from reality as ZAR/USD moves, the way a hand-set number would.
+// configured with — see src/lib/fx.ts). Every other currency shown here is
+// only ever an estimate: Lemon Squeezy auto-localizes the real ZAR price to
+// whatever currency a customer's browser suggests at checkout, so nothing
+// this app shows here is the literal amount that gets charged — each is
+// computed from a live rate (getPriceEstimates) specifically so it doesn't
+// visibly drift from reality as ZAR moves against it, the way a hand-set
+// number would.
 const ZAR_PRICE = 799;
 
 const CTA_HREF = "/signup";
@@ -24,9 +28,10 @@ const CTA_HREF = "/signup";
  * src/lib/billing.ts: max_instances is unlimited and canWrite is true only
  * once subscription_status is "active", both false during the trial.
  */
-export default function Pricing({ usdEstimate }: { usdEstimate: number }) {
+export default function Pricing({ estimates }: { estimates: PriceEstimates }) {
   const [currency, setCurrency] = useState<Currency>("USD");
-  const price = currency === "USD" ? { symbol: "$", amount: usdEstimate } : { symbol: "R", amount: ZAR_PRICE };
+  const amount = currency === "ZAR" ? ZAR_PRICE : estimates[currency];
+  const price = { symbol: CURRENCY_SYMBOL[currency], amount };
 
   return (
     <section id="pricing" className="border-t border-slate-200 bg-slate-50 py-24">
@@ -53,7 +58,7 @@ export default function Pricing({ usdEstimate }: { usdEstimate: number }) {
 
         <Reveal className="mt-10 flex justify-center">
           <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm" role="group" aria-label="Currency">
-            {(["USD", "ZAR"] as const).map((c) => (
+            {(["USD", "EUR", "GBP", "ZAR"] as const).map((c) => (
               <button
                 key={c}
                 onClick={() => setCurrency(c)}
@@ -74,8 +79,10 @@ export default function Pricing({ usdEstimate }: { usdEstimate: number }) {
             {price.amount}
             <span className="text-lg font-medium text-slate-400"> / month</span>
           </p>
-          {currency === "USD" && (
-            <p className="mt-2 text-xs text-slate-400">Billed in ZAR (R{ZAR_PRICE}) — shown here as today&rsquo;s approximate USD equivalent.</p>
+          {currency !== "ZAR" && (
+            <p className="mt-2 text-xs text-slate-400">
+              Billed in ZAR (R{ZAR_PRICE}) — shown here as today&rsquo;s approximate {currency} equivalent.
+            </p>
           )}
           <ul className="mt-6 flex flex-col gap-2.5 text-left text-sm text-slate-600">
             {[

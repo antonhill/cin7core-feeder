@@ -3,7 +3,7 @@ import Link from "next/link";
 import { MODULES, ToolboxLogo, type ModuleConfig } from "@/app/module-nav";
 import Reveal from "@/app/marketing-reveal";
 import Pricing from "@/app/marketing-pricing";
-import { getUsdPriceEstimate } from "@/lib/fx";
+import { getPriceEstimates } from "@/lib/fx";
 
 /**
  * Public landing page shown at "/" to a visitor with no session (see
@@ -12,7 +12,7 @@ import { getUsdPriceEstimate } from "@/lib/fx";
  * the only interactive bits (scroll-reveal, the pricing currency toggle) are
  * split into small client children (marketing-reveal.tsx,
  * marketing-pricing.tsx) so the rest of this page can stay static — this one
- * is `async` only to fetch today's USD price estimate before render.
+ * is `async` only to fetch today's price estimates before render.
  */
 
 // The six customer-facing modules, pulled from the single source of truth
@@ -30,7 +30,7 @@ const CTA_HREF = "/signup";
 const TRIAL_LABEL = "Start your free 7-day trial";
 
 export default async function MarketingHome() {
-  const usdEstimate = await getUsdPriceEstimate();
+  const priceEstimates = await getPriceEstimates();
   return (
     <main className="bg-white">
       {/* NAV */}
@@ -254,7 +254,7 @@ export default async function MarketingHome() {
       </section>
 
       {/* PRICING — replaces the old generic closing CTA; itself the closing CTA now */}
-      <Pricing usdEstimate={usdEstimate} />
+      <Pricing estimates={priceEstimates} />
 
       {/* FOOTER */}
       <footer className="border-t border-sidebar-border bg-sidebar-bg py-9 text-sidebar-text">
