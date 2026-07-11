@@ -1,10 +1,13 @@
 "use client";
 
+import { useState, useTransition } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOutAction } from "@/actions/auth";
+import { uploadCurrentOrgLogo } from "@/actions/org-logo";
 import { MODULES, ADMIN_MODULE, BillingIcon, ShieldIcon, DiagnosticsIcon, SignOutIcon } from "@/app/module-nav";
 import { OrgSwitcher } from "@/app/OrgSwitcher";
+import { Spinner } from "@/app/Spinner";
 
 /** Two-letter fallback avatar shown when an org has no logo uploaded yet. */
 function OrgPlaceholder({ orgName }: { orgName: string | null }) {
@@ -19,6 +22,43 @@ function OrgPlaceholder({ orgName }: { orgName: string | null }) {
     <span className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-2xl font-semibold text-white shadow-sm">
       {initials}
     </span>
+  );
+}
+
+/** Icon-only nav button (Link or submit button) with a small custom tooltip on hover — the native `title` attribute alone has a slow, easy-to-miss browser tooltip, so this pairs a fast styled one with it while keeping `title`/`aria-label` for accessibility. Tooltip opens upward since these buttons sit at the very bottom of the sidebar. */
+function NavIconButton({
+  href,
+  label,
+  active,
+  children,
+}: {
+  href?: string;
+  label: string;
+  active?: boolean;
+  children: React.ReactNode;
+}) {
+  const className = `group relative flex h-10 w-10 items-center justify-center rounded-lg border transition ${
+    active ? "border-sidebar-bg-raised bg-sidebar-bg-raised" : "border-sidebar-border hover:bg-sidebar-bg-raised"
+  }`;
+  const tooltip = (
+    <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-xs font-medium text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
+      {label}
+    </span>
+  );
+
+  if (href) {
+    return (
+      <Link href={href} title={label} aria-label={label} className={className}>
+        {children}
+        {tooltip}
+      </Link>
+    );
+  }
+  return (
+    <button type="submit" title={label} aria-label={label} className={className}>
+      {children}
+      {tooltip}
+    </button>
   );
 }
 
@@ -41,6 +81,26 @@ export function AppNav({
   showBilling: boolean;
 }) {
   const pathname = usePathname();
+  const [logoUrl, setLogoUrl] = useState(orgLogoUrl);
+  const [logoError, setLogoError] = useState<string | null>(null);
+  const [isUploadingLogo, startLogoTransition] = useTransition();
+
+  function handleLogoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setLogoError(null);
+    const formData = new FormData();
+    formData.set("logo", file);
+    startLogoTransition(async () => {
+      const result = await uploadCurrentOrgLogo(formData);
+      if (!result.ok) {
+        setLogoError(result.error ?? "Unknown error");
+        return;
+      }
+      setLogoUrl(result.logoUrl ?? null);
+    });
+  }
 
   if (
     pathname.startsWith("/login") ||
@@ -57,17 +117,34 @@ export function AppNav({
 
   return (
     <nav className="flex h-full w-64 shrink-0 flex-col bg-sidebar-bg print:hidden">
-      <Link href="/" className="flex flex-col items-center gap-3 border-b border-sidebar-border px-5 py-6 text-lg font-bold text-sidebar-text-active">
-        {orgLogoUrl ? (
-          // Wide, not square — a real uploaded logo is often a wordmark, not
-          // an icon, and a square box was cropping/shrinking it down to fit.
-          // eslint-disable-next-line @next/next/no-img-element -- external, per-org logo URL; not worth configuring next/image remotePatterns for
-          <img src={orgLogoUrl} alt={orgName ?? "Organization logo"} className="h-20 w-full shrink-0 rounded-2xl object-contain" />
-        ) : (
-          <OrgPlaceholder orgName={orgName} />
-        )}
-        <span className="max-w-full truncate text-center">{orgName ?? "Cin7 Core Toolbox"}</span>
-      </Link>
+      <div className="flex flex-col items-center gap-3 border-b border-sidebar-border px-5 py-6">
+        {/* Hover-to-change logo upload — any org member can set their own org's logo now (was previously an /admin-only super-admin action; see src/lib/org-logo.ts for the shared upload logic both now call). */}
+        <label className="group relative flex h-20 w-full cursor-pointer items-center justify-center overflow-hidden rounded-2xl">
+          {logoUrl ? (
+            // Wide, not square — a real uploaded logo is often a wordmark, not
+            // an icon, and a square box was cropping/shrinking it down to fit.
+            // eslint-disable-next-line @next/next/no-img-element -- external, per-org logo URL; not worth configuring next/image remotePatterns for
+            <img src={logoUrl} alt={orgName ?? "Organization logo"} className="h-20 w-full shrink-0 rounded-2xl object-contain" />
+          ) : (
+            <OrgPlaceholder orgName={orgName} />
+          )}
+          <span className="absolute inset-0 flex items-center justify-center rounded-2xl bg-slate-900/70 text-xs font-medium text-white opacity-0 transition group-hover:opacity-100">
+            {isUploadingLogo && <Spinner className="mr-1.5" />}
+            {isUploadingLogo ? "Uploading…" : "Change logo"}
+          </span>
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml"
+            onChange={handleLogoChange}
+            disabled={isUploadingLogo}
+            className="hidden"
+          />
+        </label>
+        <Link href="/" className="max-w-full truncate text-center text-lg font-bold text-sidebar-text-active hover:underline">
+          {orgName ?? "Cin7 Core Toolbox"}
+        </Link>
+        {logoError && <p className="max-w-full text-center text-xs text-red-400">{logoError}</p>}
+      </div>
 
       {isSuperAdmin && <OrgSwitcher currentOrgId={orgId} />}
 
@@ -103,54 +180,22 @@ export function AppNav({
           {/* Compact icon-button row instead of stacked full-width text links — same active/hover treatment, just laid out horizontally to reclaim vertical space at the bottom of the sidebar. */}
           <div className="flex items-center justify-center gap-2">
             {showBilling && (
-              <Link
-                href="/settings/billing"
-                title="Billing"
-                aria-label="Billing"
-                className={`flex h-10 w-10 items-center justify-center rounded-lg border transition ${
-                  pathname.startsWith("/settings/billing")
-                    ? "border-sidebar-bg-raised bg-sidebar-bg-raised"
-                    : "border-sidebar-border hover:bg-sidebar-bg-raised"
-                }`}
-              >
+              <NavIconButton href="/settings/billing" label="Billing" active={pathname.startsWith("/settings/billing")}>
                 <BillingIcon className="h-5 w-5" />
-              </Link>
+              </NavIconButton>
             )}
-            <Link
-              href="/settings/security"
-              title="Security"
-              aria-label="Security"
-              className={`flex h-10 w-10 items-center justify-center rounded-lg border transition ${
-                pathname.startsWith("/settings/security")
-                  ? "border-sidebar-bg-raised bg-sidebar-bg-raised"
-                  : "border-sidebar-border hover:bg-sidebar-bg-raised"
-              }`}
-            >
+            <NavIconButton href="/settings/security" label="Security" active={pathname.startsWith("/settings/security")}>
               <ShieldIcon className="h-5 w-5" />
-            </Link>
+            </NavIconButton>
             {isSuperAdmin && (
-              <Link
-                href="/settings/diagnostics"
-                title="Diagnostics"
-                aria-label="Diagnostics"
-                className={`flex h-10 w-10 items-center justify-center rounded-lg border transition ${
-                  pathname.startsWith("/settings/diagnostics")
-                    ? "border-sidebar-bg-raised bg-sidebar-bg-raised"
-                    : "border-sidebar-border hover:bg-sidebar-bg-raised"
-                }`}
-              >
+              <NavIconButton href="/settings/diagnostics" label="Diagnostics" active={pathname.startsWith("/settings/diagnostics")}>
                 <DiagnosticsIcon className="h-5 w-5" />
-              </Link>
+              </NavIconButton>
             )}
             <form action={signOutAction}>
-              <button
-                type="submit"
-                title="Sign out"
-                aria-label="Sign out"
-                className="flex h-10 w-10 items-center justify-center rounded-lg border border-sidebar-border transition hover:bg-sidebar-bg-raised"
-              >
+              <NavIconButton label="Sign out">
                 <SignOutIcon className="h-5 w-5" />
-              </button>
+              </NavIconButton>
             </form>
           </div>
           <Link href="/privacy" className="mt-3 block text-center text-xs text-sidebar-text/70 hover:text-sidebar-text-active hover:underline">
