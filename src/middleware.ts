@@ -188,6 +188,13 @@ export async function middleware(request: NextRequest) {
 // icon.svg is Next's file-convention favicon route — it must be reachable
 // with no session too, or the browser's (unauthenticated) request for it
 // gets swallowed by the login redirect and the favicon never loads.
+// marketing/ (public/marketing/*, e.g. the landing page's hero image) has
+// the same problem — confirmed live 2026-07-11: a logged-out visitor's
+// request for it 307-redirected to /login, which Next's image optimizer
+// then reported as "isn't a valid image" since it got an HTML redirect back
+// instead of image bytes, not an obviously auth-related error.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.svg|api/sync|api/import|api/delete-expired-trials|api/webhooks).*)"],
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|icon.svg|marketing/|api/sync|api/import|api/delete-expired-trials|api/webhooks).*)",
+  ],
 };

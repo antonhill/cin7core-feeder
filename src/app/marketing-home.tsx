@@ -1,7 +1,7 @@
+import Image from "next/image";
 import Link from "next/link";
 import { MODULES, ToolboxLogo, type ModuleConfig } from "@/app/module-nav";
 import Reveal from "@/app/marketing-reveal";
-import HealthScorecard from "@/app/marketing-health-scorecard";
 import Pricing from "@/app/marketing-pricing";
 
 /**
@@ -83,19 +83,19 @@ export default function MarketingHome() {
             WebkitMaskImage: "radial-gradient(ellipse 75% 70% at 72% 25%, #000 40%, transparent 100%)",
           }}
         />
-        <div className="relative mx-auto grid max-w-6xl grid-cols-1 items-center gap-12 px-6 py-20 lg:grid-cols-2 lg:py-24">
-          <div>
+        <div className="relative mx-auto max-w-6xl px-6 py-20 lg:py-24">
+          <div className="mx-auto max-w-2xl text-center">
             <p className="font-mono text-xs font-medium uppercase tracking-wide text-indigo-300">The admin layer for Cin7 Core</p>
             <h1 className="mt-5 text-4xl font-bold leading-tight tracking-tight text-white sm:text-5xl">
               Do amazing things
               <br />
               you <span className="text-indigo-300">can&rsquo;t do</span> in Cin7 Core.
             </h1>
-            <p className="mt-5 max-w-xl text-lg text-sidebar-text">
+            <p className="mx-auto mt-5 max-w-xl text-lg text-sidebar-text">
               Push one import to every instance, bulk-fix your data, score each instance&rsquo;s health, migrate cleanly, and
               report on what Cin7 Core keeps hidden — all from one console.
             </p>
-            <div className="mt-7 flex flex-wrap gap-3">
+            <div className="mt-7 flex flex-wrap justify-center gap-3">
               <Link
                 href={CTA_HREF}
                 className="rounded-lg bg-indigo-600 px-5 py-3 font-semibold text-white shadow-sm transition hover:-translate-y-px hover:bg-indigo-500"
@@ -109,12 +109,19 @@ export default function MarketingHome() {
                 See what it does
               </a>
             </div>
-            <p className="mt-5 flex flex-wrap items-center gap-2 font-mono text-xs text-sidebar-text">
+            <p className="mt-5 flex flex-wrap items-center justify-center gap-2 font-mono text-xs text-sidebar-text">
               <span className="text-emerald-400">●</span> No card required · Connect 1 instance, read-only · See it on your
               own data
             </p>
           </div>
-          <HealthScorecard />
+          <Image
+            src="/marketing/hero.png"
+            alt="From disconnected and uncertain to connected and in control — Cin7 Core Toolbox brings every Cin7 Core instance into one dashboard."
+            width={1536}
+            height={1024}
+            priority
+            className="relative mt-14 w-full rounded-2xl border border-sidebar-border shadow-2xl"
+          />
         </div>
       </header>
 
