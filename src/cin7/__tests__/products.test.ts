@@ -375,6 +375,32 @@ describe("pushProduct", () => {
     expect(body).not.toHaveProperty("Suppliers");
   });
 
+  it("coerces FixedCost to a real number even when Postgres hands back a numeric-looking string", async () => {
+    // Real bug found 2026-07-11 (Casa das Natas): Supabase returns `numeric`
+    // columns as strings (e.g. "65.4"), and the CanonicalProductRow type's
+    // `number | null` annotation doesn't reflect that at runtime. Cin7
+    // rejected the whole Suppliers array with "Suppliers is invalid" when
+    // FixedCost was a string, even though the same string-typed values are
+    // tolerated fine on top-level product fields (length/weight/etc.).
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce(CATEGORY_EXISTS)
+      .mockResolvedValueOnce(UOM_EXISTS)
+      .mockResolvedValueOnce({ SupplierList: [{ ID: "supplier-1", Name: "Acme Supplies" }] })
+      .mockResolvedValueOnce({ Products: [] })
+      .mockResolvedValueOnce({ ID: "new-id" });
+
+    await pushProduct(creds, {
+      ...product,
+      last_supplied_by: "Acme Supplies",
+      supplier_fixed_price: "65.4" as unknown as number,
+    });
+
+    const [, , options] = vi.mocked(cin7Request).mock.calls[4];
+    const body = options?.body as { Suppliers: { FixedCost: unknown }[] };
+    expect(body.Suppliers[0].FixedCost).toBe(65.4);
+    expect(typeof body.Suppliers[0].FixedCost).toBe("number");
+  });
+
   it("caches a resolved supplier ID across multiple products in the same run", async () => {
     vi.mocked(cin7Request)
       .mockResolvedValueOnce(CATEGORY_EXISTS)

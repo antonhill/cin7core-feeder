@@ -320,13 +320,21 @@ export async function pushProduct(
   if (product.last_supplied_by) {
     const supplierId = await resolveSupplierId(creds, product.last_supplied_by, supplierIdCache);
     if (supplierId) {
+      // FixedCost also (still confirmed live 2026-07-11) needs to be a real
+      // JSON number, not a numeric-looking string — Postgres `numeric`
+      // columns come back from Supabase as strings, and unlike top-level
+      // product fields (length/weight/etc., which Cin7 tolerates as
+      // strings), this nested Suppliers array is validated more strictly:
+      // a string FixedCost also triggers "Suppliers is invalid", the exact
+      // same error as the missing-ID case above.
+      const fixedCost = product.supplier_fixed_price != null ? Number(product.supplier_fixed_price) : undefined;
       payload.Suppliers = [
         {
           ID: supplierId,
           SupplierName: product.last_supplied_by,
           SupplierInventoryCode: product.supplier_product_code ?? undefined,
           SupplierProductName: product.supplier_product_name ?? undefined,
-          FixedCost: product.supplier_fixed_price ?? undefined,
+          FixedCost: fixedCost,
         },
       ];
     }
