@@ -59,8 +59,10 @@ export function AppNav({
     <nav className="flex h-full w-64 shrink-0 flex-col bg-sidebar-bg print:hidden">
       <Link href="/" className="flex flex-col items-center gap-3 border-b border-sidebar-border px-5 py-6 text-lg font-bold text-sidebar-text-active">
         {orgLogoUrl ? (
+          // Wide, not square — a real uploaded logo is often a wordmark, not
+          // an icon, and a square box was cropping/shrinking it down to fit.
           // eslint-disable-next-line @next/next/no-img-element -- external, per-org logo URL; not worth configuring next/image remotePatterns for
-          <img src={orgLogoUrl} alt={orgName ?? "Organization logo"} className="h-20 w-20 shrink-0 rounded-2xl object-contain" />
+          <img src={orgLogoUrl} alt={orgName ?? "Organization logo"} className="h-20 w-full shrink-0 rounded-2xl object-contain" />
         ) : (
           <OrgPlaceholder orgName={orgName} />
         )}
