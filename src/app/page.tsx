@@ -198,7 +198,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ b
   const [stats, shipToday, stockHealth] = await Promise.all([getHomeStats(orgId), getShipTodayCount(orgId), getStockHealthSummary(orgId)]);
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-6 py-12">
+    <main className="mx-auto w-full max-w-7xl px-6 py-12">
       <div className="flex items-center gap-4">
         <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-white shadow-md">
           <ToolboxLogo className="h-8 w-8" />
@@ -233,7 +233,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ b
         </div>
       )}
 
-      <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
         {visibleModules.map((module) => {
           const Icon = module.Icon;
           return (
