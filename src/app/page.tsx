@@ -118,11 +118,7 @@ function ShipTodayCard({ readyToShip, overdue }: ShipTodayStats) {
   const allCaughtUp = readyToShip === 0 && overdue === 0;
   return (
     <Link href="/reports/order-fulfillment?tab=ship" className={`flex items-center gap-4 ${CARD_CLASS}`}>
-      <span
-        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm ${
-          allCaughtUp ? "from-emerald-500 to-emerald-700" : "from-sky-500 to-sky-700"
-        }`}
-      >
+      <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br shadow-sm ${SELF_COLORED_ICON_BADGE}`}>
         <ShipTodayIcon className="h-5 w-5" />
       </span>
       {allCaughtUp ? (
@@ -147,7 +143,7 @@ function StockHealthCard({ summary, activeInstances }: { summary: StockHealthSum
   if (activeInstances === 0) {
     return (
       <div className={`flex items-center gap-4 ${CARD_CLASS}`}>
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-slate-400 to-slate-600 text-white shadow-sm">
+        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br shadow-sm ${SELF_COLORED_ICON_BADGE}`}>
           <StockLevelsIcon className="h-5 w-5" />
         </span>
         <p className="text-sm text-slate-500">Connect an instance to see stock health here.</p>
@@ -158,7 +154,7 @@ function StockHealthCard({ summary, activeInstances }: { summary: StockHealthSum
   if (totalProducts === 0) {
     return (
       <Link href="/reports/stock-health" className={`flex items-center gap-4 ${CARD_CLASS}`}>
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-slate-400 to-slate-600 text-white shadow-sm">
+        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br shadow-sm ${SELF_COLORED_ICON_BADGE}`}>
           <StockLevelsIcon className="h-5 w-5" />
         </span>
         <p className="text-sm text-slate-500">Stock levels haven&rsquo;t been synced yet — visit Stock Health to sync.</p>
@@ -171,7 +167,7 @@ function StockHealthCard({ summary, activeInstances }: { summary: StockHealthSum
   return (
     <Link href="/reports/stock-health" className={CARD_CLASS}>
       <div className="flex items-center gap-4">
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-teal-500 to-teal-700 text-white shadow-sm">
+        <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br shadow-sm ${SELF_COLORED_ICON_BADGE}`}>
           <StockLevelsIcon className="h-5 w-5" />
         </span>
         <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Stock health</p>

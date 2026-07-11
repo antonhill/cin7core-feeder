@@ -16,7 +16,7 @@ function OrgPlaceholder({ orgName }: { orgName: string | null }) {
     .join("") || "C7";
 
   return (
-    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-700 text-sm font-semibold text-white shadow-sm">
+    <span className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-2xl font-semibold text-white shadow-sm">
       {initials}
     </span>
   );
@@ -57,14 +57,14 @@ export function AppNav({
 
   return (
     <nav className="flex h-full w-64 shrink-0 flex-col bg-sidebar-bg print:hidden">
-      <Link href="/" className="flex items-center gap-3 whitespace-nowrap border-b border-sidebar-border px-5 py-6 text-lg font-bold text-sidebar-text-active">
+      <Link href="/" className="flex flex-col items-center gap-3 border-b border-sidebar-border px-5 py-6 text-lg font-bold text-sidebar-text-active">
         {orgLogoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element -- external, per-org logo URL; not worth configuring next/image remotePatterns for
-          <img src={orgLogoUrl} alt={orgName ?? "Organization logo"} className="h-10 w-10 shrink-0 rounded-lg object-contain" />
+          <img src={orgLogoUrl} alt={orgName ?? "Organization logo"} className="h-20 w-20 shrink-0 rounded-2xl object-contain" />
         ) : (
           <OrgPlaceholder orgName={orgName} />
         )}
-        <span className="truncate">{orgName ?? "Cin7 Core Toolbox"}</span>
+        <span className="max-w-full truncate text-center">{orgName ?? "Cin7 Core Toolbox"}</span>
       </Link>
 
       {isSuperAdmin && <OrgSwitcher currentOrgId={orgId} />}
