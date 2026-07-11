@@ -3,12 +3,21 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { verifyWebhookSignature, mapSubscriptionStatus } from "@/lib/lemonsqueezy";
 
 /**
- * Every event Lemon Squeezy sends for a subscription lifecycle. Payment
- * events (success/failed/recovered) are handled by re-reading the
- * subscription's own `status` field rather than branching on the event name
- * itself — Lemon Squeezy already rolls a failed/recovered payment into the
- * subscription's status (past_due/active), so there's one mapping to keep
- * in sync (mapSubscriptionStatus), not one per event type.
+ * Every event Lemon Squeezy sends for a subscription lifecycle. Confirmed
+ * live 2026-07-11: the lifecycle events (created/updated/cancelled/etc.)
+ * carry the actual `subscriptions` resource in `data`, but the payment
+ * events (success/failed/recovered) instead carry a `subscription-invoices`
+ * resource — a different shape entirely (its `id` is the invoice's own ID,
+ * not the subscription's, and it has no `renews_at`/`ends_at`, and its
+ * `status` means paid/refunded/etc., not active/cancelled/etc.). Treating
+ * every event the same way previously overwrote a real subscription ID with
+ * an invoice ID, and fed an invoice status through mapSubscriptionStatus
+ * (which doesn't recognize it, so it silently fell through to "canceled").
+ * Payment events are still listened for (so the endpoint doesn't 404 them),
+ * but only SUBSCRIPTION_TYPED_EVENTS below actually update our stored
+ * status — Lemon Squeezy always pairs a payment event with its own
+ * subscription_updated event carrying the resulting status, so nothing is
+ * lost by ignoring the invoice payload itself.
  */
 const SUBSCRIPTION_EVENTS = new Set([
   "subscription_created",
@@ -23,6 +32,16 @@ const SUBSCRIPTION_EVENTS = new Set([
   "subscription_payment_recovered",
 ]);
 
+const SUBSCRIPTION_TYPED_EVENTS = new Set([
+  "subscription_created",
+  "subscription_updated",
+  "subscription_cancelled",
+  "subscription_resumed",
+  "subscription_expired",
+  "subscription_paused",
+  "subscription_unpaused",
+]);
+
 interface LemonSqueezyWebhookPayload {
   meta: {
     event_name: string;
@@ -30,6 +49,7 @@ interface LemonSqueezyWebhookPayload {
   };
   data: {
     id: string;
+    type: string;
     attributes: {
       status: string;
       customer_id: number;
@@ -72,6 +92,10 @@ export async function POST(req: Request) {
   const orgId = payload.meta.custom_data?.org_id;
   if (!orgId) {
     return NextResponse.json({ error: "No org_id in custom_data" }, { status: 400 });
+  }
+
+  if (!SUBSCRIPTION_TYPED_EVENTS.has(eventName)) {
+    return NextResponse.json({ ok: true, ignored: `${eventName} (not a subscription-typed payload)` });
   }
 
   const status = mapSubscriptionStatus(payload.data.attributes.status);
