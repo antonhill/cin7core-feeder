@@ -1348,30 +1348,36 @@ export interface ProductSupplierLinkTest {
   supplierName: string;
   supplierFound: boolean;
   supplierId?: string;
-  putSucceeded: boolean;
-  putError?: string;
+  /** Whether the product's own GET /Product?ID= response actually carried its ID field — ruling out "the product's own ID is what's missing" before blaming the nested Suppliers shape. */
+  fullRecordHadId: boolean;
+  /** Tried in order, stopping at the first success. */
+  attempts: { shape: string; succeeded: boolean; error?: string }[];
 }
 
 /**
- * Diagnostic only. Confirmed live 2026-07-11: pushProduct's Suppliers array
- * (products.ts, sent as `{ SupplierName, SupplierInventoryCode,
- * SupplierProductName, FixedCost }` per the community client spec's worked
- * example, no SupplierID) is rejected with "Suppliers is invalid" — across
- * many different supplier names, including ones already confirmed to exist
- * as real Cin7 supplier records (created moments earlier via this same
- * app's own supplier push), so it isn't a per-row name-matching issue.
- * Suspect Cin7 actually requires a resolved SupplierID, unlike Category/
- * Brand/UOM's own reference-book endpoints which do accept a bare name/code.
+ * Diagnostic only. Confirmed live 2026-07-11 (Casa das Natas): pushProduct's
+ * Suppliers array (products.ts, sent as `{ SupplierName,
+ * SupplierInventoryCode, SupplierProductName, FixedCost }` per the community
+ * client spec's worked example, no ID field at all) is rejected with
+ * "Suppliers is invalid" — across many different supplier names, including
+ * ones already confirmed to exist as real Cin7 supplier records, so it isn't
+ * a per-row name-matching issue. A first live test adding `SupplierID`
+ * changed the error to "Required attribute 'ID' not provided" rather than
+ * fixing it — i.e. still wrong, but differently wrong, suggesting the
+ * correct field name/shape isn't settled yet. Rather than guess again one
+ * round-trip at a time, this tries a few candidate shapes in sequence
+ * (stopping at the first that succeeds) so one click converges on the
+ * answer instead of three.
  *
- * Tests that directly: resolves the named supplier's real ID via GET
- * /supplier, fetches the target product's own current full record (not a
+ * Each attempt PUTs the product's own current full record (not a
  * reconstructed payload — same safety reasoning as testSaleShipByWriteBack,
- * a real PUT needs the product's actual current data, not a guessed one),
- * and PUTs it back changing only Suppliers to include the resolved
- * SupplierID alongside SupplierName. This both diagnoses the cause and, if
- * it succeeds, is the actual fix already applied to that one product live —
- * safe to do since the product currently has no supplier link at all (this
- * exact push already fails today), not a case of overwriting a working one.
+ * a real PUT needs the product's actual current data) with only Suppliers
+ * changed, and the top-level `ID` set explicitly (not just trusted to
+ * survive the `...full` spread) to also rule out the top-level product ID
+ * itself being what "Required attribute 'ID' not provided" referred to.
+ * Safe to do since the product currently has no working supplier link at
+ * all (this exact push already fails today) — not a case of overwriting a
+ * working one.
  */
 export async function testProductSupplierLink(creds: Cin7Credentials, sku: string, supplierName: string): Promise<ProductSupplierLinkTest> {
   const supplierRes = await cin7Request<{ SupplierList?: Record<string, unknown>[] }>(creds, "/supplier", {
@@ -1385,22 +1391,32 @@ export async function testProductSupplierLink(creds: Cin7Credentials, sku: strin
   });
   const match = listRes.Products?.find((p) => p.SKU === sku);
   if (!match?.ID) throw new Error(`No product found with SKU "${sku}"`);
-  const full = await cin7Request<Record<string, unknown>>(creds, "/Product", { query: { ID: match.ID as string } });
+  const productId = match.ID as string;
+  const full = await cin7Request<Record<string, unknown>>(creds, "/Product", { query: { ID: productId } });
+  const fullRecordHadId = Boolean(full.ID);
 
-  try {
-    await cin7Request(creds, "/Product", {
-      method: "PUT",
-      body: { ...full, Suppliers: [{ SupplierID: supplierId, SupplierName: supplierName }] },
-    });
-    return { sku, supplierName, supplierFound: Boolean(supplier), supplierId, putSucceeded: true };
-  } catch (e) {
-    return {
-      sku,
-      supplierName,
-      supplierFound: Boolean(supplier),
-      supplierId,
-      putSucceeded: false,
-      putError: e instanceof Cin7ApiError ? `[${e.status}] ${e.message}` : e instanceof Error ? e.message : "Unknown error",
-    };
+  const candidates: { shape: string; suppliers: Record<string, unknown>[] }[] = [
+    { shape: "ID + SupplierName", suppliers: [{ ID: supplierId, SupplierName: supplierName }] },
+    { shape: "ID only", suppliers: [{ ID: supplierId }] },
+    { shape: "SupplierID + ID + SupplierName (both id fields)", suppliers: [{ ID: supplierId, SupplierID: supplierId, SupplierName: supplierName }] },
+  ];
+
+  const attempts: { shape: string; succeeded: boolean; error?: string }[] = [];
+  for (const candidate of candidates) {
+    try {
+      await cin7Request(creds, "/Product", {
+        method: "PUT",
+        body: { ...full, ID: productId, Suppliers: candidate.suppliers },
+      });
+      attempts.push({ shape: candidate.shape, succeeded: true });
+      return { sku, supplierName, supplierFound: Boolean(supplier), supplierId, fullRecordHadId, attempts };
+    } catch (e) {
+      attempts.push({
+        shape: candidate.shape,
+        succeeded: false,
+        error: e instanceof Cin7ApiError ? `[${e.status}] ${e.message}` : e instanceof Error ? e.message : "Unknown error",
+      });
+    }
   }
+  return { sku, supplierName, supplierFound: Boolean(supplier), supplierId, fullRecordHadId, attempts };
 }
