@@ -339,7 +339,8 @@ describe("pushProduct", () => {
       .mockResolvedValueOnce(UOM_EXISTS)
       .mockResolvedValueOnce({ SupplierList: [{ ID: "supplier-1", Name: "Acme Supplies" }] })
       .mockResolvedValueOnce({ Products: [] }) // findProductBySku
-      .mockResolvedValueOnce({ ID: "new-id" }); // create
+      .mockResolvedValueOnce({ ID: "new-id" }) // create (no Suppliers)
+      .mockResolvedValueOnce({ ID: "new-id" }); // follow-up PUT to attach Suppliers
 
     await pushProduct(creds, {
       ...product,
@@ -349,9 +350,17 @@ describe("pushProduct", () => {
       supplier_fixed_price: 4.5,
     });
 
-    const [, , options] = vi.mocked(cin7Request).mock.calls[4];
-    const body = options?.body as { Suppliers: unknown };
-    expect(body.Suppliers).toEqual([{ ID: "supplier-1", SupplierName: "Acme Supplies" }]);
+    const createCall = vi.mocked(cin7Request).mock.calls[4];
+    expect(createCall[2]?.body).not.toHaveProperty("Suppliers");
+
+    // Full payload again on the follow-up PUT, not a bare {ID, Suppliers} —
+    // Cin7's PUT clears omitted optional fields to blank rather than
+    // leaving them untouched (see suppliers.ts's blank-clears-field rule).
+    const [, , attachOptions] = vi.mocked(cin7Request).mock.calls[5];
+    const attachBody = attachOptions?.body as { ID: string; SKU: string; Suppliers: unknown };
+    expect(attachBody.ID).toBe("new-id");
+    expect(attachBody.SKU).toBe(product.sku);
+    expect(attachBody.Suppliers).toEqual([{ ID: "supplier-1", SupplierName: "Acme Supplies" }]);
   });
 
   it("omits Suppliers rather than sending a doomed request when the named supplier doesn't exist in Cin7 yet", async () => {
@@ -367,9 +376,31 @@ describe("pushProduct", () => {
 
     await pushProduct(creds, { ...product, last_supplied_by: "Not Yet Created Supplier" });
 
+    // No supplier resolved -> no follow-up PUT at all, just the plain create.
+    expect(cin7Request).toHaveBeenCalledTimes(5);
     const [, , options] = vi.mocked(cin7Request).mock.calls[4];
     const body = options?.body as Record<string, unknown>;
     expect(body).not.toHaveProperty("Suppliers");
+  });
+
+  it("attaches Suppliers via PUT after creating, but sends Suppliers directly on the payload when updating an existing product", async () => {
+    // Confirmed live 2026-07-11 (Casa das Natas, all 23 currently-failing
+    // products): Cin7's POST /Product rejects an inline Suppliers array
+    // outright, while PUT accepts it fine — the earlier "confirmed working"
+    // shape was only ever tested via PUT against an existing product.
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce(CATEGORY_EXISTS)
+      .mockResolvedValueOnce(UOM_EXISTS)
+      .mockResolvedValueOnce({ SupplierList: [{ ID: "supplier-1", Name: "Acme Supplies" }] })
+      .mockResolvedValueOnce({ Products: [{ ID: "existing-id", SKU: product.sku }] }) // findProductBySku: already exists
+      .mockResolvedValueOnce({ ID: "existing-id" }); // single PUT, Suppliers included directly
+
+    await pushProduct(creds, { ...product, last_supplied_by: "Acme Supplies" });
+
+    expect(cin7Request).toHaveBeenCalledTimes(5);
+    const [, , options] = vi.mocked(cin7Request).mock.calls[4];
+    const body = options?.body as { Suppliers: unknown };
+    expect(body.Suppliers).toEqual([{ ID: "supplier-1", SupplierName: "Acme Supplies" }]);
   });
 
   it("caches a resolved supplier ID across multiple products in the same run", async () => {
@@ -379,17 +410,19 @@ describe("pushProduct", () => {
       .mockResolvedValueOnce({ SupplierList: [{ ID: "supplier-1", Name: "Acme Supplies" }] })
       .mockResolvedValueOnce({ Products: [] })
       .mockResolvedValueOnce({ ID: "new-id-1" })
+      .mockResolvedValueOnce({ ID: "new-id-1" }) // follow-up PUT to attach Suppliers
       .mockResolvedValueOnce(CATEGORY_EXISTS)
       .mockResolvedValueOnce(UOM_EXISTS)
       .mockResolvedValueOnce({ Products: [] })
-      .mockResolvedValueOnce({ ID: "new-id-2" });
+      .mockResolvedValueOnce({ ID: "new-id-2" })
+      .mockResolvedValueOnce({ ID: "new-id-2" }); // follow-up PUT to attach Suppliers
 
     const supplierIdCache = new Map<string, string | null>();
     await pushProduct(creds, { ...product, last_supplied_by: "Acme Supplies" }, [], [], new Map(), new Set(), supplierIdCache);
     await pushProduct(creds, { ...product, sku: "SKU2", last_supplied_by: "Acme Supplies" }, [], [], new Map(), new Set(), supplierIdCache);
 
-    // 9 calls total, not 10 — the second product's supplier lookup was served from cache.
-    expect(cin7Request).toHaveBeenCalledTimes(9);
+    // 11 calls total, not 12 — the second product's supplier lookup was served from cache.
+    expect(cin7Request).toHaveBeenCalledTimes(11);
   });
 });
 

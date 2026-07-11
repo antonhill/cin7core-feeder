@@ -317,37 +317,52 @@ export async function pushProduct(
   // run-sync.ts) simply can't be resolved; skip Suppliers for now rather
   // than send a request already known to fail — a later sync run picks it
   // up once the supplier exists.
+  let suppliers: { ID: string; SupplierName: string }[] | undefined;
   if (product.last_supplied_by) {
     const supplierId = await resolveSupplierId(creds, product.last_supplied_by, supplierIdCache);
-    if (supplierId) {
-      // Confirmed live 2026-07-11 (Casa das Natas, 23/60 real products, not
-      // just a sample): `{ID, SupplierName}` is the ONLY shape ever actually
-      // live-tested and confirmed to work. `SupplierInventoryCode`/
-      // `SupplierProductName`/`FixedCost` were added speculatively from a
-      // third-party community client's schema (docs/cin7-api-findings.md
-      // §5c) without a live write test — and turned out to be wrong, same
-      // as that doc's `SupplierID` field-name claim already was. Coercing
-      // FixedCost from string to number (tried first) did NOT fix it: every
-      // failure has a non-null supplier_fixed_price and every success
-      // doesn't, regardless of type, so Cin7 rejects the field outright in
-      // this nested context. Left capture-only (still stored in our own DB
-      // for reporting) until independently confirmed live.
-      payload.Suppliers = [{ ID: supplierId, SupplierName: product.last_supplied_by }];
-    }
+    // `{ID, SupplierName}` is the only shape ever confirmed live to work.
+    // `SupplierInventoryCode`/`SupplierProductName`/`FixedCost` were added
+    // speculatively from a third-party client's schema (see
+    // docs/cin7-api-findings.md §5c) without a live write test, and turned
+    // out to be wrong — left capture-only in our own DB until independently
+    // confirmed.
+    if (supplierId) suppliers = [{ ID: supplierId, SupplierName: product.last_supplied_by }];
   }
+
   const existing = await findProductBySku(creds, product.sku);
 
   if (existing) {
     const updated = await cin7Request<Cin7ProductResponse>(creds, "/Product", {
       method: "PUT",
-      body: { ID: existing.id, ...payload },
+      body: { ID: existing.id, ...payload, ...(suppliers ? { Suppliers: suppliers } : {}) },
     });
     return { cin7Id: requireId(updated, "PUT /Product"), status: "updated" };
   }
 
+  // Confirmed live 2026-07-11 (Casa das Natas, all 23 currently-failing
+  // products, not a small sample): Cin7's POST /Product — unlike PUT —
+  // rejects an inline Suppliers array outright ("Suppliers is invalid"),
+  // regardless of its shape or fields. Every prior "confirmed working" test
+  // of the Suppliers shape (including the multi-shape live diagnostic) was
+  // run as a PUT against an existing product, never a fresh POST, which is
+  // why this went unnoticed. Create without Suppliers first, then a
+  // follow-up PUT (now that the product exists) attaches it — mirroring
+  // exactly the update path above, which is already proven to work.
   const created = await cin7Request<Cin7ProductResponse>(creds, "/Product", {
     method: "POST",
     body: payload,
   });
-  return { cin7Id: requireId(created, "POST /Product"), status: "created" };
+  const newId = requireId(created, "POST /Product");
+  if (suppliers) {
+    // Full payload again, not just {ID, Suppliers} — see suppliers.ts's
+    // "blank-clears-field" rule: Cin7's PUT isn't a partial PATCH, an
+    // omitted optional field gets cleared to blank/default, not left
+    // untouched. A minimal body here would wipe out everything else this
+    // product was just created with.
+    await cin7Request<Cin7ProductResponse>(creds, "/Product", {
+      method: "PUT",
+      body: { ID: newId, ...payload, Suppliers: suppliers },
+    });
+  }
+  return { cin7Id: newId, status: "created" };
 }
