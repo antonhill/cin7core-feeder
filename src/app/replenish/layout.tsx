@@ -17,7 +17,7 @@ import { ReplenishNav } from "./ReplenishNav";
  */
 export default function ReplenishLayout({ children }: { children: React.ReactNode }) {
   return (
-    <>
+    <main className="mx-auto w-full max-w-[1800px] px-6 py-12">
       <ModuleHeader module={REPLENISH_MODULE}>
         Reads each product&rsquo;s stock-on-hand per location (already synced) against its reorder point — a
         location-specific override when Cin7 has one set, otherwise the product&rsquo;s flat/global minimum.
@@ -29,6 +29,6 @@ export default function ReplenishLayout({ children }: { children: React.ReactNod
         <ReplenishNav />
       </div>
       <div className="mt-6">{children}</div>
-    </>
+    </main>
   );
 }

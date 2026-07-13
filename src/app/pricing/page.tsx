@@ -165,7 +165,7 @@ export default function PricingPage() {
   const tierLabel = previewData?.tierLabels[tierIndex] ?? "";
 
   return (
-    <>
+    <main className="mx-auto w-full max-w-[1800px] px-6 py-12">
       <ModuleHeader module={PRICING_MODULE}>
         Filters one connected instance&rsquo;s live product catalog by Category, Supplier, and search, then bulk-updates
         one chosen price tier — set a single flat price across every selected product, or increase each product&rsquo;s
@@ -416,6 +416,6 @@ export default function PricingPage() {
           )}
         </section>
       )}
-    </>
+    </main>
   );
 }
