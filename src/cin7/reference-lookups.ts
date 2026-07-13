@@ -164,6 +164,35 @@ export function locationExists(creds: Cin7Credentials, name: string, cache: Map<
   return cachedFieldExists(creds, REF_LOCATION_PATH, "Name", name, cache);
 }
 
+export interface Cin7Location {
+  id: string;
+  name: string;
+}
+
+/**
+ * Every location in the account, with its real GUID — needed by Bulk
+ * Reorder Points (src/reports/replenish/reorder-config.ts) to add a
+ * brand-new per-location `ReorderLevels` entry to a product that doesn't
+ * have one yet: confirmed live 2026-07-14 that a `ReorderLevels` write
+ * requires `LocationID`, not just `LocationName`. Unlike Replenish's own
+ * "no Locations master-list, use product_availability's distinct
+ * locations" approach, this works even for a location with zero currently
+ * synced stock, since it comes straight from Cin7's own reference book.
+ */
+export async function fetchAllLocations(creds: Cin7Credentials): Promise<Cin7Location[]> {
+  const pageSize = 100;
+  const all: Cin7Location[] = [];
+  for (let page = 1; ; page++) {
+    const response = await cin7Request<Record<string, unknown>>(creds, REF_LOCATION_PATH, {
+      query: { Page: page, Limit: pageSize },
+    });
+    const entries = extractEntries(response);
+    for (const e of entries) if (e.ID && e.Name) all.push({ id: e.ID, name: e.Name });
+    if (entries.length < pageSize) break;
+  }
+  return all;
+}
+
 export function companyContactExists(creds: Cin7Credentials, name: string, cache: Map<string, boolean>): Promise<boolean> {
   return cachedFieldExists(creds, ME_CONTACTS_PATH, "Name", name, cache);
 }

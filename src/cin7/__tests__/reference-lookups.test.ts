@@ -12,6 +12,7 @@ import {
   REF_ATTRIBUTE_SET_PATH,
   REF_DISCOUNT_PATH,
   locationExists,
+  fetchAllLocations,
   companyContactExists,
   accountExists,
   payableAccountExists,
@@ -131,6 +132,26 @@ describe("locationExists / companyContactExists / accountExists (exists-only, no
   it("locationExists returns false for a location that isn't in the list", async () => {
     vi.mocked(cin7Request).mockResolvedValueOnce({ LocationList: [] });
     await expect(locationExists(creds, "Main Warehouse Nooo", new Map())).resolves.toBe(false);
+  });
+
+  it("fetchAllLocations returns every location's id+name, paginating until a short page", async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ ID: `loc-${i}`, Name: `Location ${i}` }));
+    const page2 = [{ ID: "loc-last", Name: "Last Location" }];
+    vi.mocked(cin7Request).mockResolvedValueOnce({ LocationList: page1 }).mockResolvedValueOnce({ LocationList: page2 });
+
+    const all = await fetchAllLocations(creds);
+
+    expect(all).toHaveLength(101);
+    expect(all[0]).toEqual({ id: "loc-0", name: "Location 0" });
+    expect(all[100]).toEqual({ id: "loc-last", name: "Last Location" });
+    expect(cin7Request).toHaveBeenCalledTimes(2);
+    expect(cin7Request).toHaveBeenNthCalledWith(1, creds, REF_LOCATION_PATH, { query: { Page: 1, Limit: 100 } });
+  });
+
+  it("fetchAllLocations skips an entry missing ID or Name", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ LocationList: [{ ID: "loc-1", Name: "Main Warehouse" }, { Name: "No ID" }, { ID: "loc-2" }] });
+    const all = await fetchAllLocations(creds);
+    expect(all).toEqual([{ id: "loc-1", name: "Main Warehouse" }]);
   });
 
   it("companyContactExists checks /me/contacts by Name", async () => {

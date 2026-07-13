@@ -14,8 +14,6 @@ import {
 import { resolveReorderThresholds, buildReplenishLines, type ReplenishLine } from "@/reports/replenish/build";
 import type { ProductAvailabilitySyncStatus } from "@/reports/query";
 import { SNAPSHOT_STALE_HOURS, hoursSince, StaleBadge, staleSyncButtonClass } from "@/app/reports/sync-staleness";
-import { ModuleHeader } from "@/app/ModuleHeader";
-import { REPLENISH_MODULE } from "@/app/module-nav";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 
@@ -180,12 +178,6 @@ export default function ReplenishPage() {
 
   return (
     <>
-      <ModuleHeader module={REPLENISH_MODULE}>
-        Reads each product&rsquo;s stock-on-hand per location (already synced) against its reorder point — a
-        location-specific override when Cin7 has one set, otherwise the product&rsquo;s flat/global minimum — and
-        proposes Stock Transfers from one chosen source location to top up whichever locations have fallen below it.
-        Transfers are created in Cin7 as <strong>DRAFT</strong>, ready for you to review and complete there.
-      </ModuleHeader>
       <PageLoadingIndicator show={isLoadingPreview} label="Building replenish list…" />
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">

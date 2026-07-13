@@ -5,8 +5,8 @@ import { findSupplierByName } from "@/cin7/suppliers";
 
 export interface ProductFix {
   productId: string;
-  /** Suppliers takes the array shape (see products.ts's pushProduct — `{ID, SupplierName}` is the one shape confirmed live to work); `number` supports PriceTierN (see Bulk Pricing, src/app/pricing/actions.ts) and anything else numeric; everything else is a plain scalar. */
-  fields: Record<string, string | number | boolean | { ID: string; SupplierName: string }[]>;
+  /** `{ID, SupplierName}[]` is Suppliers' own confirmed-live shape (see products.ts's pushProduct); the broader `Record<string, unknown>[]` covers other array fields sent whole, e.g. ReorderLevels (see Bulk Reorder Points, src/reports/replenish/reorder-config.ts) — always the product's COMPLETE array for that field, never a partial one, since Cin7 replaces rather than merges array fields on PUT (confirmed live 2026-07-14). `number` supports PriceTierN (see Bulk Pricing, src/app/pricing/actions.ts); everything else is a plain scalar. */
+  fields: Record<string, string | number | boolean | { ID: string; SupplierName: string }[] | Record<string, unknown>[]>;
 }
 
 export interface ApplyFixesResult {
