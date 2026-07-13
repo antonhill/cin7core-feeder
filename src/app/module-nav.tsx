@@ -152,6 +152,15 @@ export function BillingIcon({ className }: IconProps) {
   );
 }
 
+export function PricingIcon({ className }: IconProps) {
+  return (
+    <GradientIcon className={className} from="#22c55e" to="#15803d">
+      <path d="M12.5 3.5h6a1 1 0 0 1 1 1v6a1 1 0 0 1-.3.7l-9 9a1 1 0 0 1-1.4 0l-6-6a1 1 0 0 1 0-1.4l9-9a1 1 0 0 1 .7-.3Z" />
+      <path d="M16.5 8a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z" />
+    </GradientIcon>
+  );
+}
+
 export function ReplenishIcon({ className }: IconProps) {
   return (
     <GradientIcon className={className} from="#7c3aed" to="#5b21b6">
@@ -275,6 +284,14 @@ export const AUDIT_MODULE: ModuleConfig = {
   blurb: "Scan a connected instance's products for consistency and accuracy gaps — missing Brand, no sales price, incomplete inventory setup, missing GL accounts, near-duplicate categories — and bulk-fix them.",
 };
 
+export const PRICING_MODULE: ModuleConfig = {
+  href: "/pricing",
+  label: "Bulk Pricing",
+  gradient: SELF_COLORED_ICON_BADGE,
+  Icon: PricingIcon,
+  blurb: "Filter one connected instance's products by Category, Supplier, or search, then set a flat price or apply a % increase across a chosen price tier — writes straight to Cin7.",
+};
+
 export const REPLENISH_MODULE: ModuleConfig = {
   href: "/replenish",
   label: "Replenish",
@@ -367,6 +384,7 @@ export const MODULES: ModuleConfig[] = [
   MIGRATE_MODULE,
   REPORTS_MODULE,
   AUDIT_MODULE,
+  PRICING_MODULE,
   REPLENISH_MODULE,
   HEALTH_MODULE,
   INSTANCES_MODULE,

@@ -5,8 +5,8 @@ import { findSupplierByName } from "@/cin7/suppliers";
 
 export interface ProductFix {
   productId: string;
-  /** Suppliers takes the array shape (see products.ts's pushProduct — `{ID, SupplierName}` is the one shape confirmed live to work), everything else is a plain scalar. */
-  fields: Record<string, string | boolean | { ID: string; SupplierName: string }[]>;
+  /** Suppliers takes the array shape (see products.ts's pushProduct — `{ID, SupplierName}` is the one shape confirmed live to work); `number` supports PriceTierN (see Bulk Pricing, src/app/pricing/actions.ts) and anything else numeric; everything else is a plain scalar. */
+  fields: Record<string, string | number | boolean | { ID: string; SupplierName: string }[]>;
 }
 
 export interface ApplyFixesResult {
