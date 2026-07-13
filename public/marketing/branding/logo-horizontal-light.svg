@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 240">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#2D2A7A"/>
+          <stop offset="1" stop-color="#17184F"/>
+        </linearGradient>
+        <linearGradient id="teal" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#21E2DE"/>
+          <stop offset="1" stop-color="#00BFC4"/>
+        </linearGradient>
+      </defs>
+      <rect x="12" y="12" width="216" height="216" rx="50" fill="url(#bg)"/>
+      <path d="M72 82h96q22 0 22 22v75q0 22-22 22H72q-22 0-22-22v-75q0-22 22-22z"
+            fill="none" stroke="#FFFFFF" stroke-width="13" stroke-linejoin="round"/>
+      <path d="M90 82V68q0-14 14-14h32q14 0 14 14v14"
+            fill="none" stroke="#FFFFFF" stroke-width="13" stroke-linecap="round"/>
+      <path d="M50 124h140" stroke="#FFFFFF" stroke-width="13" stroke-linecap="round"/>
+      <g transform="translate(120 163)" fill="none" stroke="url(#teal)" stroke-width="8.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M0 -23 C10 -34 24 -22 18 -12 L7 -1"/>
+        <path d="M23 0 C34 10 22 24 12 18 L1 7"/>
+        <path d="M0 23 C-10 34 -24 22 -18 12 L-7 1"/>
+        <path d="M-23 0 C-34 -10 -22 -24 -12 -18 L-1 -7"/>
+        <path d="M0 -9 L9 0 L0 9 L-9 0 Z"/>
+      </g>
+      <text x="270" y="145" font-family="Inter, Arial, Helvetica, sans-serif"
+            font-size="80" font-weight="700" fill="#10182C">Cin7 Core Toolbox</text>
+    </svg>
