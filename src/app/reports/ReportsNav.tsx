@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { CASA_DAS_NATAS_ORG_ID } from "@/lib/casa-das-natas";
 
 interface ReportLink {
   href: string;
@@ -33,6 +34,9 @@ const REPORT_CATEGORIES: ReportCategory[] = [
     ],
   },
   { label: "Sales", links: [{ href: "/reports", label: "Sales" }] },
+  // "Natas Sold" is appended conditionally in ReportsNav() below, not listed
+  // here — it's a Casa das Natas-only report (see
+  // src/lib/casa-das-natas.ts), not a category every org should see.
   {
     label: "Costing",
     links: [
@@ -53,13 +57,22 @@ const REPORT_CATEGORIES: ReportCategory[] = [
   },
 ];
 
-export function ReportsNav() {
+export function ReportsNav({ currentOrgId }: { currentOrgId: string | null }) {
   const pathname = usePathname();
+
+  const categories =
+    currentOrgId === CASA_DAS_NATAS_ORG_ID
+      ? REPORT_CATEGORIES.map((category) =>
+          category.label === "Sales"
+            ? { ...category, links: [...category.links, { href: "/reports/natas", label: "Natas Sold" }] }
+            : category
+        )
+      : REPORT_CATEGORIES;
 
   return (
     <nav className="sticky top-6 w-56 shrink-0">
       <div className="flex flex-col gap-6">
-        {REPORT_CATEGORIES.map((category) => (
+        {categories.map((category) => (
           <div key={category.label}>
             <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
               {category.label}

@@ -1,6 +1,7 @@
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { REPORTS_MODULE } from "@/app/module-nav";
 import { ReportsNav } from "./ReportsNav";
+import { requireCurrentOrg } from "@/lib/current-org";
 
 // Route segment config applies to every Server Action invoked from any page
 // under /reports/* (Order Fulfillment's "Sync sales now", Stock Health's
@@ -25,11 +26,19 @@ export const maxDuration = 300;
  * enough columns to benefit from using more of a large monitor's width
  * rather than being centered in a narrower column (Anton, 2026-07-10).
  */
-export default function ReportsLayout({
+export default async function ReportsLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  // Best-effort — ReportsNav only uses this to decide whether to show the
+  // Casa das Natas-only nav entry; a failure here (e.g. an edge-case session
+  // state) should never break the rest of the Reporting module, so it just
+  // falls back to not showing that one link rather than throwing.
+  const currentOrgId = await requireCurrentOrg()
+    .then((c) => c.orgId)
+    .catch(() => null);
+
   return (
     <main className="mx-auto w-full max-w-[1800px] px-6 py-12 print:max-w-none print:p-0">
       <div className="print:hidden">
@@ -53,7 +62,7 @@ export default function ReportsLayout({
       </div>
       <div className="mt-6 flex items-start gap-8 print:mt-0 print:block">
         <div className="print:hidden">
-          <ReportsNav />
+          <ReportsNav currentOrgId={currentOrgId} />
         </div>
         <div className="min-w-0 flex-1">{children}</div>
       </div>
