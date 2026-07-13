@@ -98,20 +98,20 @@ export default async function MarketingHome() {
             WebkitMaskImage: "radial-gradient(ellipse 75% 70% at 72% 25%, #000 40%, transparent 100%)",
           }}
         />
-        <div className="relative mx-auto max-w-6xl px-6 py-20 lg:py-24">
-          <div className="mx-auto max-w-2xl text-center">
+        <div className="relative mx-auto grid max-w-6xl grid-cols-1 items-center gap-12 px-6 py-20 lg:grid-cols-2 lg:py-24">
+          <div className="mx-auto max-w-xl text-center lg:mx-0 lg:text-left">
             <p className="font-mono text-xs font-medium uppercase tracking-wide text-indigo-300">The admin layer for Cin7 Core</p>
             <h1 className="mt-5 text-4xl font-bold leading-tight tracking-tight text-white sm:text-5xl">
               Do amazing things
               <br />
               you <span className="text-indigo-300">can&rsquo;t do</span> in Cin7 Core.
             </h1>
-            <p className="mx-auto mt-5 max-w-xl text-lg text-sidebar-text">
+            <p className="mt-5 max-w-xl text-lg text-sidebar-text">
               Push one import to every instance, bulk-fix your data, pricing, and reorder points, replenish stock
               across locations, score each instance&rsquo;s health, migrate cleanly, and report on what Cin7 Core keeps
               hidden — all from one console.
             </p>
-            <div className="mt-7 flex flex-wrap justify-center gap-3">
+            <div className="mt-7 flex flex-wrap justify-center gap-3 lg:justify-start">
               <Link
                 href={CTA_HREF}
                 className="rounded-lg bg-indigo-600 px-5 py-3 font-semibold text-white shadow-sm transition hover:-translate-y-px hover:bg-indigo-500"
@@ -125,7 +125,7 @@ export default async function MarketingHome() {
                 See what it does
               </a>
             </div>
-            <p className="mt-5 flex flex-wrap items-center justify-center gap-2 font-mono text-xs text-sidebar-text">
+            <p className="mt-5 flex flex-wrap items-center justify-center gap-2 font-mono text-xs text-sidebar-text lg:justify-start">
               <span className="text-emerald-400">●</span> No card required · Connect 1 instance, read-only · See it on your
               own data
             </p>
@@ -136,7 +136,7 @@ export default async function MarketingHome() {
             width={1536}
             height={1024}
             priority
-            className="relative mt-14 w-full rounded-2xl border border-sidebar-border shadow-2xl"
+            className="relative w-full rounded-2xl border border-sidebar-border shadow-2xl"
           />
         </div>
       </header>
@@ -187,7 +187,7 @@ export default async function MarketingHome() {
               Cin7 Core administration.
             </p>
           </Reveal>
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
             {FEATURES.map((m) => {
               const Icon = m.Icon;
               return (
