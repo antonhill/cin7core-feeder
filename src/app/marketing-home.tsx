@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { MODULES, ToolboxLogo, type ModuleConfig } from "@/app/module-nav";
+import { MODULES, ToolboxLogoHorizontal, type ModuleConfig } from "@/app/module-nav";
 import Reveal from "@/app/marketing-reveal";
 import Pricing from "@/app/marketing-pricing";
 import { getPriceEstimates } from "@/lib/fx";
@@ -48,9 +48,8 @@ export default async function MarketingHome() {
       {/* NAV */}
       <nav className="sticky top-0 z-50 border-b border-sidebar-border bg-sidebar-bg/90 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
-          <div className="flex items-center gap-3 text-white">
-            <ToolboxLogo className="h-8 w-8 shadow-sm" />
-            <span className="font-semibold tracking-tight">Cin7 Core Toolbox</span>
+          <div className="flex items-center text-white">
+            <ToolboxLogoHorizontal className="h-9 w-auto" />
           </div>
           <div className="hidden items-center gap-7 md:flex">
             <a href="#gap" className="text-sm font-medium text-sidebar-text hover:text-white">
@@ -272,9 +271,8 @@ export default async function MarketingHome() {
       {/* FOOTER */}
       <footer className="border-t border-sidebar-border bg-sidebar-bg py-9 text-sidebar-text">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 text-sm">
-          <div className="flex items-center gap-3 text-white">
-            <ToolboxLogo className="h-7 w-7" />
-            <span className="font-semibold">Cin7 Core Toolbox</span>
+          <div className="flex items-center text-white">
+            <ToolboxLogoHorizontal className="h-7 w-auto" />
           </div>
           <p>An independent tool — not affiliated with, or endorsed by, Cin7.</p>
           <p>
