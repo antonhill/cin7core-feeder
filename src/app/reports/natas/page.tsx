@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { loadNatasFilterOptionsAction, loadNatasReportAction } from "./actions";
 import type { NatasFilterOptions } from "@/reports/natas-query";
 import type { AggregatedNataRow, UnmappedItem } from "@/reports/natas-report";
@@ -17,6 +17,15 @@ function percent(value: number | null | undefined): string {
   return `${value.toFixed(2)}%`;
 }
 
+interface DisplayRow extends AggregatedNataRow {
+  /** Full-COGS profit per individual nata — display-only, derived here rather than in natas-report.ts since it's a trivial ratio of two already-computed fields. */
+  fullProfitPerNata: number | null;
+}
+
+function toDisplayRow(row: AggregatedNataRow): DisplayRow {
+  return { ...row, fullProfitPerNata: row.individualNatas > 0 ? row.fullProfit / row.individualNatas : null };
+}
+
 function sumRows(rows: AggregatedNataRow[]) {
   return rows.reduce(
     (acc, r) => ({
@@ -30,6 +39,84 @@ function sumRows(rows: AggregatedNataRow[]) {
     { individualNatas: 0, revenue: 0, packagingCost: 0, profit: 0, fullCogs: 0, fullProfit: 0 }
   );
 }
+
+type Totals = ReturnType<typeof sumRows>;
+
+/**
+ * Every column is independently toggleable via checkbox (this is purely a
+ * display-layer concern — it doesn't affect what data was fetched, so
+ * toggling never needs to re-run the report). Defaults to a smaller
+ * "standard" set (Anton, 2026-07-13): the full-COGS view (Cin7's own
+ * average_cost basis) rather than the packaging-only "net of packaging"
+ * columns, which are still available but unchecked by default for anyone
+ * who wants to drill into just the packaging-cost split this report was
+ * originally built around.
+ */
+const COLUMNS: {
+  key: string;
+  label: string;
+  defaultVisible: boolean;
+  render: (row: DisplayRow) => React.ReactNode;
+  renderTotal: (totals: Totals) => React.ReactNode;
+}[] = [
+  { key: "month", label: "Month", defaultVisible: true, render: (r) => r.month, renderTotal: () => "Total" },
+  { key: "location", label: "Location", defaultVisible: true, render: (r) => r.location, renderTotal: () => "" },
+  { key: "nataType", label: "Nata Type", defaultVisible: true, render: (r) => r.nataType, renderTotal: () => "" },
+  {
+    key: "individualNatas",
+    label: "Individual Natas",
+    defaultVisible: true,
+    render: (r) => r.individualNatas.toLocaleString(),
+    renderTotal: (t) => t.individualNatas.toLocaleString(),
+  },
+  { key: "revenue", label: "Revenue", defaultVisible: true, render: (r) => money(r.revenue), renderTotal: (t) => money(t.revenue) },
+  { key: "fullCogs", label: "COGS", defaultVisible: true, render: (r) => money(r.fullCogs), renderTotal: (t) => money(t.fullCogs) },
+  { key: "fullProfit", label: "Profit", defaultVisible: true, render: (r) => money(r.fullProfit), renderTotal: (t) => money(t.fullProfit) },
+  {
+    key: "fullProfitPerNata",
+    label: "Unit Profit",
+    defaultVisible: true,
+    render: (r) => money(r.fullProfitPerNata),
+    renderTotal: (t) => money(t.individualNatas > 0 ? t.fullProfit / t.individualNatas : null),
+  },
+  {
+    key: "fullMarginPercent",
+    label: "Margin %",
+    defaultVisible: true,
+    render: (r) => percent(r.fullMarginPercent),
+    renderTotal: (t) => percent(t.revenue > 0 ? (t.fullProfit / t.revenue) * 100 : null),
+  },
+  {
+    key: "packagingCost",
+    label: "Packaging COGS",
+    defaultVisible: false,
+    render: (r) => money(r.packagingCost),
+    renderTotal: (t) => money(t.packagingCost),
+  },
+  {
+    key: "packagingCostPerNata",
+    label: "Packaging COGS / Nata",
+    defaultVisible: false,
+    render: (r) => money(r.packagingCostPerNata),
+    renderTotal: (t) => money(t.individualNatas > 0 ? t.packagingCost / t.individualNatas : null),
+  },
+  {
+    key: "profit",
+    label: "Profit (net of packaging)",
+    defaultVisible: false,
+    render: (r) => money(r.profit),
+    renderTotal: (t) => money(t.profit),
+  },
+  {
+    key: "marginPercent",
+    label: "Margin % (net of packaging)",
+    defaultVisible: false,
+    render: (r) => percent(r.marginPercent),
+    renderTotal: (t) => percent(t.revenue > 0 ? (t.profit / t.revenue) * 100 : null),
+  },
+];
+
+const DEFAULT_VISIBLE_KEYS = new Set(COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key));
 
 export default function NatasReportPage() {
   const [options, setOptions] = useState<NatasFilterOptions | null>(null);
@@ -45,6 +132,8 @@ export default function NatasReportPage() {
   const [reportError, setReportError] = useState<string | null>(null);
   const [isRunning, startRunTransition] = useTransition();
 
+  const [visibleKeys, setVisibleKeys] = useState<Set<string>>(DEFAULT_VISIBLE_KEYS);
+
   useEffect(() => {
     loadNatasFilterOptionsAction().then((result) => {
       if (!result.ok) {
@@ -57,6 +146,15 @@ export default function NatasReportPage() {
 
   function toggleInstance(id: string) {
     setInstanceIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  function toggleColumn(key: string) {
+    setVisibleKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   }
 
   function handleRunReport() {
@@ -77,16 +175,19 @@ export default function NatasReportPage() {
     });
   }
 
+  const displayRows = useMemo(() => (rows ?? []).map(toDisplayRow), [rows]);
   const totals = rows ? sumRows(rows) : null;
+  const visibleColumns = COLUMNS.filter((c) => visibleKeys.has(c.key));
 
   return (
     <>
       <ReportDescription title="Natas Sold &amp; Packaging COGS">
         Individual natas sold per Nata Type, Location, and Month — normalizing both predefined packs (e.g. &ldquo;Lisbon
         Classic 6&rdquo;, extrapolated to 6 individual natas from its own Assembly BOM) and mixed packs (individual
-        singles combined with a zero-cost packaging line in the same sale). Packaging cost (Packaging + Label + Topping
-        components) is split across however many natas it actually packaged, so margins compare fairly at the
-        individual-nata level.
+        singles combined with a zero-cost packaging line in the same sale). COGS/Profit/Margin % use Cin7&rsquo;s own
+        average-cost basis by default; the packaging-only split this report was originally built around (Packaging +
+        Label + Topping cost, amortized across however many natas it packaged) is still available via the column
+        picker below.
       </ReportDescription>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -165,68 +266,62 @@ export default function NatasReportPage() {
 
       {rows && (
         <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="font-medium text-slate-900">
-            {rows.length} row{rows.length === 1 ? "" : "s"}
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="font-medium text-slate-900">
+              {rows.length} row{rows.length === 1 ? "" : "s"}
+            </p>
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 border-b border-slate-100 pb-4">
+            {COLUMNS.map((col) => (
+              <label key={col.key} className="flex items-center gap-1.5 text-sm text-slate-600">
+                <input type="checkbox" checked={visibleKeys.has(col.key)} onChange={() => toggleColumn(col.key)} className="h-4 w-4" />
+                {col.label}
+              </label>
+            ))}
+          </div>
+
           {rows.length === 0 && <p className="mt-2 text-sm text-slate-400">No matching Nata sales.</p>}
 
-          {rows.length > 0 && (
+          {rows.length > 0 && visibleColumns.length > 0 && (
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 text-slate-500">
-                    <th className="py-2 pr-4">Month</th>
-                    <th className="py-2 pr-4">Location</th>
-                    <th className="py-2 pr-4">Nata Type</th>
-                    <th className="py-2 pr-4">Individual Natas</th>
-                    <th className="py-2 pr-4">Revenue</th>
-                    <th className="py-2 pr-4">Packaging COGS</th>
-                    <th className="py-2 pr-4">Packaging COGS / Nata</th>
-                    <th className="py-2 pr-4">Profit (net of packaging)</th>
-                    <th className="py-2 pr-4">Margin % (net of packaging)</th>
-                    <th className="py-2 pr-4">Full COGS</th>
-                    <th className="py-2 pr-4">Profit (full COGS)</th>
-                    <th className="py-2 pr-4">Margin % (full COGS)</th>
+                    {visibleColumns.map((col) => (
+                      <th key={col.key} className="py-2 pr-4">
+                        {col.label}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
+                  {displayRows.map((row) => (
                     <tr key={`${row.month}|${row.location}|${row.nataType}`} className="border-b border-slate-100">
-                      <td className="py-2 pr-4">{row.month}</td>
-                      <td className="py-2 pr-4">{row.location}</td>
-                      <td className="py-2 pr-4">{row.nataType}</td>
-                      <td className="py-2 pr-4">{row.individualNatas.toLocaleString()}</td>
-                      <td className="py-2 pr-4">{money(row.revenue)}</td>
-                      <td className="py-2 pr-4">{money(row.packagingCost)}</td>
-                      <td className="py-2 pr-4">{money(row.packagingCostPerNata)}</td>
-                      <td className="py-2 pr-4">{money(row.profit)}</td>
-                      <td className="py-2 pr-4">{percent(row.marginPercent)}</td>
-                      <td className="py-2 pr-4">{money(row.fullCogs)}</td>
-                      <td className="py-2 pr-4">{money(row.fullProfit)}</td>
-                      <td className="py-2 pr-4">{percent(row.fullMarginPercent)}</td>
+                      {visibleColumns.map((col) => (
+                        <td key={col.key} className="py-2 pr-4">
+                          {col.render(row)}
+                        </td>
+                      ))}
                     </tr>
                   ))}
                 </tbody>
                 {totals && (
                   <tfoot>
                     <tr className="border-t border-slate-200 font-semibold text-slate-700">
-                      <td className="py-2 pr-4" colSpan={3}>
-                        Total
-                      </td>
-                      <td className="py-2 pr-4">{totals.individualNatas.toLocaleString()}</td>
-                      <td className="py-2 pr-4">{money(totals.revenue)}</td>
-                      <td className="py-2 pr-4">{money(totals.packagingCost)}</td>
-                      <td className="py-2 pr-4">{money(totals.individualNatas > 0 ? totals.packagingCost / totals.individualNatas : null)}</td>
-                      <td className="py-2 pr-4">{money(totals.profit)}</td>
-                      <td className="py-2 pr-4">{percent(totals.revenue > 0 ? (totals.profit / totals.revenue) * 100 : null)}</td>
-                      <td className="py-2 pr-4">{money(totals.fullCogs)}</td>
-                      <td className="py-2 pr-4">{money(totals.fullProfit)}</td>
-                      <td className="py-2 pr-4">{percent(totals.revenue > 0 ? (totals.fullProfit / totals.revenue) * 100 : null)}</td>
+                      {visibleColumns.map((col) => (
+                        <td key={col.key} className="py-2 pr-4">
+                          {col.renderTotal(totals)}
+                        </td>
+                      ))}
                     </tr>
                   </tfoot>
                 )}
               </table>
             </div>
+          )}
+          {rows.length > 0 && visibleColumns.length === 0 && (
+            <p className="mt-4 text-sm text-slate-400">No columns selected — check at least one above.</p>
           )}
         </section>
       )}

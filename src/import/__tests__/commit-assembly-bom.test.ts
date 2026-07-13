@@ -58,7 +58,7 @@ describe("commitAssemblyBomRows", () => {
       row({ Action: "Create/Update", ComponentSKU: "COMP2" }),
     ]);
 
-    expect(summary).toEqual({ linesUpserted: 2, linesDeleted: 0 });
+    expect(summary).toEqual({ linesUpserted: 2, linesDeleted: 0, duplicatesReplaced: 0 });
     expect(upserts.assembly_bom_lines).toHaveLength(2);
   });
 
@@ -69,7 +69,7 @@ describe("commitAssemblyBomRows", () => {
       row({ Action: "Delete", ComponentSKU: "COMP1" }),
     ]);
 
-    expect(summary).toEqual({ linesUpserted: 0, linesDeleted: 1 });
+    expect(summary).toEqual({ linesUpserted: 0, linesDeleted: 1, duplicatesReplaced: 0 });
     expect(upserts.assembly_bom_lines).toBeUndefined();
     expect(deleteCalls).toEqual([
       { table: "assembly_bom_lines", filters: { org_id: "org1", product_sku: "PARENT", component_sku: "COMP1" } },
@@ -91,8 +91,26 @@ describe("commitAssemblyBomRows", () => {
       row({ ComponentSKU: "COMP3" }),
     ]);
 
-    expect(summary).toEqual({ linesUpserted: 2, linesDeleted: 1 });
+    expect(summary).toEqual({ linesUpserted: 2, linesDeleted: 1, duplicatesReplaced: 0 });
     expect(upserts.assembly_bom_lines).toHaveLength(2);
     expect(deleteCalls).toHaveLength(1);
+  });
+
+  it("dedupes a repeated (ProductSKU, ComponentSKU) pair instead of letting a single bulk upsert fail outright", async () => {
+    const { db, upserts } = createFakeDb();
+
+    const summary = await commitAssemblyBomRows(db, "org1", [
+      row({ ComponentSKU: "COMP1", Quantity: 1 }),
+      row({ ComponentSKU: "COMP2", Quantity: 2 }),
+      // Same (ProductSKU, ComponentSKU) as the first row, edited later in the file — this is what
+      // previously caused Postgres's "ON CONFLICT DO UPDATE command cannot affect row a second
+      // time" to fail the whole batch. The later row should win.
+      row({ ComponentSKU: "COMP1", Quantity: 5 }),
+    ]);
+
+    expect(summary).toEqual({ linesUpserted: 2, linesDeleted: 0, duplicatesReplaced: 1 });
+    expect(upserts.assembly_bom_lines).toHaveLength(2);
+    const comp1 = upserts.assembly_bom_lines.find((l) => l.component_sku === "COMP1");
+    expect(comp1?.quantity).toBe(5);
   });
 });
