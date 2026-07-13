@@ -49,7 +49,7 @@ export default async function MarketingHome() {
       <nav className="sticky top-0 z-50 border-b border-sidebar-border bg-sidebar-bg/90 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
           <div className="flex items-center text-white">
-            <ToolboxLogoHorizontal className="h-9 w-auto" />
+            <ToolboxLogoHorizontal className="h-11 w-auto" />
           </div>
           <div className="hidden items-center gap-7 md:flex">
             <a href="#gap" className="text-sm font-medium text-sidebar-text hover:text-white">
