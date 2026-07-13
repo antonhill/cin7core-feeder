@@ -98,7 +98,7 @@ export default async function MarketingHome() {
             WebkitMaskImage: "radial-gradient(ellipse 75% 70% at 72% 25%, #000 40%, transparent 100%)",
           }}
         />
-        <div className="relative mx-auto grid max-w-6xl grid-cols-1 items-center gap-12 px-6 py-20 lg:grid-cols-2 lg:py-24">
+        <div className="relative mx-auto grid max-w-6xl grid-cols-1 items-center gap-12 px-6 py-20 lg:grid-cols-[2fr_3fr] lg:py-24">
           <div className="mx-auto max-w-xl text-center lg:mx-0 lg:text-left">
             <p className="font-mono text-xs font-medium uppercase tracking-wide text-indigo-300">The admin layer for Cin7 Core</p>
             <h1 className="mt-5 text-4xl font-bold leading-tight tracking-tight text-white sm:text-5xl">
@@ -131,9 +131,9 @@ export default async function MarketingHome() {
           </div>
           <Image
             src="/marketing/hero.png"
-            alt="From disconnected and uncertain to connected and in control — Cin7 Core Toolbox brings every Cin7 Core instance into one dashboard."
-            width={1536}
-            height={1024}
+            alt="The real Cin7 Core Toolbox dashboard — active instances, team members, recent activity, ready-to-ship and stock health at a glance, and every connected module one click away."
+            width={1920}
+            height={745}
             priority
             className="relative w-full rounded-2xl border border-sidebar-border shadow-2xl"
           />
