@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/supabase/server";
 import { syncOrgSales } from "@/sync/sync-sales";
+import { runCronRotation } from "@/sync/cron-rotation";
 import { assertInternalAuth, UnauthorizedError } from "@/lib/internal-auth";
 
 // Separate cron/route from /api/sync: sales sync is a two-phase, queue-based
@@ -14,11 +15,18 @@ import { assertInternalAuth, UnauthorizedError } from "@/lib/internal-auth";
 // already needed (/api/sync, /api/sync-purchases).
 export const maxDuration = 300;
 
-/** GET — Vercel Cron entry point, same auth convention as /api/sync. */
+/**
+ * GET — Vercel Cron entry point, same auth convention as /api/sync.
+ * Rotates through active orgs oldest-attempted-first (see
+ * src/sync/cron-rotation.ts) rather than sweeping every org's sales in one
+ * invocation — confirmed live 2026-07-11 that the unscoped sweep can hit
+ * the 300s ceiling as the tenant base grows, same bug /api/sync had.
+ */
 export async function GET(req: Request) {
   try {
     assertInternalAuth(req);
-    const results = await syncOrgSales(createServiceRoleClient());
+    const db = createServiceRoleClient();
+    const results = await runCronRotation(db, "sync-sales", (orgId) => syncOrgSales(db, orgId));
     return NextResponse.json({ results });
   } catch (e) {
     if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

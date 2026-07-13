@@ -1,27 +1,33 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/supabase/server";
 import { syncOrgInstances } from "@/sync/sync-org";
+import { runCronRotation } from "@/sync/cron-rotation";
 import { assertInternalAuth, UnauthorizedError } from "@/lib/internal-auth";
 
 // Cin7's own limit is 60 calls/min; a catalogue with real volume can take
 // well over the default function timeout to sync at 1 req/sec. Confirmed
-// live 2026-07-09 (Vercel logs) that the previous 60s cap was too low —
-// every org/instance syncs in one unscoped pass here, so 300s (Vercel Pro's
-// serverless function ceiling) buys real headroom. If data volume grows
-// enough that even this isn't sufficient, the durable fix is scoping this
-// to one org per invocation rather than raising the ceiling further.
+// live 2026-07-09 (Vercel logs) that the previous 60s cap was too low, and
+// confirmed live again 2026-07-11 that even 300s isn't enough once every
+// org/instance is swept in one unscoped invocation. The durable fix (now
+// landed): GET rotates through active orgs oldest-attempted-first within a
+// time budget per tick, via runCronRotation (src/sync/cron-rotation.ts),
+// rather than sweeping every org in one call — 300s is now the safety
+// margin for however many orgs the rotation actually attempts per tick,
+// not a budget for the whole tenant base at once.
 export const maxDuration = 300;
 
 /**
  * GET — the Vercel Cron entry point (crons always call GET and Vercel
  * auto-injects `Authorization: Bearer <CRON_SECRET>`; set CRON_SECRET in
  * Vercel to the same value as SYNC_SHARED_SECRET so this passes auth).
- * Syncs every active instance across every organization.
+ * Rotates through active orgs oldest-attempted-first (see cron-rotation.ts)
+ * rather than sweeping every org in one invocation.
  */
 export async function GET(req: Request) {
   try {
     assertInternalAuth(req);
-    const results = await syncOrgInstances(createServiceRoleClient());
+    const db = createServiceRoleClient();
+    const results = await runCronRotation(db, "sync", (orgId) => syncOrgInstances(db, orgId));
     return NextResponse.json({ results });
   } catch (e) {
     if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/supabase/server";
 import { syncOrgPurchases } from "@/sync/sync-purchases";
+import { runCronRotation } from "@/sync/cron-rotation";
 import { assertInternalAuth, UnauthorizedError } from "@/lib/internal-auth";
 
 // Separate cron/route from /api/sync and /api/sync-sales: purchase receipt
@@ -14,11 +15,18 @@ import { assertInternalAuth, UnauthorizedError } from "@/lib/internal-auth";
 // 300s (Vercel Pro's serverless ceiling) buys real headroom.
 export const maxDuration = 300;
 
-/** GET — Vercel Cron entry point, same auth convention as /api/sync. */
+/**
+ * GET — Vercel Cron entry point, same auth convention as /api/sync.
+ * Rotates through active orgs oldest-attempted-first (see
+ * src/sync/cron-rotation.ts) rather than sweeping every org's purchases in
+ * one invocation — same 300s-ceiling bug /api/sync had, confirmed live
+ * 2026-07-11 as the tenant base grows.
+ */
 export async function GET(req: Request) {
   try {
     assertInternalAuth(req);
-    const results = await syncOrgPurchases(createServiceRoleClient());
+    const db = createServiceRoleClient();
+    const results = await runCronRotation(db, "sync-purchases", (orgId) => syncOrgPurchases(db, orgId));
     return NextResponse.json({ results });
   } catch (e) {
     if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
