@@ -52,7 +52,7 @@ describe("buildBomCostIndex", () => {
 });
 
 describe("buildNatasReport", () => {
-  it("extrapolates a predefined-pack sale to its individual-nata count and own packaging cost (Lisbon Classic 1 receipt)", () => {
+  it("extrapolates a predefined-pack sale to its individual-nata count, own packaging cost, and full COGS (Lisbon Classic 1 receipt)", () => {
     const bomLines: BomLineInput[] = [
       { productSku: "LisbonClassic1", componentSku: "2PillowSleeve", quantity: 0.001, estimatedUnitCost: 1910, componentCategoryCode: "Packaging" },
       { productSku: "LisbonClassic1", componentSku: "CinnamonSachet", quantity: 0.002, estimatedUnitCost: 73.7, componentCategoryCode: "Topping" },
@@ -70,6 +70,7 @@ describe("buildNatasReport", () => {
         categoryCode: "Nata",
         quantity: 1,
         total: 21,
+        averageCost: 5.2444,
         invoiceDate: "2026-07-12",
         location: "Sandton",
       },
@@ -84,9 +85,13 @@ describe("buildNatasReport", () => {
     expect(rows[0].packagingCostPerNata).toBeCloseTo(2.71733, 4);
     expect(rows[0].profit).toBeCloseTo(21 - 2.71733, 4);
     expect(rows[0].marginPercent).toBeCloseTo(((21 - 2.71733) / 21) * 100, 4);
+    // Full COGS uses Cin7's own average_cost, independent of the BOM-derived packaging split.
+    expect(rows[0].fullCogs).toBeCloseTo(5.2444, 4);
+    expect(rows[0].fullProfit).toBeCloseTo(21 - 5.2444, 4);
+    expect(rows[0].fullMarginPercent).toBeCloseTo(((21 - 5.2444) / 21) * 100, 4);
   });
 
-  it("splits a mixed-pack sale's patch-packaging cost proportionally across two Nata Types in the same sale (SNTN4 receipt)", () => {
+  it("splits a mixed-pack sale's patch-packaging cost (both BOM-derived and Cin7's own average cost) proportionally across two Nata Types in the same sale (SNTN4 receipt)", () => {
     const bomLines: BomLineInput[] = [
       // LisbonClassicSingleNata: no packaging components at all — packaging is added separately via 6NataPackaging.
       { productSku: "LisbonClassicSingleNata", componentSku: "LisClassicFillStd", quantity: 0.006521, estimatedUnitCost: 318.5898, componentCategoryCode: "Fillings" },
@@ -109,6 +114,7 @@ describe("buildNatasReport", () => {
         categoryCode: "Packaging",
         quantity: 1,
         total: 0,
+        averageCost: 4, // Cin7's own average cost for the packaging bundle — a real cost, even though it's sold at R0.
         invoiceDate: "2026-07-12",
         location: "Sandton",
       },
@@ -120,6 +126,7 @@ describe("buildNatasReport", () => {
         categoryCode: "Nata",
         quantity: 3,
         total: 58.12,
+        averageCost: 2.5377,
         invoiceDate: "2026-07-12",
         location: "Sandton",
       },
@@ -131,6 +138,7 @@ describe("buildNatasReport", () => {
         categoryCode: "Nata",
         quantity: 3,
         total: 60.88,
+        averageCost: 3.2524,
         invoiceDate: "2026-07-12",
         location: "Sandton",
       },
@@ -148,6 +156,9 @@ describe("buildNatasReport", () => {
     expect(happyRow?.packagingCost).toBeCloseTo(2.292165, 4);
     // Total revenue across both rows matches the real sale total (R119.00).
     expect((lisbonRow?.revenue ?? 0) + (happyRow?.revenue ?? 0)).toBeCloseTo(119, 2);
+    // Full COGS: each single's own (quantity*averageCost) plus half of 6NataPackaging's average cost (4 * 1 / 2 = 2).
+    expect(lisbonRow?.fullCogs).toBeCloseTo(3 * 2.5377 + 2, 4);
+    expect(happyRow?.fullCogs).toBeCloseTo(3 * 3.2524 + 2, 4);
   });
 
   it("reports zero packaging cost for a NoPackaging pack variant with no Packaging/Label/Topping components in its own BOM and no patch line in the sale", () => {
@@ -164,16 +175,17 @@ describe("buildNatasReport", () => {
         categoryCode: "Nata",
         quantity: 1,
         total: 150,
+        averageCost: 0,
         invoiceDate: "2026-07-12",
         location: "Sandton",
       },
     ];
 
     const { rows } = buildNatasReport(saleLines, buildBomCostIndex(bomLines));
-    expect(rows[0]).toMatchObject({ individualNatas: 12, packagingCost: 0, packagingCostPerNata: 0, profit: 150 });
+    expect(rows[0]).toMatchObject({ individualNatas: 12, packagingCost: 0, packagingCostPerNata: 0, profit: 150, fullCogs: 0, fullProfit: 150 });
   });
 
-  it("reports marginPercent as null (not 0 or NaN) when revenue is 0, since the ratio is genuinely undefined", () => {
+  it("reports marginPercent/fullMarginPercent as null (not 0 or NaN) when revenue is 0, since the ratio is genuinely undefined", () => {
     const saleLines: NatasSaleLineInput[] = [
       {
         instanceId: "inst-1",
@@ -183,12 +195,14 @@ describe("buildNatasReport", () => {
         categoryCode: "Nata",
         quantity: 1,
         total: 0,
+        averageCost: 1,
         invoiceDate: "2026-07-12",
         location: "Sandton",
       },
     ];
     const { rows } = buildNatasReport(saleLines, buildBomCostIndex([]));
     expect(rows[0].marginPercent).toBeNull();
+    expect(rows[0].fullMarginPercent).toBeNull();
   });
 
   it("surfaces an unrecognized Nata-category SKU in `unmapped` instead of dropping or miscounting it", () => {
@@ -201,6 +215,7 @@ describe("buildNatasReport", () => {
         categoryCode: "Nata",
         quantity: 5,
         total: 0,
+        averageCost: 0,
         invoiceDate: "2026-07-12",
         location: "Sandton",
       },
@@ -224,6 +239,7 @@ describe("buildNatasReport", () => {
         categoryCode: "Nata",
         quantity: 1,
         total: 21,
+        averageCost: 5,
         invoiceDate: "2026-07-05",
         location: "Sandton",
       },
@@ -235,6 +251,7 @@ describe("buildNatasReport", () => {
         categoryCode: "Nata",
         quantity: 2,
         total: 42,
+        averageCost: 5,
         invoiceDate: "2026-07-20",
         location: "Sandton",
       },
@@ -242,6 +259,6 @@ describe("buildNatasReport", () => {
 
     const { rows } = buildNatasReport(saleLines, buildBomCostIndex(bomLines));
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ month: "2026-07", location: "Sandton", nataType: "Lisbon Classic", individualNatas: 3, revenue: 63 });
+    expect(rows[0]).toMatchObject({ month: "2026-07", location: "Sandton", nataType: "Lisbon Classic", individualNatas: 3, revenue: 63, fullCogs: 15 });
   });
 });

@@ -28,6 +28,8 @@ export interface NatasSaleLineInput {
   quantity: number;
   /** Line revenue — already net of discount (matches sale_lines.total). */
   total: number;
+  /** Cin7's own per-unit average cost (sale_lines.average_cost) — the same COGS basis the Sales report uses, independent of this report's own BOM-derived packaging split. */
+  averageCost: number | null;
   /** "YYYY-MM-DD", or null if not yet known. */
   invoiceDate: string | null;
   location: string | null;
@@ -64,10 +66,15 @@ export interface AggregatedNataRow {
   revenue: number;
   packagingCost: number;
   packagingCostPerNata: number | null;
-  /** Revenue minus packaging cost only — NOT a full-COGS profit (ingredient/casing cost isn't split by this report; see the Sales report's average_cost-based Profit/Margin% for that). */
+  /** Revenue minus packaging cost only — NOT a full-COGS profit (ingredient/casing cost isn't split by this report). See fullProfit for that. */
   profit: number;
   /** profit / revenue * 100, null when revenue is 0 (matches the Sales report's own null-not-0 convention for an undefined ratio). */
   marginPercent: number | null;
+  /** Cin7's own average-cost COGS (same basis as the Sales report), attributed the same way packagingCost is — a mixed-pack sale's patch-packaging line's own average cost is split proportionally across that sale's individual-nata lines, same as its BOM-derived packaging cost. */
+  fullCogs: number;
+  /** revenue - fullCogs — the true full-cost profit, unlike `profit` above. */
+  fullProfit: number;
+  fullMarginPercent: number | null;
 }
 
 export interface NatasReportResult {
@@ -156,7 +163,15 @@ export function buildNatasReport(saleLines: NatasSaleLineInput[], bomCostIndex: 
   }
 
   const unmappedBySku = new Map<string, UnmappedItem>();
-  const emitted: { month: string; location: string; nataType: string; individualNatas: number; revenue: number; packagingCost: number }[] = [];
+  const emitted: {
+    month: string;
+    location: string;
+    nataType: string;
+    individualNatas: number;
+    revenue: number;
+    packagingCost: number;
+    fullCogs: number;
+  }[] = [];
 
   for (const lines of salesByKey.values()) {
     const natLines = lines.filter((l) => l.categoryCode === "Nata");
@@ -166,7 +181,8 @@ export function buildNatasReport(saleLines: NatasSaleLineInput[], bomCostIndex: 
       const info = bomCostIndex.get(line.productSku);
       const individualNatas = line.quantity * (info?.casingMultiplier ?? 1);
       const ownPackagingCost = (info?.packagingUnitCost ?? 0) * line.quantity;
-      return { line, individualNatas, ownPackagingCost };
+      const ownFullCogs = (line.averageCost ?? 0) * line.quantity;
+      return { line, individualNatas, ownPackagingCost, ownFullCogs };
     });
 
     const totalNatasInSale = perNatLine.reduce((sum, x) => sum + x.individualNatas, 0);
@@ -174,8 +190,13 @@ export function buildNatasReport(saleLines: NatasSaleLineInput[], bomCostIndex: 
       const info = bomCostIndex.get(line.productSku);
       return sum + (info?.packagingUnitCost ?? 0) * line.quantity;
     }, 0);
+    // The patch-packaging line's own Cin7 average cost is a real cost too — split it
+    // across the sale's individual-nata lines the same way its BOM-derived packaging
+    // cost is split, so fullCogs reflects it rather than dropping it on the floor
+    // (a patch line's own revenue is always 0, but its cost isn't).
+    const patchFullCogsTotal = patchLines.reduce((sum, line) => sum + (line.averageCost ?? 0) * line.quantity, 0);
 
-    for (const { line, individualNatas, ownPackagingCost } of perNatLine) {
+    for (const { line, individualNatas, ownPackagingCost, ownFullCogs } of perNatLine) {
       const nataType = mapNataType(line.productSku);
       if (nataType === null) {
         const existing = unmappedBySku.get(line.productSku);
@@ -187,8 +208,9 @@ export function buildNatasReport(saleLines: NatasSaleLineInput[], bomCostIndex: 
         continue;
       }
 
-      const allocatedPatchShare =
-        patchPackagingCostTotal > 0 && totalNatasInSale > 0 ? patchPackagingCostTotal * (individualNatas / totalNatasInSale) : 0;
+      const natasShare = totalNatasInSale > 0 ? individualNatas / totalNatasInSale : 0;
+      const allocatedPatchPackagingShare = patchPackagingCostTotal > 0 ? patchPackagingCostTotal * natasShare : 0;
+      const allocatedPatchFullCogsShare = patchFullCogsTotal > 0 ? patchFullCogsTotal * natasShare : 0;
 
       emitted.push({
         month: monthOf(line.invoiceDate),
@@ -196,14 +218,15 @@ export function buildNatasReport(saleLines: NatasSaleLineInput[], bomCostIndex: 
         nataType,
         individualNatas,
         revenue: line.total,
-        packagingCost: ownPackagingCost + allocatedPatchShare,
+        packagingCost: ownPackagingCost + allocatedPatchPackagingShare,
+        fullCogs: ownFullCogs + allocatedPatchFullCogsShare,
       });
     }
   }
 
   const grouped = new Map<
     string,
-    { month: string; location: string; nataType: string; individualNatas: number; revenue: number; packagingCost: number }
+    { month: string; location: string; nataType: string; individualNatas: number; revenue: number; packagingCost: number; fullCogs: number }
   >();
   for (const e of emitted) {
     const key = `${e.month}|${e.location}|${e.nataType}`;
@@ -212,6 +235,7 @@ export function buildNatasReport(saleLines: NatasSaleLineInput[], bomCostIndex: 
       existing.individualNatas += e.individualNatas;
       existing.revenue += e.revenue;
       existing.packagingCost += e.packagingCost;
+      existing.fullCogs += e.fullCogs;
     } else {
       grouped.set(key, { ...e });
     }
@@ -220,11 +244,14 @@ export function buildNatasReport(saleLines: NatasSaleLineInput[], bomCostIndex: 
   const rows: AggregatedNataRow[] = [...grouped.values()]
     .map((r) => {
       const profit = r.revenue - r.packagingCost;
+      const fullProfit = r.revenue - r.fullCogs;
       return {
         ...r,
         packagingCostPerNata: r.individualNatas > 0 ? r.packagingCost / r.individualNatas : null,
         profit,
         marginPercent: r.revenue > 0 ? (profit / r.revenue) * 100 : null,
+        fullProfit,
+        fullMarginPercent: r.revenue > 0 ? (fullProfit / r.revenue) * 100 : null,
       };
     })
     .sort((a, b) => a.month.localeCompare(b.month) || a.location.localeCompare(b.location) || a.nataType.localeCompare(b.nataType));

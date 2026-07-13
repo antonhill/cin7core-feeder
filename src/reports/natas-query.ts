@@ -24,6 +24,7 @@ interface RawSaleLineRow {
   product_name: string | null;
   quantity: number | null;
   total: number | null;
+  average_cost: number | null;
   invoice_date: string | null;
   sales: { location: string | null } | null;
 }
@@ -56,7 +57,7 @@ export async function getNatasReport(db: SupabaseClient, filters: NatasReportFil
 
   let saleLinesQuery = db
     .from("sale_lines")
-    .select("instance_id, cin7_sale_id, product_sku, product_name, quantity, total, invoice_date, sales!inner(location)")
+    .select("instance_id, cin7_sale_id, product_sku, product_name, quantity, total, average_cost, invoice_date, sales!inner(location)")
     .eq("org_id", orgId);
   if (filters.instanceIds?.length) saleLinesQuery = saleLinesQuery.in("instance_id", filters.instanceIds);
   if (filters.dateFrom) saleLinesQuery = saleLinesQuery.gte("invoice_date", filters.dateFrom);
@@ -78,6 +79,7 @@ export async function getNatasReport(db: SupabaseClient, filters: NatasReportFil
         categoryCode: categoryBySku.get(sku) ?? null,
         quantity: row.quantity ?? 0,
         total: row.total ?? 0,
+        averageCost: row.average_cost,
         invoiceDate: row.invoice_date,
         location: row.sales?.location ?? null,
       };

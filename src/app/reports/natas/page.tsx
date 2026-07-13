@@ -24,8 +24,10 @@ function sumRows(rows: AggregatedNataRow[]) {
       revenue: acc.revenue + r.revenue,
       packagingCost: acc.packagingCost + r.packagingCost,
       profit: acc.profit + r.profit,
+      fullCogs: acc.fullCogs + r.fullCogs,
+      fullProfit: acc.fullProfit + r.fullProfit,
     }),
-    { individualNatas: 0, revenue: 0, packagingCost: 0, profit: 0 }
+    { individualNatas: 0, revenue: 0, packagingCost: 0, profit: 0, fullCogs: 0, fullProfit: 0 }
   );
 }
 
@@ -182,6 +184,9 @@ export default function NatasReportPage() {
                     <th className="py-2 pr-4">Packaging COGS / Nata</th>
                     <th className="py-2 pr-4">Profit (net of packaging)</th>
                     <th className="py-2 pr-4">Margin % (net of packaging)</th>
+                    <th className="py-2 pr-4">Full COGS</th>
+                    <th className="py-2 pr-4">Profit (full COGS)</th>
+                    <th className="py-2 pr-4">Margin % (full COGS)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -196,6 +201,9 @@ export default function NatasReportPage() {
                       <td className="py-2 pr-4">{money(row.packagingCostPerNata)}</td>
                       <td className="py-2 pr-4">{money(row.profit)}</td>
                       <td className="py-2 pr-4">{percent(row.marginPercent)}</td>
+                      <td className="py-2 pr-4">{money(row.fullCogs)}</td>
+                      <td className="py-2 pr-4">{money(row.fullProfit)}</td>
+                      <td className="py-2 pr-4">{percent(row.fullMarginPercent)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -211,6 +219,9 @@ export default function NatasReportPage() {
                       <td className="py-2 pr-4">{money(totals.individualNatas > 0 ? totals.packagingCost / totals.individualNatas : null)}</td>
                       <td className="py-2 pr-4">{money(totals.profit)}</td>
                       <td className="py-2 pr-4">{percent(totals.revenue > 0 ? (totals.profit / totals.revenue) * 100 : null)}</td>
+                      <td className="py-2 pr-4">{money(totals.fullCogs)}</td>
+                      <td className="py-2 pr-4">{money(totals.fullProfit)}</td>
+                      <td className="py-2 pr-4">{percent(totals.revenue > 0 ? (totals.fullProfit / totals.revenue) * 100 : null)}</td>
                     </tr>
                   </tfoot>
                 )}
