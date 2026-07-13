@@ -14,7 +14,7 @@ beforeEach(() => {
 });
 
 describe("fetchAllProductsForReplenish", () => {
-  it("requests /Product with page/limit and parses ReorderLevels entries", async () => {
+  it("requests /Product with page/limit and IncludeReorderLevels=true, and parses ReorderLevels entries", async () => {
     vi.mocked(cin7Request).mockResolvedValueOnce({
       Products: [
         {
@@ -40,7 +40,7 @@ describe("fetchAllProductsForReplenish", () => {
         reorderLevels: [{ locationName: "Main Warehouse", minimumBeforeReorder: 10, reorderQuantity: 50 }],
       },
     ]);
-    expect(cin7Request).toHaveBeenCalledWith(creds, "/Product", { query: { page: 1, limit: 100 } });
+    expect(cin7Request).toHaveBeenCalledWith(creds, "/Product", { query: { page: 1, limit: 100, IncludeReorderLevels: "true" } });
   });
 
   it("defaults reorderLevels to an empty array when the field is missing or empty", async () => {

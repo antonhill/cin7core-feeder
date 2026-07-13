@@ -29,14 +29,17 @@ export interface ReplenishProduct {
 }
 
 /**
- * One paginated `/Product` pass reading ReorderLevels. Confirmed live
- * 2026-07-13 that this field is present on the default `/Product`
- * response with no opt-in query flag needed (unlike BOM/Suppliers, which
- * require `IncludeBOM`/`IncludeSuppliers` — see product-cost.ts). Every
- * live product checked so far returns an empty array; a real populated
- * example hasn't been confirmed yet, so this is built against Cin7's
- * documented schema, not a verified live shape — re-check the first time
- * a real location-level override actually appears in this data.
+ * One paginated `/Product` pass reading ReorderLevels. An earlier version
+ * of this comment claimed no opt-in query flag was needed — that was
+ * wrong. Confirmed live 2026-07-13 (Anton's own Spark Demo instance, SKU
+ * `BTSLARGEBLK01`, matching his real "Stock Reorder locations" CSV
+ * export): the plain `/Product` response always returns `ReorderLevels:
+ * []` even when the product genuinely has entries set — the array is
+ * only populated when the request includes `IncludeReorderLevels=true`,
+ * the same opt-in-nested-data pattern as `IncludeBOM`/`IncludeSuppliers`
+ * (see product-cost.ts). The earlier "no flag needed" conclusion came
+ * from testing SKUs that likely had no reorder levels set at all, not
+ * from a real negative result on a populated one.
  *
  * Live-fetched rather than read from the `products` table because
  * ReorderLevels isn't in the InventoryList CSV template this app's
@@ -51,7 +54,7 @@ export async function fetchAllProductsForReplenish(creds: Cin7Credentials): Prom
   const all: ReplenishProduct[] = [];
   for (let page = 1; ; page++) {
     const response = await cin7Request<Cin7ProductListResponse>(creds, "/Product", {
-      query: { page, limit: pageSize },
+      query: { page, limit: pageSize, IncludeReorderLevels: "true" },
     });
     const products = response.Products ?? [];
     for (const raw of products) all.push(toReplenishProduct(raw));
