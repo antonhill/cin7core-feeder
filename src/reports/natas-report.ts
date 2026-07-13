@@ -39,6 +39,16 @@ export interface BomLineInput {
   productSku: string;
   componentSku: string;
   quantity: number;
+  /**
+   * Cin7's own live-tracked average cost for the *component itself*
+   * (products.average_cost) — the primary cost source. Confirmed live
+   * 2026-07-13: this is already correctly populated for every real
+   * packaging/label/topping material (no manual CSV import needed), unlike
+   * `estimatedUnitCost` below, which depends on a fragile manual
+   * Assembly BOM CSV round-trip and is 0 whenever that hasn't succeeded.
+   */
+  componentAverageCost: number | null;
+  /** Assembly BOM CSV's own EstimatedUnitCost column — used only as a fallback when componentAverageCost isn't available. */
   estimatedUnitCost: number | null;
   /** The *component's own* category (products.category_code), not the parent's. */
   componentCategoryCode: string | null;
@@ -134,7 +144,7 @@ export function buildBomCostIndex(bomLines: BomLineInput[]): Map<string, BomCost
     for (const line of lines) {
       if (CASING_SKUS.includes(line.componentSku)) casingQty += line.quantity;
       if (line.componentCategoryCode && PACKAGING_CATEGORIES.includes(line.componentCategoryCode)) {
-        packagingCost += line.quantity * (line.estimatedUnitCost ?? 0);
+        packagingCost += line.quantity * (line.componentAverageCost ?? line.estimatedUnitCost ?? 0);
       }
     }
     index.set(sku, { casingMultiplier: casingQty > 0 ? casingQty : 1, packagingUnitCost: packagingCost });

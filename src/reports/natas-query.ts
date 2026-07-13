@@ -48,11 +48,22 @@ export async function getNatasReport(db: SupabaseClient, filters: NatasReportFil
   const orgId = CASA_DAS_NATAS_ORG_ID;
 
   // This org's whole catalog is small — cheaper to fetch once for a
-  // sku -> category lookup than to join per sale line or per BOM line.
-  const { data: productsData, error: productsError } = await db.from("products").select("sku, category_code").eq("org_id", orgId);
+  // sku -> category/cost lookup than to join per sale line or per BOM line.
+  // average_cost is Cin7's own live-tracked per-unit cost — confirmed live
+  // 2026-07-13 to already be correctly populated for every real packaging
+  // component (no manual CSV import needed), unlike assembly_bom_lines'
+  // own estimated_unit_cost, which depends on that fragile round-trip and
+  // is only used as a fallback (see buildBomCostIndex).
+  const { data: productsData, error: productsError } = await db
+    .from("products")
+    .select("sku, category_code, average_cost")
+    .eq("org_id", orgId);
   if (productsError) throw new Error(`products: ${productsError.message}`);
   const categoryBySku = new Map(
     (productsData ?? []).map((p: { sku: string; category_code: string | null }) => [p.sku, p.category_code])
+  );
+  const averageCostBySku = new Map(
+    (productsData ?? []).map((p: { sku: string; average_cost: number | null }) => [p.sku, p.average_cost])
   );
 
   let saleLinesQuery = db
@@ -99,6 +110,7 @@ export async function getNatasReport(db: SupabaseClient, filters: NatasReportFil
       productSku: row.product_sku,
       componentSku: row.component_sku,
       quantity: row.quantity,
+      componentAverageCost: averageCostBySku.get(row.component_sku) ?? null,
       estimatedUnitCost: row.estimated_unit_cost,
       componentCategoryCode: categoryBySku.get(row.component_sku) ?? null,
     }));
