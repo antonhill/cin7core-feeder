@@ -23,6 +23,11 @@ function qty(value: number): string {
   return value.toLocaleString();
 }
 
+/** Unique per proposed line — matches build.ts's own `${sku}::${location}` threshold-map keying convention. buildReplenishLines only ever emits one line per (sku, destination) pair, so this is stable across re-renders. */
+function lineKey(line: ReplenishLine): string {
+  return `${line.productSku}::${line.toLocation}`;
+}
+
 export default function ReplenishPage() {
   const [instances, setInstances] = useState<InstancePickerItem[]>([]);
   const [instancesError, setInstancesError] = useState<string | null>(null);
@@ -63,6 +68,34 @@ export default function ReplenishPage() {
     const { thresholds } = resolveReorderThresholds(previewData.availabilityRows, previewData.products);
     return buildReplenishLines(previewData.availabilityRows, thresholds, sourceLocation);
   }, [previewData, sourceLocation]);
+
+  // Raw toggle state; ticking a line off excludes it. Not reset on every
+  // source-location change — derived below against the currently visible
+  // line keys instead (same "drop stale selections rather than resync via
+  // effect" pattern as the Data Audit page's IssueTypeSection), so a
+  // leftover exclusion from a previous source location can't silently
+  // apply to an unrelated line that happens to reuse the same key.
+  const [rawExcludedLineKeys, setRawExcludedLineKeys] = useState<Set<string>>(new Set());
+  const excludedLineKeys = useMemo(() => {
+    if (!lines) return new Set<string>();
+    const visibleKeys = new Set(lines.map(lineKey));
+    return new Set([...rawExcludedLineKeys].filter((k) => visibleKeys.has(k)));
+  }, [rawExcludedLineKeys, lines]);
+  const selectedLines = useMemo(() => (lines ? lines.filter((l) => !excludedLineKeys.has(lineKey(l))) : []), [lines, excludedLineKeys]);
+
+  function toggleLine(key: string) {
+    setRawExcludedLineKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleAllLines() {
+    if (!lines) return;
+    setRawExcludedLineKeys(excludedLineKeys.size === 0 ? new Set(lines.map(lineKey)) : new Set());
+  }
 
   function refreshSyncStatus(forInstanceId: string) {
     setSyncStatusError(null);
@@ -118,6 +151,7 @@ export default function ReplenishPage() {
     setSourceLocation("");
     setCreatedTransfers(null);
     setCreateError(null);
+    setRawExcludedLineKeys(new Set());
     startPreviewTransition(async () => {
       const result = await loadReplenishPreviewAction(instanceId);
       if (!result.ok) {
@@ -129,11 +163,11 @@ export default function ReplenishPage() {
   }
 
   function handleCreate() {
-    if (!instanceId || !sourceLocation || !lines || lines.length === 0) return;
+    if (!instanceId || !sourceLocation || selectedLines.length === 0) return;
     setCreateError(null);
     setCreatedTransfers(null);
     startCreateTransition(async () => {
-      const result = await createReplenishTransfersAction(instanceId, sourceLocation, lines);
+      const result = await createReplenishTransfersAction(instanceId, sourceLocation, selectedLines);
       if (!result.ok) {
         setCreateError(result.error ?? "Unknown error");
         return;
@@ -236,12 +270,16 @@ export default function ReplenishPage() {
               <button
                 type="button"
                 onClick={handleCreate}
-                disabled={writeDisabled}
+                disabled={writeDisabled || selectedLines.length === 0}
                 title={!canWrite ? "Writing to Cin7 is disabled on your current plan." : undefined}
                 className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
               >
                 {isCreating && <Spinner className="mr-1.5" />}
-                {isCreating ? "Creating…" : `Create ${new Set(lines.map((l) => l.toLocation)).size} Transfer${new Set(lines.map((l) => l.toLocation)).size === 1 ? "" : "s"}`}
+                {isCreating
+                  ? "Creating…"
+                  : selectedLines.length === 0
+                    ? "Create Transfers"
+                    : `Create ${new Set(selectedLines.map((l) => l.toLocation)).size} Transfer${new Set(selectedLines.map((l) => l.toLocation)).size === 1 ? "" : "s"} (${selectedLines.length} line${selectedLines.length === 1 ? "" : "s"})`}
               </button>
             )}
           </div>
@@ -279,6 +317,17 @@ export default function ReplenishPage() {
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 text-slate-500">
+                    <th className="py-2 pr-4">
+                      <input
+                        type="checkbox"
+                        checked={excludedLineKeys.size === 0}
+                        ref={(el) => {
+                          if (el) el.indeterminate = excludedLineKeys.size > 0 && excludedLineKeys.size < lines.length;
+                        }}
+                        onChange={toggleAllLines}
+                        className="h-4 w-4"
+                      />
+                    </th>
                     <th className="py-2 pr-4">Product</th>
                     <th className="py-2 pr-4">To Location</th>
                     <th className="py-2 pr-4 text-right">Quantity</th>
@@ -286,23 +335,30 @@ export default function ReplenishPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {lines.map((line: ReplenishLine, i: number) => (
-                    <tr key={i} className="border-b border-slate-100">
-                      <td className="py-2 pr-4">
-                        <div className="font-medium text-slate-900">{line.productName ?? line.productSku}</div>
-                        <div className="text-xs text-slate-400">{line.productSku}</div>
-                      </td>
-                      <td className="py-2 pr-4">{line.toLocation}</td>
-                      <td className="py-2 pr-4 text-right font-medium">{qty(line.quantity)}</td>
-                      <td className="py-2 pr-4">
-                        {line.capped && (
-                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                            capped — source only had enough for {qty(line.quantity)}
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {lines.map((line: ReplenishLine) => {
+                    const key = lineKey(line);
+                    const checked = !excludedLineKeys.has(key);
+                    return (
+                      <tr key={key} className={`border-b border-slate-100 ${checked ? "" : "opacity-50"}`}>
+                        <td className="py-1.5 pr-4">
+                          <input type="checkbox" checked={checked} onChange={() => toggleLine(key)} className="h-4 w-4" />
+                        </td>
+                        <td className="py-2 pr-4">
+                          <div className="font-medium text-slate-900">{line.productName ?? line.productSku}</div>
+                          <div className="text-xs text-slate-400">{line.productSku}</div>
+                        </td>
+                        <td className="py-2 pr-4">{line.toLocation}</td>
+                        <td className="py-2 pr-4 text-right font-medium">{qty(line.quantity)}</td>
+                        <td className="py-2 pr-4">
+                          {line.capped && (
+                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                              capped — source only had enough for {qty(line.quantity)}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
