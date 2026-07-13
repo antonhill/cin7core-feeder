@@ -64,6 +64,10 @@ export interface AggregatedNataRow {
   revenue: number;
   packagingCost: number;
   packagingCostPerNata: number | null;
+  /** Revenue minus packaging cost only — NOT a full-COGS profit (ingredient/casing cost isn't split by this report; see the Sales report's average_cost-based Profit/Margin% for that). */
+  profit: number;
+  /** profit / revenue * 100, null when revenue is 0 (matches the Sales report's own null-not-0 convention for an undefined ratio). */
+  marginPercent: number | null;
 }
 
 export interface NatasReportResult {
@@ -214,7 +218,15 @@ export function buildNatasReport(saleLines: NatasSaleLineInput[], bomCostIndex: 
   }
 
   const rows: AggregatedNataRow[] = [...grouped.values()]
-    .map((r) => ({ ...r, packagingCostPerNata: r.individualNatas > 0 ? r.packagingCost / r.individualNatas : null }))
+    .map((r) => {
+      const profit = r.revenue - r.packagingCost;
+      return {
+        ...r,
+        packagingCostPerNata: r.individualNatas > 0 ? r.packagingCost / r.individualNatas : null,
+        profit,
+        marginPercent: r.revenue > 0 ? (profit / r.revenue) * 100 : null,
+      };
+    })
     .sort((a, b) => a.month.localeCompare(b.month) || a.location.localeCompare(b.location) || a.nataType.localeCompare(b.nataType));
 
   return { rows, unmapped: [...unmappedBySku.values()] };

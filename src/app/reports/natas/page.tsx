@@ -12,14 +12,20 @@ function money(value: number | null | undefined): string {
   return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function percent(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  return `${value.toFixed(2)}%`;
+}
+
 function sumRows(rows: AggregatedNataRow[]) {
   return rows.reduce(
     (acc, r) => ({
       individualNatas: acc.individualNatas + r.individualNatas,
       revenue: acc.revenue + r.revenue,
       packagingCost: acc.packagingCost + r.packagingCost,
+      profit: acc.profit + r.profit,
     }),
-    { individualNatas: 0, revenue: 0, packagingCost: 0 }
+    { individualNatas: 0, revenue: 0, packagingCost: 0, profit: 0 }
   );
 }
 
@@ -174,6 +180,8 @@ export default function NatasReportPage() {
                     <th className="py-2 pr-4">Revenue</th>
                     <th className="py-2 pr-4">Packaging COGS</th>
                     <th className="py-2 pr-4">Packaging COGS / Nata</th>
+                    <th className="py-2 pr-4">Profit (net of packaging)</th>
+                    <th className="py-2 pr-4">Margin % (net of packaging)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -186,6 +194,8 @@ export default function NatasReportPage() {
                       <td className="py-2 pr-4">{money(row.revenue)}</td>
                       <td className="py-2 pr-4">{money(row.packagingCost)}</td>
                       <td className="py-2 pr-4">{money(row.packagingCostPerNata)}</td>
+                      <td className="py-2 pr-4">{money(row.profit)}</td>
+                      <td className="py-2 pr-4">{percent(row.marginPercent)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -199,6 +209,8 @@ export default function NatasReportPage() {
                       <td className="py-2 pr-4">{money(totals.revenue)}</td>
                       <td className="py-2 pr-4">{money(totals.packagingCost)}</td>
                       <td className="py-2 pr-4">{money(totals.individualNatas > 0 ? totals.packagingCost / totals.individualNatas : null)}</td>
+                      <td className="py-2 pr-4">{money(totals.profit)}</td>
+                      <td className="py-2 pr-4">{percent(totals.revenue > 0 ? (totals.profit / totals.revenue) * 100 : null)}</td>
                     </tr>
                   </tfoot>
                 )}

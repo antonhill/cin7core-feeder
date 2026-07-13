@@ -82,6 +82,8 @@ describe("buildNatasReport", () => {
     expect(rows[0]).toMatchObject({ month: "2026-07", location: "Sandton", nataType: "Lisbon Classic", individualNatas: 1, revenue: 21 });
     expect(rows[0].packagingCost).toBeCloseTo(2.71733, 4);
     expect(rows[0].packagingCostPerNata).toBeCloseTo(2.71733, 4);
+    expect(rows[0].profit).toBeCloseTo(21 - 2.71733, 4);
+    expect(rows[0].marginPercent).toBeCloseTo(((21 - 2.71733) / 21) * 100, 4);
   });
 
   it("splits a mixed-pack sale's patch-packaging cost proportionally across two Nata Types in the same sale (SNTN4 receipt)", () => {
@@ -168,7 +170,25 @@ describe("buildNatasReport", () => {
     ];
 
     const { rows } = buildNatasReport(saleLines, buildBomCostIndex(bomLines));
-    expect(rows[0]).toMatchObject({ individualNatas: 12, packagingCost: 0, packagingCostPerNata: 0 });
+    expect(rows[0]).toMatchObject({ individualNatas: 12, packagingCost: 0, packagingCostPerNata: 0, profit: 150 });
+  });
+
+  it("reports marginPercent as null (not 0 or NaN) when revenue is 0, since the ratio is genuinely undefined", () => {
+    const saleLines: NatasSaleLineInput[] = [
+      {
+        instanceId: "inst-1",
+        cin7SaleId: "4",
+        productSku: "LisbonClassic1",
+        productName: "Lisbon Classic 1",
+        categoryCode: "Nata",
+        quantity: 1,
+        total: 0,
+        invoiceDate: "2026-07-12",
+        location: "Sandton",
+      },
+    ];
+    const { rows } = buildNatasReport(saleLines, buildBomCostIndex([]));
+    expect(rows[0].marginPercent).toBeNull();
   });
 
   it("surfaces an unrecognized Nata-category SKU in `unmapped` instead of dropping or miscounting it", () => {
