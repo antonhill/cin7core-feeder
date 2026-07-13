@@ -200,9 +200,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ b
   return (
     <main className="mx-auto w-full max-w-7xl px-6 py-12">
       <div className="flex items-center gap-4">
-        <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-white shadow-md">
-          <ToolboxLogo className="h-8 w-8" />
-        </span>
+        <ToolboxLogo className="h-14 w-14 shrink-0 shadow-md" />
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-slate-900">Cin7 Core Toolbox</h1>
           <p className="mt-1 max-w-2xl text-base text-slate-500">Do amazing things that you cannot do in Cin7 Core.</p>

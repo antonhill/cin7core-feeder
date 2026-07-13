@@ -49,9 +49,7 @@ export default async function MarketingHome() {
       <nav className="sticky top-0 z-50 border-b border-sidebar-border bg-sidebar-bg/90 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
           <div className="flex items-center gap-3 text-white">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-700 shadow-sm">
-              <ToolboxLogo className="h-5 w-5" />
-            </span>
+            <ToolboxLogo className="h-8 w-8 shadow-sm" />
             <span className="font-semibold tracking-tight">Cin7 Core Toolbox</span>
           </div>
           <div className="hidden items-center gap-7 md:flex">
@@ -275,9 +273,7 @@ export default async function MarketingHome() {
       <footer className="border-t border-sidebar-border bg-sidebar-bg py-9 text-sidebar-text">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 text-sm">
           <div className="flex items-center gap-3 text-white">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-700">
-              <ToolboxLogo className="h-4 w-4" />
-            </span>
+            <ToolboxLogo className="h-7 w-7" />
             <span className="font-semibold">Cin7 Core Toolbox</span>
           </div>
           <p>An independent tool — not affiliated with, or endorsed by, Cin7.</p>

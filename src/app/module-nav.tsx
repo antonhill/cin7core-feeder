@@ -57,19 +57,15 @@ function ModuleImageIcon({ src, className }: { src: string; className?: string }
 }
 
 /**
- * The product's own mark — a toolbox whose latch is drawn as a "7", a quiet
- * nod to Cin7 without reproducing their actual logo/trademark. Used on the
- * home page next to the product name.
+ * The product's own mark (2026-07-13 refresh) — a designed knot glyph on
+ * its own glowing rounded-square tile, replacing the earlier hand-drawn
+ * toolbox-and-7 SVG. Unlike every other icon in this file, this asset
+ * already bakes in its own rounded-square badge/background — callers
+ * should size it directly (e.g. `h-8 w-8`) rather than wrapping it in a
+ * separate colored badge `<span>` the way the old SVG mark needed.
  */
 export function ToolboxLogo({ className }: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <path d="M8 8V6a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-      <rect x="3" y="8" width="18" height="11" rx="2" />
-      <path d="M3 13h6M15 13h6" />
-      <path d="M10.3 11.3h3.4l-2 5" />
-    </svg>
-  );
+  return <Image src="/icons/logo.png" alt="Cin7 Core Toolbox" width={112} height={112} className={`rounded-xl object-cover ${className ?? ""}`} />;
 }
 
 export function ImportIcon({ className }: IconProps) {
