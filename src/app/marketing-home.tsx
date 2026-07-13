@@ -272,7 +272,7 @@ export default async function MarketingHome() {
       <footer className="border-t border-sidebar-border bg-sidebar-bg py-9 text-sidebar-text">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 text-sm">
           <div className="flex items-center text-white">
-            <ToolboxLogoHorizontal className="h-7 w-auto" />
+            <ToolboxLogoHorizontal className="h-9 w-auto" />
           </div>
           <p>An independent tool — not affiliated with, or endorsed by, Cin7.</p>
           <p>
