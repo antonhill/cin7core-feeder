@@ -152,6 +152,16 @@ export function BillingIcon({ className }: IconProps) {
   );
 }
 
+export function ReplenishIcon({ className }: IconProps) {
+  return (
+    <GradientIcon className={className} from="#7c3aed" to="#5b21b6">
+      <rect x="3" y="10" width="7" height="10" rx="1" />
+      <rect x="14" y="4" width="7" height="16" rx="1" />
+      <path d="M6.5 7V5m0 2-1.5-1.5M6.5 7 8 5.5" />
+    </GradientIcon>
+  );
+}
+
 export function TeamIcon({ className }: IconProps) {
   return (
     <GradientIcon className={className} from="#2563eb" to="#1d4ed8">
@@ -265,6 +275,14 @@ export const AUDIT_MODULE: ModuleConfig = {
   blurb: "Scan a connected instance's products for consistency and accuracy gaps — missing Brand, no sales price, incomplete inventory setup, missing GL accounts, near-duplicate categories — and bulk-fix them.",
 };
 
+export const REPLENISH_MODULE: ModuleConfig = {
+  href: "/replenish",
+  label: "Replenish",
+  gradient: SELF_COLORED_ICON_BADGE,
+  Icon: ReplenishIcon,
+  blurb: "Compare stock-on-hand per location against each product's reorder point (location-specific or global) and create real Stock Transfers from a chosen source location.",
+};
+
 export const HEALTH_MODULE: ModuleConfig = {
   href: "/health",
   label: "System Health",
@@ -349,6 +367,7 @@ export const MODULES: ModuleConfig[] = [
   MIGRATE_MODULE,
   REPORTS_MODULE,
   AUDIT_MODULE,
+  REPLENISH_MODULE,
   HEALTH_MODULE,
   INSTANCES_MODULE,
   ACTIVITY_MODULE,
