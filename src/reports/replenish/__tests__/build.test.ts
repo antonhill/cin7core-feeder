@@ -56,8 +56,8 @@ describe("resolveReorderThresholds", () => {
 describe("buildReplenishLines", () => {
   it("proposes a transfer covering the full shortfall when the source has enough surplus", () => {
     const rows: AvailabilityRow[] = [
-      { location: "Main Warehouse", productSku: "WIDGET", productName: "Widget", onHand: 100 },
-      { location: "Store A", productSku: "WIDGET", productName: "Widget", onHand: 2 },
+      { location: "Main Warehouse", productSku: "WIDGET", productName: "Widget", available: 100 },
+      { location: "Store A", productSku: "WIDGET", productName: "Widget", available: 2 },
     ];
     const thresholds = new Map([["WIDGET::Store A", { minimumBeforeReorder: 10, reorderQuantity: 5 }]]);
 
@@ -69,8 +69,8 @@ describe("buildReplenishLines", () => {
 
   it("excludes a destination already at or above its target (no line emitted)", () => {
     const rows: AvailabilityRow[] = [
-      { location: "Main Warehouse", productSku: "WIDGET", productName: "Widget", onHand: 100 },
-      { location: "Store A", productSku: "WIDGET", productName: "Widget", onHand: 50 },
+      { location: "Main Warehouse", productSku: "WIDGET", productName: "Widget", available: 100 },
+      { location: "Store A", productSku: "WIDGET", productName: "Widget", available: 50 },
     ];
     const thresholds = new Map([["WIDGET::Store A", { minimumBeforeReorder: 10, reorderQuantity: 5 }]]);
 
@@ -80,8 +80,8 @@ describe("buildReplenishLines", () => {
 
   it("caps the proposed quantity to the source's own surplus and flags it", () => {
     const rows: AvailabilityRow[] = [
-      { location: "Main Warehouse", productSku: "WIDGET", productName: "Widget", onHand: 5 },
-      { location: "Store A", productSku: "WIDGET", productName: "Widget", onHand: 0 },
+      { location: "Main Warehouse", productSku: "WIDGET", productName: "Widget", available: 5 },
+      { location: "Store A", productSku: "WIDGET", productName: "Widget", available: 0 },
     ];
     const thresholds = new Map([["WIDGET::Store A", { minimumBeforeReorder: 10, reorderQuantity: 5 }]]);
 
@@ -93,9 +93,9 @@ describe("buildReplenishLines", () => {
 
   it("splits a limited source across two destinations, largest-shortfall location first", () => {
     const rows: AvailabilityRow[] = [
-      { location: "Main Warehouse", productSku: "WIDGET", productName: "Widget", onHand: 12 },
-      { location: "Store A", productSku: "WIDGET", productName: "Widget", onHand: 0 }, // shortfall 15
-      { location: "Store B", productSku: "WIDGET", productName: "Widget", onHand: 10 }, // shortfall 5
+      { location: "Main Warehouse", productSku: "WIDGET", productName: "Widget", available: 12 },
+      { location: "Store A", productSku: "WIDGET", productName: "Widget", available: 0 }, // shortfall 15
+      { location: "Store B", productSku: "WIDGET", productName: "Widget", available: 10 }, // shortfall 5
     ];
     const thresholds = new Map([
       ["WIDGET::Store A", { minimumBeforeReorder: 10, reorderQuantity: 5 }],
@@ -110,8 +110,8 @@ describe("buildReplenishLines", () => {
 
   it("falls back to topping up to minimumBeforeReorder alone when reorderQuantity is 0", () => {
     const rows: AvailabilityRow[] = [
-      { location: "Main Warehouse", productSku: "WIDGET", productName: "Widget", onHand: 100 },
-      { location: "Store A", productSku: "WIDGET", productName: "Widget", onHand: 2 },
+      { location: "Main Warehouse", productSku: "WIDGET", productName: "Widget", available: 100 },
+      { location: "Store A", productSku: "WIDGET", productName: "Widget", available: 2 },
     ];
     const thresholds = new Map([["WIDGET::Store A", { minimumBeforeReorder: 10, reorderQuantity: 0 }]]);
 
@@ -120,7 +120,7 @@ describe("buildReplenishLines", () => {
   });
 
   it("never proposes the chosen source location as a destination, even if it's also below its own resolved threshold", () => {
-    const rows: AvailabilityRow[] = [{ location: "Main Warehouse", productSku: "WIDGET", productName: "Widget", onHand: 1 }];
+    const rows: AvailabilityRow[] = [{ location: "Main Warehouse", productSku: "WIDGET", productName: "Widget", available: 1 }];
     const thresholds = new Map([["WIDGET::Main Warehouse", { minimumBeforeReorder: 10, reorderQuantity: 5 }]]);
 
     const lines = buildReplenishLines(rows, thresholds, "Main Warehouse");
@@ -129,10 +129,37 @@ describe("buildReplenishLines", () => {
 
   it("a (product, location) pair with no resolved threshold at all is never proposed", () => {
     const rows: AvailabilityRow[] = [
-      { location: "Main Warehouse", productSku: "WIDGET", productName: "Widget", onHand: 100 },
-      { location: "Store A", productSku: "WIDGET", productName: "Widget", onHand: 0 },
+      { location: "Main Warehouse", productSku: "WIDGET", productName: "Widget", available: 100 },
+      { location: "Store A", productSku: "WIDGET", productName: "Widget", available: 0 },
     ];
     const lines = buildReplenishLines(rows, new Map(), "Main Warehouse");
     expect(lines).toEqual([]);
+  });
+
+  it("does not propose a destination that hasn't hit its own reorder point yet, even if it's still below minimum+reorderQuantity", () => {
+    // Real live case (2026-07-14): Sandton at 211 available against a 100
+    // minimum/200 reorder-quantity was wrongly proposed a top-up, since 211
+    // is below the combined 300 target but well above its own 100 minimum —
+    // MinimumBeforeReorder is a trigger ("appear on Reorder report/forms"),
+    // not just an input to a target level.
+    const rows: AvailabilityRow[] = [
+      { location: "Main Warehouse", productSku: "WIDGET", productName: "Widget", available: 1000 },
+      { location: "Sandton", productSku: "WIDGET", productName: "Widget", available: 211 },
+    ];
+    const thresholds = new Map([["WIDGET::Sandton", { minimumBeforeReorder: 100, reorderQuantity: 200 }]]);
+
+    const lines = buildReplenishLines(rows, thresholds, "Main Warehouse");
+    expect(lines).toEqual([]);
+  });
+
+  it("does propose a destination whose available quantity is exactly at its minimum (at-or-below is the trigger)", () => {
+    const rows: AvailabilityRow[] = [
+      { location: "Main Warehouse", productSku: "WIDGET", productName: "Widget", available: 1000 },
+      { location: "Store A", productSku: "WIDGET", productName: "Widget", available: 100 },
+    ];
+    const thresholds = new Map([["WIDGET::Store A", { minimumBeforeReorder: 100, reorderQuantity: 200 }]]);
+
+    const lines = buildReplenishLines(rows, thresholds, "Main Warehouse");
+    expect(lines).toEqual([{ productSku: "WIDGET", productName: "Widget", fromLocation: "Main Warehouse", toLocation: "Store A", quantity: 200, capped: false }]);
   });
 });

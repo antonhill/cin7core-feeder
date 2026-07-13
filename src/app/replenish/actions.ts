@@ -48,7 +48,7 @@ export async function loadReplenishPreviewAction(instanceId: string): Promise<Re
 
     const { data: rows, error } = await db
       .from("product_availability")
-      .select("location, product_sku, product_name, on_hand")
+      .select("location, product_sku, product_name, available")
       .eq("org_id", orgId)
       .eq("instance_id", instanceId)
       .order("product_sku")
@@ -61,7 +61,7 @@ export async function loadReplenishPreviewAction(instanceId: string): Promise<Re
         location: r.location as string,
         productSku: r.product_sku as string,
         productName: r.product_name,
-        onHand: r.on_hand ?? 0,
+        available: r.available ?? 0,
       }));
 
     const candidateSkus = new Set(availabilityRows.map((r) => r.productSku));

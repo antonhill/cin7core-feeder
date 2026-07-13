@@ -13,11 +13,28 @@
  * flat value otherwise; a (product, location) pair with neither set (or
  * set to 0) isn't a candidate at all.
  *
- * Proposed quantity tops up to `minimumBeforeReorder + reorderQuantity`,
- * not just the reorder point alone — otherwise `reorderQuantity` would be
- * a field this feature never reads, which is a strong signal it'd be the
- * wrong formula (the two fields are the classic reorder-point/
- * reorder-quantity pair, not alternatives).
+ * `MinimumBeforeReorder` is a **trigger, not just a target-level input** —
+ * Cin7's own field docs: "Minimum available product quantity for this
+ * product to appear on Reorder report/forms." A location only becomes a
+ * candidate at all once its own available quantity has dropped to or
+ * below its resolved `minimumBeforeReorder`; a location sitting between
+ * its minimum and `minimum + reorderQuantity` hasn't hit its reorder
+ * point yet and must not be proposed (a real bug caught live 2026-07-14:
+ * Sandton at 211 available against a 100 minimum/200 reorder-quantity
+ * was wrongly proposed a top-up, since 211 is below the *combined* 300
+ * but very much above its own 100 minimum). Once triggered, quantity
+ * tops up to `minimumBeforeReorder + reorderQuantity` (not just the
+ * reorder point alone — otherwise `reorderQuantity` would be a field
+ * this feature never reads, a strong signal it'd be the wrong formula;
+ * the two fields are the classic reorder-point/reorder-quantity pair,
+ * not alternatives).
+ *
+ * Uses **available**, not on-hand, throughout — matching Cin7's own
+ * "available" wording above, and because on-hand can include stock
+ * already allocated to an open sale. Using on-hand for the source
+ * location's own remaining stock risked proposing a transfer that eats
+ * into stock already promised to a customer order (confirmed live: a
+ * source location with `on_hand: 400, available: 370` had 30 allocated).
  *
  * A single source location can't independently "fully" supply every
  * destination if their combined shortfall exceeds its own stock, so the
@@ -33,7 +50,7 @@ export interface AvailabilityRow {
   location: string;
   productSku: string;
   productName: string | null;
-  onHand: number;
+  available: number;
 }
 
 export interface ReorderThreshold {
@@ -111,15 +128,16 @@ export function buildReplenishLines(rows: AvailabilityRow[], thresholds: Map<str
 
   for (const [sku, skuRows] of rowsBySku) {
     const sourceRow = skuRows.find((r) => r.location === sourceLocation);
-    let sourceRemaining = sourceRow?.onHand ?? 0;
+    let sourceRemaining = sourceRow?.available ?? 0;
 
     const candidates = skuRows
       .filter((r) => r.location !== sourceLocation)
       .map((row) => {
         const threshold = thresholds.get(`${sku}::${row.location}`);
         if (!threshold) return null;
+        if (row.available > threshold.minimumBeforeReorder) return null; // hasn't hit its own reorder point yet
         const target = threshold.minimumBeforeReorder + (threshold.reorderQuantity || 0);
-        const shortfall = target - row.onHand;
+        const shortfall = target - row.available;
         return shortfall > 0 ? { row, shortfall } : null;
       })
       .filter((c): c is { row: AvailabilityRow; shortfall: number } => c !== null)
