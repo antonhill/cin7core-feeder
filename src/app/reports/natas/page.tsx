@@ -2,8 +2,13 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { loadNatasFilterOptionsAction, loadNatasReportAction } from "./actions";
+import { loadSalesSyncStatusAction, triggerSalesSyncAction, exportReportXlsxAction } from "../actions";
+import type { SalesSyncStatus } from "@/reports/query";
 import type { NatasFilterOptions } from "@/reports/natas-query";
 import type { AggregatedNataRow, UnmappedItem } from "@/reports/natas-report";
+import { buildNatasReportSheet } from "@/reports/natas-export";
+import { downloadBase64File } from "@/reports/download-base64-file";
+import { StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { Spinner } from "@/app/Spinner";
 import { ReportDescription } from "../ReportDescription";
 
@@ -126,6 +131,12 @@ export default function NatasReportPage() {
   const [options, setOptions] = useState<NatasFilterOptions | null>(null);
   const [optionsError, setOptionsError] = useState<string | null>(null);
 
+  const [syncStatus, setSyncStatus] = useState<SalesSyncStatus | null>(null);
+  const [isSyncing, startSyncTransition] = useTransition();
+  const [syncError, setSyncError] = useState<string | null>(null);
+  // Same "stale whenever anything at all is still pending" convention as the Sales report — revenue/COGS accuracy depends on this, not a time-based signal.
+  const isSalesStale = Boolean(syncStatus) && (syncStatus?.pendingDetail ?? 0) > 0;
+
   const [instanceIds, setInstanceIds] = useState<string[]>([]);
   const [location, setLocation] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -136,7 +147,16 @@ export default function NatasReportPage() {
   const [reportError, setReportError] = useState<string | null>(null);
   const [isRunning, startRunTransition] = useTransition();
 
+  const [isExporting, startExportTransition] = useTransition();
+  const [exportError, setExportError] = useState<string | null>(null);
+
   const [visibleKeys, setVisibleKeys] = useState<Set<string>>(DEFAULT_VISIBLE_KEYS);
+
+  function refreshSyncStatus() {
+    loadSalesSyncStatusAction().then((result) => {
+      if (result.ok) setSyncStatus(result.data ?? null);
+    });
+  }
 
   useEffect(() => {
     loadNatasFilterOptionsAction().then((result) => {
@@ -146,6 +166,7 @@ export default function NatasReportPage() {
       }
       setOptions(result.data ?? null);
     });
+    refreshSyncStatus();
   }, []);
 
   function toggleInstance(id: string) {
@@ -158,6 +179,18 @@ export default function NatasReportPage() {
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
+    });
+  }
+
+  function handleSync() {
+    setSyncError(null);
+    startSyncTransition(async () => {
+      const result = await triggerSalesSyncAction();
+      if (!result.ok) {
+        setSyncError(result.error ?? "Unknown error");
+        return;
+      }
+      refreshSyncStatus();
     });
   }
 
@@ -179,6 +212,19 @@ export default function NatasReportPage() {
     });
   }
 
+  function handleExport() {
+    if (!rows) return;
+    setExportError(null);
+    startExportTransition(async () => {
+      const result = await exportReportXlsxAction(buildNatasReportSheet(rows), "Natas Sold");
+      if (!result.ok || !result.data) {
+        setExportError(result.error ?? "Unknown error");
+        return;
+      }
+      downloadBase64File(result.data, "natas-sold.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    });
+  }
+
   const displayRows = useMemo(() => (rows ?? []).map(toDisplayRow), [rows]);
   const totals = rows ? sumRows(rows) : null;
   const visibleColumns = COLUMNS.filter((c) => visibleKeys.has(c.key));
@@ -196,6 +242,29 @@ export default function NatasReportPage() {
       </ReportDescription>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="font-medium text-slate-900">Sales data</p>
+            {syncStatus && (
+              <p className="mt-1 text-sm text-slate-500">
+                {syncStatus.totalSales} sale{syncStatus.totalSales === 1 ? "" : "s"} synced
+                {syncStatus.pendingDetail > 0 &&
+                  ` — ${syncStatus.pendingDetail} still waiting on line-item detail (rate-limited, catches up a batch every sync run)`}
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {isSalesStale && <StaleBadge label="Behind — sync recommended" />}
+            <button type="button" onClick={handleSync} disabled={isSyncing} className={staleSyncButtonClass(isSalesStale, "sm")}>
+              {isSyncing && <Spinner className="mr-1.5" />}
+              {isSyncing ? "Syncing…" : "Sync sales now"}
+            </button>
+          </div>
+        </div>
+        {syncError && <p className="mt-2 text-sm text-red-600">{syncError}</p>}
+      </section>
+
+      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <p className="font-medium text-slate-900">Filters</p>
         {optionsError && <p className="mt-2 text-sm text-red-600">{optionsError}</p>}
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -275,7 +344,18 @@ export default function NatasReportPage() {
             <p className="font-medium text-slate-900">
               {rows.length} row{rows.length === 1 ? "" : "s"}
             </p>
+            {rows.length > 0 && (
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={isExporting}
+                className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {isExporting ? "Exporting…" : "Export to Excel"}
+              </button>
+            )}
           </div>
+          {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
 
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 border-b border-slate-100 pb-4">
             {COLUMNS.map((col) => (

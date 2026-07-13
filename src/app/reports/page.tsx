@@ -14,6 +14,7 @@ import type { ReportFilterOptions, ProductSalesReportRow, SaleLineDetailRow, Sal
 import type { SalesReportFilters } from "@/reports/query";
 import { buildPivotGrid, METRIC_COLUMNS, type PivotCellValues, type PivotGroupBy, type PivotSourceRow } from "@/reports/pivot";
 import { buildFlatReportSheet, buildPivotSheet } from "@/reports/export-xlsx";
+import { downloadBase64File } from "@/reports/download-base64-file";
 import { StaleBadge, staleSyncButtonClass } from "./sync-staleness";
 import { compareNullable, SortHeader, type SortDirection } from "./sortable-table";
 import { Spinner } from "@/app/Spinner";
@@ -27,20 +28,6 @@ type ProductSalesSortColumn = "product" | "quantity_sold" | "revenue" | "cogs" |
 function productSalesSortValue(row: ProductSalesReportRow, column: ProductSalesSortColumn): string | number | null {
   if (column === "product") return row.product_name ?? row.product_sku;
   return row[column];
-}
-
-/** Decodes the base64 .xlsx bytes the server rendered and triggers a normal browser download — no server-side file storage involved. */
-function downloadBase64File(base64: string, filename: string, mimeType: string) {
-  const byteChars = atob(base64);
-  const bytes = new Uint8Array(byteChars.length);
-  for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
-  const blob = new Blob([bytes], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 function money(value: number | null | undefined): string {

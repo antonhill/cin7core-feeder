@@ -163,6 +163,18 @@ export function TeamIcon({ className }: IconProps) {
   );
 }
 
+/** Sidebar's compact icon-button row — not a module tile, just a shared icon. Cyan (distinct from every other icon here) for the global "sync sales now" action, available regardless of which page is open. */
+export function SyncIcon({ className }: IconProps) {
+  return (
+    <GradientIcon className={className} from="#0891b2" to="#155e75">
+      <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+      <path d="M3 21v-5h5" />
+    </GradientIcon>
+  );
+}
+
 /** Sidebar's compact icon-button row — not a module tile, just a shared icon. Neutral slate, not a brand color, since signing out isn't a section of the app. */
 export function SignOutIcon({ className }: IconProps) {
   return (

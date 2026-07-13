@@ -5,7 +5,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOutAction } from "@/actions/auth";
 import { uploadCurrentOrgLogo } from "@/actions/org-logo";
-import { MODULES, ADMIN_MODULE, BillingIcon, ShieldIcon, DiagnosticsIcon, TeamIcon, SignOutIcon } from "@/app/module-nav";
+import { triggerSalesSyncAction } from "@/app/reports/actions";
+import { MODULES, ADMIN_MODULE, BillingIcon, ShieldIcon, DiagnosticsIcon, TeamIcon, SyncIcon, SignOutIcon } from "@/app/module-nav";
 import { OrgSwitcher } from "@/app/OrgSwitcher";
 import { Spinner } from "@/app/Spinner";
 
@@ -25,21 +26,26 @@ function OrgPlaceholder({ orgName }: { orgName: string | null }) {
   );
 }
 
-/** Icon-only nav button (Link or submit button) with a small custom tooltip on hover — the native `title` attribute alone has a slow, easy-to-miss browser tooltip, so this pairs a fast styled one with it while keeping `title`/`aria-label` for accessibility. Tooltip opens upward since these buttons sit at the very bottom of the sidebar. */
+/** Icon-only nav button (Link, plain submit button, or an async onClick action) with a small custom tooltip on hover — the native `title` attribute alone has a slow, easy-to-miss browser tooltip, so this pairs a fast styled one with it while keeping `title`/`aria-label` for accessibility. Tooltip opens upward since these buttons sit at the very bottom of the sidebar. */
 function NavIconButton({
   href,
   label,
   active,
+  onClick,
+  busy,
   children,
 }: {
   href?: string;
   label: string;
   active?: boolean;
+  /** Client-driven async action (e.g. triggering a sync) — mutually exclusive with `href`. */
+  onClick?: () => void;
+  busy?: boolean;
   children: React.ReactNode;
 }) {
   const className = `group relative flex h-10 w-10 items-center justify-center rounded-lg border transition ${
     active ? "border-sidebar-bg-raised bg-sidebar-bg-raised" : "border-sidebar-border hover:bg-sidebar-bg-raised"
-  }`;
+  } ${busy ? "opacity-60" : ""}`;
   const tooltip = (
     <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-xs font-medium text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
       {label}
@@ -52,6 +58,14 @@ function NavIconButton({
         {children}
         {tooltip}
       </Link>
+    );
+  }
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} disabled={busy} title={label} aria-label={label} className={className}>
+        {busy ? <Spinner /> : children}
+        {tooltip}
+      </button>
     );
   }
   return (
@@ -97,6 +111,27 @@ export function AppNav({
   const [logoUrl, setLogoUrl] = useState(orgLogoUrl);
   const [logoError, setLogoError] = useState<string | null>(null);
   const [isUploadingLogo, startLogoTransition] = useTransition();
+
+  // Available regardless of which page is open (not just the Sales report)
+  // — every report that reads sale_lines/sales (the Natas report especially)
+  // is only as fresh as the last sync, so this is a global shortcut for the
+  // same triggerSalesSyncAction the Sales report page's own button already
+  // calls, not a separate sync mechanism.
+  const [syncMessage, setSyncMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [isSyncing, startSyncTransition] = useTransition();
+
+  function handleGlobalSync() {
+    setSyncMessage(null);
+    startSyncTransition(async () => {
+      const result = await triggerSalesSyncAction();
+      if (!result.ok) {
+        setSyncMessage({ ok: false, text: result.error ?? "Sync failed" });
+        return;
+      }
+      const totalSynced = (result.data ?? []).reduce((sum, s) => sum + s.detailSynced, 0);
+      setSyncMessage({ ok: true, text: totalSynced > 0 ? `Synced ${totalSynced} sale${totalSynced === 1 ? "" : "s"}` : "Already up to date" });
+    });
+  }
 
   function handleLogoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -191,7 +226,11 @@ export function AppNav({
         <div className="border-t border-sidebar-border px-3 py-4">
           <p className="truncate px-3 pb-3 text-sm text-sidebar-text">{userEmail}</p>
           {/* Compact icon-button row instead of stacked full-width text links — same active/hover treatment, just laid out horizontally to reclaim vertical space at the bottom of the sidebar. */}
-          <div className="flex items-center justify-center gap-2">
+          {/* flex-wrap: up to 6 icons can appear at once now (Sync + Billing + Security + Team + Diagnostics + Sign out for a super-admin/org-admin with billing enabled) — 6 * 40px buttons + gaps exceeds the sidebar's available width, so this wraps to a second row instead of overflowing. */}
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <NavIconButton label="Sync sales" onClick={handleGlobalSync} busy={isSyncing}>
+              <SyncIcon className="h-5 w-5" />
+            </NavIconButton>
             {showBilling && (
               <NavIconButton href="/settings/billing" label="Billing" active={pathname.startsWith("/settings/billing")}>
                 <BillingIcon className="h-5 w-5" />
@@ -216,6 +255,9 @@ export function AppNav({
               </NavIconButton>
             </form>
           </div>
+          {syncMessage && (
+            <p className={`mt-2 text-center text-xs ${syncMessage.ok ? "text-sidebar-text/70" : "text-red-400"}`}>{syncMessage.text}</p>
+          )}
           <Link href="/privacy" className="mt-3 block text-center text-xs text-sidebar-text/70 hover:text-sidebar-text-active hover:underline">
             Privacy Policy
           </Link>
