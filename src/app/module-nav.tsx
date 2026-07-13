@@ -57,44 +57,40 @@ function ModuleImageIcon({ src, className }: { src: string; className?: string }
 }
 
 /**
- * The product's own mark (2026-07-13 refresh, redrawn as a flat icon —
- * supersedes the same day's earlier photographic/glow version) — a
- * turquoise knot glyph on a violet/navy rounded-square tile, replacing the
- * original hand-drawn toolbox-and-7 SVG. Source was supplied as a PNG with
- * a fake "checkerboard" transparency backdrop (AI image generators can't
- * emit a real alpha channel) — real transparency was recovered with a
- * border-connected flood fill, required here (not a plain color-distance
- * chroma-key) since the checkerboard's tone overlaps the icon's own white
- * linework; a pixel only became transparent if it matched the background
- * color *and* was reachable from the canvas edge without crossing the
- * tile's real border, so enclosed white shapes were never touched. Unlike
- * every other icon in this file, this asset already bakes in its own
+ * The product's own mark (2026-07-13 refresh — supersedes the same day's
+ * earlier two attempts: a hand-drawn toolbox-and-7 SVG, then a photographic/
+ * glow version cropped from an AI-generated PNG) — a turquoise knot glyph on
+ * a violet/navy rounded-square tile. This final version is real vector
+ * source (public/marketing/branding/logo-mark.svg, part of a full brand kit
+ * with a README covering every asset/variant), not a raster crop, so it's
+ * crisp at any size with no transparency-recovery hackery needed. A plain
+ * `<img>`, not `next/image` — SVGs aren't part of next/image's raster
+ * optimization pipeline (same convention as AppNav.tsx's org-logo `<img>`).
+ * Unlike every other icon in this file, this asset already bakes in its own
  * rounded-square badge/background — callers should size it directly (e.g.
  * `h-8 w-8`) rather than wrapping it in a separate colored badge `<span>`
- * the way the old SVG mark needed.
+ * the way the original SVG mark needed.
  */
 export function ToolboxLogo({ className }: IconProps) {
-  return <Image src="/icons/logo.png" alt="Cin7 Core Toolbox" width={1009} height={1039} className={`object-contain ${className ?? ""}`} />;
+  // eslint-disable-next-line @next/next/no-img-element -- local SVG, not worth routing through next/image's raster pipeline
+  return <img src="/marketing/branding/logo-mark.svg" alt="Cin7 Core Toolbox" className={className} />;
 }
 
 /**
- * Horizontal lockup (icon + wordmark) of the same mark, white text — for
- * the marketing page's nav/footer, both on a dark background. Replaces
- * rendering `ToolboxLogo` and a `Cin7 Core Toolbox` text span as two
- * separate elements side by side; use `ToolboxLogo` alone (paired with
- * your own text styling) wherever a light-background/dark-text version
- * would be needed instead — no such variant has been generated yet.
+ * Horizontal lockup (icon + wordmark) of the same mark — white text, for a
+ * dark background (the marketing page's nav/footer). Replaces rendering
+ * `ToolboxLogo` and a `Cin7 Core Toolbox` text span as two separate elements
+ * side by side.
  */
 export function ToolboxLogoHorizontal({ className }: IconProps) {
-  return (
-    <Image
-      src="/icons/logo-horizontal.png"
-      alt="Cin7 Core Toolbox"
-      width={2382}
-      height={424}
-      className={`h-auto object-contain ${className ?? ""}`}
-    />
-  );
+  // eslint-disable-next-line @next/next/no-img-element -- local SVG, not worth routing through next/image's raster pipeline
+  return <img src="/marketing/branding/logo-horizontal-dark.svg" alt="Cin7 Core Toolbox" className={className} />;
+}
+
+/** Same lockup, dark text — for a light background. Nothing in the app currently needs this (the one light-background usage, the dashboard header, already pairs the plain `ToolboxLogo` icon with its own separately-styled dark `<h1>`), but it's here since the brand kit ships it as a first-class variant. */
+export function ToolboxLogoHorizontalLight({ className }: IconProps) {
+  // eslint-disable-next-line @next/next/no-img-element -- local SVG, not worth routing through next/image's raster pipeline
+  return <img src="/marketing/branding/logo-horizontal-light.svg" alt="Cin7 Core Toolbox" className={className} />;
 }
 
 export function ImportIcon({ className }: IconProps) {

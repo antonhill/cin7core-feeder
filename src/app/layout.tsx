@@ -20,6 +20,20 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Cin7 Core Toolbox",
   description: "Do amazing things that you cannot do in Cin7 Core",
+  // The bare favicon itself is the file-convention src/app/icon.svg (a copy
+  // of the same brand kit's icon.svg) — these cover the sizes/formats that
+  // convention alone doesn't (explicit pixel favicons, iOS home-screen, PWA
+  // manifest icons). See public/marketing/branding/README.txt.
+  icons: {
+    icon: [
+      { url: "/marketing/branding/favicon-16.png", sizes: "16x16", type: "image/png" },
+      { url: "/marketing/branding/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/marketing/branding/favicon-48.png", sizes: "48x48", type: "image/png" },
+      { url: "/marketing/branding/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/marketing/branding/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/marketing/branding/apple-touch-icon.png",
+  },
 };
 
 /** Outside the component body — Date.now() is an impure call the react-hooks/purity rule flags if made directly during render. */
