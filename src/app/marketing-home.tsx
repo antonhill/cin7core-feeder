@@ -107,9 +107,8 @@ export default async function MarketingHome() {
               you <span className="text-indigo-300">can&rsquo;t do</span> in Cin7 Core.
             </h1>
             <p className="mt-5 max-w-xl text-lg text-sidebar-text">
-              Push one import to every instance, bulk-fix your data, pricing, and reorder points, replenish stock
-              across locations, score each instance&rsquo;s health, migrate cleanly, and report on what Cin7 Core keeps
-              hidden — all from one console.
+              Sync every instance from one place, bulk-fix what&rsquo;s drifted, and see what Cin7 Core keeps hidden
+              — all without touching a spreadsheet.
             </p>
             <div className="mt-7 flex flex-wrap justify-center gap-3 lg:justify-start">
               <Link
@@ -180,7 +179,7 @@ export default async function MarketingHome() {
           <Reveal className="mb-12 max-w-2xl">
             <p className="font-mono text-xs font-medium uppercase tracking-wide text-indigo-600">What&rsquo;s inside</p>
             <h2 className="mt-4 text-3xl font-bold leading-tight tracking-tight text-slate-900 sm:text-4xl">
-              Eight tools for the work Cin7 Core leaves to you.
+              Every tool for the work Cin7 Core leaves to you.
             </h2>
             <p className="mt-4 text-lg text-slate-500">
               Connect your instances once, then work across all of them. Every capability targets a specific gap in native
