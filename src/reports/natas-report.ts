@@ -67,24 +67,33 @@ export interface UnmappedItem {
   quantity: number;
 }
 
+/** This org's sales are recorded VAT-inclusive (South Africa, 15%) — every profit/margin figure is computed against revenueExVat, not the raw invoiced amount, since COGS (Cin7's average_cost) is itself VAT-exclusive and mixing the two would inflate margin by the VAT portion. */
+export const VAT_RATE = 0.15;
+
 export interface AggregatedNataRow {
   /** "YYYY-MM", or "Unknown" if invoiceDate was null. */
   month: string;
   location: string;
   nataType: string;
   individualNatas: number;
+  /** VAT-inclusive, as invoiced (matches Cin7's own Invoice/Revenue figures). */
   revenue: number;
-  packagingCost: number;
-  packagingCostPerNata: number | null;
-  /** Revenue minus packaging cost only — NOT a full-COGS profit (ingredient/casing cost isn't split by this report). See fullProfit for that. */
-  profit: number;
-  /** profit / revenue * 100, null when revenue is 0 (matches the Sales report's own null-not-0 convention for an undefined ratio). */
-  marginPercent: number | null;
+  /** revenue / (1 + VAT_RATE) — the basis for every profit/margin figure below. */
+  revenueExVat: number;
   /** Cin7's own average-cost COGS (same basis as the Sales report), attributed the same way packagingCost is — a mixed-pack sale's patch-packaging line's own average cost is split proportionally across that sale's individual-nata lines, same as its BOM-derived packaging cost. */
   fullCogs: number;
-  /** revenue - fullCogs — the true full-cost profit, unlike `profit` above. */
-  fullProfit: number;
-  fullMarginPercent: number | null;
+  /** fullCogs minus packagingCost — the ingredient/casing/filling portion of full COGS, not itself independently computed. */
+  natCogs: number;
+  /** natCogs / fullCogs * 100, null when fullCogs is 0. */
+  natCogsPercent: number | null;
+  /** This SKU's own BOM cost of Packaging+Label+Topping components — see PACKAGING_CATEGORIES. */
+  packagingCost: number;
+  /** packagingCost / fullCogs * 100, null when fullCogs is 0. */
+  packagingCostPercent: number | null;
+  /** revenueExVat - fullCogs. */
+  profit: number;
+  /** profit / revenueExVat * 100, null when revenueExVat is 0 (matches the Sales report's own null-not-0 convention for an undefined ratio). */
+  marginPercent: number | null;
 }
 
 export interface NatasReportResult {
@@ -253,15 +262,17 @@ export function buildNatasReport(saleLines: NatasSaleLineInput[], bomCostIndex: 
 
   const rows: AggregatedNataRow[] = [...grouped.values()]
     .map((r) => {
-      const profit = r.revenue - r.packagingCost;
-      const fullProfit = r.revenue - r.fullCogs;
+      const revenueExVat = r.revenue / (1 + VAT_RATE);
+      const natCogs = r.fullCogs - r.packagingCost;
+      const profit = revenueExVat - r.fullCogs;
       return {
         ...r,
-        packagingCostPerNata: r.individualNatas > 0 ? r.packagingCost / r.individualNatas : null,
+        revenueExVat,
+        natCogs,
+        natCogsPercent: r.fullCogs > 0 ? (natCogs / r.fullCogs) * 100 : null,
+        packagingCostPercent: r.fullCogs > 0 ? (r.packagingCost / r.fullCogs) * 100 : null,
         profit,
-        marginPercent: r.revenue > 0 ? (profit / r.revenue) * 100 : null,
-        fullProfit,
-        fullMarginPercent: r.revenue > 0 ? (fullProfit / r.revenue) * 100 : null,
+        marginPercent: revenueExVat > 0 ? (profit / revenueExVat) * 100 : null,
       };
     })
     .sort((a, b) => a.month.localeCompare(b.month) || a.location.localeCompare(b.location) || a.nataType.localeCompare(b.nataType));

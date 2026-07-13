@@ -3,6 +3,7 @@ import {
   buildBomCostIndex,
   buildNatasReport,
   mapNataType,
+  VAT_RATE,
   type BomLineInput,
   type NatasSaleLineInput,
 } from "@/reports/natas-report";
@@ -67,7 +68,7 @@ describe("buildBomCostIndex", () => {
 });
 
 describe("buildNatasReport", () => {
-  it("extrapolates a predefined-pack sale to its individual-nata count, own packaging cost, and full COGS (Lisbon Classic 1 receipt)", () => {
+  it("extrapolates a predefined-pack sale to its individual-nata count, splits full COGS into nat/packaging with percentages, and computes profit/margin off ex-VAT revenue (Lisbon Classic 1 receipt)", () => {
     const bomLines: BomLineInput[] = [
       { productSku: "LisbonClassic1", componentSku: "2PillowSleeve", quantity: 0.001, componentAverageCost: 2.62, estimatedUnitCost: null, componentCategoryCode: "Packaging" },
       { productSku: "LisbonClassic1", componentSku: "CinnamonSachet", quantity: 0.002, componentAverageCost: 67, estimatedUnitCost: null, componentCategoryCode: "Topping" },
@@ -95,16 +96,21 @@ describe("buildNatasReport", () => {
 
     expect(unmapped).toEqual([]);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ month: "2026-07", location: "Sandton", nataType: "Lisbon Classic", individualNatas: 1, revenue: 21 });
+    const row = rows[0];
+    expect(row).toMatchObject({ month: "2026-07", location: "Sandton", nataType: "Lisbon Classic", individualNatas: 1, revenue: 21 });
     // 0.001*2.62 + 0.002*67 + 0.001*51.75 + 0.0005*1140 = 0.75837
-    expect(rows[0].packagingCost).toBeCloseTo(0.75837, 4);
-    expect(rows[0].packagingCostPerNata).toBeCloseTo(0.75837, 4);
-    expect(rows[0].profit).toBeCloseTo(21 - 0.75837, 4);
-    expect(rows[0].marginPercent).toBeCloseTo(((21 - 0.75837) / 21) * 100, 4);
-    // Full COGS uses Cin7's own average_cost, independent of the BOM-derived packaging split.
-    expect(rows[0].fullCogs).toBeCloseTo(5.2444, 4);
-    expect(rows[0].fullProfit).toBeCloseTo(21 - 5.2444, 4);
-    expect(rows[0].fullMarginPercent).toBeCloseTo(((21 - 5.2444) / 21) * 100, 4);
+    expect(row.packagingCost).toBeCloseTo(0.75837, 4);
+    expect(row.fullCogs).toBeCloseTo(5.2444, 4);
+    // natCogs = fullCogs - packagingCost; percentages of fullCogs sum to 100.
+    expect(row.natCogs).toBeCloseTo(5.2444 - 0.75837, 4);
+    expect(row.natCogsPercent).toBeCloseTo(((5.2444 - 0.75837) / 5.2444) * 100, 4);
+    expect(row.packagingCostPercent).toBeCloseTo((0.75837 / 5.2444) * 100, 4);
+    expect((row.natCogsPercent ?? 0) + (row.packagingCostPercent ?? 0)).toBeCloseTo(100, 6);
+    // revenue is VAT-inclusive; every profit/margin figure is computed off the ex-VAT basis.
+    const revenueExVat = 21 / (1 + VAT_RATE);
+    expect(row.revenueExVat).toBeCloseTo(revenueExVat, 4);
+    expect(row.profit).toBeCloseTo(revenueExVat - 5.2444, 4);
+    expect(row.marginPercent).toBeCloseTo(((revenueExVat - 5.2444) / revenueExVat) * 100, 4);
   });
 
   it("splits a mixed-pack sale's patch-packaging cost (both BOM-derived and Cin7's own average cost) proportionally across two Nata Types in the same sale (SNTN4 receipt)", () => {
@@ -175,9 +181,10 @@ describe("buildNatasReport", () => {
     // Full COGS: each single's own (quantity*averageCost) plus half of 6NataPackaging's average cost (4 * 1 / 2 = 2).
     expect(lisbonRow?.fullCogs).toBeCloseTo(3 * 2.5377 + 2, 4);
     expect(happyRow?.fullCogs).toBeCloseTo(3 * 3.2524 + 2, 4);
+    expect(lisbonRow?.natCogs).toBeCloseTo((lisbonRow?.fullCogs ?? 0) - 1.527875, 4);
   });
 
-  it("reports zero packaging cost for a NoPackaging pack variant with no Packaging/Label/Topping components in its own BOM and no patch line in the sale", () => {
+  it("reports zero packaging cost, zero natCogs, and null percentages for a NoPackaging variant with zero full COGS", () => {
     const bomLines: BomLineInput[] = [
       { productSku: "LisbonClassic12NoPackaging", componentSku: "LisClassicFillStd", quantity: 0.0391, componentAverageCost: 318.5898, estimatedUnitCost: null, componentCategoryCode: "Fillings" },
       { productSku: "LisbonClassic12NoPackaging", componentSku: "NatasCasingStd", quantity: 12, componentAverageCost: 0.4563, estimatedUnitCost: null, componentCategoryCode: "Nata" },
@@ -198,10 +205,18 @@ describe("buildNatasReport", () => {
     ];
 
     const { rows } = buildNatasReport(saleLines, buildBomCostIndex(bomLines));
-    expect(rows[0]).toMatchObject({ individualNatas: 12, packagingCost: 0, packagingCostPerNata: 0, profit: 150, fullCogs: 0, fullProfit: 150 });
+    expect(rows[0]).toMatchObject({
+      individualNatas: 12,
+      packagingCost: 0,
+      fullCogs: 0,
+      natCogs: 0,
+      natCogsPercent: null,
+      packagingCostPercent: null,
+      profit: 150 / (1 + VAT_RATE),
+    });
   });
 
-  it("reports marginPercent/fullMarginPercent as null (not 0 or NaN) when revenue is 0, since the ratio is genuinely undefined", () => {
+  it("reports marginPercent as null (not 0 or NaN) when revenueExVat is 0, since the ratio is genuinely undefined", () => {
     const saleLines: NatasSaleLineInput[] = [
       {
         instanceId: "inst-1",
@@ -218,7 +233,6 @@ describe("buildNatasReport", () => {
     ];
     const { rows } = buildNatasReport(saleLines, buildBomCostIndex([]));
     expect(rows[0].marginPercent).toBeNull();
-    expect(rows[0].fullMarginPercent).toBeNull();
   });
 
   it("surfaces an unrecognized Nata-category SKU in `unmapped` instead of dropping or miscounting it", () => {
@@ -276,5 +290,6 @@ describe("buildNatasReport", () => {
     const { rows } = buildNatasReport(saleLines, buildBomCostIndex(bomLines));
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ month: "2026-07", location: "Sandton", nataType: "Lisbon Classic", individualNatas: 3, revenue: 63, fullCogs: 15 });
+    expect(rows[0].revenueExVat).toBeCloseTo(63 / (1 + VAT_RATE), 4);
   });
 });

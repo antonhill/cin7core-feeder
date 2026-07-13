@@ -18,25 +18,25 @@ function percent(value: number | null | undefined): string {
 }
 
 interface DisplayRow extends AggregatedNataRow {
-  /** Full-COGS profit per individual nata — display-only, derived here rather than in natas-report.ts since it's a trivial ratio of two already-computed fields. */
-  fullProfitPerNata: number | null;
+  /** Profit per individual nata — display-only, derived here rather than in natas-report.ts since it's a trivial ratio of two already-computed fields. */
+  profitPerNata: number | null;
 }
 
 function toDisplayRow(row: AggregatedNataRow): DisplayRow {
-  return { ...row, fullProfitPerNata: row.individualNatas > 0 ? row.fullProfit / row.individualNatas : null };
+  return { ...row, profitPerNata: row.individualNatas > 0 ? row.profit / row.individualNatas : null };
 }
 
 function sumRows(rows: AggregatedNataRow[]) {
   return rows.reduce(
     (acc, r) => ({
       individualNatas: acc.individualNatas + r.individualNatas,
-      revenue: acc.revenue + r.revenue,
+      revenueExVat: acc.revenueExVat + r.revenueExVat,
+      fullCogs: acc.fullCogs + r.fullCogs,
+      natCogs: acc.natCogs + r.natCogs,
       packagingCost: acc.packagingCost + r.packagingCost,
       profit: acc.profit + r.profit,
-      fullCogs: acc.fullCogs + r.fullCogs,
-      fullProfit: acc.fullProfit + r.fullProfit,
     }),
-    { individualNatas: 0, revenue: 0, packagingCost: 0, profit: 0, fullCogs: 0, fullProfit: 0 }
+    { individualNatas: 0, revenueExVat: 0, fullCogs: 0, natCogs: 0, packagingCost: 0, profit: 0 }
   );
 }
 
@@ -45,12 +45,10 @@ type Totals = ReturnType<typeof sumRows>;
 /**
  * Every column is independently toggleable via checkbox (this is purely a
  * display-layer concern — it doesn't affect what data was fetched, so
- * toggling never needs to re-run the report). Defaults to a smaller
- * "standard" set (Anton, 2026-07-13): the full-COGS view (Cin7's own
- * average_cost basis) rather than the packaging-only "net of packaging"
- * columns, which are still available but unchecked by default for anyone
- * who wants to drill into just the packaging-cost split this report was
- * originally built around.
+ * toggling never needs to re-run the report). All checked by default —
+ * Anton (2026-07-13) removed the earlier "net of packaging" duplicate
+ * profit/margin view in favor of a single COGS breakdown (Nata COGS +
+ * Packaging COGS = full COGS, with each shown as a % of the total).
  */
 const COLUMNS: {
   key: string;
@@ -69,50 +67,56 @@ const COLUMNS: {
     render: (r) => r.individualNatas.toLocaleString(),
     renderTotal: (t) => t.individualNatas.toLocaleString(),
   },
-  { key: "revenue", label: "Revenue", defaultVisible: true, render: (r) => money(r.revenue), renderTotal: (t) => money(t.revenue) },
-  { key: "fullCogs", label: "COGS", defaultVisible: true, render: (r) => money(r.fullCogs), renderTotal: (t) => money(t.fullCogs) },
-  { key: "fullProfit", label: "Profit", defaultVisible: true, render: (r) => money(r.fullProfit), renderTotal: (t) => money(t.fullProfit) },
   {
-    key: "fullProfitPerNata",
-    label: "Unit Profit",
+    key: "revenueExVat",
+    label: "Revenue (ex VAT)",
     defaultVisible: true,
-    render: (r) => money(r.fullProfitPerNata),
-    renderTotal: (t) => money(t.individualNatas > 0 ? t.fullProfit / t.individualNatas : null),
+    render: (r) => money(r.revenueExVat),
+    renderTotal: (t) => money(t.revenueExVat),
+  },
+  { key: "fullCogs", label: "COGS", defaultVisible: true, render: (r) => money(r.fullCogs), renderTotal: (t) => money(t.fullCogs) },
+  {
+    key: "natCogs",
+    label: "Nata COGS",
+    defaultVisible: true,
+    render: (r) => money(r.natCogs),
+    renderTotal: (t) => money(t.natCogs),
   },
   {
-    key: "fullMarginPercent",
-    label: "Margin %",
+    key: "natCogsPercent",
+    label: "Nata COGS %",
     defaultVisible: true,
-    render: (r) => percent(r.fullMarginPercent),
-    renderTotal: (t) => percent(t.revenue > 0 ? (t.fullProfit / t.revenue) * 100 : null),
+    render: (r) => percent(r.natCogsPercent),
+    renderTotal: (t) => percent(t.fullCogs > 0 ? (t.natCogs / t.fullCogs) * 100 : null),
   },
   {
     key: "packagingCost",
     label: "Packaging COGS",
-    defaultVisible: false,
+    defaultVisible: true,
     render: (r) => money(r.packagingCost),
     renderTotal: (t) => money(t.packagingCost),
   },
   {
-    key: "packagingCostPerNata",
-    label: "Packaging COGS / Nata",
-    defaultVisible: false,
-    render: (r) => money(r.packagingCostPerNata),
-    renderTotal: (t) => money(t.individualNatas > 0 ? t.packagingCost / t.individualNatas : null),
+    key: "packagingCostPercent",
+    label: "Packaging COGS %",
+    defaultVisible: true,
+    render: (r) => percent(r.packagingCostPercent),
+    renderTotal: (t) => percent(t.fullCogs > 0 ? (t.packagingCost / t.fullCogs) * 100 : null),
   },
+  { key: "profit", label: "Profit", defaultVisible: true, render: (r) => money(r.profit), renderTotal: (t) => money(t.profit) },
   {
-    key: "profit",
-    label: "Profit (net of packaging)",
-    defaultVisible: false,
-    render: (r) => money(r.profit),
-    renderTotal: (t) => money(t.profit),
+    key: "profitPerNata",
+    label: "Unit Profit",
+    defaultVisible: true,
+    render: (r) => money(r.profitPerNata),
+    renderTotal: (t) => money(t.individualNatas > 0 ? t.profit / t.individualNatas : null),
   },
   {
     key: "marginPercent",
-    label: "Margin % (net of packaging)",
-    defaultVisible: false,
+    label: "Margin %",
+    defaultVisible: true,
     render: (r) => percent(r.marginPercent),
-    renderTotal: (t) => percent(t.revenue > 0 ? (t.profit / t.revenue) * 100 : null),
+    renderTotal: (t) => percent(t.revenueExVat > 0 ? (t.profit / t.revenueExVat) * 100 : null),
   },
 ];
 
@@ -184,10 +188,11 @@ export default function NatasReportPage() {
       <ReportDescription title="Natas Sold &amp; Packaging COGS">
         Individual natas sold per Nata Type, Location, and Month — normalizing both predefined packs (e.g. &ldquo;Lisbon
         Classic 6&rdquo;, extrapolated to 6 individual natas from its own Assembly BOM) and mixed packs (individual
-        singles combined with a zero-cost packaging line in the same sale). COGS/Profit/Margin % use Cin7&rsquo;s own
-        average-cost basis by default; the packaging-only split this report was originally built around (Packaging +
-        Label + Topping cost, amortized across however many natas it packaged) is still available via the column
-        picker below.
+        singles combined with a zero-cost packaging line in the same sale). COGS (Cin7&rsquo;s own average-cost basis)
+        splits into Nata COGS (ingredients/casing) and Packaging COGS (Packaging + Label + Topping, amortized across
+        however many natas it packaged), each shown as a % of the total. Revenue is ex VAT (this org records sales
+        VAT-inclusive; 15% is backed out here) — Profit and Margin % are computed against that ex-VAT figure, not the
+        invoiced amount.
       </ReportDescription>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
