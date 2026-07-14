@@ -9,7 +9,9 @@ import {
   groupByStatus,
   cumulativeCostThroughStage,
   hasInputShortfall,
+  hasInputOverproduction,
   operationHasInputShortfall,
+  operationHasInputOverproduction,
   previousOperation,
   NOT_STARTED_COLUMN,
 } from "@/reports/production-tracking/build";
@@ -350,6 +352,48 @@ describe("operationHasInputShortfall", () => {
 
   it("is false when the full expected amount was received", () => {
     expect(operationHasInputShortfall(operationRow({ startDate: "2026-07-14T00:00:00", inputExpectedQty: 25.5, inputActualQty: 25.5 }))).toBe(false);
+  });
+});
+
+describe("hasInputOverproduction", () => {
+  it("is true when the current stage received more than expected", () => {
+    expect(
+      hasInputOverproduction(trackingRow({ currentOperationStartedAt: "2026-07-14T00:00:00", currentInputExpectedQty: 25, currentInputActualQty: 27 }))
+    ).toBe(true);
+  });
+
+  it("is false when the full expected amount was received (on target)", () => {
+    expect(
+      hasInputOverproduction(trackingRow({ currentOperationStartedAt: "2026-07-14T00:00:00", currentInputExpectedQty: 25, currentInputActualQty: 25 }))
+    ).toBe(false);
+  });
+
+  it("is false when it's actually a shortfall, not overproduction", () => {
+    expect(
+      hasInputOverproduction(trackingRow({ currentOperationStartedAt: "2026-07-14T00:00:00", currentInputExpectedQty: 25, currentInputActualQty: 23 }))
+    ).toBe(false);
+  });
+
+  it("is false when the current stage's BOM doesn't track Inputs/Outputs at all", () => {
+    expect(
+      hasInputOverproduction(
+        trackingRow({ currentOperationStartedAt: "2026-07-14T00:00:00", currentInputExpectedQty: null, currentInputActualQty: null })
+      )
+    ).toBe(false);
+  });
+});
+
+describe("operationHasInputOverproduction", () => {
+  it("is true for a started operation that received more than expected", () => {
+    expect(operationHasInputOverproduction(operationRow({ startDate: "2026-07-14T00:00:00", inputExpectedQty: 25, inputActualQty: 27 }))).toBe(true);
+  });
+
+  it("is false for an operation that hasn't started", () => {
+    expect(operationHasInputOverproduction(operationRow({ startDate: null, inputExpectedQty: 25, inputActualQty: 27 }))).toBe(false);
+  });
+
+  it("is false when it's a shortfall rather than overproduction", () => {
+    expect(operationHasInputOverproduction(operationRow({ startDate: "2026-07-14T00:00:00", inputExpectedQty: 25, inputActualQty: 23 }))).toBe(false);
   });
 });
 

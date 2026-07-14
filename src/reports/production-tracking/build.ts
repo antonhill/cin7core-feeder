@@ -62,41 +62,55 @@ export function isLate(requiredByDate: string | null, listStatus: string | null,
 }
 
 /**
- * True when a stage has actually started (its own StartDate is set) AND
- * received less of the previous stage's semi-finished output than Cin7
- * expected — the shared logic behind the Kanban card, list-view row, and
- * modal row-line shortfall alerts.
- *
- * Compares actual vs expected directly rather than trusting Cin7's own
- * InputProducts.WastageQuantity field: confirmed live 2026-07-14 on
- * MO-00042 that a real shortfall (Grinding expected 25.5kg from Roasting,
- * actually received only 23.5kg) can show WastageQuantity 0 — an operator
- * can enter a lower received quantity on Cin7's own Input screen without
- * separately flagging it as wastage, the exact same ambiguity as the
- * Output screen's "reduce the quantity" vs "enter wastage" choice. Relying
- * on WastageQuantity alone would silently miss this.
+ * Compares a stage's actual vs expected Input quantity directly, rather
+ * than trusting Cin7's own InputProducts.WastageQuantity field: confirmed
+ * live 2026-07-14 on MO-00042 that a real shortfall (Grinding expected
+ * 25.5kg from Roasting, actually received only 23.5kg) can show
+ * WastageQuantity 0 — an operator can enter a different received quantity
+ * on Cin7's own Input screen without separately flagging anything, the
+ * exact same ambiguity as the Output screen's "reduce the quantity" vs
+ * "enter wastage" choice. Relying on WastageQuantity alone would silently
+ * miss this in either direction.
  *
  * Gated on `startDate !== null` so a not-yet-started stage — which always
  * shows 0 received, because nothing has happened yet — doesn't misfire as
- * a false "shortfall". False when the stage doesn't track Inputs/Outputs
- * at all (expected/actual null).
+ * a false "shortfall". Returns "not-tracked" when the stage doesn't track
+ * Inputs/Outputs at all (expected/actual null).
  */
-function isInputShort(startDate: string | null, expectedQty: number | null, actualQty: number | null): boolean {
-  if (startDate === null) return false;
-  if (expectedQty === null || actualQty === null) return false;
-  return actualQty < expectedQty;
+function compareInputToExpected(
+  startDate: string | null,
+  expectedQty: number | null,
+  actualQty: number | null
+): "short" | "over" | "on-target" | "not-tracked" {
+  if (startDate === null) return "not-tracked";
+  if (expectedQty === null || actualQty === null) return "not-tracked";
+  if (actualQty < expectedQty) return "short";
+  if (actualQty > expectedQty) return "over";
+  return "on-target";
 }
 
-/** The order's current-stage shortfall — drives the Kanban card and list-view row highlight. See isInputShort. */
+/** The order's current-stage shortfall — drives the Kanban card and list-view row's red highlight. See compareInputToExpected. */
 export function hasInputShortfall(
   row: Pick<ProductionTrackingRow, "currentOperationStartedAt" | "currentInputExpectedQty" | "currentInputActualQty">
 ): boolean {
-  return isInputShort(row.currentOperationStartedAt, row.currentInputExpectedQty, row.currentInputActualQty);
+  return compareInputToExpected(row.currentOperationStartedAt, row.currentInputExpectedQty, row.currentInputActualQty) === "short";
 }
 
-/** One specific operation's own shortfall — drives the modal's per-row highlight, independent of whether that operation is the order's current stage. See isInputShort. */
+/** The order's current-stage overproduction (received/produced MORE than the BOM expected) — drives the card/list row's amber highlight, distinct from the shortfall's red one. See compareInputToExpected. */
+export function hasInputOverproduction(
+  row: Pick<ProductionTrackingRow, "currentOperationStartedAt" | "currentInputExpectedQty" | "currentInputActualQty">
+): boolean {
+  return compareInputToExpected(row.currentOperationStartedAt, row.currentInputExpectedQty, row.currentInputActualQty) === "over";
+}
+
+/** One specific operation's own shortfall — drives the modal's per-row red highlight, independent of whether that operation is the order's current stage. See compareInputToExpected. */
 export function operationHasInputShortfall(op: Pick<ProductionOperationRow, "startDate" | "inputExpectedQty" | "inputActualQty">): boolean {
-  return isInputShort(op.startDate, op.inputExpectedQty, op.inputActualQty);
+  return compareInputToExpected(op.startDate, op.inputExpectedQty, op.inputActualQty) === "short";
+}
+
+/** One specific operation's own overproduction — drives the modal's per-row amber highlight. See compareInputToExpected. */
+export function operationHasInputOverproduction(op: Pick<ProductionOperationRow, "startDate" | "inputExpectedQty" | "inputActualQty">): boolean {
+  return compareInputToExpected(op.startDate, op.inputExpectedQty, op.inputActualQty) === "over";
 }
 
 /**

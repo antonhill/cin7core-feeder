@@ -16,7 +16,9 @@ import {
   groupByStatus,
   cumulativeCostThroughStage,
   hasInputShortfall,
+  hasInputOverproduction,
   operationHasInputShortfall,
+  operationHasInputOverproduction,
   previousOperation,
   PRODUCTION_STATUS_ORDER,
   type WorkCentreColumn,
@@ -106,7 +108,9 @@ function ProductionOrderDetailPanel({
             const stageCost = (op.actualResourceCost ?? 0) + (op.actualMaterialCost ?? 0);
             const hasInputData = op.inputExpectedQty !== null;
             const shortfall = operationHasInputShortfall(op);
+            const overproduction = operationHasInputOverproduction(op);
             const shortfallQty = shortfall ? (op.inputExpectedQty ?? 0) - (op.inputActualQty ?? 0) : 0;
+            const overQty = overproduction ? (op.inputActualQty ?? 0) - (op.inputExpectedQty ?? 0) : 0;
             // Cin7 tracks Output wastage (flagged on the producing stage) and Input
             // wastage (flagged on the receiving stage) as separate, non-propagating
             // figures — confirmed live 2026-07-14 (MO-00042) that Roasting's own
@@ -116,7 +120,10 @@ function ProductionOrderDetailPanel({
             const upstream = shortfall ? previousOperation(operations, op.operationOrder) : null;
             const upstreamWastage = upstream?.outputWastageQty ?? 0;
             return (
-              <tr key={op.operationOrder} className={`border-t ${shortfall ? "border-red-200 bg-red-50" : "border-slate-100"}`}>
+              <tr
+                key={op.operationOrder}
+                className={`border-t ${shortfall ? "border-red-200 bg-red-50" : overproduction ? "border-amber-200 bg-amber-50" : "border-slate-100"}`}
+              >
                 <td className="py-1 pr-4">{op.operationName ?? "—"}</td>
                 <td className="py-1 pr-4">{op.workCenterName ?? "—"}</td>
                 <td className="py-1 pr-4">{op.status ?? "—"}</td>
@@ -138,6 +145,9 @@ function ProductionOrderDetailPanel({
                         ) : (
                           <span className="font-semibold text-rose-700"> — ⚠ {qty(shortfallQty)} short (not flagged as wastage)</span>
                         ))}
+                      {overproduction && (
+                        <span className="font-semibold text-amber-700"> — ▲ {qty(overQty)} over-received</span>
+                      )}
                     </>
                   ) : (
                     <span className="text-slate-400">Not tracked for this stage</span>
@@ -169,11 +179,12 @@ function ProductionOrderCard({ row, today, onOpenDetail }: { row: ProductionTrac
   const late = isLate(row.requiredByDate, row.listStatus, today);
   const days = daysLate(row.requiredByDate, today);
   const shortfall = hasInputShortfall(row);
+  const overproduction = hasInputOverproduction(row);
   return (
     <div
       onClick={() => onOpenDetail(row.productionOrderId)}
       className={`min-w-0 cursor-pointer overflow-hidden rounded-lg border p-2 text-xs shadow-sm transition hover:border-indigo-300 ${
-        shortfall ? "border-red-400 bg-red-50" : "border-slate-200 bg-white"
+        shortfall ? "border-red-400 bg-red-50" : overproduction ? "border-amber-400 bg-amber-50" : "border-slate-200 bg-white"
       }`}
     >
       <div className="truncate font-medium text-slate-900">{row.orderNumber ?? row.productionOrderId}</div>
@@ -182,6 +193,11 @@ function ProductionOrderCard({ row, today, onOpenDetail }: { row: ProductionTrac
       {shortfall && (
         <div className="mt-1 rounded bg-red-100 px-1.5 py-0.5 font-semibold text-red-700">
           ⚠ Short input: {qty(row.currentInputActualQty ?? 0)} of {qty(row.currentInputExpectedQty ?? 0)} expected
+        </div>
+      )}
+      {overproduction && (
+        <div className="mt-1 rounded bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-700">
+          ▲ Over-received: {qty(row.currentInputActualQty ?? 0)} of {qty(row.currentInputExpectedQty ?? 0)} expected
         </div>
       )}
       <div className="mt-1 flex flex-wrap items-center gap-1">
@@ -636,12 +652,17 @@ export default function ProductionTrackingPage() {
                     const days = daysLate(row.requiredByDate, today);
                     const isExpanded = expandedIds.has(row.productionOrderId);
                     const shortfall = hasInputShortfall(row);
+                    const overproduction = hasInputOverproduction(row);
                     return (
                       <Fragment key={row.productionOrderId}>
                         <tr
                           onClick={() => handleToggleExpand(row.productionOrderId)}
                           className={`cursor-pointer border-b last:border-0 ${
-                            shortfall ? "border-red-200 bg-red-50 hover:bg-red-100" : "border-slate-100 hover:bg-slate-50"
+                            shortfall
+                              ? "border-red-200 bg-red-50 hover:bg-red-100"
+                              : overproduction
+                                ? "border-amber-200 bg-amber-50 hover:bg-amber-100"
+                                : "border-slate-100 hover:bg-slate-50"
                           }`}
                         >
                           <td className="px-2 py-2 align-top text-center text-slate-400">{isExpanded ? "▾" : "▸"}</td>
@@ -657,6 +678,11 @@ export default function ProductionTrackingPage() {
                                 {shortfall && (
                                   <div className="text-xs font-semibold text-red-700">
                                     ⚠ Short input: {qty(row.currentInputActualQty ?? 0)} of {qty(row.currentInputExpectedQty ?? 0)} expected
+                                  </div>
+                                )}
+                                {overproduction && (
+                                  <div className="text-xs font-semibold text-amber-700">
+                                    ▲ Over-received: {qty(row.currentInputActualQty ?? 0)} of {qty(row.currentInputExpectedQty ?? 0)} expected
                                   </div>
                                 )}
                               </>
