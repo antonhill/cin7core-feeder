@@ -90,7 +90,7 @@ function ProductionOrderDetailPanel({
     return <p className="px-4 py-3 text-sm text-slate-500">No operation detail synced yet for this order.</p>;
 
   return (
-    <div className="px-4 py-4">
+    <div className="overflow-x-auto px-4 py-4">
       <table className="w-full text-left text-sm text-slate-700">
         <thead>
           <tr className="text-xs uppercase tracking-wide text-slate-400">
@@ -275,18 +275,20 @@ function ProductionOrderDetailModal({
               {row.productName ?? row.productSku} — {row.currentOperationName ?? currentStageFallbackLabel(row)}
               {row.currentWorkCenterName && ` (${row.currentWorkCenterName})`}
             </p>
+            {row.tags && <p className="text-sm text-slate-500">🏷 {row.tags}</p>}
             <p className="text-sm text-slate-500">
               Qty planned: {row.plannedQuantity !== null ? qty(row.plannedQuantity) : "—"}
             </p>
-            {row.actualOutputQty !== null && (
-              <p
-                className={`text-sm ${
-                  row.plannedQuantity !== null && row.actualOutputQty < row.plannedQuantity ? "font-semibold text-red-700" : "text-slate-500"
-                }`}
-              >
-                Actual out: {qty(row.actualOutputQty)}
-              </p>
-            )}
+            {/*
+              TODO(actual output): row.actualOutputQty (Run.FinishedProducts.OutputQuantity) is known
+              to disagree with Cin7's own ground truth — confirmed live 2026-07-14 on MO-00042, where
+              this field read 2 while Cin7's own Output tab and Product Availability both showed 98.
+              Likely stale after an Output line is edited post-completion, not just re-fetched. Not
+              safe to display until a reliable source is found — NOT Product Availability, since
+              pre-existing stock unrelated to this specific order would pollute an on-hand read.
+              Hidden here on purpose; the field is still synced (see sync-production-runs.ts) in case
+              a fix surfaces later.
+            */}
             {reconciliation && (
               <p
                 className={`mt-2 inline-block rounded-lg px-3 py-1.5 text-sm font-medium ${
@@ -355,12 +357,21 @@ export default function ProductionTrackingPage() {
   const [productSearch, setProductSearch] = useState("");
 
   function toggleStatusColumn(status: string) {
+    const wasHidden = hiddenStatuses.has(status);
     setHiddenStatuses((prev) => {
       const next = new Set(prev);
       if (next.has(status)) next.delete(status);
       else next.add(status);
       return next;
     });
+    // Un-hiding COMPLETED/VOIDED only matters if those orders were actually
+    // fetched — the top-level "Include completed/voided" toggle lives on
+    // the Table view only now, so checking these columns here must trigger
+    // that fetch itself the first time, rather than un-hiding an empty set.
+    if (wasHidden && (status === "COMPLETED" || status === "VOIDED") && !includeCompleted && instanceId) {
+      setIncludeCompleted(true);
+      refreshRowsAndStatus(instanceId, true);
+    }
   }
 
   const [sortColumn, setSortColumn] = useState<SortColumn>("daysLate");

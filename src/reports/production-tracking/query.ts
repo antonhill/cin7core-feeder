@@ -29,11 +29,12 @@ export interface ProductionTrackingRow {
   currentInputActualQty: number | null;
   currentInputWastageQty: number | null;
   /**
-   * The real finished-good quantity actually produced (Run's own
-   * FinishedProducts.OutputQuantity) — a third, later checkpoint distinct
-   * from the WIP shortfall/overproduction figures above, only populated
-   * once output has actually been recorded. Null when no operation on
-   * this order defines FinishedProducts at all yet.
+   * TODO(actual output): sourced from Run.FinishedProducts.OutputQuantity,
+   * confirmed live 2026-07-14 (MO-00042) to disagree with Cin7's own
+   * ground truth (read 2 while Cin7's own Output tab and Product
+   * Availability both showed 98) — likely stale after an Output line is
+   * edited post-completion. Not currently displayed anywhere in the UI;
+   * do not surface without finding a reliable source first.
    */
   actualOutputQty: number | null;
   wipActualCost: number | null;

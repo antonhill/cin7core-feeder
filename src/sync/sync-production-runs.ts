@@ -167,12 +167,14 @@ async function syncProductionOrderRunDetails(
         // output" bucketing, which needs them to go null once finished.
         const latestStarted = latestStartedOperation(latestRun.operations);
         const latestStartedHasInput = (latestStarted?.inputProducts.length ?? 0) > 0;
-        // The real finished-good quantity, from whichever operation's own
-        // FinishedProducts records it (typically just the terminal one) —
-        // a third, later checkpoint distinct from the WIP Input/Output
-        // figures above, only meaningful once output has actually been
-        // recorded. null (not tracked) unless some operation defines
-        // FinishedProducts at all.
+        // TODO(actual output): FinishedProducts.OutputQuantity is confirmed
+        // live (2026-07-14, MO-00042) to disagree with Cin7's own ground
+        // truth — this field read 2 while Cin7's own Output tab and Product
+        // Availability both showed 98, likely because it's not refreshed
+        // after an Output line is edited post-completion. Still synced
+        // here in case a fix surfaces later, but deliberately NOT
+        // displayed anywhere in the UI until a reliable source is found —
+        // see the TODO in page.tsx's ProductionOrderDetailModal.
         const finishedProducts = latestRun.operations.flatMap((op) => op.finishedProducts);
         const { error: updateError } = await db
           .from("production_orders")
