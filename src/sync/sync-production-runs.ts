@@ -79,19 +79,25 @@ async function syncProductionOrderRunDetails(
   db: SupabaseClient,
   orgId: string,
   instanceId: string,
-  creds: Cin7Credentials
+  creds: Cin7Credentials,
+  force = false
 ): Promise<{ synced: number; failed: number; errors: { productionOrderId: string; error: string }[] }> {
-  const cutoffIso = new Date(Date.now() - REFRESH_INTERVAL_MS).toISOString();
-  const { data: pending } = await db
+  let pendingQuery = db
     .from("production_orders")
     .select("cin7_production_order_id")
     .eq("org_id", orgId)
     .eq("instance_id", instanceId)
     .neq("list_status", "COMPLETED")
-    .neq("list_status", "VOIDED")
-    .or(`run_synced_at.is.null,run_synced_at.lt.${cutoffIso}`)
-    .order("run_synced_at", { ascending: true, nullsFirst: true })
-    .limit(DETAIL_FETCH_BATCH_SIZE);
+    .neq("list_status", "VOIDED");
+  // force = true is the user-initiated "Sync now" click, not the automated
+  // cron sweep — a human pacing their own clicks won't hammer Cin7's 60/min
+  // account-wide limit the way an unthrottled automated loop could, so it's
+  // safe to skip the freshness gate and always re-fetch every open order.
+  if (!force) {
+    const cutoffIso = new Date(Date.now() - REFRESH_INTERVAL_MS).toISOString();
+    pendingQuery = pendingQuery.or(`run_synced_at.is.null,run_synced_at.lt.${cutoffIso}`);
+  }
+  const { data: pending } = await pendingQuery.order("run_synced_at", { ascending: true, nullsFirst: true }).limit(DETAIL_FETCH_BATCH_SIZE);
 
   let synced = 0;
   const errors: { productionOrderId: string; error: string }[] = [];
@@ -183,11 +189,16 @@ async function syncProductionOrderRunDetails(
   return { synced, failed: errors.length, errors };
 }
 
-/** Runs both sync phases for one instance. */
-export async function syncInstanceProductionRuns(db: SupabaseClient, orgId: string, instanceId: string): Promise<ProductionRunsSyncSummary> {
+/** Runs both sync phases for one instance. `force` skips Phase 2's 15-minute freshness gate — see syncProductionOrderRunDetails. */
+export async function syncInstanceProductionRuns(
+  db: SupabaseClient,
+  orgId: string,
+  instanceId: string,
+  force = false
+): Promise<ProductionRunsSyncSummary> {
   const creds = await loadCin7Credentials(db, orgId, instanceId);
   const listSynced = await syncProductionOrdersList(db, orgId, instanceId, creds);
-  const { synced, failed, errors } = await syncProductionOrderRunDetails(db, orgId, instanceId, creds);
+  const { synced, failed, errors } = await syncProductionOrderRunDetails(db, orgId, instanceId, creds, force);
   return { instanceId, listSynced, detailSynced: synced, detailFailed: failed, errors };
 }
 
@@ -197,7 +208,12 @@ export async function syncInstanceProductionRuns(db: SupabaseClient, orgId: stri
  * shape. Per-instance failures are caught so one bad instance doesn't stop
  * others.
  */
-export async function syncOrgProductionRuns(db: SupabaseClient, orgId?: string, instanceIds?: string[]): Promise<ProductionRunsSyncSummary[]> {
+export async function syncOrgProductionRuns(
+  db: SupabaseClient,
+  orgId?: string,
+  instanceIds?: string[],
+  force = false
+): Promise<ProductionRunsSyncSummary[]> {
   let query = db.from("cin7_instances").select("id, org_id").eq("active", true);
   if (orgId) query = query.eq("org_id", orgId);
   if (instanceIds?.length) query = query.in("id", instanceIds);
@@ -207,7 +223,7 @@ export async function syncOrgProductionRuns(db: SupabaseClient, orgId?: string, 
   const results: ProductionRunsSyncSummary[] = [];
   for (const instance of (instances ?? []) as { id: string; org_id: string }[]) {
     try {
-      results.push(await syncInstanceProductionRuns(db, instance.org_id, instance.id));
+      results.push(await syncInstanceProductionRuns(db, instance.org_id, instance.id, force));
     } catch (e) {
       results.push({
         instanceId: instance.id,

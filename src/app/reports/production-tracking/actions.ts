@@ -56,12 +56,18 @@ export async function loadProductionTrackingSyncStatusAction(instanceId: string)
   }
 }
 
-/** On-demand production-run sync for just this one instance — same direct-call pattern as Replenish's/Fulfillment Cleanup's own trigger action. */
+/**
+ * On-demand production-run sync for just this one instance — same
+ * direct-call pattern as Replenish's/Fulfillment Cleanup's own trigger
+ * action. force = true: a user clicking "Sync now" expects it to actually
+ * fetch fresh data, so this bypasses Phase 2's 15-minute freshness gate
+ * (which exists only to throttle the automated cron sweep).
+ */
 export async function triggerProductionTrackingSyncAction(instanceId: string): Promise<ProductionTrackingActionResult<ProductionRunsSyncSummary[]>> {
   try {
     const { orgId } = await requireCurrentOrg();
     const db = createServiceRoleClient();
-    return { ok: true, data: await syncOrgProductionRuns(db, orgId, [instanceId]) };
+    return { ok: true, data: await syncOrgProductionRuns(db, orgId, [instanceId], true) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
