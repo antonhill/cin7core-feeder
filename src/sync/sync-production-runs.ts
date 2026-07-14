@@ -69,27 +69,39 @@ async function syncProductionOrdersList(db: SupabaseClient, orgId: string, insta
 
 /**
  * Phase 2: re-fetches /production/order/run for open orders (list_status
- * not COMPLETED/VOIDED) whose run detail is missing or older than
- * REFRESH_INTERVAL_MS, capped at DETAIL_FETCH_BATCH_SIZE per run. Takes
- * the highest-Number Run (the latest one — an order restarting a Run is
- * rare and out of scope), computes current stage/WIP cost/wastage via
- * build.ts, replaces (delete + reinsert) that order's production_operations
- * rows wholesale, and updates the header.
+ * not COMPLETED/VOIDED, unless `includeFinished`) whose run detail is
+ * missing or older than REFRESH_INTERVAL_MS, capped at
+ * DETAIL_FETCH_BATCH_SIZE per run. Takes the highest-Number Run (the
+ * latest one — an order restarting a Run is rare and out of scope),
+ * computes current stage/WIP cost/wastage via build.ts, replaces (delete
+ * + reinsert) that order's production_operations rows wholesale, and
+ * updates the header.
  */
 async function syncProductionOrderRunDetails(
   db: SupabaseClient,
   orgId: string,
   instanceId: string,
   creds: Cin7Credentials,
-  force = false
+  force = false,
+  includeFinished = false
 ): Promise<{ synced: number; failed: number; errors: { productionOrderId: string; error: string }[] }> {
   let pendingQuery = db
     .from("production_orders")
     .select("cin7_production_order_id")
     .eq("org_id", orgId)
-    .eq("instance_id", instanceId)
-    .neq("list_status", "COMPLETED")
-    .neq("list_status", "VOIDED");
+    .eq("instance_id", instanceId);
+  // A completed/voided order's run detail is normally frozen on purpose —
+  // nothing about it should change, so the cron sweep excludes it to avoid
+  // polling Cin7 forever for no reason. But that also means a parsing bug
+  // fixed after an order already completed (e.g. actual_output_qty sourced
+  // from the wrong field — confirmed live 2026-07-15, MO-00042) stays wrong
+  // in the DB forever unless something explicitly re-fetches it.
+  // includeFinished is that explicit escape hatch: the report's "Sync now"
+  // passes it through only when the user has "Include completed/voided"
+  // checked, so this never fires as part of the automated cron sweep.
+  if (!includeFinished) {
+    pendingQuery = pendingQuery.neq("list_status", "COMPLETED").neq("list_status", "VOIDED");
+  }
   // force = true is the user-initiated "Sync now" click, not the automated
   // cron sweep — a human pacing their own clicks won't hammer Cin7's 60/min
   // account-wide limit the way an unthrottled automated loop could, so it's
@@ -213,16 +225,22 @@ async function syncProductionOrderRunDetails(
   return { synced, failed: errors.length, errors };
 }
 
-/** Runs both sync phases for one instance. `force` skips Phase 2's 15-minute freshness gate — see syncProductionOrderRunDetails. */
+/**
+ * Runs both sync phases for one instance. `force` skips Phase 2's
+ * 15-minute freshness gate; `includeFinished` also re-fetches run detail
+ * for already-COMPLETED/VOIDED orders — see syncProductionOrderRunDetails
+ * for why both are opt-in, not the cron default.
+ */
 export async function syncInstanceProductionRuns(
   db: SupabaseClient,
   orgId: string,
   instanceId: string,
-  force = false
+  force = false,
+  includeFinished = false
 ): Promise<ProductionRunsSyncSummary> {
   const creds = await loadCin7Credentials(db, orgId, instanceId);
   const listSynced = await syncProductionOrdersList(db, orgId, instanceId, creds);
-  const { synced, failed, errors } = await syncProductionOrderRunDetails(db, orgId, instanceId, creds, force);
+  const { synced, failed, errors } = await syncProductionOrderRunDetails(db, orgId, instanceId, creds, force, includeFinished);
   return { instanceId, listSynced, detailSynced: synced, detailFailed: failed, errors };
 }
 
@@ -236,7 +254,8 @@ export async function syncOrgProductionRuns(
   db: SupabaseClient,
   orgId?: string,
   instanceIds?: string[],
-  force = false
+  force = false,
+  includeFinished = false
 ): Promise<ProductionRunsSyncSummary[]> {
   let query = db.from("cin7_instances").select("id, org_id").eq("active", true);
   if (orgId) query = query.eq("org_id", orgId);
@@ -247,7 +266,7 @@ export async function syncOrgProductionRuns(
   const results: ProductionRunsSyncSummary[] = [];
   for (const instance of (instances ?? []) as { id: string; org_id: string }[]) {
     try {
-      results.push(await syncInstanceProductionRuns(db, instance.org_id, instance.id, force));
+      results.push(await syncInstanceProductionRuns(db, instance.org_id, instance.id, force, includeFinished));
     } catch (e) {
       results.push({
         instanceId: instance.id,

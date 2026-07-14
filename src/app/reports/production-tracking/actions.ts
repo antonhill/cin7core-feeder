@@ -62,12 +62,20 @@ export async function loadProductionTrackingSyncStatusAction(instanceId: string)
  * action. force = true: a user clicking "Sync now" expects it to actually
  * fetch fresh data, so this bypasses Phase 2's 15-minute freshness gate
  * (which exists only to throttle the automated cron sweep).
+ *
+ * includeFinished re-fetches already-COMPLETED/VOIDED orders too — the
+ * page passes this through only when its "Include completed/voided"
+ * toggle is on, so a normal "Sync now" click still leaves finished orders'
+ * (frozen-on-purpose) data alone.
  */
-export async function triggerProductionTrackingSyncAction(instanceId: string): Promise<ProductionTrackingActionResult<ProductionRunsSyncSummary[]>> {
+export async function triggerProductionTrackingSyncAction(
+  instanceId: string,
+  includeFinished = false
+): Promise<ProductionTrackingActionResult<ProductionRunsSyncSummary[]>> {
   try {
     const { orgId } = await requireCurrentOrg();
     const db = createServiceRoleClient();
-    return { ok: true, data: await syncOrgProductionRuns(db, orgId, [instanceId], true) };
+    return { ok: true, data: await syncOrgProductionRuns(db, orgId, [instanceId], true, includeFinished) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
