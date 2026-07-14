@@ -100,7 +100,7 @@ function ProductionOrderDetailPanel({
             <th className="py-1 pr-4 text-right font-medium">Planned Time</th>
             <th className="py-1 pr-4 text-right font-medium">Actual Time</th>
             <th className="py-1 pr-4 font-medium">Input (from previous stage)</th>
-            <th className="py-1 pr-4 text-right font-medium">Wastage</th>
+            <th className="py-1 pr-4 text-right font-medium">Component Wastage</th>
             <th className="py-1 pr-4 text-right font-medium">Actual Cost</th>
             <th className="py-1 pr-4 text-right font-medium">Cost so far</th>
           </tr>
@@ -204,7 +204,9 @@ function ProductionOrderCard({ row, today, onOpenDetail }: { row: ProductionTrac
       )}
       <div className="mt-1 flex flex-wrap items-center gap-1">
         {late && <span className="rounded-full bg-rose-100 px-2 py-0.5 font-semibold text-rose-700">{days}d late</span>}
-        {row.totalWastage > 0 && <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">wastage</span>}
+        {row.totalWastage > 0 && (
+          <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">component wastage</span>
+        )}
       </div>
       <div className="mt-1 text-slate-400">WIP: {row.wipActualCost ? money(row.wipActualCost) : "—"}</div>
     </div>
@@ -658,7 +660,7 @@ export default function ProductionTrackingPage() {
                       onSort={handleSort}
                     />
                     <SortHeader
-                      label="Wastage"
+                      label="Component Wastage"
                       column="totalWastage"
                       align="right"
                       thClassName="px-4 py-2"
