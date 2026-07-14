@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
-import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail, surveyProductionOrderRoutingTasks, surveyProductionOrderOperationStatus, surveyProductionRun, surveyPurchaseDetailFields, surveyProductAvailabilityFields, surveySaleFulfillmentFields, surveyBackorderEtaFields, testSaleShipByWriteBack, testProductSupplierLink } from "@/cin7/debug";
+import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail, surveyProductionOrderRoutingTasks, surveyProductionOrderOperationStatus, surveyProductionRun, surveyProductionOrderStatuses, surveyPurchaseDetailFields, surveyProductAvailabilityFields, surveySaleFulfillmentFields, surveyBackorderEtaFields, testSaleShipByWriteBack, testProductSupplierLink } from "@/cin7/debug";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
@@ -386,6 +386,24 @@ export async function debugSurveyProductionRun(instanceId: string, orderNumber: 
     if (!trimmed) return { ok: false, message: "Enter a Manufacture Order number, e.g. MO-00019." };
 
     const result = await surveyProductionRun(creds, trimmed);
+    return { ok: true, message: JSON.stringify(result, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Diagnostic only: tallies real Status/OrderStatus values across every
+ * Production Order on this instance, ahead of a planned Kanban board
+ * grouped by pre-production status (draft/planned/released) — every
+ * order checked so far shows OrderStatus "RELEASED" even when fully
+ * completed, so this confirms whether DRAFT/PLANNED are real values here
+ * before any column labels get built around them.
+ */
+export async function debugSurveyProductionOrderStatuses(instanceId: string): Promise<TestConnectionResult> {
+  try {
+    const creds = await loadInstanceCreds(instanceId);
+    const result = await surveyProductionOrderStatuses(creds);
     return { ok: true, message: JSON.stringify(result, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };

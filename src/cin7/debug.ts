@@ -1100,6 +1100,43 @@ export async function surveyProductionRun(creds: Cin7Credentials, orderNumber: s
   }
 }
 
+export interface ProductionOrderStatusSurvey {
+  totalOrders: number;
+  /** Distinct Status values (Type "O" rows only) with counts — the field this codebase already stores as production_orders.list_status. */
+  statusCounts: { value: string; count: number }[];
+  /** Distinct OrderStatus values with counts — NOT currently stored anywhere; only ever seen "RELEASED" live so far (both MO-00036 and MO-00019). This survey exists to confirm whether DRAFT/PLANNED/etc are real values on this account before building a Kanban column around them. */
+  orderStatusCounts: { value: string; count: number }[];
+}
+
+/**
+ * Advanced Manufacturing anticipation work, continued (2026-07-14): the
+ * client wants a Kanban board grouped by pre-production status
+ * ("draft/planned/released"), which sounds like Cin7's `OrderStatus`
+ * field on /production/orderList — but every real order checked so far
+ * has shown `OrderStatus: "RELEASED"`, even a fully completed one. Rather
+ * than guess DRAFT/PLANNED are real values here, this tallies every Type
+ * "O" order's real Status and OrderStatus across the whole account.
+ */
+export async function surveyProductionOrderStatuses(creds: Cin7Credentials): Promise<ProductionOrderStatusSurvey> {
+  const orders = await fetchAllProductionOrdersList(creds);
+  const typeO = orders.filter((o) => o.Type === "O");
+
+  function tally(values: (string | undefined)[]): { value: string; count: number }[] {
+    const counts = new Map<string, number>();
+    for (const v of values) {
+      const key = v ?? "(none)";
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return [...counts.entries()].map(([value, count]) => ({ value, count })).sort((a, b) => b.count - a.count);
+  }
+
+  return {
+    totalOrders: typeO.length,
+    statusCounts: tally(typeO.map((o) => o.Status)),
+    orderStatusCounts: tally(typeO.map((o) => o.OrderStatus)),
+  };
+}
+
 export interface PurchaseDetailCheck {
   orderNumber: string;
   purchaseId: string;

@@ -18,6 +18,7 @@ import {
   debugSurveyProductionOrderRoutingTasks,
   debugSurveyProductionOrderOperationStatus,
   debugSurveyProductionRun,
+  debugSurveyProductionOrderStatuses,
   debugSurveyPurchaseDetailFields,
   debugSurveyProductAvailabilityFields,
   debugSurveySaleFulfillmentFields,
@@ -226,6 +227,14 @@ export default function DiagnosticsPage() {
     });
   }
 
+  function handleSurveyProductionOrderStatuses(instanceId: string) {
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Tallying Status/OrderStatus across every production order…" } }));
+    startTransition(async () => {
+      const result = await debugSurveyProductionOrderStatuses(instanceId);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
   function handleSurveyPurchaseDetailFields(instanceId: string) {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Surveying purchase detail fields (multiple calls)…" } }));
     startTransition(async () => {
@@ -418,6 +427,13 @@ export default function DiagnosticsPage() {
                 className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Fetch /production/order/run (Adv. Mfg — actuals)
+              </button>
+              <button
+                onClick={() => handleSurveyProductionOrderStatuses(inst.id)}
+                disabled={isPending}
+                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Survey Status/OrderStatus values (whole account, Adv. Mfg)
               </button>
             </div>
             <div className="mt-2 flex items-center gap-2">
