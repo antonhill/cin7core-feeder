@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
-import { deleteInstance, listInstances, testInstanceConnection, upsertInstance, type InstanceRecord } from "./actions";
+import { deleteInstance, listInstances, testInstanceConnection, upsertInstance, debugSurveyProductionRun, type InstanceRecord } from "./actions";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { INSTANCES_MODULE } from "@/app/module-nav";
 import { Spinner } from "@/app/Spinner";
@@ -26,6 +26,22 @@ function InstancesSettingsPageInner() {
   const [modalTarget, setModalTarget] = useState<"new" | string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [isPending, startTransition] = useTransition();
+
+  // TEMP DEBUG (remove after use): re-checking whether /production/order/run's
+  // FinishedProducts.OutputQuantity is stale-cached rather than permanently
+  // wrong — see the TODO(actual output) comments in the production-tracking
+  // report. Delete this state + handler + the JSX block below once resolved.
+  const [runOrderNumbers, setRunOrderNumbers] = useState<Record<string, string>>({});
+  const [runResults, setRunResults] = useState<Record<string, { ok: boolean; message: string }>>({});
+
+  function handleSurveyRun(instanceId: string) {
+    const orderNumber = runOrderNumbers[instanceId] ?? "";
+    setRunResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Querying…" } }));
+    startTransition(async () => {
+      const result = await debugSurveyProductionRun(instanceId, orderNumber);
+      setRunResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
 
   useEffect(() => {
     startTransition(async () => {
@@ -133,6 +149,31 @@ function InstancesSettingsPageInner() {
                 className={`mt-3 max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs ${testResults[inst.id].ok ? "text-emerald-700" : "text-red-700"}`}
               >
                 {testResults[inst.id].message}
+              </pre>
+            )}
+
+            {/* TEMP DEBUG (remove after use) — see comment near runResults state above */}
+            <div className="mt-3 flex items-center gap-2 border-t border-dashed border-amber-300 pt-3">
+              <span className="text-xs font-medium text-amber-700">DEBUG survey /production/order/run:</span>
+              <input
+                value={runOrderNumbers[inst.id] ?? ""}
+                onChange={(e) => setRunOrderNumbers((prev) => ({ ...prev, [inst.id]: e.target.value }))}
+                placeholder="MO-00042"
+                className="rounded-lg border border-slate-300 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none"
+              />
+              <button
+                onClick={() => handleSurveyRun(inst.id)}
+                disabled={isPending}
+                className="rounded-full border border-amber-300 px-3 py-1 text-xs font-medium text-amber-800 hover:bg-amber-50 disabled:opacity-50"
+              >
+                Survey
+              </button>
+            </div>
+            {runResults[inst.id] && (
+              <pre
+                className={`mt-2 max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-amber-50 p-3 text-xs ${runResults[inst.id].ok ? "text-slate-800" : "text-red-700"}`}
+              >
+                {runResults[inst.id].message}
               </pre>
             )}
           </div>
