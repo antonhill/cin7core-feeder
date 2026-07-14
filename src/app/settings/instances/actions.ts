@@ -9,7 +9,6 @@ import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierC
 import { requireCurrentOrg } from "@/lib/current-org";
 import { getBillingStatus } from "@/lib/billing";
 import { requireSuperAdmin } from "@/lib/require-super-admin";
-import { syncInstanceProductionRuns } from "@/sync/sync-production-runs";
 
 export interface InstanceRecord {
   id: string;
@@ -387,28 +386,6 @@ export async function debugSurveyProductionRun(instanceId: string, orderNumber: 
     if (!trimmed) return { ok: false, message: "Enter a Manufacture Order number, e.g. MO-00019." };
 
     const result = await surveyProductionRun(creds, trimmed);
-    return { ok: true, message: JSON.stringify(result, null, 2) };
-  } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
-  }
-}
-
-/**
- * One-time backfill (remove this action once run): Phase 2 of
- * sync-production-runs.ts deliberately never re-fetches run detail for an
- * already-COMPLETED/VOIDED order, so actual_output_qty rows synced before
- * the 2026-07-15 fix (which corrected the source from an operation's
- * FinishedProducts.OutputQuantity — confirmed unreliable on MO-00042 — to
- * the Run's own Output[].Quantity) are stuck showing the old wrong value
- * forever. This calls syncInstanceProductionRuns with includeFinished=true
- * to re-fetch every order on the instance, including finished ones, once.
- */
-export async function debugBackfillFinishedProductionRuns(instanceId: string): Promise<TestConnectionResult> {
-  try {
-    await requireSuperAdmin();
-    const { orgId } = await requireCurrentOrg();
-    const db = createServiceRoleClient();
-    const result = await syncInstanceProductionRuns(db, orgId, instanceId, true, true);
     return { ok: true, message: JSON.stringify(result, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };

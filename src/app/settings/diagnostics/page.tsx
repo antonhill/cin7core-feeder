@@ -27,7 +27,6 @@ import {
   debugTestProductSupplierLink,
   debugProbeWorkCentrePaths,
   debugPushOneCustomerAndSupplier,
-  debugBackfillFinishedProductionRuns,
   listInstances,
   type InstanceRecord,
 } from "../instances/actions";
@@ -224,17 +223,6 @@ export default function DiagnosticsPage() {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Fetching /production/order/run…" } }));
     startTransition(async () => {
       const result = await debugSurveyProductionRun(instanceId, orderNumber);
-      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
-    });
-  }
-
-  // TEMP (remove after use): one-time backfill for orders whose
-  // actual_output_qty was synced before the 2026-07-15 fix — see
-  // debugBackfillFinishedProductionRuns's own comment.
-  function handleBackfillFinishedProductionRuns(instanceId: string) {
-    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Re-syncing every order incl. completed/voided (may take a bit)…" } }));
-    startTransition(async () => {
-      const result = await debugBackfillFinishedProductionRuns(instanceId);
       setTestResults((prev) => ({ ...prev, [instanceId]: result }));
     });
   }
@@ -446,13 +434,6 @@ export default function DiagnosticsPage() {
                 className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Survey Status/OrderStatus values (whole account, Adv. Mfg)
-              </button>
-              <button
-                onClick={() => handleBackfillFinishedProductionRuns(inst.id)}
-                disabled={isPending}
-                className="rounded-full border border-amber-300 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-50 disabled:opacity-50"
-              >
-                TEMP: backfill actual_output_qty for completed/voided orders
               </button>
             </div>
             <div className="mt-2 flex items-center gap-2">
