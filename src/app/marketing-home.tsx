@@ -213,7 +213,7 @@ export default async function MarketingHome() {
           <Reveal>
             <p className="font-mono text-xs font-medium uppercase tracking-wide text-indigo-300">You stay in control</p>
             <h2 className="mt-4 text-2xl font-bold leading-snug tracking-tight text-white sm:text-3xl">
-              It writes to live Cin7 data. So it never hides what it did.
+              It writes straight to Cin7 Core — efficiently, reliably, and every action logged.
             </h2>
             <p className="mt-4 text-base text-sidebar-text">
               Toolbox is powerful because it can change real records across your instances. That power only works if you can
