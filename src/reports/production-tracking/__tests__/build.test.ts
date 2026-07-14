@@ -61,7 +61,7 @@ describe("deriveCurrentOperation", () => {
 });
 
 function run(overrides: Partial<ProductionRun> = {}): ProductionRun {
-  return { runId: "run-1", number: 1, status: "IN PROGRESS", wipAccount: "780", operations: [], ...overrides };
+  return { runId: "run-1", number: 1, status: "IN PROGRESS", wipAccount: "780", quantity: 1, operations: [], ...overrides };
 }
 
 describe("computeWipCost", () => {
@@ -160,6 +160,7 @@ function trackingRow(overrides: Partial<ProductionTrackingRow> = {}): Production
     currentWorkCenterName: "Mixing",
     currentOperationOrder: 1,
     currentOperationStartedAt: null,
+    plannedQuantity: null,
     wipActualCost: 0,
     runSyncedAt: null,
     totalWastage: 0,

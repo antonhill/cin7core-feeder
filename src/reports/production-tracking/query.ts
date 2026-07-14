@@ -16,6 +16,8 @@ export interface ProductionTrackingRow {
   /** Operations[].Order for the current stage — drives the Kanban board's column ordering (groupByWorkCentre in build.ts), not shown directly in the UI. */
   currentOperationOrder: number | null;
   currentOperationStartedAt: string | null;
+  /** The Run's own planned quantity to produce — "how many did it start with," null until the first successful run-detail fetch. */
+  plannedQuantity: number | null;
   wipActualCost: number | null;
   runSyncedAt: string | null;
   /** Sum of production_operations.wastage_qty across this order's latest Run — a plain DB read alongside the header rows, not a separate per-row query. */
@@ -68,6 +70,7 @@ export async function getProductionTrackingRows(
     currentWorkCenterName: o.current_work_center_name,
     currentOperationOrder: o.current_operation_order,
     currentOperationStartedAt: o.current_operation_started_at,
+    plannedQuantity: o.planned_quantity,
     wipActualCost: o.wip_actual_cost,
     runSyncedAt: o.run_synced_at,
     totalWastage: wastageByOrder.get(o.cin7_production_order_id) ?? 0,

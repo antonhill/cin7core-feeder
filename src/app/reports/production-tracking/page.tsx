@@ -153,6 +153,7 @@ function ProductionOrderCard({ row, today, onOpenDetail }: { row: ProductionTrac
     >
       <div className="truncate font-medium text-slate-900">{row.orderNumber ?? row.productionOrderId}</div>
       <div className="truncate text-slate-500">{row.productName ?? row.productSku ?? "—"}</div>
+      <div className="mt-1 text-slate-400">Qty planned: {row.plannedQuantity !== null ? qty(row.plannedQuantity) : "—"}</div>
       <div className="mt-1 flex flex-wrap items-center gap-1">
         {late && <span className="rounded-full bg-rose-100 px-2 py-0.5 font-semibold text-rose-700">{days}d late</span>}
         {row.totalWastage > 0 && <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">wastage</span>}
@@ -221,6 +222,9 @@ function ProductionOrderDetailModal({
             <p className="text-sm text-slate-500">
               {row.productName ?? row.productSku} — {row.currentOperationName ?? "not synced yet"}
               {row.currentWorkCenterName && ` (${row.currentWorkCenterName})`}
+            </p>
+            <p className="text-sm text-slate-500">
+              Qty planned: {row.plannedQuantity !== null ? qty(row.plannedQuantity) : "—"}
             </p>
           </div>
           <button

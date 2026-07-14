@@ -87,6 +87,8 @@ export interface ProductionRun {
   status: string;
   /** GL account holding this run's WIP value — informational only, no GL/trial-balance integration exists anywhere in this codebase to reconcile against. */
   wipAccount: string | null;
+  /** Quantity to produce during this Run — confirmed live on MO-00019's real response ("Quantity": 1 on the Run object). The "how many did it start with" figure for the Kanban card. */
+  quantity: number;
   operations: ProductionRunOperation[];
 }
 
@@ -145,6 +147,7 @@ export async function fetchProductionOrderRun(creds: Cin7Credentials, production
     number: Number(run.Number ?? 0),
     status: String(run.Status ?? ""),
     wipAccount: typeof run.WIPAccount === "string" ? run.WIPAccount : null,
+    quantity: Number(run.Quantity ?? 0),
     operations: Array.isArray(run.Operations) ? (run.Operations as Record<string, unknown>[]).map(toRunOperation) : [],
   }));
 }

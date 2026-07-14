@@ -155,6 +155,7 @@ async function syncProductionOrderRunDetails(
             current_work_center_name: current?.workCenterName ?? null,
             current_operation_order: current?.order ?? null,
             current_operation_started_at: current?.startDate ?? null,
+            planned_quantity: latestRun.quantity,
             wip_actual_cost: computeWipCost(runs),
             run_synced_at: new Date().toISOString(),
           })
