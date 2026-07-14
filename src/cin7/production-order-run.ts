@@ -76,8 +76,41 @@ export interface ProductionRunOperation {
   inputProducts: ProductionRunOperationProduct[];
   /** Semi-finished products this operation produced for a later operation in the same BOM (empty unless the BOM defines Inputs and Outputs). */
   outputProducts: ProductionRunOperationProduct[];
-  /** The order's real finished-good output, when this operation is the one that completes it. */
+  /**
+   * The order's finished-good line, when this operation is the one that
+   * completes it — but its own `.outputQuantity` is confirmed live
+   * (2026-07-15, MO-00042) to be UNRELIABLE, not just stale: on a run whose
+   * own ground-truth `Output[]` (see `ProductionRun.output` below) read
+   * Quantity 98/Received true, this entry read `OutputQuantity: 2,
+   * WastageQuantity: 2` — i.e. `.outputQuantity` here silently duplicated
+   * the wastage figure instead of the actual produced quantity. Use
+   * `ProductionRun.output` for the real finished-good count; this array's
+   * `.wastageQuantity` still checks out as the real wastage figure.
+   */
   finishedProducts: ProductionRunOperationProduct[];
+}
+
+/**
+ * One finished-good receipt into stock — the Run-level `Output[]` array,
+ * a sibling of `Operations[]`, NOT the same resource as an operation's own
+ * `FinishedProducts[]` (see the warning on that field above). Confirmed
+ * live (2026-07-15, MO-00042) to be the reliable source: `quantity` read
+ * 98 and matched Cin7's own Production Order UI ("Actually Produced: 98")
+ * exactly, while the same run's operation-level FinishedProducts entry
+ * read a bogus `OutputQuantity: 2`. Empty until the run's output has
+ * actually been received into stock (e.g. the VOIDED run in the same
+ * live example had `Output: []`).
+ */
+export interface ProductionRunOutputLine {
+  productSku: string | null;
+  productName: string | null;
+  unit: string | null;
+  /** The real actual finished-good quantity produced/received — confirmed live to match Cin7's own "Actually Produced" figure. */
+  quantity: number;
+  wastageQuantity: number;
+  /** True once this output line has actually been received into stock. */
+  received: boolean;
+  receivedDate: string | null;
 }
 
 export interface ProductionRun {
@@ -90,6 +123,8 @@ export interface ProductionRun {
   /** Quantity to produce during this Run — confirmed live on MO-00019's real response ("Quantity": 1 on the Run object). The "how many did it start with" figure for the Kanban card. */
   quantity: number;
   operations: ProductionRunOperation[];
+  /** The real finished-good receipt(s) for this run — see ProductionRunOutputLine's own comment. */
+  output: ProductionRunOutputLine[];
 }
 
 function toRunOperationProduct(raw: Record<string, unknown>): ProductionRunOperationProduct {
@@ -136,6 +171,18 @@ function toRunOperation(raw: Record<string, unknown>): ProductionRunOperation {
   };
 }
 
+function toRunOutputLine(raw: Record<string, unknown>): ProductionRunOutputLine {
+  return {
+    productSku: typeof raw.ProductCode === "string" ? raw.ProductCode : null,
+    productName: typeof raw.ProductName === "string" ? raw.ProductName : null,
+    unit: typeof raw.Unit === "string" ? raw.Unit : null,
+    quantity: Number(raw.Quantity ?? 0),
+    wastageQuantity: Number(raw.WastageQuantity ?? 0),
+    received: raw.Received === true,
+    receivedDate: typeof raw.ReceivedDate === "string" ? raw.ReceivedDate : null,
+  };
+}
+
 /** Fetches every Run for one Production Order, typed per the confirmed live shape above. Empty array if the order has no Runs yet (e.g. never released). */
 export async function fetchProductionOrderRun(creds: Cin7Credentials, productionOrderId: string): Promise<ProductionRun[]> {
   const response = await cin7Request<{ Runs?: Record<string, unknown>[] }>(creds, RUN_PATH, {
@@ -149,7 +196,20 @@ export async function fetchProductionOrderRun(creds: Cin7Credentials, production
     wipAccount: typeof run.WIPAccount === "string" ? run.WIPAccount : null,
     quantity: Number(run.Quantity ?? 0),
     operations: Array.isArray(run.Operations) ? (run.Operations as Record<string, unknown>[]).map(toRunOperation) : [],
+    output: Array.isArray(run.Output) ? (run.Output as Record<string, unknown>[]).map(toRunOutputLine) : [],
   }));
+}
+
+/**
+ * The real total finished-good quantity actually produced by `run` —
+ * summed across `run.output` (see ProductionRunOutputLine's own comment
+ * for why this, not any operation's FinishedProducts.outputQuantity, is
+ * the reliable figure). Null when output hasn't been received yet (run
+ * not completed, or a VOIDED run), distinct from a genuine 0.
+ */
+export function actualOutputQty(run: ProductionRun | null): number | null {
+  if (!run || !run.output.length) return null;
+  return run.output.reduce((sum, o) => sum + o.quantity, 0);
 }
 
 /** The most recent Run (highest `number`) — an order restarting a Run is rare, so only the latest one is meaningful. Null if the order has no Runs yet (e.g. never released). */

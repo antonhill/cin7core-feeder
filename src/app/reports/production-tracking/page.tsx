@@ -281,16 +281,15 @@ function ProductionOrderDetailModal({
             <p className="text-sm text-slate-500">
               Qty planned: {row.plannedQuantity !== null ? qty(row.plannedQuantity) : "—"}
             </p>
-            {/*
-              TODO(actual output): row.actualOutputQty (Run.FinishedProducts.OutputQuantity) is known
-              to disagree with Cin7's own ground truth — confirmed live 2026-07-14 on MO-00042, where
-              this field read 2 while Cin7's own Output tab and Product Availability both showed 98.
-              Likely stale after an Output line is edited post-completion, not just re-fetched. Not
-              safe to display until a reliable source is found — NOT Product Availability, since
-              pre-existing stock unrelated to this specific order would pollute an on-hand read.
-              Hidden here on purpose; the field is still synced (see sync-production-runs.ts) in case
-              a fix surfaces later.
-            */}
+            {row.actualOutputQty !== null && (
+              <p
+                className={`text-sm ${
+                  row.plannedQuantity !== null && row.actualOutputQty < row.plannedQuantity ? "font-semibold text-red-700" : "text-slate-500"
+                }`}
+              >
+                Actual out: {qty(row.actualOutputQty)}
+              </p>
+            )}
             {reconciliation && (
               <p
                 className={`mt-2 inline-block rounded-lg px-3 py-1.5 text-sm font-medium ${

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pickLatestRun, actualWastageBySku } from "@/cin7/production-order-run";
+import { pickLatestRun, actualWastageBySku, actualOutputQty } from "@/cin7/production-order-run";
 import type { ProductionRun, ProductionRunOperation } from "@/cin7/production-order-run";
 
 function operation(overrides: Partial<ProductionRunOperation> = {}): ProductionRunOperation {
@@ -23,7 +23,7 @@ function operation(overrides: Partial<ProductionRunOperation> = {}): ProductionR
 }
 
 function run(overrides: Partial<ProductionRun> = {}): ProductionRun {
-  return { runId: "run-1", number: 1, status: "IN PROGRESS", wipAccount: "780", quantity: 1, operations: [], ...overrides };
+  return { runId: "run-1", number: 1, status: "IN PROGRESS", wipAccount: "780", quantity: 1, operations: [], output: [], ...overrides };
 }
 
 describe("pickLatestRun", () => {
@@ -74,5 +74,24 @@ describe("actualWastageBySku", () => {
 
   it("returns an empty map for a null run (order never released)", () => {
     expect(actualWastageBySku(null).size).toBe(0);
+  });
+});
+
+describe("actualOutputQty", () => {
+  it("sums Quantity across the run's Output lines", () => {
+    const r = run({
+      output: [
+        { productSku: "FG-COFFEE-250", productName: null, unit: "EACH", quantity: 98, wastageQuantity: 0, received: true, receivedDate: "2026-07-14T00:00:00" },
+      ],
+    });
+    expect(actualOutputQty(r)).toBe(98);
+  });
+
+  it("returns null when the run has no Output yet (not received)", () => {
+    expect(actualOutputQty(run({ output: [] }))).toBeNull();
+  });
+
+  it("returns null for a null run (order never released)", () => {
+    expect(actualOutputQty(null)).toBeNull();
   });
 });

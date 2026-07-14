@@ -29,12 +29,14 @@ export interface ProductionTrackingRow {
   currentInputActualQty: number | null;
   currentInputWastageQty: number | null;
   /**
-   * TODO(actual output): sourced from Run.FinishedProducts.OutputQuantity,
-   * confirmed live 2026-07-14 (MO-00042) to disagree with Cin7's own
-   * ground truth (read 2 while Cin7's own Output tab and Product
-   * Availability both showed 98) — likely stale after an Output line is
-   * edited post-completion. Not currently displayed anywhere in the UI;
-   * do not surface without finding a reliable source first.
+   * The real finished-good quantity actually produced — sourced from the
+   * Run's own Output[] (see actualOutputQty() in production-order-run.ts),
+   * confirmed live 2026-07-15 (MO-00042) to match Cin7's own "Actually
+   * Produced" figure exactly. An earlier attempt sourced this from an
+   * operation's FinishedProducts.outputQuantity instead, which was
+   * confirmed unreliable (silently duplicated the wastage figure instead
+   * of the actual produced quantity) — null until output has actually
+   * been received into stock.
    */
   actualOutputQty: number | null;
   wipActualCost: number | null;

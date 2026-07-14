@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductionOrdersList } from "@/cin7/production-orders";
-import { fetchProductionOrderRun, pickLatestRun } from "@/cin7/production-order-run";
+import { fetchProductionOrderRun, pickLatestRun, actualOutputQty } from "@/cin7/production-order-run";
 import { deriveCurrentOperation, latestStartedOperation, computeWipCost, totalWastage } from "@/reports/production-tracking/build";
 import type { Cin7Credentials } from "@/cin7/types";
 
@@ -167,15 +167,6 @@ async function syncProductionOrderRunDetails(
         // output" bucketing, which needs them to go null once finished.
         const latestStarted = latestStartedOperation(latestRun.operations);
         const latestStartedHasInput = (latestStarted?.inputProducts.length ?? 0) > 0;
-        // TODO(actual output): FinishedProducts.OutputQuantity is confirmed
-        // live (2026-07-14, MO-00042) to disagree with Cin7's own ground
-        // truth — this field read 2 while Cin7's own Output tab and Product
-        // Availability both showed 98, likely because it's not refreshed
-        // after an Output line is edited post-completion. Still synced
-        // here in case a fix surfaces later, but deliberately NOT
-        // displayed anywhere in the UI until a reliable source is found —
-        // see the TODO in page.tsx's ProductionOrderDetailModal.
-        const finishedProducts = latestRun.operations.flatMap((op) => op.finishedProducts);
         const { error: updateError } = await db
           .from("production_orders")
           .update({
@@ -188,7 +179,12 @@ async function syncProductionOrderRunDetails(
             current_input_expected_qty: latestStartedHasInput ? latestStarted!.inputProducts.reduce((sum, p) => sum + p.expectedQuantity, 0) : null,
             current_input_actual_qty: latestStartedHasInput ? latestStarted!.inputProducts.reduce((sum, p) => sum + p.outputQuantity, 0) : null,
             current_input_wastage_qty: latestStartedHasInput ? latestStarted!.inputProducts.reduce((sum, p) => sum + p.wastageQuantity, 0) : null,
-            actual_output_qty: finishedProducts.length ? finishedProducts.reduce((sum, p) => sum + p.outputQuantity, 0) : null,
+            // Sourced from the Run's own Output[] (see actualOutputQty's
+            // comment) — confirmed live 2026-07-15 (MO-00042) to match
+            // Cin7's own "Actually Produced" figure exactly. An operation's
+            // FinishedProducts.outputQuantity was tried first and confirmed
+            // unreliable (silently duplicated the wastage figure instead).
+            actual_output_qty: actualOutputQty(latestRun),
             planned_quantity: latestRun.quantity,
             wip_actual_cost: computeWipCost(runs),
             run_synced_at: new Date().toISOString(),

@@ -101,7 +101,7 @@ describe("latestStartedOperation", () => {
 });
 
 function run(overrides: Partial<ProductionRun> = {}): ProductionRun {
-  return { runId: "run-1", number: 1, status: "IN PROGRESS", wipAccount: "780", quantity: 1, operations: [], ...overrides };
+  return { runId: "run-1", number: 1, status: "IN PROGRESS", wipAccount: "780", quantity: 1, operations: [], output: [], ...overrides };
 }
 
 describe("computeWipCost", () => {
