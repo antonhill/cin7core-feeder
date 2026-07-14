@@ -17,6 +17,7 @@ import {
   cumulativeCostThroughStage,
   hasInputShortfall,
   operationHasInputShortfall,
+  previousOperation,
   PRODUCTION_STATUS_ORDER,
   type WorkCentreColumn,
 } from "@/reports/production-tracking/build";
@@ -105,10 +106,15 @@ function ProductionOrderDetailPanel({
             const stageCost = (op.actualResourceCost ?? 0) + (op.actualMaterialCost ?? 0);
             const hasInputData = op.inputExpectedQty !== null;
             const shortfall = operationHasInputShortfall(op);
-            // Cin7's own WastageQuantity can read 0 even on a real shortfall (see
-            // operationHasInputShortfall) — surface the unflagged gap too, distinct
-            // from wording that implies Cin7 itself recorded it as wastage.
-            const unflaggedShortfall = shortfall && !(op.inputWastageQty ?? 0);
+            const shortfallQty = shortfall ? (op.inputExpectedQty ?? 0) - (op.inputActualQty ?? 0) : 0;
+            // Cin7 tracks Output wastage (flagged on the producing stage) and Input
+            // wastage (flagged on the receiving stage) as separate, non-propagating
+            // figures — confirmed live 2026-07-14 (MO-00042) that Roasting's own
+            // Output recorded 2 wastage while Grinding's Input still read 0 for the
+            // same handoff. Check the previous stage's own Output record before
+            // claiming a shortfall "wasn't flagged as wastage" anywhere.
+            const upstream = shortfall ? previousOperation(operations, op.operationOrder) : null;
+            const upstreamWastage = upstream?.outputWastageQty ?? 0;
             return (
               <tr key={op.operationOrder} className={`border-t ${shortfall ? "border-red-200 bg-red-50" : "border-slate-100"}`}>
                 <td className="py-1 pr-4">{op.operationName ?? "—"}</td>
@@ -123,12 +129,15 @@ function ProductionOrderDetailPanel({
                       {(op.inputWastageQty ?? 0) > 0 && (
                         <span className="text-rose-600"> — {qty(op.inputWastageQty ?? 0)} lost upstream</span>
                       )}
-                      {unflaggedShortfall && (
-                        <span className="font-semibold text-rose-700">
-                          {" "}
-                          — ⚠ {qty((op.inputExpectedQty ?? 0) - (op.inputActualQty ?? 0))} short (not flagged as wastage)
-                        </span>
-                      )}
+                      {shortfall &&
+                        (upstreamWastage > 0 ? (
+                          <span className="font-semibold text-rose-700">
+                            {" "}
+                            — ⚠ {qty(shortfallQty)} short — flagged as {qty(upstreamWastage)} wastage in {upstream?.operationName ?? "the previous stage"}
+                          </span>
+                        ) : (
+                          <span className="font-semibold text-rose-700"> — ⚠ {qty(shortfallQty)} short (not flagged as wastage)</span>
+                        ))}
                     </>
                   ) : (
                     <span className="text-slate-400">Not tracked for this stage</span>

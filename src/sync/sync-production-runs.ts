@@ -144,6 +144,7 @@ async function syncProductionOrderRunDetails(
             input_actual_qty: hasInput ? op.inputProducts.reduce((sum, p) => sum + p.outputQuantity, 0) : null,
             input_wastage_qty: hasInput ? op.inputProducts.reduce((sum, p) => sum + p.wastageQuantity, 0) : null,
             output_qty: hasOutput ? op.outputProducts.reduce((sum, p) => sum + p.outputQuantity, 0) : null,
+            output_wastage_qty: hasOutput ? op.outputProducts.reduce((sum, p) => sum + p.wastageQuantity, 0) : null,
           };
         });
         if (operationRows.length) {

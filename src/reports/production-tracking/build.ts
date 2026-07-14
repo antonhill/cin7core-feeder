@@ -99,6 +99,21 @@ export function operationHasInputShortfall(op: Pick<ProductionOperationRow, "sta
   return isInputShort(op.startDate, op.inputExpectedQty, op.inputActualQty);
 }
 
+/**
+ * The immediately preceding operation by `operationOrder` — i.e. the one
+ * whose Output feeds this operation's Input — or null if this is the
+ * first operation. Used to check whether a shortfall was actually flagged
+ * as wastage upstream (on the producing stage's own Output record) before
+ * claiming in the UI that it wasn't flagged anywhere; see
+ * operationHasInputShortfall's docstring for why Output and Input wastage
+ * are separate, non-propagating figures.
+ */
+export function previousOperation(operations: ProductionOperationRow[], operationOrder: number): ProductionOperationRow | null {
+  const earlier = operations.filter((op) => op.operationOrder < operationOrder);
+  if (!earlier.length) return null;
+  return earlier.reduce((a, b) => (b.operationOrder > a.operationOrder ? b : a));
+}
+
 /** A label reserved for orders with no Run yet at all (never released) — distinct from a real, named work centre. */
 export const NOT_STARTED_COLUMN = "Not started yet";
 

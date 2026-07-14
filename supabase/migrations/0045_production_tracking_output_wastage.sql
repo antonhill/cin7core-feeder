@@ -1,0 +1,12 @@
+-- Confirmed live 2026-07-14 (MO-00042): Roasting's OWN Output record can
+-- carry a real WastageQuantity (the operator explicitly flagged 2kg on
+-- Roasting's Output screen) that never propagates onto Grinding's own
+-- Input record (Grinding's InputProducts.WastageQuantity stayed 0 despite
+-- receiving 2kg less than expected) — Output and Input are separate,
+-- independently-entered Cin7 records for the same semi-finished-product
+-- handoff. Storing the producing operation's own output wastage lets the
+-- modal correctly say "flagged as wastage in Roasting" instead of the
+-- misleading "not flagged as wastage" when it actually was, just on the
+-- other side of the handoff. Nullable: null means this operation's BOM
+-- doesn't define an Output here at all (not tracked).
+alter table production_operations add column if not exists output_wastage_qty numeric;

@@ -10,6 +10,7 @@ import {
   cumulativeCostThroughStage,
   hasInputShortfall,
   operationHasInputShortfall,
+  previousOperation,
   NOT_STARTED_COLUMN,
 } from "@/reports/production-tracking/build";
 import type { ProductionRun, ProductionRunOperation } from "@/cin7/production-order-run";
@@ -267,6 +268,7 @@ function operationRow(overrides: Partial<ProductionOperationRow> = {}): Producti
     inputActualQty: null,
     inputWastageQty: null,
     outputQty: null,
+    outputWastageQty: null,
     ...overrides,
   };
 }
@@ -348,5 +350,31 @@ describe("operationHasInputShortfall", () => {
 
   it("is false when the full expected amount was received", () => {
     expect(operationHasInputShortfall(operationRow({ startDate: "2026-07-14T00:00:00", inputExpectedQty: 25.5, inputActualQty: 25.5 }))).toBe(false);
+  });
+});
+
+describe("previousOperation", () => {
+  it("returns the operation with the highest operationOrder below the given one", () => {
+    const operations = [
+      operationRow({ operationOrder: 10, operationName: "Roasting" }),
+      operationRow({ operationOrder: 20, operationName: "Grinding" }),
+      operationRow({ operationOrder: 30, operationName: "Packing" }),
+    ];
+    expect(previousOperation(operations, 20)?.operationName).toBe("Roasting");
+    expect(previousOperation(operations, 30)?.operationName).toBe("Grinding");
+  });
+
+  it("returns null for the first operation", () => {
+    const operations = [operationRow({ operationOrder: 10, operationName: "Roasting" })];
+    expect(previousOperation(operations, 10)).toBeNull();
+  });
+
+  it("doesn't assume operations are pre-sorted", () => {
+    const operations = [
+      operationRow({ operationOrder: 30, operationName: "Packing" }),
+      operationRow({ operationOrder: 10, operationName: "Roasting" }),
+      operationRow({ operationOrder: 20, operationName: "Grinding" }),
+    ];
+    expect(previousOperation(operations, 30)?.operationName).toBe("Grinding");
   });
 });

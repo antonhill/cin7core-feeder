@@ -116,6 +116,16 @@ export interface ProductionOperationRow {
   inputWastageQty: number | null;
   /** How much semi-finished product this stage produced for the next one — null when the BOM doesn't define an output here. */
   outputQty: number | null;
+  /**
+   * Wastage flagged on THIS stage's own Output record — confirmed live
+   * 2026-07-14 (MO-00042) that this can be nonzero (properly flagged by
+   * the operator on Roasting's Output screen) while the NEXT stage's own
+   * InputWastageQty stays 0 for the same handoff — Output and Input are
+   * separate, independently-entered Cin7 records. Lets the next stage's
+   * shortfall message say "flagged as wastage in {this stage}" instead of
+   * wrongly claiming nothing was flagged anywhere.
+   */
+  outputWastageQty: number | null;
 }
 
 /** Per-operation breakdown behind one order's row (the drill-down panel) — a plain DB read, already synced, not a live Cin7 call. */
@@ -150,6 +160,7 @@ export async function getProductionOrderOperations(
     inputActualQty: op.input_actual_qty,
     inputWastageQty: op.input_wastage_qty,
     outputQty: op.output_qty,
+    outputWastageQty: op.output_wastage_qty,
   }));
 }
 
