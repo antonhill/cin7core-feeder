@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
+import { useInstancePicker } from "@/hooks/useInstancePicker";
+import { InstancePicker } from "@/app/InstancePicker";
 import { downloadLiveTemplateAction, downloadTemplateAction } from "./actions";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { TEMPLATES_MODULE } from "@/app/module-nav";
@@ -28,27 +29,12 @@ export default function TemplatesPage() {
   const [kind, setKind] = useState<Kind>("products");
   const [source, setSource] = useState<Source>("canonical");
 
-  const [instances, setInstances] = useState<InstancePickerItem[]>([]);
-  const [instancesError, setInstancesError] = useState<string | null>(null);
-  const [selectedInstanceId, setSelectedInstanceId] = useState("");
-  const [isLoadingInstances, startLoadTransition] = useTransition();
+  const picker = useInstancePicker();
+  const selectedInstanceId = picker.instanceId;
 
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [downloadedFilename, setDownloadedFilename] = useState<string | null>(null);
   const [isDownloading, startDownloadTransition] = useTransition();
-
-  function handleLoadInstances() {
-    setInstancesError(null);
-    startLoadTransition(async () => {
-      const result = await listInstancesForPicker();
-      if (!result.ok) {
-        setInstancesError(result.error ?? "Unknown error");
-        return;
-      }
-      setInstances(result.instances ?? []);
-      if (result.instances?.length === 1) setSelectedInstanceId(result.instances[0].id);
-    });
-  }
 
   function handleDownload() {
     setDownloadError(null);
@@ -57,7 +43,7 @@ export default function TemplatesPage() {
       const result =
         source === "canonical"
           ? await downloadTemplateAction(kind)
-          : await downloadLiveTemplateAction(selectedInstanceId, kind);
+          : await downloadLiveTemplateAction(selectedInstanceId ?? "", kind);
       if (!result.ok || !result.csv) {
         setDownloadError(result.error ?? "Unknown error");
         return;
@@ -130,30 +116,9 @@ export default function TemplatesPage() {
               Pulled live from the chosen instance, with every column Cin7&apos;s own template has —
               a genuine export, not the hub&apos;s trimmed view.
             </p>
-            <button
-              type="button"
-              onClick={handleLoadInstances}
-              disabled={isLoadingInstances}
-              className="mt-3 rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-white disabled:opacity-50"
-            >
-              {isLoadingInstances && <Spinner className="mr-1.5" />}
-              {isLoadingInstances ? "Loading…" : "Load instances"}
-            </button>
-            {instancesError && <p className="mt-2 text-sm text-red-600">{instancesError}</p>}
-            {instances.length > 0 && (
-              <select
-                value={selectedInstanceId}
-                onChange={(e) => setSelectedInstanceId(e.target.value)}
-                className="mt-3 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-base focus:border-indigo-500 focus:outline-none"
-              >
-                <option value="">Choose an instance…</option>
-                {instances.map((inst) => (
-                  <option key={inst.id} value={inst.id} disabled={!inst.active}>
-                    {inst.name} {!inst.active ? "(inactive)" : ""}
-                  </option>
-                ))}
-              </select>
-            )}
+            <div className="mt-3">
+              <InstancePicker {...picker} onChange={picker.setInstanceId} />
+            </div>
           </div>
         )}
 

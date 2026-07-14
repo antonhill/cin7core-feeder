@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { PivotGroupBy, PivotSourceRow } from "@/reports/pivot";
+import type { InstancePickerItem } from "@/actions/instances";
 
 export interface SalesReportFilters {
   instanceIds?: string[];
@@ -136,7 +137,8 @@ export async function getSaleLineDetails(
 }
 
 export interface ReportFilterOptions {
-  instances: { id: string; name: string }[];
+  /** Reuses the same shape as listInstancesForPicker() — this used to omit `active` entirely, which broke auto-select logic for the fulfillment-cleanup page (the one caller that also uses this as its instance picker). */
+  instances: InstancePickerItem[];
   locations: string[];
   categories: { code: string; name: string }[];
 }
@@ -166,7 +168,7 @@ export async function getReportFilterOptions(db: SupabaseClient, orgId: string, 
   if (scopedInstanceIds) locationsQuery = locationsQuery.in("instance_id", scopedInstanceIds);
 
   const [instancesRes, locationsRes] = await Promise.all([
-    db.from("cin7_instances").select("id, name").eq("org_id", orgId).order("name"),
+    db.from("cin7_instances").select("id, name, active").eq("org_id", orgId).order("name"),
     locationsQuery,
   ]);
   if (instancesRes.error) throw new Error(instancesRes.error.message);

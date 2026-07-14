@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
-import { loadReportFilterOptionsAction } from "../actions";
+import { useInstancePicker } from "@/hooks/useInstancePicker";
+import { InstancePicker } from "@/app/InstancePicker";
 import {
   loadFulfillmentCleanupPreviewAction,
   downloadFulfillmentCleanupCsvAction,
@@ -13,7 +14,7 @@ import {
   triggerFulfillmentCleanupSalesSyncAction,
   type FulfillmentCleanupPreviewData,
 } from "./actions";
-import type { ReportFilterOptions, ProductAvailabilitySyncStatus, SalesSyncStatus } from "@/reports/query";
+import type { ProductAvailabilitySyncStatus, SalesSyncStatus } from "@/reports/query";
 import { buildFulfillmentCleanupLines } from "@/reports/fulfillment-cleanup/build";
 import { SNAPSHOT_STALE_HOURS, hoursSince, StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { compareNullable, SortHeader } from "../sortable-table";
@@ -40,10 +41,8 @@ function qty(value: number): string {
 }
 
 export default function FulfillmentCleanupPage() {
-  const [options, setOptions] = useState<ReportFilterOptions | null>(null);
-  const [optionsError, setOptionsError] = useState<string | null>(null);
-  const [isLoadingOptions, startOptionsTransition] = useTransition();
-  const [instanceId, setInstanceId] = useState("");
+  const picker = useInstancePicker();
+  const { instanceId } = picker;
 
   const [stockSyncStatus, setStockSyncStatus] = useState<ProductAvailabilitySyncStatus | null>(null);
   const [stockSyncStatusError, setStockSyncStatusError] = useState<string | null>(null);
@@ -126,19 +125,6 @@ export default function FulfillmentCleanupPage() {
     });
     return rows;
   }, [previewData, sortColumn, sortDirection]);
-
-  function handleLoadInstances() {
-    setOptionsError(null);
-    startOptionsTransition(async () => {
-      const result = await loadReportFilterOptionsAction();
-      if (!result.ok) {
-        setOptionsError(result.error ?? "Unknown error");
-        return;
-      }
-      setOptions(result.data ?? null);
-      if (result.data?.instances.length === 1) setInstanceId(result.data.instances[0].id);
-    });
-  }
 
   function refreshStockSyncStatus(forInstanceId: string) {
     setStockSyncStatusError(null);
@@ -288,32 +274,9 @@ export default function FulfillmentCleanupPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <span className="text-sm font-medium text-slate-700">Instance</span>
-            <div className="mt-2 flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleLoadInstances}
-                disabled={isLoadingOptions}
-                className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                {isLoadingOptions && <Spinner className="mr-1.5" />}
-                {isLoadingOptions ? "Loading…" : "Load instances"}
-              </button>
-              {options && options.instances.length > 0 && (
-                <select
-                  value={instanceId}
-                  onChange={(e) => setInstanceId(e.target.value)}
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                >
-                  <option value="">Choose an instance…</option>
-                  {options.instances.map((inst) => (
-                    <option key={inst.id} value={inst.id}>
-                      {inst.name}
-                    </option>
-                  ))}
-                </select>
-              )}
+            <div className="mt-2">
+              <InstancePicker {...picker} onChange={picker.setInstanceId} />
             </div>
-            {options && options.instances.length === 0 && <p className="mt-2 text-sm text-slate-400">No instances connected.</p>}
             {instanceId && (
               <div className="mt-2 flex flex-col gap-1.5">
                 <div className="flex items-center gap-3">
@@ -365,7 +328,6 @@ export default function FulfillmentCleanupPage() {
             {isLoadingPreview ? "Building…" : "Build cleanup list"}
           </button>
         </div>
-        {optionsError && <p className="mt-2 text-sm text-red-600">{optionsError}</p>}
         {previewError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{previewError}</p>}
       </section>
 

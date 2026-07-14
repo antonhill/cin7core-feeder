@@ -3,7 +3,8 @@
 import { useEffect, useState, useTransition } from "react";
 import { pullInstanceDataAction } from "./actions";
 import { pushToCin7Action, type PushScopeSelection } from "@/app/import/actions";
-import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
+import { useInstancePicker } from "@/hooks/useInstancePicker";
+import { InstancePicker } from "@/app/InstancePicker";
 import { getBillingStatusAction } from "@/actions/billing";
 import type { InstanceSyncOutcome } from "@/sync/sync-org";
 import { Spinner } from "@/app/Spinner";
@@ -55,11 +56,10 @@ function StatPill({ label, value, tone = "neutral" }: { label: string; value: nu
 }
 
 export default function MigratePage() {
-  const [instances, setInstances] = useState<InstancePickerItem[]>([]);
-  const [instancesError, setInstancesError] = useState<string | null>(null);
-  const [isLoadingInstances, startLoadTransition] = useTransition();
+  const picker = useInstancePicker();
+  const sourceId = picker.instanceId;
+  const setSourceId = picker.setInstanceId;
 
-  const [sourceId, setSourceId] = useState<string | null>(null);
   const [pullResult, setPullResult] = useState<PullInstanceResult | null>(null);
   const [isPullPending, startPullTransition] = useTransition();
 
@@ -78,18 +78,6 @@ export default function MigratePage() {
       if (res.ok && res.data) setCanWrite(res.data.canWrite);
     });
   }, []);
-
-  function handleLoadInstances() {
-    setInstancesError(null);
-    startLoadTransition(async () => {
-      const result = await listInstancesForPicker();
-      if (!result.ok) {
-        setInstancesError(result.error ?? "Unknown error");
-        return;
-      }
-      setInstances(result.instances ?? []);
-    });
-  }
 
   function handlePull() {
     if (!sourceId) return;
@@ -118,8 +106,7 @@ export default function MigratePage() {
     });
   }
 
-  const activeInstances = instances.filter((i) => i.active);
-  const targetChoices = activeInstances.filter((i) => i.id !== sourceId);
+  const targetChoices = picker.selectableInstances.filter((i) => i.id !== sourceId);
 
   return (
     <main className="mx-auto w-full max-w-4xl px-6 py-12">
@@ -140,38 +127,7 @@ export default function MigratePage() {
           <StepHeader step={1} title="Pull from a source instance" done={pullResult?.ok === true} />
 
           <div className="mt-5 pl-11">
-            <button
-              type="button"
-              onClick={handleLoadInstances}
-              disabled={isLoadingInstances}
-              className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
-              {isLoadingInstances && <Spinner className="mr-1.5" />}
-              {isLoadingInstances ? "Loading…" : "Load instances"}
-            </button>
-
-            {instancesError && <p className="mt-2 text-sm text-red-600">{instancesError}</p>}
-            {instances.length === 0 && !instancesError && (
-              <p className="mt-2 text-sm text-slate-400">No instances loaded yet.</p>
-            )}
-
-            {instances.length > 0 && (
-              <div className="mt-4 flex flex-col gap-2">
-                {instances.map((inst) => (
-                  <label key={inst.id} className="flex items-center gap-2 text-base">
-                    <input
-                      type="radio"
-                      name="source-instance"
-                      checked={sourceId === inst.id}
-                      onChange={() => setSourceId(inst.id)}
-                      disabled={!inst.active}
-                      className="h-4 w-4"
-                    />
-                    {inst.name} {!inst.active && <span className="text-sm text-slate-400">(inactive)</span>}
-                  </label>
-                ))}
-              </div>
-            )}
+            <InstancePicker {...picker} onChange={setSourceId} />
 
             <button
               type="button"

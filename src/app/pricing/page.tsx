@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
+import { useInstancePicker } from "@/hooks/useInstancePicker";
+import { InstancePicker } from "@/app/InstancePicker";
 import { getBillingStatusAction } from "@/actions/billing";
 import { loadPricingPreviewAction, applyPriceUpdatesAction } from "./actions";
 import type { PricingFetchResult } from "@/cin7/pricing";
@@ -17,10 +18,8 @@ function money(value: number): string {
 }
 
 export default function PricingPage() {
-  const [instances, setInstances] = useState<InstancePickerItem[]>([]);
-  const [instancesError, setInstancesError] = useState<string | null>(null);
-  const [isLoadingInstances, startLoadTransition] = useTransition();
-  const [instanceId, setInstanceId] = useState("");
+  const picker = useInstancePicker();
+  const { instanceId } = picker;
 
   const [previewData, setPreviewData] = useState<PricingFetchResult | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -111,19 +110,6 @@ export default function PricingPage() {
     setSupplierFilter((prev) => (prev.includes(supplier) ? prev.filter((s) => s !== supplier) : [...prev, supplier]));
   }
 
-  function handleLoadInstances() {
-    setInstancesError(null);
-    startLoadTransition(async () => {
-      const res = await listInstancesForPicker();
-      if (!res.ok) {
-        setInstancesError(res.error ?? "Unknown error");
-        return;
-      }
-      setInstances(res.instances ?? []);
-      if (res.instances?.length === 1) setInstanceId(res.instances[0].id);
-    });
-  }
-
   function handleLoadProducts() {
     if (!instanceId) return;
     setPreviewError(null);
@@ -177,32 +163,9 @@ export default function PricingPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <span className="text-sm font-medium text-slate-700">Instance</span>
-            <div className="mt-2 flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleLoadInstances}
-                disabled={isLoadingInstances}
-                className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                {isLoadingInstances && <Spinner className="mr-1.5" />}
-                {isLoadingInstances ? "Loading…" : "Load instances"}
-              </button>
-              {instances.length > 0 && (
-                <select
-                  value={instanceId}
-                  onChange={(e) => setInstanceId(e.target.value)}
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                >
-                  <option value="">Choose an instance…</option>
-                  {instances.map((inst) => (
-                    <option key={inst.id} value={inst.id}>
-                      {inst.name}
-                    </option>
-                  ))}
-                </select>
-              )}
+            <div className="mt-2">
+              <InstancePicker {...picker} onChange={picker.setInstanceId} />
             </div>
-            {instancesError && <p className="mt-2 text-sm text-red-600">{instancesError}</p>}
           </div>
           <button
             type="button"

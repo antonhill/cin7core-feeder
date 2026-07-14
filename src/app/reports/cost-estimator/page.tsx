@@ -10,10 +10,8 @@ import {
   exportProductionCostEstimatesSummaryAction,
   type ProductionCostEstimatorResult,
 } from "./actions";
-import {
-  listInstancesForPicker,
-  type InstancePickerItem,
-} from "@/actions/instances";
+import { useInstancePicker } from "@/hooks/useInstancePicker";
+import { InstancePicker } from "@/app/InstancePicker";
 import {
   COST_BASIS_OPTIONS,
   type CostBasis,
@@ -90,10 +88,8 @@ const BOM_KIND_TABS: { value: BomKind; label: string }[] = [
 
 export default function CostEstimatorPage() {
   const [bomKind, setBomKind] = useState<BomKind>("assembly");
-  const [instances, setInstances] = useState<InstancePickerItem[]>([]);
-  const [instancesError, setInstancesError] = useState<string | null>(null);
-  const [isLoadingInstances, startLoadTransition] = useTransition();
-  const [instanceId, setInstanceId] = useState<string | null>(null);
+  const picker = useInstancePicker();
+  const { instanceId } = picker;
 
   const [basis, setBasis] = useState<CostBasis>("average");
 
@@ -141,18 +137,6 @@ export default function CostEstimatorPage() {
       setProductionSortColumn(column);
       setProductionSortDirection("asc");
     }
-  }
-
-  function handleLoadInstances() {
-    setInstancesError(null);
-    startLoadTransition(async () => {
-      const res = await listInstancesForPicker();
-      if (!res.ok) {
-        setInstancesError(res.error ?? "Unknown error");
-        return;
-      }
-      setInstances(res.instances ?? []);
-    });
   }
 
   function handleScan(nextBasis: CostBasis = basis) {
@@ -320,41 +304,7 @@ export default function CostEstimatorPage() {
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <p className="font-medium text-slate-900">Instance</p>
         <div className="mt-3">
-          <button
-            type="button"
-            onClick={handleLoadInstances}
-            disabled={isLoadingInstances}
-            className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          >
-            {isLoadingInstances && <Spinner className="mr-1.5" />}
-            {isLoadingInstances ? "Loading…" : "Load instances"}
-          </button>
-          {instancesError && (
-            <p className="mt-2 text-sm text-red-600">{instancesError}</p>
-          )}
-          {instances.length > 0 && (
-            <div className="mt-3 flex flex-col gap-1.5">
-              {instances.map((inst) => (
-                <label
-                  key={inst.id}
-                  className="flex items-center gap-2 text-base"
-                >
-                  <input
-                    type="radio"
-                    name="cost-estimator-instance"
-                    checked={instanceId === inst.id}
-                    onChange={() => setInstanceId(inst.id)}
-                    disabled={!inst.active}
-                    className="h-4 w-4"
-                  />
-                  {inst.name}{" "}
-                  {!inst.active && (
-                    <span className="text-sm text-slate-400">(inactive)</span>
-                  )}
-                </label>
-              ))}
-            </div>
-          )}
+          <InstancePicker {...picker} onChange={picker.setInstanceId} />
         </div>
       </section>
 

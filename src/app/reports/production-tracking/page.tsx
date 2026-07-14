@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo, useState, useTransition, Fragment } from "react";
+import { useEffect, useMemo, useState, useTransition, Fragment } from "react";
 import {
   loadProductionTrackingAction,
   loadProductionOrderDetailAction,
   loadProductionTrackingSyncStatusAction,
   triggerProductionTrackingSyncAction,
 } from "./actions";
-import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
+import { useInstancePicker } from "@/hooks/useInstancePicker";
+import { InstancePicker } from "@/app/InstancePicker";
 import type { ProductionTrackingRow, ProductionOperationRow, ProductionTrackingSyncStatus } from "@/reports/production-tracking/query";
 import {
   isLate,
@@ -333,10 +334,8 @@ const VIEW_MODE_TABS: { value: ViewMode; label: string }[] = [
 ];
 
 export default function ProductionTrackingPage() {
-  const [instances, setInstances] = useState<InstancePickerItem[]>([]);
-  const [instancesError, setInstancesError] = useState<string | null>(null);
-  const [isLoadingInstances, startLoadTransition] = useTransition();
-  const [instanceId, setInstanceId] = useState<string | null>(null);
+  const picker = useInstancePicker();
+  const { instanceId } = picker;
 
   const [syncStatus, setSyncStatus] = useState<ProductionTrackingSyncStatus | null>(null);
   const [isSyncing, startSyncTransition] = useTransition();
@@ -393,25 +392,13 @@ export default function ProductionTrackingPage() {
     }
   }
 
-  function handleLoadInstances() {
-    setInstancesError(null);
-    startLoadTransition(async () => {
-      const res = await listInstancesForPicker();
-      if (!res.ok) {
-        setInstancesError(res.error ?? "Unknown error");
-        return;
-      }
-      setInstances(res.instances ?? []);
-    });
-  }
-
   function refreshRowsAndStatus(id: string, withCompleted: boolean) {
-    setLoadError(null);
-    setExpandedIds(new Set());
-    setOperationsById({});
-    setDetailErrors({});
-    setModalOrderId(null);
     startRowsTransition(async () => {
+      setLoadError(null);
+      setExpandedIds(new Set());
+      setOperationsById({});
+      setDetailErrors({});
+      setModalOrderId(null);
       const res = await loadProductionTrackingAction(id, withCompleted);
       if (!res.ok) {
         setLoadError(res.error ?? "Unknown error");
@@ -424,11 +411,15 @@ export default function ProductionTrackingPage() {
     });
   }
 
-  function handleSelectInstance(id: string) {
-    setInstanceId(id);
-    setRows(null);
-    refreshRowsAndStatus(id, includeCompleted);
-  }
+  // Reacts to instanceId changing regardless of source — a manual picker
+  // selection or useInstancePicker's own auto-select when there's exactly
+  // one active instance (which doesn't go through any page-level handler).
+  useEffect(() => {
+    if (!instanceId) return;
+    startRowsTransition(() => setRows(null));
+    refreshRowsAndStatus(instanceId, includeCompleted);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instanceId]);
 
   function handleToggleIncludeCompleted() {
     const next = !includeCompleted;
@@ -524,33 +515,7 @@ export default function ProductionTrackingPage() {
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <p className="font-medium text-slate-900">Instance</p>
         <div className="mt-3">
-          <button
-            type="button"
-            onClick={handleLoadInstances}
-            disabled={isLoadingInstances}
-            className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          >
-            {isLoadingInstances && <Spinner className="mr-1.5" />}
-            {isLoadingInstances ? "Loading…" : "Load instances"}
-          </button>
-          {instancesError && <p className="mt-2 text-sm text-red-600">{instancesError}</p>}
-          {instances.length > 0 && (
-            <div className="mt-3 flex flex-col gap-1.5">
-              {instances.map((inst) => (
-                <label key={inst.id} className="flex items-center gap-2 text-base">
-                  <input
-                    type="radio"
-                    name="production-tracking-instance"
-                    checked={instanceId === inst.id}
-                    onChange={() => handleSelectInstance(inst.id)}
-                    disabled={!inst.active}
-                    className="h-4 w-4"
-                  />
-                  {inst.name} {!inst.active && <span className="text-sm text-slate-400">(inactive)</span>}
-                </label>
-              ))}
-            </div>
-          )}
+          <InstancePicker {...picker} onChange={picker.setInstanceId} />
         </div>
 
         {instanceId && (

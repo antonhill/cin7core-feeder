@@ -204,7 +204,9 @@ describe("getReportFilterOptions", () => {
     const db = {
       from: (table: string) => {
         if (table === "cin7_instances") {
-          return { select: () => ({ eq: () => ({ order: () => Promise.resolve({ data: [{ id: "inst-1", name: "Spark Demo" }], error: null }) }) }) };
+          return {
+            select: () => ({ eq: () => ({ order: () => Promise.resolve({ data: [{ id: "inst-1", name: "Spark Demo", active: true }], error: null }) }) }),
+          };
         }
         if (table === "sales") {
           return {
@@ -224,7 +226,9 @@ describe("getReportFilterOptions", () => {
 
     const options = await getReportFilterOptions(db, "org1");
 
-    expect(options.instances).toEqual([{ id: "inst-1", name: "Spark Demo" }]);
+    // Confirmed live 2026-07-14: this used to omit `active` entirely, silently breaking auto-select
+    // logic for any page (fulfillment-cleanup) that uses this as its instance picker.
+    expect(options.instances).toEqual([{ id: "inst-1", name: "Spark Demo", active: true }]);
     expect(options.locations).toEqual(["Main Warehouse", "Secondary"]);
     expect(options.categories).toEqual([{ code: "WIDGETS", name: "Widgets" }]);
   });
