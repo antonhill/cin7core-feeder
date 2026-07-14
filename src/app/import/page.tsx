@@ -9,9 +9,9 @@ import {
   type ScopeMode,
 } from "./actions";
 import type { ImportKind } from "@/import/run-import";
-import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import { getBillingStatusAction } from "@/actions/billing";
 import type { InstanceSyncOutcome } from "@/sync/sync-org";
+import { useInstancePicker } from "@/hooks/useInstancePicker";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { IMPORT_MODULE } from "@/app/module-nav";
 import { Spinner } from "@/app/Spinner";
@@ -101,10 +101,8 @@ function StatPill({ label, value, tone = "neutral" }: { label: string; value: nu
 export default function ImportPage() {
   const [state, formAction, isImportPending] = useActionState(importCsvAction, INITIAL_STATE);
 
-  const [instances, setInstances] = useState<InstancePickerItem[]>([]);
-  const [instancesError, setInstancesError] = useState<string | null>(null);
+  const picker = useInstancePicker();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [isLoadingInstances, startLoadTransition] = useTransition();
 
   const [pushOutcomes, setPushOutcomes] = useState<InstanceSyncOutcome[] | null>(null);
   const [pushError, setPushError] = useState<string | null>(null);
@@ -133,18 +131,6 @@ export default function ImportPage() {
     setScopeSelection(isolatedScopeFor(state.result.kind));
   }
 
-  function handleLoadInstances() {
-    setInstancesError(null);
-    startLoadTransition(async () => {
-      const result = await listInstancesForPicker();
-      if (!result.ok) {
-        setInstancesError(result.error ?? "Unknown error");
-        return;
-      }
-      setInstances(result.instances ?? []);
-    });
-  }
-
   function toggleInstance(id: string) {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
@@ -166,7 +152,6 @@ export default function ImportPage() {
     setScopeSelection((prev) => ({ ...prev, [key]: mode }));
   }
 
-  const activeInstances = instances.filter((i) => i.active);
 
   return (
     <main className="mx-auto w-full max-w-4xl px-6 py-12">
@@ -283,34 +268,45 @@ export default function ImportPage() {
           </p>
 
           <div className="mt-5 pl-11">
-            <button
-              type="button"
-              onClick={handleLoadInstances}
-              disabled={isLoadingInstances}
-              className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
-              {isLoadingInstances && <Spinner className="mr-1.5" />}
-              {isLoadingInstances ? "Loading…" : "Load instances"}
-            </button>
+            {picker.isLoading && picker.selectableInstances.length === 0 && (
+              <p className="text-sm text-slate-500">
+                <Spinner className="mr-1.5" />
+                Loading instances…
+              </p>
+            )}
 
-            {instancesError && <p className="mt-2 text-sm text-red-600">{instancesError}</p>}
+            {picker.error && (
+              <p className="text-sm text-red-600">
+                {picker.error}{" "}
+                <button type="button" onClick={picker.reload} className="font-medium underline hover:no-underline">
+                  Retry
+                </button>
+              </p>
+            )}
 
-            {instances.length > 0 && (
-              <div className="mt-4 flex flex-col gap-2">
-                {instances.map((inst) => (
+            {!picker.isLoading && !picker.error && picker.selectableInstances.length === 0 && (
+              <p className="text-sm text-slate-400">No active instances connected — visit Settings to connect one.</p>
+            )}
+
+            {picker.selectableInstances.length > 0 && (
+              <div className="flex flex-col gap-2">
+                {picker.selectableInstances.map((inst) => (
                   <label key={inst.id} className="flex items-center gap-2 text-base">
                     <input
                       type="checkbox"
                       checked={selectedIds.includes(inst.id)}
                       onChange={() => toggleInstance(inst.id)}
-                      disabled={!inst.active}
                       className="h-4 w-4"
                     />
-                    {inst.name} {!inst.active && <span className="text-sm text-slate-400">(inactive — skipped)</span>}
+                    {inst.name}
                   </label>
                 ))}
                 <div className="mt-1 flex gap-3 text-sm text-indigo-600">
-                  <button type="button" onClick={() => setSelectedIds(activeInstances.map((i) => i.id))} className="hover:underline">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedIds(picker.selectableInstances.map((i) => i.id))}
+                    className="hover:underline"
+                  >
                     Select all
                   </button>
                   <button type="button" onClick={() => setSelectedIds([])} className="hover:underline">
@@ -318,9 +314,6 @@ export default function ImportPage() {
                   </button>
                 </div>
               </div>
-            )}
-            {instances.length === 0 && !instancesError && (
-              <p className="mt-2 text-sm text-slate-400">No instances loaded yet.</p>
             )}
           </div>
         </section>
