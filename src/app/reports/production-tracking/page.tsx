@@ -194,6 +194,11 @@ function ProductionOrderCard({ row, today, onOpenDetail }: { row: ProductionTrac
       <div className="truncate text-slate-500">{row.productName ?? row.productSku ?? "—"}</div>
       {row.tags && <div className="truncate text-slate-400">🏷 {row.tags}</div>}
       <div className="mt-1 text-slate-400">Qty planned: {row.plannedQuantity !== null ? qty(row.plannedQuantity) : "—"}</div>
+      {row.actualOutputQty !== null && (
+        <div className={row.plannedQuantity !== null && row.actualOutputQty < row.plannedQuantity ? "font-semibold text-red-700" : "text-slate-400"}>
+          Actual out: {qty(row.actualOutputQty)}
+        </div>
+      )}
       {shortfall && (
         <div className="mt-1 rounded bg-red-100 px-1.5 py-0.5 font-semibold text-red-700">
           ⚠ Short input: {qty(row.currentInputActualQty ?? 0)} of {qty(row.currentInputExpectedQty ?? 0)} expected
