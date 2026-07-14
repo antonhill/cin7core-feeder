@@ -28,6 +28,8 @@ export interface Cin7ProductionOrderListEntry {
   OrderStatus?: string;
   RequiredByDate?: string | null;
   CompletionDate?: string | null;
+  /** Free-text, commonly used to note which customer/sales order a run is for — confirmed live 2026-07-14, MO-00042: "Anton Hill Order: 23424324". */
+  Tags?: string;
 }
 
 /** Fetches every production order (and routing sub-)record on the account. Paginates until a short page signals the end, same pattern as fetchAllSalesList. */

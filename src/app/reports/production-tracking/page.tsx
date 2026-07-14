@@ -191,6 +191,7 @@ function ProductionOrderCard({ row, today, onOpenDetail }: { row: ProductionTrac
     >
       <div className="truncate font-medium text-slate-900">{row.orderNumber ?? row.productionOrderId}</div>
       <div className="truncate text-slate-500">{row.productName ?? row.productSku ?? "—"}</div>
+      {row.tags && <div className="truncate text-slate-400">🏷 {row.tags}</div>}
       <div className="mt-1 text-slate-400">Qty planned: {row.plannedQuantity !== null ? qty(row.plannedQuantity) : "—"}</div>
       {shortfall && (
         <div className="mt-1 rounded bg-red-100 px-1.5 py-0.5 font-semibold text-red-700">
@@ -277,6 +278,15 @@ function ProductionOrderDetailModal({
             <p className="text-sm text-slate-500">
               Qty planned: {row.plannedQuantity !== null ? qty(row.plannedQuantity) : "—"}
             </p>
+            {row.actualOutputQty !== null && (
+              <p
+                className={`text-sm ${
+                  row.plannedQuantity !== null && row.actualOutputQty < row.plannedQuantity ? "font-semibold text-red-700" : "text-slate-500"
+                }`}
+              >
+                Actual out: {qty(row.actualOutputQty)}
+              </p>
+            )}
             {reconciliation && (
               <p
                 className={`mt-2 inline-block rounded-lg px-3 py-1.5 text-sm font-medium ${

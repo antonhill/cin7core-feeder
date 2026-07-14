@@ -203,15 +203,24 @@ export function reconcileInputFlow(operations: ProductionOperationRow[]): Shortf
 /**
  * Human-readable label for "where is this order right now" (the modal
  * header and table view's Current Stage column) — `currentOperationName`
- * is null in two very different situations that shouldn't share the same
- * wording: the order genuinely hasn't synced/started yet, vs. every
- * operation is COMPLETED and it's just waiting on the finished-good
- * Output to be recorded (Cin7's own `run_status` reads "OPERATIONS
- * COMPLETED" for this — confirmed live 2026-07-14 on MO-00042, which
- * otherwise misleadingly showed "not synced yet" for a fully-worked order).
+ * is null in several very different situations that shouldn't share the
+ * same wording:
+ *  - the order genuinely hasn't synced/started yet
+ *  - every operation is COMPLETED and it's waiting on the finished-good
+ *    Output to be recorded (`run_status` reads "OPERATIONS COMPLETED")
+ *  - Output has been recorded (`run_status` reads "COMPLETED") but Cin7's
+ *    own Production Order Status hasn't followed — confirmed live
+ *    2026-07-14 (MO-00042) that completing the Run/output doesn't
+ *    automatically close the order itself; `listStatus` stayed
+ *    "IN PROGRESS" with no CompletionDate until a separate action on the
+ *    order was taken.
+ * All three previously showed the same misleading "not synced yet".
  */
-export function currentStageFallbackLabel(row: Pick<ProductionTrackingRow, "runStatus">): string {
-  return row.runStatus === "OPERATIONS COMPLETED" ? "all operations complete — awaiting output" : "not synced yet";
+export function currentStageFallbackLabel(row: Pick<ProductionTrackingRow, "runStatus" | "listStatus">): string {
+  if (row.listStatus === "COMPLETED") return "order complete";
+  if (row.runStatus === "OPERATIONS COMPLETED") return "all operations complete — awaiting output";
+  if (row.runStatus === "COMPLETED") return "output recorded — awaiting order close in Cin7";
+  return "not synced yet";
 }
 
 /** A label reserved for orders with no Run yet at all (never released) — distinct from a real, named work centre. */

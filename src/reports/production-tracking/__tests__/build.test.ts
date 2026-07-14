@@ -204,9 +204,11 @@ function trackingRow(overrides: Partial<ProductionTrackingRow> = {}): Production
     currentInputExpectedQty: null,
     currentInputActualQty: null,
     currentInputWastageQty: null,
+    actualOutputQty: null,
     wipActualCost: 0,
     runSyncedAt: null,
     totalWastage: 0,
+    tags: null,
     ...overrides,
   };
 }
@@ -366,12 +368,25 @@ describe("currentStageFallbackLabel", () => {
   // null the same way it does for a genuinely not-yet-started order — this label distinguishes them
   // instead of showing the misleading "not synced yet" for a fully-worked order.
   it("says awaiting output when the run finished every operation", () => {
-    expect(currentStageFallbackLabel({ runStatus: "OPERATIONS COMPLETED" })).toBe("all operations complete — awaiting output");
+    expect(currentStageFallbackLabel({ runStatus: "OPERATIONS COMPLETED", listStatus: "IN PROGRESS" })).toBe(
+      "all operations complete — awaiting output"
+    );
+  });
+
+  // Also confirmed live 2026-07-14 (MO-00042): completing the Run/output doesn't automatically close
+  // the order itself — listStatus stayed "IN PROGRESS" with run_status "COMPLETED" until a separate
+  // action was taken on the order in Cin7.
+  it("says awaiting order close when output was recorded but the order's own status hasn't followed", () => {
+    expect(currentStageFallbackLabel({ runStatus: "COMPLETED", listStatus: "IN PROGRESS" })).toBe("output recorded — awaiting order close in Cin7");
+  });
+
+  it("says order complete once the order's own status actually closed", () => {
+    expect(currentStageFallbackLabel({ runStatus: "COMPLETED", listStatus: "COMPLETED" })).toBe("order complete");
   });
 
   it("falls back to not synced yet for any other run status (including no Run at all)", () => {
-    expect(currentStageFallbackLabel({ runStatus: "IN PROGRESS" })).toBe("not synced yet");
-    expect(currentStageFallbackLabel({ runStatus: null })).toBe("not synced yet");
+    expect(currentStageFallbackLabel({ runStatus: "IN PROGRESS", listStatus: "IN PROGRESS" })).toBe("not synced yet");
+    expect(currentStageFallbackLabel({ runStatus: null, listStatus: "DRAFT" })).toBe("not synced yet");
   });
 });
 

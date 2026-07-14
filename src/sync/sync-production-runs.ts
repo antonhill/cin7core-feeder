@@ -57,6 +57,7 @@ async function syncProductionOrdersList(db: SupabaseClient, orgId: string, insta
     list_status: o.Status ?? null,
     required_by_date: toDateOnly(o.RequiredByDate),
     completion_date: toDateOnly(o.CompletionDate),
+    tags: o.Tags ?? null,
     updated_at: new Date().toISOString(),
   }));
 
@@ -166,6 +167,13 @@ async function syncProductionOrderRunDetails(
         // output" bucketing, which needs them to go null once finished.
         const latestStarted = latestStartedOperation(latestRun.operations);
         const latestStartedHasInput = (latestStarted?.inputProducts.length ?? 0) > 0;
+        // The real finished-good quantity, from whichever operation's own
+        // FinishedProducts records it (typically just the terminal one) —
+        // a third, later checkpoint distinct from the WIP Input/Output
+        // figures above, only meaningful once output has actually been
+        // recorded. null (not tracked) unless some operation defines
+        // FinishedProducts at all.
+        const finishedProducts = latestRun.operations.flatMap((op) => op.finishedProducts);
         const { error: updateError } = await db
           .from("production_orders")
           .update({
@@ -178,6 +186,7 @@ async function syncProductionOrderRunDetails(
             current_input_expected_qty: latestStartedHasInput ? latestStarted!.inputProducts.reduce((sum, p) => sum + p.expectedQuantity, 0) : null,
             current_input_actual_qty: latestStartedHasInput ? latestStarted!.inputProducts.reduce((sum, p) => sum + p.outputQuantity, 0) : null,
             current_input_wastage_qty: latestStartedHasInput ? latestStarted!.inputProducts.reduce((sum, p) => sum + p.wastageQuantity, 0) : null,
+            actual_output_qty: finishedProducts.length ? finishedProducts.reduce((sum, p) => sum + p.outputQuantity, 0) : null,
             planned_quantity: latestRun.quantity,
             wip_actual_cost: computeWipCost(runs),
             run_synced_at: new Date().toISOString(),

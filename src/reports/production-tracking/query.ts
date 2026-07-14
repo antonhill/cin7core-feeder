@@ -28,10 +28,20 @@ export interface ProductionTrackingRow {
   currentInputExpectedQty: number | null;
   currentInputActualQty: number | null;
   currentInputWastageQty: number | null;
+  /**
+   * The real finished-good quantity actually produced (Run's own
+   * FinishedProducts.OutputQuantity) — a third, later checkpoint distinct
+   * from the WIP shortfall/overproduction figures above, only populated
+   * once output has actually been recorded. Null when no operation on
+   * this order defines FinishedProducts at all yet.
+   */
+  actualOutputQty: number | null;
   wipActualCost: number | null;
   runSyncedAt: string | null;
   /** Sum of production_operations.wastage_qty across this order's latest Run — a plain DB read alongside the header rows, not a separate per-row query. */
   totalWastage: number;
+  /** Cin7's own free-text Production Order Tags field — commonly used to note which customer/sales order a run is for. Shown on the Kanban card. */
+  tags: string | null;
 }
 
 /**
@@ -84,9 +94,11 @@ export async function getProductionTrackingRows(
     currentInputExpectedQty: o.current_input_expected_qty,
     currentInputActualQty: o.current_input_actual_qty,
     currentInputWastageQty: o.current_input_wastage_qty,
+    actualOutputQty: o.actual_output_qty,
     wipActualCost: o.wip_actual_cost,
     runSyncedAt: o.run_synced_at,
     totalWastage: wastageByOrder.get(o.cin7_production_order_id) ?? 0,
+    tags: o.tags,
   }));
 }
 
