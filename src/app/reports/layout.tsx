@@ -56,8 +56,10 @@ export default async function ReportsLayout({
           Calendar (a drag-to-reschedule week view — moving a card writes the
           new Ship By date straight back to Cin7 Core), and the Fulfillment
           Cleanup Helper (a completed Bulk Stock Adjustment CSV for every
-          oversold SKU, ready to import into Cin7), with more report types to
-          come.
+          oversold SKU, ready to import into Cin7), and Production Tracking
+          (for Advanced Manufacturing — current work centre per open order,
+          actual wastage per stage, and an estimated WIP cost), with more
+          report types to come.
         </ModuleHeader>
       </div>
       <div className="mt-6 flex items-start gap-8 print:mt-0 print:block">

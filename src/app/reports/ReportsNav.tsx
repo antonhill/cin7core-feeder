@@ -45,6 +45,10 @@ const REPORT_CATEGORIES: ReportCategory[] = [
     ],
   },
   {
+    label: "Manufacturing",
+    links: [{ href: "/reports/production-tracking", label: "Production Tracking" }],
+  },
+  {
     label: "Inventory",
     links: [
       { href: "/reports/inventory-movement", label: "Inventory Movement" },
