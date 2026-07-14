@@ -20,6 +20,7 @@ import {
   operationHasInputShortfall,
   operationHasInputOverproduction,
   previousOperation,
+  reconcileInputFlow,
   PRODUCTION_STATUS_ORDER,
   type WorkCentreColumn,
 } from "@/reports/production-tracking/build";
@@ -259,6 +260,7 @@ function ProductionOrderDetailModal({
   error: string | undefined;
   onClose: () => void;
 }) {
+  const reconciliation = operations ? reconcileInputFlow(operations) : null;
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50" onClick={onClose}>
       <div className="mx-auto my-8 max-w-3xl rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
@@ -272,6 +274,25 @@ function ProductionOrderDetailModal({
             <p className="text-sm text-slate-500">
               Qty planned: {row.plannedQuantity !== null ? qty(row.plannedQuantity) : "—"}
             </p>
+            {reconciliation && (
+              <p
+                className={`mt-2 inline-block rounded-lg px-3 py-1.5 text-sm font-medium ${
+                  reconciliation.netDeviationQty < 0 ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"
+                }`}
+              >
+                {qty(Math.abs(reconciliation.netDeviationQty))} {reconciliation.netDeviationQty < 0 ? "short" : "over"} overall as of{" "}
+                {reconciliation.finalOperationName}
+                {reconciliation.originOperationName !== reconciliation.finalOperationName && (
+                  <>
+                    {" "}
+                    — first appeared at {reconciliation.originOperationName}
+                    {reconciliation.originDeviationQty === reconciliation.netDeviationQty
+                      ? ", unchanged since (no additional loss/gain downstream)"
+                      : ` (${qty(Math.abs(reconciliation.originDeviationQty))} there, now ${qty(Math.abs(reconciliation.netDeviationQty))})`}
+                  </>
+                )}
+              </p>
+            )}
           </div>
           <button
             type="button"

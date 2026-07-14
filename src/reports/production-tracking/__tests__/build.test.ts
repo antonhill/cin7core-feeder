@@ -13,6 +13,7 @@ import {
   operationHasInputShortfall,
   operationHasInputOverproduction,
   previousOperation,
+  reconcileInputFlow,
   NOT_STARTED_COLUMN,
 } from "@/reports/production-tracking/build";
 import type { ProductionRun, ProductionRunOperation } from "@/cin7/production-order-run";
@@ -420,5 +421,75 @@ describe("previousOperation", () => {
       operationRow({ operationOrder: 20, operationName: "Grinding" }),
     ];
     expect(previousOperation(operations, 30)?.operationName).toBe("Grinding");
+  });
+});
+
+describe("reconcileInputFlow", () => {
+  it("returns null when no operation tracks Inputs/Outputs at all", () => {
+    const operations = [
+      operationRow({ operationOrder: 10, operationName: "Roasting", inputExpectedQty: null, inputActualQty: null }),
+      operationRow({ operationOrder: 20, operationName: "Grinding", inputExpectedQty: null, inputActualQty: null }),
+    ];
+    expect(reconcileInputFlow(operations)).toBeNull();
+  });
+
+  it("returns null when every tracked stage received exactly what was expected", () => {
+    const operations = [
+      operationRow({ operationOrder: 20, operationName: "Grinding", inputExpectedQty: 25.5, inputActualQty: 25.5 }),
+      operationRow({ operationOrder: 30, operationName: "Packing", inputExpectedQty: 25, inputActualQty: 25 }),
+    ];
+    expect(reconcileInputFlow(operations)).toBeNull();
+  });
+
+  // Confirmed live 2026-07-14 (MO-00042): Grinding received 23.5 of 25.5 expected (the origin), and by
+  // the time it reaches Packing the net deviation is still exactly -2 — the same loss carried forward
+  // unchanged, not a second separate loss.
+  it("reports the origin and net figure as unchanged when the deviation doesn't grow between stages", () => {
+    const operations = [
+      operationRow({ operationOrder: 20, operationName: "Grinding", inputExpectedQty: 25.5, inputActualQty: 23.5 }),
+      operationRow({ operationOrder: 30, operationName: "Packing", inputExpectedQty: 25, inputActualQty: 23 }),
+    ];
+    expect(reconcileInputFlow(operations)).toEqual({
+      originOperationName: "Grinding",
+      originDeviationQty: -2,
+      finalOperationName: "Packing",
+      netDeviationQty: -2,
+    });
+  });
+
+  it("reports a widening deviation with both figures when it grows further downstream", () => {
+    const operations = [
+      operationRow({ operationOrder: 20, operationName: "Grinding", inputExpectedQty: 25.5, inputActualQty: 23.5 }),
+      operationRow({ operationOrder: 30, operationName: "Packing", inputExpectedQty: 25, inputActualQty: 20 }),
+    ];
+    expect(reconcileInputFlow(operations)).toEqual({
+      originOperationName: "Grinding",
+      originDeviationQty: -2,
+      finalOperationName: "Packing",
+      netDeviationQty: -5,
+    });
+  });
+
+  it("uses the same operation for origin and final when only one tracked stage has a deviation so far", () => {
+    const operations = [operationRow({ operationOrder: 20, operationName: "Grinding", inputExpectedQty: 25.5, inputActualQty: 23.5 })];
+    expect(reconcileInputFlow(operations)).toEqual({
+      originOperationName: "Grinding",
+      originDeviationQty: -2,
+      finalOperationName: "Grinding",
+      netDeviationQty: -2,
+    });
+  });
+
+  it("handles overproduction (positive deviation) the same way", () => {
+    const operations = [
+      operationRow({ operationOrder: 20, operationName: "Grinding", inputExpectedQty: 25, inputActualQty: 27 }),
+      operationRow({ operationOrder: 30, operationName: "Packing", inputExpectedQty: 25, inputActualQty: 27 }),
+    ];
+    expect(reconcileInputFlow(operations)).toEqual({
+      originOperationName: "Grinding",
+      originDeviationQty: 2,
+      finalOperationName: "Packing",
+      netDeviationQty: 2,
+    });
   });
 });

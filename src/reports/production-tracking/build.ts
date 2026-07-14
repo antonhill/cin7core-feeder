@@ -128,6 +128,55 @@ export function previousOperation(operations: ProductionOperationRow[], operatio
   return earlier.reduce((a, b) => (b.operationOrder > a.operationOrder ? b : a));
 }
 
+export interface ShortfallReconciliation {
+  /** The first operation (by operationOrder) whose Input actually deviated from what the BOM expected — where the deviation entered the chain. */
+  originOperationName: string;
+  /** That operation's own Input deviation (actual - expected) — negative = short, positive = over. */
+  originDeviationQty: number;
+  /** The last operation that tracks Input data — the tail of the chain, i.e. what's actually reached the furthest stage so far. */
+  finalOperationName: string;
+  /** That operation's own Input deviation — the net figure for the whole order as of its furthest tracked stage. */
+  netDeviationQty: number;
+}
+
+/**
+ * Reconciles the order's whole Input/Output chain into one net figure, so
+ * a single upstream loss doesn't look like it's been "lost" or
+ * double-counted across several independent per-row messages (each row's
+ * own message — see operationHasInputShortfall/operationHasInputOverproduction
+ * — stays accurate on its own; this is a separate, order-level rollup,
+ * not a replacement for those).
+ *
+ * Deliberately doesn't attempt to ratio-adjust each stage's own expected
+ * yield to judge "did this specific stage introduce NEW loss" — that
+ * would need each operation's own planned conversion ratio and assumes a
+ * simple linear routing with no branches, which won't hold for every BOM.
+ * Instead it reports plain, defensible facts: where the deviation first
+ * appeared, and what it's grown/shrunk to by the furthest tracked stage —
+ * letting the reader judge whether the gap widened downstream themselves.
+ *
+ * Returns null if no operation tracks Inputs/Outputs at all, or if every
+ * tracked stage received exactly what the BOM expected (nothing to
+ * reconcile).
+ */
+export function reconcileInputFlow(operations: ProductionOperationRow[]): ShortfallReconciliation | null {
+  const tracked = [...operations]
+    .filter((op) => op.inputExpectedQty !== null && op.inputActualQty !== null)
+    .sort((a, b) => a.operationOrder - b.operationOrder);
+  if (!tracked.length) return null;
+
+  const origin = tracked.find((op) => (op.inputActualQty ?? 0) !== (op.inputExpectedQty ?? 0));
+  if (!origin) return null;
+
+  const final = tracked[tracked.length - 1];
+  return {
+    originOperationName: origin.operationName ?? "an earlier stage",
+    originDeviationQty: (origin.inputActualQty ?? 0) - (origin.inputExpectedQty ?? 0),
+    finalOperationName: final.operationName ?? "the current stage",
+    netDeviationQty: (final.inputActualQty ?? 0) - (final.inputExpectedQty ?? 0),
+  };
+}
+
 /** A label reserved for orders with no Run yet at all (never released) — distinct from a real, named work centre. */
 export const NOT_STARTED_COLUMN = "Not started yet";
 
