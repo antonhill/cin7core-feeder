@@ -1,4 +1,5 @@
 import type { ProductionRun, ProductionRunOperation } from "@/cin7/production-order-run";
+import type { ProductionTrackingRow, ProductionOperationRow } from "@/reports/production-tracking/query";
 
 /**
  * Confirmed live 2026-07-14 (Spark Demo, MO-00019): "current stage" is the
@@ -58,4 +59,53 @@ export function isLate(requiredByDate: string | null, listStatus: string | null,
   const days = daysLate(requiredByDate, today);
   if (days === null || days <= 0) return false;
   return listStatus !== "COMPLETED" && listStatus !== "VOIDED";
+}
+
+/** A label reserved for orders with no Run yet at all (never released) — distinct from a real, named work centre. */
+export const NOT_STARTED_COLUMN = "Not started yet";
+
+export interface WorkCentreColumn {
+  workCentre: string;
+  orders: ProductionTrackingRow[];
+}
+
+/**
+ * Buckets open orders into Kanban columns by their current work centre.
+ * `NOT_STARTED_COLUMN` (orders with no Run yet) always sorts first, since
+ * it isn't a real stage in any BOM's routing; the remaining columns order
+ * by the lowest `currentOperationOrder` seen among orders sitting there —
+ * a heuristic, not a configured sequence, since different BOMs can route
+ * through work centres in different orders. Orders within a column keep
+ * whatever order the caller already sorted `rows` in (e.g. by required-by
+ * date), not re-sorted here.
+ */
+export function groupByWorkCentre(rows: ProductionTrackingRow[]): WorkCentreColumn[] {
+  const byWorkCentre = new Map<string, ProductionTrackingRow[]>();
+  for (const row of rows) {
+    const key = row.currentWorkCenterName ?? NOT_STARTED_COLUMN;
+    const arr = byWorkCentre.get(key) ?? [];
+    arr.push(row);
+    byWorkCentre.set(key, arr);
+  }
+
+  const columns = [...byWorkCentre.entries()].map(([workCentre, orders]) => ({ workCentre, orders }));
+  columns.sort((a, b) => {
+    if (a.workCentre === NOT_STARTED_COLUMN) return -1;
+    if (b.workCentre === NOT_STARTED_COLUMN) return 1;
+    const aMin = Math.min(...a.orders.map((o) => o.currentOperationOrder ?? Infinity));
+    const bMin = Math.min(...b.orders.map((o) => o.currentOperationOrder ?? Infinity));
+    return aMin - bMin;
+  });
+  return columns;
+}
+
+/**
+ * Running total of actualResourceCost + actualMaterialCost for every
+ * operation up to and including `uptoOrder` — "value added up the flow"
+ * as of a given stage. `operations` isn't assumed pre-sorted.
+ */
+export function cumulativeCostThroughStage(operations: ProductionOperationRow[], uptoOrder: number): number {
+  return operations
+    .filter((op) => op.operationOrder <= uptoOrder)
+    .reduce((sum, op) => sum + (op.actualResourceCost ?? 0) + (op.actualMaterialCost ?? 0), 0);
 }

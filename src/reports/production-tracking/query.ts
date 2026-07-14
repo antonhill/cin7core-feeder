@@ -13,6 +13,8 @@ export interface ProductionTrackingRow {
   wipAccount: string | null;
   currentOperationName: string | null;
   currentWorkCenterName: string | null;
+  /** Operations[].Order for the current stage — drives the Kanban board's column ordering (groupByWorkCentre in build.ts), not shown directly in the UI. */
+  currentOperationOrder: number | null;
   currentOperationStartedAt: string | null;
   wipActualCost: number | null;
   runSyncedAt: string | null;
@@ -64,6 +66,7 @@ export async function getProductionTrackingRows(
     wipAccount: o.wip_account,
     currentOperationName: o.current_operation_name,
     currentWorkCenterName: o.current_work_center_name,
+    currentOperationOrder: o.current_operation_order,
     currentOperationStartedAt: o.current_operation_started_at,
     wipActualCost: o.wip_actual_cost,
     runSyncedAt: o.run_synced_at,
@@ -81,7 +84,22 @@ export interface ProductionOperationRow {
   startDate: string | null;
   endDate: string | null;
   actualResourceCost: number | null;
+  /** Material cost consumed at this stage — sum of component quantity * unitCost, the other half of "value added per stage" alongside actualResourceCost. */
+  actualMaterialCost: number | null;
   wastageQty: number | null;
+  /**
+   * Real, Cin7-tracked semi-finished-product transfer figures (Cin7's own
+   * "Inputs and Outputs" feature, help.core.cin7.com/hc/en-us/articles/
+   * 9034587837839) — null on ALL THREE means this stage's BOM doesn't
+   * define an intermediate product here at all (the common case; "not
+   * necessary to include input/output in a Production BOM" per Cin7's own
+   * docs), which the UI should render as "not tracked," not as zero.
+   */
+  inputExpectedQty: number | null;
+  inputActualQty: number | null;
+  inputWastageQty: number | null;
+  /** How much semi-finished product this stage produced for the next one — null when the BOM doesn't define an output here. */
+  outputQty: number | null;
 }
 
 /** Per-operation breakdown behind one order's row (the drill-down panel) — a plain DB read, already synced, not a live Cin7 call. */
@@ -110,7 +128,12 @@ export async function getProductionOrderOperations(
     startDate: op.start_date,
     endDate: op.end_date,
     actualResourceCost: op.actual_resource_cost,
+    actualMaterialCost: op.actual_material_cost,
     wastageQty: op.wastage_qty,
+    inputExpectedQty: op.input_expected_qty,
+    inputActualQty: op.input_actual_qty,
+    inputWastageQty: op.input_wastage_qty,
+    outputQty: op.output_qty,
   }));
 }
 

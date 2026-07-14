@@ -9,7 +9,7 @@ import {
 } from "./actions";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import type { ProductionTrackingRow, ProductionOperationRow, ProductionTrackingSyncStatus } from "@/reports/production-tracking/query";
-import { isLate, daysLate } from "@/reports/production-tracking/build";
+import { isLate, daysLate, groupByWorkCentre, cumulativeCostThroughStage } from "@/reports/production-tracking/build";
 import { StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
 import { Spinner } from "@/app/Spinner";
@@ -84,27 +84,157 @@ function ProductionOrderDetailPanel({
             <th className="py-1 pr-4 font-medium">Status</th>
             <th className="py-1 pr-4 text-right font-medium">Planned Time</th>
             <th className="py-1 pr-4 text-right font-medium">Actual Time</th>
+            <th className="py-1 pr-4 font-medium">Input (from previous stage)</th>
             <th className="py-1 pr-4 text-right font-medium">Wastage</th>
             <th className="py-1 pr-4 text-right font-medium">Actual Cost</th>
+            <th className="py-1 pr-4 text-right font-medium">Cost so far</th>
           </tr>
         </thead>
         <tbody>
-          {operations.map((op) => (
-            <tr key={op.operationOrder} className="border-t border-slate-100">
-              <td className="py-1 pr-4">{op.operationName ?? "—"}</td>
-              <td className="py-1 pr-4">{op.workCenterName ?? "—"}</td>
-              <td className="py-1 pr-4">{op.status ?? "—"}</td>
-              <td className="py-1 pr-4 text-right">{op.plannedTime ?? "—"}</td>
-              <td className="py-1 pr-4 text-right">{op.actualTime ?? "—"}</td>
-              <td className="py-1 pr-4 text-right">{op.wastageQty ? qty(op.wastageQty) : "—"}</td>
-              <td className="py-1 pr-4 text-right">{op.actualResourceCost ? money(op.actualResourceCost) : "—"}</td>
-            </tr>
-          ))}
+          {operations.map((op) => {
+            const stageCost = (op.actualResourceCost ?? 0) + (op.actualMaterialCost ?? 0);
+            const hasInputData = op.inputExpectedQty !== null;
+            return (
+              <tr key={op.operationOrder} className="border-t border-slate-100">
+                <td className="py-1 pr-4">{op.operationName ?? "—"}</td>
+                <td className="py-1 pr-4">{op.workCenterName ?? "—"}</td>
+                <td className="py-1 pr-4">{op.status ?? "—"}</td>
+                <td className="py-1 pr-4 text-right">{op.plannedTime ?? "—"}</td>
+                <td className="py-1 pr-4 text-right">{op.actualTime ?? "—"}</td>
+                <td className="py-1 pr-4 text-xs">
+                  {hasInputData ? (
+                    <>
+                      Received {qty(op.inputActualQty ?? 0)} of {qty(op.inputExpectedQty ?? 0)} expected
+                      {(op.inputWastageQty ?? 0) > 0 && (
+                        <span className="text-rose-600"> — {qty(op.inputWastageQty ?? 0)} lost upstream</span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-slate-400">Not tracked for this stage</span>
+                  )}
+                </td>
+                <td className="py-1 pr-4 text-right">{op.wastageQty ? qty(op.wastageQty) : "—"}</td>
+                <td className="py-1 pr-4 text-right">{stageCost ? money(stageCost) : "—"}</td>
+                <td className="py-1 pr-4 text-right font-medium">
+                  {money(cumulativeCostThroughStage(operations, op.operationOrder))}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
 }
+
+/**
+ * Read-only — no drag-and-drop. Cin7's own UI (Start/Suspend/Resume/
+ * Complete) is where operations actually move; dragging a card here would
+ * imply write-back, which is out of scope (this report is visibility
+ * only). Column/card styling mirrors Shipping Calendar's day-column
+ * kanban (src/app/reports/shipping-calendar/page.tsx) minus every
+ * drag-specific prop.
+ */
+function ProductionOrderCard({ row, today, onOpenDetail }: { row: ProductionTrackingRow; today: string; onOpenDetail: (id: string) => void }) {
+  const late = isLate(row.requiredByDate, row.listStatus, today);
+  const days = daysLate(row.requiredByDate, today);
+  return (
+    <div
+      onClick={() => onOpenDetail(row.productionOrderId)}
+      className="min-w-0 cursor-pointer overflow-hidden rounded-lg border border-slate-200 bg-white p-2 text-xs shadow-sm transition hover:border-indigo-300"
+    >
+      <div className="truncate font-medium text-slate-900">{row.orderNumber ?? row.productionOrderId}</div>
+      <div className="truncate text-slate-500">{row.productName ?? row.productSku ?? "—"}</div>
+      <div className="mt-1 flex flex-wrap items-center gap-1">
+        {late && <span className="rounded-full bg-rose-100 px-2 py-0.5 font-semibold text-rose-700">{days}d late</span>}
+        {row.totalWastage > 0 && <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">wastage</span>}
+      </div>
+      <div className="mt-1 text-slate-400">WIP: {row.wipActualCost ? money(row.wipActualCost) : "—"}</div>
+    </div>
+  );
+}
+
+function WorkCentreColumnView({
+  workCentre,
+  orders,
+  today,
+  onOpenDetail,
+}: {
+  workCentre: string;
+  orders: ProductionTrackingRow[];
+  today: string;
+  onOpenDetail: (id: string) => void;
+}) {
+  return (
+    <div className="flex min-h-[220px] w-64 shrink-0 flex-col gap-1.5 rounded-xl border border-slate-200 bg-slate-50 p-2">
+      <div className="mb-1 flex items-baseline justify-between px-0.5 text-xs font-semibold text-slate-600">
+        <span>{workCentre}</span>
+        <span className="font-normal text-slate-400">{orders.length}</span>
+      </div>
+      {orders.map((row) => (
+        <ProductionOrderCard key={row.productionOrderId} row={row} today={today} onOpenDetail={onOpenDetail} />
+      ))}
+    </div>
+  );
+}
+
+function BoardView({ rows, today, onOpenDetail }: { rows: ProductionTrackingRow[]; today: string; onOpenDetail: (id: string) => void }) {
+  const columns = groupByWorkCentre(rows);
+  if (columns.length === 0) return null;
+  return (
+    <div className="flex gap-3 overflow-x-auto pb-2">
+      {columns.map((column) => (
+        <WorkCentreColumnView key={column.workCentre} workCentre={column.workCentre} orders={column.orders} today={today} onOpenDetail={onOpenDetail} />
+      ))}
+    </div>
+  );
+}
+
+/** Detail doesn't fit readably inside a card at any font size — same reasoning Shipping Calendar's own OrderDetailModal comment gives — so a click opens this instead. */
+function ProductionOrderDetailModal({
+  row,
+  operations,
+  isLoading,
+  error,
+  onClose,
+}: {
+  row: ProductionTrackingRow;
+  operations: ProductionOperationRow[] | undefined;
+  isLoading: boolean;
+  error: string | undefined;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50" onClick={onClose}>
+      <div className="mx-auto my-8 max-w-3xl rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">{row.orderNumber ?? row.productionOrderId}</h2>
+            <p className="text-sm text-slate-500">
+              {row.productName ?? row.productSku} — {row.currentOperationName ?? "not synced yet"}
+              {row.currentWorkCenterName && ` (${row.currentWorkCenterName})`}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Close
+          </button>
+        </div>
+        <ProductionOrderDetailPanel operations={operations} isLoading={isLoading} error={error} />
+      </div>
+    </div>
+  );
+}
+
+type ViewMode = "table" | "board";
+
+const VIEW_MODE_TABS: { value: ViewMode; label: string }[] = [
+  { value: "table", label: "Table" },
+  { value: "board", label: "Board" },
+];
 
 export default function ProductionTrackingPage() {
   const [instances, setInstances] = useState<InstancePickerItem[]>([]);
@@ -125,6 +255,9 @@ export default function ProductionTrackingPage() {
   const [operationsById, setOperationsById] = useState<Record<string, ProductionOperationRow[]>>({});
   const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
   const [loadingDetailIds, setLoadingDetailIds] = useState<Set<string>>(new Set());
+
+  const [viewMode, setViewMode] = useState<ViewMode>("table");
+  const [modalOrderId, setModalOrderId] = useState<string | null>(null);
 
   const [sortColumn, setSortColumn] = useState<SortColumn>("daysLate");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -154,6 +287,7 @@ export default function ProductionTrackingPage() {
     setExpandedIds(new Set());
     setOperationsById({});
     setDetailErrors({});
+    setModalOrderId(null);
     startRowsTransition(async () => {
       const res = await loadProductionTrackingAction(id, withCompleted);
       if (!res.ok) {
@@ -192,14 +326,8 @@ export default function ProductionTrackingPage() {
     });
   }
 
-  function handleToggleExpand(productionOrderId: string) {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(productionOrderId)) next.delete(productionOrderId);
-      else next.add(productionOrderId);
-      return next;
-    });
-
+  /** Fetches one order's operations if not already cached or in flight — shared by the table's row-expand and the board's detail modal, neither of which re-fetches an order that's already loaded. */
+  function ensureOperationsLoaded(productionOrderId: string) {
     if (!instanceId || operationsById[productionOrderId] || loadingDetailIds.has(productionOrderId)) return;
     setLoadingDetailIds((prev) => new Set(prev).add(productionOrderId));
     loadProductionOrderDetailAction(instanceId, productionOrderId).then((res) => {
@@ -214,6 +342,21 @@ export default function ProductionTrackingPage() {
       }
       setOperationsById((prev) => ({ ...prev, [productionOrderId]: res.data! }));
     });
+  }
+
+  function handleToggleExpand(productionOrderId: string) {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(productionOrderId)) next.delete(productionOrderId);
+      else next.add(productionOrderId);
+      return next;
+    });
+    ensureOperationsLoaded(productionOrderId);
+  }
+
+  function handleOpenModal(productionOrderId: string) {
+    setModalOrderId(productionOrderId);
+    ensureOperationsLoaded(productionOrderId);
   }
 
   const today = todayIso();
@@ -321,16 +464,34 @@ export default function ProductionTrackingPage() {
               </p>
               <p className="mt-1 text-sm text-slate-500">Estimated WIP cost: {money(summary?.wipTotal ?? 0)}</p>
             </div>
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              <input type="checkbox" checked={includeCompleted} onChange={handleToggleIncludeCompleted} className="h-4 w-4" />
-              Include completed/voided orders
-            </label>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={includeCompleted} onChange={handleToggleIncludeCompleted} className="h-4 w-4" />
+                Include completed/voided orders
+              </label>
+              <div className="flex gap-1.5">
+                {VIEW_MODE_TABS.map((tab) => (
+                  <button
+                    key={tab.value}
+                    type="button"
+                    onClick={() => setViewMode(tab.value)}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                      viewMode === tab.value ? "bg-indigo-600 text-white" : "border border-slate-300 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
           {rows.length === 0 ? (
             <p className="text-base text-slate-500">
               {includeCompleted ? "No production orders on this instance yet." : "No open production orders right now — every order is completed or voided."}
             </p>
+          ) : viewMode === "board" ? (
+            <BoardView rows={sortedRows} today={today} onOpenDetail={handleOpenModal} />
           ) : (
             <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
               <table className="w-full text-left text-sm text-slate-700">
@@ -443,6 +604,21 @@ export default function ProductionTrackingPage() {
           )}
         </section>
       )}
+
+      {modalOrderId &&
+        (() => {
+          const modalRow = rows?.find((r) => r.productionOrderId === modalOrderId);
+          if (!modalRow) return null;
+          return (
+            <ProductionOrderDetailModal
+              row={modalRow}
+              operations={operationsById[modalOrderId]}
+              isLoading={loadingDetailIds.has(modalOrderId)}
+              error={detailErrors[modalOrderId]}
+              onClose={() => setModalOrderId(null)}
+            />
+          );
+        })()}
     </>
   );
 }

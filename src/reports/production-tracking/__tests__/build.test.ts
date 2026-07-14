@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { deriveCurrentOperation, computeWipCost, totalWastage, daysLate, isLate } from "@/reports/production-tracking/build";
+import {
+  deriveCurrentOperation,
+  computeWipCost,
+  totalWastage,
+  daysLate,
+  isLate,
+  groupByWorkCentre,
+  cumulativeCostThroughStage,
+  NOT_STARTED_COLUMN,
+} from "@/reports/production-tracking/build";
 import type { ProductionRun, ProductionRunOperation } from "@/cin7/production-order-run";
+import type { ProductionTrackingRow, ProductionOperationRow } from "@/reports/production-tracking/query";
 
 function operation(overrides: Partial<ProductionRunOperation> = {}): ProductionRunOperation {
   return {
@@ -130,5 +140,123 @@ describe("daysLate / isLate", () => {
 
   it("isLate is false with no required-by date at all", () => {
     expect(isLate(null, "IN PROGRESS", "2026-07-14")).toBe(false);
+  });
+});
+
+function trackingRow(overrides: Partial<ProductionTrackingRow> = {}): ProductionTrackingRow {
+  return {
+    productionOrderId: "po-1",
+    orderNumber: "MO-1",
+    productSku: "SKU-1",
+    productName: "Product 1",
+    locationName: "Main",
+    listStatus: "IN PROGRESS",
+    requiredByDate: null,
+    completionDate: null,
+    runStatus: "IN PROGRESS",
+    wipAccount: "780",
+    currentOperationName: "Mixing",
+    currentWorkCenterName: "Mixing",
+    currentOperationOrder: 1,
+    currentOperationStartedAt: null,
+    wipActualCost: 0,
+    runSyncedAt: null,
+    totalWastage: 0,
+    ...overrides,
+  };
+}
+
+describe("groupByWorkCentre", () => {
+  it("buckets orders by currentWorkCenterName", () => {
+    const rows = [
+      trackingRow({ productionOrderId: "a", currentWorkCenterName: "Mixing", currentOperationOrder: 1 }),
+      trackingRow({ productionOrderId: "b", currentWorkCenterName: "Blending", currentOperationOrder: 2 }),
+      trackingRow({ productionOrderId: "c", currentWorkCenterName: "Mixing", currentOperationOrder: 1 }),
+    ];
+    const columns = groupByWorkCentre(rows);
+    const mixing = columns.find((c) => c.workCentre === "Mixing");
+    expect(mixing?.orders.map((o) => o.productionOrderId).sort()).toEqual(["a", "c"]);
+  });
+
+  it("puts orders with no current work centre in the NOT_STARTED_COLUMN bucket", () => {
+    const rows = [trackingRow({ currentWorkCenterName: null, currentOperationOrder: null })];
+    const columns = groupByWorkCentre(rows);
+    expect(columns).toHaveLength(1);
+    expect(columns[0].workCentre).toBe(NOT_STARTED_COLUMN);
+  });
+
+  it("sorts NOT_STARTED_COLUMN first regardless of other columns' operation order", () => {
+    const rows = [
+      trackingRow({ productionOrderId: "a", currentWorkCenterName: "Blending", currentOperationOrder: 1 }),
+      trackingRow({ productionOrderId: "b", currentWorkCenterName: null, currentOperationOrder: null }),
+    ];
+    const columns = groupByWorkCentre(rows);
+    expect(columns[0].workCentre).toBe(NOT_STARTED_COLUMN);
+  });
+
+  it("orders remaining columns by the lowest currentOperationOrder seen in each", () => {
+    const rows = [
+      trackingRow({ productionOrderId: "a", currentWorkCenterName: "Blending", currentOperationOrder: 3 }),
+      trackingRow({ productionOrderId: "b", currentWorkCenterName: "Mixing", currentOperationOrder: 1 }),
+      trackingRow({ productionOrderId: "c", currentWorkCenterName: "Packing", currentOperationOrder: 2 }),
+    ];
+    const columns = groupByWorkCentre(rows);
+    expect(columns.map((c) => c.workCentre)).toEqual(["Mixing", "Packing", "Blending"]);
+  });
+
+  it("returns no columns for an empty row set", () => {
+    expect(groupByWorkCentre([])).toEqual([]);
+  });
+});
+
+function operationRow(overrides: Partial<ProductionOperationRow> = {}): ProductionOperationRow {
+  return {
+    operationOrder: 1,
+    operationName: "Mixing",
+    workCenterName: "Mixing",
+    status: "COMPLETED",
+    plannedTime: null,
+    actualTime: null,
+    startDate: null,
+    endDate: null,
+    actualResourceCost: 0,
+    actualMaterialCost: 0,
+    wastageQty: 0,
+    inputExpectedQty: null,
+    inputActualQty: null,
+    inputWastageQty: null,
+    outputQty: null,
+    ...overrides,
+  };
+}
+
+describe("cumulativeCostThroughStage", () => {
+  it("sums resource + material cost up to and including the given stage", () => {
+    const operations = [
+      operationRow({ operationOrder: 1, actualResourceCost: 10, actualMaterialCost: 5 }),
+      operationRow({ operationOrder: 2, actualResourceCost: 20, actualMaterialCost: 15 }),
+    ];
+    expect(cumulativeCostThroughStage(operations, 2)).toBe(50);
+  });
+
+  it("excludes stages after uptoOrder", () => {
+    const operations = [
+      operationRow({ operationOrder: 1, actualResourceCost: 10, actualMaterialCost: 5 }),
+      operationRow({ operationOrder: 2, actualResourceCost: 20, actualMaterialCost: 15 }),
+    ];
+    expect(cumulativeCostThroughStage(operations, 1)).toBe(15);
+  });
+
+  it("treats null cost fields as 0", () => {
+    const operations = [operationRow({ operationOrder: 1, actualResourceCost: null, actualMaterialCost: null })];
+    expect(cumulativeCostThroughStage(operations, 1)).toBe(0);
+  });
+
+  it("doesn't assume operations are pre-sorted", () => {
+    const operations = [
+      operationRow({ operationOrder: 2, actualResourceCost: 20, actualMaterialCost: 0 }),
+      operationRow({ operationOrder: 1, actualResourceCost: 10, actualMaterialCost: 0 }),
+    ];
+    expect(cumulativeCostThroughStage(operations, 1)).toBe(10);
   });
 });

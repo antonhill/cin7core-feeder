@@ -111,21 +111,35 @@ async function syncProductionOrderRunDetails(
       if (deleteError) throw new Error(`production_operations delete: ${deleteError.message}`);
 
       if (latestRun) {
-        const operationRows = latestRun.operations.map((op) => ({
-          org_id: orgId,
-          instance_id: instanceId,
-          cin7_production_order_id: productionOrderId,
-          operation_order: op.order,
-          operation_name: op.name,
-          work_center_name: op.workCenterName,
-          status: op.status,
-          planned_time: op.plannedTime,
-          actual_time: op.actualTime,
-          start_date: op.startDate,
-          end_date: op.endDate,
-          actual_resource_cost: op.resourceCosts.reduce((sum, rc) => sum + rc.cost, 0),
-          wastage_qty: totalWastage([op]),
-        }));
+        const operationRows = latestRun.operations.map((op) => {
+          // null means "not tracked for this stage" (BOM doesn't define Cin7's
+          // Inputs and Outputs feature for this operation) — distinct from 0
+          // ("configured, genuinely zero"). Most BOMs won't have these at all
+          // (help.core.cin7.com/hc/en-us/articles/9034587837839: "not necessary
+          // to include input/output in a Production BOM").
+          const hasInput = op.inputProducts.length > 0;
+          const hasOutput = op.outputProducts.length > 0;
+          return {
+            org_id: orgId,
+            instance_id: instanceId,
+            cin7_production_order_id: productionOrderId,
+            operation_order: op.order,
+            operation_name: op.name,
+            work_center_name: op.workCenterName,
+            status: op.status,
+            planned_time: op.plannedTime,
+            actual_time: op.actualTime,
+            start_date: op.startDate,
+            end_date: op.endDate,
+            actual_resource_cost: op.resourceCosts.reduce((sum, rc) => sum + rc.cost, 0),
+            actual_material_cost: op.components.reduce((sum, c) => sum + c.quantity * c.unitCost, 0),
+            wastage_qty: totalWastage([op]),
+            input_expected_qty: hasInput ? op.inputProducts.reduce((sum, p) => sum + p.expectedQuantity, 0) : null,
+            input_actual_qty: hasInput ? op.inputProducts.reduce((sum, p) => sum + p.outputQuantity, 0) : null,
+            input_wastage_qty: hasInput ? op.inputProducts.reduce((sum, p) => sum + p.wastageQuantity, 0) : null,
+            output_qty: hasOutput ? op.outputProducts.reduce((sum, p) => sum + p.outputQuantity, 0) : null,
+          };
+        });
         if (operationRows.length) {
           const { error: insertError } = await db.from("production_operations").insert(operationRows);
           if (insertError) throw new Error(`production_operations insert: ${insertError.message}`);
@@ -139,6 +153,7 @@ async function syncProductionOrderRunDetails(
             wip_account: latestRun.wipAccount,
             current_operation_name: current?.name ?? null,
             current_work_center_name: current?.workCenterName ?? null,
+            current_operation_order: current?.order ?? null,
             current_operation_started_at: current?.startDate ?? null,
             wip_actual_cost: computeWipCost(runs),
             run_synced_at: new Date().toISOString(),
