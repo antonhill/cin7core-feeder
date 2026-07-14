@@ -583,10 +583,12 @@ export default function ProductionTrackingPage() {
                 placeholder="Search product name…"
                 className="rounded-full border border-slate-300 px-3 py-1.5 text-sm text-slate-700 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none"
               />
-              <label className="flex items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox" checked={includeCompleted} onChange={handleToggleIncludeCompleted} className="h-4 w-4" />
-                Include completed/voided orders
-              </label>
+              {viewMode === "table" && (
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input type="checkbox" checked={includeCompleted} onChange={handleToggleIncludeCompleted} className="h-4 w-4" />
+                  Include completed/voided orders
+                </label>
+              )}
               <div className="flex gap-1.5">
                 {VIEW_MODE_TABS.map((tab) => (
                   <button
