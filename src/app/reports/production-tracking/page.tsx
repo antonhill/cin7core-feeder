@@ -267,7 +267,7 @@ function ProductionOrderDetailModal({
   const reconciliation = operations ? reconcileInputFlow(operations) : null;
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50" onClick={onClose}>
-      <div className="mx-auto my-8 max-w-3xl rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <div className="mx-auto my-8 max-w-6xl rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">{row.orderNumber ?? row.productionOrderId}</h2>
