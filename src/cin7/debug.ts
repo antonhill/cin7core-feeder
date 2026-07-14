@@ -872,6 +872,52 @@ export async function surveyProductionOrderDetail(creds: Cin7Credentials, orderN
   }
 }
 
+export interface ProductionOrderRoutingTaskSurvey {
+  orderNumber: string;
+  found: boolean;
+  productionOrderId?: string;
+  /** Every /production/orderList row sharing this order's ProductionOrderID — the Type "O" header row plus any Type "R" routing sub-rows, raw and unfiltered so fields outside Cin7ProductionOrderListEntry's own (deliberately narrow) interface are still visible. */
+  matchingRows?: unknown[];
+  error?: string;
+}
+
+/**
+ * Advanced Manufacturing anticipation work (new client, 2026-07-14): neither
+ * /production/order (see surveyProductionOrderDetail above) nor its
+ * Operations array carries any per-operation progress/status field — an
+ * in-progress order's Operations look identical in shape to a completed
+ * one's, just static routing/sequence/work-centre data. The one place a
+ * finer-grained state COULD live is the Type "R" routing sub-rows this
+ * codebase's own fetchAllProductionOrdersList already knows exist
+ * (production-orders.ts's own comment: "Each Manufacture Order (Type "O")
+ * can have one or more associated Routing sub-rows (Type "R") sharing the
+ * same ProductionOrderID but a distinct TaskID") — those have never actually
+ * been inspected, only skipped over (every caller filters to Type "O").
+ * This dumps every row (Type "O" and any "R" siblings) for one order,
+ * unfiltered, to see what a routing sub-row's real fields are — reuses
+ * fetchAllProductionOrdersList's already-fetched objects rather than a new
+ * request, since a TS interface doesn't strip extra runtime fields from the
+ * underlying JSON.
+ */
+export async function surveyProductionOrderRoutingTasks(creds: Cin7Credentials, orderNumber: string): Promise<ProductionOrderRoutingTaskSurvey> {
+  try {
+    const orders = await fetchAllProductionOrdersList(creds);
+    const match = orders.find((o) => o.Type === "O" && (o.OrderNumber ?? "").toUpperCase() === orderNumber.toUpperCase());
+    if (!match?.ProductionOrderID) {
+      return {
+        orderNumber,
+        found: false,
+        error: "No matching Manufacture Order (Type \"O\") found in this instance's production order list",
+      };
+    }
+
+    const matchingRows = orders.filter((o) => o.ProductionOrderID === match.ProductionOrderID);
+    return { orderNumber, found: true, productionOrderId: match.ProductionOrderID, matchingRows };
+  } catch (e) {
+    return { orderNumber, found: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
 export interface PurchaseDetailCheck {
   orderNumber: string;
   purchaseId: string;

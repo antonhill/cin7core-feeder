@@ -15,6 +15,7 @@ import {
   debugSurveyProductionBomFields,
   debugCheckProductionBomForSkus,
   debugFetchProductionOrderDetail,
+  debugSurveyProductionOrderRoutingTasks,
   debugSurveyPurchaseDetailFields,
   debugSurveyProductAvailabilityFields,
   debugSurveySaleFulfillmentFields,
@@ -193,6 +194,16 @@ export default function DiagnosticsPage() {
     });
   }
 
+  function handleSurveyProductionOrderRoutingTasks(instanceId: string) {
+    const orderNumber = (productionOrderNumbers[instanceId] ?? "").trim();
+    if (!orderNumber) return;
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Fetching routing tasks…" } }));
+    startTransition(async () => {
+      const result = await debugSurveyProductionOrderRoutingTasks(instanceId, orderNumber);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
   function handleSurveyPurchaseDetailFields(instanceId: string) {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Surveying purchase detail fields (multiple calls)…" } }));
     startTransition(async () => {
@@ -364,6 +375,13 @@ export default function DiagnosticsPage() {
                 className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Fetch Production Order detail
+              </button>
+              <button
+                onClick={() => handleSurveyProductionOrderRoutingTasks(inst.id)}
+                disabled={isPending || !(productionOrderNumbers[inst.id] ?? "").trim()}
+                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Survey routing tasks (Type &quot;R&quot; rows, Adv. Mfg)
               </button>
             </div>
             <div className="mt-2 flex items-center gap-2">
