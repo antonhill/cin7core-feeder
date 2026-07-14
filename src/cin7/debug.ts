@@ -1052,6 +1052,54 @@ export async function surveyProductionOrderOperationStatus(creds: Cin7Credential
   }
 }
 
+export interface ProductionRunSurvey {
+  orderNumber: string;
+  found: boolean;
+  productionOrderId?: string;
+  raw?: unknown;
+  error?: string;
+}
+
+/**
+ * Advanced Manufacturing anticipation work (new client), continued —
+ * neither /production/order nor its Type "R" routing-list siblings expose
+ * per-operation progress (see surveyProductionOrderRoutingTasks and
+ * surveyProductionOrderOperationStatus above). Found via the community
+ * Apiary spec transcription (nnhansg/dear-openapi,
+ * specification/dearinventory.apib, ~line 10660 "Production Run"): a wholly
+ * separate resource, GET /production/order/run?ProductionOrderID=X, is
+ * documented with exactly the missing fields — Run-level Status
+ * (PLANNED/IN PROGRESS/OPERATION_COMPLETED/COMPLETED/VOIDED), a WIPAccount
+ * field, and per-Operation Status (PLANNED/IN PROGRESS/SUSPENDED/COMPLETED)
+ * with real StartDate/EndDate/ActualTime plus actual (not just planned)
+ * Component quantities/wastage and Resource costs — and PUT
+ * .../run/operation/{start,suspend,resume,complete} matching the exact
+ * button set seen live in Cin7's own UI for this order. Not yet confirmed
+ * live on this account — community docs aren't guaranteed current, so this
+ * probes the real endpoint and returns the raw response rather than
+ * assuming the spec is accurate.
+ */
+export async function surveyProductionRun(creds: Cin7Credentials, orderNumber: string): Promise<ProductionRunSurvey> {
+  try {
+    const orders = await fetchAllProductionOrdersList(creds);
+    const match = orders.find((o) => o.Type === "O" && (o.OrderNumber ?? "").toUpperCase() === orderNumber.toUpperCase());
+    if (!match?.ProductionOrderID) {
+      return {
+        orderNumber,
+        found: false,
+        error: "No matching Manufacture Order (Type \"O\") found in this instance's production order list",
+      };
+    }
+
+    const raw = await cin7Request<unknown>(creds, "/production/order/run", {
+      query: { ProductionOrderID: match.ProductionOrderID },
+    });
+    return { orderNumber, found: true, productionOrderId: match.ProductionOrderID, raw };
+  } catch (e) {
+    return { orderNumber, found: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
 export interface PurchaseDetailCheck {
   orderNumber: string;
   purchaseId: string;
