@@ -8,6 +8,7 @@ import {
   groupByWorkCentre,
   groupByStatus,
   cumulativeCostThroughStage,
+  hasInputShortfall,
   NOT_STARTED_COLUMN,
 } from "@/reports/production-tracking/build";
 import type { ProductionRun, ProductionRunOperation } from "@/cin7/production-order-run";
@@ -161,6 +162,9 @@ function trackingRow(overrides: Partial<ProductionTrackingRow> = {}): Production
     currentOperationOrder: 1,
     currentOperationStartedAt: null,
     plannedQuantity: null,
+    currentInputExpectedQty: null,
+    currentInputActualQty: null,
+    currentInputWastageQty: null,
     wipActualCost: 0,
     runSyncedAt: null,
     totalWastage: 0,
@@ -294,5 +298,36 @@ describe("cumulativeCostThroughStage", () => {
       operationRow({ operationOrder: 1, actualResourceCost: 10, actualMaterialCost: 0 }),
     ];
     expect(cumulativeCostThroughStage(operations, 1)).toBe(10);
+  });
+});
+
+describe("hasInputShortfall", () => {
+  it("is true when a started stage received less than expected, even if Cin7's own WastageQuantity is 0", () => {
+    // Confirmed live 2026-07-14 (MO-00042): Grinding expected 25.5kg from Roasting, received only
+    // 23.5kg, but Cin7's InputProducts.WastageQuantity showed 0 — comparing actual vs expected directly
+    // is what catches this, not trusting WastageQuantity alone.
+    expect(
+      hasInputShortfall(trackingRow({ currentOperationStartedAt: "2026-07-14T00:00:00", currentInputExpectedQty: 25.5, currentInputActualQty: 23.5 }))
+    ).toBe(true);
+  });
+
+  it("is false when the current stage's BOM doesn't track Inputs/Outputs at all", () => {
+    expect(
+      hasInputShortfall(
+        trackingRow({ currentOperationStartedAt: "2026-07-14T00:00:00", currentInputExpectedQty: null, currentInputActualQty: null })
+      )
+    ).toBe(false);
+  });
+
+  it("is false when tracked but the full expected amount was received", () => {
+    expect(
+      hasInputShortfall(trackingRow({ currentOperationStartedAt: "2026-07-14T00:00:00", currentInputExpectedQty: 25.5, currentInputActualQty: 25.5 }))
+    ).toBe(false);
+  });
+
+  it("is false for a not-yet-started stage (0 received is expected, not a shortfall)", () => {
+    expect(
+      hasInputShortfall(trackingRow({ currentOperationStartedAt: null, currentInputExpectedQty: 25.5, currentInputActualQty: 0 }))
+    ).toBe(false);
   });
 });

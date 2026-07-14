@@ -152,6 +152,11 @@ async function syncProductionOrderRunDetails(
         }
 
         const current = deriveCurrentOperation(latestRun.operations);
+        // Same "null means not tracked for this stage" convention as the
+        // per-operation rows above — a redundant copy of the current
+        // operation's own InputProducts figures, kept on the header row so
+        // the Kanban card can flag a shortfall without fetching full detail.
+        const currentHasInput = (current?.inputProducts.length ?? 0) > 0;
         const { error: updateError } = await db
           .from("production_orders")
           .update({
@@ -161,6 +166,9 @@ async function syncProductionOrderRunDetails(
             current_work_center_name: current?.workCenterName ?? null,
             current_operation_order: current?.order ?? null,
             current_operation_started_at: current?.startDate ?? null,
+            current_input_expected_qty: currentHasInput ? current!.inputProducts.reduce((sum, p) => sum + p.expectedQuantity, 0) : null,
+            current_input_actual_qty: currentHasInput ? current!.inputProducts.reduce((sum, p) => sum + p.outputQuantity, 0) : null,
+            current_input_wastage_qty: currentHasInput ? current!.inputProducts.reduce((sum, p) => sum + p.wastageQuantity, 0) : null,
             planned_quantity: latestRun.quantity,
             wip_actual_cost: computeWipCost(runs),
             run_synced_at: new Date().toISOString(),

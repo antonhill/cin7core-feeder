@@ -18,6 +18,16 @@ export interface ProductionTrackingRow {
   currentOperationStartedAt: string | null;
   /** The Run's own planned quantity to produce — "how many did it start with," null until the first successful run-detail fetch. */
   plannedQuantity: number | null;
+  /**
+   * The current operation's own InputProducts figures, copied onto the
+   * header row so the Kanban card can flag a shortfall without fetching
+   * full per-operation detail — null on all three means the current
+   * stage's BOM doesn't define Inputs/Outputs (not tracked), distinct from
+   * 0 (tracked, no shortfall).
+   */
+  currentInputExpectedQty: number | null;
+  currentInputActualQty: number | null;
+  currentInputWastageQty: number | null;
   wipActualCost: number | null;
   runSyncedAt: string | null;
   /** Sum of production_operations.wastage_qty across this order's latest Run — a plain DB read alongside the header rows, not a separate per-row query. */
@@ -71,6 +81,9 @@ export async function getProductionTrackingRows(
     currentOperationOrder: o.current_operation_order,
     currentOperationStartedAt: o.current_operation_started_at,
     plannedQuantity: o.planned_quantity,
+    currentInputExpectedQty: o.current_input_expected_qty,
+    currentInputActualQty: o.current_input_actual_qty,
+    currentInputWastageQty: o.current_input_wastage_qty,
     wipActualCost: o.wip_actual_cost,
     runSyncedAt: o.run_synced_at,
     totalWastage: wastageByOrder.get(o.cin7_production_order_id) ?? 0,

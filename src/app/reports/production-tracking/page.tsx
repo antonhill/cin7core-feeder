@@ -15,6 +15,7 @@ import {
   groupByWorkCentre,
   groupByStatus,
   cumulativeCostThroughStage,
+  hasInputShortfall,
   PRODUCTION_STATUS_ORDER,
   type WorkCentreColumn,
 } from "@/reports/production-tracking/build";
@@ -146,14 +147,22 @@ function ProductionOrderDetailPanel({
 function ProductionOrderCard({ row, today, onOpenDetail }: { row: ProductionTrackingRow; today: string; onOpenDetail: (id: string) => void }) {
   const late = isLate(row.requiredByDate, row.listStatus, today);
   const days = daysLate(row.requiredByDate, today);
+  const shortfall = hasInputShortfall(row);
   return (
     <div
       onClick={() => onOpenDetail(row.productionOrderId)}
-      className="min-w-0 cursor-pointer overflow-hidden rounded-lg border border-slate-200 bg-white p-2 text-xs shadow-sm transition hover:border-indigo-300"
+      className={`min-w-0 cursor-pointer overflow-hidden rounded-lg border p-2 text-xs shadow-sm transition hover:border-indigo-300 ${
+        shortfall ? "border-red-400 bg-red-50" : "border-slate-200 bg-white"
+      }`}
     >
       <div className="truncate font-medium text-slate-900">{row.orderNumber ?? row.productionOrderId}</div>
       <div className="truncate text-slate-500">{row.productName ?? row.productSku ?? "—"}</div>
       <div className="mt-1 text-slate-400">Qty planned: {row.plannedQuantity !== null ? qty(row.plannedQuantity) : "—"}</div>
+      {shortfall && (
+        <div className="mt-1 rounded bg-red-100 px-1.5 py-0.5 font-semibold text-red-700">
+          ⚠ Short input: {qty(row.currentInputActualQty ?? 0)} of {qty(row.currentInputExpectedQty ?? 0)} expected
+        </div>
+      )}
       <div className="mt-1 flex flex-wrap items-center gap-1">
         {late && <span className="rounded-full bg-rose-100 px-2 py-0.5 font-semibold text-rose-700">{days}d late</span>}
         {row.totalWastage > 0 && <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">wastage</span>}

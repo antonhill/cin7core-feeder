@@ -61,6 +61,36 @@ export function isLate(requiredByDate: string | null, listStatus: string | null,
   return listStatus !== "COMPLETED" && listStatus !== "VOIDED";
 }
 
+/**
+ * True when the order's current stage has actually started AND received
+ * less of the previous stage's semi-finished output than Cin7 expected —
+ * the Kanban card's shortfall alert.
+ *
+ * Compares actual vs expected directly rather than trusting Cin7's own
+ * InputProducts.WastageQuantity field: confirmed live 2026-07-14 on
+ * MO-00042 that a real shortfall (Grinding expected 25.5kg from Roasting,
+ * actually received only 23.5kg) can show WastageQuantity 0 — an operator
+ * can enter a lower received quantity on Cin7's own Input screen without
+ * separately flagging it as wastage, the exact same ambiguity as the
+ * Output screen's "reduce the quantity" vs "enter wastage" choice. Relying
+ * on WastageQuantity alone would silently miss this.
+ *
+ * Gated on `currentOperationStartedAt !== null` (the current operation's
+ * own StartDate, already set once Cin7 shows it IN PROGRESS/SUSPENDED/
+ * COMPLETED) so a not-yet-started stage — which always shows 0 received,
+ * because nothing has happened yet — doesn't misfire as a false
+ * "shortfall". False for orders whose current stage doesn't track
+ * Inputs/Outputs at all (currentInputExpectedQty/currentInputActualQty
+ * null).
+ */
+export function hasInputShortfall(
+  row: Pick<ProductionTrackingRow, "currentOperationStartedAt" | "currentInputExpectedQty" | "currentInputActualQty">
+): boolean {
+  if (row.currentOperationStartedAt === null) return false;
+  if (row.currentInputExpectedQty === null || row.currentInputActualQty === null) return false;
+  return row.currentInputActualQty < row.currentInputExpectedQty;
+}
+
 /** A label reserved for orders with no Run yet at all (never released) — distinct from a real, named work centre. */
 export const NOT_STARTED_COLUMN = "Not started yet";
 
