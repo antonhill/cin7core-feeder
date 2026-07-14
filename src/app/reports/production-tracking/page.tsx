@@ -209,7 +209,9 @@ function ProductionOrderCard({ row, today, onOpenDetail }: { row: ProductionTrac
           <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">component wastage</span>
         )}
       </div>
-      <div className="mt-1 text-slate-400">WIP: {row.wipActualCost ? money(row.wipActualCost) : "—"}</div>
+      {row.listStatus !== "COMPLETED" && row.listStatus !== "VOIDED" && (
+        <div className="mt-1 text-slate-400">WIP: {row.wipActualCost ? money(row.wipActualCost) : "—"}</div>
+      )}
     </div>
   );
 }
@@ -353,7 +355,14 @@ export default function ProductionTrackingPage() {
 
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [modalOrderId, setModalOrderId] = useState<string | null>(null);
-  const [hiddenStatuses, setHiddenStatuses] = useState<Set<string>>(new Set());
+  // COMPLETED/VOIDED start hidden (unchecked) on purpose: hiddenStatuses
+  // only filters already-loaded rows, and those two are never fetched
+  // until toggleStatusColumn's fetch-trigger runs on a hidden -> shown
+  // transition — starting them shown skips that transition entirely
+  // (confirmed live: they read "checked" but show nothing until manually
+  // unticked and reticked), so the first real check needs them to start
+  // unticked.
+  const [hiddenStatuses, setHiddenStatuses] = useState<Set<string>>(new Set(["COMPLETED", "VOIDED"]));
   const [productSearch, setProductSearch] = useState("");
 
   function toggleStatusColumn(status: string) {
