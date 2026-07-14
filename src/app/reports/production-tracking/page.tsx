@@ -16,6 +16,7 @@ import {
   groupByStatus,
   cumulativeCostThroughStage,
   hasInputShortfall,
+  operationHasInputShortfall,
   PRODUCTION_STATUS_ORDER,
   type WorkCentreColumn,
 } from "@/reports/production-tracking/build";
@@ -103,8 +104,13 @@ function ProductionOrderDetailPanel({
           {operations.map((op) => {
             const stageCost = (op.actualResourceCost ?? 0) + (op.actualMaterialCost ?? 0);
             const hasInputData = op.inputExpectedQty !== null;
+            const shortfall = operationHasInputShortfall(op);
+            // Cin7's own WastageQuantity can read 0 even on a real shortfall (see
+            // operationHasInputShortfall) — surface the unflagged gap too, distinct
+            // from wording that implies Cin7 itself recorded it as wastage.
+            const unflaggedShortfall = shortfall && !(op.inputWastageQty ?? 0);
             return (
-              <tr key={op.operationOrder} className="border-t border-slate-100">
+              <tr key={op.operationOrder} className={`border-t ${shortfall ? "border-red-200 bg-red-50" : "border-slate-100"}`}>
                 <td className="py-1 pr-4">{op.operationName ?? "—"}</td>
                 <td className="py-1 pr-4">{op.workCenterName ?? "—"}</td>
                 <td className="py-1 pr-4">{op.status ?? "—"}</td>
@@ -116,6 +122,12 @@ function ProductionOrderDetailPanel({
                       Received {qty(op.inputActualQty ?? 0)} of {qty(op.inputExpectedQty ?? 0)} expected
                       {(op.inputWastageQty ?? 0) > 0 && (
                         <span className="text-rose-600"> — {qty(op.inputWastageQty ?? 0)} lost upstream</span>
+                      )}
+                      {unflaggedShortfall && (
+                        <span className="font-semibold text-rose-700">
+                          {" "}
+                          — ⚠ {qty((op.inputExpectedQty ?? 0) - (op.inputActualQty ?? 0))} short (not flagged as wastage)
+                        </span>
                       )}
                     </>
                   ) : (
@@ -614,11 +626,14 @@ export default function ProductionTrackingPage() {
                     const late = isLate(row.requiredByDate, row.listStatus, today);
                     const days = daysLate(row.requiredByDate, today);
                     const isExpanded = expandedIds.has(row.productionOrderId);
+                    const shortfall = hasInputShortfall(row);
                     return (
                       <Fragment key={row.productionOrderId}>
                         <tr
                           onClick={() => handleToggleExpand(row.productionOrderId)}
-                          className="cursor-pointer border-b border-slate-100 last:border-0 hover:bg-slate-50"
+                          className={`cursor-pointer border-b last:border-0 ${
+                            shortfall ? "border-red-200 bg-red-50 hover:bg-red-100" : "border-slate-100 hover:bg-slate-50"
+                          }`}
                         >
                           <td className="px-2 py-2 align-top text-center text-slate-400">{isExpanded ? "▾" : "▸"}</td>
                           <td className="px-4 py-2 align-top">{row.orderNumber ?? "—"}</td>
@@ -630,6 +645,11 @@ export default function ProductionTrackingPage() {
                               <>
                                 {row.currentOperationName}
                                 {row.currentWorkCenterName && <span className="text-xs text-slate-400"> ({row.currentWorkCenterName})</span>}
+                                {shortfall && (
+                                  <div className="text-xs font-semibold text-red-700">
+                                    ⚠ Short input: {qty(row.currentInputActualQty ?? 0)} of {qty(row.currentInputExpectedQty ?? 0)} expected
+                                  </div>
+                                )}
                               </>
                             ) : (
                               <span className="text-slate-400">not synced yet</span>

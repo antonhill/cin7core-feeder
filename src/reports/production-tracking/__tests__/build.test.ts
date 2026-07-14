@@ -9,6 +9,7 @@ import {
   groupByStatus,
   cumulativeCostThroughStage,
   hasInputShortfall,
+  operationHasInputShortfall,
   NOT_STARTED_COLUMN,
 } from "@/reports/production-tracking/build";
 import type { ProductionRun, ProductionRunOperation } from "@/cin7/production-order-run";
@@ -329,5 +330,23 @@ describe("hasInputShortfall", () => {
     expect(
       hasInputShortfall(trackingRow({ currentOperationStartedAt: null, currentInputExpectedQty: 25.5, currentInputActualQty: 0 }))
     ).toBe(false);
+  });
+});
+
+describe("operationHasInputShortfall", () => {
+  it("is true for a started operation that received less than expected, even with WastageQuantity 0", () => {
+    expect(operationHasInputShortfall(operationRow({ startDate: "2026-07-14T00:00:00", inputExpectedQty: 25.5, inputActualQty: 23.5 }))).toBe(true);
+  });
+
+  it("is false for an operation that hasn't started (startDate null)", () => {
+    expect(operationHasInputShortfall(operationRow({ startDate: null, inputExpectedQty: 25.5, inputActualQty: 0 }))).toBe(false);
+  });
+
+  it("is false when the operation doesn't track Inputs/Outputs at all", () => {
+    expect(operationHasInputShortfall(operationRow({ startDate: "2026-07-14T00:00:00", inputExpectedQty: null, inputActualQty: null }))).toBe(false);
+  });
+
+  it("is false when the full expected amount was received", () => {
+    expect(operationHasInputShortfall(operationRow({ startDate: "2026-07-14T00:00:00", inputExpectedQty: 25.5, inputActualQty: 25.5 }))).toBe(false);
   });
 });

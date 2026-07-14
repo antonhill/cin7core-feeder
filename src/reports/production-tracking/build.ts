@@ -62,9 +62,10 @@ export function isLate(requiredByDate: string | null, listStatus: string | null,
 }
 
 /**
- * True when the order's current stage has actually started AND received
- * less of the previous stage's semi-finished output than Cin7 expected —
- * the Kanban card's shortfall alert.
+ * True when a stage has actually started (its own StartDate is set) AND
+ * received less of the previous stage's semi-finished output than Cin7
+ * expected — the shared logic behind the Kanban card, list-view row, and
+ * modal row-line shortfall alerts.
  *
  * Compares actual vs expected directly rather than trusting Cin7's own
  * InputProducts.WastageQuantity field: confirmed live 2026-07-14 on
@@ -75,20 +76,27 @@ export function isLate(requiredByDate: string | null, listStatus: string | null,
  * Output screen's "reduce the quantity" vs "enter wastage" choice. Relying
  * on WastageQuantity alone would silently miss this.
  *
- * Gated on `currentOperationStartedAt !== null` (the current operation's
- * own StartDate, already set once Cin7 shows it IN PROGRESS/SUSPENDED/
- * COMPLETED) so a not-yet-started stage — which always shows 0 received,
- * because nothing has happened yet — doesn't misfire as a false
- * "shortfall". False for orders whose current stage doesn't track
- * Inputs/Outputs at all (currentInputExpectedQty/currentInputActualQty
- * null).
+ * Gated on `startDate !== null` so a not-yet-started stage — which always
+ * shows 0 received, because nothing has happened yet — doesn't misfire as
+ * a false "shortfall". False when the stage doesn't track Inputs/Outputs
+ * at all (expected/actual null).
  */
+function isInputShort(startDate: string | null, expectedQty: number | null, actualQty: number | null): boolean {
+  if (startDate === null) return false;
+  if (expectedQty === null || actualQty === null) return false;
+  return actualQty < expectedQty;
+}
+
+/** The order's current-stage shortfall — drives the Kanban card and list-view row highlight. See isInputShort. */
 export function hasInputShortfall(
   row: Pick<ProductionTrackingRow, "currentOperationStartedAt" | "currentInputExpectedQty" | "currentInputActualQty">
 ): boolean {
-  if (row.currentOperationStartedAt === null) return false;
-  if (row.currentInputExpectedQty === null || row.currentInputActualQty === null) return false;
-  return row.currentInputActualQty < row.currentInputExpectedQty;
+  return isInputShort(row.currentOperationStartedAt, row.currentInputExpectedQty, row.currentInputActualQty);
+}
+
+/** One specific operation's own shortfall — drives the modal's per-row highlight, independent of whether that operation is the order's current stage. See isInputShort. */
+export function operationHasInputShortfall(op: Pick<ProductionOperationRow, "startDate" | "inputExpectedQty" | "inputActualQty">): boolean {
+  return isInputShort(op.startDate, op.inputExpectedQty, op.inputActualQty);
 }
 
 /** A label reserved for orders with no Run yet at all (never released) — distinct from a real, named work centre. */
