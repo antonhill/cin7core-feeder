@@ -104,8 +104,8 @@ export default async function MarketingHome() {
               you <span className="text-indigo-300">can&rsquo;t do</span> in Cin7 Core.
             </h1>
             <p className="mt-5 max-w-xl text-lg text-sidebar-text">
-              Sync every instance from one place, bulk-fix what&rsquo;s drifted, and see what Cin7 Core keeps hidden
-              — all without touching a spreadsheet.
+              Sync every instance from one place, bulk-fix what&rsquo;s drifted, and see what Cin7 Core doesn&rsquo;t do
+              natively — all without touching a spreadsheet.
             </p>
             <div className="mt-7 flex flex-wrap justify-center gap-3 lg:justify-start">
               <Link
