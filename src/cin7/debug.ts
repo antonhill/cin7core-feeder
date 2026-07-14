@@ -918,6 +918,140 @@ export async function surveyProductionOrderRoutingTasks(creds: Cin7Credentials, 
   }
 }
 
+export interface ProductionOrderOperationProbe {
+  attempt: string;
+  status: number;
+  looksLikeJson: boolean;
+  /** Only set for the Include*-flag retries against /production/order — each operation's own key set, to diff against the baseline (no extra flag) call. */
+  operationKeys?: string[][];
+  snippet?: string;
+  error?: string;
+}
+
+export interface ProductionOrderOperationStatusSurvey {
+  orderNumber: string;
+  found: boolean;
+  productionOrderId?: string;
+  operations?: { operationId: string; name: string }[];
+  probes: ProductionOrderOperationProbe[];
+  error?: string;
+}
+
+// Cin7's own /Product resource silently omits certain nested arrays
+// (BOM/Suppliers/ReorderLevels) unless an explicit Include*=true flag is
+// passed — confirmed live elsewhere in this codebase (see products.ts).
+// Worth testing the same pattern here: maybe /production/order's Operations
+// omit per-operation progress (Start/Suspend/Resume/Complete state, actual
+// vs planned time) unless a similar flag is set, rather than that data not
+// existing at all — Cin7's own UI clearly tracks it (Operation start/
+// completion date, Actual Time, a Start/Suspend/Resume/Complete lifecycle
+// per operation, confirmed live 2026-07-14 against MO-00019: Mixing shown
+// complete, Blending shown not-yet-started).
+const OPERATION_STATUS_FLAG_CANDIDATES = [
+  "IncludeOperationStatus",
+  "IncludeActuals",
+  "IncludeActualTime",
+  "IncludeTaskDetails",
+  "IncludeOperationDetails",
+  "IncludeProgress",
+];
+
+// Separately, maybe operation-level state lives on its own addressable
+// resource rather than as extra fields on /production/order — same probing
+// approach as probeWorkCentrePaths, keyed by one real OperationID from the
+// order (Cin7's UI's Start/Suspend/Resume/Complete buttons must read/write
+// state somewhere).
+const OPERATION_PATH_CANDIDATES = ["/production/operation", "/production/order/operation", "/production/orderOperation", "/production/task"];
+
+/**
+ * Advanced Manufacturing anticipation work (new client, 2026-07-14),
+ * continued from surveyProductionOrderRoutingTasks: that probe ruled out the
+ * Type "R" routing rows as a source of per-operation progress (they just
+ * mirror the parent order's own Status, and there's only one "R" row for a
+ * 2-operation order). This probe tests two remaining hypotheses instead —
+ * an omitted-by-default Include* flag on /production/order, or a wholly
+ * separate operation-level resource — against a real order with one
+ * genuinely completed and one genuinely not-yet-started operation.
+ */
+export async function surveyProductionOrderOperationStatus(creds: Cin7Credentials, orderNumber: string): Promise<ProductionOrderOperationStatusSurvey> {
+  try {
+    const orders = await fetchAllProductionOrdersList(creds);
+    const match = orders.find((o) => o.Type === "O" && (o.OrderNumber ?? "").toUpperCase() === orderNumber.toUpperCase());
+    if (!match?.ProductionOrderID) {
+      return {
+        orderNumber,
+        found: false,
+        probes: [],
+        error: "No matching Manufacture Order (Type \"O\") found in this instance's production order list",
+      };
+    }
+    const productionOrderId = match.ProductionOrderID;
+
+    const baseline = await cin7Request<{ ProductionOrders?: Record<string, unknown>[] }>(creds, "/production/order", {
+      query: { ProductionOrderID: productionOrderId, ReturnAttachmentsContent: "false" },
+    });
+    const baselineOperations = Array.isArray(baseline.ProductionOrders?.[0]?.Operations)
+      ? (baseline.ProductionOrders![0].Operations as Record<string, unknown>[])
+      : [];
+    const operationSummaries = baselineOperations.map((op) => ({ operationId: String(op.OperationID ?? ""), name: String(op.Name ?? "") }));
+    const baselineKeys = baselineOperations.map((op) => Object.keys(op).sort());
+
+    const probes: ProductionOrderOperationProbe[] = [];
+
+    for (const flag of OPERATION_STATUS_FLAG_CANDIDATES) {
+      const attempt = `GET /production/order?...&${flag}=true`;
+      try {
+        const response = await cin7Request<{ ProductionOrders?: Record<string, unknown>[] }>(creds, "/production/order", {
+          query: { ProductionOrderID: productionOrderId, ReturnAttachmentsContent: "false", [flag]: "true" },
+        });
+        const ops = Array.isArray(response.ProductionOrders?.[0]?.Operations) ? (response.ProductionOrders![0].Operations as Record<string, unknown>[]) : [];
+        const keys = ops.map((op) => Object.keys(op).sort());
+        const changed = JSON.stringify(keys) !== JSON.stringify(baselineKeys);
+        probes.push({ attempt, status: 200, looksLikeJson: true, operationKeys: keys, snippet: changed ? "KEYS CHANGED vs baseline" : "same keys as baseline (flag had no effect)" });
+      } catch (e) {
+        probes.push({ attempt, status: 0, looksLikeJson: false, error: e instanceof Error ? e.message : "error" });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+    }
+
+    const sampleOperationId = operationSummaries[0]?.operationId;
+    if (sampleOperationId) {
+      for (const path of OPERATION_PATH_CANDIDATES) {
+        const attempt = `GET ${path}?OperationID=...`;
+        const url = new URL(`${creds.baseUrl.replace(/\/$/, "")}${path}`);
+        url.searchParams.set("OperationID", sampleOperationId);
+        url.searchParams.set("ProductionOrderID", productionOrderId);
+        try {
+          const response = await fetch(url.toString(), {
+            method: "GET",
+            headers: {
+              "api-auth-accountid": creds.accountId,
+              "api-auth-applicationkey": creds.applicationKey,
+              Accept: "application/json",
+            },
+          });
+          const text = await response.text();
+          let looksLikeJson = false;
+          try {
+            JSON.parse(text);
+            looksLikeJson = true;
+          } catch {
+            looksLikeJson = false;
+          }
+          probes.push({ attempt, status: response.status, looksLikeJson, snippet: text.slice(0, 300) });
+        } catch (e) {
+          probes.push({ attempt, status: 0, looksLikeJson: false, error: e instanceof Error ? e.message : "network error" });
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1100));
+      }
+    }
+
+    return { orderNumber, found: true, productionOrderId, operations: operationSummaries, probes };
+  } catch (e) {
+    return { orderNumber, found: false, probes: [], error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
 export interface PurchaseDetailCheck {
   orderNumber: string;
   purchaseId: string;
