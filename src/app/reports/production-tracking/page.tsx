@@ -21,6 +21,7 @@ import {
   operationHasInputOverproduction,
   previousOperation,
   reconcileInputFlow,
+  currentStageFallbackLabel,
   PRODUCTION_STATUS_ORDER,
   type WorkCentreColumn,
 } from "@/reports/production-tracking/build";
@@ -268,7 +269,7 @@ function ProductionOrderDetailModal({
           <div>
             <h2 className="text-lg font-semibold text-slate-900">{row.orderNumber ?? row.productionOrderId}</h2>
             <p className="text-sm text-slate-500">
-              {row.productName ?? row.productSku} — {row.currentOperationName ?? "not synced yet"}
+              {row.productName ?? row.productSku} — {row.currentOperationName ?? currentStageFallbackLabel(row)}
               {row.currentWorkCenterName && ` (${row.currentWorkCenterName})`}
             </p>
             <p className="text-sm text-slate-500">
@@ -696,19 +697,19 @@ export default function ProductionTrackingPage() {
                               <>
                                 {row.currentOperationName}
                                 {row.currentWorkCenterName && <span className="text-xs text-slate-400"> ({row.currentWorkCenterName})</span>}
-                                {shortfall && (
-                                  <div className="text-xs font-semibold text-red-700">
-                                    ⚠ Short input: {qty(row.currentInputActualQty ?? 0)} of {qty(row.currentInputExpectedQty ?? 0)} expected
-                                  </div>
-                                )}
-                                {overproduction && (
-                                  <div className="text-xs font-semibold text-amber-700">
-                                    ▲ Over-received: {qty(row.currentInputActualQty ?? 0)} of {qty(row.currentInputExpectedQty ?? 0)} expected
-                                  </div>
-                                )}
                               </>
                             ) : (
-                              <span className="text-slate-400">not synced yet</span>
+                              <span className="text-slate-400">{currentStageFallbackLabel(row)}</span>
+                            )}
+                            {shortfall && (
+                              <div className="text-xs font-semibold text-red-700">
+                                ⚠ Short input: {qty(row.currentInputActualQty ?? 0)} of {qty(row.currentInputExpectedQty ?? 0)} expected
+                              </div>
+                            )}
+                            {overproduction && (
+                              <div className="text-xs font-semibold text-amber-700">
+                                ▲ Over-received: {qty(row.currentInputActualQty ?? 0)} of {qty(row.currentInputExpectedQty ?? 0)} expected
+                              </div>
                             )}
                           </td>
                           <td className="px-4 py-2 align-top">{row.listStatus ?? "—"}</td>

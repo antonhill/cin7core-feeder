@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductionOrdersList } from "@/cin7/production-orders";
 import { fetchProductionOrderRun, pickLatestRun } from "@/cin7/production-order-run";
-import { deriveCurrentOperation, computeWipCost, totalWastage } from "@/reports/production-tracking/build";
+import { deriveCurrentOperation, latestStartedOperation, computeWipCost, totalWastage } from "@/reports/production-tracking/build";
 import type { Cin7Credentials } from "@/cin7/types";
 
 // Rate-limited detail fetch is one Cin7 call per order — capped per run so a
@@ -153,11 +153,19 @@ async function syncProductionOrderRunDetails(
         }
 
         const current = deriveCurrentOperation(latestRun.operations);
-        // Same "null means not tracked for this stage" convention as the
-        // per-operation rows above — a redundant copy of the current
-        // operation's own InputProducts figures, kept on the header row so
-        // the Kanban card can flag a shortfall without fetching full detail.
-        const currentHasInput = (current?.inputProducts.length ?? 0) > 0;
+        // The shortfall/overproduction alert fields deliberately read from
+        // latestStartedOperation, NOT `current` — deriveCurrentOperation
+        // goes null once every operation is COMPLETED (nothing left to
+        // work on), which would silently clear a real, unresolved WIP
+        // shortfall from the Kanban card the moment the order finishes,
+        // reading as "resolved" when the material loss never actually
+        // was. latestStartedOperation stays pointed at the last operation
+        // that ran even after it completes. current_operation_name/
+        // current_work_center_name/current_operation_order stay on
+        // `current` on purpose — those drive groupByWorkCentre's "Awaiting
+        // output" bucketing, which needs them to go null once finished.
+        const latestStarted = latestStartedOperation(latestRun.operations);
+        const latestStartedHasInput = (latestStarted?.inputProducts.length ?? 0) > 0;
         const { error: updateError } = await db
           .from("production_orders")
           .update({
@@ -166,10 +174,10 @@ async function syncProductionOrderRunDetails(
             current_operation_name: current?.name ?? null,
             current_work_center_name: current?.workCenterName ?? null,
             current_operation_order: current?.order ?? null,
-            current_operation_started_at: current?.startDate ?? null,
-            current_input_expected_qty: currentHasInput ? current!.inputProducts.reduce((sum, p) => sum + p.expectedQuantity, 0) : null,
-            current_input_actual_qty: currentHasInput ? current!.inputProducts.reduce((sum, p) => sum + p.outputQuantity, 0) : null,
-            current_input_wastage_qty: currentHasInput ? current!.inputProducts.reduce((sum, p) => sum + p.wastageQuantity, 0) : null,
+            current_operation_started_at: latestStarted?.startDate ?? null,
+            current_input_expected_qty: latestStartedHasInput ? latestStarted!.inputProducts.reduce((sum, p) => sum + p.expectedQuantity, 0) : null,
+            current_input_actual_qty: latestStartedHasInput ? latestStarted!.inputProducts.reduce((sum, p) => sum + p.outputQuantity, 0) : null,
+            current_input_wastage_qty: latestStartedHasInput ? latestStarted!.inputProducts.reduce((sum, p) => sum + p.wastageQuantity, 0) : null,
             planned_quantity: latestRun.quantity,
             wip_actual_cost: computeWipCost(runs),
             run_synced_at: new Date().toISOString(),

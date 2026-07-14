@@ -15,6 +15,24 @@ export function deriveCurrentOperation(operations: ProductionRunOperation[]): Pr
 }
 
 /**
+ * The furthest operation (by `order`) that has actually started (its own
+ * StartDate is set) — unlike deriveCurrentOperation, this doesn't go null
+ * once every operation is COMPLETED, since a completed operation still
+ * has a StartDate. Drives the header-level shortfall/overproduction alert
+ * fields (current_input_expected_qty etc. in sync-production-runs.ts) so
+ * a real, unresolved WIP shortfall stays visible on the Kanban card even
+ * after the order finishes every operation and moves to "Awaiting
+ * output" — confirmed live 2026-07-14 (MO-00042) that the alert would
+ * otherwise silently disappear once deriveCurrentOperation returns null,
+ * which reads as "resolved" when the material loss never actually was.
+ */
+export function latestStartedOperation(operations: ProductionRunOperation[]): ProductionRunOperation | null {
+  const started = operations.filter((op) => op.startDate !== null);
+  if (!started.length) return null;
+  return started.reduce((a, b) => (b.order > a.order ? b : a));
+}
+
+/**
  * WIP financial position — sums the ACTUAL GL-posted cost
  * (ResourceCosts[].Cost) across every operation belonging to a Run that
  * isn't COMPLETED or VOIDED. This is a bottom-up reconstruction, not a
@@ -161,7 +179,12 @@ export interface ShortfallReconciliation {
  */
 export function reconcileInputFlow(operations: ProductionOperationRow[]): ShortfallReconciliation | null {
   const tracked = [...operations]
-    .filter((op) => op.inputExpectedQty !== null && op.inputActualQty !== null)
+    // startDate !== null: a not-yet-started downstream operation already
+    // carries its expected Input quantity (Cin7 pre-populates it) with
+    // actual 0 — including it here would misread "hasn't happened yet" as
+    // a real shortfall, the same false-positive operationHasInputShortfall
+    // already guards against per-row.
+    .filter((op) => op.startDate !== null && op.inputExpectedQty !== null && op.inputActualQty !== null)
     .sort((a, b) => a.operationOrder - b.operationOrder);
   if (!tracked.length) return null;
 
@@ -175,6 +198,20 @@ export function reconcileInputFlow(operations: ProductionOperationRow[]): Shortf
     finalOperationName: final.operationName ?? "the current stage",
     netDeviationQty: (final.inputActualQty ?? 0) - (final.inputExpectedQty ?? 0),
   };
+}
+
+/**
+ * Human-readable label for "where is this order right now" (the modal
+ * header and table view's Current Stage column) — `currentOperationName`
+ * is null in two very different situations that shouldn't share the same
+ * wording: the order genuinely hasn't synced/started yet, vs. every
+ * operation is COMPLETED and it's just waiting on the finished-good
+ * Output to be recorded (Cin7's own `run_status` reads "OPERATIONS
+ * COMPLETED" for this — confirmed live 2026-07-14 on MO-00042, which
+ * otherwise misleadingly showed "not synced yet" for a fully-worked order).
+ */
+export function currentStageFallbackLabel(row: Pick<ProductionTrackingRow, "runStatus">): string {
+  return row.runStatus === "OPERATIONS COMPLETED" ? "all operations complete — awaiting output" : "not synced yet";
 }
 
 /** A label reserved for orders with no Run yet at all (never released) — distinct from a real, named work centre. */

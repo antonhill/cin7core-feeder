@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   deriveCurrentOperation,
+  latestStartedOperation,
+  currentStageFallbackLabel,
   computeWipCost,
   totalWastage,
   daysLate,
@@ -64,6 +66,37 @@ describe("deriveCurrentOperation", () => {
       operation({ order: 1, name: "Mixing", status: "COMPLETED" }),
     ];
     expect(deriveCurrentOperation(operations)?.name).toBe("Blending");
+  });
+});
+
+describe("latestStartedOperation", () => {
+  // Confirmed live 2026-07-14 (MO-00042): once Packing (the last operation) completes,
+  // deriveCurrentOperation returns null (nothing left to work on) — but latestStartedOperation should
+  // still resolve to Packing, since it did start, so the shortfall alert doesn't silently disappear.
+  it("returns the highest-order started operation even when every operation is COMPLETED", () => {
+    const operations = [
+      operation({ order: 10, name: "Roasting", status: "COMPLETED", startDate: "2026-07-14T00:00:00" }),
+      operation({ order: 20, name: "Packing", status: "COMPLETED", startDate: "2026-07-14T00:00:00" }),
+    ];
+    expect(latestStartedOperation(operations)?.name).toBe("Packing");
+  });
+
+  it("ignores operations that haven't started, even if a later one has", () => {
+    const operations = [
+      operation({ order: 10, name: "Roasting", status: "COMPLETED", startDate: "2026-07-14T00:00:00" }),
+      operation({ order: 20, name: "Grinding", status: "IN PROGRESS", startDate: "2026-07-14T00:00:00" }),
+      operation({ order: 30, name: "Packing", status: "PLANNED", startDate: null }),
+    ];
+    expect(latestStartedOperation(operations)?.name).toBe("Grinding");
+  });
+
+  it("returns null when no operation has started yet", () => {
+    const operations = [operation({ order: 10, startDate: null }), operation({ order: 20, startDate: null })];
+    expect(latestStartedOperation(operations)).toBeNull();
+  });
+
+  it("returns null with no operations at all", () => {
+    expect(latestStartedOperation([])).toBeNull();
   });
 });
 
@@ -328,6 +361,20 @@ describe("cumulativeCostThroughStage", () => {
   });
 });
 
+describe("currentStageFallbackLabel", () => {
+  // Confirmed live 2026-07-14 (MO-00042): once every operation completes, currentOperationName goes
+  // null the same way it does for a genuinely not-yet-started order — this label distinguishes them
+  // instead of showing the misleading "not synced yet" for a fully-worked order.
+  it("says awaiting output when the run finished every operation", () => {
+    expect(currentStageFallbackLabel({ runStatus: "OPERATIONS COMPLETED" })).toBe("all operations complete — awaiting output");
+  });
+
+  it("falls back to not synced yet for any other run status (including no Run at all)", () => {
+    expect(currentStageFallbackLabel({ runStatus: "IN PROGRESS" })).toBe("not synced yet");
+    expect(currentStageFallbackLabel({ runStatus: null })).toBe("not synced yet");
+  });
+});
+
 describe("hasInputShortfall", () => {
   it("is true when a started stage received less than expected, even if Cin7's own WastageQuantity is 0", () => {
     // Confirmed live 2026-07-14 (MO-00042): Grinding expected 25.5kg from Roasting, received only
@@ -445,19 +492,21 @@ describe("previousOperation", () => {
   });
 });
 
+const STARTED = "2026-07-14T00:00:00";
+
 describe("reconcileInputFlow", () => {
   it("returns null when no operation tracks Inputs/Outputs at all", () => {
     const operations = [
-      operationRow({ operationOrder: 10, operationName: "Roasting", inputExpectedQty: null, inputActualQty: null }),
-      operationRow({ operationOrder: 20, operationName: "Grinding", inputExpectedQty: null, inputActualQty: null }),
+      operationRow({ operationOrder: 10, operationName: "Roasting", startDate: STARTED, inputExpectedQty: null, inputActualQty: null }),
+      operationRow({ operationOrder: 20, operationName: "Grinding", startDate: STARTED, inputExpectedQty: null, inputActualQty: null }),
     ];
     expect(reconcileInputFlow(operations)).toBeNull();
   });
 
   it("returns null when every tracked stage received exactly what was expected", () => {
     const operations = [
-      operationRow({ operationOrder: 20, operationName: "Grinding", inputExpectedQty: 25.5, inputActualQty: 25.5 }),
-      operationRow({ operationOrder: 30, operationName: "Packing", inputExpectedQty: 25, inputActualQty: 25 }),
+      operationRow({ operationOrder: 20, operationName: "Grinding", startDate: STARTED, inputExpectedQty: 25.5, inputActualQty: 25.5 }),
+      operationRow({ operationOrder: 30, operationName: "Packing", startDate: STARTED, inputExpectedQty: 25, inputActualQty: 25 }),
     ];
     expect(reconcileInputFlow(operations)).toBeNull();
   });
@@ -467,8 +516,8 @@ describe("reconcileInputFlow", () => {
   // unchanged, not a second separate loss.
   it("reports the origin and net figure as unchanged when the deviation doesn't grow between stages", () => {
     const operations = [
-      operationRow({ operationOrder: 20, operationName: "Grinding", inputExpectedQty: 25.5, inputActualQty: 23.5 }),
-      operationRow({ operationOrder: 30, operationName: "Packing", inputExpectedQty: 25, inputActualQty: 23 }),
+      operationRow({ operationOrder: 20, operationName: "Grinding", startDate: STARTED, inputExpectedQty: 25.5, inputActualQty: 23.5 }),
+      operationRow({ operationOrder: 30, operationName: "Packing", startDate: STARTED, inputExpectedQty: 25, inputActualQty: 23 }),
     ];
     expect(reconcileInputFlow(operations)).toEqual({
       originOperationName: "Grinding",
@@ -480,8 +529,8 @@ describe("reconcileInputFlow", () => {
 
   it("reports a widening deviation with both figures when it grows further downstream", () => {
     const operations = [
-      operationRow({ operationOrder: 20, operationName: "Grinding", inputExpectedQty: 25.5, inputActualQty: 23.5 }),
-      operationRow({ operationOrder: 30, operationName: "Packing", inputExpectedQty: 25, inputActualQty: 20 }),
+      operationRow({ operationOrder: 20, operationName: "Grinding", startDate: STARTED, inputExpectedQty: 25.5, inputActualQty: 23.5 }),
+      operationRow({ operationOrder: 30, operationName: "Packing", startDate: STARTED, inputExpectedQty: 25, inputActualQty: 20 }),
     ];
     expect(reconcileInputFlow(operations)).toEqual({
       originOperationName: "Grinding",
@@ -492,7 +541,7 @@ describe("reconcileInputFlow", () => {
   });
 
   it("uses the same operation for origin and final when only one tracked stage has a deviation so far", () => {
-    const operations = [operationRow({ operationOrder: 20, operationName: "Grinding", inputExpectedQty: 25.5, inputActualQty: 23.5 })];
+    const operations = [operationRow({ operationOrder: 20, operationName: "Grinding", startDate: STARTED, inputExpectedQty: 25.5, inputActualQty: 23.5 })];
     expect(reconcileInputFlow(operations)).toEqual({
       originOperationName: "Grinding",
       originDeviationQty: -2,
@@ -503,14 +552,29 @@ describe("reconcileInputFlow", () => {
 
   it("handles overproduction (positive deviation) the same way", () => {
     const operations = [
-      operationRow({ operationOrder: 20, operationName: "Grinding", inputExpectedQty: 25, inputActualQty: 27 }),
-      operationRow({ operationOrder: 30, operationName: "Packing", inputExpectedQty: 25, inputActualQty: 27 }),
+      operationRow({ operationOrder: 20, operationName: "Grinding", startDate: STARTED, inputExpectedQty: 25, inputActualQty: 27 }),
+      operationRow({ operationOrder: 30, operationName: "Packing", startDate: STARTED, inputExpectedQty: 25, inputActualQty: 27 }),
     ];
     expect(reconcileInputFlow(operations)).toEqual({
       originOperationName: "Grinding",
       originDeviationQty: 2,
       finalOperationName: "Packing",
       netDeviationQty: 2,
+    });
+  });
+
+  // The exact bug this session found: Cin7 pre-populates a not-yet-started operation's InputExpectedQty
+  // with actual 0, which would misread as a huge false shortfall if not excluded by startDate.
+  it("ignores a not-yet-started downstream operation even though it already carries an expected quantity", () => {
+    const operations = [
+      operationRow({ operationOrder: 20, operationName: "Grinding", startDate: STARTED, inputExpectedQty: 25.5, inputActualQty: 23.5 }),
+      operationRow({ operationOrder: 30, operationName: "Packing", startDate: null, inputExpectedQty: 25, inputActualQty: 0 }),
+    ];
+    expect(reconcileInputFlow(operations)).toEqual({
+      originOperationName: "Grinding",
+      originDeviationQty: -2,
+      finalOperationName: "Grinding",
+      netDeviationQty: -2,
     });
   });
 });
