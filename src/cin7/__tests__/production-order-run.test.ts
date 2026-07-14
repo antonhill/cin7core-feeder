@@ -15,6 +15,9 @@ function operation(overrides: Partial<ProductionRunOperation> = {}): ProductionR
     endDate: null,
     components: [],
     resourceCosts: [],
+    inputProducts: [],
+    outputProducts: [],
+    finishedProducts: [],
     ...overrides,
   };
 }
@@ -42,8 +45,8 @@ describe("actualWastageBySku", () => {
   it("sums WastageQty for one SKU across multiple operations", () => {
     const r = run({
       operations: [
-        operation({ components: [{ productCode: "RAW0001", quantity: 1, expectedQuantity: 1, wastageQty: 0.2 }] }),
-        operation({ components: [{ productCode: "RAW0001", quantity: 1, expectedQuantity: 1, wastageQty: 0.3 }] }),
+        operation({ components: [{ productCode: "RAW0001", quantity: 1, expectedQuantity: 1, wastageQty: 0.2, unitCost: 0 }] }),
+        operation({ components: [{ productCode: "RAW0001", quantity: 1, expectedQuantity: 1, wastageQty: 0.3, unitCost: 0 }] }),
       ],
     });
     expect(actualWastageBySku(r).get("RAW0001")).toBeCloseTo(0.5);
@@ -54,8 +57,8 @@ describe("actualWastageBySku", () => {
       operations: [
         operation({
           components: [
-            { productCode: "RAW0001", quantity: 1, expectedQuantity: 1, wastageQty: 0.2 },
-            { productCode: "RAW0002", quantity: 1, expectedQuantity: 1, wastageQty: 0.1 },
+            { productCode: "RAW0001", quantity: 1, expectedQuantity: 1, wastageQty: 0.2, unitCost: 0 },
+            { productCode: "RAW0002", quantity: 1, expectedQuantity: 1, wastageQty: 0.1, unitCost: 0 },
           ],
         }),
       ],
@@ -65,7 +68,7 @@ describe("actualWastageBySku", () => {
   });
 
   it("skips components with no productCode", () => {
-    const r = run({ operations: [operation({ components: [{ productCode: null, quantity: 1, expectedQuantity: 1, wastageQty: 5 }] })] });
+    const r = run({ operations: [operation({ components: [{ productCode: null, quantity: 1, expectedQuantity: 1, wastageQty: 5, unitCost: 0 }] })] });
     expect(actualWastageBySku(r).size).toBe(0);
   });
 

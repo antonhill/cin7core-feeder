@@ -23,6 +23,8 @@ export interface ProductionRunOperationComponent {
   expectedQuantity: number;
   /** Actual wastage — confirmed real field, though every live example seen so far was 0. */
   wastageQty: number;
+  /** Per-unit actual cost — the material-cost half of "value added per stage" (resourceCosts on the operation is the other half). */
+  unitCost: number;
 }
 
 export interface ProductionRunOperationResourceCost {
@@ -30,6 +32,30 @@ export interface ProductionRunOperationResourceCost {
   expenseAccount: string | null;
   /** Actual cost incurred for this operation — distinct from the standard/planned cost on Resources. */
   cost: number;
+}
+
+/**
+ * A semi-finished/intermediate product handed between operations — Cin7's
+ * own "Inputs and Outputs" feature (help.core.cin7.com/hc/en-us/articles/
+ * 9034587837839), confirmed via their docs 2026-07-14: optional per BOM
+ * ("it is not necessary to include input/output in a Production BOM"), a
+ * real inventory SKU that one operation is configured to Output and a
+ * later operation Input, specifically "to improve... transparency and
+ * tracking of wastage of intermediate products during production." When a
+ * BOM doesn't use this feature (e.g. this session's test order, MO-00019 —
+ * a plain Mixing → Blending recipe with no semi-finished SKU between them),
+ * these arrays are simply empty; that's the BOM's own configuration, not
+ * missing/broken data.
+ */
+export interface ProductionRunOperationProduct {
+  productSku: string | null;
+  productName: string | null;
+  unit: string | null;
+  /** Actual quantity this operation produced/received. */
+  outputQuantity: number;
+  expectedQuantity: number;
+  /** Actual wastage of THIS intermediate product specifically — the real, Cin7-tracked transfer figure the "input based on wastage from the previous stage" ask is really after, when the BOM defines one. */
+  wastageQuantity: number;
 }
 
 export interface ProductionRunOperation {
@@ -46,6 +72,12 @@ export interface ProductionRunOperation {
   endDate: string | null;
   components: ProductionRunOperationComponent[];
   resourceCosts: ProductionRunOperationResourceCost[];
+  /** Semi-finished products this operation received from an earlier operation in the same BOM (empty unless the BOM defines Inputs and Outputs). */
+  inputProducts: ProductionRunOperationProduct[];
+  /** Semi-finished products this operation produced for a later operation in the same BOM (empty unless the BOM defines Inputs and Outputs). */
+  outputProducts: ProductionRunOperationProduct[];
+  /** The order's real finished-good output, when this operation is the one that completes it. */
+  finishedProducts: ProductionRunOperationProduct[];
 }
 
 export interface ProductionRun {
@@ -58,9 +90,23 @@ export interface ProductionRun {
   operations: ProductionRunOperation[];
 }
 
+function toRunOperationProduct(raw: Record<string, unknown>): ProductionRunOperationProduct {
+  return {
+    productSku: typeof raw.ProductSKU === "string" ? raw.ProductSKU : null,
+    productName: typeof raw.ProductName === "string" ? raw.ProductName : null,
+    unit: typeof raw.Unit === "string" ? raw.Unit : null,
+    outputQuantity: Number(raw.OutputQuantity ?? 0),
+    expectedQuantity: Number(raw.ExpectedQuantity ?? 0),
+    wastageQuantity: Number(raw.WastageQuantity ?? 0),
+  };
+}
+
 function toRunOperation(raw: Record<string, unknown>): ProductionRunOperation {
   const components = Array.isArray(raw.Components) ? (raw.Components as Record<string, unknown>[]) : [];
   const resourceCosts = Array.isArray(raw.ResourceCosts) ? (raw.ResourceCosts as Record<string, unknown>[]) : [];
+  const inputProducts = Array.isArray(raw.InputProducts) ? (raw.InputProducts as Record<string, unknown>[]) : [];
+  const outputProducts = Array.isArray(raw.OutputProducts) ? (raw.OutputProducts as Record<string, unknown>[]) : [];
+  const finishedProducts = Array.isArray(raw.FinishedProducts) ? (raw.FinishedProducts as Record<string, unknown>[]) : [];
   return {
     operationId: String(raw.OperationID ?? ""),
     order: Number(raw.Order ?? 0),
@@ -76,7 +122,11 @@ function toRunOperation(raw: Record<string, unknown>): ProductionRunOperation {
       quantity: Number(c.Quantity ?? 0),
       expectedQuantity: Number(c.ExpectedQuantity ?? 0),
       wastageQty: Number(c.WastageQty ?? 0),
+      unitCost: Number(c.UnitCost ?? 0),
     })),
+    inputProducts: inputProducts.map(toRunOperationProduct),
+    outputProducts: outputProducts.map(toRunOperationProduct),
+    finishedProducts: finishedProducts.map(toRunOperationProduct),
     resourceCosts: resourceCosts.map((r) => ({
       expenseAccount: typeof r.ExpenseAccount === "string" ? r.ExpenseAccount : null,
       cost: Number(r.Cost ?? 0),

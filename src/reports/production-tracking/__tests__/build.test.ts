@@ -15,6 +15,9 @@ function operation(overrides: Partial<ProductionRunOperation> = {}): ProductionR
     endDate: null,
     components: [],
     resourceCosts: [],
+    inputProducts: [],
+    outputProducts: [],
+    finishedProducts: [],
     ...overrides,
   };
 }
@@ -83,14 +86,14 @@ describe("computeWipCost", () => {
 describe("totalWastage", () => {
   it("sums WastageQty across every operation's components", () => {
     const operations = [
-      operation({ components: [{ productCode: "A", quantity: 1, expectedQuantity: 1, wastageQty: 0.2 }] }),
-      operation({ components: [{ productCode: "B", quantity: 1, expectedQuantity: 1, wastageQty: 0.3 }] }),
+      operation({ components: [{ productCode: "A", quantity: 1, expectedQuantity: 1, wastageQty: 0.2, unitCost: 0 }] }),
+      operation({ components: [{ productCode: "B", quantity: 1, expectedQuantity: 1, wastageQty: 0.3, unitCost: 0 }] }),
     ];
     expect(totalWastage(operations)).toBeCloseTo(0.5);
   });
 
   it("returns 0 when every component has zero wastage (the real-world case seen so far)", () => {
-    const operations = [operation({ components: [{ productCode: "A", quantity: 1, expectedQuantity: 1, wastageQty: 0 }] })];
+    const operations = [operation({ components: [{ productCode: "A", quantity: 1, expectedQuantity: 1, wastageQty: 0, unitCost: 0 }] })];
     expect(totalWastage(operations)).toBe(0);
   });
 });
