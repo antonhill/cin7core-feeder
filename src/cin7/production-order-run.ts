@@ -83,7 +83,7 @@ export interface ProductionRunOperation {
 export interface ProductionRun {
   runId: string;
   number: number;
-  /** PLANNED | IN PROGRESS | OPERATION_COMPLETED | COMPLETED | VOIDED (confirmed live values). */
+  /** PLANNED | IN PROGRESS | OPERATIONS COMPLETED | COMPLETED | VOIDED (confirmed live values — note the plural/space in "OPERATIONS COMPLETED", which the community Apiary spec had guessed as singular "OPERATION_COMPLETED"). */
   status: string;
   /** GL account holding this run's WIP value — informational only, no GL/trial-balance integration exists anywhere in this codebase to reconcile against. */
   wipAccount: string | null;

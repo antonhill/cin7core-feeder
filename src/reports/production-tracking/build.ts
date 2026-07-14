@@ -180,6 +180,20 @@ export function reconcileInputFlow(operations: ProductionOperationRow[]): Shortf
 /** A label reserved for orders with no Run yet at all (never released) — distinct from a real, named work centre. */
 export const NOT_STARTED_COLUMN = "Not started yet";
 
+/**
+ * A label reserved for orders whose Run has finished every operation
+ * (Cin7's own `run_status` reads "OPERATIONS COMPLETED" — confirmed live
+ * 2026-07-14 on MO-00042, note the plural/space, which doesn't match the
+ * singular "OPERATION_COMPLETED" the community Apiary spec had guessed)
+ * but haven't had their finished-good Output recorded yet, so the order's
+ * own `list_status` hasn't flipped to COMPLETED. Without this bucket
+ * these orders fall through to `currentWorkCenterName === null` exactly
+ * like a NOT-yet-started order — genuinely confusing, since the order
+ * looks like it vanished from wherever its last work centre was, not like
+ * it finished. Sorts last, opposite end from NOT_STARTED_COLUMN.
+ */
+export const AWAITING_OUTPUT_COLUMN = "Awaiting output";
+
 /** A labeled bucket of orders for a Kanban column — reused by both groupByWorkCentre and groupByStatus below (the `workCentre` field just means "column label" in the status case, not literally a work centre). */
 export interface WorkCentreColumn {
   workCentre: string;
@@ -189,17 +203,19 @@ export interface WorkCentreColumn {
 /**
  * Buckets open orders into Kanban columns by their current work centre.
  * `NOT_STARTED_COLUMN` (orders with no Run yet) always sorts first, since
- * it isn't a real stage in any BOM's routing; the remaining columns order
- * by the lowest `currentOperationOrder` seen among orders sitting there —
- * a heuristic, not a configured sequence, since different BOMs can route
- * through work centres in different orders. Orders within a column keep
- * whatever order the caller already sorted `rows` in (e.g. by required-by
- * date), not re-sorted here.
+ * it isn't a real stage in any BOM's routing; `AWAITING_OUTPUT_COLUMN`
+ * (every operation done, output not yet recorded) always sorts last, for
+ * the same reason at the opposite end of the flow. The remaining columns
+ * order by the lowest `currentOperationOrder` seen among orders sitting
+ * there — a heuristic, not a configured sequence, since different BOMs
+ * can route through work centres in different orders. Orders within a
+ * column keep whatever order the caller already sorted `rows` in (e.g. by
+ * required-by date), not re-sorted here.
  */
 export function groupByWorkCentre(rows: ProductionTrackingRow[]): WorkCentreColumn[] {
   const byWorkCentre = new Map<string, ProductionTrackingRow[]>();
   for (const row of rows) {
-    const key = row.currentWorkCenterName ?? NOT_STARTED_COLUMN;
+    const key = row.currentWorkCenterName ?? (row.runStatus === "OPERATIONS COMPLETED" ? AWAITING_OUTPUT_COLUMN : NOT_STARTED_COLUMN);
     const arr = byWorkCentre.get(key) ?? [];
     arr.push(row);
     byWorkCentre.set(key, arr);
@@ -209,6 +225,8 @@ export function groupByWorkCentre(rows: ProductionTrackingRow[]): WorkCentreColu
   columns.sort((a, b) => {
     if (a.workCentre === NOT_STARTED_COLUMN) return -1;
     if (b.workCentre === NOT_STARTED_COLUMN) return 1;
+    if (a.workCentre === AWAITING_OUTPUT_COLUMN) return 1;
+    if (b.workCentre === AWAITING_OUTPUT_COLUMN) return -1;
     const aMin = Math.min(...a.orders.map((o) => o.currentOperationOrder ?? Infinity));
     const bMin = Math.min(...b.orders.map((o) => o.currentOperationOrder ?? Infinity));
     return aMin - bMin;

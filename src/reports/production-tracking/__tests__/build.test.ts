@@ -15,6 +15,7 @@ import {
   previousOperation,
   reconcileInputFlow,
   NOT_STARTED_COLUMN,
+  AWAITING_OUTPUT_COLUMN,
 } from "@/reports/production-tracking/build";
 import type { ProductionRun, ProductionRunOperation } from "@/cin7/production-order-run";
 import type { ProductionTrackingRow, ProductionOperationRow } from "@/reports/production-tracking/query";
@@ -217,6 +218,26 @@ describe("groupByWorkCentre", () => {
 
   it("returns no columns for an empty row set", () => {
     expect(groupByWorkCentre([])).toEqual([]);
+  });
+
+  // Confirmed live 2026-07-14 (MO-00042): after Packing's last operation completes, run_status reads
+  // "OPERATIONS COMPLETED" and currentWorkCenterName goes null — same null as a NOT-yet-started order,
+  // but it means the opposite thing (finished, not unstarted), so it needs its own bucket.
+  it("puts a finished-operations order awaiting output in AWAITING_OUTPUT_COLUMN, not NOT_STARTED_COLUMN", () => {
+    const rows = [trackingRow({ currentWorkCenterName: null, currentOperationOrder: null, runStatus: "OPERATIONS COMPLETED" })];
+    const columns = groupByWorkCentre(rows);
+    expect(columns).toHaveLength(1);
+    expect(columns[0].workCentre).toBe(AWAITING_OUTPUT_COLUMN);
+  });
+
+  it("sorts AWAITING_OUTPUT_COLUMN last, after NOT_STARTED_COLUMN and every real work-centre column", () => {
+    const rows = [
+      trackingRow({ productionOrderId: "a", currentWorkCenterName: null, currentOperationOrder: null, runStatus: "OPERATIONS COMPLETED" }),
+      trackingRow({ productionOrderId: "b", currentWorkCenterName: "Mixing", currentOperationOrder: 1 }),
+      trackingRow({ productionOrderId: "c", currentWorkCenterName: null, currentOperationOrder: null, runStatus: null }),
+    ];
+    const columns = groupByWorkCentre(rows);
+    expect(columns.map((c) => c.workCentre)).toEqual([NOT_STARTED_COLUMN, "Mixing", AWAITING_OUTPUT_COLUMN]);
   });
 });
 

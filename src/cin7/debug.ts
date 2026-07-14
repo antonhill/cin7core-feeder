@@ -1069,7 +1069,7 @@ export interface ProductionRunSurvey {
  * specification/dearinventory.apib, ~line 10660 "Production Run"): a wholly
  * separate resource, GET /production/order/run?ProductionOrderID=X, is
  * documented with exactly the missing fields — Run-level Status
- * (PLANNED/IN PROGRESS/OPERATION_COMPLETED/COMPLETED/VOIDED), a WIPAccount
+ * (PLANNED/IN PROGRESS/OPERATIONS COMPLETED/COMPLETED/VOIDED), a WIPAccount
  * field, and per-Operation Status (PLANNED/IN PROGRESS/SUSPENDED/COMPLETED)
  * with real StartDate/EndDate/ActualTime plus actual (not just planned)
  * Component quantities/wastage and Resource costs — and PUT
