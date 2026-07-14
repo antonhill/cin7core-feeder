@@ -272,6 +272,7 @@ export default function ProductionTrackingPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [modalOrderId, setModalOrderId] = useState<string | null>(null);
   const [hiddenStatuses, setHiddenStatuses] = useState<Set<string>>(new Set());
+  const [productSearch, setProductSearch] = useState("");
 
   function toggleStatusColumn(status: string) {
     setHiddenStatuses((prev) => {
@@ -384,21 +385,28 @@ export default function ProductionTrackingPage() {
 
   const today = todayIso();
 
-  const sortedRows = useMemo(() => {
+  /** Matches product name OR SKU, case-insensitive substring — shared by table, work-centre board, and status board since all three render from sortedRows. */
+  const filteredRows = useMemo(() => {
     if (!rows) return [];
-    const copy = [...rows];
+    const q = productSearch.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => (r.productName ?? "").toLowerCase().includes(q) || (r.productSku ?? "").toLowerCase().includes(q));
+  }, [rows, productSearch]);
+
+  const sortedRows = useMemo(() => {
+    const copy = [...filteredRows];
     copy.sort((a, b) => {
       const cmp = compareNullable(sortValue(a, sortColumn, today), sortValue(b, sortColumn, today));
       return sortDirection === "asc" ? cmp : -cmp;
     });
     return copy;
-  }, [rows, sortColumn, sortDirection, today]);
+  }, [filteredRows, sortColumn, sortDirection, today]);
 
   const summary = rows
     ? {
-        open: rows.length,
-        late: rows.filter((r) => isLate(r.requiredByDate, r.listStatus, today)).length,
-        wipTotal: rows.reduce((sum, r) => sum + (r.wipActualCost ?? 0), 0),
+        open: filteredRows.length,
+        late: filteredRows.filter((r) => isLate(r.requiredByDate, r.listStatus, today)).length,
+        wipTotal: filteredRows.reduce((sum, r) => sum + (r.wipActualCost ?? 0), 0),
       }
     : null;
 
@@ -487,7 +495,14 @@ export default function ProductionTrackingPage() {
               </p>
               <p className="mt-1 text-sm text-slate-500">Estimated WIP cost: {money(summary?.wipTotal ?? 0)}</p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                type="text"
+                value={productSearch}
+                onChange={(e) => setProductSearch(e.target.value)}
+                placeholder="Search product name…"
+                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm text-slate-700 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none"
+              />
               <label className="flex items-center gap-2 text-sm text-slate-700">
                 <input type="checkbox" checked={includeCompleted} onChange={handleToggleIncludeCompleted} className="h-4 w-4" />
                 Include completed/voided orders
@@ -525,6 +540,8 @@ export default function ProductionTrackingPage() {
             <p className="text-base text-slate-500">
               {includeCompleted ? "No production orders on this instance yet." : "No open production orders right now — every order is completed or voided."}
             </p>
+          ) : sortedRows.length === 0 ? (
+            <p className="text-base text-slate-500">No orders match &ldquo;{productSearch}&rdquo;.</p>
           ) : viewMode === "board" ? (
             <BoardView columns={groupByWorkCentre(sortedRows)} today={today} onOpenDetail={handleOpenModal} />
           ) : viewMode === "status" ? (
