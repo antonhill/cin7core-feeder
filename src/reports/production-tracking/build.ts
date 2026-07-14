@@ -64,6 +64,7 @@ export function isLate(requiredByDate: string | null, listStatus: string | null,
 /** A label reserved for orders with no Run yet at all (never released) — distinct from a real, named work centre. */
 export const NOT_STARTED_COLUMN = "Not started yet";
 
+/** A labeled bucket of orders for a Kanban column — reused by both groupByWorkCentre and groupByStatus below (the `workCentre` field just means "column label" in the status case, not literally a work centre). */
 export interface WorkCentreColumn {
   workCentre: string;
   orders: ProductionTrackingRow[];
@@ -95,6 +96,52 @@ export function groupByWorkCentre(rows: ProductionTrackingRow[]): WorkCentreColu
     const aMin = Math.min(...a.orders.map((o) => o.currentOperationOrder ?? Infinity));
     const bMin = Math.min(...b.orders.map((o) => o.currentOperationOrder ?? Infinity));
     return aMin - bMin;
+  });
+  return columns;
+}
+
+/**
+ * Real, confirmed-live `Status` (production_orders.list_status) lifecycle
+ * order for a given account (surveyed 2026-07-14 across every order on
+ * Spark Demo — all six values are real: DRAFT, PLANNED, RELEASED,
+ * IN PROGRESS, COMPLETED, VOIDED). A fixed sequence, unlike work-centre
+ * columns — every order goes through this same order-level lifecycle
+ * regardless of its BOM's own routing, so there's no need for
+ * groupByWorkCentre's "lowest position seen" heuristic here.
+ */
+export const PRODUCTION_STATUS_ORDER = ["DRAFT", "PLANNED", "RELEASED", "IN PROGRESS", "COMPLETED", "VOIDED"];
+
+/**
+ * Buckets orders into Kanban columns by their order-level `listStatus`
+ * (Cin7's Status field — distinct from the per-operation work-centre
+ * board, and from OrderStatus, a separate DRAFT/AUTHORISED/RELEASED/VOIDED
+ * approval-gate field this codebase doesn't currently track). `hidden`
+ * lets the caller drop specific columns (e.g. Draft, Planned) without
+ * losing anything — the underlying rows are untouched, just not bucketed
+ * into a column for a hidden status. A status with no orders in `rows` at
+ * all still produces an (empty) column unless hidden, since seeing "0" in
+ * e.g. Draft is itself useful information — it's the caller's job to skip
+ * rendering empty columns if desired, not this function's.
+ */
+export function groupByStatus(rows: ProductionTrackingRow[], hidden: Set<string> = new Set()): WorkCentreColumn[] {
+  const byStatus = new Map<string, ProductionTrackingRow[]>();
+  for (const status of PRODUCTION_STATUS_ORDER) {
+    if (!hidden.has(status)) byStatus.set(status, []);
+  }
+  for (const row of rows) {
+    const key = row.listStatus ?? "(none)";
+    if (hidden.has(key)) continue;
+    const arr = byStatus.get(key) ?? [];
+    arr.push(row);
+    byStatus.set(key, arr);
+  }
+
+  const known = new Set(PRODUCTION_STATUS_ORDER);
+  const columns = [...byStatus.entries()].map(([workCentre, orders]) => ({ workCentre, orders }));
+  columns.sort((a, b) => {
+    const aIdx = known.has(a.workCentre) ? PRODUCTION_STATUS_ORDER.indexOf(a.workCentre) : PRODUCTION_STATUS_ORDER.length;
+    const bIdx = known.has(b.workCentre) ? PRODUCTION_STATUS_ORDER.indexOf(b.workCentre) : PRODUCTION_STATUS_ORDER.length;
+    return aIdx - bIdx;
   });
   return columns;
 }

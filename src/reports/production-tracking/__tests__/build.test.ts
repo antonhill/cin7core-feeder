@@ -6,6 +6,7 @@ import {
   daysLate,
   isLate,
   groupByWorkCentre,
+  groupByStatus,
   cumulativeCostThroughStage,
   NOT_STARTED_COLUMN,
 } from "@/reports/production-tracking/build";
@@ -206,6 +207,40 @@ describe("groupByWorkCentre", () => {
 
   it("returns no columns for an empty row set", () => {
     expect(groupByWorkCentre([])).toEqual([]);
+  });
+});
+
+describe("groupByStatus", () => {
+  it("orders columns by the fixed lifecycle sequence, not input order", () => {
+    const rows = [
+      trackingRow({ productionOrderId: "a", listStatus: "RELEASED" }),
+      trackingRow({ productionOrderId: "b", listStatus: "DRAFT" }),
+      trackingRow({ productionOrderId: "c", listStatus: "PLANNED" }),
+    ];
+    const columns = groupByStatus(rows);
+    expect(columns.map((c) => c.workCentre)).toEqual(["DRAFT", "PLANNED", "RELEASED", "IN PROGRESS", "COMPLETED", "VOIDED"]);
+  });
+
+  it("includes every known status as its own column even with zero orders in it", () => {
+    const columns = groupByStatus([trackingRow({ listStatus: "DRAFT" })]);
+    const draft = columns.find((c) => c.workCentre === "DRAFT");
+    const planned = columns.find((c) => c.workCentre === "PLANNED");
+    expect(draft?.orders).toHaveLength(1);
+    expect(planned?.orders).toHaveLength(0);
+  });
+
+  it("hides a column entirely when its status is in the hidden set", () => {
+    const rows = [trackingRow({ listStatus: "DRAFT" }), trackingRow({ listStatus: "PLANNED" })];
+    const columns = groupByStatus(rows, new Set(["DRAFT"]));
+    expect(columns.map((c) => c.workCentre)).not.toContain("DRAFT");
+    expect(columns.map((c) => c.workCentre)).toContain("PLANNED");
+  });
+
+  it("drops rows whose status is hidden rather than bucketing them elsewhere", () => {
+    const rows = [trackingRow({ productionOrderId: "a", listStatus: "DRAFT" })];
+    const columns = groupByStatus(rows, new Set(["DRAFT"]));
+    const allOrders = columns.flatMap((c) => c.orders);
+    expect(allOrders).toHaveLength(0);
   });
 });
 

@@ -9,7 +9,15 @@ import {
 } from "./actions";
 import { listInstancesForPicker, type InstancePickerItem } from "@/actions/instances";
 import type { ProductionTrackingRow, ProductionOperationRow, ProductionTrackingSyncStatus } from "@/reports/production-tracking/query";
-import { isLate, daysLate, groupByWorkCentre, cumulativeCostThroughStage } from "@/reports/production-tracking/build";
+import {
+  isLate,
+  daysLate,
+  groupByWorkCentre,
+  groupByStatus,
+  cumulativeCostThroughStage,
+  PRODUCTION_STATUS_ORDER,
+  type WorkCentreColumn,
+} from "@/reports/production-tracking/build";
 import { StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
 import { Spinner } from "@/app/Spinner";
@@ -178,8 +186,8 @@ function WorkCentreColumnView({
   );
 }
 
-function BoardView({ rows, today, onOpenDetail }: { rows: ProductionTrackingRow[]; today: string; onOpenDetail: (id: string) => void }) {
-  const columns = groupByWorkCentre(rows);
+/** Renders any set of already-grouped columns — reused for both the work-centre board (groupByWorkCentre) and the status board (groupByStatus); the two groupings differ, the rendering doesn't. */
+function BoardView({ columns, today, onOpenDetail }: { columns: WorkCentreColumn[]; today: string; onOpenDetail: (id: string) => void }) {
   if (columns.length === 0) return null;
   return (
     <div className="flex gap-3 overflow-x-auto pb-2">
@@ -229,11 +237,12 @@ function ProductionOrderDetailModal({
   );
 }
 
-type ViewMode = "table" | "board";
+type ViewMode = "table" | "board" | "status";
 
 const VIEW_MODE_TABS: { value: ViewMode; label: string }[] = [
   { value: "table", label: "Table" },
-  { value: "board", label: "Board" },
+  { value: "board", label: "Work Centre Board" },
+  { value: "status", label: "Status Board" },
 ];
 
 export default function ProductionTrackingPage() {
@@ -258,6 +267,16 @@ export default function ProductionTrackingPage() {
 
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [modalOrderId, setModalOrderId] = useState<string | null>(null);
+  const [hiddenStatuses, setHiddenStatuses] = useState<Set<string>>(new Set());
+
+  function toggleStatusColumn(status: string) {
+    setHiddenStatuses((prev) => {
+      const next = new Set(prev);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      return next;
+    });
+  }
 
   const [sortColumn, setSortColumn] = useState<SortColumn>("daysLate");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -486,12 +505,26 @@ export default function ProductionTrackingPage() {
             </div>
           </div>
 
+          {viewMode === "status" && (
+            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 text-sm">
+              <span className="font-medium text-slate-700">Columns:</span>
+              {PRODUCTION_STATUS_ORDER.map((status) => (
+                <label key={status} className="flex items-center gap-1.5 text-slate-600">
+                  <input type="checkbox" checked={!hiddenStatuses.has(status)} onChange={() => toggleStatusColumn(status)} className="h-4 w-4" />
+                  {status}
+                </label>
+              ))}
+            </div>
+          )}
+
           {rows.length === 0 ? (
             <p className="text-base text-slate-500">
               {includeCompleted ? "No production orders on this instance yet." : "No open production orders right now — every order is completed or voided."}
             </p>
           ) : viewMode === "board" ? (
-            <BoardView rows={sortedRows} today={today} onOpenDetail={handleOpenModal} />
+            <BoardView columns={groupByWorkCentre(sortedRows)} today={today} onOpenDetail={handleOpenModal} />
+          ) : viewMode === "status" ? (
+            <BoardView columns={groupByStatus(sortedRows, hiddenStatuses)} today={today} onOpenDetail={handleOpenModal} />
           ) : (
             <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
               <table className="w-full text-left text-sm text-slate-700">
