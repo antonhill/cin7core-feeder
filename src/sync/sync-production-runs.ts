@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductionOrdersList } from "@/cin7/production-orders";
-import { fetchProductionOrderRun } from "@/cin7/production-order-run";
+import { fetchProductionOrderRun, pickLatestRun } from "@/cin7/production-order-run";
 import { deriveCurrentOperation, computeWipCost, totalWastage } from "@/reports/production-tracking/build";
 import type { Cin7Credentials } from "@/cin7/types";
 
@@ -100,7 +100,7 @@ async function syncProductionOrderRunDetails(
     const productionOrderId = row.cin7_production_order_id;
     try {
       const runs = await fetchProductionOrderRun(creds, productionOrderId);
-      const latestRun = runs.length ? runs.reduce((a, b) => (b.number > a.number ? b : a)) : null;
+      const latestRun = pickLatestRun(runs);
 
       const { error: deleteError } = await db
         .from("production_operations")

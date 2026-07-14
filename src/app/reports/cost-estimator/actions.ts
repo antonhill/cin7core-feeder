@@ -8,6 +8,7 @@ import {
   fetchLatestProductionOrdersBySku,
   fetchProductionOrderDetail,
 } from "@/cin7/production-order-detail";
+import { fetchProductionOrderRun, pickLatestRun, actualWastageBySku } from "@/cin7/production-order-run";
 import {
   estimateAssemblyCost,
   type CostBasis,
@@ -168,13 +169,25 @@ export async function getProductionCostEstimatesAction(
         creds,
         orderInfo.productionOrderId,
       );
+      // /production/order's own Components[].WastageQty is confirmed live
+      // to always be the planned figure (0 on every real order checked) —
+      // the actual wastage lives on the separate /production/order/run
+      // resource instead (see src/cin7/production-order-run.ts). Overlaying
+      // it here means this estimate's effective quantity actually reflects
+      // real wastage rather than always adding zero.
+      const runs = await fetchProductionOrderRun(creds, orderInfo.productionOrderId);
+      const actualWastage = actualWastageBySku(pickLatestRun(runs));
+      const componentsWithActualWastage = detail.components.map((c) => ({
+        ...c,
+        wastageQuantity: actualWastage.get(c.componentSku) ?? c.wastageQuantity,
+      }));
       estimates.push(
         estimateProductionCost(
           p.sku,
           p.name,
           orderInfo.orderNumber,
           orderInfo.completionDate,
-          detail.components,
+          componentsWithActualWastage,
           detail.resources,
           costsBySku,
           basis,

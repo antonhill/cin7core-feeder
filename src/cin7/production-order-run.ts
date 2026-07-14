@@ -98,3 +98,28 @@ export async function fetchProductionOrderRun(creds: Cin7Credentials, production
     operations: Array.isArray(run.Operations) ? (run.Operations as Record<string, unknown>[]).map(toRunOperation) : [],
   }));
 }
+
+/** The most recent Run (highest `number`) — an order restarting a Run is rare, so only the latest one is meaningful. Null if the order has no Runs yet (e.g. never released). */
+export function pickLatestRun(runs: ProductionRun[]): ProductionRun | null {
+  if (!runs.length) return null;
+  return runs.reduce((a, b) => (b.number > a.number ? b : a));
+}
+
+/**
+ * Actual wastage quantity per component SKU, summed across every operation
+ * in `run` — confirmed live 2026-07-14 to be the real, actual figure,
+ * distinct from `/production/order`'s Components[].WastageQty (always the
+ * planned figure, 0 in every real example seen). Empty map for a null run
+ * (order never released).
+ */
+export function actualWastageBySku(run: ProductionRun | null): Map<string, number> {
+  const wastage = new Map<string, number>();
+  if (!run) return wastage;
+  for (const operation of run.operations) {
+    for (const component of operation.components) {
+      if (!component.productCode) continue;
+      wastage.set(component.productCode, (wastage.get(component.productCode) ?? 0) + component.wastageQty);
+    }
+  }
+  return wastage;
+}
