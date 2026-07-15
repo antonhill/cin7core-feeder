@@ -367,7 +367,7 @@ export default function ReportsPage() {
           <div>
             <span className="text-sm font-medium text-slate-700">Instance(s)</span>
             <div className="mt-2">
-              <InstanceMultiPicker instances={options?.instances ?? []} selectedIds={instanceIds} onToggle={toggleInstance} />
+              {options && <InstanceMultiPicker instances={options.instances} selectedIds={instanceIds} onToggle={toggleInstance} />}
             </div>
           </div>
 

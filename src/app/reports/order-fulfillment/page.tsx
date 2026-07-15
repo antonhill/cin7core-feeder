@@ -330,7 +330,7 @@ export default function OrderFulfillmentPage() {
           <div>
             <span className="text-sm font-medium text-slate-700">Instance(s)</span>
             <div className="mt-2">
-              <InstanceMultiPicker instances={options?.instances ?? []} selectedIds={instanceIds} onToggle={toggleInstance} wrap />
+              {options && <InstanceMultiPicker instances={options.instances} selectedIds={instanceIds} onToggle={toggleInstance} wrap />}
             </div>
             {syncStatus && (
               <p className="mt-2 text-xs text-slate-400">
