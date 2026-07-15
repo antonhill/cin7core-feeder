@@ -18,6 +18,7 @@ import type { CustomReportRow } from "@/reports/custom/aggregate";
 import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
+import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { ReportDescription } from "../ReportDescription";
 
 /** "dim:<index>" or "measure:<index>" — a plain string rather than a fixed union, since dimensions/measures are user-chosen and vary per source. Unlike every other report here, aggregateCustomReport has no fixed row order at all (Map iteration order), so sorting matters more on this page than anywhere else. */
@@ -301,14 +302,8 @@ export default function CustomReportPage() {
           <div className="mt-4 grid grid-cols-1 gap-4 border-t border-slate-100 pt-4 sm:grid-cols-2">
             <div>
               <span className="text-sm font-medium text-slate-700">Instance(s)</span>
-              <div className="mt-2 flex flex-col gap-1.5">
-                {(options?.instances ?? []).map((inst) => (
-                  <label key={inst.id} className="flex items-center gap-2 text-sm">
-                    <input type="checkbox" checked={instanceIds.includes(inst.id)} onChange={() => toggleInstance(inst.id)} className="h-4 w-4" />
-                    {inst.name}
-                  </label>
-                ))}
-                {options && options.instances.length === 0 && <p className="text-sm text-slate-400">No instances connected.</p>}
+              <div className="mt-2">
+                <InstanceMultiPicker instances={options?.instances ?? []} selectedIds={instanceIds} onToggle={toggleInstance} />
               </div>
             </div>
 

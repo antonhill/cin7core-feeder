@@ -13,6 +13,7 @@ import { compareNullable, type SortDirection } from "../sortable-table";
 import { StatusBadge } from "../status-badge";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
+import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { ReportDescription } from "../ReportDescription";
 
 type Tab = "pick" | "ship" | "all";
@@ -328,14 +329,8 @@ export default function OrderFulfillmentPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <span className="text-sm font-medium text-slate-700">Instance(s)</span>
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5">
-              {(options?.instances ?? []).map((inst) => (
-                <label key={inst.id} className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={instanceIds.includes(inst.id)} onChange={() => toggleInstance(inst.id)} className="h-4 w-4" />
-                  {inst.name}
-                </label>
-              ))}
-              {options && options.instances.length === 0 && <p className="text-sm text-slate-400">No instances connected.</p>}
+            <div className="mt-2">
+              <InstanceMultiPicker instances={options?.instances ?? []} selectedIds={instanceIds} onToggle={toggleInstance} wrap />
             </div>
             {syncStatus && (
               <p className="mt-2 text-xs text-slate-400">
@@ -579,7 +574,12 @@ export default function OrderFulfillmentPage() {
                               <button
                                 type="button"
                                 onClick={() => handleViewDocuments(row.instance_id, row.cin7_sale_id)}
-                                disabled={isLoadingAttachments}
+                                disabled={isLoadingAttachments || options?.instances.find((i) => i.id === row.instance_id)?.active === false}
+                                title={
+                                  options?.instances.find((i) => i.id === row.instance_id)?.active === false
+                                    ? "Instance disconnected — documents unavailable"
+                                    : undefined
+                                }
                                 className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                               >
                                 {isLoadingAttachments && !attachmentsBySaleId[row.cin7_sale_id] ? "Loading documents…" : "View documents"}

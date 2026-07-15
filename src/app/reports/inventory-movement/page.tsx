@@ -8,6 +8,7 @@ import type { InventoryMovementRow } from "@/reports/query";
 import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
+import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { ReportDescription } from "../ReportDescription";
 
 type MovementSortColumn =
@@ -194,14 +195,8 @@ export default function InventoryMovementPage() {
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <span className="text-sm font-medium text-slate-700">Instance(s)</span>
-            <div className="mt-2 flex flex-col gap-1.5">
-              {(options?.instances ?? []).map((inst) => (
-                <label key={inst.id} className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={instanceIds.includes(inst.id)} onChange={() => toggleInstance(inst.id)} className="h-4 w-4" />
-                  {inst.name}
-                </label>
-              ))}
-              {options && options.instances.length === 0 && <p className="text-sm text-slate-400">No instances connected.</p>}
+            <div className="mt-2">
+              <InstanceMultiPicker instances={options?.instances ?? []} selectedIds={instanceIds} onToggle={toggleInstance} />
             </div>
           </div>
 

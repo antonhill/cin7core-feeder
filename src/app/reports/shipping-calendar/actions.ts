@@ -12,6 +12,7 @@ import {
   type OrderFulfillmentLineRow,
   type OrderFulfillmentFilters,
 } from "@/reports/query";
+import type { InstancePickerItem } from "@/actions/instances";
 
 export interface ShippingCalendarActionResult<T> {
   ok: boolean;
@@ -22,7 +23,7 @@ export interface ShippingCalendarActionResult<T> {
 export interface ShippingCalendarData {
   orders: OrderFulfillmentRow[];
   lines: OrderFulfillmentLineRow[];
-  instances: { id: string; name: string }[];
+  instances: InstancePickerItem[];
 }
 
 /** Every order (+ per-SKU line detail, for the click-to-expand card view), optionally scoped to a subset of connected instances — same instanceIds filter Order Fulfillment uses, since a multi-instance org needs the same ability to isolate one instance's shipments here. */

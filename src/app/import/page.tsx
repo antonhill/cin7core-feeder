@@ -12,6 +12,7 @@ import type { ImportKind } from "@/import/run-import";
 import { getBillingStatusAction } from "@/actions/billing";
 import type { InstanceSyncOutcome } from "@/sync/sync-org";
 import { useInstancePicker } from "@/hooks/useInstancePicker";
+import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { IMPORT_MODULE } from "@/app/module-nav";
 import { Spinner } from "@/app/Spinner";
@@ -284,36 +285,15 @@ export default function ImportPage() {
               </p>
             )}
 
-            {!picker.isLoading && !picker.error && picker.selectableInstances.length === 0 && (
-              <p className="text-sm text-slate-400">No active instances connected — visit Settings to connect one.</p>
-            )}
-
-            {picker.selectableInstances.length > 0 && (
-              <div className="flex flex-col gap-2">
-                {picker.selectableInstances.map((inst) => (
-                  <label key={inst.id} className="flex items-center gap-2 text-base">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.includes(inst.id)}
-                      onChange={() => toggleInstance(inst.id)}
-                      className="h-4 w-4"
-                    />
-                    {inst.name}
-                  </label>
-                ))}
-                <div className="mt-1 flex gap-3 text-sm text-indigo-600">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedIds(picker.selectableInstances.map((i) => i.id))}
-                    className="hover:underline"
-                  >
-                    Select all
-                  </button>
-                  <button type="button" onClick={() => setSelectedIds([])} className="hover:underline">
-                    Clear
-                  </button>
-                </div>
-              </div>
+            {!picker.isLoading && !picker.error && (
+              <InstanceMultiPicker
+                instances={picker.selectableInstances}
+                selectedIds={selectedIds}
+                onToggle={toggleInstance}
+                onSelectAll={() => setSelectedIds(picker.selectableInstances.map((i) => i.id))}
+                onClear={() => setSelectedIds([])}
+                emptyMessage="No active instances connected — visit Settings to connect one."
+              />
             )}
           </div>
         </section>

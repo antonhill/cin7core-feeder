@@ -5,6 +5,7 @@ import { pullInstanceDataAction } from "./actions";
 import { pushToCin7Action, type PushScopeSelection } from "@/app/import/actions";
 import { useInstancePicker } from "@/hooks/useInstancePicker";
 import { InstancePicker } from "@/app/InstancePicker";
+import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { getBillingStatusAction } from "@/actions/billing";
 import type { InstanceSyncOutcome } from "@/sync/sync-org";
 import { Spinner } from "@/app/Spinner";
@@ -202,24 +203,12 @@ export default function MigratePage() {
           </p>
 
           <div className="mt-5 pl-11">
-            {targetChoices.length === 0 && (
-              <p className="text-sm text-slate-400">Load instances above and pick a source first.</p>
-            )}
-            {targetChoices.length > 0 && (
-              <div className="flex flex-col gap-2">
-                {targetChoices.map((inst) => (
-                  <label key={inst.id} className="flex items-center gap-2 text-base">
-                    <input
-                      type="checkbox"
-                      checked={targetIds.includes(inst.id)}
-                      onChange={() => toggleTarget(inst.id)}
-                      className="h-4 w-4"
-                    />
-                    {inst.name}
-                  </label>
-                ))}
-              </div>
-            )}
+            <InstanceMultiPicker
+              instances={targetChoices}
+              selectedIds={targetIds}
+              onToggle={toggleTarget}
+              emptyMessage="Load instances above and pick a source first."
+            />
 
             <button
               type="button"

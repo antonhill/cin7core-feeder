@@ -5,9 +5,11 @@ import { loadShippingCalendarOrdersAction, updateOrderShipByAction, loadCarriers
 import { currentWeekStart, mondayOf, addDays, formatDayLabel, todayIso } from "./date-utils";
 import type { OrderFulfillmentRow, OrderFulfillmentLineRow } from "@/reports/query";
 import type { MarkShippedInput } from "@/cin7/sales";
+import type { InstancePickerItem } from "@/actions/instances";
 import { ReportDescription } from "../ReportDescription";
 import { StatusBadge } from "../status-badge";
 import { Spinner } from "@/app/Spinner";
+import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 
 /** What the page's onMarkShipped callback resolves to — enough for MarkAsShippedSection to render success/error itself, without needing the full ShippingCalendarActionResult shape. */
 interface MarkShippedOutcome {
@@ -306,6 +308,7 @@ function OrderDetailModal({
   lines,
   effectiveShipBy,
   isPending,
+  instanceActive,
   onReschedule,
   onMarkShipped,
   onClose,
@@ -314,6 +317,8 @@ function OrderDetailModal({
   lines: OrderFulfillmentLineRow[];
   effectiveShipBy: string;
   isPending: boolean;
+  /** False when this order's Cin7 instance has been disconnected — reschedule/mark-shipped/carrier-loading all hit the live Cin7 API and would just fail server-side, so disable them with an explanation instead. */
+  instanceActive: boolean;
   onReschedule: (saleId: string, newDate: string) => void;
   onMarkShipped: (saleId: string, instanceId: string, input: MarkShippedInput) => Promise<MarkShippedOutcome>;
   onClose: () => void;
@@ -355,15 +360,19 @@ function OrderDetailModal({
             <input
               type="date"
               value={effectiveShipBy}
-              disabled={isPending}
+              disabled={isPending || !instanceActive}
+              title={!instanceActive ? "Instance disconnected — can't reschedule" : undefined}
               onChange={(e) => e.target.value && onReschedule(order.cin7_sale_id, e.target.value)}
               className="rounded border border-slate-300 px-2 py-1 text-sm text-slate-700 disabled:opacity-50"
             />
             {isPending && <Spinner className="h-3 w-3" />}
           </label>
+          {!instanceActive && (
+            <p className="w-full text-sm text-slate-400">Instance disconnected — read-only.</p>
+          )}
         </div>
 
-        <MarkAsShippedSection order={order} onMarkShipped={onMarkShipped} />
+        {instanceActive && <MarkAsShippedSection order={order} onMarkShipped={onMarkShipped} />}
 
         <h3 className="mt-6 mb-2 text-sm font-semibold text-slate-700">Order lines</h3>
         {lines.length === 0 ? (
@@ -401,7 +410,7 @@ export default function ShippingCalendarPage() {
   const [weekStart, setWeekStart] = useState(currentWeekStart);
   const [orders, setOrders] = useState<OrderFulfillmentRow[] | null>(null);
   const [lines, setLines] = useState<OrderFulfillmentLineRow[]>([]);
-  const [instances, setInstances] = useState<{ id: string; name: string }[]>([]);
+  const [instances, setInstances] = useState<InstancePickerItem[]>([]);
   const [instanceIds, setInstanceIds] = useState<string[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, startLoadTransition] = useTransition();
@@ -445,6 +454,7 @@ export default function ShippingCalendarPage() {
   const today = useMemo(() => currentWeekStart(), []);
   const days = useMemo(() => Array.from({ length: DAY_COUNT }, (_, i) => addDays(weekStart, i)), [weekStart]);
   const instanceNameById = useMemo(() => new Map(instances.map((i) => [i.id, i.name])), [instances]);
+  const instanceActiveById = useMemo(() => new Map(instances.map((i) => [i.id, i.active])), [instances]);
 
   const linesBySaleId = useMemo(() => {
     const map = new Map<string, OrderFulfillmentLineRow[]>();
@@ -540,12 +550,7 @@ export default function ShippingCalendarPage() {
         {instances.length > 0 && (
           <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-slate-100 pb-4">
             <span className="text-sm font-medium text-slate-700">Instance(s)</span>
-            {instances.map((inst) => (
-              <label key={inst.id} className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={instanceIds.includes(inst.id)} onChange={() => toggleInstance(inst.id)} className="h-4 w-4" />
-                {inst.name}
-              </label>
-            ))}
+            <InstanceMultiPicker instances={instances} selectedIds={instanceIds} onToggle={toggleInstance} wrap />
             <span className="text-xs text-slate-400">(none checked = all instances)</span>
           </div>
         )}
@@ -623,6 +628,7 @@ export default function ShippingCalendarPage() {
           lines={linesBySaleId.get(detailOrder.cin7_sale_id) ?? []}
           effectiveShipBy={shipByOverrides[detailOrder.cin7_sale_id] ?? detailOrder.ship_by ?? today}
           isPending={pendingSaleIds.has(detailOrder.cin7_sale_id)}
+          instanceActive={instanceActiveById.get(detailOrder.instance_id) !== false}
           onReschedule={handleReschedule}
           onMarkShipped={handleMarkShipped}
           onClose={() => setDetailSaleId(null)}
