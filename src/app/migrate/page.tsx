@@ -2,12 +2,12 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { pullInstanceDataAction } from "./actions";
-import { pushToCin7Action, type PushScopeSelection } from "@/app/import/actions";
+import type { PushScopeSelection } from "@/app/import/actions";
 import { useInstancePicker } from "@/hooks/useInstancePicker";
+import { usePushJob } from "@/hooks/usePushJob";
 import { InstancePicker } from "@/app/InstancePicker";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { getBillingStatusAction } from "@/actions/billing";
-import type { InstanceSyncOutcome } from "@/sync/sync-org";
 import { Spinner } from "@/app/Spinner";
 import type { PullInstanceResult } from "@/migrate/pull-instance";
 import type { ImportKind } from "@/import/run-import";
@@ -65,9 +65,7 @@ export default function MigratePage() {
   const [isPullPending, startPullTransition] = useTransition();
 
   const [targetIds, setTargetIds] = useState<string[]>([]);
-  const [pushOutcomes, setPushOutcomes] = useState<InstanceSyncOutcome[] | null>(null);
-  const [pushError, setPushError] = useState<string | null>(null);
-  const [isPushPending, startPushTransition] = useTransition();
+  const push = usePushJob();
 
   // Optimistic default (true) so the button isn't disabled during the brief
   // window before this resolves — same convention as /import.
@@ -83,7 +81,7 @@ export default function MigratePage() {
   function handlePull() {
     if (!sourceId) return;
     setPullResult(null);
-    setPushOutcomes(null);
+    push.reset();
     setTargetIds((prev) => prev.filter((id) => id !== sourceId));
     startPullTransition(async () => {
       setPullResult(await pullInstanceDataAction(sourceId));
@@ -95,16 +93,7 @@ export default function MigratePage() {
   }
 
   function handlePush() {
-    setPushError(null);
-    setPushOutcomes(null);
-    startPushTransition(async () => {
-      const result = await pushToCin7Action(targetIds, PUSH_PULLED_SCOPE);
-      if (!result.ok) {
-        setPushError(result.error ?? "Unknown error");
-        return;
-      }
-      setPushOutcomes(result.outcomes ?? []);
-    });
+    push.start(targetIds, PUSH_PULLED_SCOPE);
   }
 
   const targetChoices = picker.selectableInstances.filter((i) => i.id !== sourceId);
@@ -195,7 +184,7 @@ export default function MigratePage() {
         </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <StepHeader step={2} title="Push into another instance" done={pushOutcomes !== null} />
+          <StepHeader step={2} title="Push into another instance" done={push.status === "done"} />
           <p className="mt-1 pl-11 text-base text-slate-500">
             Pushes only what was just pulled (scoped to the most recent import of each kind), not
             the org&apos;s whole catalog. The source instance is excluded here to avoid pushing
@@ -213,11 +202,13 @@ export default function MigratePage() {
             <button
               type="button"
               onClick={handlePush}
-              disabled={isPushPending || targetIds.length === 0 || !pullResult?.ok || !canWrite}
+              disabled={push.isPushing || push.status === "running" || targetIds.length === 0 || !pullResult?.ok || !canWrite}
               className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
             >
-              {isPushPending && <Spinner className="mr-1.5" />}
-              {isPushPending ? "Pushing…" : `Push to ${targetIds.length || ""} instance${targetIds.length === 1 ? "" : "s"}`}
+              {(push.isPushing || push.status === "running") && <Spinner className="mr-1.5" />}
+              {push.status === "running"
+                ? "Pushing… (may take a while for a large catalog)"
+                : `Push to ${targetIds.length || ""} instance${targetIds.length === 1 ? "" : "s"}`}
             </button>
             {!canWrite && (
               <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -225,15 +216,15 @@ export default function MigratePage() {
               </p>
             )}
 
-            {pushError && (
+            {push.error && (
               <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {pushError}
+                {push.error}
               </p>
             )}
 
-            {pushOutcomes && (
+            {push.outcomes && (
               <div className="mt-4 flex flex-col gap-3">
-                {pushOutcomes.map((outcome) => (
+                {push.outcomes.map((outcome) => (
                   <div
                     key={outcome.instanceId}
                     className={`rounded-xl border p-4 ${outcome.ok ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}

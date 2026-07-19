@@ -68,6 +68,7 @@ describe("syncOrgInstances", () => {
       suppliersSkipped: 0,
       suppliersFailed: 0,
       errors: [],
+      truncated: false,
     });
 
     const results = await syncOrgInstances(db, "org1");
@@ -99,12 +100,13 @@ describe("syncOrgInstances", () => {
       suppliersSkipped: 0,
       suppliersFailed: 0,
       errors: [],
+      truncated: false,
     });
 
     const results = await syncOrgInstances(db, "org1", ["inst-1"]);
 
     expect(results).toHaveLength(1);
-    expect(syncInstance).toHaveBeenCalledWith(db, "org1", "inst-1", {});
+    expect(syncInstance).toHaveBeenCalledWith(db, "org1", "inst-1", {}, undefined);
   });
 
   it("catches a per-instance failure and continues, rather than aborting the whole run", async () => {
@@ -132,6 +134,7 @@ describe("syncOrgInstances", () => {
         suppliersSkipped: 0,
         suppliersFailed: 0,
         errors: [],
+        truncated: false,
       });
 
     const results = await syncOrgInstances(db, "org1");
@@ -170,6 +173,7 @@ describe("syncOrgInstances", () => {
       suppliersSkipped: 0,
       suppliersFailed: 0,
       errors: [],
+      truncated: false,
     });
 
     await syncOrgInstances(db, "org1");
@@ -206,6 +210,7 @@ describe("syncOrgInstances", () => {
       suppliersSkipped: 0,
       suppliersFailed: 0,
       errors: [],
+      truncated: false,
     });
 
     await syncOrgInstances(db, "org1", undefined, {}, { userId: "u1", email: "anton@sparkconsulting.co.za" });
@@ -264,6 +269,7 @@ describe("syncOrgInstances", () => {
       suppliersSkipped: 0,
       suppliersFailed: 0,
       errors: [],
+      truncated: false,
     });
     const results = await resultsPromise;
 

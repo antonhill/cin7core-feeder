@@ -3,15 +3,14 @@
 import { useActionState, useEffect, useState, useTransition } from "react";
 import {
   importCsvAction,
-  pushToCin7Action,
   type ImportActionState,
   type PushScopeSelection,
   type ScopeMode,
 } from "./actions";
 import type { ImportKind } from "@/import/run-import";
 import { getBillingStatusAction } from "@/actions/billing";
-import type { InstanceSyncOutcome } from "@/sync/sync-org";
 import { useInstancePicker } from "@/hooks/useInstancePicker";
+import { usePushJob } from "@/hooks/usePushJob";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { IMPORT_MODULE } from "@/app/module-nav";
@@ -19,7 +18,7 @@ import { Spinner } from "@/app/Spinner";
 
 const INITIAL_STATE: ImportActionState = { status: "idle" };
 
-// Kept in sync with pushToCin7Action's own default in actions.ts — a
+// Kept in sync with startPushJobAction's own default in actions.ts — a
 // "use server" file may only export async functions, so this can't be a
 // shared exported constant (that's what crashed every action in that file:
 // "A 'use server' file can only export async functions, found object").
@@ -105,9 +104,7 @@ export default function ImportPage() {
   const picker = useInstancePicker();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  const [pushOutcomes, setPushOutcomes] = useState<InstanceSyncOutcome[] | null>(null);
-  const [pushError, setPushError] = useState<string | null>(null);
-  const [isPushPending, startPushTransition] = useTransition();
+  const push = usePushJob();
   const [scopeSelection, setScopeSelection] = useState<PushScopeSelection>(DEFAULT_PUSH_SCOPE_SELECTION);
   // Tracks which committed batch the scope was last isolated for, so we only
   // re-isolate once per new import rather than on every render — set during
@@ -137,16 +134,7 @@ export default function ImportPage() {
   }
 
   function handlePush() {
-    setPushError(null);
-    setPushOutcomes(null);
-    startPushTransition(async () => {
-      const result = await pushToCin7Action(selectedIds, scopeSelection);
-      if (!result.ok) {
-        setPushError(result.error ?? "Unknown error");
-        return;
-      }
-      setPushOutcomes(result.outcomes ?? []);
-    });
+    push.start(selectedIds, scopeSelection);
   }
 
   function setScopeFor(key: keyof PushScopeSelection, mode: ScopeMode) {
@@ -300,7 +288,7 @@ export default function ImportPage() {
 
         {/* Step 3 — Push */}
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <StepHeader step={3} title="Push to Cin7 Core" done={pushOutcomes !== null} />
+          <StepHeader step={3} title="Push to Cin7 Core" done={push.status === "done"} />
 
           <div className="mt-5 pl-11">
             <p className="text-base font-medium text-slate-700">Scope</p>
@@ -345,12 +333,12 @@ export default function ImportPage() {
             <button
               type="button"
               onClick={handlePush}
-              disabled={isPushPending || selectedIds.length === 0 || !canWrite}
+              disabled={push.isPushing || push.status === "running" || selectedIds.length === 0 || !canWrite}
               className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
             >
-              {isPushPending && <Spinner className="mr-1.5" />}
-              {isPushPending
-                ? "Pushing…"
+              {(push.isPushing || push.status === "running") && <Spinner className="mr-1.5" />}
+              {push.status === "running"
+                ? "Pushing… (may take a while for a large catalog)"
                 : `Push to ${selectedIds.length || ""} instance${selectedIds.length === 1 ? "" : "s"}`}
             </button>
             {!canWrite && (
@@ -359,15 +347,15 @@ export default function ImportPage() {
               </p>
             )}
 
-            {pushError && (
+            {push.error && (
               <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {pushError}
+                {push.error}
               </p>
             )}
 
-            {pushOutcomes && (
+            {push.outcomes && (
               <div className="mt-4 flex flex-col gap-3">
-                {pushOutcomes.map((outcome) => (
+                {push.outcomes.map((outcome) => (
                   <div
                     key={outcome.instanceId}
                     className={`rounded-xl border p-4 ${outcome.ok ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}

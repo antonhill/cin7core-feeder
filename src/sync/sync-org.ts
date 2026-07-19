@@ -23,6 +23,8 @@ export interface InstanceSyncOutcome {
   suppliersSkipped?: number;
   suppliersFailed?: number;
   errors?: { sku: string; error: string[]; raw?: string }[];
+  /** See SyncRunSummary.truncated — set when a budgetMs cut this instance's push short. */
+  truncated?: boolean;
 }
 
 // Instances used to sync one at a time here, which meant two genuinely
@@ -86,7 +88,8 @@ export async function syncOrgInstances(
   orgId?: string,
   instanceIds?: string[],
   scope: PushScope = {},
-  actor: ActivityActor = "system"
+  actor: ActivityActor = "system",
+  budgetMs?: number
 ): Promise<InstanceSyncOutcome[]> {
   let query = db.from("cin7_instances").select("id, org_id").eq("active", true);
   if (orgId) query = query.eq("org_id", orgId);
@@ -96,7 +99,7 @@ export async function syncOrgInstances(
 
   return mapWithConcurrency(instances ?? [], MAX_CONCURRENT_INSTANCE_SYNCS, async (instance): Promise<InstanceSyncOutcome> => {
     try {
-      const summary = await syncInstance(db, instance.org_id, instance.id, scope);
+      const summary = await syncInstance(db, instance.org_id, instance.id, scope, budgetMs);
       await logActivity(db, {
         orgId: instance.org_id,
         instanceId: instance.id,

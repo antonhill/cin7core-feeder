@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncInstance } from "@/sync/run-sync";
 import { pushProduct } from "@/cin7/products";
@@ -299,6 +299,80 @@ describe("syncInstance", () => {
   it("throws if the instance is inactive", async () => {
     const { db } = createFakeDb({ cin7_instances: [{ ...instanceRow, active: false }] });
     await expect(syncInstance(db, "org1", "inst-1")).rejects.toThrow("inactive");
+  });
+
+  describe("budgetMs / truncated", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("stops once the budget runs out mid-products-loop and reports truncated: true", async () => {
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [
+          { org_id: "org1", sku: "SKU1", name: "A", content_hash: "h1" },
+          { org_id: "org1", sku: "SKU2", name: "B", content_hash: "h2" },
+        ],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+      });
+      vi.useFakeTimers();
+      // Each pushProduct call "takes" 1s of (fake) wall-clock time — simulates
+      // the real rate-limited Cin7 API call this stands in for.
+      vi.mocked(pushProduct).mockImplementation(async () => {
+        vi.advanceTimersByTime(1000);
+        return { cin7Id: "cin7-x", status: "created" };
+      });
+
+      const summary = await syncInstance(db, "org1", "inst-1", {}, 500);
+
+      expect(summary.truncated).toBe(true);
+      expect(summary.productsCreated).toBe(1);
+      expect(pushProduct).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not truncate when the whole run finishes within budget", async () => {
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [
+          { org_id: "org1", sku: "SKU1", name: "A", content_hash: "h1" },
+          { org_id: "org1", sku: "SKU2", name: "B", content_hash: "h2" },
+        ],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+      });
+      vi.useFakeTimers();
+      vi.mocked(pushProduct).mockImplementation(async () => {
+        vi.advanceTimersByTime(1000);
+        return { cin7Id: "cin7-x", status: "created" };
+      });
+
+      const summary = await syncInstance(db, "org1", "inst-1", {}, 10_000);
+
+      expect(summary.truncated).toBe(false);
+      expect(summary.productsCreated).toBe(2);
+      expect(pushProduct).toHaveBeenCalledTimes(2);
+    });
+
+    it("with no budgetMs at all, never truncates (today's unbounded behavior, unchanged)", async () => {
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: [{ org_id: "org1", sku: "SKU1", name: "A", content_hash: "h1" }],
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+      });
+      vi.mocked(pushProduct).mockResolvedValueOnce({ cin7Id: "cin7-x", status: "created" });
+
+      const summary = await syncInstance(db, "org1", "inst-1");
+
+      expect(summary.truncated).toBe(false);
+    });
   });
 
   describe("product reference-field pre-flight", () => {

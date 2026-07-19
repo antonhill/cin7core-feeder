@@ -49,6 +49,8 @@ export interface SyncRunSummary {
   suppliersSkipped: number;
   suppliersFailed: number;
   errors: { sku: string; error: string[]; raw?: string }[];
+  /** True iff `budgetMs` ran out before every product/BOM/customer/supplier row was attempted — the caller should invoke syncInstance again to pick up the rest (already-synced rows skip via content_hash, so this is cheap). */
+  truncated: boolean;
 }
 
 interface DescribedError {
@@ -142,8 +144,18 @@ export async function syncInstance(
   db: SupabaseClient,
   orgId: string,
   instanceId: string,
-  scope: PushScope = {}
+  scope: PushScope = {},
+  budgetMs?: number
 ): Promise<SyncRunSummary> {
+  // Sticky once tripped — a per-row check inside every phase's loop (not just
+  // once per phase), since a single phase's own row count can itself run long.
+  const deadline = budgetMs !== undefined ? Date.now() + budgetMs : null;
+  let truncated = false;
+  const overBudget = () => {
+    if (!truncated && deadline !== null && Date.now() >= deadline) truncated = true;
+    return truncated;
+  };
+
   const { data: instanceRow, error: instanceError } = await db
     .from("cin7_instances")
     .select("id, name, account_id, application_key_encrypted, base_url, active")
@@ -177,6 +189,7 @@ export async function syncInstance(
     suppliersFailed: 0,
     suppliersSkipped: 0,
     errors: [],
+    truncated: false,
   };
 
   let productsQuery = db
@@ -224,6 +237,7 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
   const refCheckCache = new Map<string, boolean>();
 
   for (const product of products ?? []) {
+    if (overBudget()) break;
     if (syncedHashBySku.has(product.sku) && syncedHashBySku.get(product.sku) === product.content_hash) {
       summary.productsSkipped++;
       continue;
@@ -358,13 +372,14 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
     .select("product_sku, version, version_name, version_default, buffer_percent, quantity_to_produce")
     .eq("org_id", orgId);
   if (scope.productSkus) versionsQuery = versionsQuery.in("product_sku", scope.productSkus);
-  const { data: versions } = await versionsQuery;
+  const { data: versions } = overBudget() ? { data: [] } : await versionsQuery;
 
   // Shared across every version this run — a work centre/resource looked up
   // for one product's BOM doesn't need a second call for the next.
   const productionBomRefCaches = createProductionBomRefCaches();
 
   for (const version of versions ?? []) {
+    if (overBudget()) break;
     try {
       const cin7ProductId = cin7IdBySku.get(version.product_sku);
       if (!cin7ProductId) {
@@ -407,7 +422,7 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
     )
     .eq("org_id", orgId);
   if (scope.customerNames) customersQuery = customersQuery.in("name", scope.customerNames);
-  const { data: customers } = await customersQuery;
+  const { data: customers } = overBudget() ? { data: [] } : await customersQuery;
 
   const { data: customerSyncStates } = await db
     .from("customer_sync_state")
@@ -419,6 +434,7 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
   );
 
   for (const customer of customers ?? []) {
+    if (overBudget()) break;
     if (syncedHashByCustomerName.has(customer.name) && syncedHashByCustomerName.get(customer.name) === customer.content_hash) {
       summary.customersSkipped++;
       continue;
@@ -533,7 +549,7 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
     )
     .eq("org_id", orgId);
   if (scope.supplierNames) suppliersQuery = suppliersQuery.in("name", scope.supplierNames);
-  const { data: suppliers } = await suppliersQuery;
+  const { data: suppliers } = overBudget() ? { data: [] } : await suppliersQuery;
 
   const { data: supplierSyncStates } = await db
     .from("supplier_sync_state")
@@ -545,6 +561,7 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
   );
 
   for (const supplier of suppliers ?? []) {
+    if (overBudget()) break;
     if (syncedHashBySupplierName.has(supplier.name) && syncedHashBySupplierName.get(supplier.name) === supplier.content_hash) {
       summary.suppliersSkipped++;
       continue;
@@ -634,5 +651,6 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
     }
   }
 
+  summary.truncated = truncated;
   return summary;
 }
