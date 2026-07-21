@@ -23,7 +23,13 @@ export async function commitSupplierRows(
 
   const names = [...suppliersByName.keys()];
   if (names.length) {
-    const { error: deleteError } = await db.from("supplier_contacts").delete().eq("org_id", orgId).in("name", names);
+    // See commit-customers.ts's identical delete for why this chunk size is
+    // much smaller than the upsert/insert chunks above.
+    const { error: deleteError } = await chunkedWrite(
+      names,
+      (chunk) => db.from("supplier_contacts").delete().eq("org_id", orgId).in("name", chunk),
+      200
+    );
     if (deleteError) throw new Error(`supplier_contacts delete: ${deleteError.message}`);
   }
 

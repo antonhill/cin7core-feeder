@@ -27,7 +27,13 @@ export async function commitSupplierAddressRows(
 ): Promise<CommitSupplierAddressesSummary> {
   const names = [...new Set(rows.map((r) => r.Name))];
   if (names.length) {
-    const { error } = await db.from("supplier_addresses").delete().eq("org_id", orgId).in("name", names);
+    // See commit-customers.ts's identical delete for why this chunk size is
+    // much smaller than the insert chunk below.
+    const { error } = await chunkedWrite(
+      names,
+      (chunk) => db.from("supplier_addresses").delete().eq("org_id", orgId).in("name", chunk),
+      200
+    );
     if (error) throw new Error(`supplier_addresses delete: ${error.message}`);
   }
 

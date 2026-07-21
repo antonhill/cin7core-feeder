@@ -33,7 +33,16 @@ export async function commitCustomerRows(
 
   const names = [...customersByName.keys()];
   if (names.length) {
-    const { error: deleteError } = await db.from("customer_contacts").delete().eq("org_id", orgId).in("name", names);
+    // Chunk size is much smaller than the upsert/insert chunks above: a
+    // .in("name", chunk) filter is encoded into the request URL, so what
+    // matters here is total character length, not row count — a large
+    // enough names list trips Cloudflare's URL-length limit ("414 Request-
+    // URI Too Large"), confirmed live 2026-07-21 on customer_contacts.
+    const { error: deleteError } = await chunkedWrite(
+      names,
+      (chunk) => db.from("customer_contacts").delete().eq("org_id", orgId).in("name", chunk),
+      200
+    );
     if (deleteError) throw new Error(`customer_contacts delete: ${deleteError.message}`);
   }
 
