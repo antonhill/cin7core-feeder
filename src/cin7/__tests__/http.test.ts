@@ -186,5 +186,32 @@ describe("cin7Request", () => {
 
       await Promise.all([promiseA, promiseB]);
     });
+
+    it("still paces N calls one interval apart when they're all launched in the same tick — pull-instance.ts's Promise.all over products/customers/suppliers for one account is exactly this shape", async () => {
+      process.env.RATE_LIMIT_RPS = "1";
+      vi.useFakeTimers();
+      const fn = mockFetchSequence([
+        () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+        () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+        () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      ]);
+
+      // No await between these — mirrors Promise.all([a(), b(), c()]) launching
+      // all three before any of them has had a chance to sleep-then-write back
+      // its own call timestamp. Under the old racy throttle(), b and c would
+      // both read the same stale lastCallAt and fire together.
+      const promises = [cin7Request(creds, "/Product"), cin7Request(creds, "/customer"), cin7Request(creds, "/supplier")];
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fn).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(fn).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(fn).toHaveBeenCalledTimes(3);
+
+      await Promise.all(promises);
+    });
   });
 });

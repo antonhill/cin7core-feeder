@@ -43,16 +43,33 @@ function minIntervalMs(): number {
 // concurrency (sync-org.ts) actually speed anything up.
 const lastCallAtByAccount = new Map<string, number>();
 
-async function throttle(accountId: string) {
-  const lastCallAt = lastCallAtByAccount.get(accountId) ?? 0;
-  const wait = lastCallAt + minIntervalMs() - Date.now();
-  if (wait > 0) await sleep(wait);
-  lastCallAtByAccount.set(accountId, Date.now());
+// A per-account FIFO queue, not just a shared timestamp — callers that fire
+// concurrently (e.g. pull-instance.ts's Promise.all over products/customers/
+// suppliers, all against the same account) must genuinely take turns, not
+// each read the same stale lastCallAt before any of them has slept and
+// written it back. That race (confirmed live 2026-07-21: several concurrent
+// callers computing the same wake-up time and firing together) let bursts
+// through fast enough to trip Cin7's 60-calls/60s limit despite RATE_LIMIT_RPS
+// being 1. Chaining every call onto the same account's queue tail forces
+// them through the read→sleep→write sequence one at a time.
+const throttleQueueByAccount = new Map<string, Promise<void>>();
+
+function throttle(accountId: string): Promise<void> {
+  const previous = throttleQueueByAccount.get(accountId) ?? Promise.resolve();
+  const next = previous.then(async () => {
+    const lastCallAt = lastCallAtByAccount.get(accountId) ?? 0;
+    const wait = lastCallAt + minIntervalMs() - Date.now();
+    if (wait > 0) await sleep(wait);
+    lastCallAtByAccount.set(accountId, Date.now());
+  });
+  throttleQueueByAccount.set(accountId, next);
+  return next;
 }
 
-/** Test-only: fake timers can leave lastCallAtByAccount referencing a stale fake clock. */
+/** Test-only: fake timers can leave lastCallAtByAccount/throttleQueueByAccount referencing a stale fake clock. */
 export function __resetRateLimiterForTests() {
   lastCallAtByAccount.clear();
+  throttleQueueByAccount.clear();
 }
 
 /**
