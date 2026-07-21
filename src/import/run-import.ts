@@ -185,8 +185,14 @@ export async function runImport(
       errors: r.errors,
     })),
   ];
-  if (rowsToInsert.length) {
-    const { error } = await db.from("import_rows").insert(rowsToInsert);
+  // Chunked, not one INSERT for the whole batch — a large live pull (e.g.
+  // Migrate against an instance with a big catalog) can mean thousands of
+  // rows each carrying their full raw JSONB, and a single INSERT that size
+  // hit Postgres's statement timeout in practice (confirmed live 2026-07-21).
+  const IMPORT_ROWS_INSERT_BATCH_SIZE = 500;
+  for (let i = 0; i < rowsToInsert.length; i += IMPORT_ROWS_INSERT_BATCH_SIZE) {
+    const chunk = rowsToInsert.slice(i, i + IMPORT_ROWS_INSERT_BATCH_SIZE);
+    const { error } = await db.from("import_rows").insert(chunk);
     if (error) throw new Error(`import_rows: ${error.message}`);
   }
 
