@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { toCanonicalCustomer, toCanonicalCustomerContact, type CustomerCsvRow } from "@/model/customers";
+import { chunkedWrite } from "@/import/chunked-write";
 
 export interface CommitCustomersSummary {
   customersUpserted: number;
@@ -25,12 +26,9 @@ export async function commitCustomerRows(
   const customersByName = new Map(rows.map((r) => [r.Name, toCanonicalCustomer(r)]));
   const customers = [...customersByName.values()];
 
-  const { error } = await db
-    .from("customers")
-    .upsert(
-      customers.map((c) => ({ ...c, org_id: orgId })),
-      { onConflict: "org_id,name" }
-    );
+  const { error } = await chunkedWrite(customers.map((c) => ({ ...c, org_id: orgId })), (chunk) =>
+    db.from("customers").upsert(chunk, { onConflict: "org_id,name" })
+  );
   if (error) throw new Error(`customers: ${error.message}`);
 
   const names = [...customersByName.keys()];
@@ -41,9 +39,9 @@ export async function commitCustomerRows(
 
   const contacts = rows.map(toCanonicalCustomerContact).filter((c) => c.contact_name);
   if (contacts.length) {
-    const { error: insertError } = await db
-      .from("customer_contacts")
-      .insert(contacts.map((c) => ({ ...c, org_id: orgId })));
+    const { error: insertError } = await chunkedWrite(contacts.map((c) => ({ ...c, org_id: orgId })), (chunk) =>
+      db.from("customer_contacts").insert(chunk)
+    );
     if (insertError) throw new Error(`customer_contacts insert: ${insertError.message}`);
   }
 

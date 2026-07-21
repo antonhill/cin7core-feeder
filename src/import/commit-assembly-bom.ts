@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { toCanonicalAssemblyBomLine, type AssemblyBomCsvRow, type CanonicalAssemblyBomLine } from "@/model/assembly-bom";
+import { chunkedWrite } from "@/import/chunked-write";
 
 export interface CommitAssemblyBomSummary {
   linesUpserted: number;
@@ -55,12 +56,9 @@ export async function commitAssemblyBomRows(
     const dedupedLines = [...bySkuPair.values()];
     linesUpserted = dedupedLines.length;
 
-    const { error } = await db
-      .from("assembly_bom_lines")
-      .upsert(
-        dedupedLines.map((l) => ({ ...l, org_id: orgId })),
-        { onConflict: "org_id,product_sku,component_sku" }
-      );
+    const { error } = await chunkedWrite(dedupedLines.map((l) => ({ ...l, org_id: orgId })), (chunk) =>
+      db.from("assembly_bom_lines").upsert(chunk, { onConflict: "org_id,product_sku,component_sku" })
+    );
     if (error) throw new Error(`assembly_bom_lines upsert: ${error.message}`);
   }
 

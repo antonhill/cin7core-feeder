@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { toCanonicalPriceTiers, toCanonicalProduct, type ProductCsvRow } from "@/model/products";
+import { chunkedWrite } from "@/import/chunked-write";
 
 export interface CommitSummary {
   productsUpserted: number;
@@ -35,40 +36,28 @@ export async function commitProductRows(
   const uomCodes = new Set(products.map((p) => p.uom_code).filter((c): c is string => !!c));
 
   if (categoryCodes.size) {
-    const { error } = await db
-      .from("categories")
-      .upsert(
-        [...categoryCodes].map((code) => ({ org_id: orgId, code, name: code })),
-        { onConflict: "org_id,code", ignoreDuplicates: true }
-      );
+    const { error } = await chunkedWrite([...categoryCodes].map((code) => ({ org_id: orgId, code, name: code })), (chunk) =>
+      db.from("categories").upsert(chunk, { onConflict: "org_id,code", ignoreDuplicates: true })
+    );
     if (error) throw new Error(`categories: ${error.message}`);
   }
 
   if (uomCodes.size) {
-    const { error } = await db
-      .from("uoms")
-      .upsert(
-        [...uomCodes].map((code) => ({ org_id: orgId, code, name: code })),
-        { onConflict: "org_id,code", ignoreDuplicates: true }
-      );
+    const { error } = await chunkedWrite([...uomCodes].map((code) => ({ org_id: orgId, code, name: code })), (chunk) =>
+      db.from("uoms").upsert(chunk, { onConflict: "org_id,code", ignoreDuplicates: true })
+    );
     if (error) throw new Error(`uoms: ${error.message}`);
   }
 
-  const { error: productsError } = await db
-    .from("products")
-    .upsert(
-      products.map((p) => ({ ...p, org_id: orgId })),
-      { onConflict: "org_id,sku" }
-    );
+  const { error: productsError } = await chunkedWrite(products.map((p) => ({ ...p, org_id: orgId })), (chunk) =>
+    db.from("products").upsert(chunk, { onConflict: "org_id,sku" })
+  );
   if (productsError) throw new Error(`products: ${productsError.message}`);
 
   if (priceTiers.length) {
-    const { error } = await db
-      .from("price_tiers")
-      .upsert(
-        priceTiers.map((t) => ({ ...t, org_id: orgId })),
-        { onConflict: "org_id,product_sku,tier_code" }
-      );
+    const { error } = await chunkedWrite(priceTiers.map((t) => ({ ...t, org_id: orgId })), (chunk) =>
+      db.from("price_tiers").upsert(chunk, { onConflict: "org_id,product_sku,tier_code" })
+    );
     if (error) throw new Error(`price_tiers: ${error.message}`);
   }
 

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { toCanonicalCustomerAddress, type CustomerAddressCsvRow } from "@/model/customer-addresses";
+import { chunkedWrite } from "@/import/chunked-write";
 
 export interface CommitCustomerAddressesSummary {
   addressesUpserted: number;
@@ -24,7 +25,9 @@ export async function commitCustomerAddressRows(
 
   const toInsert = rows.filter((r) => !isDeleteAction(r.Action)).map(toCanonicalCustomerAddress);
   if (toInsert.length) {
-    const { error } = await db.from("customer_addresses").insert(toInsert.map((a) => ({ ...a, org_id: orgId })));
+    const { error } = await chunkedWrite(toInsert.map((a) => ({ ...a, org_id: orgId })), (chunk) =>
+      db.from("customer_addresses").insert(chunk)
+    );
     if (error) throw new Error(`customer_addresses insert: ${error.message}`);
   }
 
