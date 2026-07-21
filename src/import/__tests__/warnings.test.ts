@@ -7,6 +7,7 @@ import {
   checkBlankSupplierAccountPayable,
   checkBlankSupplierRequiredFields,
   checkContactMissingName,
+  checkDuplicateProductSkus,
   checkFixedAssetType,
   checkMultipleDefaultAddresses,
   checkMultipleDefaultContacts,
@@ -464,6 +465,26 @@ describe("checkFixedAssetType", () => {
 
   it("does not warn when Type is Stock and FixedAssetType is blank", () => {
     expect(checkFixedAssetType([parsedRow(1, productRow({ Type: "Stock", FixedAssetType: "" }))])).toEqual([]);
+  });
+});
+
+describe("checkDuplicateProductSkus", () => {
+  it("warns on every row when a ProductCode appears more than once", () => {
+    const rows = [
+      parsedRow(1, productRow({ ProductCode: "SKU-1" })),
+      parsedRow(2, productRow({ ProductCode: "SKU-2" })),
+      parsedRow(3, productRow({ ProductCode: "SKU-1" })),
+    ];
+    const warnings = checkDuplicateProductSkus(rows);
+    expect(warnings).toEqual([
+      { rowNumber: 1, message: 'ProductCode "SKU-1" appears 2 times in this file (rows 1, 3) — only the last one was kept' },
+      { rowNumber: 3, message: 'ProductCode "SKU-1" appears 2 times in this file (rows 1, 3) — only the last one was kept' },
+    ]);
+  });
+
+  it("does not warn when every ProductCode is unique", () => {
+    const rows = [parsedRow(1, productRow({ ProductCode: "SKU-1" })), parsedRow(2, productRow({ ProductCode: "SKU-2" }))];
+    expect(checkDuplicateProductSkus(rows)).toEqual([]);
   });
 });
 

@@ -17,8 +17,19 @@ export async function commitProductRows(
   orgId: string,
   rows: ProductCsvRow[]
 ): Promise<CommitSummary> {
-  const products = rows.map(toCanonicalProduct);
-  const priceTiers = rows.flatMap(toCanonicalPriceTiers);
+  // products' real conflict key is (org_id, sku) — two rows sharing a
+  // ProductCode in the same batch make the upsert below throw "ON CONFLICT
+  // DO UPDATE command cannot affect row a second time" (confirmed live
+  // 2026-07-21, on a Migrate pull whose source Cin7 account's /Product
+  // export contained duplicate ProductCodes). Deduping here, before
+  // products/priceTiers are derived, keeps both consistent with whichever
+  // occurrence survives — checkDuplicateProductSkus (warnings.ts) surfaces
+  // which rows were involved, so this doesn't silently hide it.
+  const dedupedBySku = new Map(rows.map((r) => [r.ProductCode, r]));
+  const uniqueRows = [...dedupedBySku.values()];
+
+  const products = uniqueRows.map(toCanonicalProduct);
+  const priceTiers = uniqueRows.flatMap(toCanonicalPriceTiers);
 
   const categoryCodes = new Set(products.map((p) => p.category_code).filter((c): c is string => !!c));
   const uomCodes = new Set(products.map((p) => p.uom_code).filter((c): c is string => !!c));

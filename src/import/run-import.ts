@@ -25,6 +25,7 @@ import {
   checkBlankSupplierAccountPayable,
   checkBlankSupplierRequiredFields,
   checkContactMissingName,
+  checkDuplicateProductSkus,
   checkFixedAssetType,
   checkMultipleDefaultAddresses,
   checkMultipleDefaultContacts,
@@ -154,6 +155,7 @@ export async function runImport(
       ...checkProductEnumFields(valid as ParsedRow<ProductCsvRow>[]),
       ...checkProductBooleanFields(valid as ParsedRow<ProductCsvRow>[]),
       ...checkFixedAssetType(valid as ParsedRow<ProductCsvRow>[]),
+      ...checkDuplicateProductSkus(valid as ParsedRow<ProductCsvRow>[]),
       ...(await checkProductSupplierReference(db, orgId, valid as ParsedRow<ProductCsvRow>[])),
     ];
   }

@@ -248,6 +248,38 @@ export function checkFixedAssetType(rows: ParsedRow<ProductCsvRow>[]): ImportWar
   return warnings;
 }
 
+/**
+ * ProductCode (sku) is the products table's real conflict key
+ * (org_id,sku — commit-products.ts's upsert). Two rows sharing one within a
+ * single import batch make that upsert throw "ON CONFLICT DO UPDATE command
+ * cannot affect row a second time" (confirmed live 2026-07-21, on a Migrate
+ * pull from a Cin7 account whose /Product export contained duplicate
+ * ProductCodes). commit-products.ts dedupes before upserting so the batch
+ * always succeeds — this surfaces which rows were involved so the
+ * duplication is visible rather than silently resolved.
+ */
+export function checkDuplicateProductSkus(rows: ParsedRow<ProductCsvRow>[]): ImportWarning[] {
+  const groups = new Map<string, ParsedRow<ProductCsvRow>[]>();
+  for (const r of rows) {
+    const group = groups.get(r.data.ProductCode) ?? [];
+    group.push(r);
+    groups.set(r.data.ProductCode, group);
+  }
+
+  const warnings: ImportWarning[] = [];
+  for (const group of groups.values()) {
+    if (group.length <= 1) continue;
+    const rowNumbers = group.map((r) => r.rowNumber).join(", ");
+    for (const r of group) {
+      warnings.push({
+        rowNumber: r.rowNumber,
+        message: `ProductCode "${r.data.ProductCode}" appears ${group.length} times in this file (rows ${rowNumbers}) — only the last one was kept`,
+      });
+    }
+  }
+  return warnings;
+}
+
 /** The subset of Customer/Supplier CSV columns describing one contact — both templates share this exact shape. */
 interface ContactRowFields {
   Name: string;
