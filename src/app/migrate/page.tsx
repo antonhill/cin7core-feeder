@@ -1,15 +1,14 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { pullInstanceDataAction } from "./actions";
 import type { PushScopeSelection } from "@/app/import/actions";
 import { useInstancePicker } from "@/hooks/useInstancePicker";
 import { usePushJob } from "@/hooks/usePushJob";
+import { usePullJob } from "@/hooks/usePullJob";
 import { InstancePicker } from "@/app/InstancePicker";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { getBillingStatusAction } from "@/actions/billing";
 import { Spinner } from "@/app/Spinner";
-import type { PullInstanceResult } from "@/migrate/pull-instance";
 import type { ImportKind } from "@/import/run-import";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { MIGRATE_MODULE } from "@/app/module-nav";
@@ -61,8 +60,7 @@ export default function MigratePage() {
   const sourceId = picker.instanceId;
   const setSourceId = picker.setInstanceId;
 
-  const [pullResult, setPullResult] = useState<PullInstanceResult | null>(null);
-  const [isPullPending, startPullTransition] = useTransition();
+  const pull = usePullJob();
 
   const [targetIds, setTargetIds] = useState<string[]>([]);
   const push = usePushJob();
@@ -80,12 +78,9 @@ export default function MigratePage() {
 
   function handlePull() {
     if (!sourceId) return;
-    setPullResult(null);
     push.reset();
     setTargetIds((prev) => prev.filter((id) => id !== sourceId));
-    startPullTransition(async () => {
-      setPullResult(await pullInstanceDataAction(sourceId));
-    });
+    pull.start(sourceId);
   }
 
   function toggleTarget(id: string) {
@@ -114,7 +109,7 @@ export default function MigratePage() {
 
       <div className="mt-6 flex flex-col gap-6">
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <StepHeader step={1} title="Pull from a source instance" done={pullResult?.ok === true} />
+          <StepHeader step={1} title="Pull from a source instance" done={pull.status === "done"} />
 
           <div className="mt-5 pl-11">
             <InstancePicker {...picker} onChange={setSourceId} />
@@ -122,23 +117,23 @@ export default function MigratePage() {
             <button
               type="button"
               onClick={handlePull}
-              disabled={isPullPending || !sourceId}
+              disabled={pull.isPulling || pull.status === "running" || !sourceId}
               className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
             >
-              {isPullPending && <Spinner className="mr-1.5" />}
-              {isPullPending ? "Pulling…" : "Pull all data"}
+              {(pull.isPulling || pull.status === "running") && <Spinner className="mr-1.5" />}
+              {pull.status === "running" ? "Pulling… (may take a while for a large catalog)" : "Pull all data"}
             </button>
 
-            {pullResult && !pullResult.ok && (
+            {pull.error && (
               <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {pullResult.error}
+                {pull.error}
               </p>
             )}
 
-            {pullResult?.ok && pullResult.results && (
+            {pull.results && (
               <div className="mt-4 flex flex-col gap-3">
                 {KIND_ORDER.map((kind) => {
-                  const result = pullResult.results?.[kind];
+                  const result = pull.results?.[kind];
                   if (!result) return null;
                   const committedCount = result.rowCount - result.errorCount;
                   return (
@@ -202,7 +197,7 @@ export default function MigratePage() {
             <button
               type="button"
               onClick={handlePush}
-              disabled={push.isPushing || push.status === "running" || targetIds.length === 0 || !pullResult?.ok || !canWrite}
+              disabled={push.isPushing || push.status === "running" || targetIds.length === 0 || pull.status !== "done" || !canWrite}
               className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
             >
               {(push.isPushing || push.status === "running") && <Spinner className="mr-1.5" />}
