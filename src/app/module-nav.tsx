@@ -192,6 +192,17 @@ export function ReplenishIcon({ className }: IconProps) {
   );
 }
 
+export function SupplierPlannerIcon({ className }: IconProps) {
+  return (
+    <GradientIcon className={className} from="#0891b2" to="#0e7490">
+      <rect x="3" y="4" width="18" height="14" rx="1" />
+      <path d="M3 9h18" />
+      <path d="M8 14h3M8 17h5" />
+      <circle cx="17" cy="15.5" r="1" />
+    </GradientIcon>
+  );
+}
+
 export function TeamIcon({ className }: IconProps) {
   return (
     <GradientIcon className={className} from="#2563eb" to="#1d4ed8">
@@ -321,6 +332,15 @@ export const REPLENISH_MODULE: ModuleConfig = {
   blurb: "Compare stock-on-hand per location against each product's reorder point (location-specific or global) and create real Stock Transfers from a chosen source location.",
 };
 
+export const SUPPLIER_PLANNER_MODULE: ModuleConfig = {
+  href: "/supplier-planner",
+  label: "Supplier Planner",
+  gradient: SELF_COLORED_ICON_BADGE,
+  Icon: SupplierPlannerIcon,
+  blurb:
+    "Combines each supplier's configured lead time and safety stock with recent sales velocity to flag products that need reordering before they run out during transit — the lead-time-aware workflow for imports/long-lead-time suppliers.",
+};
+
 export const HEALTH_MODULE: ModuleConfig = {
   href: "/health",
   label: "System Health",
@@ -407,6 +427,7 @@ export const MODULES: ModuleConfig[] = [
   AUDIT_MODULE,
   PRICING_MODULE,
   REPLENISH_MODULE,
+  SUPPLIER_PLANNER_MODULE,
   HEALTH_MODULE,
   INSTANCES_MODULE,
   ACTIVITY_MODULE,
