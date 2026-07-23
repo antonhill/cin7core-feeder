@@ -1858,3 +1858,53 @@ export async function surveyProductSupplierOptionsFields(creds: Cin7Credentials)
 
   return { pathProbes, includeProbes };
 }
+
+export interface ProductSupplierOptionsExampleVariant {
+  includeFlags: string[];
+  rawExample: unknown;
+}
+
+export interface ProductSupplierOptionsExample {
+  sku: string;
+  found: boolean;
+  variants: ProductSupplierOptionsExampleVariant[];
+}
+
+/**
+ * Diagnostic only: surveyProductSupplierOptionsFields's blind 50-product
+ * scan found nothing, but that only proves those 50 products don't have the
+ * feature configured, not that the flag guesses were wrong — confirmed live
+ * 2026-07-23 that Cin7's own product-edit UI shows a populated example
+ * ("New Item for Smart", supplier "3 Diamonds Transport (Pty) Ltd", Lead=10/
+ * Safety=20/ReorderQuantity=500/MinimumOrderQuantity=500, plus a per-location
+ * breakdown) rendered on the Suppliers tab. Fetches that exact product under
+ * several flag combinations and dumps the full raw record for each — so the
+ * data (if the API exposes it via a flag guessed here) can be visually
+ * diffed out, rather than relying on the fully-automated key-matching
+ * surveyProductSupplierOptionsFields already tried and came up empty on a
+ * population that may just not have had this feature set at all.
+ */
+export async function findProductSupplierOptionsExample(creds: Cin7Credentials, sku: string): Promise<ProductSupplierOptionsExample> {
+  const flagSets: string[][] = [
+    [],
+    ["IncludeSuppliers"],
+    ["IncludeSuppliers", "IncludeReorderLevels"],
+    ["IncludeSuppliers", "IncludeSupplierOptions"],
+    ["IncludeSuppliers", "IncludeProductSupplierOptions"],
+    ["IncludeSupplierOptions"],
+    ["IncludeProductSupplierOptions"],
+  ];
+
+  const variants: ProductSupplierOptionsExampleVariant[] = [];
+  let found = false;
+  for (const flags of flagSets) {
+    const query: Record<string, string | number> = { SKU: sku, page: 1, limit: 1 };
+    for (const flag of flags) query[flag] = "true";
+    const response = await cin7Request<Cin7ProductListResponse>(creds, "/Product", { query });
+    const rawExample = response.Products?.[0];
+    if (rawExample) found = true;
+    variants.push({ includeFlags: flags, rawExample });
+  }
+
+  return { sku, found, variants };
+}

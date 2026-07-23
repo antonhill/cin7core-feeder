@@ -22,6 +22,7 @@ import {
   debugSurveyPurchaseDetailFields,
   debugSurveyProductAvailabilityFields,
   debugSurveyProductSupplierOptionsFields,
+  debugFindProductSupplierOptionsExample,
   debugSurveySaleFulfillmentFields,
   debugSurveyBackorderEtaFields,
   debugTestSaleShipByWriteBack,
@@ -52,6 +53,7 @@ export default function DiagnosticsPage() {
   const [productionOrderNumbers, setProductionOrderNumbers] = useState<Record<string, string>>({});
   const [shipByTestOrderNumbers, setShipByTestOrderNumbers] = useState<Record<string, string>>({});
   const [supplierLinkTests, setSupplierLinkTests] = useState<Record<string, string>>({});
+  const [supplierOptionsSkus, setSupplierOptionsSkus] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -256,6 +258,16 @@ export default function DiagnosticsPage() {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Hunting for Product Supplier Options fields (many calls)…" } }));
     startTransition(async () => {
       const result = await debugSurveyProductSupplierOptionsFields(instanceId);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
+  function handleFindProductSupplierOptionsExample(instanceId: string) {
+    const sku = (supplierOptionsSkus[instanceId] ?? "").trim();
+    if (!sku) return;
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Fetching one SKU under several Include flag combos…" } }));
+    startTransition(async () => {
+      const result = await debugFindProductSupplierOptionsExample(instanceId, sku);
       setTestResults((prev) => ({ ...prev, [instanceId]: result }));
     });
   }
@@ -467,6 +479,24 @@ export default function DiagnosticsPage() {
               >
                 Survey Product Supplier Options fields (Replenish rebuild)
               </button>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="SKU e.g. New Item for Smart"
+                value={supplierOptionsSkus[inst.id] ?? ""}
+                onChange={(e) => setSupplierOptionsSkus((prev) => ({ ...prev, [inst.id]: e.target.value }))}
+                className="w-96 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+              />
+              <button
+                onClick={() => handleFindProductSupplierOptionsExample(inst.id)}
+                disabled={isPending || !(supplierOptionsSkus[inst.id] ?? "").trim()}
+                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Fetch one SKU&apos;s Product Supplier Options (targeted, raw dump)
+              </button>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
               <button
                 onClick={() => handleSurveySaleFulfillmentFields(inst.id)}
                 disabled={isPending}

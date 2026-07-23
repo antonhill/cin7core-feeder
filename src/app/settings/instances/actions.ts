@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
-import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail, surveyProductionOrderRoutingTasks, surveyProductionOrderOperationStatus, surveyProductionRun, surveyProductionOrderStatuses, surveyPurchaseDetailFields, surveyProductAvailabilityFields, surveySaleFulfillmentFields, surveyBackorderEtaFields, testSaleShipByWriteBack, testProductSupplierLink, surveyProductSupplierOptionsFields } from "@/cin7/debug";
+import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail, surveyProductionOrderRoutingTasks, surveyProductionOrderOperationStatus, surveyProductionRun, surveyProductionOrderStatuses, surveyPurchaseDetailFields, surveyProductAvailabilityFields, surveySaleFulfillmentFields, surveyBackorderEtaFields, testSaleShipByWriteBack, testProductSupplierLink, surveyProductSupplierOptionsFields, findProductSupplierOptionsExample } from "@/cin7/debug";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
@@ -442,6 +442,17 @@ export async function debugSurveyProductSupplierOptionsFields(instanceId: string
   try {
     const creds = await loadInstanceCreds(instanceId);
     const result = await surveyProductSupplierOptionsFields(creds);
+    return { ok: true, message: JSON.stringify(result, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/** Targeted follow-up to debugSurveyProductSupplierOptionsFields — fetches one exact SKU (a real confirmed-populated example, found via Cin7's own product-edit UI) under several Include flag combos and dumps the raw record so the right field/flag can be diffed out directly rather than relying on a blind bulk scan. */
+export async function debugFindProductSupplierOptionsExample(instanceId: string, sku: string): Promise<TestConnectionResult> {
+  try {
+    const creds = await loadInstanceCreds(instanceId);
+    const result = await findProductSupplierOptionsExample(creds, sku);
     return { ok: true, message: JSON.stringify(result, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
