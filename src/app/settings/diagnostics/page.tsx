@@ -21,6 +21,7 @@ import {
   debugSurveyProductionOrderStatuses,
   debugSurveyPurchaseDetailFields,
   debugSurveyProductAvailabilityFields,
+  debugSurveyProductSupplierOptionsFields,
   debugSurveySaleFulfillmentFields,
   debugSurveyBackorderEtaFields,
   debugTestSaleShipByWriteBack,
@@ -251,6 +252,14 @@ export default function DiagnosticsPage() {
     });
   }
 
+  function handleSurveyProductSupplierOptionsFields(instanceId: string) {
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Hunting for Product Supplier Options fields (many calls)…" } }));
+    startTransition(async () => {
+      const result = await debugSurveyProductSupplierOptionsFields(instanceId);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
   function handleSurveySaleFulfillmentFields(instanceId: string) {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Surveying sale fulfillment fields (multiple calls)…" } }));
     startTransition(async () => {
@@ -450,6 +459,13 @@ export default function DiagnosticsPage() {
                 className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Survey product availability fields (Stock Health)
+              </button>
+              <button
+                onClick={() => handleSurveyProductSupplierOptionsFields(inst.id)}
+                disabled={isPending}
+                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Survey Product Supplier Options fields (Replenish rebuild)
               </button>
               <button
                 onClick={() => handleSurveySaleFulfillmentFields(inst.id)}

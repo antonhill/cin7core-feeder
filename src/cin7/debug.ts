@@ -1685,3 +1685,176 @@ export async function testProductSupplierLink(creds: Cin7Credentials, sku: strin
   }
   return { sku, supplierName, supplierFound: Boolean(supplier), supplierId, fullRecordHadId, attempts };
 }
+
+export interface ProductSupplierOptionsPathProbe {
+  path: string;
+  status: number;
+  looksLikeJson: boolean;
+  snippet: string;
+}
+
+export interface ProductSupplierOptionsFieldMatch {
+  /** Where the signature keys turned up: a brand-new top-level array field on Product, or nested inside each existing Suppliers[] entry. */
+  location: "top-level field" | "nested in Suppliers[]";
+  fieldKey: string;
+  nonEmptyCount: number;
+  keys: string[];
+  keyExamples: Record<string, unknown>;
+  rawExample?: unknown;
+}
+
+export interface ProductSupplierOptionsIncludeProbe {
+  includeFlag: string | null;
+  productsScanned: number;
+  matches: ProductSupplierOptionsFieldMatch[];
+}
+
+export interface ProductSupplierOptionsSurvey {
+  pathProbes: ProductSupplierOptionsPathProbe[];
+  includeProbes: ProductSupplierOptionsIncludeProbe[];
+}
+
+/** Cin7's own docs (screenshot reviewed 2026-07-23) name these fields on its "Product Supplier Options Model" — Lead/Safety/MinimumToReorder/SupplyIntervals aren't used anywhere else in this codebase, so any object carrying one is almost certainly that model. */
+const PRODUCT_SUPPLIER_OPTIONS_SIGNATURE_KEYS = ["Lead", "Safety", "MinimumToReorder", "SupplyIntervals"];
+
+function looksLikeProductSupplierOptions(entry: Record<string, unknown>): boolean {
+  return PRODUCT_SUPPLIER_OPTIONS_SIGNATURE_KEYS.some((key) => key in entry);
+}
+
+function scanForProductSupplierOptions(products: Record<string, unknown>[]): ProductSupplierOptionsFieldMatch[] {
+  const topLevel = new Map<string, { count: number; keySet: Set<string>; keyExamples: Record<string, unknown>; rawExample?: unknown }>();
+  const nested = { count: 0, keySet: new Set<string>(), keyExamples: {} as Record<string, unknown>, rawExample: undefined as unknown };
+
+  for (const raw of products) {
+    for (const [key, value] of Object.entries(raw)) {
+      if (!Array.isArray(value) || value.length === 0) continue;
+      const first = value[0];
+      if (!first || typeof first !== "object") continue;
+
+      if (key === "Suppliers") {
+        for (const entry of value as Record<string, unknown>[]) {
+          if (!looksLikeProductSupplierOptions(entry)) continue;
+          nested.count++;
+          collectKeys([entry], nested.keySet, nested.keyExamples);
+          if (!nested.rawExample) nested.rawExample = entry;
+        }
+        continue;
+      }
+
+      if (looksLikeProductSupplierOptions(first as Record<string, unknown>)) {
+        const bucket = topLevel.get(key) ?? { count: 0, keySet: new Set<string>(), keyExamples: {} };
+        bucket.count++;
+        collectKeys(value as Record<string, unknown>[], bucket.keySet, bucket.keyExamples);
+        if (!bucket.rawExample) bucket.rawExample = value;
+        topLevel.set(key, bucket);
+      }
+    }
+  }
+
+  const matches: ProductSupplierOptionsFieldMatch[] = [];
+  for (const [fieldKey, bucket] of topLevel) {
+    matches.push({
+      location: "top-level field",
+      fieldKey,
+      nonEmptyCount: bucket.count,
+      keys: [...bucket.keySet].sort(),
+      keyExamples: bucket.keyExamples,
+      rawExample: bucket.rawExample,
+    });
+  }
+  if (nested.count > 0) {
+    matches.push({
+      location: "nested in Suppliers[]",
+      fieldKey: "Suppliers",
+      nonEmptyCount: nested.count,
+      keys: [...nested.keySet].sort(),
+      keyExamples: nested.keyExamples,
+      rawExample: nested.rawExample,
+    });
+  }
+  return matches;
+}
+
+/**
+ * Diagnostic only: hunts for Cin7's "Product Supplier Options" model (Lead/
+ * Safety/ReorderQuantity/MinimumToReorder/SupplyIntervals, per (product,
+ * supplier, location) per a screenshot of Cin7's own docs reviewed
+ * 2026-07-23) — never fetched by this codebase before, and neither its
+ * endpoint nor its opt-in flag (if any) is documented anywhere accessible
+ * to us. Tries every shape this project has seen Cin7 use elsewhere for a
+ * feature like this:
+ *   1. A standalone list endpoint (like /purchaseList, /saleList) — several
+ *      plausible casings.
+ *   2. A brand-new nested array field on GET /Product, unlocked by an
+ *      Include*=true flag (the same opt-in-nested-data pattern as
+ *      IncludeReorderLevels/IncludeBOM/IncludeSuppliers) — several
+ *      plausible flag names, plus a no-flag baseline in case it's already
+ *      returned by default.
+ *   3. An EXTENDED shape of the existing Suppliers[] entries themselves —
+ *      plausible given the model's own name ("Product SUPPLIER Options"),
+ *      i.e. Lead/Safety/etc. might just be additional fields on each
+ *      product-supplier link Cin7 already returns via IncludeSuppliers=true,
+ *      not a separate array at all.
+ * Reports which (if any) actually returns matching data, rather than
+ * committing to an implementation from the doc screenshot alone — same
+ * discipline as every other survey* function here.
+ */
+export async function surveyProductSupplierOptionsFields(creds: Cin7Credentials): Promise<ProductSupplierOptionsSurvey> {
+  const pathCandidates = [
+    "/productsupplieroptions",
+    "/ProductSupplierOptions",
+    "/ref/productsupplieroptions",
+    "/ref/ProductSupplierOptions",
+    "/productSupplierOptions",
+  ];
+
+  const pathProbes: ProductSupplierOptionsPathProbe[] = [];
+  for (const path of pathCandidates) {
+    const url = new URL(`${creds.baseUrl.replace(/\/$/, "")}${path}`);
+    url.searchParams.set("Page", "1");
+    url.searchParams.set("Limit", "100");
+    try {
+      const response = await fetch(url.toString(), {
+        method: "GET",
+        headers: {
+          "api-auth-accountid": creds.accountId,
+          "api-auth-applicationkey": creds.applicationKey,
+          Accept: "application/json",
+        },
+      });
+      const text = await response.text();
+      let looksLikeJson = false;
+      try {
+        JSON.parse(text);
+        looksLikeJson = true;
+      } catch {
+        looksLikeJson = false;
+      }
+      pathProbes.push({ path, status: response.status, looksLikeJson, snippet: text.slice(0, 200) });
+    } catch (e) {
+      pathProbes.push({ path, status: 0, looksLikeJson: false, snippet: e instanceof Error ? e.message : "network error" });
+    }
+    // Space these out — these bypass cin7Request's built-in throttle queue
+    // (raw fetch, same reasoning as probeWorkCentrePaths above).
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+  }
+
+  const includeFlagCandidates: (string | null)[] = [
+    null, // baseline: no extra flag, in case it's returned by default or lives inside IncludeSuppliers
+    "IncludeSuppliers",
+    "IncludeSupplierOptions",
+    "IncludeProductSupplierOptions",
+    "IncludeReorderOptions",
+    "IncludeSupplierReorderOptions",
+  ];
+  const includeProbes: ProductSupplierOptionsIncludeProbe[] = [];
+  for (const includeFlag of includeFlagCandidates) {
+    const query: Record<string, string | number> = { page: 1, limit: 50 };
+    if (includeFlag) query[includeFlag] = "true";
+    const response = await cin7Request<Cin7ProductListResponse>(creds, "/Product", { query });
+    const products = (response.Products ?? []) as Record<string, unknown>[];
+    includeProbes.push({ includeFlag, productsScanned: products.length, matches: scanForProductSupplierOptions(products) });
+  }
+
+  return { pathProbes, includeProbes };
+}
