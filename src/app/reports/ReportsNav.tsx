@@ -53,6 +53,7 @@ const REPORT_CATEGORIES: ReportCategory[] = [
     links: [
       { href: "/reports/inventory-movement", label: "Inventory Movement" },
       { href: "/reports/stock-health", label: "Stock Health" },
+      { href: "/reports/reorder-report", label: "Reorder Report" },
     ],
   },
   {

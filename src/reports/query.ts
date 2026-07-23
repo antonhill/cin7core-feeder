@@ -298,6 +298,49 @@ export async function getStockHealthReport(db: SupabaseClient, orgId: string, fi
   return data ?? [];
 }
 
+export interface ReorderReportFilters {
+  instanceIds?: string[];
+  /** Velocity lookback window used for the sales-over-period threshold — "YYYY-MM-DD", inclusive. */
+  velocityDateFrom?: string;
+  velocityDateTo?: string;
+  /** Extra headroom on top of the period's total sales, e.g. 10 for +10%. */
+  bufferPercent?: number;
+}
+
+export interface ReorderReportRow {
+  product_sku: string;
+  product_name: string | null;
+  on_hand: number;
+  available: number;
+  on_order: number;
+  avg_unit_cost: number | null;
+  total_out: number;
+  weeks_of_cover: number | null;
+  reorder_threshold: number;
+  needs_reorder: boolean;
+  mover_category: "Fast" | "Medium" | "Slow" | "No movement";
+  status: "Stockout risk" | "Excess" | "Healthy";
+}
+
+/**
+ * The "Local" procurement workflow — flags a SKU once on-hand stock has
+ * dropped to or below its recent sales velocity plus a selectable buffer %.
+ * Deliberately separate from Stock Health/getStockHealthReport (its own
+ * established column contract/export) and from the lead-time-based
+ * Supplier Planner — see report_reorder (0048) for why these stay apart.
+ */
+export async function getReorderReport(db: SupabaseClient, orgId: string, filters: ReorderReportFilters): Promise<ReorderReportRow[]> {
+  const { data, error } = await db.rpc("report_reorder", {
+    p_org_id: orgId,
+    p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
+    p_velocity_date_from: filters.velocityDateFrom || null,
+    p_velocity_date_to: filters.velocityDateTo || null,
+    p_buffer_percent: filters.bufferPercent ?? 0,
+  });
+  if (error) throw new Error(`report_reorder: ${error.message}`);
+  return data ?? [];
+}
+
 export interface ProductAvailabilitySyncStatus {
   totalRows: number;
   lastSyncedAt: string | null;
