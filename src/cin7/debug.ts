@@ -1914,6 +1914,8 @@ export interface CreatePurchaseOrderAttempt {
   shape: string;
   endpoint: "/purchase" | "/advanced-purchase";
   succeeded: boolean;
+  /** Only meaningful when succeeded — false means Cin7 accepted the request (created a real DRAFT PO) but silently dropped the line items rather than erroring, confirmed live 2026-07-24 (round 3's flat top-level `Lines` key). */
+  linesPopulated?: boolean;
   error?: string;
   rawResponse?: unknown;
 }
@@ -1940,7 +1942,9 @@ async function tryCreatePurchase(
 ): Promise<CreatePurchaseOrderAttempt> {
   try {
     const response = await cin7Request<Record<string, unknown>>(creds, endpoint, { method: "POST", body });
-    return { shape, endpoint, succeeded: true, rawResponse: response };
+    const order = response.Order as Record<string, unknown> | undefined;
+    const linesPopulated = Array.isArray(order?.Lines) && order.Lines.length > 0;
+    return { shape, endpoint, succeeded: true, linesPopulated, rawResponse: response };
   } catch (e) {
     return {
       shape,
@@ -1992,14 +1996,19 @@ export async function testCreatePurchaseOrder(
   const location = locations.find((l) => l.name === locationName);
   const locationId = location?.id;
 
-  // Round 3 (2026-07-24): round 2's "Cost"/"Landed Cost" guess was wrong,
-  // but Cin7's own validation error was generous enough to hand us the real
-  // enum directly: "Invalid Value for Attribute 'Approach'. Possible values
-  // are 'Invoice' or 'Stock'." Trying both, still crossed with whether
-  // Lines need a Price (unconfirmed either way so far).
+  // Round 4 (2026-07-24): round 3's Approach="Stock" body was accepted —
+  // created a real DRAFT PO (PO-00301) — but its Order.Lines[] came back
+  // EMPTY. Cin7 silently ignored the flat top-level `Lines` key rather than
+  // erroring on it. The response's own shape is the tell: `Order` is its
+  // own nested sub-object (`Order: { Lines: [], AdditionalCharges: [],
+  // Prepayments: [], TotalBeforeTax, Tax, Total }`), mirroring exactly what
+  // purchase-detail.ts's READ side already extracts from — so the write
+  // side almost certainly expects lines nested under `Order.Lines`, not a
+  // top-level `Lines` key. Only testing that nested shape now, crossed with
+  // ProductID/Price, since the flat-Lines shapes are a confirmed dead end.
   const candidates: { shape: string; body: Record<string, unknown> }[] = [
     {
-      shape: 'Approach="Stock" + Lines[SKU,Quantity]',
+      shape: "Order.Lines[SKU,Quantity]",
       body: {
         Status: "DRAFT",
         Supplier: supplierName,
@@ -2007,23 +2016,11 @@ export async function testCreatePurchaseOrder(
         Location: locationName,
         LocationID: locationId,
         Approach: "Stock",
-        Lines: [{ SKU: sku, Quantity: quantity }],
+        Order: { Lines: [{ SKU: sku, Quantity: quantity }] },
       },
     },
     {
-      shape: 'Approach="Invoice" + Lines[SKU,Quantity]',
-      body: {
-        Status: "DRAFT",
-        Supplier: supplierName,
-        SupplierID: supplierId,
-        Location: locationName,
-        LocationID: locationId,
-        Approach: "Invoice",
-        Lines: [{ SKU: sku, Quantity: quantity }],
-      },
-    },
-    {
-      shape: 'Approach="Stock" + Lines[ProductID,SKU,Quantity,Price]',
+      shape: "Order.Lines[ProductID,SKU,Quantity]",
       body: {
         Status: "DRAFT",
         Supplier: supplierName,
@@ -2031,19 +2028,31 @@ export async function testCreatePurchaseOrder(
         Location: locationName,
         LocationID: locationId,
         Approach: "Stock",
-        Lines: [{ ProductID: productId, SKU: sku, Quantity: quantity, Price: 0 }],
+        Order: { Lines: [{ ProductID: productId, SKU: sku, Quantity: quantity }] },
       },
     },
     {
-      shape: 'Approach="Invoice" + Lines[ProductID,SKU,Quantity,Price]',
+      shape: "Order.Lines[SKU,Quantity,Price]",
       body: {
         Status: "DRAFT",
         Supplier: supplierName,
         SupplierID: supplierId,
         Location: locationName,
         LocationID: locationId,
-        Approach: "Invoice",
-        Lines: [{ ProductID: productId, SKU: sku, Quantity: quantity, Price: 0 }],
+        Approach: "Stock",
+        Order: { Lines: [{ SKU: sku, Quantity: quantity, Price: 0 }] },
+      },
+    },
+    {
+      shape: "Order.Lines[ProductID,SKU,Quantity,Price]",
+      body: {
+        Status: "DRAFT",
+        Supplier: supplierName,
+        SupplierID: supplierId,
+        Location: locationName,
+        LocationID: locationId,
+        Approach: "Stock",
+        Order: { Lines: [{ ProductID: productId, SKU: sku, Quantity: quantity, Price: 0 }] },
       },
     },
   ];
@@ -2055,14 +2064,17 @@ export async function testCreatePurchaseOrder(
     if (succeededAttempt) break;
     const first = await tryCreatePurchase(creds, "/purchase", candidate.shape, candidate.body);
     attempts.push(first);
-    if (first.succeeded) {
+    // Only a real, final success once the line items actually landed — a
+    // 200 with Order.Lines still empty (round 3's flat top-level `Lines`
+    // key) is a false positive that must not stop the search early.
+    if (first.succeeded && first.linesPopulated) {
       succeededAttempt = first;
       break;
     }
-    if (/Advanced Purchase/i.test(first.error ?? "")) {
+    if (!first.succeeded && /Advanced Purchase/i.test(first.error ?? "")) {
       const second = await tryCreatePurchase(creds, "/advanced-purchase", candidate.shape, candidate.body);
       attempts.push(second);
-      if (second.succeeded) succeededAttempt = second;
+      if (second.succeeded && second.linesPopulated) succeededAttempt = second;
     }
   }
 
