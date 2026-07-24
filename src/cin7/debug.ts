@@ -1992,29 +1992,61 @@ export async function testCreatePurchaseOrder(
   const location = locations.find((l) => l.name === locationName);
   const locationId = location?.id;
 
+  // Round 2 (2026-07-24): round 1 confirmed Location is required (its error
+  // disappeared once included) but every attempt still failed with
+  // "Required Attribute 'Approach' not specified" — a real Cin7 Core
+  // concept from its own purchase-creation UI (a Cost vs Landed Cost
+  // costing-method choice), never encountered anywhere else in this
+  // codebase and unconfirmed as an exact string value, so trying both
+  // guesses live rather than picking one blind. Crossed with whether Lines
+  // need a Price too, since that's still an open question round 1 didn't
+  // resolve either way.
   const candidates: { shape: string; body: Record<string, unknown> }[] = [
     {
-      shape: "Status+Supplier+SupplierID+Lines[SKU,Quantity]",
-      body: { Status: "DRAFT", Supplier: supplierName, SupplierID: supplierId, Lines: [{ SKU: sku, Quantity: quantity }] },
-    },
-    {
-      shape: "+ Location",
-      body: {
-        Status: "DRAFT",
-        Supplier: supplierName,
-        SupplierID: supplierId,
-        Location: locationName,
-        Lines: [{ SKU: sku, Quantity: quantity }],
-      },
-    },
-    {
-      shape: "+ LocationID + ProductID + Price",
+      shape: 'Approach="Cost" + Lines[SKU,Quantity]',
       body: {
         Status: "DRAFT",
         Supplier: supplierName,
         SupplierID: supplierId,
         Location: locationName,
         LocationID: locationId,
+        Approach: "Cost",
+        Lines: [{ SKU: sku, Quantity: quantity }],
+      },
+    },
+    {
+      shape: 'Approach="Landed Cost" + Lines[SKU,Quantity]',
+      body: {
+        Status: "DRAFT",
+        Supplier: supplierName,
+        SupplierID: supplierId,
+        Location: locationName,
+        LocationID: locationId,
+        Approach: "Landed Cost",
+        Lines: [{ SKU: sku, Quantity: quantity }],
+      },
+    },
+    {
+      shape: 'Approach="Cost" + Lines[ProductID,SKU,Quantity,Price]',
+      body: {
+        Status: "DRAFT",
+        Supplier: supplierName,
+        SupplierID: supplierId,
+        Location: locationName,
+        LocationID: locationId,
+        Approach: "Cost",
+        Lines: [{ ProductID: productId, SKU: sku, Quantity: quantity, Price: 0 }],
+      },
+    },
+    {
+      shape: 'Approach="Landed Cost" + Lines[ProductID,SKU,Quantity,Price]',
+      body: {
+        Status: "DRAFT",
+        Supplier: supplierName,
+        SupplierID: supplierId,
+        Location: locationName,
+        LocationID: locationId,
+        Approach: "Landed Cost",
         Lines: [{ ProductID: productId, SKU: sku, Quantity: quantity, Price: 0 }],
       },
     },
