@@ -10,6 +10,8 @@ import {
   type ProductAvailabilitySyncStatus,
 } from "@/reports/query";
 import { syncOrgProductAvailability, type ProductAvailabilitySyncSummary } from "@/sync/sync-product-availability";
+import { buildReorderReportSheet } from "@/reports/reorder-report-export";
+import { renderXlsxBase64 } from "@/reports/xlsx-writer";
 
 export interface ReorderReportActionResult<T> {
   ok: boolean;
@@ -43,6 +45,17 @@ export async function triggerReorderReportSyncAction(): Promise<ReorderReportAct
     const { orgId } = await requireCurrentOrg();
     const db = createServiceRoleClient();
     return { ok: true, data: await syncOrgProductAvailability(db, orgId) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/** Renders whatever's currently on screen (post-filter) into a real .xlsx file — same pattern as exportStockHealthXlsxAction. */
+export async function exportReorderReportXlsxAction(rows: ReorderReportRow[]): Promise<ReorderReportActionResult<string>> {
+  try {
+    await requireCurrentOrg();
+    const sheet = buildReorderReportSheet(rows);
+    return { ok: true, data: await renderXlsxBase64(sheet, "Reorder Report") };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

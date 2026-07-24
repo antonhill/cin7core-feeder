@@ -50,10 +50,23 @@ export interface SupplierPlanLine {
   lead: number;
   safety: number;
   onHand: number;
+  onOrder: number;
   totalOut: number;
   threshold: number;
   suggestedQty: number;
   needsReorder: boolean;
+  moverCategory: SupplierPlanMoverCategory;
+  status: SupplierPlanStatus;
+}
+
+export type SupplierPlanMoverCategory = "Fast" | "Medium" | "Slow" | "No movement";
+export type SupplierPlanStatus = "Stockout risk" | "Excess" | "Healthy";
+
+/** Same per-SKU on_order/mover/status the Reorder Report already computes (report_reorder RPC) — passed through rather than re-derived here. Optional/defaulted so existing callers/tests that only care about the threshold math don't need to supply it. */
+export interface SupplierPlanExtra {
+  onOrder: number;
+  moverCategory: SupplierPlanMoverCategory;
+  status: SupplierPlanStatus;
 }
 
 export interface BuildSupplierPlanOptions {
@@ -83,17 +96,21 @@ function dedupeOptions(options: SupplierPlanOptionInput[]): SupplierPlanOptionIn
   return [defaultOption, ...divergent];
 }
 
+const DEFAULT_EXTRA: SupplierPlanExtra = { onOrder: 0, moverCategory: "No movement", status: "Healthy" };
+
 export function buildSupplierPlanLines(
   products: SupplierPlanProductInput[],
   velocityBySku: Map<string, number>,
   onHandBySku: Map<string, number>,
-  opts: BuildSupplierPlanOptions
+  opts: BuildSupplierPlanOptions,
+  extraBySku: Map<string, SupplierPlanExtra> = new Map()
 ): SupplierPlanLine[] {
   const lines: SupplierPlanLine[] = [];
 
   for (const product of products) {
     const totalOut = velocityBySku.get(product.sku) ?? 0;
     const onHand = onHandBySku.get(product.sku) ?? 0;
+    const extra = extraBySku.get(product.sku) ?? DEFAULT_EXTRA;
     const dailyRate = opts.periodDays > 0 ? totalOut / opts.periodDays : 0;
 
     for (const supplier of product.suppliers) {
@@ -118,10 +135,13 @@ export function buildSupplierPlanLines(
           lead,
           safety,
           onHand,
+          onOrder: extra.onOrder,
           totalOut,
           threshold: Math.round(threshold * 100) / 100,
           suggestedQty: Math.round(Math.max(suggestedQty, 0) * 100) / 100,
           needsReorder: onHand <= threshold,
+          moverCategory: extra.moverCategory,
+          status: extra.status,
         });
       }
     }

@@ -90,6 +90,25 @@ describe("buildSupplierPlanLines", () => {
     expect(lines.map((l) => l.locationName)).toEqual([null, "Custom Location"]);
   });
 
+  it("defaults onOrder/moverCategory/status when no extra data is supplied for a SKU", () => {
+    const velocityBySku = new Map([["SKU1", 300]]);
+    const onHandBySku = new Map([["SKU1", 50]]);
+    const lines = buildSupplierPlanLines([product()], velocityBySku, onHandBySku, { bufferPercent: 0, periodDays: 30 });
+    expect(lines[0].onOrder).toBe(0);
+    expect(lines[0].moverCategory).toBe("No movement");
+    expect(lines[0].status).toBe("Healthy");
+  });
+
+  it("passes through onOrder/moverCategory/status from the same per-SKU data the Reorder Report already computes", () => {
+    const velocityBySku = new Map([["SKU1", 300]]);
+    const onHandBySku = new Map([["SKU1", 50]]);
+    const extraBySku = new Map([["SKU1", { onOrder: 120, moverCategory: "Fast" as const, status: "Stockout risk" as const }]]);
+    const lines = buildSupplierPlanLines([product()], velocityBySku, onHandBySku, { bufferPercent: 0, periodDays: 30 }, extraBySku);
+    expect(lines[0].onOrder).toBe(120);
+    expect(lines[0].moverCategory).toBe("Fast");
+    expect(lines[0].status).toBe("Stockout risk");
+  });
+
   it("groups lines by supplier name", () => {
     const products: SupplierPlanProductInput[] = [
       product({ sku: "SKU1" }),

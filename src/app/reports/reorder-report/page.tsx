@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { loadReportFilterOptionsAction } from "../actions";
-import { loadReorderReportAction, loadReorderReportSyncStatusAction, triggerReorderReportSyncAction } from "./actions";
+import { loadReorderReportAction, loadReorderReportSyncStatusAction, triggerReorderReportSyncAction, exportReorderReportXlsxAction } from "./actions";
 import type { ReportFilterOptions, ReorderReportRow, ProductAvailabilitySyncStatus } from "@/reports/query";
 import { SNAPSHOT_STALE_HOURS, hoursSince, StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
@@ -42,6 +42,22 @@ const STATUS_BADGE: Record<ReorderReportRow["status"], string> = {
   Healthy: "bg-emerald-100 text-emerald-700",
 };
 
+const MOVER_OPTIONS: ReorderReportRow["mover_category"][] = ["Fast", "Medium", "Slow", "No movement"];
+const STATUS_OPTIONS: ReorderReportRow["status"][] = ["Stockout risk", "Excess", "Healthy"];
+
+function downloadBase64File(base64: string, filename: string, mimeType: string) {
+  const byteChars = atob(base64);
+  const bytes = new Uint8Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+  const blob = new Blob([bytes], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 /** "YYYY-MM-DD" for today minus N months, in local time — matches the date-only columns this report filters against. */
 function monthsAgoIso(months: number): string {
   const d = new Date();
@@ -78,8 +94,32 @@ export default function ReorderReportPage() {
   const [reportError, setReportError] = useState<string | null>(null);
   const [isRunning, startRunTransition] = useTransition();
 
+  const [moverFilter, setMoverFilter] = useState<Set<ReorderReportRow["mover_category"]>>(new Set(MOVER_OPTIONS));
+  const [statusFilter, setStatusFilter] = useState<Set<ReorderReportRow["status"]>>(new Set(STATUS_OPTIONS));
+
+  const [isExporting, startExportTransition] = useTransition();
+  const [exportError, setExportError] = useState<string | null>(null);
+
   const [sortColumn, setSortColumn] = useState<ReorderSortColumn>("weeks_of_cover");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+
+  function toggleMover(m: ReorderReportRow["mover_category"]) {
+    setMoverFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(m)) next.delete(m);
+      else next.add(m);
+      return next;
+    });
+  }
+
+  function toggleStatus(s: ReorderReportRow["status"]) {
+    setStatusFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s);
+      else next.add(s);
+      return next;
+    });
+  }
 
   function handleSort(column: ReorderSortColumn) {
     if (column === sortColumn) setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
@@ -91,8 +131,10 @@ export default function ReorderReportPage() {
 
   const visibleRows = useMemo(() => {
     if (!rows) return [];
-    return needsReorderOnly ? rows.filter((r) => r.needs_reorder) : rows;
-  }, [rows, needsReorderOnly]);
+    return rows.filter(
+      (r) => (!needsReorderOnly || r.needs_reorder) && moverFilter.has(r.mover_category) && statusFilter.has(r.status)
+    );
+  }, [rows, needsReorderOnly, moverFilter, statusFilter]);
 
   const sortedRows = useMemo(() => {
     const copy = [...visibleRows];
@@ -177,6 +219,19 @@ export default function ReorderReportPage() {
   }
 
   const needsReorderCount = rows ? rows.filter((r) => r.needs_reorder).length : 0;
+
+  function handleExport() {
+    if (!visibleRows.length) return;
+    setExportError(null);
+    startExportTransition(async () => {
+      const result = await exportReorderReportXlsxAction(visibleRows);
+      if (!result.ok || !result.data) {
+        setExportError(result.error ?? "Unknown error");
+        return;
+      }
+      downloadBase64File(result.data, "reorder-report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    });
+  }
 
   return (
     <>
@@ -269,11 +324,45 @@ export default function ReorderReportPage() {
               </p>
               <p className="mt-1 text-sm text-slate-500">{needsReorderCount} need reordering at this buffer</p>
             </div>
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              <input type="checkbox" checked={needsReorderOnly} onChange={(e) => setNeedsReorderOnly(e.target.checked)} />
-              Needs reorder only
-            </label>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={needsReorderOnly} onChange={(e) => setNeedsReorderOnly(e.target.checked)} />
+                Needs reorder only
+              </label>
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={isExporting || visibleRows.length === 0}
+                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {isExporting && <Spinner className="mr-1.5" />}
+                {isExporting ? "Exporting…" : "Export to Excel"}
+              </button>
+            </div>
           </div>
+
+          <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Mover</span>
+              {MOVER_OPTIONS.map((m) => (
+                <label key={m} className="flex items-center gap-1.5 text-sm text-slate-700">
+                  <input type="checkbox" checked={moverFilter.has(m)} onChange={() => toggleMover(m)} />
+                  {m}
+                </label>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Status</span>
+              {STATUS_OPTIONS.map((s) => (
+                <label key={s} className="flex items-center gap-1.5 text-sm text-slate-700">
+                  <input type="checkbox" checked={statusFilter.has(s)} onChange={() => toggleStatus(s)} />
+                  {s}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
           {visibleRows.length === 0 && <p className="mt-2 text-sm text-slate-400">No stock or movement data matches these filters.</p>}
 
           {visibleRows.length > 0 && (

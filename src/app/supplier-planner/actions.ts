@@ -5,7 +5,9 @@ import { requireCurrentOrg } from "@/lib/current-org";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsForSupplierPlanning } from "@/cin7/product-supplier-options";
 import { getReorderReport } from "@/reports/query";
-import { buildSupplierPlanLines, type SupplierPlanLine } from "@/reports/supplier-planner/build";
+import { buildSupplierPlanLines, type SupplierPlanExtra, type SupplierPlanLine } from "@/reports/supplier-planner/build";
+import { buildSupplierPlanSheet } from "@/reports/supplier-planner-export";
+import { renderXlsxBase64 } from "@/reports/xlsx-writer";
 
 export interface SupplierPlanActionResult<T> {
   ok: boolean;
@@ -50,13 +52,30 @@ export async function loadSupplierPlanAction(params: SupplierPlanParams): Promis
 
     const velocityBySku = new Map(reorderRows.map((r) => [r.product_sku, r.total_out]));
     const onHandBySku = new Map(reorderRows.map((r) => [r.product_sku, r.on_hand]));
+    const extraBySku = new Map<string, SupplierPlanExtra>(
+      reorderRows.map((r) => [r.product_sku, { onOrder: r.on_order, moverCategory: r.mover_category, status: r.status }])
+    );
 
-    const lines = buildSupplierPlanLines(products, velocityBySku, onHandBySku, {
-      bufferPercent: params.bufferPercent,
-      periodDays: params.periodDays,
-    });
+    const lines = buildSupplierPlanLines(
+      products,
+      velocityBySku,
+      onHandBySku,
+      { bufferPercent: params.bufferPercent, periodDays: params.periodDays },
+      extraBySku
+    );
 
     return { ok: true, data: lines };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/** Renders whatever's currently on screen (post-filter) into a real .xlsx file — same pattern as exportReorderReportXlsxAction. */
+export async function exportSupplierPlanXlsxAction(lines: SupplierPlanLine[]): Promise<SupplierPlanActionResult<string>> {
+  try {
+    await requireCurrentOrg();
+    const sheet = buildSupplierPlanSheet(lines);
+    return { ok: true, data: await renderXlsxBase64(sheet, "Supplier Planner") };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

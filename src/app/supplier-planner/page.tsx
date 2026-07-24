@@ -3,8 +3,8 @@
 import { useMemo, useState, useTransition } from "react";
 import { useInstancePicker } from "@/hooks/useInstancePicker";
 import { InstancePicker } from "@/app/InstancePicker";
-import { loadSupplierPlanAction } from "./actions";
-import { groupLinesBySupplier, type SupplierPlanLine } from "@/reports/supplier-planner/build";
+import { loadSupplierPlanAction, exportSupplierPlanXlsxAction } from "./actions";
+import { groupLinesBySupplier, type SupplierPlanLine, type SupplierPlanMoverCategory, type SupplierPlanStatus } from "@/reports/supplier-planner/build";
 import { Spinner } from "@/app/Spinner";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { SUPPLIER_PLANNER_MODULE } from "@/app/module-nav";
@@ -20,6 +20,35 @@ const PERIOD_OPTIONS: { value: Period; label: string; months: number; days: numb
 ];
 
 const BUFFER_OPTIONS = [0, 10, 20, 30];
+
+const MOVER_OPTIONS: SupplierPlanMoverCategory[] = ["Fast", "Medium", "Slow", "No movement"];
+const STATUS_OPTIONS: SupplierPlanStatus[] = ["Stockout risk", "Excess", "Healthy"];
+
+const MOVER_BADGE: Record<SupplierPlanMoverCategory, string> = {
+  Fast: "bg-emerald-100 text-emerald-700",
+  Medium: "bg-amber-100 text-amber-700",
+  Slow: "bg-rose-100 text-rose-700",
+  "No movement": "bg-slate-100 text-slate-500",
+};
+
+const STATUS_BADGE: Record<SupplierPlanStatus, string> = {
+  "Stockout risk": "bg-rose-100 text-rose-700",
+  Excess: "bg-amber-100 text-amber-700",
+  Healthy: "bg-emerald-100 text-emerald-700",
+};
+
+function downloadBase64File(base64: string, filename: string, mimeType: string) {
+  const byteChars = atob(base64);
+  const bytes = new Uint8Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+  const blob = new Blob([bytes], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 /** "YYYY-MM-DD" for today minus N months, in local time. */
 function monthsAgoIso(months: number): string {
@@ -57,10 +86,36 @@ export default function SupplierPlannerPage() {
   const [error, setError] = useState<string | null>(null);
   const [isRunning, startRunTransition] = useTransition();
 
+  const [moverFilter, setMoverFilter] = useState<Set<SupplierPlanMoverCategory>>(new Set(MOVER_OPTIONS));
+  const [statusFilter, setStatusFilter] = useState<Set<SupplierPlanStatus>>(new Set(STATUS_OPTIONS));
+
+  const [isExporting, startExportTransition] = useTransition();
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  function toggleMover(m: SupplierPlanMoverCategory) {
+    setMoverFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(m)) next.delete(m);
+      else next.add(m);
+      return next;
+    });
+  }
+
+  function toggleStatus(s: SupplierPlanStatus) {
+    setStatusFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s);
+      else next.add(s);
+      return next;
+    });
+  }
+
   const visibleLines = useMemo(() => {
     if (!lines) return [];
-    return needsReorderOnly ? lines.filter((l) => l.needsReorder) : lines;
-  }, [lines, needsReorderOnly]);
+    return lines.filter(
+      (l) => (!needsReorderOnly || l.needsReorder) && moverFilter.has(l.moverCategory) && statusFilter.has(l.status)
+    );
+  }, [lines, needsReorderOnly, moverFilter, statusFilter]);
 
   const grouped = useMemo(() => groupLinesBySupplier(visibleLines), [visibleLines]);
 
@@ -86,6 +141,19 @@ export default function SupplierPlannerPage() {
   }
 
   const needsReorderCount = lines ? lines.filter((l) => l.needsReorder).length : 0;
+
+  function handleExport() {
+    if (!visibleLines.length) return;
+    setExportError(null);
+    startExportTransition(async () => {
+      const result = await exportSupplierPlanXlsxAction(visibleLines);
+      if (!result.ok || !result.data) {
+        setExportError(result.error ?? "Unknown error");
+        return;
+      }
+      downloadBase64File(result.data, "supplier-planner.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    });
+  }
 
   return (
     <main className="mx-auto w-full max-w-4xl px-6 py-12">
@@ -153,11 +221,45 @@ export default function SupplierPlannerPage() {
               {visibleLines.length} line{visibleLines.length === 1 ? "" : "s"} across {grouped.size} supplier{grouped.size === 1 ? "" : "s"} —{" "}
               {needsReorderCount} need reordering at this buffer
             </p>
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              <input type="checkbox" checked={needsReorderOnly} onChange={(e) => setNeedsReorderOnly(e.target.checked)} />
-              Needs reorder only
-            </label>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={needsReorderOnly} onChange={(e) => setNeedsReorderOnly(e.target.checked)} />
+                Needs reorder only
+              </label>
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={isExporting || visibleLines.length === 0}
+                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {isExporting && <Spinner className="mr-1.5" />}
+                {isExporting ? "Exporting…" : "Export to Excel"}
+              </button>
+            </div>
           </div>
+
+          <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Mover</span>
+              {MOVER_OPTIONS.map((m) => (
+                <label key={m} className="flex items-center gap-1.5 text-sm text-slate-700">
+                  <input type="checkbox" checked={moverFilter.has(m)} onChange={() => toggleMover(m)} />
+                  {m}
+                </label>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Status</span>
+              {STATUS_OPTIONS.map((s) => (
+                <label key={s} className="flex items-center gap-1.5 text-sm text-slate-700">
+                  <input type="checkbox" checked={statusFilter.has(s)} onChange={() => toggleStatus(s)} />
+                  {s}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {exportError && <p className="text-sm text-red-600">{exportError}</p>}
 
           {visibleLines.length === 0 && (
             <p className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-400 shadow-sm">
@@ -178,9 +280,12 @@ export default function SupplierPlannerPage() {
                       <th className="py-2 pr-4 font-medium">Location</th>
                       <th className="py-2 pr-4 text-right font-medium">Lead + Safety</th>
                       <th className="py-2 pr-4 text-right font-medium">On Hand</th>
+                      <th className="py-2 pr-4 text-right font-medium">On Order</th>
                       <th className="py-2 pr-4 text-right font-medium">Reorder At</th>
                       <th className="py-2 pr-4 text-right font-medium">Suggested Qty</th>
                       <th className="py-2 pr-4 text-right font-medium">Latest Price</th>
+                      <th className="py-2 pr-4 font-medium">Mover</th>
+                      <th className="py-2 pr-4 font-medium">Status</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -195,9 +300,18 @@ export default function SupplierPlannerPage() {
                           {line.lead}+{line.safety}
                         </td>
                         <td className="py-2 pr-4 text-right">{qty(line.onHand)}</td>
+                        <td className="py-2 pr-4 text-right">{qty(line.onOrder)}</td>
                         <td className="py-2 pr-4 text-right">{qty(line.threshold)}</td>
                         <td className="py-2 pr-4 text-right font-medium">{qty(line.suggestedQty)}</td>
                         <td className="py-2 pr-4 text-right">{money(line.cost, line.currency)}</td>
+                        <td className="py-2 pr-4">
+                          <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${MOVER_BADGE[line.moverCategory]}`}>
+                            {line.moverCategory}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-4">
+                          <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_BADGE[line.status]}`}>{line.status}</span>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
