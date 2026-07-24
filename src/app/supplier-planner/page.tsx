@@ -88,6 +88,12 @@ export default function SupplierPlannerPage() {
 
   const [moverFilter, setMoverFilter] = useState<Set<SupplierPlanMoverCategory>>(new Set(MOVER_OPTIONS));
   const [statusFilter, setStatusFilter] = useState<Set<SupplierPlanStatus>>(new Set(STATUS_OPTIONS));
+  // Hidden by default — Cin7 returns an all-zero Lead/Safety/ReorderQuantity/
+  // MinimumToReorder placeholder for a product+supplier link that's never
+  // had Product Supplier Options configured at all (confirmed live
+  // 2026-07-24), which otherwise shows up as a misleading "needs reorder,
+  // suggested qty 0" line.
+  const [showUnconfigured, setShowUnconfigured] = useState(false);
 
   const [isExporting, startExportTransition] = useTransition();
   const [exportError, setExportError] = useState<string | null>(null);
@@ -113,9 +119,15 @@ export default function SupplierPlannerPage() {
   const visibleLines = useMemo(() => {
     if (!lines) return [];
     return lines.filter(
-      (l) => (!needsReorderOnly || l.needsReorder) && moverFilter.has(l.moverCategory) && statusFilter.has(l.status)
+      (l) =>
+        (!needsReorderOnly || l.needsReorder) &&
+        moverFilter.has(l.moverCategory) &&
+        statusFilter.has(l.status) &&
+        (showUnconfigured || !l.isUnconfigured)
     );
-  }, [lines, needsReorderOnly, moverFilter, statusFilter]);
+  }, [lines, needsReorderOnly, moverFilter, statusFilter, showUnconfigured]);
+
+  const unconfiguredCount = lines ? lines.filter((l) => l.isUnconfigured).length : 0;
 
   const grouped = useMemo(() => groupLinesBySupplier(visibleLines), [visibleLines]);
 
@@ -257,6 +269,10 @@ export default function SupplierPlannerPage() {
                 </label>
               ))}
             </div>
+            <label className="flex items-center gap-1.5 text-sm text-slate-700">
+              <input type="checkbox" checked={showUnconfigured} onChange={(e) => setShowUnconfigured(e.target.checked)} />
+              Show unconfigured entries{!showUnconfigured && unconfiguredCount > 0 && ` (${unconfiguredCount} hidden)`}
+            </label>
           </div>
 
           {exportError && <p className="text-sm text-red-600">{exportError}</p>}

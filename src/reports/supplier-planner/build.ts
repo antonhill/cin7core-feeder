@@ -57,6 +57,8 @@ export interface SupplierPlanLine {
   needsReorder: boolean;
   moverCategory: SupplierPlanMoverCategory;
   status: SupplierPlanStatus;
+  /** Lead/Safety/ReorderQuantity/MinimumToReorder all zero/unset — Cin7 appears to return this exact all-zero placeholder shape for a product+supplier link that has never had Product Supplier Options configured at all (confirmed live 2026-07-24 against a real account), rather than omitting the entry or nulling Lead. Distinguishing this from a genuinely-configured zero-lead entry needs all four fields to agree — a real entry could deliberately have Lead=0 (instant local pickup) while still carrying a real ReorderQuantity/MinimumToReorder. */
+  isUnconfigured: boolean;
 }
 
 export type SupplierPlanMoverCategory = "Fast" | "Medium" | "Slow" | "No movement";
@@ -97,6 +99,11 @@ function dedupeOptions(options: SupplierPlanOptionInput[]): SupplierPlanOptionIn
 }
 
 const DEFAULT_EXTRA: SupplierPlanExtra = { onOrder: 0, moverCategory: "No movement", status: "Healthy" };
+
+/** See SupplierPlanLine.isUnconfigured's own comment — requires every planning field to be zero/unset at once, not just Lead alone, so a deliberately-configured zero-lead entry with a real ReorderQuantity/MinimumToReorder isn't mistaken for an unconfigured placeholder. */
+function isUnconfiguredOption(option: SupplierPlanOptionInput): boolean {
+  return option.lead === 0 && (option.safety ?? 0) === 0 && option.reorderQuantity === 0 && !option.minimumToReorder;
+}
 
 export function buildSupplierPlanLines(
   products: SupplierPlanProductInput[],
@@ -142,6 +149,7 @@ export function buildSupplierPlanLines(
           needsReorder: onHand <= threshold,
           moverCategory: extra.moverCategory,
           status: extra.status,
+          isUnconfigured: isUnconfiguredOption(option),
         });
       }
     }

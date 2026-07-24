@@ -109,6 +109,55 @@ describe("buildSupplierPlanLines", () => {
     expect(lines[0].status).toBe("Stockout risk");
   });
 
+  it("flags an all-zero Lead/Safety/ReorderQuantity/MinimumToReorder entry as unconfigured — Cin7's placeholder shape for a link that's never had Product Supplier Options set up, confirmed live 2026-07-24", () => {
+    const lines = buildSupplierPlanLines(
+      [
+        product({
+          suppliers: [
+            {
+              supplierId: "sup-1",
+              supplierName: "S",
+              cost: null,
+              currency: null,
+              options: [{ locationId: null, locationName: null, reorderQuantity: 0, lead: 0, safety: 0, minimumToReorder: null }],
+            },
+          ],
+        }),
+      ],
+      new Map([["SKU1", 100]]),
+      new Map([["SKU1", 0]]),
+      { bufferPercent: 0, periodDays: 30 }
+    );
+    expect(lines[0].isUnconfigured).toBe(true);
+  });
+
+  it("does not flag a deliberately zero-lead entry as unconfigured when it has a real ReorderQuantity or MinimumToReorder", () => {
+    const lines = buildSupplierPlanLines(
+      [
+        product({
+          suppliers: [
+            {
+              supplierId: "sup-1",
+              supplierName: "S",
+              cost: null,
+              currency: null,
+              options: [{ locationId: null, locationName: null, reorderQuantity: 250, lead: 0, safety: 0, minimumToReorder: null }],
+            },
+          ],
+        }),
+      ],
+      new Map([["SKU1", 100]]),
+      new Map([["SKU1", 0]]),
+      { bufferPercent: 0, periodDays: 30 }
+    );
+    expect(lines[0].isUnconfigured).toBe(false);
+  });
+
+  it("does not flag the default product() fixture (real Lead/Safety/MinimumToReorder) as unconfigured", () => {
+    const lines = buildSupplierPlanLines([product()], new Map([["SKU1", 300]]), new Map([["SKU1", 50]]), { bufferPercent: 0, periodDays: 30 });
+    expect(lines[0].isUnconfigured).toBe(false);
+  });
+
   it("groups lines by supplier name", () => {
     const products: SupplierPlanProductInput[] = [
       product({ sku: "SKU1" }),
