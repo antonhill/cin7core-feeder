@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
-import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail, surveyProductionOrderRoutingTasks, surveyProductionOrderOperationStatus, surveyProductionRun, surveyProductionOrderStatuses, surveyPurchaseDetailFields, surveyProductAvailabilityFields, surveySaleFulfillmentFields, surveyBackorderEtaFields, testSaleShipByWriteBack, testProductSupplierLink, surveyProductSupplierOptionsFields, findProductSupplierOptionsExample } from "@/cin7/debug";
+import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail, surveyProductionOrderRoutingTasks, surveyProductionOrderOperationStatus, surveyProductionRun, surveyProductionOrderStatuses, surveyPurchaseDetailFields, surveyProductAvailabilityFields, surveySaleFulfillmentFields, surveyBackorderEtaFields, testSaleShipByWriteBack, testProductSupplierLink, surveyProductSupplierOptionsFields, findProductSupplierOptionsExample, testCreatePurchaseOrder } from "@/cin7/debug";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
@@ -521,6 +521,33 @@ export async function debugTestProductSupplierLink(instanceId: string, input: st
 
     const creds = await loadInstanceCreds(instanceId);
     const result = await testProductSupplierLink(creds, sku, supplierName);
+    return { ok: true, message: JSON.stringify(result, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Diagnostic only, and a genuine WRITE: creates a real (DRAFT-status) test
+ * Purchase Order in Cin7 — see testCreatePurchaseOrder's own comment for why
+ * this trial-and-error approach is needed (no confirmed POST /purchase
+ * shape exists anywhere in this codebase). `input` is "SKU,Supplier
+ * Name,Quantity,Location Name".
+ */
+export async function debugTestCreatePurchaseOrder(instanceId: string, input: string): Promise<TestConnectionResult> {
+  try {
+    // Defense in depth — see debugTestSaleShipByWriteBack's own comment.
+    await requireSuperAdmin();
+    const parts = input.split(",").map((p) => p.trim());
+    if (parts.length !== 4 || parts.some((p) => !p)) {
+      return { ok: false, message: 'Enter "SKU,Supplier Name,Quantity,Location Name", e.g. Cardboard80,Box Shop Packaging,1,Main Warehouse' };
+    }
+    const [sku, supplierName, quantityRaw, locationName] = parts;
+    const quantity = Number(quantityRaw);
+    if (!Number.isFinite(quantity) || quantity <= 0) return { ok: false, message: "Quantity must be a positive number" };
+
+    const creds = await loadInstanceCreds(instanceId);
+    const result = await testCreatePurchaseOrder(creds, sku, supplierName, quantity, locationName);
     return { ok: true, message: JSON.stringify(result, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };

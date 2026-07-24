@@ -3,6 +3,7 @@ import { cin7Request, Cin7ApiError } from "@/cin7/http";
 import {
   accountExists,
   companyContactExists,
+  fetchAllLocations,
   locationExists,
   payableAccountExists,
   paymentTermExists,
@@ -1907,4 +1908,147 @@ export async function findProductSupplierOptionsExample(creds: Cin7Credentials, 
   }
 
   return { sku, found, variants };
+}
+
+export interface CreatePurchaseOrderAttempt {
+  shape: string;
+  endpoint: "/purchase" | "/advanced-purchase";
+  succeeded: boolean;
+  error?: string;
+  rawResponse?: unknown;
+}
+
+export interface CreatePurchaseOrderTest {
+  sku: string;
+  supplierName: string;
+  quantity: number;
+  locationName: string;
+  supplierFound: boolean;
+  supplierId?: string;
+  productFound: boolean;
+  productId?: string;
+  locationFound: boolean;
+  locationId?: string;
+  attempts: CreatePurchaseOrderAttempt[];
+}
+
+async function tryCreatePurchase(
+  creds: Cin7Credentials,
+  endpoint: "/purchase" | "/advanced-purchase",
+  shape: string,
+  body: Record<string, unknown>
+): Promise<CreatePurchaseOrderAttempt> {
+  try {
+    const response = await cin7Request<Record<string, unknown>>(creds, endpoint, { method: "POST", body });
+    return { shape, endpoint, succeeded: true, rawResponse: response };
+  } catch (e) {
+    return {
+      shape,
+      endpoint,
+      succeeded: false,
+      error: e instanceof Cin7ApiError ? `[${e.status}] ${e.message}` : e instanceof Error ? e.message : "Unknown error",
+    };
+  }
+}
+
+/**
+ * Diagnostic only, and a genuine WRITE (unlike every other survey* function
+ * here): no code in this codebase has ever created a Cin7 Purchase Order —
+ * src/cin7/purchases.ts and purchase-detail.ts are read-only, and there is
+ * no confirmed POST /purchase request shape anywhere, not even a failed
+ * attempt (unlike Suppliers[], which has this exact trial-and-error history
+ * in testProductSupplierLink below). Resolves real prerequisite IDs live
+ * first (never fabricated), then tries a small set of plausible payload
+ * shapes in sequence, stopping at the first success — mirroring
+ * testProductSupplierLink's own discipline. Every created order always
+ * hardcodes Status: "DRAFT" (same convention as createStockTransfer), so a
+ * successful test attempt is a genuine but inert proposal a human still
+ * reviews/voids in Cin7, never something this survey force-authorizes.
+ * Retries the SAME candidate body against /advanced-purchase only when
+ * /purchase's failure matches the exact "...Advanced Purchase..." message
+ * purchase-detail.ts's GET side already keys off of — any other failure
+ * moves straight to the next candidate shape instead.
+ */
+export async function testCreatePurchaseOrder(
+  creds: Cin7Credentials,
+  sku: string,
+  supplierName: string,
+  quantity: number,
+  locationName: string
+): Promise<CreatePurchaseOrderTest> {
+  const supplierRes = await cin7Request<{ SupplierList?: Record<string, unknown>[] }>(creds, "/supplier", {
+    query: { Name: supplierName, page: 1, limit: 1 },
+  });
+  const supplier = supplierRes.SupplierList?.find((s) => s.Name === supplierName);
+  const supplierId = supplier?.ID as string | undefined;
+
+  const productRes = await cin7Request<Cin7ProductListResponse>(creds, "/Product", {
+    query: { SKU: sku, page: 1, limit: 1 },
+  });
+  const product = productRes.Products?.find((p) => p.SKU === sku);
+  const productId = product?.ID as string | undefined;
+
+  const locations = await fetchAllLocations(creds);
+  const location = locations.find((l) => l.name === locationName);
+  const locationId = location?.id;
+
+  const candidates: { shape: string; body: Record<string, unknown> }[] = [
+    {
+      shape: "Status+Supplier+SupplierID+Lines[SKU,Quantity]",
+      body: { Status: "DRAFT", Supplier: supplierName, SupplierID: supplierId, Lines: [{ SKU: sku, Quantity: quantity }] },
+    },
+    {
+      shape: "+ Location",
+      body: {
+        Status: "DRAFT",
+        Supplier: supplierName,
+        SupplierID: supplierId,
+        Location: locationName,
+        Lines: [{ SKU: sku, Quantity: quantity }],
+      },
+    },
+    {
+      shape: "+ LocationID + ProductID + Price",
+      body: {
+        Status: "DRAFT",
+        Supplier: supplierName,
+        SupplierID: supplierId,
+        Location: locationName,
+        LocationID: locationId,
+        Lines: [{ ProductID: productId, SKU: sku, Quantity: quantity, Price: 0 }],
+      },
+    },
+  ];
+
+  const attempts: CreatePurchaseOrderAttempt[] = [];
+  let succeededAttempt: CreatePurchaseOrderAttempt | undefined;
+
+  for (const candidate of candidates) {
+    if (succeededAttempt) break;
+    const first = await tryCreatePurchase(creds, "/purchase", candidate.shape, candidate.body);
+    attempts.push(first);
+    if (first.succeeded) {
+      succeededAttempt = first;
+      break;
+    }
+    if (/Advanced Purchase/i.test(first.error ?? "")) {
+      const second = await tryCreatePurchase(creds, "/advanced-purchase", candidate.shape, candidate.body);
+      attempts.push(second);
+      if (second.succeeded) succeededAttempt = second;
+    }
+  }
+
+  return {
+    sku,
+    supplierName,
+    quantity,
+    locationName,
+    supplierFound: Boolean(supplier),
+    supplierId,
+    productFound: Boolean(product),
+    productId,
+    locationFound: Boolean(location),
+    locationId,
+    attempts,
+  };
 }

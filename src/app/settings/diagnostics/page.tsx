@@ -27,6 +27,7 @@ import {
   debugSurveyBackorderEtaFields,
   debugTestSaleShipByWriteBack,
   debugTestProductSupplierLink,
+  debugTestCreatePurchaseOrder,
   debugProbeWorkCentrePaths,
   debugPushOneCustomerAndSupplier,
   listInstances,
@@ -54,6 +55,7 @@ export default function DiagnosticsPage() {
   const [shipByTestOrderNumbers, setShipByTestOrderNumbers] = useState<Record<string, string>>({});
   const [supplierLinkTests, setSupplierLinkTests] = useState<Record<string, string>>({});
   const [supplierOptionsSkus, setSupplierOptionsSkus] = useState<Record<string, string>>({});
+  const [createPoTests, setCreatePoTests] = useState<Record<string, string>>({});
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -308,6 +310,16 @@ export default function DiagnosticsPage() {
     });
   }
 
+  function handleTestCreatePurchaseOrder(instanceId: string) {
+    const input = (createPoTests[instanceId] ?? "").trim();
+    if (!input) return;
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Writing (resolving IDs, trying candidate PO shapes)…" } }));
+    startTransition(async () => {
+      const result = await debugTestCreatePurchaseOrder(instanceId, input);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
   return (
     <main className="mx-auto w-full max-w-4xl px-6 py-12">
       <ModuleHeader module={DIAGNOSTICS_MODULE}>
@@ -544,6 +556,23 @@ export default function DiagnosticsPage() {
                 title="Performs a real PUT against this product in Cin7, adding a resolved SupplierID to its Suppliers array — a genuine write, not a no-op. Only safe to use on a product whose supplier link is currently missing/failing anyway."
               >
                 Test product-supplier link with resolved SupplierID (WRITES to Cin7)
+              </button>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="text"
+                placeholder='"SKU,Supplier Name,Quantity,Location Name" e.g. Cardboard80,Box Shop Packaging,1,Main Warehouse'
+                value={createPoTests[inst.id] ?? ""}
+                onChange={(e) => setCreatePoTests((prev) => ({ ...prev, [inst.id]: e.target.value }))}
+                className="w-[30rem] rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+              />
+              <button
+                onClick={() => handleTestCreatePurchaseOrder(inst.id)}
+                disabled={isPending || !(createPoTests[inst.id] ?? "").trim()}
+                className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                title="Creates a real DRAFT Purchase Order in Cin7 by trying several candidate payload shapes — a genuine write, not a no-op. No confirmed POST /purchase shape exists anywhere in this codebase yet. Use a real test supplier/SKU/location, not a live customer's — the created order is a draft you can void/delete in Cin7's own UI afterward."
+              >
+                Test create Purchase Order (WRITES to Cin7 — creates a real DRAFT)
               </button>
             </div>
             {testResults[inst.id] && (
