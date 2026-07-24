@@ -94,7 +94,14 @@ export default function ReorderReportPage() {
   const [reportError, setReportError] = useState<string | null>(null);
   const [isRunning, startRunTransition] = useTransition();
 
-  const [moverFilter, setMoverFilter] = useState<Set<ReorderReportRow["mover_category"]>>(new Set(MOVER_OPTIONS));
+  // "No movement" starts unchecked — a SKU with zero sales in the whole
+  // selected period trivially satisfies on_hand(0) <= reorder_threshold(0)
+  // and gets flagged needs_reorder regardless of any real velocity signal.
+  // Reusing this existing Mover filter to hide/reveal them (rather than a
+  // separate toggle) avoids two overlapping controls doing the same thing.
+  const [moverFilter, setMoverFilter] = useState<Set<ReorderReportRow["mover_category"]>>(
+    new Set(MOVER_OPTIONS.filter((m) => m !== "No movement"))
+  );
   const [statusFilter, setStatusFilter] = useState<Set<ReorderReportRow["status"]>>(new Set(STATUS_OPTIONS));
 
   const [isExporting, startExportTransition] = useTransition();
@@ -219,6 +226,7 @@ export default function ReorderReportPage() {
   }
 
   const needsReorderCount = rows ? rows.filter((r) => r.needs_reorder).length : 0;
+  const noMovementCount = rows ? rows.filter((r) => r.mover_category === "No movement").length : 0;
 
   function handleExport() {
     if (!visibleRows.length) return;
@@ -348,6 +356,9 @@ export default function ReorderReportPage() {
                 <label key={m} className="flex items-center gap-1.5 text-sm text-slate-700">
                   <input type="checkbox" checked={moverFilter.has(m)} onChange={() => toggleMover(m)} />
                   {m}
+                  {m === "No movement" && !moverFilter.has(m) && noMovementCount > 0 && (
+                    <span className="text-slate-400">({noMovementCount} hidden)</span>
+                  )}
                 </label>
               ))}
             </div>
