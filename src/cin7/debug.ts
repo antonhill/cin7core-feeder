@@ -1934,14 +1934,15 @@ export interface CreatePurchaseOrderTest {
   attempts: CreatePurchaseOrderAttempt[];
 }
 
-async function tryCreatePurchase(
+async function tryPurchaseRequest(
   creds: Cin7Credentials,
+  method: "POST" | "PUT",
   endpoint: "/purchase" | "/advanced-purchase",
   shape: string,
   body: Record<string, unknown>
 ): Promise<CreatePurchaseOrderAttempt> {
   try {
-    const response = await cin7Request<Record<string, unknown>>(creds, endpoint, { method: "POST", body });
+    const response = await cin7Request<Record<string, unknown>>(creds, endpoint, { method, body });
     const order = response.Order as Record<string, unknown> | undefined;
     const linesPopulated = Array.isArray(order?.Lines) && order.Lines.length > 0;
     return { shape, endpoint, succeeded: true, linesPopulated, rawResponse: response };
@@ -1996,85 +1997,68 @@ export async function testCreatePurchaseOrder(
   const location = locations.find((l) => l.name === locationName);
   const locationId = location?.id;
 
-  // Round 4 (2026-07-24): round 3's Approach="Stock" body was accepted —
-  // created a real DRAFT PO (PO-00301) — but its Order.Lines[] came back
-  // EMPTY. Cin7 silently ignored the flat top-level `Lines` key rather than
-  // erroring on it. The response's own shape is the tell: `Order` is its
-  // own nested sub-object (`Order: { Lines: [], AdditionalCharges: [],
-  // Prepayments: [], TotalBeforeTax, Tax, Total }`), mirroring exactly what
-  // purchase-detail.ts's READ side already extracts from — so the write
-  // side almost certainly expects lines nested under `Order.Lines`, not a
-  // top-level `Lines` key. Only testing that nested shape now, crossed with
-  // ProductID/Price, since the flat-Lines shapes are a confirmed dead end.
-  const candidates: { shape: string; body: Record<string, unknown> }[] = [
-    {
-      shape: "Order.Lines[SKU,Quantity]",
-      body: {
-        Status: "DRAFT",
-        Supplier: supplierName,
-        SupplierID: supplierId,
-        Location: locationName,
-        LocationID: locationId,
-        Approach: "Stock",
-        Order: { Lines: [{ SKU: sku, Quantity: quantity }] },
-      },
-    },
-    {
-      shape: "Order.Lines[ProductID,SKU,Quantity]",
-      body: {
-        Status: "DRAFT",
-        Supplier: supplierName,
-        SupplierID: supplierId,
-        Location: locationName,
-        LocationID: locationId,
-        Approach: "Stock",
-        Order: { Lines: [{ ProductID: productId, SKU: sku, Quantity: quantity }] },
-      },
-    },
-    {
-      shape: "Order.Lines[SKU,Quantity,Price]",
-      body: {
-        Status: "DRAFT",
-        Supplier: supplierName,
-        SupplierID: supplierId,
-        Location: locationName,
-        LocationID: locationId,
-        Approach: "Stock",
-        Order: { Lines: [{ SKU: sku, Quantity: quantity, Price: 0 }] },
-      },
-    },
-    {
-      shape: "Order.Lines[ProductID,SKU,Quantity,Price]",
-      body: {
-        Status: "DRAFT",
-        Supplier: supplierName,
-        SupplierID: supplierId,
-        Location: locationName,
-        LocationID: locationId,
-        Approach: "Stock",
-        Order: { Lines: [{ ProductID: productId, SKU: sku, Quantity: quantity, Price: 0 }] },
-      },
-    },
-  ];
-
+  // Round 5 (2026-07-24): rounds 3-4 both got a real 200 (fresh DRAFT PO
+  // each time — PO-00301 through PO-00305) but Order.Lines[] came back
+  // empty regardless of whether Lines was a flat top-level key or nested
+  // under Order — Cin7 silently ignores line data on CREATE either way,
+  // rather than erroring. This mirrors an existing, confirmed pattern in
+  // this exact codebase: products.ts's POST /Product rejects an inline
+  // Suppliers[] the same way, requiring a follow-up PUT to attach it
+  // (src/cin7/products.ts:363). Testing the same two-step shape here:
+  // create a bare header with NO line data at all (one single POST, not
+  // one per candidate, to stop minting empty orphan test POs), then try
+  // several PUT bodies against that one real order — always the FULL
+  // returned object with only Order.Lines changed, never a partial patch,
+  // since Cin7's PUTs have repeatedly been confirmed elsewhere to not be
+  // partial (ReorderLevels' full-array-replace, Product's blank-clears-
+  // field rule).
   const attempts: CreatePurchaseOrderAttempt[] = [];
   let succeededAttempt: CreatePurchaseOrderAttempt | undefined;
 
-  for (const candidate of candidates) {
-    if (succeededAttempt) break;
-    const first = await tryCreatePurchase(creds, "/purchase", candidate.shape, candidate.body);
-    attempts.push(first);
-    // Only a real, final success once the line items actually landed — a
-    // 200 with Order.Lines still empty (round 3's flat top-level `Lines`
-    // key) is a false positive that must not stop the search early.
-    if (first.succeeded && first.linesPopulated) {
-      succeededAttempt = first;
-      break;
-    }
-    if (!first.succeeded && /Advanced Purchase/i.test(first.error ?? "")) {
-      const second = await tryCreatePurchase(creds, "/advanced-purchase", candidate.shape, candidate.body);
-      attempts.push(second);
-      if (second.succeeded && second.linesPopulated) succeededAttempt = second;
+  const createBody: Record<string, unknown> = {
+    Status: "DRAFT",
+    Supplier: supplierName,
+    SupplierID: supplierId,
+    Location: locationName,
+    LocationID: locationId,
+    Approach: "Stock",
+  };
+  let created = await tryPurchaseRequest(creds, "POST", "/purchase", "Step 1: create bare header (no Lines)", createBody);
+  attempts.push(created);
+  if (!created.succeeded && /Advanced Purchase/i.test(created.error ?? "")) {
+    created = await tryPurchaseRequest(creds, "POST", "/advanced-purchase", "Step 1: create bare header (no Lines) [advanced]", createBody);
+    attempts.push(created);
+  }
+
+  if (created.succeeded) {
+    const endpoint = created.endpoint;
+    const full = created.rawResponse as Record<string, unknown>;
+    const existingOrder = (full.Order as Record<string, unknown> | undefined) ?? {};
+
+    const putCandidates: { shape: string; body: Record<string, unknown> }[] = [
+      {
+        shape: "Step 2 PUT: full record + Order.Lines[SKU,Quantity]",
+        body: { ...full, Order: { ...existingOrder, Lines: [{ SKU: sku, Quantity: quantity }] } },
+      },
+      {
+        shape: "Step 2 PUT: full record + Order.Lines[ProductID,SKU,Quantity]",
+        body: { ...full, Order: { ...existingOrder, Lines: [{ ProductID: productId, SKU: sku, Quantity: quantity }] } },
+      },
+      {
+        shape: "Step 2 PUT: full record + Order.Lines[SKU,Quantity,Price]",
+        body: { ...full, Order: { ...existingOrder, Lines: [{ SKU: sku, Quantity: quantity, Price: 0 }] } },
+      },
+      {
+        shape: "Step 2 PUT: full record + top-level Lines[SKU,Quantity] (in case PUT differs from POST)",
+        body: { ...full, Lines: [{ SKU: sku, Quantity: quantity }] },
+      },
+    ];
+
+    for (const candidate of putCandidates) {
+      if (succeededAttempt) break;
+      const attempt = await tryPurchaseRequest(creds, "PUT", endpoint, candidate.shape, candidate.body);
+      attempts.push(attempt);
+      if (attempt.succeeded && attempt.linesPopulated) succeededAttempt = attempt;
     }
   }
 
