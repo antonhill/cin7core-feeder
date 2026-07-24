@@ -18,15 +18,27 @@ export interface Cin7RequestOptions {
   query?: Record<string, string | number>;
 }
 
-const MAX_RETRIES = 3;
-const RETRY_BASE_DELAY_MS = 2000;
+// Quick mitigation (2026-07-24, after Supplier Planner's live paginated
+// fetch hit "60 calls per 60 seconds" against a real large-catalog account):
+// the in-memory throttle below only paces calls *within one serverless
+// invocation* — it can't see a concurrent Vercel Cron sync (e.g.
+// /api/sync-product-availability) hitting the same Cin7 account from a
+// separate invocation at the same time, so the combined real call volume
+// can exceed 60/60s even when every individual invocation believes it's
+// pacing at a safe rate. A real fix needs a cross-invocation limiter (e.g.
+// Postgres-backed token bucket); until then, running the default pace with
+// real headroom below the limit (not exactly at it) and giving a persistent
+// rate-limit response more patience to retry through gives day-to-day
+// coverage without that bigger piece of work.
+const MAX_RETRIES = 6;
+const RETRY_BASE_DELAY_MS = 5000;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function minIntervalMs(): number {
-  const rps = Number(process.env.RATE_LIMIT_RPS ?? "1");
+  const rps = Number(process.env.RATE_LIMIT_RPS ?? "0.8");
   return 1000 / Math.max(rps, 0.1);
 }
 
