@@ -82,6 +82,11 @@ function lineKey(line: SupplierPlanLine): string {
   return `${line.productSku}::${line.supplierId}::${line.locationId ?? "default"}`;
 }
 
+/** Cin7's own supplier Currency field — the closest signal this app has to "local vs foreign" supplier, since Cin7 has no such flag itself. */
+function currencyLabel(line: SupplierPlanLine): string {
+  return line.currency ?? "No currency";
+}
+
 export default function SupplierPlannerPage() {
   const picker = useInstancePicker();
   const { instanceId } = picker;
@@ -98,6 +103,12 @@ export default function SupplierPlannerPage() {
 
   const [moverFilter, setMoverFilter] = useState<Set<SupplierPlanMoverCategory>>(new Set(MOVER_OPTIONS));
   const [statusFilter, setStatusFilter] = useState<Set<SupplierPlanStatus>>(new Set(STATUS_OPTIONS));
+  // null = every currency shown (the implicit default) — distinct from an
+  // explicit empty Set (every currency unchecked, nothing shown). Currency
+  // options are data-driven (whatever Cin7 actually has), unlike Mover/
+  // Status's fixed enums, so there's no static "all options" set to seed
+  // from up front.
+  const [currencyFilter, setCurrencyFilter] = useState<Set<string> | null>(null);
   // Hidden by default — Cin7 returns an all-zero Lead/Safety/ReorderQuantity/
   // MinimumToReorder placeholder for a product+supplier link that's never
   // had Product Supplier Options configured at all (confirmed live
@@ -143,6 +154,17 @@ export default function SupplierPlannerPage() {
     });
   }
 
+  const availableCurrencies = useMemo(() => [...new Set((lines ?? []).map(currencyLabel))].sort(), [lines]);
+
+  function toggleCurrency(currency: string) {
+    setCurrencyFilter((prev) => {
+      const next = new Set(prev ?? availableCurrencies);
+      if (next.has(currency)) next.delete(currency);
+      else next.add(currency);
+      return next;
+    });
+  }
+
   const visibleLines = useMemo(() => {
     if (!lines) return [];
     return lines.filter(
@@ -150,9 +172,10 @@ export default function SupplierPlannerPage() {
         (!needsReorderOnly || l.needsReorder) &&
         moverFilter.has(l.moverCategory) &&
         statusFilter.has(l.status) &&
+        (currencyFilter === null || currencyFilter.has(currencyLabel(l))) &&
         (showUnconfigured || !l.isUnconfigured)
     );
-  }, [lines, needsReorderOnly, moverFilter, statusFilter, showUnconfigured]);
+  }, [lines, needsReorderOnly, moverFilter, statusFilter, currencyFilter, showUnconfigured]);
 
   const unconfiguredCount = lines ? lines.filter((l) => l.isUnconfigured).length : 0;
 
@@ -212,6 +235,7 @@ export default function SupplierPlannerPage() {
     setRawExcludedLineKeys(new Set());
     setPoResults(new Map());
     setReceivingLocationId("");
+    setCurrencyFilter(null);
     const periodOption = PERIOD_OPTIONS.find((p) => p.value === period)!;
     startRunTransition(async () => {
       const result = await loadSupplierPlanAction({
@@ -366,6 +390,15 @@ export default function SupplierPlannerPage() {
                 <label key={s} className="flex items-center gap-1.5 text-sm text-slate-700">
                   <input type="checkbox" checked={statusFilter.has(s)} onChange={() => toggleStatus(s)} />
                   {s}
+                </label>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Currency</span>
+              {availableCurrencies.map((c) => (
+                <label key={c} className="flex items-center gap-1.5 text-sm text-slate-700">
+                  <input type="checkbox" checked={currencyFilter === null || currencyFilter.has(c)} onChange={() => toggleCurrency(c)} />
+                  {c}
                 </label>
               ))}
             </div>
