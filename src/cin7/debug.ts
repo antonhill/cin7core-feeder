@@ -1912,7 +1912,7 @@ export async function findProductSupplierOptionsExample(creds: Cin7Credentials, 
 
 export interface CreatePurchaseOrderAttempt {
   shape: string;
-  endpoint: "/purchase" | "/advanced-purchase";
+  endpoint: string;
   succeeded: boolean;
   /**
    * Only meaningful when succeeded — null means Cin7 accepted the request
@@ -1972,6 +1972,36 @@ async function tryPurchaseRequest(
 }
 
 /**
+ * Round 7's shape (see testCreatePurchaseOrder's own comment): a flat
+ * response with `TaskID`/`Lines`/`AdditionalCharges`/`Total` directly at the
+ * top level, no `Order`/`Invoice`/`StockReceived` wrapper at all — a
+ * genuinely different shape from every /purchase attempt tried so far, so
+ * this checks `response.Lines` directly rather than reusing
+ * tryPurchaseRequest's nested-section check.
+ */
+async function tryPurchaseOrderLines(
+  creds: Cin7Credentials,
+  method: "POST" | "PUT",
+  path: string,
+  shape: string,
+  body: Record<string, unknown>
+): Promise<CreatePurchaseOrderAttempt> {
+  try {
+    const response = await cin7Request<Record<string, unknown>>(creds, path, { method, body });
+    const lines = response.Lines;
+    const linesPopulatedIn = Array.isArray(lines) && lines.length > 0 ? "Order" : null;
+    return { shape, endpoint: `${method} ${path}`, succeeded: true, linesPopulatedIn, rawResponse: response };
+  } catch (e) {
+    return {
+      shape,
+      endpoint: `${method} ${path}`,
+      succeeded: false,
+      error: e instanceof Cin7ApiError ? `[${e.status}] ${e.message}` : e instanceof Error ? e.message : "Unknown error",
+    };
+  }
+}
+
+/**
  * Diagnostic only, and a genuine WRITE (unlike every other survey* function
  * here): no code in this codebase has ever created a Cin7 Purchase Order —
  * src/cin7/purchases.ts and purchase-detail.ts are read-only, and there is
@@ -2012,20 +2042,22 @@ export async function testCreatePurchaseOrder(
   const location = locations.find((l) => l.name === locationName);
   const locationId = location?.id;
 
-  // Round 6 (2026-07-24): round 5's full-record PUTs against Order.Lines
-  // all "succeeded" (real 200s, LastUpdatedDate genuinely advanced each
-  // time) but Order.Lines[] stayed empty regardless of shape. The response
-  // itself hints at why: a purchase tracks THREE separate line-bearing
-  // sections — Order, StockReceived, Invoice — each with its own Status,
-  // and in every response so far only Invoice ever came back "DRAFT"
-  // (active); Order/StockReceived/CreditNote/ManualJournals all stayed
-  // "NOT AVAILABLE" no matter what was sent. Two live theories, tested
-  // together: (a) lines actually belong on Invoice.Lines, the one section
-  // that's ever been "active"; (b) Order needs its own Status explicitly
-  // set to "DRAFT" before Cin7 will accept content into it — never tried
-  // explicitly until now. Also finally tests Approach="Invoice" (round 3
-  // only tried it with the since-confirmed-wrong flat top-level Lines
-  // shape, before nesting was even suspected).
+  // Round 7 (2026-07-24): rounds 3-6 exhaustively tried every plausible
+  // shape of Lines AS A FIELD ON /purchase itself (flat, nested under
+  // Order/Invoice/StockReceived, with/without an explicit sub-Status) — all
+  // "succeeded" (real 200s, fields genuinely persisted) but line arrays
+  // stayed empty every time, with zero validation error to react to.
+  // Anton found a genuine official docs example that changes the picture
+  // entirely: it's a FLAT response (`TaskID`/`Lines`/`AdditionalCharges`/
+  // `Total` directly at the top level, no Order/Invoice/StockReceived
+  // wrapper at all) keyed by `TaskID` — the same identifier convention
+  // createStockTransfer already uses — strongly suggesting this is a
+  // SEPARATE sub-resource endpoint entirely (most likely /purchase/order,
+  // matching the "Order" sub-object's own name), not a field within the
+  // general /purchase resource this whole investigation has been testing
+  // until now. Creates one bare header first (Approach doesn't appear to
+  // affect any of this either way, per rounds 4-6), then tries this new
+  // endpoint shape against a couple of plausible paths.
   const attempts: CreatePurchaseOrderAttempt[] = [];
   let succeededAttempt: CreatePurchaseOrderAttempt | undefined;
 
@@ -2035,50 +2067,59 @@ export async function testCreatePurchaseOrder(
     SupplierID: supplierId,
     Location: locationName,
     LocationID: locationId,
-    Approach: "Invoice",
+    Approach: "Stock",
   };
-  let created = await tryPurchaseRequest(creds, "POST", "/purchase", "Step 1: create bare header, Approach=Invoice (no Lines)", createBody);
+  let created = await tryPurchaseRequest(creds, "POST", "/purchase", "Step 1: create bare header (no Lines)", createBody);
   attempts.push(created);
   if (!created.succeeded && /Advanced Purchase/i.test(created.error ?? "")) {
-    created = await tryPurchaseRequest(
-      creds,
-      "POST",
-      "/advanced-purchase",
-      "Step 1: create bare header, Approach=Invoice (no Lines) [advanced]",
-      createBody
-    );
+    created = await tryPurchaseRequest(creds, "POST", "/advanced-purchase", "Step 1: create bare header (no Lines) [advanced]", createBody);
     attempts.push(created);
   }
 
   if (created.succeeded) {
-    const endpoint = created.endpoint;
     const full = created.rawResponse as Record<string, unknown>;
-    const existingOrder = (full.Order as Record<string, unknown> | undefined) ?? {};
-    const existingInvoice = (full.Invoice as Record<string, unknown> | undefined) ?? {};
-    const existingStockReceived = (full.StockReceived as Record<string, unknown> | undefined) ?? {};
+    const taskId = full.ID as string;
+    const productName = typeof product?.Name === "string" ? product.Name : sku;
+    const purchaseTaxRule = typeof product?.PurchaseTaxRule === "string" ? product.PurchaseTaxRule : undefined;
 
-    const putCandidates: { shape: string; body: Record<string, unknown> }[] = [
+    const lineBody = {
+      TaskID: taskId,
+      CombineAdditionalCharges: false,
+      Memo: "",
+      Status: "DRAFT",
+      Lines: [
+        {
+          ProductID: productId,
+          SKU: sku,
+          Name: productName,
+          Quantity: quantity,
+          Price: 0,
+          Discount: 0,
+          Tax: 0,
+          ...(purchaseTaxRule ? { TaxRule: purchaseTaxRule } : {}),
+          SupplierSKU: "",
+          Comment: "",
+          Total: 0,
+        },
+      ],
+      AdditionalCharges: [],
+    };
+
+    const orderLineCandidates: { method: "PUT" | "POST"; path: string; shape: string; body: Record<string, unknown> }[] = [
+      { method: "PUT", path: "/purchase/order", shape: "PUT /purchase/order, Status=DRAFT", body: lineBody },
+      { method: "POST", path: "/purchase/order", shape: "POST /purchase/order, Status=DRAFT", body: lineBody },
+      { method: "PUT", path: "/purchase/Order", shape: "PUT /purchase/Order (capitalized), Status=DRAFT", body: lineBody },
       {
-        shape: "Step 2 PUT: Invoice.Lines[SKU,Quantity] (the one section that's ever come back active)",
-        body: { ...full, Invoice: { ...existingInvoice, Lines: [{ SKU: sku, Quantity: quantity }] } },
-      },
-      {
-        shape: 'Step 2 PUT: Order.Status="DRAFT" + Order.Lines[SKU,Quantity] (explicit status, never tried before)',
-        body: { ...full, Order: { ...existingOrder, Status: "DRAFT", Lines: [{ SKU: sku, Quantity: quantity }] } },
-      },
-      {
-        shape: 'Step 2 PUT: Invoice.Lines[SKU,Quantity,Price] + Invoice.Status="DRAFT" (redundant safety)',
-        body: { ...full, Invoice: { ...existingInvoice, Status: "DRAFT", Lines: [{ SKU: sku, Quantity: quantity, Price: 0 }] } },
-      },
-      {
-        shape: 'Step 2 PUT: StockReceived.Status="DRAFT" + StockReceived.Lines[SKU,Quantity] (third section, in case none of the above are it)',
-        body: { ...full, StockReceived: { ...existingStockReceived, Status: "DRAFT", Lines: [{ SKU: sku, Quantity: quantity }] } },
+        method: "PUT",
+        path: "/purchase/order",
+        shape: "PUT /purchase/order, Status=AUTHORISED (matches docs example exactly)",
+        body: { ...lineBody, Status: "AUTHORISED" },
       },
     ];
 
-    for (const candidate of putCandidates) {
+    for (const candidate of orderLineCandidates) {
       if (succeededAttempt) break;
-      const attempt = await tryPurchaseRequest(creds, "PUT", endpoint, candidate.shape, candidate.body);
+      const attempt = await tryPurchaseOrderLines(creds, candidate.method, candidate.path, candidate.shape, candidate.body);
       attempts.push(attempt);
       if (attempt.succeeded && attempt.linesPopulatedIn) succeededAttempt = attempt;
     }
