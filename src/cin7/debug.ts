@@ -1914,8 +1914,17 @@ export interface CreatePurchaseOrderAttempt {
   shape: string;
   endpoint: "/purchase" | "/advanced-purchase";
   succeeded: boolean;
-  /** Only meaningful when succeeded — false means Cin7 accepted the request (created a real DRAFT PO) but silently dropped the line items rather than erroring, confirmed live 2026-07-24 (round 3's flat top-level `Lines` key). */
-  linesPopulated?: boolean;
+  /**
+   * Only meaningful when succeeded — null means Cin7 accepted the request
+   * (created/updated a real DRAFT PO) but silently dropped the line items
+   * rather than erroring, confirmed live 2026-07-24 across several shapes.
+   * A real purchase response tracks THREE separate line-bearing sections
+   * (`Order`, `StockReceived`, `Invoice`), each with its own `Status` — only
+   * one has ever come back non-"NOT AVAILABLE" (`Invoice: "DRAFT"`) despite
+   * every attempt targeting `Order`, so this reports whichever section (if
+   * any) actually ended up populated rather than assuming it's always Order.
+   */
+  linesPopulatedIn?: "Order" | "StockReceived" | "Invoice" | null;
   error?: string;
   rawResponse?: unknown;
 }
@@ -1943,9 +1952,15 @@ async function tryPurchaseRequest(
 ): Promise<CreatePurchaseOrderAttempt> {
   try {
     const response = await cin7Request<Record<string, unknown>>(creds, endpoint, { method, body });
-    const order = response.Order as Record<string, unknown> | undefined;
-    const linesPopulated = Array.isArray(order?.Lines) && order.Lines.length > 0;
-    return { shape, endpoint, succeeded: true, linesPopulated, rawResponse: response };
+    let linesPopulatedIn: CreatePurchaseOrderAttempt["linesPopulatedIn"] = null;
+    for (const key of ["Order", "StockReceived", "Invoice"] as const) {
+      const section = response[key] as Record<string, unknown> | undefined;
+      if (Array.isArray(section?.Lines) && section.Lines.length > 0) {
+        linesPopulatedIn = key;
+        break;
+      }
+    }
+    return { shape, endpoint, succeeded: true, linesPopulatedIn, rawResponse: response };
   } catch (e) {
     return {
       shape,
@@ -1997,21 +2012,20 @@ export async function testCreatePurchaseOrder(
   const location = locations.find((l) => l.name === locationName);
   const locationId = location?.id;
 
-  // Round 5 (2026-07-24): rounds 3-4 both got a real 200 (fresh DRAFT PO
-  // each time — PO-00301 through PO-00305) but Order.Lines[] came back
-  // empty regardless of whether Lines was a flat top-level key or nested
-  // under Order — Cin7 silently ignores line data on CREATE either way,
-  // rather than erroring. This mirrors an existing, confirmed pattern in
-  // this exact codebase: products.ts's POST /Product rejects an inline
-  // Suppliers[] the same way, requiring a follow-up PUT to attach it
-  // (src/cin7/products.ts:363). Testing the same two-step shape here:
-  // create a bare header with NO line data at all (one single POST, not
-  // one per candidate, to stop minting empty orphan test POs), then try
-  // several PUT bodies against that one real order — always the FULL
-  // returned object with only Order.Lines changed, never a partial patch,
-  // since Cin7's PUTs have repeatedly been confirmed elsewhere to not be
-  // partial (ReorderLevels' full-array-replace, Product's blank-clears-
-  // field rule).
+  // Round 6 (2026-07-24): round 5's full-record PUTs against Order.Lines
+  // all "succeeded" (real 200s, LastUpdatedDate genuinely advanced each
+  // time) but Order.Lines[] stayed empty regardless of shape. The response
+  // itself hints at why: a purchase tracks THREE separate line-bearing
+  // sections — Order, StockReceived, Invoice — each with its own Status,
+  // and in every response so far only Invoice ever came back "DRAFT"
+  // (active); Order/StockReceived/CreditNote/ManualJournals all stayed
+  // "NOT AVAILABLE" no matter what was sent. Two live theories, tested
+  // together: (a) lines actually belong on Invoice.Lines, the one section
+  // that's ever been "active"; (b) Order needs its own Status explicitly
+  // set to "DRAFT" before Cin7 will accept content into it — never tried
+  // explicitly until now. Also finally tests Approach="Invoice" (round 3
+  // only tried it with the since-confirmed-wrong flat top-level Lines
+  // shape, before nesting was even suspected).
   const attempts: CreatePurchaseOrderAttempt[] = [];
   let succeededAttempt: CreatePurchaseOrderAttempt | undefined;
 
@@ -2021,12 +2035,18 @@ export async function testCreatePurchaseOrder(
     SupplierID: supplierId,
     Location: locationName,
     LocationID: locationId,
-    Approach: "Stock",
+    Approach: "Invoice",
   };
-  let created = await tryPurchaseRequest(creds, "POST", "/purchase", "Step 1: create bare header (no Lines)", createBody);
+  let created = await tryPurchaseRequest(creds, "POST", "/purchase", "Step 1: create bare header, Approach=Invoice (no Lines)", createBody);
   attempts.push(created);
   if (!created.succeeded && /Advanced Purchase/i.test(created.error ?? "")) {
-    created = await tryPurchaseRequest(creds, "POST", "/advanced-purchase", "Step 1: create bare header (no Lines) [advanced]", createBody);
+    created = await tryPurchaseRequest(
+      creds,
+      "POST",
+      "/advanced-purchase",
+      "Step 1: create bare header, Approach=Invoice (no Lines) [advanced]",
+      createBody
+    );
     attempts.push(created);
   }
 
@@ -2034,23 +2054,25 @@ export async function testCreatePurchaseOrder(
     const endpoint = created.endpoint;
     const full = created.rawResponse as Record<string, unknown>;
     const existingOrder = (full.Order as Record<string, unknown> | undefined) ?? {};
+    const existingInvoice = (full.Invoice as Record<string, unknown> | undefined) ?? {};
+    const existingStockReceived = (full.StockReceived as Record<string, unknown> | undefined) ?? {};
 
     const putCandidates: { shape: string; body: Record<string, unknown> }[] = [
       {
-        shape: "Step 2 PUT: full record + Order.Lines[SKU,Quantity]",
-        body: { ...full, Order: { ...existingOrder, Lines: [{ SKU: sku, Quantity: quantity }] } },
+        shape: "Step 2 PUT: Invoice.Lines[SKU,Quantity] (the one section that's ever come back active)",
+        body: { ...full, Invoice: { ...existingInvoice, Lines: [{ SKU: sku, Quantity: quantity }] } },
       },
       {
-        shape: "Step 2 PUT: full record + Order.Lines[ProductID,SKU,Quantity]",
-        body: { ...full, Order: { ...existingOrder, Lines: [{ ProductID: productId, SKU: sku, Quantity: quantity }] } },
+        shape: 'Step 2 PUT: Order.Status="DRAFT" + Order.Lines[SKU,Quantity] (explicit status, never tried before)',
+        body: { ...full, Order: { ...existingOrder, Status: "DRAFT", Lines: [{ SKU: sku, Quantity: quantity }] } },
       },
       {
-        shape: "Step 2 PUT: full record + Order.Lines[SKU,Quantity,Price]",
-        body: { ...full, Order: { ...existingOrder, Lines: [{ SKU: sku, Quantity: quantity, Price: 0 }] } },
+        shape: 'Step 2 PUT: Invoice.Lines[SKU,Quantity,Price] + Invoice.Status="DRAFT" (redundant safety)',
+        body: { ...full, Invoice: { ...existingInvoice, Status: "DRAFT", Lines: [{ SKU: sku, Quantity: quantity, Price: 0 }] } },
       },
       {
-        shape: "Step 2 PUT: full record + top-level Lines[SKU,Quantity] (in case PUT differs from POST)",
-        body: { ...full, Lines: [{ SKU: sku, Quantity: quantity }] },
+        shape: 'Step 2 PUT: StockReceived.Status="DRAFT" + StockReceived.Lines[SKU,Quantity] (third section, in case none of the above are it)',
+        body: { ...full, StockReceived: { ...existingStockReceived, Status: "DRAFT", Lines: [{ SKU: sku, Quantity: quantity }] } },
       },
     ];
 
@@ -2058,7 +2080,7 @@ export async function testCreatePurchaseOrder(
       if (succeededAttempt) break;
       const attempt = await tryPurchaseRequest(creds, "PUT", endpoint, candidate.shape, candidate.body);
       attempts.push(attempt);
-      if (attempt.succeeded && attempt.linesPopulated) succeededAttempt = attempt;
+      if (attempt.succeeded && attempt.linesPopulatedIn) succeededAttempt = attempt;
     }
   }
 
