@@ -14,6 +14,7 @@ import {
 import { fetchAllProductionOrdersList } from "@/cin7/production-orders";
 import { fetchAllPurchasesList } from "@/cin7/purchases";
 import { updateSaleShipBy } from "@/cin7/sales";
+import { fetchAllProductAvailability, type Cin7ProductAvailabilityEntry } from "@/cin7/product-availability";
 
 interface Cin7ProductListResponse {
   Products?: Record<string, unknown>[];
@@ -2138,4 +2139,27 @@ export async function testCreatePurchaseOrder(
     locationId,
     attempts,
   };
+}
+
+export interface ProductAvailabilityCheckResult {
+  sku: string;
+  /** Every location/bin/batch entry Cin7 actually returned for this SKU — empty means Cin7 has no record of this SKU at any location at all (never received/stocked anywhere), not a sync gap on this app's side. */
+  entries: Cin7ProductAvailabilityEntry[];
+}
+
+/**
+ * Diagnostic only: confirms live, directly against Cin7, whether specific
+ * SKUs have any stock record at all — for when this app's own synced
+ * product_availability table shows zero rows for a SKU and it's unclear
+ * whether that's a real "never stocked anywhere" state or a sync gap.
+ * Reuses fetchAllProductAvailability (the exact same live fetch
+ * sync-product-availability.ts itself uses, and which deliberately does
+ * NOT filter out zero-quantity rows) rather than guessing at a `Sku=`
+ * filter query param on `/ref/productavailability` — confirmed filterable
+ * per docs/cin7-api-findings.md §13b, but a full scan removes any doubt
+ * about whether that filter param actually works as named.
+ */
+export async function checkProductAvailabilityForSkus(creds: Cin7Credentials, skus: string[]): Promise<ProductAvailabilityCheckResult[]> {
+  const all = await fetchAllProductAvailability(creds);
+  return skus.map((sku) => ({ sku, entries: all.filter((e) => e.SKU === sku) }));
 }

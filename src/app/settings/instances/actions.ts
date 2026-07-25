@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
-import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail, surveyProductionOrderRoutingTasks, surveyProductionOrderOperationStatus, surveyProductionRun, surveyProductionOrderStatuses, surveyPurchaseDetailFields, surveyProductAvailabilityFields, surveySaleFulfillmentFields, surveyBackorderEtaFields, testSaleShipByWriteBack, testProductSupplierLink, surveyProductSupplierOptionsFields, findProductSupplierOptionsExample, testCreatePurchaseOrder } from "@/cin7/debug";
+import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail, surveyProductionOrderRoutingTasks, surveyProductionOrderOperationStatus, surveyProductionRun, surveyProductionOrderStatuses, surveyPurchaseDetailFields, surveyProductAvailabilityFields, surveySaleFulfillmentFields, surveyBackorderEtaFields, testSaleShipByWriteBack, testProductSupplierLink, surveyProductSupplierOptionsFields, findProductSupplierOptionsExample, testCreatePurchaseOrder, checkProductAvailabilityForSkus } from "@/cin7/debug";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
@@ -303,6 +303,28 @@ export async function debugCheckProductionBomForSkus(instanceId: string, skusInp
     if (!skus.length) return { ok: false, message: "Enter one or more comma-separated SKUs." };
 
     const result = await surveyProductionBomForSkus(creds, skus);
+    return { ok: true, message: JSON.stringify(result, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Diagnostic only: confirms live whether specific SKUs have any Product
+ * Availability record in Cin7 at all — see checkProductAvailabilityForSkus's
+ * own comment for why this matters (distinguishing "never stocked
+ * anywhere" from a sync gap).
+ */
+export async function debugCheckProductAvailabilityForSkus(instanceId: string, skusInput: string): Promise<TestConnectionResult> {
+  try {
+    const creds = await loadInstanceCreds(instanceId);
+    const skus = skusInput
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!skus.length) return { ok: false, message: "Enter one or more comma-separated SKUs." };
+
+    const result = await checkProductAvailabilityForSkus(creds, skus);
     return { ok: true, message: JSON.stringify(result, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };

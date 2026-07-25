@@ -28,6 +28,7 @@ import {
   debugTestSaleShipByWriteBack,
   debugTestProductSupplierLink,
   debugTestCreatePurchaseOrder,
+  debugCheckProductAvailabilityForSkus,
   debugProbeWorkCentrePaths,
   debugPushOneCustomerAndSupplier,
   listInstances,
@@ -51,6 +52,7 @@ export default function DiagnosticsPage() {
   const [refCheckNames, setRefCheckNames] = useState<Record<string, string>>({});
   const [accountCodes, setAccountCodes] = useState<Record<string, string>>({});
   const [productionBomSkus, setProductionBomSkus] = useState<Record<string, string>>({});
+  const [availabilitySkus, setAvailabilitySkus] = useState<Record<string, string>>({});
   const [productionOrderNumbers, setProductionOrderNumbers] = useState<Record<string, string>>({});
   const [shipByTestOrderNumbers, setShipByTestOrderNumbers] = useState<Record<string, string>>({});
   const [supplierLinkTests, setSupplierLinkTests] = useState<Record<string, string>>({});
@@ -188,6 +190,16 @@ export default function DiagnosticsPage() {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Checking…" } }));
     startTransition(async () => {
       const result = await debugCheckProductionBomForSkus(instanceId, skus);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
+  function handleCheckProductAvailabilityForSkus(instanceId: string) {
+    const skus = (availabilitySkus[instanceId] ?? "").trim();
+    if (!skus) return;
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Checking…" } }));
+    startTransition(async () => {
+      const result = await debugCheckProductAvailabilityForSkus(instanceId, skus);
       setTestResults((prev) => ({ ...prev, [instanceId]: result }));
     });
   }
@@ -423,6 +435,22 @@ export default function DiagnosticsPage() {
                 className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Check Production BOM for SKUs
+              </button>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="SKUs to check stock for, e.g. CC50X50-009,CC60X60-009"
+                value={availabilitySkus[inst.id] ?? ""}
+                onChange={(e) => setAvailabilitySkus((prev) => ({ ...prev, [inst.id]: e.target.value }))}
+                className="w-80 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+              />
+              <button
+                onClick={() => handleCheckProductAvailabilityForSkus(inst.id)}
+                disabled={isPending || !(availabilitySkus[inst.id] ?? "").trim()}
+                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Check stock for SKUs
               </button>
             </div>
             <div className="mt-2 flex items-center gap-2">
