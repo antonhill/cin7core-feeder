@@ -8,7 +8,14 @@ import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsForSupplierPlanning } from "@/cin7/product-supplier-options";
 import { createPurchaseOrder } from "@/cin7/purchase-write";
 import { getReorderReport } from "@/reports/query";
-import { buildSupplierPlanLines, groupLinesForPurchaseOrders, type SupplierPlanExtra, type SupplierPlanLine } from "@/reports/supplier-planner/build";
+import { fetchAllLocations, type Cin7Location } from "@/cin7/reference-lookups";
+import {
+  buildSupplierPlanLines,
+  groupLinesForPurchaseOrders,
+  type PurchaseOrderFallbackLocation,
+  type SupplierPlanExtra,
+  type SupplierPlanLine,
+} from "@/reports/supplier-planner/build";
 import { buildSupplierPlanSheet } from "@/reports/supplier-planner-export";
 import { renderXlsxBase64 } from "@/reports/xlsx-writer";
 
@@ -26,6 +33,12 @@ export interface SupplierPlanParams {
   bufferPercent: number;
 }
 
+export interface SupplierPlanData {
+  lines: SupplierPlanLine[];
+  /** Every real location in the account, so the UI can offer a "receiving location" for lines that carry no location of their own — see groupLinesForPurchaseOrders' own comment on why that's most lines, not a rare exception. */
+  locations: Cin7Location[];
+}
+
 /**
  * Combines a live Cin7 fetch (Suppliers[].ProductSupplierOptions — Lead/
  * Safety/ReorderQuantity/MinimumToReorder, src/cin7/product-supplier-
@@ -36,7 +49,7 @@ export interface SupplierPlanParams {
  * build.ts's header comment for why it stays a separate tool from the
  * Reorder Report rather than merging with it.
  */
-export async function loadSupplierPlanAction(params: SupplierPlanParams): Promise<SupplierPlanActionResult<SupplierPlanLine[]>> {
+export async function loadSupplierPlanAction(params: SupplierPlanParams): Promise<SupplierPlanActionResult<SupplierPlanData>> {
   if (!params.instanceId) return { ok: false, error: "Choose an instance." };
 
   try {
@@ -44,13 +57,14 @@ export async function loadSupplierPlanAction(params: SupplierPlanParams): Promis
     const db = createServiceRoleClient();
 
     const creds = await loadCin7Credentials(db, orgId, params.instanceId);
-    const [products, reorderRows] = await Promise.all([
+    const [products, reorderRows, locations] = await Promise.all([
       fetchAllProductsForSupplierPlanning(creds),
       getReorderReport(db, orgId, {
         instanceIds: [params.instanceId],
         velocityDateFrom: params.velocityDateFrom,
         velocityDateTo: params.velocityDateTo,
       }),
+      fetchAllLocations(creds),
     ]);
 
     const velocityBySku = new Map(reorderRows.map((r) => [r.product_sku, r.total_out]));
@@ -67,7 +81,7 @@ export async function loadSupplierPlanAction(params: SupplierPlanParams): Promis
       extraBySku
     );
 
-    return { ok: true, data: lines };
+    return { ok: true, data: { lines, locations } };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
@@ -119,7 +133,8 @@ export interface CreatePurchaseOrdersResult {
  */
 export async function createSupplierPlanPurchaseOrdersAction(
   instanceId: string,
-  lines: SupplierPlanLine[]
+  lines: SupplierPlanLine[],
+  fallbackLocation?: PurchaseOrderFallbackLocation
 ): Promise<SupplierPlanActionResult<CreatePurchaseOrdersResult>> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   if (!lines.length) return { ok: false, error: "Select at least one line to create a PO from." };
@@ -130,7 +145,14 @@ export async function createSupplierPlanPurchaseOrdersAction(
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
 
-    const groups = groupLinesForPurchaseOrders(lines);
+    const groups = groupLinesForPurchaseOrders(lines, fallbackLocation);
+    if (!groups.length) {
+      return {
+        ok: false,
+        error:
+          "None of the selected lines have a specific location, and no receiving location was chosen — a Purchase Order needs exactly one. Choose a receiving location above and try again.",
+      };
+    }
     const created: CreatedPurchaseOrder[] = [];
     const failed: FailedPurchaseOrder[] = [];
 

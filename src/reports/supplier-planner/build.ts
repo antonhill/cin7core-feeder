@@ -181,24 +181,38 @@ export interface PurchaseOrderGroup {
   lines: SupplierPlanLine[];
 }
 
+export interface PurchaseOrderFallbackLocation {
+  locationId: string;
+  locationName: string;
+}
+
 /**
  * Groups selected lines by (supplier, location) — not just supplier — for
  * real PO creation, since a Cin7 Purchase Order has exactly one receiving
  * Location (confirmed live 2026-07-25, src/cin7/purchase-write.ts). A
  * supplier whose selected lines span multiple locations needs one PO per
- * location, not one PO overall. Lines with no resolved location (the
- * org-wide "default" options entry, locationId: null) are skipped — there's
- * nowhere for Cin7 to receive that stock into, so nothing to create a real
- * PO from.
+ * location, not one PO overall.
+ *
+ * Most lines carry no location of their own — dedupeOptions() above
+ * collapses every product+supplier link down to its org-wide "default"
+ * entry (locationId: null) unless a specific location's config genuinely
+ * diverges, so in practice almost every line hits this case, not the rare
+ * exception. A line's OWN locationId always wins when present (a genuine
+ * per-location divergence); otherwise `fallbackLocation` — a location the
+ * caller has the user explicitly choose as "where this PO's stock arrives"
+ * — fills in. Without a fallback, a location-less line is skipped, same as
+ * before.
  */
-export function groupLinesForPurchaseOrders(lines: SupplierPlanLine[]): PurchaseOrderGroup[] {
+export function groupLinesForPurchaseOrders(lines: SupplierPlanLine[], fallbackLocation?: PurchaseOrderFallbackLocation): PurchaseOrderGroup[] {
   const grouped = new Map<string, PurchaseOrderGroup>();
   for (const line of lines) {
-    if (!line.locationId || !line.locationName) continue;
-    const key = `${line.supplierId}::${line.locationId}`;
+    const locationId = line.locationId ?? fallbackLocation?.locationId ?? null;
+    const locationName = line.locationName ?? fallbackLocation?.locationName ?? null;
+    if (!locationId || !locationName) continue;
+    const key = `${line.supplierId}::${locationId}`;
     const existing = grouped.get(key);
     if (existing) existing.lines.push(line);
-    else grouped.set(key, { supplierId: line.supplierId, supplierName: line.supplierName, locationId: line.locationId, locationName: line.locationName, lines: [line] });
+    else grouped.set(key, { supplierId: line.supplierId, supplierName: line.supplierName, locationId, locationName, lines: [line] });
   }
   return [...grouped.values()];
 }

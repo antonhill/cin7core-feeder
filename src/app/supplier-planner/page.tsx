@@ -12,6 +12,7 @@ import {
   type FailedPurchaseOrder,
 } from "./actions";
 import { groupLinesBySupplier, type SupplierPlanLine, type SupplierPlanMoverCategory, type SupplierPlanStatus } from "@/reports/supplier-planner/build";
+import type { Cin7Location } from "@/cin7/reference-lookups";
 import { Spinner } from "@/app/Spinner";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { SUPPLIER_PLANNER_MODULE } from "@/app/module-nav";
@@ -90,6 +91,8 @@ export default function SupplierPlannerPage() {
   const [needsReorderOnly, setNeedsReorderOnly] = useState(true);
 
   const [lines, setLines] = useState<SupplierPlanLine[] | null>(null);
+  const [locations, setLocations] = useState<Cin7Location[]>([]);
+  const [receivingLocationId, setReceivingLocationId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isRunning, startRunTransition] = useTransition();
 
@@ -179,13 +182,19 @@ export default function SupplierPlannerPage() {
     });
   }
 
+  const receivingLocation = locations.find((l) => l.id === receivingLocationId);
+
   function handleCreatePo(supplierName: string, supplierLines: SupplierPlanLine[]) {
     if (!instanceId) return;
     const selected = supplierLines.filter((l) => !excludedLineKeys.has(lineKey(l)));
     if (!selected.length) return;
     setCreatingSupplier(supplierName);
     startCreatePoTransition(async () => {
-      const result = await createSupplierPlanPurchaseOrdersAction(instanceId, selected);
+      const result = await createSupplierPlanPurchaseOrdersAction(
+        instanceId,
+        selected,
+        receivingLocation ? { locationId: receivingLocation.id, locationName: receivingLocation.name } : undefined
+      );
       setPoResults((prev) => {
         const next = new Map(prev);
         if (result.data) next.set(supplierName, { created: result.data.created, failed: result.data.failed });
@@ -202,6 +211,7 @@ export default function SupplierPlannerPage() {
     setLines(null);
     setRawExcludedLineKeys(new Set());
     setPoResults(new Map());
+    setReceivingLocationId("");
     const periodOption = PERIOD_OPTIONS.find((p) => p.value === period)!;
     startRunTransition(async () => {
       const result = await loadSupplierPlanAction({
@@ -215,7 +225,8 @@ export default function SupplierPlannerPage() {
         setError(result.error ?? "Unknown error");
         return;
       }
-      setLines(result.data ?? []);
+      setLines(result.data?.lines ?? []);
+      setLocations(result.data?.locations ?? []);
     });
   }
 
@@ -317,6 +328,28 @@ export default function SupplierPlannerPage() {
             </div>
           </div>
 
+          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-slate-700">Receiving location</span>
+              <select
+                value={receivingLocationId}
+                onChange={(e) => setReceivingLocationId(e.target.value)}
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="">Choose a location…</option>
+                {locations.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="max-w-md text-xs text-slate-400">
+              Used for lines with no location of their own (most lines) when creating a PO — Cin7 needs exactly one receiving location per
+              order. A line that already has its own specific location keeps that instead.
+            </p>
+          </div>
+
           <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Mover</span>
@@ -351,10 +384,18 @@ export default function SupplierPlannerPage() {
           )}
 
           {[...grouped.entries()].map(([supplierName, supplierLines]) => {
-            const selectedCount = supplierLines.filter((l) => !excludedLineKeys.has(lineKey(l))).length;
+            const selectedLines = supplierLines.filter((l) => !excludedLineKeys.has(lineKey(l)));
+            const selectedCount = selectedLines.length;
             const allSelected = selectedCount === supplierLines.length;
             const poResult = poResults.get(supplierName);
             const isCreatingThisSupplier = isCreatingPo && creatingSupplier === supplierName;
+            const hasResolvableLocation = selectedLines.some((l) => l.locationId || receivingLocation);
+            const createDisabled = isCreatingPo || !canWrite || selectedCount === 0 || !hasResolvableLocation;
+            const createTitle = !canWrite
+              ? "Writing to Cin7 is disabled on your current plan."
+              : selectedCount > 0 && !hasResolvableLocation
+                ? "Choose a receiving location above — none of the selected lines have one of their own."
+                : undefined;
             return (
               <div key={supplierName} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -367,8 +408,8 @@ export default function SupplierPlannerPage() {
                   <button
                     type="button"
                     onClick={() => handleCreatePo(supplierName, supplierLines)}
-                    disabled={isCreatingPo || !canWrite || selectedCount === 0}
-                    title={!canWrite ? "Writing to Cin7 is disabled on your current plan." : undefined}
+                    disabled={createDisabled}
+                    title={createTitle}
                     className="rounded-full bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
                   >
                     {isCreatingThisSupplier && <Spinner className="mr-1.5" />}

@@ -225,8 +225,23 @@ describe("groupLinesForPurchaseOrders", () => {
     expect(groups.map((g) => g.supplierName).sort()).toEqual(["Supplier A", "Supplier B"]);
   });
 
-  it("skips a line with no resolved location — nothing for Cin7 to receive it into", () => {
+  it("skips a line with no resolved location and no fallback — nothing for Cin7 to receive it into", () => {
     const lines = [line({ locationId: null, locationName: null })];
     expect(groupLinesForPurchaseOrders(lines)).toHaveLength(0);
+  });
+
+  it("falls back to the caller-supplied receiving location when a line has none of its own — this is the common case, not the exception", () => {
+    const lines = [line({ locationId: null, locationName: null })];
+    const groups = groupLinesForPurchaseOrders(lines, { locationId: "loc-fallback", locationName: "Main Warehouse" });
+    expect(groups).toHaveLength(1);
+    expect(groups[0].locationId).toBe("loc-fallback");
+    expect(groups[0].locationName).toBe("Main Warehouse");
+  });
+
+  it("prefers a line's own location over the fallback when it has one — a genuine per-location divergence should still route there", () => {
+    const lines = [line({ locationId: "loc-specific", locationName: "Cape Town" })];
+    const groups = groupLinesForPurchaseOrders(lines, { locationId: "loc-fallback", locationName: "Main Warehouse" });
+    expect(groups).toHaveLength(1);
+    expect(groups[0].locationName).toBe("Cape Town");
   });
 });
