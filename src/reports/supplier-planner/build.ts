@@ -6,13 +6,25 @@
  * arbitrate which threshold wins when a SKU has both a reorder level and a
  * supplier lead time configured.
  *
- * For each (product, supplier, location) entry with a Lead time configured
+ * For each (product, supplier, location) with a Lead time configured
  * (src/cin7/product-supplier-options.ts): threshold = the greater of a
  * velocity-based lead-time demand figure and the supplier's own
  * `MinimumToReorder` — Anton confirmed the supplier's own configured
  * minimum should act as a floor under the velocity-based number, not be
  * overridden by it ("a bit of overlap" with the Reorder Report's own
  * threshold concept, without merging the two tools).
+ *
+ * **Per-location demand (2026-07-25):** on-hand/on-order/sales-velocity are
+ * now genuinely computed per real Cin7 location, not one instance-wide
+ * aggregate reused under every location label. Anton flagged that a line
+ * could show a specific location name while still doing its math off the
+ * whole instance's stock/sales — see report_supplier_plan_location_demand
+ * (migration 0049) and query.ts's getSupplierPlanLocationDemand for where
+ * this per-location data actually comes from. One deliberate limitation
+ * carried over from that function: it only attributes SALES to a location
+ * (sales.location is real, synced data); assembly-consumption demand is not
+ * location-tagged in this schema today and is excluded here, unlike Reorder
+ * Report's own total_out which blends both sources.
  */
 
 export interface SupplierPlanOptionInput {
@@ -66,9 +78,8 @@ export interface SupplierPlanLine {
 export type SupplierPlanMoverCategory = "Fast" | "Medium" | "Slow" | "No movement";
 export type SupplierPlanStatus = "Stockout risk" | "Excess" | "Healthy";
 
-/** Same per-SKU on_order/mover/status the Reorder Report already computes (report_reorder RPC) — passed through rather than re-derived here. Optional/defaulted so existing callers/tests that only care about the threshold math don't need to supply it. */
+/** Same per-SKU mover/status the Reorder Report already computes (report_reorder RPC) — passed through rather than re-derived here, since there's no per-location equivalent bucketing yet (see this file's own header comment). onOrder is NOT here — like onHand/totalOut, it now comes from the per-location demand data instead, so a location's own incoming stock reduces only that location's own need. Optional/defaulted so existing callers/tests that only care about the threshold math don't need to supply it. */
 export interface SupplierPlanExtra {
-  onOrder: number;
   moverCategory: SupplierPlanMoverCategory;
   status: SupplierPlanStatus;
 }
@@ -78,29 +89,24 @@ export interface BuildSupplierPlanOptions {
   periodDays: number;
 }
 
-/**
- * Cin7 auto-copies the "default" (locationId: null) options entry's Lead/
- * Safety/ReorderQuantity to EVERY existing location the first time a
- * supplier's options are configured — confirmed live 2026-07-23 (25
- * per-location entries alongside the one default entry, every one an exact
- * copy). Naively emitting one line per location would flood the report
- * with near-duplicate rows for every product. Collapses to just the
- * default entry, and only ALSO surfaces a location's own entry when its
- * values genuinely diverge from the default — i.e. someone actually
- * customized that location.
- */
-function dedupeOptions(options: SupplierPlanOptionInput[]): SupplierPlanOptionInput[] {
-  const defaultOption = options.find((o) => o.locationId === null) ?? options[0];
-  if (!defaultOption) return [];
-  const divergent = options.filter(
-    (o) =>
-      o.locationId !== null &&
-      (o.lead !== defaultOption.lead || o.safety !== defaultOption.safety || o.reorderQuantity !== defaultOption.reorderQuantity)
-  );
-  return [defaultOption, ...divergent];
+/** One location's own on-hand/on-order/sales-velocity figures — see report_supplier_plan_location_demand (migration 0049). */
+export interface SupplierPlanLocationDemand {
+  onHand: number;
+  onOrder: number;
+  totalOut: number;
 }
 
-const DEFAULT_EXTRA: SupplierPlanExtra = { onOrder: 0, moverCategory: "No movement", status: "Healthy" };
+export interface SupplierPlanDemandData {
+  /** sku -> real Cin7 location name -> that location's own demand. Only present for a SKU when it actually has synced per-location activity (product_availability and/or sale_lines/sales rows). */
+  byLocation: Map<string, Map<string, SupplierPlanLocationDemand>>;
+  /** sku -> org-wide aggregate demand (report_reorder) — used only as a fallback when a SKU has zero per-location rows at all (e.g. a brand-new product with nothing synced yet), so a real MinimumToReorder floor still surfaces a line instead of silently disappearing. */
+  fallbackBySku: Map<string, SupplierPlanLocationDemand>;
+  /** Real Cin7 location name -> its LocationID — a demand-derived line needs a genuine ID for PO creation, since it no longer necessarily comes from a matching supplier-option row. */
+  locationIdByName: Map<string, string>;
+}
+
+const DEFAULT_EXTRA: SupplierPlanExtra = { moverCategory: "No movement", status: "Healthy" };
+const ZERO_DEMAND: SupplierPlanLocationDemand = { onHand: 0, onOrder: 0, totalOut: 0 };
 
 /** See SupplierPlanLine.isUnconfigured's own comment — requires every planning field to be zero/unset at once, not just Lead alone, so a deliberately-configured zero-lead entry with a real ReorderQuantity/MinimumToReorder isn't mistaken for an unconfigured placeholder. */
 function isUnconfiguredOption(option: SupplierPlanOptionInput): boolean {
@@ -109,28 +115,47 @@ function isUnconfiguredOption(option: SupplierPlanOptionInput): boolean {
 
 export function buildSupplierPlanLines(
   products: SupplierPlanProductInput[],
-  velocityBySku: Map<string, number>,
-  onHandBySku: Map<string, number>,
+  demand: SupplierPlanDemandData,
   opts: BuildSupplierPlanOptions,
   extraBySku: Map<string, SupplierPlanExtra> = new Map()
 ): SupplierPlanLine[] {
   const lines: SupplierPlanLine[] = [];
 
   for (const product of products) {
-    const totalOut = velocityBySku.get(product.sku) ?? 0;
-    const onHand = onHandBySku.get(product.sku) ?? 0;
     const extra = extraBySku.get(product.sku) ?? DEFAULT_EXTRA;
-    const dailyRate = opts.periodDays > 0 ? totalOut / opts.periodDays : 0;
+    const perLocation = demand.byLocation.get(product.sku);
+    // A SKU with genuine per-location activity gets one demand entry per
+    // real location it actually has stock/sales in — no location the
+    // product has never touched gets a manufactured zero row. A SKU with
+    // NONE at all (nothing synced yet) falls back to a single org-wide
+    // entry, same as this report's previous instance-wide-only behavior.
+    const demandEntries: { locationName: string | null; figures: SupplierPlanLocationDemand }[] =
+      perLocation && perLocation.size > 0
+        ? [...perLocation.entries()].map(([locationName, figures]) => ({ locationName, figures }))
+        : [{ locationName: null, figures: demand.fallbackBySku.get(product.sku) ?? ZERO_DEMAND }];
 
     for (const supplier of product.suppliers) {
-      for (const option of dedupeOptions(supplier.options)) {
-        if (option.lead === null) continue; // nothing to plan a lead time around
+      const defaultOption = supplier.options.find((o) => o.locationId === null) ?? supplier.options[0];
+      if (!defaultOption || defaultOption.lead === null) continue; // nothing to plan a lead time around
+
+      // MinimumToReorder only ever populates on the default (locationId:
+      // null) entry — Cin7 only lets it be configured centrally, never
+      // per-location (src/cin7/product-supplier-options.ts) — so it always
+      // comes from here regardless of which location's own option below
+      // supplies the lead time/reorder quantity.
+      const minimumFloor = defaultOption.minimumToReorder ?? 0;
+
+      for (const { locationName, figures } of demandEntries) {
+        const matchingOption = locationName ? supplier.options.find((o) => o.locationId !== null && o.locationName === locationName) : undefined;
+        const option = matchingOption ?? defaultOption;
+        if (option.lead === null) continue;
 
         const lead = option.lead;
         const safety = option.safety ?? 0;
+        const dailyRate = opts.periodDays > 0 ? figures.totalOut / opts.periodDays : 0;
         const leadTimeDemand = dailyRate * (lead + safety) * (1 + opts.bufferPercent / 100);
-        const threshold = Math.max(leadTimeDemand, option.minimumToReorder ?? 0);
-        const suggestedQty = Math.max(option.reorderQuantity || 0, threshold - onHand);
+        const threshold = Math.max(leadTimeDemand, minimumFloor);
+        const suggestedQty = Math.max(option.reorderQuantity || 0, threshold - figures.onHand);
 
         lines.push({
           productId: product.productId,
@@ -140,16 +165,16 @@ export function buildSupplierPlanLines(
           supplierName: supplier.supplierName,
           currency: supplier.currency,
           cost: supplier.cost,
-          locationId: option.locationId,
-          locationName: option.locationName,
+          locationId: locationName ? (demand.locationIdByName.get(locationName) ?? null) : null,
+          locationName,
           lead,
           safety,
-          onHand,
-          onOrder: extra.onOrder,
-          totalOut,
+          onHand: figures.onHand,
+          onOrder: figures.onOrder,
+          totalOut: figures.totalOut,
           threshold: Math.round(threshold * 100) / 100,
           suggestedQty: Math.round(Math.max(suggestedQty, 0) * 100) / 100,
-          needsReorder: onHand <= threshold,
+          needsReorder: figures.onHand <= threshold,
           moverCategory: extra.moverCategory,
           status: extra.status,
           isUnconfigured: isUnconfiguredOption(option),
@@ -193,15 +218,12 @@ export interface PurchaseOrderFallbackLocation {
  * supplier whose selected lines span multiple locations needs one PO per
  * location, not one PO overall.
  *
- * Most lines carry no location of their own — dedupeOptions() above
- * collapses every product+supplier link down to its org-wide "default"
- * entry (locationId: null) unless a specific location's config genuinely
- * diverges, so in practice almost every line hits this case, not the rare
- * exception. A line's OWN locationId always wins when present (a genuine
- * per-location divergence); otherwise `fallbackLocation` — a location the
- * caller has the user explicitly choose as "where this PO's stock arrives"
- * — fills in. Without a fallback, a location-less line is skipped, same as
- * before.
+ * A line only has `locationId: null` when its SKU has no per-location
+ * demand data at all (buildSupplierPlanLines' own org-wide fallback case)
+ * — `fallbackLocation`, a location the caller has the user explicitly
+ * choose as "where this PO's stock arrives," fills in for that case.
+ * Without a fallback, a location-less line is skipped — nowhere for Cin7
+ * to receive that stock into.
  */
 export function groupLinesForPurchaseOrders(lines: SupplierPlanLine[], fallbackLocation?: PurchaseOrderFallbackLocation): PurchaseOrderGroup[] {
   const grouped = new Map<string, PurchaseOrderGroup>();

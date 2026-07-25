@@ -341,6 +341,43 @@ export async function getReorderReport(db: SupabaseClient, orgId: string, filter
   return data ?? [];
 }
 
+export interface SupplierPlanLocationDemandFilters {
+  instanceIds?: string[];
+  velocityDateFrom?: string;
+  velocityDateTo?: string;
+}
+
+export interface SupplierPlanLocationDemandRow {
+  product_sku: string;
+  location: string;
+  on_hand: number;
+  on_order: number;
+  total_out: number;
+}
+
+/**
+ * Genuine per-location on-hand/on-order/sales-velocity for Supplier Planner
+ * (src/reports/supplier-planner/build.ts) — a NEW function rather than
+ * widening report_reorder (0048), same discipline as
+ * report_inventory_movement_lines sitting alongside report_inventory_movement.
+ * See migration 0049 for why assembly-consumption demand isn't included
+ * here (not location-tagged in this schema today).
+ */
+export async function getSupplierPlanLocationDemand(
+  db: SupabaseClient,
+  orgId: string,
+  filters: SupplierPlanLocationDemandFilters
+): Promise<SupplierPlanLocationDemandRow[]> {
+  const { data, error } = await db.rpc("report_supplier_plan_location_demand", {
+    p_org_id: orgId,
+    p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
+    p_velocity_date_from: filters.velocityDateFrom || null,
+    p_velocity_date_to: filters.velocityDateTo || null,
+  });
+  if (error) throw new Error(`report_supplier_plan_location_demand: ${error.message}`);
+  return data ?? [];
+}
+
 export interface ProductAvailabilitySyncStatus {
   totalRows: number;
   lastSyncedAt: string | null;

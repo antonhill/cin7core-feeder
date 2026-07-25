@@ -7,7 +7,7 @@ import { logActivity } from "@/lib/activity-log";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsForSupplierPlanning } from "@/cin7/product-supplier-options";
 import { createPurchaseOrder } from "@/cin7/purchase-write";
-import { getReorderReport } from "@/reports/query";
+import { getReorderReport, getSupplierPlanLocationDemand } from "@/reports/query";
 import { fetchAllLocations, type Cin7Location } from "@/cin7/reference-lookups";
 import {
   buildSupplierPlanLines,
@@ -15,6 +15,7 @@ import {
   type PurchaseOrderFallbackLocation,
   type SupplierPlanExtra,
   type SupplierPlanLine,
+  type SupplierPlanLocationDemand,
 } from "@/reports/supplier-planner/build";
 import { buildSupplierPlanSheet } from "@/reports/supplier-planner-export";
 import { renderXlsxBase64 } from "@/reports/xlsx-writer";
@@ -57,9 +58,14 @@ export async function loadSupplierPlanAction(params: SupplierPlanParams): Promis
     const db = createServiceRoleClient();
 
     const creds = await loadCin7Credentials(db, orgId, params.instanceId);
-    const [products, reorderRows, locations] = await Promise.all([
+    const [products, reorderRows, locationDemandRows, locations] = await Promise.all([
       fetchAllProductsForSupplierPlanning(creds),
       getReorderReport(db, orgId, {
+        instanceIds: [params.instanceId],
+        velocityDateFrom: params.velocityDateFrom,
+        velocityDateTo: params.velocityDateTo,
+      }),
+      getSupplierPlanLocationDemand(db, orgId, {
         instanceIds: [params.instanceId],
         velocityDateFrom: params.velocityDateFrom,
         velocityDateTo: params.velocityDateTo,
@@ -67,16 +73,29 @@ export async function loadSupplierPlanAction(params: SupplierPlanParams): Promis
       fetchAllLocations(creds),
     ]);
 
-    const velocityBySku = new Map(reorderRows.map((r) => [r.product_sku, r.total_out]));
-    const onHandBySku = new Map(reorderRows.map((r) => [r.product_sku, r.on_hand]));
-    const extraBySku = new Map<string, SupplierPlanExtra>(
-      reorderRows.map((r) => [r.product_sku, { onOrder: r.on_order, moverCategory: r.mover_category, status: r.status }])
+    const extraBySku = new Map<string, SupplierPlanExtra>(reorderRows.map((r) => [r.product_sku, { moverCategory: r.mover_category, status: r.status }]));
+
+    // Org-wide aggregate — used only as a fallback when a SKU has zero
+    // per-location rows at all (see buildSupplierPlanLines' own comment).
+    const fallbackBySku = new Map<string, SupplierPlanLocationDemand>(
+      reorderRows.map((r) => [r.product_sku, { onHand: r.on_hand, onOrder: r.on_order, totalOut: r.total_out }])
     );
+
+    const byLocation = new Map<string, Map<string, SupplierPlanLocationDemand>>();
+    for (const row of locationDemandRows) {
+      let locs = byLocation.get(row.product_sku);
+      if (!locs) {
+        locs = new Map();
+        byLocation.set(row.product_sku, locs);
+      }
+      locs.set(row.location, { onHand: row.on_hand, onOrder: row.on_order, totalOut: row.total_out });
+    }
+
+    const locationIdByName = new Map(locations.map((l) => [l.name, l.id]));
 
     const lines = buildSupplierPlanLines(
       products,
-      velocityBySku,
-      onHandBySku,
+      { byLocation, fallbackBySku, locationIdByName },
       { bufferPercent: params.bufferPercent, periodDays: params.periodDays },
       extraBySku
     );
