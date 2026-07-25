@@ -33,12 +33,14 @@ export interface SupplierPlanLinkInput {
 }
 
 export interface SupplierPlanProductInput {
+  productId: string;
   sku: string;
   name: string;
   suppliers: SupplierPlanLinkInput[];
 }
 
 export interface SupplierPlanLine {
+  productId: string;
   productSku: string;
   productName: string;
   supplierId: string;
@@ -131,6 +133,7 @@ export function buildSupplierPlanLines(
         const suggestedQty = Math.max(option.reorderQuantity || 0, threshold - onHand);
 
         lines.push({
+          productId: product.productId,
           productSku: product.sku,
           productName: product.name,
           supplierId: supplier.supplierId,
@@ -168,4 +171,34 @@ export function groupLinesBySupplier(lines: SupplierPlanLine[]): Map<string, Sup
     grouped.set(key, arr);
   }
   return grouped;
+}
+
+export interface PurchaseOrderGroup {
+  supplierId: string;
+  supplierName: string;
+  locationId: string;
+  locationName: string;
+  lines: SupplierPlanLine[];
+}
+
+/**
+ * Groups selected lines by (supplier, location) — not just supplier — for
+ * real PO creation, since a Cin7 Purchase Order has exactly one receiving
+ * Location (confirmed live 2026-07-25, src/cin7/purchase-write.ts). A
+ * supplier whose selected lines span multiple locations needs one PO per
+ * location, not one PO overall. Lines with no resolved location (the
+ * org-wide "default" options entry, locationId: null) are skipped — there's
+ * nowhere for Cin7 to receive that stock into, so nothing to create a real
+ * PO from.
+ */
+export function groupLinesForPurchaseOrders(lines: SupplierPlanLine[]): PurchaseOrderGroup[] {
+  const grouped = new Map<string, PurchaseOrderGroup>();
+  for (const line of lines) {
+    if (!line.locationId || !line.locationName) continue;
+    const key = `${line.supplierId}::${line.locationId}`;
+    const existing = grouped.get(key);
+    if (existing) existing.lines.push(line);
+    else grouped.set(key, { supplierId: line.supplierId, supplierName: line.supplierName, locationId: line.locationId, locationName: line.locationName, lines: [line] });
+  }
+  return [...grouped.values()];
 }

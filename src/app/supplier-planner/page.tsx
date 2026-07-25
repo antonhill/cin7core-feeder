@@ -1,9 +1,16 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useInstancePicker } from "@/hooks/useInstancePicker";
 import { InstancePicker } from "@/app/InstancePicker";
-import { loadSupplierPlanAction, exportSupplierPlanXlsxAction } from "./actions";
+import { getBillingStatusAction } from "@/actions/billing";
+import {
+  loadSupplierPlanAction,
+  exportSupplierPlanXlsxAction,
+  createSupplierPlanPurchaseOrdersAction,
+  type CreatedPurchaseOrder,
+  type FailedPurchaseOrder,
+} from "./actions";
 import { groupLinesBySupplier, type SupplierPlanLine, type SupplierPlanMoverCategory, type SupplierPlanStatus } from "@/reports/supplier-planner/build";
 import { Spinner } from "@/app/Spinner";
 import { ModuleHeader } from "@/app/ModuleHeader";
@@ -98,6 +105,23 @@ export default function SupplierPlannerPage() {
   const [isExporting, startExportTransition] = useTransition();
   const [exportError, setExportError] = useState<string | null>(null);
 
+  const [canWrite, setCanWrite] = useState(true);
+  useEffect(() => {
+    getBillingStatusAction().then((res) => {
+      if (res.ok && res.data) setCanWrite(res.data.canWrite);
+    });
+  }, []);
+
+  // Raw toggle state; ticking a line off excludes it from PO creation.
+  // Filtered against currently-visible line keys below, same pattern as
+  // Replenish's own excludedLineKeys — a leftover exclusion from before a
+  // filter change can't silently apply to an unrelated line reusing the key.
+  const [rawExcludedLineKeys, setRawExcludedLineKeys] = useState<Set<string>>(new Set());
+
+  const [creatingSupplier, setCreatingSupplier] = useState<string | null>(null);
+  const [isCreatingPo, startCreatePoTransition] = useTransition();
+  const [poResults, setPoResults] = useState<Map<string, { created: CreatedPurchaseOrder[]; failed: FailedPurchaseOrder[]; error?: string }>>(new Map());
+
   function toggleMover(m: SupplierPlanMoverCategory) {
     setMoverFilter((prev) => {
       const next = new Set(prev);
@@ -131,10 +155,53 @@ export default function SupplierPlannerPage() {
 
   const grouped = useMemo(() => groupLinesBySupplier(visibleLines), [visibleLines]);
 
+  const excludedLineKeys = useMemo(() => {
+    const visibleKeys = new Set(visibleLines.map(lineKey));
+    return new Set([...rawExcludedLineKeys].filter((k) => visibleKeys.has(k)));
+  }, [rawExcludedLineKeys, visibleLines]);
+
+  function toggleLine(key: string) {
+    setRawExcludedLineKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function toggleSupplierLines(supplierLines: SupplierPlanLine[]) {
+    const keys = supplierLines.map(lineKey);
+    const allSelected = keys.every((k) => !excludedLineKeys.has(k));
+    setRawExcludedLineKeys((prev) => {
+      const next = new Set(prev);
+      keys.forEach((k) => (allSelected ? next.add(k) : next.delete(k)));
+      return next;
+    });
+  }
+
+  function handleCreatePo(supplierName: string, supplierLines: SupplierPlanLine[]) {
+    if (!instanceId) return;
+    const selected = supplierLines.filter((l) => !excludedLineKeys.has(lineKey(l)));
+    if (!selected.length) return;
+    setCreatingSupplier(supplierName);
+    startCreatePoTransition(async () => {
+      const result = await createSupplierPlanPurchaseOrdersAction(instanceId, selected);
+      setPoResults((prev) => {
+        const next = new Map(prev);
+        if (result.data) next.set(supplierName, { created: result.data.created, failed: result.data.failed });
+        else next.set(supplierName, { created: [], failed: [], error: result.error ?? "Unknown error" });
+        return next;
+      });
+      setCreatingSupplier(null);
+    });
+  }
+
   function handleRunPlan() {
     if (!instanceId) return;
     setError(null);
     setLines(null);
+    setRawExcludedLineKeys(new Set());
+    setPoResults(new Map());
     const periodOption = PERIOD_OPTIONS.find((p) => p.value === period)!;
     startRunTransition(async () => {
       const result = await loadSupplierPlanAction({
@@ -283,58 +350,129 @@ export default function SupplierPlannerPage() {
             </p>
           )}
 
-          {[...grouped.entries()].map(([supplierName, supplierLines]) => (
-            <div key={supplierName} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <p className="font-semibold text-slate-900">
-                {supplierName} <span className="ml-2 text-sm font-normal text-slate-400">{supplierLines.length} line{supplierLines.length === 1 ? "" : "s"}</span>
-              </p>
-              <div className="mt-3 overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-slate-500">
-                      <th className="py-2 pr-4 font-medium">Product</th>
-                      <th className="py-2 pr-4 font-medium">Location</th>
-                      <th className="py-2 pr-4 text-right font-medium">Lead + Safety</th>
-                      <th className="py-2 pr-4 text-right font-medium">On Hand</th>
-                      <th className="py-2 pr-4 text-right font-medium">On Order</th>
-                      <th className="py-2 pr-4 text-right font-medium">Reorder At</th>
-                      <th className="py-2 pr-4 text-right font-medium">Suggested Qty</th>
-                      <th className="py-2 pr-4 text-right font-medium">Latest Price</th>
-                      <th className="py-2 pr-4 font-medium">Mover</th>
-                      <th className="py-2 pr-4 font-medium">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {supplierLines.map((line) => (
-                      <tr key={lineKey(line)} className={`border-b border-slate-100 ${line.needsReorder ? "bg-amber-50/50" : ""}`}>
-                        <td className="py-2 pr-4">
-                          <div className="font-medium text-slate-900">{line.productName}</div>
-                          <div className="text-xs text-slate-400">{line.productSku}</div>
-                        </td>
-                        <td className="py-2 pr-4 text-slate-500">{line.locationName ?? "All locations"}</td>
-                        <td className="py-2 pr-4 text-right">
-                          {line.lead}+{line.safety}
-                        </td>
-                        <td className="py-2 pr-4 text-right">{qty(line.onHand)}</td>
-                        <td className="py-2 pr-4 text-right">{qty(line.onOrder)}</td>
-                        <td className="py-2 pr-4 text-right">{qty(line.threshold)}</td>
-                        <td className="py-2 pr-4 text-right font-medium">{qty(line.suggestedQty)}</td>
-                        <td className="py-2 pr-4 text-right">{money(line.cost, line.currency)}</td>
-                        <td className="py-2 pr-4">
-                          <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${MOVER_BADGE[line.moverCategory]}`}>
-                            {line.moverCategory}
-                          </span>
-                        </td>
-                        <td className="py-2 pr-4">
-                          <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_BADGE[line.status]}`}>{line.status}</span>
-                        </td>
+          {[...grouped.entries()].map(([supplierName, supplierLines]) => {
+            const selectedCount = supplierLines.filter((l) => !excludedLineKeys.has(lineKey(l))).length;
+            const allSelected = selectedCount === supplierLines.length;
+            const poResult = poResults.get(supplierName);
+            const isCreatingThisSupplier = isCreatingPo && creatingSupplier === supplierName;
+            return (
+              <div key={supplierName} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="font-semibold text-slate-900">
+                    {supplierName}{" "}
+                    <span className="ml-2 text-sm font-normal text-slate-400">
+                      {supplierLines.length} line{supplierLines.length === 1 ? "" : "s"}
+                    </span>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => handleCreatePo(supplierName, supplierLines)}
+                    disabled={isCreatingPo || !canWrite || selectedCount === 0}
+                    title={!canWrite ? "Writing to Cin7 is disabled on your current plan." : undefined}
+                    className="rounded-full bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {isCreatingThisSupplier && <Spinner className="mr-1.5" />}
+                    {isCreatingThisSupplier ? "Creating…" : `Create PO${selectedCount > 0 ? ` (${selectedCount} line${selectedCount === 1 ? "" : "s"})` : ""}`}
+                  </button>
+                </div>
+
+                {poResult?.error && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{poResult.error}</p>}
+                {poResult && (poResult.created.length > 0 || poResult.failed.length > 0) && (
+                  <div className="mt-3 flex flex-col gap-2">
+                    {poResult.created.length > 0 && (
+                      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                        Created {poResult.created.length} draft PO{poResult.created.length === 1 ? "" : "s"} in Cin7 — review and authorize
+                        {poResult.created.length === 1 ? " it" : " them"} there:
+                        <ul className="mt-1 list-disc pl-5">
+                          {poResult.created.map((po) => (
+                            <li key={`${po.orderNumber}-${po.locationName}`}>
+                              <strong>{po.orderNumber}</strong> → {po.locationName} ({po.lineCount} line{po.lineCount === 1 ? "" : "s"}, {po.status})
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {poResult.failed.length > 0 && (
+                      <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                        {poResult.failed.length} PO{poResult.failed.length === 1 ? "" : "s"} failed to create:
+                        <ul className="mt-1 list-disc pl-5">
+                          {poResult.failed.map((f) => (
+                            <li key={`${f.supplierName}-${f.locationName}`}>
+                              {f.locationName}: {f.error}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="mt-3 overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-500">
+                        <th className="py-2 pr-4">
+                          <input
+                            type="checkbox"
+                            checked={allSelected}
+                            ref={(el) => {
+                              if (el) el.indeterminate = selectedCount > 0 && selectedCount < supplierLines.length;
+                            }}
+                            onChange={() => toggleSupplierLines(supplierLines)}
+                            className="h-4 w-4"
+                          />
+                        </th>
+                        <th className="py-2 pr-4 font-medium">Product</th>
+                        <th className="py-2 pr-4 font-medium">Location</th>
+                        <th className="py-2 pr-4 text-right font-medium">Lead + Safety</th>
+                        <th className="py-2 pr-4 text-right font-medium">On Hand</th>
+                        <th className="py-2 pr-4 text-right font-medium">On Order</th>
+                        <th className="py-2 pr-4 text-right font-medium">Reorder At</th>
+                        <th className="py-2 pr-4 text-right font-medium">Suggested Qty</th>
+                        <th className="py-2 pr-4 text-right font-medium">Latest Price</th>
+                        <th className="py-2 pr-4 font-medium">Mover</th>
+                        <th className="py-2 pr-4 font-medium">Status</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {supplierLines.map((line) => {
+                        const key = lineKey(line);
+                        const checked = !excludedLineKeys.has(key);
+                        return (
+                          <tr key={key} className={`border-b border-slate-100 ${line.needsReorder ? "bg-amber-50/50" : ""} ${checked ? "" : "opacity-50"}`}>
+                            <td className="py-1.5 pr-4">
+                              <input type="checkbox" checked={checked} onChange={() => toggleLine(key)} className="h-4 w-4" />
+                            </td>
+                            <td className="py-2 pr-4">
+                              <div className="font-medium text-slate-900">{line.productName}</div>
+                              <div className="text-xs text-slate-400">{line.productSku}</div>
+                            </td>
+                            <td className="py-2 pr-4 text-slate-500">{line.locationName ?? "All locations"}</td>
+                            <td className="py-2 pr-4 text-right">
+                              {line.lead}+{line.safety}
+                            </td>
+                            <td className="py-2 pr-4 text-right">{qty(line.onHand)}</td>
+                            <td className="py-2 pr-4 text-right">{qty(line.onOrder)}</td>
+                            <td className="py-2 pr-4 text-right">{qty(line.threshold)}</td>
+                            <td className="py-2 pr-4 text-right font-medium">{qty(line.suggestedQty)}</td>
+                            <td className="py-2 pr-4 text-right">{money(line.cost, line.currency)}</td>
+                            <td className="py-2 pr-4">
+                              <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${MOVER_BADGE[line.moverCategory]}`}>
+                                {line.moverCategory}
+                              </span>
+                            </td>
+                            <td className="py-2 pr-4">
+                              <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_BADGE[line.status]}`}>{line.status}</span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </section>
       )}
     </main>

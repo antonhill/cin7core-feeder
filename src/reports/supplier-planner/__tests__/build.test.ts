@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildSupplierPlanLines, groupLinesBySupplier, type SupplierPlanProductInput } from "@/reports/supplier-planner/build";
+import { buildSupplierPlanLines, groupLinesBySupplier, groupLinesForPurchaseOrders, type SupplierPlanLine, type SupplierPlanProductInput } from "@/reports/supplier-planner/build";
 
 function product(overrides: Partial<SupplierPlanProductInput> = {}): SupplierPlanProductInput {
   return {
+    productId: "prod-1",
     sku: "SKU1",
     name: "Product One",
     suppliers: [
@@ -170,5 +171,62 @@ describe("buildSupplierPlanLines", () => {
     const grouped = groupLinesBySupplier(lines);
     expect([...grouped.keys()]).toEqual(["3 Diamonds Transport (Pty) Ltd", "ABC Suppliers"]);
     expect(grouped.get("3 Diamonds Transport (Pty) Ltd")).toHaveLength(1);
+  });
+});
+
+function line(overrides: Partial<SupplierPlanLine> = {}): SupplierPlanLine {
+  return {
+    productId: "prod-1",
+    productSku: "SKU1",
+    productName: "Product One",
+    supplierId: "sup-1",
+    supplierName: "3 Diamonds Transport (Pty) Ltd",
+    currency: "USD",
+    cost: 600,
+    locationId: "loc-1",
+    locationName: "Main Warehouse",
+    lead: 10,
+    safety: 20,
+    onHand: 50,
+    onOrder: 0,
+    totalOut: 300,
+    threshold: 500,
+    suggestedQty: 450,
+    needsReorder: true,
+    moverCategory: "Fast",
+    status: "Stockout risk",
+    isUnconfigured: false,
+    ...overrides,
+  };
+}
+
+describe("groupLinesForPurchaseOrders", () => {
+  it("groups lines by (supplier, location), not just supplier — a PO has exactly one receiving Location", () => {
+    const lines = [
+      line({ productSku: "SKU1", locationId: "loc-1", locationName: "Main Warehouse" }),
+      line({ productSku: "SKU2", locationId: "loc-1", locationName: "Main Warehouse" }),
+      line({ productSku: "SKU3", locationId: "loc-2", locationName: "Cape Town" }),
+    ];
+    const groups = groupLinesForPurchaseOrders(lines);
+    expect(groups).toHaveLength(2);
+    const mainWarehouse = groups.find((g) => g.locationName === "Main Warehouse");
+    const capeTown = groups.find((g) => g.locationName === "Cape Town");
+    expect(mainWarehouse?.lines).toHaveLength(2);
+    expect(capeTown?.lines).toHaveLength(1);
+  });
+
+  it("keeps different suppliers at the same location in separate groups", () => {
+    const lines = [
+      line({ supplierId: "sup-1", supplierName: "Supplier A", locationId: "loc-1", locationName: "Main Warehouse" }),
+      line({ supplierId: "sup-2", supplierName: "Supplier B", locationId: "loc-1", locationName: "Main Warehouse" }),
+    ];
+    const groups = groupLinesForPurchaseOrders(lines);
+    expect(groups).toHaveLength(2);
+    expect(groups.map((g) => g.supplierName).sort()).toEqual(["Supplier A", "Supplier B"]);
+  });
+
+  it("skips a line with no resolved location — nothing for Cin7 to receive it into", () => {
+    const lines = [line({ locationId: null, locationName: null })];
+    expect(groupLinesForPurchaseOrders(lines)).toHaveLength(0);
   });
 });
