@@ -2,6 +2,7 @@
 
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireCurrentOrg } from "@/lib/current-org";
+import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { requireWriteAllowed } from "@/lib/billing";
 import { logActivity } from "@/lib/activity-log";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
@@ -34,6 +35,55 @@ export interface SupplierPlanParams {
   velocityDateTo: string;
   periodDays: number;
   bufferPercent: number;
+  /** Per-run values for the import-supplier stock floor — pre-filled from purchase_planner_settings by the caller, but not required to match it (a one-off what-if run doesn't have to change the saved org default). null homeCurrency turns the floor off. */
+  homeCurrency: string | null;
+  importStockMonths: number;
+}
+
+export interface PurchasePlannerSettings {
+  homeCurrency: string | null;
+  importStockMonths: number;
+}
+
+const DEFAULT_PURCHASE_PLANNER_SETTINGS: PurchasePlannerSettings = { homeCurrency: null, importStockMonths: 4 };
+
+/** Every org member can read the org's saved defaults — same read-access level as everything else in Purchase Planner. */
+export async function getPurchasePlannerSettingsAction(): Promise<SupplierPlanActionResult<PurchasePlannerSettings>> {
+  try {
+    const { orgId } = await requireCurrentOrg();
+    const db = createServiceRoleClient();
+    const { data } = await db.from("purchase_planner_settings").select("home_currency, import_stock_months").eq("org_id", orgId).maybeSingle();
+    if (!data) return { ok: true, data: DEFAULT_PURCHASE_PLANNER_SETTINGS };
+    return { ok: true, data: { homeCurrency: data.home_currency, importStockMonths: Number(data.import_stock_months) } };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Gated to org owners/admins (requireOrgAdmin) — this changes a shared
+ * business-policy default that reshapes every user's suggested quantities,
+ * not a personal preference, so it shouldn't be left open to any org member
+ * the way reading it is.
+ */
+export async function savePurchasePlannerSettingsAction(settings: PurchasePlannerSettings): Promise<SupplierPlanActionResult<null>> {
+  try {
+    const { orgId } = await requireOrgAdmin();
+    const db = createServiceRoleClient();
+    const { error } = await db.from("purchase_planner_settings").upsert(
+      {
+        org_id: orgId,
+        home_currency: settings.homeCurrency,
+        import_stock_months: settings.importStockMonths,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "org_id" }
+    );
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, data: null };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
 }
 
 export interface SupplierPlanData {
@@ -153,7 +203,7 @@ export async function loadSupplierPlanAction(params: SupplierPlanParams): Promis
     const lines = buildSupplierPlanLines(
       products,
       { byLocation, fallbackBySku, locationIdByName },
-      { bufferPercent: params.bufferPercent, periodDays: params.periodDays },
+      { bufferPercent: params.bufferPercent, periodDays: params.periodDays, homeCurrency: params.homeCurrency, importStockMonths: params.importStockMonths },
       extraBySku,
       pendingPurchaseOrders
     );

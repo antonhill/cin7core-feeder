@@ -8,6 +8,8 @@ import {
   loadSupplierPlanAction,
   exportSupplierPlanXlsxAction,
   createSupplierPlanPurchaseOrdersAction,
+  getPurchasePlannerSettingsAction,
+  savePurchasePlannerSettingsAction,
   type CreatedPurchaseOrder,
   type FailedPurchaseOrder,
 } from "./actions";
@@ -125,6 +127,34 @@ export default function SupplierPlannerPage() {
       if (res.ok && res.data) setCanWrite(res.data.canWrite);
     });
   }, []);
+
+  // Per-run values for the import-supplier stock floor, pre-filled from the
+  // org's saved default on mount but editable for a one-off what-if run
+  // without changing that default. Empty homeCurrency string = the floor is
+  // off (matches the org default being unconfigured/null).
+  const [homeCurrency, setHomeCurrency] = useState("");
+  const [importStockMonths, setImportStockMonths] = useState(4);
+  const [isSavingDefaults, startSaveDefaultsTransition] = useTransition();
+  const [saveDefaultsMessage, setSaveDefaultsMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    getPurchasePlannerSettingsAction().then((res) => {
+      if (res.ok && res.data) {
+        setHomeCurrency(res.data.homeCurrency ?? "");
+        setImportStockMonths(res.data.importStockMonths);
+      }
+    });
+  }, []);
+
+  function handleSaveDefaults() {
+    setSaveDefaultsMessage(null);
+    startSaveDefaultsTransition(async () => {
+      const result = await savePurchasePlannerSettingsAction({
+        homeCurrency: homeCurrency.trim() ? homeCurrency.trim().toUpperCase() : null,
+        importStockMonths,
+      });
+      setSaveDefaultsMessage(result.ok ? { ok: true, text: "Saved as this org's default." } : { ok: false, text: result.error ?? "Unknown error" });
+    });
+  }
 
   // Raw toggle state; ticking a line off excludes it from PO creation.
   // Filtered against currently-visible line keys below, same pattern as
@@ -244,6 +274,8 @@ export default function SupplierPlannerPage() {
         velocityDateTo: todayIso(),
         periodDays: periodOption.days,
         bufferPercent,
+        homeCurrency: homeCurrency.trim() ? homeCurrency.trim().toUpperCase() : null,
+        importStockMonths,
       });
       if (!result.ok) {
         setError(result.error ?? "Unknown error");
@@ -319,6 +351,51 @@ export default function SupplierPlannerPage() {
               ))}
             </select>
           </label>
+        </div>
+
+        <div className="mt-5 border-t border-slate-100 pt-4">
+          <p className="text-sm font-medium text-slate-700">Import supplier stock floor</p>
+          <p className="mt-1 max-w-2xl text-xs text-slate-400">
+            For any supplier whose Currency differs from the home currency below, the suggested quantity never drops below N
+            months of average sales — on top of, not instead of, the usual lead-time calculation. Leave home currency blank to
+            turn this off. This might not suit every client, so it&apos;s a setting, not a fixed rule.
+          </p>
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-slate-700">Home currency</span>
+              <input
+                type="text"
+                value={homeCurrency}
+                onChange={(e) => setHomeCurrency(e.target.value)}
+                placeholder="e.g. ZAR"
+                className="w-28 rounded-lg border border-slate-300 px-3 py-2 uppercase"
+                maxLength={3}
+              />
+            </label>
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-slate-700">Months of stock (import)</span>
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                value={importStockMonths}
+                onChange={(e) => setImportStockMonths(Number(e.target.value))}
+                className="w-32 rounded-lg border border-slate-300 px-3 py-2"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={handleSaveDefaults}
+              disabled={isSavingDefaults}
+              className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              {isSavingDefaults && <Spinner className="mr-1.5" />}
+              {isSavingDefaults ? "Saving…" : "Save as org default"}
+            </button>
+          </div>
+          {saveDefaultsMessage && (
+            <p className={`mt-2 text-sm ${saveDefaultsMessage.ok ? "text-emerald-700" : "text-red-700"}`}>{saveDefaultsMessage.text}</p>
+          )}
         </div>
 
         <button
@@ -543,7 +620,17 @@ export default function SupplierPlannerPage() {
                             <td className="py-2 pr-4 text-right">{qty(line.onOrder)}</td>
                             <td className="py-2 pr-4 text-right">{qty(line.threshold)}</td>
                             <td className="py-2 pr-4 text-right font-medium">{qty(line.suggestedQty)}</td>
-                            <td className="py-2 pr-4 text-right">{money(line.cost, line.currency)}</td>
+                            <td className="py-2 pr-4 text-right">
+                              {money(line.cost, line.currency)}
+                              {line.isImportSupplier && (
+                                <span
+                                  className="ml-1.5 inline-block rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700"
+                                  title="Supplier's currency differs from this org's home currency — the import stock-floor was considered for this line."
+                                >
+                                  Import
+                                </span>
+                              )}
+                            </td>
                             <td className="py-2 pr-4">
                               <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${MOVER_BADGE[line.moverCategory]}`}>
                                 {line.moverCategory}

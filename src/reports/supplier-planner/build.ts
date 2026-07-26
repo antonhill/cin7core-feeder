@@ -25,6 +25,17 @@
  * (sales.location is real, synced data); assembly-consumption demand is not
  * location-tagged in this schema today and is excluded here, unlike Reorder
  * Report's own total_out which blends both sources.
+ *
+ * **Import-supplier stock floor (2026-07-26):** a client asked that a
+ * SUPPLIER's own currency, if it differs from the org's configured home
+ * currency (`purchase_planner_settings.home_currency`, migration 0051),
+ * imply the product needs a bigger buffer — Anton confirmed this varies per
+ * client, so it's a settable org default, not a hardcoded USD check. Modeled
+ * as a THIRD floor alongside MinimumToReorder, not a replacement of the
+ * lead-time math: `monthlyAvgSales × importStockMonths`. `homeCurrency:
+ * null` (unconfigured) turns this off entirely rather than guessing —
+ * distorting a real client's purchasing suggestions on an unconfirmed
+ * assumption would be worse than the floor simply not applying yet.
  */
 
 export interface SupplierPlanOptionInput {
@@ -75,6 +86,8 @@ export interface SupplierPlanLine {
   isUnconfigured: boolean;
   /** A DRAFT PO this app already created for this exact (product, supplier, location), still not authorized in Cin7 — null when there's none, or the last one this app created for it was authorized/voided since. See PendingPurchaseOrderLookup's own comment for the matching rule. */
   pendingPurchaseOrder: PendingPurchaseOrder | null;
+  /** This supplier's own Currency differs from the org's configured home_currency (purchase_planner_settings) — the import-stock-months floor was considered for this line (whether it actually raised the threshold depends on how it compares to the lead-time/minimum floors). Always false when home_currency isn't configured or this supplier has no currency of its own. */
+  isImportSupplier: boolean;
 }
 
 export type SupplierPlanMoverCategory = "Fast" | "Medium" | "Slow" | "No movement";
@@ -89,6 +102,10 @@ export interface SupplierPlanExtra {
 export interface BuildSupplierPlanOptions {
   bufferPercent: number;
   periodDays: number;
+  /** purchase_planner_settings.home_currency (migration 0051) — null means the import-stock-months floor is off (unconfigured for this org), not "assume everything is local." */
+  homeCurrency: string | null;
+  /** purchase_planner_settings.import_stock_months — only applied when homeCurrency is set and a line's own supplier currency differs from it. */
+  importStockMonths: number;
 }
 
 /** One location's own on-hand/on-order/sales-velocity figures — see report_supplier_plan_location_demand (migration 0049). */
@@ -172,6 +189,12 @@ export function buildSupplierPlanLines(
       // supplies the lead time/reorder quantity.
       const minimumFloor = defaultOption.minimumToReorder ?? 0;
 
+      // Off when homeCurrency isn't configured, and when this supplier's
+      // own currency is unknown — a supplier with no currency recorded
+      // can't be judged import vs local, so this deliberately doesn't
+      // assume either way.
+      const isImportSupplier = opts.homeCurrency !== null && supplier.currency !== null && supplier.currency !== opts.homeCurrency;
+
       for (const { locationName, figures } of demandEntries) {
         const matchingOption = locationName ? supplier.options.find((o) => o.locationId !== null && o.locationName === locationName) : undefined;
         const option = matchingOption ?? defaultOption;
@@ -181,7 +204,11 @@ export function buildSupplierPlanLines(
         const safety = option.safety ?? 0;
         const dailyRate = opts.periodDays > 0 ? figures.totalOut / opts.periodDays : 0;
         const leadTimeDemand = dailyRate * (lead + safety) * (1 + opts.bufferPercent / 100);
-        const threshold = Math.max(leadTimeDemand, minimumFloor);
+        // A calendar-month approximation, not tied to whichever velocity
+        // period the user happened to select — same daily rate the
+        // lead-time figure above uses, just projected out further.
+        const importFloor = isImportSupplier ? dailyRate * 30 * opts.importStockMonths : 0;
+        const threshold = Math.max(leadTimeDemand, minimumFloor, importFloor);
         const suggestedQty = Math.max(option.reorderQuantity || 0, threshold - figures.onHand);
         const locationId = locationName ? (demand.locationIdByName.get(locationName) ?? null) : null;
 
@@ -212,6 +239,7 @@ export function buildSupplierPlanLines(
           status: extra.status,
           isUnconfigured: isUnconfiguredOption(option),
           pendingPurchaseOrder,
+          isImportSupplier,
         });
       }
     }

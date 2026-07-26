@@ -3,6 +3,7 @@ import {
   buildSupplierPlanLines,
   groupLinesBySupplier,
   groupLinesForPurchaseOrders,
+  type BuildSupplierPlanOptions,
   type PendingPurchaseOrderLookup,
   type SupplierPlanDemandData,
   type SupplierPlanLine,
@@ -46,10 +47,15 @@ function demandData(opts: {
   return { byLocation, fallbackBySku, locationIdByName };
 }
 
+/** Default BuildSupplierPlanOptions for tests that don't care about the import-stock-months floor — homeCurrency null keeps it off, matching an org that hasn't configured purchase_planner_settings. */
+function planOpts(bufferPercent = 0, overrides: Partial<BuildSupplierPlanOptions> = {}): BuildSupplierPlanOptions {
+  return { bufferPercent, periodDays: 30, homeCurrency: null, importStockMonths: 4, ...overrides };
+}
+
 describe("buildSupplierPlanLines", () => {
   it("computes threshold from velocity × (lead + safety) × buffer, and flags needsReorder when on-hand is at or below it", () => {
     const demand = demandData({ fallbackBySku: { SKU1: { onHand: 50, totalOut: 300 } } });
-    const lines = buildSupplierPlanLines([product()], demand, { bufferPercent: 0, periodDays: 30 });
+    const lines = buildSupplierPlanLines([product()], demand, planOpts());
 
     expect(lines).toHaveLength(1);
     // dailyRate = 300/30 = 10; leadTimeDemand = 10 * (10+20) * 1.0 = 300; MinimumToReorder=500 wins as the floor
@@ -63,7 +69,7 @@ describe("buildSupplierPlanLines", () => {
     const lines = buildSupplierPlanLines(
       [product({ suppliers: [{ supplierId: "sup-1", supplierName: "S", cost: null, currency: null, options: [{ locationId: null, locationName: null, reorderQuantity: 0, lead: 10, safety: 20, minimumToReorder: 0 }] }] })],
       demand,
-      { bufferPercent: 20, periodDays: 30 }
+      planOpts(20)
     );
     // dailyRate = 10; leadTimeDemand = 10 * 30 * 1.2 = 360
     expect(lines[0].threshold).toBe(360);
@@ -74,7 +80,7 @@ describe("buildSupplierPlanLines", () => {
     const lines = buildSupplierPlanLines(
       [product({ suppliers: [{ supplierId: "sup-1", supplierName: "S", cost: null, currency: null, options: [{ locationId: null, locationName: null, reorderQuantity: 0, lead: 5, safety: 5, minimumToReorder: 200 }] }] })],
       demand,
-      { bufferPercent: 10, periodDays: 30 }
+      planOpts(10)
     );
     expect(lines[0].threshold).toBe(200);
     expect(lines[0].needsReorder).toBe(true);
@@ -84,7 +90,7 @@ describe("buildSupplierPlanLines", () => {
     const lines = buildSupplierPlanLines(
       [product({ suppliers: [{ supplierId: "sup-1", supplierName: "S", cost: null, currency: null, options: [{ locationId: null, locationName: null, reorderQuantity: 0, lead: null, safety: null, minimumToReorder: null }] }] })],
       demandData(),
-      { bufferPercent: 0, periodDays: 30 }
+      planOpts()
     );
     expect(lines).toHaveLength(0);
   });
@@ -92,13 +98,13 @@ describe("buildSupplierPlanLines", () => {
   it("suggestedQty is the greater of the supplier's own ReorderQuantity and the actual shortfall to threshold", () => {
     const demand = demandData({ fallbackBySku: { SKU1: { onHand: 50, totalOut: 300 } } });
     // threshold=500 (MinimumToReorder floor), onHand=50 -> shortfall=450, ReorderQuantity=500 -> suggestedQty=max(500,450)=500
-    const lines = buildSupplierPlanLines([product()], demand, { bufferPercent: 0, periodDays: 30 });
+    const lines = buildSupplierPlanLines([product()], demand, planOpts());
     expect(lines[0].suggestedQty).toBe(500);
   });
 
   it("falls back to a single org-wide line only when a SKU has zero per-location demand rows at all", () => {
     const demand = demandData({ fallbackBySku: { SKU1: { onHand: 50, totalOut: 300 } } });
-    const lines = buildSupplierPlanLines([product()], demand, { bufferPercent: 0, periodDays: 30 });
+    const lines = buildSupplierPlanLines([product()], demand, planOpts());
     expect(lines).toHaveLength(1);
     expect(lines[0].locationName).toBeNull();
   });
@@ -115,7 +121,7 @@ describe("buildSupplierPlanLines", () => {
         },
       },
     });
-    const lines = buildSupplierPlanLines([product()], demand, { bufferPercent: 0, periodDays: 30 });
+    const lines = buildSupplierPlanLines([product()], demand, planOpts());
 
     expect(lines).toHaveLength(2);
     const mainWarehouse = lines.find((l) => l.locationName === "Main Warehouse")!;
@@ -153,7 +159,7 @@ describe("buildSupplierPlanLines", () => {
         }),
       ],
       demand,
-      { bufferPercent: 0, periodDays: 30 }
+      planOpts()
     );
 
     const mainWarehouse = lines.find((l) => l.locationName === "Main Warehouse")!;
@@ -184,7 +190,7 @@ describe("buildSupplierPlanLines", () => {
         }),
       ],
       demand,
-      { bufferPercent: 0, periodDays: 30 }
+      planOpts()
     );
     expect(lines[0].threshold).toBe(400); // the default's floor still applies, not 0
   });
@@ -194,13 +200,13 @@ describe("buildSupplierPlanLines", () => {
       byLocation: { SKU1: { "Cape Town": { onHand: 0, totalOut: 0 } } },
       locationIdByName: { "Cape Town": "real-cin7-location-id" },
     });
-    const lines = buildSupplierPlanLines([product()], demand, { bufferPercent: 0, periodDays: 30 });
+    const lines = buildSupplierPlanLines([product()], demand, planOpts());
     expect(lines[0].locationId).toBe("real-cin7-location-id");
   });
 
   it("defaults moverCategory/status when no extra data is supplied for a SKU, and takes onOrder from the demand data itself", () => {
     const demand = demandData({ fallbackBySku: { SKU1: { onHand: 50, totalOut: 300, onOrder: 15 } } });
-    const lines = buildSupplierPlanLines([product()], demand, { bufferPercent: 0, periodDays: 30 });
+    const lines = buildSupplierPlanLines([product()], demand, planOpts());
     expect(lines[0].onOrder).toBe(15);
     expect(lines[0].moverCategory).toBe("No movement");
     expect(lines[0].status).toBe("Healthy");
@@ -209,7 +215,7 @@ describe("buildSupplierPlanLines", () => {
   it("passes through moverCategory/status from the same per-SKU data the Reorder Report already computes", () => {
     const demand = demandData({ fallbackBySku: { SKU1: { onHand: 50, totalOut: 300 } } });
     const extraBySku = new Map([["SKU1", { moverCategory: "Fast" as const, status: "Stockout risk" as const }]]);
-    const lines = buildSupplierPlanLines([product()], demand, { bufferPercent: 0, periodDays: 30 }, extraBySku);
+    const lines = buildSupplierPlanLines([product()], demand, planOpts(), extraBySku);
     expect(lines[0].moverCategory).toBe("Fast");
     expect(lines[0].status).toBe("Stockout risk");
   });
@@ -231,7 +237,7 @@ describe("buildSupplierPlanLines", () => {
         }),
       ],
       demand,
-      { bufferPercent: 0, periodDays: 30 }
+      planOpts()
     );
     expect(lines[0].isUnconfigured).toBe(true);
   });
@@ -253,14 +259,14 @@ describe("buildSupplierPlanLines", () => {
         }),
       ],
       demand,
-      { bufferPercent: 0, periodDays: 30 }
+      planOpts()
     );
     expect(lines[0].isUnconfigured).toBe(false);
   });
 
   it("does not flag the default product() fixture (real Lead/Safety/MinimumToReorder) as unconfigured", () => {
     const demand = demandData({ fallbackBySku: { SKU1: { onHand: 50, totalOut: 300 } } });
-    const lines = buildSupplierPlanLines([product()], demand, { bufferPercent: 0, periodDays: 30 });
+    const lines = buildSupplierPlanLines([product()], demand, planOpts());
     expect(lines[0].isUnconfigured).toBe(false);
   });
 
@@ -272,7 +278,7 @@ describe("buildSupplierPlanLines", () => {
         suppliers: [{ supplierId: "sup-2", supplierName: "ABC Suppliers", cost: 500, currency: "ZAR", options: [{ locationId: null, locationName: null, reorderQuantity: 100, lead: 5, safety: 5, minimumToReorder: 100 }] }],
       }),
     ];
-    const lines = buildSupplierPlanLines(products, demandData(), { bufferPercent: 0, periodDays: 30 });
+    const lines = buildSupplierPlanLines(products, demandData(), planOpts());
     const grouped = groupLinesBySupplier(lines);
     expect([...grouped.keys()]).toEqual(["3 Diamonds Transport (Pty) Ltd", "ABC Suppliers"]);
     expect(grouped.get("3 Diamonds Transport (Pty) Ltd")).toHaveLength(1);
@@ -287,7 +293,7 @@ describe("buildSupplierPlanLines", () => {
       byFullKey: new Map([["SKU1::sup-1::loc-ct", { orderNumber: "PO-00312", createdAt: "2026-07-26T10:00:00Z" }]]),
       bySkuSupplier: new Map(),
     };
-    const lines = buildSupplierPlanLines([product()], demand, { bufferPercent: 0, periodDays: 30 }, new Map(), pending);
+    const lines = buildSupplierPlanLines([product()], demand, planOpts(), new Map(), pending);
     expect(lines[0].pendingPurchaseOrder).toEqual({ orderNumber: "PO-00312", createdAt: "2026-07-26T10:00:00Z" });
   });
 
@@ -297,15 +303,82 @@ describe("buildSupplierPlanLines", () => {
       byFullKey: new Map(),
       bySkuSupplier: new Map([["SKU1::sup-1", { orderNumber: "PO-00313", createdAt: "2026-07-26T10:00:00Z" }]]),
     };
-    const lines = buildSupplierPlanLines([product()], demand, { bufferPercent: 0, periodDays: 30 }, new Map(), pending);
+    const lines = buildSupplierPlanLines([product()], demand, planOpts(), new Map(), pending);
     expect(lines[0].locationName).toBeNull();
     expect(lines[0].pendingPurchaseOrder).toEqual({ orderNumber: "PO-00313", createdAt: "2026-07-26T10:00:00Z" });
   });
 
   it("is null when no pending PO matches this line at all", () => {
     const demand = demandData({ fallbackBySku: { SKU1: { onHand: 0, totalOut: 0 } } });
-    const lines = buildSupplierPlanLines([product()], demand, { bufferPercent: 0, periodDays: 30 });
+    const lines = buildSupplierPlanLines([product()], demand, planOpts());
     expect(lines[0].pendingPurchaseOrder).toBeNull();
+  });
+});
+
+describe("import stock floor", () => {
+  it("is off by default even for a foreign-currency supplier — homeCurrency must be configured", () => {
+    const demand = demandData({ fallbackBySku: { SKU1: { onHand: 0, totalOut: 300 } } });
+    const lines = buildSupplierPlanLines([product()], demand, planOpts()); // product()'s supplier currency is "USD", homeCurrency defaults to null
+    expect(lines[0].isImportSupplier).toBe(false);
+  });
+
+  it("flags a supplier as import when its currency differs from the configured home currency, and floors the threshold at monthlyAvgSales × importStockMonths", () => {
+    const demand = demandData({ fallbackBySku: { SKU1: { onHand: 0, totalOut: 300 } } }); // dailyRate = 300/30 = 10
+    const lines = buildSupplierPlanLines(
+      [
+        product({
+          suppliers: [
+            {
+              supplierId: "sup-1",
+              supplierName: "S",
+              cost: null,
+              currency: "USD",
+              options: [{ locationId: null, locationName: null, reorderQuantity: 0, lead: 0, safety: 0, minimumToReorder: 0 }],
+            },
+          ],
+        }),
+      ],
+      demand,
+      planOpts(0, { homeCurrency: "ZAR", importStockMonths: 4 })
+    );
+    expect(lines[0].isImportSupplier).toBe(true);
+    // dailyRate=10; importFloor = 10*30*4 = 1200; leadTimeDemand=0; minimumFloor=0
+    expect(lines[0].threshold).toBe(1200);
+  });
+
+  it("does not flag a supplier whose currency matches the home currency", () => {
+    const demand = demandData({ fallbackBySku: { SKU1: { onHand: 0, totalOut: 300 } } });
+    const lines = buildSupplierPlanLines([product()], demand, planOpts(0, { homeCurrency: "USD" })); // product()'s supplier currency is "USD"
+    expect(lines[0].isImportSupplier).toBe(false);
+  });
+
+  it("does not flag a supplier with no currency recorded — can't judge import vs local from unknown data", () => {
+    const demand = demandData({ fallbackBySku: { SKU1: { onHand: 0, totalOut: 300 } } });
+    const lines = buildSupplierPlanLines(
+      [
+        product({
+          suppliers: [
+            {
+              supplierId: "sup-1",
+              supplierName: "S",
+              cost: null,
+              currency: null,
+              options: [{ locationId: null, locationName: null, reorderQuantity: 500, lead: 10, safety: 20, minimumToReorder: 500 }],
+            },
+          ],
+        }),
+      ],
+      demand,
+      planOpts(0, { homeCurrency: "ZAR" })
+    );
+    expect(lines[0].isImportSupplier).toBe(false);
+  });
+
+  it("is a floor, not a replacement — never lowers a threshold the lead-time/minimum math already put higher", () => {
+    const demand = demandData({ fallbackBySku: { SKU1: { onHand: 0, totalOut: 0 } } }); // zero velocity -> import floor would be 0
+    const lines = buildSupplierPlanLines([product()], demand, planOpts(0, { homeCurrency: "ZAR", importStockMonths: 1 })); // product()'s supplier currency USD != ZAR -> import
+    expect(lines[0].isImportSupplier).toBe(true);
+    expect(lines[0].threshold).toBe(500); // MinimumToReorder floor still wins, not overridden down to 0
   });
 });
 
@@ -332,6 +405,7 @@ function line(overrides: Partial<SupplierPlanLine> = {}): SupplierPlanLine {
     status: "Stockout risk",
     isUnconfigured: false,
     pendingPurchaseOrder: null,
+    isImportSupplier: false,
     ...overrides,
   };
 }
