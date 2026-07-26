@@ -334,7 +334,7 @@ export const REPLENISH_MODULE: ModuleConfig = {
 
 export const SUPPLIER_PLANNER_MODULE: ModuleConfig = {
   href: "/supplier-planner",
-  label: "Supplier Planner",
+  label: "Purchase Planner",
   gradient: SELF_COLORED_ICON_BADGE,
   Icon: SupplierPlannerIcon,
   blurb:

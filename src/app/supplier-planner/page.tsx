@@ -271,12 +271,12 @@ export default function SupplierPlannerPage() {
         setExportError(result.error ?? "Unknown error");
         return;
       }
-      downloadBase64File(result.data, "supplier-planner.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      downloadBase64File(result.data, "purchase-planner.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     });
   }
 
   return (
-    <main className="mx-auto w-full max-w-4xl px-6 py-12">
+    <main className="mx-auto w-full max-w-[1800px] px-6 py-12">
       <ModuleHeader module={SUPPLIER_PLANNER_MODULE}>
         Combines each supplier&apos;s configured lead time and safety stock (Cin7&apos;s own Product Supplier Options)
         with recent sales velocity to flag which products need reordering before they run out during transit — the

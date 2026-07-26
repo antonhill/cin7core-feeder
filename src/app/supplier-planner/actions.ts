@@ -169,7 +169,7 @@ export async function exportSupplierPlanXlsxAction(lines: SupplierPlanLine[]): P
   try {
     await requireCurrentOrg();
     const sheet = buildSupplierPlanSheet(lines);
-    return { ok: true, data: await renderXlsxBase64(sheet, "Supplier Planner") };
+    return { ok: true, data: await renderXlsxBase64(sheet, "Purchase Planner") };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

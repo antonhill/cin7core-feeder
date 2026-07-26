@@ -246,7 +246,7 @@ export default function ReorderReportPage() {
       <ReportDescription title="Reorder Report">
         Flags a product once its on-hand stock has dropped to or below its recent sales over the selected period plus a
         buffer % — the simple, threshold-based reorder check for suppliers with no meaningful lead time to plan around.
-        For imports/long-lead-time suppliers, use the Supplier Planner instead. Stock levels are a live snapshot —
+        For imports/long-lead-time suppliers, use the Purchase Planner instead. Stock levels are a live snapshot —
         refresh them below before running the report if you need the latest numbers.
       </ReportDescription>
 
