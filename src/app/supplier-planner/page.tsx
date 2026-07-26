@@ -249,8 +249,14 @@ export default function SupplierPlannerPage() {
         setError(result.error ?? "Unknown error");
         return;
       }
-      setLines(result.data?.lines ?? []);
+      const newLines = result.data?.lines ?? [];
+      setLines(newLines);
       setLocations(result.data?.locations ?? []);
+      // Default-deselect anything already covered by a draft PO awaiting
+      // authorization in Cin7 — avoids accidentally creating a duplicate.
+      // Still shown (with a badge) and still toggleable, in case the user
+      // genuinely needs another PO on top of it.
+      setRawExcludedLineKeys(new Set(newLines.filter((l) => l.pendingPurchaseOrder).map(lineKey)));
     });
   }
 
@@ -520,6 +526,14 @@ export default function SupplierPlannerPage() {
                             <td className="py-2 pr-4">
                               <div className="font-medium text-slate-900">{line.productName}</div>
                               <div className="text-xs text-slate-400">{line.productSku}</div>
+                              {line.pendingPurchaseOrder && (
+                                <span
+                                  className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"
+                                  title={`Created ${new Date(line.pendingPurchaseOrder.createdAt).toLocaleString()} — not yet authorized in Cin7. Deselected by default to avoid a duplicate.`}
+                                >
+                                  {line.pendingPurchaseOrder.orderNumber} pending authorization
+                                </span>
+                              )}
                             </td>
                             <td className="py-2 pr-4 text-slate-500">{line.locationName ?? "All locations"}</td>
                             <td className="py-2 pr-4 text-right">

@@ -73,6 +73,8 @@ export interface SupplierPlanLine {
   status: SupplierPlanStatus;
   /** Lead/Safety/ReorderQuantity/MinimumToReorder all zero/unset — Cin7 appears to return this exact all-zero placeholder shape for a product+supplier link that has never had Product Supplier Options configured at all (confirmed live 2026-07-24 against a real account), rather than omitting the entry or nulling Lead. Distinguishing this from a genuinely-configured zero-lead entry needs all four fields to agree — a real entry could deliberately have Lead=0 (instant local pickup) while still carrying a real ReorderQuantity/MinimumToReorder. */
   isUnconfigured: boolean;
+  /** A DRAFT PO this app already created for this exact (product, supplier, location), still not authorized in Cin7 — null when there's none, or the last one this app created for it was authorized/voided since. See PendingPurchaseOrderLookup's own comment for the matching rule. */
+  pendingPurchaseOrder: PendingPurchaseOrder | null;
 }
 
 export type SupplierPlanMoverCategory = "Fast" | "Medium" | "Slow" | "No movement";
@@ -105,6 +107,30 @@ export interface SupplierPlanDemandData {
   locationIdByName: Map<string, string>;
 }
 
+export interface PendingPurchaseOrder {
+  orderNumber: string;
+  createdAt: string;
+}
+
+/**
+ * Which (product, supplier, location) combos already have a DRAFT PO this
+ * app created, not yet authorized in Cin7 — see
+ * supplier_plan_created_po_lines (migration 0050) and
+ * src/app/supplier-planner/actions.ts for where these maps are built.
+ * `byFullKey` (sku::supplierId::locationId) is the precise match, used for
+ * the normal case where a line resolves to a real location. `bySkuSupplier`
+ * (sku::supplierId) is a coarser fallback for the rare org-wide line (no
+ * per-location demand data at all, so nothing to match a stored locationId
+ * against) — matching any pending PO for that supplier is a deliberately
+ * conservative choice: better to flag a possible duplicate than miss one.
+ */
+export interface PendingPurchaseOrderLookup {
+  byFullKey: Map<string, PendingPurchaseOrder>;
+  bySkuSupplier: Map<string, PendingPurchaseOrder>;
+}
+
+const EMPTY_PENDING_LOOKUP: PendingPurchaseOrderLookup = { byFullKey: new Map(), bySkuSupplier: new Map() };
+
 const DEFAULT_EXTRA: SupplierPlanExtra = { moverCategory: "No movement", status: "Healthy" };
 const ZERO_DEMAND: SupplierPlanLocationDemand = { onHand: 0, onOrder: 0, totalOut: 0 };
 
@@ -117,7 +143,8 @@ export function buildSupplierPlanLines(
   products: SupplierPlanProductInput[],
   demand: SupplierPlanDemandData,
   opts: BuildSupplierPlanOptions,
-  extraBySku: Map<string, SupplierPlanExtra> = new Map()
+  extraBySku: Map<string, SupplierPlanExtra> = new Map(),
+  pendingPurchaseOrders: PendingPurchaseOrderLookup = EMPTY_PENDING_LOOKUP
 ): SupplierPlanLine[] {
   const lines: SupplierPlanLine[] = [];
 
@@ -156,6 +183,12 @@ export function buildSupplierPlanLines(
         const leadTimeDemand = dailyRate * (lead + safety) * (1 + opts.bufferPercent / 100);
         const threshold = Math.max(leadTimeDemand, minimumFloor);
         const suggestedQty = Math.max(option.reorderQuantity || 0, threshold - figures.onHand);
+        const locationId = locationName ? (demand.locationIdByName.get(locationName) ?? null) : null;
+
+        const pendingPurchaseOrder =
+          (locationId ? pendingPurchaseOrders.byFullKey.get(`${product.sku}::${supplier.supplierId}::${locationId}`) : undefined) ??
+          pendingPurchaseOrders.bySkuSupplier.get(`${product.sku}::${supplier.supplierId}`) ??
+          null;
 
         lines.push({
           productId: product.productId,
@@ -165,7 +198,7 @@ export function buildSupplierPlanLines(
           supplierName: supplier.supplierName,
           currency: supplier.currency,
           cost: supplier.cost,
-          locationId: locationName ? (demand.locationIdByName.get(locationName) ?? null) : null,
+          locationId,
           locationName,
           lead,
           safety,
@@ -178,6 +211,7 @@ export function buildSupplierPlanLines(
           moverCategory: extra.moverCategory,
           status: extra.status,
           isUnconfigured: isUnconfiguredOption(option),
+          pendingPurchaseOrder,
         });
       }
     }

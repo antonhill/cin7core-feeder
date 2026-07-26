@@ -3,6 +3,7 @@ import {
   buildSupplierPlanLines,
   groupLinesBySupplier,
   groupLinesForPurchaseOrders,
+  type PendingPurchaseOrderLookup,
   type SupplierPlanDemandData,
   type SupplierPlanLine,
   type SupplierPlanLocationDemand,
@@ -276,6 +277,36 @@ describe("buildSupplierPlanLines", () => {
     expect([...grouped.keys()]).toEqual(["3 Diamonds Transport (Pty) Ltd", "ABC Suppliers"]);
     expect(grouped.get("3 Diamonds Transport (Pty) Ltd")).toHaveLength(1);
   });
+
+  it("attaches a pending PO when this exact (sku, supplier, location) has one outstanding — the precise byFullKey match", () => {
+    const demand = demandData({
+      byLocation: { SKU1: { "Cape Town": { onHand: 0, totalOut: 0 } } },
+      locationIdByName: { "Cape Town": "loc-ct" },
+    });
+    const pending: PendingPurchaseOrderLookup = {
+      byFullKey: new Map([["SKU1::sup-1::loc-ct", { orderNumber: "PO-00312", createdAt: "2026-07-26T10:00:00Z" }]]),
+      bySkuSupplier: new Map(),
+    };
+    const lines = buildSupplierPlanLines([product()], demand, { bufferPercent: 0, periodDays: 30 }, new Map(), pending);
+    expect(lines[0].pendingPurchaseOrder).toEqual({ orderNumber: "PO-00312", createdAt: "2026-07-26T10:00:00Z" });
+  });
+
+  it("falls back to a (sku, supplier) match when the line has no location of its own — the org-wide fallback-line case", () => {
+    const demand = demandData({ fallbackBySku: { SKU1: { onHand: 0, totalOut: 0 } } });
+    const pending: PendingPurchaseOrderLookup = {
+      byFullKey: new Map(),
+      bySkuSupplier: new Map([["SKU1::sup-1", { orderNumber: "PO-00313", createdAt: "2026-07-26T10:00:00Z" }]]),
+    };
+    const lines = buildSupplierPlanLines([product()], demand, { bufferPercent: 0, periodDays: 30 }, new Map(), pending);
+    expect(lines[0].locationName).toBeNull();
+    expect(lines[0].pendingPurchaseOrder).toEqual({ orderNumber: "PO-00313", createdAt: "2026-07-26T10:00:00Z" });
+  });
+
+  it("is null when no pending PO matches this line at all", () => {
+    const demand = demandData({ fallbackBySku: { SKU1: { onHand: 0, totalOut: 0 } } });
+    const lines = buildSupplierPlanLines([product()], demand, { bufferPercent: 0, periodDays: 30 });
+    expect(lines[0].pendingPurchaseOrder).toBeNull();
+  });
 });
 
 function line(overrides: Partial<SupplierPlanLine> = {}): SupplierPlanLine {
@@ -300,6 +331,7 @@ function line(overrides: Partial<SupplierPlanLine> = {}): SupplierPlanLine {
     moverCategory: "Fast",
     status: "Stockout risk",
     isUnconfigured: false,
+    pendingPurchaseOrder: null,
     ...overrides,
   };
 }

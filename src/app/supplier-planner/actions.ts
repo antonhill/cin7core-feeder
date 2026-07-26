@@ -12,6 +12,8 @@ import { fetchAllLocations, type Cin7Location } from "@/cin7/reference-lookups";
 import {
   buildSupplierPlanLines,
   groupLinesForPurchaseOrders,
+  type PendingPurchaseOrder,
+  type PendingPurchaseOrderLookup,
   type PurchaseOrderFallbackLocation,
   type SupplierPlanExtra,
   type SupplierPlanLine,
@@ -41,6 +43,60 @@ export interface SupplierPlanData {
 }
 
 /**
+ * Cross-references this app's own record of what it's created
+ * (supplier_plan_created_po_lines, migration 0050) against the already-
+ * synced `purchases.status` to find which lines still have a DRAFT (not
+ * yet authorized) PO outstanding — see PendingPurchaseOrderLookup's own
+ * comment in build.ts for the matching rule. A purchase whose status
+ * hasn't synced yet (not found in `purchases` at all) is treated as still
+ * pending — safer to over-flag a possible duplicate right after creation
+ * than to under-flag one because the sync hasn't caught up.
+ */
+async function loadPendingPurchaseOrders(
+  db: ReturnType<typeof createServiceRoleClient>,
+  orgId: string,
+  instanceId: string
+): Promise<PendingPurchaseOrderLookup> {
+  const { data: createdRows } = await db
+    .from("supplier_plan_created_po_lines")
+    .select("cin7_purchase_id, order_number, supplier_id, location_id, product_sku, created_at")
+    .eq("org_id", orgId)
+    .eq("instance_id", instanceId);
+
+  if (!createdRows?.length) return { byFullKey: new Map(), bySkuSupplier: new Map() };
+
+  const purchaseIds = [...new Set(createdRows.map((r) => r.cin7_purchase_id))];
+  const { data: purchaseRows } = await db
+    .from("purchases")
+    .select("cin7_purchase_id, status")
+    .eq("org_id", orgId)
+    .eq("instance_id", instanceId)
+    .in("cin7_purchase_id", purchaseIds);
+  const statusByPurchaseId = new Map((purchaseRows ?? []).map((r) => [r.cin7_purchase_id, r.status as string | null]));
+
+  const byFullKey = new Map<string, PendingPurchaseOrder>();
+  const bySkuSupplier = new Map<string, PendingPurchaseOrder>();
+
+  for (const row of createdRows) {
+    const status = statusByPurchaseId.get(row.cin7_purchase_id);
+    const isPending = !status || status === "DRAFT";
+    if (!isPending) continue;
+
+    const pending: PendingPurchaseOrder = { orderNumber: row.order_number ?? row.cin7_purchase_id, createdAt: row.created_at };
+    const fullKey = `${row.product_sku}::${row.supplier_id}::${row.location_id}`;
+    const skuSupplierKey = `${row.product_sku}::${row.supplier_id}`;
+
+    const existingFull = byFullKey.get(fullKey);
+    if (!existingFull || row.created_at > existingFull.createdAt) byFullKey.set(fullKey, pending);
+
+    const existingSkuSupplier = bySkuSupplier.get(skuSupplierKey);
+    if (!existingSkuSupplier || row.created_at > existingSkuSupplier.createdAt) bySkuSupplier.set(skuSupplierKey, pending);
+  }
+
+  return { byFullKey, bySkuSupplier };
+}
+
+/**
  * Combines a live Cin7 fetch (Suppliers[].ProductSupplierOptions — Lead/
  * Safety/ReorderQuantity/MinimumToReorder, src/cin7/product-supplier-
  * options.ts) with the same sales-velocity/on-hand data the Reorder Report
@@ -58,7 +114,7 @@ export async function loadSupplierPlanAction(params: SupplierPlanParams): Promis
     const db = createServiceRoleClient();
 
     const creds = await loadCin7Credentials(db, orgId, params.instanceId);
-    const [products, reorderRows, locationDemandRows, locations] = await Promise.all([
+    const [products, reorderRows, locationDemandRows, locations, pendingPurchaseOrders] = await Promise.all([
       fetchAllProductsForSupplierPlanning(creds),
       getReorderReport(db, orgId, {
         instanceIds: [params.instanceId],
@@ -71,6 +127,7 @@ export async function loadSupplierPlanAction(params: SupplierPlanParams): Promis
         velocityDateTo: params.velocityDateTo,
       }),
       fetchAllLocations(creds),
+      loadPendingPurchaseOrders(db, orgId, params.instanceId),
     ]);
 
     const extraBySku = new Map<string, SupplierPlanExtra>(reorderRows.map((r) => [r.product_sku, { moverCategory: r.mover_category, status: r.status }]));
@@ -97,7 +154,8 @@ export async function loadSupplierPlanAction(params: SupplierPlanParams): Promis
       products,
       { byLocation, fallbackBySku, locationIdByName },
       { bufferPercent: params.bufferPercent, periodDays: params.periodDays },
-      extraBySku
+      extraBySku,
+      pendingPurchaseOrders
     );
 
     return { ok: true, data: { lines, locations } };
@@ -197,6 +255,24 @@ export async function createSupplierPlanPurchaseOrdersAction(
           status: result.status,
           lineCount: result.lineCount,
         });
+
+        // Best-effort: this app's own memory of what it just created, so
+        // Supplier Planner can flag these exact lines as "already ordered,
+        // pending authorization" next time it loads (see
+        // loadPendingPurchaseOrders above). A failure here shouldn't
+        // undermine the fact that a real PO now exists in Cin7.
+        const { error: recordError } = await db.from("supplier_plan_created_po_lines").insert(
+          group.lines.map((l) => ({
+            org_id: orgId,
+            instance_id: instanceId,
+            cin7_purchase_id: result.taskId,
+            order_number: result.orderNumber,
+            supplier_id: group.supplierId,
+            location_id: group.locationId,
+            product_sku: l.productSku,
+          }))
+        );
+        if (recordError) console.error("supplier_plan_created_po_lines insert failed:", recordError.message);
       } catch (e) {
         failed.push({
           supplierName: group.supplierName,
