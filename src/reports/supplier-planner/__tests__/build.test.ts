@@ -60,8 +60,8 @@ describe("buildSupplierPlanLines", () => {
     const lines = buildSupplierPlanLines([product()], demand, planOpts());
 
     expect(lines).toHaveLength(1);
-    // dailyRate = 300/30 = 10; leadTimeDemand = 10 * (10+20) * 1.0 = 300; MinimumToReorder=500 wins as the floor
-    expect(lines[0].threshold).toBe(500);
+    // dailyRate = 300/30 = 10; leadTimeDemand = 10 * (10+20) * 1.0 = 300
+    expect(lines[0].threshold).toBe(300);
     expect(lines[0].needsReorder).toBe(true);
     expect(lines[0].locationName).toBeNull(); // no per-location demand supplied — org-wide fallback line
   });
@@ -77,15 +77,16 @@ describe("buildSupplierPlanLines", () => {
     expect(lines[0].threshold).toBe(360);
   });
 
-  it("uses the supplier's own MinimumToReorder as a floor under the velocity-based number — never overridden by it", () => {
+  it("uses the supplier's own MinimumToReorder as an MOQ floor on suggestedQty, not on the threshold itself — confirmed live 2026-07-27 it's Cin7's 'Minimum to order' field, not the reorder-trigger threshold", () => {
     const demand = demandData({ fallbackBySku: { SKU1: { onHand: 100, totalOut: 0 } } }); // zero velocity — leadTimeDemand would be 0
     const lines = buildSupplierPlanLines(
       [product({ suppliers: [{ supplierId: "sup-1", supplierName: "S", cost: null, currency: null, options: [{ locationId: null, locationName: null, reorderQuantity: 0, lead: 5, safety: 5, minimumToReorder: 200 }] }] })],
       demand,
       planOpts(10)
     );
-    expect(lines[0].threshold).toBe(200);
-    expect(lines[0].needsReorder).toBe(true);
+    expect(lines[0].threshold).toBe(0); // MinimumToReorder no longer affects the trigger threshold
+    expect(lines[0].needsReorder).toBe(false); // onHand(100) comfortably clears a threshold of 0
+    expect(lines[0].suggestedQty).toBe(200); // but the MOQ still floors the purchase quantity
   });
 
   it("skips an entry with no Lead configured — nothing to plan a lead time around", () => {
@@ -97,10 +98,29 @@ describe("buildSupplierPlanLines", () => {
     expect(lines).toHaveLength(0);
   });
 
-  it("suggestedQty is the greater of the supplier's own ReorderQuantity and the actual shortfall to threshold", () => {
+  it("suggestedQty is the greater of the supplier's own MOQ (MinimumToReorder) and the actual shortfall to threshold — NOT ReorderQuantity, which is deliberately never used as a floor", () => {
     const demand = demandData({ fallbackBySku: { SKU1: { onHand: 50, totalOut: 300 } } });
-    // threshold=500 (MinimumToReorder floor), onHand=50 -> shortfall=450, ReorderQuantity=500 -> suggestedQty=max(500,450)=500
-    const lines = buildSupplierPlanLines([product()], demand, planOpts());
+    const lines = buildSupplierPlanLines(
+      [
+        product({
+          suppliers: [
+            {
+              supplierId: "sup-1",
+              supplierName: "S",
+              cost: null,
+              currency: null,
+              // reorderQuantity deliberately much bigger than minimumToReorder — if
+              // suggestedQty ever used ReorderQuantity as a floor again, this would
+              // catch it (999, not 500).
+              options: [{ locationId: null, locationName: null, reorderQuantity: 999, lead: 10, safety: 20, minimumToReorder: 500 }],
+            },
+          ],
+        }),
+      ],
+      demand,
+      planOpts()
+    );
+    // threshold = 300 (leadTimeDemand only); shortfall = 300-50-0 = 250; MOQ=500 wins -> suggestedQty=max(500,250)=500
     expect(lines[0].suggestedQty).toBe(500);
   });
 
@@ -137,14 +157,11 @@ describe("buildSupplierPlanLines", () => {
   });
 
   it("emits one line per real location with actual demand, each computed off that location's OWN on-hand/velocity — not an instance-wide aggregate reused under every location", () => {
-    // product()'s default option has MinimumToReorder: 500, which acts as a
-    // floor under every location's own threshold — Main Warehouse needs
-    // more than that floor on hand to read as healthy.
     const demand = demandData({
       byLocation: {
         SKU1: {
-          "Main Warehouse": { onHand: 600, totalOut: 30 }, // plenty of stock here
-          "Cape Town": { onHand: 5, totalOut: 300 }, // this location is nearly out
+          "Main Warehouse": { onHand: 600, totalOut: 30 }, // plenty of stock here relative to this location's own low velocity
+          "Cape Town": { onHand: 5, totalOut: 300 }, // this location is nearly out relative to its own high velocity
         },
       },
     });
@@ -153,7 +170,7 @@ describe("buildSupplierPlanLines", () => {
     expect(lines).toHaveLength(2);
     const mainWarehouse = lines.find((l) => l.locationName === "Main Warehouse")!;
     const capeTown = lines.find((l) => l.locationName === "Cape Town")!;
-    expect(mainWarehouse.needsReorder).toBe(false); // 600 on hand comfortably covers this location's own low velocity + the floor
+    expect(mainWarehouse.needsReorder).toBe(false); // 600 on hand comfortably covers this location's own low velocity
     expect(capeTown.needsReorder).toBe(true); // 5 on hand can't cover this location's own high velocity
     expect(mainWarehouse.onHand).toBe(600);
     expect(capeTown.onHand).toBe(5);
@@ -196,7 +213,7 @@ describe("buildSupplierPlanLines", () => {
     expect(capeTown.safety).toBe(2);
   });
 
-  it("always sources the MinimumToReorder floor from the default option, even for a location using its own diverging option — Cin7 only lets that field be configured centrally", () => {
+  it("always sources the MOQ (MinimumToReorder) from the default option, even for a location using its own diverging option — Cin7 only lets that field be configured centrally", () => {
     const demand = demandData({ byLocation: { SKU1: { "Cape Town": { onHand: 50, totalOut: 0 } } } });
     const lines = buildSupplierPlanLines(
       [
@@ -219,7 +236,8 @@ describe("buildSupplierPlanLines", () => {
       demand,
       planOpts()
     );
-    expect(lines[0].threshold).toBe(400); // the default's floor still applies, not 0
+    expect(lines[0].threshold).toBe(0); // Cape Town's own lead=3/safety=0 with zero velocity -> leadTimeDemand=0
+    expect(lines[0].suggestedQty).toBe(400); // the default's own MOQ still applies to suggestedQty, not Cape Town's null one
   });
 
   it("attaches the real Cin7 LocationID from locationIdByName, not whatever locationId the supplier option itself happened to carry", () => {
@@ -408,11 +426,12 @@ describe("import stock floor", () => {
     expect(lines[0].isImportSupplier).toBe(false);
   });
 
-  it("is a floor, not a replacement — never lowers a threshold the lead-time/minimum math already put higher", () => {
-    const demand = demandData({ fallbackBySku: { SKU1: { onHand: 0, totalOut: 0 } } }); // zero velocity -> import floor would be 0
-    const lines = buildSupplierPlanLines([product()], demand, planOpts(0, { homeCurrency: "ZAR", importStockMonths: 1 })); // product()'s supplier currency USD != ZAR -> import
+  it("is a floor, not a replacement — a small import floor never reduces a threshold the lead-time math already put higher", () => {
+    const demand = demandData({ fallbackBySku: { SKU1: { onHand: 0, totalOut: 300 } } }); // dailyRate = 300/30 = 10
+    // leadTimeDemand = 10 * (10+20) * 1 = 300 (product()'s default lead=10/safety=20); importFloor = 10*30*0.5 = 150 — smaller
+    const lines = buildSupplierPlanLines([product()], demand, planOpts(0, { homeCurrency: "ZAR", importStockMonths: 0.5 })); // product()'s supplier currency USD != ZAR -> import
     expect(lines[0].isImportSupplier).toBe(true);
-    expect(lines[0].threshold).toBe(500); // MinimumToReorder floor still wins, not overridden down to 0
+    expect(lines[0].threshold).toBe(300); // the smaller import floor doesn't reduce the bigger lead-time-based threshold
   });
 });
 

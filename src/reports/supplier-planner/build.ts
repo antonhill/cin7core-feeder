@@ -7,12 +7,29 @@
  * supplier lead time configured.
  *
  * For each (product, supplier, location) with a Lead time configured
- * (src/cin7/product-supplier-options.ts): threshold = the greater of a
- * velocity-based lead-time demand figure and the supplier's own
- * `MinimumToReorder` — Anton confirmed the supplier's own configured
- * minimum should act as a floor under the velocity-based number, not be
- * overridden by it ("a bit of overlap" with the Reorder Report's own
- * threshold concept, without merging the two tools).
+ * (src/cin7/product-supplier-options.ts): threshold (the reorder trigger
+ * point) = the velocity-based lead-time demand figure. `suggestedQty` (the
+ * purchase quantity once actually below that trigger) is floored at the
+ * supplier's own MOQ.
+ *
+ * **`MinimumToReorder` is MOQ, not the trigger threshold (corrected
+ * 2026-07-27).** Originally assumed to be Cin7's "Minimum before reorder"
+ * trigger concept and folded into `threshold` — wrong. Confirmed live
+ * against a real product: the Suppliers-tab UI showed Reorder Quantity=100/
+ * **Minimum Order Quantity=50**, and the raw default-entry JSON carried
+ * exactly `ReorderQuantity: 100, MinimumToReorder: 50` — an exact value
+ * match, not just a naming coincidence. `MinimumToReorder` is a
+ * supplier-side floor on the PURCHASE QUANTITY (never order less than a
+ * supplier will accept), so it now floors `suggestedQty`, not `threshold`.
+ * `ReorderQuantity` is NOT a floor at all — per Cin7's own reorder-
+ * suggestion docs it's a lot-size input that only appears in a formula
+ * branch (safety-stock calculation disabled) this tool doesn't implement —
+ * so it's no longer used as a floor anywhere. Cin7's own real "Minimum
+ * before reorder" trigger concept appears to live in a top-level product
+ * field (`MinimumBeforeReorder`) and/or the separate `ReorderLevels[]`
+ * array (already fetched elsewhere for Reorder Points) — neither of which
+ * this tool fetches yet; whether `threshold` should incorporate either is a
+ * separate, not-yet-scoped follow-up.
  *
  * **Per-location demand (2026-07-25):** on-hand/on-order/sales-velocity are
  * now genuinely computed per real Cin7 location, not one instance-wide
@@ -31,8 +48,8 @@
  * currency (`purchase_planner_settings.home_currency`, migration 0051),
  * imply the product needs a bigger buffer — Anton confirmed this varies per
  * client, so it's a settable org default, not a hardcoded USD check. Modeled
- * as a THIRD floor alongside MinimumToReorder, not a replacement of the
- * lead-time math: `monthlyAvgSales × importStockMonths`. `homeCurrency:
+ * as a second component of `threshold` alongside the lead-time figure, not a
+ * replacement of it: `monthlyAvgSales × importStockMonths`. `homeCurrency:
  * null` (unconfigured) turns this off entirely rather than guessing —
  * distorting a real client's purchasing suggestions on an unconfirmed
  * assumption would be worse than the floor simply not applying yet.
@@ -186,12 +203,20 @@ export function buildSupplierPlanLines(
       const defaultOption = supplier.options.find((o) => o.locationId === null) ?? supplier.options[0];
       if (!defaultOption || defaultOption.lead === null) continue; // nothing to plan a lead time around
 
-      // MinimumToReorder only ever populates on the default (locationId:
-      // null) entry — Cin7 only lets it be configured centrally, never
-      // per-location (src/cin7/product-supplier-options.ts) — so it always
+      // MinimumToReorder is Cin7's MOQ ("Minimum to order") — confirmed
+      // live 2026-07-27 against a real product (Suppliers-tab UI showed
+      // Reorder Quantity=100/Minimum Order Quantity=50, and the raw
+      // default-entry JSON carried exactly ReorderQuantity=100/
+      // MinimumToReorder=50). It's a supplier-side floor on the PURCHASE
+      // QUANTITY, not the reorder trigger threshold — it only ever
+      // populates on the default (locationId: null) entry (Cin7 only lets
+      // it be configured centrally, never per-location), so it always
       // comes from here regardless of which location's own option below
-      // supplies the lead time/reorder quantity.
-      const minimumFloor = defaultOption.minimumToReorder ?? 0;
+      // supplies the lead time/reorder quantity. ReorderQuantity is NOT a
+      // floor at all — per Cin7's own reorder-suggestion docs it's a
+      // lot-size input that only appears in a formula branch (safety-stock
+      // calculation disabled) this tool doesn't implement.
+      const moq = defaultOption.minimumToReorder ?? 0;
 
       // Off when homeCurrency isn't configured, and when this supplier's
       // own currency is unknown — a supplier with no currency recorded
@@ -212,12 +237,14 @@ export function buildSupplierPlanLines(
         // period the user happened to select — same daily rate the
         // lead-time figure above uses, just projected out further.
         const importFloor = isImportSupplier ? dailyRate * 30 * opts.importStockMonths : 0;
-        const threshold = Math.max(leadTimeDemand, minimumFloor, importFloor);
+        const threshold = Math.max(leadTimeDemand, importFloor);
         // Nets off stock already inbound, not just on-hand — a shortfall
         // calc that ignores onOrder over-suggests by however much is
         // already in the pipe, the exact failure mode Cin7's own velocity
-        // engine avoids by subtracting both Available and On Order.
-        const suggestedQty = Math.max(option.reorderQuantity || 0, threshold - figures.onHand - figures.onOrder);
+        // engine avoids by subtracting both Available and On Order. Floored
+        // at the supplier's own MOQ (never suggest less than they'll
+        // accept), not at ReorderQuantity — see moq's own comment above.
+        const suggestedQty = Math.max(moq, threshold - figures.onHand - figures.onOrder);
         const locationId = locationName ? (demand.locationIdByName.get(locationName) ?? null) : null;
 
         const pendingPurchaseOrder =
