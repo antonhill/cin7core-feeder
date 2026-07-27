@@ -37,6 +37,9 @@ export interface SupplierPlanProduct {
   productId: string;
   sku: string;
   name: string;
+  /** Flat string fields on /Product, confirmed live via the same fetch Reorder Points already uses (src/cin7/product-reorder.ts). */
+  category: string | null;
+  brand: string | null;
   suppliers: SupplierPlanLink[];
 }
 
@@ -80,6 +83,8 @@ function toSupplierPlanProduct(raw: Record<string, unknown>): SupplierPlanProduc
     productId: String(raw.ID ?? ""),
     sku: String(raw.SKU ?? ""),
     name: String(raw.Name ?? ""),
+    category: typeof raw.Category === "string" && raw.Category.trim() ? raw.Category.trim() : null,
+    brand: typeof raw.Brand === "string" && raw.Brand.trim() ? raw.Brand.trim() : null,
     suppliers,
   };
 }

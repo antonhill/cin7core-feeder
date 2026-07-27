@@ -16,6 +16,8 @@ function product(overrides: Partial<SupplierPlanProductInput> = {}): SupplierPla
     productId: "prod-1",
     sku: "SKU1",
     name: "Product One",
+    category: null,
+    brand: null,
     suppliers: [
       {
         supplierId: "sup-1",
@@ -220,6 +222,13 @@ describe("buildSupplierPlanLines", () => {
     expect(lines[0].status).toBe("Stockout risk");
   });
 
+  it("passes through the product's category/brand onto every line — for search/filtering", () => {
+    const demand = demandData({ fallbackBySku: { SKU1: { onHand: 50, totalOut: 300 } } });
+    const lines = buildSupplierPlanLines([product({ category: "Cushions", brand: "Acme" })], demand, planOpts());
+    expect(lines[0].category).toBe("Cushions");
+    expect(lines[0].brand).toBe("Acme");
+  });
+
   it("flags an all-zero Lead/Safety/ReorderQuantity/MinimumToReorder entry as unconfigured — Cin7's placeholder shape for a link that's never had Product Supplier Options set up, confirmed live 2026-07-24", () => {
     const demand = demandData({ fallbackBySku: { SKU1: { onHand: 0, totalOut: 100 } } });
     const lines = buildSupplierPlanLines(
@@ -387,6 +396,8 @@ function line(overrides: Partial<SupplierPlanLine> = {}): SupplierPlanLine {
     productId: "prod-1",
     productSku: "SKU1",
     productName: "Product One",
+    category: null,
+    brand: null,
     supplierId: "sup-1",
     supplierName: "3 Diamonds Transport (Pty) Ltd",
     currency: "USD",

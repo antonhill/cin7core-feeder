@@ -22,6 +22,8 @@ describe("fetchAllProductsForSupplierPlanning", () => {
           ID: "18bd8a57-f43c-4c60-af6c-d78dcfbd97d1",
           SKU: "New Item for Smart",
           Name: "New Item for Smart",
+          Category: "Bedroom",
+          Brand: "Acme",
           Suppliers: [
             {
               SupplierID: "f3705aa1-332f-4f27-8dbe-6b8a33f3abff",
@@ -66,6 +68,8 @@ describe("fetchAllProductsForSupplierPlanning", () => {
         productId: "18bd8a57-f43c-4c60-af6c-d78dcfbd97d1",
         sku: "New Item for Smart",
         name: "New Item for Smart",
+        category: "Bedroom",
+        brand: "Acme",
         suppliers: [
           {
             supplierId: "f3705aa1-332f-4f27-8dbe-6b8a33f3abff",
@@ -103,6 +107,13 @@ describe("fetchAllProductsForSupplierPlanning", () => {
     const all = await fetchAllProductsForSupplierPlanning(creds);
     expect(all[0].suppliers[0].currency).toBeNull();
     expect(all[0].suppliers[0].cost).toBeNull();
+  });
+
+  it("defaults category/brand to null when blank/absent", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ Products: [{ SKU: "NOCAT", Name: "No Category", Category: "", Brand: "  " }] });
+    const all = await fetchAllProductsForSupplierPlanning(creds);
+    expect(all[0].category).toBeNull();
+    expect(all[0].brand).toBeNull();
   });
 
   it("paginates until a short page", async () => {

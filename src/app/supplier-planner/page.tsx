@@ -111,6 +111,12 @@ export default function SupplierPlannerPage() {
   // Status's fixed enums, so there's no static "all options" set to seed
   // from up front.
   const [currencyFilter, setCurrencyFilter] = useState<Set<string> | null>(null);
+  // Empty array = no restriction — same convention as Reorder Points'
+  // filterReorderConfigProducts (src/reports/replenish/reorder-config.ts).
+  const [search, setSearch] = useState("");
+  const [supplierFilter, setSupplierFilter] = useState<string[]>([]);
+  const [brandFilter, setBrandFilter] = useState<string[]>([]);
+  const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
   // Hidden by default — Cin7 returns an all-zero Lead/Safety/ReorderQuantity/
   // MinimumToReorder placeholder for a product+supplier link that's never
   // had Product Supplier Options configured at all (confirmed live
@@ -195,17 +201,42 @@ export default function SupplierPlannerPage() {
     });
   }
 
+  const availableSuppliers = useMemo(() => [...new Set((lines ?? []).map((l) => l.supplierName))].sort(), [lines]);
+  const availableBrands = useMemo(() => [...new Set((lines ?? []).map((l) => l.brand).filter((b): b is string => b !== null))].sort(), [lines]);
+  const availableCategories = useMemo(
+    () => [...new Set((lines ?? []).map((l) => l.category).filter((c): c is string => c !== null))].sort(),
+    [lines]
+  );
+
+  function toggleSupplier(supplier: string) {
+    setSupplierFilter((prev) => (prev.includes(supplier) ? prev.filter((s) => s !== supplier) : [...prev, supplier]));
+  }
+  function toggleBrand(brand: string) {
+    setBrandFilter((prev) => (prev.includes(brand) ? prev.filter((b) => b !== brand) : [...prev, brand]));
+  }
+  function toggleCategory(category: string) {
+    setCategoryFilter((prev) => (prev.includes(category) ? prev.filter((c) => c !== category) : [...prev, category]));
+  }
+
   const visibleLines = useMemo(() => {
     if (!lines) return [];
+    const needle = search.trim().toLowerCase();
     return lines.filter(
       (l) =>
         (!needsReorderOnly || l.needsReorder) &&
         moverFilter.has(l.moverCategory) &&
         statusFilter.has(l.status) &&
         (currencyFilter === null || currencyFilter.has(currencyLabel(l))) &&
-        (showUnconfigured || !l.isUnconfigured)
+        (showUnconfigured || !l.isUnconfigured) &&
+        (supplierFilter.length === 0 || supplierFilter.includes(l.supplierName)) &&
+        (brandFilter.length === 0 || (l.brand !== null && brandFilter.includes(l.brand))) &&
+        (categoryFilter.length === 0 || (l.category !== null && categoryFilter.includes(l.category))) &&
+        (!needle ||
+          l.productSku.toLowerCase().includes(needle) ||
+          l.productName.toLowerCase().includes(needle) ||
+          l.supplierName.toLowerCase().includes(needle))
     );
-  }, [lines, needsReorderOnly, moverFilter, statusFilter, currencyFilter, showUnconfigured]);
+  }, [lines, needsReorderOnly, moverFilter, statusFilter, currencyFilter, showUnconfigured, supplierFilter, brandFilter, categoryFilter, search]);
 
   const unconfiguredCount = lines ? lines.filter((l) => l.isUnconfigured).length : 0;
 
@@ -266,6 +297,10 @@ export default function SupplierPlannerPage() {
     setPoResults(new Map());
     setReceivingLocationId("");
     setCurrencyFilter(null);
+    setSearch("");
+    setSupplierFilter([]);
+    setBrandFilter([]);
+    setCategoryFilter([]);
     const periodOption = PERIOD_OPTIONS.find((p) => p.value === period)!;
     startRunTransition(async () => {
       const result = await loadSupplierPlanAction({
@@ -419,6 +454,13 @@ export default function SupplierPlannerPage() {
               {needsReorderCount} need reordering at this buffer
             </p>
             <div className="flex flex-wrap items-center gap-3">
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search product, SKU, or supplier…"
+                className="w-64 rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+              />
               <label className="flex items-center gap-2 text-sm text-slate-700">
                 <input type="checkbox" checked={needsReorderOnly} onChange={(e) => setNeedsReorderOnly(e.target.checked)} />
                 Needs reorder only
@@ -490,6 +532,65 @@ export default function SupplierPlannerPage() {
               Show unconfigured entries{!showUnconfigured && unconfiguredCount > 0 && ` (${unconfiguredCount} hidden)`}
             </label>
           </div>
+
+          {(availableSuppliers.length > 0 || availableBrands.length > 0 || availableCategories.length > 0) && (
+            <div className="flex flex-wrap gap-x-6 gap-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              {availableSuppliers.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Supplier</span>
+                    <button type="button" onClick={() => setSupplierFilter([])} className="text-xs text-indigo-600 hover:underline">
+                      Clear{supplierFilter.length > 0 ? ` (${supplierFilter.length})` : ""}
+                    </button>
+                  </div>
+                  <div className="flex max-w-2xl flex-wrap items-center gap-3">
+                    {availableSuppliers.map((s) => (
+                      <label key={s} className="flex items-center gap-1.5 text-sm text-slate-700">
+                        <input type="checkbox" checked={supplierFilter.includes(s)} onChange={() => toggleSupplier(s)} />
+                        {s}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {availableBrands.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Brand</span>
+                    <button type="button" onClick={() => setBrandFilter([])} className="text-xs text-indigo-600 hover:underline">
+                      Clear{brandFilter.length > 0 ? ` (${brandFilter.length})` : ""}
+                    </button>
+                  </div>
+                  <div className="flex max-w-2xl flex-wrap items-center gap-3">
+                    {availableBrands.map((b) => (
+                      <label key={b} className="flex items-center gap-1.5 text-sm text-slate-700">
+                        <input type="checkbox" checked={brandFilter.includes(b)} onChange={() => toggleBrand(b)} />
+                        {b}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {availableCategories.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Category</span>
+                    <button type="button" onClick={() => setCategoryFilter([])} className="text-xs text-indigo-600 hover:underline">
+                      Clear{categoryFilter.length > 0 ? ` (${categoryFilter.length})` : ""}
+                    </button>
+                  </div>
+                  <div className="flex max-w-2xl flex-wrap items-center gap-3">
+                    {availableCategories.map((c) => (
+                      <label key={c} className="flex items-center gap-1.5 text-sm text-slate-700">
+                        <input type="checkbox" checked={categoryFilter.includes(c)} onChange={() => toggleCategory(c)} />
+                        {c}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {exportError && <p className="text-sm text-red-600">{exportError}</p>}
 

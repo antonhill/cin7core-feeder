@@ -59,6 +59,8 @@ export interface SupplierPlanProductInput {
   productId: string;
   sku: string;
   name: string;
+  category: string | null;
+  brand: string | null;
   suppliers: SupplierPlanLinkInput[];
 }
 
@@ -66,6 +68,8 @@ export interface SupplierPlanLine {
   productId: string;
   productSku: string;
   productName: string;
+  category: string | null;
+  brand: string | null;
   supplierId: string;
   supplierName: string;
   currency: string | null;
@@ -221,6 +225,8 @@ export function buildSupplierPlanLines(
           productId: product.productId,
           productSku: product.sku,
           productName: product.name,
+          category: product.category,
+          brand: product.brand,
           supplierId: supplier.supplierId,
           supplierName: supplier.supplierName,
           currency: supplier.currency,
