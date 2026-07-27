@@ -89,6 +89,51 @@ function currencyLabel(line: SupplierPlanLine): string {
   return line.currency ?? "No currency";
 }
 
+const FILTER_PREVIEW_COUNT = 8;
+
+/** A checkbox filter group that collapses to a short preview when the option list is long, with a "Show all (N)"/"Show less" toggle — keeps Category/Brand from blowing out the page's vertical space when a catalog has dozens of either. */
+function CollapsibleCheckboxFilter({
+  label,
+  options,
+  selected,
+  onToggle,
+  onClear,
+}: {
+  label: string;
+  options: string[];
+  selected: string[];
+  onToggle: (value: string) => void;
+  onClear: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const hasMore = options.length > FILTER_PREVIEW_COUNT;
+  const visible = expanded ? options : options.slice(0, FILTER_PREVIEW_COUNT);
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</span>
+        <button type="button" onClick={onClear} className="text-xs text-indigo-600 hover:underline">
+          Clear{selected.length > 0 ? ` (${selected.length})` : ""}
+        </button>
+      </div>
+      <div className="flex max-w-2xl flex-wrap items-center gap-3">
+        {visible.map((value) => (
+          <label key={value} className="flex items-center gap-1.5 text-sm text-slate-700">
+            <input type="checkbox" checked={selected.includes(value)} onChange={() => onToggle(value)} />
+            {value}
+          </label>
+        ))}
+      </div>
+      {hasMore && (
+        <button type="button" onClick={() => setExpanded((e) => !e)} className="self-start text-xs text-indigo-600 hover:underline">
+          {expanded ? "Show less" : `Show all (${options.length})`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function SupplierPlannerPage() {
   const picker = useInstancePicker();
   const { instanceId } = picker;
@@ -554,40 +599,22 @@ export default function SupplierPlannerPage() {
                 </div>
               )}
               {availableBrands.length > 0 && (
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Brand</span>
-                    <button type="button" onClick={() => setBrandFilter([])} className="text-xs text-indigo-600 hover:underline">
-                      Clear{brandFilter.length > 0 ? ` (${brandFilter.length})` : ""}
-                    </button>
-                  </div>
-                  <div className="flex max-w-2xl flex-wrap items-center gap-3">
-                    {availableBrands.map((b) => (
-                      <label key={b} className="flex items-center gap-1.5 text-sm text-slate-700">
-                        <input type="checkbox" checked={brandFilter.includes(b)} onChange={() => toggleBrand(b)} />
-                        {b}
-                      </label>
-                    ))}
-                  </div>
-                </div>
+                <CollapsibleCheckboxFilter
+                  label="Brand"
+                  options={availableBrands}
+                  selected={brandFilter}
+                  onToggle={toggleBrand}
+                  onClear={() => setBrandFilter([])}
+                />
               )}
               {availableCategories.length > 0 && (
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Category</span>
-                    <button type="button" onClick={() => setCategoryFilter([])} className="text-xs text-indigo-600 hover:underline">
-                      Clear{categoryFilter.length > 0 ? ` (${categoryFilter.length})` : ""}
-                    </button>
-                  </div>
-                  <div className="flex max-w-2xl flex-wrap items-center gap-3">
-                    {availableCategories.map((c) => (
-                      <label key={c} className="flex items-center gap-1.5 text-sm text-slate-700">
-                        <input type="checkbox" checked={categoryFilter.includes(c)} onChange={() => toggleCategory(c)} />
-                        {c}
-                      </label>
-                    ))}
-                  </div>
-                </div>
+                <CollapsibleCheckboxFilter
+                  label="Category"
+                  options={availableCategories}
+                  selected={categoryFilter}
+                  onToggle={toggleCategory}
+                  onClear={() => setCategoryFilter([])}
+                />
               )}
             </div>
           )}
