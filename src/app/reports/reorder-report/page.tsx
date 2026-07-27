@@ -351,8 +351,13 @@ export default function ReorderReportPage() {
     setSupplierError(null);
     setSupplierLines(null);
     setPoResults(new Map());
+    const months = PERIOD_OPTIONS.find((p) => p.value === period)!.months;
     startLoadSuppliersTransition(async () => {
-      const result = await loadReorderReportSupplierLinesAction(instanceIds[0], visibleRows);
+      const result = await loadReorderReportSupplierLinesAction(instanceIds[0], {
+        velocityDateFrom: monthsAgoIso(months),
+        velocityDateTo: todayIso(),
+        bufferPercent,
+      });
       if (!result.ok) {
         setSupplierError(result.error ?? "Unknown error");
         return;
@@ -395,11 +400,20 @@ export default function ReorderReportPage() {
     setCategoryFilter((prev) => (prev.includes(category) ? prev.filter((c) => c !== category) : [...prev, category]));
   }
 
+  // Reorder Report's own on-hand/threshold data isn't sent to the server for
+  // this fetch (see loadReorderReportSupplierLinesAction's own comment on
+  // why) — it's re-queried there instead, so it isn't itself filtered by the
+  // top table's Mover/Status/"needs reorder only" filters. Restrict back
+  // down to whatever SKU set is currently visible up there, so this section
+  // still reflects what's on screen rather than the instance's whole catalog.
+  const visibleRowSkus = useMemo(() => new Set(visibleRows.map((r) => r.product_sku)), [visibleRows]);
+
   const visibleSupplierLines = useMemo(() => {
     if (!supplierLines) return [];
     const needle = search.trim().toLowerCase();
     return supplierLines.filter(
       (l) =>
+        visibleRowSkus.has(l.productSku) &&
         (currencyFilter === null || currencyFilter.has(currencyLabel(l))) &&
         (supplierFilter.length === 0 || supplierFilter.includes(l.supplierName)) &&
         (brandFilter.length === 0 || (l.brand !== null && brandFilter.includes(l.brand))) &&
@@ -409,7 +423,7 @@ export default function ReorderReportPage() {
           l.productName.toLowerCase().includes(needle) ||
           l.supplierName.toLowerCase().includes(needle))
     );
-  }, [supplierLines, currencyFilter, supplierFilter, brandFilter, categoryFilter, search]);
+  }, [supplierLines, visibleRowSkus, currencyFilter, supplierFilter, brandFilter, categoryFilter, search]);
 
   const groupedSupplierLines = useMemo(() => groupLinesBySupplier(visibleSupplierLines), [visibleSupplierLines]);
 

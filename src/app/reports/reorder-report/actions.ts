@@ -87,13 +87,20 @@ export interface ReorderReportSupplierData {
  * one instance, unlike the plain report above which can aggregate several
  * via instanceIds. A supplier fetch and a Purchase Order write are
  * inherently single-instance (Cin7 credentials/suppliers are per-instance),
- * so the caller must have exactly one instance selected. Reuses the
- * already-loaded reorder rows rather than re-querying report_reorder — see
- * src/reports/reorder-report/build.ts for how the two are combined.
+ * so the caller must have exactly one instance selected.
+ *
+ * Re-queries report_reorder itself from small scalar filter params, exactly
+ * like loadSupplierPlanAction does, rather than accepting the already-loaded
+ * rows as an argument — a real catalog's full row set can run to
+ * thousands of products, and passing that array through as a Server Action
+ * argument risks exceeding Next's default request body limit (a real
+ * production incident, 2026-07-27: this originally took `rows` as a
+ * parameter and 500'd in production for exactly this reason). The page
+ * narrows the result back down to whatever's currently visible client-side.
  */
 export async function loadReorderReportSupplierLinesAction(
   instanceId: string,
-  rows: ReorderReportRow[]
+  filters: Omit<ReorderReportFilters, "instanceIds">
 ): Promise<ReorderReportActionResult<ReorderReportSupplierData>> {
   if (!instanceId) return { ok: false, error: "Choose exactly one instance to enable supplier data and PO creation." };
 
@@ -102,7 +109,8 @@ export async function loadReorderReportSupplierLinesAction(
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
 
-    const [products, locations, pendingPurchaseOrders] = await Promise.all([
+    const [rows, products, locations, pendingPurchaseOrders] = await Promise.all([
+      getReorderReport(db, orgId, { ...filters, instanceIds: [instanceId] }),
       fetchAllProductsForSupplierPlanning(creds),
       fetchAllLocations(creds),
       loadPendingPurchaseOrders(db, orgId, instanceId),
