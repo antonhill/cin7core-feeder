@@ -102,7 +102,7 @@ export interface SupplierPlanData {
  * pending — safer to over-flag a possible duplicate right after creation
  * than to under-flag one because the sync hasn't caught up.
  */
-async function loadPendingPurchaseOrders(
+export async function loadPendingPurchaseOrders(
   db: ReturnType<typeof createServiceRoleClient>,
   orgId: string,
   instanceId: string
