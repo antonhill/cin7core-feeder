@@ -581,22 +581,13 @@ export default function SupplierPlannerPage() {
           {(availableSuppliers.length > 0 || availableBrands.length > 0 || availableCategories.length > 0) && (
             <div className="flex flex-wrap gap-x-6 gap-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               {availableSuppliers.length > 0 && (
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Supplier</span>
-                    <button type="button" onClick={() => setSupplierFilter([])} className="text-xs text-indigo-600 hover:underline">
-                      Clear{supplierFilter.length > 0 ? ` (${supplierFilter.length})` : ""}
-                    </button>
-                  </div>
-                  <div className="flex max-w-2xl flex-wrap items-center gap-3">
-                    {availableSuppliers.map((s) => (
-                      <label key={s} className="flex items-center gap-1.5 text-sm text-slate-700">
-                        <input type="checkbox" checked={supplierFilter.includes(s)} onChange={() => toggleSupplier(s)} />
-                        {s}
-                      </label>
-                    ))}
-                  </div>
-                </div>
+                <CollapsibleCheckboxFilter
+                  label="Supplier"
+                  options={availableSuppliers}
+                  selected={supplierFilter}
+                  onToggle={toggleSupplier}
+                  onClear={() => setSupplierFilter([])}
+                />
               )}
               {availableBrands.length > 0 && (
                 <CollapsibleCheckboxFilter

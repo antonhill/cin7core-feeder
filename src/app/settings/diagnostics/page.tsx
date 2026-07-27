@@ -23,6 +23,7 @@ import {
   debugSurveyProductAvailabilityFields,
   debugSurveyProductSupplierOptionsFields,
   debugFindProductSupplierOptionsExample,
+  debugCheckProductSupplierOptionsForUnparsedFields,
   debugSurveySaleFulfillmentFields,
   debugSurveyBackorderEtaFields,
   debugTestSaleShipByWriteBack,
@@ -286,6 +287,14 @@ export default function DiagnosticsPage() {
     });
   }
 
+  function handleCheckProductSupplierOptionsForUnparsedFields(instanceId: string) {
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Scanning live ProductSupplierOptions entries for unparsed fields (e.g. MOQ)…" } }));
+    startTransition(async () => {
+      const result = await debugCheckProductSupplierOptionsForUnparsedFields(instanceId);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
   function handleSurveySaleFulfillmentFields(instanceId: string) {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Surveying sale fulfillment fields (multiple calls)…" } }));
     startTransition(async () => {
@@ -534,6 +543,13 @@ export default function DiagnosticsPage() {
                 className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Fetch one SKU&apos;s Product Supplier Options (targeted, raw dump)
+              </button>
+              <button
+                onClick={() => handleCheckProductSupplierOptionsForUnparsedFields(inst.id)}
+                disabled={isPending}
+                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Check for a real MOQ field (Purchase Planner)
               </button>
             </div>
             <div className="mt-2 flex flex-wrap gap-2">

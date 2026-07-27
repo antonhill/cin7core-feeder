@@ -213,7 +213,11 @@ export function buildSupplierPlanLines(
         // lead-time figure above uses, just projected out further.
         const importFloor = isImportSupplier ? dailyRate * 30 * opts.importStockMonths : 0;
         const threshold = Math.max(leadTimeDemand, minimumFloor, importFloor);
-        const suggestedQty = Math.max(option.reorderQuantity || 0, threshold - figures.onHand);
+        // Nets off stock already inbound, not just on-hand — a shortfall
+        // calc that ignores onOrder over-suggests by however much is
+        // already in the pipe, the exact failure mode Cin7's own velocity
+        // engine avoids by subtracting both Available and On Order.
+        const suggestedQty = Math.max(option.reorderQuantity || 0, threshold - figures.onHand - figures.onOrder);
         const locationId = locationName ? (demand.locationIdByName.get(locationName) ?? null) : null;
 
         const pendingPurchaseOrder =

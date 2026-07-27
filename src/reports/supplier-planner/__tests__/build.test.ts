@@ -104,6 +104,31 @@ describe("buildSupplierPlanLines", () => {
     expect(lines[0].suggestedQty).toBe(500);
   });
 
+  it("nets off onOrder as well as onHand — stock already inbound shrinks the shortfall, not just stock in the warehouse", () => {
+    // Custom supplier with no MinimumToReorder/ReorderQuantity floor, so the
+    // shortfall calc itself is what's under test, not a floor masking it.
+    const demand = demandData({ fallbackBySku: { SKU1: { onHand: 50, totalOut: 300, onOrder: 300 } } });
+    const lines = buildSupplierPlanLines(
+      [
+        product({
+          suppliers: [
+            {
+              supplierId: "sup-1",
+              supplierName: "S",
+              cost: null,
+              currency: null,
+              options: [{ locationId: null, locationName: null, reorderQuantity: 0, lead: 10, safety: 20, minimumToReorder: 0 }],
+            },
+          ],
+        }),
+      ],
+      demand,
+      planOpts()
+    );
+    // dailyRate=10; threshold=10*30=300; shortfall = 300 - 50(onHand) - 300(onOrder) = -50 -> floored at 0
+    expect(lines[0].suggestedQty).toBe(0);
+  });
+
   it("falls back to a single org-wide line only when a SKU has zero per-location demand rows at all", () => {
     const demand = demandData({ fallbackBySku: { SKU1: { onHand: 50, totalOut: 300 } } });
     const lines = buildSupplierPlanLines([product()], demand, planOpts());

@@ -1911,6 +1911,70 @@ export async function findProductSupplierOptionsExample(creds: Cin7Credentials, 
   return { sku, found, variants };
 }
 
+/** The 6 fields src/cin7/product-supplier-options.ts actually parses off a real ProductSupplierOptions entry today. */
+const KNOWN_PRODUCT_SUPPLIER_OPTION_KEYS = ["LocationID", "LocationName", "ReorderQuantity", "Lead", "Safety", "MinimumToReorder"];
+
+export interface ProductSupplierOptionsFieldCheck {
+  entriesScanned: number;
+  knownKeys: string[];
+  /** Keys seen on at least one real ProductSupplierOptions entry that this app doesn't currently parse — e.g. a real MOQ field distinct from MinimumToReorder, or SupplyIntervals (a field Cin7's own docs name but this codebase has never wired up). */
+  unparsedKeys: string[];
+  /** One full raw entry per unparsed key, to see its actual value/shape rather than just its name. */
+  exampleByUnparsedKey: Record<string, unknown>;
+}
+
+/**
+ * Diagnostic only: a client asked (2026-07-27) whether Cin7's own "Minimum
+ * to Order" / MOQ concept — distinct from MinimumToReorder, which is the
+ * REORDER TRIGGER threshold, not a purchase-quantity floor — is something
+ * this app's Purchase Planner should be enforcing. A 2026-07-23 screenshot
+ * of Cin7's own product-edit UI showed a `MinimumOrderQuantity` value
+ * alongside `ReorderQuantity` (findProductSupplierOptionsExample's own
+ * comment), but that was read off the UI, not the raw API response — it's
+ * unconfirmed whether the API actually exposes a distinct field for it, or
+ * whether the UI's "Minimum Order Quantity" label is just how Cin7 displays
+ * `ReorderQuantity` itself. Scans real ProductSupplierOptions entries
+ * (paginated live, same IncludeSuppliers=true fetch production code uses)
+ * and reports every raw key seen that this app doesn't already parse,
+ * rather than guessing at a field name — same discipline as every other
+ * live-verify diagnostic in this file.
+ */
+export async function checkProductSupplierOptionsForUnparsedFields(creds: Cin7Credentials, minEntries = 200): Promise<ProductSupplierOptionsFieldCheck> {
+  const pageSize = 100;
+  let entriesScanned = 0;
+  const keySet = new Set<string>();
+  const exampleByKey: Record<string, unknown> = {};
+
+  for (let page = 1; ; page++) {
+    const response = await cin7Request<Cin7ProductListResponse>(creds, "/Product", {
+      query: { page, limit: pageSize, IncludeSuppliers: "true" },
+    });
+    const products = response.Products ?? [];
+    for (const raw of products) {
+      const suppliers = (raw.Suppliers as Record<string, unknown>[] | undefined) ?? [];
+      for (const supplier of suppliers) {
+        const options = (supplier.ProductSupplierOptions as Record<string, unknown>[] | undefined) ?? [];
+        for (const option of options) {
+          entriesScanned++;
+          for (const key of Object.keys(option)) {
+            if (!keySet.has(key)) exampleByKey[key] = option;
+            keySet.add(key);
+          }
+        }
+      }
+    }
+    if (products.length < pageSize || entriesScanned >= minEntries) break;
+  }
+
+  const unparsedKeys = [...keySet].filter((k) => !KNOWN_PRODUCT_SUPPLIER_OPTION_KEYS.includes(k)).sort();
+  return {
+    entriesScanned,
+    knownKeys: KNOWN_PRODUCT_SUPPLIER_OPTION_KEYS,
+    unparsedKeys,
+    exampleByUnparsedKey: Object.fromEntries(unparsedKeys.map((k) => [k, exampleByKey[k]])),
+  };
+}
+
 export interface CreatePurchaseOrderAttempt {
   shape: string;
   endpoint: string;
