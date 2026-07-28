@@ -412,6 +412,16 @@ export default function ReorderReportPage() {
   // still reflects what's on screen rather than the instance's whole catalog.
   const visibleRowSkus = useMemo(() => new Set(visibleRows.map((r) => r.product_sku)), [visibleRows]);
 
+  // A product with no Supplier configured in Cin7 at all never gets a line
+  // (buildReorderReportSupplierLines simply has nothing to fan out for it —
+  // no supplier means no PO to create) — surfaced here so the count below
+  // doesn't read as "data went missing" when it's really "not configured yet".
+  const skusWithSupplierData = useMemo(() => new Set((supplierLines ?? []).map((l) => l.productSku)), [supplierLines]);
+  const noSupplierCount = useMemo(
+    () => visibleRows.filter((r) => !skusWithSupplierData.has(r.product_sku)).length,
+    [visibleRows, skusWithSupplierData]
+  );
+
   const visibleSupplierLines = useMemo(() => {
     if (!supplierLines) return [];
     const needle = search.trim().toLowerCase();
@@ -723,10 +733,19 @@ export default function ReorderReportPage() {
           {supplierLines !== null && (
             <>
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-sm text-slate-500">
-                  {visibleSupplierLines.length} line{visibleSupplierLines.length === 1 ? "" : "s"} across {groupedSupplierLines.size}{" "}
-                  supplier{groupedSupplierLines.size === 1 ? "" : "s"}
-                </p>
+                <div>
+                  <p className="text-sm text-slate-500">
+                    {visibleSupplierLines.length} line{visibleSupplierLines.length === 1 ? "" : "s"} across {groupedSupplierLines.size}{" "}
+                    supplier{groupedSupplierLines.size === 1 ? "" : "s"}
+                  </p>
+                  {noSupplierCount > 0 && (
+                    <p className="mt-0.5 text-xs text-slate-400">
+                      {noSupplierCount} of {visibleRows.length} product{visibleRows.length === 1 ? "" : "s"} above{" "}
+                      {noSupplierCount === 1 ? "has" : "have"} no supplier configured in Cin7 and {noSupplierCount === 1 ? "isn't" : "aren't"}{" "}
+                      shown below.
+                    </p>
+                  )}
+                </div>
                 <div className="flex flex-wrap items-center gap-3">
                   <input
                     type="text"
