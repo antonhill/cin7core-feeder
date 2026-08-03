@@ -89,16 +89,37 @@ describe("setBulkChecked", () => {
 });
 
 describe("mergeStocktakeFile", () => {
-  it("leaves every original row byte-for-byte unchanged, even a blank-Bin row for the same SKU", () => {
-    const original = [stocktakeRow({ Bin: "" }), stocktakeRow({ Bin: "Bin1", "Quantity On Hand": "16.0000" })];
-    const { rows } = mergeStocktakeFile(original, [line({ quantity: 8 })]);
-    expect(rows[0]).toEqual(original[0]);
-    expect(rows[1]).toEqual(original[1]);
+  it("auto-places onto the single existing Bin row when a SKU has exactly one Bin with on-hand stock", () => {
+    const original = [stocktakeRow({ Bin: "Bin1", "Quantity On Hand": "6.0000", "Stocktake Quantity": "0.0000" })];
+    const { rows, autoPlacedCount, appendedCount } = mergeStocktakeFile(original, [line({ quantity: 8 })]);
+    expect(autoPlacedCount).toBe(1);
+    expect(appendedCount).toBe(0);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]["Stocktake Quantity"]).toBe("8");
+    expect(rows[0].Bin).toBe("Bin1");
+    expect(rows[0]["Product Name"]).toBe("Widget"); // unchanged, no [PLACE MANUALLY] prefix
   });
 
-  it("appends one new row per SKU with a nonzero confirmed total, prefixing the product name", () => {
-    const { rows, appendedCount } = mergeStocktakeFile([stocktakeRow({})], [line({ quantity: 8 })]);
+  it("sums onto whatever Stocktake Quantity the row already had, rather than overwriting it", () => {
+    const original = [stocktakeRow({ "Quantity On Hand": "6.0000", "Stocktake Quantity": "2.0000" })];
+    const { rows } = mergeStocktakeFile(original, [line({ quantity: 8 })]);
+    expect(rows[0]["Stocktake Quantity"]).toBe("10");
+  });
+
+  it("sums picked + packed together onto the same auto-placed row", () => {
+    const original = [stocktakeRow({ "Quantity On Hand": "6.0000" })];
+    const { rows, autoPlacedCount } = mergeStocktakeFile(original, [line({ stage: "pick", quantity: 5 }), line({ stage: "pack", quantity: 3 })]);
+    expect(autoPlacedCount).toBe(1);
+    expect(rows[0]["Stocktake Quantity"]).toBe("8");
+  });
+
+  it("falls back to an appended, clearly-flagged row when a SKU's on-hand stock spans more than one Bin", () => {
+    const original = [stocktakeRow({ Bin: "", "Quantity On Hand": "6.0000" }), stocktakeRow({ Bin: "Bin1", "Quantity On Hand": "16.0000" })];
+    const { rows, autoPlacedCount, appendedCount } = mergeStocktakeFile(original, [line({ quantity: 8 })]);
+    expect(autoPlacedCount).toBe(0);
     expect(appendedCount).toBe(1);
+    expect(rows[0]).toEqual(original[0]);
+    expect(rows[1]).toEqual(original[1]);
     const appended = rows[rows.length - 1];
     expect(appended["Product Code"]).toBe("SKU-A");
     expect(appended["Product Name"]).toBe("[PICKED/PACKED - PLACE MANUALLY] Widget");
@@ -106,33 +127,25 @@ describe("mergeStocktakeFile", () => {
     expect(appended["Stocktake Quantity"]).toBe("8");
   });
 
-  it("sums picked + packed for the same SKU into a single appended row", () => {
-    const { rows, appendedCount } = mergeStocktakeFile(
-      [stocktakeRow({})],
-      [line({ stage: "pick", quantity: 5 }), line({ stage: "pack", quantity: 3 })]
-    );
+  it("falls back to an appended row when no row for that SKU has any on-hand qty at all", () => {
+    const original = [stocktakeRow({ "Quantity On Hand": "0.0000" })];
+    const { autoPlacedCount, appendedCount } = mergeStocktakeFile(original, [line({ quantity: 4 })]);
+    expect(autoPlacedCount).toBe(0);
     expect(appendedCount).toBe(1);
-    expect(rows[rows.length - 1]["Stocktake Quantity"]).toBe("8");
-  });
-
-  it("still appends a new row even when every existing row for that SKU has a specific Bin (no blank-Bin row to touch)", () => {
-    const original = [stocktakeRow({ Bin: "Bin1" }), stocktakeRow({ Bin: "Bin2" })];
-    const { rows, appendedCount } = mergeStocktakeFile(original, [line({ quantity: 4 })]);
-    expect(appendedCount).toBe(1);
-    expect(rows).toHaveLength(3);
-    expect(rows[0]).toEqual(original[0]);
-    expect(rows[1]).toEqual(original[1]);
   });
 
   it("excludes unticked lines entirely", () => {
-    const { rows, appendedCount } = mergeStocktakeFile([stocktakeRow({})], [line({ checked: false })]);
+    const { rows, autoPlacedCount, appendedCount } = mergeStocktakeFile([stocktakeRow({})], [line({ checked: false })]);
+    expect(autoPlacedCount).toBe(0);
     expect(appendedCount).toBe(0);
     expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual(stocktakeRow({}));
   });
 
   it("ignores a line whose SKU nets to zero across checked entries", () => {
-    const { appendedCount } = mergeStocktakeFile([stocktakeRow({})], [line({ quantity: 0, checked: true })]);
+    const { appendedCount, autoPlacedCount } = mergeStocktakeFile([stocktakeRow({})], [line({ quantity: 0, checked: true })]);
     expect(appendedCount).toBe(0);
+    expect(autoPlacedCount).toBe(0);
   });
 });
 

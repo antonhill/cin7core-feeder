@@ -7,10 +7,14 @@
  * Cin7's Sale Fulfilment pick/pack data has no Bin field at all (confirmed
  * live 2026-07-09, see migration 0034) — only Location. The uploaded CSV,
  * by contrast, splits the same product across several Bin-specific rows.
- * Per Anton's explicit call, this tool never guesses which Bin row a
- * location-level quantity belongs to: every original row passes through
- * completely untouched, and confirmed picked/packed quantities are
- * appended as brand-new, clearly-flagged rows for a human to place.
+ * Per Anton's explicit call, this tool never *guesses* which Bin row a
+ * location-level quantity belongs to — but when the uploaded file shows a
+ * product holding stock in exactly one Bin at this location, there's no
+ * real ambiguity to guess about: that's the only place it could have been
+ * picked from, so the quantity is added straight onto that row. Only when
+ * a product's stock is genuinely split across more than one Bin (or isn't
+ * in the file with any on-hand qty at all) does it fall back to an
+ * appended, clearly-flagged reference row for a human to place.
  */
 
 import Papa from "papaparse";
@@ -95,19 +99,32 @@ const PLACE_MANUALLY_PREFIX = "[PICKED/PACKED - PLACE MANUALLY] ";
 
 export interface MergeStocktakeResult {
   rows: StocktakeRow[];
-  /** How many new reference rows were appended (one per SKU with a nonzero confirmed total). */
+  /** SKUs auto-placed straight onto their one existing Bin row. */
+  autoPlacedCount: number;
+  /** SKUs that fell back to an appended reference row (stock split across multiple Bins, or none found with any on-hand qty). */
   appendedCount: number;
 }
 
+function parseQty(value: string): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
 /**
- * Every original row passes through byte-for-byte unchanged (per Anton's
- * explicit call — no auto-placement into a specific Bin row). For each SKU
- * with at least one checked confirmation line, appends one new row summing
- * every checked quantity for that SKU (picked + packed combined), with Bin/
- * Unit/BatchSN/ExpiryDate/Quantity On Hand left blank since none of those
- * are known at the location level — only Stocktake Quantity is set, and
- * Product Name is prefixed so the row is unmistakable as a manual-placement
- * reference rather than a real physical count.
+ * For each SKU with at least one checked confirmation line, sums every
+ * checked quantity (picked + packed combined) and either:
+ *
+ *  - adds it straight onto the SKU's existing Stocktake Quantity when the
+ *    uploaded file shows exactly one Bin row for that SKU with a nonzero
+ *    Quantity On Hand — unambiguous, since that's the only Bin the stock
+ *    could physically be in;
+ *  - otherwise appends a brand-new reference row (Bin/Unit/BatchSN/
+ *    ExpiryDate/Quantity On Hand left blank, Product Name prefixed) for a
+ *    human to place, per Anton's explicit call never to guess across a
+ *    genuine multi-Bin split.
+ *
+ * Rows with no confirmed quantity at all pass through byte-for-byte
+ * unchanged either way.
  */
 export function mergeStocktakeFile(originalRows: StocktakeRow[], confirmationLines: ConfirmationLine[]): MergeStocktakeResult {
   const totalsBySku = new Map<string, { productName: string | null; quantity: number }>();
@@ -120,9 +137,30 @@ export function mergeStocktakeFile(originalRows: StocktakeRow[], confirmationLin
     });
   }
 
+  const candidateRowIndexesBySku = new Map<string, number[]>();
+  originalRows.forEach((row, i) => {
+    if (parseQty(row["Quantity On Hand"]) <= 0) return;
+    const sku = row["Product Code"];
+    const indexes = candidateRowIndexesBySku.get(sku) ?? [];
+    indexes.push(i);
+    candidateRowIndexesBySku.set(sku, indexes);
+  });
+
+  const rows = [...originalRows];
   const appended: StocktakeRow[] = [];
+  let autoPlacedCount = 0;
+
   for (const [sku, { productName, quantity }] of totalsBySku) {
     if (quantity <= 0) continue;
+    const candidates = candidateRowIndexesBySku.get(sku) ?? [];
+
+    if (candidates.length === 1) {
+      const i = candidates[0];
+      rows[i] = { ...rows[i], "Stocktake Quantity": String(parseQty(rows[i]["Stocktake Quantity"]) + quantity) };
+      autoPlacedCount++;
+      continue;
+    }
+
     appended.push({
       "Product Code": sku,
       "Product Name": PLACE_MANUALLY_PREFIX + (productName ?? ""),
@@ -135,7 +173,7 @@ export function mergeStocktakeFile(originalRows: StocktakeRow[], confirmationLin
     });
   }
 
-  return { rows: [...originalRows, ...appended], appendedCount: appended.length };
+  return { rows: [...rows, ...appended], autoPlacedCount, appendedCount: appended.length };
 }
 
 /** Serializes back to Cin7's fixed 8-column stocktake import order, regardless of the uploaded file's original column order. */

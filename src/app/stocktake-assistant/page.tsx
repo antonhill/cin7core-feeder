@@ -97,11 +97,14 @@ export default function StocktakeAssistantPage() {
 
   function handleDownload() {
     if (!previewData) return;
-    const { rows, appendedCount } = mergeStocktakeFile(previewData.originalRows, confirmationLines);
+    const { rows, autoPlacedCount, appendedCount } = mergeStocktakeFile(previewData.originalRows, confirmationLines);
     const csv = buildStocktakeCsv(rows);
     const filename = `Stocktake_${location.replace(/[^a-zA-Z0-9]+/g, "_") || "export"}.csv`;
     triggerCsvDownload(csv, filename);
-    setDownloadedFilename(`${filename} — ${appendedCount} reference row${appendedCount === 1 ? "" : "s"} appended for manual placement`);
+    const parts: string[] = [];
+    if (autoPlacedCount > 0) parts.push(`${autoPlacedCount} product${autoPlacedCount === 1 ? "" : "s"} added straight onto its only Bin`);
+    if (appendedCount > 0) parts.push(`${appendedCount} product${appendedCount === 1 ? "" : "s"} appended for manual placement (stock split across multiple Bins)`);
+    setDownloadedFilename(`${filename} — ${parts.length ? parts.join(", ") : "no changes"}`);
   }
 
   return (
@@ -173,8 +176,9 @@ export default function StocktakeAssistantPage() {
                 {confirmationLines.length} picked/packed line{confirmationLines.length === 1 ? "" : "s"} found at {location}
               </p>
               <p className="mt-1 text-sm text-slate-500">
-                Untick anything that shouldn&rsquo;t be added, or bulk-skip a whole category below. Confirmed lines are appended as
-                new, clearly-flagged rows — every row from your uploaded file stays exactly as it was.
+                Untick anything that shouldn&rsquo;t be added, or bulk-skip a whole category below. When a product&rsquo;s stock
+                sits in only one Bin in your file, the confirmed quantity is added straight onto that row; when it&rsquo;s split
+                across more than one Bin, it&rsquo;s appended as a new, clearly-flagged row for you to place instead.
               </p>
             </div>
             {confirmationLines.length > 0 && (
