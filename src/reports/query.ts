@@ -504,3 +504,33 @@ export async function getOrderFulfillmentLines(db: SupabaseClient, orgId: string
   if (error) throw new Error(`report_order_fulfillment_lines: ${error.message}`);
   return data ?? [];
 }
+
+export interface StocktakeStagedStockRow {
+  product_sku: string;
+  product_name: string | null;
+  picked_qty: number;
+  packed_qty: number;
+}
+
+/** Every location this instance has any synced stock in (product_availability), for the Stocktake Assistant's location picker — a plain DB read, no live Cin7 call needed since a stocktake location by definition already has stock. */
+export async function getStocktakeLocations(db: SupabaseClient, orgId: string, instanceId: string): Promise<string[]> {
+  const { data, error } = await db
+    .from("product_availability")
+    .select("location")
+    .eq("org_id", orgId)
+    .eq("instance_id", instanceId)
+    .not("location", "is", null);
+  if (error) throw new Error(`product_availability locations: ${error.message}`);
+  return [...new Set((data ?? []).map((r) => r.location as string))].sort();
+}
+
+/** Per-SKU picked/packed quantity still staged (not yet shipped) at one instance+location (report_stocktake_staged_stock, 0053) — the stock a physical stocktake walk-through won't see on the shelf. */
+export async function getStocktakeStagedStock(db: SupabaseClient, orgId: string, instanceId: string, location: string): Promise<StocktakeStagedStockRow[]> {
+  const { data, error } = await db.rpc("report_stocktake_staged_stock", {
+    p_org_id: orgId,
+    p_instance_id: instanceId,
+    p_location: location,
+  });
+  if (error) throw new Error(`report_stocktake_staged_stock: ${error.message}`);
+  return data ?? [];
+}

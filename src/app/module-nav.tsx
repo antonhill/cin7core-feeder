@@ -203,6 +203,16 @@ export function SupplierPlannerIcon({ className }: IconProps) {
   );
 }
 
+export function StocktakeIcon({ className }: IconProps) {
+  return (
+    <GradientIcon className={className} from="#ea580c" to="#9a3412">
+      <rect x="4" y="3" width="16" height="18" rx="1.5" />
+      <path d="M8 3v3M16 3v3" />
+      <path d="m8.5 12 2 2 4-4" />
+    </GradientIcon>
+  );
+}
+
 export function TeamIcon({ className }: IconProps) {
   return (
     <GradientIcon className={className} from="#2563eb" to="#1d4ed8">
@@ -341,6 +351,15 @@ export const SUPPLIER_PLANNER_MODULE: ModuleConfig = {
     "Combines each supplier's configured lead time and safety stock with recent sales velocity to flag products that need reordering before they run out during transit — the lead-time-aware workflow for imports/long-lead-time suppliers.",
 };
 
+export const STOCKTAKE_MODULE: ModuleConfig = {
+  href: "/stocktake-assistant",
+  label: "Stocktake Assistant",
+  gradient: SELF_COLORED_ICON_BADGE,
+  Icon: StocktakeIcon,
+  blurb:
+    "Upload a Cin7 stocktake export and see what's currently picked/packed for open orders at that location — stock a physical count would otherwise miss on the shelf.",
+};
+
 export const HEALTH_MODULE: ModuleConfig = {
   href: "/health",
   label: "System Health",
@@ -428,6 +447,7 @@ export const MODULES: ModuleConfig[] = [
   PRICING_MODULE,
   REPLENISH_MODULE,
   SUPPLIER_PLANNER_MODULE,
+  STOCKTAKE_MODULE,
   HEALTH_MODULE,
   INSTANCES_MODULE,
   ACTIVITY_MODULE,
