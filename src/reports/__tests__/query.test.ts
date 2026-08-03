@@ -401,9 +401,17 @@ describe("getProductAvailabilitySyncStatus", () => {
   });
 });
 
+/** getOrderFulfillmentReport/Lines page through .rpc() with .range() (see fetchAllRpcRows) — this stubs one page's worth of {data, error} per range() call, mirroring the real chained shape rather than a bare rpc().then(). */
+function stubPagedRpc(pages: { data: unknown[] | null; error: { message: string } | null }[]) {
+  let call = 0;
+  const range = vi.fn(() => Promise.resolve(pages[Math.min(call++, pages.length - 1)]));
+  const rpc = vi.fn(() => ({ range }));
+  return { rpc, range };
+}
+
 describe("getOrderFulfillmentReport", () => {
   it("calls the report_order_fulfillment RPC with null defaults for unset filters", async () => {
-    const rpc = vi.fn().mockResolvedValue({ data: [{ cin7_sale_id: "s1", is_pick_today: true }], error: null });
+    const { rpc } = stubPagedRpc([{ data: [{ cin7_sale_id: "s1", is_pick_today: true }], error: null }]);
     const db = { rpc } as unknown as SupabaseClient;
 
     const rows = await getOrderFulfillmentReport(db, "org1", {});
@@ -413,22 +421,37 @@ describe("getOrderFulfillmentReport", () => {
   });
 
   it("passes through the instance filter", async () => {
-    const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
+    const { rpc } = stubPagedRpc([{ data: [], error: null }]);
     const db = { rpc } as unknown as SupabaseClient;
     await getOrderFulfillmentReport(db, "org1", { instanceIds: ["inst-1"] });
     expect(rpc).toHaveBeenCalledWith("report_order_fulfillment", { p_org_id: "org1", p_instance_ids: ["inst-1"] });
   });
 
   it("throws with the underlying error message on failure", async () => {
-    const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: "boom" } });
+    const { rpc } = stubPagedRpc([{ data: null, error: { message: "boom" } }]);
     const db = { rpc } as unknown as SupabaseClient;
     await expect(getOrderFulfillmentReport(db, "org1", {})).rejects.toThrow("report_order_fulfillment: boom");
+  });
+
+  it("pages past PostgREST's 1000-row cap instead of silently truncating", async () => {
+    const fullPage = Array.from({ length: 1000 }, (_, i) => ({ cin7_sale_id: `s${i}` }));
+    const { rpc, range } = stubPagedRpc([
+      { data: fullPage, error: null },
+      { data: [{ cin7_sale_id: "s1000" }], error: null },
+    ]);
+    const db = { rpc } as unknown as SupabaseClient;
+
+    const rows = await getOrderFulfillmentReport(db, "org1", {});
+
+    expect(rows).toHaveLength(1001);
+    expect(range).toHaveBeenNthCalledWith(1, 0, 999);
+    expect(range).toHaveBeenNthCalledWith(2, 1000, 1999);
   });
 });
 
 describe("getOrderFulfillmentLines", () => {
   it("calls the report_order_fulfillment_lines RPC with null defaults for unset filters", async () => {
-    const rpc = vi.fn().mockResolvedValue({ data: [{ cin7_sale_id: "s1", product_sku: "SKU-1", pickable_qty: 2 }], error: null });
+    const { rpc } = stubPagedRpc([{ data: [{ cin7_sale_id: "s1", product_sku: "SKU-1", pickable_qty: 2 }], error: null }]);
     const db = { rpc } as unknown as SupabaseClient;
 
     const rows = await getOrderFulfillmentLines(db, "org1", {});
@@ -438,7 +461,7 @@ describe("getOrderFulfillmentLines", () => {
   });
 
   it("throws with the underlying error message on failure", async () => {
-    const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: "boom" } });
+    const { rpc } = stubPagedRpc([{ data: null, error: { message: "boom" } }]);
     const db = { rpc } as unknown as SupabaseClient;
     await expect(getOrderFulfillmentLines(db, "org1", {})).rejects.toThrow("report_order_fulfillment_lines: boom");
   });

@@ -2,6 +2,30 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { PivotGroupBy, PivotSourceRow } from "@/reports/pivot";
 import type { InstancePickerItem } from "@/actions/instances";
 
+const RPC_PAGE_SIZE = 1000;
+
+/**
+ * PostgREST caps any single response at its configured max-rows (1000 on
+ * this project) regardless of how many rows the underlying function
+ * actually returns — confirmed live 2026-08-04: Order Fulfillment's "All
+ * Orders" count was silently stuck at exactly 1000 while the DB itself had
+ * 9,915 orders, and none of the org's 32 real Pick Today orders happened to
+ * fall in that arbitrary first slice. `.rpc()` needs explicit `.range()`
+ * paging to get every row back; without it, this fails silently (no error,
+ * just a truncated result) rather than throwing.
+ */
+async function fetchAllRpcRows<T>(db: SupabaseClient, fn: string, params: Record<string, unknown>): Promise<T[]> {
+  const all: T[] = [];
+  for (let from = 0; ; from += RPC_PAGE_SIZE) {
+    const { data, error } = await db.rpc(fn, params).range(from, from + RPC_PAGE_SIZE - 1);
+    if (error) throw new Error(`${fn}: ${error.message}`);
+    const rows = (data ?? []) as T[];
+    all.push(...rows);
+    if (rows.length < RPC_PAGE_SIZE) break;
+  }
+  return all;
+}
+
 export interface SalesReportFilters {
   instanceIds?: string[];
   location?: string;
@@ -487,22 +511,18 @@ export interface OrderFulfillmentLineRow {
  * excluded — nothing that needs action drops out of sight.
  */
 export async function getOrderFulfillmentReport(db: SupabaseClient, orgId: string, filters: OrderFulfillmentFilters): Promise<OrderFulfillmentRow[]> {
-  const { data, error } = await db.rpc("report_order_fulfillment", {
+  return fetchAllRpcRows<OrderFulfillmentRow>(db, "report_order_fulfillment", {
     p_org_id: orgId,
     p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
   });
-  if (error) throw new Error(`report_order_fulfillment: ${error.message}`);
-  return data ?? [];
 }
 
 /** Per-SKU detail behind an order's row (report_order_fulfillment_lines, 0033) — fetched for every order in the current result set up front (a plain DB read, not a rate-limited Cin7 call), so expanding a row is instant. */
 export async function getOrderFulfillmentLines(db: SupabaseClient, orgId: string, filters: OrderFulfillmentFilters): Promise<OrderFulfillmentLineRow[]> {
-  const { data, error } = await db.rpc("report_order_fulfillment_lines", {
+  return fetchAllRpcRows<OrderFulfillmentLineRow>(db, "report_order_fulfillment_lines", {
     p_org_id: orgId,
     p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
   });
-  if (error) throw new Error(`report_order_fulfillment_lines: ${error.message}`);
-  return data ?? [];
 }
 
 export interface StocktakeStagedStockRow {
