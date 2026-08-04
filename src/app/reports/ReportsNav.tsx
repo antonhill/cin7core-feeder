@@ -30,6 +30,7 @@ const REPORT_CATEGORIES: ReportCategory[] = [
     links: [
       { href: "/reports/order-fulfillment", label: "Order Fulfillment" },
       { href: "/reports/shipping-calendar", label: "Shipping Calendar" },
+      { href: "/reports/invoicing-scheduler", label: "Invoicing Scheduler" },
       { href: "/reports/fulfillment-cleanup", label: "Fulfillment Cleanup Helper" },
     ],
   },
