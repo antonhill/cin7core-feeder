@@ -49,10 +49,34 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(cleanUrl);
   }
 
-  const {
-    data: { user },
-    error: getUserError,
-  } = await supabase.auth.getUser();
+  // Authentication gate. getClaims() verifies the session JWT's signature
+  // LOCALLY against the project's published JWKS (asymmetric ES256 keys, kid
+  // present) using WebCrypto — no per-request round-trip to the Auth API, and
+  // the JWKS is cached in-process after the first fetch. getSession(), which
+  // getClaims() calls internally, still rotates the access-token cookie via
+  // the handlers above, so session refresh is preserved exactly as before.
+  //
+  // This REPLACES an earlier fail-OPEN on getUser(): a 429 from the Auth API
+  // used to let the request through *unauthenticated*, so anyone who could
+  // push that shared endpoint into rate-limiting (trivially, from outside)
+  // could sail past the login, MFA and module gates below. We now fail
+  // CLOSED — a session that can't be positively verified is treated as
+  // logged out. Because verification is local (no rate-limitable call on the
+  // hot path), this does NOT reintroduce the "genuine users bounced to
+  // /login under load" problem the fail-open was originally papering over.
+  let userId: string | null = null;
+  try {
+    const { data: claimsData } = await supabase.auth.getClaims();
+    const sub = claimsData?.claims?.sub;
+    userId = typeof sub === "string" && sub.length > 0 ? sub : null;
+  } catch (error) {
+    // A truly unexpected failure (e.g. the JWKS endpoint briefly unreachable
+    // on a cold start) must neither crash middleware for every route nor fall
+    // open. Leaving userId null fails closed: protected routes redirect to
+    // /login, public routes still render.
+    console.error("middleware: getClaims() failed; treating request as unauthenticated", error);
+    userId = null;
+  }
 
   const isPublic = PUBLIC_PATHS.some((p) => request.nextUrl.pathname.startsWith(p));
   // The root path is public too, but can't just join PUBLIC_PATHS — that
@@ -62,19 +86,7 @@ export async function middleware(request: NextRequest) {
   // whether a session exists.
   const isRoot = request.nextUrl.pathname === "/";
 
-  // getUser() validates the token against Supabase's Auth API on every
-  // request — under heavy testing volume (or any transient network blip)
-  // that call itself can be rate-limited/fail, which previously looked
-  // identical to "not logged in" and bounced a genuinely signed-in user
-  // back to /login. A rate-limit (429) specifically means "couldn't check",
-  // not "not authenticated" — fail open just for that narrow case rather
-  // than treating every possible error the same as a real logged-out user.
-  if (getUserError && getUserError.status === 429) {
-    console.error("middleware: getUser() rate-limited, allowing request through without a fresh check", getUserError);
-    return response;
-  }
-
-  if (!user && !isPublic && !isRoot) {
+  if (!userId && !isPublic && !isRoot) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     return NextResponse.redirect(loginUrl);
@@ -86,7 +98,7 @@ export async function middleware(request: NextRequest) {
   // alone only ever proves aal1. Checked before the blocked-module logic
   // below so a half-authenticated session can't route around MFA by hitting
   // a disabled-module redirect first.
-  if (user) {
+  if (userId) {
     const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
     const needsMfa = Boolean(aal && aal.nextLevel === "aal2" && aal.currentLevel !== aal.nextLevel);
     const onMfaChallenge = request.nextUrl.pathname.startsWith("/mfa-challenge");
@@ -119,7 +131,7 @@ export async function middleware(request: NextRequest) {
   // src/actions/org-switch.ts) is bound by THAT org's settings instead —
   // otherwise this check would silently apply the wrong org's module
   // visibility while impersonating.
-  if (user && !isPublic) {
+  if (userId && !isPublic) {
     const db = createServiceRoleClient();
     let orgId: string | null = null;
     // A super-admin's own module access is never restricted by a per-user
@@ -127,7 +139,7 @@ export async function middleware(request: NextRequest) {
     // getCurrentUserInfo()'s same guard in src/actions/auth.ts.
     let allowedModules: string[] | null = null;
 
-    const { data: superAdminRow } = await db.from("super_admins").select("user_id").eq("user_id", user.id).maybeSingle();
+    const { data: superAdminRow } = await db.from("super_admins").select("user_id").eq("user_id", userId).maybeSingle();
     const isSuperAdmin = Boolean(superAdminRow);
     if (isSuperAdmin) {
       const impersonatedOrgId = request.cookies.get(IMPERSONATED_ORG_COOKIE)?.value;
@@ -141,7 +153,7 @@ export async function middleware(request: NextRequest) {
       const { data: membership } = await supabase
         .from("org_members")
         .select("org_id, allowed_modules")
-        .eq("user_id", user.id)
+        .eq("user_id", userId)
         .limit(1)
         .maybeSingle();
       orgId = membership?.org_id ?? null;
@@ -174,7 +186,7 @@ export async function middleware(request: NextRequest) {
   // silently discard the org name they typed and reuse their existing
   // membership instead — confusing either way. You can't have two accounts
   // in one session; sign out first to genuinely start a second trial.
-  if (user && (request.nextUrl.pathname.startsWith("/login") || request.nextUrl.pathname.startsWith("/signup"))) {
+  if (userId && (request.nextUrl.pathname.startsWith("/login") || request.nextUrl.pathname.startsWith("/signup"))) {
     const homeUrl = request.nextUrl.clone();
     homeUrl.pathname = "/";
     return NextResponse.redirect(homeUrl);
