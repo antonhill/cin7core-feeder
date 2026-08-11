@@ -1,5 +1,7 @@
+import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { decrypt } from "@/cin7/crypto";
+import { CIN7_API_ORIGIN } from "@/cin7/api-origin";
 import type { Cin7Credentials } from "@/cin7/types";
 
 /** Loads and decrypts one instance's Cin7 credentials, scoped to the org (defense against a stray cross-org instanceId). */
@@ -10,7 +12,7 @@ export async function loadCin7Credentials(
 ): Promise<Cin7Credentials & { name: string }> {
   const { data: instanceRow, error } = await db
     .from("cin7_instances")
-    .select("name, account_id, application_key_encrypted, base_url, active")
+    .select("name, account_id, application_key_encrypted, active")
     .eq("id", instanceId)
     .eq("org_id", orgId)
     .single();
@@ -21,6 +23,7 @@ export async function loadCin7Credentials(
     name: instanceRow.name,
     accountId: instanceRow.account_id,
     applicationKey: decrypt(instanceRow.application_key_encrypted),
-    baseUrl: instanceRow.base_url,
+    // Always the canonical origin — the stored base_url is intentionally ignored (SSRF).
+    baseUrl: CIN7_API_ORIGIN,
   };
 }

@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Cin7ApiError, cin7Request, __resetRateLimiterForTests } from "@/cin7/http";
 
+import { CIN7_API_ORIGIN } from "@/cin7/api-origin";
+
+// baseUrl here is deliberately a bogus host — the request must still go to the canonical
+// Cin7 origin, proving a member-editable / DB-stored base_url can never redirect credentials.
 const creds = { accountId: "acct-1", applicationKey: "key-1", baseUrl: "https://example.test/v2" };
 
 beforeEach(() => {
@@ -31,11 +35,34 @@ describe("cin7Request", () => {
     expect(result).toEqual({ ID: "abc" });
     const [url, init] = fn.mock.calls[0];
     const headers = init?.headers as Record<string, string>;
-    expect(String(url)).toBe("https://example.test/v2/Product?page=1");
+    // Canonical origin, NOT creds.baseUrl ("https://example.test/v2") — the SSRF fix.
+    expect(String(url)).toBe(`${CIN7_API_ORIGIN}/Product?page=1`);
     expect(init?.method).toBe("POST");
+    expect(init?.redirect).toBe("manual"); // never auto-follow a redirect off-origin
     expect(headers["api-auth-accountid"]).toBe("acct-1");
     expect(headers["api-auth-applicationkey"]).toBe("key-1");
     expect(init?.body).toBe(JSON.stringify({ SKU: "X" }));
+  });
+
+  it("SSRF: a malicious stored baseUrl cannot redirect credentials off the canonical Cin7 host", async () => {
+    const evilCreds = { accountId: "acct-1", applicationKey: "key-1", baseUrl: "https://evil.example/steal" };
+    const fn = mockFetchSequence([() => new Response(JSON.stringify({ ok: true }), { status: 200 })]);
+
+    await cin7Request(evilCreds, "/Product");
+
+    const [url] = fn.mock.calls[0];
+    // Credentials only ever go to the allowlisted Cin7 origin — never to evil.example.
+    expect(new URL(String(url)).origin).toBe(new URL(CIN7_API_ORIGIN).origin);
+    expect(String(url)).not.toContain("evil.example");
+  });
+
+  it("refuses to follow a redirect off-origin (does not leak credentials to the redirect target)", async () => {
+    mockFetchSequence([
+      () => new Response(null, { status: 302, headers: { location: "https://evil.example/collect" } }),
+    ]);
+    await expect(cin7Request(creds, "/Product")).rejects.toMatchObject({
+      message: expect.stringContaining("refusing to follow"),
+    });
   });
 
   it("throws a non-retryable Cin7ApiError on 400", async () => {
