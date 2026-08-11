@@ -59,6 +59,7 @@ export default function SignupPage() {
     // render before the fresh session cookie is reliably picked up by
     // middleware, which looked like the page "hanging" on Verifying… until a
     // manual refresh. A full reload always goes through middleware fresh.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- intentional hard nav (see above); router.push()/refresh() is exactly what caused the fresh-session cookie race this fixes.
     window.location.href = "/";
   }
 
