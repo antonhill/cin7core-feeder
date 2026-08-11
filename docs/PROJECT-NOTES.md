@@ -293,6 +293,51 @@ their member-level RLS is correct, not a mismatch. RLS behaviour is verified by
 `supabase/tests/0052_org_admin_rls.test.sql` (transactional, rolls back — run it
 against the DB after 0052 is applied).
 
+## Module-access enforcement inside Server Actions (Phase 1.1–1.2, 2026-08-11)
+
+Module visibility (`organizations.disabled_modules` per-org; `org_members.allowed_modules`
+per-member) was historically enforced only in the nav (cosmetic) and in
+`middleware.ts` (blocks direct URL navigation by matching `request.nextUrl.pathname`).
+A **Server Action is a POST whose path is the referer page, not the action's own
+module**, so the middleware path check can be routed around — an action's
+`requireCurrentOrg()` proves org membership but not "allowed to use THIS module".
+
+**`src/lib/authorization.ts`** (Phase 1.1) closes that gap:
+- `requireModuleAccess(moduleHref)` — member + module-visibility check, reusing
+  `computeEffectiveDisabledModules`/`findBlockedModule` from module-nav so the action
+  gate and the URL gate can't drift. Super-admin bypasses the per-user allow-list but
+  is still bound by the org's `disabled_modules` (parity with middleware); impersonation-aware.
+- `requireModuleWrite(moduleHref)` = `requireModuleAccess` + `requireWriteAllowed` (billing
+  write-plan gate) — the guard for Cin7-write actions.
+
+Capability → guard: `reports.read`→`requireModuleAccess`; `imports.run`/`products.write`/`sync.run`→`requireModuleWrite`; `instance.manage`/`team.manage`/`billing.manage`→`requireOrgAdmin` (+`requireModuleAccess` where the module is org-toggleable); `diagnostics.run`→`requireSuperAdmin`.
+
+**Phase 1.2 rollout checklist** — swap each org-toggleable module's actions from bare
+`requireCurrentOrg` (reads) / `requireCurrentOrg`+`requireWriteAllowed` (writes) to
+`requireModuleAccess(<MODULE>.href)` / `requireModuleWrite(<MODULE>.href)`:
+
+| Module href | Action files | Status |
+|---|---|---|
+| `/activity` | `activity/actions.ts` | **done (1.1 proof)** |
+| `/import` | `import/actions.ts` | pending 1.2 |
+| `/templates` | `templates/actions.ts` | pending 1.2 |
+| `/migrate` | `migrate/actions.ts` | pending 1.2 |
+| `/reports` | `reports/actions.ts` + all `reports/*/actions.ts` sub-routes (cost-estimator, fulfillment-cleanup, shipping-calendar, inventory-movement, stock-health, invoicing-scheduler, assemblies, order-fulfillment, production-tracking, custom, reorder-report) | pending 1.2 |
+| `/audit` | `audit/actions.ts` | pending 1.2 |
+| `/pricing` | `pricing/actions.ts` | pending 1.2 |
+| `/replenish` | `replenish/actions.ts` + `replenish/reorder-points/actions.ts` | pending 1.2 |
+| `/supplier-planner` | `supplier-planner/actions.ts` | pending 1.2 |
+| `/stocktake-assistant` | `stocktake-assistant/actions.ts` | pending 1.2 |
+| `/health` | `health/actions.ts` | pending 1.2 |
+| `/settings/instances` | `settings/instances/actions.ts` (keeps `requireOrgAdmin` for role; add `requireModuleAccess` for the toggle) | pending 1.2 |
+
+Not module-toggleable (keep their existing role/plan/single-org guards, no `requireModuleAccess`):
+`/settings/members` (`requireOrgAdmin`), `/settings/billing` (`requireOrgAdmin`), `/admin/*`
+(`requireSuperAdmin`), `/reports/natas` (`requireCasaDasNatasOrg`), and the self-scoped
+`auth.ts`/`org-switch.ts` actions. Also flagged during the 1.1 recon:
+`supplier-planner/actions.ts:loadPendingPurchaseOrders` is an exported-but-unguarded internal
+helper (takes a `db` arg) — tighten or un-export in 1.2.
+
 ## Known gaps (scoped, not yet started — see Task #33 in project tracking)
 
 Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas):

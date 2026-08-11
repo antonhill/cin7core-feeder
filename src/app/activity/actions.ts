@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { ACTIVITY_MODULE } from "@/app/module-nav";
 import { fetchActivityLog, type ActivityLogEntry } from "@/lib/activity-log";
 
 export interface ActivityActionResult<T> {
@@ -17,7 +18,7 @@ export interface ActivityLogRow extends ActivityLogEntry {
 /** The current org's activity log, newest first, with each entry's instance ID resolved to its name for display. */
 export async function listActivityAction(): Promise<ActivityActionResult<ActivityLogRow[]>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(ACTIVITY_MODULE.href);
     const db = createServiceRoleClient();
     const entries = await fetchActivityLog(db, orgId);
 
