@@ -268,6 +268,31 @@ prune/rewrite entries here rather than appending forever once something is fully
 8. **`exceljs`, not `xlsx`/SheetJS**, for Excel export — SheetJS's last npm release has unpatched
    prototype-pollution/ReDoS advisories with fixes only available via their own CDN.
 
+## Authorization / RLS matrix (Phase 0.3–0.4, 2026-08-11)
+
+App authorization is enforced **inside Server Actions** (the primary boundary);
+RLS is defense-in-depth for the anon-key path. Most writes run through the
+service-role client, which **bypasses RLS** — so RLS matters most for what a raw
+authenticated (anon-key) session could do directly if it skipped the app.
+
+Helpers: `is_org_member(org_id)` (0001); `is_org_admin(org_id)` (0052 — role in
+('owner','admin')).
+
+| Resource | App-action guard | RLS write | RLS read |
+|---|---|---|---|
+| `cin7_instances` | `requireOrgAdmin` (0.2) | owner/admin (`is_org_admin`, 0052) | owner/admin — app reads via service-role; **no member read of Account ID / encrypted key** |
+| `purchase_planner_settings` | `requireOrgAdmin` | owner/admin (`is_org_admin`, 0052) | member — a non-sensitive shared business default |
+| `custom_reports` | `requireCurrentOrg` (members save their own reports) | member — **intentional** | member |
+| `pull_jobs` / `push_jobs` | `requireCurrentOrg` (member-initiated migrate/import) | member — **intentional** | member |
+| canonical data (`products`, `price_tiers`, `customers`, `suppliers`, BOMs, …) | `requireCurrentOrg` | member | member |
+
+Migration **0052** fixed the only two write policies whose name/comment said
+admin-only but checked `is_org_member`. `custom_reports` and `pull_jobs` are
+member-managed by design (their actions authorize with `requireCurrentOrg`), so
+their member-level RLS is correct, not a mismatch. RLS behaviour is verified by
+`supabase/tests/0052_org_admin_rls.test.sql` (transactional, rolls back — run it
+against the DB after 0052 is applied).
+
 ## Known gaps (scoped, not yet started — see Task #33 in project tracking)
 
 Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas):
