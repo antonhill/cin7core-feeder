@@ -1,4 +1,6 @@
+import "server-only";
 import type { Cin7Credentials } from "@/cin7/types";
+import { buildCin7Url } from "@/cin7/api-origin";
 
 /** Cin7 Core returns 503 (not 429) when the 60/min limit is hit, with no Retry-After header. */
 export class Cin7ApiError extends Error {
@@ -94,10 +96,9 @@ export async function cin7Request<T>(
   path: string,
   options: Cin7RequestOptions = {}
 ): Promise<T> {
-  const url = new URL(`${creds.baseUrl.replace(/\/$/, "")}${path}`);
-  if (options.query) {
-    for (const [key, value] of Object.entries(options.query)) url.searchParams.set(key, String(value));
-  }
+  // Host is fixed by buildCin7Url (the canonical Cin7 origin) — creds.baseUrl is deliberately
+  // NOT used, so an org-member-editable base_url can never redirect credentials elsewhere.
+  const url = buildCin7Url(path, options.query);
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     await throttle(creds.accountId);
@@ -106,6 +107,10 @@ export async function cin7Request<T>(
     try {
       response = await fetch(url.toString(), {
         method: options.method ?? "GET",
+        // Never auto-follow a redirect: it could send the Account ID + Application Key to
+        // a different origin. With "manual", undici returns the 3xx response unfollowed and
+        // we reject it below rather than leaking credentials off the allowlisted host.
+        redirect: "manual",
         headers: {
           "api-auth-accountid": creds.accountId,
           "api-auth-applicationkey": creds.applicationKey,
@@ -132,6 +137,16 @@ export async function cin7Request<T>(
         0,
         `Network error on ${options.method ?? "GET"} ${path} after ${attempt + 1} attempt(s): ${detail}`,
         true
+      );
+    }
+
+    // A redirect off the (single, allowlisted) Cin7 origin is never legitimate for an API
+    // call and must not be followed — treat any 3xx (or an opaque redirect) as a hard error.
+    if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+      throw new Cin7ApiError(
+        response.status || 0,
+        `Cin7 API returned a redirect (${response.headers.get("location") ?? "no location"}) on ${options.method ?? "GET"} ${path}; refusing to follow it off-origin.`,
+        false
       );
     }
 
