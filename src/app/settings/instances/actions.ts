@@ -7,6 +7,7 @@ import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExampl
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
+import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { getBillingStatus } from "@/lib/billing";
 import { requireSuperAdmin } from "@/lib/require-super-admin";
 
@@ -55,7 +56,8 @@ async function toRecord(row: {
 
 export async function listInstances(): Promise<ActionResult> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    // Instance config carries Account IDs + key metadata — owner/admin only.
+    const { orgId } = await requireOrgAdmin("view Cin7 instance configuration");
     const db = createServiceRoleClient();
     const { data, error } = await db
       .from("cin7_instances")
@@ -85,7 +87,8 @@ export async function upsertInstance(params: {
   }
 
   try {
-    const { orgId } = await requireCurrentOrg();
+    // Create / update / replace-key — owner/admin only.
+    const { orgId } = await requireOrgAdmin("manage Cin7 instances");
     const db = createServiceRoleClient();
 
     if (params.instanceId) {
@@ -142,7 +145,9 @@ export interface TestConnectionResult {
 }
 
 async function loadInstanceCreds(instanceId: string) {
-  const { orgId } = await requireCurrentOrg();
+  // Chokepoint for every diagnostic below: loading decrypted creds + running live Cin7
+  // calls is owner/admin only. testInstanceConnection and all debug* actions go through here.
+  const { orgId } = await requireOrgAdmin("run Cin7 instance diagnostics");
   const db = createServiceRoleClient();
   const { data, error } = await db
     .from("cin7_instances")
@@ -692,7 +697,7 @@ export async function debugPushOneCustomerAndSupplier(instanceId: string): Promi
  */
 export async function debugCheckCustomerReferenceFields(instanceId: string, customerName: string): Promise<TestConnectionResult> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireOrgAdmin("run Cin7 instance diagnostics");
     const db = createServiceRoleClient();
     const creds = await loadInstanceCreds(instanceId);
 
@@ -715,7 +720,7 @@ export async function debugCheckCustomerReferenceFields(instanceId: string, cust
 /** Supplier equivalent of debugCheckCustomerReferenceFields — same reasoning, AccountPayable/TaxRule/PaymentTerm only (no Location/SalesRepresentative/PriceTier on suppliers). */
 export async function debugCheckSupplierReferenceFields(instanceId: string, supplierName: string): Promise<TestConnectionResult> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireOrgAdmin("run Cin7 instance diagnostics");
     const db = createServiceRoleClient();
     const creds = await loadInstanceCreds(instanceId);
 
@@ -797,7 +802,7 @@ export async function debugCheckSaleStatuses(instanceId: string): Promise<TestCo
 
 export async function deleteInstance(instanceId: string): Promise<ActionResult> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireOrgAdmin("delete Cin7 instances");
     const db = createServiceRoleClient();
     const { error } = await db.from("cin7_instances").delete().eq("id", instanceId).eq("org_id", orgId);
     if (error) return { ok: false, error: error.message };

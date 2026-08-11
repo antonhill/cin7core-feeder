@@ -11,7 +11,7 @@ import { createServiceRoleClient } from "@/supabase/server";
  * query — requireCurrentOrg() is a dependency of every mutating action in
  * the app, and this feature's one extra read isn't worth that blast radius.
  */
-export async function requireOrgAdmin(): Promise<CurrentOrg> {
+export async function requireOrgAdmin(action = "manage team members"): Promise<CurrentOrg> {
   const current = await requireCurrentOrg();
 
   const db = createServiceRoleClient();
@@ -25,7 +25,7 @@ export async function requireOrgAdmin(): Promise<CurrentOrg> {
     .eq("user_id", current.userId)
     .maybeSingle();
   if (!membership || (membership.role !== "owner" && membership.role !== "admin")) {
-    throw new Error("Only an org owner or admin can manage team members.");
+    throw new Error(`Only an org owner or admin can ${action}.`);
   }
 
   return current;
