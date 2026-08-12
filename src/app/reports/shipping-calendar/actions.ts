@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { REPORTS_MODULE } from "@/app/module-nav";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { updateSaleShipBy, fetchCarriers, markSaleShipped, type MarkShippedInput } from "@/cin7/sales";
 import {
@@ -29,7 +30,7 @@ export interface ShippingCalendarData {
 /** Every order (+ per-SKU line detail, for the click-to-expand card view), optionally scoped to a subset of connected instances — same instanceIds filter Order Fulfillment uses, since a multi-instance org needs the same ability to isolate one instance's shipments here. */
 export async function loadShippingCalendarOrdersAction(filters: OrderFulfillmentFilters = {}): Promise<ShippingCalendarActionResult<ShippingCalendarData>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     const [orders, lines, options] = await Promise.all([
       getOrderFulfillmentReport(db, orgId, filters),
@@ -51,7 +52,7 @@ export async function loadShippingCalendarOrdersAction(filters: OrderFulfillment
  */
 export async function updateOrderShipByAction(instanceId: string, saleId: string, shipBy: string): Promise<ShippingCalendarActionResult<void>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     await updateSaleShipBy(creds, saleId, shipBy);
@@ -73,7 +74,7 @@ export async function updateOrderShipByAction(instanceId: string, saleId: string
 /** Carrier names already on file in this Cin7 instance (`/ref/carrier`) — offered as a pick-list for "mark as shipped" rather than free-typing a name that might not match Cin7's own record. */
 export async function loadCarriersAction(instanceId: string): Promise<ShippingCalendarActionResult<string[]>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const carriers = await fetchCarriers(creds);
@@ -101,7 +102,7 @@ export async function markOrderShippedAction(
   input: MarkShippedInput
 ): Promise<ShippingCalendarActionResult<MarkOrderShippedResult>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     await markSaleShipped(creds, saleId, input);

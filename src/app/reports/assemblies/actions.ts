@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { REPORTS_MODULE } from "@/app/module-nav";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllFinishedGoodsList, fetchFinishedGoodsDetail, type Cin7FinishedGoodsListEntry, type Cin7FinishedGoodsDetail } from "@/cin7/finished-goods";
 import { buildAssembliesSheet, buildAssembliesDetailSheet, type AssemblyWithDetail } from "@/reports/assemblies-export";
@@ -17,7 +18,7 @@ export interface AssembliesActionResult<T> {
 export async function listAssembliesAction(instanceId: string): Promise<AssembliesActionResult<Cin7FinishedGoodsListEntry[]>> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const assemblies = await fetchAllFinishedGoodsList(creds);
@@ -36,7 +37,7 @@ export async function getAssemblyDetailAction(instanceId: string, taskId: string
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   if (!taskId) return { ok: false, error: "Missing assembly ID." };
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const detail = await fetchFinishedGoodsDetail(creds, taskId);
@@ -49,7 +50,7 @@ export async function getAssemblyDetailAction(instanceId: string, taskId: string
 /** Renders whatever's currently filtered/searched on screen (the client already has that list — see page.tsx's `filtered`) into a real .xlsx file. */
 export async function exportAssembliesXlsxAction(entries: Cin7FinishedGoodsListEntry[]): Promise<AssembliesActionResult<string>> {
   try {
-    await requireCurrentOrg();
+    await requireModuleAccess(REPORTS_MODULE.href);
     const sheet = buildAssembliesSheet(entries);
     return { ok: true, data: await renderXlsxBase64(sheet, "Assemblies") };
   } catch (e) {
@@ -68,7 +69,7 @@ export async function exportAssembliesXlsxAction(entries: Cin7FinishedGoodsListE
  */
 export async function exportAssembliesDetailXlsxAction(rows: AssemblyWithDetail[]): Promise<AssembliesActionResult<string>> {
   try {
-    await requireCurrentOrg();
+    await requireModuleAccess(REPORTS_MODULE.href);
     const sheet = buildAssembliesDetailSheet(rows);
     return { ok: true, data: await renderXlsxBase64(sheet, "Assemblies Detail") };
   } catch (e) {

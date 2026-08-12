@@ -7,7 +7,8 @@ import { syncOrgInstances, type InstanceSyncOutcome } from "@/sync/sync-org";
 import type { PushScope } from "@/sync/run-sync";
 import type { ActivityActor } from "@/lib/activity-log";
 import { getLastImportKeys } from "@/import/last-batch";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { IMPORT_MODULE } from "@/app/module-nav";
 import { requireWriteAllowed } from "@/lib/billing";
 
 export interface ImportActionState {
@@ -46,7 +47,7 @@ export async function importCsvAction(
   }
 
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(IMPORT_MODULE.href);
     const csvText = await file.text();
     const db = createServiceRoleClient();
     const result = await runImport(db, orgId, kind as ImportKind, file.name, csvText);
@@ -197,7 +198,7 @@ export async function startPushJobAction(
   if (!instanceIds.length) return { ok: false, error: "Select at least one instance to push to." };
 
   try {
-    const { orgId, userId, email } = await requireCurrentOrg();
+    const { orgId, userId, email } = await requireModuleAccess(IMPORT_MODULE.href);
     await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
 
@@ -219,7 +220,7 @@ export async function startPushJobAction(
 /** Runs the next budgeted chunk of an in-progress push job. Call repeatedly until the returned status is no longer "running". */
 export async function continuePushJobAction(jobId: string): Promise<PushJobResult> {
   try {
-    const { orgId, userId, email } = await requireCurrentOrg();
+    const { orgId, userId, email } = await requireModuleAccess(IMPORT_MODULE.href);
     const db = createServiceRoleClient();
     const { data: job, error } = await db
       .from("push_jobs")
@@ -239,7 +240,7 @@ export async function continuePushJobAction(jobId: string): Promise<PushJobResul
 /** The org's current in-progress push job, if any — lets the Import/Migrate pages resume showing live progress after a reload or reopening the page mid-push. */
 export async function getActivePushJobAction(): Promise<PushJobResult | null> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(IMPORT_MODULE.href);
     const db = createServiceRoleClient();
     const { data: job } = await db
       .from("push_jobs")

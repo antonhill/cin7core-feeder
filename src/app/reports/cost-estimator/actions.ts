@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { REPORTS_MODULE } from "@/app/module-nav";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsForCosting } from "@/cin7/product-cost";
 import {
@@ -66,7 +67,7 @@ export async function getCostEstimatesAction(
 ): Promise<CostEstimatorActionResult<AssemblyCostEstimate[]>> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const { assemblies, costsBySku } = await fetchCostingData(
       orgId,
       instanceId,
@@ -88,7 +89,7 @@ export async function exportCostEstimatesAction(
   estimates: AssemblyCostEstimate[],
 ): Promise<CostEstimatorActionResult<string>> {
   try {
-    await requireCurrentOrg();
+    await requireModuleAccess(REPORTS_MODULE.href);
     const sheet = buildCostEstimateSheet(estimates);
     return { ok: true, data: await renderXlsxBase64(sheet, "Cost Estimate") };
   } catch (e) {
@@ -104,7 +105,7 @@ export async function exportCostEstimatesSummaryAction(
   estimates: AssemblyCostEstimate[],
 ): Promise<CostEstimatorActionResult<string>> {
   try {
-    await requireCurrentOrg();
+    await requireModuleAccess(REPORTS_MODULE.href);
     const sheet = buildCostEstimateSummarySheet(estimates);
     return {
       ok: true,
@@ -141,7 +142,7 @@ export async function getProductionCostEstimatesAction(
 ): Promise<CostEstimatorActionResult<ProductionCostEstimatorResult>> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
 
@@ -216,7 +217,7 @@ export async function exportProductionCostEstimatesAction(
   estimates: ProductionCostEstimate[],
 ): Promise<CostEstimatorActionResult<string>> {
   try {
-    await requireCurrentOrg();
+    await requireModuleAccess(REPORTS_MODULE.href);
     const sheet = buildProductionCostEstimateSheet(estimates);
     return {
       ok: true,
@@ -235,7 +236,7 @@ export async function exportProductionCostEstimatesSummaryAction(
   estimates: ProductionCostEstimate[],
 ): Promise<CostEstimatorActionResult<string>> {
   try {
-    await requireCurrentOrg();
+    await requireModuleAccess(REPORTS_MODULE.href);
     const sheet = buildProductionCostEstimateSummarySheet(estimates);
     return {
       ok: true,

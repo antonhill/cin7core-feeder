@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { REPORTS_MODULE } from "@/app/module-nav";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsForCosting } from "@/cin7/product-cost";
 import {
@@ -62,7 +63,7 @@ export interface FulfillmentCleanupPreviewData {
  */
 export async function loadFulfillmentCleanupPreviewAction(instanceId: string): Promise<FulfillmentCleanupActionResult<FulfillmentCleanupPreviewData>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
 
     const { data: rows, error } = await db
@@ -128,7 +129,7 @@ export async function loadFulfillmentCleanupPreviewAction(instanceId: string): P
 /** Renders whatever's currently on screen into the completed Bulk Stock Adjustment CSV — same "what you see is what you export" convention as every other report here. */
 export async function downloadFulfillmentCleanupCsvAction(lines: FulfillmentCleanupLine[]): Promise<FulfillmentCleanupActionResult<string>> {
   try {
-    await requireCurrentOrg();
+    await requireModuleAccess(REPORTS_MODULE.href);
     return { ok: true, data: buildFulfillmentCleanupCsv(lines) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
@@ -138,7 +139,7 @@ export async function downloadFulfillmentCleanupCsvAction(lines: FulfillmentClea
 /** An audit-trail export (not a Cin7 import file): every backordered sale the user did NOT exclude from this cleanup run — a record of exactly which orders a given Bulk Stock Adjustment import was meant to unblock. */
 export async function downloadIncludedSalesCsvAction(sales: BackorderedSale[]): Promise<FulfillmentCleanupActionResult<string>> {
   try {
-    await requireCurrentOrg();
+    await requireModuleAccess(REPORTS_MODULE.href);
     return { ok: true, data: buildIncludedSalesCsv(sales) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
@@ -148,7 +149,7 @@ export async function downloadIncludedSalesCsvAction(sales: BackorderedSale[]): 
 /** Scoped to this one instance (unlike Stock Health's org-wide status) — the cleanup list only ever comes from one instance at a time, and an org-wide "last synced" could mask this specific instance being stale behind another that happened to sync more recently. */
 export async function loadFulfillmentCleanupStockSyncStatusAction(instanceId: string): Promise<FulfillmentCleanupActionResult<ProductAvailabilitySyncStatus>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     return { ok: true, data: await getProductAvailabilitySyncStatus(db, orgId, instanceId) };
   } catch (e) {
@@ -159,7 +160,7 @@ export async function loadFulfillmentCleanupStockSyncStatusAction(instanceId: st
 /** On-demand stock-level sync for just this one instance — same direct-call pattern as Stock Health's own trigger action, scoped down via syncOrgProductAvailability's instanceIds filter so it doesn't also re-sync every other instance on the org. */
 export async function triggerFulfillmentCleanupStockSyncAction(instanceId: string): Promise<FulfillmentCleanupActionResult<ProductAvailabilitySyncSummary[]>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     return { ok: true, data: await syncOrgProductAvailability(db, orgId, [instanceId]) };
   } catch (e) {
@@ -178,7 +179,7 @@ export async function triggerFulfillmentCleanupStockSyncAction(instanceId: strin
  */
 export async function loadFulfillmentCleanupSalesSyncStatusAction(instanceId: string): Promise<FulfillmentCleanupActionResult<SalesSyncStatus>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     return { ok: true, data: await getSalesSyncStatus(db, orgId, instanceId) };
   } catch (e) {
@@ -189,7 +190,7 @@ export async function loadFulfillmentCleanupSalesSyncStatusAction(instanceId: st
 /** On-demand sales sync for just this one instance — same direct-call pattern as Order Fulfillment's own "Sync sales now" button, scoped down via syncOrgSales's instanceIds filter. */
 export async function triggerFulfillmentCleanupSalesSyncAction(instanceId: string): Promise<FulfillmentCleanupActionResult<SalesSyncSummary[]>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     return { ok: true, data: await syncOrgSales(db, orgId, [instanceId]) };
   } catch (e) {

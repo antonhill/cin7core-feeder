@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { REPORTS_MODULE } from "@/app/module-nav";
 import { getSalesFacts, getInventoryMovementFacts, type CustomReportFilters } from "@/reports/custom/facts";
 import { aggregateCustomReport, type CustomReportResult, type DimensionDef } from "@/reports/custom/aggregate";
 import { SALES_SOURCE, INVENTORY_MOVEMENT_SOURCE, type ReportSourceConfig, type ReportSourceKey } from "@/reports/custom/sources";
@@ -55,7 +56,7 @@ export async function runCustomReportAction(
   filters: CustomReportFilters
 ): Promise<CustomReportActionResult<CustomReportResult>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
 
     if (sourceKey === "sales") {
@@ -83,7 +84,7 @@ export async function exportCustomReportXlsxAction(
   result: CustomReportResult
 ): Promise<CustomReportActionResult<string>> {
   try {
-    await requireCurrentOrg();
+    await requireModuleAccess(REPORTS_MODULE.href);
     const source = sourceKey === "sales" ? SALES_SOURCE : INVENTORY_MOVEMENT_SOURCE;
     const dimensionLabels = dimensionKeys.map((k) => source.dimensions.find((d) => d.key === k)?.label ?? k);
     const measureLabels = measureKeys.map((k) => source.measures.find((m) => m.key === k)?.label ?? k);
@@ -96,7 +97,7 @@ export async function exportCustomReportXlsxAction(
 
 export async function listCustomReportsAction(): Promise<CustomReportActionResult<SavedCustomReport[]>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     const { data, error } = await db
       .from("custom_reports")
@@ -119,7 +120,7 @@ export async function saveCustomReportAction(
 ): Promise<CustomReportActionResult<SavedCustomReport>> {
   if (!name.trim()) return { ok: false, error: "Name is required." };
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     const { data, error } = await db
       .from("custom_reports")
@@ -135,7 +136,7 @@ export async function saveCustomReportAction(
 
 export async function deleteCustomReportAction(id: string): Promise<CustomReportActionResult<null>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     const { error } = await db.from("custom_reports").delete().eq("id", id).eq("org_id", orgId);
     if (error) throw new Error(error.message);

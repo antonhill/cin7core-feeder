@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { REPORTS_MODULE } from "@/app/module-nav";
 import {
   getStockHealthReport,
   getProductAvailabilitySyncStatus,
@@ -21,7 +22,7 @@ export interface StockHealthActionResult<T> {
 
 export async function loadStockHealthReportAction(filters: StockHealthFilters): Promise<StockHealthActionResult<StockHealthRow[]>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     return { ok: true, data: await getStockHealthReport(db, orgId, filters) };
   } catch (e) {
@@ -31,7 +32,7 @@ export async function loadStockHealthReportAction(filters: StockHealthFilters): 
 
 export async function loadProductAvailabilitySyncStatusAction(): Promise<StockHealthActionResult<ProductAvailabilitySyncStatus>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     return { ok: true, data: await getProductAvailabilitySyncStatus(db, orgId) };
   } catch (e) {
@@ -42,7 +43,7 @@ export async function loadProductAvailabilitySyncStatusAction(): Promise<StockHe
 /** On-demand stock-level sync for the current org's active instances — same direct-call pattern as triggerSalesSyncAction, already gated by the logged-in session. */
 export async function triggerProductAvailabilitySyncAction(): Promise<StockHealthActionResult<ProductAvailabilitySyncSummary[]>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     return { ok: true, data: await syncOrgProductAvailability(db, orgId) };
   } catch (e) {
@@ -53,7 +54,7 @@ export async function triggerProductAvailabilitySyncAction(): Promise<StockHealt
 /** Renders whatever's currently on screen into a real .xlsx file — same pattern as exportInventoryMovementXlsxAction. */
 export async function exportStockHealthXlsxAction(rows: StockHealthRow[]): Promise<StockHealthActionResult<string>> {
   try {
-    await requireCurrentOrg();
+    await requireModuleAccess(REPORTS_MODULE.href);
     const sheet = buildStockHealthSheet(rows);
     return { ok: true, data: await renderXlsxBase64(sheet, "Stock Health") };
   } catch (e) {

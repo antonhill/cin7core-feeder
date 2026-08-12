@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { TEMPLATES_MODULE } from "@/app/module-nav";
 import { exportProductsCsv } from "@/export/products-csv";
 import { exportAssemblyBomCsv } from "@/export/assembly-bom-csv";
 import { exportSuppliersCsv } from "@/export/suppliers-csv";
@@ -51,7 +52,7 @@ export async function downloadTemplateAction(kind: TemplateKind): Promise<Downlo
   if (!TEMPLATE_KINDS.includes(kind)) return { ok: false, error: `kind must be one of ${TEMPLATE_KINDS.join(", ")}` };
 
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(TEMPLATES_MODULE.href);
     const db = createServiceRoleClient();
 
     const EXPORTERS: Record<TemplateKind, () => Promise<string>> = {
@@ -93,7 +94,7 @@ export async function downloadLiveTemplateAction(instanceId: string, kind: Templ
   }
 
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(TEMPLATES_MODULE.href);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const products = await fetchAllProductsWithBom(creds);

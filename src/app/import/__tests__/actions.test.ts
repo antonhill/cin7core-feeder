@@ -4,10 +4,10 @@ import { startPushJobAction, continuePushJobAction } from "@/app/import/actions"
 import { syncOrgInstances } from "@/sync/sync-org";
 import { getLastImportKeys } from "@/import/last-batch";
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
 
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: vi.fn() }));
-vi.mock("@/lib/current-org", () => ({ requireCurrentOrg: vi.fn() }));
+vi.mock("@/lib/authorization", () => ({ requireModuleAccess: vi.fn() }));
 vi.mock("@/lib/billing", () => ({ requireWriteAllowed: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/sync/sync-org", () => ({ syncOrgInstances: vi.fn() }));
 vi.mock("@/import/last-batch", () => ({ getLastImportKeys: vi.fn() }));
@@ -51,7 +51,7 @@ function createFakePushJobsDb() {
 }
 
 beforeEach(() => {
-  vi.mocked(requireCurrentOrg).mockResolvedValue({ orgId: "org1", userId: "user1", email: "a@b.com" });
+  vi.mocked(requireModuleAccess).mockResolvedValue({ orgId: "org1", userId: "user1", email: "a@b.com" });
   vi.mocked(syncOrgInstances).mockReset();
   vi.mocked(getLastImportKeys).mockReset();
 });

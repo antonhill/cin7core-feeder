@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { REPORTS_MODULE } from "@/app/module-nav";
 import {
   getReorderReport,
   getProductAvailabilitySyncStatus,
@@ -24,7 +25,8 @@ import type { SupplierPlanLine, PurchaseOrderFallbackLocation } from "@/reports/
 // module evaluation, since it doesn't get elided by Next's "use server"
 // transform under Turbopack). Callers that need those types import them
 // straight from supplier-planner/actions, their real source.
-import { loadPendingPurchaseOrders, createSupplierPlanPurchaseOrdersAction, type CreatePurchaseOrdersResult } from "@/app/supplier-planner/actions";
+import { createSupplierPlanPurchaseOrdersAction, type CreatePurchaseOrdersResult } from "@/app/supplier-planner/actions";
+import { loadPendingPurchaseOrders } from "@/lib/pending-purchase-orders";
 
 export interface ReorderReportActionResult<T> {
   ok: boolean;
@@ -34,7 +36,7 @@ export interface ReorderReportActionResult<T> {
 
 export async function loadReorderReportAction(filters: ReorderReportFilters): Promise<ReorderReportActionResult<ReorderReportRow[]>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     return { ok: true, data: await getReorderReport(db, orgId, filters) };
   } catch (e) {
@@ -45,7 +47,7 @@ export async function loadReorderReportAction(filters: ReorderReportFilters): Pr
 /** Same shared product_availability snapshot Stock Health syncs — reused here since this report reads the same table (on_hand/on_order/stock_value). */
 export async function loadReorderReportSyncStatusAction(): Promise<ReorderReportActionResult<ProductAvailabilitySyncStatus>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     return { ok: true, data: await getProductAvailabilitySyncStatus(db, orgId) };
   } catch (e) {
@@ -55,7 +57,7 @@ export async function loadReorderReportSyncStatusAction(): Promise<ReorderReport
 
 export async function triggerReorderReportSyncAction(): Promise<ReorderReportActionResult<ProductAvailabilitySyncSummary[]>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     return { ok: true, data: await syncOrgProductAvailability(db, orgId) };
   } catch (e) {
@@ -66,7 +68,7 @@ export async function triggerReorderReportSyncAction(): Promise<ReorderReportAct
 /** Renders whatever's currently on screen (post-filter) into a real .xlsx file — same pattern as exportStockHealthXlsxAction. */
 export async function exportReorderReportXlsxAction(rows: ReorderReportRow[]): Promise<ReorderReportActionResult<string>> {
   try {
-    await requireCurrentOrg();
+    await requireModuleAccess(REPORTS_MODULE.href);
     const sheet = buildReorderReportSheet(rows);
     return { ok: true, data: await renderXlsxBase64(sheet, "Reorder Report") };
   } catch (e) {
@@ -102,7 +104,7 @@ export async function loadReorderReportSupplierLinesAction(
   if (!instanceId) return { ok: false, error: "Choose exactly one instance to enable supplier data and PO creation." };
 
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
 
@@ -137,7 +139,7 @@ export async function createReorderReportPurchaseOrdersAction(
 /** Same export shape as Purchase Planner's own sheet (Supplier/Lead/Safety/Currency/Suggested Qty/…) — reused as-is since these lines are literally SupplierPlanLine. */
 export async function exportReorderReportSupplierLinesXlsxAction(lines: SupplierPlanLine[]): Promise<ReorderReportActionResult<string>> {
   try {
-    await requireCurrentOrg();
+    await requireModuleAccess(REPORTS_MODULE.href);
     const sheet = buildSupplierPlanSheet(lines);
     return { ok: true, data: await renderXlsxBase64(sheet, "Reorder Report Suppliers") };
   } catch (e) {

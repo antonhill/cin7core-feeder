@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { STOCKTAKE_MODULE } from "@/app/module-nav";
 import { getStocktakeLocations, getStocktakeStagedStock } from "@/reports/query";
 import { parseStocktakeFile, buildConfirmationLines, type StocktakeRow, type ConfirmationLine } from "@/reports/stocktake-assistant/build";
 
@@ -15,7 +16,7 @@ export interface StocktakeActionResult<T> {
 export async function loadStocktakeLocationsAction(instanceId: string): Promise<StocktakeActionResult<string[]>> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(STOCKTAKE_MODULE.href);
     const db = createServiceRoleClient();
     const locations = await getStocktakeLocations(db, orgId, instanceId);
     return { ok: true, data: locations };
@@ -46,7 +47,7 @@ export async function previewStocktakeAction(instanceId: string, location: strin
     const { rows, error } = parseStocktakeFile(csvText);
     if (error) return { ok: false, error };
 
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(STOCKTAKE_MODULE.href);
     const db = createServiceRoleClient();
     const staged = await getStocktakeStagedStock(db, orgId, instanceId, location);
 

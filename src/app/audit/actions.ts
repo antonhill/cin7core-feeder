@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { AUDIT_MODULE } from "@/app/module-nav";
 import { requireWriteAllowed } from "@/lib/billing";
 import { logActivity } from "@/lib/activity-log";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
@@ -38,7 +39,7 @@ function resultSuffix(result: { succeeded: number; failed: unknown[] }): string 
 export async function runProductAuditAction(instanceId: string): Promise<AuditActionResult<ProductAuditResult>> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(AUDIT_MODULE.href);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const [products, suppliers] = await Promise.all([fetchAllProductsWithBom(creds), fetchAllSuppliers(creds)]);
@@ -53,7 +54,7 @@ export async function applyProductFixesAction(instanceId: string, fixes: Product
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   if (!fixes.length) return { ok: false, error: "Nothing to apply." };
   try {
-    const { orgId, userId, email } = await requireCurrentOrg();
+    const { orgId, userId, email } = await requireModuleAccess(AUDIT_MODULE.href);
     await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
@@ -87,7 +88,7 @@ async function mergeAction(
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   if (!toName.trim()) return { ok: false, error: `Choose which ${fieldLabel} to keep.` };
   try {
-    const { orgId, userId, email } = await requireCurrentOrg();
+    const { orgId, userId, email } = await requireModuleAccess(AUDIT_MODULE.href);
     await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
@@ -137,7 +138,7 @@ export async function applyAttributeTemplateAction(
   if (!templateProductId) return { ok: false, error: "Choose a product to copy attribute values from." };
   if (!targetProductIds.length) return { ok: false, error: "Nothing to apply." };
   try {
-    const { orgId, userId, email } = await requireCurrentOrg();
+    const { orgId, userId, email } = await requireModuleAccess(AUDIT_MODULE.href);
     await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
@@ -167,7 +168,7 @@ export async function applySupplierAssignmentAction(
   if (!supplierName.trim()) return { ok: false, error: "Choose a supplier." };
   if (!targetProductIds.length) return { ok: false, error: "Nothing to apply." };
   try {
-    const { orgId, userId, email } = await requireCurrentOrg();
+    const { orgId, userId, email } = await requireModuleAccess(AUDIT_MODULE.href);
     await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
@@ -192,7 +193,7 @@ export async function applySupplierAssignmentAction(
 export async function runPartyAuditAction(instanceId: string, kind: PartyKind): Promise<AuditActionResult<PartyAuditResult>> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(AUDIT_MODULE.href);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const parties = kind === "customer" ? await fetchAllCustomers(creds) : await fetchAllSuppliers(creds);
@@ -210,7 +211,7 @@ export async function applyPartyFixesAction(
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   if (!fixes.length) return { ok: false, error: "Nothing to apply." };
   try {
-    const { orgId, userId, email } = await requireCurrentOrg();
+    const { orgId, userId, email } = await requireModuleAccess(AUDIT_MODULE.href);
     await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);

@@ -319,24 +319,41 @@ Capability → guard: `reports.read`→`requireModuleAccess`; `imports.run`/`pro
 | Module href | Action files | Status |
 |---|---|---|
 | `/activity` | `activity/actions.ts` | **done (1.1 proof)** |
-| `/import` | `import/actions.ts` | pending 1.2 |
-| `/templates` | `templates/actions.ts` | pending 1.2 |
-| `/migrate` | `migrate/actions.ts` | pending 1.2 |
-| `/reports` | `reports/actions.ts` + all `reports/*/actions.ts` sub-routes (cost-estimator, fulfillment-cleanup, shipping-calendar, inventory-movement, stock-health, invoicing-scheduler, assemblies, order-fulfillment, production-tracking, custom, reorder-report) | pending 1.2 |
-| `/audit` | `audit/actions.ts` | pending 1.2 |
-| `/pricing` | `pricing/actions.ts` | pending 1.2 |
-| `/replenish` | `replenish/actions.ts` + `replenish/reorder-points/actions.ts` | pending 1.2 |
-| `/supplier-planner` | `supplier-planner/actions.ts` | pending 1.2 |
-| `/stocktake-assistant` | `stocktake-assistant/actions.ts` | pending 1.2 |
-| `/health` | `health/actions.ts` | pending 1.2 |
-| `/settings/instances` | `settings/instances/actions.ts` (keeps `requireOrgAdmin` for role; add `requireModuleAccess` for the toggle) | pending 1.2 |
+| `/import` | `import/actions.ts` | **done (1.2)** |
+| `/templates` | `templates/actions.ts` | **done (1.2)** |
+| `/migrate` | `migrate/actions.ts` | **done (1.2)** |
+| `/reports` | `reports/actions.ts` + all `reports/*/actions.ts` sub-routes (cost-estimator, fulfillment-cleanup, shipping-calendar, inventory-movement, stock-health, invoicing-scheduler, assemblies, order-fulfillment, production-tracking, custom, reorder-report) | **done (1.2)** |
+| `/audit` | `audit/actions.ts` | **done (1.2)** |
+| `/pricing` | `pricing/actions.ts` | **done (1.2)** |
+| `/replenish` | `replenish/actions.ts` + `replenish/reorder-points/actions.ts` | **done (1.2)** |
+| `/supplier-planner` | `supplier-planner/actions.ts` | **done (1.2)** |
+| `/stocktake-assistant` | `stocktake-assistant/actions.ts` | **done (1.2)** |
+| `/health` | `health/actions.ts` | **done (1.2)** |
+| `/settings/instances` | `settings/instances/actions.ts` | **role-gated (see note)** |
+
+The 1.2 rollout swapped every `requireCurrentOrg()` guard in the 22 files above to
+`requireModuleAccess(<MODULE>.href)`, leaving each `requireWriteAllowed(orgId)` line
+untouched (so a write action is now module-access + billing-write, exactly as before
+plus the module gate — billing behaviour unchanged). ~91 call sites.
+
+**`/settings/instances` — deliberately left role-gated (not a silent defer).** Its
+actions use `requireOrgAdmin` (owner/admin), which already excludes *every* member —
+and members are the only principals a module allow/deny toggle can restrict. Module-
+gating them would only add coverage for the narrow case of an *admin* whose org had the
+instances module disabled org-wide invoking an instance action by direct POST (middleware
+already blocks that via the URL). Weighed against editing the app's most intricate,
+previously-outage-prone `"use server"` file, that marginal gain wasn't worth the risk in
+this rollout. Tracked as a small follow-up if strict action-layer parity is wanted.
+
+**`loadPendingPurchaseOrders`** (was exported from `supplier-planner/actions.ts`, making it
+a guardless action endpoint) moved to `src/lib/pending-purchase-orders.ts` (server-only, not
+an action). Both call sites (`supplier-planner`, `reports/reorder-report`) updated. It only
+ever runs with an already-authorized `orgId` + service-role `db` passed by its callers.
 
 Not module-toggleable (keep their existing role/plan/single-org guards, no `requireModuleAccess`):
 `/settings/members` (`requireOrgAdmin`), `/settings/billing` (`requireOrgAdmin`), `/admin/*`
 (`requireSuperAdmin`), `/reports/natas` (`requireCasaDasNatasOrg`), and the self-scoped
-`auth.ts`/`org-switch.ts` actions. Also flagged during the 1.1 recon:
-`supplier-planner/actions.ts:loadPendingPurchaseOrders` is an exported-but-unguarded internal
-helper (takes a `db` arg) — tighten or un-export in 1.2.
+`auth.ts`/`org-switch.ts` actions.
 
 ## Known gaps (scoped, not yet started — see Task #33 in project tracking)
 

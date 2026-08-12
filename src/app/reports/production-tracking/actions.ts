@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { REPORTS_MODULE } from "@/app/module-nav";
 import {
   getProductionTrackingRows,
   getProductionOrderOperations,
@@ -24,7 +25,7 @@ export async function loadProductionTrackingAction(
 ): Promise<ProductionTrackingActionResult<ProductionTrackingRow[]>> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     return { ok: true, data: await getProductionTrackingRows(db, orgId, instanceId, includeCompleted) };
   } catch (e) {
@@ -37,7 +38,7 @@ export async function loadProductionOrderDetailAction(
   productionOrderId: string
 ): Promise<ProductionTrackingActionResult<ProductionOperationRow[]>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     return { ok: true, data: await getProductionOrderOperations(db, orgId, instanceId, productionOrderId) };
   } catch (e) {
@@ -48,7 +49,7 @@ export async function loadProductionOrderDetailAction(
 /** Scoped to this one instance — same convention as Replenish's own sync-status action. */
 export async function loadProductionTrackingSyncStatusAction(instanceId: string): Promise<ProductionTrackingActionResult<ProductionTrackingSyncStatus>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     return { ok: true, data: await getProductionTrackingSyncStatus(db, orgId, instanceId) };
   } catch (e) {
@@ -73,7 +74,7 @@ export async function triggerProductionTrackingSyncAction(
   includeFinished = false
 ): Promise<ProductionTrackingActionResult<ProductionRunsSyncSummary[]>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     return { ok: true, data: await syncOrgProductionRuns(db, orgId, [instanceId], true, includeFinished) };
   } catch (e) {

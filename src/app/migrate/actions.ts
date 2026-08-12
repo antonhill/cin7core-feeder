@@ -2,7 +2,8 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { MIGRATE_MODULE } from "@/app/module-nav";
 import { pullInstanceGroup, PULL_GROUP_ORDER, type PullGroup } from "@/migrate/pull-instance";
 import type { ImportKind, RunImportResult } from "@/import/run-import";
 
@@ -83,7 +84,7 @@ export async function startPullJobAction(sourceInstanceId: string): Promise<Pull
   if (!sourceInstanceId) return { ok: false, error: "Choose a source instance." };
 
   try {
-    const { orgId, userId } = await requireCurrentOrg();
+    const { orgId, userId } = await requireModuleAccess(MIGRATE_MODULE.href);
     const db = createServiceRoleClient();
 
     const { data: job, error } = await db
@@ -102,7 +103,7 @@ export async function startPullJobAction(sourceInstanceId: string): Promise<Pull
 /** Runs the next budgeted chunk of an in-progress pull job. Call repeatedly until the returned status is no longer "running". */
 export async function continuePullJobAction(jobId: string): Promise<PullJobResult> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(MIGRATE_MODULE.href);
     const db = createServiceRoleClient();
     const { data: job, error } = await db
       .from("pull_jobs")
@@ -124,7 +125,7 @@ export async function continuePullJobAction(jobId: string): Promise<PullJobResul
 /** The org's current in-progress pull job, if any — lets the Migrate page resume showing live progress after a reload or reopening the page mid-pull. */
 export async function getActivePullJobAction(): Promise<PullJobResult | null> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(MIGRATE_MODULE.href);
     const db = createServiceRoleClient();
     const { data: job } = await db
       .from("pull_jobs")

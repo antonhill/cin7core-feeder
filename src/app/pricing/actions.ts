@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { PRICING_MODULE } from "@/app/module-nav";
 import { requireWriteAllowed } from "@/lib/billing";
 import { logActivity } from "@/lib/activity-log";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
@@ -29,7 +30,7 @@ export interface PricingActionResult<T> {
 export async function loadPricingPreviewAction(instanceId: string): Promise<PricingActionResult<PricingFetchResult>> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(PRICING_MODULE.href);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const result = await fetchAllProductsForPricing(creds);
@@ -53,7 +54,7 @@ export async function applyPriceUpdatesAction(
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   if (!lines.length) return { ok: false, error: "Nothing to apply." };
   try {
-    const { orgId, userId, email } = await requireCurrentOrg();
+    const { orgId, userId, email } = await requireModuleAccess(PRICING_MODULE.href);
     await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);

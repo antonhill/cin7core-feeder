@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { REPORTS_MODULE } from "@/app/module-nav";
 import { getOrderFulfillmentReport, getReportFilterOptions } from "@/reports/query";
 import type { OrderFulfillmentRow, OrderFulfillmentFilters } from "@/reports/query";
 import type { InstancePickerItem } from "@/actions/instances";
@@ -20,7 +21,7 @@ export interface InvoicingSchedulerData {
 /** Read-only — nothing here writes to Cin7, so unlike every write feature in this app there's no requireWriteAllowed gate. No per-SKU line detail either (unlike shipping-calendar's equivalent action) — this page is display + link only. */
 export async function loadInvoicingSchedulerOrdersAction(filters: OrderFulfillmentFilters = {}): Promise<InvoicingSchedulerActionResult<InvoicingSchedulerData>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     const [orders, options] = await Promise.all([getOrderFulfillmentReport(db, orgId, filters), getReportFilterOptions(db, orgId)]);
     return { ok: true, data: { orders, instances: options.instances } };
@@ -37,7 +38,7 @@ export interface InstanceOrigin {
 
 export async function loadInstanceOriginsAction(): Promise<InvoicingSchedulerActionResult<InstanceOrigin[]>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     const { data, error } = await db.from("cin7_instances").select("id, base_url").eq("org_id", orgId);
     if (error) return { ok: false, error: error.message };

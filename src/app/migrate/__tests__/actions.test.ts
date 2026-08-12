@@ -3,11 +3,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { startPullJobAction, continuePullJobAction } from "@/app/migrate/actions";
 import { pullInstanceGroup } from "@/migrate/pull-instance";
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
 import type { ImportKind, RunImportResult } from "@/import/run-import";
 
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: vi.fn() }));
-vi.mock("@/lib/current-org", () => ({ requireCurrentOrg: vi.fn() }));
+vi.mock("@/lib/authorization", () => ({ requireModuleAccess: vi.fn() }));
 vi.mock("@/migrate/pull-instance", () => ({
   pullInstanceGroup: vi.fn(),
   PULL_GROUP_ORDER: ["products", "customers", "suppliers"],
@@ -56,7 +56,7 @@ function fakeResult(kind: ImportKind): RunImportResult {
 }
 
 beforeEach(() => {
-  vi.mocked(requireCurrentOrg).mockResolvedValue({ orgId: "org1", userId: "user1", email: "a@b.com" });
+  vi.mocked(requireModuleAccess).mockResolvedValue({ orgId: "org1", userId: "user1", email: "a@b.com" });
   vi.mocked(pullInstanceGroup).mockReset();
 });
 
