@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { SUPPLIER_PLANNER_MODULE } from "@/app/module-nav";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { requireWriteAllowed } from "@/lib/billing";
 import { logActivity } from "@/lib/activity-log";
@@ -13,13 +14,12 @@ import { fetchAllLocations, type Cin7Location } from "@/cin7/reference-lookups";
 import {
   buildSupplierPlanLines,
   groupLinesForPurchaseOrders,
-  type PendingPurchaseOrder,
-  type PendingPurchaseOrderLookup,
   type PurchaseOrderFallbackLocation,
   type SupplierPlanExtra,
   type SupplierPlanLine,
   type SupplierPlanLocationDemand,
 } from "@/reports/supplier-planner/build";
+import { loadPendingPurchaseOrders } from "@/lib/pending-purchase-orders";
 import { buildSupplierPlanSheet } from "@/reports/supplier-planner-export";
 import { renderXlsxBase64 } from "@/reports/xlsx-writer";
 
@@ -50,7 +50,7 @@ const DEFAULT_PURCHASE_PLANNER_SETTINGS: PurchasePlannerSettings = { homeCurrenc
 /** Every org member can read the org's saved defaults — same read-access level as everything else in Purchase Planner. */
 export async function getPurchasePlannerSettingsAction(): Promise<SupplierPlanActionResult<PurchasePlannerSettings>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(SUPPLIER_PLANNER_MODULE.href);
     const db = createServiceRoleClient();
     const { data } = await db.from("purchase_planner_settings").select("home_currency, import_stock_months").eq("org_id", orgId).maybeSingle();
     if (!data) return { ok: true, data: DEFAULT_PURCHASE_PLANNER_SETTINGS };
@@ -93,60 +93,6 @@ export interface SupplierPlanData {
 }
 
 /**
- * Cross-references this app's own record of what it's created
- * (supplier_plan_created_po_lines, migration 0050) against the already-
- * synced `purchases.status` to find which lines still have a DRAFT (not
- * yet authorized) PO outstanding — see PendingPurchaseOrderLookup's own
- * comment in build.ts for the matching rule. A purchase whose status
- * hasn't synced yet (not found in `purchases` at all) is treated as still
- * pending — safer to over-flag a possible duplicate right after creation
- * than to under-flag one because the sync hasn't caught up.
- */
-export async function loadPendingPurchaseOrders(
-  db: ReturnType<typeof createServiceRoleClient>,
-  orgId: string,
-  instanceId: string
-): Promise<PendingPurchaseOrderLookup> {
-  const { data: createdRows } = await db
-    .from("supplier_plan_created_po_lines")
-    .select("cin7_purchase_id, order_number, supplier_id, location_id, product_sku, created_at")
-    .eq("org_id", orgId)
-    .eq("instance_id", instanceId);
-
-  if (!createdRows?.length) return { byFullKey: new Map(), bySkuSupplier: new Map() };
-
-  const purchaseIds = [...new Set(createdRows.map((r) => r.cin7_purchase_id))];
-  const { data: purchaseRows } = await db
-    .from("purchases")
-    .select("cin7_purchase_id, status")
-    .eq("org_id", orgId)
-    .eq("instance_id", instanceId)
-    .in("cin7_purchase_id", purchaseIds);
-  const statusByPurchaseId = new Map((purchaseRows ?? []).map((r) => [r.cin7_purchase_id, r.status as string | null]));
-
-  const byFullKey = new Map<string, PendingPurchaseOrder>();
-  const bySkuSupplier = new Map<string, PendingPurchaseOrder>();
-
-  for (const row of createdRows) {
-    const status = statusByPurchaseId.get(row.cin7_purchase_id);
-    const isPending = !status || status === "DRAFT";
-    if (!isPending) continue;
-
-    const pending: PendingPurchaseOrder = { orderNumber: row.order_number ?? row.cin7_purchase_id, createdAt: row.created_at };
-    const fullKey = `${row.product_sku}::${row.supplier_id}::${row.location_id}`;
-    const skuSupplierKey = `${row.product_sku}::${row.supplier_id}`;
-
-    const existingFull = byFullKey.get(fullKey);
-    if (!existingFull || row.created_at > existingFull.createdAt) byFullKey.set(fullKey, pending);
-
-    const existingSkuSupplier = bySkuSupplier.get(skuSupplierKey);
-    if (!existingSkuSupplier || row.created_at > existingSkuSupplier.createdAt) bySkuSupplier.set(skuSupplierKey, pending);
-  }
-
-  return { byFullKey, bySkuSupplier };
-}
-
-/**
  * Combines a live Cin7 fetch (Suppliers[].ProductSupplierOptions — Lead/
  * Safety/ReorderQuantity/MinimumToReorder, src/cin7/product-supplier-
  * options.ts) with the same sales-velocity/on-hand data the Reorder Report
@@ -160,7 +106,7 @@ export async function loadSupplierPlanAction(params: SupplierPlanParams): Promis
   if (!params.instanceId) return { ok: false, error: "Choose an instance." };
 
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(SUPPLIER_PLANNER_MODULE.href);
     const db = createServiceRoleClient();
 
     const creds = await loadCin7Credentials(db, orgId, params.instanceId);
@@ -217,7 +163,7 @@ export async function loadSupplierPlanAction(params: SupplierPlanParams): Promis
 /** Renders whatever's currently on screen (post-filter) into a real .xlsx file — same pattern as exportReorderReportXlsxAction. */
 export async function exportSupplierPlanXlsxAction(lines: SupplierPlanLine[]): Promise<SupplierPlanActionResult<string>> {
   try {
-    await requireCurrentOrg();
+    await requireModuleAccess(SUPPLIER_PLANNER_MODULE.href);
     const sheet = buildSupplierPlanSheet(lines);
     return { ok: true, data: await renderXlsxBase64(sheet, "Purchase Planner") };
   } catch (e) {
@@ -267,7 +213,7 @@ export async function createSupplierPlanPurchaseOrdersAction(
   if (!lines.length) return { ok: false, error: "Select at least one line to create a PO from." };
 
   try {
-    const { orgId, userId, email } = await requireCurrentOrg();
+    const { orgId, userId, email } = await requireModuleAccess(SUPPLIER_PLANNER_MODULE.href);
     await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);

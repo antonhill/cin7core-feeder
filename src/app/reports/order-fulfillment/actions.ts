@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { REPORTS_MODULE } from "@/app/module-nav";
 import {
   getOrderFulfillmentReport,
   getOrderFulfillmentLines,
@@ -28,7 +29,7 @@ export interface OrderFulfillmentData {
 /** Loads both the order-level rows and every order's line detail in one round trip — a plain DB read for the whole result set, not a rate-limited per-order Cin7 call, so every row's drill-down is already in hand before the user expands it. */
 export async function loadOrderFulfillmentAction(filters: OrderFulfillmentFilters): Promise<OrderFulfillmentActionResult<OrderFulfillmentData>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     const [orders, lines] = await Promise.all([getOrderFulfillmentReport(db, orgId, filters), getOrderFulfillmentLines(db, orgId, filters)]);
     return { ok: true, data: { orders, lines } };
@@ -40,7 +41,7 @@ export async function loadOrderFulfillmentAction(filters: OrderFulfillmentFilter
 /** Renders whatever's currently on screen (the client already has the filtered rows) into a real .xlsx file — same pattern as every other report's export action. */
 export async function exportOrderFulfillmentXlsxAction(rows: OrderFulfillmentRow[]): Promise<OrderFulfillmentActionResult<string>> {
   try {
-    await requireCurrentOrg();
+    await requireModuleAccess(REPORTS_MODULE.href);
     const sheet = buildOrderFulfillmentSheet(rows);
     return { ok: true, data: await renderXlsxBase64(sheet, "Order Fulfillment") };
   } catch (e) {
@@ -58,7 +59,7 @@ export async function exportOrderFulfillmentXlsxAction(rows: OrderFulfillmentRow
  */
 export async function loadSaleAttachmentsAction(instanceId: string, saleId: string): Promise<OrderFulfillmentActionResult<Cin7SaleAttachment[]>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const detail = await fetchSaleDetail(creds, saleId);

@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { HEALTH_MODULE } from "@/app/module-nav";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsWithBom } from "@/cin7/products";
 import { fetchAllSalesList } from "@/cin7/sales";
@@ -22,7 +23,7 @@ export interface HealthActionResult<T> {
 export async function runSystemHealthAction(instanceId: string): Promise<HealthActionResult<SystemHealthResult>> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(HEALTH_MODULE.href);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
 

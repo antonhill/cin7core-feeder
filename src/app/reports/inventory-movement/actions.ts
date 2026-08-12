@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { REPORTS_MODULE } from "@/app/module-nav";
 import { getInventoryMovementReport, type InventoryMovementFilters, type InventoryMovementRow } from "@/reports/query";
 import { buildInventoryMovementSheet } from "@/reports/inventory-movement-export";
 import { renderXlsxBase64 } from "@/reports/xlsx-writer";
@@ -16,7 +17,7 @@ export async function loadInventoryMovementReportAction(
   filters: InventoryMovementFilters
 ): Promise<InventoryMovementActionResult<InventoryMovementRow[]>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     return { ok: true, data: await getInventoryMovementReport(db, orgId, filters) };
   } catch (e) {
@@ -27,7 +28,7 @@ export async function loadInventoryMovementReportAction(
 /** Renders whatever's currently on screen (the client already has the report rows) into a real .xlsx file — same pattern as exportReportXlsxAction. */
 export async function exportInventoryMovementXlsxAction(rows: InventoryMovementRow[]): Promise<InventoryMovementActionResult<string>> {
   try {
-    await requireCurrentOrg();
+    await requireModuleAccess(REPORTS_MODULE.href);
     const sheet = buildInventoryMovementSheet(rows);
     return { ok: true, data: await renderXlsxBase64(sheet, "Inventory Movement") };
   } catch (e) {

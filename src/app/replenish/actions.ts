@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { REPLENISH_MODULE } from "@/app/module-nav";
 import { requireWriteAllowed } from "@/lib/billing";
 import { logActivity } from "@/lib/activity-log";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
@@ -43,7 +44,7 @@ export interface ReplenishPreviewData {
 export async function loadReplenishPreviewAction(instanceId: string): Promise<ReplenishActionResult<ReplenishPreviewData>> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPLENISH_MODULE.href);
     const db = createServiceRoleClient();
 
     const { data: rows, error } = await db
@@ -84,7 +85,7 @@ export async function loadReplenishPreviewAction(instanceId: string): Promise<Re
 /** Scoped to this one instance — same convention as Fulfillment Cleanup's own stock-sync status action. */
 export async function loadReplenishSyncStatusAction(instanceId: string): Promise<ReplenishActionResult<ProductAvailabilitySyncStatus>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPLENISH_MODULE.href);
     const db = createServiceRoleClient();
     return { ok: true, data: await getProductAvailabilitySyncStatus(db, orgId, instanceId) };
   } catch (e) {
@@ -95,7 +96,7 @@ export async function loadReplenishSyncStatusAction(instanceId: string): Promise
 /** On-demand stock-level sync for just this one instance — same direct-call pattern as Fulfillment Cleanup's own trigger action. */
 export async function triggerReplenishSyncAction(instanceId: string): Promise<ReplenishActionResult<ProductAvailabilitySyncSummary[]>> {
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPLENISH_MODULE.href);
     const db = createServiceRoleClient();
     return { ok: true, data: await syncOrgProductAvailability(db, orgId, [instanceId]) };
   } catch (e) {
@@ -141,7 +142,7 @@ export async function createReplenishTransfersAction(
   if (!lines.length) return { ok: false, error: "Nothing to transfer." };
 
   try {
-    const { orgId, userId, email } = await requireCurrentOrg();
+    const { orgId, userId, email } = await requireModuleAccess(REPLENISH_MODULE.href);
     await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);

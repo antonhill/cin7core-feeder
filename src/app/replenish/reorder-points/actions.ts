@@ -1,7 +1,8 @@
 "use server";
 
 import { createServiceRoleClient } from "@/supabase/server";
-import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
+import { REPLENISH_MODULE } from "@/app/module-nav";
 import { requireWriteAllowed } from "@/lib/billing";
 import { logActivity } from "@/lib/activity-log";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
@@ -36,7 +37,7 @@ export interface ReorderConfigPreviewData {
 export async function loadReorderConfigPreviewAction(instanceId: string): Promise<ReorderConfigActionResult<ReorderConfigPreviewData>> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   try {
-    const { orgId } = await requireCurrentOrg();
+    const { orgId } = await requireModuleAccess(REPLENISH_MODULE.href);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const [products, locations] = await Promise.all([fetchAllProductsForReplenish(creds), fetchAllLocations(creds)]);
@@ -57,7 +58,7 @@ export async function applyReorderConfigAction(instanceId: string, lines: Reorde
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   if (!lines.length) return { ok: false, error: "Nothing to apply." };
   try {
-    const { orgId, userId, email } = await requireCurrentOrg();
+    const { orgId, userId, email } = await requireModuleAccess(REPLENISH_MODULE.href);
     await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
