@@ -2,6 +2,8 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { findBlockedModule, computeEffectiveDisabledModules } from "@/app/module-nav";
 import { createServiceRoleClient } from "@/supabase/server";
+import { writeAllowedFor } from "@/lib/billing-status";
+import type { SubscriptionStatus } from "@/lib/billing";
 
 // Must match src/lib/org-switch.ts's IMPERSONATED_ORG_COOKIE — duplicated
 // rather than imported, since that module calls next/headers' cookies() and
@@ -98,8 +100,13 @@ export async function middleware(request: NextRequest) {
   // alone only ever proves aal1. Checked before the blocked-module logic
   // below so a half-authenticated session can't route around MFA by hitting
   // a disabled-module redirect first.
+  // Whether this user has a verified MFA factor enrolled at all (nextLevel is
+  // "aal2" iff at least one verified factor exists). Carried down to the
+  // privileged-user enrolment enforcement in the block below.
+  let hasVerifiedFactor = false;
   if (userId) {
     const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    hasVerifiedFactor = aal?.nextLevel === "aal2";
     const needsMfa = Boolean(aal && aal.nextLevel === "aal2" && aal.currentLevel !== aal.nextLevel);
     const onMfaChallenge = request.nextUrl.pathname.startsWith("/mfa-challenge");
 
@@ -138,6 +145,7 @@ export async function middleware(request: NextRequest) {
     // allow-list, whether or not they're currently impersonating — mirrors
     // getCurrentUserInfo()'s same guard in src/actions/auth.ts.
     let allowedModules: string[] | null = null;
+    let role: string | null = null;
 
     const { data: superAdminRow } = await db.from("super_admins").select("user_id").eq("user_id", userId).maybeSingle();
     const isSuperAdmin = Boolean(superAdminRow);
@@ -152,17 +160,47 @@ export async function middleware(request: NextRequest) {
     if (!orgId) {
       const { data: membership } = await supabase
         .from("org_members")
-        .select("org_id, allowed_modules")
+        .select("org_id, allowed_modules, role")
         .eq("user_id", userId)
         .limit(1)
         .maybeSingle();
       orgId = membership?.org_id ?? null;
+      role = membership?.role ?? null;
       if (!isSuperAdmin) allowedModules = membership?.allowed_modules ?? null;
     }
 
+    // Read the org row once — disabled_modules for the block below,
+    // subscription_status for the MFA-enrolment rule.
+    let orgRow: { disabled_modules: string[] | null; subscription_status: SubscriptionStatus } | null = null;
     if (orgId) {
-      const { data: org } = await db.from("organizations").select("disabled_modules").eq("id", orgId).maybeSingle();
-      const disabledModules = computeEffectiveDisabledModules(org?.disabled_modules ?? [], allowedModules);
+      const { data } = await db
+        .from("organizations")
+        .select("disabled_modules, subscription_status")
+        .eq("id", orgId)
+        .maybeSingle();
+      orgRow = data ?? null;
+    }
+
+    // Phase 1.5 — mandatory MFA for privileged users. Super-admins always;
+    // org owners/admins only once their org has write access (a paid/active
+    // plan) — read-only trial orgs stay exempt, so trial onboarding isn't
+    // gated on setting up an authenticator app first. A privileged user with
+    // no verified factor is sent to Settings > Security to enrol before
+    // reaching anything else (that page is exempted so they can actually
+    // enrol, and it carries the app's sign-out control). Enrolled-but-not-
+    // stepped-up users are already handled by the /mfa-challenge redirect above.
+    const orgCanWrite = orgRow ? writeAllowedFor(orgRow.subscription_status) : false;
+    const isPrivileged = isSuperAdmin || ((role === "owner" || role === "admin") && orgCanWrite);
+    if (isPrivileged && !hasVerifiedFactor && !request.nextUrl.pathname.startsWith("/settings/security")) {
+      const enrolUrl = request.nextUrl.clone();
+      enrolUrl.pathname = "/settings/security";
+      enrolUrl.search = "";
+      enrolUrl.searchParams.set("mfa", "required");
+      return NextResponse.redirect(enrolUrl);
+    }
+
+    if (orgRow) {
+      const disabledModules = computeEffectiveDisabledModules(orgRow.disabled_modules ?? [], allowedModules);
       const blockedModule = findBlockedModule(request.nextUrl.pathname, disabledModules);
       if (blockedModule) {
         const homeUrl = request.nextUrl.clone();

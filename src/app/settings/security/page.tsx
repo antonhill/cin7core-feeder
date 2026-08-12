@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import { useSearchParams } from "next/navigation";
 import { createBrowserSupabaseClient } from "@/supabase/browser";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { SECURITY_MODULE } from "@/app/module-nav";
@@ -31,6 +32,10 @@ export default function SecurityPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [isSubmitting, startSubmitTransition] = useTransition();
+
+  // Set when middleware bounced a privileged (super-admin / paid owner-admin)
+  // user here to enrol MFA before they can use the rest of the app (Phase 1.5).
+  const mfaRequired = useSearchParams().get("mfa") === "required";
 
   function refresh() {
     startLoadTransition(async () => {
@@ -128,6 +133,16 @@ export default function SecurityPage() {
         Add a second step to sign-in using an authenticator app (Google Authenticator, Authy, 1Password, etc.) — after
         your email code, you&rsquo;ll also enter a 6-digit code from the app.
       </ModuleHeader>
+
+      {mfaRequired && verifiedFactors.length === 0 && (
+        <div className="mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-5 shadow-sm">
+          <p className="font-semibold text-amber-900">Two-factor authentication is required for your account.</p>
+          <p className="mt-1 text-sm text-amber-800">
+            Because you can change your organization&rsquo;s data or settings, you need to set up an authenticator app
+            before continuing. Finish the setup below to unlock the rest of the app.
+          </p>
+        </div>
+      )}
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         {loadError && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>}

@@ -355,6 +355,31 @@ Not module-toggleable (keep their existing role/plan/single-org guards, no `requ
 (`requireSuperAdmin`), `/reports/natas` (`requireCasaDasNatasOrg`), and the self-scoped
 `auth.ts`/`org-switch.ts` actions.
 
+## Mandatory MFA for privileged users (Phase 1.5, 2026-08-12)
+
+`middleware.ts` now forces **privileged** users who have no verified TOTP factor to
+`/settings/security?mfa=required` before they can reach anything else (that page is
+exempted from the redirect so they can actually enrol, and it carries the app's
+sign-out control). Enrolled-but-not-stepped-up users were already sent to
+`/mfa-challenge` — this adds the *enrolment* requirement on top.
+
+**Scope = super-admins + owners/admins of orgs with write access** (Anton's decision,
+2026-08-12). Read-only **trial orgs are exempt** so trial onboarding isn't gated on
+setting up an authenticator app; "write access" is `writeAllowedFor(subscription_status)`
+(active only), shared with billing via the new dependency-free `src/lib/billing-status.ts`
+(edge-safe — middleware can import it without pulling billing.ts's I/O deps). The
+privileged check reuses the reads the module-block already does (added `role` to the
+`org_members` select and `subscription_status` to the `organizations` select — no extra
+round-trips).
+
+**AAL2-on-billing (deferred from Phase 1.3): satisfied by this middleware enforcement**,
+not a per-action check. A paid org's owner/admin — the only principals who can reach
+`getManageSubscriptionUrlAction` — is now forced to enrol + step up to AAL2 before any
+page loads, so billing management is effectively AAL2-gated. A redundant `assertAal2()` on
+the billing actions was deliberately NOT added: it would also have to guard
+`getCheckoutUrlAction`, which **trial** owners (MFA-exempt) must use to subscribe — blocking
+it there would break the upgrade path.
+
 ## Known gaps (scoped, not yet started — see Task #33 in project tracking)
 
 Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas):

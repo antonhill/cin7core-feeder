@@ -1,5 +1,6 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { isStoreActive } from "@/lib/lemonsqueezy";
+import { writeAllowedFor } from "@/lib/billing-status";
 
 export type SubscriptionStatus = "trialing" | "active" | "past_due" | "canceled";
 
@@ -17,8 +18,6 @@ export interface BillingStatus {
   /** See checkoutAvailableFor below. */
   checkoutAvailable: boolean;
 }
-
-const WRITE_ALLOWED_STATUSES = new Set<SubscriptionStatus>(["active"]);
 
 /**
  * Lemon Squeezy's checkout/customer-portal pages 404 for anyone but the
@@ -39,7 +38,7 @@ export function toBillingStatus(row: { subscription_status: SubscriptionStatus; 
     status: row.subscription_status,
     trialEndsAt: row.trial_ends_at,
     maxInstances: row.max_instances,
-    canWrite: WRITE_ALLOWED_STATUSES.has(row.subscription_status),
+    canWrite: writeAllowedFor(row.subscription_status),
     checkoutAvailable: checkoutAvailableFor(row.subscription_status),
   };
 }
