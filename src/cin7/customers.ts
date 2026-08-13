@@ -172,7 +172,9 @@ export async function findCustomerByName(creds: Cin7Credentials, name: string): 
  * products.ts.
  */
 export async function fetchAllCustomers(creds: Cin7Credentials): Promise<Record<string, unknown>[]> {
-  const pageSize = 100;
+  // Cin7's documented max page size is 1000 (Customers confirmed 1..1000) —
+  // cuts list-phase GETs ~10x; short-page termination below stays correct.
+  const pageSize = 1000;
   const all: Record<string, unknown>[] = [];
   for (let page = 1; ; page++) {
     const response = await cin7Request<{ CustomerList?: Record<string, unknown>[] }>(creds, "/customer", {

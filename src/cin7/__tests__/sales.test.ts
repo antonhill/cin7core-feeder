@@ -26,20 +26,20 @@ describe("fetchAllSalesList", () => {
   });
 
   it("paginates until a short page", async () => {
-    const page1 = Array.from({ length: 100 }, (_, i) => ({ SaleID: `sale-${i}` }));
+    const page1 = Array.from({ length: 1000 }, (_, i) => ({ SaleID: `sale-${i}` }));
     const page2 = [{ SaleID: "sale-last" }];
     vi.mocked(cin7Request).mockResolvedValueOnce({ SaleList: page1 }).mockResolvedValueOnce({ SaleList: page2 });
     const all = await fetchAllSalesList(creds);
-    expect(all).toHaveLength(101);
-    expect(cin7Request).toHaveBeenNthCalledWith(1, creds, "/saleList", { query: { Page: 1, Limit: 100 } });
-    expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/saleList", { query: { Page: 2, Limit: 100 } });
+    expect(all).toHaveLength(1001);
+    expect(cin7Request).toHaveBeenNthCalledWith(1, creds, "/saleList", { query: { Page: 1, Limit: 1000 } });
+    expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/saleList", { query: { Page: 2, Limit: 1000 } });
   });
 
   it("includes UpdatedSince when provided, for incremental sync", async () => {
     vi.mocked(cin7Request).mockResolvedValueOnce({ SaleList: [] });
     await fetchAllSalesList(creds, "2026-01-01T00:00:00.000Z");
     expect(cin7Request).toHaveBeenCalledWith(creds, "/saleList", {
-      query: { Page: 1, Limit: 100, UpdatedSince: "2026-01-01T00:00:00.000Z" },
+      query: { Page: 1, Limit: 1000, UpdatedSince: "2026-01-01T00:00:00.000Z" },
     });
   });
 

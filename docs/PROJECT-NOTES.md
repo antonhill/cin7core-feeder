@@ -428,6 +428,37 @@ the only cross-invocation store the project has):
 Rollout: apply `0054` **before** merging/deploying the code, so the deployed limiter runs
 against an existing function (the `42883` latch makes an out-of-order deploy safe regardless).
 
+## Reducing Cin7 API call volume (Phase 3, 2026-08-13)
+
+Recon finding: the suspected per-product N+1 is **already solved** — supplier/component/
+reference lookups are memoized per run (`refCache`/`supplierIdCache`/`refCheckCache`/
+`cin7IdBySku` in run-sync.ts), and skip-unchanged runs **before** any Cin7 call (an unchanged
+row makes 0 calls). So Phase 3 targets the remaining, independent reductions.
+
+**Phase 3.1 (shipped):**
+- **Page size 100→1000** on the 5 list endpoints Cin7 documents as `limit` max 1000
+  (Products, Customers, Suppliers, Sales, ProductAvailability — `products.ts`, `customers.ts`,
+  `suppliers.ts`, `sales.ts`, `product-availability.ts`). Cuts list-phase GETs ~5–10×. Safe:
+  the `< pageSize` short-page termination stays correct because these endpoints honour the
+  requested limit (never return fewer while more remain). **Deliberately NOT raised** on
+  `purchaseList`, `finishedGoods`, `production/orderList`, `categories`, `ref/*` — docs don't
+  confirm max 1000 there, and an endpoint that silently caps below the requested size would
+  early-terminate the loop and drop rows.
+- **Staggered the 6 sync crons** (`vercel.json`) across a 10-min window (`0/2/4/6/8/10` + 15s),
+  each still every 15 min — they used to all fire at `*/15` (minute 0/15/30/45) together and
+  saturate the per-account 60/min bucket at tick boundaries. Flattens the burst → fewer 503
+  retries (each retry is a wasted call).
+
+**Phase 3 backlog (not yet done):**
+- **3.2** — skip `findProductBySku`/`findCustomerByName`/`findSupplierByName` when the stored
+  `cin7_id` is known (PUT directly, fall back to find→create on "not found"): −1 GET per changed
+  row. (Customers/suppliers currently load only `synced_hash`, not `cin7_id`.)
+- **3.3a** — per-(org,route) in-flight guard (needs a stale-TTL, not a naked flag) to stop
+  overlapping cron ticks / user syncs double-scanning.
+- **3.3b** — `UpdatedSince` watermark for purchases/assembly-builds/production-orders lists
+  (they full-scan history every tick; sales already avoids this). **Blocked on a live Cin7
+  probe** — a silently-ignored filter param would drop rows.
+
 ## Known gaps (scoped, not yet started — see Task #33 in project tracking)
 
 Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas):

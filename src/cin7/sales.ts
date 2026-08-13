@@ -95,7 +95,9 @@ export interface Cin7SaleListEntry {
  * sync/sync-sales.ts) and the System Health scorecard.
  */
 export async function fetchAllSalesList(creds: Cin7Credentials, updatedSince?: string): Promise<Cin7SaleListEntry[]> {
-  const pageSize = 100;
+  // Cin7's documented max page size is 1000 (Sales confirmed 1..1000) — cuts
+  // list-phase GETs ~10x; short-page termination below stays correct.
+  const pageSize = 1000;
   const all: Cin7SaleListEntry[] = [];
   for (let page = 1; ; page++) {
     const query: Record<string, string | number> = { Page: page, Limit: pageSize };
