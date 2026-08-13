@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
   toCin7SupplierPayload,
   fetchAllSuppliers,
+  pushSupplier,
   type CanonicalSupplierAddressRow,
   type CanonicalSupplierContactRow,
   type CanonicalSupplierRow,
@@ -132,5 +133,26 @@ describe("fetchAllSuppliers", () => {
     const all = await fetchAllSuppliers(creds);
     expect(all).toEqual([{ Name: "Only One" }]);
     expect(cin7Request).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("pushSupplier Phase 3.2 fast path", () => {
+  it("PUTs to a known Cin7 ID and skips the find-by-Name GET", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ ID: "known-id" }); // PUT
+    const result = await pushSupplier(creds, supplier({ name: "Acme" }), [], [], "known-id");
+    expect(result).toEqual({ cin7Id: "known-id", status: "updated" });
+    expect(cin7Request).toHaveBeenCalledTimes(1);
+    const [, path, options] = vi.mocked(cin7Request).mock.calls[0];
+    expect(path).toBe("/supplier");
+    expect(options).toMatchObject({ method: "PUT", body: expect.objectContaining({ ID: "known-id" }) });
+  });
+
+  it("uses the find-by-Name path when no known ID is provided (unchanged behaviour)", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ SupplierList: [] }) // findSupplierByName → not found
+      .mockResolvedValueOnce({ ID: "new-id" }); // POST create
+    const result = await pushSupplier(creds, supplier({ name: "Acme" }));
+    expect(result).toEqual({ cin7Id: "new-id", status: "created" });
+    expect(cin7Request).toHaveBeenCalledTimes(2);
   });
 });
