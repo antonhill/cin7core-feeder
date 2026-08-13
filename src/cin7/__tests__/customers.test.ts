@@ -156,7 +156,7 @@ describe("toCin7CustomerPayload", () => {
 
 describe("fetchAllCustomers", () => {
   it("paginates until a short page signals the end", async () => {
-    const page1 = Array.from({ length: 100 }, (_, i) => ({ Name: `Customer ${i}` }));
+    const page1 = Array.from({ length: 1000 }, (_, i) => ({ Name: `Customer ${i}` }));
     const page2 = [{ Name: "Last Customer" }];
     vi.mocked(cin7Request)
       .mockResolvedValueOnce({ CustomerList: page1 })
@@ -164,10 +164,10 @@ describe("fetchAllCustomers", () => {
 
     const all = await fetchAllCustomers(creds);
 
-    expect(all).toHaveLength(101);
+    expect(all).toHaveLength(1001);
     expect(cin7Request).toHaveBeenCalledTimes(2);
-    expect(cin7Request).toHaveBeenNthCalledWith(1, creds, "/customer", { query: { page: 1, limit: 100 } });
-    expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/customer", { query: { page: 2, limit: 100 } });
+    expect(cin7Request).toHaveBeenNthCalledWith(1, creds, "/customer", { query: { page: 1, limit: 1000 } });
+    expect(cin7Request).toHaveBeenNthCalledWith(2, creds, "/customer", { query: { page: 2, limit: 1000 } });
   });
 
   it("stops after a single short page", async () => {

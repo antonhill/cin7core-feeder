@@ -237,7 +237,12 @@ export async function resolveComponentIds(
  * export). Paginates until a short page signals the end.
  */
 export async function fetchAllProductsWithBom(creds: Cin7Credentials): Promise<Record<string, unknown>[]> {
-  const pageSize = 100;
+  // Cin7's documented max page size is 1000 (docs/cin7-api-findings.md §6:
+  // Products confirmed limit 1..1000). Requesting the max cuts list-phase GETs
+  // by up to 10x. The `< pageSize` short-page termination below stays correct
+  // because Cin7 honours the requested limit for this endpoint (it never
+  // returns fewer than asked while more pages remain).
+  const pageSize = 1000;
   const all: Record<string, unknown>[] = [];
   for (let page = 1; ; page++) {
     const response = await cin7Request<{ Products?: Record<string, unknown>[] }>(creds, "/Product", {

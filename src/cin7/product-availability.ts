@@ -34,7 +34,10 @@ export interface Cin7ProductAvailabilityEntry {
  * the end, same convention as every other list-scan fetch in this codebase.
  */
 export async function fetchAllProductAvailability(creds: Cin7Credentials): Promise<Cin7ProductAvailabilityEntry[]> {
-  const pageSize = 200;
+  // Cin7's documented max page size is 1000 (ProductAvailability confirmed
+  // 1..1000) — cuts list-phase GETs ~5x from the previous 200; short-page
+  // termination below stays correct.
+  const pageSize = 1000;
   const all: Cin7ProductAvailabilityEntry[] = [];
   for (let page = 1; ; page++) {
     const response = await cin7Request<{ ProductAvailabilityList?: Cin7ProductAvailabilityEntry[] }>(creds, "/ref/productavailability", {
