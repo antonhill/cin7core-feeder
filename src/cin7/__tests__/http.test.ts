@@ -3,6 +3,14 @@ import { Cin7ApiError, cin7Request, __resetRateLimiterForTests } from "@/cin7/ht
 
 import { CIN7_API_ORIGIN } from "@/cin7/api-origin";
 
+// Force the distributed limiter to report "unavailable" so these tests exercise
+// the in-memory throttle fallback they were written to assert. The distributed
+// limiter's own behaviour is covered in cin7/__tests__/rate-limit.test.ts.
+vi.mock("@/cin7/rate-limit", () => ({
+  acquireCin7Slot: vi.fn(async () => false),
+  __resetDistributedLimiterForTests: vi.fn(),
+}));
+
 // baseUrl here is deliberately a bogus host — the request must still go to the canonical
 // Cin7 origin, proving a member-editable / DB-stored base_url can never redirect credentials.
 const creds = { accountId: "acct-1", applicationKey: "key-1", baseUrl: "https://example.test/v2" };

@@ -1,6 +1,7 @@
 import "server-only";
 import type { Cin7Credentials } from "@/cin7/types";
 import { buildCin7Url } from "@/cin7/api-origin";
+import { acquireCin7Slot } from "@/cin7/rate-limit";
 
 /** Cin7 Core returns 503 (not 429) when the 60/min limit is hit, with no Retry-After header. */
 export class Cin7ApiError extends Error {
@@ -101,7 +102,13 @@ export async function cin7Request<T>(
   const url = buildCin7Url(path, options.query);
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    await throttle(creds.accountId);
+    // Cross-invocation distributed limiter (Postgres token bucket, migration
+    // 0054) — the real fix for the multi-invocation problem the throttle below
+    // can't solve. If it's unavailable (DB blip, or the migration isn't applied
+    // yet), fall back to the in-memory per-invocation throttle so a limiter
+    // outage never halts Cin7 traffic and behaviour stays exactly as it was.
+    const pacedByDistributedLimiter = await acquireCin7Slot(creds.accountId);
+    if (!pacedByDistributedLimiter) await throttle(creds.accountId);
 
     let response: Response;
     try {
