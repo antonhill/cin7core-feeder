@@ -380,6 +380,25 @@ the billing actions was deliberately NOT added: it would also have to guard
 `getCheckoutUrlAction`, which **trial** owners (MFA-exempt) must use to subscribe — blocking
 it there would break the upgrade path.
 
+## Impersonation hardening (Phase 1.6, 2026-08-13)
+
+Super-admin "view as org" (`src/actions/org-switch.ts`, cookie `impersonated_org_id`):
+- **Secure cookie in prod** — `secure: NODE_ENV === "production"` added to the cookie set
+  (local dev stays plain http). Was `httpOnly`/`sameSite=lax` only.
+- **Shorter expiry** — `maxAge` 30 days → **8 hours** (`IMPERSONATION_MAX_AGE_SECONDS`), so an
+  impersonation left open by accident reverts the same day.
+- **Audit** — `setImpersonatedOrgAction`/`clearImpersonatedOrgAction` now emit a structured
+  `[impersonation.start|end]` server log line (actor user id, target org id/name, timestamp).
+  Deliberately a **platform log**, not a client-visible `activity_log` row — a super-admin's
+  access shouldn't appear in the target org's own Activity feed. A durable, queryable
+  super-admin audit table is **Phase 13** (observability) work; this is the no-schema-change
+  audit trail for now.
+- **Banner** — the "Viewing as {org} (master user)" amber bar + Exit already existed
+  (`src/app/layout.tsx`, gated on `isImpersonating`); no change needed.
+
+The cookie remains a "which org" hint only — never an authorization grant. Every read/write
+still re-checks super-admin status server-side before honoring it.
+
 ## Known gaps (scoped, not yet started — see Task #33 in project tracking)
 
 Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas):
