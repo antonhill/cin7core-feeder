@@ -6,6 +6,25 @@ import { requireSuperAdmin } from "@/lib/require-super-admin";
 import { createServiceRoleClient } from "@/supabase/server";
 import { IMPERSONATED_ORG_COOKIE } from "@/lib/org-switch";
 
+// Impersonation is an active, deliberate support task — the "which org" cookie
+// shouldn't outlive a work session. 8 hours (down from 30 days), so an
+// impersonation left open by accident reverts on its own the same day.
+const IMPERSONATION_MAX_AGE_SECONDS = 60 * 60 * 8;
+
+/**
+ * Structured server-side audit line for impersonation start/end. Written to the
+ * platform logs (Vercel) rather than a client-visible `activity_log` row, so a
+ * super-admin's access to an org isn't surfaced in that org's own Activity feed.
+ * A durable, queryable super-admin audit table is Phase 13 (observability) work;
+ * this is the immediate, no-schema-change audit trail the hardening brief asks for.
+ */
+function logImpersonationEvent(
+  event: "start" | "end",
+  info: { actorUserId: string; targetOrgId: string | null; targetOrgName?: string | null }
+): void {
+  console.info(`[impersonation.${event}] ${JSON.stringify({ at: new Date().toISOString(), ...info })}`);
+}
+
 export interface SwitchableOrg {
   id: string;
   name: string;
@@ -50,19 +69,22 @@ export interface SetImpersonatedOrgResult {
  */
 export async function setImpersonatedOrgAction(orgId: string): Promise<SetImpersonatedOrgResult> {
   try {
-    await requireSuperAdmin();
+    const { userId } = await requireSuperAdmin();
     const db = createServiceRoleClient();
-    const { data, error } = await db.from("organizations").select("id").eq("id", orgId).maybeSingle();
+    const { data, error } = await db.from("organizations").select("id, name").eq("id", orgId).maybeSingle();
     if (error) throw new Error(error.message);
     if (!data) return { ok: false, error: "Organization not found." };
 
     const cookieStore = await cookies();
     cookieStore.set(IMPERSONATED_ORG_COOKIE, orgId, {
       httpOnly: true,
+      // Only sent over HTTPS in production; local dev is plain http.
+      secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       path: "/",
-      maxAge: 60 * 60 * 24 * 30,
+      maxAge: IMPERSONATION_MAX_AGE_SECONDS,
     });
+    logImpersonationEvent("start", { actorUserId: userId, targetOrgId: data.id, targetOrgName: data.name });
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
@@ -71,8 +93,11 @@ export async function setImpersonatedOrgAction(orgId: string): Promise<SetImpers
 
 /** Plain form action (see AppNav's "Exit" button) — clears impersonation and sends the super-admin back to their own org's home page. */
 export async function clearImpersonatedOrgAction() {
-  await requireSuperAdmin();
+  const { userId } = await requireSuperAdmin();
   const cookieStore = await cookies();
+  // Capture which org was being viewed BEFORE deleting the cookie, for the audit line.
+  const previousOrgId = cookieStore.get(IMPERSONATED_ORG_COOKIE)?.value ?? null;
   cookieStore.delete(IMPERSONATED_ORG_COOKIE);
+  logImpersonationEvent("end", { actorUserId: userId, targetOrgId: previousOrgId });
   redirect("/");
 }
