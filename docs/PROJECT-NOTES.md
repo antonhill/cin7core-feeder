@@ -399,6 +399,35 @@ Super-admin "view as org" (`src/actions/org-switch.ts`, cookie `impersonated_org
 The cookie remains a "which org" hint only — never an authorization grant. Every read/write
 still re-checks super-admin status server-side before honoring it.
 
+## Cin7 distributed rate limiter (Phase 2.1, 2026-08-13)
+
+Cin7 Core enforces **60 calls/min per API application, keyed by `accountId`** (503, no
+Retry-After). The old throttle in `src/cin7/http.ts` only paced calls **within one serverless
+invocation** — but 6 cron sync routes fire on the same 15-min schedule, plus on-demand syncs,
+live Supplier-Planner reports, and migrate/import jobs, all able to hit the same account
+concurrently and blow past 60/min from combined volume.
+
+**Fix = a Postgres token bucket** (Anton chose Supabase over adding Upstash — no new infra;
+the only cross-invocation store the project has):
+- **Migration `0054`** — `cin7_rate_limits` table (one row per `accountId`) + atomic
+  `cin7_rate_limit_acquire(account_id, capacity, refill_per_sec)` function (time-based refill
+  via `clock_timestamp`, `FOR UPDATE` row lock so concurrent invocations serialize). Returns
+  ms-to-wait (0 = granted). RLS on, no policies, EXECUTE revoked from anon/authenticated —
+  service-role only. Test: `supabase/tests/0054_cin7_rate_limit.test.sql` (transactional).
+- **`src/cin7/rate-limit.ts`** `acquireCin7Slot(accountId)` — calls the RPC, sleeps the
+  returned wait (bounded, jittered), returns `true` when it paced the call. **Never throws:**
+  on any DB error returns `false`; on `42883` (function missing → migration not applied) it
+  latches the distributed path off process-wide.
+- **`http.ts`** calls `acquireCin7Slot` before each attempt; if it returns `false` the call
+  falls back to the **existing in-memory throttle**, so behaviour is identical to today until
+  0054 is applied, and a limiter/DB outage never halts Cin7 traffic. The 503 linear backoff
+  stays as the backstop.
+- Rate = `RATE_LIMIT_RPS` (default 0.8/s ≈ 48/min, under the 60 ceiling); burst =
+  `CIN7_RATE_LIMIT_BURST` (default 5).
+
+Rollout: apply `0054` **before** merging/deploying the code, so the deployed limiter runs
+against an existing function (the `42883` latch makes an out-of-order deploy safe regardless).
+
 ## Known gaps (scoped, not yet started — see Task #33 in project tracking)
 
 Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas):
