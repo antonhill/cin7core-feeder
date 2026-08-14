@@ -1,5 +1,5 @@
 import type { Cin7Credentials } from "@/cin7/types";
-import { cin7Request } from "@/cin7/http";
+import { cin7Request, Cin7ApiError } from "@/cin7/http";
 
 export interface CanonicalSupplierRow {
   name: string;
@@ -170,9 +170,28 @@ export async function pushSupplier(
   creds: Cin7Credentials,
   supplier: CanonicalSupplierRow,
   addresses: CanonicalSupplierAddressRow[] = [],
-  contacts: CanonicalSupplierContactRow[] = []
+  contacts: CanonicalSupplierContactRow[] = [],
+  knownCin7Id?: string | null
 ): Promise<{ cin7Id: string; status: SupplierPushStatus }> {
   const payload = toCin7SupplierPayload(supplier, addresses, contacts);
+
+  // Fast path (Phase 3.2): if we already know this supplier's Cin7 ID (from
+  // supplier_sync_state), PUT straight to it and skip the find-by-Name GET. On
+  // a NON-retryable failure the stored ID may be stale (supplier deleted/
+  // recreated in Cin7 out of band) — fall back to the authoritative find path
+  // below. A retryable failure (rate-limit/network) is re-thrown, not doubled.
+  if (typeof knownCin7Id === "string" && knownCin7Id.length > 0) {
+    try {
+      const updated = await cin7Request<Cin7SupplierResponse>(creds, "/supplier", {
+        method: "PUT",
+        body: { ID: knownCin7Id, ...payload },
+      });
+      return { cin7Id: requireId(updated, "PUT /supplier"), status: "updated" };
+    } catch (e) {
+      if (e instanceof Cin7ApiError && e.retryable) throw e;
+    }
+  }
+
   const existing = await findSupplierByName(creds, supplier.name);
 
   if (existing) {

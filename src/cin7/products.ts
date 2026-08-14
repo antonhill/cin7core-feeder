@@ -1,5 +1,5 @@
 import type { Cin7Credentials } from "@/cin7/types";
-import { cin7Request } from "@/cin7/http";
+import { cin7Request, Cin7ApiError } from "@/cin7/http";
 import { toCin7BomFields, type CanonicalAssemblyBomLineRow } from "@/cin7/assembly-bom";
 import { ensureReferenceExists, REF_BRAND_PATH, REF_CATEGORY_PATH, REF_UOM_PATH } from "@/cin7/reference-lookups";
 import { findSupplierByName } from "@/cin7/suppliers";
@@ -332,6 +332,29 @@ export async function pushProduct(
     // out to be wrong — left capture-only in our own DB until independently
     // confirmed.
     if (supplierId) suppliers = [{ ID: supplierId, SupplierName: product.last_supplied_by }];
+  }
+
+  // Fast path (Phase 3.2): if we already know this SKU's Cin7 ID (seeded from
+  // sync_state), PUT straight to it and skip the find-by-SKU GET — one fewer
+  // call per changed, previously-synced product. On a NON-retryable failure the
+  // stored ID may be stale (product deleted, or deleted-and-recreated under a
+  // new ID in Cin7 out of band), so we fall back to the authoritative
+  // find-by-SKU path below, which re-PUTs to the current ID or recreates it (a
+  // genuine payload error simply recurs there and surfaces). A RETRYABLE failure
+  // (rate-limit/network, already retried to exhaustion in http.ts) is re-thrown
+  // rather than triggering a second full round of calls.
+  const knownId = cin7IdCache.get(product.sku);
+  if (typeof knownId === "string" && knownId.length > 0) {
+    try {
+      const updated = await cin7Request<Cin7ProductResponse>(creds, "/Product", {
+        method: "PUT",
+        body: { ID: knownId, ...payload, ...(suppliers ? { Suppliers: suppliers } : {}) },
+      });
+      return { cin7Id: requireId(updated, "PUT /Product"), status: "updated" };
+    } catch (e) {
+      if (e instanceof Cin7ApiError && e.retryable) throw e;
+      // else: stored ID likely stale — fall through to find-by-SKU.
+    }
   }
 
   const existing = await findProductBySku(creds, product.sku);

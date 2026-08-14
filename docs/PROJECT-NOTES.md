@@ -449,10 +449,18 @@ row makes 0 calls). So Phase 3 targets the remaining, independent reductions.
   saturate the per-account 60/min bucket at tick boundaries. Flattens the burst → fewer 503
   retries (each retry is a wasted call).
 
+**Phase 3.2 (shipped):** skip the find-by-key GET when the stored `cin7_id` is known.
+`pushProduct`/`pushCustomer`/`pushSupplier` now PUT straight to the stored ID (products via the
+already-threaded `cin7IdBySku`; customers/suppliers via `cin7_id` now added to the
+`customer_sync_state`/`supplier_sync_state` SELECTs — the column was already written, just not
+read back). −1 GET per changed, previously-synced row. **Safety:** on a NON-retryable PUT
+failure the stored ID may be stale (row deleted/recreated in Cin7 out of band) → falls back to
+the authoritative find→create/PUT path (a genuine payload error recurs there and surfaces). A
+RETRYABLE failure (rate-limit/network, already exhausted in http.ts) is re-thrown, NOT doubled
+into a second round of calls. No schema change. First-sync/bulk-create paths are unaffected
+(no stored ID yet → find→create as before).
+
 **Phase 3 backlog (not yet done):**
-- **3.2** — skip `findProductBySku`/`findCustomerByName`/`findSupplierByName` when the stored
-  `cin7_id` is known (PUT directly, fall back to find→create on "not found"): −1 GET per changed
-  row. (Customers/suppliers currently load only `synced_hash`, not `cin7_id`.)
 - **3.3a** — per-(org,route) in-flight guard (needs a stale-TTL, not a naked flag) to stop
   overlapping cron ticks / user syncs double-scanning.
 - **3.3b** — `UpdatedSince` watermark for purchases/assembly-builds/production-orders lists

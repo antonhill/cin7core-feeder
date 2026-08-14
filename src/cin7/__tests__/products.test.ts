@@ -1,8 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { toCin7ProductPayload, pushProduct, resolveComponentIds } from "@/cin7/products";
-import { cin7Request } from "@/cin7/http";
+import { cin7Request, Cin7ApiError } from "@/cin7/http";
 
-vi.mock("@/cin7/http", () => ({ cin7Request: vi.fn() }));
+// Preserve the real Cin7ApiError (pushProduct's fast path does `instanceof
+// Cin7ApiError`); only cin7Request is mocked.
+vi.mock("@/cin7/http", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/cin7/http")>();
+  return { ...actual, cin7Request: vi.fn() };
+});
 
 const creds = { accountId: "a", applicationKey: "k", baseUrl: "https://example.test" };
 const product = {
@@ -182,6 +187,50 @@ const UOM_EXISTS = { UnitList: [{ ID: "uom-1", Name: "Item" }] };
 // `product` has category_code + uom_code set but brand: null, so pushProduct
 // checks Category then UOM (Brand is skipped) before every product push.
 describe("pushProduct", () => {
+  describe("Phase 3.2 fast path (known Cin7 ID → skip find-by-SKU)", () => {
+    it("PUTs straight to the known ID and skips the find-by-SKU GET", async () => {
+      vi.mocked(cin7Request)
+        .mockResolvedValueOnce(CATEGORY_EXISTS)
+        .mockResolvedValueOnce(UOM_EXISTS)
+        .mockResolvedValueOnce({ ID: "known-id" }); // PUT
+
+      const result = await pushProduct(creds, product, [], [], new Map([["SKU1", "known-id"]]));
+
+      expect(result).toEqual({ cin7Id: "known-id", status: "updated" });
+      // category, uom, PUT — three calls, and NO find-by-SKU GET.
+      expect(cin7Request).toHaveBeenCalledTimes(3);
+      const [, path, options] = vi.mocked(cin7Request).mock.calls[2];
+      expect(path).toBe("/Product");
+      expect(options).toMatchObject({ method: "PUT", body: expect.objectContaining({ ID: "known-id" }) });
+      const findBySku = vi.mocked(cin7Request).mock.calls.find((c) => (c[2]?.query as { SKU?: string })?.SKU);
+      expect(findBySku).toBeUndefined();
+    });
+
+    it("falls back to find→create on a NON-retryable PUT failure (stale stored ID)", async () => {
+      vi.mocked(cin7Request)
+        .mockResolvedValueOnce(CATEGORY_EXISTS)
+        .mockResolvedValueOnce(UOM_EXISTS)
+        .mockRejectedValueOnce(new Cin7ApiError(400, "product not found", false)) // stale ID PUT
+        .mockResolvedValueOnce({ Products: [] }) // findProductBySku → gone
+        .mockResolvedValueOnce({ ID: "new-id" }); // create
+
+      const result = await pushProduct(creds, product, [], [], new Map([["SKU1", "stale-id"]]));
+      expect(result).toEqual({ cin7Id: "new-id", status: "created" });
+    });
+
+    it("re-throws a RETRYABLE PUT failure without a second round of find/create calls", async () => {
+      vi.mocked(cin7Request)
+        .mockResolvedValueOnce(CATEGORY_EXISTS)
+        .mockResolvedValueOnce(UOM_EXISTS)
+        .mockRejectedValueOnce(new Cin7ApiError(503, "rate limited", true));
+
+      await expect(pushProduct(creds, product, [], [], new Map([["SKU1", "known-id"]]))).rejects.toMatchObject({
+        status: 503,
+      });
+      expect(cin7Request).toHaveBeenCalledTimes(3); // no fallback find/create
+    });
+  });
+
   it("creates via POST when the SKU doesn't exist yet", async () => {
     vi.mocked(cin7Request)
       .mockResolvedValueOnce(CATEGORY_EXISTS)

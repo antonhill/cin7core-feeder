@@ -1,5 +1,5 @@
 import type { Cin7Credentials } from "@/cin7/types";
-import { cin7Request } from "@/cin7/http";
+import { cin7Request, Cin7ApiError } from "@/cin7/http";
 
 export interface CanonicalCustomerRow {
   name: string;
@@ -200,9 +200,28 @@ export async function pushCustomer(
   creds: Cin7Credentials,
   customer: CanonicalCustomerRow,
   addresses: CanonicalCustomerAddressRow[] = [],
-  contacts: CanonicalCustomerContactRow[] = []
+  contacts: CanonicalCustomerContactRow[] = [],
+  knownCin7Id?: string | null
 ): Promise<{ cin7Id: string; status: CustomerPushStatus }> {
   const payload = toCin7CustomerPayload(customer, addresses, contacts);
+
+  // Fast path (Phase 3.2): if we already know this customer's Cin7 ID (from
+  // customer_sync_state), PUT straight to it and skip the find-by-Name GET. On
+  // a NON-retryable failure the stored ID may be stale (customer deleted/
+  // recreated in Cin7 out of band) — fall back to the authoritative find path
+  // below. A retryable failure (rate-limit/network) is re-thrown, not doubled.
+  if (typeof knownCin7Id === "string" && knownCin7Id.length > 0) {
+    try {
+      const updated = await cin7Request<Cin7CustomerResponse>(creds, "/customer", {
+        method: "PUT",
+        body: { ID: knownCin7Id, ...payload },
+      });
+      return { cin7Id: requireId(updated, "PUT /customer"), status: "updated" };
+    } catch (e) {
+      if (e instanceof Cin7ApiError && e.retryable) throw e;
+    }
+  }
+
   const existing = await findCustomerByName(creds, customer.name);
 
   if (existing) {

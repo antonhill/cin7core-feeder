@@ -426,11 +426,16 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
 
   const { data: customerSyncStates } = await db
     .from("customer_sync_state")
-    .select("name, synced_hash")
+    .select("name, synced_hash, cin7_id")
     .eq("org_id", orgId)
     .eq("instance_id", instanceId);
   const syncedHashByCustomerName = new Map(
     (customerSyncStates ?? []).map((s: { name: string; synced_hash: string | null }) => [s.name, s.synced_hash])
+  );
+  // Stored Cin7 ID per customer — lets pushCustomer skip the find-by-Name GET
+  // for an already-synced customer (Phase 3.2).
+  const cin7IdByCustomerName = new Map(
+    (customerSyncStates ?? []).map((s: { name: string; cin7_id: string | null }) => [s.name, s.cin7_id])
   );
 
   for (const customer of customers ?? []) {
@@ -502,7 +507,8 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
         creds,
         customer,
         (addresses ?? []) as CanonicalCustomerAddressRow[],
-        (contacts ?? []) as CanonicalCustomerContactRow[]
+        (contacts ?? []) as CanonicalCustomerContactRow[],
+        cin7IdByCustomerName.get(customer.name) ?? null
       );
 
       await db.from("customer_sync_state").upsert(
@@ -553,11 +559,16 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
 
   const { data: supplierSyncStates } = await db
     .from("supplier_sync_state")
-    .select("name, synced_hash")
+    .select("name, synced_hash, cin7_id")
     .eq("org_id", orgId)
     .eq("instance_id", instanceId);
   const syncedHashBySupplierName = new Map(
     (supplierSyncStates ?? []).map((s: { name: string; synced_hash: string | null }) => [s.name, s.synced_hash])
+  );
+  // Stored Cin7 ID per supplier — lets pushSupplier skip the find-by-Name GET
+  // for an already-synced supplier (Phase 3.2).
+  const cin7IdBySupplierName = new Map(
+    (supplierSyncStates ?? []).map((s: { name: string; cin7_id: string | null }) => [s.name, s.cin7_id])
   );
 
   for (const supplier of suppliers ?? []) {
@@ -614,7 +625,8 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
         creds,
         supplier,
         (addresses ?? []) as CanonicalSupplierAddressRow[],
-        (contacts ?? []) as CanonicalSupplierContactRow[]
+        (contacts ?? []) as CanonicalSupplierContactRow[],
+        cin7IdBySupplierName.get(supplier.name) ?? null
       );
 
       await db.from("supplier_sync_state").upsert(
