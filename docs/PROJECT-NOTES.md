@@ -494,9 +494,16 @@ concurrent job chunks (status read isn't a claim).
 
 Rollout: apply `0055` before merging (guard fails open until then, so out-of-order is safe too).
 
-**Phase 4 remaining:** 4.2 stock-transfer idempotency (same pattern, needs a guard table);
-4.3 per-(org,instance) advisory lock around syncs (pure code); 4.4 job-chunk claim (`locked_at`
-column + claiming UPDATE).
+**Phase 4.2 (shipped) — stock-transfer idempotency:** the same claim pattern for
+`createReplenishTransfersAction` (rank #2 — duplicate PHYSICAL inventory movement, and it had
+not even a memory table). Migration `0056` (`transfer_creation_claims` + `transfer_creation_claim`,
+built with 0055's ambiguous-column fix baked in) + `src/lib/transfer-idempotency.ts`. The action
+now claims each destination group before `POST /stockTransfer`; it also gained per-group
+try/catch + a `{ created, failed, deduplicated }` result (was a bare `CreatedTransfer[]` that
+aborted the whole run on the first failure), with matching UI blocks. Fails open, TTL 15 min.
+
+**Phase 4 remaining:** 4.3 per-(org,instance) advisory lock around syncs (pure code); 4.4
+job-chunk claim (`locked_at` column + claiming UPDATE).
 
 ## Known gaps (scoped, not yet started — see Task #33 in project tracking)
 

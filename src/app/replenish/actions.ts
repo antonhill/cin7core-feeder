@@ -8,6 +8,12 @@ import { logActivity } from "@/lib/activity-log";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsForReplenish } from "@/cin7/product-reorder";
 import { createStockTransfer, type CreateStockTransferResult } from "@/cin7/stock-transfers";
+import {
+  transferIdempotencyKey,
+  claimTransferCreation,
+  settleTransferCreation,
+  releaseTransferCreation,
+} from "@/lib/transfer-idempotency";
 import { getProductAvailabilitySyncStatus, type ProductAvailabilitySyncStatus } from "@/reports/query";
 import { syncOrgProductAvailability, type ProductAvailabilitySyncSummary } from "@/sync/sync-product-availability";
 import { resolveReorderThresholds, type AvailabilityRow, type ReplenishProductInput, type ReplenishLine } from "@/reports/replenish/build";
@@ -112,6 +118,22 @@ export interface CreatedTransfer {
   skus: string[];
 }
 
+export interface FailedTransfer {
+  toLocation: string;
+  error: string;
+}
+
+export interface CreateTransfersResult {
+  created: CreatedTransfer[];
+  failed: FailedTransfer[];
+  /**
+   * Transfers NOT created because an identical one for these exact lines was
+   * already created moments ago (double-submit / two tabs) — the existing
+   * transfer is returned instead of a duplicate (Phase 4.2).
+   */
+  deduplicated?: CreatedTransfer[];
+}
+
 /**
  * Creates the real Stock Transfer(s) in Cin7. `POST /stockTransfer` moves
  * lines between exactly one (FromLocation, ToLocation) pair per call (see
@@ -136,7 +158,7 @@ export async function createReplenishTransfersAction(
   instanceId: string,
   fromLocation: string,
   lines: ReplenishLine[]
-): Promise<ReplenishActionResult<CreatedTransfer[]>> {
+): Promise<ReplenishActionResult<CreateTransfersResult>> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   if (!fromLocation) return { ok: false, error: "Choose a source location." };
   if (!lines.length) return { ok: false, error: "Nothing to transfer." };
@@ -175,34 +197,73 @@ export async function createReplenishTransfersAction(
     }
 
     const created: CreatedTransfer[] = [];
+    const failed: FailedTransfer[] = [];
+    const deduplicated: CreatedTransfer[] = [];
+
     for (const [toLocation, destLines] of linesByDestination) {
-      const result: CreateStockTransferResult = await createStockTransfer(
-        creds,
+      // Idempotency guard (Phase 4.2): claim the right to create THIS exact
+      // transfer before hitting Cin7, so a double-click / two tabs / concurrent
+      // invocation can't create two real (physical) stock movements.
+      const idempotencyKey = transferIdempotencyKey(
         fromLocation,
         toLocation,
-        destLines.map((l) => {
-          const batch = bestBatchBySku.get(l.productSku);
-          return {
-            sku: l.productSku,
-            transferQuantity: l.quantity,
-            batchSn: batch?.batchSn ?? null,
-            expiryDate: batch?.expiryDate ?? null,
-          };
-        })
+        destLines.map((l) => ({ productSku: l.productSku, quantity: l.quantity }))
       );
-      created.push({ toLocation, taskId: result.taskId, number: result.number, status: result.status, skus: destLines.map((l) => l.productSku) });
+      const claim = await claimTransferCreation(db, orgId, instanceId, idempotencyKey);
+      if (!claim.claimed) {
+        if (claim.existingStatus === "completed" && claim.cin7TaskId) {
+          deduplicated.push({
+            toLocation,
+            taskId: claim.cin7TaskId,
+            number: claim.transferNumber ?? "",
+            status: "DRAFT",
+            skus: destLines.map((l) => l.productSku),
+          });
+        } else {
+          failed.push({ toLocation, error: "A transfer for these exact lines is already being created — skipped to avoid a duplicate." });
+        }
+        continue;
+      }
+
+      try {
+        const result: CreateStockTransferResult = await createStockTransfer(
+          creds,
+          fromLocation,
+          toLocation,
+          destLines.map((l) => {
+            const batch = bestBatchBySku.get(l.productSku);
+            return {
+              sku: l.productSku,
+              transferQuantity: l.quantity,
+              batchSn: batch?.batchSn ?? null,
+              expiryDate: batch?.expiryDate ?? null,
+            };
+          })
+        );
+        created.push({ toLocation, taskId: result.taskId, number: result.number, status: result.status, skus: destLines.map((l) => l.productSku) });
+        await settleTransferCreation(db, orgId, instanceId, idempotencyKey, result.taskId, result.number);
+      } catch (e) {
+        await releaseTransferCreation(db, orgId, instanceId, idempotencyKey);
+        failed.push({ toLocation, error: e instanceof Error ? e.message : "Unknown error" });
+      }
     }
 
-    await logActivity(db, {
-      orgId,
-      instanceId,
-      actor: { userId, email },
-      action: "replenish.create_transfer",
-      summary: `Created ${created.length} draft transfer${created.length === 1 ? "" : "s"} from ${fromLocation} (${lines.length} line${lines.length === 1 ? "" : "s"})`,
-      detail: { fromLocation, transfers: created },
-    });
+    if (created.length) {
+      await logActivity(db, {
+        orgId,
+        instanceId,
+        actor: { userId, email },
+        action: "replenish.create_transfer",
+        summary: `Created ${created.length} draft transfer${created.length === 1 ? "" : "s"} from ${fromLocation} (${lines.length} line${lines.length === 1 ? "" : "s"})${failed.length ? ` (${failed.length} failed)` : ""}${deduplicated.length ? ` (${deduplicated.length} already existed)` : ""}`,
+        detail: { fromLocation, transfers: created, failed, deduplicated },
+      });
+    }
 
-    return { ok: true, data: created };
+    return {
+      ok: failed.length === 0,
+      data: { created, failed, deduplicated },
+      error: failed.length ? `${failed.length} transfer(s) failed to create` : undefined,
+    };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
