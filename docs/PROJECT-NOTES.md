@@ -467,6 +467,37 @@ into a second round of calls. No schema change. First-sync/bulk-create paths are
   (they full-scan history every tick; sales already avoids this). **Blocked on a live Cin7
   probe** — a silently-ignored filter param would drop rows.
 
+## Data integrity — duplicate-write / partial-data (Phase 4, 2026-08-13)
+
+A Phase-4 audit found the **sync engine itself is well-protected** (find-by-key + `content_hash`
++ after-success-only `synced_hash` ordering + unique constraints backing every upsert). The real
+holes are the **unguarded external-create paths** — a double-click / two tabs / concurrent
+invocation creates duplicate real Cin7 records. Ranked: (1) **duplicate Purchase Order**, (2)
+**duplicate Stock Transfer**, (3) concurrent same-org sync (no lock; mostly self-heals), (4)
+concurrent job chunks (status read isn't a claim).
+
+**Phase 4.1 (shipped) — PO-creation idempotency:**
+- **Migration `0055`** — `po_creation_claims` table + atomic `po_creation_claim(org, instance,
+  key, ttl_seconds)` function (INSERT-or-`FOR UPDATE`-reclaim; returns whether the caller may
+  create). RLS on, no policies, EXECUTE revoked from anon/authenticated. Test:
+  `supabase/tests/0055_po_creation_claims.test.sql` (transactional).
+- **`src/lib/po-idempotency.ts`** — `poIdempotencyKey` (sha256 of supplier+location+sorted
+  lines/qtys), `claimPoCreation` / `settlePoCreation` / `releasePoCreation`.
+- **`createSupplierPlanPurchaseOrdersAction`** (and its reorder-report delegate) now claims each
+  group **before** the Cin7 create: a live `completed` claim → returns the existing PO
+  (`deduplicated` result field, amber UI note); a live `pending` claim → skipped as `failed`
+  ("already being created"); success → settle; failure → release (immediate retry).
+- **Fails OPEN**: any guard error (DB down, migration not applied) → proceeds to create exactly
+  as before (never blocks the money path on the guard). TTL 15 min — covers double-click /
+  retry / concurrent, far short of a legitimate recurring re-order (which the existing
+  `supplier_plan_created_po_lines` advisory also flags).
+
+Rollout: apply `0055` before merging (guard fails open until then, so out-of-order is safe too).
+
+**Phase 4 remaining:** 4.2 stock-transfer idempotency (same pattern, needs a guard table);
+4.3 per-(org,instance) advisory lock around syncs (pure code); 4.4 job-chunk claim (`locked_at`
+column + claiming UPDATE).
+
 ## Known gaps (scoped, not yet started — see Task #33 in project tracking)
 
 Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas):

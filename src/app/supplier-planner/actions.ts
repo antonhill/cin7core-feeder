@@ -9,6 +9,7 @@ import { logActivity } from "@/lib/activity-log";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsForSupplierPlanning } from "@/cin7/product-supplier-options";
 import { createPurchaseOrder } from "@/cin7/purchase-write";
+import { poIdempotencyKey, claimPoCreation, settlePoCreation, releasePoCreation } from "@/lib/po-idempotency";
 import { getReorderReport, getSupplierPlanLocationDemand } from "@/reports/query";
 import { fetchAllLocations, type Cin7Location } from "@/cin7/reference-lookups";
 import {
@@ -188,6 +189,12 @@ export interface FailedPurchaseOrder {
 export interface CreatePurchaseOrdersResult {
   created: CreatedPurchaseOrder[];
   failed: FailedPurchaseOrder[];
+  /**
+   * POs that were NOT created because an identical PO for these exact lines was
+   * already created moments ago (double-submit / two tabs) — the existing PO is
+   * returned instead of a duplicate. Optional/back-compat (Phase 4.1).
+   */
+  deduplicated?: CreatedPurchaseOrder[];
 }
 
 /**
@@ -228,8 +235,40 @@ export async function createSupplierPlanPurchaseOrdersAction(
     }
     const created: CreatedPurchaseOrder[] = [];
     const failed: FailedPurchaseOrder[] = [];
+    const deduplicated: CreatedPurchaseOrder[] = [];
 
     for (const group of groups) {
+      // Idempotency guard (Phase 4.1): claim the right to create THIS exact PO
+      // before hitting Cin7, so a double-click / two tabs / concurrent
+      // invocation of the same selection can't create two real POs.
+      const idempotencyKey = poIdempotencyKey(
+        group.supplierId,
+        group.locationId,
+        group.lines.map((l) => ({ productSku: l.productSku, quantity: l.suggestedQty }))
+      );
+      const claim = await claimPoCreation(db, orgId, instanceId, idempotencyKey);
+      if (!claim.claimed) {
+        if (claim.existingStatus === "completed" && claim.orderNumber) {
+          // Already created for this exact selection within the window — return
+          // the existing PO instead of duplicating it.
+          deduplicated.push({
+            supplierName: group.supplierName,
+            locationName: group.locationName,
+            orderNumber: claim.orderNumber,
+            status: "DRAFT",
+            lineCount: group.lines.length,
+          });
+        } else {
+          // A concurrent request is creating this same PO right now.
+          failed.push({
+            supplierName: group.supplierName,
+            locationName: group.locationName,
+            error: "A purchase order for these exact lines is already being created — skipped to avoid a duplicate.",
+          });
+        }
+        continue;
+      }
+
       try {
         const result = await createPurchaseOrder(creds, {
           supplierName: group.supplierName,
@@ -252,6 +291,10 @@ export async function createSupplierPlanPurchaseOrdersAction(
           lineCount: result.lineCount,
         });
 
+        // Mark the idempotency claim completed with the real PO's identity, so
+        // a resubmit inside the window returns THIS PO rather than duplicating.
+        await settlePoCreation(db, orgId, instanceId, idempotencyKey, result.taskId, result.orderNumber);
+
         // Best-effort: this app's own memory of what it just created, so
         // Supplier Planner can flag these exact lines as "already ordered,
         // pending authorization" next time it loads (see
@@ -270,6 +313,9 @@ export async function createSupplierPlanPurchaseOrdersAction(
         );
         if (recordError) console.error("supplier_plan_created_po_lines insert failed:", recordError.message);
       } catch (e) {
+        // The create failed — release the claim so an immediate retry isn't
+        // blocked for the whole TTL window.
+        await releasePoCreation(db, orgId, instanceId, idempotencyKey);
         failed.push({
           supplierName: group.supplierName,
           locationName: group.locationName,
@@ -284,14 +330,14 @@ export async function createSupplierPlanPurchaseOrdersAction(
         instanceId,
         actor: { userId, email },
         action: "supplier_planner.create_purchase_order",
-        summary: `Created ${created.length} draft PO${created.length === 1 ? "" : "s"} across ${new Set(created.map((c) => c.supplierName)).size} supplier${new Set(created.map((c) => c.supplierName)).size === 1 ? "" : "s"}${failed.length ? ` (${failed.length} failed)` : ""}`,
-        detail: { created, failed },
+        summary: `Created ${created.length} draft PO${created.length === 1 ? "" : "s"} across ${new Set(created.map((c) => c.supplierName)).size} supplier${new Set(created.map((c) => c.supplierName)).size === 1 ? "" : "s"}${failed.length ? ` (${failed.length} failed)` : ""}${deduplicated.length ? ` (${deduplicated.length} already existed)` : ""}`,
+        detail: { created, failed, deduplicated },
       });
     }
 
     return {
       ok: failed.length === 0,
-      data: { created, failed },
+      data: { created, failed, deduplicated },
       error: failed.length ? `${failed.length} of ${groups.length} PO(s) failed to create` : undefined,
     };
   } catch (e) {
