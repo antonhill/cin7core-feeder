@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncInstance, type PushScope, type SyncRunSummary } from "@/sync/run-sync";
 import { logActivity, type ActivityActor } from "@/lib/activity-log";
+import { acquireSyncLock, releaseSyncLock } from "@/lib/sync-lock";
 
 export interface InstanceSyncOutcome {
   ok: boolean;
@@ -25,6 +26,13 @@ export interface InstanceSyncOutcome {
   errors?: { sku: string; error: string[]; raw?: string }[];
   /** See SyncRunSummary.truncated — set when a budgetMs cut this instance's push short. */
   truncated?: boolean;
+  /**
+   * True when this instance was skipped entirely because another sync run
+   * already held its advisory lock (Phase 4.3) — not a failure, just
+   * deliberately avoided overlap. The next attempt (cron tick or manual
+   * retry) picks it up once free.
+   */
+  skippedLocked?: boolean;
 }
 
 // Instances used to sync one at a time here, which meant two genuinely
@@ -82,6 +90,15 @@ function summarizeSyncOutcome(summary: SyncRunSummary): string {
  * `actor` defaults to "system" — correct for both /api/sync call sites
  * (cron, and the bearer-token-authed on-demand POST), neither of which has
  * a real session user. pushToCin7Action passes the actual signed-in user.
+ *
+ * Advisory lock (Phase 4.3): those same three call sites (cron tick,
+ * on-demand POST, Import wizard push) can race for the SAME (org, instance)
+ * — each instance claims a short-lived lock (migration 0057) before its own
+ * syncInstance call and releases it in a finally, so an already-in-progress
+ * instance is skipped rather than double-scanned/double-pushed by a second
+ * concurrent run. Fails open (never blocks a sync on the guard itself) and
+ * self-heals via a TTL past Vercel's 300s hard timeout, so a crashed run
+ * can't wedge an instance out of every future sync.
  */
 export async function syncOrgInstances(
   db: SupabaseClient,
@@ -98,6 +115,18 @@ export async function syncOrgInstances(
   if (error) throw new Error(error.message);
 
   return mapWithConcurrency(instances ?? [], MAX_CONCURRENT_INSTANCE_SYNCS, async (instance): Promise<InstanceSyncOutcome> => {
+    const lock = await acquireSyncLock(db, instance.org_id, instance.id);
+    if (!lock.acquired) {
+      await logActivity(db, {
+        orgId: instance.org_id,
+        instanceId: instance.id,
+        actor,
+        action: "sync.skipped_locked",
+        summary: "Sync skipped — another sync is already in progress for this instance",
+      });
+      return { ok: true, instanceId: instance.id, orgId: instance.org_id, skippedLocked: true };
+    }
+
     try {
       const summary = await syncInstance(db, instance.org_id, instance.id, scope, budgetMs);
       await logActivity(db, {
@@ -119,6 +148,8 @@ export async function syncOrgInstances(
         summary: `Sync failed: ${errorMessage}`,
       });
       return { ok: false, instanceId: instance.id, orgId: instance.org_id, error: errorMessage };
+    } finally {
+      await releaseSyncLock(db, instance.org_id, instance.id, lock.lockedAt);
     }
   });
 }
