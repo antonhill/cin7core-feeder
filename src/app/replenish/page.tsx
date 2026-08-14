@@ -10,7 +10,7 @@ import {
   triggerReplenishSyncAction,
   createReplenishTransfersAction,
   type ReplenishPreviewData,
-  type CreatedTransfer,
+  type CreateTransfersResult,
 } from "./actions";
 import { resolveReorderThresholds, buildReplenishLines, type ReplenishLine } from "@/reports/replenish/build";
 import type { ProductAvailabilitySyncStatus } from "@/reports/query";
@@ -54,7 +54,7 @@ export default function ReplenishPage() {
 
   const [isCreating, startCreateTransition] = useTransition();
   const [createError, setCreateError] = useState<string | null>(null);
-  const [createdTransfers, setCreatedTransfers] = useState<CreatedTransfer[] | null>(null);
+  const [transferResult, setTransferResult] = useState<CreateTransfersResult | null>(null);
 
   // Recomputed instantly whenever the source location changes — no server
   // round trip, since resolveReorderThresholds/buildReplenishLines are pure
@@ -133,7 +133,7 @@ export default function ReplenishPage() {
     if (!instanceId) return;
     setPreviewError(null);
     setSourceLocation("");
-    setCreatedTransfers(null);
+    setTransferResult(null);
     setCreateError(null);
     setRawExcludedLineKeys(new Set());
     startPreviewTransition(async () => {
@@ -149,14 +149,14 @@ export default function ReplenishPage() {
   function handleCreate() {
     if (!instanceId || !sourceLocation || selectedLines.length === 0) return;
     setCreateError(null);
-    setCreatedTransfers(null);
+    setTransferResult(null);
     startCreateTransition(async () => {
       const result = await createReplenishTransfersAction(instanceId, sourceLocation, selectedLines);
-      if (!result.ok) {
-        setCreateError(result.error ?? "Unknown error");
-        return;
-      }
-      setCreatedTransfers(result.data ?? []);
+      // A partial failure still returns whichever transfers genuinely got
+      // created (result.data) alongside ok:false — show that, not just the
+      // error, same convention as Supplier Planner's PO creation.
+      if (result.data) setTransferResult(result.data);
+      else setCreateError(result.error ?? "Unknown error");
     });
   }
 
@@ -247,19 +247,51 @@ export default function ReplenishPage() {
           )}
 
           {createError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{createError}</p>}
-          {createdTransfers && createdTransfers.length > 0 && (
-            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-              Created {createdTransfers.length} draft transfer{createdTransfers.length === 1 ? "" : "s"} in Cin7 — review and complete
-              {createdTransfers.length === 1 ? " it" : " them"} there:
-              <ul className="mt-1 list-disc pl-5">
-                {createdTransfers.map((t) => (
-                  <li key={t.taskId}>
-                    <strong>{t.number}</strong> → {t.toLocation} ({t.skus.length} SKU{t.skus.length === 1 ? "" : "s"}, {t.status})
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {transferResult &&
+            (transferResult.created.length > 0 || transferResult.failed.length > 0 || (transferResult.deduplicated?.length ?? 0) > 0) && (
+              <div className="mt-3 flex flex-col gap-2">
+                {(transferResult.deduplicated?.length ?? 0) > 0 && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                    {transferResult.deduplicated!.length} transfer{transferResult.deduplicated!.length === 1 ? " was" : "s were"} already created
+                    moments ago for the same lines — returned the existing
+                    {transferResult.deduplicated!.length === 1 ? " one" : " ones"} instead of a duplicate:
+                    <ul className="mt-1 list-disc pl-5">
+                      {transferResult.deduplicated!.map((t) => (
+                        <li key={`dedup-${t.taskId}`}>
+                          <strong>{t.number}</strong> → {t.toLocation}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {transferResult.created.length > 0 && (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                    Created {transferResult.created.length} draft transfer{transferResult.created.length === 1 ? "" : "s"} in Cin7 — review and
+                    complete
+                    {transferResult.created.length === 1 ? " it" : " them"} there:
+                    <ul className="mt-1 list-disc pl-5">
+                      {transferResult.created.map((t) => (
+                        <li key={t.taskId}>
+                          <strong>{t.number}</strong> → {t.toLocation} ({t.skus.length} SKU{t.skus.length === 1 ? "" : "s"}, {t.status})
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {transferResult.failed.length > 0 && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {transferResult.failed.length} transfer{transferResult.failed.length === 1 ? "" : "s"} failed to create:
+                    <ul className="mt-1 list-disc pl-5">
+                      {transferResult.failed.map((f) => (
+                        <li key={f.toLocation}>
+                          {f.toLocation}: {f.error}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
 
           {!sourceLocation && <p className="mt-4 text-sm text-slate-400">Choose a source location to see proposed transfers.</p>}
 
