@@ -7,8 +7,8 @@ begin;
 
 -- Minimal FK parents (rolled back).
 insert into organizations (id, name) values ('00000000-0000-0000-0000-0000000000aa', 'PO Idempotency Test Org');
-insert into cin7_instances (id, org_id, name, account_id, application_key)
-  values ('00000000-0000-0000-0000-0000000000bb', '00000000-0000-0000-0000-0000000000aa', 'Test Instance', 'acct', 'key');
+insert into cin7_instances (id, org_id, name, account_id, application_key_encrypted)
+  values ('00000000-0000-0000-0000-0000000000bb', '00000000-0000-0000-0000-0000000000aa', 'Test Instance', 'acct', 'enc');
 
 do $$
 declare

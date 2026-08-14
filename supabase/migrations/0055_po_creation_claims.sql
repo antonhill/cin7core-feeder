@@ -72,10 +72,12 @@ begin
   end if;
 
   -- A row already exists — lock it and decide (serializes concurrent callers).
-  select status, cin7_purchase_id, order_number, created_at
+  -- Columns are table-qualified: the RETURNS TABLE output params share the names
+  -- cin7_purchase_id / order_number, so an unqualified select is ambiguous.
+  select c.status, c.cin7_purchase_id, c.order_number, c.created_at
     into v_status, v_pid, v_order, v_created
-  from po_creation_claims
-  where org_id = p_org and instance_id = p_instance and idempotency_key = p_key
+  from po_creation_claims c
+  where c.org_id = p_org and c.instance_id = p_instance and c.idempotency_key = p_key
   for update;
 
   if v_created > clock_timestamp() - make_interval(secs => p_ttl_seconds) then
