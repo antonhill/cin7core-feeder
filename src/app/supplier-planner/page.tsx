@@ -215,7 +215,9 @@ export default function SupplierPlannerPage() {
 
   const [creatingSupplier, setCreatingSupplier] = useState<string | null>(null);
   const [isCreatingPo, startCreatePoTransition] = useTransition();
-  const [poResults, setPoResults] = useState<Map<string, { created: CreatedPurchaseOrder[]; failed: FailedPurchaseOrder[]; error?: string }>>(new Map());
+  const [poResults, setPoResults] = useState<
+    Map<string, { created: CreatedPurchaseOrder[]; failed: FailedPurchaseOrder[]; deduplicated?: CreatedPurchaseOrder[]; error?: string }>
+  >(new Map());
 
   function toggleMover(m: SupplierPlanMoverCategory) {
     setMoverFilter((prev) => {
@@ -326,7 +328,12 @@ export default function SupplierPlannerPage() {
       );
       setPoResults((prev) => {
         const next = new Map(prev);
-        if (result.data) next.set(supplierName, { created: result.data.created, failed: result.data.failed });
+        if (result.data)
+          next.set(supplierName, {
+            created: result.data.created,
+            failed: result.data.failed,
+            deduplicated: result.data.deduplicated ?? [],
+          });
         else next.set(supplierName, { created: [], failed: [], error: result.error ?? "Unknown error" });
         return next;
       });
@@ -653,8 +660,21 @@ export default function SupplierPlannerPage() {
                 </div>
 
                 {poResult?.error && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{poResult.error}</p>}
-                {poResult && (poResult.created.length > 0 || poResult.failed.length > 0) && (
+                {poResult && (poResult.created.length > 0 || poResult.failed.length > 0 || (poResult.deduplicated?.length ?? 0) > 0) && (
                   <div className="mt-3 flex flex-col gap-2">
+                    {(poResult.deduplicated?.length ?? 0) > 0 && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                        {poResult.deduplicated!.length} PO{poResult.deduplicated!.length === 1 ? " was" : "s were"} already created moments ago for the same lines — returned the existing
+                        {poResult.deduplicated!.length === 1 ? " one" : " ones"} instead of a duplicate:
+                        <ul className="mt-1 list-disc pl-5">
+                          {poResult.deduplicated!.map((po) => (
+                            <li key={`dedup-${po.orderNumber}-${po.locationName}`}>
+                              <strong>{po.orderNumber}</strong> → {po.locationName}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                     {poResult.created.length > 0 && (
                       <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
                         Created {poResult.created.length} draft PO{poResult.created.length === 1 ? "" : "s"} in Cin7 — review and authorize
