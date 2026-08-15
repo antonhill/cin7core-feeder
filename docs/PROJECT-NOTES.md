@@ -526,8 +526,48 @@ Verified: `tsc`/`eslint`/`vitest` (full suite, 940 tests) clean, `next build` cl
 evaluates cleanly at request time (standing rule #1) — 307 redirect-to-login (unauthenticated,
 expected) and 200 respectively, no module-crash errors in the server log.
 
-**Phase 4 remaining:** 4.3 per-(org,instance) advisory lock around syncs (pure code); 4.4
-job-chunk claim (`locked_at` column + claiming UPDATE).
+**Phase 4.3 (shipped) — per-(org,instance) sync advisory lock:** targets audit finding #3
+("concurrent same-org sync — no lock; mostly self-heals"). `syncOrgInstances`
+(`src/sync/sync-org.ts`) has three real call sites that can race for the SAME (org, instance): the
+15-min cron tick (`GET /api/sync`), an on-demand trigger (`POST /api/sync`), and the Import
+wizard's "push to Cin7" button (`pushToCin7Action`). Concurrent runs mostly self-heal (idempotent
+upsert + `content_hash` skip-if-unchanged) but still double-scan the whole catalog and race on the
+same row's `synced_hash` write — lower severity than 4.1/4.2's real-money-document duplication, but
+still worth a guard.
+- **Different shape from 4.1/4.2's claim tables**: this is a true mutual-exclusion lock (held only
+  for the sync's own duration, then released), not a create-once memo, so there's no
+  `pending`/`completed` status column — just `locked_at`. Reliable Postgres session/transaction
+  advisory locks (`pg_advisory_lock`) don't fit this codebase's architecture — the service-role
+  client talks to Postgres via PostgREST over stateless HTTP calls with pooled connections, so a
+  lock tied to one RPC call's session can't span the many separate calls a real sync makes over its
+  whole duration. Built as a claim-row table instead, following the same INSERT-or-`FOR UPDATE`-
+  reclaim shape as 0055/0056, just without the status field.
+- **Migration `0057`** — `sync_locks` table (`org_id, instance_id, locked_at`, PK on
+  `(org_id, instance_id)`) + atomic `try_acquire_sync_lock(org, instance, ttl_seconds)` function,
+  `RETURNS TABLE (acquired boolean, locked_at timestamptz)`. RLS on, no policies, EXECUTE revoked
+  from anon/authenticated. Test: `supabase/tests/0057_sync_locks.test.sql` (transactional), plus a
+  live `execute_sql` run against the real DB after applying.
+- **`src/lib/sync-lock.ts`** — `acquireSyncLock` / `releaseSyncLock`, `SYNC_LOCK_TTL_SECONDS` = 6
+  min (comfortably past `/api/sync`'s hard 300s Vercel `maxDuration`, so a crashed/timed-out run's
+  lock is reclaimable rather than stuck forever). `releaseSyncLock` takes the exact `locked_at` the
+  caller acquired and only deletes a row matching it — so a run that somehow outlives its own TTL
+  can never clear a DIFFERENT run's lock that has since reclaimed the same (org, instance).
+- **`syncOrgInstances`** now acquires the lock per instance before calling `syncInstance`, in a
+  `finally` releases it after (success, failure, or truncation all release — only "still running"
+  should ever hold it). A live lock held by another run → skip this instance entirely this attempt
+  (`skippedLocked: true` on the returned `InstanceSyncOutcome`, a `sync.skipped_locked` activity-log
+  entry) rather than double-scanning; the next cron tick or manual retry picks it up once free.
+- **Fails OPEN**: any guard error (DB down, migration not applied) → proceeds to sync exactly as
+  before (never blocks a sync on the guard's own availability).
+
+Verified: `tsc`/`eslint`/`vitest` (full suite, 949 tests) clean, `next build` clean, and a
+`next start` + `curl` against `/import` and `/` confirms the touched `"use server"` file evaluates
+cleanly at request time (standing rule #1) — 307 redirect-to-login (unauthenticated, expected) and
+200 respectively, no module-crash errors in the server log. (`/api/sync` itself 500s locally with
+"SYNC_SHARED_SECRET is not configured" — pre-existing, unrelated to this change: that env var isn't
+set in this local `.env.local`, and `assertInternalAuth` throws before reaching any sync code.)
+
+**Phase 4 remaining:** 4.4 job-chunk claim (`locked_at` column + claiming UPDATE).
 
 ## Known gaps (scoped, not yet started — see Task #33 in project tracking)
 
