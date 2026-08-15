@@ -6,6 +6,7 @@ import { requireModuleAccess } from "@/lib/authorization";
 import { MIGRATE_MODULE } from "@/app/module-nav";
 import { pullInstanceGroup, PULL_GROUP_ORDER, type PullGroup } from "@/migrate/pull-instance";
 import type { ImportKind, RunImportResult } from "@/import/run-import";
+import { claimJobLock, releaseJobLock } from "@/lib/job-lock";
 
 export type PullJobStatus = "running" | "done" | "failed";
 
@@ -33,6 +34,14 @@ const PULL_BUDGET_MS = 260_000;
  * pull job that dies partway through (e.g. Cin7 rate-limited on the
  * suppliers group) still has its already-completed groups' results saved,
  * not silently lost.
+ *
+ * Job-chunk claim (Phase 4.4): two concurrent calls for the SAME jobId
+ * (realistic case: two browser tabs both finding the same org-wide "current
+ * running job" on mount — see usePullJob.ts) would otherwise both read the
+ * same prior state and race to write it back, the loser's chunk silently
+ * discarded. Claims the job row before doing any real work and releases it
+ * in a finally; a call that loses the claim reports back the unchanged prior
+ * state as still "running" rather than double-processing.
  */
 async function runNextPullChunk(
   db: SupabaseClient,
@@ -42,6 +51,9 @@ async function runNextPullChunk(
   completedGroups: PullGroup[],
   priorResults: Partial<Record<ImportKind, RunImportResult>>
 ): Promise<PullJobResult> {
+  const lock = await claimJobLock(db, "pull_jobs", jobId);
+  if (!lock.claimed) return { ok: true, jobId, status: "running", results: priorResults };
+
   const deadline = Date.now() + PULL_BUDGET_MS;
   const completed = [...completedGroups];
   const results = { ...priorResults };
@@ -66,6 +78,8 @@ async function runNextPullChunk(
       .update({ completed_groups: completed, results, status: "failed", error, updated_at: new Date().toISOString() })
       .eq("id", jobId);
     return { ok: false, jobId, status: "failed", error, results };
+  } finally {
+    await releaseJobLock(db, "pull_jobs", jobId, lock.lockedAt);
   }
 }
 

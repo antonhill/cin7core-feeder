@@ -4,6 +4,7 @@ import { startPullJobAction, continuePullJobAction } from "@/app/migrate/actions
 import { pullInstanceGroup } from "@/migrate/pull-instance";
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
+import { claimJobLock, releaseJobLock } from "@/lib/job-lock";
 import type { ImportKind, RunImportResult } from "@/import/run-import";
 
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: vi.fn() }));
@@ -12,6 +13,9 @@ vi.mock("@/migrate/pull-instance", () => ({
   pullInstanceGroup: vi.fn(),
   PULL_GROUP_ORDER: ["products", "customers", "suppliers"],
 }));
+// Defaults to "always claimed" so every pre-existing test's behavior is unaffected —
+// Phase 4.4's own claim/release wiring is exercised separately below.
+vi.mock("@/lib/job-lock", () => ({ claimJobLock: vi.fn(), releaseJobLock: vi.fn() }));
 
 /** Minimal in-memory stand-in for the exact pull_jobs chains actions.ts issues — insert+select+single, select+eq+eq+single, update+eq. */
 function createFakePullJobsDb() {
@@ -58,6 +62,8 @@ function fakeResult(kind: ImportKind): RunImportResult {
 beforeEach(() => {
   vi.mocked(requireModuleAccess).mockResolvedValue({ orgId: "org1", userId: "user1", email: "a@b.com" });
   vi.mocked(pullInstanceGroup).mockReset();
+  vi.mocked(claimJobLock).mockReset().mockResolvedValue({ claimed: true, lockedAt: "2026-08-15T00:00:00Z" });
+  vi.mocked(releaseJobLock).mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -145,5 +151,40 @@ describe("continuePullJobAction", () => {
     const again = await continuePullJobAction(start.jobId!);
     expect(again.status).toBe("done");
     expect(pullInstanceGroup).not.toHaveBeenCalled();
+  });
+});
+
+describe("Phase 4.4 job-chunk claim", () => {
+  it("does not call pullInstanceGroup and reports the unchanged prior state when the job lock isn't claimed", async () => {
+    const { db } = createFakePullJobsDb();
+    vi.mocked(createServiceRoleClient).mockReturnValue(db);
+    vi.mocked(claimJobLock).mockResolvedValue({ claimed: false });
+
+    const start = await startPullJobAction("inst-1");
+
+    expect(pullInstanceGroup).not.toHaveBeenCalled();
+    expect(start).toEqual(expect.objectContaining({ ok: true, status: "running", results: {} }));
+  });
+
+  it("releases the lock (with the exact lockedAt it claimed) after a chunk runs", async () => {
+    const { db } = createFakePullJobsDb();
+    vi.mocked(createServiceRoleClient).mockReturnValue(db);
+    vi.mocked(claimJobLock).mockResolvedValue({ claimed: true, lockedAt: "2026-08-15T01:02:03Z" });
+    vi.mocked(pullInstanceGroup).mockResolvedValue({});
+
+    const start = await startPullJobAction("inst-1");
+
+    expect(releaseJobLock).toHaveBeenCalledWith(db, "pull_jobs", start.jobId, "2026-08-15T01:02:03Z");
+  });
+
+  it("still releases the lock when a group throws", async () => {
+    const { db } = createFakePullJobsDb();
+    vi.mocked(createServiceRoleClient).mockReturnValue(db);
+    vi.mocked(pullInstanceGroup).mockRejectedValueOnce(new Error("boom"));
+
+    const result = await startPullJobAction("inst-1");
+
+    expect(result.status).toBe("failed");
+    expect(releaseJobLock).toHaveBeenCalled();
   });
 });

@@ -5,12 +5,16 @@ import { syncOrgInstances } from "@/sync/sync-org";
 import { getLastImportKeys } from "@/import/last-batch";
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
+import { claimJobLock, releaseJobLock } from "@/lib/job-lock";
 
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: vi.fn() }));
 vi.mock("@/lib/authorization", () => ({ requireModuleAccess: vi.fn() }));
 vi.mock("@/lib/billing", () => ({ requireWriteAllowed: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/sync/sync-org", () => ({ syncOrgInstances: vi.fn() }));
 vi.mock("@/import/last-batch", () => ({ getLastImportKeys: vi.fn() }));
+// Defaults to "always claimed" so every pre-existing test's behavior is unaffected —
+// Phase 4.4's own claim/release wiring is exercised separately below.
+vi.mock("@/lib/job-lock", () => ({ claimJobLock: vi.fn(), releaseJobLock: vi.fn() }));
 
 /** Minimal in-memory stand-in for the exact push_jobs chains actions.ts issues — insert+select+single, select+eq+eq+single, update+eq. */
 function createFakePushJobsDb() {
@@ -54,6 +58,8 @@ beforeEach(() => {
   vi.mocked(requireModuleAccess).mockResolvedValue({ orgId: "org1", userId: "user1", email: "a@b.com" });
   vi.mocked(syncOrgInstances).mockReset();
   vi.mocked(getLastImportKeys).mockReset();
+  vi.mocked(claimJobLock).mockReset().mockResolvedValue({ claimed: true, lockedAt: "2026-08-15T00:00:00Z" });
+  vi.mocked(releaseJobLock).mockReset().mockResolvedValue(undefined);
 });
 
 function outcome(overrides: Partial<Record<string, unknown>> = {}) {
@@ -178,5 +184,60 @@ describe("continuePushJobAction", () => {
     const again = await continuePushJobAction(start.jobId!);
     expect(again.status).toBe("done");
     expect(syncOrgInstances).not.toHaveBeenCalled();
+  });
+
+  it("treats a skippedLocked outcome (Phase 4.3's sync lock held by a concurrent run) as still needing work, not done", async () => {
+    const { db } = createFakePushJobsDb();
+    vi.mocked(createServiceRoleClient).mockReturnValue(db);
+    vi.mocked(syncOrgInstances).mockResolvedValueOnce([outcome({ skippedLocked: true, truncated: undefined })]);
+
+    const start = await startPushJobAction(["inst-1"]);
+    expect(start.status).toBe("running");
+
+    vi.mocked(syncOrgInstances).mockResolvedValueOnce([outcome({ truncated: false })]);
+    const next = await continuePushJobAction(start.jobId!);
+
+    expect(syncOrgInstances).toHaveBeenLastCalledWith(db, "org1", ["inst-1"], expect.anything(), expect.anything(), expect.any(Number));
+    expect(next.status).toBe("done");
+  });
+});
+
+describe("Phase 4.4 job-chunk claim", () => {
+  it("does not call syncOrgInstances and reports the unchanged prior state when the job lock isn't claimed", async () => {
+    const { db } = createFakePushJobsDb();
+    vi.mocked(createServiceRoleClient).mockReturnValue(db);
+    vi.mocked(syncOrgInstances).mockResolvedValueOnce([outcome({ productsCreated: 3, truncated: true })]);
+
+    const start = await startPushJobAction(["inst-1"]);
+    expect(start.status).toBe("running");
+
+    vi.mocked(claimJobLock).mockResolvedValueOnce({ claimed: false });
+    vi.mocked(syncOrgInstances).mockClear();
+    const next = await continuePushJobAction(start.jobId!);
+
+    expect(syncOrgInstances).not.toHaveBeenCalled();
+    expect(next).toEqual(expect.objectContaining({ ok: true, status: "running", outcomes: start.outcomes }));
+  });
+
+  it("releases the lock (with the exact lockedAt it claimed) after a chunk runs", async () => {
+    const { db } = createFakePushJobsDb();
+    vi.mocked(createServiceRoleClient).mockReturnValue(db);
+    vi.mocked(claimJobLock).mockResolvedValue({ claimed: true, lockedAt: "2026-08-15T01:02:03Z" });
+    vi.mocked(syncOrgInstances).mockResolvedValueOnce([outcome({ truncated: false })]);
+
+    const start = await startPushJobAction(["inst-1"]);
+
+    expect(releaseJobLock).toHaveBeenCalledWith(db, "push_jobs", start.jobId, "2026-08-15T01:02:03Z");
+  });
+
+  it("still releases the lock when syncOrgInstances throws", async () => {
+    const { db } = createFakePushJobsDb();
+    vi.mocked(createServiceRoleClient).mockReturnValue(db);
+    vi.mocked(syncOrgInstances).mockRejectedValueOnce(new Error("boom"));
+
+    const result = await startPushJobAction(["inst-1"]);
+
+    expect(result.ok).toBe(false);
+    expect(releaseJobLock).toHaveBeenCalled();
   });
 });

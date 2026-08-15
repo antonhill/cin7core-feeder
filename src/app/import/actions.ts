@@ -10,6 +10,7 @@ import { getLastImportKeys } from "@/import/last-batch";
 import { requireModuleAccess } from "@/lib/authorization";
 import { IMPORT_MODULE } from "@/app/module-nav";
 import { requireWriteAllowed } from "@/lib/billing";
+import { claimJobLock, releaseJobLock } from "@/lib/job-lock";
 
 export interface ImportActionState {
   status: "idle" | "error" | "success";
@@ -158,11 +159,31 @@ function mergeOutcomes(prior: InstanceSyncOutcome[], next: InstanceSyncOutcome[]
 }
 
 /**
- * Runs one budgeted chunk for whichever instances aren't done yet (an
- * instance is "done" once its most recent outcome came back with
- * `truncated: false`), merges the result into the job's running outcomes,
- * and updates the job row. Shared by startPushJobAction (first chunk) and
- * continuePushJobAction (every chunk after).
+ * True while an instance still needs another chunk: either its most recent
+ * outcome came back `truncated` (budget ran out mid-sync), or it was
+ * `skippedLocked` (Phase 4.3's sync lock was held by a concurrent run —
+ * found while wiring up Phase 4.4's job-chunk claim below: neither field
+ * implies the other, and treating only `truncated` as "still needs work"
+ * would let a merely-skipped instance's zero-progress outcome be read as
+ * "done", ending the whole job early without ever actually syncing it).
+ */
+function stillNeedsWork(outcome: InstanceSyncOutcome): boolean {
+  return Boolean(outcome.truncated || outcome.skippedLocked);
+}
+
+/**
+ * Runs one budgeted chunk for whichever instances aren't done yet, merges
+ * the result into the job's running outcomes, and updates the job row.
+ * Shared by startPushJobAction (first chunk) and continuePushJobAction
+ * (every chunk after).
+ *
+ * Job-chunk claim (Phase 4.4): two concurrent calls for the SAME jobId
+ * (realistic case: two browser tabs both finding the same org-wide "current
+ * running job" on mount — see usePushJob.ts) would otherwise both read the
+ * same prior state and race to write it back, the loser's chunk silently
+ * discarded. Claims the job row before doing any real work and releases it
+ * in a finally; a call that loses the claim reports back the unchanged prior
+ * state as still "running" rather than double-processing.
  */
 async function runNextChunk(
   db: SupabaseClient,
@@ -173,15 +194,22 @@ async function runNextChunk(
   actor: ActivityActor,
   priorOutcomes: InstanceSyncOutcome[]
 ): Promise<PushJobResult> {
-  const doneIds = new Set(priorOutcomes.filter((o) => !o.truncated).map((o) => o.instanceId));
-  const remainingIds = instanceIds.filter((id) => !doneIds.has(id));
+  const lock = await claimJobLock(db, "push_jobs", jobId);
+  if (!lock.claimed) return { ok: true, jobId, status: "running", outcomes: priorOutcomes };
 
-  const chunkOutcomes = remainingIds.length ? await syncOrgInstances(db, orgId, remainingIds, scope, actor, PUSH_BUDGET_MS) : [];
-  const outcomes = mergeOutcomes(priorOutcomes, chunkOutcomes);
-  const status: PushJobStatus = outcomes.some((o) => o.truncated) ? "running" : "done";
+  try {
+    const doneIds = new Set(priorOutcomes.filter((o) => !stillNeedsWork(o)).map((o) => o.instanceId));
+    const remainingIds = instanceIds.filter((id) => !doneIds.has(id));
 
-  await db.from("push_jobs").update({ outcomes, status, updated_at: new Date().toISOString() }).eq("id", jobId);
-  return { ok: true, jobId, status, outcomes };
+    const chunkOutcomes = remainingIds.length ? await syncOrgInstances(db, orgId, remainingIds, scope, actor, PUSH_BUDGET_MS) : [];
+    const outcomes = mergeOutcomes(priorOutcomes, chunkOutcomes);
+    const status: PushJobStatus = outcomes.some(stillNeedsWork) ? "running" : "done";
+
+    await db.from("push_jobs").update({ outcomes, status, updated_at: new Date().toISOString() }).eq("id", jobId);
+    return { ok: true, jobId, status, outcomes };
+  } finally {
+    await releaseJobLock(db, "push_jobs", jobId, lock.lockedAt);
+  }
 }
 
 /**
