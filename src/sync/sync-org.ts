@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncInstance, type PushScope, type SyncRunSummary } from "@/sync/run-sync";
 import { logActivity, type ActivityActor } from "@/lib/activity-log";
 import { acquireSyncLock, releaseSyncLock } from "@/lib/sync-lock";
+import { acquireSyncRouteLock, releaseSyncRouteLock } from "@/lib/sync-route-lock";
 
 export interface InstanceSyncOutcome {
   ok: boolean;
@@ -99,6 +100,17 @@ function summarizeSyncOutcome(summary: SyncRunSummary): string {
  * concurrent run. Fails open (never blocks a sync on the guard itself) and
  * self-heals via a TTL past Vercel's 300s hard timeout, so a crashed run
  * can't wedge an instance out of every future sync.
+ *
+ * Route lock (Phase 3.3a): on top of the per-instance lock above, the whole
+ * call is ALSO guarded per (org, "sync") — those same three call sites can
+ * overlap for a given org before even reaching the per-instance loop,
+ * meaning two runs redundantly re-query and re-walk the same instance list.
+ * When `orgId` is given (every real caller supplies one), the whole
+ * instance list for that org is skipped as a batch rather than starting a
+ * second concurrent scan — reusing `skippedLocked` since it's the exact
+ * same "still needs work, retry later" semantics a per-instance lock miss
+ * already has. The legacy "no orgId, sweep every org" shape (unused by any
+ * current caller) proceeds unguarded, since there's no single org to lock.
  */
 export async function syncOrgInstances(
   db: SupabaseClient,
@@ -113,43 +125,57 @@ export async function syncOrgInstances(
   if (instanceIds?.length) query = query.in("id", instanceIds);
   const { data: instances, error } = await query;
   if (error) throw new Error(error.message);
+  const allInstances = (instances ?? []) as { id: string; org_id: string }[];
 
-  return mapWithConcurrency(instances ?? [], MAX_CONCURRENT_INSTANCE_SYNCS, async (instance): Promise<InstanceSyncOutcome> => {
-    const lock = await acquireSyncLock(db, instance.org_id, instance.id);
-    if (!lock.acquired) {
-      await logActivity(db, {
-        orgId: instance.org_id,
-        instanceId: instance.id,
-        actor,
-        action: "sync.skipped_locked",
-        summary: "Sync skipped — another sync is already in progress for this instance",
-      });
-      return { ok: true, instanceId: instance.id, orgId: instance.org_id, skippedLocked: true };
-    }
+  const runInstances = (list: typeof allInstances) =>
+    mapWithConcurrency(list, MAX_CONCURRENT_INSTANCE_SYNCS, async (instance): Promise<InstanceSyncOutcome> => {
+      const lock = await acquireSyncLock(db, instance.org_id, instance.id);
+      if (!lock.acquired) {
+        await logActivity(db, {
+          orgId: instance.org_id,
+          instanceId: instance.id,
+          actor,
+          action: "sync.skipped_locked",
+          summary: "Sync skipped — another sync is already in progress for this instance",
+        });
+        return { ok: true, instanceId: instance.id, orgId: instance.org_id, skippedLocked: true };
+      }
 
-    try {
-      const summary = await syncInstance(db, instance.org_id, instance.id, scope, budgetMs);
-      await logActivity(db, {
-        orgId: instance.org_id,
-        instanceId: instance.id,
-        actor,
-        action: "sync.push",
-        summary: summarizeSyncOutcome(summary),
-        detail: { ...summary },
-      });
-      return { ok: true, orgId: instance.org_id, ...summary };
-    } catch (e) {
-      const errorMessage = e instanceof Error ? e.message : "Unknown error";
-      await logActivity(db, {
-        orgId: instance.org_id,
-        instanceId: instance.id,
-        actor,
-        action: "sync.push_failed",
-        summary: `Sync failed: ${errorMessage}`,
-      });
-      return { ok: false, instanceId: instance.id, orgId: instance.org_id, error: errorMessage };
-    } finally {
-      await releaseSyncLock(db, instance.org_id, instance.id, lock.lockedAt);
-    }
-  });
+      try {
+        const summary = await syncInstance(db, instance.org_id, instance.id, scope, budgetMs);
+        await logActivity(db, {
+          orgId: instance.org_id,
+          instanceId: instance.id,
+          actor,
+          action: "sync.push",
+          summary: summarizeSyncOutcome(summary),
+          detail: { ...summary },
+        });
+        return { ok: true, orgId: instance.org_id, ...summary };
+      } catch (e) {
+        const errorMessage = e instanceof Error ? e.message : "Unknown error";
+        await logActivity(db, {
+          orgId: instance.org_id,
+          instanceId: instance.id,
+          actor,
+          action: "sync.push_failed",
+          summary: `Sync failed: ${errorMessage}`,
+        });
+        return { ok: false, instanceId: instance.id, orgId: instance.org_id, error: errorMessage };
+      } finally {
+        await releaseSyncLock(db, instance.org_id, instance.id, lock.lockedAt);
+      }
+    });
+
+  if (!orgId) return runInstances(allInstances);
+
+  const routeLock = await acquireSyncRouteLock(db, "sync", orgId);
+  if (!routeLock.acquired) {
+    return allInstances.map((i) => ({ ok: true, instanceId: i.id, orgId: i.org_id, skippedLocked: true }));
+  }
+  try {
+    return await runInstances(allInstances);
+  } finally {
+    await releaseSyncRouteLock(db, "sync", orgId, routeLock.lockedAt);
+  }
 }

@@ -51,11 +51,25 @@ function createFakeDb(instances: Record<string, unknown>[], rpc: ReturnType<type
     };
     return api;
   }
-  return { from: (table: string) => (table === "sync_locks" ? createSyncLocksBuilder() : instancesBuilder()), rpc } as unknown as SupabaseClient;
+  return {
+    from: (table: string) => (table === "sync_locks" || table === "sync_route_locks" ? createSyncLocksBuilder() : instancesBuilder()),
+    rpc,
+  } as unknown as SupabaseClient;
 }
 
 function defaultLockRpc() {
   return vi.fn().mockResolvedValue({ data: [{ acquired: true, locked_at: "2026-01-01T00:00:00Z" }], error: null });
+}
+
+/** rpc() stub that discriminates by RPC function name — lets a test control the route lock and the per-instance lock independently. */
+function lockRpc(opts: { routeAcquired?: boolean; instanceAcquired?: boolean } = {}) {
+  const { routeAcquired = true, instanceAcquired = true } = opts;
+  return vi.fn().mockImplementation((fn: string) => {
+    if (fn === "try_acquire_sync_route_lock") {
+      return Promise.resolve({ data: [{ acquired: routeAcquired, locked_at: "2026-01-01T00:00:00Z" }], error: null });
+    }
+    return Promise.resolve({ data: [{ acquired: instanceAcquired, locked_at: "2026-01-01T00:00:00Z" }], error: null });
+  });
 }
 
 beforeEach(() => {
@@ -327,7 +341,7 @@ describe("syncOrgInstances", () => {
 
   describe("Phase 4.3 advisory lock", () => {
     it("skips an instance whose lock is already held, without calling syncInstance", async () => {
-      const rpc = vi.fn().mockResolvedValue({ data: [{ acquired: false, locked_at: "2026-01-01T00:00:00Z" }], error: null });
+      const rpc = lockRpc({ instanceAcquired: false });
       const db = createFakeDb([{ id: "inst-1", org_id: "org1", active: true }], rpc);
 
       const results = await syncOrgInstances(db, "org1");
@@ -380,6 +394,48 @@ describe("syncOrgInstances", () => {
       await syncOrgInstances(db, "org1");
 
       expect(deleteSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe("Phase 3.3a route lock", () => {
+    it("skips every instance for the org (as skippedLocked) without calling syncInstance when the route lock isn't acquired", async () => {
+      const rpc = lockRpc({ routeAcquired: false });
+      const db = createFakeDb(
+        [
+          { id: "inst-1", org_id: "org1", active: true },
+          { id: "inst-2", org_id: "org1", active: true },
+        ],
+        rpc
+      );
+
+      const results = await syncOrgInstances(db, "org1");
+
+      expect(syncInstance).not.toHaveBeenCalled();
+      expect(results).toEqual([
+        expect.objectContaining({ ok: true, instanceId: "inst-1", skippedLocked: true }),
+        expect.objectContaining({ ok: true, instanceId: "inst-2", skippedLocked: true }),
+      ]);
+    });
+
+    it("releases the route lock after a run, even when a per-instance sync throws", async () => {
+      const rpc = lockRpc();
+      const deleteSpy = vi.fn().mockReturnThis();
+      const eqSpy = vi.fn().mockReturnThis();
+      const routeLocksBuilder = { delete: deleteSpy, eq: eqSpy, then: (r: (v: { error: null }) => void) => r({ error: null }) };
+      deleteSpy.mockReturnValue(routeLocksBuilder);
+      eqSpy.mockReturnValue(routeLocksBuilder);
+      const instancesDb = createFakeDb([{ id: "inst-1", org_id: "org1", active: true }], rpc);
+      const db = {
+        from: (table: string) => (table === "sync_route_locks" ? routeLocksBuilder : instancesDb.from(table)),
+        rpc,
+      } as unknown as SupabaseClient;
+
+      vi.mocked(syncInstance).mockRejectedValueOnce(new Error("boom"));
+
+      await syncOrgInstances(db, "org1");
+
+      expect(deleteSpy).toHaveBeenCalled();
+      expect(eqSpy).toHaveBeenCalledWith("locked_at", "2026-01-01T00:00:00Z");
     });
   });
 });

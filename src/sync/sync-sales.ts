@@ -3,6 +3,7 @@ import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllSalesList, fetchSaleDetail, type Cin7SaleFulfilment } from "@/cin7/sales";
 import { fetchAllCategories } from "@/cin7/categories";
 import type { Cin7Credentials } from "@/cin7/types";
+import { acquireSyncRouteLock, releaseSyncRouteLock } from "@/lib/sync-route-lock";
 
 const DEFAULT_BACKFILL_MONTHS = 12;
 // Rate-limited detail fetch is one Cin7 call per sale — capped per run so a
@@ -341,6 +342,17 @@ export async function syncInstanceSales(db: SupabaseClient, orgId: string, insta
  * Syncs sales for active instances — every one for the org, or just the
  * given subset — mirroring sync-org.ts's syncOrgInstances shape. Per-instance
  * failures are caught so one bad instance doesn't stop others.
+ *
+ * Route lock (Phase 3.3a): reachable from this route's own cron tick,
+ * on-demand POST, and several report pages' direct "sync now" actions
+ * (src/app/reports/actions.ts, fulfillment-cleanup/actions.ts) — guarded
+ * per (org, "sync-sales") so two overlapping runs for the same org don't
+ * both re-query and re-walk its whole instance list. When `orgId` is given
+ * (every real caller supplies one) and the lock isn't acquired, this
+ * returns an empty result — self-resolving: the run that DOES hold the
+ * lock does the real work, so nothing is actually lost, just not
+ * double-attempted. No single org to lock when `orgId` is omitted (unused
+ * by any current caller), so that path proceeds unguarded.
  */
 export async function syncOrgSales(db: SupabaseClient, orgId?: string, instanceIds?: string[]): Promise<SalesSyncSummary[]> {
   let query = db.from("cin7_instances").select("id, org_id").eq("active", true);
@@ -348,20 +360,33 @@ export async function syncOrgSales(db: SupabaseClient, orgId?: string, instanceI
   if (instanceIds?.length) query = query.in("id", instanceIds);
   const { data: instances, error } = await query;
   if (error) throw new Error(error.message);
+  const allInstances = (instances ?? []) as { id: string; org_id: string }[];
 
-  const results: SalesSyncSummary[] = [];
-  for (const instance of (instances ?? []) as { id: string; org_id: string }[]) {
-    try {
-      results.push(await syncInstanceSales(db, instance.org_id, instance.id));
-    } catch (e) {
-      results.push({
-        instanceId: instance.id,
-        listSynced: 0,
-        detailSynced: 0,
-        detailFailed: 0,
-        errors: [{ saleId: "-", error: e instanceof Error ? e.message : "Unknown error" }],
-      });
+  const runInstances = async (list: typeof allInstances) => {
+    const results: SalesSyncSummary[] = [];
+    for (const instance of list) {
+      try {
+        results.push(await syncInstanceSales(db, instance.org_id, instance.id));
+      } catch (e) {
+        results.push({
+          instanceId: instance.id,
+          listSynced: 0,
+          detailSynced: 0,
+          detailFailed: 0,
+          errors: [{ saleId: "-", error: e instanceof Error ? e.message : "Unknown error" }],
+        });
+      }
     }
+    return results;
+  };
+
+  if (!orgId) return runInstances(allInstances);
+
+  const routeLock = await acquireSyncRouteLock(db, "sync-sales", orgId);
+  if (!routeLock.acquired) return [];
+  try {
+    return await runInstances(allInstances);
+  } finally {
+    await releaseSyncRouteLock(db, "sync-sales", orgId, routeLock.lockedAt);
   }
-  return results;
 }

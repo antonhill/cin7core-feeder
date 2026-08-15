@@ -377,4 +377,45 @@ describe("syncOrgSales", () => {
     expect(results[0].errors[0].error).toBe("Instance not found");
     expect(results[1].instanceId).toBe("inst-2");
   });
+
+  describe("Phase 3.3a route lock (when a specific orgId is given)", () => {
+    function fakeDbWithRouteLock(instances: { id: string; org_id: string }[], routeAcquired: boolean) {
+      const rpc = vi.fn().mockResolvedValue({ data: [{ acquired: routeAcquired, locked_at: "2026-01-01T00:00:00Z" }], error: null });
+      const noopChain = { delete: () => noopChain, eq: () => noopChain, then: (r: (v: { error: null }) => void) => r({ error: null }) };
+      const db = {
+        from: (table: string) => {
+          if (table === "sync_route_locks") return noopChain;
+          if (table !== "cin7_instances") throw new Error(`unexpected table ${table}`);
+          const api = {
+            select: () => api,
+            eq: () => api,
+            then: (resolve: (v: unknown) => void) => resolve({ data: instances, error: null }),
+          };
+          return api;
+        },
+        rpc,
+      } as unknown as SupabaseClient;
+      return { db, rpc };
+    }
+
+    it("runs the sync normally when the route lock is acquired", async () => {
+      const { db } = fakeDbWithRouteLock([{ id: "inst-1", org_id: "org1" }], true);
+      vi.mocked(loadCin7Credentials).mockResolvedValue({ ...creds, name: "OK" });
+      vi.mocked(fetchAllSalesList).mockResolvedValue([]);
+
+      const results = await syncOrgSales(db, "org1");
+
+      expect(results).toHaveLength(1);
+      expect(results[0].instanceId).toBe("inst-1");
+    });
+
+    it("returns no results, without touching any instance, when the route lock isn't acquired", async () => {
+      const { db } = fakeDbWithRouteLock([{ id: "inst-1", org_id: "org1" }], false);
+
+      const results = await syncOrgSales(db, "org1");
+
+      expect(results).toEqual([]);
+      expect(loadCin7Credentials).not.toHaveBeenCalled();
+    });
+  });
 });
