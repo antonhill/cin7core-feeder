@@ -16,15 +16,27 @@ import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { ReportDescription } from "../ReportDescription";
 
-type Tab = "pick" | "ship" | "all";
+type Tab = "pick" | "ship" | "readyToInvoice" | "all";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "pick", label: "Pick Today" },
   { value: "ship", label: "Ship Today" },
+  { value: "readyToInvoice", label: "Ready to Invoice" },
   { value: "all", label: "All Orders" },
 ];
 
-type OrderTableColumn = "select" | "order" | "shipBy" | "picking" | "packing" | "shipping" | "invoice" | "payment" | "pickableNow" | "paidInvoice";
+type OrderTableColumn =
+  | "select"
+  | "order"
+  | "shipBy"
+  | "picking"
+  | "packing"
+  | "shipping"
+  | "invoice"
+  | "payment"
+  | "pickableNow"
+  | "readyToInvoiceQty"
+  | "paidInvoice";
 
 const ORDER_TABLE_COLUMNS: OrderTableColumn[] = [
   "select",
@@ -36,6 +48,7 @@ const ORDER_TABLE_COLUMNS: OrderTableColumn[] = [
   "invoice",
   "payment",
   "pickableNow",
+  "readyToInvoiceQty",
   "paidInvoice",
 ];
 
@@ -49,6 +62,7 @@ const ORDER_TABLE_DEFAULT_WIDTHS: Record<OrderTableColumn, number> = {
   invoice: 130,
   payment: 130,
   pickableNow: 120,
+  readyToInvoiceQty: 140,
   paidInvoice: 140,
 };
 
@@ -71,6 +85,8 @@ function orderTableSortValue(column: OrderTableColumn, row: OrderFulfillmentRow)
       return row.combined_payment_status;
     case "pickableNow":
       return row.total_pickable_qty;
+    case "readyToInvoiceQty":
+      return row.total_ready_to_invoice_qty;
     case "paidInvoice":
       return row.paid_amount;
     default:
@@ -267,6 +283,7 @@ export default function OrderFulfillmentPage() {
     let rows = orders;
     if (tab === "pick") rows = rows.filter((o) => o.is_pick_today);
     else if (tab === "ship") rows = rows.filter((o) => o.is_ship_today);
+    else if (tab === "readyToInvoice") rows = rows.filter((o) => o.is_ready_to_invoice);
 
     const searchLower = search.trim().toLowerCase();
     if (searchLower) {
@@ -294,21 +311,29 @@ export default function OrderFulfillmentPage() {
   }, [visibleRows, sortColumn, sortDirection]);
 
   const counts = orders
-    ? { pick: orders.filter((o) => o.is_pick_today).length, ship: orders.filter((o) => o.is_ship_today).length, all: orders.length }
+    ? {
+        pick: orders.filter((o) => o.is_pick_today).length,
+        ship: orders.filter((o) => o.is_ship_today).length,
+        readyToInvoice: orders.filter((o) => o.is_ready_to_invoice).length,
+        all: orders.length,
+      }
     : null;
 
   // P5.3 (LBL brief): orders older than the instance's fulfilment_view_start_date
-  // are excluded from is_pick_today/is_ship_today (see report_order_fulfillment,
-  // migration 0061) but still returned here — All Orders must keep seeing
-  // everything, only the queue tabs are gated. Counted from the full `orders` set
-  // (not visibleRows) since the point is "how many are hidden from this tab
-  // overall," not a count that shrinks as the user narrows their own search.
+  // are excluded from is_pick_today/is_ship_today/is_ready_to_invoice (see
+  // report_order_fulfillment, migrations 0061/0062) but still returned here —
+  // All Orders must keep seeing everything, only the queue tabs are gated.
+  // Counted from the full `orders` set (not visibleRows) since the point is
+  // "how many are hidden from this tab overall," not a count that shrinks as
+  // the user narrows their own search.
   const hiddenByFloorCount = orders
     ? tab === "pick"
       ? orders.filter((o) => o.pick_today_hidden_by_floor).length
       : tab === "ship"
         ? orders.filter((o) => o.ship_today_hidden_by_floor).length
-        : 0
+        : tab === "readyToInvoice"
+          ? orders.filter((o) => o.ready_to_invoice_hidden_by_floor).length
+          : 0
     : 0;
 
   const selectedOrders = useMemo(() => (orders ?? []).filter((o) => selectedSaleIds.has(o.cin7_sale_id)), [orders, selectedSaleIds]);
@@ -331,10 +356,12 @@ export default function OrderFulfillmentPage() {
       <div className="print:hidden">
       <ReportDescription title="Order Fulfillment">
         A working dashboard for pick/pack/ship/invoice/payment — not just a status report.{" "}
-        <strong>Pick Today</strong>{" "}
-        and <strong>Ship Today</strong>{" "}
-        are priority queues (overdue orders first, undated orders last, nothing dropped just because it&rsquo;s late
-        or has no ship-by date), each order expandable to the exact SKUs and quantities still needed.{" "}
+        <strong>Pick Today</strong>, <strong>Ship Today</strong>, and <strong>Ready to Invoice</strong> are priority
+        queues (overdue orders first, undated orders last, nothing dropped just because it&rsquo;s late or has no
+        ship-by date), each order expandable to the exact SKUs and quantities still needed.{" "}
+        <strong>Ready to Invoice</strong> is a real per-SKU quantity comparison (authorised-packed minus invoiced,
+        summed across every fulfilment and invoice on the order) — not the sale-level invoice status, which can miss
+        an order that&rsquo;s already been partially invoiced from an earlier fulfilment and now needs another.{" "}
         <strong>All Orders</strong> shows the complete picture across every stage.
       </ReportDescription>
       <PageLoadingIndicator show={isExporting} label="Exporting to Excel…" />
@@ -533,6 +560,7 @@ export default function OrderFulfillmentPage() {
                     <ResizableTh column="invoice" label="Invoice" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <ResizableTh column="payment" label="Payment" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <ResizableTh column="pickableNow" label="Pickable Now" align="right" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <ResizableTh column="readyToInvoiceQty" label="Qty Awaiting Invoice" align="right" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <ResizableTh column="paidInvoice" label="Paid / Invoice" align="right" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                   </tr>
                 </thead>
@@ -587,13 +615,14 @@ export default function OrderFulfillmentPage() {
                           <StatusBadge status={row.combined_payment_status} />
                         </td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium">{qty(row.total_pickable_qty)}</td>
+                        <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium">{qty(row.total_ready_to_invoice_qty)}</td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right">
                           {money(row.paid_amount)} / {money(row.invoice_amount)}
                         </td>
                       </tr>
                       {expandedSaleId === row.cin7_sale_id && (
                         <tr>
-                          <td colSpan={10} className="bg-slate-50 px-4 py-3">
+                          <td colSpan={11} className="bg-slate-50 px-4 py-3">
                             <div className="mb-3 flex items-center justify-between">
                               <button
                                 type="button"
@@ -644,6 +673,8 @@ export default function OrderFulfillmentPage() {
                                     <th className="py-1 pr-4 text-right">Picked</th>
                                     <th className="py-1 pr-4 text-right">Packed</th>
                                     <th className="py-1 pr-4 text-right">Pickable Now</th>
+                                    <th className="py-1 pr-4 text-right">Packed (Authorised)</th>
+                                    <th className="py-1 pr-4 text-right">Invoiced</th>
                                     <th className="py-1 pr-4">Picked From</th>
                                     <th className="py-1 pr-4">Suggested Pick Location</th>
                                     <th className="py-1 pr-4">Backorder ETA</th>
@@ -661,6 +692,8 @@ export default function OrderFulfillmentPage() {
                                       <td className="whitespace-nowrap py-1 pr-4 text-right">{qty(line.picked_qty)}</td>
                                       <td className="whitespace-nowrap py-1 pr-4 text-right">{qty(line.packed_qty)}</td>
                                       <td className="whitespace-nowrap py-1 pr-4 text-right font-medium">{qty(line.pickable_qty)}</td>
+                                      <td className="whitespace-nowrap py-1 pr-4 text-right">{qty(line.packed_qty_authorised)}</td>
+                                      <td className="whitespace-nowrap py-1 pr-4 text-right">{qty(line.invoiced_qty)}</td>
                                       <td className="whitespace-nowrap py-1 pr-4 text-slate-500">{line.picked_from_locations ?? "—"}</td>
                                       <td className="whitespace-nowrap py-1 pr-4 text-slate-500">
                                         {line.suggested_pick_location
