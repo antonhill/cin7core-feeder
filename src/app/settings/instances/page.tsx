@@ -55,6 +55,7 @@ function InstancesSettingsPageInner() {
         applicationKey: String(form.get("applicationKey") ?? "") || undefined,
         baseUrl: String(form.get("baseUrl") ?? DEFAULT_BASE_URL),
         active: form.get("active") === "on",
+        fulfilmentViewStartDate: String(form.get("fulfilmentViewStartDate") ?? ""),
       });
       if (!result.ok) {
         setError(result.error ?? "Unknown error");
@@ -218,6 +219,21 @@ function InstanceModal({
           <label className="flex items-center gap-2 text-base">
             <input name="active" type="checkbox" defaultChecked={instance?.active ?? true} className="h-4 w-4" />
             Active
+          </label>
+          <label className="flex flex-col gap-1.5 text-base">
+            <span className="font-medium text-slate-700">
+              Fulfilment view start date <span className="text-sm font-normal text-slate-400">(optional)</span>
+            </span>
+            <input
+              name="fulfilmentViewStartDate"
+              type="date"
+              defaultValue={instance?.fulfilmentViewStartDate ?? ""}
+              className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none"
+            />
+            <span className="text-sm text-slate-500">
+              Orders dated before this hide from Pick Today, Ship Today, and the Shipping Calendar — useful while
+              cleaning up old history. Leave blank to show everything.
+            </span>
           </label>
           <div className="mt-2 flex gap-2">
             <button type="submit" disabled={isPending} className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50">

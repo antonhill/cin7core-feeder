@@ -297,6 +297,20 @@ export default function OrderFulfillmentPage() {
     ? { pick: orders.filter((o) => o.is_pick_today).length, ship: orders.filter((o) => o.is_ship_today).length, all: orders.length }
     : null;
 
+  // P5.3 (LBL brief): orders older than the instance's fulfilment_view_start_date
+  // are excluded from is_pick_today/is_ship_today (see report_order_fulfillment,
+  // migration 0061) but still returned here — All Orders must keep seeing
+  // everything, only the queue tabs are gated. Counted from the full `orders` set
+  // (not visibleRows) since the point is "how many are hidden from this tab
+  // overall," not a count that shrinks as the user narrows their own search.
+  const hiddenByFloorCount = orders
+    ? tab === "pick"
+      ? orders.filter((o) => o.pick_today_hidden_by_floor).length
+      : tab === "ship"
+        ? orders.filter((o) => o.ship_today_hidden_by_floor).length
+        : 0
+    : 0;
+
   const selectedOrders = useMemo(() => (orders ?? []).filter((o) => selectedSaleIds.has(o.cin7_sale_id)), [orders, selectedSaleIds]);
   const pickList = useMemo(() => buildBatchPickList(selectedOrders, linesBySaleId), [selectedOrders, linesBySaleId]);
 
@@ -391,6 +405,16 @@ export default function OrderFulfillmentPage() {
             )}
           </div>
           {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
+          {hiddenByFloorCount > 0 && (
+            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              {hiddenByFloorCount} older order{hiddenByFloorCount === 1 ? "" : "s"} hidden by the start-date setting — visible under All
+              Orders, or adjust the setting on{" "}
+              <a href="/settings/instances" className="underline">
+                Instances
+              </a>
+              .
+            </p>
+          )}
 
           <div className="mt-4 flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1.5 text-sm">
