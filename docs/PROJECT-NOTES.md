@@ -567,7 +567,57 @@ cleanly at request time (standing rule #1) — 307 redirect-to-login (unauthenti
 "SYNC_SHARED_SECRET is not configured" — pre-existing, unrelated to this change: that env var isn't
 set in this local `.env.local`, and `assertInternalAuth` throws before reaching any sync code.)
 
-**Phase 4 remaining:** 4.4 job-chunk claim (`locked_at` column + claiming UPDATE).
+**Phase 4.4 (shipped) — job-chunk claim for push_jobs/pull_jobs:** targets audit finding #4
+("concurrent job chunks — status read isn't a claim"). `continuePushJobAction`/
+`continuePullJobAction` each read the job row, run the next budgeted chunk (up to ~260s of real
+Cin7 API calls), then write the merged result back — two concurrent calls for the SAME jobId
+(realistic case: two browser tabs open to the same org's `/import` or `/migrate`, both finding the
+same org-wide "current running job" on mount — `usePushJob.ts`/`usePullJob.ts`'s mount-effect
+"resume" path) both read the same prior state and race to write it back; whichever UPDATE lands
+last silently overwrites the other's result.
+- **Different shape from 4.1-4.3 again**: no new table or function needed. The job row already
+  exists by the time a chunk runs (created by `startPushJobAction`/`startPullJobAction`
+  beforehand), so "claiming" is a single atomic conditional UPDATE issued directly via the
+  Supabase client — `UPDATE ... SET locked_at = now() WHERE id = $jobId AND (locked_at IS NULL OR
+  locked_at < now() - ttl) RETURNING id` — Postgres's own row-level locking on that UPDATE
+  statement makes the check-and-set atomic against a concurrent caller doing the exact same
+  UPDATE, the same principle 0055-0057 needed a whole INSERT-or-reclaim function for, but simpler
+  here since there's no "doesn't exist yet" case to handle.
+- **Migration `0058`** — adds a plain `locked_at timestamptz` column to both `push_jobs` and
+  `pull_jobs`. `push_jobs` itself has no earlier migration file in this repo (shipped 2026-07-19,
+  applied directly to the live DB — see `0047_pull_jobs.sql`'s own note about that gap); this
+  migration only adds a column to it, so it's safe regardless. Test:
+  `supabase/tests/0058_job_locks.test.sql` (transactional, exercises the exact claiming-UPDATE
+  shape rather than a function, since there is none this time), plus a live `execute_sql` run
+  against the real DB after applying.
+- **`src/lib/job-lock.ts`** — `claimJobLock`/`releaseJobLock`, generic across both tables
+  (`JobLockTable = "push_jobs" | "pull_jobs"`). `JOB_LOCK_TTL_SECONDS` = 6 min, same reasoning as
+  `sync-lock.ts`'s TTL. `releaseJobLock` takes the exact `locked_at` the caller claimed and only
+  clears a row matching it (defense-in-depth — in practice a chunk can never actually outlive the
+  TTL, since Vercel's 300s hard function timeout is well inside the 6 min window).
+- **`runNextChunk`/`runNextPullChunk`** now claim the job row before doing any real work and
+  release in a `finally`; a call that loses the claim reports back the unchanged prior state as
+  still `"running"` rather than double-processing (no error surfaced — the client's poll loop just
+  asks again).
+- **Found in passing, fixed**: wiring this up surfaced a real interaction bug with Phase 4.3.
+  `runNextChunk`'s "is this instance done yet" check only ever looked at `truncated` — a
+  `skippedLocked` outcome (Phase 4.3's sync lock held by a concurrent run, added after this
+  function was written) has `truncated: undefined`, which read as "done", so a push job could end
+  early having never actually finished syncing that instance. Fixed with a `stillNeedsWork` helper
+  checking both fields, used everywhere `runNextChunk` previously checked `truncated` alone. (This
+  fix depends on 4.3's `skippedLocked` field, which doesn't exist on `main` yet — this branch is
+  stacked on `harden/phase4.3-sync-advisory-lock` rather than `main` for that reason; merge order
+  matters here, 4.3 before 4.4.)
+- **Fails OPEN**: any guard error (DB down, migration not applied) → proceeds to run the chunk
+  exactly as before.
+
+Verified: `tsc`/`eslint`/`vitest` (full suite, 961 tests) clean, `next build` clean, and a
+`next start` + `curl` against `/import`, `/migrate`, and `/` confirms both touched `"use server"`
+files evaluate cleanly at request time (standing rule #1) — 307 redirect-to-login (unauthenticated,
+expected) ×2 and 200 respectively, no module-crash errors in the server log.
+
+**Phase 4 complete** — all four sub-phases (PO idempotency, Stock Transfer idempotency, sync
+advisory lock, job-chunk claim) shipped. Next audit-driven work, if any, needs a fresh pass.
 
 ## Known gaps (scoped, not yet started — see Task #33 in project tracking)
 
