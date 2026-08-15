@@ -8,6 +8,12 @@ import { logActivity } from "@/lib/activity-log";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsForReplenish } from "@/cin7/product-reorder";
 import { createStockTransfer, type CreateStockTransferResult } from "@/cin7/stock-transfers";
+import {
+  stockTransferIdempotencyKey,
+  claimStockTransferCreation,
+  settleStockTransferCreation,
+  releaseStockTransferCreation,
+} from "@/lib/stock-transfer-idempotency";
 import { getProductAvailabilitySyncStatus, type ProductAvailabilitySyncStatus } from "@/reports/query";
 import { syncOrgProductAvailability, type ProductAvailabilitySyncSummary } from "@/sync/sync-product-availability";
 import { resolveReorderThresholds, type AvailabilityRow, type ReplenishProductInput, type ReplenishLine } from "@/reports/replenish/build";
@@ -112,6 +118,23 @@ export interface CreatedTransfer {
   skus: string[];
 }
 
+export interface FailedTransfer {
+  toLocation: string;
+  error: string;
+}
+
+export interface CreateTransfersResult {
+  created: CreatedTransfer[];
+  failed: FailedTransfer[];
+  /**
+   * Transfers that were NOT created because an identical transfer for this
+   * exact (fromLocation, toLocation, line-set) was already created moments
+   * ago (double-click / two tabs) — the existing transfer is returned
+   * instead of duplicating it (Phase 4.2).
+   */
+  deduplicated?: CreatedTransfer[];
+}
+
 /**
  * Creates the real Stock Transfer(s) in Cin7. `POST /stockTransfer` moves
  * lines between exactly one (FromLocation, ToLocation) pair per call (see
@@ -131,12 +154,21 @@ export interface CreatedTransfer {
  * simplification (splitting a single proposed line across multiple
  * batches is out of scope for now, same as the plan's other deferred
  * items).
+ *
+ * Idempotency guard (Phase 4.2): each destination group claims the right to
+ * create THIS exact transfer before hitting Cin7 (migration 0056), same
+ * pattern as the Supplier Planner's PO-creation guard (Phase 4.1) — a
+ * double-click / two tabs / concurrent invocation of the same selection
+ * can't move the same stock twice. Per-group try/catch (unlike this
+ * function's previous single top-level try/catch) so a failure partway
+ * through still reports and logs whichever transfers genuinely got created
+ * in Cin7, rather than silently discarding that they happened.
  */
 export async function createReplenishTransfersAction(
   instanceId: string,
   fromLocation: string,
   lines: ReplenishLine[]
-): Promise<ReplenishActionResult<CreatedTransfer[]>> {
+): Promise<ReplenishActionResult<CreateTransfersResult>> {
   if (!instanceId) return { ok: false, error: "Choose an instance." };
   if (!fromLocation) return { ok: false, error: "Choose a source location." };
   if (!lines.length) return { ok: false, error: "Nothing to transfer." };
@@ -175,34 +207,86 @@ export async function createReplenishTransfersAction(
     }
 
     const created: CreatedTransfer[] = [];
+    const failed: FailedTransfer[] = [];
+    const deduplicated: CreatedTransfer[] = [];
+
     for (const [toLocation, destLines] of linesByDestination) {
-      const result: CreateStockTransferResult = await createStockTransfer(
-        creds,
+      // Idempotency guard (Phase 4.2): claim the right to create THIS exact
+      // transfer before hitting Cin7, so a double-click / two tabs /
+      // concurrent invocation of the same selection can't move the same
+      // stock twice.
+      const idempotencyKey = stockTransferIdempotencyKey(
         fromLocation,
         toLocation,
-        destLines.map((l) => {
-          const batch = bestBatchBySku.get(l.productSku);
-          return {
-            sku: l.productSku,
-            transferQuantity: l.quantity,
-            batchSn: batch?.batchSn ?? null,
-            expiryDate: batch?.expiryDate ?? null,
-          };
-        })
+        destLines.map((l) => ({ productSku: l.productSku, transferQuantity: l.quantity }))
       );
-      created.push({ toLocation, taskId: result.taskId, number: result.number, status: result.status, skus: destLines.map((l) => l.productSku) });
+      const claim = await claimStockTransferCreation(db, orgId, instanceId, idempotencyKey);
+      if (!claim.claimed) {
+        if (claim.existingStatus === "completed" && claim.cin7TransferId) {
+          // Already created for this exact selection within the window —
+          // return the existing transfer instead of duplicating it.
+          deduplicated.push({
+            toLocation,
+            taskId: claim.cin7TransferId,
+            number: claim.transferNumber ?? claim.cin7TransferId,
+            status: "DRAFT",
+            skus: destLines.map((l) => l.productSku),
+          });
+        } else {
+          // A concurrent request is creating this same transfer right now.
+          failed.push({
+            toLocation,
+            error: "A stock transfer for these exact lines is already being created — skipped to avoid moving the same stock twice.",
+          });
+        }
+        continue;
+      }
+
+      try {
+        const result: CreateStockTransferResult = await createStockTransfer(
+          creds,
+          fromLocation,
+          toLocation,
+          destLines.map((l) => {
+            const batch = bestBatchBySku.get(l.productSku);
+            return {
+              sku: l.productSku,
+              transferQuantity: l.quantity,
+              batchSn: batch?.batchSn ?? null,
+              expiryDate: batch?.expiryDate ?? null,
+            };
+          })
+        );
+        created.push({ toLocation, taskId: result.taskId, number: result.number, status: result.status, skus: destLines.map((l) => l.productSku) });
+
+        // Mark the idempotency claim completed with the real transfer's
+        // identity, so a resubmit inside the window returns THIS transfer
+        // rather than duplicating it.
+        await settleStockTransferCreation(db, orgId, instanceId, idempotencyKey, result.taskId, result.number);
+      } catch (e) {
+        // The create failed — release the claim so an immediate retry isn't
+        // blocked for the whole TTL window.
+        await releaseStockTransferCreation(db, orgId, instanceId, idempotencyKey);
+        failed.push({ toLocation, error: e instanceof Error ? e.message : "Unknown error" });
+      }
     }
 
-    await logActivity(db, {
-      orgId,
-      instanceId,
-      actor: { userId, email },
-      action: "replenish.create_transfer",
-      summary: `Created ${created.length} draft transfer${created.length === 1 ? "" : "s"} from ${fromLocation} (${lines.length} line${lines.length === 1 ? "" : "s"})`,
-      detail: { fromLocation, transfers: created },
-    });
+    if (created.length) {
+      await logActivity(db, {
+        orgId,
+        instanceId,
+        actor: { userId, email },
+        action: "replenish.create_transfer",
+        summary: `Created ${created.length} draft transfer${created.length === 1 ? "" : "s"} from ${fromLocation}${failed.length ? ` (${failed.length} failed)` : ""}${deduplicated.length ? ` (${deduplicated.length} already existed)` : ""}`,
+        detail: { fromLocation, transfers: created, failed, deduplicated },
+      });
+    }
 
-    return { ok: true, data: created };
+    return {
+      ok: failed.length === 0,
+      data: { created, failed, deduplicated },
+      error: failed.length ? `${failed.length} of ${linesByDestination.size} transfer(s) failed to create` : undefined,
+    };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

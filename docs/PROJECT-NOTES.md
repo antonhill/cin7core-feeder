@@ -494,9 +494,40 @@ concurrent job chunks (status read isn't a claim).
 
 Rollout: apply `0055` before merging (guard fails open until then, so out-of-order is safe too).
 
-**Phase 4 remaining:** 4.2 stock-transfer idempotency (same pattern, needs a guard table);
-4.3 per-(org,instance) advisory lock around syncs (pure code); 4.4 job-chunk claim (`locked_at`
-column + claiming UPDATE).
+**Phase 4.2 (shipped) — Stock-Transfer-creation idempotency:** identical shape to 4.1, applied to
+`createReplenishTransfersAction` instead of PO creation.
+- **Migration `0056`** — `stock_transfer_creation_claims` table + atomic
+  `stock_transfer_creation_claim(org, instance, key, ttl_seconds)` function, same INSERT-or-
+  `FOR UPDATE`-reclaim shape as `po_creation_claim` — written with the table-qualified-column fix
+  from the start (0055 needed a follow-up migration for this; the `RETURNS TABLE` output params
+  share names with the underlying table's columns, so an unqualified `select` is ambiguous). RLS
+  on, no policies, EXECUTE revoked from anon/authenticated. Test:
+  `supabase/tests/0056_stock_transfer_creation_claims.test.sql` (transactional), plus a live
+  `execute_sql` run against the real DB after applying.
+- **`src/lib/stock-transfer-idempotency.ts`** — `stockTransferIdempotencyKey` (sha256 of
+  fromLocation+toLocation+sorted sku/qty lines — batch/expiry deliberately excluded from the key
+  since it's resolved fresh from current stock on each call, not part of the user's selection
+  identity), `claimStockTransferCreation` / `settleStockTransferCreation` /
+  `releaseStockTransferCreation`.
+- **`createReplenishTransfersAction`** restructured from a single top-level try/catch (which lost
+  evidence of already-created transfers if a later destination group failed) to per-group
+  try/catch, matching the PO action's shape: claims each destination group **before** the Cin7
+  create; a live `completed` claim → returns the existing transfer (`deduplicated` result field,
+  amber UI note on `/replenish`); a live `pending` claim → skipped as `failed` ("already being
+  created"); success → settle; failure → release (immediate retry). `CreateTransfersResult`
+  (`created`/`failed`/`deduplicated`) replaces the old bare `CreatedTransfer[]` return — UI
+  updated to match Supplier Planner's three-block (amber/green/red) result rendering.
+- **Fails OPEN**: any guard error (DB down, migration not applied) → proceeds to create exactly
+  as before. Same 15 min TTL as 4.1 — covers double-click/retry/concurrent, short of a genuine
+  later replenish of the same lines.
+
+Verified: `tsc`/`eslint`/`vitest` (full suite, 940 tests) clean, `next build` clean, and a
+`next start` + `curl` against `/replenish` and `/` confirms the touched `"use server"` file
+evaluates cleanly at request time (standing rule #1) — 307 redirect-to-login (unauthenticated,
+expected) and 200 respectively, no module-crash errors in the server log.
+
+**Phase 4 remaining:** 4.3 per-(org,instance) advisory lock around syncs (pure code); 4.4
+job-chunk claim (`locked_at` column + claiming UPDATE).
 
 ## Known gaps (scoped, not yet started — see Task #33 in project tracking)
 
