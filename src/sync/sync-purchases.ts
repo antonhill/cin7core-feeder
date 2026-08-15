@@ -10,6 +10,16 @@ import { acquireSyncRouteLock, releaseSyncRouteLock } from "@/lib/sync-route-loc
 // spreads across several sync runs instead of one timing out (Vercel's
 // maxDuration; see api/sync-purchases/route.ts), same reasoning as sales.
 const DETAIL_FETCH_BATCH_SIZE = 50;
+// Same bounded-initial-backfill reasoning/value as sales (sync-sales.ts) —
+// a purchase order older than this that's still open is a rare edge case,
+// not the common path this needs to optimize for.
+const DEFAULT_BACKFILL_MONTHS = 12;
+
+function monthsAgoIso(months: number): string {
+  const d = new Date();
+  d.setMonth(d.getMonth() - months);
+  return d.toISOString();
+}
 
 export interface PurchasesSyncSummary {
   instanceId: string;
@@ -26,11 +36,16 @@ function toDateOnly(value: string | null | undefined): string | null {
 
 /**
  * Phase 1: pulls /purchaseList (cheap, paginated, already used by System
- * Health) for every purchase order. Unlike sales, /purchaseList has no
- * confirmed "Updated" watermark field to filter by, so this scans the full
- * list each run — acceptable for now since purchase volume is typically far
- * lower than sales volume; revisit if that stops being true. A purchase is
- * queued for phase 2 (detail_synced_at cleared) when it's new, or its
+ * Health) for every purchase order changed since this instance's last
+ * synced watermark — the last `DEFAULT_BACKFILL_MONTHS` months on first run,
+ * same bounded-backfill shape as sales (sync-sales.ts). Confirmed live
+ * 2026-08-15 (Spark Demo instance) that `UpdatedSince` genuinely narrows
+ * `/purchaseList`'s result set (100 -> 1 row with a 7-day cutoff) via its
+ * `LastUpdatedDate` field — unlike `/finishedGoodsList`/
+ * `/production/orderList`, which showed identical counts across every
+ * cutoff and expose no comparable field, so those two stay full-scan (see
+ * docs/PROJECT-NOTES.md's Phase 3.3b section). A purchase is queued for
+ * phase 2 (detail_synced_at cleared) when it's new, or its
  * CombinedReceivingStatus changed since the last detail fetch (catching
  * partial -> fully received transitions). Previously skipped orders that had
  * never received anything ("NOT RECEIVED") entirely — widened 2026-07-10 for
@@ -39,44 +54,61 @@ function toDateOnly(value: string | null | undefined): string | null {
  * not CombinedReceivingStatus) is excluded now.
  */
 async function syncPurchasesList(db: SupabaseClient, orgId: string, instanceId: string, creds: Cin7Credentials): Promise<number> {
-  const entries = await fetchAllPurchasesList(creds);
-  const relevant = entries.filter((e) => e.CombinedReceivingStatus && e.Status !== "VOIDED");
-  if (!relevant.length) return 0;
-
-  const ids = relevant.map((e) => e.ID);
-  const { data: existingRows } = await db
-    .from("purchases")
-    .select("cin7_purchase_id, combined_receiving_status, detail_synced_at")
+  const { data: state } = await db
+    .from("purchases_sync_state")
+    .select("last_list_synced_at")
     .eq("org_id", orgId)
     .eq("instance_id", instanceId)
-    .in("cin7_purchase_id", ids);
-  const existingByCin7Id = new Map(
-    (existingRows ?? []).map((r: { cin7_purchase_id: string; combined_receiving_status: string | null; detail_synced_at: string | null }) => [
-      r.cin7_purchase_id,
-      r,
-    ])
-  );
+    .maybeSingle();
 
-  const rows = relevant.map((e) => {
-    const prior = existingByCin7Id.get(e.ID);
-    const changed = !prior || prior.combined_receiving_status !== (e.CombinedReceivingStatus ?? null);
-    return {
-      org_id: orgId,
-      instance_id: instanceId,
-      cin7_purchase_id: e.ID,
-      order_number: e.OrderNumber ?? null,
-      supplier_name: e.Supplier ?? null,
-      status: e.Status ?? null,
-      combined_receiving_status: e.CombinedReceivingStatus ?? null,
-      order_date: toDateOnly(e.OrderDate),
-      required_by: toDateOnly(e.RequiredBy),
-      detail_synced_at: changed ? null : (prior?.detail_synced_at ?? null),
-      updated_at: new Date().toISOString(),
-    };
-  });
+  const updatedSince: string = state?.last_list_synced_at ?? monthsAgoIso(DEFAULT_BACKFILL_MONTHS);
+  // Captured before any calls, so a purchase updated mid-run isn't missed by the next run's UpdatedSince.
+  const syncStartedAt = new Date().toISOString();
 
-  const { error } = await db.from("purchases").upsert(rows, { onConflict: "org_id,instance_id,cin7_purchase_id" });
-  if (error) throw new Error(`purchases upsert: ${error.message}`);
+  const entries = await fetchAllPurchasesList(creds, updatedSince);
+  const relevant = entries.filter((e) => e.CombinedReceivingStatus && e.Status !== "VOIDED");
+
+  if (relevant.length) {
+    const ids = relevant.map((e) => e.ID);
+    const { data: existingRows } = await db
+      .from("purchases")
+      .select("cin7_purchase_id, combined_receiving_status, detail_synced_at")
+      .eq("org_id", orgId)
+      .eq("instance_id", instanceId)
+      .in("cin7_purchase_id", ids);
+    const existingByCin7Id = new Map(
+      (existingRows ?? []).map((r: { cin7_purchase_id: string; combined_receiving_status: string | null; detail_synced_at: string | null }) => [
+        r.cin7_purchase_id,
+        r,
+      ])
+    );
+
+    const rows = relevant.map((e) => {
+      const prior = existingByCin7Id.get(e.ID);
+      const changed = !prior || prior.combined_receiving_status !== (e.CombinedReceivingStatus ?? null);
+      return {
+        org_id: orgId,
+        instance_id: instanceId,
+        cin7_purchase_id: e.ID,
+        order_number: e.OrderNumber ?? null,
+        supplier_name: e.Supplier ?? null,
+        status: e.Status ?? null,
+        combined_receiving_status: e.CombinedReceivingStatus ?? null,
+        order_date: toDateOnly(e.OrderDate),
+        required_by: toDateOnly(e.RequiredBy),
+        detail_synced_at: changed ? null : (prior?.detail_synced_at ?? null),
+        updated_at: new Date().toISOString(),
+      };
+    });
+
+    const { error } = await db.from("purchases").upsert(rows, { onConflict: "org_id,instance_id,cin7_purchase_id" });
+    if (error) throw new Error(`purchases upsert: ${error.message}`);
+  }
+
+  const { error: stateError } = await db
+    .from("purchases_sync_state")
+    .upsert({ org_id: orgId, instance_id: instanceId, last_list_synced_at: syncStartedAt }, { onConflict: "org_id,instance_id" });
+  if (stateError) throw new Error(`purchases_sync_state upsert: ${stateError.message}`);
 
   return relevant.length;
 }

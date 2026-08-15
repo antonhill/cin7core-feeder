@@ -2227,3 +2227,105 @@ export async function checkProductAvailabilityForSkus(creds: Cin7Credentials, sk
   const all = await fetchAllProductAvailability(creds);
   return skus.map((sku) => ({ sku, entries: all.filter((e) => e.SKU === sku) }));
 }
+
+const MODIFIED_FIELD_CANDIDATES = ["LastUpdatedDate", "LastModifiedOn", "ModifiedOn", "Updated", "UpdatedOn", "UpdatedDate", "LastModified"];
+
+function findModifiedFieldCandidate(record: Record<string, unknown>): { field: string; value: unknown } | null {
+  for (const key of Object.keys(record)) {
+    if (MODIFIED_FIELD_CANDIDATES.some((c) => c.toLowerCase() === key.toLowerCase())) return { field: key, value: record[key] };
+  }
+  return null;
+}
+
+export interface UpdatedSinceEndpointProbe {
+  label: string;
+  path: string;
+  /** Page-1 row count with no filter, a 10-year-ago cutoff (sanity check — should ~match unfiltered), and a 7-day-ago cutoff. */
+  unfilteredCount: number;
+  oldCutoffCount: number;
+  recentCutoffCount: number;
+  /** Every key seen on the first unfiltered row — read this when `modifiedField` is null to look for a differently-named candidate. */
+  fieldsOnFirstRow: string[];
+  /** The first last-modified-like field name found among MODIFIED_FIELD_CANDIDATES, if any. */
+  modifiedField: string | null;
+  /** True only when modifiedField exists AND every row returned under the recent cutoff has that field >= the cutoff — the real correctness check, not just a count comparison. */
+  filterConfirmedWorking: boolean;
+  /** Human-readable verdict combining the count comparison and (when available) the per-row check above. */
+  verdict: string;
+}
+
+/**
+ * Diagnostic: does Cin7's `UpdatedSince` list-filter param actually narrow
+ * results on a given endpoint, the way it's confirmed to work on
+ * `/saleList` (src/cin7/sales.ts) and, as of the run this function
+ * durably records the method for, `/purchaseList` too? Run live 2026-08-15
+ * against the Spark Demo instance: `/purchaseList` genuinely narrowed
+ * (100 -> 1 row with a 7-day cutoff, via a real `LastUpdatedDate` field);
+ * `/finishedGoodsList` and `/production/orderList` returned the IDENTICAL
+ * row count across every cutoff tried, with no last-modified-like field on
+ * either response — the exact "silently-ignored filter param would drop
+ * rows" risk docs/PROJECT-NOTES.md's Phase 3.3b flagged, now with live
+ * evidence rather than a guess. Re-run this (e.g. via a temporary button
+ * wired to one of the debugX actions in settings/instances/actions.ts,
+ * matching every other diagnostic in this file) if Cin7 ever changes these
+ * endpoints, or before extending the same optimization to a new one — never
+ * trust the docs alone for this (see this file's own standing rule #6 in
+ * PROJECT-NOTES.md).
+ */
+export async function probeUpdatedSinceFiltering(creds: Cin7Credentials): Promise<UpdatedSinceEndpointProbe[]> {
+  const targets: { label: string; path: string; listKey: string }[] = [
+    { label: "Purchases", path: "/purchaseList", listKey: "PurchaseList" },
+    { label: "Assembly Builds (FinishedGoods)", path: "/finishedGoodsList", listKey: "FinishedGoods" },
+    { label: "Production Orders", path: "/production/orderList", listKey: "ProductionOrderListItems" },
+  ];
+
+  const results: UpdatedSinceEndpointProbe[] = [];
+  for (const { label, path, listKey } of targets) {
+    const now = Date.now();
+    const oldCutoff = new Date(now - 3650 * 24 * 60 * 60 * 1000).toISOString();
+    const recentCutoff = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    const unfiltered = await cin7Request<Record<string, unknown>>(creds, path, { query: { Page: 1, Limit: 100 } });
+    const unfilteredRows = (unfiltered[listKey] as Record<string, unknown>[] | undefined) ?? [];
+
+    const withOldCutoff = await cin7Request<Record<string, unknown>>(creds, path, { query: { Page: 1, Limit: 100, UpdatedSince: oldCutoff } });
+    const oldRows = (withOldCutoff[listKey] as Record<string, unknown>[] | undefined) ?? [];
+
+    const withRecentCutoff = await cin7Request<Record<string, unknown>>(creds, path, {
+      query: { Page: 1, Limit: 100, UpdatedSince: recentCutoff },
+    });
+    const recentRows = (withRecentCutoff[listKey] as Record<string, unknown>[] | undefined) ?? [];
+
+    const modField = unfilteredRows[0] ? findModifiedFieldCandidate(unfilteredRows[0]) : null;
+    const staleRowsReturned = modField
+      ? recentRows.filter((r) => {
+          const v = r[modField.field];
+          return typeof v === "string" && new Date(v).getTime() < new Date(recentCutoff).getTime();
+        })
+      : [];
+    const filterConfirmedWorking = Boolean(modField) && staleRowsReturned.length === 0 && recentRows.length < unfilteredRows.length;
+
+    const verdict = !unfilteredRows.length
+      ? "No rows at all on this instance — can't probe further."
+      : !modField
+        ? `No modified-field found among candidates — only a count comparison is possible (unfiltered=${unfilteredRows.length}, 7d-cutoff=${recentRows.length}).`
+        : staleRowsReturned.length > 0
+          ? `FILTER IGNORED (or broken): ${staleRowsReturned.length} returned row(s) have ${modField.field} older than the 7-day cutoff.`
+          : filterConfirmedWorking
+            ? `Confirmed working: every returned row's ${modField.field} is >= the cutoff, and the count dropped (${unfilteredRows.length} -> ${recentRows.length}).`
+            : `Inconclusive: ${modField.field} present and no stale rows returned, but the count didn't drop (${unfilteredRows.length} -> ${recentRows.length}) — could mean everything genuinely changed recently.`;
+
+    results.push({
+      label,
+      path,
+      unfilteredCount: unfilteredRows.length,
+      oldCutoffCount: oldRows.length,
+      recentCutoffCount: recentRows.length,
+      fieldsOnFirstRow: unfilteredRows[0] ? Object.keys(unfilteredRows[0]) : [],
+      modifiedField: modField?.field ?? null,
+      filterConfirmedWorking,
+      verdict,
+    });
+  }
+  return results;
+}

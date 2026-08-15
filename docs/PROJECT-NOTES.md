@@ -504,11 +504,46 @@ Verified: `tsc`/`eslint`/`vitest` (full suite, 971 tests) clean, `next build` cl
 cleanly at request time (standing rule #1) — 307 redirect-to-login (unauthenticated, expected) on
 every gated page, 200 on `/`, no module-crash errors in the server log.
 
-**Phase 3 backlog (still not done):**
-- **3.3b** — `UpdatedSince` watermark for purchases/assembly-builds/production-orders lists
-  (they full-scan history every tick; sales already avoids this). **Still blocked on a live Cin7
-  probe** — a silently-ignored filter param would drop rows. Not attempted this session; no new
-  evidence available to unblock it.
+**Phase 3 backlog: 3.3b, resolved 2026-08-15 — a live probe against the Spark Demo instance
+settled the "silently-ignored filter param would drop rows" risk, with a genuinely mixed
+result:**
+- **Purchases: shipped.** `/purchaseList` genuinely narrows on `UpdatedSince` (100 -> 1 row with
+  a 7-day cutoff against real data) and carries a real `LastUpdatedDate` field. New
+  `purchases_sync_state` table (migration `0060`, mirrors `sales_sync_state` exactly) +
+  `syncPurchasesList` (`src/sync/sync-purchases.ts`) now reads/advances a watermark the same way
+  `syncSalesList` already did — 12-month bounded backfill on first run (same reasoning/value as
+  sales), full watermark thereafter. The per-purchase "queue for phase 2 detail fetch" decision
+  (`combined_receiving_status` comparison) is unchanged — the watermark only shrinks what phase 1
+  has to page through in the first place, an accounts-with-real-history efficiency win, not a
+  correctness change.
+- **Assembly Builds & Production Orders: confirmed NOT viable, not just "blocked."**
+  `/finishedGoodsList` and `/production/orderList` returned the IDENTICAL row count across
+  unfiltered / 10-year-cutoff / 7-day-cutoff, and neither response exposes any last-modified-like
+  field to independently verify a differently-named param either. Both stay full-scan. **Don't
+  re-attempt without new evidence** — same standing convention as the paused Production BOM push
+  (`src/sync/run-sync.ts`).
+- **Durable diagnostic landed**: `probeUpdatedSinceFiltering` (`src/cin7/debug.ts`) + a thin
+  `debugProbeUpdatedSinceFiltering` wrapper (`src/app/settings/instances/actions.ts`) — reruns
+  this exact three-endpoint check (count comparison + per-row modified-field verification, not
+  just counts) against any real instance. Not wired to a page button right now, matching this
+  file's own established convention: every one of the ~25 other diagnostics in `debug.ts` is
+  similarly reachable only by temporarily wiring one into `/settings/instances`'s page, not a
+  permanent UI feature — re-run this one the same way if Cin7 ever changes these endpoints, or
+  before extending the watermark optimization to a new one.
+- **How the probe itself was run**: a one-off `tsx` script hitting the real Cin7 API directly
+  (`loadCin7Credentials`-equivalent decrypt + raw `cin7Request` calls), NOT through
+  `createServiceRoleClient()` — this environment's local `.env.local` has an empty
+  `SUPABASE_SERVICE_ROLE_KEY` (present but blank; likely never fully populated when the file was
+  copied), so anything routing through the app's own Supabase client fails locally today. Worked
+  around by fetching the target instance's encrypted credential via the Supabase management API's
+  `execute_sql` directly (separate auth path, unaffected) and decrypting locally with
+  `ENCRYPTION_KEY` (which IS populated). **Real gap surfaced in passing**: `acquireCin7Slot`
+  (`src/cin7/rate-limit.ts`) calls `createServiceRoleClient()` outside any try/catch, contradicting
+  its own doc comment's "Never throws: a limiter/DB outage must never halt Cin7 traffic" — a
+  missing/malformed `SUPABASE_SERVICE_ROLE_KEY` would throw uncaught instead of falling back to the
+  in-memory throttle like every other failure mode there already does. Not fixed this session
+  (would need its own verification); flagged here since the probe's own workaround is what exposed
+  it. Production is unaffected (Vercel's own env config is separate from this local file).
 
 ## Data integrity — duplicate-write / partial-data (Phase 4, 2026-08-13)
 

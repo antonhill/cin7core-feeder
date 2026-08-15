@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
-import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail, surveyProductionOrderRoutingTasks, surveyProductionOrderOperationStatus, surveyProductionRun, surveyProductionOrderStatuses, surveyPurchaseDetailFields, surveyProductAvailabilityFields, surveySaleFulfillmentFields, surveyBackorderEtaFields, testSaleShipByWriteBack, testProductSupplierLink, surveyProductSupplierOptionsFields, findProductSupplierOptionsExample, testCreatePurchaseOrder, checkProductAvailabilityForSkus, checkProductSupplierOptionsForUnparsedFields } from "@/cin7/debug";
+import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail, surveyProductionOrderRoutingTasks, surveyProductionOrderOperationStatus, surveyProductionRun, surveyProductionOrderStatuses, surveyPurchaseDetailFields, surveyProductAvailabilityFields, surveySaleFulfillmentFields, surveyBackorderEtaFields, testSaleShipByWriteBack, testProductSupplierLink, surveyProductSupplierOptionsFields, findProductSupplierOptionsExample, testCreatePurchaseOrder, checkProductAvailabilityForSkus, checkProductSupplierOptionsForUnparsedFields, probeUpdatedSinceFiltering } from "@/cin7/debug";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
@@ -447,6 +447,25 @@ export async function debugSurveyPurchaseDetailFields(instanceId: string): Promi
   try {
     const creds = await loadInstanceCreds(instanceId);
     const result = await surveyPurchaseDetailFields(creds);
+    return { ok: true, message: JSON.stringify(result, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Diagnostic only: Phase 3.3b — does Cin7's `UpdatedSince` list-filter param
+ * actually narrow /purchaseList, /finishedGoodsList, and
+ * /production/orderList, or would trusting it silently drop rows? See
+ * probeUpdatedSinceFiltering's own doc comment (src/cin7/debug.ts) for the
+ * 2026-08-15 live findings this recorded against the Spark Demo instance —
+ * re-run this against a real instance before ever extending the watermark
+ * optimization already shipped for purchases to a new endpoint.
+ */
+export async function debugProbeUpdatedSinceFiltering(instanceId: string): Promise<TestConnectionResult> {
+  try {
+    const creds = await loadInstanceCreds(instanceId);
+    const result = await probeUpdatedSinceFiltering(creds);
     return { ok: true, message: JSON.stringify(result, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
