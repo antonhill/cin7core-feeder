@@ -29,6 +29,9 @@ function order(overrides: Partial<OrderFulfillmentRow>): OrderFulfillmentRow {
     is_ship_today: false,
     pick_today_hidden_by_floor: false,
     ship_today_hidden_by_floor: false,
+    total_ready_to_invoice_qty: 0,
+    is_ready_to_invoice: false,
+    ready_to_invoice_hidden_by_floor: false,
     ...overrides,
   };
 }
@@ -49,6 +52,9 @@ function line(overrides: Partial<OrderFulfillmentLineRow>): OrderFulfillmentLine
     backorder_po_number: null,
     backorder_eta: null,
     backorder_po_outstanding_qty: null,
+    packed_qty_authorised: 0,
+    invoiced_qty: 0,
+    ready_to_invoice_qty: 0,
     ...overrides,
   };
 }

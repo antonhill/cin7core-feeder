@@ -482,6 +482,11 @@ export interface OrderFulfillmentRow {
   pick_today_hidden_by_floor: boolean;
   /** Same as pick_today_hidden_by_floor, for the shipping queue. */
   ship_today_hidden_by_floor: boolean;
+  /** Sum of every line's ready_to_invoice_qty (P1, "Ready to Invoice" queue) — authorised-packed quantity not yet covered by an AUTHORISED/PAID invoice, summed across every fulfilment/invoice on the order. */
+  total_ready_to_invoice_qty: number;
+  is_ready_to_invoice: boolean;
+  /** Same floor semantics as pick_today_hidden_by_floor/ship_today_hidden_by_floor, for the Ready to Invoice queue. */
+  ready_to_invoice_hidden_by_floor: boolean;
 }
 
 export interface OrderFulfillmentLineRow {
@@ -503,6 +508,12 @@ export interface OrderFulfillmentLineRow {
   /** The PO's RequiredBy date — confirmed live to be the ONLY ETA Cin7 exposes at all (no per-line date field exists); frequently null even on open orders, shown as-is rather than hidden. */
   backorder_eta: string | null;
   backorder_po_outstanding_qty: number | null;
+  /** Packed quantity whose OWNING fulfilment's Pack.Status is AUTHORISED — narrower than packed_qty above, which counts every attempted pack regardless of authorisation (P1, "Ready to Invoice" queue). */
+  packed_qty_authorised: number;
+  /** Summed across every invoice on the order whose Status is AUTHORISED or PAID — a DRAFT or (if Cin7 ever shows one) VOIDED invoice's lines don't count, an allow-list not a deny-list since VOIDED has never been confirmed live. */
+  invoiced_qty: number;
+  /** greatest(packed_qty_authorised - invoiced_qty, 0) — the actual per-line qualifying quantity for Ready to Invoice. */
+  ready_to_invoice_qty: number;
 }
 
 /**

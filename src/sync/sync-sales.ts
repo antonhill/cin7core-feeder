@@ -50,6 +50,14 @@ function extractPickPackLineRows(orgId: string, instanceId: string, saleId: stri
     quantity: number | null;
     location: string | null;
     batch_sn: string | null;
+    // The OWNING fulfilment's own Pick.Status/Pack.Status (confirmed live
+    // 2026-08-15 for the LBL brief's Ready to Invoice queue — real values
+    // include AUTHORISED/NOT AVAILABLE) — distinct from the sale-level
+    // CombinedPickingStatus/CombinedPackingStatus aggregate, which can't
+    // say whether a SPECIFIC pack event is authorised on a multi-fulfilment
+    // sale. Every line from the same fulfilment shares its fulfilment's
+    // status, same "flatten across Fulfilments[]" shape as quantity.
+    status: string | null;
   }[] = [];
 
   let pickLineNumber = 0;
@@ -67,6 +75,7 @@ function extractPickPackLineRows(orgId: string, instanceId: string, saleId: stri
         quantity: line.Quantity ?? null,
         location: line.Location ?? null,
         batch_sn: line.BatchSN ?? null,
+        status: fulfilment.Pick?.Status ?? null,
       });
     }
     for (const line of fulfilment.Pack?.Lines ?? []) {
@@ -81,6 +90,7 @@ function extractPickPackLineRows(orgId: string, instanceId: string, saleId: stri
         quantity: line.Quantity ?? null,
         location: line.Location ?? null,
         batch_sn: line.BatchSN ?? null,
+        status: fulfilment.Pack?.Status ?? null,
       });
     }
   }
@@ -225,6 +235,11 @@ async function syncSaleDetails(
           invoice_number: invoice.InvoiceNumber ?? "",
           line_number: i,
           invoice_date: toDateOnly(invoice.InvoiceDate),
+          // AUTHORISED/DRAFT/PAID confirmed live — see Cin7SaleInvoice's own
+          // doc comment (sales.ts). Delete-then-reinsert on every resync
+          // (see the sale_lines delete above) means a later void is picked
+          // up the next time this sale's detail is re-fetched.
+          invoice_status: invoice.Status ?? null,
           product_sku: line.SKU ?? null,
           product_name: line.Name ?? null,
           quantity: line.Quantity ?? null,

@@ -232,8 +232,8 @@ describe("syncInstanceSales — detail phase", () => {
       Location: "Main Warehouse",
       CustomerReference: "PO-98765",
       Invoices: [
-        { InvoiceNumber: "INV-1", InvoiceDate: "2026-06-01T00:00:00", Lines: [{ SKU: "SKU-A", Name: "Widget", Quantity: 2, Price: 10, Total: 20, AverageCost: 4 }] },
-        { InvoiceNumber: "INV-2", InvoiceDate: "2026-06-15T00:00:00", Lines: [{ SKU: "SKU-B", Name: "Gadget", Quantity: 1, Price: 30, Total: 30, AverageCost: 12 }] },
+        { InvoiceNumber: "INV-1", InvoiceDate: "2026-06-01T00:00:00", Status: "AUTHORISED", Lines: [{ SKU: "SKU-A", Name: "Widget", Quantity: 2, Price: 10, Total: 20, AverageCost: 4 }] },
+        { InvoiceNumber: "INV-2", InvoiceDate: "2026-06-15T00:00:00", Status: "DRAFT", Lines: [{ SKU: "SKU-B", Name: "Gadget", Quantity: 1, Price: 30, Total: 30, AverageCost: 12 }] },
       ],
     });
     const { db, calls } = makeFakeDb({ syncState: { last_list_synced_at: null }, existingSales: [], pendingSales: [{ cin7_sale_id: "sale-1" }] });
@@ -243,10 +243,10 @@ describe("syncInstanceSales — detail phase", () => {
     expect(summary.detailSynced).toBe(1);
     expect(summary.detailFailed).toBe(0);
     const insertCall = calls.find((c) => c.table === "sale_lines" && c.op === "insert");
-    const lines = insertCall?.args[0] as { invoice_number: string; product_sku: string; line_number: number }[];
+    const lines = insertCall?.args[0] as { invoice_number: string; product_sku: string; line_number: number; invoice_status: string | null }[];
     expect(lines).toEqual([
-      expect.objectContaining({ invoice_number: "INV-1", product_sku: "SKU-A", line_number: 0 }),
-      expect.objectContaining({ invoice_number: "INV-2", product_sku: "SKU-B", line_number: 0 }),
+      expect.objectContaining({ invoice_number: "INV-1", product_sku: "SKU-A", line_number: 0, invoice_status: "AUTHORISED" }),
+      expect.objectContaining({ invoice_number: "INV-2", product_sku: "SKU-B", line_number: 0, invoice_status: "DRAFT" }),
     ]);
     const updateCall = calls.find((c) => c.table === "sales" && c.op === "update");
     expect(updateCall?.args[0]).toMatchObject({ location: "Main Warehouse", customer_reference: "PO-98765" });
@@ -335,11 +335,39 @@ describe("syncInstanceSales — detail phase", () => {
     await syncInstanceSales(db, "org1", "inst-1");
 
     const insertCall = calls.find((c) => c.table === "sale_pick_pack_lines" && c.op === "insert");
-    const rows = insertCall?.args[0] as { stage: string; product_sku: string; line_number: number; location: string | null; batch_sn: string | null }[];
+    const rows = insertCall?.args[0] as {
+      stage: string;
+      product_sku: string;
+      line_number: number;
+      location: string | null;
+      batch_sn: string | null;
+      status: string | null;
+    }[];
     expect(rows).toEqual([
-      expect.objectContaining({ stage: "pick", product_sku: "SKU-A", line_number: 0, location: "Main Warehouse", batch_sn: "BATCH-1" }),
-      expect.objectContaining({ stage: "pick", product_sku: "SKU-B", line_number: 1, location: "Overflow", batch_sn: null }),
-      expect.objectContaining({ stage: "pack", product_sku: "SKU-B", line_number: 0, location: null, batch_sn: null }),
+      expect.objectContaining({ stage: "pick", product_sku: "SKU-A", line_number: 0, location: "Main Warehouse", batch_sn: "BATCH-1", status: "AUTHORISED" }),
+      expect.objectContaining({ stage: "pick", product_sku: "SKU-B", line_number: 1, location: "Overflow", batch_sn: null, status: "AUTHORISED" }),
+      expect.objectContaining({ stage: "pack", product_sku: "SKU-B", line_number: 0, location: null, batch_sn: null, status: "AUTHORISED" }),
+    ]);
+  });
+
+  it("tags every line from a fulfilment with THAT fulfilment's own Pack.Status, not another fulfilment's", async () => {
+    vi.mocked(fetchSaleDetail).mockResolvedValueOnce({
+      ID: "sale-1",
+      Invoices: [],
+      Fulfilments: [
+        { TaskID: "f1", Pack: { Status: "NOT AVAILABLE", Lines: [{ SKU: "SKU-A", Quantity: 2 }] } },
+        { TaskID: "f2", Pack: { Status: "AUTHORISED", Lines: [{ SKU: "SKU-B", Quantity: 1 }] } },
+      ],
+    });
+    const { db, calls } = makeFakeDb({ syncState: { last_list_synced_at: null }, existingSales: [], pendingSales: [{ cin7_sale_id: "sale-1" }] });
+
+    await syncInstanceSales(db, "org1", "inst-1");
+
+    const insertCall = calls.find((c) => c.table === "sale_pick_pack_lines" && c.op === "insert");
+    const rows = insertCall?.args[0] as { product_sku: string; status: string | null }[];
+    expect(rows).toEqual([
+      expect.objectContaining({ product_sku: "SKU-A", status: "NOT AVAILABLE" }),
+      expect.objectContaining({ product_sku: "SKU-B", status: "AUTHORISED" }),
     ]);
   });
 
