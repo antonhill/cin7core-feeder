@@ -11,9 +11,20 @@ import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 
 const DAY_COUNT = 7;
 
-/** Only the confirmed-live invoice-status value means "done" — everything else (NOT INVOICED, null, or the plausible-but-unconfirmed PARTIALLY INVOICED) still needs attention. */
+/**
+ * LBL brief P1: `combined_invoice_status` is a sale-level aggregate, so it
+ * can't tell a sale with a fulfilment that's packed-and-not-yet-invoiced
+ * apart from one that's already fully invoiced on a multi-fulfilment order
+ * — it also can't exclude an order that's simply not packed yet at all
+ * (nothing to invoice regardless of status). `is_ready_to_invoice`
+ * (report_order_fulfillment, migration 0062) is the real per-SKU quantity
+ * comparison instead: authorised-packed minus invoiced, summed across every
+ * fulfilment/invoice on the order. Already floor-aware (P5.3) — an order
+ * hidden by the instance's fulfilment_view_start_date setting is already
+ * excluded here, no extra check needed.
+ */
 function needsInvoicing(order: OrderFulfillmentRow): boolean {
-  return order.combined_invoice_status !== "INVOICED";
+  return order.is_ready_to_invoice;
 }
 
 function isShipped(order: OrderFulfillmentRow): boolean {
@@ -95,6 +106,11 @@ function DayColumn({
 export default function InvoicingSchedulerPage() {
   const [weekStart, setWeekStart] = useState(currentWeekStart);
   const [orders, setOrders] = useState<OrderFulfillmentRow[] | null>(null);
+  // P5.3 (LBL brief): counted separately at load time, since `orders` itself
+  // already has ready_to_invoice_hidden_by_floor rows filtered out by
+  // needsInvoicing — same pattern as shipping-calendar/page.tsx's own
+  // hiddenByFloorCount.
+  const [hiddenByFloorCount, setHiddenByFloorCount] = useState(0);
   const [instances, setInstances] = useState<InstancePickerItem[]>([]);
   const [origins, setOrigins] = useState<InstanceOrigin[]>([]);
   const [instanceIds, setInstanceIds] = useState<string[]>([]);
@@ -115,6 +131,7 @@ export default function InvoicingSchedulerPage() {
       }
       setLoadError(null);
       setOrders(result.data.orders.filter(needsInvoicing));
+      setHiddenByFloorCount(result.data.orders.filter((o) => o.ready_to_invoice_hidden_by_floor).length);
       setInstances(result.data.instances);
     });
   }, [instanceIds]);
@@ -160,10 +177,11 @@ export default function InvoicingSchedulerPage() {
   return (
     <>
       <ReportDescription title="Invoicing Scheduler">
-        A calendar of sales still needing invoicing, placed on the day you choose relative to Ship By — set the
-        offset below to see what needs invoicing today, a few days ahead, or a few days after shipping. Each card
-        links straight into that sale in Cin7 Core and shows whether it&rsquo;s already shipped. Read-only —
-        nothing here writes to Cin7.
+A calendar of sales that have a packed, authorised fulfilment not yet covered by an invoice — including orders
+        already partially invoiced from an earlier fulfilment — placed on the day you choose relative to Ship By. Set
+        the offset below to see what needs invoicing today, a few days ahead, or a few days after shipping. Each card
+        links straight into that sale in Cin7 Core and shows whether it&rsquo;s already shipped. Read-only — nothing
+        here writes to Cin7.
       </ReportDescription>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -200,6 +218,16 @@ export default function InvoicingSchedulerPage() {
           </label>
         </div>
         {loadError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>}
+        {hiddenByFloorCount > 0 && (
+          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {hiddenByFloorCount} older order{hiddenByFloorCount === 1 ? "" : "s"} hidden by the start-date setting — visible on Order
+            Fulfillment&rsquo;s All Orders tab, or adjust the setting on{" "}
+            <a href="/settings/instances" className="underline">
+              Instances
+            </a>
+            .
+          </p>
+        )}
       </section>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
