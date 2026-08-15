@@ -20,9 +20,17 @@ interface MarkShippedOutcome {
 
 const DAY_COUNT = 7;
 
-/** Nothing left to schedule — a calendar for rescheduling shouldn't surface orders that have already shipped or been voided. */
+/**
+ * Nothing left to schedule — a calendar for rescheduling shouldn't surface
+ * orders that have already shipped or been voided. Also respects the
+ * instance's fulfilment_view_start_date floor (P5.3, LBL brief) — same
+ * ship_today_hidden_by_floor signal Order Fulfillment's Ship Today tab uses
+ * (report_order_fulfillment, migration 0061), applied here too per Anton's
+ * call: this calendar shows the same "ready to ship" set over a longer
+ * horizon, so stale pre-cleanup orders shouldn't clutter it either.
+ */
 function isSchedulable(order: OrderFulfillmentRow): boolean {
-  return order.combined_shipping_status !== "SHIPPED" && order.combined_shipping_status !== "VOIDED";
+  return order.combined_shipping_status !== "SHIPPED" && order.combined_shipping_status !== "VOIDED" && !order.ship_today_hidden_by_floor;
 }
 
 type Readiness = "ready" | "in_progress" | "not_started";
@@ -409,6 +417,10 @@ function OrderDetailModal({
 export default function ShippingCalendarPage() {
   const [weekStart, setWeekStart] = useState(currentWeekStart);
   const [orders, setOrders] = useState<OrderFulfillmentRow[] | null>(null);
+  // P5.3 (LBL brief): counted separately from `orders` at load time, since
+  // `orders` itself already has ship_today_hidden_by_floor rows filtered out
+  // by isSchedulable — this is the only place that count is still visible.
+  const [hiddenByFloorCount, setHiddenByFloorCount] = useState(0);
   const [lines, setLines] = useState<OrderFulfillmentLineRow[]>([]);
   const [instances, setInstances] = useState<InstancePickerItem[]>([]);
   const [instanceIds, setInstanceIds] = useState<string[]>([]);
@@ -442,6 +454,7 @@ export default function ShippingCalendarPage() {
       }
       setLoadError(null);
       setOrders(result.data.orders.filter(isSchedulable));
+      setHiddenByFloorCount(result.data.orders.filter((o) => o.ship_today_hidden_by_floor).length);
       setLines(result.data.lines);
       setInstances(result.data.instances);
     });
@@ -597,6 +610,16 @@ export default function ShippingCalendarPage() {
 
         {unscheduledCount > 0 && (
           <p className="mt-3 text-sm text-slate-400">{unscheduledCount} open order(s) have no Ship By date set — not shown here.</p>
+        )}
+        {hiddenByFloorCount > 0 && (
+          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {hiddenByFloorCount} older order{hiddenByFloorCount === 1 ? "" : "s"} hidden by the start-date setting — visible on Order
+            Fulfillment&rsquo;s All Orders tab, or adjust the setting on{" "}
+            <a href="/settings/instances" className="underline">
+              Instances
+            </a>
+            .
+          </p>
         )}
 
         {orders && (

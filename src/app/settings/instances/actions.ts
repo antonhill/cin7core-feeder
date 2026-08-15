@@ -19,6 +19,8 @@ export interface InstanceRecord {
   active: boolean;
   keyLast4: string;
   createdAt: string;
+  /** P5.3 (LBL brief): orders with an effective date (ship_by, falling back to order_date) before this hide from Pick Today / Ship Today / the Shipping Calendar — null means no floor, the default. Per-instance, not per-org: different instances can be at different points in their own history cleanup. */
+  fulfilmentViewStartDate: string | null;
 }
 
 export interface ActionResult {
@@ -35,6 +37,7 @@ async function toRecord(row: {
   base_url: string;
   active: boolean;
   created_at: string;
+  fulfilment_view_start_date: string | null;
 }): Promise<InstanceRecord> {
   let keyLast4 = "????";
   try {
@@ -51,6 +54,7 @@ async function toRecord(row: {
     active: row.active,
     keyLast4,
     createdAt: row.created_at,
+    fulfilmentViewStartDate: row.fulfilment_view_start_date,
   };
 }
 
@@ -61,7 +65,7 @@ export async function listInstances(): Promise<ActionResult> {
     const db = createServiceRoleClient();
     const { data, error } = await db
       .from("cin7_instances")
-      .select("id, name, account_id, application_key_encrypted, base_url, active, created_at")
+      .select("id, name, account_id, application_key_encrypted, base_url, active, created_at, fulfilment_view_start_date")
       .eq("org_id", orgId)
       .order("created_at");
     if (error) return { ok: false, error: error.message };
@@ -79,6 +83,8 @@ export async function upsertInstance(params: {
   applicationKey?: string;
   baseUrl: string;
   active: boolean;
+  /** "" clears the floor (no restriction); omitted on create defaults to no floor. */
+  fulfilmentViewStartDate?: string;
 }): Promise<ActionResult> {
   if (!params.name.trim()) return { ok: false, error: "Name is required." };
   if (!params.accountId.trim()) return { ok: false, error: "Account ID is required." };
@@ -97,6 +103,7 @@ export async function upsertInstance(params: {
         account_id: params.accountId.trim(),
         base_url: params.baseUrl.trim(),
         active: params.active,
+        fulfilment_view_start_date: params.fulfilmentViewStartDate?.trim() || null,
         updated_at: new Date().toISOString(),
       };
       if (params.applicationKey) update.application_key_encrypted = encrypt(params.applicationKey);

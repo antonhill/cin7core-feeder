@@ -478,6 +478,10 @@ export interface OrderFulfillmentRow {
   total_picked_qty: number;
   is_pick_today: boolean;
   is_ship_today: boolean;
+  /** True when this order would otherwise be pick-today but its effective date (ship_by, falling back to order_date) falls before the instance's fulfilment_view_start_date setting (P5.3) — lets the UI show "N older orders hidden" without re-deriving the qualification rule client-side. */
+  pick_today_hidden_by_floor: boolean;
+  /** Same as pick_today_hidden_by_floor, for the shipping queue. */
+  ship_today_hidden_by_floor: boolean;
 }
 
 export interface OrderFulfillmentLineRow {
