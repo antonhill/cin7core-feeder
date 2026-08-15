@@ -29,6 +29,9 @@ function row(overrides: Partial<OrderFulfillmentRow>): OrderFulfillmentRow {
     is_ship_today: false,
     pick_today_hidden_by_floor: false,
     ship_today_hidden_by_floor: false,
+    total_ready_to_invoice_qty: 0,
+    is_ready_to_invoice: false,
+    ready_to_invoice_hidden_by_floor: false,
     ...overrides,
   };
 }

@@ -126,6 +126,15 @@ export interface Cin7SaleInvoiceLine {
 export interface Cin7SaleInvoice {
   InvoiceNumber?: string;
   InvoiceDate?: string;
+  /**
+   * Confirmed live 2026-08-15 (probe for the LBL brief's Ready to Invoice
+   * queue, docs/PROJECT-NOTES.md's Phase P1 section): real observed values
+   * include AUTHORISED, DRAFT, and PAID. No VOIDED example turned up in the
+   * sample, so callers should treat this as an allow-list (AUTHORISED/PAID
+   * count as "really invoiced") rather than a deny-list against VOIDED —
+   * an unconfirmed enum value shouldn't silently count as "final."
+   */
+  Status?: string;
   Lines?: Cin7SaleInvoiceLine[];
 }
 
