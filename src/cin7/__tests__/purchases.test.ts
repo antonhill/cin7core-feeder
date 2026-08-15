@@ -31,4 +31,18 @@ describe("fetchAllPurchasesList", () => {
     expect(all).toHaveLength(101);
     expect(cin7Request).toHaveBeenCalledTimes(2);
   });
+
+  it("passes UpdatedSince through to every page's query when given", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ PurchaseList: [{ ID: "p1" }] });
+    await fetchAllPurchasesList(creds, "2026-08-01T00:00:00.000Z");
+    expect(cin7Request).toHaveBeenCalledWith(creds, "/purchaseList", {
+      query: { Page: 1, Limit: 100, UpdatedSince: "2026-08-01T00:00:00.000Z" },
+    });
+  });
+
+  it("omits UpdatedSince from the query when not given", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ PurchaseList: [] });
+    await fetchAllPurchasesList(creds);
+    expect(cin7Request).toHaveBeenCalledWith(creds, "/purchaseList", { query: { Page: 1, Limit: 100 } });
+  });
 });

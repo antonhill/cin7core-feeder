@@ -12,6 +12,7 @@ vi.mock("@/cin7/purchase-detail", () => ({ fetchPurchaseDetail: vi.fn() }));
 const creds = { accountId: "a", applicationKey: "k", baseUrl: "https://example.test" };
 
 interface FakeDbOptions {
+  syncState?: { last_list_synced_at: string | null } | null;
   existingPurchases?: { cin7_purchase_id: string; combined_receiving_status: string | null; detail_synced_at: string | null }[];
   pendingPurchases?: { cin7_purchase_id: string }[];
 }
@@ -45,6 +46,7 @@ function makeFakeDb(opts: FakeDbOptions) {
         calls.push({ table, op: "limit", args });
         return obj;
       },
+      maybeSingle: async () => terminalResult(),
       then: (resolve: (v: unknown) => void) => resolve(terminalResult()),
     };
     return obj;
@@ -52,6 +54,15 @@ function makeFakeDb(opts: FakeDbOptions) {
 
   const db = {
     from: (table: string) => {
+      if (table === "purchases_sync_state") {
+        return {
+          ...chain(table, () => ({ data: opts.syncState ?? null, error: null })),
+          upsert: (row: unknown, conflictOpts: unknown) => {
+            calls.push({ table, op: "upsert", args: [row, conflictOpts] });
+            return Promise.resolve({ error: null });
+          },
+        };
+      }
       if (table === "purchases") {
         return {
           select: (cols: string) => {
@@ -168,6 +179,35 @@ describe("syncInstancePurchases — list phase", () => {
     const upsertCall = calls.find((c) => c.table === "purchases" && c.op === "upsert");
     const rows = upsertCall?.args[0] as { detail_synced_at: unknown }[];
     expect(rows[0].detail_synced_at).toBeNull();
+  });
+
+  it("defaults to ~12 months ago on first run (no prior sync_state) — bounded initial backfill", async () => {
+    const { db } = makeFakeDb({ syncState: null, existingPurchases: [], pendingPurchases: [] });
+    await syncInstancePurchases(db, "org1", "inst-1");
+
+    const [, updatedSince] = vi.mocked(fetchAllPurchasesList).mock.calls[0];
+    const expected = new Date();
+    expected.setMonth(expected.getMonth() - 12);
+    const diffMs = Math.abs(new Date(updatedSince as string).getTime() - expected.getTime());
+    expect(diffMs).toBeLessThan(5000); // both computed via `new Date()` a few ms apart
+  });
+
+  it("passes the stored watermark as UpdatedSince on a subsequent run", async () => {
+    const { db } = makeFakeDb({ syncState: { last_list_synced_at: "2026-05-01T00:00:00.000Z" }, existingPurchases: [], pendingPurchases: [] });
+    await syncInstancePurchases(db, "org1", "inst-1");
+    expect(fetchAllPurchasesList).toHaveBeenCalledWith(expect.objectContaining(creds), "2026-05-01T00:00:00.000Z");
+  });
+
+  it("advances the watermark even when nothing came back changed", async () => {
+    vi.mocked(fetchAllPurchasesList).mockResolvedValue([]);
+    const { db, calls } = makeFakeDb({ syncState: { last_list_synced_at: "2026-05-01T00:00:00.000Z" }, existingPurchases: [], pendingPurchases: [] });
+
+    await syncInstancePurchases(db, "org1", "inst-1");
+
+    const stateUpsert = calls.find((c) => c.table === "purchases_sync_state" && c.op === "upsert");
+    expect(stateUpsert).toBeDefined();
+    const [row] = stateUpsert!.args as [{ org_id: string; instance_id: string; last_list_synced_at: string }, unknown];
+    expect(row.last_list_synced_at).not.toBe("2026-05-01T00:00:00.000Z");
   });
 });
 
