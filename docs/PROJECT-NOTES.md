@@ -460,12 +460,55 @@ RETRYABLE failure (rate-limit/network, already exhausted in http.ts) is re-throw
 into a second round of calls. No schema change. First-sync/bulk-create paths are unaffected
 (no stored ID yet → find→create as before).
 
-**Phase 3 backlog (not yet done):**
-- **3.3a** — per-(org,route) in-flight guard (needs a stale-TTL, not a naked flag) to stop
-  overlapping cron ticks / user syncs double-scanning.
+**Phase 3.3a (shipped):** per-(org,route) in-flight guard to stop overlapping cron ticks / user
+syncs double-scanning. All six `syncOrgX` functions (`sync-org.ts`'s `syncOrgInstances`,
+`sync-sales.ts`, `sync-purchases.ts`, `sync-assembly-builds.ts`, `sync-product-availability.ts`,
+`sync-production-runs.ts`) are each reachable from at least their own cron tick and on-demand
+`POST /api/sync*`, and several are ALSO reachable from a report page's own direct "sync now" action
+(`syncOrgProductAvailability` alone has 4 separate call sites: `replenish/actions.ts`, `reports/
+stock-health/actions.ts`, `reports/reorder-report/actions.ts`, `reports/fulfillment-cleanup/
+actions.ts`) — two overlapping runs for the same (org, route) both re-query and re-walk that org's
+whole instance list, wasted Cin7 calls and DB round trips (not, for 5 of the 6, a data-integrity
+risk the way Phase 4's unguarded create-paths were — Phase 4.3's separate `sync_locks` already
+guards the "sync" route's own per-instance writes against actual duplication).
+- **Migration `0059`** — `sync_route_locks` table + atomic `try_acquire_sync_route_lock(route, org,
+  ttl_seconds)` function, same INSERT-or-`FOR UPDATE`-reclaim shape as migration 0057's
+  `try_acquire_sync_lock` (see that migration's own comment for why a real Postgres advisory lock
+  doesn't fit this architecture). Keyed `(sync_route, org_id)` to match the existing
+  `sync_route_attempts` table's own column shape (0040) — a sibling table for the same rotation
+  machinery, but a genuine mutual-exclusion lock rather than fairness-ordering bookkeeping, so kept
+  separate rather than repurposing `sync_route_attempts.last_attempted_at` (already means something
+  else: "when did we last finish attempting this org"). RLS on, no policies, EXECUTE revoked from
+  anon/authenticated. Test: `supabase/tests/0059_sync_route_locks.test.sql` (transactional), plus a
+  live `execute_sql` run against the real DB after applying.
+- **`src/lib/sync-route-lock.ts`** — `acquireSyncRouteLock` / `releaseSyncRouteLock`,
+  `SYNC_ROUTE_LOCK_TTL_SECONDS` = 6 min (comfortably past every sync route's 300s Vercel hard
+  `maxDuration`).
+- **Guard lives inside each `syncOrgX` function itself**, not in `cron-rotation.ts` or each
+  `route.ts`'s POST handler — the shared choke point every caller (cron rotation, on-demand POST,
+  AND any direct action call) already goes through, mirroring how Phase 4.3's per-instance lock was
+  wired into `syncOrgInstances` rather than duplicated across its 3 callers. When `orgId` is given
+  (every real caller supplies one) and the lock isn't acquired: `syncOrgInstances` returns every
+  instance as `skippedLocked: true` (reusing Phase 4.3's own field — same "still needs work, retry
+  later" semantics); the other 5 simply return an empty result (self-resolving — the run that DOES
+  hold the lock does the real work, so returning nothing isn't silently losing anything, just not
+  double-attempting it). The legacy "no orgId, sweep every org" shape (unused by any current caller
+  across all 6 functions) proceeds unguarded, since there's no single org to lock.
+- **Fails OPEN**: any guard error (DB down, migration not applied) → proceeds to sync exactly as
+  before.
+
+Verified: `tsc`/`eslint`/`vitest` (full suite, 971 tests) clean, `next build` clean, and a
+`next start` + `curl` across every touched route's page (`/import`, `/migrate`, `/replenish`,
+`/reports`, `/reports/stock-health`, `/reports/reorder-report`, `/reports/fulfillment-cleanup`,
+`/reports/production-tracking`, and `/`) confirms every touched `"use server"` file evaluates
+cleanly at request time (standing rule #1) — 307 redirect-to-login (unauthenticated, expected) on
+every gated page, 200 on `/`, no module-crash errors in the server log.
+
+**Phase 3 backlog (still not done):**
 - **3.3b** — `UpdatedSince` watermark for purchases/assembly-builds/production-orders lists
-  (they full-scan history every tick; sales already avoids this). **Blocked on a live Cin7
-  probe** — a silently-ignored filter param would drop rows.
+  (they full-scan history every tick; sales already avoids this). **Still blocked on a live Cin7
+  probe** — a silently-ignored filter param would drop rows. Not attempted this session; no new
+  evidence available to unblock it.
 
 ## Data integrity — duplicate-write / partial-data (Phase 4, 2026-08-13)
 

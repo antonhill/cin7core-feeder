@@ -4,6 +4,7 @@ import { fetchAllProductionOrdersList } from "@/cin7/production-orders";
 import { fetchProductionOrderRun, pickLatestRun, actualOutputQty } from "@/cin7/production-order-run";
 import { deriveCurrentOperation, latestStartedOperation, computeWipCost, totalWastage } from "@/reports/production-tracking/build";
 import type { Cin7Credentials } from "@/cin7/types";
+import { acquireSyncRouteLock, releaseSyncRouteLock } from "@/lib/sync-route-lock";
 
 // Rate-limited detail fetch is one Cin7 call per order — capped per run so a
 // large open-order count spreads across several sync runs instead of one
@@ -249,6 +250,9 @@ export async function syncInstanceProductionRuns(
  * for the org, or just the given subset — mirroring sync-assembly-builds.ts's
  * shape. Per-instance failures are caught so one bad instance doesn't stop
  * others.
+ *
+ * Route lock (Phase 3.3a): guarded per (org, "sync-production-runs") — same
+ * reasoning as syncOrgSales's own route lock.
  */
 export async function syncOrgProductionRuns(
   db: SupabaseClient,
@@ -262,20 +266,33 @@ export async function syncOrgProductionRuns(
   if (instanceIds?.length) query = query.in("id", instanceIds);
   const { data: instances, error } = await query;
   if (error) throw new Error(error.message);
+  const allInstances = (instances ?? []) as { id: string; org_id: string }[];
 
-  const results: ProductionRunsSyncSummary[] = [];
-  for (const instance of (instances ?? []) as { id: string; org_id: string }[]) {
-    try {
-      results.push(await syncInstanceProductionRuns(db, instance.org_id, instance.id, force, includeFinished));
-    } catch (e) {
-      results.push({
-        instanceId: instance.id,
-        listSynced: 0,
-        detailSynced: 0,
-        detailFailed: 0,
-        errors: [{ productionOrderId: "-", error: e instanceof Error ? e.message : "Unknown error" }],
-      });
+  const runInstances = async (list: typeof allInstances) => {
+    const results: ProductionRunsSyncSummary[] = [];
+    for (const instance of list) {
+      try {
+        results.push(await syncInstanceProductionRuns(db, instance.org_id, instance.id, force, includeFinished));
+      } catch (e) {
+        results.push({
+          instanceId: instance.id,
+          listSynced: 0,
+          detailSynced: 0,
+          detailFailed: 0,
+          errors: [{ productionOrderId: "-", error: e instanceof Error ? e.message : "Unknown error" }],
+        });
+      }
     }
+    return results;
+  };
+
+  if (!orgId) return runInstances(allInstances);
+
+  const routeLock = await acquireSyncRouteLock(db, "sync-production-runs", orgId);
+  if (!routeLock.acquired) return [];
+  try {
+    return await runInstances(allInstances);
+  } finally {
+    await releaseSyncRouteLock(db, "sync-production-runs", orgId, routeLock.lockedAt);
   }
-  return results;
 }

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllFinishedGoodsList, fetchFinishedGoodsDetail } from "@/cin7/finished-goods";
 import type { Cin7Credentials } from "@/cin7/types";
+import { acquireSyncRouteLock, releaseSyncRouteLock } from "@/lib/sync-route-lock";
 
 // Rate-limited detail fetch is one Cin7 call per build — capped per run so a
 // large backlog spreads across several sync runs instead of one timing out
@@ -154,6 +155,9 @@ export async function syncInstanceAssemblyBuilds(db: SupabaseClient, orgId: stri
  * Syncs assembly build movement for active instances — every one for the
  * org, or just the given subset — mirroring sync-purchases.ts's shape.
  * Per-instance failures are caught so one bad instance doesn't stop others.
+ *
+ * Route lock (Phase 3.3a): guarded per (org, "sync-assembly-builds") — same
+ * reasoning as syncOrgSales's own route lock.
  */
 export async function syncOrgAssemblyBuilds(db: SupabaseClient, orgId?: string, instanceIds?: string[]): Promise<AssemblyBuildsSyncSummary[]> {
   let query = db.from("cin7_instances").select("id, org_id").eq("active", true);
@@ -161,20 +165,33 @@ export async function syncOrgAssemblyBuilds(db: SupabaseClient, orgId?: string, 
   if (instanceIds?.length) query = query.in("id", instanceIds);
   const { data: instances, error } = await query;
   if (error) throw new Error(error.message);
+  const allInstances = (instances ?? []) as { id: string; org_id: string }[];
 
-  const results: AssemblyBuildsSyncSummary[] = [];
-  for (const instance of (instances ?? []) as { id: string; org_id: string }[]) {
-    try {
-      results.push(await syncInstanceAssemblyBuilds(db, instance.org_id, instance.id));
-    } catch (e) {
-      results.push({
-        instanceId: instance.id,
-        listSynced: 0,
-        detailSynced: 0,
-        detailFailed: 0,
-        errors: [{ taskId: "-", error: e instanceof Error ? e.message : "Unknown error" }],
-      });
+  const runInstances = async (list: typeof allInstances) => {
+    const results: AssemblyBuildsSyncSummary[] = [];
+    for (const instance of list) {
+      try {
+        results.push(await syncInstanceAssemblyBuilds(db, instance.org_id, instance.id));
+      } catch (e) {
+        results.push({
+          instanceId: instance.id,
+          listSynced: 0,
+          detailSynced: 0,
+          detailFailed: 0,
+          errors: [{ taskId: "-", error: e instanceof Error ? e.message : "Unknown error" }],
+        });
+      }
     }
+    return results;
+  };
+
+  if (!orgId) return runInstances(allInstances);
+
+  const routeLock = await acquireSyncRouteLock(db, "sync-assembly-builds", orgId);
+  if (!routeLock.acquired) return [];
+  try {
+    return await runInstances(allInstances);
+  } finally {
+    await releaseSyncRouteLock(db, "sync-assembly-builds", orgId, routeLock.lockedAt);
   }
-  return results;
 }

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductAvailability } from "@/cin7/product-availability";
+import { acquireSyncRouteLock, releaseSyncRouteLock } from "@/lib/sync-route-lock";
 
 export interface ProductAvailabilitySyncSummary {
   instanceId: string;
@@ -66,6 +67,13 @@ export async function syncInstanceProductAvailability(db: SupabaseClient, orgId:
  * that instance (the delete+insert already happened or didn't; there's no
  * partial state to clean up), so a failed instance simply keeps its last
  * good snapshot until the next successful run.
+ *
+ * Route lock (Phase 3.3a): reachable from this route's own cron tick,
+ * on-demand POST, AND several report pages' direct "sync now" actions
+ * (replenish/actions.ts, reports/stock-health/actions.ts, reports/
+ * reorder-report/actions.ts, fulfillment-cleanup/actions.ts — the most
+ * call sites of any sync route) — guarded per (org, "sync-product-
+ * availability") for the same reasoning as syncOrgSales's own route lock.
  */
 export async function syncOrgProductAvailability(db: SupabaseClient, orgId?: string, instanceIds?: string[]): Promise<ProductAvailabilitySyncSummary[]> {
   let query = db.from("cin7_instances").select("id, org_id").eq("active", true);
@@ -73,14 +81,27 @@ export async function syncOrgProductAvailability(db: SupabaseClient, orgId?: str
   if (instanceIds?.length) query = query.in("id", instanceIds);
   const { data: instances, error } = await query;
   if (error) throw new Error(error.message);
+  const allInstances = (instances ?? []) as { id: string; org_id: string }[];
 
-  const results: ProductAvailabilitySyncSummary[] = [];
-  for (const instance of (instances ?? []) as { id: string; org_id: string }[]) {
-    try {
-      results.push(await syncInstanceProductAvailability(db, instance.org_id, instance.id));
-    } catch (e) {
-      results.push({ instanceId: instance.id, rowsSynced: 0, error: e instanceof Error ? e.message : "Unknown error" });
+  const runInstances = async (list: typeof allInstances) => {
+    const results: ProductAvailabilitySyncSummary[] = [];
+    for (const instance of list) {
+      try {
+        results.push(await syncInstanceProductAvailability(db, instance.org_id, instance.id));
+      } catch (e) {
+        results.push({ instanceId: instance.id, rowsSynced: 0, error: e instanceof Error ? e.message : "Unknown error" });
+      }
     }
+    return results;
+  };
+
+  if (!orgId) return runInstances(allInstances);
+
+  const routeLock = await acquireSyncRouteLock(db, "sync-product-availability", orgId);
+  if (!routeLock.acquired) return [];
+  try {
+    return await runInstances(allInstances);
+  } finally {
+    await releaseSyncRouteLock(db, "sync-product-availability", orgId, routeLock.lockedAt);
   }
-  return results;
 }
