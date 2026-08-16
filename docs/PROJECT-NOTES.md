@@ -69,6 +69,25 @@ prune/rewrite entries here rather than appending forever once something is fully
     reports the union of every field seen, specifically to catch a services/resources key that only
     shows up on some records. The UI's detail panel says this limitation out loud rather than
     silently omitting it.
+- **New sync-populated columns don't backfill existing data — learned the hard way, 2026-08-16.**
+  `sale_lines.invoice_status` (added by migration `0062`/P1, 2026-08-15) only gets set by
+  `syncSaleDetails` (`src/sync/sync-sales.ts`), which only re-fetches a sale's detail when
+  `detail_synced_at is null` — true for a never-synced sale, and reset to null when Cin7 reports
+  `cin7_updated_at` changed (see that function's own comment). A sale that was already fully
+  synced *before* the new column shipped, and hasn't had any Cin7-side change since, silently
+  keeps `invoice_status = null` forever — the sync has no reason to ever revisit it. Found live for
+  LBL's org: **100% of existing `sale_lines` rows (23,450) had `invoice_status = null`**, despite
+  `sales.combined_invoice_status` showing real INVOICED/PARTIALLY INVOICED data — silently breaking
+  Ready to Invoice, Box Label Queue, and the invoice-coverage filter for every pre-existing order,
+  reported by Anton as "the filter doesn't work." Fixed via a one-time backfill: reset
+  `detail_synced_at = null` for the ~5,519 sales with a real (non-NOT-INVOICED/NOT-AVAILABLE)
+  `combined_invoice_status`, letting the normal 15-min sync cron drain them naturally (50/instance
+  per run — a multi-thousand-row backlog takes on the order of a day to fully drain, faster if
+  "Sync sales now" is triggered manually more often). **Apply this lesson to any future migration
+  that adds a column meant to be populated by `syncSaleDetails`**: it needs either (a) a matching
+  one-time backfill (reset `detail_synced_at` for whatever subset needs the new field) shipped
+  alongside the migration, or (b) a deliberate decision that old data stays blank until its next
+  natural re-sync — don't assume "the sync code populates it" means existing rows already have it.
 - **Data Audit** (`/audit`): pulls a chosen instance's products live and flags missing
   Brand/sales-pricing/inventory-setup/GL-accounts, near-duplicate Category/UOM/Tag values
   (Levenshtein-based), incomplete `AdditionalAttribute1-10` values within a category (with a
