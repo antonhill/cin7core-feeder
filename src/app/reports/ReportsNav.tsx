@@ -30,6 +30,11 @@ const REPORT_CATEGORIES: ReportCategory[] = [
     links: [
       { href: "/reports/order-fulfillment", label: "Order Fulfillment" },
       { href: "/reports/shipping-calendar", label: "Shipping Calendar" },
+      // "Picking Calendar" is appended conditionally in ReportsNav() below,
+      // not listed here — unlike every other report on this page, it has
+      // its own org-toggleable module (PICKING_CALENDAR_MODULE) and ships
+      // off by default, so the link should only show once an admin has
+      // turned it on for this org (see module-nav.tsx's own comment on why).
       { href: "/reports/invoicing-scheduler", label: "Invoicing Scheduler" },
       { href: "/reports/fulfillment-cleanup", label: "Fulfillment Cleanup Helper" },
     ],
@@ -63,10 +68,17 @@ const REPORT_CATEGORIES: ReportCategory[] = [
   },
 ];
 
-export function ReportsNav({ currentOrgId }: { currentOrgId: string | null }) {
+export function ReportsNav({
+  currentOrgId,
+  pickingCalendarVisible,
+}: {
+  currentOrgId: string | null;
+  /** Mirrors the Casa das Natas-only link below — a per-org visibility check that isn't a blanket "always show" like every other link here. */
+  pickingCalendarVisible: boolean;
+}) {
   const pathname = usePathname();
 
-  const categories =
+  let categories =
     currentOrgId === CASA_DAS_NATAS_ORG_ID
       ? REPORT_CATEGORIES.map((category) =>
           category.label === "Sales"
@@ -74,6 +86,21 @@ export function ReportsNav({ currentOrgId }: { currentOrgId: string | null }) {
             : category
         )
       : REPORT_CATEGORIES;
+
+  if (pickingCalendarVisible) {
+    categories = categories.map((category) =>
+      category.label === "Fulfillment"
+        ? {
+            ...category,
+            links: [
+              category.links[0],
+              { href: "/reports/picking-calendar", label: "Picking Calendar" },
+              ...category.links.slice(1),
+            ],
+          }
+        : category
+    );
+  }
 
   return (
     <nav className="sticky top-6 w-56 shrink-0">
