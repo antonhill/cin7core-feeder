@@ -11,6 +11,8 @@ import { StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { useResizableColumns, ColGroup, ResizableTh } from "../resizable-columns";
 import { compareNullable, type SortDirection } from "../sortable-table";
 import { StatusBadge } from "../status-badge";
+import { matchesSearch } from "../text-search";
+import { SearchInput } from "../search-input";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
@@ -344,10 +346,14 @@ export default function OrderFulfillmentPage() {
     else if (tab === "readyToInvoice") rows = rows.filter((o) => o.is_ready_to_invoice);
     else if (tab === "boxLabel") rows = rows.filter((o) => o.is_ready_for_box_label);
 
-    const searchLower = search.trim().toLowerCase();
-    if (searchLower) {
+    // P5.4 (LBL brief): matches order #/customer OR any line's SKU/product
+    // name on the order — linesBySaleId is already fetched for the row
+    // expand panel, so this is free (no extra query).
+    if (search.trim()) {
       rows = rows.filter(
-        (o) => (o.order_number ?? "").toLowerCase().includes(searchLower) || (o.customer_name ?? "").toLowerCase().includes(searchLower)
+        (o) =>
+          matchesSearch(search, o.order_number, o.customer_name) ||
+          (linesBySaleId.get(o.cin7_sale_id) ?? []).some((l) => matchesSearch(search, l.product_sku, l.product_name))
       );
     }
     if (paymentFilter) rows = rows.filter((o) => o.combined_payment_status === paymentFilter);
@@ -367,7 +373,7 @@ export default function OrderFulfillmentPage() {
     if (invoiceCoverageFilter) rows = rows.filter((o) => o.invoice_coverage_status === invoiceCoverageFilter);
 
     return rows;
-  }, [orders, tab, search, paymentFilter, shipByFrom, shipByTo, backorderFilter, backorderPoFilter, invoiceCoverageFilter]);
+  }, [orders, tab, search, paymentFilter, shipByFrom, shipByTo, backorderFilter, backorderPoFilter, invoiceCoverageFilter, linesBySaleId]);
 
   const sortedRows = useMemo(() => {
     if (!sortColumn) return visibleRows;
@@ -521,16 +527,7 @@ export default function OrderFulfillmentPage() {
           )}
 
           <div className="mt-4 flex flex-wrap items-end gap-3">
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">Search</span>
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Order # or customer"
-                className="w-56 rounded-lg border border-slate-300 px-3 py-2"
-              />
-            </label>
+            <SearchInput value={search} onChange={setSearch} placeholder="Order #, customer, or SKU" />
             <label className="flex flex-col gap-1.5 text-sm">
               <span className="font-medium text-slate-700">Payment</span>
               <select value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2">

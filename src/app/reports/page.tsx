@@ -17,6 +17,8 @@ import { buildFlatReportSheet, buildPivotSheet } from "@/reports/export-xlsx";
 import { downloadBase64File } from "@/reports/download-base64-file";
 import { StaleBadge, staleSyncButtonClass } from "./sync-staleness";
 import { compareNullable, SortHeader, type SortDirection } from "./sortable-table";
+import { matchesSearch } from "./text-search";
+import { SearchInput } from "./search-input";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
@@ -154,13 +156,23 @@ export default function ReportsPage() {
   const [isRunning, startRunTransition] = useTransition();
 
   const [groupBy, setGroupBy] = useState<GroupBySelection>("none");
+  const [search, setSearch] = useState("");
   const [isExporting, startExportTransition] = useTransition();
   const [exportError, setExportError] = useState<string | null>(null);
 
+  // P5.4 (LBL brief): filters by product SKU or name before sorting/grouping
+  // — applied to the pivot's source rows too, so a search narrows what gets
+  // aggregated into pivot cells rather than only hiding whole pivot rows.
+  const filteredRows = useMemo(() => (rows ?? []).filter((r) => matchesSearch(search, r.product_sku, r.product_name)), [rows, search]);
+  const filteredPivotSourceRows = useMemo(
+    () => (pivotSourceRows ?? []).filter((r) => matchesSearch(search, r.product_sku, r.product_name)),
+    [pivotSourceRows, search]
+  );
+
   const pivotGrid = useMemo(() => {
     if (groupBy === "none" || !pivotSourceRows) return null;
-    return buildPivotGrid(pivotSourceRows, groupBy);
-  }, [pivotSourceRows, groupBy]);
+    return buildPivotGrid(filteredPivotSourceRows, groupBy);
+  }, [filteredPivotSourceRows, pivotSourceRows, groupBy]);
 
   const [expandedSku, setExpandedSku] = useState<string | null>(null);
   const [details, setDetails] = useState<Record<string, SaleLineDetailRow[]>>({});
@@ -179,13 +191,13 @@ export default function ReportsPage() {
 
   const sortedRows = useMemo(() => {
     if (!rows) return [];
-    const copy = [...rows];
+    const copy = [...filteredRows];
     copy.sort((a, b) => {
       const cmp = compareNullable(productSalesSortValue(a, sortColumn), productSalesSortValue(b, sortColumn));
       return sortDirection === "asc" ? cmp : -cmp;
     });
     return copy;
-  }, [rows, sortColumn, sortDirection]);
+  }, [rows, filteredRows, sortColumn, sortDirection]);
 
   function refreshOptionsAndStatus() {
     loadReportFilterOptionsAction(instanceIds.length ? instanceIds : undefined).then((result) => {
@@ -311,7 +323,7 @@ export default function ReportsPage() {
   }
 
   function handleExport() {
-    const sheet = pivotGrid ? buildPivotSheet(pivotGrid) : rows ? buildFlatReportSheet(rows) : null;
+    const sheet = pivotGrid ? buildPivotSheet(pivotGrid) : rows ? buildFlatReportSheet(filteredRows) : null;
     if (!sheet) return;
     setExportError(null);
     startExportTransition(async () => {
@@ -429,6 +441,7 @@ export default function ReportsPage() {
           {groupBy !== "none" && (
             <p className="text-sm text-slate-500">Every metric (Qty/Revenue/COGS/Profit/Margin%) shows together per column.</p>
           )}
+          <SearchInput value={search} onChange={setSearch} placeholder="Product name or SKU" />
         </div>
 
         <button
@@ -448,9 +461,9 @@ export default function ReportsPage() {
         <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="font-medium text-slate-900">
-              {rows.length} product{rows.length === 1 ? "" : "s"}
+              {filteredRows.length} product{filteredRows.length === 1 ? "" : "s"}
             </p>
-            {rows.length > 0 && (
+            {filteredRows.length > 0 && (
               <button
                 type="button"
                 onClick={handleExport}
@@ -462,9 +475,9 @@ export default function ReportsPage() {
             )}
           </div>
           {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
-          {rows.length === 0 && <p className="mt-2 text-sm text-slate-400">No invoiced sales match these filters.</p>}
+          {filteredRows.length === 0 && <p className="mt-2 text-sm text-slate-400">No invoiced sales match these filters.</p>}
 
-          {rows.length > 0 && (
+          {filteredRows.length > 0 && (
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>

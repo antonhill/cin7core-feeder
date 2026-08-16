@@ -11,6 +11,8 @@ import {
 import type { ReportFilterOptions, StockHealthRow, ProductAvailabilitySyncStatus } from "@/reports/query";
 import { SNAPSHOT_STALE_HOURS, hoursSince, StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
+import { matchesSearch } from "../text-search";
+import { SearchInput } from "../search-input";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
@@ -96,6 +98,7 @@ export default function StockHealthPage() {
 
   const [sortColumn, setSortColumn] = useState<StockHealthSortColumn>("stock_value");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [search, setSearch] = useState("");
 
   function handleSort(column: StockHealthSortColumn) {
     if (column === sortColumn) setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
@@ -105,15 +108,18 @@ export default function StockHealthPage() {
     }
   }
 
+  // P5.4 (LBL brief): filters by product SKU or name.
+  const filteredRows = useMemo(() => (rows ?? []).filter((r) => matchesSearch(search, r.product_sku, r.product_name)), [rows, search]);
+
   const sortedRows = useMemo(() => {
     if (!rows) return [];
-    const copy = [...rows];
+    const copy = [...filteredRows];
     copy.sort((a, b) => {
       const cmp = compareNullable(stockHealthSortValue(a, sortColumn), stockHealthSortValue(b, sortColumn));
       return sortDirection === "asc" ? cmp : -cmp;
     });
     return copy;
-  }, [rows, sortColumn, sortDirection]);
+  }, [rows, filteredRows, sortColumn, sortDirection]);
 
   function refreshOptionsAndStatus() {
     loadReportFilterOptionsAction().then((result) => {
@@ -194,7 +200,7 @@ export default function StockHealthPage() {
     if (!rows) return;
     setExportError(null);
     startExportTransition(async () => {
-      const result = await exportStockHealthXlsxAction(rows);
+      const result = await exportStockHealthXlsxAction(filteredRows);
       if (!result.ok || !result.data) {
         setExportError(result.error ?? "Unknown error");
         return;
@@ -264,6 +270,8 @@ export default function StockHealthPage() {
               ))}
             </select>
           </label>
+
+          <SearchInput value={search} onChange={setSearch} placeholder="Product name or SKU" />
         </div>
 
         <button
@@ -284,7 +292,7 @@ export default function StockHealthPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="font-medium text-slate-900">
-                {rows.length} product{rows.length === 1 ? "" : "s"}
+                {filteredRows.length} product{filteredRows.length === 1 ? "" : "s"}
               </p>
               {summary && (
                 <p className="mt-1 text-sm text-slate-500">
@@ -292,7 +300,7 @@ export default function StockHealthPage() {
                 </p>
               )}
             </div>
-            {rows.length > 0 && (
+            {filteredRows.length > 0 && (
               <button
                 type="button"
                 onClick={handleExport}
@@ -305,8 +313,9 @@ export default function StockHealthPage() {
           </div>
           {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
           {rows.length === 0 && <p className="mt-2 text-sm text-slate-400">No stock or movement data matches these filters.</p>}
+          {rows.length > 0 && filteredRows.length === 0 && <p className="mt-2 text-sm text-slate-400">Nothing matches &ldquo;{search}&rdquo;.</p>}
 
-          {rows.length > 0 && (
+          {filteredRows.length > 0 && (
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>

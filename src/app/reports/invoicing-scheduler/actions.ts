@@ -3,8 +3,8 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
 import { REPORTS_MODULE } from "@/app/module-nav";
-import { getOrderFulfillmentReport, getReportFilterOptions } from "@/reports/query";
-import type { OrderFulfillmentRow, OrderFulfillmentFilters } from "@/reports/query";
+import { getOrderFulfillmentReport, getOrderFulfillmentLines, getReportFilterOptions } from "@/reports/query";
+import type { OrderFulfillmentRow, OrderFulfillmentLineRow, OrderFulfillmentFilters } from "@/reports/query";
 import type { InstancePickerItem } from "@/actions/instances";
 
 export interface InvoicingSchedulerActionResult<T> {
@@ -15,16 +15,22 @@ export interface InvoicingSchedulerActionResult<T> {
 
 export interface InvoicingSchedulerData {
   orders: OrderFulfillmentRow[];
+  /** P5.4 (LBL brief): line-level SKU detail, fetched so the page's search box can match by SKU too — same cheap DB read shipping-calendar's own action already does, not a Cin7 call. */
+  lines: OrderFulfillmentLineRow[];
   instances: InstancePickerItem[];
 }
 
-/** Read-only — nothing here writes to Cin7, so unlike every write feature in this app there's no requireWriteAllowed gate. No per-SKU line detail either (unlike shipping-calendar's equivalent action) — this page is display + link only. */
+/** Read-only — nothing here writes to Cin7, so unlike every write feature in this app there's no requireWriteAllowed gate. */
 export async function loadInvoicingSchedulerOrdersAction(filters: OrderFulfillmentFilters = {}): Promise<InvoicingSchedulerActionResult<InvoicingSchedulerData>> {
   try {
     const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
-    const [orders, options] = await Promise.all([getOrderFulfillmentReport(db, orgId, filters), getReportFilterOptions(db, orgId)]);
-    return { ok: true, data: { orders, instances: options.instances } };
+    const [orders, lines, options] = await Promise.all([
+      getOrderFulfillmentReport(db, orgId, filters),
+      getOrderFulfillmentLines(db, orgId, filters),
+      getReportFilterOptions(db, orgId),
+    ]);
+    return { ok: true, data: { orders, lines, instances: options.instances } };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

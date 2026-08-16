@@ -569,7 +569,7 @@ export default function ProductionTrackingPage() {
                 type="text"
                 value={productSearch}
                 onChange={(e) => setProductSearch(e.target.value)}
-                placeholder="Search product name…"
+                placeholder="Search product name or SKU…"
                 className="rounded-full border border-slate-300 px-3 py-1.5 text-sm text-slate-700 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none"
               />
               {viewMode === "table" && (
