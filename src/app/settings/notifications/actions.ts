@@ -132,3 +132,44 @@ export async function deleteShipByNotificationRepAction(repName: string): Promis
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
 }
+
+export interface BomAlertSettings {
+  enabled: boolean;
+  warehouseManagerEmail: string;
+}
+
+const DEFAULT_BOM_ALERT_SETTINGS: BomAlertSettings = { enabled: false, warehouseManagerEmail: "" };
+
+/** P5.1: every org member can read — same read-access level as the Ship By notification settings above. */
+export async function getBomAlertSettingsAction(): Promise<NotificationsActionResult<BomAlertSettings>> {
+  try {
+    const { orgId } = await requireCurrentOrg();
+    const db = createServiceRoleClient();
+    const { data } = await db.from("bom_alert_settings").select("enabled, warehouse_manager_email").eq("org_id", orgId).maybeSingle();
+    if (!data) return { ok: true, data: DEFAULT_BOM_ALERT_SETTINGS };
+    return { ok: true, data: { enabled: data.enabled, warehouseManagerEmail: data.warehouse_manager_email ?? "" } };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/** Gated to org owners/admins — same reasoning as the Ship By notification settings above. */
+export async function saveBomAlertSettingsAction(settings: BomAlertSettings): Promise<NotificationsActionResult<null>> {
+  try {
+    const { orgId } = await requireOrgAdmin();
+    const db = createServiceRoleClient();
+    const { error } = await db.from("bom_alert_settings").upsert(
+      {
+        org_id: orgId,
+        enabled: settings.enabled,
+        warehouse_manager_email: settings.warehouseManagerEmail || null,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "org_id" }
+    );
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, data: null };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
