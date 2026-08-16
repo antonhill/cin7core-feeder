@@ -94,7 +94,10 @@ prune/rewrite entries here rather than appending forever once something is fully
     timestamp on `Attachments[]` to tell "added after this invoice" from "added before," and a
     per-row live Cin7 call at list-view scale would be exactly the N+1 cost this codebase avoids
     elsewhere (see Assemblies' component detail and Order Fulfillment's own "View documents", both
-    on-demand-only for the same reason).
+    on-demand-only for the same reason). **"Unmark" added 2026-08-16** (`unmarkBoxLabelPrintedAction`)
+    for a mistaken click — a plain delete of the `box_label_print_state` row, not a soft-clear, so
+    the order is judged purely on its live qualification again; shown as a small "Unmark" link next
+    to the "Printed {date}" text once a sale has been marked.
   - **Shipping Calendar / Picking Calendar** (P3, 0065): share one component,
     `src/app/reports/shipping-calendar/calendar-board.tsx`'s `CalendarBoard` — parameterized by
     `offsetDays` (days subtracted from `ship_by` to get a card's bucket day; 0 for Shipping

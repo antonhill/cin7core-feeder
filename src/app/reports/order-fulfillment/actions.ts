@@ -163,3 +163,38 @@ export async function markBoxLabelPrintedAction(instanceId: string, saleId: stri
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
 }
+
+/**
+ * Undoes a mistaken "Mark as printed" click — deletes the box_label_print_state
+ * row outright (not a soft-clear) so the order is judged purely on its live
+ * is_ready_for_box_label qualification again, same as if it had never been
+ * marked. Scoped to requireModuleAccess's own orgId, so a sale ID from
+ * another org can't be targeted. Not an error if the row is already gone
+ * (e.g. two tabs open, or it was already unmarked) — that's the same end
+ * state the caller wanted, not a failure.
+ */
+export async function unmarkBoxLabelPrintedAction(instanceId: string, saleId: string): Promise<OrderFulfillmentActionResult<void>> {
+  try {
+    const { orgId, userId, email } = await requireModuleAccess(REPORTS_MODULE.href);
+    const db = createServiceRoleClient();
+    const { error } = await db
+      .from("box_label_print_state")
+      .delete()
+      .eq("org_id", orgId)
+      .eq("instance_id", instanceId)
+      .eq("cin7_sale_id", saleId);
+    if (error) return { ok: false, error: error.message };
+
+    await logActivity(db, {
+      orgId,
+      instanceId,
+      actor: { userId, email },
+      action: "order_fulfillment.box_label_unmarked",
+      summary: `Unmarked box label printed for sale ${saleId}`,
+    });
+
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}

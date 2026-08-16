@@ -8,6 +8,7 @@ import {
   exportOrderFulfillmentXlsxAction,
   loadSaleAttachmentsAction,
   markBoxLabelPrintedAction,
+  unmarkBoxLabelPrintedAction,
   loadOrderFulfillmentExportColumnsAction,
   saveOrderFulfillmentExportColumnsAction,
 } from "./actions";
@@ -300,6 +301,20 @@ export default function OrderFulfillmentPage() {
     setMarkPrintedError(null);
     setMarkingPrintedSaleId(saleId);
     markBoxLabelPrintedAction(instanceId, saleId).then((result) => {
+      setMarkingPrintedSaleId(null);
+      if (!result.ok) {
+        setMarkPrintedError(result.error ?? "Unknown error");
+        return;
+      }
+      runLoad();
+    });
+  }
+
+  /** Undoes a mistaken "Mark as printed" click — same busy-state/refresh pattern as marking it, just the inverse write. */
+  function handleUnmarkBoxLabelPrinted(instanceId: string, saleId: string) {
+    setMarkPrintedError(null);
+    setMarkingPrintedSaleId(saleId);
+    unmarkBoxLabelPrintedAction(instanceId, saleId).then((result) => {
       setMarkingPrintedSaleId(null);
       if (!result.ok) {
         setMarkPrintedError(result.error ?? "Unknown error");
@@ -778,8 +793,19 @@ export default function OrderFulfillmentPage() {
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium">{qty(row.total_ready_for_box_label_qty)}</td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                           {row.box_label_printed_at ? (
-                            <span className="text-xs text-emerald-600" title={row.box_label_printed_by_email ?? undefined}>
-                              Printed {row.box_label_printed_at.slice(0, 10)}
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="text-xs text-emerald-600" title={row.box_label_printed_by_email ?? undefined}>
+                                Printed {row.box_label_printed_at.slice(0, 10)}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleUnmarkBoxLabelPrinted(row.instance_id, row.cin7_sale_id)}
+                                disabled={markingPrintedSaleId === row.cin7_sale_id}
+                                title="Clicked by mistake? Undo it."
+                                className="text-xs font-medium text-slate-400 underline hover:text-slate-600 disabled:opacity-50"
+                              >
+                                {markingPrintedSaleId === row.cin7_sale_id ? "…" : "Unmark"}
+                              </button>
                             </span>
                           ) : row.is_ready_for_box_label ? (
                             <button
