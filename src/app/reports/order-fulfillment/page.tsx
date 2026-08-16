@@ -792,7 +792,16 @@ export default function OrderFulfillmentPage() {
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium">{qty(row.total_ready_to_invoice_qty)}</td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium">{qty(row.total_ready_for_box_label_qty)}</td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4" onClick={(e) => e.stopPropagation()}>
-                          {row.box_label_printed_at ? (
+                          {row.is_ready_for_box_label ? (
+                            <button
+                              type="button"
+                              onClick={() => handleMarkBoxLabelPrinted(row.instance_id, row.cin7_sale_id)}
+                              disabled={markingPrintedSaleId === row.cin7_sale_id}
+                              className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                            >
+                              {markingPrintedSaleId === row.cin7_sale_id ? "Marking…" : "Mark as printed"}
+                            </button>
+                          ) : row.box_label_printed_at ? (
                             <span className="inline-flex items-center gap-1.5">
                               <span className="text-xs text-emerald-600" title={row.box_label_printed_by_email ?? undefined}>
                                 Printed {row.box_label_printed_at.slice(0, 10)}
@@ -807,15 +816,6 @@ export default function OrderFulfillmentPage() {
                                 {markingPrintedSaleId === row.cin7_sale_id ? "…" : "Unmark"}
                               </button>
                             </span>
-                          ) : row.is_ready_for_box_label ? (
-                            <button
-                              type="button"
-                              onClick={() => handleMarkBoxLabelPrinted(row.instance_id, row.cin7_sale_id)}
-                              disabled={markingPrintedSaleId === row.cin7_sale_id}
-                              className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                            >
-                              {markingPrintedSaleId === row.cin7_sale_id ? "Marking…" : "Mark as printed"}
-                            </button>
                           ) : (
                             <span className="text-xs text-slate-300">—</span>
                           )}
@@ -844,7 +844,7 @@ export default function OrderFulfillmentPage() {
                             </div>
                             {attachmentsError && <p className="mb-2 text-xs text-red-600">{attachmentsError}</p>}
                             {markPrintedError && <p className="mb-2 text-xs text-red-600">{markPrintedError}</p>}
-                            {!row.box_label_printed_at &&
+                            {row.is_ready_for_box_label &&
                               attachmentsBySaleId[row.cin7_sale_id]?.some((att) => isBoxLabelAttachment(att.FileName)) && (
                                 <p className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                                   A box label attachment already exists on this sale in Cin7.
