@@ -18,6 +18,8 @@ import type { ProductAvailabilitySyncStatus, SalesSyncStatus } from "@/reports/q
 import { buildFulfillmentCleanupLines } from "@/reports/fulfillment-cleanup/build";
 import { SNAPSHOT_STALE_HOURS, hoursSince, StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { compareNullable, SortHeader } from "../sortable-table";
+import { matchesSearch } from "../text-search";
+import { SearchInput } from "../search-input";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
@@ -109,6 +111,13 @@ export default function FulfillmentCleanupPage() {
     if (!lines) return [];
     return [...new Set(lines.filter((l) => l.action === "Zero" && l.unitCost === null).map((l) => l.productSku))];
   }, [lines]);
+
+  // P5.4 (LBL brief): filters only what's shown in the table below — the
+  // downloaded CSV (handleDownload) always uses the full `lines` list,
+  // since it's a correction file for Cin7 import, not a report export;
+  // narrowing the on-screen view shouldn't silently drop lines from it.
+  const [search, setSearch] = useState("");
+  const visibleLines = useMemo(() => (lines ?? []).filter((l) => matchesSearch(search, l.productSku, l.productName)), [lines, search]);
 
   // Every backordered sale the user did NOT exclude — the audit-trail export answers "which orders was this cleanup run meant to unblock?"
   const includedSales = useMemo(() => {
@@ -389,6 +398,7 @@ export default function FulfillmentCleanupPage() {
               {lines.filter((l) => l.action === "NonZero").length} NonZero
               {excludedSaleIds.size > 0 && ` (${excludedSaleIds.size} sale${excludedSaleIds.size === 1 ? "" : "s"} excluded)`}
             </p>
+            <SearchInput value={search} onChange={setSearch} placeholder="Product name or SKU" />
             {lines.length > 0 && (
               <div className="flex gap-2">
                 <button
@@ -437,8 +447,9 @@ export default function FulfillmentCleanupPage() {
                 : "Nothing is currently oversold on this instance."}
             </p>
           )}
+          {lines.length > 0 && visibleLines.length === 0 && <p className="mt-4 text-sm text-slate-400">Nothing matches &ldquo;{search}&rdquo;.</p>}
 
-          {lines.length > 0 && (
+          {visibleLines.length > 0 && (
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
@@ -453,7 +464,7 @@ export default function FulfillmentCleanupPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {lines.map((line, i) => (
+                  {visibleLines.map((line, i) => (
                     <tr key={i} className="border-b border-slate-100">
                       <td className="py-2 pr-4">
                         <span

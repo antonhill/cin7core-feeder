@@ -3,10 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { loadInvoicingSchedulerOrdersAction, loadInstanceOriginsAction, type InstanceOrigin } from "./actions";
 import { currentWeekStart, addDays, formatDayLabel } from "./date-utils";
-import type { OrderFulfillmentRow } from "@/reports/query";
+import type { OrderFulfillmentRow, OrderFulfillmentLineRow } from "@/reports/query";
 import type { InstancePickerItem } from "@/actions/instances";
 import { ReportDescription } from "../ReportDescription";
 import { StatusBadge } from "../status-badge";
+import { matchesSearch } from "../text-search";
+import { SearchInput } from "../search-input";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { cin7SaleUrl } from "@/cin7/web-url";
 
@@ -102,6 +104,7 @@ function DayColumn({
 export default function InvoicingSchedulerPage() {
   const [weekStart, setWeekStart] = useState(currentWeekStart);
   const [orders, setOrders] = useState<OrderFulfillmentRow[] | null>(null);
+  const [lines, setLines] = useState<OrderFulfillmentLineRow[]>([]);
   // P5.3 (LBL brief): counted separately at load time, since `orders` itself
   // already has ready_to_invoice_hidden_by_floor rows filtered out by
   // needsInvoicing — same pattern as shipping-calendar/page.tsx's own
@@ -128,6 +131,7 @@ export default function InvoicingSchedulerPage() {
       setLoadError(null);
       setOrders(result.data.orders.filter(needsInvoicing));
       setHiddenByFloorCount(result.data.orders.filter((o) => o.ready_to_invoice_hidden_by_floor).length);
+      setLines(result.data.lines);
       setInstances(result.data.instances);
     });
   }, [instanceIds]);
@@ -147,13 +151,25 @@ export default function InvoicingSchedulerPage() {
   const instanceNameById = useMemo(() => new Map(instances.map((i) => [i.id, i.name])), [instances]);
   const originByInstanceId = useMemo(() => new Map(origins.map((o) => [o.instanceId, o.origin])), [origins]);
 
+  const linesBySaleId = useMemo(() => {
+    const map = new Map<string, OrderFulfillmentLineRow[]>();
+    for (const line of lines) {
+      const existing = map.get(line.cin7_sale_id);
+      if (existing) existing.push(line);
+      else map.set(line.cin7_sale_id, [line]);
+    }
+    return map;
+  }, [lines]);
+
+  // P5.4 (LBL brief): matches order #/customer OR any line's SKU/product name.
   const searchedOrders = useMemo(() => {
-    const searchLower = search.trim().toLowerCase();
-    if (!searchLower) return orders ?? [];
+    if (!search.trim()) return orders ?? [];
     return (orders ?? []).filter(
-      (o) => (o.order_number ?? "").toLowerCase().includes(searchLower) || (o.customer_name ?? "").toLowerCase().includes(searchLower)
+      (o) =>
+        matchesSearch(search, o.order_number, o.customer_name) ||
+        (linesBySaleId.get(o.cin7_sale_id) ?? []).some((l) => matchesSearch(search, l.product_sku, l.product_name))
     );
-  }, [orders, search]);
+  }, [orders, search, linesBySaleId]);
 
   // Recomputed instantly whenever the offset/search/week changes — no
   // server round trip, matching every other filter-driven report in this
@@ -202,16 +218,12 @@ A calendar of sales that have a packed, authorised fulfilment not yet covered by
               </span>
             </div>
           </label>
-          <label className="flex flex-col gap-1.5 text-sm">
-            <span className="font-medium text-slate-700">Search</span>
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Order # or customer"
-              className="w-56 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
-            />
-          </label>
+          <SearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="Order #, customer, or SKU"
+            className="w-56 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+          />
         </div>
         {loadError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>}
         {hiddenByFloorCount > 0 && (

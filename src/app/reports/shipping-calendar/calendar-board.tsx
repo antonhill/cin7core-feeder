@@ -6,6 +6,7 @@ import type { OrderFulfillmentRow, OrderFulfillmentLineRow, OrderFulfillmentFilt
 import type { MarkShippedInput } from "@/cin7/sales";
 import type { InstancePickerItem } from "@/actions/instances";
 import { StatusBadge } from "../status-badge";
+import { matchesSearch } from "../text-search";
 import { Spinner } from "@/app/Spinner";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 
@@ -521,15 +522,20 @@ export function CalendarBoard({ offsetDays, dateLabel, qualifies, hiddenByFloor,
 
   const searchedOrders = useMemo(() => {
     let rows = orders ?? [];
-    const searchLower = search.trim().toLowerCase();
-    if (searchLower) {
+    // P5.4 (LBL brief): matches order #/customer OR any line's SKU/product
+    // name — linesBySaleId is already fetched for the detail modal, so this
+    // is free (no extra query). Shared by both Shipping and Picking
+    // Calendar since they're the same CalendarBoard component.
+    if (search.trim()) {
       rows = rows.filter(
-        (o) => (o.order_number ?? "").toLowerCase().includes(searchLower) || (o.customer_name ?? "").toLowerCase().includes(searchLower)
+        (o) =>
+          matchesSearch(search, o.order_number, o.customer_name) ||
+          (linesBySaleId.get(o.cin7_sale_id) ?? []).some((l) => matchesSearch(search, l.product_sku, l.product_name))
       );
     }
     if (invoiceCoverageFilter) rows = rows.filter((o) => o.invoice_coverage_status === invoiceCoverageFilter);
     return rows;
-  }, [orders, search, invoiceCoverageFilter]);
+  }, [orders, search, invoiceCoverageFilter, linesBySaleId]);
 
   const ordersByDay = useMemo(() => {
     const map = new Map<string, OrderFulfillmentRow[]>();
@@ -639,7 +645,7 @@ export function CalendarBoard({ offsetDays, dateLabel, qualifies, hiddenByFloor,
           <div className="flex items-center gap-2">
             <input
               type="text"
-              placeholder="Order # or customer"
+              placeholder="Order #, customer, or SKU"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="w-56 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
