@@ -235,7 +235,8 @@ export async function middleware(request: NextRequest) {
 
 // api/sync (and api/sync-sales, api/sync-purchases, api/sync-assembly-builds,
 // api/sync-product-availability — all matched by the same "api/sync" prefix),
-// api/import, and api/delete-expired-trials all authenticate themselves via a bearer token
+// api/import, api/delete-expired-trials, and api/notify-ship-by-changes (P4,
+// LBL brief) all authenticate themselves via a bearer token
 // (assertInternalAuth) for external/Cron callers with no browser session —
 // they must never be intercepted by the session-cookie redirect below, or
 // Vercel Cron's bearer-token request just gets bounced to /login and the
@@ -260,6 +261,6 @@ export async function middleware(request: NextRequest) {
 // module icons the authenticated app's sidebar/tiles use.
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|icon.svg|marketing/|icons/|api/sync|api/import|api/delete-expired-trials|api/webhooks).*)",
+    "/((?!_next/static|_next/image|favicon.ico|icon.svg|marketing/|icons/|api/sync|api/import|api/delete-expired-trials|api/notify-ship-by-changes|api/webhooks).*)",
   ],
 };

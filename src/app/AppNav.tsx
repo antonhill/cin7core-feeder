@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { signOutAction } from "@/actions/auth";
 import { uploadCurrentOrgLogo } from "@/actions/org-logo";
 import { triggerSalesSyncAction } from "@/app/reports/actions";
-import { MODULES, ADMIN_MODULE, BillingIcon, ShieldIcon, DiagnosticsIcon, TeamIcon, SyncIcon, SignOutIcon } from "@/app/module-nav";
+import { MODULES, ADMIN_MODULE, BillingIcon, ShieldIcon, DiagnosticsIcon, TeamIcon, NotificationsIcon, SyncIcon, SignOutIcon } from "@/app/module-nav";
 import { OrgSwitcher } from "@/app/OrgSwitcher";
 import { Spinner } from "@/app/Spinner";
 
@@ -226,7 +226,7 @@ export function AppNav({
         <div className="border-t border-sidebar-border px-3 py-4">
           <p className="truncate px-3 pb-3 text-sm text-sidebar-text">{userEmail}</p>
           {/* Compact icon-button row instead of stacked full-width text links — same active/hover treatment, just laid out horizontally to reclaim vertical space at the bottom of the sidebar. */}
-          {/* flex-wrap: up to 6 icons can appear at once now (Sync + Billing + Security + Team + Diagnostics + Sign out for a super-admin/org-admin with billing enabled) — 6 * 40px buttons + gaps exceeds the sidebar's available width, so this wraps to a second row instead of overflowing. */}
+          {/* flex-wrap: up to 7 icons can appear at once now (Sync + Billing + Security + Notifications + Team + Diagnostics + Sign out for a super-admin/org-admin with billing enabled) — 7 * 40px buttons + gaps exceeds the sidebar's available width, so this wraps to a second row instead of overflowing. */}
           <div className="flex flex-wrap items-center justify-center gap-2">
             <NavIconButton label="Sync sales" onClick={handleGlobalSync} busy={isSyncing}>
               <SyncIcon className="h-5 w-5" />
@@ -238,6 +238,9 @@ export function AppNav({
             )}
             <NavIconButton href="/settings/security" label="Security" active={pathname.startsWith("/settings/security")}>
               <ShieldIcon className="h-5 w-5" />
+            </NavIconButton>
+            <NavIconButton href="/settings/notifications" label="Notifications" active={pathname.startsWith("/settings/notifications")}>
+              <NotificationsIcon className="h-5 w-5" />
             </NavIconButton>
             {isOrgAdmin && (
               <NavIconButton href="/settings/members" label="Team" active={pathname.startsWith("/settings/members")}>
