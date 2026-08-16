@@ -503,6 +503,14 @@ export interface OrderFulfillmentRow {
   has_backorder_with_po: boolean;
   /** P5.2: true when ≥1 backordered line has NO linked open PO — the actionable procurement list ("nothing's on order for this yet"), as distinct from Cin7's own status fields. */
   has_backorder_no_po: boolean;
+  /** P5.5: sum of every line's packed_qty (every attempted pack, regardless of authorisation) — broader than total_pickable_qty/total_picked_qty, added as a pickable export column. */
+  total_packed_qty: number;
+  /** P5.5: sum of every line's packed_qty_authorised — narrower than total_packed_qty above, same "AUTHORISED fulfilment only" scope total_ready_to_invoice_qty already uses. */
+  total_packed_qty_authorised: number;
+  /** P5.5: sum of every line's invoiced_qty. Was already computed internally for invoice_coverage_status but never exposed as its own column until this. */
+  total_invoiced_qty: number;
+  /** P5.5: sum of every line's backorder_po_outstanding_qty — the remaining qty on each line's own linked PO, summed. Not a single coherent "PO balance" when different lines are covered by different POs, but still a reasonable "how much is still outstanding across every PO covering this order" export figure; a line with no linked PO contributes 0. */
+  total_backorder_po_outstanding_qty: number;
 }
 
 export interface OrderFulfillmentLineRow {

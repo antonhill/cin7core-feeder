@@ -41,6 +41,10 @@ function order(overrides: Partial<OrderFulfillmentRow>): OrderFulfillmentRow {
     box_label_printed_by_email: null,
     has_backorder_with_po: false,
     has_backorder_no_po: false,
+    total_packed_qty: 0,
+    total_packed_qty_authorised: 0,
+    total_invoiced_qty: 0,
+    total_backorder_po_outstanding_qty: 0,
     ...overrides,
   };
 }

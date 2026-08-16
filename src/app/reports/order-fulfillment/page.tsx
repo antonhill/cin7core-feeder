@@ -3,10 +3,19 @@
 import { Fragment, useEffect, useMemo, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
 import { loadReportFilterOptionsAction, loadSalesSyncStatusAction, triggerSalesSyncAction } from "../actions";
-import { loadOrderFulfillmentAction, exportOrderFulfillmentXlsxAction, loadSaleAttachmentsAction, markBoxLabelPrintedAction } from "./actions";
+import {
+  loadOrderFulfillmentAction,
+  exportOrderFulfillmentXlsxAction,
+  loadSaleAttachmentsAction,
+  markBoxLabelPrintedAction,
+  loadOrderFulfillmentExportColumnsAction,
+  saveOrderFulfillmentExportColumnsAction,
+} from "./actions";
 import type { ReportFilterOptions, OrderFulfillmentRow, OrderFulfillmentLineRow, SalesSyncStatus } from "@/reports/query";
 import type { Cin7SaleAttachment } from "@/cin7/sales";
 import { buildBatchPickList } from "@/reports/order-fulfillment/pick-list";
+import { DEFAULT_ORDER_FULFILLMENT_EXPORT_COLUMN_KEYS } from "@/reports/order-fulfillment-export-columns";
+import { ExportColumnPicker } from "./ExportColumnPicker";
 import { StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { useResizableColumns, ColGroup, ResizableTh } from "../resizable-columns";
 import { compareNullable, type SortDirection } from "../sortable-table";
@@ -194,6 +203,31 @@ export default function OrderFulfillmentPage() {
   const [isExporting, startExportTransition] = useTransition();
   const [exportError, setExportError] = useState<string | null>(null);
 
+  // P5.5 (LBL brief): starts at the original fixed column set so the very
+  // first export (before the saved-preference fetch resolves) behaves
+  // exactly as it always has — overwritten below if the user has a saved
+  // preference on this org.
+  const [exportColumnKeys, setExportColumnKeys] = useState<string[]>(DEFAULT_ORDER_FULFILLMENT_EXPORT_COLUMN_KEYS);
+  const [showColumnPicker, setShowColumnPicker] = useState(false);
+  const [isSavingColumns, startSaveColumnsTransition] = useTransition();
+  const [columnsSaveError, setColumnsSaveError] = useState<string | null>(null);
+
+  function toggleExportColumn(key: string) {
+    setExportColumnKeys((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+  }
+
+  function handleSaveExportColumns() {
+    setColumnsSaveError(null);
+    startSaveColumnsTransition(async () => {
+      const result = await saveOrderFulfillmentExportColumnsAction(exportColumnKeys);
+      if (!result.ok) {
+        setColumnsSaveError(result.error ?? "Unknown error");
+        return;
+      }
+      setShowColumnPicker(false);
+    });
+  }
+
   const [syncStatus, setSyncStatus] = useState<SalesSyncStatus | null>(null);
   const [isSyncing, startSyncTransition] = useTransition();
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -293,6 +327,9 @@ export default function OrderFulfillmentPage() {
     });
     loadSalesSyncStatusAction().then((result) => {
       if (result.ok) setSyncStatus(result.data ?? null);
+    });
+    loadOrderFulfillmentExportColumnsAction().then((result) => {
+      if (result.ok && result.data?.length) setExportColumnKeys(result.data);
     });
   }, []);
 
@@ -414,7 +451,7 @@ export default function OrderFulfillmentPage() {
   function handleExport() {
     setExportError(null);
     startExportTransition(async () => {
-      const result = await exportOrderFulfillmentXlsxAction(visibleRows);
+      const result = await exportOrderFulfillmentXlsxAction(visibleRows, exportColumnKeys);
       if (!result.ok || !result.data) {
         setExportError(result.error ?? "Unknown error");
         return;
@@ -498,14 +535,24 @@ export default function OrderFulfillmentPage() {
               ))}
             </div>
             {visibleRows.length > 0 && (
-              <button
-                type="button"
-                onClick={handleExport}
-                disabled={isExporting}
-                className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                {isExporting ? "Exporting…" : "Export to Excel"}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowColumnPicker(true)}
+                  className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  title="Choose which columns Export to Excel includes"
+                >
+                  Columns…
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExport}
+                  disabled={isExporting}
+                  className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {isExporting ? "Exporting…" : "Export to Excel"}
+                </button>
+              </div>
             )}
           </div>
           {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
@@ -877,6 +924,18 @@ export default function OrderFulfillmentPage() {
         </section>
       )}
       </div>
+
+      {showColumnPicker && (
+        <ExportColumnPicker
+          selectedKeys={new Set(exportColumnKeys)}
+          onToggle={toggleExportColumn}
+          onReset={() => setExportColumnKeys(DEFAULT_ORDER_FULFILLMENT_EXPORT_COLUMN_KEYS)}
+          onSave={handleSaveExportColumns}
+          isSaving={isSavingColumns}
+          saveError={columnsSaveError}
+          onClose={() => setShowColumnPicker(false)}
+        />
+      )}
 
       {showPickList && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 print:static print:bg-transparent print:overflow-visible">

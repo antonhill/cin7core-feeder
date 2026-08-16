@@ -72,10 +72,10 @@ prune/rewrite entries here rather than appending forever once something is fully
     reports the union of every field seen, specifically to catch a services/resources key that only
     shows up on some records. The UI's detail panel says this limitation out loud rather than
     silently omitting it.
-- **LBL Fulfilment & Invoicing workflow** (client brief, built P5.3/P1/P2/P3/P4/P5.1/P5.2, 2026-08-15/16) — Order
+- **LBL Fulfilment & Invoicing workflow** (client brief, built P5.3/P1/P2/P3/P4/P5.1/P5.2/P5.5, 2026-08-15/16) — Order
   Fulfillment, Shipping Calendar, Invoicing Scheduler, and Picking Calendar all share one SQL-side
   source of truth: `report_order_fulfillment`/`report_order_fulfillment_lines`
-  (`supabase/migrations/0061`-`0063`, `0065`, `0068`; P4/P5.1's own tables are separate, see below).
+  (`supabase/migrations/0061`-`0063`, `0065`, `0068`-`0069`; P4/P5.1's own tables are separate, see below).
   **Known architecture limitation, accepted not fixed**: the
   sync has no per-fulfilment Cin7 TaskID, so every "per-fulfilment" quantity comparison here
   (packed-vs-invoiced, pick-vs-pack) is actually per-SKU-across-the-whole-sale — fine for the
@@ -214,6 +214,27 @@ prune/rewrite entries here rather than appending forever once something is fully
     are independent "does at least one line match" checks, not a 3-way partition: a mixed order
     (one backordered line covered by an open PO, another with none) is `true` for both, by
     design.
+  - **Configurable Excel export** (P5.5, 0069-0070) — Order Fulfillment is the ONLY genuinely
+    fulfilment-related view with export capability today (Shipping/Picking Calendar and Invoicing
+    Scheduler have none). `[DECISION]` resolved with Anton, 2026-08-16 — the brief's "full synced
+    column set including per-line quantities" doesn't specify a sheet shape, and the export is
+    strictly one-row-per-order today: rather than add a second one-row-per-SKU-line export mode,
+    stayed on the existing one-row-per-order sheet and extended `report_order_fulfillment` (0069)
+    with order-level sums for the 4 per-line quantity fields that didn't already have one
+    (`total_packed_qty`, `total_packed_qty_authorised`, `total_backorder_po_outstanding_qty` are new
+    sums; `total_invoiced_qty` was already being computed internally for `invoice_coverage_status`
+    but never exposed as its own output column — just added to the select list). The other 6
+    per-line quantities already had an order-level sum from earlier phases. The column-picker itself
+    (`src/reports/order-fulfillment-export-columns.ts`'s `ORDER_FULFILLMENT_EXPORT_COLUMNS` registry
+    + `resolveOrderFulfillmentExportColumns`) covers all 41 fields on `OrderFulfillmentRow`, not just
+    quantities —
+    `buildOrderFulfillmentSheet` now takes an optional column-key list, defaulting to the original
+    fixed 15-column set so nothing changes for anyone who hasn't customized their columns yet.
+    **No per-(org, user) preferences table existed anywhere in this schema before this** — every
+    existing `*_settings` table is org-wide business policy keyed by `org_id` alone; this is a
+    genuine personal display preference, so `order_fulfillment_export_columns` (0070) is keyed by
+    `(org_id, user_id)` instead, resolved server-side from `requireModuleAccess`'s own `userId` (a
+    user can only ever write their own row, never a client-supplied one).
 - **New sync-populated columns don't backfill existing data — learned the hard way, 2026-08-16.**
   `sale_lines.invoice_status` (added by migration `0062`/P1, 2026-08-15) only gets set by
   `syncSaleDetails` (`src/sync/sync-sales.ts`), which only re-fetches a sale's detail when

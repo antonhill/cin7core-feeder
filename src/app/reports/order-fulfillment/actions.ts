@@ -11,6 +11,7 @@ import {
   type OrderFulfillmentLineRow,
 } from "@/reports/query";
 import { buildOrderFulfillmentSheet } from "@/reports/order-fulfillment-export";
+import { isOrderFulfillmentExportColumnKey } from "@/reports/order-fulfillment-export-columns";
 import { renderXlsxBase64 } from "@/reports/xlsx-writer";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchSaleDetail, type Cin7SaleAttachment } from "@/cin7/sales";
@@ -39,12 +40,60 @@ export async function loadOrderFulfillmentAction(filters: OrderFulfillmentFilter
   }
 }
 
-/** Renders whatever's currently on screen (the client already has the filtered rows) into a real .xlsx file — same pattern as every other report's export action. */
-export async function exportOrderFulfillmentXlsxAction(rows: OrderFulfillmentRow[]): Promise<OrderFulfillmentActionResult<string>> {
+/**
+ * Renders whatever's currently on screen (the client already has the
+ * filtered rows) into a real .xlsx file — same pattern as every other
+ * report's export action. `columnKeys` (P5.5) is the user's column-picker
+ * selection, passed straight through to buildOrderFulfillmentSheet — omitted
+ * falls back to the original fixed column set.
+ */
+export async function exportOrderFulfillmentXlsxAction(rows: OrderFulfillmentRow[], columnKeys?: string[]): Promise<OrderFulfillmentActionResult<string>> {
   try {
     await requireModuleAccess(REPORTS_MODULE.href);
-    const sheet = buildOrderFulfillmentSheet(rows);
+    const sheet = buildOrderFulfillmentSheet(rows, columnKeys);
     return { ok: true, data: await renderXlsxBase64(sheet, "Order Fulfillment") };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * P5.5 (LBL brief): the export column-picker's saved selection — genuinely
+ * per-user, not per-org, unlike every other settings table in this app
+ * (order_fulfillment_export_columns, migration 0070). Returns null when the
+ * user has never customized their columns yet, distinct from an (invalid)
+ * empty array — the client falls back to the default column set either way,
+ * but null vs [] lets it distinguish "never set" from "explicitly saved as
+ * empty" if that ever matters later.
+ */
+export async function loadOrderFulfillmentExportColumnsAction(): Promise<OrderFulfillmentActionResult<string[] | null>> {
+  try {
+    const { orgId, userId } = await requireModuleAccess(REPORTS_MODULE.href);
+    const db = createServiceRoleClient();
+    const { data, error } = await db
+      .from("order_fulfillment_export_columns")
+      .select("columns")
+      .eq("org_id", orgId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, data: (data?.columns as string[] | undefined) ?? null };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/** Upserts the current user's own export column selection — always scoped to requireModuleAccess's own resolved userId, never a client-supplied one, so one user can't overwrite another's saved preference. Silently drops any unrecognized key (e.g. leftover from a since-renamed field) rather than persisting garbage. */
+export async function saveOrderFulfillmentExportColumnsAction(columns: string[]): Promise<OrderFulfillmentActionResult<void>> {
+  try {
+    const { orgId, userId } = await requireModuleAccess(REPORTS_MODULE.href);
+    const known = columns.filter(isOrderFulfillmentExportColumnKey);
+    const db = createServiceRoleClient();
+    const { error } = await db
+      .from("order_fulfillment_export_columns")
+      .upsert({ org_id: orgId, user_id: userId, columns: known, updated_at: new Date().toISOString() }, { onConflict: "org_id,user_id" });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }
