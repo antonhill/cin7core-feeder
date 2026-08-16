@@ -167,21 +167,43 @@ prune/rewrite entries here rather than appending forever once something is fully
       via a cron sync-diff producer) is a stub only — `ship_by_notification_settings.phase2_enabled`
       exists as a placeholder flag, nothing sets or reads it. `[DECISION]` in the brief itself:
       whether Phase 2 ships to LBL at all — not resolved, deferred with Anton's awareness.
-  - **BOM alert on authorised SOs** (P5.1) — when a sale transitions INTO Cin7's `AUTHORISED`
+  - **BOM alert on authorised SOs** (P5.1, 0067): when a sale transitions INTO Cin7's `AUTHORISED`
     `order_status` and its lines include ≥1 BOM/assembly product, emails a configured Warehouse
-    Manager (BOM lines don't print on Cin7's own "Pick Available" flow). Transition detection
-    lives entirely in phase 1 of `syncSalesList` (`src/sync/sync-sales.ts`) — compares the sale's
-    prior `order_status` (added to that phase's own prior-row select) against the new one from
-    the same cheap `/saleList` scan, no extra Cin7 traffic for the check itself. A sale already
-    `AUTHORISED` before this feature existed has `prior.order_status = 'AUTHORISED'` too, so
-    enabling this for an org does NOT burst-alert on the existing backlog. `[VALIDATE-API]`
-    resolved: Cin7's real field is `BillOfMaterial` (boolean, `GET /Product`), already confirmed
-    live by Data Audit's `findProductsWithBom`. `[DECISION]` resolved with Anton: the brief
-    assumed an existing product sync to "minimally extend" — there isn't one (`products` is only
-    ever pushed TO Cin7, never pulled back) — so the BOM check is a live call scoped to just the
-    transitioned sale's own SKUs (`findBomSkus`, `src/cin7/products.ts`), not a new sync
-    pipeline. No debounce table unlike P4 — fires once per sale, guarded by
-    `sales.bom_alert_sent_at`. Settings live as a second section on `/settings/notifications`.
+    Manager — BOM lines don't print on Cin7's own "Pick Available" flow, so this is the interim
+    measure until WMS expanded picking. **Transition detection lives entirely in phase 1 of
+    `syncSalesList`** (`src/sync/sync-sales.ts`) — compares the sale's prior `order_status` (now
+    added to that phase's own prior-row select) against the new one from the same cheap
+    `/saleList` scan already being pulled; both are already-synced fields, no extra Cin7 traffic
+    for the transition check itself. Because a sale already `AUTHORISED` before this feature
+    existed has `prior.order_status = 'AUTHORISED'` too, turning this on for an org does **not**
+    burst-alert on the existing backlog — only genuine future transitions fire.
+    - **`[VALIDATE-API]` resolved**: Cin7's real field is `BillOfMaterial` (boolean, `GET
+      /Product`) — already confirmed live and in production use by Data Audit
+      (`src/audit/product-audit.ts`'s `findProductsWithBom`).
+    - **`[DECISION]` resolved with Anton, 2026-08-16 — the brief's own assumption didn't hold.**
+      It says "extend the product sync minimally" if products aren't fully synced — but there IS
+      no ongoing product sync to extend: the local `products` table is only ever **pushed to**
+      Cin7 (`run-sync.ts`, content-hash change detection), never pulled back. Rather than build a
+      whole new inbound product-sync pipeline for one boolean, the BOM check is a **live call
+      scoped to the handful of SKUs on the one just-transitioned sale**
+      (`src/cin7/products.ts`'s `findBomSkus`, reusing `/Product?SKU=`'s single-SKU query shape
+      from `findProductBySku`) — a low-frequency business event (a sale becoming authorised), not
+      the list-view N+1 pattern this codebase actually avoids elsewhere. SKUs come from the
+      sale's already-cached `sale_order_lines` (populated by an earlier detail sync — reliable for
+      the common case of an existing sale changing status; a sale that arrives ALREADY authorised
+      on its very first sync has no cached lines yet and is skipped rather than guessed at —
+      documented limitation, not silently wrong).
+    - **No debounce table, unlike P4** — this fires once per sale, guarded by a plain
+      `sales.bom_alert_sent_at` timestamp (not reset on a later re-authorisation, e.g. void +
+      recreate; a rare second-alert miss is accepted rather than adding a second tracking column
+      for it), so there's nothing to collapse the way rapid `ship_by` edits need collapsing.
+    - **Reuses P4's pipeline pattern** (same `sendEmail` wrapper, same "log unconditionally
+      including failures/no-recipients" discipline via `bom_alert_notifications`, same org-flag-off-
+      by-default gating) via its own parallel tables/settings (`bom_alert_settings`) rather than a
+      shared schema with P4 — the trigger events (a debounced UI write-back vs. a sync-detected
+      status transition) are different enough in kind that sharing tables risked forcing an
+      awkward generalization onto both; settings UI lives on the same `/settings/notifications`
+      page as a second section.
   - **Backorder "no open PO" filter** (P5.2) — the client specifically asked whether the
     EXISTING "Backorders" filter on Order Fulfillment (`total_backorder_qty > 0`) is status- or
     linkage-based: it's status-based, a raw quantity check. This adds a SEPARATE, explicitly

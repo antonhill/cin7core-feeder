@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { toCin7ProductPayload, pushProduct, resolveComponentIds } from "@/cin7/products";
+import { toCin7ProductPayload, pushProduct, resolveComponentIds, findBomSkus } from "@/cin7/products";
 import { cin7Request, Cin7ApiError } from "@/cin7/http";
 
 // Preserve the real Cin7ApiError (pushProduct's fast path does `instanceof
@@ -502,5 +502,41 @@ describe("resolveComponentIds", () => {
     await resolveComponentIds(creds, ["NOT-YET-SYNCED"], cache);
 
     expect(cache.has("NOT-YET-SYNCED")).toBe(false);
+  });
+});
+
+describe("findBomSkus", () => {
+  it("returns only the SKUs whose live BillOfMaterial flag is true", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ Products: [{ ID: "1", SKU: "SKU-A", BillOfMaterial: true }] })
+      .mockResolvedValueOnce({ Products: [{ ID: "2", SKU: "SKU-B", BillOfMaterial: false }] });
+
+    const result = await findBomSkus(creds, ["SKU-A", "SKU-B"]);
+
+    expect(result).toEqual(["SKU-A"]);
+  });
+
+  it("returns an empty array when no SKU has a BOM", async () => {
+    vi.mocked(cin7Request).mockResolvedValue({ Products: [{ ID: "1", SKU: "SKU-A", BillOfMaterial: false }] });
+
+    const result = await findBomSkus(creds, ["SKU-A"]);
+
+    expect(result).toEqual([]);
+  });
+
+  it("doesn't count a mismatched SKU (defensive against Cin7 returning an arbitrary row) as a BOM match", async () => {
+    vi.mocked(cin7Request).mockResolvedValueOnce({ Products: [{ ID: "1", SKU: "DIFFERENT-SKU", BillOfMaterial: true }] });
+
+    const result = await findBomSkus(creds, ["SKU-A"]);
+
+    expect(result).toEqual([]);
+  });
+
+  it("de-duplicates repeated SKUs to one live call each", async () => {
+    vi.mocked(cin7Request).mockResolvedValue({ Products: [{ ID: "1", SKU: "SKU-A", BillOfMaterial: true }] });
+
+    await findBomSkus(creds, ["SKU-A", "SKU-A", "SKU-A"]);
+
+    expect(cin7Request).toHaveBeenCalledTimes(1);
   });
 });

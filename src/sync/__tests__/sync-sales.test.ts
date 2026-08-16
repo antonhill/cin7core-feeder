@@ -13,8 +13,10 @@ const creds = { accountId: "a", applicationKey: "k", baseUrl: "https://example.t
 
 interface FakeDbOptions {
   syncState?: { last_list_synced_at: string | null } | null;
-  existingSales?: { cin7_sale_id: string; cin7_updated_at: string | null; detail_synced_at: string | null }[];
+  existingSales?: { cin7_sale_id: string; cin7_updated_at: string | null; detail_synced_at: string | null; order_status?: string | null }[];
   pendingSales?: { cin7_sale_id: string }[];
+  /** P5.1: defaults to "not configured" (no row) — processBomAlerts should no-op without needing sale_order_lines/bom_alert_notifications support in this fake db at all. */
+  bomAlertSettings?: { enabled: boolean; warehouse_manager_email: string | null } | null;
 }
 
 function makeFakeDb(opts: FakeDbOptions) {
@@ -103,6 +105,9 @@ function makeFakeDb(opts: FakeDbOptions) {
             return Promise.resolve({ error: null });
           },
         };
+      }
+      if (table === "bom_alert_settings") {
+        return chain(table, () => ({ data: opts.bomAlertSettings ?? null, error: null }));
       }
       throw new Error(`Unhandled table in fake db: ${table}`);
     },
@@ -222,6 +227,50 @@ describe("syncInstanceSales — list phase", () => {
       paid_amount: 0,
       invoice_amount: 4608.04,
     });
+  });
+
+  it("P5.1: checks bom_alert_settings for a sale genuinely entering Authorised status", async () => {
+    vi.mocked(fetchAllSalesList).mockResolvedValue([
+      { SaleID: "sale-1", OrderStatus: "AUTHORISED", Updated: "2026-06-01T01:00:00.000Z" },
+    ]);
+    const { db, calls } = makeFakeDb({
+      syncState: null,
+      existingSales: [{ cin7_sale_id: "sale-1", cin7_updated_at: "2026-05-01T00:00:00.000Z", detail_synced_at: "2026-05-01T00:00:00.000Z", order_status: "DRAFT" }],
+      pendingSales: [],
+      bomAlertSettings: null, // not configured — processBomAlerts should check, then no-op
+    });
+
+    await syncInstanceSales(db, "org1", "inst-1");
+
+    expect(calls.some((c) => c.table === "bom_alert_settings" && c.op === "select")).toBe(true);
+  });
+
+  it("P5.1: does NOT check bom_alert_settings for a sale that was already Authorised — no transition, no burst-alert on an existing backlog", async () => {
+    vi.mocked(fetchAllSalesList).mockResolvedValue([
+      { SaleID: "sale-1", OrderStatus: "AUTHORISED", Updated: "2026-06-05T00:00:00.000Z" },
+    ]);
+    const { db, calls } = makeFakeDb({
+      syncState: null,
+      existingSales: [{ cin7_sale_id: "sale-1", cin7_updated_at: "2026-06-01T00:00:00.000Z", detail_synced_at: "2026-06-01T00:00:00.000Z", order_status: "AUTHORISED" }],
+      pendingSales: [],
+    });
+
+    await syncInstanceSales(db, "org1", "inst-1");
+
+    expect(calls.some((c) => c.table === "bom_alert_settings")).toBe(false);
+  });
+
+  it("P5.1: does NOT check bom_alert_settings for a sale that stays DRAFT (no transition into Authorised at all)", async () => {
+    vi.mocked(fetchAllSalesList).mockResolvedValue([{ SaleID: "sale-1", OrderStatus: "DRAFT", Updated: "2026-06-05T00:00:00.000Z" }]);
+    const { db, calls } = makeFakeDb({
+      syncState: null,
+      existingSales: [{ cin7_sale_id: "sale-1", cin7_updated_at: "2026-06-01T00:00:00.000Z", detail_synced_at: "2026-06-01T00:00:00.000Z", order_status: "DRAFT" }],
+      pendingSales: [],
+    });
+
+    await syncInstanceSales(db, "org1", "inst-1");
+
+    expect(calls.some((c) => c.table === "bom_alert_settings")).toBe(false);
   });
 });
 

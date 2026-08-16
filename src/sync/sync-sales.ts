@@ -4,6 +4,10 @@ import { fetchAllSalesList, fetchSaleDetail, type Cin7SaleFulfilment } from "@/c
 import { fetchAllCategories } from "@/cin7/categories";
 import type { Cin7Credentials } from "@/cin7/types";
 import { acquireSyncRouteLock, releaseSyncRouteLock } from "@/lib/sync-route-lock";
+import { processBomAlerts } from "@/lib/bom-alerts";
+
+/** Cin7's own order_status string for an authorised sale — used throughout this codebase's test fixtures and P5.1's own transition check. */
+const AUTHORISED_STATUS = "AUTHORISED";
 
 const DEFAULT_BACKFILL_MONTHS = 12;
 // Rate-limited detail fetch is one Cin7 call per sale — capped per run so a
@@ -133,15 +137,17 @@ async function syncSalesList(
     const ids = entries.map((e) => e.SaleID);
     const { data: existingRows } = await db
       .from("sales")
-      .select("cin7_sale_id, cin7_updated_at, detail_synced_at")
+      .select("cin7_sale_id, cin7_updated_at, detail_synced_at, order_status")
       .eq("org_id", orgId)
       .eq("instance_id", instanceId)
       .in("cin7_sale_id", ids);
     const existingByCin7Id = new Map(
-      (existingRows ?? []).map((r: { cin7_sale_id: string; cin7_updated_at: string | null; detail_synced_at: string | null }) => [
-        r.cin7_sale_id,
-        r,
-      ])
+      (existingRows ?? []).map(
+        (r: { cin7_sale_id: string; cin7_updated_at: string | null; detail_synced_at: string | null; order_status: string | null }) => [
+          r.cin7_sale_id,
+          r,
+        ]
+      )
     );
 
     const rows = entries.map((e) => {
@@ -178,6 +184,19 @@ async function syncSalesList(
 
     const { error } = await db.from("sales").upsert(rows, { onConflict: "org_id,instance_id,cin7_sale_id" });
     if (error) throw new Error(`sales upsert: ${error.message}`);
+
+    // P5.1 (LBL brief): a sale genuinely ENTERING Authorised this run, not
+    // one that was already Authorised before (that sale's own prior row
+    // already says so, so it's excluded here) — both values come straight
+    // from this same cheap /saleList scan, no extra Cin7 traffic for the
+    // transition check itself. See src/lib/bom-alerts.ts for what happens
+    // next (org-flagged off by default, so usually a same-tick no-op).
+    const transitionedToAuthorised = entries
+      .filter((e) => (e.OrderStatus ?? null) === AUTHORISED_STATUS && existingByCin7Id.get(e.SaleID)?.order_status !== AUTHORISED_STATUS)
+      .map((e) => e.SaleID);
+    if (transitionedToAuthorised.length) {
+      await processBomAlerts(db, orgId, instanceId, creds, transitionedToAuthorised);
+    }
   }
 
   const { error: stateError } = await db

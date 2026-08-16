@@ -72,7 +72,7 @@ export interface CanonicalPriceTierRow {
 }
 
 interface Cin7ProductListResponse {
-  Products?: { ID: string; SKU?: string }[];
+  Products?: { ID: string; SKU?: string; BillOfMaterial?: boolean }[];
 }
 
 /**
@@ -210,6 +210,30 @@ export async function findProductBySku(creds: Cin7Credentials, sku: string): Pro
   const first = response.Products?.[0];
   if (!first || first.SKU !== sku) return null;
   return { id: first.ID };
+}
+
+/**
+ * P5.1 (LBL brief): which of these SKUs currently have Cin7's own
+ * `BillOfMaterial` flag set (real GET /Product field, confirmed live
+ * 2026-07-11 for Data Audit's own BOM roster — see
+ * src/audit/product-audit.ts's ProductWithBom/findProductsWithBom). Scoped
+ * to a handful of SKUs from ONE just-authorised sale (a low-frequency
+ * business event), not a full catalog scan — this codebase has no bulk
+ * SKU-list filter on /Product, so it's one live call per distinct SKU, same
+ * per-SKU query shape as findProductBySku just above. Live, not synced: the
+ * local `products` table isn't kept live-synced from Cin7 at all (only
+ * pushed outward — see run-sync.ts), so there was no already-fresh local
+ * column to check instead (Anton confirmed 2026-08-16: live-check here
+ * rather than build a new pull-sync pipeline for one boolean).
+ */
+export async function findBomSkus(creds: Cin7Credentials, skus: string[]): Promise<string[]> {
+  const found: string[] = [];
+  for (const sku of new Set(skus)) {
+    const response = await cin7Request<Cin7ProductListResponse>(creds, "/Product", { query: { SKU: sku, page: 1, limit: 1 } });
+    const first = response.Products?.[0];
+    if (first && first.SKU === sku && first.BillOfMaterial === true) found.push(sku);
+  }
+  return found;
 }
 
 /**
