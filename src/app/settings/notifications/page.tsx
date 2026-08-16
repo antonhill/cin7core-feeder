@@ -8,8 +8,11 @@ import {
   listKnownSalesRepsAction,
   saveShipByNotificationRepAction,
   deleteShipByNotificationRepAction,
+  getBomAlertSettingsAction,
+  saveBomAlertSettingsAction,
   type ShipByNotificationSettings,
   type RepMapping,
+  type BomAlertSettings,
 } from "./actions";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { NOTIFICATIONS_MODULE } from "@/app/module-nav";
@@ -40,6 +43,13 @@ export default function NotificationsSettingsPage() {
   const [isSavingRep, startSaveRepTransition] = useTransition();
   const [pendingDeleteRep, setPendingDeleteRep] = useState<string | null>(null);
 
+  const [bomSettings, setBomSettings] = useState<BomAlertSettings | null>(null);
+  const [bomEnabled, setBomEnabled] = useState(false);
+  const [warehouseManagerEmail, setWarehouseManagerEmail] = useState("");
+  const [bomSettingsError, setBomSettingsError] = useState<string | null>(null);
+  const [isSavingBomSettings, startSaveBomSettingsTransition] = useTransition();
+  const [bomSavedOk, setBomSavedOk] = useState(false);
+
   useEffect(() => {
     getShipByNotificationSettingsAction().then((result) => {
       if (!result.ok || !result.data) {
@@ -57,6 +67,15 @@ export default function NotificationsSettingsPage() {
     });
     listKnownSalesRepsAction().then((result) => {
       if (result.ok) setKnownRepNames(result.data ?? []);
+    });
+    getBomAlertSettingsAction().then((result) => {
+      if (!result.ok || !result.data) {
+        setBomSettingsError(result.error ?? "Unknown error");
+        return;
+      }
+      setBomSettings(result.data);
+      setBomEnabled(result.data.enabled);
+      setWarehouseManagerEmail(result.data.warehouseManagerEmail);
     });
   }, []);
 
@@ -114,6 +133,24 @@ export default function NotificationsSettingsPage() {
   }
 
   const unmappedRepNames = knownRepNames.filter((name) => !(reps ?? []).some((r) => r.repName === name));
+
+  const bomDirty =
+    bomSettings !== null && (bomEnabled !== bomSettings.enabled || warehouseManagerEmail !== bomSettings.warehouseManagerEmail);
+
+  function handleSaveBomSettings() {
+    setBomSettingsError(null);
+    setBomSavedOk(false);
+    startSaveBomSettingsTransition(async () => {
+      const next: BomAlertSettings = { enabled: bomEnabled, warehouseManagerEmail: warehouseManagerEmail.trim() };
+      const result = await saveBomAlertSettingsAction(next);
+      if (!result.ok) {
+        setBomSettingsError(result.error ?? "Unknown error");
+        return;
+      }
+      setBomSettings(next);
+      setBomSavedOk(true);
+    });
+  }
 
   return (
     <main className="mx-auto w-full max-w-4xl px-6 py-12">
@@ -265,6 +302,58 @@ export default function NotificationsSettingsPage() {
             </div>
             {repsError && <p className="mt-2 text-sm text-rose-600">{repsError}</p>}
           </>
+        )}
+      </section>
+
+      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <p className="font-medium text-slate-900">BOM alert</p>
+        <p className="mt-1 text-sm text-slate-500">
+          When an order enters Authorised status and includes at least one assembly/BOM product, email your Warehouse
+          Manager so assembly happens before picking — Cin7&rsquo;s own Pick Available flow doesn&rsquo;t print BOM
+          lines. One alert per order.
+        </p>
+
+        {bomSettings === null ? (
+          <div className="mt-4 flex items-center gap-2 text-sm text-slate-400">
+            <Spinner /> Loading…
+          </div>
+        ) : (
+          <div className="mt-4 flex flex-col gap-4">
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={bomEnabled}
+                onChange={(e) => setBomEnabled(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              Send BOM alert emails for this org
+            </label>
+
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-slate-700">Warehouse Manager email</span>
+              <input
+                type="email"
+                value={warehouseManagerEmail}
+                onChange={(e) => setWarehouseManagerEmail(e.target.value)}
+                placeholder="warehouse@example.com"
+                className="w-full max-w-md rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+            </label>
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleSaveBomSettings}
+                disabled={isSavingBomSettings || !bomDirty}
+                className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {isSavingBomSettings && <Spinner className="mr-1.5" />}
+                {isSavingBomSettings ? "Saving…" : "Save"}
+              </button>
+              {bomSavedOk && !bomDirty && <span className="text-sm text-emerald-600">Saved.</span>}
+            </div>
+            {bomSettingsError && <p className="text-sm text-rose-600">{bomSettingsError}</p>}
+          </div>
         )}
       </section>
     </main>
