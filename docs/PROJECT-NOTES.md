@@ -69,6 +69,19 @@ prune/rewrite entries here rather than appending forever once something is fully
     reports the union of every field seen, specifically to catch a services/resources key that only
     shows up on some records. The UI's detail panel says this limitation out loud rather than
     silently omitting it.
+- **`report_order_fulfillment_lines` performance, 2026-08-16 (migration `0064`)**: this function
+  (backs Order Fulfillment/Shipping Calendar/Invoicing Scheduler/Picking Calendar) was scanning
+  `sale_pick_pack_lines` FOUR separate times — once each for its `picked`/`packed`/
+  `packed_authorised`/`picked_locations` CTEs, a pattern dating back to migration `0035`. Fine at
+  small scale, but for an org with 28k+ `sale_order_lines`/48k+ `sale_pick_pack_lines` rows (LBL)
+  it pushed `report_order_fulfillment` past Postgres's statement timeout — Shipping Calendar
+  failing outright with "canceling statement due to statement timeout". **Fix**: consolidate the
+  four CTEs into one pass using `FILTER` clauses for conditional aggregation — confirmed live via
+  `EXPLAIN ANALYZE` to cut total execution from ~6.7s to ~0.6-1.4s for that org, output verified
+  identical against the old version first (row counts + every aggregate sum + location strings).
+  **If this function gets slow again**: check whether a new CTE has reintroduced a redundant scan
+  of the same base table before reaching for indexes — that was the entire cost here, not missing
+  indexes (all the relevant `(org_id, ...)` indexes were already in place).
 - **Data Audit** (`/audit`): pulls a chosen instance's products live and flags missing
   Brand/sales-pricing/inventory-setup/GL-accounts, near-duplicate Category/UOM/Tag values
   (Levenshtein-based), incomplete `AdditionalAttribute1-10` values within a category (with a
