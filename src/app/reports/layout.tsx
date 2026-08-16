@@ -1,7 +1,8 @@
 import { ModuleHeader } from "@/app/ModuleHeader";
-import { REPORTS_MODULE } from "@/app/module-nav";
+import { REPORTS_MODULE, PICKING_CALENDAR_MODULE } from "@/app/module-nav";
 import { ReportsNav } from "./ReportsNav";
 import { requireCurrentOrg } from "@/lib/current-org";
+import { requireModuleAccess } from "@/lib/authorization";
 
 // Route segment config applies to every Server Action invoked from any page
 // under /reports/* (Order Fulfillment's "Sync sales now", Stock Health's
@@ -39,6 +40,14 @@ export default async function ReportsLayout({
     .then((c) => c.orgId)
     .catch(() => null);
 
+  // Reuses requireModuleAccess (the same check its own actions.ts already
+  // runs) rather than re-querying disabled_modules/allowed_modules here too
+  // — one source of truth for "can this org see Picking Calendar," same
+  // best-effort fallback reasoning as currentOrgId above.
+  const pickingCalendarVisible = await requireModuleAccess(PICKING_CALENDAR_MODULE.href)
+    .then(() => true)
+    .catch(() => false);
+
   return (
     <main className="mx-auto w-full max-w-[1800px] px-6 py-12 print:max-w-none print:p-0">
       <div className="print:hidden">
@@ -54,7 +63,9 @@ export default async function ReportsLayout({
           flagging), Order Fulfillment (a working pick/ship-today
           dashboard, order and product-level detail together), Shipping
           Calendar (a drag-to-reschedule week view — moving a card writes the
-          new Ship By date straight back to Cin7 Core), and the Fulfillment
+          new Ship By date straight back to Cin7 Core), Picking Calendar (the
+          same week view offset N working days earlier, for orgs that have it
+          enabled), and the Fulfillment
           Cleanup Helper (a completed Bulk Stock Adjustment CSV for every
           oversold SKU, ready to import into Cin7), and Production Tracking
           (for Advanced Manufacturing — current work centre per open order,
@@ -64,7 +75,7 @@ export default async function ReportsLayout({
       </div>
       <div className="mt-6 flex items-start gap-8 print:mt-0 print:block">
         <div className="print:hidden">
-          <ReportsNav currentOrgId={currentOrgId} />
+          <ReportsNav currentOrgId={currentOrgId} pickingCalendarVisible={pickingCalendarVisible} />
         </div>
         <div className="min-w-0 flex-1">{children}</div>
       </div>

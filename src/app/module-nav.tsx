@@ -203,6 +203,16 @@ export function SupplierPlannerIcon({ className }: IconProps) {
   );
 }
 
+export function PickingCalendarIcon({ className }: IconProps) {
+  return (
+    <GradientIcon className={className} from="#ec4899" to="#be185d">
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M3 10h18M8 3v4M16 3v4" />
+      <path d="m8 15 2 2 6-6" />
+    </GradientIcon>
+  );
+}
+
 export function StocktakeIcon({ className }: IconProps) {
   return (
     <GradientIcon className={className} from="#ea580c" to="#9a3412">
@@ -360,6 +370,28 @@ export const STOCKTAKE_MODULE: ModuleConfig = {
     "Upload a Cin7 stocktake export and see what's currently picked/packed for open orders at that location — stock a physical count would otherwise miss on the shelf.",
 };
 
+// Off-by-default, unlike every other module here (PROJECT-NOTES.md has the
+// full writeup): every other report under /reports/* rides on REPORTS_MODULE's
+// single toggle (reports/layout.tsx's own comment explains why), but the LBL
+// brief requires Picking Calendar specifically to ship disabled until an
+// admin turns it on per-org — the only way to do that with the existing
+// disabled_modules mechanism is to give it its own MODULES entry, which also
+// means its own home-page tile (Anton confirmed that's fine, 2026-08-16).
+// Migration 0064 seeds every EXISTING org's disabled_modules with this href.
+// A brand-new org signing up after this ships is NOT covered by that seed —
+// disabled_modules defaults to '{}' (every module on) and
+// src/app/signup/actions.ts doesn't special-case this href — so it starts
+// enabled; a super-admin has to opt each new org in (or out) via /admin.
+// Anton accepted that gap 2026-08-16 rather than adding a new mechanism just
+// for this one module's default.
+export const PICKING_CALENDAR_MODULE: ModuleConfig = {
+  href: "/reports/picking-calendar",
+  label: "Picking Calendar",
+  gradient: SELF_COLORED_ICON_BADGE,
+  Icon: PickingCalendarIcon,
+  blurb: "A drag-to-reschedule week view offset N working days before Ship By, for planning when to pick rather than when to ship.",
+};
+
 export const HEALTH_MODULE: ModuleConfig = {
   href: "/health",
   label: "System Health",
@@ -448,6 +480,7 @@ export const MODULES: ModuleConfig[] = [
   REPLENISH_MODULE,
   SUPPLIER_PLANNER_MODULE,
   STOCKTAKE_MODULE,
+  PICKING_CALENDAR_MODULE,
   HEALTH_MODULE,
   INSTANCES_MODULE,
   ACTIVITY_MODULE,

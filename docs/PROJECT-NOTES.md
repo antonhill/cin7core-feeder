@@ -30,7 +30,10 @@ prune/rewrite entries here rather than appending forever once something is fully
   shared `layout.tsx` (one `ModuleHeader` banner) + `ReportsNav.tsx` (secondary pill-tab nav,
   active-tab logic keyed off `pathname`) so adding a report is just a new route + one line in
   `REPORT_TABS` — no new top-level nav/home-tile entry needed, since disabling "Reporting" in
-  `/admin`'s per-org visibility now blocks every report under it in one place.
+  `/admin`'s per-org visibility now blocks every report under it in one place. **One exception:**
+  Picking Calendar (see the LBL Fulfilment bullet below) needed its own off-by-default toggle, which
+  this mechanism can only do by giving it a full separate module entry — so it breaks this
+  convention deliberately, not by accident.
   - **Sales** (`/reports`, the hub's default/index route): two-phase sales sync (cheap paginated
     list scan queues new/changed sales, then a rate-limited detail phase pulls line items +
     `AverageCost`, since Cin7's Sale API has no bulk line-item endpoint) + a pivot grid matching
@@ -69,6 +72,58 @@ prune/rewrite entries here rather than appending forever once something is fully
     reports the union of every field seen, specifically to catch a services/resources key that only
     shows up on some records. The UI's detail panel says this limitation out loud rather than
     silently omitting it.
+- **LBL Fulfilment & Invoicing workflow** (client brief, built P5.3/P1/P2/P3, 2026-08-15/16) — Order
+  Fulfillment, Shipping Calendar, Invoicing Scheduler, and Picking Calendar all share one SQL-side
+  source of truth: `report_order_fulfillment`/`report_order_fulfillment_lines`
+  (`supabase/migrations/0061`-`0064`). **Known architecture limitation, accepted not fixed**: the
+  sync has no per-fulfilment Cin7 TaskID, so every "per-fulfilment" quantity comparison here
+  (packed-vs-invoiced, pick-vs-pack) is actually per-SKU-across-the-whole-sale — fine for the
+  common case, but a genuine multi-fulfilment split order can misattribute which specific
+  fulfilment a partial quantity belongs to. Revisit if that ever needs to be exact.
+  - **Date floor** (0061): `cin7_instances.fulfilment_view_start_date` — orders whose
+    `ship_by`/`order_date` predate it don't count toward `is_pick_today`/`is_ship_today`/
+    `is_ready_to_invoice`/`is_ready_for_box_label`, but stay visible on Order Fulfillment's All
+    Orders tab (so nothing's hidden from search/export, only from the "act on this now" queues).
+    Each queue exposes its own `*_hidden_by_floor` boolean so the UI can show an accurate "N older
+    orders hidden" count without re-deriving the floor logic client-side.
+  - **Ready to Invoice** (0062) and **Box Label Queue** (0063) both live on Order Fulfillment as
+    extra tabs, plus their own qualification booleans/counts on the shared report function. Box
+    Label Queue's "printed" state is a local-only flag (`box_label_print_state`), never written to
+    Cin7 — deliberately not auto-cleared from a live Cin7 attachment check, since Cin7 exposes no
+    timestamp on `Attachments[]` to tell "added after this invoice" from "added before," and a
+    per-row live Cin7 call at list-view scale would be exactly the N+1 cost this codebase avoids
+    elsewhere (see Assemblies' component detail and Order Fulfillment's own "View documents", both
+    on-demand-only for the same reason).
+  - **Shipping Calendar / Picking Calendar** (P3, 0064): share one component,
+    `src/app/reports/shipping-calendar/calendar-board.tsx`'s `CalendarBoard` — parameterized by
+    `offsetDays` (days subtracted from `ship_by` to get a card's bucket day; 0 for Shipping
+    Calendar), `dateLabel`, a `qualifies` predicate (`isSchedulable` vs. `is_pick_today`, reused
+    unchanged — no new SQL qualification logic for Picking Calendar at all), a `hiddenByFloor`
+    predicate, and an optional `markShipped` bundle (only Shipping Calendar has a Mark-as-Shipped
+    action). Both pass the same underlying Cin7 write (`updateSaleShipBy` + `sales` table mirror),
+    but through **separate, per-page Server Actions** — Picking Calendar's `actions.ts` does NOT
+    import Shipping Calendar's, even though the bodies are identical, because
+    `requireModuleAccess` is gated per-href and a shared action bound to `REPORTS_MODULE.href`
+    would silently bypass Picking Calendar's own module toggle (see
+    `lib/authorization.ts`'s own comment on why every Server Action needs its own gate check, not
+    just the page route).
+  - **Picking Calendar is off-by-default — the one exception to "Reporting is a single toggle"**
+    (see the Reporting hub bullet above). It has its own `PICKING_CALENDAR_MODULE` entry
+    (`href: "/reports/picking-calendar"`) in `module-nav.tsx`'s `MODULES`, which also means its own
+    home-page tile — there's no way in the current `disabled_modules`/`findBlockedModule` mechanism
+    to gate one specific report without that. Migration `0064` seeded every **existing** org's
+    `disabled_modules` with the new href; a **new** org signing up after this ships is NOT covered
+    by that seed (`disabled_modules` defaults to `'{}'`, i.e. everything on, and
+    `src/app/signup/actions.ts` doesn't special-case this href) — a super-admin has to opt each new
+    org in or out via `/admin`, same as onboarding any other client-specific capability. Anton
+    accepted that gap (2026-08-16) rather than building a second default mechanism for one module.
+    The per-org pick offset itself (`picking_calendar_settings.offset_days`, default 1, range 0-7)
+    is a separate, always-available setting, edited inline on the Picking Calendar page itself
+    (gated to org admins, same `requireOrgAdmin` pattern as `purchase_planner_settings`).
+  - **Deliberately NOT done**: Order Fulfillment's Pick Today tab does not sort by the picking
+    offset — it stays exactly as it was (date-independent, sortable by any column on click). Anton
+    declined coupling that page to the new setting (2026-08-16); revisit only if picking staff
+    actually ask for it.
 - **Data Audit** (`/audit`): pulls a chosen instance's products live and flags missing
   Brand/sales-pricing/inventory-setup/GL-accounts, near-duplicate Category/UOM/Tag values
   (Levenshtein-based), incomplete `AdditionalAttribute1-10` values within a category (with a
