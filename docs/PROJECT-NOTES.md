@@ -98,6 +98,31 @@ prune/rewrite entries here rather than appending forever once something is fully
     for a mistaken click — a plain delete of the `box_label_print_state` row, not a soft-clear, so
     the order is judged purely on its live qualification again; shown as a small "Unmark" link next
     to the "Printed {date}" text once a sale has been marked.
+    **Multi-fulfilment re-qualification fix, 2026-08-16 (0071):** the original "printed" flag was a
+    boolean (`printed_at is null`) — one row per SALE, since Cin7 gives no way to tie a specific box
+    label attachment to a specific fulfilment. A genuine second fulfilment (e.g. a backorder later
+    packed and invoiced) made `total_ready_for_box_label_qty` grow again, but the order never
+    reappeared in the queue, because `printed_at` was still set from the FIRST fulfilment's label.
+    Fixed by replacing the boolean with a QUANTITY snapshot (`box_label_print_state.ready_qty_at_mark`,
+    set to the live ready-for-box-label total at the moment of each "Mark as printed" click) —
+    `qualifies_box_label` now compares the live quantity against that snapshot
+    (`total_ready_for_box_label_qty > ready_qty_at_mark`) instead of checking `printed_at is null`,
+    so genuine new growth self-heals the queue automatically, no per-fulfilment Cin7 tracking needed.
+    Considered and rejected a real per-fulfilment fix: Cin7's `Fulfilments[]` DOES carry a `TaskID`
+    per entry (`Cin7SaleFulfilment.TaskID`, `src/cin7/sales.ts`), but it's discarded at THREE points
+    today (`extractPickPackLineRows` in `sync-sales.ts` never captures it, `sale_pick_pack_lines` has
+    no column for it, and the report functions sum purely by SKU across the whole sale) — retrofitting
+    it would touch the sync pipeline, a new migration, AND the report functions, and would still not
+    solve tying a specific label FILE to a specific fulfilment (Cin7's attachment API has no such
+    linkage regardless — the same gap 0063 already hit). The snapshot approach fixes the actual
+    symptom with none of that. UI updated to match: the main table cell and the "found a BoxLabel
+    attachment in Cin7" banner both now check `is_ready_for_box_label` FIRST (show "Mark as printed"
+    when there's live new-round quantity to acknowledge) before falling back to `box_label_printed_at`
+    (show "Printed {date}" + Unmark when nothing new is outstanding) — checking `printed_at` alone
+    first, as before, would show stale "Printed" text on an order that has already re-qualified for a
+    genuinely new round. **Existing marked rows backfilled to TODAY's actual ready quantity** (not a
+    bare 0 default) so nothing looked newly-ready the instant this shipped — same "a new column
+    doesn't get to read as new business by accident" lesson as the `invoice_status` backfill above.
   - **Shipping Calendar / Picking Calendar** (P3, 0065): share one component,
     `src/app/reports/shipping-calendar/calendar-board.tsx`'s `CalendarBoard` — parameterized by
     `offsetDays` (days subtracted from `ship_by` to get a card's bucket day; 0 for Shipping

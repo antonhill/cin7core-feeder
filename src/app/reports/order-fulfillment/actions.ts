@@ -133,11 +133,32 @@ export async function loadSaleAttachmentsAction(instanceId: string, saleId: stri
  * Upsert (not insert) so re-clicking after a sync brought back an updated
  * row doesn't error, and so this doubles as an implicit "re-print" record
  * if it's ever clicked again.
+ *
+ * Follow-up (`ready_qty_at_mark`, migration 0071): snapshots the CURRENT
+ * ready-for-box-label quantity so a later fulfilment that pushes the total
+ * higher automatically re-qualifies the order for the queue again — see
+ * report_order_fulfillment's own qualifies_box_label condition (qty >
+ * ready_qty_at_mark), no longer a plain "has this ever been printed"
+ * boolean. Reuses report_order_fulfillment_lines (the same canonical
+ * per-line qualification the report itself sums from) rather than
+ * re-deriving the math server-side from scratch, scoped to one instance and
+ * filtered to this one sale via PostgREST so it stays a cheap targeted
+ * lookup, not a full report scan.
  */
 export async function markBoxLabelPrintedAction(instanceId: string, saleId: string): Promise<OrderFulfillmentActionResult<void>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
+
+    const { data: lineRows, error: lineError } = await db
+      .rpc("report_order_fulfillment_lines", { p_org_id: orgId, p_instance_ids: [instanceId] })
+      .eq("cin7_sale_id", saleId);
+    if (lineError) return { ok: false, error: lineError.message };
+    const readyQtyAtMark = ((lineRows ?? []) as { ready_for_box_label_qty: number }[]).reduce(
+      (sum, row) => sum + (row.ready_for_box_label_qty ?? 0),
+      0
+    );
+
     const { error } = await db.from("box_label_print_state").upsert(
       {
         org_id: orgId,
@@ -145,6 +166,7 @@ export async function markBoxLabelPrintedAction(instanceId: string, saleId: stri
         cin7_sale_id: saleId,
         printed_by_email: email ?? "Unknown",
         printed_at: new Date().toISOString(),
+        ready_qty_at_mark: readyQtyAtMark,
       },
       { onConflict: "org_id,instance_id,cin7_sale_id" }
     );
