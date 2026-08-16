@@ -8,6 +8,7 @@ import type { InstancePickerItem } from "@/actions/instances";
 import { ReportDescription } from "../ReportDescription";
 import { StatusBadge } from "../status-badge";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
+import { cin7SaleUrl } from "@/cin7/web-url";
 
 const DAY_COUNT = 7;
 
@@ -29,11 +30,6 @@ function needsInvoicing(order: OrderFulfillmentRow): boolean {
 
 function isShipped(order: OrderFulfillmentRow): boolean {
   return order.combined_shipping_status === "SHIPPED";
-}
-
-/** Cin7's own web app — one shared domain regardless of instance/region (confirmed live 2026-08-04: a real Cin7 sale URL is `https://inventory.dearsystems.com/SaleMultiple#{id}~{id}~tabOrder`), not a per-instance subdomain. Still derived from each instance's own stored base_url rather than hardcoded, in case a different Cin7 region ever uses a different host. */
-function cin7SaleUrl(origin: string, cin7SaleId: string): string {
-  return `${origin}/SaleMultiple#${cin7SaleId}~${cin7SaleId}~tabOrder`;
 }
 
 function InvoicingCard({ order, instanceName, cin7Url }: { order: OrderFulfillmentRow; instanceName?: string; cin7Url: string | null }) {

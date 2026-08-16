@@ -6,6 +6,7 @@ import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { PICKING_CALENDAR_MODULE } from "@/app/module-nav";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { updateSaleShipBy } from "@/cin7/sales";
+import { recordShipByChange } from "@/lib/ship-by-notifications";
 import {
   getOrderFulfillmentReport,
   getOrderFulfillmentLines,
@@ -55,9 +56,20 @@ export async function loadPickingCalendarOrdersAction(filters: OrderFulfillmentF
 /** Same Cin7 write + local mirror as Shipping Calendar's updateOrderShipByAction (reused per the brief), re-gated to Picking Calendar's own module — see loadPickingCalendarOrdersAction's comment above for why. */
 export async function updatePickingShipByAction(instanceId: string, saleId: string, shipBy: string): Promise<PickingCalendarActionResult<void>> {
   try {
-    const { orgId } = await requireModuleAccess(PICKING_CALENDAR_MODULE.href);
+    const { orgId, email } = await requireModuleAccess(PICKING_CALENDAR_MODULE.href);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
+
+    // Read before write — see Shipping Calendar's updateOrderShipByAction
+    // for why (P4 needs the pre-change value for its notification email).
+    const { data: existing } = await db
+      .from("sales")
+      .select("ship_by")
+      .eq("org_id", orgId)
+      .eq("instance_id", instanceId)
+      .eq("cin7_sale_id", saleId)
+      .maybeSingle();
+
     await updateSaleShipBy(creds, saleId, shipBy);
 
     const { error } = await db
@@ -67,6 +79,15 @@ export async function updatePickingShipByAction(instanceId: string, saleId: stri
       .eq("instance_id", instanceId)
       .eq("cin7_sale_id", saleId);
     if (error) throw new Error(`sales table mirror update: ${error.message}`);
+
+    await recordShipByChange(db, {
+      orgId,
+      instanceId,
+      cin7SaleId: saleId,
+      oldShipBy: existing?.ship_by ?? null,
+      newShipBy: shipBy,
+      changedByEmail: email,
+    });
 
     return { ok: true };
   } catch (e) {

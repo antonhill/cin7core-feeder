@@ -72,10 +72,11 @@ prune/rewrite entries here rather than appending forever once something is fully
     reports the union of every field seen, specifically to catch a services/resources key that only
     shows up on some records. The UI's detail panel says this limitation out loud rather than
     silently omitting it.
-- **LBL Fulfilment & Invoicing workflow** (client brief, built P5.3/P1/P2/P3, 2026-08-15/16) — Order
+- **LBL Fulfilment & Invoicing workflow** (client brief, built P5.3/P1/P2/P3/P4, 2026-08-15/16) — Order
   Fulfillment, Shipping Calendar, Invoicing Scheduler, and Picking Calendar all share one SQL-side
   source of truth: `report_order_fulfillment`/`report_order_fulfillment_lines`
-  (`supabase/migrations/0061`-`0063`, `0065`). **Known architecture limitation, accepted not fixed**: the
+  (`supabase/migrations/0061`-`0063`, `0065`; P4's own tables are separate, see below). **Known
+  architecture limitation, accepted not fixed**: the
   sync has no per-fulfilment Cin7 TaskID, so every "per-fulfilment" quantity comparison here
   (packed-vs-invoiced, pick-vs-pack) is actually per-SKU-across-the-whole-sale — fine for the
   common case, but a genuine multi-fulfilment split order can misattribute which specific
@@ -124,6 +125,48 @@ prune/rewrite entries here rather than appending forever once something is fully
     offset — it stays exactly as it was (date-independent, sortable by any column on click). Anton
     declined coupling that page to the new setting (2026-08-16); revisit only if picking staff
     actually ask for it.
+  - **Ship By Change Notifications, Phase 1** (P4, 0066): fires only on a Toolbox-originated
+    ShipBy write (drag/Move-to, either calendar) — hooks `updateOrderShipByAction`/
+    `updatePickingShipByAction` directly, right after each one's existing Cin7 write + `sales`
+    mirror update, per the brief's own instruction not to add a parallel write-back path.
+    `recordShipByChange` (`src/lib/ship-by-notifications.ts`) is a no-op unless
+    `ship_by_notification_settings.enabled` is true for the org — **off by default everywhere**,
+    since the brief requires a real deliverability test against the client's mail ingress before
+    ever turning it on. **No email provider existed in this codebase at all before this** —
+    confirmed live 2026-08-16 that OTP/invite emails go through Supabase Auth's own fixed
+    templates only, nothing capable of arbitrary custom-content transactional email. Added
+    [Resend](https://resend.com) (`RESEND_API_KEY`/`RESEND_FROM_EMAIL` env vars,
+    `src/lib/email/resend.ts`) — Anton's own choice, flagged rather than picked unilaterally, per
+    the brief's explicit instruction on this exact scenario.
+    - **Recipient resolution**: confirmed live (`probeSalesRepField` against a real LBL sale) that
+      Cin7's `SalesRepresentative` is reliably present but its VALUE is inconsistent — mostly a
+      plain name ("Wayne Roberts"), at least one real example was already a bare email. Not
+      resolvable on its own, so it's now synced to `sales.sales_rep` (captured in `syncSaleDetails`
+      alongside `location`/`customer_reference` — same detail-only field, no new Cin7 call) and
+      resolved through an explicit per-org `ship_by_notification_reps` mapping table + settings UI
+      (`/settings/notifications`) rather than trusted directly. An unmapped rep falls back to the
+      org's CC list as the primary recipient, rather than silently sending nowhere.
+    - **Debounce** (anti-bombardment, default 15 min, per-org configurable): `ship_by_change_pending`
+      is a genuine sliding window — `record_ship_by_change_pending` (SQL function, atomic
+      insert-or-extend, same "preserve the first value, race-safe in one round trip" shape as
+      `po_creation_claim`/`try_acquire_sync_route_lock`) keeps `original_ship_by` from the FIRST
+      change in a burst but always pushes `send_after` forward on every subsequent change, so a
+      flurry of edits collapses into one email reporting the true original → final date, sent only
+      once things settle. Flushed by `/api/notify-ship-by-changes` (Vercel Cron, every 5 min,
+      bearer-secret auth — **had to add it to `middleware.ts`'s matcher exclusion list**, the exact
+      "Cron's bearer token gets 307'd to /login before the route handler ever runs" bug this
+      codebase already documented once for the sync/webhook routes; confirmed live it reproduces
+      for any new `api/*` route that forgets the exclusion, so check that list first whenever
+      adding another bearer-auth route).
+    - **Logged unconditionally** (`ship_by_change_notifications`) — including the "no recipients
+      resolved" case (empty `recipients` array, `sent_at` null) and Resend failures (`error` set,
+      `sent_at` null), so a change is never silently unaccounted for even when nobody actually got
+      emailed. No retry queue in Phase 1 — a failed send is logged and the pending row still clears;
+      revisit only if the deliverability test surfaces real transient failures worth retrying.
+    - **Explicitly deferred, not built**: Phase 2 (detecting a ShipBy change made directly in Cin7,
+      via a cron sync-diff producer) is a stub only — `ship_by_notification_settings.phase2_enabled`
+      exists as a placeholder flag, nothing sets or reads it. `[DECISION]` in the brief itself:
+      whether Phase 2 ships to LBL at all — not resolved, deferred with Anton's awareness.
 - **New sync-populated columns don't backfill existing data — learned the hard way, 2026-08-16.**
   `sale_lines.invoice_status` (added by migration `0062`/P1, 2026-08-15) only gets set by
   `syncSaleDetails` (`src/sync/sync-sales.ts`), which only re-fetches a sale's detail when

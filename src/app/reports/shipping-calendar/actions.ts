@@ -5,6 +5,7 @@ import { requireModuleAccess } from "@/lib/authorization";
 import { REPORTS_MODULE } from "@/app/module-nav";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { updateSaleShipBy, fetchCarriers, markSaleShipped, type MarkShippedInput } from "@/cin7/sales";
+import { recordShipByChange } from "@/lib/ship-by-notifications";
 import {
   getOrderFulfillmentReport,
   getOrderFulfillmentLines,
@@ -52,9 +53,21 @@ export async function loadShippingCalendarOrdersAction(filters: OrderFulfillment
  */
 export async function updateOrderShipByAction(instanceId: string, saleId: string, shipBy: string): Promise<ShippingCalendarActionResult<void>> {
   try {
-    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
+    const { orgId, email } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
+
+    // Read before write — P4 (LBL brief) needs the pre-change value to
+    // report "old date -> new date" in the notification email; a plain
+    // UPDATE has no way to recover what a row held before it ran.
+    const { data: existing } = await db
+      .from("sales")
+      .select("ship_by")
+      .eq("org_id", orgId)
+      .eq("instance_id", instanceId)
+      .eq("cin7_sale_id", saleId)
+      .maybeSingle();
+
     await updateSaleShipBy(creds, saleId, shipBy);
 
     const { error } = await db
@@ -64,6 +77,19 @@ export async function updateOrderShipByAction(instanceId: string, saleId: string
       .eq("instance_id", instanceId)
       .eq("cin7_sale_id", saleId);
     if (error) throw new Error(`sales table mirror update: ${error.message}`);
+
+    // P4 Phase 1: fires only on this Toolbox-originated write, per the
+    // brief's own requirement 1 — hooks the existing write-back path
+    // rather than adding a parallel one. No-op unless the org has
+    // notifications enabled (recordShipByChange checks this itself).
+    await recordShipByChange(db, {
+      orgId,
+      instanceId,
+      cin7SaleId: saleId,
+      oldShipBy: existing?.ship_by ?? null,
+      newShipBy: shipBy,
+      changedByEmail: email,
+    });
 
     return { ok: true };
   } catch (e) {

@@ -223,6 +223,15 @@ export function StocktakeIcon({ className }: IconProps) {
   );
 }
 
+export function NotificationsIcon({ className }: IconProps) {
+  return (
+    <GradientIcon className={className} from="#eab308" to="#a16207">
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+    </GradientIcon>
+  );
+}
+
 export function TeamIcon({ className }: IconProps) {
   return (
     <GradientIcon className={className} from="#2563eb" to="#1d4ed8">
@@ -468,6 +477,20 @@ export const TEAM_MEMBERS_MODULE: ModuleConfig = {
   gradient: SELF_COLORED_ICON_BADGE,
   Icon: TeamIcon,
   blurb: "Invite teammates and choose which modules each one can access.",
+};
+
+// Same "not an org-toggleable module" reasoning as SECURITY_MODULE above —
+// P4 (LBL brief) itself is org-flagged off by default (ship_by_notification_
+// settings.enabled), which is the real gate; any org member can view this
+// page (same read-for-all/write-for-admin split as Purchase Planner's own
+// settings), so there's no admin-only page gate the way /settings/members
+// has one.
+export const NOTIFICATIONS_MODULE: ModuleConfig = {
+  href: "/settings/notifications",
+  label: "Notifications",
+  gradient: SELF_COLORED_ICON_BADGE,
+  Icon: NotificationsIcon,
+  blurb: "Ship By change email alerts — who gets notified when a date moves, and the anti-bombardment window.",
 };
 
 export const MODULES: ModuleConfig[] = [

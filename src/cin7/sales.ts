@@ -227,6 +227,17 @@ export interface Cin7SaleDetail {
    * made for line detail, no extra Cin7 request.
    */
   CustomerReference?: string | null;
+  /**
+   * Confirmed live 2026-08-16 (probeSalesRepField, real LBL sale detail
+   * responses): reliably present on every sale checked, but the VALUE is
+   * inconsistent — mostly a plain human name ("Wayne Roberts"), at least one
+   * real example was already a bare email address
+   * ("rick@lightsbylinea.com"). Not resolvable to an email on its own —
+   * P4's notification feature resolves it through an explicit per-org
+   * rep-name→email mapping table (`ship_by_notification_reps`) rather than
+   * trusting this string directly.
+   */
+  SalesRepresentative?: string | null;
   /** An array because a single Sale can be invoiced more than once over its life (e.g. partial shipments) — each with its own InvoiceNumber/InvoiceDate/Lines. */
   Invoices?: Cin7SaleInvoice[];
   Order?: Cin7SaleOrder;

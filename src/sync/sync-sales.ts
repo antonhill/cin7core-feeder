@@ -294,7 +294,12 @@ async function syncSaleDetails(
 
       const { error: updateError } = await db
         .from("sales")
-        .update({ location: detail.Location ?? null, customer_reference: detail.CustomerReference ?? null, detail_synced_at: new Date().toISOString() })
+        .update({
+          location: detail.Location ?? null,
+          customer_reference: detail.CustomerReference ?? null,
+          sales_rep: detail.SalesRepresentative ?? null,
+          detail_synced_at: new Date().toISOString(),
+        })
         .eq("org_id", orgId)
         .eq("instance_id", instanceId)
         .eq("cin7_sale_id", row.cin7_sale_id);

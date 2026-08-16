@@ -6,6 +6,7 @@
     { "path": "/api/sync-assembly-builds", "schedule": "6,21,36,51 * * * *" },
     { "path": "/api/sync-product-availability", "schedule": "8,23,38,53 * * * *" },
     { "path": "/api/sync-production-runs", "schedule": "10,25,40,55 * * * *" },
-    { "path": "/api/delete-expired-trials", "schedule": "0 3 * * *" }
+    { "path": "/api/delete-expired-trials", "schedule": "0 3 * * *" },
+    { "path": "/api/notify-ship-by-changes", "schedule": "*/5 * * * *" }
   ]
 }
