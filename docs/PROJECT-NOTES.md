@@ -72,7 +72,7 @@ prune/rewrite entries here rather than appending forever once something is fully
     reports the union of every field seen, specifically to catch a services/resources key that only
     shows up on some records. The UI's detail panel says this limitation out loud rather than
     silently omitting it.
-- **LBL Fulfilment & Invoicing workflow** (client brief, built P5.3/P1/P2/P3/P4/P5.1/P5.2/P5.5, 2026-08-15/16) — Order
+- **LBL Fulfilment & Invoicing workflow** (client brief, built P5.3/P1/P2/P3/P4/P5.1/P5.2/P5.4/P5.5, 2026-08-15/16) — Order
   Fulfillment, Shipping Calendar, Invoicing Scheduler, and Picking Calendar all share one SQL-side
   source of truth: `report_order_fulfillment`/`report_order_fulfillment_lines`
   (`supabase/migrations/0061`-`0063`, `0065`, `0068`-`0069`; P4/P5.1's own tables are separate, see below).
@@ -214,6 +214,26 @@ prune/rewrite entries here rather than appending forever once something is fully
     are independent "does at least one line match" checks, not a 3-way partition: a mixed order
     (one backordered line covered by an open PO, another with none) is `true` for both, by
     design.
+  - **Code/SKU search audit** (P5.4) — audited all 14 Reporting modules (see the PR description's
+    checklist). **No shared filter component existed before this** — the brief's own phrasing
+    ("using the shared filter component") assumed one; every module's search box was bespoke inline
+    JSX. Added `src/app/reports/text-search.ts` (`matchesSearch` predicate, used everywhere below)
+    and `src/app/reports/search-input.tsx` (`SearchInput`, used for every newly-added box — existing
+    boxes that only needed their match logic extended, not new UI, were left as their own markup).
+    Order Fulfillment, Shipping/Picking Calendar (shared `CalendarBoard`), and Invoicing Scheduler
+    already had an order#/customer search box — extended each to also match line-level
+    SKU/product name via the line data each already fetches (Invoicing Scheduler didn't fetch line
+    detail at all before this; now calls `getOrderFulfillmentLines` alongside its existing report
+    call, same cheap DB RPC the other two already use, not a Cin7 call). Sales, Fulfillment Cleanup
+    Helper, Production Cost Estimator, Inventory Movement, and Stock Health had no search at
+    all — added. Reorder Report already had a search box, but it only ever reached the
+    "Suppliers & purchase orders" section below — the main product table had no search reaching it;
+    wired the same `search` state into both. Assemblies and Production Tracking already had working
+    SKU search (Production Tracking's placeholder text was stale — said "product name" only — fixed
+    to mention SKU too); left both alone otherwise. Custom Reports (user-picked dimensions, no fixed
+    SKU column) and Natas Sold (single-org-gated, Month×Location×NataType aggregate rows, not
+    per-order/SKU) have no natural fixed SKU field to search — flagged N/A rather than silently
+    skipped.
   - **Configurable Excel export** (P5.5, 0069-0070) — Order Fulfillment is the ONLY genuinely
     fulfilment-related view with export capability today (Shipping/Picking Calendar and Invoicing
     Scheduler have none). `[DECISION]` resolved with Anton, 2026-08-16 — the brief's "full synced

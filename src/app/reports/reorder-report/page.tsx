@@ -14,6 +14,8 @@ import {
 import type { ReportFilterOptions, ReorderReportRow, ProductAvailabilitySyncStatus } from "@/reports/query";
 import { SNAPSHOT_STALE_HOURS, hoursSince, StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
+import { matchesSearch } from "../text-search";
+import { SearchInput } from "../search-input";
 import { Spinner } from "@/app/Spinner";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { ReportDescription } from "../ReportDescription";
@@ -245,12 +247,20 @@ export default function ReorderReportPage() {
     }
   }
 
+  // P5.4 (LBL brief): the same `search` state already used below to filter
+  // the supplier-lines section now also gates the main product table — it
+  // previously only reached the supplier section, so a SKU search here
+  // looked like it covered everything but silently didn't.
   const visibleRows = useMemo(() => {
     if (!rows) return [];
     return rows.filter(
-      (r) => (!needsReorderOnly || r.needs_reorder) && moverFilter.has(r.mover_category) && statusFilter.has(r.status)
+      (r) =>
+        (!needsReorderOnly || r.needs_reorder) &&
+        moverFilter.has(r.mover_category) &&
+        statusFilter.has(r.status) &&
+        matchesSearch(search, r.product_sku, r.product_name)
     );
-  }, [rows, needsReorderOnly, moverFilter, statusFilter]);
+  }, [rows, needsReorderOnly, moverFilter, statusFilter, search]);
 
   const sortedRows = useMemo(() => {
     const copy = [...visibleRows];
@@ -609,6 +619,12 @@ export default function ReorderReportPage() {
               <p className="mt-1 text-sm text-slate-500">{needsReorderCount} need reordering at this buffer</p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
+              <SearchInput
+                value={search}
+                onChange={setSearch}
+                placeholder="Product name or SKU"
+                className="w-56 rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+              />
               <label className="flex items-center gap-2 text-sm text-slate-700">
                 <input type="checkbox" checked={needsReorderOnly} onChange={(e) => setNeedsReorderOnly(e.target.checked)} />
                 Needs reorder only

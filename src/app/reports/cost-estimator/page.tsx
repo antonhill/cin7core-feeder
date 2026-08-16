@@ -18,6 +18,8 @@ import {
   type AssemblyCostEstimate,
 } from "@/costing/estimate";
 import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
+import { matchesSearch } from "../text-search";
+import { SearchInput } from "../search-input";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
@@ -119,6 +121,7 @@ export default function CostEstimatorPage() {
 
   const [sortColumn, setSortColumn] = useState<AssemblySortColumn>("assembly");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [assemblySearch, setAssemblySearch] = useState("");
 
   function handleSort(column: AssemblySortColumn) {
     if (column === sortColumn) setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
@@ -130,6 +133,7 @@ export default function CostEstimatorPage() {
 
   const [productionSortColumn, setProductionSortColumn] = useState<ProductionSortColumn>("product");
   const [productionSortDirection, setProductionSortDirection] = useState<SortDirection>("asc");
+  const [productionSearch, setProductionSearch] = useState("");
 
   function handleProductionSort(column: ProductionSortColumn) {
     if (column === productionSortColumn) setProductionSortDirection((d) => (d === "asc" ? "desc" : "asc"));
@@ -251,10 +255,12 @@ export default function CostEstimatorPage() {
   // is negligible; the React Compiler couldn't preserve manual memoization
   // here anyway (some other pre-existing pattern in this large file blocks
   // its auto-optimization pass).
-  const sortedEstimates = [...(estimates ?? [])].sort((a, b) => {
-    const cmp = compareNullable(assemblyEstimateSortValue(a, sortColumn), assemblyEstimateSortValue(b, sortColumn));
-    return sortDirection === "asc" ? cmp : -cmp;
-  });
+  const sortedEstimates = [...(estimates ?? [])]
+    .filter((e) => matchesSearch(assemblySearch, e.assemblySku, e.assemblyName))
+    .sort((a, b) => {
+      const cmp = compareNullable(assemblyEstimateSortValue(a, sortColumn), assemblyEstimateSortValue(b, sortColumn));
+      return sortDirection === "asc" ? cmp : -cmp;
+    });
 
   const productionEstimates = productionResult?.estimates ?? [];
   const totalAcrossProduction = productionEstimates.reduce(
@@ -265,10 +271,12 @@ export default function CostEstimatorPage() {
     (e) => !e.complete,
   ).length;
 
-  const sortedProductionEstimates = [...productionEstimates].sort((a, b) => {
-    const cmp = compareNullable(productionEstimateSortValue(a, productionSortColumn), productionEstimateSortValue(b, productionSortColumn));
-    return productionSortDirection === "asc" ? cmp : -cmp;
-  });
+  const sortedProductionEstimates = [...productionEstimates]
+    .filter((e) => matchesSearch(productionSearch, e.productSku, e.productName))
+    .sort((a, b) => {
+      const cmp = compareNullable(productionEstimateSortValue(a, productionSortColumn), productionEstimateSortValue(b, productionSortColumn));
+      return productionSortDirection === "asc" ? cmp : -cmp;
+    });
 
   return (
     <>
@@ -347,10 +355,11 @@ export default function CostEstimatorPage() {
             <section className="mt-6 flex flex-col gap-4">
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4">
                 <p className="text-sm text-slate-500">
-                  {estimates.length} assembl
+                  {sortedEstimates.length} of {estimates.length} assembl
                   {estimates.length === 1 ? "y" : "ies"} · basis:{" "}
                   {COST_BASIS_OPTIONS.find((o) => o.value === basis)?.label}
                 </p>
+                <SearchInput value={assemblySearch} onChange={setAssemblySearch} placeholder="Assembly SKU or name" />
                 <div className="flex items-center gap-3">
                   <p className="text-sm font-medium text-slate-700">
                     Total across all: {formatNumber(totalAcrossAssemblies)}
@@ -387,7 +396,7 @@ export default function CostEstimatorPage() {
                 </p>
               )}
 
-              {estimates.length > 0 ? (
+              {sortedEstimates.length > 0 ? (
                 <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
                   <table className="w-full text-left text-sm text-slate-700">
                     <thead>
@@ -521,7 +530,7 @@ export default function CostEstimatorPage() {
                 </div>
               ) : (
                 <p className="text-base text-slate-500">
-                  No Assembly BOMs found on this instance.
+                  {estimates.length > 0 ? `Nothing matches "${assemblySearch}".` : "No Assembly BOMs found on this instance."}
                 </p>
               )}
             </section>
@@ -586,10 +595,11 @@ export default function CostEstimatorPage() {
               )}
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4">
                 <p className="text-sm text-slate-500">
-                  {productionEstimates.length} product
+                  {sortedProductionEstimates.length} of {productionEstimates.length} product
                   {productionEstimates.length === 1 ? "" : "s"} · basis:{" "}
                   {COST_BASIS_OPTIONS.find((o) => o.value === basis)?.label}
                 </p>
+                <SearchInput value={productionSearch} onChange={setProductionSearch} placeholder="Product SKU or name" />
                 <div className="flex items-center gap-3">
                   <p className="text-sm font-medium text-slate-700">
                     Total across all: {formatNumber(totalAcrossProduction)}
@@ -634,7 +644,7 @@ export default function CostEstimatorPage() {
                 </p>
               )}
 
-              {productionEstimates.length > 0 ? (
+              {sortedProductionEstimates.length > 0 ? (
                 <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
                   <table className="w-full text-left text-sm text-slate-700">
                     <thead>
@@ -881,8 +891,9 @@ export default function CostEstimatorPage() {
                 </div>
               ) : (
                 <p className="text-base text-slate-500">
-                  No Production BOM products with a completed Manufacture Order
-                  were found on this instance.
+                  {productionEstimates.length > 0
+                    ? `Nothing matches "${productionSearch}".`
+                    : "No Production BOM products with a completed Manufacture Order were found on this instance."}
                 </p>
               )}
             </section>
