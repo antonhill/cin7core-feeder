@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useMemo, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
 import { loadReportFilterOptionsAction, loadSalesSyncStatusAction, triggerSalesSyncAction } from "../actions";
-import { loadOrderFulfillmentAction, exportOrderFulfillmentXlsxAction, loadSaleAttachmentsAction } from "./actions";
+import { loadOrderFulfillmentAction, exportOrderFulfillmentXlsxAction, loadSaleAttachmentsAction, markBoxLabelPrintedAction } from "./actions";
 import type { ReportFilterOptions, OrderFulfillmentRow, OrderFulfillmentLineRow, SalesSyncStatus } from "@/reports/query";
 import type { Cin7SaleAttachment } from "@/cin7/sales";
 import { buildBatchPickList } from "@/reports/order-fulfillment/pick-list";
@@ -16,12 +16,13 @@ import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { ReportDescription } from "../ReportDescription";
 
-type Tab = "pick" | "ship" | "readyToInvoice" | "all";
+type Tab = "pick" | "ship" | "readyToInvoice" | "boxLabel" | "all";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "pick", label: "Pick Today" },
   { value: "ship", label: "Ship Today" },
   { value: "readyToInvoice", label: "Ready to Invoice" },
+  { value: "boxLabel", label: "Box Label Queue" },
   { value: "all", label: "All Orders" },
 ];
 
@@ -33,9 +34,12 @@ type OrderTableColumn =
   | "packing"
   | "shipping"
   | "invoice"
+  | "invoiceNumbers"
   | "payment"
   | "pickableNow"
   | "readyToInvoiceQty"
+  | "boxLabelQty"
+  | "boxLabelAction"
   | "paidInvoice";
 
 const ORDER_TABLE_COLUMNS: OrderTableColumn[] = [
@@ -46,9 +50,12 @@ const ORDER_TABLE_COLUMNS: OrderTableColumn[] = [
   "packing",
   "shipping",
   "invoice",
+  "invoiceNumbers",
   "payment",
   "pickableNow",
   "readyToInvoiceQty",
+  "boxLabelQty",
+  "boxLabelAction",
   "paidInvoice",
 ];
 
@@ -60,13 +67,16 @@ const ORDER_TABLE_DEFAULT_WIDTHS: Record<OrderTableColumn, number> = {
   packing: 130,
   shipping: 130,
   invoice: 130,
+  invoiceNumbers: 140,
   payment: 130,
   pickableNow: 120,
   readyToInvoiceQty: 140,
+  boxLabelQty: 130,
+  boxLabelAction: 170,
   paidInvoice: 140,
 };
 
-/** The "select" checkbox column has no sensible sort value; every other column maps to one field (or, for Order, falls back to customer name so an order with no number still sorts sensibly). */
+/** The "select" checkbox column has no sensible sort value; every other column maps to one field (or, for Order, falls back to customer name so an order with no number still sorts sensibly). "boxLabelAction" isn't sortable either — it's a button, not data. */
 function orderTableSortValue(column: OrderTableColumn, row: OrderFulfillmentRow): string | number | null {
   switch (column) {
     case "order":
@@ -81,12 +91,16 @@ function orderTableSortValue(column: OrderTableColumn, row: OrderFulfillmentRow)
       return row.combined_shipping_status;
     case "invoice":
       return row.combined_invoice_status;
+    case "invoiceNumbers":
+      return row.invoice_numbers;
     case "payment":
       return row.combined_payment_status;
     case "pickableNow":
       return row.total_pickable_qty;
     case "readyToInvoiceQty":
       return row.total_ready_to_invoice_qty;
+    case "boxLabelQty":
+      return row.total_ready_for_box_label_qty;
     case "paidInvoice":
       return row.paid_amount;
     default:
@@ -116,6 +130,18 @@ function qty(value: number): string {
 
 function money(value: number): string {
   return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/**
+ * P2 (LBL brief) Box Label Queue: confirmed live 2026-08-15 (Spark Demo
+ * instance, SO-00128) that a real Cin7 box-label attachment is named
+ * "BoxLabel+{OrderNumber}+for+{Customer}.pdf" — same "+"-joined convention
+ * every other Cin7-generated document here already uses. Case-insensitive
+ * prefix match rather than an exact one, matching this codebase's standing
+ * rule about not trusting a single observed casing as the only real one.
+ */
+function isBoxLabelAttachment(filename: string | undefined): boolean {
+  return Boolean(filename?.toLowerCase().startsWith("boxlabel"));
 }
 
 export default function OrderFulfillmentPage() {
@@ -157,6 +183,8 @@ export default function OrderFulfillmentPage() {
   const [shipByFrom, setShipByFrom] = useState("");
   const [shipByTo, setShipByTo] = useState("");
   const [backorderFilter, setBackorderFilter] = useState<"all" | "fulfillable" | "backorder">("all");
+  // P2 requirement 3: "" means no filter (all coverage states shown).
+  const [invoiceCoverageFilter, setInvoiceCoverageFilter] = useState<"" | "not_invoiced" | "partially_invoiced" | "invoiced">("");
 
   const [isExporting, startExportTransition] = useTransition();
   const [exportError, setExportError] = useState<string | null>(null);
@@ -173,6 +201,11 @@ export default function OrderFulfillmentPage() {
 
   const [selectedSaleIds, setSelectedSaleIds] = useState<Set<string>>(new Set());
   const [showPickList, setShowPickList] = useState(false);
+
+  // P2 (LBL brief) Box Label Queue — per-sale so one row's in-flight click
+  // doesn't disable every "Mark as printed" button on the page.
+  const [markingPrintedSaleId, setMarkingPrintedSaleId] = useState<string | null>(null);
+  const [markPrintedError, setMarkPrintedError] = useState<string | null>(null);
 
   function toggleSelected(saleId: string) {
     setSelectedSaleIds((prev) => {
@@ -212,6 +245,26 @@ export default function OrderFulfillmentPage() {
         return;
       }
       setAttachmentsBySaleId((prev) => ({ ...prev, [saleId]: result.data ?? [] }));
+    });
+  }
+
+  /**
+   * P2 (LBL brief) Box Label Queue: records the Toolbox-local "printed"
+   * flag — never a Cin7 write — then refetches the report so this row's
+   * is_ready_for_box_label/box_label_printed_at reflect the new state
+   * immediately (a plain DB read behind loadOrderFulfillmentAction, not a
+   * Cin7 call, so this is cheap).
+   */
+  function handleMarkBoxLabelPrinted(instanceId: string, saleId: string) {
+    setMarkPrintedError(null);
+    setMarkingPrintedSaleId(saleId);
+    markBoxLabelPrintedAction(instanceId, saleId).then((result) => {
+      setMarkingPrintedSaleId(null);
+      if (!result.ok) {
+        setMarkPrintedError(result.error ?? "Unknown error");
+        return;
+      }
+      runLoad();
     });
   }
 
@@ -284,6 +337,7 @@ export default function OrderFulfillmentPage() {
     if (tab === "pick") rows = rows.filter((o) => o.is_pick_today);
     else if (tab === "ship") rows = rows.filter((o) => o.is_ship_today);
     else if (tab === "readyToInvoice") rows = rows.filter((o) => o.is_ready_to_invoice);
+    else if (tab === "boxLabel") rows = rows.filter((o) => o.is_ready_for_box_label);
 
     const searchLower = search.trim().toLowerCase();
     if (searchLower) {
@@ -296,9 +350,13 @@ export default function OrderFulfillmentPage() {
     if (shipByTo) rows = rows.filter((o) => o.ship_by !== null && o.ship_by <= shipByTo);
     if (backorderFilter === "fulfillable") rows = rows.filter((o) => o.total_backorder_qty === 0);
     else if (backorderFilter === "backorder") rows = rows.filter((o) => o.total_backorder_qty > 0);
+    // P2 requirement 3: scope any tab (most useful on Ship Today / Box Label
+    // Queue) to real invoice coverage, computed server-side from quantities
+    // rather than Cin7's own combined_invoice_status string.
+    if (invoiceCoverageFilter) rows = rows.filter((o) => o.invoice_coverage_status === invoiceCoverageFilter);
 
     return rows;
-  }, [orders, tab, search, paymentFilter, shipByFrom, shipByTo, backorderFilter]);
+  }, [orders, tab, search, paymentFilter, shipByFrom, shipByTo, backorderFilter, invoiceCoverageFilter]);
 
   const sortedRows = useMemo(() => {
     if (!sortColumn) return visibleRows;
@@ -315,6 +373,7 @@ export default function OrderFulfillmentPage() {
         pick: orders.filter((o) => o.is_pick_today).length,
         ship: orders.filter((o) => o.is_ship_today).length,
         readyToInvoice: orders.filter((o) => o.is_ready_to_invoice).length,
+        boxLabel: orders.filter((o) => o.is_ready_for_box_label).length,
         all: orders.length,
       }
     : null;
@@ -333,7 +392,9 @@ export default function OrderFulfillmentPage() {
         ? orders.filter((o) => o.ship_today_hidden_by_floor).length
         : tab === "readyToInvoice"
           ? orders.filter((o) => o.ready_to_invoice_hidden_by_floor).length
-          : 0
+          : tab === "boxLabel"
+            ? orders.filter((o) => o.box_label_hidden_by_floor).length
+            : 0
     : 0;
 
   const selectedOrders = useMemo(() => (orders ?? []).filter((o) => selectedSaleIds.has(o.cin7_sale_id)), [orders, selectedSaleIds]);
@@ -356,13 +417,18 @@ export default function OrderFulfillmentPage() {
       <div className="print:hidden">
       <ReportDescription title="Order Fulfillment">
         A working dashboard for pick/pack/ship/invoice/payment — not just a status report.{" "}
-        <strong>Pick Today</strong>, <strong>Ship Today</strong>, and <strong>Ready to Invoice</strong> are priority
-        queues (overdue orders first, undated orders last, nothing dropped just because it&rsquo;s late or has no
-        ship-by date), each order expandable to the exact SKUs and quantities still needed.{" "}
-        <strong>Ready to Invoice</strong> is a real per-SKU quantity comparison (authorised-packed minus invoiced,
-        summed across every fulfilment and invoice on the order) — not the sale-level invoice status, which can miss
-        an order that&rsquo;s already been partially invoiced from an earlier fulfilment and now needs another.{" "}
-        <strong>All Orders</strong> shows the complete picture across every stage.
+        <strong>Pick Today</strong>, <strong>Ship Today</strong>, <strong>Ready to Invoice</strong>, and{" "}
+        <strong>Box Label Queue</strong> are priority queues (overdue orders first, undated orders last, nothing
+        dropped just because it&rsquo;s late or has no ship-by date), each order expandable to the exact SKUs and
+        quantities still needed.{" "}
+        <strong>Ready to Invoice</strong> and <strong>Box Label Queue</strong> are real per-SKU quantity comparisons
+        (authorised-packed vs. invoiced, summed across every fulfilment and invoice on the order) — not the
+        sale-level invoice status, which can miss an order that&rsquo;s already been partially invoiced from an
+        earlier fulfilment and now needs another.{" "}
+        <strong>Box Label Queue</strong>&rsquo;s &ldquo;Mark as printed&rdquo; is a Toolbox-local record, never
+        written to Cin7 — it&rsquo;s what actually removes an order from this queue, since Cin7 gives no reliable way
+        to detect a label was printed automatically. <strong>All Orders</strong> shows the complete picture across
+        every stage.
       </ReportDescription>
       <PageLoadingIndicator show={isExporting} label="Exporting to Excel…" />
 
@@ -485,7 +551,21 @@ export default function OrderFulfillmentPage() {
                 <option value="backorder">Has backorders only</option>
               </select>
             </label>
-            {(search || paymentFilter || shipByFrom || shipByTo || backorderFilter !== "all") && (
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-slate-700">Invoice coverage</span>
+              <select
+                value={invoiceCoverageFilter}
+                onChange={(e) => setInvoiceCoverageFilter(e.target.value as typeof invoiceCoverageFilter)}
+                className="rounded-lg border border-slate-300 px-3 py-2"
+                title="Based on real invoiced-vs-ordered quantities, not Cin7's own invoice status field"
+              >
+                <option value="">All</option>
+                <option value="not_invoiced">Not invoiced</option>
+                <option value="partially_invoiced">Partially invoiced</option>
+                <option value="invoiced">Invoiced</option>
+              </select>
+            </label>
+            {(search || paymentFilter || shipByFrom || shipByTo || backorderFilter !== "all" || invoiceCoverageFilter) && (
               <button
                 type="button"
                 onClick={() => {
@@ -494,6 +574,7 @@ export default function OrderFulfillmentPage() {
                   setShipByFrom("");
                   setShipByTo("");
                   setBackorderFilter("all");
+                  setInvoiceCoverageFilter("");
                 }}
                 className="rounded-full border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
               >
@@ -558,9 +639,12 @@ export default function OrderFulfillmentPage() {
                     <ResizableTh column="packing" label="Packing" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <ResizableTh column="shipping" label="Shipping" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <ResizableTh column="invoice" label="Invoice" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <ResizableTh column="invoiceNumbers" label="Invoice #(s)" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <ResizableTh column="payment" label="Payment" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <ResizableTh column="pickableNow" label="Pickable Now" align="right" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <ResizableTh column="readyToInvoiceQty" label="Qty Awaiting Invoice" align="right" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <ResizableTh column="boxLabelQty" label="Qty Ready for Label" align="right" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <ResizableTh column="boxLabelAction" label="Box Label" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <ResizableTh column="paidInvoice" label="Paid / Invoice" align="right" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                   </tr>
                 </thead>
@@ -582,6 +666,11 @@ export default function OrderFulfillmentPage() {
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4">
                           <div className="truncate font-medium text-slate-900">{row.order_number ?? row.cin7_sale_id}</div>
                           <div className="truncate text-xs text-slate-400">{row.customer_name}</div>
+                          {(options?.instances.length ?? 0) > 1 && (
+                            <div className="truncate text-xs text-slate-300">
+                              {options?.instances.find((i) => i.id === row.instance_id)?.name}
+                            </div>
+                          )}
                         </td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4">
                           <div>{row.ship_by ?? <span className="text-slate-300">—</span>}</div>
@@ -611,18 +700,38 @@ export default function OrderFulfillmentPage() {
                         <td className="overflow-hidden py-2 pr-4">
                           <StatusBadge status={row.combined_invoice_status} />
                         </td>
+                        <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-xs text-slate-600">{row.invoice_numbers ?? "—"}</td>
                         <td className="overflow-hidden py-2 pr-4">
                           <StatusBadge status={row.combined_payment_status} />
                         </td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium">{qty(row.total_pickable_qty)}</td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium">{qty(row.total_ready_to_invoice_qty)}</td>
+                        <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium">{qty(row.total_ready_for_box_label_qty)}</td>
+                        <td className="overflow-hidden whitespace-nowrap py-2 pr-4" onClick={(e) => e.stopPropagation()}>
+                          {row.box_label_printed_at ? (
+                            <span className="text-xs text-emerald-600" title={row.box_label_printed_by_email ?? undefined}>
+                              Printed {row.box_label_printed_at.slice(0, 10)}
+                            </span>
+                          ) : row.is_ready_for_box_label ? (
+                            <button
+                              type="button"
+                              onClick={() => handleMarkBoxLabelPrinted(row.instance_id, row.cin7_sale_id)}
+                              disabled={markingPrintedSaleId === row.cin7_sale_id}
+                              className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                            >
+                              {markingPrintedSaleId === row.cin7_sale_id ? "Marking…" : "Mark as printed"}
+                            </button>
+                          ) : (
+                            <span className="text-xs text-slate-300">—</span>
+                          )}
+                        </td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right">
                           {money(row.paid_amount)} / {money(row.invoice_amount)}
                         </td>
                       </tr>
                       {expandedSaleId === row.cin7_sale_id && (
                         <tr>
-                          <td colSpan={11} className="bg-slate-50 px-4 py-3">
+                          <td colSpan={ORDER_TABLE_COLUMNS.length} className="bg-slate-50 px-4 py-3">
                             <div className="mb-3 flex items-center justify-between">
                               <button
                                 type="button"
@@ -639,6 +748,21 @@ export default function OrderFulfillmentPage() {
                               </button>
                             </div>
                             {attachmentsError && <p className="mb-2 text-xs text-red-600">{attachmentsError}</p>}
+                            {markPrintedError && <p className="mb-2 text-xs text-red-600">{markPrintedError}</p>}
+                            {!row.box_label_printed_at &&
+                              attachmentsBySaleId[row.cin7_sale_id]?.some((att) => isBoxLabelAttachment(att.FileName)) && (
+                                <p className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                                  A box label attachment already exists on this sale in Cin7.
+                                  <button
+                                    type="button"
+                                    onClick={() => handleMarkBoxLabelPrinted(row.instance_id, row.cin7_sale_id)}
+                                    disabled={markingPrintedSaleId === row.cin7_sale_id}
+                                    className="rounded-full border border-amber-300 bg-white px-2.5 py-1 font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                                  >
+                                    {markingPrintedSaleId === row.cin7_sale_id ? "Marking…" : "Mark as printed"}
+                                  </button>
+                                </p>
+                              )}
                             {attachmentsBySaleId[row.cin7_sale_id] && (
                               <div className="mb-3">
                                 {attachmentsBySaleId[row.cin7_sale_id].length === 0 ? (

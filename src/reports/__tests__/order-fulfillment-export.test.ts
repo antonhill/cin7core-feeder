@@ -32,6 +32,13 @@ function row(overrides: Partial<OrderFulfillmentRow>): OrderFulfillmentRow {
     total_ready_to_invoice_qty: 0,
     is_ready_to_invoice: false,
     ready_to_invoice_hidden_by_floor: false,
+    invoice_numbers: null,
+    invoice_coverage_status: "not_invoiced",
+    total_ready_for_box_label_qty: 0,
+    is_ready_for_box_label: false,
+    box_label_hidden_by_floor: false,
+    box_label_printed_at: null,
+    box_label_printed_by_email: null,
     ...overrides,
   };
 }

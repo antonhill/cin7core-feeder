@@ -428,6 +428,8 @@ export default function ShippingCalendarPage() {
   const [isLoading, startLoadTransition] = useTransition();
 
   const [search, setSearch] = useState("");
+  // P2 (LBL brief) requirement 3: "" means no filter (all coverage states shown) — scopes the calendar to e.g. "invoiced but not fully shipped".
+  const [invoiceCoverageFilter, setInvoiceCoverageFilter] = useState<"" | "not_invoiced" | "partially_invoiced" | "invoiced">("");
   const [detailSaleId, setDetailSaleId] = useState<string | null>(null);
 
   // Applied instantly on drop so the card visibly moves before the Cin7
@@ -480,12 +482,16 @@ export default function ShippingCalendarPage() {
   }, [lines]);
 
   const searchedOrders = useMemo(() => {
+    let rows = orders ?? [];
     const searchLower = search.trim().toLowerCase();
-    if (!searchLower) return orders ?? [];
-    return (orders ?? []).filter(
-      (o) => (o.order_number ?? "").toLowerCase().includes(searchLower) || (o.customer_name ?? "").toLowerCase().includes(searchLower)
-    );
-  }, [orders, search]);
+    if (searchLower) {
+      rows = rows.filter(
+        (o) => (o.order_number ?? "").toLowerCase().includes(searchLower) || (o.customer_name ?? "").toLowerCase().includes(searchLower)
+      );
+    }
+    if (invoiceCoverageFilter) rows = rows.filter((o) => o.invoice_coverage_status === invoiceCoverageFilter);
+    return rows;
+  }, [orders, search, invoiceCoverageFilter]);
 
   const ordersByDay = useMemo(() => {
     const map = new Map<string, OrderFulfillmentRow[]>();
@@ -602,6 +608,17 @@ export default function ShippingCalendarPage() {
               onChange={(e) => setSearch(e.target.value)}
               className="w-56 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
             />
+            <select
+              value={invoiceCoverageFilter}
+              onChange={(e) => setInvoiceCoverageFilter(e.target.value as typeof invoiceCoverageFilter)}
+              className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+              title="Based on real invoiced-vs-ordered quantities, not Cin7's own invoice status field"
+            >
+              <option value="">Any invoice coverage</option>
+              <option value="not_invoiced">Not invoiced</option>
+              <option value="partially_invoiced">Partially invoiced</option>
+              <option value="invoiced">Invoiced</option>
+            </select>
             {isLoading && <Spinner />}
           </div>
         </div>

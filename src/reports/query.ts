@@ -487,6 +487,18 @@ export interface OrderFulfillmentRow {
   is_ready_to_invoice: boolean;
   /** Same floor semantics as pick_today_hidden_by_floor/ship_today_hidden_by_floor, for the Ready to Invoice queue. */
   ready_to_invoice_hidden_by_floor: boolean;
+  /** Distinct AUTHORISED/PAID invoice numbers on this order, comma-joined — null when nothing's been finally invoiced yet (P2, "Box Label Queue"). */
+  invoice_numbers: string | null;
+  /** Requirement 3's shipping-view filter: "not_invoiced" | "partially_invoiced" | "invoiced", computed from real invoiced-vs-ordered quantities rather than trusting Cin7's own combined_invoice_status string. */
+  invoice_coverage_status: "not_invoiced" | "partially_invoiced" | "invoiced";
+  /** Sum of every line's ready_for_box_label_qty (P2) — authorised-packed quantity now fully covered by a final invoice, the exact complement of total_ready_to_invoice_qty. */
+  total_ready_for_box_label_qty: number;
+  /** False once a local box_label_print_state row exists for this sale — that flag, not Cin7 attachment detection, is the real "drops off the queue" mechanism (see migration 0063's own comment on why bulk attachment auto-clear isn't built). */
+  is_ready_for_box_label: boolean;
+  box_label_hidden_by_floor: boolean;
+  /** Null unless someone has clicked "Mark as printed" for this sale — a Toolbox-local record, never written to Cin7. */
+  box_label_printed_at: string | null;
+  box_label_printed_by_email: string | null;
 }
 
 export interface OrderFulfillmentLineRow {
@@ -514,6 +526,8 @@ export interface OrderFulfillmentLineRow {
   invoiced_qty: number;
   /** greatest(packed_qty_authorised - invoiced_qty, 0) — the actual per-line qualifying quantity for Ready to Invoice. */
   ready_to_invoice_qty: number;
+  /** packed_qty_authorised when invoiced_qty already covers it (else 0) — the exact complement of ready_to_invoice_qty, P2's per-line qualifying quantity for the Box Label Queue. */
+  ready_for_box_label_qty: number;
 }
 
 /**
