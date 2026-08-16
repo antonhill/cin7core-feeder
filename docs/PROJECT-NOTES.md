@@ -72,11 +72,11 @@ prune/rewrite entries here rather than appending forever once something is fully
     reports the union of every field seen, specifically to catch a services/resources key that only
     shows up on some records. The UI's detail panel says this limitation out loud rather than
     silently omitting it.
-- **LBL Fulfilment & Invoicing workflow** (client brief, built P5.3/P1/P2/P3/P4, 2026-08-15/16) — Order
+- **LBL Fulfilment & Invoicing workflow** (client brief, built P5.3/P1/P2/P3/P4/P5.1/P5.2, 2026-08-15/16) — Order
   Fulfillment, Shipping Calendar, Invoicing Scheduler, and Picking Calendar all share one SQL-side
   source of truth: `report_order_fulfillment`/`report_order_fulfillment_lines`
-  (`supabase/migrations/0061`-`0063`, `0065`; P4's own tables are separate, see below). **Known
-  architecture limitation, accepted not fixed**: the
+  (`supabase/migrations/0061`-`0063`, `0065`, `0068`; P4/P5.1's own tables are separate, see below).
+  **Known architecture limitation, accepted not fixed**: the
   sync has no per-fulfilment Cin7 TaskID, so every "per-fulfilment" quantity comparison here
   (packed-vs-invoiced, pick-vs-pack) is actually per-SKU-across-the-whole-sale — fine for the
   common case, but a genuine multi-fulfilment split order can misattribute which specific
@@ -167,6 +167,31 @@ prune/rewrite entries here rather than appending forever once something is fully
       via a cron sync-diff producer) is a stub only — `ship_by_notification_settings.phase2_enabled`
       exists as a placeholder flag, nothing sets or reads it. `[DECISION]` in the brief itself:
       whether Phase 2 ships to LBL at all — not resolved, deferred with Anton's awareness.
+  - **BOM alert on authorised SOs** (P5.1) — when a sale transitions INTO Cin7's `AUTHORISED`
+    `order_status` and its lines include ≥1 BOM/assembly product, emails a configured Warehouse
+    Manager (BOM lines don't print on Cin7's own "Pick Available" flow). Transition detection
+    lives entirely in phase 1 of `syncSalesList` (`src/sync/sync-sales.ts`) — compares the sale's
+    prior `order_status` (added to that phase's own prior-row select) against the new one from
+    the same cheap `/saleList` scan, no extra Cin7 traffic for the check itself. A sale already
+    `AUTHORISED` before this feature existed has `prior.order_status = 'AUTHORISED'` too, so
+    enabling this for an org does NOT burst-alert on the existing backlog. `[VALIDATE-API]`
+    resolved: Cin7's real field is `BillOfMaterial` (boolean, `GET /Product`), already confirmed
+    live by Data Audit's `findProductsWithBom`. `[DECISION]` resolved with Anton: the brief
+    assumed an existing product sync to "minimally extend" — there isn't one (`products` is only
+    ever pushed TO Cin7, never pulled back) — so the BOM check is a live call scoped to just the
+    transitioned sale's own SKUs (`findBomSkus`, `src/cin7/products.ts`), not a new sync
+    pipeline. No debounce table unlike P4 — fires once per sale, guarded by
+    `sales.bom_alert_sent_at`. Settings live as a second section on `/settings/notifications`.
+  - **Backorder "no open PO" filter** (P5.2) — the client specifically asked whether the
+    EXISTING "Backorders" filter on Order Fulfillment (`total_backorder_qty > 0`) is status- or
+    linkage-based: it's status-based, a raw quantity check. This adds a SEPARATE, explicitly
+    linkage-based filter alongside it (`has_backorder_with_po`/`has_backorder_no_po`, aggregated
+    in `report_order_fulfillment`'s own `totals` CTE via `bool_or` over
+    `report_order_fulfillment_lines`' already-existing `backorder_po_number`), with a `title`
+    tooltip spelling out the distinction — doesn't touch the original filter. The two new columns
+    are independent "does at least one line match" checks, not a 3-way partition: a mixed order
+    (one backordered line covered by an open PO, another with none) is `true` for both, by
+    design.
 - **New sync-populated columns don't backfill existing data — learned the hard way, 2026-08-16.**
   `sale_lines.invoice_status` (added by migration `0062`/P1, 2026-08-15) only gets set by
   `syncSaleDetails` (`src/sync/sync-sales.ts`), which only re-fetches a sale's detail when

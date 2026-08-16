@@ -183,6 +183,11 @@ export default function OrderFulfillmentPage() {
   const [shipByFrom, setShipByFrom] = useState("");
   const [shipByTo, setShipByTo] = useState("");
   const [backorderFilter, setBackorderFilter] = useState<"all" | "fulfillable" | "backorder">("all");
+  // P5.2: "" means no filter. Deliberately separate from backorderFilter
+  // above (which is status-based — a raw total_backorder_qty check) — this
+  // one is PO-linkage-based, which is exactly the distinction the client
+  // asked to have made explicit (see the select's own title attribute).
+  const [backorderPoFilter, setBackorderPoFilter] = useState<"" | "with_po" | "no_po">("");
   // P2 requirement 3: "" means no filter (all coverage states shown).
   const [invoiceCoverageFilter, setInvoiceCoverageFilter] = useState<"" | "not_invoiced" | "partially_invoiced" | "invoiced">("");
 
@@ -350,13 +355,19 @@ export default function OrderFulfillmentPage() {
     if (shipByTo) rows = rows.filter((o) => o.ship_by !== null && o.ship_by <= shipByTo);
     if (backorderFilter === "fulfillable") rows = rows.filter((o) => o.total_backorder_qty === 0);
     else if (backorderFilter === "backorder") rows = rows.filter((o) => o.total_backorder_qty > 0);
+    // P5.2: PO-linkage-based, independent of backorderFilter above — see
+    // that state's own comment. "No open PO" is the actionable procurement
+    // list; "with PO" and "no PO" aren't mutually exclusive (a mixed order
+    // can match both), so each is its own straightforward boolean filter.
+    if (backorderPoFilter === "with_po") rows = rows.filter((o) => o.has_backorder_with_po);
+    else if (backorderPoFilter === "no_po") rows = rows.filter((o) => o.has_backorder_no_po);
     // P2 requirement 3: scope any tab (most useful on Ship Today / Box Label
     // Queue) to real invoice coverage, computed server-side from quantities
     // rather than Cin7's own combined_invoice_status string.
     if (invoiceCoverageFilter) rows = rows.filter((o) => o.invoice_coverage_status === invoiceCoverageFilter);
 
     return rows;
-  }, [orders, tab, search, paymentFilter, shipByFrom, shipByTo, backorderFilter, invoiceCoverageFilter]);
+  }, [orders, tab, search, paymentFilter, shipByFrom, shipByTo, backorderFilter, backorderPoFilter, invoiceCoverageFilter]);
 
   const sortedRows = useMemo(() => {
     if (!sortColumn) return visibleRows;
@@ -552,6 +563,19 @@ export default function OrderFulfillmentPage() {
               </select>
             </label>
             <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-slate-700">Backorder PO status</span>
+              <select
+                value={backorderPoFilter}
+                onChange={(e) => setBackorderPoFilter(e.target.value as typeof backorderPoFilter)}
+                className="rounded-lg border border-slate-300 px-3 py-2"
+                title="Based on PO linkage (is a backordered line actually covered by an open purchase order?), not order status — separate from the Backorders filter above, which is just a quantity check"
+              >
+                <option value="">All</option>
+                <option value="with_po">Has backorder with PO</option>
+                <option value="no_po">Has backorder with NO open PO</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1.5 text-sm">
               <span className="font-medium text-slate-700">Invoice coverage</span>
               <select
                 value={invoiceCoverageFilter}
@@ -565,7 +589,7 @@ export default function OrderFulfillmentPage() {
                 <option value="invoiced">Invoiced</option>
               </select>
             </label>
-            {(search || paymentFilter || shipByFrom || shipByTo || backorderFilter !== "all" || invoiceCoverageFilter) && (
+            {(search || paymentFilter || shipByFrom || shipByTo || backorderFilter !== "all" || backorderPoFilter || invoiceCoverageFilter) && (
               <button
                 type="button"
                 onClick={() => {
@@ -574,6 +598,7 @@ export default function OrderFulfillmentPage() {
                   setShipByFrom("");
                   setShipByTo("");
                   setBackorderFilter("all");
+                  setBackorderPoFilter("");
                   setInvoiceCoverageFilter("");
                 }}
                 className="rounded-full border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"

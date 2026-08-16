@@ -39,6 +39,8 @@ function order(overrides: Partial<OrderFulfillmentRow>): OrderFulfillmentRow {
     box_label_hidden_by_floor: false,
     box_label_printed_at: null,
     box_label_printed_by_email: null,
+    has_backorder_with_po: false,
+    has_backorder_no_po: false,
     ...overrides,
   };
 }

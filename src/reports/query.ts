@@ -499,6 +499,10 @@ export interface OrderFulfillmentRow {
   /** Null unless someone has clicked "Mark as printed" for this sale — a Toolbox-local record, never written to Cin7. */
   box_label_printed_at: string | null;
   box_label_printed_by_email: string | null;
+  /** P5.2: true when ≥1 backordered line has a linked open PO (with ETA) covering it. Independent of has_backorder_no_po — a mixed order (one line covered, another not) can be true for both. */
+  has_backorder_with_po: boolean;
+  /** P5.2: true when ≥1 backordered line has NO linked open PO — the actionable procurement list ("nothing's on order for this yet"), as distinct from Cin7's own status fields. */
+  has_backorder_no_po: boolean;
 }
 
 export interface OrderFulfillmentLineRow {
