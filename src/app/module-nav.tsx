@@ -377,7 +377,7 @@ export const STOCKTAKE_MODULE: ModuleConfig = {
 // admin turns it on per-org — the only way to do that with the existing
 // disabled_modules mechanism is to give it its own MODULES entry, which also
 // means its own home-page tile (Anton confirmed that's fine, 2026-08-16).
-// Migration 0064 seeds every EXISTING org's disabled_modules with this href.
+// Migration 0065 seeds every EXISTING org's disabled_modules with this href.
 // A brand-new org signing up after this ships is NOT covered by that seed —
 // disabled_modules defaults to '{}' (every module on) and
 // src/app/signup/actions.ts doesn't special-case this href — so it starts

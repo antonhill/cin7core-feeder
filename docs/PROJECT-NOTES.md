@@ -75,7 +75,7 @@ prune/rewrite entries here rather than appending forever once something is fully
 - **LBL Fulfilment & Invoicing workflow** (client brief, built P5.3/P1/P2/P3, 2026-08-15/16) — Order
   Fulfillment, Shipping Calendar, Invoicing Scheduler, and Picking Calendar all share one SQL-side
   source of truth: `report_order_fulfillment`/`report_order_fulfillment_lines`
-  (`supabase/migrations/0061`-`0064`). **Known architecture limitation, accepted not fixed**: the
+  (`supabase/migrations/0061`-`0063`, `0065`). **Known architecture limitation, accepted not fixed**: the
   sync has no per-fulfilment Cin7 TaskID, so every "per-fulfilment" quantity comparison here
   (packed-vs-invoiced, pick-vs-pack) is actually per-SKU-across-the-whole-sale — fine for the
   common case, but a genuine multi-fulfilment split order can misattribute which specific
@@ -94,7 +94,7 @@ prune/rewrite entries here rather than appending forever once something is fully
     per-row live Cin7 call at list-view scale would be exactly the N+1 cost this codebase avoids
     elsewhere (see Assemblies' component detail and Order Fulfillment's own "View documents", both
     on-demand-only for the same reason).
-  - **Shipping Calendar / Picking Calendar** (P3, 0064): share one component,
+  - **Shipping Calendar / Picking Calendar** (P3, 0065): share one component,
     `src/app/reports/shipping-calendar/calendar-board.tsx`'s `CalendarBoard` — parameterized by
     `offsetDays` (days subtracted from `ship_by` to get a card's bucket day; 0 for Shipping
     Calendar), `dateLabel`, a `qualifies` predicate (`isSchedulable` vs. `is_pick_today`, reused
@@ -111,7 +111,7 @@ prune/rewrite entries here rather than appending forever once something is fully
     (see the Reporting hub bullet above). It has its own `PICKING_CALENDAR_MODULE` entry
     (`href: "/reports/picking-calendar"`) in `module-nav.tsx`'s `MODULES`, which also means its own
     home-page tile — there's no way in the current `disabled_modules`/`findBlockedModule` mechanism
-    to gate one specific report without that. Migration `0064` seeded every **existing** org's
+    to gate one specific report without that. Migration `0065` seeded every **existing** org's
     `disabled_modules` with the new href; a **new** org signing up after this ships is NOT covered
     by that seed (`disabled_modules` defaults to `'{}'`, i.e. everything on, and
     `src/app/signup/actions.ts` doesn't special-case this href) — a super-admin has to opt each new
@@ -124,6 +124,38 @@ prune/rewrite entries here rather than appending forever once something is fully
     offset — it stays exactly as it was (date-independent, sortable by any column on click). Anton
     declined coupling that page to the new setting (2026-08-16); revisit only if picking staff
     actually ask for it.
+- **New sync-populated columns don't backfill existing data — learned the hard way, 2026-08-16.**
+  `sale_lines.invoice_status` (added by migration `0062`/P1, 2026-08-15) only gets set by
+  `syncSaleDetails` (`src/sync/sync-sales.ts`), which only re-fetches a sale's detail when
+  `detail_synced_at is null` — true for a never-synced sale, and reset to null when Cin7 reports
+  `cin7_updated_at` changed (see that function's own comment). A sale that was already fully
+  synced *before* the new column shipped, and hasn't had any Cin7-side change since, silently
+  keeps `invoice_status = null` forever — the sync has no reason to ever revisit it. Found live for
+  LBL's org: **100% of existing `sale_lines` rows (23,450) had `invoice_status = null`**, despite
+  `sales.combined_invoice_status` showing real INVOICED/PARTIALLY INVOICED data — silently breaking
+  Ready to Invoice, Box Label Queue, and the invoice-coverage filter for every pre-existing order,
+  reported by Anton as "the filter doesn't work." Fixed via a one-time backfill: reset
+  `detail_synced_at = null` for the ~5,519 sales with a real (non-NOT-INVOICED/NOT-AVAILABLE)
+  `combined_invoice_status`, letting the normal 15-min sync cron drain them naturally (50/instance
+  per run — a multi-thousand-row backlog takes on the order of a day to fully drain, faster if
+  "Sync sales now" is triggered manually more often). **Apply this lesson to any future migration
+  that adds a column meant to be populated by `syncSaleDetails`**: it needs either (a) a matching
+  one-time backfill (reset `detail_synced_at` for whatever subset needs the new field) shipped
+  alongside the migration, or (b) a deliberate decision that old data stays blank until its next
+  natural re-sync — don't assume "the sync code populates it" means existing rows already have it.
+- **`report_order_fulfillment_lines` performance, 2026-08-16 (migration `0064`)**: this function
+  (backs Order Fulfillment/Shipping Calendar/Invoicing Scheduler/Picking Calendar) was scanning
+  `sale_pick_pack_lines` FOUR separate times — once each for its `picked`/`packed`/
+  `packed_authorised`/`picked_locations` CTEs, a pattern dating back to migration `0035`. Fine at
+  small scale, but for an org with 28k+ `sale_order_lines`/48k+ `sale_pick_pack_lines` rows (LBL)
+  it pushed `report_order_fulfillment` past Postgres's statement timeout — Shipping Calendar
+  failing outright with "canceling statement due to statement timeout". **Fix**: consolidate the
+  four CTEs into one pass using `FILTER` clauses for conditional aggregation — confirmed live via
+  `EXPLAIN ANALYZE` to cut total execution from ~6.7s to ~0.6-1.4s for that org, output verified
+  identical against the old version first (row counts + every aggregate sum + location strings).
+  **If this function gets slow again**: check whether a new CTE has reintroduced a redundant scan
+  of the same base table before reaching for indexes — that was the entire cost here, not missing
+  indexes (all the relevant `(org_id, ...)` indexes were already in place).
 - **Data Audit** (`/audit`): pulls a chosen instance's products live and flags missing
   Brand/sales-pricing/inventory-setup/GL-accounts, near-duplicate Category/UOM/Tag values
   (Levenshtein-based), incomplete `AdditionalAttribute1-10` values within a category (with a
