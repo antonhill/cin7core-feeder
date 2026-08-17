@@ -40,7 +40,7 @@ describe("resolveWorkCentreId", () => {
 
     expect(id).toBe("wc-new");
     const [, , options] = vi.mocked(cin7Request).mock.calls[1];
-    expect(options).toMatchObject({ method: "POST" });
+    expect(options).toMatchObject({ method: "POST", nonIdempotentCreate: true }); // security re-audit round 3, item 2
     const body = options?.body as { Workcenters: { Code: string; IsCoMan: boolean }[] };
     expect(body.Workcenters[0]).toMatchObject({ Code: "BLENDING", IsCoMan: false });
   });

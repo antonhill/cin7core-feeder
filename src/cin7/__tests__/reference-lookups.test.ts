@@ -58,7 +58,7 @@ describe("ensureReferenceExists", () => {
     expect(cin7Request).toHaveBeenCalledTimes(2);
     const [, path, options] = vi.mocked(cin7Request).mock.calls[1];
     expect(path).toBe("/ref/brand");
-    expect(options).toMatchObject({ method: "POST", body: { Name: "Acme" } });
+    expect(options).toMatchObject({ method: "POST", body: { Name: "Acme" }, nonIdempotentCreate: true }); // security re-audit round 3, item 2
   });
 
   it("skips a cached path+name pair (no extra API call)", async () => {

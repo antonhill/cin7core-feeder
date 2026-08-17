@@ -113,6 +113,8 @@ describe("pushProductionBom", () => {
     const result = await pushProductionBom(creds, cin7ProductId, version, operations, items, preResolvedCaches());
 
     expect(result).toEqual({ status: "created" });
+    const [, , createOptions] = vi.mocked(cin7Request).mock.calls[1];
+    expect(createOptions).toMatchObject({ method: "POST", nonIdempotentCreate: true }); // security re-audit round 3, item 2
   });
 
   it("wraps the body in a ProductionBOMs array (confirmed via a live 400: 'Required attribute ProductionBOMs is not provided')", async () => {

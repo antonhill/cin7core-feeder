@@ -71,18 +71,20 @@ export interface Cin7RequestOptions {
   operationTimeoutMs?: number;
 }
 
-// Quick mitigation (2026-07-24, after Supplier Planner's live paginated
-// fetch hit "60 calls per 60 seconds" against a real large-catalog account):
-// the in-memory throttle below only paces calls *within one serverless
-// invocation* — it can't see a concurrent Vercel Cron sync (e.g.
-// /api/sync-product-availability) hitting the same Cin7 account from a
-// separate invocation at the same time, so the combined real call volume
-// can exceed 60/60s even when every individual invocation believes it's
-// pacing at a safe rate. A real fix needs a cross-invocation limiter (e.g.
-// Postgres-backed token bucket); until then, running the default pace with
-// real headroom below the limit (not exactly at it) and giving a persistent
-// rate-limit response more patience to retry through gives day-to-day
-// coverage without that bigger piece of work.
+// The distributed Postgres-backed token bucket (migration 0075, P0-3) is the
+// ONLY pacing mechanism now. Security re-audit round 3, item 3.1: a prior
+// in-memory per-invocation throttle used to exist here as a fallback for GET
+// requests when the distributed coordinator was unavailable/contended
+// ("degrade" outcome) — but that fallback let the real HTTP request through
+// completely unaccounted by the shared bucket, reopening exactly the
+// multi-worker uncoordinated-traffic race P0-3 was built to close, just
+// scoped to reads. A "degrade" outcome is now treated identically to
+// "blocked": the request does not proceed unpaced on this attempt — it
+// retries the whole attempt through the existing maxRetries/backoff loop
+// below, or fails clearly once exhausted. See acquireCin7Slot's own comment
+// for why "degrade"/"blocked" remain distinct return values (still useful
+// for future observability) even though this function now handles them the
+// same way.
 const MAX_RETRIES = 6;
 const RETRY_BASE_DELAY_MS = 5000;
 // Security re-audit P0-4: a single attempt's own network deadline — generous
@@ -109,53 +111,6 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function minIntervalMs(): number {
-  const rps = Number(process.env.RATE_LIMIT_RPS ?? "0.8");
-  return 1000 / Math.max(rps, 0.1);
-}
-
-// Module-level so pacing holds across every call within (and across warm
-// invocations of) a single sync run — Cin7's limit is per API application,
-// not per request. Keyed by accountId (not baseUrl+accountId): accountId is
-// the real per-tenant identity Cin7 enforces its 60/min ceiling against, so
-// two Cin7Credentials sharing an accountId genuinely share the same upstream
-// quota bucket regardless of hostname — throttling them together is
-// correct, not a bug to guard against. Confirmed live 2026-07-11 this was
-// previously a SINGLE global gate shared across every instance, needlessly
-// serializing two completely independent Cin7 accounts' own 60/min budgets
-// through one combined 1/sec pace — this is what let per-instance
-// concurrency (sync-org.ts) actually speed anything up.
-const lastCallAtByAccount = new Map<string, number>();
-
-// A per-account FIFO queue, not just a shared timestamp — callers that fire
-// concurrently (e.g. pull-instance.ts's Promise.all over products/customers/
-// suppliers, all against the same account) must genuinely take turns, not
-// each read the same stale lastCallAt before any of them has slept and
-// written it back. That race (confirmed live 2026-07-21: several concurrent
-// callers computing the same wake-up time and firing together) let bursts
-// through fast enough to trip Cin7's 60-calls/60s limit despite RATE_LIMIT_RPS
-// being 1. Chaining every call onto the same account's queue tail forces
-// them through the read→sleep→write sequence one at a time.
-const throttleQueueByAccount = new Map<string, Promise<void>>();
-
-function throttle(accountId: string): Promise<void> {
-  const previous = throttleQueueByAccount.get(accountId) ?? Promise.resolve();
-  const next = previous.then(async () => {
-    const lastCallAt = lastCallAtByAccount.get(accountId) ?? 0;
-    const wait = lastCallAt + minIntervalMs() - Date.now();
-    if (wait > 0) await sleep(wait);
-    lastCallAtByAccount.set(accountId, Date.now());
-  });
-  throttleQueueByAccount.set(accountId, next);
-  return next;
-}
-
-/** Test-only: fake timers can leave lastCallAtByAccount/throttleQueueByAccount referencing a stale fake clock. */
-export function __resetRateLimiterForTests() {
-  lastCallAtByAccount.clear();
-  throttleQueueByAccount.clear();
-}
-
 /**
  * Makes an authenticated Cin7 Core API request, self-throttled to
  * RATE_LIMIT_RPS and retrying with a fixed backoff on 503 (no Retry-After
@@ -176,6 +131,15 @@ export async function cin7Request<T>(
   // already past its budget fails fast instead of starting one more
   // (possibly ~30s-backoff-plus-20s-timeout) attempt.
   const operationDeadline = Date.now() + (options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS);
+  // Security re-audit round 3, item 4: every retry-backoff sleep in this
+  // function is clamped through this one helper — a sleep is never allowed
+  // to run longer than what's actually left of the whole-call budget.
+  // Floored at 0 (not 1, unlike the quota-wait/fetch-timeout clamps above):
+  // an already-expired budget just makes this an ~instant sleep(0); the
+  // top-of-loop deadline check (attempt is always > 0 right after any of
+  // these sleeps) throws the real, correctly-worded error on the very next
+  // iteration instead.
+  const clampedBackoff = (attempt: number) => sleep(Math.max(0, Math.min(RETRY_BASE_DELAY_MS * (attempt + 1), operationDeadline - Date.now())));
 
   // Security re-audit P0-3: a real WRITE must never bypass the distributed
   // coordinator — only a read may degrade to the in-memory per-invocation
@@ -197,20 +161,39 @@ export async function cin7Request<T>(
       );
     }
 
-    // Cross-invocation distributed limiter (Postgres token bucket, migration
-    // 0075) — the real fix for the multi-invocation problem the in-memory
-    // throttle below can't solve on its own.
-    const acquireOutcome = await acquireCin7Slot(creds.accountId, creds.applicationKey, { allowDegrade: !isWrite });
+    // Security re-audit round 3, item 4: recomputed fresh right before each
+    // potentially-blocking operation below (quota wait, fetch timeout,
+    // backoff sleep) rather than once at the top of the loop — time already
+    // spent this iteration (e.g. a slow acquireCin7Slot call) must shrink
+    // what's left for the NEXT blocking operation too. Floored at 1ms rather
+    // than 0 so attempt 0 always gets a genuine (if minimal) real attempt
+    // regardless of how small/expired operationTimeoutMs already is — the
+    // top-of-loop check above is what actually enforces "no attempt after
+    // attempt 0 starts once the deadline has passed."
+    const remainingForAcquire = Math.max(1, operationDeadline - Date.now());
 
-    if (acquireOutcome === "blocked") {
-      // The coordinator is unavailable or still contended, and this is a
-      // write — it must not proceed unpaced. Cin7 itself was never
-      // contacted this attempt, so this is unambiguous (unlike a lost
+    // Cross-invocation distributed limiter (Postgres token bucket, migration
+    // 0075) — the ONLY pacing mechanism now (security re-audit round 3, item
+    // 3.1 — see this file's top-of-module comment). Its own internal wait is
+    // now bounded by remainingForAcquire (item 4) — it can't itself consume
+    // more of this call's budget than is actually left.
+    const acquireOutcome = await acquireCin7Slot(creds.accountId, creds.applicationKey, {
+      allowDegrade: !isWrite,
+      maxWaitMs: remainingForAcquire,
+    });
+
+    if (acquireOutcome === "blocked" || acquireOutcome === "degrade") {
+      // The coordinator is unavailable or still contended. Cin7 itself was
+      // never contacted this attempt, so this is unambiguous (unlike a lost
       // network response): safe to retry the whole attempt (a fresh
       // acquireCin7Slot call next time round), bounded by the same
       // maxRetries/backoff this function already uses for everything else.
+      // "degrade" (a read whose coordinator call couldn't be resolved) is
+      // treated identically to "blocked" (a write) — neither proceeds
+      // unpaced; see this file's top-of-module comment for why the old
+      // read-only local-throttle fallback was removed.
       if (attempt < maxRetries) {
-        await sleep(RETRY_BASE_DELAY_MS * (attempt + 1));
+        await clampedBackoff(attempt);
         continue;
       }
       throw new Cin7ApiError(
@@ -219,8 +202,12 @@ export async function cin7Request<T>(
         true
       );
     }
-    if (acquireOutcome === "degrade") await throttle(creds.accountId);
-    // "granted" — proceed directly, no extra throttle needed.
+    // "granted" — proceed directly.
+
+    // Item 4: the fetch's own AbortSignal timeout must not outlive the whole
+    // call's remaining budget — recomputed fresh here since the quota
+    // acquisition above may itself have consumed real time this iteration.
+    const attemptTimeoutMs = Math.max(1, Math.min(timeoutMs, operationDeadline - Date.now()));
 
     let response: Response;
     try {
@@ -237,9 +224,11 @@ export async function cin7Request<T>(
           Accept: "application/json",
         },
         body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-        // Security re-audit P0-4: bounds THIS attempt only — a stalled
-        // connection throws (caught below) instead of hanging forever.
-        signal: AbortSignal.timeout(timeoutMs),
+        // Security re-audit P0-4/round-3-item-4: bounds THIS attempt only —
+        // a stalled connection throws (caught below) instead of hanging
+        // forever — clamped to whatever's actually left of the whole-call
+        // budget, not always the fixed configured timeoutMs.
+        signal: AbortSignal.timeout(attemptTimeoutMs),
       });
     } catch (e) {
       // Retry like a 503 — a raw fetch failure (DNS blip, connection reset,
@@ -268,7 +257,7 @@ export async function cin7Request<T>(
       }
 
       if (attempt < maxRetries) {
-        await sleep(RETRY_BASE_DELAY_MS * (attempt + 1));
+        await clampedBackoff(attempt); // security re-audit round 3, item 4
         continue;
       }
       throw new Cin7ApiError(
@@ -295,7 +284,7 @@ export async function cin7Request<T>(
       // Best-effort: never throws, never blocks this call's own handling.
       await reportCin7RateLimitCooldown(creds.accountId, creds.applicationKey, CIN7_503_COOLDOWN_MS);
       if (attempt < maxRetries) {
-        await sleep(RETRY_BASE_DELAY_MS * (attempt + 1));
+        await clampedBackoff(attempt); // security re-audit round 3, item 4
         continue;
       }
       throw new Cin7ApiError(503, "Rate limited (60 calls/min) and retries exhausted", true);
@@ -320,7 +309,7 @@ export async function cin7Request<T>(
         // condition, just reported differently by this endpoint family.
         await reportCin7RateLimitCooldown(creds.accountId, creds.applicationKey, CIN7_503_COOLDOWN_MS);
         if (attempt < maxRetries) {
-          await sleep(RETRY_BASE_DELAY_MS * (attempt + 1));
+          await clampedBackoff(attempt); // security re-audit round 3, item 4
           continue;
         }
       }
@@ -367,10 +356,27 @@ export interface Cin7RawResponse {
  * headers/redirect-safety rules as cin7Request — no other function in this
  * codebase may call fetch() with Cin7 credentials attached (enforced by
  * src/test/__tests__/cin7-gateway-boundary.test.ts). Deliberately no
- * retry/rate-limit backoff: these are exploratory probes over many candidate
- * paths, already self-paced by their own caller between calls.
+ * retry/backoff loop: these are exploratory probes over many candidate
+ * paths, already self-paced by their own caller between calls (a fixed
+ * manual sleep, not a bounded retry sequence like cin7Request's).
+ *
+ * Security re-audit round 3, item 3.2: DOES still acquire a real distributed
+ * quota token first, though — this used to be the one credential-bearing
+ * Cin7 request path with zero quota participation of any kind (not even the
+ * old in-memory throttle), consuming real 60/min budget completely
+ * unaccounted by the shared bucket every other caller coordinates through.
+ * A single acquire attempt (no retry loop, matching this function's own
+ * no-retry design) throws a clear, typed error on anything but "granted" —
+ * every caller in debug.ts already wraps each candidate-path call in its own
+ * try/catch and records a failed probe result, so this fits the existing
+ * per-path error-tolerant control flow without any caller change needed.
  */
 export async function cin7RawRequest(creds: Cin7Credentials, path: string, query?: Record<string, string | number>): Promise<Cin7RawResponse> {
+  const acquireOutcome = await acquireCin7Slot(creds.accountId, creds.applicationKey, { allowDegrade: false });
+  if (acquireOutcome !== "granted") {
+    throw new Cin7ApiError(0, `Rate limit coordinator unavailable or contended; refusing to send GET ${path} unpaced`, true);
+  }
+
   const url = buildCin7Url(path, query);
   const response = await fetch(url.toString(), {
     method: "GET",

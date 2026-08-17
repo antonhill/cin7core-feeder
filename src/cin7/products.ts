@@ -400,9 +400,15 @@ export async function pushProduct(
   // why this went unnoticed. Create without Suppliers first, then a
   // follow-up PUT (now that the product exists) attaches it — mirroring
   // exactly the update path above, which is already proven to work.
+  // Security re-audit round 3, item 2: same reasoning as pushCustomer in
+  // customers.ts — nonIdempotentCreate stops cin7Request's own retry loop
+  // from blindly resending an ambiguous create; findProductBySku above
+  // already provides reconciliation on the next sync attempt (a thrown
+  // error here leaves sync_state's synced_hash stale).
   const created = await cin7Request<Cin7ProductResponse>(creds, "/Product", {
     method: "POST",
     body: payload,
+    nonIdempotentCreate: true,
   });
   const newId = requireId(created, "POST /Product");
   if (suppliers) {

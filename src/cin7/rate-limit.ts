@@ -2,19 +2,36 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { createServiceRoleClient } from "@/supabase/server";
 
-// Refill rate reuses RATE_LIMIT_RPS (the same knob the legacy in-memory
-// throttle used) so behaviour/tuning is consistent; default 0.8/s ≈ 48/min,
-// safely under Cin7's hard 60/min. CIN7_RATE_LIMIT_BURST is the bucket
-// capacity — a small allowance for short bursts without letting sustained rate
-// exceed the refill.
+// RATE_LIMIT_RPS default 0.8/s ≈ 48/min, safely under Cin7's hard 60/min.
+// CIN7_RATE_LIMIT_BURST is the bucket capacity — a small allowance for short
+// bursts without letting sustained rate exceed the refill.
 const DEFAULT_RPS = 0.8;
 const DEFAULT_BURST = 5;
 
+// Security re-audit round 3, item 3.3: an environment-variable mistake must
+// not be able to configure the app above its safe Cin7 allowance. Cin7's
+// documented limit is 60/min (1/s) per API Application — MAX_RPS is set
+// below that, not at it, so real headroom survives even a maxed-out config.
+// Previously only floored (Math.max(..., 0.1)), with no ceiling at all: an
+// operator setting RATE_LIMIT_RPS=2 (a real drift this repo has already
+// shipped once — see docs/cin7-api-findings.md) would have been silently
+// accepted at 2x the documented limit. A non-numeric value previously
+// produced NaN, which Math.max(NaN, floor) passes straight through (NaN
+// comparisons are always false, so nothing catches it) — Number.isFinite
+// rejects that case explicitly, falling back to the safe default instead of
+// forwarding NaN into the Postgres RPC's own token-math.
+const MAX_RPS = 0.9;
+const MAX_BURST = 10;
+
 function refillPerSec(): number {
-  return Math.max(Number(process.env.RATE_LIMIT_RPS ?? DEFAULT_RPS), 0.1);
+  const raw = Number(process.env.RATE_LIMIT_RPS ?? DEFAULT_RPS);
+  if (!Number.isFinite(raw)) return DEFAULT_RPS;
+  return Math.min(Math.max(raw, 0.1), MAX_RPS);
 }
 function capacity(): number {
-  return Math.max(Number(process.env.CIN7_RATE_LIMIT_BURST ?? DEFAULT_BURST), 1);
+  const raw = Number(process.env.CIN7_RATE_LIMIT_BURST ?? DEFAULT_BURST);
+  if (!Number.isFinite(raw)) return DEFAULT_BURST;
+  return Math.min(Math.max(raw, 1), MAX_BURST);
 }
 
 /**
@@ -91,7 +108,18 @@ function unavailableOutcome(allowDegrade: boolean): AcquireOutcome {
 export async function acquireCin7Slot(
   accountId: string,
   applicationKey: string,
-  opts: { allowDegrade: boolean }
+  opts: {
+    allowDegrade: boolean;
+    /**
+     * Security re-audit round 3, item 4: caller's own remaining whole-call
+     * operation budget (cin7Request's operationDeadline), so this function's
+     * internal wait can't itself eat into — let alone exceed — time the
+     * caller no longer has. Defaults to this function's own MAX_TOTAL_WAIT_MS
+     * when omitted (e.g. a caller with no operation-deadline concept of its
+     * own). The effective wait is always the SMALLER of the two.
+     */
+    maxWaitMs?: number;
+  }
 ): Promise<AcquireOutcome> {
   if (distributedLimiterUnavailable) return unavailableOutcome(opts.allowDegrade);
 
@@ -104,7 +132,7 @@ export async function acquireCin7Slot(
   }
 
   const key = bucketKey(accountId, applicationKey);
-  const deadline = Date.now() + MAX_TOTAL_WAIT_MS;
+  const deadline = Date.now() + Math.min(MAX_TOTAL_WAIT_MS, opts.maxWaitMs ?? MAX_TOTAL_WAIT_MS);
 
   for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
     const { data, error } = await db.rpc("cin7_rate_limit_acquire", {

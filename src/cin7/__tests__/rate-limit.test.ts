@@ -34,6 +34,43 @@ describe("acquireCin7Slot", () => {
     expect(rpc).toHaveBeenCalledTimes(1);
   });
 
+  describe("security re-audit round 3, item 3.3: config values are clamped, not just floored", () => {
+    it("clamps an over-limit RATE_LIMIT_RPS down to MAX_RPS instead of accepting it verbatim", async () => {
+      process.env.RATE_LIMIT_RPS = "2"; // a real value this repo has shipped before — see docs/cin7-api-findings.md
+      rpc.mockResolvedValue({ data: 0, error: null });
+      await acquireCin7Slot("acct-1", "key-1", READ);
+      expect(rpc).toHaveBeenCalledWith("cin7_rate_limit_acquire", expect.objectContaining({ p_refill_per_sec: 0.9 }));
+    });
+
+    it("clamps an over-limit CIN7_RATE_LIMIT_BURST down to MAX_BURST instead of accepting it verbatim", async () => {
+      process.env.CIN7_RATE_LIMIT_BURST = "500";
+      rpc.mockResolvedValue({ data: 0, error: null });
+      await acquireCin7Slot("acct-1", "key-1", READ);
+      expect(rpc).toHaveBeenCalledWith("cin7_rate_limit_acquire", expect.objectContaining({ p_capacity: 10 }));
+    });
+
+    it("falls back to the safe default instead of forwarding NaN on a non-numeric RATE_LIMIT_RPS", async () => {
+      process.env.RATE_LIMIT_RPS = "not-a-number";
+      rpc.mockResolvedValue({ data: 0, error: null });
+      await acquireCin7Slot("acct-1", "key-1", READ);
+      expect(rpc).toHaveBeenCalledWith("cin7_rate_limit_acquire", expect.objectContaining({ p_refill_per_sec: 0.8 }));
+    });
+
+    it("falls back to the safe default instead of forwarding NaN on a non-numeric CIN7_RATE_LIMIT_BURST", async () => {
+      process.env.CIN7_RATE_LIMIT_BURST = "not-a-number";
+      rpc.mockResolvedValue({ data: 0, error: null });
+      await acquireCin7Slot("acct-1", "key-1", READ);
+      expect(rpc).toHaveBeenCalledWith("cin7_rate_limit_acquire", expect.objectContaining({ p_capacity: 5 }));
+    });
+
+    it("still floors a below-minimum RATE_LIMIT_RPS at 0.1 (pre-existing behavior, unaffected by the new ceiling)", async () => {
+      process.env.RATE_LIMIT_RPS = "0";
+      rpc.mockResolvedValue({ data: 0, error: null });
+      await acquireCin7Slot("acct-1", "key-1", READ);
+      expect(rpc).toHaveBeenCalledWith("cin7_rate_limit_acquire", expect.objectContaining({ p_refill_per_sec: 0.1 }));
+    });
+  });
+
   it("security re-audit P0-3: fingerprints the bucket key from BOTH accountId and applicationKey — never the raw applicationKey itself", async () => {
     rpc.mockResolvedValue({ data: 0, error: null });
     await acquireCin7Slot("acct-1", "super-secret-key", READ);
@@ -115,6 +152,28 @@ describe("acquireCin7Slot", () => {
     await vi.runAllTimersAsync();
     await expect(p).resolves.toBe("degrade");
     expect(rpc.mock.calls.length).toBeLessThan(10); // MAX_ACQUIRE_ATTEMPTS
+  });
+
+  it("security re-audit round 3, item 4: honours a caller-supplied maxWaitMs smaller than the default 20s internal budget", async () => {
+    vi.useFakeTimers();
+    rpc.mockResolvedValue({ data: 5_000, error: null }); // never grants a token
+    const p = acquireCin7Slot("acct-1", "key-1", { ...READ, maxWaitMs: 300 });
+    await vi.advanceTimersByTimeAsync(300);
+    await expect(p).resolves.toBe("degrade");
+    // With only a 300ms budget (vs. a 5000ms-per-attempt reported wait), this
+    // must give up after its very first attempt — proving maxWaitMs actually
+    // shrank the internal deadline rather than the default 20s/10-attempt
+    // budget being used regardless.
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it("security re-audit round 3, item 4: a maxWaitMs LARGER than the default internal budget doesn't extend it — MAX_TOTAL_WAIT_MS still wins", async () => {
+    vi.useFakeTimers();
+    rpc.mockResolvedValue({ data: 15_000, error: null }); // never grants a token
+    const p = acquireCin7Slot("acct-1", "key-1", { ...READ, maxWaitMs: 10 * 60_000 }); // 10 minutes — far larger than MAX_TOTAL_WAIT_MS
+    await vi.runAllTimersAsync();
+    await expect(p).resolves.toBe("degrade");
+    expect(rpc.mock.calls.length).toBeLessThan(10); // still bounded by the function's own MAX_ACQUIRE_ATTEMPTS/MAX_TOTAL_WAIT_MS, not the caller's larger value
   });
 });
 

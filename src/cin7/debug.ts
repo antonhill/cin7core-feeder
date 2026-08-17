@@ -1984,7 +1984,24 @@ async function tryPurchaseRequest(
   body: Record<string, unknown>
 ): Promise<CreatePurchaseOrderAttempt> {
   try {
-    const response = await cin7Request<Record<string, unknown>>(creds, endpoint, { method, body });
+    // Security re-audit round 3, item 2: on a POST (a genuine create, unlike
+    // the PUT candidates tried elsewhere in testCreatePurchaseOrder),
+    // nonIdempotentCreate stops cin7Request's own retry loop from blindly
+    // resending an ambiguous create — this diagnostic has no reconciliation
+    // mechanism (no stable client-generated reference to search Cin7 for,
+    // unlike the real sync paths in customers.ts/suppliers.ts/products.ts/
+    // work-centres.ts/reference-lookups.ts/production-bom.ts), so an
+    // ambiguous failure here still surfaces as a failed attempt with no way
+    // to confirm whether a DRAFT PO was actually created — an accepted,
+    // named residual risk given this tool is super-admin-only, used for
+    // rare one-off live-format verification rather than production sync
+    // volume, and every created order is DRAFT-status (inert until a human
+    // reviews/voids it in Cin7).
+    const response = await cin7Request<Record<string, unknown>>(creds, endpoint, {
+      method,
+      body,
+      nonIdempotentCreate: method === "POST",
+    });
     let linesPopulatedIn: CreatePurchaseOrderAttempt["linesPopulatedIn"] = null;
     for (const key of ["Order", "StockReceived", "Invoice"] as const) {
       const section = response[key] as Record<string, unknown> | undefined;
@@ -2020,7 +2037,14 @@ async function tryPurchaseOrderLines(
   body: Record<string, unknown>
 ): Promise<CreatePurchaseOrderAttempt> {
   try {
-    const response = await cin7Request<Record<string, unknown>>(creds, path, { method, body });
+    // Security re-audit round 3, item 2: see tryPurchaseRequest's identical
+    // comment above — same reasoning, same accepted residual (no
+    // reconciliation mechanism for this diagnostic-only path).
+    const response = await cin7Request<Record<string, unknown>>(creds, path, {
+      method,
+      body,
+      nonIdempotentCreate: method === "POST",
+    });
     const lines = response.Lines;
     const linesPopulatedIn = Array.isArray(lines) && lines.length > 0 ? "Order" : null;
     return { shape, endpoint: `${method} ${path}`, succeeded: true, linesPopulatedIn, rawResponse: response };

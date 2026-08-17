@@ -23,12 +23,17 @@ export type SyncLockResult = SyncLockHeld | { acquired: false };
 
 /**
  * Try to acquire the per-(org,instance) sync lock (migration 0057's
- * `try_acquire_sync_lock`). On ANY guard error — DB unreachable, or the
- * migration not applied yet — this FAILS OPEN (acquired=true, no lockedAt to
- * release), so sync still runs exactly as it did before this guard existed.
- * Overlapping syncs are only possible during a guard outage, i.e. the same
- * exposure as today; the guard must never block a sync on its own
- * availability.
+ * `try_acquire_sync_lock`). Security re-audit round 3, P1-5 (Anton-approved
+ * 2026-08-17): FAILS CLOSED on any guard error — DB unreachable, or the
+ * migration not applied — by THROWING, rather than proceeding as if the lock
+ * were acquired. This is the real backstop against a genuine duplicate
+ * product/customer/supplier record in Cin7 (two overlapping syncs both
+ * missing a find-by-SKU/Name check during a guard outage) — see
+ * docs/security-reaudit-report-2026-08-17.md's round 3 P1-5 section for the
+ * decision table this was approved against. The caller (sync-org.ts) treats
+ * this the same as any other per-instance sync failure: that one instance's
+ * sync fails for this run, other instances proceed unaffected. (Previously
+ * failed open, returning acquired=true.)
  */
 export async function acquireSyncLock(db: Db, orgId: string, instanceId: string): Promise<SyncLockResult> {
   const { data, error } = await db.rpc("try_acquire_sync_lock", {
@@ -37,11 +42,10 @@ export async function acquireSyncLock(db: Db, orgId: string, instanceId: string)
     p_ttl_seconds: SYNC_LOCK_TTL_SECONDS,
   });
   if (error) {
-    console.error("try_acquire_sync_lock failed; proceeding without the sync lock:", error.message);
-    return { acquired: true, lockedAt: "" };
+    throw new Error(`try_acquire_sync_lock failed (sync lock guard unavailable): ${error.message}`);
   }
   const row = (Array.isArray(data) ? data[0] : data) as { acquired?: boolean; locked_at?: string } | undefined;
-  if (!row) return { acquired: true, lockedAt: "" };
+  if (!row) throw new Error("try_acquire_sync_lock returned no row (sync lock guard unavailable)");
   if (!row.acquired) return { acquired: false };
   return { acquired: true, lockedAt: row.locked_at ?? "" };
 }

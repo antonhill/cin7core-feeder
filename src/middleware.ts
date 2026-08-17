@@ -4,6 +4,7 @@ import { findBlockedModule, computeEffectiveDisabledModules } from "@/app/module
 import { createServiceRoleClient } from "@/supabase/server";
 import { writeAllowedFor } from "@/lib/billing-status";
 import type { SubscriptionStatus } from "@/lib/billing";
+import { ACTIVE_ORG_COOKIE, resolveActiveOrgId } from "@/lib/active-org-resolution";
 
 // Must match src/lib/org-switch.ts's IMPERSONATED_ORG_COOKIE — duplicated
 // rather than imported, since that module calls next/headers' cookies() and
@@ -158,15 +159,29 @@ export async function middleware(request: NextRequest) {
     }
 
     if (!orgId) {
-      const { data: membership } = await supabase
-        .from("org_members")
-        .select("org_id, allowed_modules, role")
-        .eq("user_id", userId)
-        .limit(1)
-        .maybeSingle();
-      orgId = membership?.org_id ?? null;
-      role = membership?.role ?? null;
-      if (!isSuperAdmin) allowedModules = membership?.allowed_modules ?? null;
+      // Security re-audit round 3, item 1: fixes a real role/MFA-gating
+      // mismatch for a multi-org user. This used to be an unordered
+      // `.limit(1)` query — whichever org_members row Postgres happened to
+      // return first, completely ignoring which org the user actually has
+      // active — while requireCurrentOrg/getCurrentUserInfo (Server Actions)
+      // correctly honored the active_org_id cookie via the same
+      // resolveActiveOrgId rule this now uses. A member of Org A but admin
+      // of Org B, with Org B active, previously had this MFA-enrolment gate
+      // evaluate Org A (member — gate skipped) while their Server Actions
+      // correctly resolved Org B (admin — should be gated). Fetching every
+      // membership and resolving via the SAME shared, pure function
+      // Server Actions use makes middleware structurally incapable of
+      // disagreeing with them.
+      const { data: memberships } = await supabase.from("org_members").select("org_id, allowed_modules, role").eq("user_id", userId);
+      const membershipRows = memberships ?? [];
+      const cookieOrgId = request.cookies.get(ACTIVE_ORG_COOKIE)?.value ?? null;
+      orgId = resolveActiveOrgId(
+        cookieOrgId,
+        membershipRows.map((m) => m.org_id)
+      );
+      const activeMembership = membershipRows.find((m) => m.org_id === orgId);
+      role = activeMembership?.role ?? null;
+      if (!isSuperAdmin) allowedModules = activeMembership?.allowed_modules ?? null;
     }
 
     // Read the org row once — disabled_modules for the block below,

@@ -232,9 +232,19 @@ export async function pushCustomer(
     return { cin7Id: requireId(updated, "PUT /customer"), status: "updated" };
   }
 
+  // Security re-audit round 3, item 2: a genuine create (not the PUT/update
+  // paths above) — an ambiguous network failure must not be blindly
+  // auto-retried by cin7Request's own retry loop, which could otherwise
+  // create a second customer with the same Name. nonIdempotentCreate makes
+  // an ambiguous failure throw immediately instead. Reconciliation already
+  // exists: this function's own findCustomerByName check above runs again
+  // on the very next sync attempt for this row (a thrown error here leaves
+  // customer_sync_state's synced_hash stale, so run-sync.ts retries this
+  // customer, find-before-create and all, rather than blindly recreating).
   const created = await cin7Request<Cin7CustomerResponse>(creds, "/customer", {
     method: "POST",
     body: payload,
+    nonIdempotentCreate: true,
   });
   return { cin7Id: requireId(created, "POST /customer"), status: "created" };
 }

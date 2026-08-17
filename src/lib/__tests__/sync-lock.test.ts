@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { acquireSyncLock, releaseSyncLock, SYNC_LOCK_TTL_SECONDS } from "@/lib/sync-lock";
 
 function makeDb(rpc: ReturnType<typeof vi.fn>, tableOps?: Record<string, unknown>) {
@@ -6,8 +6,6 @@ function makeDb(rpc: ReturnType<typeof vi.fn>, tableOps?: Record<string, unknown
 }
 
 describe("acquireSyncLock", () => {
-  beforeEach(() => vi.spyOn(console, "error").mockImplementation(() => {}));
-
   it("passes the TTL and parses a granted, fresh lock", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [{ acquired: true, locked_at: "2026-08-14T00:00:00Z" }], error: null });
     const res = await acquireSyncLock(makeDb(rpc), "org", "inst");
@@ -25,15 +23,14 @@ describe("acquireSyncLock", () => {
     expect(res).toEqual({ acquired: false });
   });
 
-  it("FAILS OPEN (acquired=true) on a guard error — never blocks a sync", async () => {
+  it("FAILS CLOSED (throws) on a guard error — round 3 P1-5", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: "function does not exist" } });
-    const res = await acquireSyncLock(makeDb(rpc), "org", "inst");
-    expect(res.acquired).toBe(true);
+    await expect(acquireSyncLock(makeDb(rpc), "org", "inst")).rejects.toThrow(/guard unavailable/);
   });
 
-  it("FAILS OPEN when the RPC returns no row", async () => {
+  it("FAILS CLOSED (throws) when the RPC returns no row", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
-    expect((await acquireSyncLock(makeDb(rpc), "org", "inst")).acquired).toBe(true);
+    await expect(acquireSyncLock(makeDb(rpc), "org", "inst")).rejects.toThrow(/guard unavailable/);
   });
 });
 

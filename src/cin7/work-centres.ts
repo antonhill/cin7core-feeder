@@ -40,8 +40,15 @@ async function findWorkCentreByCode(creds: Cin7Credentials, code: string): Promi
 }
 
 async function createWorkCentre(creds: Cin7Credentials, code: string): Promise<{ id: string }> {
+  // Security re-audit round 3, item 2: a genuine create — nonIdempotentCreate
+  // stops cin7Request's own retry loop from blindly resending an ambiguous
+  // create; findWorkCentreByCode (resolveWorkCentreId, above) already
+  // provides reconciliation, since a thrown error here leaves this code
+  // unresolved in the caller's cache and the next resolveWorkCentreId call
+  // (same run or a later one) re-checks find-by-Code before creating again.
   const response = await cin7Request<Cin7WorkCentresResponse>(creds, WORK_CENTRES_PATH, {
     method: "POST",
+    nonIdempotentCreate: true,
     body: {
       Workcenters: [
         { Code: code, Name: code, IsActive: true, IsCoMan: false, IsCoManPurchase: false, WorkCenterLocations: [] },

@@ -354,6 +354,58 @@ describe("syncOrgInstances", () => {
       );
     });
 
+    it("security re-audit round 3, P1-5: fails closed (not skips syncInstance quietly) — a sync-lock guard error blocks only that instance, other instances proceed", async () => {
+      const rpc = vi.fn().mockImplementation((fn: string) => {
+        if (fn === "try_acquire_sync_lock") return Promise.resolve({ data: null, error: { message: "connection refused" } });
+        return Promise.resolve({ data: [{ acquired: true, locked_at: "2026-01-01T00:00:00Z" }], error: null }); // route lock
+      });
+      const db = createFakeDb(
+        [
+          { id: "inst-1", org_id: "org1", active: true },
+          { id: "inst-2", org_id: "org1", active: true },
+        ],
+        rpc
+      );
+      vi.mocked(syncInstance).mockResolvedValue({
+        instanceId: "inst-2",
+        instanceName: "X",
+        productsCreated: 0,
+        productsUpdated: 0,
+        productsSkipped: 0,
+        productsFailed: 0,
+        productionBomsPushed: 0,
+        productionBomsFailed: 0,
+        customersCreated: 0,
+        customersUpdated: 0,
+        customersSkipped: 0,
+        customersFailed: 0,
+        suppliersCreated: 0,
+        suppliersUpdated: 0,
+        suppliersSkipped: 0,
+        suppliersFailed: 0,
+        errors: [],
+        truncated: false,
+      });
+
+      const results = await syncOrgInstances(db, "org1");
+
+      // Both instances share one rpc mock keyed by function name, so BOTH
+      // per-instance lock acquisitions fail here — this proves the guard
+      // failure itself is what's asserted (fail-closed, not silently
+      // succeeding), and that syncInstance is never called for a blocked
+      // instance while the batch as a whole still completes (no unhandled
+      // rejection escaping mapWithConcurrency).
+      expect(syncInstance).not.toHaveBeenCalled();
+      expect(results).toEqual([
+        expect.objectContaining({ ok: false, instanceId: "inst-1", error: expect.stringContaining("guard unavailable") }),
+        expect.objectContaining({ ok: false, instanceId: "inst-2", error: expect.stringContaining("guard unavailable") }),
+      ]);
+      expect(logActivity).toHaveBeenCalledWith(
+        db,
+        expect.objectContaining({ action: "sync.push_failed", instanceId: "inst-1" })
+      );
+    });
+
     it("releases the lock (with the exact locked_at it acquired) after a successful sync", async () => {
       const rpc = vi.fn().mockResolvedValue({ data: [{ acquired: true, locked_at: "2026-01-01T00:00:00Z" }], error: null });
       const { db, deleteSpy, eqSpy } = createFakeDbWithLockSpy([{ id: "inst-1", org_id: "org1", active: true }], rpc);

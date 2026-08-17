@@ -309,6 +309,15 @@ export async function createSupplierPlanPurchaseOrdersAction(
               error: "A previous attempt to create this PO is still being confirmed with Cin7 — try again shortly.",
             });
           }
+        } else if (claim.existingStatus === "guard_unavailable") {
+          // Security re-audit round 3, P1-5 (Anton-approved): the duplicate-
+          // creation guard itself is unreachable — fail closed rather than
+          // risk creating a real duplicate PO with no way to detect it.
+          failed.push({
+            supplierName: group.supplierName,
+            locationName: group.locationName,
+            error: "Could not confirm no duplicate order exists — try again shortly.",
+          });
         } else {
           // A concurrent request is creating this same PO right now.
           failed.push({

@@ -40,19 +40,20 @@ export interface StockTransferClaimResult {
   /** true → the caller OWNS the claim and must create the transfer (then settle/release). */
   claimed: boolean;
   /** When claimed=false, the state of the live claim that blocked us. */
-  existingStatus: "pending" | "completed" | "ambiguous" | null;
+  existingStatus: "pending" | "completed" | "ambiguous" | "guard_unavailable" | null;
   cin7TransferId: string | null;
   transferNumber: string | null;
 }
 
 /**
  * Try to claim the right to create a Stock Transfer for this key (migration
- * 0056's `stock_transfer_creation_claim`). On ANY guard error — DB
- * unreachable, or the migration not applied yet — this FAILS OPEN (returns
- * claimed=true), so transfer creation still works exactly as it did before
- * this guard existed. Duplicates are only possible during a guard outage,
- * i.e. the same exposure as today; the guard must never block stock movement
- * on its own availability.
+ * 0056's `stock_transfer_creation_claim`). Security re-audit round 3, P1-5
+ * (Anton-approved 2026-08-17): FAILS CLOSED on any guard error — DB
+ * unreachable, or the migration not applied — returning claimed=false with
+ * existingStatus="guard_unavailable" rather than proceeding as if the claim
+ * were won. See po-idempotency.ts's claimPoCreation for the symmetric change
+ * and docs/security-reaudit-report-2026-08-17.md's round 3 P1-5 section for
+ * the decision table this was approved against. (Previously failed open.)
  */
 export async function claimStockTransferCreation(db: Db, orgId: string, instanceId: string, key: string): Promise<StockTransferClaimResult> {
   const { data, error } = await db.rpc("stock_transfer_creation_claim", {
@@ -62,13 +63,13 @@ export async function claimStockTransferCreation(db: Db, orgId: string, instance
     p_ttl_seconds: STOCK_TRANSFER_CLAIM_TTL_SECONDS,
   });
   if (error) {
-    console.error("stock_transfer_creation_claim failed; proceeding without the idempotency guard:", error.message);
-    return { claimed: true, existingStatus: null, cin7TransferId: null, transferNumber: null };
+    console.error("stock_transfer_creation_claim failed; blocking transfer creation (fail-closed):", error.message);
+    return { claimed: false, existingStatus: "guard_unavailable", cin7TransferId: null, transferNumber: null };
   }
   const row = (Array.isArray(data) ? data[0] : data) as
     | { claimed?: boolean; existing_status?: string; cin7_transfer_id?: string | null; transfer_number?: string | null }
     | undefined;
-  if (!row) return { claimed: true, existingStatus: null, cin7TransferId: null, transferNumber: null };
+  if (!row) return { claimed: false, existingStatus: "guard_unavailable", cin7TransferId: null, transferNumber: null };
   return {
     claimed: Boolean(row.claimed),
     existingStatus: (row.existing_status as "pending" | "completed" | "ambiguous" | null) ?? null,

@@ -170,8 +170,17 @@ export async function pushProductionBom(
   // provided"): the request body must be wrapped in a ProductionBOMs array,
   // not a flat object — the endpoint apparently supports batching like
   // /BillOfMaterials does.
+  //
+  // Security re-audit round 3, item 2: when !exists this is a genuine
+  // create — nonIdempotentCreate stops cin7Request's own retry loop from
+  // blindly resending an ambiguous create; findProductionBomVersion above
+  // already provides reconciliation, since a thrown error here surfaces to
+  // run-sync.ts's catch and the next sync attempt re-checks
+  // findProductionBomVersion before creating again. The PUT (update) branch
+  // is unaffected — updates are already safe to retry.
   await cin7Request<Cin7ProductionBomResponse>(creds, PRODUCTION_BOM_PATH, {
     method: exists ? "PUT" : "POST",
+    nonIdempotentCreate: !exists,
     body: { ProductionBOMs: [payload] },
   });
 

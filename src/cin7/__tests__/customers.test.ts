@@ -198,4 +198,13 @@ describe("pushCustomer Phase 3.2 fast path", () => {
     expect(result).toEqual({ cin7Id: "new-id", status: "created" });
     expect(cin7Request).toHaveBeenCalledTimes(2);
   });
+
+  it("security re-audit round 3, item 2: the create POST sets nonIdempotentCreate — no blind auto-retry on an ambiguous network failure", async () => {
+    vi.mocked(cin7Request)
+      .mockResolvedValueOnce({ CustomerList: [] }) // findCustomerByName → not found
+      .mockResolvedValueOnce({ ID: "new-id" }); // POST create
+    await pushCustomer(creds, customer({ name: "Acme" }));
+    const [, , createOptions] = vi.mocked(cin7Request).mock.calls[1];
+    expect(createOptions).toMatchObject({ method: "POST", nonIdempotentCreate: true });
+  });
 });
