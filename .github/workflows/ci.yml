@@ -81,16 +81,20 @@ jobs:
       # someone eventually tries a real blank-project bootstrap.
       - run: supabase start
       - run: supabase db reset --local
+      # security re-audit round 2 fixup: `supabase db query --file` rejects
+      # any file with more than one statement ("cannot insert multiple
+      # commands into a prepared statement" -- confirmed by the real CI
+      # run's own error) -- every file in supabase/tests/ is a multi-
+      # statement transactional script (begin; ... do $$ ... $$; ...
+      # rollback;), so it needs a real psql connection instead.
+      - name: Install postgresql-client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Run the RLS/security regression SQL test suite
         run: |
           set -e
-          # security re-audit round 2 fixup: this CLI version has no `db
-          # execute` subcommand (confirmed by the real CI run's own error
-          # output, which named the actual subcommands) -- `db query --file`
-          # is the real one, --local passed after the subcommand per its own
-          # usage hint.
+          eval "$(supabase status -o env | sed 's/^/export /')"
           for f in supabase/tests/*.test.sql; do
             echo "::group::$f"
-            supabase db query --local --file "$f"
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f"
             echo "::endgroup::"
           done
