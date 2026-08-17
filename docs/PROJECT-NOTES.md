@@ -1256,6 +1256,24 @@ cin7_instances`, `foreign-org UPDATE cin7_instances`, `member UPDATE purchase_pl
 policies on `cin7_instances` and `purchase_planner_settings` were never at fault — confirmed
 correct throughout via live `pg_policies` inspection and the rowcount/value diagnostics above.
 
+**Running the full `supabase/tests/*.test.sql` suite for the first time ever (this CI job's whole
+reason to exist) also caught a genuine stale-fixture bug in a pre-existing, unrelated test:**
+`0063_box_label_queue.test.sql` failed with `sale-4 (local label-printed flag already set) must NOT
+appear ... got {"is_ready_for_box_label": true, ...}`. Migration `0071` (a prior round, unrelated to
+this one) changed box-label re-qualification from a plain `printed_at is null` boolean to a
+quantity-snapshot comparison (`total_ready_for_box_label_qty > ready_qty_at_mark`), so a genuine
+later fulfilment can re-qualify an order without per-fulfilment Cin7 tracking. `0063`'s own test
+fixture predates `0071` and only ever inserted `box_label_print_state` with `printed_by_email` — it
+never set `ready_qty_at_mark`, which defaults to `0`, so under the new logic `10 > 0` reads as fresh
+growth and wrongly re-qualifies sale-4. This test was never actually re-run end-to-end after `0071`
+shipped (it isn't part of any round's live-verification checklist unless something touches it
+directly), so nothing caught the drift until this CI job's very first full-suite run. Fixed by
+setting `ready_qty_at_mark = 10` in the fixture, matching what `markBoxLabelPrintedAction` (see
+`src/actions/box-label.ts`) always snapshots for real at click time. Verified live against
+production end-to-end (assembled file, `begin`/`rollback`, deliberate final `raise` to confirm every
+assertion passed) before pushing. No application code changed — this was purely a stale test
+fixture, unrelated to any of this round's 6 scoped items.
+
 Verified for this round: `tsc`/`eslint` clean, `next build` clean (confirmed buildable with zero
 env vars set), full `vitest` suite passing (see PR description for the exact count), plus the
 live-browser CSP verification and live Supabase MCP verification of migrations `0076`/`0077`
