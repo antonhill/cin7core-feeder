@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const rpc = vi.fn();
-vi.mock("@/supabase/server", () => ({ createServiceRoleClient: () => ({ rpc }) }));
+const createServiceRoleClient = vi.fn(() => ({ rpc }));
+vi.mock("@/supabase/server", () => ({ createServiceRoleClient: () => createServiceRoleClient() }));
 
 import { acquireCin7Slot, __resetDistributedLimiterForTests } from "@/cin7/rate-limit";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  createServiceRoleClient.mockImplementation(() => ({ rpc }));
   __resetDistributedLimiterForTests();
   vi.spyOn(console, "error").mockImplementation(() => {});
   process.env.RATE_LIMIT_RPS = "0.8";
@@ -52,6 +54,14 @@ describe("acquireCin7Slot", () => {
     expect(rpc).toHaveBeenCalledTimes(1);
 
     rpc.mockClear();
+    await expect(acquireCin7Slot("acct-1")).resolves.toBe(false);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("falls back (false) rather than throwing when client creation itself throws", async () => {
+    createServiceRoleClient.mockImplementation(() => {
+      throw new Error("missing SUPABASE_SERVICE_ROLE_KEY");
+    });
     await expect(acquireCin7Slot("acct-1")).resolves.toBe(false);
     expect(rpc).not.toHaveBeenCalled();
   });

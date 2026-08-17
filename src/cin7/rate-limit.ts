@@ -45,7 +45,14 @@ let distributedLimiterUnavailable = false;
  */
 export async function acquireCin7Slot(accountId: string): Promise<boolean> {
   if (distributedLimiterUnavailable) return false;
-  const db = createServiceRoleClient();
+
+  let db: ReturnType<typeof createServiceRoleClient>;
+  try {
+    db = createServiceRoleClient();
+  } catch (err) {
+    console.error("cin7 rate-limit client creation failed; using in-memory throttle:", err);
+    return false;
+  }
 
   for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
     const { data, error } = await db.rpc("cin7_rate_limit_acquire", {
