@@ -27,4 +27,17 @@ describe("parseCsv", () => {
     expect(valid).toHaveLength(1);
     expect(invalid).toEqual([]);
   });
+
+  describe("security re-audit P1-7: resource boundaries, checked before per-row schema validation", () => {
+    it("rejects a file with too many columns, before validating any row", () => {
+      const header = Array.from({ length: 201 }, (_, i) => `col${i}`).join(",");
+      const csv = `${header}\n${Array.from({ length: 201 }, () => "x").join(",")}\n`;
+      expect(() => parseCsv(csv, productCsvRowSchema)).toThrow(/columns.*maximum is 200/);
+    });
+
+    it("rejects a single field over the max length, naming the row and column", () => {
+      const csv = `ProductCode,Name\nSKU1,${"x".repeat(10_001)}\n`;
+      expect(() => parseCsv(csv, productCsvRowSchema)).toThrow(/Row 1, column "Name".*maximum is 10,000/);
+    });
+  });
 });

@@ -11,6 +11,7 @@ import { requireModuleAccess } from "@/lib/authorization";
 import { IMPORT_MODULE } from "@/app/module-nav";
 import { requireWriteAllowed } from "@/lib/billing";
 import { claimJobLock, releaseJobLock } from "@/lib/job-lock";
+import { checkUploadSize, looksLikeText } from "@/lib/csv-upload-limits";
 
 export interface ImportActionState {
   status: "idle" | "error" | "success";
@@ -46,10 +47,20 @@ export async function importCsvAction(
   if (!(file instanceof File) || file.size === 0) {
     return { status: "error", message: "Choose a CSV file." };
   }
+  // Security re-audit P1-7: explicit application-level size limit, checked
+  // before file.text() reads the whole upload into memory — do not rely on
+  // Next.js's own Server Action body-size default alone (see next.config.ts).
+  const sizeError = checkUploadSize(file);
+  if (sizeError) return { status: "error", message: sizeError };
 
   try {
     const { orgId } = await requireModuleAccess(IMPORT_MODULE.href);
     const csvText = await file.text();
+    // Security re-audit P1-7: rejects a binary file uploaded with a spoofed
+    // .csv name/extension — a real CSV/text file never contains a NUL byte.
+    if (!looksLikeText(csvText)) {
+      return { status: "error", message: "That file doesn't look like a text/CSV file." };
+    }
     const db = createServiceRoleClient();
     const result = await runImport(db, orgId, kind as ImportKind, file.name, csvText);
     return { status: "success", result };

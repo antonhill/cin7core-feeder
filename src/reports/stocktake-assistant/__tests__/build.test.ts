@@ -56,6 +56,15 @@ describe("parseStocktakeFile", () => {
     const { rows } = parseStocktakeFile(CSV + '"","","","","","",,\r\n');
     expect(rows).toHaveLength(2);
   });
+
+  it("security re-audit P1-7: returns a resource-limit error (not a thrown exception) for a field over the max length, matching this function's own error-return contract", () => {
+    const overlongCsv =
+      '"Product Code","Product Name","Bin","Unit","BatchSN","ExpiryDate_YYYYMMDD","Quantity On Hand","Stocktake Quantity"\r\n' +
+      `"1561","${"x".repeat(10_001)}","","ea","","",6.0000,0.0000\r\n`;
+    const { rows, error } = parseStocktakeFile(overlongCsv);
+    expect(rows).toEqual([]);
+    expect(error).toMatch(/Row 1, column "Product Name".*maximum is 10,000/);
+  });
 });
 
 describe("buildConfirmationLines", () => {

@@ -447,6 +447,14 @@ describe("getOrderFulfillmentReport", () => {
     expect(range).toHaveBeenNthCalledWith(1, 0, 999);
     expect(range).toHaveBeenNthCalledWith(2, 1000, 1999);
   });
+
+  it("security re-audit P1-7: throws a clear error instead of paging forever once matched rows exceed the 25,000-row cap", async () => {
+    const fullPage = Array.from({ length: 1000 }, (_, i) => ({ cin7_sale_id: `s${i}` }));
+    const { rpc } = stubPagedRpc([{ data: fullPage, error: null }]);
+    const db = { rpc } as unknown as SupabaseClient;
+
+    await expect(getOrderFulfillmentReport(db, "org1", {})).rejects.toThrow(/over 25,000 rows.*narrow your filters/);
+  });
 });
 
 describe("getOrderFulfillmentLines", () => {
