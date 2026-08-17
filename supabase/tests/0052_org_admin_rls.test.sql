@@ -50,6 +50,11 @@ declare
   inst_a uuid;
 begin
   -- Seed (as the table owner / service context — RLS not enforced for the definer here).
+  -- org_members.user_id references auth.users, so these throwaway ids need a
+  -- real (if minimal) row there first — `id` is the only NOT NULL column
+  -- with no default (confirmed against the live schema), so this is safe to
+  -- run against any environment, not just one with pre-existing test users.
+  insert into auth.users (id) values (u_owner), (u_member), (u_foreign);
   insert into organizations (id, name) values (org_a, 'RLS Test Org A'), (org_b, 'RLS Test Org B');
   insert into org_members (org_id, user_id, role) values
     (org_a, u_owner, 'owner'),
