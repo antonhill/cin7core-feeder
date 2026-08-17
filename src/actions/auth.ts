@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createSessionClient } from "@/supabase/server-session";
 import { createServiceRoleClient } from "@/supabase/server";
 import { getImpersonatedOrgId } from "@/lib/org-switch";
+import { getActiveOrgCookie, resolveActiveOrgId } from "@/lib/active-org";
 import { computeEffectiveDisabledModules } from "@/app/module-nav";
 
 export async function signOutAction() {
@@ -27,6 +28,8 @@ export interface CurrentUserInfo {
   /** Drives the trial banner in layout.tsx — kept as plain scalars rather than a nested BillingStatus object to minimize churn on this widely-called function. */
   subscriptionStatus: "trialing" | "active" | "past_due" | "canceled" | null;
   trialEndsAt: string | null;
+  /** Security re-audit P1-8: true when this user has more than one org_members row — drives whether AppNav renders the active-org switcher at all (most users have exactly one, so this stays false for them and no extra org-list fetch happens). */
+  hasMultipleOrgs: boolean;
 }
 
 /** Current user's email, super-admin status, org branding, and enabled modules — used to render the nav/home tiles. */
@@ -47,6 +50,7 @@ export async function getCurrentUserInfo(): Promise<CurrentUserInfo> {
       disabledModules: [],
       subscriptionStatus: null,
       trialEndsAt: null,
+      hasMultipleOrgs: false,
     };
   }
 
@@ -70,23 +74,24 @@ export async function getCurrentUserInfo(): Promise<CurrentUserInfo> {
     }
   }
 
-  // Mirrors requireCurrentOrg's "first membership wins" rule, but non-throwing
-  // — the nav renders for super-admins and not-yet-invited users too, who may
-  // have no org membership at all.
+  // Security re-audit P1-8: uses the SAME shared resolveActiveOrgId rule
+  // requireCurrentOrg does, so the nav and every Server Action can never
+  // disagree about which org is "current" for a multi-org member. Non-
+  // throwing (unlike requireCurrentOrg) — the nav renders for super-admins
+  // and not-yet-invited users too, who may have no org membership at all.
+  let hasMultipleOrgs = false;
   if (!orgId) {
-    const { data: membership } = await db
-      .from("org_members")
-      .select("org_id, role, allowed_modules")
-      .eq("user_id", user.id)
-      .limit(1)
-      .maybeSingle();
-    orgId = membership?.org_id ?? null;
-    allowedModules = membership?.allowed_modules ?? null;
+    const { data: memberships } = await db.from("org_members").select("org_id, role, allowed_modules").eq("user_id", user.id);
+    hasMultipleOrgs = (memberships?.length ?? 0) > 1;
+    const cookieOrgId = await getActiveOrgCookie();
+    orgId = resolveActiveOrgId(cookieOrgId, (memberships ?? []).map((m) => m.org_id));
+    const activeMembership = memberships?.find((m) => m.org_id === orgId);
+    allowedModules = activeMembership?.allowed_modules ?? null;
     // Don't let a super-admin's own (possibly nonexistent) org_members row
     // downgrade isOrgAdmin — a super-admin not currently impersonating any
     // org (e.g. Anton's own account, with no membership row at all) must
     // stay true here, same as the impersonating branch above already does.
-    if (!isSuperAdmin) isOrgAdmin = membership?.role === "owner" || membership?.role === "admin";
+    if (!isSuperAdmin) isOrgAdmin = activeMembership?.role === "owner" || activeMembership?.role === "admin";
   }
 
   let orgName: string | null = null;
@@ -118,5 +123,6 @@ export async function getCurrentUserInfo(): Promise<CurrentUserInfo> {
     disabledModules,
     subscriptionStatus,
     trialEndsAt,
+    hasMultipleOrgs,
   };
 }

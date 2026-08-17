@@ -39,11 +39,14 @@ export async function createSelfServeOrgAction(orgName: string): Promise<CreateS
     const { data: existingMembership } = await db.from("org_members").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
     if (existingMembership) return { ok: true };
 
-    const { data: org, error: orgError } = await db.from("organizations").insert({ name: orgName.trim() }).select("id").single();
-    if (orgError) return { ok: false, error: orgError.message };
-
-    const { error: memberError } = await db.from("org_members").insert({ org_id: org.id, user_id: user.id, role: "owner" });
-    if (memberError) return { ok: false, error: memberError.message };
+    // Security re-audit P1-8: org + owner-membership creation via one atomic
+    // RPC (migration 0076) — the previous two-separate-inserts shape could
+    // leave an orphaned, ownerless org behind if the second insert failed.
+    const { error: createError } = await db.rpc("create_self_serve_org", {
+      p_org_name: orgName.trim(),
+      p_user_id: user.id,
+    });
+    if (createError) return { ok: false, error: createError.message };
 
     return { ok: true };
   } catch (e) {

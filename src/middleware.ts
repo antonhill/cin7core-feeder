@@ -235,12 +235,16 @@ export async function middleware(request: NextRequest) {
 
 // api/sync (and api/sync-sales, api/sync-purchases, api/sync-assembly-builds,
 // api/sync-product-availability — all matched by the same "api/sync" prefix),
-// api/import, api/delete-expired-trials, and api/notify-ship-by-changes (P4,
-// LBL brief) all authenticate themselves via a bearer token
-// (assertInternalAuth) for external/Cron callers with no browser session —
-// they must never be intercepted by the session-cookie redirect below, or
-// Vercel Cron's bearer-token request just gets bounced to /login and the
-// job silently never runs.
+// api/delete-expired-trials, and api/notify-ship-by-changes (P4, LBL brief)
+// all authenticate themselves via a bearer token (assertInternalAuth) for
+// external/Cron callers with no browser session — they must never be
+// intercepted by the session-cookie redirect below, or Vercel Cron's
+// bearer-token request just gets bounced to /login and the job silently
+// never runs. (api/import used to be here too — removed, security re-audit
+// P1-6: it had no real caller, was fully superseded by the session-scoped
+// importCsvAction Server Action, and — unlike this route's shared-secret
+// gate — trusted a client-supplied orgId instead of deriving it from the
+// caller's own session.)
 // api/webhooks (Lemon Squeezy's subscription webhook) is the same problem
 // from a different caller — Lemon Squeezy's server-to-server POST has no
 // browser session either, and authenticates itself via its own HMAC
@@ -261,6 +265,6 @@ export async function middleware(request: NextRequest) {
 // module icons the authenticated app's sidebar/tiles use.
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|icon.svg|marketing/|icons/|api/sync|api/import|api/delete-expired-trials|api/notify-ship-by-changes|api/webhooks).*)",
+    "/((?!_next/static|_next/image|favicon.ico|icon.svg|marketing/|icons/|api/sync|api/delete-expired-trials|api/notify-ship-by-changes|api/webhooks).*)",
   ],
 };

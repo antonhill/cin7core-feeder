@@ -8,6 +8,7 @@ import { uploadCurrentOrgLogo } from "@/actions/org-logo";
 import { triggerSalesSyncAction } from "@/app/reports/actions";
 import { MODULES, ADMIN_MODULE, BillingIcon, ShieldIcon, DiagnosticsIcon, TeamIcon, NotificationsIcon, SyncIcon, SignOutIcon } from "@/app/module-nav";
 import { OrgSwitcher } from "@/app/OrgSwitcher";
+import { ActiveOrgSwitcher } from "@/app/ActiveOrgSwitcher";
 import { Spinner } from "@/app/Spinner";
 
 /** Two-letter fallback avatar shown when an org has no logo uploaded yet. */
@@ -85,6 +86,7 @@ export function AppNav({
   orgLogoUrl,
   disabledModules,
   showBilling,
+  hasMultipleOrgs,
 }: {
   userEmail: string | null;
   isSuperAdmin: boolean;
@@ -96,6 +98,8 @@ export function AppNav({
   disabledModules: string[];
   /** False while Lemon Squeezy's store isn't yet activated and this org has never subscribed — see checkoutAvailableFor in src/lib/billing.ts. */
   showBilling: boolean;
+  /** Security re-audit P1-8: true when this user belongs to more than one org — shows the ActiveOrgSwitcher. */
+  hasMultipleOrgs: boolean;
 }) {
   const pathname = usePathname();
   // Real bug found 2026-07-11: this state's initial value only applies on
@@ -182,7 +186,7 @@ export function AppNav({
           </span>
           <input
             type="file"
-            accept="image/png,image/jpeg,image/webp,image/svg+xml"
+            accept="image/png,image/jpeg,image/webp"
             onChange={handleLogoChange}
             disabled={isUploadingLogo}
             className="hidden"
@@ -194,7 +198,11 @@ export function AppNav({
         {logoError && <p className="max-w-full text-center text-xs text-red-400">{logoError}</p>}
       </div>
 
-      {isSuperAdmin && <OrgSwitcher currentOrgId={orgId} />}
+      {isSuperAdmin ? (
+        <OrgSwitcher currentOrgId={orgId} />
+      ) : (
+        hasMultipleOrgs && <ActiveOrgSwitcher currentOrgId={orgId} />
+      )}
 
       <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-4">
         {links.map((link) => {

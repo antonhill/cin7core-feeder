@@ -18,10 +18,9 @@ export const maxDuration = 300;
 
 /**
  * GET — the Vercel Cron entry point (crons always call GET and Vercel
- * auto-injects `Authorization: Bearer <CRON_SECRET>`; set CRON_SECRET in
- * Vercel to the same value as SYNC_SHARED_SECRET so this passes auth).
- * Rotates through active orgs oldest-attempted-first (see cron-rotation.ts)
- * rather than sweeping every org in one invocation.
+ * auto-injects `Authorization: Bearer <CRON_SECRET>`, checked by
+ * assertInternalAuth). Rotates through active orgs oldest-attempted-first
+ * (see cron-rotation.ts) rather than sweeping every org in one invocation.
  */
 export async function GET(req: Request) {
   try {

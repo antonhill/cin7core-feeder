@@ -19,8 +19,13 @@ const DENY = "You don't have access to this feature.";
 
 // Routes super_admins / org_members / organizations reads to fixed rows so the
 // REAL computeEffectiveDisabledModules/findBlockedModule get exercised.
-function makeDb(opts: { isSuperAdmin?: boolean; allowedModules?: string[] | null; disabledModules?: string[] }) {
-  const { isSuperAdmin = false, allowedModules = null, disabledModules = [] } = opts;
+function makeDb(opts: {
+  isSuperAdmin?: boolean;
+  allowedModules?: string[] | null;
+  disabledModules?: string[];
+  errorOnTable?: "super_admins" | "org_members" | "organizations";
+}) {
+  const { isSuperAdmin = false, allowedModules = null, disabledModules = [], errorOnTable } = opts;
   return {
     from(table: string) {
       const data =
@@ -31,7 +36,8 @@ function makeDb(opts: { isSuperAdmin?: boolean; allowedModules?: string[] | null
       const chain: Record<string, unknown> = {
         select: () => chain,
         eq: () => chain,
-        maybeSingle: async () => ({ data }),
+        maybeSingle: async () =>
+          table === errorOnTable ? { data: null, error: { message: `${table} read failed` } } : { data, error: null },
       };
       return chain;
     },
@@ -83,6 +89,28 @@ describe("requireModuleAccess", () => {
     reqOrg.mockRejectedValue(new Error("Not signed in."));
     serviceClient.mockReturnValue(makeDb({}));
     await expect(requireModuleAccess(MODULE)).rejects.toThrow("Not signed in.");
+  });
+
+  describe("security re-audit P1-1: fails closed (denies) on a Supabase read error, instead of defaulting to unrestricted access", () => {
+    it("denies when the super_admins read errors", async () => {
+      serviceClient.mockReturnValue(makeDb({ errorOnTable: "super_admins" }));
+      await expect(requireModuleAccess(MODULE)).rejects.toThrow("super_admins read failed");
+    });
+
+    it("denies when the org_members (allowed_modules) read errors", async () => {
+      serviceClient.mockReturnValue(makeDb({ errorOnTable: "org_members" }));
+      await expect(requireModuleAccess(MODULE)).rejects.toThrow("org_members read failed");
+    });
+
+    it("denies when the organizations (disabled_modules) read errors", async () => {
+      serviceClient.mockReturnValue(makeDb({ errorOnTable: "organizations" }));
+      await expect(requireModuleAccess(MODULE)).rejects.toThrow("organizations read failed");
+    });
+
+    it("a super-admin is unaffected by an org_members error — that query is skipped for them entirely", async () => {
+      serviceClient.mockReturnValue(makeDb({ isSuperAdmin: true, errorOnTable: "org_members" }));
+      await expect(requireModuleAccess(MODULE)).resolves.toEqual(MEMBER);
+    });
   });
 });
 

@@ -3,6 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireSuperAdmin } from "@/lib/require-super-admin";
 import { deleteOrganizationById } from "@/lib/delete-organization";
+import { sniffImageType } from "@/lib/image-sniff";
 
 export interface OrgMember {
   userId: string;
@@ -212,12 +213,11 @@ export async function setOrgDisabledModules(orgId: string, disabledModules: stri
 }
 
 const MAX_LOGO_BYTES = 2 * 1024 * 1024;
-const ALLOWED_LOGO_TYPES: Record<string, string> = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/svg+xml": "svg",
-  "image/webp": "webp",
-};
+// Security re-audit P1-9: SVG removed — see org-logo.ts's matching constant
+// for why (stored-XSS risk via embedded <script>/event-handler content, and
+// no meaningful magic-byte content validation is possible for a free-form
+// text format the way there is for PNG/JPEG/WebP).
+const ALLOWED_LOGO_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 export interface UploadLogoResult {
   ok: boolean;
@@ -234,8 +234,17 @@ export async function uploadOrgLogo(orgId: string, formData: FormData): Promise<
   const file = formData.get("logo");
   if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Choose an image file first." };
   if (file.size > MAX_LOGO_BYTES) return { ok: false, error: "Logo must be under 2MB." };
-  const ext = ALLOWED_LOGO_TYPES[file.type];
-  if (!ext) return { ok: false, error: "Logo must be a PNG, JPEG, WebP, or SVG image." };
+  if (!ALLOWED_LOGO_MIME_TYPES.has(file.type)) return { ok: false, error: "Logo must be a PNG, JPEG, or WebP image." };
+
+  // Security re-audit P1-9: file.type above is browser-supplied metadata,
+  // trivially spoofed — this is the real check. The SNIFFED type (not the
+  // browser's claimed file.type) drives the stored extension/content-type
+  // below, so a mislabeled file can't get stored under the wrong extension.
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const sniffed = sniffImageType(bytes);
+  if (!sniffed) return { ok: false, error: "That file's actual content doesn't look like a PNG, JPEG, or WebP image." };
+  const ext = sniffed === "jpeg" ? "jpg" : sniffed;
+  const contentType = `image/${sniffed}`;
 
   try {
     await requireSuperAdmin();
@@ -244,7 +253,7 @@ export async function uploadOrgLogo(orgId: string, formData: FormData): Promise<
     const path = `${orgId}/logo.${ext}`;
     const { error: uploadError } = await db.storage
       .from("org-logos")
-      .upload(path, file, { upsert: true, contentType: file.type });
+      .upload(path, bytes, { upsert: true, contentType });
     if (uploadError) return { ok: false, error: uploadError.message };
 
     // Bust CDN/browser caching on re-upload — the path is stable (upsert
