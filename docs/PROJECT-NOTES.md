@@ -1233,6 +1233,29 @@ and `0053_stocktake_staged_stock.sql`, preserving today's apply order exactly). 
 content changed, only its filename — both were already live in production, applied via MCP with
 their own independent timestamp versions, so this has zero effect on the hosted database.
 
+**Running `0052_org_admin_rls.test.sql` end-to-end (not just its individual pieces) surfaced a
+second real finding — a test-methodology bug, not a live vulnerability.** Once the CI job's
+prerequisite `authenticated`/`anon` GRANTs were added (see below), the full suite failed with
+`EXPECTED DENIED but succeeded: member UPDATE cin7_instances` — on its face, a plain org member
+successfully writing to a table holding encrypted Cin7 credentials. Investigated live against
+production with `GET DIAGNOSTICS ... row_count` and a re-`SELECT` of the target row rather than
+trusting the exception-based assertion: the "successful" UPDATE actually affected **0 rows** and
+the stored value was **unchanged**. Postgres RLS filters rows a policy's `USING` clause makes
+invisible *before* an UPDATE's own `WHERE` can match them — the statement still "succeeds" with
+zero rows affected and raises no exception at all. This is fundamentally different from an
+INSERT's `WITH CHECK` failure (or an UPDATE where the row IS visible under `USING` but a separate
+`WITH CHECK` fails), which genuinely does raise `check_violation` — confirmed by contrast, the
+`member INSERT cin7_instances` assertion in the same file correctly raises one. The test's
+original `expect_denied()` helper only ever checked for a raised exception, so it could never
+detect an RLS-filtered no-op UPDATE — it would report a false PASS on a write that never happened,
+or silently stop catching a real regression if the row ever became visible to that role. Fixed by
+adding a second helper, `pg_temp.expect_no_effect(sql, label)`, which asserts `row_count = 0`
+directly, and swapping it in for the three UPDATE-shaped assertions (`member UPDATE
+cin7_instances`, `foreign-org UPDATE cin7_instances`, `member UPDATE purchase_planner_settings`);
+`expect_denied` stays correct and unchanged for the one INSERT-shaped assertion. The underlying RLS
+policies on `cin7_instances` and `purchase_planner_settings` were never at fault — confirmed
+correct throughout via live `pg_policies` inspection and the rowcount/value diagnostics above.
+
 Verified for this round: `tsc`/`eslint` clean, `next build` clean (confirmed buildable with zero
 env vars set), full `vitest` suite passing (see PR description for the exact count), plus the
 live-browser CSP verification and live Supabase MCP verification of migrations `0076`/`0077`
