@@ -1212,6 +1212,27 @@ ongoing weekly dependency PRs (npm + GitHub Actions). Could not run the Supabase
 locally (no Docker in this environment) — verified by pushing and checking the actual GitHub
 Actions run result rather than trusting the YAML alone (see PR for the run link).
 
+**The migration-bootstrap job found a real bug on its very first run** — exactly what it exists
+for. `supabase db reset` failed with `duplicate key value violates unique constraint
+"schema_migrations_pkey" — Key (version)=(0046) already exists`: the local Supabase CLI tracks
+migration identity by the **leading numeric prefix only** (not the full filename), so
+`0046_reconstruct_push_jobs.sql` collided with the pre-existing, unrelated
+`0046_production_tracking_tags_and_output.sql`. This directly contradicts round 1's own stated
+justification for that number ("reusing an already-taken number, following this repo's own
+`0052`-duplicate precedent") — that precedent (`0052_org_admin_rls.sql` +
+`0052_reorder_report_net_on_order.sql`) was only ever validated against the Supabase MCP
+`apply_migration` path (which assigns its own real timestamp version against the hosted project,
+unaffected by the local filename), never against an actual local-CLI bootstrap — so it was never
+real evidence that duplicate prefixes are safe, and would have failed this exact same way. Both
+renumbered to unique 5-digit prefixes that preserve the required apply order (Supabase CLI's
+version-prefix parser accepts any-length leading digit run, confirmed by this fix actually
+passing): `supabase/migrations/00461_reconstruct_push_jobs.sql` (still sorts before
+`0058_job_locks.sql`, which needs `push_jobs` to already exist) and
+`supabase/migrations/00521_reorder_report_net_on_order.sql` (sorts between `0052_org_admin_rls.sql`
+and `0053_stocktake_staged_stock.sql`, preserving today's apply order exactly). Neither file's own
+content changed, only its filename — both were already live in production, applied via MCP with
+their own independent timestamp versions, so this has zero effect on the hosted database.
+
 Verified for this round: `tsc`/`eslint` clean, `next build` clean (confirmed buildable with zero
 env vars set), full `vitest` suite passing (see PR description for the exact count), plus the
 live-browser CSP verification and live Supabase MCP verification of migrations `0076`/`0077`
