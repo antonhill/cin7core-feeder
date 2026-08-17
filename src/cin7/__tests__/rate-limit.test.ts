@@ -74,4 +74,16 @@ describe("acquireCin7Slot", () => {
     await expect(p).resolves.toBe(true);
     expect(rpc).toHaveBeenCalledTimes(40); // MAX_ACQUIRE_ATTEMPTS
   });
+
+  it("security re-audit P0-3: gives up on the wall-clock deadline, not just the attempt count — a degraded refill rate can't consume the whole invocation one 30s sleep at a time", async () => {
+    vi.useFakeTimers();
+    // Every attempt reports a full MAX_SLEEP_MS-sized wait (never grants a
+    // token) — at 30s/attempt, 40 attempts would be 20 minutes; the 45s
+    // total-wait deadline must cut this off after just 2 attempts instead.
+    rpc.mockResolvedValue({ data: 30_000, error: null });
+    const p = acquireCin7Slot("acct-1");
+    await vi.runAllTimersAsync();
+    await expect(p).resolves.toBe(true);
+    expect(rpc).toHaveBeenCalledTimes(2);
+  });
 });

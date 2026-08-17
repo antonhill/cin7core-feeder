@@ -17,9 +17,17 @@ function capacity(): number {
 }
 
 // A single sleep is capped so a clock oddity or huge computed wait can't strand
-// a call; the attempt count caps total time so acquire can never hang a sync.
+// a call. The attempt count alone doesn't bound total time, though: a
+// misconfigured near-zero RATE_LIMIT_RPS (floored at 0.1/s by refillPerSec())
+// can make MAX_SLEEP_MS the common case, not the rare one — 40 attempts at
+// 30s each is 20 minutes, easily enough to consume an entire Vercel
+// invocation's duration budget on ONE acquireCin7Slot call, on the very
+// first Cin7 request of the run. Security re-audit P0-3: MAX_TOTAL_WAIT_MS
+// is a genuine wall-clock deadline (checked every attempt, not just an
+// attempt counter) — whichever bound is hit first ends the loop.
 const MAX_SLEEP_MS = 30_000;
 const MAX_ACQUIRE_ATTEMPTS = 40;
+const MAX_TOTAL_WAIT_MS = 45_000;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -54,6 +62,8 @@ export async function acquireCin7Slot(accountId: string): Promise<boolean> {
     return false;
   }
 
+  const deadline = Date.now() + MAX_TOTAL_WAIT_MS;
+
   for (let attempt = 0; attempt < MAX_ACQUIRE_ATTEMPTS; attempt++) {
     const { data, error } = await db.rpc("cin7_rate_limit_acquire", {
       p_account_id: accountId,
@@ -72,13 +82,20 @@ export async function acquireCin7Slot(accountId: string): Promise<boolean> {
     const waitMs = Number(data ?? 0);
     if (waitMs <= 0) return true; // token granted
 
+    // Security re-audit P0-3: don't sleep past the deadline just because a
+    // single MAX_SLEEP_MS-capped sleep would still fit — check the wall
+    // clock, not just the attempt count, so a degraded refill rate can't
+    // silently consume the whole budget one 30s sleep at a time.
+    if (Date.now() + Math.min(waitMs, MAX_SLEEP_MS) >= deadline) break;
+
     // Jitter so waiters woken together don't all retry in lockstep.
     await sleep(Math.min(waitMs, MAX_SLEEP_MS) + Math.floor(Math.random() * 50));
   }
 
-  // Exhausted the attempt budget under heavy contention. Proceed anyway (the
-  // 503 backoff in http.ts is the backstop) — and report "handled" so we don't
-  // pile the in-memory throttle's wait on top of everything we just waited.
+  // Exhausted the attempt budget OR the wall-clock deadline under heavy
+  // contention. Proceed anyway (the 503 backoff in http.ts is the backstop)
+  // — and report "handled" so we don't pile the in-memory throttle's wait on
+  // top of everything we just waited.
   return true;
 }
 
