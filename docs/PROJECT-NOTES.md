@@ -993,16 +993,64 @@ Also added to `http.ts` (P0-4, bundled in since it touches the same retry loop):
 (`AbortSignal.timeout`, default 20s) bounding each individual attempt, and `maxRetries` override.
 
 **P0-3 — the distributed rate limiter.** See "Cin7 distributed rate limiter (Phase 2.1)" above for
-the real gap this closes: `acquireCin7Slot` called `createServiceRoleClient()` outside any
-try/catch, contradicting its own "never throws" doc comment — flagged in passing during the Phase
-3.3b probe work (2026-08-15) but not fixed then. Now wrapped in try/catch, falling back to the
-in-memory throttle like every other failure mode here already does. Also added a genuine wall-clock
-deadline (`MAX_TOTAL_WAIT_MS`, 45s) alongside the existing `MAX_ACQUIRE_ATTEMPTS` (40) — the attempt
-count alone doesn't bound total wait time: a degraded `RATE_LIMIT_RPS` (floored at 0.1/s) can make
-the 30s per-attempt sleep cap the common case, letting a single `acquireCin7Slot` call consume up to
-20 minutes on the very first Cin7 request of a run. Shipped as its own PR (#36) ahead of the rest —
-see that PR's history for why (an unrelated stale-uncommitted-diff mixup, resolved by confirming no
-other process/branch held the change).
+background. A first pass (shipped as its own PR, #36, ahead of the rest — see that PR's history for
+an unrelated stale-uncommitted-diff mixup, resolved by confirming no other process/branch held the
+change) fixed two bugs found in passing: `acquireCin7Slot` called `createServiceRoleClient()`
+outside any try/catch, contradicting its own "never throws" doc comment (flagged during the Phase
+3.3b probe work, 2026-08-15, not fixed then) — now wrapped, falling back like every other failure
+mode here already does; and a wall-clock deadline was added alongside the attempt-count cap, since
+the count alone didn't bound total wait time.
+
+A second look against the actual re-audit item text (recovered from the full session transcript,
+since an earlier compaction had only paraphrased it) found that first pass covered 2 of 7 things
+the item actually asked for. The remaining 5, all now shipped together:
+- **Bucket identity**: was keyed by `accountId` alone. Cin7's 60/min limit is per API
+  *Application*, and one account can have more than one Application (API key) configured, each
+  with its own independent budget — keying by `accountId` alone could wrongly share one budget
+  across two distinct applications on the same account. Migration `0075` recreates
+  `cin7_rate_limits` keyed by `bucket_key` — `sha256(accountId:applicationKey)`, computed in
+  `rate-limit.ts`, never the raw applicationKey itself. Table recreated rather than data-migrated
+  (ephemeral pacing state only, no historical value — a fresh bucket under the new key just starts
+  full).
+- **Removed the "exhaust attempts → proceed anyway" bypass.** `acquireCin7Slot` no longer decides
+  what happens when it can't get a token — it returns one of three outcomes
+  (`"granted" | "degrade" | "blocked"`) and hands the decision to the caller via a new required
+  `opts.allowDegrade` flag.
+- **Write-side traffic never bypasses the coordinator.** `http.ts` passes `allowDegrade: false` for
+  every non-GET call. A `"blocked"` outcome means the real HTTP request is never sent that attempt —
+  `cin7Request` retries the whole attempt (a fresh `acquireCin7Slot` call) through its own existing
+  `maxRetries`/backoff loop instead, throwing a clear `Cin7ApiError` if that's exhausted. A read
+  (`allowDegrade: true`) still degrades to the in-memory throttle on the same "unavailable/blocked"
+  outcome, exactly like the old boolean behaviour — explicit, working degradation for background
+  read syncs, as the item asked for.
+- **Cin7 503s (and the `/purchase`-family's non-standard equivalent) feed a shared cooldown.**
+  `cin7_rate_limit_report_cooldown` (also in `0075`) sets a `blocked_until` timestamp on the bucket
+  row, extend-only (`GREATEST`, never shortened by an overlapping report) — every OTHER invocation
+  sharing that bucket sees it on its next `cin7_rate_limit_acquire` call and backs off too, instead
+  of each independently colliding with the same limit and discovering it on its own.
+- **Multi-worker proof that aggregate traffic stays under quota**: two kinds of evidence, not just
+  code inspection. (1) Live: 10 genuinely concurrent Supabase MCP `execute_sql` calls (separate
+  connections, fired in parallel) against one capacity-5 bucket — exactly 5 came back granted
+  (`wait_ms: 0`), the other 5 correctly computed increasing queued wait times, proving the
+  `FOR UPDATE` row lock serializes real concurrent transactions correctly. (2) Client-side:
+  `rate-limit.test.ts`'s new "multi-worker" describe block fires 20 concurrent `acquireCin7Slot`
+  calls (`Promise.all`, fake timers) against a mock RPC with its own internal async-mutex
+  serialization (standing in for the row lock) and asserts exactly `capacity` are granted, plus a
+  second test confirming two different `applicationKey`s on the same `accountId` get independent
+  budgets even under one concurrent burst.
+- Refill defaults were already conservative (`0.8/s` ≈ 48/min, burst 5 — not the `1/sec` the item
+  warned against) — no change needed there, already correct from Phase 2.1.
+
+Also folded in the rest of **P0-4** (network deadlines) while touching the same retry loop: every
+individual attempt already had an `AbortSignal` timeout (including diagnostics, via `cin7RawRequest`
+— see P0-1 above), but there was no single deadline bounding a whole `cin7Request` call's retries
+plus backoff sleeps together — worst case, several minutes across 6 retries. New
+`operationTimeoutMs` option (default 60s, well under every route's own Vercel `maxDuration`) is
+checked at the top of each loop iteration, so a call already past its budget fails fast instead of
+starting another attempt.
+
+Both PR #36 and the consolidated P0-1/P0-2/P0-5/P0-6/P0-7/P1-3 PR gained a follow-up commit for
+this; see git history for the exact commits/PR numbers.
 
 **P0-5 — `category_instances` RLS.** RLS was already enabled live (out-of-band, undocumented) but
 absent from migration history — a blank-project bootstrap via `supabase db push` would have created
@@ -1048,9 +1096,11 @@ could still write to Cin7 through these three paths. Fixed by adding the missing
 (the codebase's own composed `requireModuleWrite` helper in `authorization.ts` exists but is never
 actually called anywhere — the two-call form is the real convention to copy, not that helper).
 
-Verified for the whole pass: `tsc`/`eslint` clean, `next build` clean, full `vitest` suite —
-**1040 tests, all passing** (up from 940 at the start of Phase 4). PRs: #36 (P0-3, merged/pending)
-and the consolidated P0-1/P0-2/P0-5/P0-6/P0-7/P1-3 PR (see git history for the number).
+Verified for the whole pass (including the P0-3/P0-4-completion follow-up above): `tsc`/`eslint`
+clean, `next build` clean, full `vitest` suite — **1057 tests, all passing** (up from 940 at the
+start of Phase 4). PRs: #36 (P0-3, first pass) + a follow-up commit completing it, and the
+consolidated P0-1/P0-2/P0-5/P0-6/P0-7/P1-3 PR (also with a P0-3/P0-4-completion follow-up commit —
+see git history for the exact commits/PR numbers).
 
 The remaining 11 re-audit items (P1-4 through P1-9, P2 items) are DEFERRED — not investigated this
 pass. See the re-audit classification report for the full FIXED/DEFERRED/NOT APPLICABLE breakdown.
