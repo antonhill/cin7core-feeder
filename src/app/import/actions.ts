@@ -249,6 +249,13 @@ export async function startPushJobAction(
 export async function continuePushJobAction(jobId: string): Promise<PushJobResult> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(IMPORT_MODULE.href);
+    // Security re-audit P1-3-class fix: startPushJobAction below checks
+    // requireWriteAllowed once, at job creation — but this resumes the SAME
+    // job's later chunks, each of which does further real Cin7 writes
+    // (runNextChunk -> syncOrgInstances -> pushProduct/pushCustomer/etc). If
+    // the org's billing plan lapses between chunks, this must not keep
+    // writing to Cin7 on the stale first check alone.
+    await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
     const { data: job, error } = await db
       .from("push_jobs")

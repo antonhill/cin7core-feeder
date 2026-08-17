@@ -7,8 +7,6 @@ import { ModuleHeader } from "@/app/ModuleHeader";
 import { INSTANCES_MODULE } from "@/app/module-nav";
 import { Spinner } from "@/app/Spinner";
 
-const DEFAULT_BASE_URL = "https://inventory.dearsystems.com/ExternalApi/v2";
-
 export default function InstancesSettingsPage() {
   return (
     <Suspense>
@@ -53,7 +51,6 @@ function InstancesSettingsPageInner() {
         name: String(form.get("name") ?? ""),
         accountId: String(form.get("accountId") ?? ""),
         applicationKey: String(form.get("applicationKey") ?? "") || undefined,
-        baseUrl: String(form.get("baseUrl") ?? DEFAULT_BASE_URL),
         active: form.get("active") === "on",
         fulfilmentViewStartDate: String(form.get("fulfilmentViewStartDate") ?? ""),
       });
@@ -114,7 +111,7 @@ function InstancesSettingsPageInner() {
                   {inst.name} {!inst.active && <span className="text-sm font-normal text-slate-400">(inactive)</span>}
                 </p>
                 <p className="text-sm text-slate-500">
-                  Account {inst.accountId} · Key ····{inst.keyLast4} · {inst.baseUrl}
+                  Account {inst.accountId} · Key ····{inst.keyLast4}
                 </p>
               </div>
               <div className="flex flex-wrap justify-end gap-2">
@@ -206,15 +203,6 @@ function InstanceModal({
               Application key {instance && <span className="text-sm font-normal text-slate-400">(leave blank to keep current)</span>}
             </span>
             <input name="applicationKey" type="password" className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none" />
-          </label>
-          <label className="flex flex-col gap-1.5 text-base">
-            <span className="font-medium text-slate-700">Base URL</span>
-            <input
-              name="baseUrl"
-              defaultValue={instance?.baseUrl ?? DEFAULT_BASE_URL}
-              required
-              className="rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm focus:border-indigo-500 focus:outline-none"
-            />
           </label>
           <label className="flex items-center gap-2 text-base">
             <input name="active" type="checkbox" defaultChecked={instance?.active ?? true} className="h-4 w-4" />

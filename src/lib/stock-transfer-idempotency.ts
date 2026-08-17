@@ -1,6 +1,8 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import type { createServiceRoleClient } from "@/supabase/server";
+import type { Cin7Credentials } from "@/cin7/types";
+import { fetchAllStockTransfersList } from "@/cin7/stock-transfers";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 
@@ -38,7 +40,7 @@ export interface StockTransferClaimResult {
   /** true → the caller OWNS the claim and must create the transfer (then settle/release). */
   claimed: boolean;
   /** When claimed=false, the state of the live claim that blocked us. */
-  existingStatus: "pending" | "completed" | null;
+  existingStatus: "pending" | "completed" | "ambiguous" | null;
   cin7TransferId: string | null;
   transferNumber: string | null;
 }
@@ -69,7 +71,7 @@ export async function claimStockTransferCreation(db: Db, orgId: string, instance
   if (!row) return { claimed: true, existingStatus: null, cin7TransferId: null, transferNumber: null };
   return {
     claimed: Boolean(row.claimed),
-    existingStatus: (row.existing_status as "pending" | "completed" | null) ?? null,
+    existingStatus: (row.existing_status as "pending" | "completed" | "ambiguous" | null) ?? null,
     cin7TransferId: row.cin7_transfer_id ?? null,
     transferNumber: row.transfer_number ?? null,
   };
@@ -93,7 +95,7 @@ export async function settleStockTransferCreation(
   if (error) console.error("settleStockTransferCreation failed:", error.message);
 }
 
-/** Release a claim after a FAILED create so an immediate retry isn't blocked for the whole TTL (best-effort). */
+/** Release a claim after a DEFINITE (non-ambiguous) create failure, so an immediate retry isn't blocked for the whole TTL (best-effort). */
 export async function releaseStockTransferCreation(db: Db, orgId: string, instanceId: string, key: string): Promise<void> {
   const { error } = await db
     .from("stock_transfer_creation_claims")
@@ -103,4 +105,59 @@ export async function releaseStockTransferCreation(db: Db, orgId: string, instan
     .eq("idempotency_key", key)
     .eq("status", "pending");
   if (error) console.error("releaseStockTransferCreation failed:", error.message);
+}
+
+/**
+ * Security re-audit P0-2: mark a claim `ambiguous` after a create call whose
+ * network outcome is unknown (Cin7ApiError.ambiguous — see
+ * cin7/http.ts's nonIdempotentCreate). Unlike releaseStockTransferCreation,
+ * this does NOT delete the claim — an immediate retry could otherwise create
+ * a genuine duplicate transfer if the original request actually reached
+ * Cin7. The claim stays live (blocking a blind retry) until it's resolved by
+ * findLikelyCreatedStockTransfer, or expires after STOCK_TRANSFER_CLAIM_TTL_SECONDS.
+ */
+export async function markStockTransferCreationAmbiguous(db: Db, orgId: string, instanceId: string, key: string): Promise<void> {
+  const { error } = await db
+    .from("stock_transfer_creation_claims")
+    .update({ status: "ambiguous", updated_at: new Date().toISOString() })
+    .eq("org_id", orgId)
+    .eq("instance_id", instanceId)
+    .eq("idempotency_key", key)
+    .eq("status", "pending");
+  if (error) console.error("markStockTransferCreationAmbiguous failed:", error.message);
+}
+
+/**
+ * Security re-audit P0-2: Cin7's create response carries no client-supplied
+ * reference to reconcile against, so this is a best-effort heuristic lookup —
+ * the newest DRAFT transfer on this exact from/to location pair, modified
+ * since the ambiguous attempt started. `sinceIso` should be bounded to at
+ * most STOCK_TRANSFER_CLAIM_TTL_SECONDS ago (an ambiguous claim can never be
+ * older than that — see stock_transfer_creation_claim's TTL-expiry reclaim in
+ * migration 0056). Not a guarantee: a second, unrelated DRAFT transfer
+ * between the same two locations created in the same short window would also
+ * match — acceptable for a rare, already-degraded (network failure) path,
+ * and strictly safer than the alternative of blindly retrying and risking a
+ * real duplicate. fetchAllStockTransfersList has no server-side time filter,
+ * so this fetches the full list and filters client-side — fine for a rare
+ * failure-recovery path, not the hot path.
+ */
+export async function findLikelyCreatedStockTransfer(
+  creds: Cin7Credentials,
+  fromLocation: string,
+  toLocation: string,
+  sinceIso: string
+): Promise<{ cin7TransferId: string; transferNumber: string | null } | null> {
+  const entries = await fetchAllStockTransfersList(creds);
+  const candidates = entries
+    .filter(
+      (e) =>
+        e.FromLocation === fromLocation &&
+        e.ToLocation === toLocation &&
+        e.Status === "DRAFT" &&
+        (e.LastModifiedOn ?? "") >= sinceIso
+    )
+    .sort((a, b) => (b.LastModifiedOn ?? "").localeCompare(a.LastModifiedOn ?? ""));
+  const match = candidates[0];
+  return match ? { cin7TransferId: match.TaskID, transferNumber: match.Number ?? null } : null;
 }

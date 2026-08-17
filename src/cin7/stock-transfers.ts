@@ -78,8 +78,11 @@ export async function createStockTransfer(
   toLocation: string,
   lines: CreateStockTransferLine[]
 ): Promise<CreateStockTransferResult> {
+  // Security re-audit P0-2: a real record with no client reference to
+  // reconcile against — never auto-resend on a network failure here.
   const response = await cin7Request<{ TaskID: string; Number: string; Status: string }>(creds, "/stockTransfer", {
     method: "POST",
+    nonIdempotentCreate: true,
     body: {
       Status: "DRAFT",
       FromLocation: fromLocation,

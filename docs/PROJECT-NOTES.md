@@ -943,6 +943,118 @@ expected) ×2 and 200 respectively, no module-crash errors in the server log.
 **Phase 4 complete** — all four sub-phases (PO idempotency, Stock Transfer idempotency, sync
 advisory lock, job-chunk claim) shipped. Next audit-driven work, if any, needs a fresh pass.
 
+## Security re-audit remediation (2026-08-17)
+
+A follow-up re-audit named 18 items; Anton's own priority order picked 7 structural blockers for
+this pass (the rest deferred to a shorter sign-off audit once these land).
+
+**P0-1 — canonicalize every Cin7 credential path.** Two independent unsafe duplicates of the
+already-safe `loadCin7Credentials` (which hardcodes `CIN7_API_ORIGIN`, ignoring the DB-stored,
+member-editable `base_url` — see Phase 0's SSRF fix) still selected+returned the raw `base_url`:
+`loadInstanceCreds` (`src/app/settings/instances/actions.ts`, feeding every diagnostic in
+`debug.ts`) and a third one inlined in `syncInstance` (`src/sync/run-sync.ts`). Both now mirror
+`loadCin7Credentials` exactly (never select `base_url`, hardcode the canonical origin) — a
+one-line-shaped fix that neutralizes ~32 downstream call sites at once rather than patching each.
+Separately, `src/cin7/client.ts`'s `testConnection` and 3 raw-fetch probe loops in `debug.ts`
+(`probeWorkCentrePaths`, part of `surveyProductionOrderOperationStatus`, part of
+`surveyProductSupplierOptionsFields`) built their own URLs from `creds.baseUrl` and called `fetch()`
+directly, bypassing the gateway's rate-limiting/timeout/redirect-safety entirely. `testConnection`
+now calls `cin7Request` (with `maxRetries: 0` for a fast single-attempt answer). The 3 debug.ts
+loops needed raw-response inspection (a 200-with-HTML "page not found" body is itself the signal
+being probed for, not an error `cin7Request` should throw away) — added `cin7RawRequest` to
+`http.ts`, the one sanctioned raw-fetch escape hatch: still goes through `buildCin7Url`/the same
+headers/redirect-safety, just returns `{status, text}` instead of parsing/throwing. New test:
+`src/test/__tests__/cin7-gateway-boundary.test.ts` — scans every file under `src/cin7/` other than
+`http.ts` for a bare `fetch(` call and fails if it finds one; self-verified by injecting a synthetic
+violation and confirming the test catches it before removing it. The "Base URL" field is also
+removed from the `/settings/instances` add/edit form entirely (`upsertInstance` no longer accepts a
+`baseUrl` param — it was pure attack surface with no real effect, since every credential-bearing
+call ignores it regardless) — `InstanceRecord`/`toRecord`/`listInstances` no longer carry it either.
+
+**P0-2 — unsafe POST retry semantics.** `cin7Request` used to retry a raw network error
+identically regardless of HTTP method — safe for idempotent reads/updates, but a lost response on
+a real **create** (Purchase Order, Stock Transfer) risks a silent duplicate if Cin7 actually
+committed the write before the response was lost. Deliberately NOT inferred from `method ===
+"POST"`: Cin7's own API uses POST for `markSaleShipped` too, which IS safely retry-idempotent in
+effect — so this needed an explicit per-call opt-in, `nonIdempotentCreate: true`
+(`Cin7RequestOptions`), wired into `purchase-write.ts`'s 2 calls and `stock-transfers.ts`'s 1 call.
+When set, a network-level failure throws immediately (zero retries) as `Cin7ApiError.ambiguous =
+true` — a 503/400/etc. (Cin7 responded and told us something) stays non-ambiguous and keeps
+retrying as before. The idempotency-claim tables (`po_creation_claims`/
+`stock_transfer_creation_claims`, Phase 4.1/4.2) gained an `ambiguous` status
+(`markPoCreationAmbiguous`/`markStockTransferCreationAmbiguous` — an UPDATE, not the old
+`releasePoCreation` DELETE, so a blind immediate retry can't create a genuine duplicate while the
+outcome is still unknown) plus a best-effort reconciliation lookup
+(`findLikelyCreatedPurchaseOrder`/`findLikelyCreatedStockTransfer`) — Cin7's create response has no
+client-supplied reference to match against, so this is a heuristic (newest matching DRAFT
+record for the same supplier/route, updated since the ambiguous attempt started, bounded to the
+claim's own TTL window) rather than a guarantee; documented as such in both idempotency modules.
+Also added to `http.ts` (P0-4, bundled in since it touches the same retry loop): `timeoutMs`
+(`AbortSignal.timeout`, default 20s) bounding each individual attempt, and `maxRetries` override.
+
+**P0-3 — the distributed rate limiter.** See "Cin7 distributed rate limiter (Phase 2.1)" above for
+the real gap this closes: `acquireCin7Slot` called `createServiceRoleClient()` outside any
+try/catch, contradicting its own "never throws" doc comment — flagged in passing during the Phase
+3.3b probe work (2026-08-15) but not fixed then. Now wrapped in try/catch, falling back to the
+in-memory throttle like every other failure mode here already does. Also added a genuine wall-clock
+deadline (`MAX_TOTAL_WAIT_MS`, 45s) alongside the existing `MAX_ACQUIRE_ATTEMPTS` (40) — the attempt
+count alone doesn't bound total wait time: a degraded `RATE_LIMIT_RPS` (floored at 0.1/s) can make
+the 30s per-attempt sleep cap the common case, letting a single `acquireCin7Slot` call consume up to
+20 minutes on the very first Cin7 request of a run. Shipped as its own PR (#36) ahead of the rest —
+see that PR's history for why (an unrelated stale-uncommitted-diff mixup, resolved by confirming no
+other process/branch held the change).
+
+**P0-5 — `category_instances` RLS.** RLS was already enabled live (out-of-band, undocumented) but
+absent from migration history — a blank-project bootstrap via `supabase db push` would have created
+the table wide open. Migration `0072_reconstruct_category_instances_rls.sql` reconstructs the exact
+live state (`enable row level security` + the `is_org_member(org_id)` policy); applied and confirmed
+a genuine no-op against the already-correct live state.
+
+**P0-6 — `push_jobs` migration history.** Same class of gap as P0-5: `push_jobs` was created
+directly against the live DB in 2026-07-19 (no local migration file — Phase 4.4's own note above
+already flagged this), so a bootstrap would fail at migration `0058` (`alter table push_jobs add
+column ...`) with "relation does not exist". Migration `0046_reconstruct_push_jobs.sql`
+reconstructs it — deliberately renumbered to `0046` (reusing an already-taken number, following
+this repo's own `0052`-duplicate precedent) so it sorts before `0058` in filename order, not
+appended as `0073` (which would've reproduced the exact same ordering bug one number later). New
+tool: `scripts/migration-audit.mjs` (+ `src/test/__tests__/migration-audit.test.ts`) — a standalone,
+self-tested static checker (regex-based, comments/schema-qualified refs stripped) that flags any
+migration referencing a table before that table's own `create table`/RLS-enable statement, and any
+table with no RLS-enable anywhere in history. Self-verified against a synthetic reproduction of this
+exact bug before trusting its "no violations" output. Both P0-5 and P0-6's migrations were applied
+live and confirmed idempotent no-ops; `0058`'s own test
+(`supabase/tests/0058_job_locks.test.sql`) re-run live against production in a transactional
+`begin;...rollback;` to confirm compatibility.
+
+**P0-7 — atomic `ProductAvailability`/purchase-detail snapshot replace.** `syncInstanceProductAvailability`
+and `syncPurchaseDetails` (`sync-purchases.ts`) each did a plain delete-then-insert (then-update, for
+purchases) as separate PostgREST calls — a failure between steps (e.g. insert failing after delete
+succeeded) left a stale-or-empty snapshot instead of the previous good one, contradicting both
+functions' own doc comments claiming a failure "keeps its last good snapshot". Migration
+`0074_atomic_snapshot_replace.sql` adds `replace_product_availability`/`replace_purchase_detail` —
+single `plpgsql` functions (one implicit transaction) using `jsonb_to_recordset()` to expand a JSON
+rows array for the insert, new precedent for this codebase. Both sync functions now call the RPC
+instead of separate delete/insert(/update). Proven live (not just code-inspected): happy path against
+a real 3,844-row instance, AND a failure deliberately injected mid-insert (malformed numeric field) —
+row count/lines verified unchanged afterward, including the case where an earlier-successful step
+(receipt lines) needed rolling back by a later step's failure (order lines).
+
+**P1-3 — shipping-calendar billing write-gate.** `updateOrderShipByAction`/`markOrderShippedAction`
+(and the identical copy-pasted `updatePickingShipByAction` in picking-calendar, plus
+`continuePushJobAction`'s per-chunk re-check in `import/actions.ts`) called `requireModuleAccess`
+but not `requireWriteAllowed` — module *visibility* was gated, but a downgraded/expired-trial org
+could still write to Cin7 through these three paths. Fixed by adding the missing
+`requireWriteAllowed(orgId)` call, matching the established two-call convention used everywhere else
+(the codebase's own composed `requireModuleWrite` helper in `authorization.ts` exists but is never
+actually called anywhere — the two-call form is the real convention to copy, not that helper).
+
+Verified for the whole pass: `tsc`/`eslint` clean, `next build` clean, full `vitest` suite —
+**1040 tests, all passing** (up from 940 at the start of Phase 4). PRs: #36 (P0-3, merged/pending)
+and the consolidated P0-1/P0-2/P0-5/P0-6/P0-7/P1-3 PR (see git history for the number).
+
+The remaining 11 re-audit items (P1-4 through P1-9, P2 items) are DEFERRED — not investigated this
+pass. See the re-audit classification report for the full FIXED/DEFERRED/NOT APPLICABLE breakdown.
+
 ## Known gaps (scoped, not yet started — see Task #33 in project tracking)
 
 Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas):

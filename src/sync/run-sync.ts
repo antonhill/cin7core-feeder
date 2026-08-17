@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { decrypt } from "@/cin7/crypto";
+import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { pushProduct } from "@/cin7/products";
 import type { CanonicalAssemblyBomLineRow } from "@/cin7/assembly-bom";
 import { pushProductionBom, createProductionBomRefCaches } from "@/cin7/production-bom";
@@ -156,24 +156,17 @@ export async function syncInstance(
     return truncated;
   };
 
-  const { data: instanceRow, error: instanceError } = await db
-    .from("cin7_instances")
-    .select("id, name, account_id, application_key_encrypted, base_url, active")
-    .eq("id", instanceId)
-    .eq("org_id", orgId)
-    .single();
-  if (instanceError || !instanceRow) throw new Error(instanceError?.message ?? "Instance not found");
-  if (!instanceRow.active) throw new Error("Instance is inactive");
-
-  const creds = {
-    accountId: instanceRow.account_id,
-    applicationKey: decrypt(instanceRow.application_key_encrypted),
-    baseUrl: instanceRow.base_url,
-  };
+  // Security re-audit P0-1: was a third independent, unsafe duplicate of
+  // loadCin7Credentials — selected+returned the DB-stored, member-editable
+  // base_url straight into creds.baseUrl. Even though the gateway
+  // (cin7Request) ignores creds.baseUrl regardless, canonicalizing every
+  // credential path onto the one safe loader removes the duplicate query and
+  // the duplicate place a future change could reintroduce the SSRF hole.
+  const creds = await loadCin7Credentials(db, orgId, instanceId);
 
   const summary: SyncRunSummary = {
     instanceId,
-    instanceName: instanceRow.name,
+    instanceName: creds.name,
     productsCreated: 0,
     productsUpdated: 0,
     productsSkipped: 0,

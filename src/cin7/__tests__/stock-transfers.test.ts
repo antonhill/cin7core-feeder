@@ -44,6 +44,7 @@ describe("createStockTransfer", () => {
     expect(result).toEqual({ taskId: "task-1", number: "TR-00065", status: "DRAFT" });
     expect(cin7Request).toHaveBeenCalledWith(creds, "/stockTransfer", {
       method: "POST",
+      nonIdempotentCreate: true,
       body: {
         Status: "DRAFT",
         FromLocation: "Main Warehouse",
@@ -62,6 +63,7 @@ describe("createStockTransfer", () => {
 
     expect(cin7Request).toHaveBeenCalledWith(creds, "/stockTransfer", {
       method: "POST",
+      nonIdempotentCreate: true,
       body: {
         Status: "DRAFT",
         FromLocation: "Main Warehouse",
@@ -80,6 +82,7 @@ describe("createStockTransfer", () => {
 
     expect(cin7Request).toHaveBeenCalledWith(creds, "/stockTransfer", {
       method: "POST",
+      nonIdempotentCreate: true,
       body: {
         Status: "DRAFT",
         FromLocation: "Main Warehouse",

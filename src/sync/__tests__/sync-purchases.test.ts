@@ -15,6 +15,7 @@ interface FakeDbOptions {
   syncState?: { last_list_synced_at: string | null } | null;
   existingPurchases?: { cin7_purchase_id: string; combined_receiving_status: string | null; detail_synced_at: string | null }[];
   pendingPurchases?: { cin7_purchase_id: string }[];
+  rpcError?: string;
 }
 
 function makeFakeDb(opts: FakeDbOptions) {
@@ -80,19 +81,16 @@ function makeFakeDb(opts: FakeDbOptions) {
           },
         };
       }
-      if (table === "purchase_receipt_lines" || table === "purchase_order_lines") {
-        return {
-          delete: () => {
-            calls.push({ table, op: "delete", args: [] });
-            return chain(table, () => ({ error: null }));
-          },
-          insert: (rows: unknown) => {
-            calls.push({ table, op: "insert", args: [rows] });
-            return Promise.resolve({ error: null });
-          },
-        };
-      }
       throw new Error(`Unhandled table in fake db: ${table}`);
+    },
+    // Security re-audit P0-7: syncPurchaseDetails now calls the atomic
+    // replace_purchase_detail RPC (migration 0074) instead of 4 separate
+    // delete/insert/update calls — the RPC's own atomicity is proven live
+    // against production (see the PR description), not by this unit test;
+    // this just records the args it was called with.
+    rpc: (fn: string, args: Record<string, unknown>) => {
+      calls.push({ table: "__rpc__", op: fn, args: [args] });
+      return Promise.resolve({ error: opts.rpcError ? { message: opts.rpcError } : null });
     },
   };
 
@@ -228,14 +226,13 @@ describe("syncInstancePurchases — detail phase", () => {
 
     expect(summary.detailSynced).toBe(1);
     expect(summary.detailFailed).toBe(0);
-    const insertCall = calls.find((c) => c.table === "purchase_receipt_lines" && c.op === "insert");
-    const lines = insertCall?.args[0] as { card_id: string; quantity: number }[];
-    expect(lines).toEqual([
+    const rpcCall = calls.find((c) => c.table === "__rpc__" && c.op === "replace_purchase_detail");
+    const rpcArgs = rpcCall?.args[0] as { p_receipt_lines: { card_id: string; quantity: number }[]; p_source: string; p_is_drop_ship: boolean };
+    expect(rpcArgs.p_receipt_lines).toEqual([
       expect.objectContaining({ card_id: "card-1", quantity: 5 }),
       expect.objectContaining({ card_id: "card-2", quantity: 5 }),
     ]);
-    const updateCall = calls.find((c) => c.table === "purchases" && c.op === "update");
-    expect(updateCall?.args[0]).toMatchObject({ source: "advanced-purchase", is_drop_ship: false });
+    expect(rpcArgs).toMatchObject({ p_source: "advanced-purchase", p_is_drop_ship: false });
   });
 
   it("stores Order.Lines[] into purchase_order_lines", async () => {
@@ -252,8 +249,8 @@ describe("syncInstancePurchases — detail phase", () => {
 
     await syncInstancePurchases(db, "org1", "inst-1");
 
-    const insertCall = calls.find((c) => c.table === "purchase_order_lines" && c.op === "insert");
-    const rows = insertCall?.args[0] as { product_sku: string; quantity: number; line_number: number }[];
+    const rpcCall = calls.find((c) => c.table === "__rpc__" && c.op === "replace_purchase_detail");
+    const rows = (rpcCall?.args[0] as { p_order_lines: { product_sku: string; quantity: number; line_number: number }[] }).p_order_lines;
     expect(rows).toEqual([
       expect.objectContaining({ product_sku: "SKU-A", quantity: 10, line_number: 0 }),
       expect.objectContaining({ product_sku: "SKU-B", quantity: 3, line_number: 1 }),
@@ -266,8 +263,8 @@ describe("syncInstancePurchases — detail phase", () => {
 
     await syncInstancePurchases(db, "org1", "inst-1");
 
-    const updateCall = calls.find((c) => c.table === "purchases" && c.op === "update");
-    expect(updateCall?.args[0]).toMatchObject({ is_drop_ship: true });
+    const rpcCall = calls.find((c) => c.table === "__rpc__" && c.op === "replace_purchase_detail");
+    expect(rpcCall?.args[0]).toMatchObject({ p_is_drop_ship: true });
   });
 
   it("records a per-purchase failure without aborting the rest of the batch", async () => {
@@ -283,6 +280,17 @@ describe("syncInstancePurchases — detail phase", () => {
     expect(summary.errors).toEqual([{ purchaseId: "po-1", error: "boom" }]);
   });
 
+  it("security re-audit P0-7: an error from replace_purchase_detail (e.g. a rolled-back transaction) is recorded as a per-purchase failure too, not just a fetchPurchaseDetail throw", async () => {
+    vi.mocked(fetchPurchaseDetail).mockResolvedValueOnce({ source: "purchase", receiptLines: [], orderLines: [], isDropShip: false });
+    const { db } = makeFakeDb({ existingPurchases: [], pendingPurchases: [{ cin7_purchase_id: "po-1" }], rpcError: "constraint violation" });
+
+    const summary = await syncInstancePurchases(db, "org1", "inst-1");
+
+    expect(summary.detailSynced).toBe(0);
+    expect(summary.detailFailed).toBe(1);
+    expect(summary.errors).toEqual([{ purchaseId: "po-1", error: "replace_purchase_detail: constraint violation" }]);
+  });
+
   it("handles a purchase detail response with no receipt lines or order lines", async () => {
     vi.mocked(fetchPurchaseDetail).mockResolvedValueOnce({ source: "purchase", receiptLines: [], orderLines: [], isDropShip: false });
     const { db, calls } = makeFakeDb({ existingPurchases: [], pendingPurchases: [{ cin7_purchase_id: "po-1" }] });
@@ -290,8 +298,8 @@ describe("syncInstancePurchases — detail phase", () => {
     const summary = await syncInstancePurchases(db, "org1", "inst-1");
 
     expect(summary.detailSynced).toBe(1);
-    expect(calls.find((c) => c.table === "purchase_receipt_lines" && c.op === "insert")).toBeUndefined();
-    expect(calls.find((c) => c.table === "purchase_order_lines" && c.op === "insert")).toBeUndefined();
+    const rpcCall = calls.find((c) => c.table === "__rpc__" && c.op === "replace_purchase_detail");
+    expect(rpcCall?.args[0]).toMatchObject({ p_receipt_lines: [], p_order_lines: [] });
   });
 });
 

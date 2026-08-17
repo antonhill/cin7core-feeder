@@ -4,8 +4,13 @@ import {
   claimPoCreation,
   settlePoCreation,
   releasePoCreation,
+  markPoCreationAmbiguous,
+  findLikelyCreatedPurchaseOrder,
   PO_CLAIM_TTL_SECONDS,
 } from "@/lib/po-idempotency";
+import { fetchAllPurchasesList } from "@/cin7/purchases";
+
+vi.mock("@/cin7/purchases", () => ({ fetchAllPurchasesList: vi.fn() }));
 
 describe("poIdempotencyKey", () => {
   const lines = [
@@ -100,5 +105,48 @@ describe("settle / release", () => {
     await releasePoCreation(db, "org", "inst", "key");
     expect(del).toHaveBeenCalled();
     expect(eq).toHaveBeenCalledWith("status", "pending");
+  });
+
+  it("markPoCreationAmbiguous updates (not deletes) a pending claim to ambiguous — security re-audit P0-2", async () => {
+    const update = vi.fn().mockReturnThis();
+    const eq = vi.fn().mockReturnThis();
+    const chain = { update, eq, then: (r: (v: { error: null }) => void) => r({ error: null }) };
+    update.mockReturnValue(chain);
+    eq.mockReturnValue(chain);
+    const db = makeDb(vi.fn(), chain);
+    await markPoCreationAmbiguous(db, "org", "inst", "key");
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ status: "ambiguous" }));
+    expect(eq).toHaveBeenCalledWith("status", "pending");
+  });
+});
+
+describe("findLikelyCreatedPurchaseOrder — security re-audit P0-2 reconciliation", () => {
+  const creds = { accountId: "a", applicationKey: "k", baseUrl: "https://example.test" };
+
+  beforeEach(() => vi.mocked(fetchAllPurchasesList).mockReset());
+
+  it("returns the newest matching DRAFT PO for the supplier", async () => {
+    vi.mocked(fetchAllPurchasesList).mockResolvedValue([
+      { ID: "po-old", SupplierID: "sup-1", Status: "DRAFT", OrderDate: "2026-08-17T09:00:00Z" },
+      { ID: "po-new", SupplierID: "sup-1", Status: "DRAFT", OrderDate: "2026-08-17T09:05:00Z", OrderNumber: "PO-0099" },
+      { ID: "po-other-supplier", SupplierID: "sup-2", Status: "DRAFT", OrderDate: "2026-08-17T09:06:00Z" },
+    ]);
+
+    const found = await findLikelyCreatedPurchaseOrder(creds, "sup-1", "2026-08-17T08:55:00Z");
+
+    expect(found).toEqual({ cin7PurchaseId: "po-new", orderNumber: "PO-0099" });
+    expect(fetchAllPurchasesList).toHaveBeenCalledWith(creds, "2026-08-17T08:55:00Z");
+  });
+
+  it("ignores a non-DRAFT PO for the same supplier (already authorized/voided, not our ambiguous create)", async () => {
+    vi.mocked(fetchAllPurchasesList).mockResolvedValue([
+      { ID: "po-authorized", SupplierID: "sup-1", Status: "AUTHORISED", OrderDate: "2026-08-17T09:05:00Z" },
+    ]);
+    expect(await findLikelyCreatedPurchaseOrder(creds, "sup-1", "2026-08-17T08:55:00Z")).toBeNull();
+  });
+
+  it("returns null when nothing matches", async () => {
+    vi.mocked(fetchAllPurchasesList).mockResolvedValue([]);
+    expect(await findLikelyCreatedPurchaseOrder(creds, "sup-1", "2026-08-17T08:55:00Z")).toBeNull();
   });
 });
