@@ -84,8 +84,13 @@ jobs:
       - name: Run the RLS/security regression SQL test suite
         run: |
           set -e
+          # security re-audit round 2 fixup: this CLI version has no `db
+          # execute` subcommand (confirmed by the real CI run's own error
+          # output, which named the actual subcommands) -- `db query --file`
+          # is the real one, --local passed after the subcommand per its own
+          # usage hint.
           for f in supabase/tests/*.test.sql; do
             echo "::group::$f"
-            supabase db execute --local --file "$f"
+            supabase db query --local --file "$f"
             echo "::endgroup::"
           done
