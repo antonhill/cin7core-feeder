@@ -1,15 +1,18 @@
 # Cin7 Core Feeder — Security Re-Audit Remediation Report
 
-**Date:** 2026-08-17 (round 1), updated 2026-08-17 (round 2)
-**Scope:** All 18 items from the re-audit. Round 1 covered Anton's own priority order of 7 structural blockers (P0-1 through P0-7, P1-3). Round 2 covered a further 6 of the remaining 11 deferred items (P1-1, P1-4, P1-6, P1-8, P1-9, P2/CI), chosen by Anton as "the straightforward six." 4 items remain DEFERRED: P1-2, P1-5, P1-7, and P2 (API optimisation).
+**Date:** 2026-08-17 (round 1), updated 2026-08-17 (round 2), updated 2026-08-17 (round 3)
+**Scope:** All 18 items from the re-audit. Round 1 covered Anton's own priority order of 7 structural blockers (P0-1 through P0-7, P1-3). Round 2 covered a further 6 of the remaining 11 deferred items (P1-1, P1-4, P1-6, P1-8, P1-9, P2/CI). Round 3 was a "final sign-off" pass — not new items, but a deeper re-audit of the P0 areas already marked FIXED (looking for gaps a first pass could have missed), plus bringing the 2 remaining highest-severity deferred items (P1-2, P1-5) into scope. 2 items remain DEFERRED: P1-7 and P2 (API optimisation).
 **PRs (round 1):** [#37](https://github.com/antonhill/cin7core-feeder/pull/37) (P0-1, P0-2, P0-5, P0-6, P0-7, P1-3) → [#38](https://github.com/antonhill/cin7core-feeder/pull/38) (P0-3, P0-4, stacked on #37). Merge order: #37 then #38. [#36](https://github.com/antonhill/cin7core-feeder/pull/36) was an earlier, incomplete first pass at P0-3 — closed as superseded by #38.
 **PR (round 2):** [#40](https://github.com/antonhill/cin7core-feeder/pull/40) (P1-1, P1-4, P1-6, P1-8, P1-9, P2/CI) — merged `70edefe` on 2026-08-17.
+**PR (round 3):** [#55](https://github.com/antonhill/cin7core-feeder/pull/55) (P1-2, P1-5, plus gap-closures on P0-2/P0-3/P0-4/P0-5) — open, not yet merged.
 
 ## A note on process
 
 P0-3's first pass ([#36](https://github.com/antonhill/cin7core-feeder/pull/36)) was scoped from a paraphrased summary of the item ("correct distributed rate limiting"), not its full text, and shipped covering 2 of the 7 things the item actually specified. This was caught before the final report was written by going back to the original message text and checking every FIXED item's evidence line-by-line against the literal wording — the same discipline "do not claim completion from code inspection alone" asks for, applied to my own prior work, not just the codebase. The gap is closed in #38. Flagging this here rather than quietly folding it in, since it's relevant to how much to trust the FIXED classifications below: each one below was re-checked against the item's literal text, not the paraphrase.
 
 **Round 2's own process note:** learning from the P0-3 mistake above, round 2 started with 10 parallel read-only investigation agents establishing ground truth against each deferred item's literal spec text before any grouping or scoping decision was made, rather than working from a paraphrase. Building the new CI job (P2) then surfaced two real bugs neither code inspection nor isolated live checks had caught — a test-assertion methodology gap in the `0052` RLS regression test, and a stale fixture in the pre-existing `0063` box-label test left behind by a prior round's migration — both detailed under P2 below. Both are further evidence for why this report insists on live/CI verification over code inspection: the bugs were in the *tests*, not the application code, and only running everything end-to-end for the first time found them.
+
+**Round 3's own process note:** Anton's round-3 brief was explicit that this was "not another full remediation pass" — a targeted re-audit of the P0 areas already marked FIXED, checking whether the *complete* affected surface was actually covered the first time, not just one implementation path. It started the same way round 2 did: 12 parallel read-only investigation agents established ground truth against each of the brief's 12 numbered items before any implementation began. Every single P0 area re-examined (non-idempotent creates, quota coordination, operation deadline, RLS policy intent) turned out to have a real, concrete gap — none were "already fully correct." The most severe: the RLS policy-intent audit (item 5) found a **live, directly-exploitable** DB-level bypass on 4 admin-only settings tables, unrelated to anything round 1's P0-5 fix touched. This is the strongest evidence yet in this report's own recurring theme — a single fix, however well-tested in isolation, doesn't prove the *complete* affected surface was covered; only a fresh, literal-text re-audit against the full class of the problem does.
 
 ---
 
@@ -18,25 +21,25 @@ P0-3's first pass ([#36](https://github.com/antonhill/cin7core-feeder/pull/36)) 
 | Item | Classification | One-line summary |
 |---|---|---|
 | P0-1 | **FIXED** | Every Cin7 credential path canonicalized; one gateway; repo test enforces it |
-| P0-2 | **FIXED** | No auto-resend on ambiguous create failures; reconciliation, not blind release |
-| P0-3 | **FIXED** | Fingerprinted bucket key, no bypass-on-contention, shared cooldown, multi-worker proof |
-| P0-4 | **FIXED** | Per-attempt AND whole-call deadlines, including diagnostics |
-| P0-5 | **FIXED** | `category_instances` RLS reconstructed into migration history |
+| P0-2 | **FIXED**, gap closed round 3 | No auto-resend on ambiguous create failures; round 3 found 6 more unprotected creates beyond the original 2 |
+| P0-3 | **FIXED**, gap closed round 3 | Fingerprinted bucket key, no bypass-on-contention; round 3 closed an unaccounted-quota blind spot for reads |
+| P0-4 | **FIXED**, gap closed round 3 | Per-attempt AND whole-call deadlines; round 3 made every blocking sub-operation clamp to the REMAINING budget |
+| P0-5 | **FIXED**, gap closed round 3 | `category_instances` RLS fixed round 1; round 3 found and fixed a live, exploitable bypass on 7 OTHER tables |
 | P0-6 | **FIXED** | `push_jobs` reconstructed; self-tested migration-order audit tool added |
 | P0-7 | **FIXED** | Atomic snapshot-replace RPCs for ProductAvailability and purchase detail |
 | P1-1 | **FIXED** (round 2) | `requireModuleAccess` now fails closed on any of its 3 Supabase read errors |
-| P1-2 | DEFERRED | Not investigated |
+| P1-2 | **FIXED** (round 3) | Real action-level AAL2 enforcement (`requirePrivilegedOrgAdmin`/`requirePrivilegedSuperAdmin`) across 13 privileged Server Actions; middleware's own active-org resolution bug fixed alongside it |
 | P1-3 | **FIXED** (round 1) | `requireWriteAllowed` added to 3 real write paths missing it |
 | P1-4 | **FIXED** (round 2) | Lemon Squeezy webhook: checkout-token binding, two-stage Zod validation, unknown-status left untouched instead of defaulting to canceled |
-| P1-5 | DEFERRED | Not investigated |
+| P1-5 | **FIXED** (round 3, Anton-approved 2026-08-17) | PO claim / Stock Transfer claim / sync_locks flipped to fail-closed per the approved decision table; 2 other lock families deliberately left fail-open |
 | P1-6 | **FIXED** (round 2) | Single `CRON_SECRET` (timing-safe compare), unsafe `/api/import` route removed entirely |
-| P1-7 | DEFERRED | Not investigated |
+| P1-7 | DEFERRED (round 3: investigated, not implemented) | Export files classified (14 Cin7-round-trip vs. 1 human-facing + 14 XLSX), concrete import/export limits proposed, formula-injection gap confirmed — findings exist, no code written yet |
 | P1-8 | **FIXED** (round 2) | `shouldCreateUser:false`, atomic self-serve org+owner RPC, explicit active-org selection/switcher |
 | P1-9 | **FIXED** (round 2) | Magic-byte org-logo content sniffing (SVG removed), all 6 security headers added |
-| P2 (API optimisation) | DEFERRED | Not investigated |
+| P2 (API optimisation) | **NOT CURRENTLY JUSTIFIED** (round 3) | Investigated: Customer/Supplier/Product are never full-scanned by the recurring cron at all — nothing to optimise today |
 | P2 (CI and sign-off) | **FIXED** (round 2) | Full CI pipeline: lint/tsc/vitest/build, dependency audit, secret scan, clean-bootstrap migration + RLS/security test matrix |
 
-No items classified NOT APPLICABLE — every item investigated across both passes was either fixed or deferred outright. 4 items (P1-2, P1-5, P1-7, P2/API optimisation) remain DEFERRED, not yet investigated.
+1 item remains DEFERRED (P1-7, not yet investigated). P2/API optimisation is now investigated and closed as NOT CURRENTLY JUSTIFIED — see its own section below for why implementing it would be complexity without a measurable benefit today.
 
 ---
 
@@ -361,13 +364,160 @@ PR [#40](https://github.com/antonhill/cin7core-feeder/pull/40) merged to `main` 
 
 ---
 
-## DEFERRED items — not investigated (either pass)
+## FIXED items — detail (round 3)
 
-Round 1 covered 7 items (P0-1 through P0-7, P1-3); round 2 covered 6 more (P1-1, P1-4, P1-6, P1-8, P1-9, P2/CI). 4 of the original 18 items remain untouched:
+Round 3 was framed as a final sign-off pass, not a new remediation round: re-examine every P0 area already marked FIXED for gaps a first pass could have missed, and resolve the 2 highest-severity remaining deferred items (P1-2, P1-5). 12 parallel read-only investigation agents established ground truth first; every P0 area re-examined had a real gap.
 
-- **P1-2** — Enforce AAL2 inside privileged Server Actions (needs one new reusable guard function wired into ~9 files/15-20 functions)
-- **P1-5** — Classify lock failure policy (needs an explicit sign-off on reversing the fail-open philosophy for 3 specific write-integrity locks)
-- **P1-7** — Import/export resource boundaries (needs sorting ~15 export files into Cin7-round-trip vs. human-facing before any fix)
-- **P2** — API optimisation (modifiedSince watermarks for Customer/Supplier/Product sync — Cin7-side support is unverified; implementing without a live probe first would repeat the exact mistake Phase 3.3b was built to avoid, and the cron-scheduled sync doesn't even list-scan those 3 endpoints today, so the item's practical benefit is unclear until scoped further)
+### P1-2 / active-org resolution parity (brief item 1)
 
-None of these were touched, reviewed, or partially started in either pass — they carry no evidence either way and should be treated as fully open for the next audit round.
+**Previous status:** DEFERRED (not investigated in rounds 1-2).
+
+**Finding:** Two related, compounding gaps. First, `middleware.ts` resolved a multi-org user's active org via an unordered `.limit(1)` `org_members` query — completely ignoring the `active_org_id` cookie that `requireCurrentOrg`/`getCurrentUserInfo` (round 2's P1-8 fix) already honored. A user who is a member of Org A but admin of Org B, with Org B active, could have middleware evaluate Org A (member → MFA-enrolment gate skipped) while every Server Action correctly resolved Org B (admin → should be gated) — middleware and Server Actions could genuinely disagree about which org's role applied. Second, no Server Action anywhere enforced AAL2 (two-factor) independently — middleware's own MFA-enrolment gate only ever protects *page navigation*; a direct POST to a privileged Server Action's own endpoint (the client bundle ships a callable reference to every action, independent of whether the user ever rendered the gating page) was never covered by it at all.
+
+**Files changed:**
+- `src/lib/active-org-resolution.ts` (new) — `ACTIVE_ORG_COOKIE`/`resolveActiveOrgId` split out of `active-org.ts` into a dependency-free module (no `next/headers` import), so Edge-runtime `middleware.ts` can share the exact same resolution rule as every Server Action without dragging in a Node-only import — mirrors the existing `IMPERSONATED_ORG_COOKIE` duplication pattern's own stated reasoning.
+- `src/lib/active-org.ts` — now re-exports from the new module; `getActiveOrgCookie()` (the `next/headers`-dependent half) is unchanged, so every existing importer needed zero changes.
+- `src/middleware.ts` — the `.limit(1)` query replaced with fetching every membership and resolving via `resolveActiveOrgId(cookieOrgId, membershipOrgIds)`, reading the cookie via `request.cookies.get(ACTIVE_ORG_COOKIE)` (matching the existing `IMPERSONATED_ORG_COOKIE` read pattern).
+- `src/lib/require-privileged.ts` (new) — `requirePrivilegedOrgAdmin()`/`requirePrivilegedSuperAdmin()` compose the existing `requireOrgAdmin`/`requireSuperAdmin` role checks with a real `supabase.auth.mfa.getAuthenticatorAssuranceLevel()` check (`currentLevel === "aal2"`, not just "a factor is enrolled"). Deliberately mirrors middleware's own trial-org AAL2 exemption (a super-admin always needs AAL2; an ordinary org owner/admin only once their org's billing is write-allowed) — enforcing it unconditionally would have made a trial-org admin's page load fine (middleware doesn't force enrolment yet) while the Server Action that page calls on load rejected them, the exact "the two checks disagree" bug this item exists to close, just inverted.
+- Applied to 13 call sites: `src/app/settings/instances/actions.ts` (`listInstances`, `upsertInstance`, `deleteInstance`), `src/actions/billing.ts` (`getCheckoutUrlAction`, `getManageSubscriptionUrlAction`), `src/app/settings/members/actions.ts` (`inviteTeamMemberAction`, `removeTeamMemberAction`, `setTeamMemberModulesAction`), `src/app/admin/actions.ts` (`createOrgAndInvite`, `inviteMemberToOrg`, `removeMemberFromOrg`, `setOrgDisabledModules`, `deleteOrganization`), `src/actions/org-switch.ts` (`setImpersonatedOrgAction`).
+- Deliberately NOT upgraded (documented, not silent): `uploadOrgLogo` (branding-only, no credentials/money/access consequence), `listInstances`'s/`listTeamMembersAction`'s/`listOrgsForAdmin`'s/`listOrgsForSwitcherAction`'s read-only siblings, `loadInstanceCreds` and the ~25 diagnostic actions funnelling through it (that's P1-7-adjacent diagnostics-authorization work, out of round 3's P0 scope — see DEFERRED below), `clearImpersonatedOrgAction` (exiting impersonation isn't gated).
+
+**Tests:** `src/__tests__/middleware.test.ts` — rewritten for multi-membership fixtures; new describe block with the brief's own required scenarios: member-in-A/admin-in-B-with-B-active, admin-in-A/member-in-B-with-B-active, stale/invalid active-org cookie, no-cookie fallback, and module-block-uses-active-org. `src/lib/__tests__/require-privileged.test.ts` (new, 12 tests) — AAL2 pass/fail at every currentLevel/nextLevel combination, role-check-fails-before-AAL2-check ordering, AAL-read-error fails closed, the trial-org exemption itself, and confirms a super-admin is held to the bar even on a trialing org. Every downstream action-level test file (`billing.test.ts`, `org-switch.test.ts`) updated to mock the new guard.
+
+**Live evidence:** N/A (pure application-code change, no schema).
+
+---
+
+### Non-idempotent Cin7 create protection — closing P0-2's gap (brief item 2)
+
+**Previous status:** FIXED (round 1) — but only for Purchase Order and Stock Transfer creation.
+
+**Finding:** Exhaustive inventory of every Cin7 POST call in the repo found 6 more genuine creates with zero `nonIdempotentCreate` protection: `pushCustomer`, `pushSupplier`, `pushProduct`, `createWorkCentre`, `createReference` (Category/Brand/UOM), `pushProductionBom`. Each already had an existing find-by-identifier function in the same file (SKU/Name/Code) — the gap wasn't "no reconciliation exists," it was that `cin7Request`'s own internal retry loop could blindly resend the exact same POST several times on a network failure before ever re-checking that identifier. Also found: a super-admin-only diagnostic PO-creation tool (`debug.ts`'s `testCreatePurchaseOrder`) with the same gap and, unlike the 6 production paths, no reconciliation mechanism at all.
+
+**Files changed:** `src/cin7/customers.ts`, `suppliers.ts`, `products.ts`, `work-centres.ts`, `reference-lookups.ts`, `production-bom.ts` — `nonIdempotentCreate: true` added to each genuine create call (conditionally, for `production-bom.ts`'s combined PUT/POST). `src/cin7/debug.ts` — same flag added to `tryPurchaseRequest`/`tryPurchaseOrderLines`'s POST branches, with the residual no-reconciliation risk explicitly documented in code rather than silently accepted.
+
+**Tests:** all 6 production files' existing test suites extended with an assertion that the create call carries `nonIdempotentCreate: true` (`customers.test.ts`, `suppliers.test.ts`, `products.test.ts`, `work-centres.test.ts`, `reference-lookups.test.ts`, `production-bom.test.ts`). No new test for the diagnostic tool — it has no pre-existing test coverage at all (a documented, pre-existing gap, same as round 1's P0-2 action-layer coverage gap).
+
+**Live evidence:** N/A (pure application-code change).
+
+**Reconciliation mechanism confirmed, not assumed:** verified via `run-sync.ts`'s own error handling — a thrown error from any of these 6 push functions leaves the corresponding `*_sync_state` row's `synced_hash` stale (never updated on the failure path), so the row is retried on the next sync run, going through the find-by-identifier check again before attempting to create — genuine reconciliation, not a gap papered over.
+
+---
+
+### Quota coordination — closing P0-3's gap (brief item 3)
+
+**Previous status:** FIXED (round 1) — the distributed coordinator existed, but with a real accounting blind spot for reads.
+
+**Finding:** When the distributed coordinator couldn't grant a slot, a GET request ("degrade" outcome) silently fell back to an in-memory per-invocation throttle and sent the real HTTP request anyway — completely unaccounted by the shared Postgres bucket, reopening exactly the multi-worker uncoordinated-traffic race P0-3 was built to close, just scoped to reads. Separately, `cin7RawRequest` (the P0-1 diagnostics escape hatch) had zero quota participation of any kind — not even the old local throttle. Config had no upper bound at all: `.env.example` shipped `RATE_LIMIT_RPS=1`, exactly on Cin7's 60/min ceiling rather than below it (and this repo has drifted above-limit before — see `docs/cin7-api-findings.md`).
+
+**Files changed:** `src/cin7/http.ts` — a "degrade" outcome is now handled identically to "blocked" (never proceeds unpaced; retries the whole attempt through the existing loop). The entire now-dead local in-memory throttle machinery (`throttle`, `throttleQueueByAccount`, `lastCallAtByAccount`, `minIntervalMs`, `__resetRateLimiterForTests`) was deleted rather than left unused. `cin7RawRequest` now calls `acquireCin7Slot(..., { allowDegrade: false })` before every raw fetch, throwing a clear `Cin7ApiError` on anything but "granted." `src/cin7/rate-limit.ts` — `refillPerSec()`/`capacity()` now clamp to `MAX_RPS = 0.9` / `MAX_BURST = 10` (real headroom under the 60/min limit) and reject non-finite input (`NaN` previously passed straight through `Math.max`, since `NaN` comparisons are always false). `.env.example` — `RATE_LIMIT_RPS` fixed to `0.8`.
+
+**Tests:** `src/cin7/__tests__/http.test.ts` — rewrote the default mock outcome from `"degrade"` to `"granted"` (matching the real common case now that degrade no longer means "proceed anyway"); new tests proving a "degrade" GET never sends the real request and retries exactly like "blocked"; new tests for `cin7RawRequest`'s quota gate (acquires with `allowDegrade:false`, throws on any non-granted outcome, no retry loop). The obsolete "per-account rate limiting" describe block (3 tests exercising the now-deleted local throttle) was removed — that behavior is covered by `rate-limit.test.ts`'s own "concurrent load (multi-worker)" suite instead. `src/cin7/__tests__/rate-limit.test.ts` — 4 new tests for the config clamps (over-limit RPS/burst clamped, non-numeric input falls back to the default, below-minimum still floors).
+
+**Live evidence:** N/A (pure application-code change). Severity assessed honestly, not inflated: Cin7's own 503 backstop plus the shared cooldown already self-corrects a runaway period within ~10s regardless — this closes a real correctness/accounting gap, not an unbounded-quota-exhaustion vulnerability.
+
+---
+
+### Hard operation deadline — closing P0-4's gap (brief item 4)
+
+**Previous status:** FIXED (round 1) — the whole-call deadline existed and was checked, but only between attempts, not during one.
+
+**Finding:** Traced two concrete overrun timelines against the actual code: (1) a contended quota wait alone could consume up to `acquireCin7Slot`'s own fixed 20s internal budget regardless of a much smaller `operationTimeoutMs`, since nothing told it how much time the caller actually had left; (2) a fetch given the full fixed `timeoutMs` (default 20s) plus an unclamped ~5-30s backoff sleep could together blow a small deadline by seconds before the top-of-loop check ever re-fired. Neither sub-operation had ever been bounded by the *remaining* budget — only by their own fixed defaults.
+
+**Files changed:** `src/cin7/rate-limit.ts` — `acquireCin7Slot` gained an optional `maxWaitMs` option; its own internal deadline is now `Date.now() + Math.min(MAX_TOTAL_WAIT_MS, maxWaitMs ?? MAX_TOTAL_WAIT_MS)`. `src/cin7/http.ts` — `remainingForAcquire` (floored at 1ms, so attempt 0 always gets a genuine attempt) is computed fresh before every `acquireCin7Slot` call and passed as `maxWaitMs`; `attemptTimeoutMs = Math.min(timeoutMs, remainingBudget)` computed fresh right before every fetch; a new `clampedBackoff(attempt)` helper (floored at 0, letting the existing top-of-loop check catch a fully-expired deadline on the next iteration with the correct attempt count) replaces all 4 of the function's unclamped `sleep(RETRY_BASE_DELAY_MS * ...)` call sites.
+
+**Tests:** `src/cin7/__tests__/http.test.ts` — new tests proving the fetch's `AbortSignal.timeout` is clamped below the configured value when the operation budget is smaller (spying on `AbortSignal.timeout` directly), that `acquireCin7Slot` receives a clamped `maxWaitMs`, and that a permanently-"blocked" outcome's backoff sleep never overruns a small deadline (proven via fake-timer advancement: if unclamped, the test would still be pending after only 200ms of advancement against a 5000ms unclamped sleep). `src/cin7/__tests__/rate-limit.test.ts` — new tests confirming `maxWaitMs` genuinely shrinks the internal deadline (single-attempt give-up on a 300ms budget vs. a 5000ms-per-attempt reported wait) and that a `maxWaitMs` *larger* than the function's own default doesn't extend it.
+
+**Live evidence:** N/A (pure application-code change).
+
+---
+
+### RLS policy-intent audit — closing P0-5's gap, and finding a live vulnerability beyond it (brief item 5)
+
+**Previous status:** FIXED (round 1) — but that fix was scoped to one table (`category_instances`); the item's own literal wording ("every table... has intentional RLS/grant configuration") was never checked at that scope.
+
+**Finding — the most severe of this round:** A live, directly-exploitable DB-level bypass. 4 admin-only settings tables (`ship_by_notification_settings`, `ship_by_notification_reps`, `bom_alert_settings`, `picking_calendar_settings`) shipped with an `is_org_member` RLS policy on their ALL (ambient read/write) clause, while every Server Action that writes them enforces `requireOrgAdmin` — meaning any ordinary org member could bypass the Server Action gate entirely with a direct PostgREST call using their own valid session token (the anon key is public by design; any logged-in member already has a legitimate access token). Each affected migration's own comment already stated the intended design ("Write access gated to org admins at the application layer") — the SQL just never matched it. Separately, 3 service-managed log/queue tables (`ship_by_change_pending`, `ship_by_change_notifications`, `bom_alert_notifications`) had a member-level read/write policy despite having no legitimate client-side reader or writer anywhere in the app at all.
+
+**Files changed:** `supabase/migrations/0078_fix_admin_only_settings_rls.sql` (new) — drops each of the 4 tables' `is_org_member` ALL policy, recreates it with `is_org_admin` (their separate member-level SELECT policy is untouched — reads are correctly member-level); drops both policies entirely (no replacement) on the 3 log/queue tables, matching the `billing_checkout_tokens` (round 2, P1-4) precedent of RLS-enabled-zero-policies-service-only. Also `REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon` — anon already gets nothing anywhere (every policy roots in `is_org_member`/`is_org_admin`, both `false` for a null `auth.uid()`), so this removes an unaudited standing capability rather than changing behavior.
+
+**Tests:** `supabase/tests/0078_fix_admin_only_settings_rls.test.sql` (new) — seeds a throwaway org with one admin and one ordinary member, proves the member can still SELECT the 4 settings tables but every UPDATE affects 0 rows (`pg_temp.expect_no_effect`, the RLS-USING-vs-exception pattern round 2 established), proves the member has zero access (SELECT or UPDATE) to the 3 log/queue tables, and proves the admin's writes still succeed.
+
+**Live evidence:** the fix and its test were both run live against production, wrapped in `begin;...rollback;`, *before* the migration was actually applied — confirming the exact "member blocked, admin allowed" behavior with real rows, not just planned SQL. The migration was then applied for real via `apply_migration`, and the resulting `pg_policies`/`information_schema.role_table_grants` state was independently re-queried and confirmed to match exactly what was intended (4 tables now `is_org_admin`-gated, 3 tables zero policies, 0 remaining anon grants).
+
+**Note:** the item's other stated bar — "prove every table in the exposed public schema has intentional RLS/grant configuration" for the *entire* schema, not just the 7 tables named above — was scoped by the investigation to the specific mismatches actually found (the 7 tables), not a full table-by-table re-certification of all ~58 public tables. The investigation's permission matrix did cover every table and found these 7 as the only real mismatches (everything else — `push_jobs`, `pull_jobs`, `custom_reports`, `purchase_planner_settings`, `cin7_instances`, every Cin7-synced data table — already matched its documented intent), so the practical bar is met, but a table-by-table matrix isn't reproduced verbatim in this report; see the round-3 investigation transcript for the full matrix if needed.
+
+---
+
+### P1-5 — Lock failure policy: Anton-approved 2026-08-17 (brief item 6)
+
+**Previous status:** DEFERRED, explicitly `AWAITING PRODUCT/RISK DECISION` per round 2's own scoping.
+
+**Investigation → decision → implementation:** every lock/claim that can degrade/fail-open was inventoried and classified. 3 are genuine Category B (write-integrity) backstops — PO creation claim, Stock Transfer creation claim, and the per-instance `sync_locks` (the real duplicate-record guard for product/customer/supplier/production-BOM pushes, confirmed via the migration comments of `sync_route_locks`/`push_jobs`' own job-chunk lock, both of which explicitly defer to `sync_locks` as the actual backstop rather than being one themselves — Category A). A decision table (current fail behaviour, fail-open risk, fail-closed UX cost, recovery path, reconciliation availability, per lock) was presented to Anton via `AskUserQuestion`; he approved **"Fail-closed for all 3 (Recommended)"** on 2026-08-17.
+
+**Files changed:** `src/lib/po-idempotency.ts` — `claimPoCreation` returns `{claimed: false, existingStatus: "guard_unavailable"}` on any guard RPC error or unexpected empty result, instead of `{claimed: true}`. `src/lib/stock-transfer-idempotency.ts` — identical shape for `claimStockTransferCreation`. `src/app/supplier-planner/actions.ts` / `src/app/replenish/actions.ts` — a new `existingStatus === "guard_unavailable"` branch surfaces a clear "Could not confirm no duplicate exists — try again shortly" error for that PO/transfer group specifically, without disrupting other groups in the same batch. `src/lib/sync-lock.ts` — `acquireSyncLock` now `throw`s on a guard error/empty result instead of returning `{acquired: true}`. `src/sync/sync-org.ts` — the `acquireSyncLock` call is now wrapped in its own try/catch, producing the identical `sync.push_failed` outcome for that ONE instance (via `mapWithConcurrency`'s per-task isolation) that any other sync failure already produces — other instances in the same batch are unaffected.
+
+**Tests:** the 3 existing "FAILS OPEN" tests (`po-idempotency.test.ts`, `stock-transfer-idempotency.test.ts`, `sync-lock.test.ts`) rewritten to assert the new fail-closed behavior. `src/sync/__tests__/sync-org.test.ts` — new test proving a sync-lock guard error blocks only the affected instance(s) (never calls `syncInstance`, logs `sync.push_failed`) while the batch as a whole completes cleanly (no unhandled rejection escaping `mapWithConcurrency`).
+
+**Live evidence:** N/A (pure application-code change — the guard RPCs themselves are unchanged; only the caller's response to a guard *failure* changed).
+
+**Deliberately unchanged:** `sync_route_locks` and the `push_jobs`/`pull_jobs` job-chunk lock stay fail-open — both are Category A per their own migration comments (read/cache coordination, not write-integrity), and flipping them would trade real availability (report refreshes, import/migrate progress bars) for no actual duplicate-Cin7-write protection.
+
+---
+
+### P2 (API optimisation) — investigated and closed as NOT CURRENTLY JUSTIFIED (brief item 11)
+
+**Previous status:** DEFERRED.
+
+**Investigation:** traced exactly how Customer/Supplier/Product are fetched by the recurring cron sync — it's a changed-row *push* (local Supabase → Cin7), gated by content-hash, never a `GET`-list-scan of Cin7's own Customer/Supplier/Product endpoints. The only callers of the actual full-list-scan functions (`fetchAllCustomers`, `fetchAllSuppliers`, `fetchAllProductsWithBom`) are exactly the complete-dataset workflows the brief itself says must NOT go incremental: System Health, the Data Audit tool, Migrate, and live CSV export. There is nothing recurring to optimise. Separately confirmed: 2 of the 3 previously-probed endpoints for `UpdatedSince` semantics (Assembly Builds, Production Orders) turned out to silently ignore the filter entirely — reinforcing that this item's own required verification step (live-probe before trusting the parameter) is not optional, and Customer/Supplier/Product were never probed at all.
+
+**Status:** `NOT CURRENTLY JUSTIFIED` — no code change. If a genuine Cin7→Supabase pull/mirror sync for these entities is ever built in the future, `probeUpdatedSinceFiltering` (`debug.ts`) should be extended to `/Product`/`/customer`/`/supplier` and run live first, exactly as this item's own brief requires, before assuming the parameter works.
+
+---
+
+## Verification output (round 3, final)
+
+```
+$ npx tsc --noEmit
+(clean, no output)
+
+$ npx eslint src
+(clean, no output)
+
+$ npx vitest run
+ Test Files  122 passed (122)
+      Tests  1152 passed (1152)
+
+$ npm run build
+✓ Compiled successfully
+(all 50 routes built, no errors)
+```
+
+CI run (all 4 jobs green on the first push): PR [#55](https://github.com/antonhill/cin7core-feeder/pull/55)
+- `Install, lint, typecheck, test, build`: success
+- `Dependency vulnerability scan`: success
+- `Secret scan`: success
+- `Clean migration bootstrap + RLS/security test matrix`: success
+
+Migration confirmed live via Supabase `list_migrations`/direct `pg_policies` re-query (project `cin7toolbox`, `pnzwjqjovxxdikxtfngq`):
+- `0078_fix_admin_only_settings_rls` — 4 tables confirmed `is_org_admin`-gated, 3 tables confirmed zero policies, 0 remaining `anon` grants on any public table.
+
+PR [#55](https://github.com/antonhill/cin7core-feeder/pull/55) open against `main`, not yet merged.
+
+---
+
+## Also investigated in round 3, not yet implemented (out of this round's P0-only scope)
+
+Round 3's 12-item investigation phase covered more ground than the 6 items actually implemented this round (P0-only, per Anton's own sequencing choice — P1 items deferred to a follow-up round). 4 investigations produced real findings with no code written yet; recorded here so a future round doesn't redundantly re-investigate:
+
+- **`/api/sync*` on-demand routes (P1-6-adjacent):** confirmed **still NOT fixed** on `main` — all 6 routes still trust a body-supplied `orgId` after only a `CRON_SECRET` check, despite round 2's report noting Anton had started a background task for this. Good news: zero real callers found for any POST handler; 4 of 6 families already have a session-scoped Server Action replacement bypassing the route entirely. Low-risk, mechanical: delete `POST` from all 6 route files, keep only `GET` (the cron entry point).
+- **Diagnostics authorization (P1-9-adjacent):** 26 of 30 diagnostic Server Actions in `settings/instances/actions.ts` are gated by `requireOrgAdmin` (any customer org admin), not `requireSuperAdmin`, despite being documented everywhere as super-admin-only. Several return raw customer/supplier/sale PII to any org admin. Recommendation: every `debug*` action should call `requireSuperAdmin()` directly, independent of the shared `loadInstanceCreds` chokepoint.
+- **Cin7 write audit-log coverage:** the privacy policy makes an unqualified "every write" claim; reality is two-tier — Data Audit/Bulk Pricing/Reorder Points are fully and correctly logged, the sync/push pipeline only logs one aggregate count per instance per run (no per-record target), and shipment status changes, credential changes, and superadmin diagnostic writes aren't logged at all. No secret-leakage found. Recommendation: narrow the privacy-policy wording now (cheap, immediate), close the highest-value logging gaps as a follow-up.
+- **Credential encryption lifecycle (P3, hardening not a vulnerability):** current AES-256-GCM is sound; no version/keyId/AAD/rotation support. Small blast radius (1 module, 4 call sites), no-outage migration path designed (dual-format decrypt support, opportunistic re-encryption).
+
+## DEFERRED items — not investigated (any pass)
+
+Round 1 covered 7 items (P0-1 through P0-7, P1-3); round 2 covered 6 more (P1-1, P1-4, P1-6, P1-8, P1-9, P2/CI); round 3 resolved P1-2 and P1-5, closed P2/API optimisation as not-currently-justified, and investigated (without implementing) P1-7 plus the 4 items listed above. 1 of the original 18 items remains genuinely untouched:
+
+- **P1-7** — Import/export resource boundaries. Investigated in round 3 (see table above) — export classification, limit proposals, and the formula-injection gap are all documented, but no code was written. Implementation is the next step whenever this item is picked up.
+
+Carries real investigation findings (not zero evidence, per the note above) but no implementation — should be treated as ready-to-implement, not "fully open," for the next audit round.
