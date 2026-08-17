@@ -1,17 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Cin7ApiError, cin7Request, cin7RawRequest, __resetRateLimiterForTests } from "@/cin7/http";
+import { Cin7ApiError, cin7Request, cin7RawRequest } from "@/cin7/http";
 
 import { CIN7_API_ORIGIN } from "@/cin7/api-origin";
 import { acquireCin7Slot, reportCin7RateLimitCooldown } from "@/cin7/rate-limit";
 
-// Force the distributed limiter to report "degrade" (unavailable/contended)
-// so these tests exercise the in-memory throttle fallback they were written
-// to assert — "degrade" lets both reads and writes proceed via the fallback,
-// same as the old boolean `false`. The distributed limiter's own behaviour
-// (including the read/write "degrade" vs "blocked" split) is covered in
-// cin7/__tests__/rate-limit.test.ts.
+// Security re-audit round 3, item 3.1: the distributed coordinator is now
+// the ONLY pacing mechanism (the old in-memory per-invocation throttle
+// fallback for "degrade" reads was removed — it let real HTTP requests
+// through completely unaccounted by the shared bucket). Default the mock to
+// "granted" so most tests here (which aren't specifically exercising the
+// coordinator's own unavailable/contended handling) proceed immediately,
+// same shape as the real common case. The distributed limiter's own
+// behaviour (including the read/write "degrade" vs "blocked" split) is
+// covered in cin7/__tests__/rate-limit.test.ts.
 vi.mock("@/cin7/rate-limit", () => ({
-  acquireCin7Slot: vi.fn(async () => "degrade"),
+  acquireCin7Slot: vi.fn(async () => "granted"),
   reportCin7RateLimitCooldown: vi.fn(async () => {}),
   __resetDistributedLimiterForTests: vi.fn(),
 }));
@@ -21,9 +24,7 @@ vi.mock("@/cin7/rate-limit", () => ({
 const creds = { accountId: "acct-1", applicationKey: "key-1", baseUrl: "https://example.test/v2" };
 
 beforeEach(() => {
-  process.env.RATE_LIMIT_RPS = "1000"; // avoid throttling slowing down these tests
-  __resetRateLimiterForTests();
-  vi.mocked(acquireCin7Slot).mockReset().mockResolvedValue("degrade");
+  vi.mocked(acquireCin7Slot).mockReset().mockResolvedValue("granted");
   vi.mocked(reportCin7RateLimitCooldown).mockReset().mockResolvedValue(undefined);
 });
 
@@ -253,11 +254,15 @@ describe("cin7Request", () => {
     it("passes allowDegrade:true for a GET (read) and allowDegrade:false for a POST (write)", async () => {
       mockFetchSequence([() => new Response(JSON.stringify({ ok: true }), { status: 200 })]);
       await cin7Request(creds, "/Product");
-      expect(acquireCin7Slot).toHaveBeenLastCalledWith("acct-1", "key-1", { allowDegrade: true });
+      expect(acquireCin7Slot).toHaveBeenLastCalledWith(
+        "acct-1",
+        "key-1",
+        expect.objectContaining({ allowDegrade: true }) // also carries maxWaitMs — round 3, item 4, covered separately below
+      );
 
       mockFetchSequence([() => new Response(JSON.stringify({ ok: true }), { status: 200 })]);
       await cin7Request(creds, "/Product", { method: "POST" });
-      expect(acquireCin7Slot).toHaveBeenLastCalledWith("acct-1", "key-1", { allowDegrade: false });
+      expect(acquireCin7Slot).toHaveBeenLastCalledWith("acct-1", "key-1", expect.objectContaining({ allowDegrade: false }));
     });
 
     it("never sends the real HTTP request on a 'blocked' outcome — retries the acquire itself instead", async () => {
@@ -289,11 +294,35 @@ describe("cin7Request", () => {
       expect(fn).not.toHaveBeenCalled(); // the real HTTP request was never sent
     });
 
-    it("a read ('degrade') proceeds via the in-memory throttle instead of blocking", async () => {
-      vi.mocked(acquireCin7Slot).mockResolvedValue("degrade");
-      const fn = mockFetchSequence([() => new Response(JSON.stringify({ ok: true }), { status: 200 })]);
-      await expect(cin7Request(creds, "/Product")).resolves.toEqual({ ok: true });
-      expect(fn).toHaveBeenCalledTimes(1);
+    describe("security re-audit round 3, item 3.1: a 'degrade' read is treated the same as 'blocked' — no in-memory throttle fallback", () => {
+      it("never sends the real HTTP request on a 'degrade' outcome — retries the acquire itself instead, exactly like 'blocked'", async () => {
+        vi.useFakeTimers();
+        vi.mocked(acquireCin7Slot).mockResolvedValueOnce("degrade").mockResolvedValueOnce("granted");
+        const fn = mockFetchSequence([() => new Response(JSON.stringify({ ok: true }), { status: 200 })]);
+
+        const promise = cin7Request(creds, "/Product"); // GET → allowDegrade:true → can receive "degrade"
+        await vi.runAllTimersAsync();
+        const result = await promise;
+
+        expect(result).toEqual({ ok: true });
+        expect(fn).toHaveBeenCalledTimes(1); // the real request only fires once "granted"
+        expect(acquireCin7Slot).toHaveBeenCalledTimes(2);
+      });
+
+      it("gives up with a clear error after exhausting retries while permanently 'degrade' — never falls back to sending unpaced", async () => {
+        vi.useFakeTimers();
+        vi.mocked(acquireCin7Slot).mockResolvedValue("degrade");
+        const fn = mockFetchSequence([() => new Response(JSON.stringify({ ok: true }), { status: 200 })]);
+
+        const promise = cin7Request(creds, "/Product", { operationTimeoutMs: Number.MAX_SAFE_INTEGER });
+        const assertion = expect(promise).rejects.toMatchObject({
+          status: 0,
+          message: expect.stringContaining("refusing to send GET /Product unpaced"),
+        });
+        await vi.runAllTimersAsync();
+        await assertion;
+        expect(fn).not.toHaveBeenCalled(); // the real HTTP request was never sent — the old local-throttle fallback is gone
+      });
     });
   });
 
@@ -356,6 +385,50 @@ describe("cin7Request", () => {
       await expect(cin7Request(creds, "/Product", { operationTimeoutMs: 1 })).resolves.toEqual({ ok: true });
       expect(fn).toHaveBeenCalledTimes(1);
     });
+
+    describe("security re-audit round 3, item 4: every blocking sub-operation is clamped to the REMAINING budget, not the fixed configured value", () => {
+      it("clamps the fetch's AbortSignal timeout to the remaining operation budget, not the full configured timeoutMs", async () => {
+        const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+        mockFetchSequence([() => new Response(JSON.stringify({ ok: true }), { status: 200 })]);
+
+        // timeoutMs (20s default) is far larger than the 500ms operation budget —
+        // the fetch must be given ~500ms, not the full 20s, or a stalled connection
+        // could run the operation deadline over before the fetch's own timeout ever fires.
+        await cin7Request(creds, "/Product", { operationTimeoutMs: 500 });
+
+        const usedTimeout = timeoutSpy.mock.calls[0][0] as number;
+        expect(usedTimeout).toBeLessThanOrEqual(500);
+        expect(usedTimeout).toBeGreaterThan(0);
+        timeoutSpy.mockRestore();
+      });
+
+      it("passes a clamped maxWaitMs (not the coordinator's own larger default) to acquireCin7Slot", async () => {
+        mockFetchSequence([() => new Response(JSON.stringify({ ok: true }), { status: 200 })]);
+        await cin7Request(creds, "/Product", { operationTimeoutMs: 500 });
+
+        const [, , opts] = vi.mocked(acquireCin7Slot).mock.calls[0];
+        expect(opts.maxWaitMs).toBeLessThanOrEqual(500);
+        expect(opts.maxWaitMs).toBeGreaterThan(0);
+      });
+
+      it("a retry's backoff sleep never overruns the operation deadline — the deadline error fires on the very next iteration instead of a full 5s+ sleep", async () => {
+        vi.useFakeTimers();
+        vi.mocked(acquireCin7Slot).mockResolvedValue("blocked"); // never grants — forces the backoff-sleep path every attempt
+        const fn = mockFetchSequence([() => new Response(JSON.stringify({ ok: true }), { status: 200 })]);
+
+        // RETRY_BASE_DELAY_MS is 5000 — attempt 0's backoff alone would be
+        // 5000ms if unclamped, dwarfing this 200ms operation budget.
+        const promise = cin7Request(creds, "/Product", { operationTimeoutMs: 200 });
+        const assertion = expect(promise).rejects.toMatchObject({
+          message: expect.stringContaining("exceeded its 200ms operation deadline"),
+        });
+        // If the backoff sleep were NOT clamped, this would still be pending
+        // (it would need a real 5000ms of fake-timer advancement to resolve).
+        await vi.advanceTimersByTimeAsync(200);
+        await assertion;
+        expect(fn).not.toHaveBeenCalled(); // never granted, so the real request never fired
+      });
+    });
   });
 
   it("names the method/path when a 200 response isn't valid JSON (usually a wrong path)", async () => {
@@ -366,77 +439,13 @@ describe("cin7Request", () => {
     });
   });
 
-  describe("per-account rate limiting", () => {
-    const credsB = { accountId: "acct-2", applicationKey: "key-2", baseUrl: "https://example.test/v2" };
-
-    it("does not block a different account's call behind another account's pacing", async () => {
-      process.env.RATE_LIMIT_RPS = "1";
-      vi.useFakeTimers();
-      const fn = mockFetchSequence([
-        () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
-        () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
-      ]);
-
-      const promiseA = cin7Request(creds, "/Product");
-      const promiseB = cin7Request(credsB, "/Product");
-      await vi.advanceTimersByTimeAsync(0);
-
-      // Both went through without either waiting on the other's pacing —
-      // under the old shared-global limiter, the second call here would
-      // still be asleep at this point.
-      expect(fn).toHaveBeenCalledTimes(2);
-      await Promise.all([promiseA, promiseB]);
-    });
-
-    it("still paces two calls for the same account at least one interval apart", async () => {
-      process.env.RATE_LIMIT_RPS = "1";
-      vi.useFakeTimers();
-      const fn = mockFetchSequence([
-        () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
-        () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
-      ]);
-
-      const promiseA = cin7Request(creds, "/Product");
-      await vi.advanceTimersByTimeAsync(0);
-      expect(fn).toHaveBeenCalledTimes(1);
-
-      const promiseB = cin7Request(creds, "/Product");
-      await vi.advanceTimersByTimeAsync(0);
-      expect(fn).toHaveBeenCalledTimes(1); // still paced behind the first call
-
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(fn).toHaveBeenCalledTimes(2);
-
-      await Promise.all([promiseA, promiseB]);
-    });
-
-    it("still paces N calls one interval apart when they're all launched in the same tick — pull-instance.ts's Promise.all over products/customers/suppliers for one account is exactly this shape", async () => {
-      process.env.RATE_LIMIT_RPS = "1";
-      vi.useFakeTimers();
-      const fn = mockFetchSequence([
-        () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
-        () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
-        () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
-      ]);
-
-      // No await between these — mirrors Promise.all([a(), b(), c()]) launching
-      // all three before any of them has had a chance to sleep-then-write back
-      // its own call timestamp. Under the old racy throttle(), b and c would
-      // both read the same stale lastCallAt and fire together.
-      const promises = [cin7Request(creds, "/Product"), cin7Request(creds, "/customer"), cin7Request(creds, "/supplier")];
-
-      await vi.advanceTimersByTimeAsync(0);
-      expect(fn).toHaveBeenCalledTimes(1);
-
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(fn).toHaveBeenCalledTimes(2);
-
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(fn).toHaveBeenCalledTimes(3);
-
-      await Promise.all(promises);
-    });
-  });
+  // "per-account rate limiting" (the old in-memory per-invocation throttle)
+  // was removed here — security re-audit round 3, item 3.1 deleted that
+  // fallback machinery entirely (see http.ts's top-of-module comment and the
+  // "degrade is treated the same as blocked" tests above). Per-account/
+  // per-application pacing is now handled exclusively by the distributed
+  // Postgres coordinator, covered by cin7/__tests__/rate-limit.test.ts's own
+  // "acquireCin7Slot under concurrent load (multi-worker)" suite.
 });
 
 describe("cin7RawRequest — security re-audit P0-1's one sanctioned raw-fetch escape hatch", () => {
@@ -477,5 +486,33 @@ describe("cin7RawRequest — security re-audit P0-1's one sanctioned raw-fetch e
     const result = await cin7RawRequest(creds, "/some/path");
     expect(result).toEqual({ status: 503, text: "boom" });
     expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  describe("security re-audit round 3, item 3.2: participates in the same distributed quota coordinator as cin7Request", () => {
+    it("acquires a real quota token (allowDegrade:false) before sending the raw fetch", async () => {
+      mockFetchSequence([() => new Response("ok", { status: 200 })]);
+      await cin7RawRequest(creds, "/some/path");
+      expect(acquireCin7Slot).toHaveBeenCalledWith("acct-1", "key-1", { allowDegrade: false });
+    });
+
+    it("throws a clear error and never sends the real fetch when the coordinator doesn't grant a token — no retry loop, matching this function's own no-retry design", async () => {
+      vi.mocked(acquireCin7Slot).mockResolvedValue("blocked");
+      const fn = mockFetchSequence([() => new Response("ok", { status: 200 })]);
+
+      await expect(cin7RawRequest(creds, "/some/path")).rejects.toMatchObject({
+        status: 0,
+        message: expect.stringContaining("refusing to send GET /some/path unpaced"),
+      });
+      expect(fn).not.toHaveBeenCalled();
+      expect(acquireCin7Slot).toHaveBeenCalledTimes(1); // no retry — a single acquire attempt, same no-retry design as the fetch itself
+    });
+
+    it("throws on any non-'granted' outcome, not just 'blocked' — the check is !== 'granted', not === 'blocked'", async () => {
+      vi.mocked(acquireCin7Slot).mockResolvedValue("degrade");
+      const fn = mockFetchSequence([() => new Response("ok", { status: 200 })]);
+
+      await expect(cin7RawRequest(creds, "/some/path")).rejects.toMatchObject({ status: 0 });
+      expect(fn).not.toHaveBeenCalled();
+    });
   });
 });

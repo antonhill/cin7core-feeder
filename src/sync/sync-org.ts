@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { syncInstance, type PushScope, type SyncRunSummary } from "@/sync/run-sync";
 import { logActivity, type ActivityActor } from "@/lib/activity-log";
-import { acquireSyncLock, releaseSyncLock } from "@/lib/sync-lock";
+import { acquireSyncLock, releaseSyncLock, type SyncLockResult } from "@/lib/sync-lock";
 import { acquireSyncRouteLock, releaseSyncRouteLock } from "@/lib/sync-route-lock";
 
 export interface InstanceSyncOutcome {
@@ -129,7 +129,24 @@ export async function syncOrgInstances(
 
   const runInstances = (list: typeof allInstances) =>
     mapWithConcurrency(list, MAX_CONCURRENT_INSTANCE_SYNCS, async (instance): Promise<InstanceSyncOutcome> => {
-      const lock = await acquireSyncLock(db, instance.org_id, instance.id);
+      let lock: SyncLockResult;
+      try {
+        lock = await acquireSyncLock(db, instance.org_id, instance.id);
+      } catch (e) {
+        // Security re-audit round 3, P1-5 (Anton-approved): the sync lock
+        // guard fails closed now — an unreachable guard blocks THIS
+        // instance's sync (same outcome as any other sync failure below),
+        // not the whole batch; other instances in this run are unaffected.
+        const errorMessage = e instanceof Error ? e.message : "Unknown error";
+        await logActivity(db, {
+          orgId: instance.org_id,
+          instanceId: instance.id,
+          actor,
+          action: "sync.push_failed",
+          summary: `Sync failed: ${errorMessage}`,
+        });
+        return { ok: false, instanceId: instance.id, orgId: instance.org_id, error: errorMessage };
+      }
       if (!lock.acquired) {
         await logActivity(db, {
           orgId: instance.org_id,

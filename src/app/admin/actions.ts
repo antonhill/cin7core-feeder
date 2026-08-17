@@ -2,6 +2,7 @@
 
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireSuperAdmin } from "@/lib/require-super-admin";
+import { requirePrivilegedSuperAdmin } from "@/lib/require-privileged";
 import { deleteOrganizationById } from "@/lib/delete-organization";
 import { sniffImageType } from "@/lib/image-sniff";
 
@@ -101,7 +102,8 @@ export async function createOrgAndInvite(orgName: string, email: string): Promis
   if (!email.trim()) return { ok: false, error: "Email is required." };
 
   try {
-    await requireSuperAdmin();
+    // Security re-audit round 3, item 1 (P1-2): AAL2 required too — creates a new org + owner.
+    await requirePrivilegedSuperAdmin("create an organization");
     const db = createServiceRoleClient();
 
     const { data: org, error: orgError } = await db
@@ -139,7 +141,8 @@ export async function inviteMemberToOrg(orgId: string, email: string): Promise<C
   if (!trimmedEmail) return { ok: false, error: "Email is required." };
 
   try {
-    await requireSuperAdmin();
+    // Security re-audit round 3, item 1 (P1-2): AAL2 required too — grants a new person access to an org.
+    await requirePrivilegedSuperAdmin("invite a member to an organization");
     const db = createServiceRoleClient();
 
     const { data: invite, error: inviteError } = await db.auth.admin.inviteUserByEmail(trimmedEmail);
@@ -178,7 +181,8 @@ export async function inviteMemberToOrg(orgId: string, email: string): Promise<C
  */
 export async function removeMemberFromOrg(orgId: string, userId: string): Promise<CreateOrgResult> {
   try {
-    await requireSuperAdmin();
+    // Security re-audit round 3, item 1 (P1-2): AAL2 required too — revokes a person's org access.
+    await requirePrivilegedSuperAdmin("remove a member from an organization");
     const db = createServiceRoleClient();
 
     const { error } = await db.from("org_members").delete().eq("org_id", orgId).eq("user_id", userId);
@@ -200,7 +204,8 @@ export async function removeMemberFromOrg(orgId: string, userId: string): Promis
  */
 export async function setOrgDisabledModules(orgId: string, disabledModules: string[]): Promise<CreateOrgResult> {
   try {
-    await requireSuperAdmin();
+    // Security re-audit round 3, item 1 (P1-2): AAL2 required too — org-wide access control change.
+    await requirePrivilegedSuperAdmin("change an organization's disabled modules");
     const db = createServiceRoleClient();
 
     const { error } = await db.from("organizations").update({ disabled_modules: disabledModules }).eq("id", orgId);
@@ -229,6 +234,12 @@ export interface UploadLogoResult {
  * Uploads a logo for an org into the public "org-logos" storage bucket
  * (created in migration 0012) and records its public URL on the org row.
  * Shown in that org's own nav bar, and as a thumbnail on this admin list.
+ *
+ * Security re-audit round 3, item 1: deliberately left on requireSuperAdmin
+ * alone, NOT upgraded to requirePrivilegedSuperAdmin — branding-only,
+ * carries no credentials/money/access-control consequence, and adding AAL2
+ * friction to a cosmetic action wasn't judged worth it. Revisit if that
+ * changes.
  */
 export async function uploadOrgLogo(orgId: string, formData: FormData): Promise<UploadLogoResult> {
   const file = formData.get("logo");
@@ -281,7 +292,8 @@ export async function uploadOrgLogo(orgId: string, formData: FormData): Promise<
  */
 export async function deleteOrganization(orgId: string, confirmName: string): Promise<CreateOrgResult> {
   try {
-    await requireSuperAdmin();
+    // Security re-audit round 3, item 1 (P1-2): AAL2 required too — irreversible, cascading delete.
+    await requirePrivilegedSuperAdmin("delete an organization");
     const db = createServiceRoleClient();
 
     const { data: org, error: fetchError } = await db.from("organizations").select("name").eq("id", orgId).single();

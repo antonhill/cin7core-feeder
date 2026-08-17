@@ -241,7 +241,12 @@ describe("pushProduct", () => {
     const result = await pushProduct(creds, product);
 
     expect(result).toEqual({ cin7Id: "new-id", status: "created" });
-    expect(cin7Request).toHaveBeenNthCalledWith(4, creds, "/Product", expect.objectContaining({ method: "POST" }));
+    expect(cin7Request).toHaveBeenNthCalledWith(
+      4,
+      creds,
+      "/Product",
+      expect.objectContaining({ method: "POST", nonIdempotentCreate: true }) // security re-audit round 3, item 2
+    );
   });
 
   it("updates via PUT when the SKU already exists", async () => {
@@ -270,7 +275,12 @@ describe("pushProduct", () => {
     const result = await pushProduct(creds, product);
 
     expect(result).toEqual({ cin7Id: "new-id", status: "created" });
-    expect(cin7Request).toHaveBeenNthCalledWith(4, creds, "/Product", expect.objectContaining({ method: "POST" }));
+    expect(cin7Request).toHaveBeenNthCalledWith(
+      4,
+      creds,
+      "/Product",
+      expect.objectContaining({ method: "POST", nonIdempotentCreate: true }) // security re-audit round 3, item 2
+    );
   });
 
   it("throws with the raw response instead of silently returning a null cin7Id", async () => {

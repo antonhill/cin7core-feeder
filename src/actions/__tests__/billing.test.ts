@@ -1,19 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@/lib/require-org-admin", () => ({ requireOrgAdmin: vi.fn() }));
+vi.mock("@/lib/require-privileged", () => ({ requirePrivilegedOrgAdmin: vi.fn() }));
 vi.mock("@/lib/current-org", () => ({ requireCurrentOrg: vi.fn() }));
 vi.mock("@/lib/billing", () => ({ getBillingStatus: vi.fn() }));
 vi.mock("@/lib/lemonsqueezy", () => ({ buildCheckoutUrl: vi.fn(), createCheckoutToken: vi.fn(), fetchCustomerPortalUrl: vi.fn() }));
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: vi.fn() }));
 
 import { getCheckoutUrlAction, getManageSubscriptionUrlAction, getBillingStatusAction } from "@/actions/billing";
-import { requireOrgAdmin } from "@/lib/require-org-admin";
+import { requirePrivilegedOrgAdmin } from "@/lib/require-privileged";
 import { requireCurrentOrg } from "@/lib/current-org";
 import { getBillingStatus } from "@/lib/billing";
 import { buildCheckoutUrl, createCheckoutToken, fetchCustomerPortalUrl } from "@/lib/lemonsqueezy";
 import { createServiceRoleClient } from "@/supabase/server";
 
-const reqAdmin = vi.mocked(requireOrgAdmin);
+const reqAdmin = vi.mocked(requirePrivilegedOrgAdmin);
 const reqOrg = vi.mocked(requireCurrentOrg);
 const billingStatus = vi.mocked(getBillingStatus);
 const checkoutUrl = vi.mocked(buildCheckoutUrl);

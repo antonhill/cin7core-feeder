@@ -202,9 +202,15 @@ export async function pushSupplier(
     return { cin7Id: requireId(updated, "PUT /supplier"), status: "updated" };
   }
 
+  // Security re-audit round 3, item 2: same reasoning as pushCustomer in
+  // customers.ts — nonIdempotentCreate stops cin7Request's own retry loop
+  // from blindly resending an ambiguous create; findSupplierByName above
+  // already provides reconciliation on the next sync attempt (a thrown
+  // error here leaves supplier_sync_state's synced_hash stale).
   const created = await cin7Request<Cin7SupplierResponse>(creds, "/supplier", {
     method: "POST",
     body: payload,
+    nonIdempotentCreate: true,
   });
   return { cin7Id: requireId(created, "POST /supplier"), status: "created" };
 }

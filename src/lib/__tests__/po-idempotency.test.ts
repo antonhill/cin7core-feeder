@@ -69,15 +69,16 @@ describe("claimPoCreation", () => {
     expect(res).toEqual({ claimed: false, existingStatus: "completed", cin7PurchaseId: "PO-1", orderNumber: "PO-0001" });
   });
 
-  it("FAILS OPEN (claimed=true) on a guard error — never blocks PO creation", async () => {
+  it("FAILS CLOSED (claimed=false, guard_unavailable) on a guard error — round 3 P1-5", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: "function does not exist" } });
     const res = await claimPoCreation(makeDb(rpc), "org", "inst", "key");
-    expect(res.claimed).toBe(true);
+    expect(res).toEqual({ claimed: false, existingStatus: "guard_unavailable", cin7PurchaseId: null, orderNumber: null });
   });
 
-  it("FAILS OPEN when the RPC returns no row", async () => {
+  it("FAILS CLOSED when the RPC returns no row", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: [], error: null });
-    expect((await claimPoCreation(makeDb(rpc), "org", "inst", "key")).claimed).toBe(true);
+    const res = await claimPoCreation(makeDb(rpc), "org", "inst", "key");
+    expect(res).toEqual({ claimed: false, existingStatus: "guard_unavailable", cin7PurchaseId: null, orderNumber: null });
   });
 });
 

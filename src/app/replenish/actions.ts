@@ -257,6 +257,14 @@ export async function createReplenishTransfersAction(
               error: "A previous attempt to create this transfer is still being confirmed with Cin7 — try again shortly.",
             });
           }
+        } else if (claim.existingStatus === "guard_unavailable") {
+          // Security re-audit round 3, P1-5 (Anton-approved): the duplicate-
+          // creation guard itself is unreachable — fail closed rather than
+          // risk creating a real duplicate transfer with no way to detect it.
+          failed.push({
+            toLocation,
+            error: "Could not confirm no duplicate transfer exists — try again shortly.",
+          });
         } else {
           // A concurrent request is creating this same transfer right now.
           failed.push({

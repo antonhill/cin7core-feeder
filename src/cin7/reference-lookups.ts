@@ -65,7 +65,13 @@ async function referenceExists(creds: Cin7Credentials, path: string, name: strin
  */
 async function createReference(creds: Cin7Credentials, path: string, name: string): Promise<void> {
   try {
-    await cin7Request(creds, path, { method: "POST", body: { Name: name } });
+    // Security re-audit round 3, item 2: a genuine create — nonIdempotentCreate
+    // stops cin7Request's own retry loop from blindly resending an ambiguous
+    // create; referenceExists (ensureReferenceExists, above) already provides
+    // reconciliation, since a thrown error here leaves this name unresolved
+    // in the caller's cache and the next ensureReferenceExists call
+    // re-checks referenceExists before creating again.
+    await cin7Request(creds, path, { method: "POST", body: { Name: name }, nonIdempotentCreate: true });
   } catch (e) {
     if (e instanceof Cin7ApiError && /already exists|must be unique/i.test(e.message)) return;
     throw e;

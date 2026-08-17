@@ -16,6 +16,7 @@
 
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
+import { requirePrivilegedOrgAdmin } from "@/lib/require-privileged";
 import { MODULES } from "@/app/module-nav";
 
 export interface TeamMember {
@@ -81,7 +82,8 @@ export async function inviteTeamMemberAction(email: string): Promise<TeamActionR
   if (!trimmedEmail) return { ok: false, error: "Email is required." };
 
   try {
-    const { orgId } = await requireOrgAdmin();
+    // Security re-audit round 3, item 1 (P1-2): AAL2 required too — grants a new person access to the org.
+    const { orgId } = await requirePrivilegedOrgAdmin("invite a team member");
     const db = createServiceRoleClient();
 
     const { data: invite, error: inviteError } = await db.auth.admin.inviteUserByEmail(trimmedEmail);
@@ -114,7 +116,8 @@ export async function inviteTeamMemberAction(email: string): Promise<TeamActionR
 /** Removes a teammate from the caller's own org — refuses self-removal, since a team member locking themselves out (accidentally or otherwise) has no recovery path short of a super-admin fixing it via /admin. */
 export async function removeTeamMemberAction(userId: string): Promise<TeamActionResult> {
   try {
-    const { orgId, userId: callerId } = await requireOrgAdmin();
+    // Security re-audit round 3, item 1 (P1-2): AAL2 required too — revokes a person's org access.
+    const { orgId, userId: callerId } = await requirePrivilegedOrgAdmin("remove a team member");
     if (userId === callerId) return { ok: false, error: "You can't remove yourself." };
 
     const db = createServiceRoleClient();
@@ -143,7 +146,8 @@ export async function setTeamMemberModulesAction(userId: string, allowedModules:
   }
 
   try {
-    const { orgId } = await requireOrgAdmin();
+    // Security re-audit round 3, item 1 (P1-2): AAL2 required too — changes a person's permissions.
+    const { orgId } = await requirePrivilegedOrgAdmin("change a team member's module access");
     const db = createServiceRoleClient();
 
     const { error } = await db.from("org_members").update({ allowed_modules: allowedModules }).eq("org_id", orgId).eq("user_id", userId);

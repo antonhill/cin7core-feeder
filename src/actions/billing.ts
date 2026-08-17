@@ -1,7 +1,7 @@
 "use server";
 
 import { requireCurrentOrg } from "@/lib/current-org";
-import { requireOrgAdmin } from "@/lib/require-org-admin";
+import { requirePrivilegedOrgAdmin } from "@/lib/require-privileged";
 import { getBillingStatus, type BillingStatus } from "@/lib/billing";
 import { buildCheckoutUrl, createCheckoutToken, fetchCustomerPortalUrl } from "@/lib/lemonsqueezy";
 import { createServiceRoleClient } from "@/supabase/server";
@@ -34,14 +34,15 @@ export interface BillingUrlResult {
  * once its webhook fires (see src/app/api/webhooks/lemonsqueezy/route.ts), not
  * on redirect back here.
  *
- * Owner/admin only (requireOrgAdmin): committing the org to a paid plan is a
- * billing decision, not something an ordinary member should be able to trigger.
- * getBillingStatusAction above stays member-readable so the page still renders
- * for everyone — only the money-moving buttons are gated.
+ * Owner/admin only (requirePrivilegedOrgAdmin, security re-audit round 3 item
+ * 1 — also requires AAL2 once the org is paid): committing the org to a paid
+ * plan is a billing decision, not something an ordinary member should be
+ * able to trigger. getBillingStatusAction above stays member-readable so the
+ * page still renders for everyone — only the money-moving buttons are gated.
  */
 export async function getCheckoutUrlAction(): Promise<BillingUrlResult> {
   try {
-    const { orgId, email } = await requireOrgAdmin("manage billing");
+    const { orgId, email } = await requirePrivilegedOrgAdmin("manage billing");
     const db = createServiceRoleClient();
     const token = await createCheckoutToken(db, orgId);
     return { ok: true, url: buildCheckoutUrl(token, email) };
@@ -54,12 +55,13 @@ export async function getCheckoutUrlAction(): Promise<BillingUrlResult> {
  * Only available once a subscription actually exists (billing_subscription_id
  * set by the webhook) — an org still on trial has nothing to manage yet.
  *
- * Owner/admin only (requireOrgAdmin): the customer-portal link exposes payment
+ * Owner/admin only (requirePrivilegedOrgAdmin, security re-audit round 3
+ * item 1 — also requires AAL2): the customer-portal link exposes payment
  * method, invoices, plan changes and cancellation — all owner/admin territory.
  */
 export async function getManageSubscriptionUrlAction(): Promise<BillingUrlResult> {
   try {
-    const { orgId } = await requireOrgAdmin("manage billing");
+    const { orgId } = await requirePrivilegedOrgAdmin("manage billing");
     const db = createServiceRoleClient();
     const { data, error } = await db.from("organizations").select("billing_subscription_id").eq("id", orgId).single();
     if (error) throw new Error(error.message);

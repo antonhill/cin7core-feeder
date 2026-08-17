@@ -3,6 +3,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { requireSuperAdmin } from "@/lib/require-super-admin";
+import { requirePrivilegedSuperAdmin } from "@/lib/require-privileged";
 import { createServiceRoleClient } from "@/supabase/server";
 import { IMPERSONATED_ORG_COOKIE } from "@/lib/org-switch";
 
@@ -66,10 +67,13 @@ export interface SetImpersonatedOrgResult {
  * actual read/write still re-checks super-admin status server-side (see
  * requireCurrentOrg/getCurrentUserInfo) before honoring it, so a non-super-
  * admin can't gain anything by tampering with this cookie's value.
+ *
+ * Security re-audit round 3, item 1 (P1-2): AAL2 required too — starting
+ * impersonation grants read/write access to an arbitrary org's data.
  */
 export async function setImpersonatedOrgAction(orgId: string): Promise<SetImpersonatedOrgResult> {
   try {
-    const { userId } = await requireSuperAdmin();
+    const { userId } = await requirePrivilegedSuperAdmin("view as another organization");
     const db = createServiceRoleClient();
     const { data, error } = await db.from("organizations").select("id, name").eq("id", orgId).maybeSingle();
     if (error) throw new Error(error.message);

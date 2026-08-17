@@ -37,18 +37,23 @@ export interface PoClaimResult {
   /** true → the caller OWNS the claim and must create the PO (then settle/release). */
   claimed: boolean;
   /** When claimed=false, the state of the live claim that blocked us. */
-  existingStatus: "pending" | "completed" | "ambiguous" | null;
+  existingStatus: "pending" | "completed" | "ambiguous" | "guard_unavailable" | null;
   cin7PurchaseId: string | null;
   orderNumber: string | null;
 }
 
 /**
  * Try to claim the right to create a PO for this key (migration 0055's
- * `po_creation_claim`). On ANY guard error — DB unreachable, or the migration
- * not applied yet — this FAILS OPEN (returns claimed=true), so PO creation
- * still works exactly as it did before this guard existed. Duplicates are only
- * possible during a guard outage, i.e. the same exposure as today; the guard
- * must never block a core money feature on its own availability.
+ * `po_creation_claim`). Security re-audit round 3, P1-5 (Anton-approved
+ * 2026-08-17): FAILS CLOSED on any guard error — DB unreachable, or the
+ * migration not applied — returning claimed=false with
+ * existingStatus="guard_unavailable" rather than proceeding as if the claim
+ * were won. This is the one lock family (alongside stock-transfer claims and
+ * sync_locks) where a guard outage could otherwise let a race create a real
+ * duplicate Purchase Order in Cin7; blocking one retryable button-click is
+ * judged a better tradeoff than that risk. (Previously failed open — see
+ * docs/security-reaudit-report-2026-08-17.md's round 3 P1-5 section for the
+ * full decision table this was approved against.)
  */
 export async function claimPoCreation(db: Db, orgId: string, instanceId: string, key: string): Promise<PoClaimResult> {
   const { data, error } = await db.rpc("po_creation_claim", {
@@ -58,13 +63,13 @@ export async function claimPoCreation(db: Db, orgId: string, instanceId: string,
     p_ttl_seconds: PO_CLAIM_TTL_SECONDS,
   });
   if (error) {
-    console.error("po_creation_claim failed; proceeding without the idempotency guard:", error.message);
-    return { claimed: true, existingStatus: null, cin7PurchaseId: null, orderNumber: null };
+    console.error("po_creation_claim failed; blocking PO creation (fail-closed):", error.message);
+    return { claimed: false, existingStatus: "guard_unavailable", cin7PurchaseId: null, orderNumber: null };
   }
   const row = (Array.isArray(data) ? data[0] : data) as
     | { claimed?: boolean; existing_status?: string; cin7_purchase_id?: string | null; order_number?: string | null }
     | undefined;
-  if (!row) return { claimed: true, existingStatus: null, cin7PurchaseId: null, orderNumber: null };
+  if (!row) return { claimed: false, existingStatus: "guard_unavailable", cin7PurchaseId: null, orderNumber: null };
   return {
     claimed: Boolean(row.claimed),
     existingStatus: (row.existing_status as "pending" | "completed" | "ambiguous" | null) ?? null,

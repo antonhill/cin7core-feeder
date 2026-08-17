@@ -9,6 +9,7 @@ import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerC
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { requireCurrentOrg } from "@/lib/current-org";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
+import { requirePrivilegedOrgAdmin } from "@/lib/require-privileged";
 import { getBillingStatus } from "@/lib/billing";
 import { requireSuperAdmin } from "@/lib/require-super-admin";
 
@@ -59,7 +60,8 @@ async function toRecord(row: {
 export async function listInstances(): Promise<ActionResult> {
   try {
     // Instance config carries Account IDs + key metadata — owner/admin only.
-    const { orgId } = await requireOrgAdmin("view Cin7 instance configuration");
+    // Security re-audit round 3, item 1 (P1-2): AAL2 required too — credential metadata.
+    const { orgId } = await requirePrivilegedOrgAdmin("view Cin7 instance configuration");
     const db = createServiceRoleClient();
     // Security re-audit P0-1: base_url deliberately not selected — nothing
     // in this file needs it anymore, and it stays out of the InstanceRecord
@@ -94,7 +96,8 @@ export async function upsertInstance(params: {
 
   try {
     // Create / update / replace-key — owner/admin only.
-    const { orgId } = await requireOrgAdmin("manage Cin7 instances");
+    // Security re-audit round 3, item 1 (P1-2): AAL2 required too — writes credentials.
+    const { orgId } = await requirePrivilegedOrgAdmin("manage Cin7 instances");
     const db = createServiceRoleClient();
 
     if (params.instanceId) {
@@ -841,7 +844,8 @@ export async function debugCheckSaleStatuses(instanceId: string): Promise<TestCo
 
 export async function deleteInstance(instanceId: string): Promise<ActionResult> {
   try {
-    const { orgId } = await requireOrgAdmin("delete Cin7 instances");
+    // Security re-audit round 3, item 1 (P1-2): AAL2 required too — deletes credentials.
+    const { orgId } = await requirePrivilegedOrgAdmin("delete Cin7 instances");
     const db = createServiceRoleClient();
     const { error } = await db.from("cin7_instances").delete().eq("id", instanceId).eq("org_id", orgId);
     if (error) return { ok: false, error: error.message };

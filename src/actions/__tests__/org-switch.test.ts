@@ -1,16 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/require-super-admin", () => ({ requireSuperAdmin: vi.fn() }));
+vi.mock("@/lib/require-privileged", () => ({ requirePrivilegedSuperAdmin: vi.fn() }));
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: vi.fn() }));
 vi.mock("next/headers", () => ({ cookies: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 
 import { setImpersonatedOrgAction, clearImpersonatedOrgAction } from "@/actions/org-switch";
 import { requireSuperAdmin } from "@/lib/require-super-admin";
+import { requirePrivilegedSuperAdmin } from "@/lib/require-privileged";
 import { createServiceRoleClient } from "@/supabase/server";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+// setImpersonatedOrgAction uses requirePrivilegedSuperAdmin (security
+// re-audit round 3, item 1 — AAL2 required to start impersonation);
+// clearImpersonatedOrgAction still uses the plain requireSuperAdmin
+// (exiting impersonation isn't gated on AAL2).
+const reqPrivilegedSuper = vi.mocked(requirePrivilegedSuperAdmin);
 const reqSuper = vi.mocked(requireSuperAdmin);
 const serviceClient = vi.mocked(createServiceRoleClient);
 const mockCookies = vi.mocked(cookies);
@@ -30,6 +37,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(console, "info").mockImplementation(() => {});
   reqSuper.mockResolvedValue({ userId: "admin-1" });
+  reqPrivilegedSuper.mockResolvedValue({ userId: "admin-1" });
   store = { set: vi.fn(), get: vi.fn(() => ({ value: "org-prev" })), delete: vi.fn() };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   mockCookies.mockResolvedValue(store as any);
@@ -72,9 +80,16 @@ describe("setImpersonatedOrgAction", () => {
   });
 
   it("does not set a cookie for a non-super-admin", async () => {
-    reqSuper.mockRejectedValue(new Error("Not authorized."));
+    reqPrivilegedSuper.mockRejectedValue(new Error("Not authorized."));
     const res = await setImpersonatedOrgAction("org-9");
     expect(res).toEqual({ ok: false, error: "Not authorized." });
+    expect(store.set).not.toHaveBeenCalled();
+  });
+
+  it("security re-audit round 3, item 1: does not set a cookie when the super-admin hasn't verified AAL2", async () => {
+    reqPrivilegedSuper.mockRejectedValue(new Error("Two-factor authentication is required to view as another organization."));
+    const res = await setImpersonatedOrgAction("org-9");
+    expect(res).toEqual({ ok: false, error: "Two-factor authentication is required to view as another organization." });
     expect(store.set).not.toHaveBeenCalled();
   });
 });
