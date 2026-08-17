@@ -282,7 +282,7 @@ function OrgCard({ org, onMembersChanged }: { org: OrgSummary; onMembersChanged:
             {isUploadingLogo && <Spinner className="mr-1.5" />}
             {isUploadingLogo ? "Uploading…" : "Change"}
           </span>
-          <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" onChange={handleLogoChange} disabled={isUploadingLogo} className="hidden" />
+          <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleLogoChange} disabled={isUploadingLogo} className="hidden" />
         </label>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">

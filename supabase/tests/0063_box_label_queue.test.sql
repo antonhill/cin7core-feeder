@@ -64,9 +64,15 @@ values
   ('00000000-0000-0000-0000-000000000901', '00000000-0000-0000-0000-000000000902', 'sale-6', 'INV-6-DRAFT', 0, 'DRAFT', 'SKU-6', 3),
   ('00000000-0000-0000-0000-000000000901', '00000000-0000-0000-0000-000000000902', 'sale-6', 'INV-6-FINAL', 0, 'AUTHORISED', 'SKU-6', 10);
 
-insert into box_label_print_state (org_id, instance_id, cin7_sale_id, printed_by_email)
+-- ready_qty_at_mark (migration 0071) must match sale-4's current
+-- ready-for-box-label qty (10) to represent "already marked printed at
+-- today's exact quantity, nothing changed since" -- leaving it at its
+-- default of 0 would make 10 > 0 look like NEW growth and wrongly
+-- re-qualify the order (this is exactly what markBoxLabelPrintedAction
+-- itself always snapshots at click time; see src/actions/box-label.ts).
+insert into box_label_print_state (org_id, instance_id, cin7_sale_id, printed_by_email, ready_qty_at_mark)
 values
-  ('00000000-0000-0000-0000-000000000901', '00000000-0000-0000-0000-000000000902', 'sale-4', 'dispatch@example.com');
+  ('00000000-0000-0000-0000-000000000901', '00000000-0000-0000-0000-000000000902', 'sale-4', 'dispatch@example.com', 10);
 
 do $$
 declare

@@ -24,7 +24,13 @@ export default function LoginPage() {
     // URLs in incoming mail to scan them, which silently consumes a
     // one-time magic-link code before the user ever clicks it. A typed
     // code has nothing for a scanner to click, so it isn't affected.
-    const { error: signInError } = await supabase.auth.signInWithOtp({ email });
+    //
+    // Security re-audit P1-8: shouldCreateUser: false — without this,
+    // signInWithOtp defaults to creating a brand-new auth user for any
+    // email typed here, silently bypassing /signup's real account-creation
+    // flow (org + owner-membership creation) and leaving an orphaned user
+    // with no org. /signup remains the only self-registration path.
+    const { error: signInError } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
     setIsSubmitting(false);
     if (signInError) {
       setError(signInError.message);

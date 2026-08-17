@@ -46,8 +46,19 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const { email, isSuperAdmin, isOrgAdmin, orgId, orgName, orgLogoUrl, isImpersonating, disabledModules, subscriptionStatus, trialEndsAt } =
-    await getCurrentUserInfo();
+  const {
+    email,
+    isSuperAdmin,
+    isOrgAdmin,
+    orgId,
+    orgName,
+    orgLogoUrl,
+    isImpersonating,
+    disabledModules,
+    subscriptionStatus,
+    trialEndsAt,
+    hasMultipleOrgs,
+  } = await getCurrentUserInfo();
 
   const trialDaysLeft = subscriptionStatus === "trialing" && trialEndsAt ? daysUntil(trialEndsAt) : null;
 
@@ -68,6 +79,7 @@ export default async function RootLayout({
             orgLogoUrl={orgLogoUrl}
             disabledModules={disabledModules}
             showBilling={checkoutAvailableFor(subscriptionStatus)}
+            hasMultipleOrgs={hasMultipleOrgs}
           />
         )}
         <div className="flex flex-1 flex-col overflow-x-hidden overflow-y-auto">

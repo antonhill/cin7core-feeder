@@ -11,6 +11,21 @@
 
 begin;
 
+-- Table-level GRANTs to authenticated/anon (RLS then restricts which ROWS
+-- are visible/writable within that) are applied by the Supabase platform
+-- itself at project-creation time -- not something any migration in this
+-- repo has ever had to state explicitly (confirmed: no migration anywhere
+-- grants anything to authenticated/anon). A real hosted project already has
+-- them; a from-scratch local CLI bootstrap (`supabase start` + our own
+-- migrations only, no platform project-creation step) does not, confirmed
+-- by a real CI run failing with "permission denied for table
+-- cin7_instances" here. GRANT/REVOKE are transactional in Postgres, so
+-- these are undone by this file's own ROLLBACK below just like everything
+-- else it does -- safe to run against a real project (redundant, matches
+-- what's already there) or a fresh local one (makes it actually work).
+grant select, insert, update, delete on cin7_instances to authenticated, anon;
+grant select, insert, update, delete on purchase_planner_settings to authenticated, anon;
+
 -- Impersonate a given user id as the `authenticated` role (what Supabase does
 -- per request); auth.uid() reads request.jwt.claims->>'sub'.
 create or replace function pg_temp.act_as(uid uuid) returns void language plpgsql as $$
@@ -40,6 +55,28 @@ begin
   end;
 end $$;
 
+-- Assertion helper for UPDATE specifically: when the target row is filtered
+-- out by an RLS policy's USING clause (not visible to this role at all —
+-- confirmed live 2026-08-17 by running this exact scenario: 0 rows
+-- affected, target value unchanged, NO exception raised), the UPDATE is a
+-- silent no-op, not an error. expect_denied's exception-based check can
+-- never catch this — it would report a false PASS on a write that never
+-- happened, or worse, mask a real regression if the row ever became visible.
+-- Genuinely checks the row was untouched instead of just hoping for an
+-- exception. (An INSERT's WITH CHECK failure, or an UPDATE where the row
+-- IS visible under USING but a separate WITH CHECK fails, still raises a
+-- real check_violation — expect_denied stays correct for those.)
+create or replace function pg_temp.expect_no_effect(sql text, label text) returns void language plpgsql as $$
+declare
+  v_count int;
+begin
+  execute sql;
+  get diagnostics v_count = row_count;
+  if v_count <> 0 then
+    raise exception 'EXPECTED 0 rows affected (RLS-filtered) but % row(s) changed: %', v_count, label;
+  end if;
+end $$;
+
 do $$
 declare
   org_a uuid := gen_random_uuid();
@@ -50,6 +87,11 @@ declare
   inst_a uuid;
 begin
   -- Seed (as the table owner / service context — RLS not enforced for the definer here).
+  -- org_members.user_id references auth.users, so these throwaway ids need a
+  -- real (if minimal) row there first — `id` is the only NOT NULL column
+  -- with no default (confirmed against the live schema), so this is safe to
+  -- run against any environment, not just one with pre-existing test users.
+  insert into auth.users (id) values (u_owner), (u_member), (u_foreign);
   insert into organizations (id, name) values (org_a, 'RLS Test Org A'), (org_b, 'RLS Test Org B');
   insert into org_members (org_id, user_id, role) values
     (org_a, u_owner, 'owner'),
@@ -65,7 +107,7 @@ begin
   if exists (select 1 from cin7_instances where id = inst_a) then
     raise exception 'FAIL: ordinary member can SELECT cin7_instances';
   end if;
-  perform pg_temp.expect_denied(
+  perform pg_temp.expect_no_effect(
     format('update cin7_instances set name=''hacked'' where id=%L', inst_a),
     'member UPDATE cin7_instances');
   perform pg_temp.expect_denied(
@@ -84,7 +126,7 @@ begin
   if exists (select 1 from cin7_instances where id = inst_a) then
     raise exception 'FAIL: foreign-org user can SELECT another org''s instance';
   end if;
-  perform pg_temp.expect_denied(
+  perform pg_temp.expect_no_effect(
     format('update cin7_instances set name=''x'' where id=%L', inst_a),
     'foreign-org UPDATE cin7_instances');
 
@@ -104,7 +146,7 @@ begin
   if not exists (select 1 from purchase_planner_settings where org_id = org_a) then
     raise exception 'FAIL: member cannot SELECT purchase_planner_settings (should be allowed)';
   end if;
-  perform pg_temp.expect_denied(
+  perform pg_temp.expect_no_effect(
     format('update purchase_planner_settings set import_stock_months=99 where org_id=%L', org_a),
     'member UPDATE purchase_planner_settings');
 

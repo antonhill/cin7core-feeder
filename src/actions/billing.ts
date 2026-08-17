@@ -3,7 +3,7 @@
 import { requireCurrentOrg } from "@/lib/current-org";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { getBillingStatus, type BillingStatus } from "@/lib/billing";
-import { buildCheckoutUrl, fetchCustomerPortalUrl } from "@/lib/lemonsqueezy";
+import { buildCheckoutUrl, createCheckoutToken, fetchCustomerPortalUrl } from "@/lib/lemonsqueezy";
 import { createServiceRoleClient } from "@/supabase/server";
 
 export interface BillingStatusResult {
@@ -42,7 +42,9 @@ export interface BillingUrlResult {
 export async function getCheckoutUrlAction(): Promise<BillingUrlResult> {
   try {
     const { orgId, email } = await requireOrgAdmin("manage billing");
-    return { ok: true, url: buildCheckoutUrl(orgId, email) };
+    const db = createServiceRoleClient();
+    const token = await createCheckoutToken(db, orgId);
+    return { ok: true, url: buildCheckoutUrl(token, email) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

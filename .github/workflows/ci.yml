@@ -1,0 +1,100 @@
+name: CI
+
+# Security re-audit P2 (CI and sign-off): clean install, lint, typecheck,
+# tests, production build, dependency vulnerability scan, secret scan, and a
+# clean Supabase migration bootstrap + the RLS/security regression suite —
+# none of this existed before this workflow (confirmed: no .github/ directory
+# anywhere in this repo's history). Every build/test step below invokes
+# tooling that already existed locally (package.json's own scripts) — this
+# is wiring, not new tooling, for those steps specifically.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: Install, lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - run: npm test
+      # Confirmed locally (2026-08-17): next build succeeds with zero env
+      # vars set — no Cin7/Supabase secrets are read at build time, only at
+      # request time inside Server Actions/routes.
+      - run: npm run build
+
+  dependency-audit:
+    name: Dependency vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # High/critical only — moderate-and-below in transitive dev
+      # dependencies is noisy and not actionable on every PR; tune the
+      # threshold here if that turns out wrong in practice.
+      - run: npm audit --audit-level=high
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  migration-and-security-tests:
+    name: Clean migration bootstrap + RLS/security test matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      # No supabase/config.toml is checked in (every migration in this repo
+      # has so far been applied directly against the hosted project via the
+      # Supabase MCP tool, not the local CLI workflow) -- `init` generates one
+      # against the existing supabase/migrations directory so `db reset` below
+      # has a local project to bootstrap. `--force` skips the interactive
+      # editor-settings prompts, which would otherwise hang this step.
+      - run: supabase init --force
+      # The actual P0-6 regression test: replays EVERY migration from 0001
+      # onward against a brand-new local Postgres + Supabase Auth stack. Any
+      # migration that depends on an object created only through a manual
+      # live change (exactly the push_jobs/category_instances RLS bug this
+      # re-audit pass fixed) fails this step instead of surfacing only when
+      # someone eventually tries a real blank-project bootstrap.
+      - run: supabase start
+      - run: supabase db reset --local
+      # security re-audit round 2 fixup: `supabase db query --file` rejects
+      # any file with more than one statement ("cannot insert multiple
+      # commands into a prepared statement" -- confirmed by the real CI
+      # run's own error) -- every file in supabase/tests/ is a multi-
+      # statement transactional script (begin; ... do $$ ... $$; ...
+      # rollback;), so it needs a real psql connection instead.
+      - name: Install postgresql-client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Run the RLS/security regression SQL test suite
+        run: |
+          set -e
+          eval "$(supabase status -o env | sed 's/^/export /')"
+          for f in supabase/tests/*.test.sql; do
+            echo "::group::$f"
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$f"
+            echo "::endgroup::"
+          done

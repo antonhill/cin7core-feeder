@@ -3,20 +3,21 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("@/lib/require-org-admin", () => ({ requireOrgAdmin: vi.fn() }));
 vi.mock("@/lib/current-org", () => ({ requireCurrentOrg: vi.fn() }));
 vi.mock("@/lib/billing", () => ({ getBillingStatus: vi.fn() }));
-vi.mock("@/lib/lemonsqueezy", () => ({ buildCheckoutUrl: vi.fn(), fetchCustomerPortalUrl: vi.fn() }));
+vi.mock("@/lib/lemonsqueezy", () => ({ buildCheckoutUrl: vi.fn(), createCheckoutToken: vi.fn(), fetchCustomerPortalUrl: vi.fn() }));
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: vi.fn() }));
 
 import { getCheckoutUrlAction, getManageSubscriptionUrlAction, getBillingStatusAction } from "@/actions/billing";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { requireCurrentOrg } from "@/lib/current-org";
 import { getBillingStatus } from "@/lib/billing";
-import { buildCheckoutUrl, fetchCustomerPortalUrl } from "@/lib/lemonsqueezy";
+import { buildCheckoutUrl, createCheckoutToken, fetchCustomerPortalUrl } from "@/lib/lemonsqueezy";
 import { createServiceRoleClient } from "@/supabase/server";
 
 const reqAdmin = vi.mocked(requireOrgAdmin);
 const reqOrg = vi.mocked(requireCurrentOrg);
 const billingStatus = vi.mocked(getBillingStatus);
 const checkoutUrl = vi.mocked(buildCheckoutUrl);
+const checkoutToken = vi.mocked(createCheckoutToken);
 const portalUrl = vi.mocked(fetchCustomerPortalUrl);
 const serviceClient = vi.mocked(createServiceRoleClient);
 
@@ -49,10 +50,22 @@ describe("billing actions require owner/admin (Phase 1.3)", () => {
 
   it("getCheckoutUrlAction: allows an owner/admin", async () => {
     reqAdmin.mockResolvedValue(ADMIN);
+    checkoutToken.mockResolvedValue("tok-abc");
     checkoutUrl.mockReturnValue("https://checkout.example/x");
     const res = await getCheckoutUrlAction();
     expect(res).toEqual({ ok: true, url: "https://checkout.example/x" });
     expect(reqAdmin).toHaveBeenCalledWith("manage billing");
+  });
+
+  it("getCheckoutUrlAction: security re-audit P1-4 — creates a checkout token scoped to the resolved org, and builds the URL from the TOKEN, never the raw orgId", async () => {
+    reqAdmin.mockResolvedValue(ADMIN);
+    const fakeDb = {} as ReturnType<typeof createServiceRoleClient>;
+    serviceClient.mockReturnValue(fakeDb);
+    checkoutToken.mockResolvedValue("tok-abc");
+    checkoutUrl.mockReturnValue("https://checkout.example/x");
+    await getCheckoutUrlAction();
+    expect(checkoutToken).toHaveBeenCalledWith(fakeDb, "org1");
+    expect(checkoutUrl).toHaveBeenCalledWith("tok-abc", "a@b.com");
   });
 
   it("getManageSubscriptionUrlAction: denies a non-admin member (no portal lookup)", async () => {

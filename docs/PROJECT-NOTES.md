@@ -1102,8 +1102,191 @@ start of Phase 4). PRs: #36 (P0-3, first pass) + a follow-up commit completing i
 consolidated P0-1/P0-2/P0-5/P0-6/P0-7/P1-3 PR (also with a P0-3/P0-4-completion follow-up commit —
 see git history for the exact commits/PR numbers).
 
-The remaining 11 re-audit items (P1-4 through P1-9, P2 items) are DEFERRED — not investigated this
-pass. See the re-audit classification report for the full FIXED/DEFERRED/NOT APPLICABLE breakdown.
+The remaining 11 re-audit items (P1-4 through P1-9, P2 items) were DEFERRED at the time — not
+investigated in that pass. See the re-audit classification report for the original
+FIXED/DEFERRED/NOT APPLICABLE breakdown, and the next section for the follow-up round below.
+
+## Security re-audit round 2 (2026-08-17): P1-1, P1-4, P1-6, P1-8, P1-9, P2 (CI)
+
+Investigated all 10 remaining deferred items via parallel read-only agents before writing any
+code (same discipline as the P0-3 lesson from round 1 — every item's literal text, not a
+paraphrase, drove the fix). 6 of the 10 were picked for this pass; P1-2, P1-5, P1-7, and P2 (API
+optimisation) remain deferred — see the round-2 findings for why (P1-5 specifically needs an
+explicit decision: it asks to reverse this codebase's consistent "fail open, never block a core
+feature on its own availability" philosophy for exactly 3 write-integrity locks).
+
+**P1-1 — fail closed on authorization read failures.** `requireModuleAccess`
+(`src/lib/authorization.ts`) destructured only `data`, never `error`, from its `org_members`/
+`organizations` reads — a Supabase error came back as `data: undefined`, which the `??`/optional-
+chaining fallbacks then read as "no restriction found," granting access instead of denying it.
+Fixed by checking `error` on all three reads and throwing. Sibling functions
+(`requireOrgAdmin`/`requireSuperAdmin`/`billing.ts`/`current-org.ts`) were checked too — all
+already fail closed, `requireModuleAccess` was the one genuine gap.
+
+**P1-4 — Lemon Squeezy organization binding.** Three of four sub-items were real gaps:
+- `custom_data.org_id` was browser-editable (set in the checkout URL client-side, echoed back
+  verbatim on every webhook) — a malicious member could attribute a payment to a different org.
+  Migration `0077` adds `billing_checkout_tokens` (token -> org_id, service-role only, rows never
+  expire since Lemon Squeezy echoes the same custom_data for a subscription's entire lifecycle).
+  `createCheckoutToken` (`src/lib/lemonsqueezy.ts`) generates a random token server-side;
+  `buildCheckoutUrl` now takes that token, not the raw org_id; the webhook handler resolves
+  org_id by looking the token up, never trusting custom_data as an identifier directly.
+- The webhook payload had zero runtime validation (a bare TS interface cast). Added Zod schemas —
+  two-stage, matching the handler's own existing trust model: a loose `basePayloadSchema` covers
+  every event (including the differently-shaped payment/invoice events), and a stricter
+  `subscriptionAttributesSchema` is only applied once an event is confirmed to be one of the real
+  `subscriptions`-typed events.
+- `mapSubscriptionStatus` defaulted any unrecognized status straight to `"canceled"` — a status
+  string Lemon Squeezy adds later would silently cut off a legitimately active org's Cin7 write
+  access. Now returns `null` for anything outside the known vocabulary; the webhook handler
+  leaves `subscription_status` untouched (but still records customer id/subscription id/renewal
+  date) when the status is unrecognized, and logs it server-side rather than guessing.
+- Stale-event protection (`subscription_event_at`, migration `0038`) was already correct — left
+  untouched, still the same atomic WHERE-clause guard against out-of-order webhook delivery.
+
+**P1-6 — internal API credential hardening.** `CRON_SECRET` and `SYNC_SHARED_SECRET` were one
+value by explicit operator instruction (`.env.example`: "set to the SAME VALUE as
+SYNC_SHARED_SECRET"), gating Vercel's own cron trigger, on-demand sync POSTs, AND `/api/import` —
+three trust domains, one credential, compared with a plain `!==` (not constant-time).
+`/api/import` itself was confirmed to have zero real callers anywhere in the app, isn't
+cron-scheduled, and was strictly MORE dangerous than the `importCsvAction` Server Action it
+duplicated (took `orgId` from the request body instead of the caller's session) — removed
+entirely. `internal-auth.ts` now checks only `CRON_SECRET`, via `crypto.timingSafeEqual`.
+Follow-up flagged (not fixed this pass, scope creep beyond what P1-6 named): 6 sibling
+`/api/sync*` POST handlers have the identical "trusts an orgId from the request body" shape as
+`/api/import` did, also with no confirmed real caller.
+
+**P1-8 — auth/account hardening.** All 4 sub-items were real:
+- `/login`'s `signInWithOtp` was missing `shouldCreateUser: false` — a login attempt for a
+  non-existent email silently created a new auth user, bypassing `/signup`'s real org-creation
+  flow entirely. One-line fix.
+- Org + owner-membership creation (`createSelfServeOrgAction`) was two sequential, non-atomic
+  inserts — a failed second insert left an orphaned, ownerless org. Migration `0076` adds
+  `create_self_serve_org(org_name, user_id)`, one plpgsql function = one transaction, same pattern
+  as the P0-2/P0-7 RPCs. Proven live: happy path, AND a failure injected via a bogus `user_id`
+  (FK violation) confirmed the `organizations` insert rolls back too, not just `org_members`.
+- "First org membership wins" was genuinely arbitrary (`org_members.select().limit(1)`, no
+  ordering) — AND independently duplicated in two places (`requireCurrentOrg` and
+  `getCurrentUserInfo`) that could in principle disagree about which org is "current." Both now
+  call one shared, unit-tested pure rule (`resolveActiveOrgId` in `src/lib/active-org.ts`): an
+  explicit `active_org_id` cookie when it matches a real membership, else the first membership
+  (same fallback as before, now just centralized). New `setActiveOrgAction`/`listMyOrgsAction`
+  (verify real membership server-side before setting the cookie) + a minimal `ActiveOrgSwitcher`
+  in the sidebar, shown only when a member actually has more than one org (most don't).
+  "Explicit active-org selection," not "single-org enforcement," was the right direction — the
+  schema/invite flow already assume multi-org membership (`org_members` PK is `(org_id,
+  user_id)`, and inviting an existing user into a second org is an established feature).
+
+**P1-9 — file/browser hardening.** All 4 sub-items were real:
+- Org-logo upload had regressed from admin-only to any org member (the code's own comment
+  admitted it: "was previously an /admin-only super-admin action") — restored via
+  `requireOrgAdmin`.
+- No real image-content validation existed — only the browser-supplied `file.type` string,
+  trivially spoofed. New `sniffImageType` (`src/lib/image-sniff.ts`, pure, magic-byte signatures
+  for PNG/JPEG/WebP) is the real gate now; the STORED extension/content-type is derived from the
+  sniffed bytes, not the browser's claim, so a mislabeled file can't land under the wrong
+  extension either.
+- SVG removed from accepted logo types entirely (can embed `<script>`/event-handler content —
+  stored-XSS risk once served back; the audit's own wording allowed "remove or sanitize," removal
+  was chosen over adding a sanitizer library for one logo format).
+- All 6 named security headers (CSP, HSTS, X-Content-Type-Options, X-Frame-Options,
+  Referrer-Policy, Permissions-Policy) added via `next.config.ts`'s `headers()`. CSP's `script-src`
+  keeps `'unsafe-inline'` — Next.js's App Router streams RSC payloads via inline
+  `<script>self.__next_f.push(...)</script>` tags in the initial HTML; removing it needs a
+  per-request nonce wired through middleware, a further-hardening step not attempted this pass.
+  Verified live (not just headers-present): built + started the production server, loaded `/` and
+  `/login` in a real browser, confirmed zero console errors (no CSP violations) and that client
+  interactivity (typing into the login form) still works — hydration genuinely survives the new CSP.
+
+**P2 (CI and sign-off).** No CI existed at all (`.github/` didn't exist in this repo's history).
+New `.github/workflows/ci.yml`: build-and-test (install/lint/tsc/vitest/build — all pure wiring of
+existing `package.json` scripts), a dependency-audit job (`npm audit --audit-level=high` — found
+and fixed 2 real pre-existing high-severity transitive vulnerabilities, `brace-expansion` and
+`js-yaml`, via `npm audit fix`, before this job could ever pass), a `gitleaks` secret-scan job, and
+a migration-and-security-tests job: `supabase init --force` (no `supabase/config.toml` existed —
+every migration so far was applied directly against the hosted project) + `supabase start` +
+`supabase db reset --local` (replays every migration 0001-current against a brand-new local
+Postgres + Supabase Auth stack — the actual automated regression test for the exact class of bug
+P0-6 fixed) + runs every `supabase/tests/*.test.sql` file. New `.github/dependabot.yml` for
+ongoing weekly dependency PRs (npm + GitHub Actions). Could not run the Supabase-CLI-based job
+locally (no Docker in this environment) — verified by pushing and checking the actual GitHub
+Actions run result rather than trusting the YAML alone (see PR for the run link).
+
+**The migration-bootstrap job found a real bug on its very first run** — exactly what it exists
+for. `supabase db reset` failed with `duplicate key value violates unique constraint
+"schema_migrations_pkey" — Key (version)=(0046) already exists`: the local Supabase CLI tracks
+migration identity by the **leading numeric prefix only** (not the full filename), so
+`0046_reconstruct_push_jobs.sql` collided with the pre-existing, unrelated
+`0046_production_tracking_tags_and_output.sql`. This directly contradicts round 1's own stated
+justification for that number ("reusing an already-taken number, following this repo's own
+`0052`-duplicate precedent") — that precedent (`0052_org_admin_rls.sql` +
+`0052_reorder_report_net_on_order.sql`) was only ever validated against the Supabase MCP
+`apply_migration` path (which assigns its own real timestamp version against the hosted project,
+unaffected by the local filename), never against an actual local-CLI bootstrap — so it was never
+real evidence that duplicate prefixes are safe, and would have failed this exact same way. Both
+renumbered to unique 5-digit prefixes that preserve the required apply order (Supabase CLI's
+version-prefix parser accepts any-length leading digit run, confirmed by this fix actually
+passing): `supabase/migrations/00461_reconstruct_push_jobs.sql` (still sorts before
+`0058_job_locks.sql`, which needs `push_jobs` to already exist) and
+`supabase/migrations/00521_reorder_report_net_on_order.sql` (sorts between `0052_org_admin_rls.sql`
+and `0053_stocktake_staged_stock.sql`, preserving today's apply order exactly). Neither file's own
+content changed, only its filename — both were already live in production, applied via MCP with
+their own independent timestamp versions, so this has zero effect on the hosted database.
+
+**Running `0052_org_admin_rls.test.sql` end-to-end (not just its individual pieces) surfaced a
+second real finding — a test-methodology bug, not a live vulnerability.** Once the CI job's
+prerequisite `authenticated`/`anon` GRANTs were added (see below), the full suite failed with
+`EXPECTED DENIED but succeeded: member UPDATE cin7_instances` — on its face, a plain org member
+successfully writing to a table holding encrypted Cin7 credentials. Investigated live against
+production with `GET DIAGNOSTICS ... row_count` and a re-`SELECT` of the target row rather than
+trusting the exception-based assertion: the "successful" UPDATE actually affected **0 rows** and
+the stored value was **unchanged**. Postgres RLS filters rows a policy's `USING` clause makes
+invisible *before* an UPDATE's own `WHERE` can match them — the statement still "succeeds" with
+zero rows affected and raises no exception at all. This is fundamentally different from an
+INSERT's `WITH CHECK` failure (or an UPDATE where the row IS visible under `USING` but a separate
+`WITH CHECK` fails), which genuinely does raise `check_violation` — confirmed by contrast, the
+`member INSERT cin7_instances` assertion in the same file correctly raises one. The test's
+original `expect_denied()` helper only ever checked for a raised exception, so it could never
+detect an RLS-filtered no-op UPDATE — it would report a false PASS on a write that never happened,
+or silently stop catching a real regression if the row ever became visible to that role. Fixed by
+adding a second helper, `pg_temp.expect_no_effect(sql, label)`, which asserts `row_count = 0`
+directly, and swapping it in for the three UPDATE-shaped assertions (`member UPDATE
+cin7_instances`, `foreign-org UPDATE cin7_instances`, `member UPDATE purchase_planner_settings`);
+`expect_denied` stays correct and unchanged for the one INSERT-shaped assertion. The underlying RLS
+policies on `cin7_instances` and `purchase_planner_settings` were never at fault — confirmed
+correct throughout via live `pg_policies` inspection and the rowcount/value diagnostics above.
+
+**Running the full `supabase/tests/*.test.sql` suite for the first time ever (this CI job's whole
+reason to exist) also caught a genuine stale-fixture bug in a pre-existing, unrelated test:**
+`0063_box_label_queue.test.sql` failed with `sale-4 (local label-printed flag already set) must NOT
+appear ... got {"is_ready_for_box_label": true, ...}`. Migration `0071` (a prior round, unrelated to
+this one) changed box-label re-qualification from a plain `printed_at is null` boolean to a
+quantity-snapshot comparison (`total_ready_for_box_label_qty > ready_qty_at_mark`), so a genuine
+later fulfilment can re-qualify an order without per-fulfilment Cin7 tracking. `0063`'s own test
+fixture predates `0071` and only ever inserted `box_label_print_state` with `printed_by_email` — it
+never set `ready_qty_at_mark`, which defaults to `0`, so under the new logic `10 > 0` reads as fresh
+growth and wrongly re-qualifies sale-4. This test was never actually re-run end-to-end after `0071`
+shipped (it isn't part of any round's live-verification checklist unless something touches it
+directly), so nothing caught the drift until this CI job's very first full-suite run. Fixed by
+setting `ready_qty_at_mark = 10` in the fixture, matching what `markBoxLabelPrintedAction` (see
+`src/actions/box-label.ts`) always snapshots for real at click time. Verified live against
+production end-to-end (assembled file, `begin`/`rollback`, deliberate final `raise` to confirm every
+assertion passed) before pushing. No application code changed — this was purely a stale test
+fixture, unrelated to any of this round's 6 scoped items.
+
+Verified for this round: `tsc`/`eslint` clean, `next build` clean (confirmed buildable with zero
+env vars set), full `vitest` suite passing (see PR description for the exact count), plus the
+live-browser CSP verification and live Supabase MCP verification of migrations `0076`/`0077`
+described above.
+
+Still DEFERRED: P1-2 (AAL2 guard — needs one new reusable guard function wired into ~9 files/15-20
+functions), P1-5 (lock failure policy — needs an explicit sign-off on reversing the fail-open
+philosophy for 3 specific write-integrity locks), P1-7 (import/export resource boundaries — needs
+sorting ~15 export files into Cin7-round-trip vs. human-facing before any fix), P2 (API
+optimisation — Customer/Supplier/Product watermark-filter support on Cin7's side is unverified;
+implementing without a live probe first would repeat the exact mistake Phase 3.3b was built to
+avoid, and the cron-scheduled sync doesn't even list-scan those 3 endpoints today so the item's
+practical benefit is unclear until scoped further).
 
 ## Known gaps (scoped, not yet started — see Task #33 in project tracking)
 

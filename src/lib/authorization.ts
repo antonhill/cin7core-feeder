@@ -63,11 +63,17 @@ export async function requireModuleAccess(moduleHref: string): Promise<CurrentOr
   const current = await requireCurrentOrg();
   const db = createServiceRoleClient();
 
-  const { data: superAdminRow } = await db
+  // Security re-audit P1-1: every one of these reads must fail CLOSED (deny)
+  // on a Supabase error, not silently fall through to "no restriction found".
+  // Previously only `data` was destructured here — a DB error came back as
+  // `data: undefined`, which the `??`/optional-chaining fallbacks below then
+  // read as "unrestricted", granting access instead of denying it.
+  const { data: superAdminRow, error: superAdminError } = await db
     .from("super_admins")
     .select("user_id")
     .eq("user_id", current.userId)
     .maybeSingle();
+  if (superAdminError) throw new Error(superAdminError.message);
   const isSuperAdmin = Boolean(superAdminRow);
 
   // A super-admin's module access is never narrowed by a per-user allow-list
@@ -75,20 +81,22 @@ export async function requireModuleAccess(moduleHref: string): Promise<CurrentOr
   // getCurrentUserInfo() and middleware.
   let allowedModules: string[] | null = null;
   if (!isSuperAdmin) {
-    const { data: membership } = await db
+    const { data: membership, error: membershipError } = await db
       .from("org_members")
       .select("allowed_modules")
       .eq("org_id", current.orgId)
       .eq("user_id", current.userId)
       .maybeSingle();
+    if (membershipError) throw new Error(membershipError.message);
     allowedModules = membership?.allowed_modules ?? null;
   }
 
-  const { data: org } = await db
+  const { data: org, error: orgError } = await db
     .from("organizations")
     .select("disabled_modules")
     .eq("id", current.orgId)
     .maybeSingle();
+  if (orgError) throw new Error(orgError.message);
 
   const disabledModules = computeEffectiveDisabledModules(org?.disabled_modules ?? [], allowedModules);
   if (findBlockedModule(moduleHref, disabledModules)) {
