@@ -2,12 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Cin7ApiError, cin7Request, cin7RawRequest, __resetRateLimiterForTests } from "@/cin7/http";
 
 import { CIN7_API_ORIGIN } from "@/cin7/api-origin";
+import { acquireCin7Slot, reportCin7RateLimitCooldown } from "@/cin7/rate-limit";
 
-// Force the distributed limiter to report "unavailable" so these tests exercise
-// the in-memory throttle fallback they were written to assert. The distributed
-// limiter's own behaviour is covered in cin7/__tests__/rate-limit.test.ts.
+// Force the distributed limiter to report "degrade" (unavailable/contended)
+// so these tests exercise the in-memory throttle fallback they were written
+// to assert — "degrade" lets both reads and writes proceed via the fallback,
+// same as the old boolean `false`. The distributed limiter's own behaviour
+// (including the read/write "degrade" vs "blocked" split) is covered in
+// cin7/__tests__/rate-limit.test.ts.
 vi.mock("@/cin7/rate-limit", () => ({
-  acquireCin7Slot: vi.fn(async () => false),
+  acquireCin7Slot: vi.fn(async () => "degrade"),
+  reportCin7RateLimitCooldown: vi.fn(async () => {}),
   __resetDistributedLimiterForTests: vi.fn(),
 }));
 
@@ -18,6 +23,8 @@ const creds = { accountId: "acct-1", applicationKey: "key-1", baseUrl: "https://
 beforeEach(() => {
   process.env.RATE_LIMIT_RPS = "1000"; // avoid throttling slowing down these tests
   __resetRateLimiterForTests();
+  vi.mocked(acquireCin7Slot).mockReset().mockResolvedValue("degrade");
+  vi.mocked(reportCin7RateLimitCooldown).mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -125,7 +132,9 @@ describe("cin7Request", () => {
       () => new Response('[{"ErrorCode":400,"Exception":"You have reached 60 calls per 60 seconds API limit."}]', { status: 400 }),
     ]);
 
-    const promise = cin7Request(creds, "/purchase");
+    // operationTimeoutMs raised so this test observes retry-COUNT exhaustion
+    // specifically, not the operation-level deadline (covered separately below).
+    const promise = cin7Request(creds, "/purchase", { operationTimeoutMs: Number.MAX_SAFE_INTEGER });
     const assertion = expect(promise).rejects.toMatchObject({ status: 400, retryable: true });
     await vi.runAllTimersAsync();
     await assertion;
@@ -160,7 +169,9 @@ describe("cin7Request", () => {
     });
     vi.stubGlobal("fetch", fn);
 
-    const promise = cin7Request(creds, "/BillOfMaterials", { method: "PUT" });
+    // operationTimeoutMs raised so this test observes retry-COUNT exhaustion
+    // specifically, not the operation-level deadline (covered separately below).
+    const promise = cin7Request(creds, "/BillOfMaterials", { method: "PUT", operationTimeoutMs: Number.MAX_SAFE_INTEGER });
     const assertion = expect(promise).rejects.toMatchObject({
       status: 0,
       message: expect.stringContaining("PUT /BillOfMaterials"),
@@ -235,6 +246,115 @@ describe("cin7Request", () => {
       await cin7Request(creds, "/Product");
       const [, init] = fn.mock.calls[0];
       expect(init?.signal).toBeInstanceOf(AbortSignal);
+    });
+  });
+
+  describe("security re-audit P0-3: write traffic never bypasses the distributed coordinator", () => {
+    it("passes allowDegrade:true for a GET (read) and allowDegrade:false for a POST (write)", async () => {
+      mockFetchSequence([() => new Response(JSON.stringify({ ok: true }), { status: 200 })]);
+      await cin7Request(creds, "/Product");
+      expect(acquireCin7Slot).toHaveBeenLastCalledWith("acct-1", "key-1", { allowDegrade: true });
+
+      mockFetchSequence([() => new Response(JSON.stringify({ ok: true }), { status: 200 })]);
+      await cin7Request(creds, "/Product", { method: "POST" });
+      expect(acquireCin7Slot).toHaveBeenLastCalledWith("acct-1", "key-1", { allowDegrade: false });
+    });
+
+    it("never sends the real HTTP request on a 'blocked' outcome — retries the acquire itself instead", async () => {
+      vi.useFakeTimers();
+      vi.mocked(acquireCin7Slot).mockResolvedValueOnce("blocked").mockResolvedValueOnce("granted");
+      const fn = mockFetchSequence([() => new Response(JSON.stringify({ ok: true }), { status: 200 })]);
+
+      const promise = cin7Request(creds, "/Product", { method: "POST" });
+      await vi.runAllTimersAsync();
+      const result = await promise;
+
+      expect(result).toEqual({ ok: true });
+      expect(fn).toHaveBeenCalledTimes(1); // the real request only fires once "granted"
+      expect(acquireCin7Slot).toHaveBeenCalledTimes(2);
+    });
+
+    it("gives up with a clear error after exhausting retries while permanently 'blocked' — never proceeds unpaced (the old 'proceed anyway' escape hatch is gone)", async () => {
+      vi.useFakeTimers();
+      vi.mocked(acquireCin7Slot).mockResolvedValue("blocked");
+      const fn = mockFetchSequence([() => new Response(JSON.stringify({ ok: true }), { status: 200 })]);
+
+      const promise = cin7Request(creds, "/Product", { method: "POST", operationTimeoutMs: Number.MAX_SAFE_INTEGER });
+      const assertion = expect(promise).rejects.toMatchObject({
+        status: 0,
+        message: expect.stringContaining("refusing to send POST /Product unpaced"),
+      });
+      await vi.runAllTimersAsync();
+      await assertion;
+      expect(fn).not.toHaveBeenCalled(); // the real HTTP request was never sent
+    });
+
+    it("a read ('degrade') proceeds via the in-memory throttle instead of blocking", async () => {
+      vi.mocked(acquireCin7Slot).mockResolvedValue("degrade");
+      const fn = mockFetchSequence([() => new Response(JSON.stringify({ ok: true }), { status: 200 })]);
+      await expect(cin7Request(creds, "/Product")).resolves.toEqual({ ok: true });
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("security re-audit P0-3: Cin7 503s feed a shared cooldown", () => {
+    it("reports a cooldown on a 503 before retrying", async () => {
+      vi.useFakeTimers();
+      const fn = mockFetchSequence([
+        () => new Response("", { status: 503 }),
+        () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      ]);
+      const promise = cin7Request(creds, "/Product");
+      await vi.runAllTimersAsync();
+      await promise;
+
+      expect(reportCin7RateLimitCooldown).toHaveBeenCalledWith("acct-1", "key-1", expect.any(Number));
+      expect(fn).toHaveBeenCalledTimes(2);
+    });
+
+    it("reports a cooldown on the /purchase-family's non-standard rate-limit response too", async () => {
+      vi.useFakeTimers();
+      mockFetchSequence([
+        () => new Response('[{"ErrorCode":400,"Exception":"You have reached 60 calls per 60 seconds API limit."}]', { status: 400 }),
+        () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      ]);
+      const promise = cin7Request(creds, "/purchase");
+      await vi.runAllTimersAsync();
+      await promise;
+
+      expect(reportCin7RateLimitCooldown).toHaveBeenCalledWith("acct-1", "key-1", expect.any(Number));
+    });
+
+    it("does NOT report a cooldown on a definite, non-rate-limit rejection", async () => {
+      mockFetchSequence([() => new Response("SKU is required", { status: 400 })]);
+      await expect(cin7Request(creds, "/Product", { method: "POST" })).rejects.toThrow();
+      expect(reportCin7RateLimitCooldown).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("security re-audit P0-4: operation-level deadline bounds the whole call, not just one attempt", () => {
+    it("fails fast once the operation deadline has passed, instead of starting another attempt", async () => {
+      vi.useFakeTimers();
+      const fn = vi.fn(async () => {
+        throw new Error("fetch failed");
+      });
+      vi.stubGlobal("fetch", fn);
+
+      const promise = cin7Request(creds, "/Product", { operationTimeoutMs: 1000 });
+      const assertion = expect(promise).rejects.toMatchObject({
+        message: expect.stringContaining("exceeded its 1000ms operation deadline"),
+      });
+      await vi.runAllTimersAsync();
+      await assertion;
+      // Far fewer than the default 7 attempts (maxRetries 6 + 1) — the 5s+
+      // backoff between attempt 1 and 2 alone already exceeds the 1000ms budget.
+      expect(fn.mock.calls.length).toBeLessThan(3);
+    });
+
+    it("always allows at least one attempt, even with a tiny operationTimeoutMs", async () => {
+      const fn = mockFetchSequence([() => new Response(JSON.stringify({ ok: true }), { status: 200 })]);
+      await expect(cin7Request(creds, "/Product", { operationTimeoutMs: 1 })).resolves.toEqual({ ok: true });
+      expect(fn).toHaveBeenCalledTimes(1);
     });
   });
 

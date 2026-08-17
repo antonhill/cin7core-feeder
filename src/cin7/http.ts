@@ -1,7 +1,7 @@
 import "server-only";
 import type { Cin7Credentials } from "@/cin7/types";
 import { buildCin7Url } from "@/cin7/api-origin";
-import { acquireCin7Slot } from "@/cin7/rate-limit";
+import { acquireCin7Slot, reportCin7RateLimitCooldown } from "@/cin7/rate-limit";
 
 /** Cin7 Core returns 503 (not 429) when the 60/min limit is hit, with no Retry-After header. */
 export class Cin7ApiError extends Error {
@@ -58,6 +58,17 @@ export interface Cin7RequestOptions {
    * may have already landed.
    */
   nonIdempotentCreate?: boolean;
+  /**
+   * Security re-audit P0-4: an overall wall-clock budget for THIS call,
+   * covering every attempt's fetch AND every sleep between them — distinct
+   * from `timeoutMs` (bounds one attempt's network time) and `maxRetries`
+   * (bounds attempt count, but not elapsed time: MAX_RETRIES backoff sleeps
+   * alone can already total ~1.75 minutes, before any fetch time). Without
+   * this, retry sleeps and stalled requests together could consume most of
+   * a Vercel invocation's own duration budget on a single cin7Request call.
+   * Defaults to DEFAULT_OPERATION_TIMEOUT_MS.
+   */
+  operationTimeoutMs?: number;
 }
 
 // Quick mitigation (2026-07-24, after Supplier Planner's live paginated
@@ -81,6 +92,18 @@ const RETRY_BASE_DELAY_MS = 5000;
 // already run with real backoff between them — this timeout is orthogonal,
 // it bounds each individual attempt, not the whole retry loop).
 const DEFAULT_TIMEOUT_MS = 20_000;
+// Security re-audit P0-3: a fixed, shared cooldown pushed into the
+// distributed bucket after a real Cin7 503/equivalent — deliberately NOT
+// scaled by this invocation's own attempt number, since it's a signal for
+// every OTHER invocation sharing the bucket, not this one's personal backoff
+// schedule.
+const CIN7_503_COOLDOWN_MS = 10_000;
+// Security re-audit P0-4: the whole-call budget (see operationTimeoutMs
+// above). 60s comfortably covers a legitimate multi-attempt retry sequence
+// while staying well under every route's own Vercel maxDuration (60-300s) —
+// most routes make many cin7Request calls per invocation, not one, so this
+// is a per-call budget, not the invocation's entire duration.
+const DEFAULT_OPERATION_TIMEOUT_MS = 60_000;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -148,15 +171,56 @@ export async function cin7Request<T>(
   const url = buildCin7Url(path, options.query);
   const maxRetries = options.maxRetries ?? MAX_RETRIES;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  // Security re-audit P0-4: covers every attempt's fetch AND every sleep
+  // between them — checked at the top of each loop iteration, so a call
+  // already past its budget fails fast instead of starting one more
+  // (possibly ~30s-backoff-plus-20s-timeout) attempt.
+  const operationDeadline = Date.now() + (options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS);
+
+  // Security re-audit P0-3: a real WRITE must never bypass the distributed
+  // coordinator — only a read may degrade to the in-memory per-invocation
+  // throttle when the coordinator is unavailable/contended. GET is the only
+  // Cin7 call this codebase ever treats as read-only; everything else is a
+  // write for pacing purposes even when it isn't for retry-safety purposes
+  // (a different, narrower question — see nonIdempotentCreate above).
+  const isWrite = (options.method ?? "GET") !== "GET";
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // Security re-audit P0-4: fail fast rather than starting another attempt
+    // (its own up-to-timeoutMs fetch plus up-to-30s backoff) once the whole
+    // call's budget is already spent.
+    if (attempt > 0 && Date.now() >= operationDeadline) {
+      throw new Cin7ApiError(
+        0,
+        `${options.method ?? "GET"} ${path} exceeded its ${options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS}ms operation deadline after ${attempt} attempt(s)`,
+        true
+      );
+    }
+
     // Cross-invocation distributed limiter (Postgres token bucket, migration
-    // 0054) — the real fix for the multi-invocation problem the throttle below
-    // can't solve. If it's unavailable (DB blip, or the migration isn't applied
-    // yet), fall back to the in-memory per-invocation throttle so a limiter
-    // outage never halts Cin7 traffic and behaviour stays exactly as it was.
-    const pacedByDistributedLimiter = await acquireCin7Slot(creds.accountId);
-    if (!pacedByDistributedLimiter) await throttle(creds.accountId);
+    // 0075) — the real fix for the multi-invocation problem the in-memory
+    // throttle below can't solve on its own.
+    const acquireOutcome = await acquireCin7Slot(creds.accountId, creds.applicationKey, { allowDegrade: !isWrite });
+
+    if (acquireOutcome === "blocked") {
+      // The coordinator is unavailable or still contended, and this is a
+      // write — it must not proceed unpaced. Cin7 itself was never
+      // contacted this attempt, so this is unambiguous (unlike a lost
+      // network response): safe to retry the whole attempt (a fresh
+      // acquireCin7Slot call next time round), bounded by the same
+      // maxRetries/backoff this function already uses for everything else.
+      if (attempt < maxRetries) {
+        await sleep(RETRY_BASE_DELAY_MS * (attempt + 1));
+        continue;
+      }
+      throw new Cin7ApiError(
+        0,
+        `Rate limit coordinator unavailable or contended; refusing to send ${options.method ?? "GET"} ${path} unpaced after ${attempt + 1} attempt(s)`,
+        true
+      );
+    }
+    if (acquireOutcome === "degrade") await throttle(creds.accountId);
+    // "granted" — proceed directly, no extra throttle needed.
 
     let response: Response;
     try {
@@ -225,6 +289,11 @@ export async function cin7Request<T>(
     }
 
     if (response.status === 503) {
+      // Security re-audit P0-3: Cin7's own authoritative "you're over
+      // budget" signal — push a shared cooldown so every OTHER invocation
+      // coordinating through this bucket backs off too, not just this one.
+      // Best-effort: never throws, never blocks this call's own handling.
+      await reportCin7RateLimitCooldown(creds.accountId, creds.applicationKey, CIN7_503_COOLDOWN_MS);
       if (attempt < maxRetries) {
         await sleep(RETRY_BASE_DELAY_MS * (attempt + 1));
         continue;
@@ -246,9 +315,14 @@ export async function cin7Request<T>(
       // ambiguous — Cin7 responded and told us it declined the request, so
       // this stays retried regardless of nonIdempotentCreate.
       const isRateLimitedNonStandard = /reached 60 calls per 60 seconds/i.test(body);
-      if (isRateLimitedNonStandard && attempt < maxRetries) {
-        await sleep(RETRY_BASE_DELAY_MS * (attempt + 1));
-        continue;
+      if (isRateLimitedNonStandard) {
+        // Same reasoning as the 503 branch above — the same underlying
+        // condition, just reported differently by this endpoint family.
+        await reportCin7RateLimitCooldown(creds.accountId, creds.applicationKey, CIN7_503_COOLDOWN_MS);
+        if (attempt < maxRetries) {
+          await sleep(RETRY_BASE_DELAY_MS * (attempt + 1));
+          continue;
+        }
       }
 
       // Validation error arrays can list many missing fields at once — a
