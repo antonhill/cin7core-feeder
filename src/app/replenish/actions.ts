@@ -8,11 +8,15 @@ import { logActivity } from "@/lib/activity-log";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsForReplenish } from "@/cin7/product-reorder";
 import { createStockTransfer, type CreateStockTransferResult } from "@/cin7/stock-transfers";
+import { Cin7ApiError } from "@/cin7/http";
 import {
   stockTransferIdempotencyKey,
   claimStockTransferCreation,
   settleStockTransferCreation,
   releaseStockTransferCreation,
+  markStockTransferCreationAmbiguous,
+  findLikelyCreatedStockTransfer,
+  STOCK_TRANSFER_CLAIM_TTL_SECONDS,
 } from "@/lib/stock-transfer-idempotency";
 import { getProductAvailabilitySyncStatus, type ProductAvailabilitySyncStatus } from "@/reports/query";
 import { syncOrgProductAvailability, type ProductAvailabilitySyncSummary } from "@/sync/sync-product-availability";
@@ -232,6 +236,27 @@ export async function createReplenishTransfersAction(
             status: "DRAFT",
             skus: destLines.map((l) => l.productSku),
           });
+        } else if (claim.existingStatus === "ambiguous") {
+          // Security re-audit P0-2: a previous attempt's outcome with Cin7 is
+          // still unconfirmed — try to resolve it now rather than blindly
+          // creating (or blindly skipping) a second transfer.
+          const since = new Date(Date.now() - STOCK_TRANSFER_CLAIM_TTL_SECONDS * 1000).toISOString();
+          const found = await findLikelyCreatedStockTransfer(creds, fromLocation, toLocation, since).catch(() => null);
+          if (found) {
+            await settleStockTransferCreation(db, orgId, instanceId, idempotencyKey, found.cin7TransferId, found.transferNumber);
+            deduplicated.push({
+              toLocation,
+              taskId: found.cin7TransferId,
+              number: found.transferNumber ?? found.cin7TransferId,
+              status: "DRAFT",
+              skus: destLines.map((l) => l.productSku),
+            });
+          } else {
+            failed.push({
+              toLocation,
+              error: "A previous attempt to create this transfer is still being confirmed with Cin7 — try again shortly.",
+            });
+          }
         } else {
           // A concurrent request is creating this same transfer right now.
           failed.push({
@@ -242,6 +267,7 @@ export async function createReplenishTransfersAction(
         continue;
       }
 
+      const attemptStartedAt = new Date().toISOString();
       try {
         const result: CreateStockTransferResult = await createStockTransfer(
           creds,
@@ -264,10 +290,37 @@ export async function createReplenishTransfersAction(
         // rather than duplicating it.
         await settleStockTransferCreation(db, orgId, instanceId, idempotencyKey, result.taskId, result.number);
       } catch (e) {
-        // The create failed — release the claim so an immediate retry isn't
-        // blocked for the whole TTL window.
-        await releaseStockTransferCreation(db, orgId, instanceId, idempotencyKey);
-        failed.push({ toLocation, error: e instanceof Error ? e.message : "Unknown error" });
+        // Security re-audit P0-2: an ambiguous failure (network error on a
+        // nonIdempotentCreate call) means we don't know if Cin7 actually
+        // committed this transfer. Releasing the claim here could let an
+        // immediate retry create a genuine duplicate, so instead we try to
+        // find the transfer by a stable reference before deciding.
+        if (e instanceof Cin7ApiError && e.ambiguous) {
+          await markStockTransferCreationAmbiguous(db, orgId, instanceId, idempotencyKey);
+          const found = await findLikelyCreatedStockTransfer(creds, fromLocation, toLocation, attemptStartedAt).catch(() => null);
+          if (found) {
+            await settleStockTransferCreation(db, orgId, instanceId, idempotencyKey, found.cin7TransferId, found.transferNumber);
+            created.push({
+              toLocation,
+              taskId: found.cin7TransferId,
+              number: found.transferNumber ?? found.cin7TransferId,
+              status: "DRAFT",
+              skus: destLines.map((l) => l.productSku),
+            });
+          } else {
+            failed.push({
+              toLocation,
+              error:
+                "Connection was lost while creating this transfer in Cin7 and we couldn't yet confirm whether it was created. Check Cin7 directly, or try again in a few minutes.",
+            });
+          }
+        } else {
+          // A definite failure (Cin7 responded and declined, or a client-side
+          // error) — release the claim so an immediate retry isn't blocked
+          // for the whole TTL window.
+          await releaseStockTransferCreation(db, orgId, instanceId, idempotencyKey);
+          failed.push({ toLocation, error: e instanceof Error ? e.message : "Unknown error" });
+        }
       }
     }
 

@@ -9,7 +9,16 @@ import { logActivity } from "@/lib/activity-log";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsForSupplierPlanning } from "@/cin7/product-supplier-options";
 import { createPurchaseOrder } from "@/cin7/purchase-write";
-import { poIdempotencyKey, claimPoCreation, settlePoCreation, releasePoCreation } from "@/lib/po-idempotency";
+import { Cin7ApiError } from "@/cin7/http";
+import {
+  poIdempotencyKey,
+  claimPoCreation,
+  settlePoCreation,
+  releasePoCreation,
+  markPoCreationAmbiguous,
+  findLikelyCreatedPurchaseOrder,
+  PO_CLAIM_TTL_SECONDS,
+} from "@/lib/po-idempotency";
 import { getReorderReport, getSupplierPlanLocationDemand } from "@/reports/query";
 import { fetchAllLocations, type Cin7Location } from "@/cin7/reference-lookups";
 import {
@@ -246,6 +255,26 @@ export async function createSupplierPlanPurchaseOrdersAction(
         group.locationId,
         group.lines.map((l) => ({ productSku: l.productSku, quantity: l.suggestedQty }))
       );
+      // Best-effort: this app's own memory of what it just created, so
+      // Supplier Planner can flag these exact lines as "already ordered,
+      // pending authorization" next time it loads (see
+      // loadPendingPurchaseOrders above). A failure here shouldn't undermine
+      // the fact that a real PO now exists in Cin7.
+      const recordCreatedPoLines = async (cin7PurchaseId: string, orderNumber: string | null) => {
+        const { error: recordError } = await db.from("supplier_plan_created_po_lines").insert(
+          group.lines.map((l) => ({
+            org_id: orgId,
+            instance_id: instanceId,
+            cin7_purchase_id: cin7PurchaseId,
+            order_number: orderNumber,
+            supplier_id: group.supplierId,
+            location_id: group.locationId,
+            product_sku: l.productSku,
+          }))
+        );
+        if (recordError) console.error("supplier_plan_created_po_lines insert failed:", recordError.message);
+      };
+
       const claim = await claimPoCreation(db, orgId, instanceId, idempotencyKey);
       if (!claim.claimed) {
         if (claim.existingStatus === "completed" && claim.orderNumber) {
@@ -258,6 +287,28 @@ export async function createSupplierPlanPurchaseOrdersAction(
             status: "DRAFT",
             lineCount: group.lines.length,
           });
+        } else if (claim.existingStatus === "ambiguous") {
+          // Security re-audit P0-2: a previous attempt's outcome with Cin7 is
+          // still unconfirmed — try to resolve it now rather than blindly
+          // creating (or blindly skipping) a second PO.
+          const since = new Date(Date.now() - PO_CLAIM_TTL_SECONDS * 1000).toISOString();
+          const found = await findLikelyCreatedPurchaseOrder(creds, group.supplierId, since).catch(() => null);
+          if (found) {
+            await settlePoCreation(db, orgId, instanceId, idempotencyKey, found.cin7PurchaseId, found.orderNumber);
+            deduplicated.push({
+              supplierName: group.supplierName,
+              locationName: group.locationName,
+              orderNumber: found.orderNumber ?? found.cin7PurchaseId,
+              status: "DRAFT",
+              lineCount: group.lines.length,
+            });
+          } else {
+            failed.push({
+              supplierName: group.supplierName,
+              locationName: group.locationName,
+              error: "A previous attempt to create this PO is still being confirmed with Cin7 — try again shortly.",
+            });
+          }
         } else {
           // A concurrent request is creating this same PO right now.
           failed.push({
@@ -269,6 +320,7 @@ export async function createSupplierPlanPurchaseOrdersAction(
         continue;
       }
 
+      const attemptStartedAt = new Date().toISOString();
       try {
         const result = await createPurchaseOrder(creds, {
           supplierName: group.supplierName,
@@ -294,33 +346,45 @@ export async function createSupplierPlanPurchaseOrdersAction(
         // Mark the idempotency claim completed with the real PO's identity, so
         // a resubmit inside the window returns THIS PO rather than duplicating.
         await settlePoCreation(db, orgId, instanceId, idempotencyKey, result.taskId, result.orderNumber);
-
-        // Best-effort: this app's own memory of what it just created, so
-        // Supplier Planner can flag these exact lines as "already ordered,
-        // pending authorization" next time it loads (see
-        // loadPendingPurchaseOrders above). A failure here shouldn't
-        // undermine the fact that a real PO now exists in Cin7.
-        const { error: recordError } = await db.from("supplier_plan_created_po_lines").insert(
-          group.lines.map((l) => ({
-            org_id: orgId,
-            instance_id: instanceId,
-            cin7_purchase_id: result.taskId,
-            order_number: result.orderNumber,
-            supplier_id: group.supplierId,
-            location_id: group.locationId,
-            product_sku: l.productSku,
-          }))
-        );
-        if (recordError) console.error("supplier_plan_created_po_lines insert failed:", recordError.message);
+        await recordCreatedPoLines(result.taskId, result.orderNumber);
       } catch (e) {
-        // The create failed — release the claim so an immediate retry isn't
-        // blocked for the whole TTL window.
-        await releasePoCreation(db, orgId, instanceId, idempotencyKey);
-        failed.push({
-          supplierName: group.supplierName,
-          locationName: group.locationName,
-          error: e instanceof Error ? e.message : "Unknown error",
-        });
+        // Security re-audit P0-2: an ambiguous failure (network error on a
+        // nonIdempotentCreate call — see cin7/http.ts) means we don't know if
+        // Cin7 actually committed this PO. Releasing the claim here could let
+        // an immediate retry create a genuine duplicate, so instead we try to
+        // find the PO by a stable reference before deciding.
+        if (e instanceof Cin7ApiError && e.ambiguous) {
+          await markPoCreationAmbiguous(db, orgId, instanceId, idempotencyKey);
+          const found = await findLikelyCreatedPurchaseOrder(creds, group.supplierId, attemptStartedAt).catch(() => null);
+          if (found) {
+            await settlePoCreation(db, orgId, instanceId, idempotencyKey, found.cin7PurchaseId, found.orderNumber);
+            created.push({
+              supplierName: group.supplierName,
+              locationName: group.locationName,
+              orderNumber: found.orderNumber ?? found.cin7PurchaseId,
+              status: "DRAFT",
+              lineCount: group.lines.length,
+            });
+            await recordCreatedPoLines(found.cin7PurchaseId, found.orderNumber);
+          } else {
+            failed.push({
+              supplierName: group.supplierName,
+              locationName: group.locationName,
+              error:
+                "Connection was lost while creating this PO in Cin7 and we couldn't yet confirm whether it was created. Check Cin7 directly, or try again in a few minutes.",
+            });
+          }
+        } else {
+          // A definite failure (Cin7 responded and declined, or a client-side
+          // error) — release the claim so an immediate retry isn't blocked
+          // for the whole TTL window.
+          await releasePoCreation(db, orgId, instanceId, idempotencyKey);
+          failed.push({
+            supplierName: group.supplierName,
+            locationName: group.locationName,
+            error: e instanceof Error ? e.message : "Unknown error",
+          });
+        }
       }
     }
 

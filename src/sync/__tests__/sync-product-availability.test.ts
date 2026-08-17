@@ -9,35 +9,28 @@ vi.mock("@/cin7/product-availability", () => ({ fetchAllProductAvailability: vi.
 
 const creds = { accountId: "a", applicationKey: "k", baseUrl: "https://example.test" };
 
+/**
+ * Security re-audit P0-7: syncInstanceProductAvailability now calls the
+ * atomic replace_product_availability RPC (migration 0074) instead of a
+ * separate delete + insert — this fake db mocks .rpc() accordingly. The
+ * RPC's own atomicity (a failure rolls back the delete too, preserving the
+ * previous snapshot) is proven live against production, not by this unit
+ * test — see PROJECT-NOTES.md / the PR description for that evidence. What
+ * this file still covers: the exact args passed to the RPC (org/instance
+ * scoping, Cin7-field-to-row-shape mapping) and per-instance failure
+ * isolation in syncOrgProductAvailability.
+ */
 function makeFakeDb() {
-  const calls: { table: string; op: string; args: unknown[] }[] = [];
+  const rpcCalls: { fn: string; args: Record<string, unknown> }[] = [];
 
   const db = {
-    from: (table: string) => {
-      if (table === "product_availability") {
-        return {
-          delete: () => {
-            calls.push({ table, op: "delete", args: [] });
-            const chainObj: Record<string, unknown> = {
-              eq: (...args: unknown[]) => {
-                calls.push({ table, op: "eq", args });
-                return chainObj;
-              },
-              then: (resolve: (v: unknown) => void) => resolve({ error: null }),
-            };
-            return chainObj;
-          },
-          insert: (rows: unknown) => {
-            calls.push({ table, op: "insert", args: [rows] });
-            return Promise.resolve({ error: null });
-          },
-        };
-      }
-      throw new Error(`Unhandled table in fake db: ${table}`);
+    rpc: (fn: string, args: Record<string, unknown>) => {
+      rpcCalls.push({ fn, args });
+      return Promise.resolve({ error: null });
     },
   };
 
-  return { db: db as unknown as SupabaseClient, calls };
+  return { db: db as unknown as SupabaseClient, rpcCalls };
 }
 
 beforeEach(() => {
@@ -46,29 +39,16 @@ beforeEach(() => {
 });
 
 describe("syncInstanceProductAvailability", () => {
-  it("deletes the instance's prior snapshot before inserting the fresh one", async () => {
+  it("calls replace_product_availability scoped to this org and instance", async () => {
     vi.mocked(fetchAllProductAvailability).mockResolvedValue([{ ID: "1", SKU: "SKU-1", Name: "Widget", Location: "Main", OnHand: 5, Available: 5 }]);
-    const { db, calls } = makeFakeDb();
+    const { db, rpcCalls } = makeFakeDb();
 
     await syncInstanceProductAvailability(db, "org1", "inst-1");
 
-    const relevant = calls.filter((c) => c.table === "product_availability");
-    const deleteIndex = relevant.findIndex((c) => c.op === "delete");
-    const insertIndex = relevant.findIndex((c) => c.op === "insert");
-    expect(deleteIndex).toBeGreaterThanOrEqual(0);
-    expect(insertIndex).toBeGreaterThan(deleteIndex);
-  });
-
-  it("scopes the delete to this org and instance", async () => {
-    const { db, calls } = makeFakeDb();
-    await syncInstanceProductAvailability(db, "org1", "inst-1");
-    const eqCalls = calls.filter((c) => c.table === "product_availability" && c.op === "eq");
-    expect(eqCalls).toEqual(
-      expect.arrayContaining([
-        { table: "product_availability", op: "eq", args: ["org_id", "org1"] },
-        { table: "product_availability", op: "eq", args: ["instance_id", "inst-1"] },
-      ])
-    );
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0].fn).toBe("replace_product_availability");
+    expect(rpcCalls[0].args.p_org_id).toBe("org1");
+    expect(rpcCalls[0].args.p_instance_id).toBe("inst-1");
   });
 
   it("maps Cin7 fields onto the row shape, including OnHand -> on_hand and StockOnHand -> stock_value", async () => {
@@ -90,12 +70,11 @@ describe("syncInstanceProductAvailability", () => {
         NextDeliveryDate: "2026-01-12T00:00:00",
       },
     ]);
-    const { db, calls } = makeFakeDb();
+    const { db, rpcCalls } = makeFakeDb();
 
     await syncInstanceProductAvailability(db, "org1", "inst-1");
 
-    const insertCall = calls.find((c) => c.table === "product_availability" && c.op === "insert");
-    const rows = insertCall?.args[0] as Record<string, unknown>[];
+    const rows = rpcCalls[0].args.p_rows as Record<string, unknown>[];
     expect(rows[0]).toMatchObject({
       product_sku: "SKU-1",
       product_name: "Widget",
@@ -111,15 +90,15 @@ describe("syncInstanceProductAvailability", () => {
     });
   });
 
-  it("still deletes the prior snapshot but skips inserting when the live list is empty", async () => {
+  it("still calls the RPC (with an empty row array) even when the live list is empty — the RPC's own delete still needs to run to clear a stale snapshot", async () => {
     vi.mocked(fetchAllProductAvailability).mockResolvedValue([]);
-    const { db, calls } = makeFakeDb();
+    const { db, rpcCalls } = makeFakeDb();
 
     const summary = await syncInstanceProductAvailability(db, "org1", "inst-1");
 
     expect(summary.rowsSynced).toBe(0);
-    expect(calls.find((c) => c.table === "product_availability" && c.op === "delete")).toBeDefined();
-    expect(calls.find((c) => c.table === "product_availability" && c.op === "insert")).toBeUndefined();
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0].args.p_rows).toEqual([]);
   });
 });
 
@@ -137,8 +116,9 @@ describe("syncOrgProductAvailability", () => {
             select: () => ({ eq: () => ({ then: (resolve: (v: unknown) => void) => resolve({ data: instances, error: null }) }) }),
           };
         }
-        return productDb.from(table);
+        throw new Error(`Unhandled table in fake db: ${table}`);
       },
+      rpc: productDb.rpc,
     } as unknown as SupabaseClient;
 
     vi.mocked(loadCin7Credentials).mockRejectedValueOnce(new Error("Instance not found")).mockResolvedValueOnce({ ...creds, name: "OK" });

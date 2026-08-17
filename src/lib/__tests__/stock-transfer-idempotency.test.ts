@@ -4,8 +4,16 @@ import {
   claimStockTransferCreation,
   settleStockTransferCreation,
   releaseStockTransferCreation,
+  markStockTransferCreationAmbiguous,
+  findLikelyCreatedStockTransfer,
   STOCK_TRANSFER_CLAIM_TTL_SECONDS,
 } from "@/lib/stock-transfer-idempotency";
+import { fetchAllStockTransfersList } from "@/cin7/stock-transfers";
+
+vi.mock("@/cin7/stock-transfers", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/cin7/stock-transfers")>();
+  return { ...actual, fetchAllStockTransfersList: vi.fn() };
+});
 
 describe("stockTransferIdempotencyKey", () => {
   const lines = [
@@ -100,5 +108,47 @@ describe("settle / release", () => {
     await releaseStockTransferCreation(db, "org", "inst", "key");
     expect(del).toHaveBeenCalled();
     expect(eq).toHaveBeenCalledWith("status", "pending");
+  });
+
+  it("markStockTransferCreationAmbiguous updates (not deletes) a pending claim to ambiguous — security re-audit P0-2", async () => {
+    const update = vi.fn().mockReturnThis();
+    const eq = vi.fn().mockReturnThis();
+    const chain = { update, eq, then: (r: (v: { error: null }) => void) => r({ error: null }) };
+    update.mockReturnValue(chain);
+    eq.mockReturnValue(chain);
+    const db = makeDb(vi.fn(), chain);
+    await markStockTransferCreationAmbiguous(db, "org", "inst", "key");
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ status: "ambiguous" }));
+    expect(eq).toHaveBeenCalledWith("status", "pending");
+  });
+});
+
+describe("findLikelyCreatedStockTransfer — security re-audit P0-2 reconciliation", () => {
+  const creds = { accountId: "a", applicationKey: "k", baseUrl: "https://example.test" };
+
+  beforeEach(() => vi.mocked(fetchAllStockTransfersList).mockReset());
+
+  it("returns the newest matching DRAFT transfer on the exact from/to pair, modified since the attempt started", async () => {
+    vi.mocked(fetchAllStockTransfersList).mockResolvedValue([
+      { TaskID: "st-old", FromLocation: "A", ToLocation: "B", Status: "DRAFT", LastModifiedOn: "2026-08-17T09:00:00Z" },
+      { TaskID: "st-new", FromLocation: "A", ToLocation: "B", Status: "DRAFT", LastModifiedOn: "2026-08-17T09:05:00Z", Number: "ST-0099" },
+      { TaskID: "st-other-route", FromLocation: "A", ToLocation: "C", Status: "DRAFT", LastModifiedOn: "2026-08-17T09:06:00Z" },
+    ]);
+
+    const found = await findLikelyCreatedStockTransfer(creds, "A", "B", "2026-08-17T08:55:00Z");
+
+    expect(found).toEqual({ cin7TransferId: "st-new", transferNumber: "ST-0099" });
+  });
+
+  it("ignores a match modified before the ambiguous attempt started (a pre-existing, unrelated transfer)", async () => {
+    vi.mocked(fetchAllStockTransfersList).mockResolvedValue([
+      { TaskID: "st-stale", FromLocation: "A", ToLocation: "B", Status: "DRAFT", LastModifiedOn: "2026-08-17T08:00:00Z" },
+    ]);
+    expect(await findLikelyCreatedStockTransfer(creds, "A", "B", "2026-08-17T08:55:00Z")).toBeNull();
+  });
+
+  it("returns null when nothing matches", async () => {
+    vi.mocked(fetchAllStockTransfersList).mockResolvedValue([]);
+    expect(await findLikelyCreatedStockTransfer(creds, "A", "B", "2026-08-17T08:55:00Z")).toBeNull();
   });
 });

@@ -3,6 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { encrypt, decrypt } from "@/cin7/crypto";
 import { testConnection } from "@/cin7/client";
+import { CIN7_API_ORIGIN } from "@/cin7/api-origin";
 import { findProductWithBom, probeWorkCentrePaths, findCustomerAndSupplierExamples, checkCustomerReferenceFields, checkSupplierReferenceFields, findCustomerRawByName, findAccountsByCodes, checkSaleStatuses, findFinishedGoodsExample, surveyFinishedGoodsFields, surveyCostBasisFields, surveyProductionBomFields, surveyProductionBomForSkus, surveyProductionOrderDetail, surveyProductionOrderRoutingTasks, surveyProductionOrderOperationStatus, surveyProductionRun, surveyProductionOrderStatuses, surveyPurchaseDetailFields, surveyProductAvailabilityFields, surveySaleFulfillmentFields, surveyBackorderEtaFields, testSaleShipByWriteBack, testProductSupplierLink, surveyProductSupplierOptionsFields, findProductSupplierOptionsExample, testCreatePurchaseOrder, checkProductAvailabilityForSkus, checkProductSupplierOptionsForUnparsedFields, probeUpdatedSinceFiltering } from "@/cin7/debug";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
@@ -15,7 +16,6 @@ export interface InstanceRecord {
   id: string;
   name: string;
   accountId: string;
-  baseUrl: string;
   active: boolean;
   keyLast4: string;
   createdAt: string;
@@ -34,7 +34,6 @@ async function toRecord(row: {
   name: string;
   account_id: string;
   application_key_encrypted: string;
-  base_url: string;
   active: boolean;
   created_at: string;
   fulfilment_view_start_date: string | null;
@@ -50,7 +49,6 @@ async function toRecord(row: {
     id: row.id,
     name: row.name,
     accountId: row.account_id,
-    baseUrl: row.base_url,
     active: row.active,
     keyLast4,
     createdAt: row.created_at,
@@ -63,9 +61,12 @@ export async function listInstances(): Promise<ActionResult> {
     // Instance config carries Account IDs + key metadata — owner/admin only.
     const { orgId } = await requireOrgAdmin("view Cin7 instance configuration");
     const db = createServiceRoleClient();
+    // Security re-audit P0-1: base_url deliberately not selected — nothing
+    // in this file needs it anymore, and it stays out of the InstanceRecord
+    // handed to the client.
     const { data, error } = await db
       .from("cin7_instances")
-      .select("id, name, account_id, application_key_encrypted, base_url, active, created_at, fulfilment_view_start_date")
+      .select("id, name, account_id, application_key_encrypted, active, created_at, fulfilment_view_start_date")
       .eq("org_id", orgId)
       .order("created_at");
     if (error) return { ok: false, error: error.message };
@@ -81,7 +82,6 @@ export async function upsertInstance(params: {
   name: string;
   accountId: string;
   applicationKey?: string;
-  baseUrl: string;
   active: boolean;
   /** "" clears the floor (no restriction); omitted on create defaults to no floor. */
   fulfilmentViewStartDate?: string;
@@ -98,10 +98,11 @@ export async function upsertInstance(params: {
     const db = createServiceRoleClient();
 
     if (params.instanceId) {
+      // Security re-audit P0-1: base_url is intentionally never written here
+      // anymore — see the insert branch's comment below.
       const update: Record<string, unknown> = {
         name: params.name.trim(),
         account_id: params.accountId.trim(),
-        base_url: params.baseUrl.trim(),
         active: params.active,
         fulfilment_view_start_date: params.fulfilmentViewStartDate?.trim() || null,
         updated_at: new Date().toISOString(),
@@ -134,7 +135,12 @@ export async function upsertInstance(params: {
         name: params.name.trim(),
         account_id: params.accountId.trim(),
         application_key_encrypted: encrypt(params.applicationKey!),
-        base_url: params.baseUrl.trim() || "https://inventory.dearsystems.com/ExternalApi/v2",
+        // Security re-audit P0-1: base_url used to be a free-text field an
+        // org admin could edit — every credential-bearing call ignores it
+        // regardless (see cin7/api-origin.ts's CIN7_API_ORIGIN), so an
+        // editable value was pure attack surface with no real effect.
+        // Always the canonical origin now; there is no UI to change it.
+        base_url: CIN7_API_ORIGIN,
         active: params.active,
       });
       if (error) return { ok: false, error: error.message };
@@ -154,11 +160,18 @@ export interface TestConnectionResult {
 async function loadInstanceCreds(instanceId: string) {
   // Chokepoint for every diagnostic below: loading decrypted creds + running live Cin7
   // calls is owner/admin only. testInstanceConnection and all debug* actions go through here.
+  //
+  // Security re-audit P0-1: this used to select+return the DB-stored, user-editable
+  // base_url and hand it straight to raw-fetch diagnostic helpers (cin7/client.ts,
+  // cin7/debug.ts) — a stored base_url could redirect these credential-bearing
+  // calls off Cin7 entirely. Mirrors loadCin7Credentials' (cin7/load-credentials.ts)
+  // already-safe pattern: never select base_url at all, always hand back the
+  // canonical, hardcoded origin.
   const { orgId } = await requireOrgAdmin("run Cin7 instance diagnostics");
   const db = createServiceRoleClient();
   const { data, error } = await db
     .from("cin7_instances")
-    .select("account_id, application_key_encrypted, base_url")
+    .select("account_id, application_key_encrypted")
     .eq("id", instanceId)
     .eq("org_id", orgId)
     .single();
@@ -166,7 +179,7 @@ async function loadInstanceCreds(instanceId: string) {
   return {
     accountId: data.account_id,
     applicationKey: decrypt(data.application_key_encrypted),
-    baseUrl: data.base_url,
+    baseUrl: CIN7_API_ORIGIN,
   };
 }
 

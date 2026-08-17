@@ -1,5 +1,5 @@
 import type { Cin7Credentials } from "@/cin7/types";
-import { cin7Request, Cin7ApiError } from "@/cin7/http";
+import { cin7Request, cin7RawRequest, Cin7ApiError } from "@/cin7/http";
 import {
   accountExists,
   companyContactExists,
@@ -49,21 +49,8 @@ export async function probeWorkCentrePaths(creds: Cin7Credentials): Promise<Path
 
   const results: PathProbeResult[] = [];
   for (const path of candidates) {
-    const url = new URL(`${creds.baseUrl.replace(/\/$/, "")}${path}`);
-    url.searchParams.set("Page", "1");
-    url.searchParams.set("Limit", "100");
-    url.searchParams.set("Name", "");
-
     try {
-      const response = await fetch(url.toString(), {
-        method: "GET",
-        headers: {
-          "api-auth-accountid": creds.accountId,
-          "api-auth-applicationkey": creds.applicationKey,
-          Accept: "application/json",
-        },
-      });
-      const text = await response.text();
+      const { status, text } = await cin7RawRequest(creds, path, { Page: "1", Limit: "100", Name: "" });
       let looksLikeJson = false;
       try {
         JSON.parse(text);
@@ -71,7 +58,7 @@ export async function probeWorkCentrePaths(creds: Cin7Credentials): Promise<Path
       } catch {
         looksLikeJson = false;
       }
-      results.push({ path, status: response.status, looksLikeJson, snippet: text.slice(0, 150) });
+      results.push({ path, status, looksLikeJson, snippet: text.slice(0, 150) });
     } catch (e) {
       results.push({ path, status: 0, looksLikeJson: false, snippet: e instanceof Error ? e.message : "network error" });
     }
@@ -1020,19 +1007,11 @@ export async function surveyProductionOrderOperationStatus(creds: Cin7Credential
     if (sampleOperationId) {
       for (const path of OPERATION_PATH_CANDIDATES) {
         const attempt = `GET ${path}?OperationID=...`;
-        const url = new URL(`${creds.baseUrl.replace(/\/$/, "")}${path}`);
-        url.searchParams.set("OperationID", sampleOperationId);
-        url.searchParams.set("ProductionOrderID", productionOrderId);
         try {
-          const response = await fetch(url.toString(), {
-            method: "GET",
-            headers: {
-              "api-auth-accountid": creds.accountId,
-              "api-auth-applicationkey": creds.applicationKey,
-              Accept: "application/json",
-            },
+          const { status, text } = await cin7RawRequest(creds, path, {
+            OperationID: sampleOperationId,
+            ProductionOrderID: productionOrderId,
           });
-          const text = await response.text();
           let looksLikeJson = false;
           try {
             JSON.parse(text);
@@ -1040,7 +1019,7 @@ export async function surveyProductionOrderOperationStatus(creds: Cin7Credential
           } catch {
             looksLikeJson = false;
           }
-          probes.push({ attempt, status: response.status, looksLikeJson, snippet: text.slice(0, 300) });
+          probes.push({ attempt, status, looksLikeJson, snippet: text.slice(0, 300) });
         } catch (e) {
           probes.push({ attempt, status: 0, looksLikeJson: false, error: e instanceof Error ? e.message : "network error" });
         }
@@ -1812,19 +1791,8 @@ export async function surveyProductSupplierOptionsFields(creds: Cin7Credentials)
 
   const pathProbes: ProductSupplierOptionsPathProbe[] = [];
   for (const path of pathCandidates) {
-    const url = new URL(`${creds.baseUrl.replace(/\/$/, "")}${path}`);
-    url.searchParams.set("Page", "1");
-    url.searchParams.set("Limit", "100");
     try {
-      const response = await fetch(url.toString(), {
-        method: "GET",
-        headers: {
-          "api-auth-accountid": creds.accountId,
-          "api-auth-applicationkey": creds.applicationKey,
-          Accept: "application/json",
-        },
-      });
-      const text = await response.text();
+      const { status, text } = await cin7RawRequest(creds, path, { Page: "1", Limit: "100" });
       let looksLikeJson = false;
       try {
         JSON.parse(text);
@@ -1832,7 +1800,7 @@ export async function surveyProductSupplierOptionsFields(creds: Cin7Credentials)
       } catch {
         looksLikeJson = false;
       }
-      pathProbes.push({ path, status: response.status, looksLikeJson, snippet: text.slice(0, 200) });
+      pathProbes.push({ path, status, looksLikeJson, snippet: text.slice(0, 200) });
     } catch (e) {
       pathProbes.push({ path, status: 0, looksLikeJson: false, snippet: e instanceof Error ? e.message : "network error" });
     }

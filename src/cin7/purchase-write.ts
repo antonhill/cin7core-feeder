@@ -45,8 +45,13 @@ export interface CreatePurchaseOrderResult {
  * authorizes in Cin7, never something this feature force-executes.
  */
 export async function createPurchaseOrder(creds: Cin7Credentials, input: CreatePurchaseOrderInput): Promise<CreatePurchaseOrderResult> {
+  // Security re-audit P0-2: both calls create real Cin7 records with no
+  // client-supplied reference to reconcile against later, so a network
+  // failure here must never trigger an automatic resend — see
+  // Cin7RequestOptions.nonIdempotentCreate in cin7/http.ts.
   const header = await cin7Request<{ ID: string; OrderNumber: string; Status: string }>(creds, "/purchase", {
     method: "POST",
+    nonIdempotentCreate: true,
     body: {
       Status: "DRAFT",
       Supplier: input.supplierName,
@@ -59,6 +64,7 @@ export async function createPurchaseOrder(creds: Cin7Credentials, input: CreateP
 
   const orderLines = await cin7Request<{ Lines?: unknown[] }>(creds, "/purchase/order", {
     method: "POST",
+    nonIdempotentCreate: true,
     body: {
       TaskID: header.ID,
       CombineAdditionalCharges: false,

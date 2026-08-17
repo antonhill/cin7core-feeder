@@ -5,6 +5,7 @@ import { syncOrgInstances } from "@/sync/sync-org";
 import { getLastImportKeys } from "@/import/last-batch";
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
+import { requireWriteAllowed } from "@/lib/billing";
 import { claimJobLock, releaseJobLock } from "@/lib/job-lock";
 
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: vi.fn() }));
@@ -199,6 +200,24 @@ describe("continuePushJobAction", () => {
 
     expect(syncOrgInstances).toHaveBeenLastCalledWith(db, "org1", ["inst-1"], expect.anything(), expect.anything(), expect.any(Number));
     expect(next.status).toBe("done");
+  });
+
+  it("security re-audit P1-3-class fix: re-checks requireWriteAllowed on every chunk, not just at job creation, and never calls syncOrgInstances if it now rejects", async () => {
+    const { db } = createFakePushJobsDb();
+    vi.mocked(createServiceRoleClient).mockReturnValue(db);
+    vi.mocked(syncOrgInstances).mockResolvedValueOnce([outcome({ truncated: true })]);
+
+    const start = await startPushJobAction(["inst-1"]);
+    expect(start.status).toBe("running");
+    expect(requireWriteAllowed).toHaveBeenCalledWith("org1");
+
+    // Billing lapses between chunks (e.g. subscription cancelled mid-push).
+    vi.mocked(requireWriteAllowed).mockRejectedValueOnce(new Error("Your subscription isn't active — subscribe to write changes back to Cin7."));
+    vi.mocked(syncOrgInstances).mockClear();
+    const next = await continuePushJobAction(start.jobId!);
+
+    expect(next.ok).toBe(false);
+    expect(syncOrgInstances).not.toHaveBeenCalled();
   });
 });
 

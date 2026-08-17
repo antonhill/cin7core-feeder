@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Cin7ApiError, cin7Request, __resetRateLimiterForTests } from "@/cin7/http";
+import { Cin7ApiError, cin7Request, cin7RawRequest, __resetRateLimiterForTests } from "@/cin7/http";
 
 import { CIN7_API_ORIGIN } from "@/cin7/api-origin";
 
@@ -170,6 +170,74 @@ describe("cin7Request", () => {
     await expect(promise).rejects.toMatchObject({ message: expect.stringContaining("ECONNRESET") });
   });
 
+  describe("security re-audit P0-2: nonIdempotentCreate — no automatic resend after an ambiguous network failure", () => {
+    it("throws immediately (no retry) and marks the error ambiguous, on the very first network failure", async () => {
+      const fn = vi.fn(async () => {
+        throw new Error("fetch failed");
+      });
+      vi.stubGlobal("fetch", fn);
+
+      await expect(cin7Request(creds, "/purchase", { method: "POST", nonIdempotentCreate: true })).rejects.toMatchObject({
+        ambiguous: true,
+        retryable: false,
+      });
+      // No sleep/backoff needed to observe this — it must never have looped.
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+
+    it("does NOT mark a definite rejection (Cin7 responded and declined) as ambiguous", async () => {
+      mockFetchSequence([() => new Response("SKU is required", { status: 400 })]);
+
+      await expect(cin7Request(creds, "/purchase", { method: "POST", nonIdempotentCreate: true })).rejects.toMatchObject({
+        status: 400,
+        ambiguous: false,
+      });
+    });
+
+    it("still retries a 503 normally — a rate-limit response is a definite rejection, not an ambiguous one", async () => {
+      vi.useFakeTimers();
+      const fn = mockFetchSequence([
+        () => new Response("", { status: 503 }),
+        () => new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      ]);
+
+      const promise = cin7Request(creds, "/purchase", { method: "POST", nonIdempotentCreate: true });
+      await vi.runAllTimersAsync();
+      const result = await promise;
+
+      expect(result).toEqual({ ok: true });
+      expect(fn).toHaveBeenCalledTimes(2);
+    });
+
+    it("a PUT/idempotent call (nonIdempotentCreate omitted) keeps retrying network errors exactly as before — markSaleShipped-style POST calls that AREN'T opted in also keep the old behavior", async () => {
+      const fn = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      vi.stubGlobal("fetch", fn);
+      // No nonIdempotentCreate here — default retry behavior, proven by the
+      // pre-existing "retries a raw network error" test above; this just
+      // confirms a POST without the flag doesn't get the ambiguous treatment.
+      await expect(cin7Request(creds, "/sale/fulfilment/ship", { method: "POST" })).resolves.toEqual({ ok: true });
+    });
+  });
+
+  describe("security re-audit P0-1/P0-4: maxRetries and timeoutMs overrides", () => {
+    it("maxRetries: 0 gives up after a single attempt instead of the default 6 retries", async () => {
+      const fn = vi.fn(async () => {
+        throw new Error("fetch failed");
+      });
+      vi.stubGlobal("fetch", fn);
+
+      await expect(cin7Request(creds, "/Product", { maxRetries: 0 })).rejects.toBeInstanceOf(Cin7ApiError);
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+
+    it("attaches an AbortSignal timeout to every fetch call", async () => {
+      const fn = mockFetchSequence([() => new Response(JSON.stringify({ ok: true }), { status: 200 })]);
+      await cin7Request(creds, "/Product");
+      const [, init] = fn.mock.calls[0];
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+    });
+  });
+
   it("names the method/path when a 200 response isn't valid JSON (usually a wrong path)", async () => {
     mockFetchSequence([() => new Response("<!DOCTYPE html><html>...</html>", { status: 200 })]);
 
@@ -248,5 +316,46 @@ describe("cin7Request", () => {
 
       await Promise.all(promises);
     });
+  });
+});
+
+describe("cin7RawRequest — security re-audit P0-1's one sanctioned raw-fetch escape hatch", () => {
+  it("goes through the canonical origin and standard headers, returning the raw status/text instead of parsing or throwing", async () => {
+    const fn = mockFetchSequence([() => new Response("<html>not found</html>", { status: 200 })]);
+
+    const result = await cin7RawRequest(creds, "/production/workcenters", { Page: "1", Limit: "100" });
+
+    expect(result).toEqual({ status: 200, text: "<html>not found</html>" });
+    const [url, init] = fn.mock.calls[0];
+    // Canonical origin, NOT creds.baseUrl — same SSRF fix as cin7Request.
+    expect(String(url)).toBe(`${CIN7_API_ORIGIN}/production/workcenters?Page=1&Limit=100`);
+    expect(init?.redirect).toBe("manual");
+    const headers = init?.headers as Record<string, string>;
+    expect(headers["api-auth-accountid"]).toBe("acct-1");
+    expect(headers["api-auth-applicationkey"]).toBe("key-1");
+  });
+
+  it("returns a non-2xx status as data, not a throw — the caller decides what a 404/500 means", async () => {
+    mockFetchSequence([() => new Response("server error", { status: 500 })]);
+    const result = await cin7RawRequest(creds, "/some/candidate/path");
+    expect(result).toEqual({ status: 500, text: "server error" });
+  });
+
+  it("reports status 0 (not the redirect status) on an unfollowed redirect — never leaks credentials off-origin", async () => {
+    const fn = vi.fn(async () => {
+      const r = new Response(null, { status: 302 });
+      Object.defineProperty(r, "type", { value: "opaqueredirect" });
+      return r;
+    });
+    vi.stubGlobal("fetch", fn);
+    const result = await cin7RawRequest(creds, "/some/path");
+    expect(result.status).toBe(0);
+  });
+
+  it("does not retry or throttle — a single bare attempt, since diagnostic probes pace themselves", async () => {
+    const fn = mockFetchSequence([() => new Response("boom", { status: 503 })]);
+    const result = await cin7RawRequest(creds, "/some/path");
+    expect(result).toEqual({ status: 503, text: "boom" });
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });

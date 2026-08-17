@@ -2,6 +2,7 @@
 
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
+import { requireWriteAllowed } from "@/lib/billing";
 import { REPORTS_MODULE } from "@/app/module-nav";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { updateSaleShipBy, fetchCarriers, markSaleShipped, type MarkShippedInput } from "@/cin7/sales";
@@ -54,6 +55,12 @@ export async function loadShippingCalendarOrdersAction(filters: OrderFulfillment
 export async function updateOrderShipByAction(instanceId: string, saleId: string, shipBy: string): Promise<ShippingCalendarActionResult<void>> {
   try {
     const { orgId, email } = await requireModuleAccess(REPORTS_MODULE.href);
+    // Security re-audit P1-3: this writes to Cin7 (updateSaleShipBy below) —
+    // requireModuleAccess alone only checks module visibility, not the org's
+    // billing plan. Same requireWriteAllowed(orgId) gate every other
+    // Cin7-writing action in this app already uses (e.g.
+    // src/app/supplier-planner/actions.ts, src/app/audit/actions.ts).
+    await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
 
@@ -129,6 +136,9 @@ export async function markOrderShippedAction(
 ): Promise<ShippingCalendarActionResult<MarkOrderShippedResult>> {
   try {
     const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
+    // Security re-audit P1-3: this writes to Cin7 (markSaleShipped below) —
+    // same billing-plan gate every other Cin7-writing action uses.
+    await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     await markSaleShipped(creds, saleId, input);

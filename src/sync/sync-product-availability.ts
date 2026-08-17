@@ -20,41 +20,41 @@ function toDateOnly(value: string | null | undefined): string | null {
  * by a stable Cin7 ID. Product Availability is a live snapshot: a
  * location/bin/batch row simply stops being returned once its stock hits
  * zero-with-no-allocation, so there's no ID to upsert against and no
- * "deleted" signal to react to. Deletes every row for this
- * (org_id, instance_id) BEFORE inserting the fresh snapshot — in that
- * order, so a mid-run failure can't leave duplicate stale+fresh rows (a
- * failure after delete but before insert just leaves this instance's data
- * empty until the next successful run, which is the safer failure mode).
+ * "deleted" signal to react to.
+ *
+ * Security re-audit P0-7: the delete+insert used to be two separate
+ * PostgREST requests — a failure between them left this instance's data
+ * EMPTY, not "keeps the last good snapshot" as the old comment here
+ * (wrongly) claimed. `replace_product_availability` (migration 0074) wraps
+ * both in one Postgres function, so it's one transaction: a failure at any
+ * point (including partway through the insert) rolls back the delete too,
+ * genuinely preserving the previous snapshot — confirmed live 2026-08-17
+ * against a real 3,844-row instance (a deliberately malformed row aborted
+ * the call and the count came back unchanged, not empty).
  */
 export async function syncInstanceProductAvailability(db: SupabaseClient, orgId: string, instanceId: string): Promise<ProductAvailabilitySyncSummary> {
   const creds = await loadCin7Credentials(db, orgId, instanceId);
   const entries = await fetchAllProductAvailability(creds);
 
-  const { error: deleteError } = await db.from("product_availability").delete().eq("org_id", orgId).eq("instance_id", instanceId);
-  if (deleteError) throw new Error(`product_availability delete: ${deleteError.message}`);
+  const rows = entries.map((e) => ({
+    product_sku: e.SKU ?? null,
+    product_name: e.Name ?? null,
+    location: e.Location ?? null,
+    bin: e.Bin ?? null,
+    batch_sn: e.Batch ?? null,
+    expiry_date: toDateOnly(e.ExpiryDate),
+    on_hand: e.OnHand ?? null,
+    available: e.Available ?? null,
+    on_order: e.OnOrder ?? null,
+    in_transit: e.InTransit ?? null,
+    allocated: e.Allocated ?? null,
+    stock_value: e.StockOnHand ?? null,
+    next_delivery_date: toDateOnly(e.NextDeliveryDate),
+    synced_at: new Date().toISOString(),
+  }));
 
-  if (entries.length) {
-    const rows = entries.map((e) => ({
-      org_id: orgId,
-      instance_id: instanceId,
-      product_sku: e.SKU ?? null,
-      product_name: e.Name ?? null,
-      location: e.Location ?? null,
-      bin: e.Bin ?? null,
-      batch_sn: e.Batch ?? null,
-      expiry_date: toDateOnly(e.ExpiryDate),
-      on_hand: e.OnHand ?? null,
-      available: e.Available ?? null,
-      on_order: e.OnOrder ?? null,
-      in_transit: e.InTransit ?? null,
-      allocated: e.Allocated ?? null,
-      stock_value: e.StockOnHand ?? null,
-      next_delivery_date: toDateOnly(e.NextDeliveryDate),
-      synced_at: new Date().toISOString(),
-    }));
-    const { error: insertError } = await db.from("product_availability").insert(rows);
-    if (insertError) throw new Error(`product_availability insert: ${insertError.message}`);
-  }
+  const { error } = await db.rpc("replace_product_availability", { p_org_id: orgId, p_instance_id: instanceId, p_rows: rows });
+  if (error) throw new Error(`replace_product_availability: ${error.message}`);
 
   return { instanceId, rowsSynced: entries.length };
 }
@@ -62,11 +62,10 @@ export async function syncInstanceProductAvailability(db: SupabaseClient, orgId:
 /**
  * Syncs stock levels for active instances — every one for the org, or just
  * the given subset. Per-instance failures are caught so one bad instance
- * doesn't stop others (same as syncOrgAssemblyBuilds/syncOrgPurchases) —
- * critically, a failure here must NOT touch product_availability at all for
- * that instance (the delete+insert already happened or didn't; there's no
- * partial state to clean up), so a failed instance simply keeps its last
- * good snapshot until the next successful run.
+ * doesn't stop others (same as syncOrgAssemblyBuilds/syncOrgPurchases) — a
+ * failed instance genuinely keeps its last good snapshot until the next
+ * successful run, since replace_product_availability's single-transaction
+ * atomicity means there's no partial state to clean up.
  *
  * Route lock (Phase 3.3a): reachable from this route's own cron tick,
  * on-demand POST, AND several report pages' direct "sync now" actions

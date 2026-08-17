@@ -116,10 +116,22 @@ async function syncPurchasesList(db: SupabaseClient, orgId: string, instanceId: 
 /**
  * Phase 2: for purchases queued by phase 1, fetches actual received-stock
  * lines one at a time (rate-limited by the shared cin7Request throttle),
- * capped at DETAIL_FETCH_BATCH_SIZE per run. Replaces (delete + reinsert) a
- * purchase's receipt lines wholesale on each (re-)fetch rather than diffing
- * — a re-synced purchase's receiving history can genuinely add new batches
+ * capped at DETAIL_FETCH_BATCH_SIZE per run. Replaces a purchase's receipt
+ * lines AND order lines wholesale on each (re-)fetch rather than diffing —
+ * a re-synced purchase's receiving history can genuinely add new batches
  * between runs, and there's no cheaper way to reconcile that.
+ *
+ * Security re-audit P0-7: this used to be 4 separate PostgREST requests
+ * (delete+insert receipt lines, delete+insert order lines, update
+ * purchases.detail_synced_at) — a failure partway through (e.g. the
+ * order-lines insert, after the receipt-lines replace already succeeded)
+ * left a mixed fresh/stale state, not the previous clean snapshot.
+ * `replace_purchase_detail` (migration 0074) wraps the whole thing in one
+ * Postgres function/transaction — confirmed live 2026-08-17 that a failure
+ * injected at the order-lines step correctly rolled back the receipt-lines
+ * replace too, leaving the purchase's original lines and detail_synced_at
+ * untouched (so it stays queued for retry, exactly today's intended
+ * failure behavior — just now actually true for the receipt-lines half too).
  */
 async function syncPurchaseDetails(
   db: SupabaseClient,
@@ -143,18 +155,7 @@ async function syncPurchaseDetails(
     try {
       const detail = await fetchPurchaseDetail(creds, row.cin7_purchase_id);
 
-      const { error: deleteError } = await db
-        .from("purchase_receipt_lines")
-        .delete()
-        .eq("org_id", orgId)
-        .eq("instance_id", instanceId)
-        .eq("cin7_purchase_id", row.cin7_purchase_id);
-      if (deleteError) throw new Error(`purchase_receipt_lines delete: ${deleteError.message}`);
-
-      const lineRows = detail.receiptLines.map((line) => ({
-        org_id: orgId,
-        instance_id: instanceId,
-        cin7_purchase_id: row.cin7_purchase_id,
+      const receiptLines = detail.receiptLines.map((line) => ({
         card_id: line.cardId,
         product_sku: line.productSku,
         product_name: line.productName,
@@ -163,40 +164,23 @@ async function syncPurchaseDetails(
         location: line.location,
         location_id: line.locationId,
       }));
-      if (lineRows.length) {
-        const { error: insertError } = await db.from("purchase_receipt_lines").insert(lineRows);
-        if (insertError) throw new Error(`purchase_receipt_lines insert: ${insertError.message}`);
-      }
-
-      const { error: orderLinesDeleteError } = await db
-        .from("purchase_order_lines")
-        .delete()
-        .eq("org_id", orgId)
-        .eq("instance_id", instanceId)
-        .eq("cin7_purchase_id", row.cin7_purchase_id);
-      if (orderLinesDeleteError) throw new Error(`purchase_order_lines delete: ${orderLinesDeleteError.message}`);
-
-      const orderLineRows = detail.orderLines.map((line, i) => ({
-        org_id: orgId,
-        instance_id: instanceId,
-        cin7_purchase_id: row.cin7_purchase_id,
+      const orderLines = detail.orderLines.map((line, i) => ({
         line_number: i,
         product_sku: line.productSku,
         product_name: line.productName,
         quantity: line.quantity,
       }));
-      if (orderLineRows.length) {
-        const { error: orderLinesInsertError } = await db.from("purchase_order_lines").insert(orderLineRows);
-        if (orderLinesInsertError) throw new Error(`purchase_order_lines insert: ${orderLinesInsertError.message}`);
-      }
 
-      const { error: updateError } = await db
-        .from("purchases")
-        .update({ source: detail.source, is_drop_ship: detail.isDropShip, detail_synced_at: new Date().toISOString() })
-        .eq("org_id", orgId)
-        .eq("instance_id", instanceId)
-        .eq("cin7_purchase_id", row.cin7_purchase_id);
-      if (updateError) throw new Error(`purchases update: ${updateError.message}`);
+      const { error } = await db.rpc("replace_purchase_detail", {
+        p_org_id: orgId,
+        p_instance_id: instanceId,
+        p_cin7_purchase_id: row.cin7_purchase_id,
+        p_receipt_lines: receiptLines,
+        p_order_lines: orderLines,
+        p_source: detail.source,
+        p_is_drop_ship: detail.isDropShip,
+      });
+      if (error) throw new Error(`replace_purchase_detail: ${error.message}`);
 
       synced++;
     } catch (e) {

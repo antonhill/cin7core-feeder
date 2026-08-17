@@ -8,7 +8,18 @@ export class Cin7ApiError extends Error {
   constructor(
     public status: number,
     message: string,
-    public retryable: boolean
+    public retryable: boolean,
+    /**
+     * Security re-audit P0-2: true when this was a `nonIdempotentCreate`
+     * request (see below) that failed with a network-level error — Cin7 may
+     * or may not have actually committed the write before the response was
+     * lost, so the caller must NOT blindly retry or release any idempotency
+     * claim it's holding; it needs to reconcile (e.g. look the record up by
+     * a stable reference) first. Always false for every other failure —
+     * a definite rejection (503, 400, a redirect, a non-JSON 200) means
+     * Cin7 told us something, which isn't ambiguous.
+     */
+    public ambiguous: boolean = false
   ) {
     super(message);
     this.name = "Cin7ApiError";
@@ -19,6 +30,34 @@ export interface Cin7RequestOptions {
   method?: "GET" | "POST" | "PUT" | "DELETE";
   body?: unknown;
   query?: Record<string, string | number>;
+  /**
+   * Security re-audit P0-1/P0-4: overrides the default retry ceiling
+   * (MAX_RETRIES) — e.g. 0 for a diagnostic/connectivity check that wants a
+   * single fast attempt and an immediate answer, instead of up to ~2.5
+   * minutes of backoff before the caller ever hears back.
+   */
+  maxRetries?: number;
+  /**
+   * Security re-audit P0-4: per-attempt network deadline in ms, enforced via
+   * `AbortSignal.timeout()` on every fetch — a stalled connection (not a
+   * clean error, just silence) must not hang indefinitely and eat the whole
+   * Vercel invocation's duration budget. Defaults to DEFAULT_TIMEOUT_MS.
+   */
+  timeoutMs?: number;
+  /**
+   * Security re-audit P0-2: set this for a request that CREATES a brand new
+   * financial/inventory document each time it succeeds — a Purchase Order,
+   * a Stock Transfer — where retrying after losing the response risks a
+   * silent duplicate. Deliberately NOT inferred from `method === "POST"`:
+   * Cin7's own API uses POST for some genuinely idempotent calls too (e.g.
+   * marking a sale shipped is a POST but re-sending it after an ambiguous
+   * failure doesn't create a second shipment), so this needs each call
+   * site's own judgment, not a blanket HTTP-verb rule. When true, a
+   * network-level failure throws IMMEDIATELY as an ambiguous Cin7ApiError —
+   * no retry attempts at all — instead of silently resending a request that
+   * may have already landed.
+   */
+  nonIdempotentCreate?: boolean;
 }
 
 // Quick mitigation (2026-07-24, after Supplier Planner's live paginated
@@ -35,6 +74,13 @@ export interface Cin7RequestOptions {
 // coverage without that bigger piece of work.
 const MAX_RETRIES = 6;
 const RETRY_BASE_DELAY_MS = 5000;
+// Security re-audit P0-4: a single attempt's own network deadline — generous
+// enough for Cin7's slower paginated/reporting endpoints, but bounded so a
+// truly stalled connection can't silently consume the rest of a Vercel
+// invocation's duration budget (see MAX_RETRIES' own comment on why retries
+// already run with real backoff between them — this timeout is orthogonal,
+// it bounds each individual attempt, not the whole retry loop).
+const DEFAULT_TIMEOUT_MS = 20_000;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -100,8 +146,10 @@ export async function cin7Request<T>(
   // Host is fixed by buildCin7Url (the canonical Cin7 origin) — creds.baseUrl is deliberately
   // NOT used, so an org-member-editable base_url can never redirect credentials elsewhere.
   const url = buildCin7Url(path, options.query);
+  const maxRetries = options.maxRetries ?? MAX_RETRIES;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     // Cross-invocation distributed limiter (Postgres token bucket, migration
     // 0054) — the real fix for the multi-invocation problem the throttle below
     // can't solve. If it's unavailable (DB blip, or the migration isn't applied
@@ -125,6 +173,9 @@ export async function cin7Request<T>(
           Accept: "application/json",
         },
         body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+        // Security re-audit P0-4: bounds THIS attempt only — a stalled
+        // connection throws (caught below) instead of hanging forever.
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {
       // Retry like a 503 — a raw fetch failure (DNS blip, connection reset,
@@ -136,7 +187,23 @@ export async function cin7Request<T>(
       const causeText = cause ? (cause instanceof Error ? cause.message : JSON.stringify(cause)) : undefined;
       const detail = [e instanceof Error ? e.message : String(e), causeText].filter(Boolean).join(" | cause: ");
 
-      if (attempt < MAX_RETRIES) {
+      // Security re-audit P0-2: a network-level failure on a
+      // nonIdempotentCreate request is AMBIGUOUS — Cin7 may have already
+      // committed the write before the response was lost. Blindly retrying
+      // here (the old behavior, for every method) is exactly how a
+      // duplicate PO/stock-transfer/other create gets made; the caller must
+      // reconcile before deciding whether to retry, not this function —
+      // so this throws immediately, on the very first failure, no retries.
+      if (options.nonIdempotentCreate) {
+        throw new Cin7ApiError(
+          0,
+          `Ambiguous outcome on ${options.method ?? "GET"} ${path} — network error, Cin7's response was lost; the write may or may not have committed. Reconcile before retrying: ${detail}`,
+          false,
+          true
+        );
+      }
+
+      if (attempt < maxRetries) {
         await sleep(RETRY_BASE_DELAY_MS * (attempt + 1));
         continue;
       }
@@ -158,7 +225,7 @@ export async function cin7Request<T>(
     }
 
     if (response.status === 503) {
-      if (attempt < MAX_RETRIES) {
+      if (attempt < maxRetries) {
         await sleep(RETRY_BASE_DELAY_MS * (attempt + 1));
         continue;
       }
@@ -175,9 +242,11 @@ export async function cin7Request<T>(
       // family. Retried the same way as a 503, since self-throttling only
       // paces calls *within* one invocation; a concurrent cron run (e.g.
       // /api/sync firing at the same time) can still push the account's
-      // shared 60/min ceiling over the top from combined call volume.
+      // shared 60/min ceiling over the top from combined call volume. Not
+      // ambiguous — Cin7 responded and told us it declined the request, so
+      // this stays retried regardless of nonIdempotentCreate.
       const isRateLimitedNonStandard = /reached 60 calls per 60 seconds/i.test(body);
-      if (isRateLimitedNonStandard && attempt < MAX_RETRIES) {
+      if (isRateLimitedNonStandard && attempt < maxRetries) {
         await sleep(RETRY_BASE_DELAY_MS * (attempt + 1));
         continue;
       }
@@ -207,4 +276,38 @@ export async function cin7Request<T>(
   }
 
   throw new Cin7ApiError(0, "Unreachable", false);
+}
+
+export interface Cin7RawResponse {
+  status: number;
+  text: string;
+}
+
+/**
+ * Security re-audit P0-1: the ONE sanctioned escape hatch from cin7Request —
+ * for diagnostics (cin7/debug.ts's path/field probes) that need to inspect a
+ * raw response cin7Request would otherwise throw away, e.g. a candidate path
+ * that returns 200 with an HTML "page not found" body: that non-JSON body
+ * IS the signal being tested for, not an error to surface. Still goes
+ * through the canonical origin (buildCin7Url) and the same
+ * headers/redirect-safety rules as cin7Request — no other function in this
+ * codebase may call fetch() with Cin7 credentials attached (enforced by
+ * src/test/__tests__/cin7-gateway-boundary.test.ts). Deliberately no
+ * retry/rate-limit backoff: these are exploratory probes over many candidate
+ * paths, already self-paced by their own caller between calls.
+ */
+export async function cin7RawRequest(creds: Cin7Credentials, path: string, query?: Record<string, string | number>): Promise<Cin7RawResponse> {
+  const url = buildCin7Url(path, query);
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    redirect: "manual",
+    headers: {
+      "api-auth-accountid": creds.accountId,
+      "api-auth-applicationkey": creds.applicationKey,
+      Accept: "application/json",
+    },
+    signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+  });
+  const text = await response.text().catch(() => "");
+  return { status: response.type === "opaqueredirect" ? 0 : response.status, text };
 }

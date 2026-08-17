@@ -2,6 +2,7 @@
 
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
+import { requireWriteAllowed } from "@/lib/billing";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { PICKING_CALENDAR_MODULE } from "@/app/module-nav";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
@@ -57,6 +58,11 @@ export async function loadPickingCalendarOrdersAction(filters: OrderFulfillmentF
 export async function updatePickingShipByAction(instanceId: string, saleId: string, shipBy: string): Promise<PickingCalendarActionResult<void>> {
   try {
     const { orgId, email } = await requireModuleAccess(PICKING_CALENDAR_MODULE.href);
+    // Security re-audit P1-3: this writes to Cin7 (updateSaleShipBy below) —
+    // requireModuleAccess alone only checks module visibility, not the org's
+    // billing plan. Same gap Shipping Calendar's own updateOrderShipByAction
+    // had (this function was copied from it, per the comment above).
+    await requireWriteAllowed(orgId);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
 
