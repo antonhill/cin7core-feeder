@@ -36,6 +36,21 @@
 -- this ADDS a fulfilment-level breakdown alongside the existing order-level
 -- ready-to-invoice columns (which are unchanged and still correct — "this
 -- order has something ready").
+--
+-- CI caught a real bug in this migration's first version (2026-08-18,
+-- PR #58): it dropped/recreated report_order_fulfillment based on 0063's
+-- copy of the function body, silently losing every column added by later
+-- migrations — 0068 (has_backorder_with_po/has_backorder_no_po), 0069
+-- (total_packed_qty/total_packed_qty_authorised/total_invoiced_qty/
+-- total_backorder_po_outstanding_qty), and 0071 (box-label snapshot-
+-- requalify logic, ready_qty_at_mark). That version was briefly applied
+-- live before being caught by supabase/tests/0068_backorder_po_linkage.
+-- test.sql failing on a fresh CI bootstrap. This version is rebuilt on top
+-- of 0071's actual latest function body (verified by reading every
+-- migration that touches report_order_fulfillment, not just the most
+-- recent one this author had already read) — same lesson as this
+-- codebase's own standing rule about not trusting an unconfirmed single
+-- observation.
 
 alter table sale_pick_pack_lines
   add column if not exists fulfilment_task_id text,
@@ -94,6 +109,12 @@ returns table (
   box_label_hidden_by_floor boolean,
   box_label_printed_at timestamptz,
   box_label_printed_by_email text,
+  has_backorder_with_po boolean,
+  has_backorder_no_po boolean,
+  total_packed_qty numeric,
+  total_packed_qty_authorised numeric,
+  total_invoiced_qty numeric,
+  total_backorder_po_outstanding_qty numeric,
   -- New: which SPECIFIC fulfilment(s) on this order are ready to invoice —
   -- the LBL fulfilment-grain requirement. Null when no fulfilment on this
   -- sale has a positive ready-to-invoice quantity, OR the sale hasn't been
@@ -111,7 +132,12 @@ returns table (
       sum(picked_qty) as total_picked_qty,
       sum(ready_to_invoice_qty) as total_ready_to_invoice_qty,
       sum(invoiced_qty) as total_invoiced_qty,
-      sum(ready_for_box_label_qty) as total_ready_for_box_label_qty
+      sum(ready_for_box_label_qty) as total_ready_for_box_label_qty,
+      sum(packed_qty) as total_packed_qty,
+      sum(packed_qty_authorised) as total_packed_qty_authorised,
+      sum(backorder_po_outstanding_qty) as total_backorder_po_outstanding_qty,
+      bool_or(backorder_qty > 0 and backorder_po_number is not null) as has_backorder_with_po,
+      bool_or(backorder_qty > 0 and backorder_po_number is null) as has_backorder_no_po
     from report_order_fulfillment_lines(p_org_id, p_instance_ids)
     group by cin7_sale_id
   ),
@@ -126,7 +152,7 @@ returns table (
     group by cin7_sale_id
   ),
   box_label as (
-    select org_id, instance_id, cin7_sale_id, printed_at, printed_by_email
+    select org_id, instance_id, cin7_sale_id, printed_at, printed_by_email, ready_qty_at_mark
     from box_label_print_state
     where org_id = p_org_id
       and (p_instance_ids is null or instance_id = any (p_instance_ids))
@@ -212,6 +238,11 @@ returns table (
       coalesce(t.total_ready_to_invoice_qty, 0) as t_total_ready_to_invoice_qty,
       coalesce(t.total_invoiced_qty, 0) as t_total_invoiced_qty,
       coalesce(t.total_ready_for_box_label_qty, 0) as t_total_ready_for_box_label_qty,
+      coalesce(t.total_packed_qty, 0) as t_total_packed_qty,
+      coalesce(t.total_packed_qty_authorised, 0) as t_total_packed_qty_authorised,
+      coalesce(t.total_backorder_po_outstanding_qty, 0) as t_total_backorder_po_outstanding_qty,
+      coalesce(t.has_backorder_with_po, false) as t_has_backorder_with_po,
+      coalesce(t.has_backorder_no_po, false) as t_has_backorder_no_po,
       inum.numbers as agg_invoice_numbers,
       bl.printed_at as box_label_printed_at,
       bl.printed_by_email as box_label_printed_by_email,
@@ -225,7 +256,7 @@ returns table (
       (coalesce(t.total_ready_to_invoice_qty, 0) > 0) as qualifies_ready_to_invoice,
       (coalesce(t.total_ready_for_box_label_qty, 0) > 0
         and coalesce(s.combined_shipping_status not in ('SHIPPED', 'VOIDED', 'NOT AVAILABLE'), false)
-        and bl.printed_at is null) as qualifies_box_label,
+        and coalesce(t.total_ready_for_box_label_qty, 0) > coalesce(bl.ready_qty_at_mark, 0)) as qualifies_box_label,
       (case
         when coalesce(t.total_ordered_qty, 0) <= 0 or coalesce(t.total_invoiced_qty, 0) <= 0 then 'not_invoiced'
         when t.total_invoiced_qty < t.total_ordered_qty then 'partially_invoiced'
@@ -284,6 +315,12 @@ returns table (
       and q.floor_date is not null and q.effective_date is not null and q.effective_date < q.floor_date) as box_label_hidden_by_floor,
     q.box_label_printed_at,
     q.box_label_printed_by_email,
+    q.t_has_backorder_with_po as has_backorder_with_po,
+    q.t_has_backorder_no_po as has_backorder_no_po,
+    q.t_total_packed_qty as total_packed_qty,
+    q.t_total_packed_qty_authorised as total_packed_qty_authorised,
+    q.t_total_invoiced_qty as total_invoiced_qty,
+    q.t_total_backorder_po_outstanding_qty as total_backorder_po_outstanding_qty,
     q.fulfilment_detail as ready_to_invoice_fulfilments,
     q.fulfilment_numbers as ready_to_invoice_fulfilment_numbers
   from qualification q
