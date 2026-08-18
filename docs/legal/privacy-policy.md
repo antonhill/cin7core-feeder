@@ -42,9 +42,13 @@ the client's direction.
   audit, or health scan. This may include personal information about your
   own customers or suppliers (e.g. contact names, emails, addresses) if
   present in your Cin7 data.
-- **Activity log**: a record of every write the App makes back to your
-  Cin7 instance(s) — what changed, which user triggered it, and when — kept
-  for your own auditability.
+- **Activity log**: a record of user-initiated and other high-impact writes
+  the App makes back to your Cin7 instance(s), and of changes to your own
+  Cin7 credentials — what was attempted, which user triggered it, when, and
+  the outcome (including a failed or unconfirmed attempt) — kept for your
+  own auditability. Background synchronization (the recurring product/
+  customer/supplier/inventory-availability sync) is logged at the level of
+  each sync run, not as a per-record trail.
 - **Basic technical logs**: standard hosting-provider request logs (see
   Sub-processors), used only for operating and debugging the App.
 
@@ -114,8 +118,11 @@ rights, contact anton@sparkconsulting.co.za.
   plaintext.
 - Login uses a one-time email code rather than a password.
 - Database access is enforced per-organization via Row-Level Security.
-- All writes the App makes to your Cin7 instance are recorded in an
-  auditable activity log.
+- User-initiated and other high-impact writes the App makes to your Cin7
+  instance, and changes to your own Cin7 credentials, are recorded in an
+  auditable activity log, including failed or unconfirmed attempts.
+  Background synchronization activity is logged at the level of each sync
+  run.
 - [Placeholder — add any additional commitments once actually true:
   incident notification timeline, penetration testing cadence, etc. Don't
   assert anything not yet in place.]

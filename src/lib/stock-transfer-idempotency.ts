@@ -78,7 +78,13 @@ export async function claimStockTransferCreation(db: Db, orgId: string, instance
   };
 }
 
-/** Mark a claim completed with the created transfer's identity (best-effort). */
+/**
+ * Mark a claim completed with the created transfer's identity (best-effort).
+ * Returns whether the settle write actually persisted — security re-audit
+ * closure, Blocker 5 (Scenario D): see settlePoCreation's identical comment
+ * in src/lib/po-idempotency.ts. Callers must fall back to
+ * {@link markStockTransferCreationAmbiguous} on a `false` return.
+ */
 export async function settleStockTransferCreation(
   db: Db,
   orgId: string,
@@ -86,14 +92,18 @@ export async function settleStockTransferCreation(
   key: string,
   cin7TransferId: string,
   transferNumber: string | null
-): Promise<void> {
+): Promise<boolean> {
   const { error } = await db
     .from("stock_transfer_creation_claims")
     .update({ status: "completed", cin7_transfer_id: cin7TransferId, transfer_number: transferNumber, updated_at: new Date().toISOString() })
     .eq("org_id", orgId)
     .eq("instance_id", instanceId)
     .eq("idempotency_key", key);
-  if (error) console.error("settleStockTransferCreation failed:", error.message);
+  if (error) {
+    console.error("settleStockTransferCreation failed:", error.message);
+    return false;
+  }
+  return true;
 }
 
 /** Release a claim after a DEFINITE (non-ambiguous) create failure, so an immediate retry isn't blocked for the whole TTL (best-effort). */

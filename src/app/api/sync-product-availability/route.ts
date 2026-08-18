@@ -4,6 +4,16 @@ import { syncOrgProductAvailability } from "@/sync/sync-product-availability";
 import { runCronRotation } from "@/sync/cron-rotation";
 import { assertInternalAuth, UnauthorizedError } from "@/lib/internal-auth";
 
+// Security re-audit closure, Blocker 6: the on-demand POST handler this
+// route used to have was removed entirely (2026-08-18) — it trusted a
+// body-supplied orgId behind only the same CRON_SECRET check GET uses,
+// letting anyone holding that one shared secret act as service-role
+// against ANY org by changing the JSON body (the exact shape round 2
+// already deleted /api/import for). Confirmed zero legitimate callers
+// existed for any of the 6 sync routes' POST handlers before removal — see
+// docs/security-final-closure-matrix.md. GET (the real Vercel Cron entry
+// point) is unaffected.
+
 // Same isolation reasoning as the other per-feature syncs: a slow/large
 // account's stock-level snapshot pull can't delay or crowd out the other
 // syncs' own time budget. 300s (not 60s) from the start, learning from
@@ -29,19 +39,3 @@ export async function GET(req: Request) {
   }
 }
 
-/** POST { orgId, instanceIds? } — on-demand stock-level sync for one org's active instances (or a subset). */
-export async function POST(req: Request) {
-  try {
-    assertInternalAuth(req);
-    const body = await req.json().catch(() => ({}));
-    const orgId = typeof body.orgId === "string" ? body.orgId : undefined;
-    if (!orgId) return NextResponse.json({ error: "orgId is required" }, { status: 400 });
-    const instanceIds = Array.isArray(body.instanceIds) ? body.instanceIds.filter((i: unknown) => typeof i === "string") : undefined;
-
-    const results = await syncOrgProductAvailability(createServiceRoleClient(), orgId, instanceIds);
-    return NextResponse.json({ results });
-  } catch (e) {
-    if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    return NextResponse.json({ error: e instanceof Error ? e.message : "Unknown error" }, { status: 500 });
-  }
-}

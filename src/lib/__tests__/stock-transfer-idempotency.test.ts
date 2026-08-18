@@ -86,17 +86,30 @@ describe("claimStockTransferCreation", () => {
 });
 
 describe("settle / release", () => {
-  it("settleStockTransferCreation marks the claim completed with the transfer identity", async () => {
+  it("settleStockTransferCreation marks the claim completed with the transfer identity, and returns true on success", async () => {
     const update = vi.fn().mockReturnThis();
     const eq = vi.fn().mockReturnThis();
     const chain = { update, eq, then: (r: (v: { error: null }) => void) => r({ error: null }) };
     update.mockReturnValue(chain);
     eq.mockReturnValue(chain);
     const db = makeDb(vi.fn(), chain);
-    await settleStockTransferCreation(db, "org", "inst", "key", "ST-1", "ST-0001");
+    const result = await settleStockTransferCreation(db, "org", "inst", "key", "ST-1", "ST-0001");
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ status: "completed", cin7_transfer_id: "ST-1", transfer_number: "ST-0001" })
     );
+    expect(result).toBe(true);
+  });
+
+  it("security re-audit closure Blocker 5 (Scenario D): settleStockTransferCreation returns false when the write itself fails, instead of throwing or silently succeeding", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const update = vi.fn().mockReturnThis();
+    const eq = vi.fn().mockReturnThis();
+    const chain = { update, eq, then: (r: (v: { error: { message: string } }) => void) => r({ error: { message: "connection reset" } }) };
+    update.mockReturnValue(chain);
+    eq.mockReturnValue(chain);
+    const db = makeDb(vi.fn(), chain);
+    const result = await settleStockTransferCreation(db, "org", "inst", "key", "ST-1", "ST-0001");
+    expect(result).toBe(false);
   });
 
   it("releaseStockTransferCreation deletes only a pending claim", async () => {

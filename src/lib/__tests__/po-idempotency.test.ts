@@ -83,17 +83,30 @@ describe("claimPoCreation", () => {
 });
 
 describe("settle / release", () => {
-  it("settlePoCreation marks the claim completed with the PO identity", async () => {
+  it("settlePoCreation marks the claim completed with the PO identity, and returns true on success", async () => {
     const update = vi.fn().mockReturnThis();
     const eq = vi.fn().mockReturnThis();
     const chain = { update, eq, then: (r: (v: { error: null }) => void) => r({ error: null }) };
     update.mockReturnValue(chain);
     eq.mockReturnValue(chain);
     const db = makeDb(vi.fn(), chain);
-    await settlePoCreation(db, "org", "inst", "key", "PO-1", "PO-0001");
+    const result = await settlePoCreation(db, "org", "inst", "key", "PO-1", "PO-0001");
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ status: "completed", cin7_purchase_id: "PO-1", order_number: "PO-0001" })
     );
+    expect(result).toBe(true);
+  });
+
+  it("security re-audit closure Blocker 5 (Scenario D): settlePoCreation returns false when the write itself fails, instead of throwing or silently succeeding", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const update = vi.fn().mockReturnThis();
+    const eq = vi.fn().mockReturnThis();
+    const chain = { update, eq, then: (r: (v: { error: { message: string } }) => void) => r({ error: { message: "connection reset" } }) };
+    update.mockReturnValue(chain);
+    eq.mockReturnValue(chain);
+    const db = makeDb(vi.fn(), chain);
+    const result = await settlePoCreation(db, "org", "inst", "key", "PO-1", "PO-0001");
+    expect(result).toBe(false);
   });
 
   it("releasePoCreation deletes only a pending claim", async () => {

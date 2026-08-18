@@ -148,12 +148,27 @@ export async function middleware(request: NextRequest) {
     let allowedModules: string[] | null = null;
     let role: string | null = null;
 
-    const { data: superAdminRow } = await db.from("super_admins").select("user_id").eq("user_id", userId).maybeSingle();
+    // Security re-audit closure, Blocker 1 audit: these reads feed the
+    // module-block and MFA-enrolment-forcing logic below, both of which are
+    // a UX/defense-in-depth layer, NOT the actual security boundary — that
+    // boundary is requireAal2 (src/lib/require-privileged.ts), which checks
+    // the live session's AAL directly via Supabase auth and does not depend
+    // on any read here. So an error here can only ever under-apply a
+    // *nudge* (skip a redirect to /settings/security, let a disabled-
+    // module's page frame render for one request) — it can never grant
+    // elevated role/data access, since every real data read stays bounded by
+    // RLS (is_org_member/is_org_admin) and every real privileged write stays
+    // bounded by its own Server Action guard, neither of which consult
+    // middleware's resolution. Logged (not silently swallowed) so a
+    // persistent failure is observable rather than invisible.
+    const { data: superAdminRow, error: superAdminError } = await db.from("super_admins").select("user_id").eq("user_id", userId).maybeSingle();
+    if (superAdminError) console.error("middleware: super_admins read failed", superAdminError);
     const isSuperAdmin = Boolean(superAdminRow);
     if (isSuperAdmin) {
       const impersonatedOrgId = request.cookies.get(IMPERSONATED_ORG_COOKIE)?.value;
       if (impersonatedOrgId) {
-        const { data: org } = await db.from("organizations").select("id").eq("id", impersonatedOrgId).maybeSingle();
+        const { data: org, error: impersonatedOrgError } = await db.from("organizations").select("id").eq("id", impersonatedOrgId).maybeSingle();
+        if (impersonatedOrgError) console.error("middleware: impersonated org read failed", impersonatedOrgError);
         if (org) orgId = org.id;
       }
     }
@@ -172,7 +187,8 @@ export async function middleware(request: NextRequest) {
       // membership and resolving via the SAME shared, pure function
       // Server Actions use makes middleware structurally incapable of
       // disagreeing with them.
-      const { data: memberships } = await supabase.from("org_members").select("org_id, allowed_modules, role").eq("user_id", userId);
+      const { data: memberships, error: membershipsError } = await supabase.from("org_members").select("org_id, allowed_modules, role").eq("user_id", userId);
+      if (membershipsError) console.error("middleware: org_members read failed", membershipsError);
       const membershipRows = memberships ?? [];
       const cookieOrgId = request.cookies.get(ACTIVE_ORG_COOKIE)?.value ?? null;
       orgId = resolveActiveOrgId(
@@ -188,11 +204,12 @@ export async function middleware(request: NextRequest) {
     // subscription_status for the MFA-enrolment rule.
     let orgRow: { disabled_modules: string[] | null; subscription_status: SubscriptionStatus } | null = null;
     if (orgId) {
-      const { data } = await db
+      const { data, error: orgRowError } = await db
         .from("organizations")
         .select("disabled_modules, subscription_status")
         .eq("id", orgId)
         .maybeSingle();
+      if (orgRowError) console.error("middleware: organizations read failed", orgRowError);
       orgRow = data ?? null;
     }
 

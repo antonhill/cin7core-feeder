@@ -49,10 +49,22 @@ export async function requirePrivilegedOrgAdmin(action = "perform this privilege
   const current = await requireOrgAdmin(action);
 
   const db = createServiceRoleClient();
-  const [{ data: superAdminRow }, { data: orgRow }] = await Promise.all([
+  const [
+    { data: superAdminRow, error: superAdminError },
+    { data: orgRow, error: orgError },
+  ] = await Promise.all([
     db.from("super_admins").select("user_id").eq("user_id", current.userId).maybeSingle(),
     db.from("organizations").select("subscription_status").eq("id", current.orgId).maybeSingle(),
   ]);
+  // Security re-audit closure, Blocker 1: both reads decide whether AAL2 is
+  // required — an unchecked error previously came back as `data: undefined`,
+  // which the fallbacks below read as "not a super-admin, org can't write",
+  // skipping the AAL2 check entirely instead of denying. Mirrors P1-1's fix
+  // to requireModuleAccess: "could not verify" must never become "not
+  // required" — a security-decision read that fails must throw, not fall
+  // through to the least-restrictive interpretation of an empty result.
+  if (superAdminError) throw new Error(superAdminError.message);
+  if (orgError) throw new Error(orgError.message);
   const isSuperAdmin = Boolean(superAdminRow);
   const orgCanWrite = orgRow ? writeAllowedFor(orgRow.subscription_status) : false;
 
