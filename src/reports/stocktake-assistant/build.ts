@@ -19,6 +19,7 @@
 
 import Papa from "papaparse";
 import { toCsv } from "@/export/csv-format";
+import { assertCsvWithinLimits } from "@/lib/csv-upload-limits";
 import type { StocktakeStagedStockRow } from "@/reports/query";
 
 export const STOCKTAKE_HEADER = [
@@ -57,6 +58,15 @@ export function parseStocktakeFile(csvText: string): ParseStocktakeFileResult {
   const fields = new Set(meta.fields ?? []);
   if (!fields.has("Product Code") || !fields.has("Stocktake Quantity")) {
     return { rows: [], error: 'File must have "Product Code" and "Stocktake Quantity" columns — is this a Cin7 stocktake export?' };
+  }
+
+  // Security re-audit P1-7: resource boundaries — this function's own
+  // established contract is to return {rows: [], error} rather than throw,
+  // so a limit violation is caught and reshaped into that same contract.
+  try {
+    assertCsvWithinLimits(data, meta.fields ?? []);
+  } catch (e) {
+    return { rows: [], error: e instanceof Error ? e.message : "File exceeds this app's size limits." };
   }
 
   const rows: StocktakeRow[] = data

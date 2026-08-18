@@ -1,5 +1,6 @@
 import Papa from "papaparse";
 import type { ZodType } from "zod";
+import { assertCsvWithinLimits } from "@/lib/csv-upload-limits";
 
 export interface ParsedRow<T> {
   rowNumber: number; // 1-based, matches the CSV data row (header excluded)
@@ -42,6 +43,12 @@ export function parseCsv<T>(csvText: string, schema: ZodType<T>): CsvParseResult
   if (fatalErrors.length) {
     throw new Error(`CSV parse error: ${fatalErrors.map((e) => e.message).join("; ")}`);
   }
+
+  // Security re-audit P1-7: resource boundaries — checked before the
+  // per-row schema validation loop below, so a pathological file (too many
+  // rows/columns, or a single absurdly long cell) is rejected immediately
+  // rather than after validating everything else in it.
+  assertCsvWithinLimits(data, meta.fields ?? []);
 
   const valid: ParsedRow<T>[] = [];
   const invalid: InvalidRow[] = [];

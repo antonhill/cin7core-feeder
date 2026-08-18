@@ -42,6 +42,19 @@ const nextConfig: NextConfig = {
   async headers() {
     return [{ source: "/:path*", headers: SECURITY_HEADERS }];
   },
+  // Security re-audit P1-7: Next's own Server Action default is 1MB —
+  // raised to genuinely fit the largest legitimate CSV import (Products has
+  // the widest template, ~118 columns) rather than relying on that opaque
+  // framework default alone. The app's own explicit checkUploadSize()
+  // (src/lib/csv-upload-limits.ts) still enforces the real limit and
+  // returns a clear message; this only raises the framework's outer ceiling
+  // so a legitimate large-but-valid file doesn't fail with a generic
+  // "Body exceeded 1mb limit" error before the app's own check ever runs.
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "10mb",
+    },
+  },
 };
 
 export default nextConfig;

@@ -5,6 +5,7 @@ import { requireModuleAccess } from "@/lib/authorization";
 import { STOCKTAKE_MODULE } from "@/app/module-nav";
 import { getStocktakeLocations, getStocktakeStagedStock } from "@/reports/query";
 import { parseStocktakeFile, buildConfirmationLines, type StocktakeRow, type ConfirmationLine } from "@/reports/stocktake-assistant/build";
+import { checkUploadSize, looksLikeText } from "@/lib/csv-upload-limits";
 
 export interface StocktakeActionResult<T> {
   ok: boolean;
@@ -41,9 +42,15 @@ export async function previewStocktakeAction(instanceId: string, location: strin
   if (!location) return { ok: false, error: "Choose a location." };
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Choose a stocktake CSV file." };
+  // Security re-audit P1-7: explicit application-level size limit — see
+  // src/app/import/actions.ts's identical guard for the full reasoning.
+  const sizeError = checkUploadSize(file);
+  if (sizeError) return { ok: false, error: sizeError };
 
   try {
     const csvText = await file.text();
+    // Security re-audit P1-7: rejects a binary file with a spoofed .csv name.
+    if (!looksLikeText(csvText)) return { ok: false, error: "That file doesn't look like a text/CSV file." };
     const { rows, error } = parseStocktakeFile(csvText);
     if (error) return { ok: false, error };
 

@@ -14,6 +14,15 @@ const RPC_PAGE_SIZE = 1000;
  * paging to get every row back; without it, this fails silently (no error,
  * just a truncated result) rather than throwing.
  */
+// Security re-audit P1-7: this is the one report function in this file that
+// deliberately pages PAST PostgREST's own implicit max-rows cap (see this
+// function's own comment above) — every other `.rpc()` call in this file is
+// accidentally bounded by that same 1000-row cap, but this one is genuinely
+// unbounded without its own explicit ceiling. Order Fulfillment's own
+// confirmed live scale is 9,915 orders for one instance; 25,000 leaves real
+// headroom for growth while still bounding worst-case memory/time.
+const MAX_RPC_ROWS = 25_000;
+
 async function fetchAllRpcRows<T>(db: SupabaseClient, fn: string, params: Record<string, unknown>): Promise<T[]> {
   const all: T[] = [];
   for (let from = 0; ; from += RPC_PAGE_SIZE) {
@@ -21,6 +30,9 @@ async function fetchAllRpcRows<T>(db: SupabaseClient, fn: string, params: Record
     if (error) throw new Error(`${fn}: ${error.message}`);
     const rows = (data ?? []) as T[];
     all.push(...rows);
+    if (all.length > MAX_RPC_ROWS) {
+      throw new Error(`This report matched over ${MAX_RPC_ROWS.toLocaleString()} rows — narrow your filters (date range, instance selection) and try again.`);
+    }
     if (rows.length < RPC_PAGE_SIZE) break;
   }
   return all;
