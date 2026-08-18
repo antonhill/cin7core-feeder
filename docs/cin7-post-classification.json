@@ -1,0 +1,20 @@
+{
+  "_comment": "Security re-audit final closure, regression guardrail #5. Every file under src/cin7/ or src/audit/ that sends a Cin7 POST or PUT-as-create must be listed here (or in exemptFiles) with an explicit classification — enforced by src/test/__tests__/cin7-post-classification.test.ts. Classification is one of: IDEMPOTENT_POST (Cin7 itself dedupes / re-sending is safe), NON_IDEMPOTENT_CREATE (carries nonIdempotentCreate:true; a retry after a network failure throws instead of silently resending), RECONCILE_BEFORE_RETRY (the caller has a full claim-table + reconciliation mechanism, not just the flag — the gold standard), VERIFIED_SAFE_POST_UPDATE (a PUT/POST against an already-existing, ID-targeted record — re-sending changes nothing new). See docs/security-final-closure-matrix.md section 6.2 for the investigation this registry snapshots (2026-08-18).",
+  "entries": [
+    { "file": "src/cin7/customers.ts", "function": "pushCustomer", "classification": "NON_IDEMPOTENT_CREATE" },
+    { "file": "src/cin7/suppliers.ts", "function": "pushSupplier", "classification": "NON_IDEMPOTENT_CREATE" },
+    { "file": "src/cin7/purchase-write.ts", "function": "createPurchaseOrder", "classification": "RECONCILE_BEFORE_RETRY" },
+    { "file": "src/cin7/stock-transfers.ts", "function": "createStockTransfer", "classification": "RECONCILE_BEFORE_RETRY" },
+    { "file": "src/cin7/reference-lookups.ts", "function": "ensureReferenceExists", "classification": "NON_IDEMPOTENT_CREATE" },
+    { "file": "src/cin7/sales.ts", "function": "updateSaleShipBy", "classification": "VERIFIED_SAFE_POST_UPDATE" },
+    { "file": "src/cin7/sales.ts", "function": "markSaleShipped", "classification": "IDEMPOTENT_POST" },
+    { "file": "src/cin7/products.ts", "function": "pushProduct", "classification": "NON_IDEMPOTENT_CREATE" },
+    { "file": "src/cin7/work-centres.ts", "function": "createWorkCentre", "classification": "NON_IDEMPOTENT_CREATE" },
+    { "file": "src/audit/apply-party-fixes.ts", "function": "applyPartyFixes", "classification": "VERIFIED_SAFE_POST_UPDATE" },
+    { "file": "src/audit/apply-fixes.ts", "function": "applyProductFixes", "classification": "VERIFIED_SAFE_POST_UPDATE" }
+  ],
+  "exemptFiles": [
+    "src/cin7/debug.ts"
+  ],
+  "exemptFilesReason": "debug.ts's diagnostic probes build candidate POST/PUT shapes dynamically (trial-and-error against several plausible request shapes, see testCreatePurchaseOrder) rather than one static cin7Request( call site per function, resisting this file-level classification approach. Its two genuine create paths (tryPurchaseRequest/tryPurchaseOrderLines, reachable only via debugTestCreatePurchaseOrder) already carry nonIdempotentCreate + are super-admin+AAL2-gated (Blocker 2) + audit-logged including ambiguous outcomes (Blocker 3) — tracked there, not duplicated here."
+}

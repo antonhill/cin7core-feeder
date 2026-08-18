@@ -193,6 +193,16 @@ export interface FailedPurchaseOrder {
   supplierName: string;
   locationName: string;
   error: string;
+  /**
+   * Security re-audit closure, Blocker 7: distinguishes WHY this group has
+   * no PO, for both the UI and the activity log — "ambiguous" (Cin7's
+   * outcome is genuinely unknown; a duplicate may already exist) must never
+   * be conflated with "failed" (Cin7 definitely declined, or a client-side
+   * error) or "blocked" (a concurrent request/unavailable guard skipped
+   * this group without ever attempting Cin7 at all). Optional/back-compat —
+   * absent means "failed", matching every pre-existing caller.
+   */
+  kind?: "failed" | "ambiguous" | "blocked";
 }
 
 export interface CreatePurchaseOrdersResult {
@@ -307,6 +317,7 @@ export async function createSupplierPlanPurchaseOrdersAction(
               supplierName: group.supplierName,
               locationName: group.locationName,
               error: "A previous attempt to create this PO is still being confirmed with Cin7 — try again shortly.",
+              kind: "ambiguous",
             });
           }
         } else if (claim.existingStatus === "guard_unavailable") {
@@ -317,6 +328,7 @@ export async function createSupplierPlanPurchaseOrdersAction(
             supplierName: group.supplierName,
             locationName: group.locationName,
             error: "Could not confirm no duplicate order exists — try again shortly.",
+            kind: "blocked",
           });
         } else {
           // A concurrent request is creating this same PO right now.
@@ -324,6 +336,7 @@ export async function createSupplierPlanPurchaseOrdersAction(
             supplierName: group.supplierName,
             locationName: group.locationName,
             error: "A purchase order for these exact lines is already being created — skipped to avoid a duplicate.",
+            kind: "blocked",
           });
         }
         continue;
@@ -354,7 +367,18 @@ export async function createSupplierPlanPurchaseOrdersAction(
 
         // Mark the idempotency claim completed with the real PO's identity, so
         // a resubmit inside the window returns THIS PO rather than duplicating.
-        await settlePoCreation(db, orgId, instanceId, idempotencyKey, result.taskId, result.orderNumber);
+        const settled = await settlePoCreation(db, orgId, instanceId, idempotencyKey, result.taskId, result.orderNumber);
+        if (!settled) {
+          // Security re-audit closure, Blocker 5 (Scenario D): Cin7 confirmed
+          // success but persisting that fact failed — mark the claim
+          // ambiguous (not left stranded at 'pending') so a future
+          // TTL-expiry reclaim is forced to reconcile against Cin7 first,
+          // same as a genuine network-ambiguous create failure. The next
+          // reconciliation pass will independently rediscover this exact PO
+          // via findLikelyCreatedPurchaseOrder regardless of this claim
+          // row's own state, so no information is lost.
+          await markPoCreationAmbiguous(db, orgId, instanceId, idempotencyKey);
+        }
         await recordCreatedPoLines(result.taskId, result.orderNumber);
       } catch (e) {
         // Security re-audit P0-2: an ambiguous failure (network error on a
@@ -381,6 +405,7 @@ export async function createSupplierPlanPurchaseOrdersAction(
               locationName: group.locationName,
               error:
                 "Connection was lost while creating this PO in Cin7 and we couldn't yet confirm whether it was created. Check Cin7 directly, or try again in a few minutes.",
+              kind: "ambiguous",
             });
           }
         } else {
@@ -392,21 +417,45 @@ export async function createSupplierPlanPurchaseOrdersAction(
             supplierName: group.supplierName,
             locationName: group.locationName,
             error: e instanceof Error ? e.message : "Unknown error",
+            kind: "failed",
           });
         }
       }
     }
 
-    if (created.length) {
-      await logActivity(db, {
-        orgId,
-        instanceId,
-        actor: { userId, email },
-        action: "supplier_planner.create_purchase_order",
-        summary: `Created ${created.length} draft PO${created.length === 1 ? "" : "s"} across ${new Set(created.map((c) => c.supplierName)).size} supplier${new Set(created.map((c) => c.supplierName)).size === 1 ? "" : "s"}${failed.length ? ` (${failed.length} failed)` : ""}${deduplicated.length ? ` (${deduplicated.length} already existed)` : ""}`,
-        detail: { created, failed, deduplicated },
-      });
-    }
+    // Security re-audit closure, Blocker 7: log unconditionally — every
+    // attempted batch produces an activity record, even when every group
+    // fails, is skipped, or is ambiguous. Previously gated on
+    // `created.length`, which meant a 100%-failed/ambiguous batch left zero
+    // trace anywhere — directly undermining the P0-2 ambiguous-create
+    // mechanism's own purpose: if Cin7 actually committed an object despite
+    // an ambiguous response, that object was left permanently untraceable.
+    const ambiguousCount = failed.filter((f) => f.kind === "ambiguous").length;
+    const blockedCount = failed.filter((f) => f.kind === "blocked").length;
+    const definiteFailedCount = failed.length - ambiguousCount - blockedCount;
+    const summaryParts = [`${created.length} created`];
+    if (deduplicated.length) summaryParts.push(`${deduplicated.length} already existed`);
+    if (definiteFailedCount) summaryParts.push(`${definiteFailedCount} failed`);
+    if (ambiguousCount) summaryParts.push(`${ambiguousCount} ambiguous`);
+    if (blockedCount) summaryParts.push(`${blockedCount} blocked`);
+    await logActivity(db, {
+      orgId,
+      instanceId,
+      actor: { userId, email },
+      action: "supplier_planner.create_purchase_order",
+      summary: `Purchase order batch: ${summaryParts.join(", ")} (${groups.length} requested)`,
+      detail: {
+        requested: groups.length,
+        created: created.length,
+        reconciled: deduplicated.length,
+        failed: definiteFailedCount,
+        ambiguous: ambiguousCount,
+        blocked: blockedCount,
+        createdDetail: created,
+        failedDetail: failed,
+        deduplicatedDetail: deduplicated,
+      },
+    });
 
     return {
       ok: failed.length === 0,

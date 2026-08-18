@@ -1,0 +1,27 @@
+-- Security re-audit final closure, Blocker 4 (Anton-approved decision D4,
+-- 2026-08-18): category_instances (0037) shipped with a policy named "org
+-- admins manage category_instances" whose actual USING clause was
+-- is_org_member(org_id), not is_org_admin(org_id) -- an internal
+-- contradiction between the policy's own name and what it enforced. This
+-- was reconstructed as-is by 0072 (which correctly captured the live state
+-- at the time, but the live state itself was wrong) and slipped past
+-- round 3's own 0078 RLS-intent fix because 0078 checked policy INTENT
+-- against Server Action guards, not a policy's name against its own qual
+-- text.
+--
+-- Both real application callers (syncInstanceSales in src/sync/sync-sales.ts,
+-- getReportFilterOptions in src/reports/query.ts) always use a service-role
+-- client -- confirmed via repo-wide grep, no browser/client component or
+-- session-scoped Server Action ever queries this table. There is no
+-- legitimate reason for any authenticated-role client to reach it at all.
+-- Anton's decision (D4): move to service-role-only rather than tightening
+-- to is_org_admin -- matching the billing_checkout_tokens (0077) /
+-- ship_by_change_pending etc. (0078) precedent: RLS stays enabled, zero
+-- client-facing policies, service-role bypasses RLS entirely so the table
+-- remains fully functional for its only two real callers.
+drop policy if exists "org admins manage category_instances" on category_instances;
+
+-- RLS was already enabled by 0072/0037 and stays enabled -- with zero
+-- policies, this rejects every authenticated/anon read and write outright
+-- (Postgres RLS defaults to deny when a table has RLS enabled and no
+-- policy matches), exactly the billing_checkout_tokens/0078 log-table shape.

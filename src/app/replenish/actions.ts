@@ -125,6 +125,16 @@ export interface CreatedTransfer {
 export interface FailedTransfer {
   toLocation: string;
   error: string;
+  /**
+   * Security re-audit closure, Blocker 7: distinguishes WHY this group has
+   * no transfer, for both the UI and the activity log — "ambiguous" (Cin7's
+   * outcome is genuinely unknown; a duplicate may already exist) must never
+   * be conflated with "failed" (Cin7 definitely declined, or a client-side
+   * error) or "blocked" (a concurrent request/unavailable guard skipped
+   * this group without ever attempting Cin7 at all). Optional/back-compat —
+   * absent means "failed", matching every pre-existing caller.
+   */
+  kind?: "failed" | "ambiguous" | "blocked";
 }
 
 export interface CreateTransfersResult {
@@ -255,6 +265,7 @@ export async function createReplenishTransfersAction(
             failed.push({
               toLocation,
               error: "A previous attempt to create this transfer is still being confirmed with Cin7 — try again shortly.",
+              kind: "ambiguous",
             });
           }
         } else if (claim.existingStatus === "guard_unavailable") {
@@ -264,12 +275,14 @@ export async function createReplenishTransfersAction(
           failed.push({
             toLocation,
             error: "Could not confirm no duplicate transfer exists — try again shortly.",
+            kind: "blocked",
           });
         } else {
           // A concurrent request is creating this same transfer right now.
           failed.push({
             toLocation,
             error: "A stock transfer for these exact lines is already being created — skipped to avoid moving the same stock twice.",
+            kind: "blocked",
           });
         }
         continue;
@@ -296,7 +309,14 @@ export async function createReplenishTransfersAction(
         // Mark the idempotency claim completed with the real transfer's
         // identity, so a resubmit inside the window returns THIS transfer
         // rather than duplicating it.
-        await settleStockTransferCreation(db, orgId, instanceId, idempotencyKey, result.taskId, result.number);
+        const settled = await settleStockTransferCreation(db, orgId, instanceId, idempotencyKey, result.taskId, result.number);
+        if (!settled) {
+          // Security re-audit closure, Blocker 5 (Scenario D): Cin7 confirmed
+          // success but persisting that fact failed — mark the claim
+          // ambiguous rather than leaving it stranded at 'pending', forcing
+          // a future TTL-expiry reclaim to reconcile against Cin7 first.
+          await markStockTransferCreationAmbiguous(db, orgId, instanceId, idempotencyKey);
+        }
       } catch (e) {
         // Security re-audit P0-2: an ambiguous failure (network error on a
         // nonIdempotentCreate call) means we don't know if Cin7 actually
@@ -320,6 +340,7 @@ export async function createReplenishTransfersAction(
               toLocation,
               error:
                 "Connection was lost while creating this transfer in Cin7 and we couldn't yet confirm whether it was created. Check Cin7 directly, or try again in a few minutes.",
+              kind: "ambiguous",
             });
           }
         } else {
@@ -327,21 +348,45 @@ export async function createReplenishTransfersAction(
           // error) — release the claim so an immediate retry isn't blocked
           // for the whole TTL window.
           await releaseStockTransferCreation(db, orgId, instanceId, idempotencyKey);
-          failed.push({ toLocation, error: e instanceof Error ? e.message : "Unknown error" });
+          failed.push({ toLocation, error: e instanceof Error ? e.message : "Unknown error", kind: "failed" });
         }
       }
     }
 
-    if (created.length) {
-      await logActivity(db, {
-        orgId,
-        instanceId,
-        actor: { userId, email },
-        action: "replenish.create_transfer",
-        summary: `Created ${created.length} draft transfer${created.length === 1 ? "" : "s"} from ${fromLocation}${failed.length ? ` (${failed.length} failed)` : ""}${deduplicated.length ? ` (${deduplicated.length} already existed)` : ""}`,
-        detail: { fromLocation, transfers: created, failed, deduplicated },
-      });
-    }
+    // Security re-audit closure, Blocker 7: log unconditionally — every
+    // attempted batch produces an activity record, even when every group
+    // fails, is skipped, or is ambiguous. Previously gated on
+    // `created.length`, which meant a 100%-failed/ambiguous batch left zero
+    // trace anywhere — directly undermining the P0-2 ambiguous-create
+    // mechanism's own purpose: if Cin7 actually committed an object despite
+    // an ambiguous response, that object was left permanently untraceable.
+    const ambiguousCount = failed.filter((f) => f.kind === "ambiguous").length;
+    const blockedCount = failed.filter((f) => f.kind === "blocked").length;
+    const definiteFailedCount = failed.length - ambiguousCount - blockedCount;
+    const summaryParts = [`${created.length} created`];
+    if (deduplicated.length) summaryParts.push(`${deduplicated.length} already existed`);
+    if (definiteFailedCount) summaryParts.push(`${definiteFailedCount} failed`);
+    if (ambiguousCount) summaryParts.push(`${ambiguousCount} ambiguous`);
+    if (blockedCount) summaryParts.push(`${blockedCount} blocked`);
+    await logActivity(db, {
+      orgId,
+      instanceId,
+      actor: { userId, email },
+      action: "replenish.create_transfer",
+      summary: `Stock transfer batch from ${fromLocation}: ${summaryParts.join(", ")} (${linesByDestination.size} requested)`,
+      detail: {
+        fromLocation,
+        requested: linesByDestination.size,
+        created: created.length,
+        reconciled: deduplicated.length,
+        failed: definiteFailedCount,
+        ambiguous: ambiguousCount,
+        blocked: blockedCount,
+        createdDetail: created,
+        failedDetail: failed,
+        deduplicatedDetail: deduplicated,
+      },
+    });
 
     return {
       ok: failed.length === 0,

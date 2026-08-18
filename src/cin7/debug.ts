@@ -1960,6 +1960,16 @@ export interface CreatePurchaseOrderAttempt {
   linesPopulatedIn?: "Order" | "StockReceived" | "Invoice" | null;
   error?: string;
   rawResponse?: unknown;
+  /**
+   * Security re-audit adversarial-verification fix (2026-08-18): true only
+   * when this attempt's failure was a `Cin7ApiError` with `.ambiguous` set
+   * (a `nonIdempotentCreate` POST whose network outcome is unknown — Cin7
+   * may have actually created the object). Without this, a caller has no
+   * way to distinguish "Cin7 definitely rejected this" from "we don't know
+   * what happened" — the exact distinction the audit log needs to report
+   * honestly instead of defaulting to a flat success/fail.
+   */
+  ambiguous?: boolean;
 }
 
 export interface CreatePurchaseOrderTest {
@@ -2017,6 +2027,7 @@ async function tryPurchaseRequest(
       endpoint,
       succeeded: false,
       error: e instanceof Cin7ApiError ? `[${e.status}] ${e.message}` : e instanceof Error ? e.message : "Unknown error",
+      ambiguous: e instanceof Cin7ApiError && e.ambiguous,
     };
   }
 }
@@ -2054,6 +2065,7 @@ async function tryPurchaseOrderLines(
       endpoint: `${method} ${path}`,
       succeeded: false,
       error: e instanceof Cin7ApiError ? `[${e.status}] ${e.message}` : e instanceof Error ? e.message : "Unknown error",
+      ambiguous: e instanceof Cin7ApiError && e.ambiguous,
     };
   }
 }

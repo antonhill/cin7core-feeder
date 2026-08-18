@@ -78,7 +78,18 @@ export async function claimPoCreation(db: Db, orgId: string, instanceId: string,
   };
 }
 
-/** Mark a claim completed with the created PO's identity (best-effort). */
+/**
+ * Mark a claim completed with the created PO's identity (best-effort).
+ * Returns whether the settle write actually persisted — security re-audit
+ * closure, Blocker 5 (Scenario D): when Cin7 confirms a create succeeded but
+ * THIS write fails (a crash/DB error between the two), the claim is
+ * otherwise left stranded at `pending` with no record that Cin7 already has
+ * the object — indistinguishable from "never attempted" once the TTL later
+ * expires, and blindly reclaimable into a genuine duplicate create. Callers
+ * must fall back to {@link markPoCreationAmbiguous} on a `false` return so
+ * the claim is at least left in a state that forces reconciliation before
+ * any future reclaim, rather than a silent `pending`.
+ */
 export async function settlePoCreation(
   db: Db,
   orgId: string,
@@ -86,14 +97,18 @@ export async function settlePoCreation(
   key: string,
   cin7PurchaseId: string,
   orderNumber: string | null
-): Promise<void> {
+): Promise<boolean> {
   const { error } = await db
     .from("po_creation_claims")
     .update({ status: "completed", cin7_purchase_id: cin7PurchaseId, order_number: orderNumber, updated_at: new Date().toISOString() })
     .eq("org_id", orgId)
     .eq("instance_id", instanceId)
     .eq("idempotency_key", key);
-  if (error) console.error("settlePoCreation failed:", error.message);
+  if (error) {
+    console.error("settlePoCreation failed:", error.message);
+    return false;
+  }
+  return true;
 }
 
 /** Release a claim after a DEFINITE (non-ambiguous) create failure, so an immediate retry isn't blocked for the whole TTL (best-effort). */

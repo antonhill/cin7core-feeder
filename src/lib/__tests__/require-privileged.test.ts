@@ -18,15 +18,20 @@ function fakeSessionClient(aal: { currentLevel: string; nextLevel: string } | nu
 }
 
 /** Stands in for the two chains requirePrivilegedOrgAdmin issues: super_admins and organizations, both select.eq.maybeSingle. */
-function fakeDb({ isSuperAdmin = false, subscriptionStatus = "active" as string | null }) {
+function fakeDb({
+  isSuperAdmin = false,
+  subscriptionStatus = "active" as string | null,
+  superAdminError = null as { message: string } | null,
+  orgError = null as { message: string } | null,
+}) {
   return {
     from: (table: string) => ({
       select: () => ({
         eq: (_c: string, v: unknown) => ({
           maybeSingle: async () => {
-            if (table === "super_admins") return { data: isSuperAdmin ? { user_id: v } : null };
-            if (table === "organizations") return { data: subscriptionStatus ? { subscription_status: subscriptionStatus } : null };
-            return { data: null };
+            if (table === "super_admins") return { data: isSuperAdmin ? { user_id: v } : null, error: superAdminError };
+            if (table === "organizations") return { data: subscriptionStatus ? { subscription_status: subscriptionStatus } : null, error: orgError };
+            return { data: null, error: null };
           },
         }),
       }),
@@ -90,6 +95,41 @@ describe("requirePrivilegedOrgAdmin", () => {
     vi.mocked(createServiceRoleClient).mockReturnValue(fakeDb({ isSuperAdmin: false, subscriptionStatus: "active" }) as never);
     vi.mocked(createSessionClient).mockResolvedValue(fakeSessionClient({ currentLevel: "aal1", nextLevel: "aal1" }) as never);
     await expect(requirePrivilegedOrgAdmin("manage Cin7 instances")).rejects.toThrow(/Two-factor authentication is required/);
+  });
+
+  describe("security closure Blocker 1: fails closed on a Supabase read error, does not silently skip AAL2", () => {
+    it("throws (does not proceed unchecked) when the super_admins read errors — DB error must never skip AAL2", async () => {
+      vi.mocked(createServiceRoleClient).mockReturnValue(
+        fakeDb({ isSuperAdmin: false, subscriptionStatus: "active", superAdminError: { message: "connection reset" } }) as never
+      );
+      await expect(requirePrivilegedOrgAdmin("manage Cin7 instances")).rejects.toThrow(/connection reset/);
+      expect(createSessionClient).not.toHaveBeenCalled();
+    });
+
+    it("throws (does not proceed unchecked) when the organizations read errors — DB error must never skip AAL2", async () => {
+      vi.mocked(createServiceRoleClient).mockReturnValue(
+        fakeDb({ isSuperAdmin: false, subscriptionStatus: "active", orgError: { message: "connection reset" } }) as never
+      );
+      await expect(requirePrivilegedOrgAdmin("manage Cin7 instances")).rejects.toThrow(/connection reset/);
+      expect(createSessionClient).not.toHaveBeenCalled();
+    });
+
+    it("cannot broaden access: a super_admins read error never gets treated as 'is a super-admin'", async () => {
+      // If the bug regressed to `Boolean(data)` on an errored, undefined `data`,
+      // this would still resolve `false` — but the FIX must be that we never
+      // reach that computation at all; the read errors, so AAL2 evaluation
+      // never silently runs with degraded/assumed inputs.
+      vi.mocked(createServiceRoleClient).mockReturnValue(
+        fakeDb({ isSuperAdmin: true, subscriptionStatus: "active", superAdminError: { message: "timeout" } }) as never
+      );
+      await expect(requirePrivilegedOrgAdmin("manage Cin7 instances")).rejects.toThrow(/timeout/);
+    });
+
+    it("AAL2 still passes normally for a correctly-verified user once the reads succeed (no over-correction)", async () => {
+      vi.mocked(createServiceRoleClient).mockReturnValue(fakeDb({ isSuperAdmin: false, subscriptionStatus: "active" }) as never);
+      vi.mocked(createSessionClient).mockResolvedValue(fakeSessionClient({ currentLevel: "aal2", nextLevel: "aal2" }) as never);
+      await expect(requirePrivilegedOrgAdmin("manage Cin7 instances")).resolves.toEqual(CURRENT_ORG);
+    });
   });
 });
 
