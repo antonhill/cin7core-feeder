@@ -19,9 +19,17 @@ const RPC_PAGE_SIZE = 1000;
 // function's own comment above) — every other `.rpc()` call in this file is
 // accidentally bounded by that same 1000-row cap, but this one is genuinely
 // unbounded without its own explicit ceiling. Order Fulfillment's own
-// confirmed live scale is 9,915 orders for one instance; 25,000 leaves real
-// headroom for growth while still bounding worst-case memory/time.
-const MAX_RPC_ROWS = 25_000;
+// confirmed live scale was 9,915 orders for one instance when 25,000 was
+// picked (~2.5x headroom on the ORDER count) — but the same cap also bounds
+// report_order_fulfillment_LINES (per-SKU, several lines per order), and
+// LBL's real growth hit that first: confirmed live 2026-08-18, "Lights by
+// Linea" alone was at 28,365 line rows, already over the old cap, on 10,297
+// orders. Rebased on that actual worst-observed number with the same ~2.5x
+// multiplier (28,365 × 2.5 ≈ 70,900) rather than the order-count figure that
+// undersized it. Paired with default date-range scoping on Order
+// Fulfillment's own fetch (see OrderFulfillmentFilters.fromDate) so this
+// ceiling is a backstop, not the primary defense against unbounded growth.
+const MAX_RPC_ROWS = 75_000;
 
 async function fetchAllRpcRows<T>(db: SupabaseClient, fn: string, params: Record<string, unknown>): Promise<T[]> {
   const all: T[] = [];
@@ -462,6 +470,35 @@ export async function getSalesSyncStatus(db: SupabaseClient, orgId: string, inst
 
 export interface OrderFulfillmentFilters {
   instanceIds?: string[];
+  /**
+   * "YYYY-MM-DD", inclusive — filters both report_order_fulfillment and
+   * report_order_fulfillment_lines server-side to orders whose ship_by
+   * (falling back to order_date, same effective-date convention the
+   * qualification logic itself uses) is on or after this date; an order
+   * with neither date set is never excluded by this filter (nothing
+   * disappears just because its date is unknown). Omitted/undefined means
+   * no date filter — the original unbounded behavior every caller except
+   * Order Fulfillment's own default UI state still gets. Added 2026-08-18
+   * after LBL's real data volume hit MAX_RPC_ROWS on the unfiltered lines
+   * fetch — see that constant's own comment.
+   */
+  fromDate?: string;
+}
+
+/**
+ * One entry per fulfilment on this order that currently has a positive
+ * ready-to-invoice quantity (LBL fulfilment-grain requirement) — invoiced_qty
+ * is attributed to THIS fulfilment only via its own linked invoice number,
+ * not summed across the whole sale (see migration 0081's header comment for
+ * why: the same SKU can appear in more than one sibling fulfilment).
+ */
+export interface ReadyToInvoiceFulfilment {
+  fulfilment_task_id: string;
+  fulfilment_number: number | null;
+  linked_invoice_number: string | null;
+  packed_authorised_qty: number;
+  invoiced_qty: number;
+  ready_to_invoice_qty: number;
 }
 
 export interface OrderFulfillmentRow {
@@ -499,6 +536,10 @@ export interface OrderFulfillmentRow {
   is_ready_to_invoice: boolean;
   /** Same floor semantics as pick_today_hidden_by_floor/ship_today_hidden_by_floor, for the Ready to Invoice queue. */
   ready_to_invoice_hidden_by_floor: boolean;
+  /** Null when no fulfilment on this sale currently has a positive ready-to-invoice quantity, or the sale hasn't been re-synced since fulfilment identity started being captured (migration 0081) — self-heals on next detail sync. */
+  ready_to_invoice_fulfilments: ReadyToInvoiceFulfilment[] | null;
+  /** Comma-joined FulfillmentNumber(s) from ready_to_invoice_fulfilments, e.g. "1" or "1, 3" — a quick display string so the UI doesn't need to parse the jsonb array just to show which fulfilment(s) are ready. */
+  ready_to_invoice_fulfilment_numbers: string | null;
   /** Distinct AUTHORISED/PAID invoice numbers on this order, comma-joined — null when nothing's been finally invoiced yet (P2, "Box Label Queue"). */
   invoice_numbers: string | null;
   /** Requirement 3's shipping-view filter: "not_invoiced" | "partially_invoiced" | "invoiced", computed from real invoiced-vs-ordered quantities rather than trusting Cin7's own combined_invoice_status string. */
@@ -567,6 +608,7 @@ export async function getOrderFulfillmentReport(db: SupabaseClient, orgId: strin
   return fetchAllRpcRows<OrderFulfillmentRow>(db, "report_order_fulfillment", {
     p_org_id: orgId,
     p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
+    p_from_date: filters.fromDate ?? null,
   });
 }
 
@@ -575,6 +617,7 @@ export async function getOrderFulfillmentLines(db: SupabaseClient, orgId: string
   return fetchAllRpcRows<OrderFulfillmentLineRow>(db, "report_order_fulfillment_lines", {
     p_org_id: orgId,
     p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
+    p_from_date: filters.fromDate ?? null,
   });
 }
 

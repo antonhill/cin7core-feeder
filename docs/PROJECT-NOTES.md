@@ -76,11 +76,43 @@ prune/rewrite entries here rather than appending forever once something is fully
   Fulfillment, Shipping Calendar, Invoicing Scheduler, and Picking Calendar all share one SQL-side
   source of truth: `report_order_fulfillment`/`report_order_fulfillment_lines`
   (`supabase/migrations/0061`-`0063`, `0065`, `0068`-`0069`; P4/P5.1's own tables are separate, see below).
-  **Known architecture limitation, accepted not fixed**: the
-  sync has no per-fulfilment Cin7 TaskID, so every "per-fulfilment" quantity comparison here
+  **Known architecture limitation, accepted not fixed** (partially closed 2026-08-18, see below):
+  the sync has no per-fulfilment Cin7 TaskID, so every "per-fulfilment" quantity comparison here
   (packed-vs-invoiced, pick-vs-pack) is actually per-SKU-across-the-whole-sale — fine for the
   common case, but a genuine multi-fulfilment split order can misattribute which specific
   fulfilment a partial quantity belongs to. Revisit if that ever needs to be exact.
+  - **Fulfilment-grain Ready to Invoice, 2026-08-18 (0081)**: LBL's actual flow needs the
+    Invoicing Clerk to see WHICH specific fulfilment on a multi-fulfilment SO is ready (e.g.
+    Fulfilment 1 of 3), not just that the order as a whole has something ready — the order-level
+    `is_ready_to_invoice`/`total_ready_to_invoice_qty` above already surfaced the order early
+    (sums across the whole sale, so it doesn't wait on every fulfilment), but couldn't say which
+    one. A live probe against real "Lights by Linea" multi-fulfilment orders (2026-08-18)
+    overturned the assumption behind 0071's "considered and rejected" note below: Cin7 DOES send
+    a `TaskID` per fulfilment (18/18 real orders checked, always populated, never colliding) AND a
+    genuine two-way `FulfillmentNumber`/`LinkedInvoiceNumber` cross-reference to
+    `Cin7SaleInvoice.InvoiceNumber` — both previously undeclared in `Cin7SaleFulfilment`
+    (`src/cin7/sales.ts`) and discarded by `extractPickPackLineRows`, exactly as 0071 described,
+    but retrievable without guessing at an allocation rule. Also confirmed live: the same SKU can
+    appear in more than one sibling fulfilment's `Pack.Lines` on the same sale (~1/3 of real
+    multi-fulfilment orders checked) — this is why summing by SKU alone across fulfilments (the
+    pre-0081 approach) isn't just imprecise but can genuinely conflate two distinct pack events.
+    **Scope kept deliberately narrow**: `sale_pick_pack_lines` now carries `fulfilment_task_id`/
+    `fulfilment_number`/`fulfilment_linked_invoice_number` per line, and `report_order_fulfillment`
+    gained two ADDITIVE columns (`ready_to_invoice_fulfilments` jsonb detail,
+    `ready_to_invoice_fulfilment_numbers` a quick "1" / "1, 3" display string) computed by joining
+    each fulfilment's own `linked_invoice_number` against `sale_lines` — invoiced qty is
+    attributed to the ONE fulfilment it actually covers, not summed sale-wide. Deliberately did
+    NOT re-derive `report_order_fulfillment_lines` or move the whole report to fulfilment grain —
+    Pick Today/Ship Today/Backorder/Box Label Queue weren't part of this ask and re-deriving them
+    would ripple into row identity/selection state across every Order Fulfillment tab for no
+    requested benefit. Surfaced on Order Fulfillment's "Fulfilment(s)" column and an Invoicing
+    Scheduler card badge. **Self-heals, no backfill**: existing `sale_pick_pack_lines` rows read
+    `fulfilment_task_id = null` until their sale's next detail sync (full delete+reinsert per sale,
+    same as always) — confirmed live post-migration that `report_order_fulfillment` still runs
+    clean and the order-level flag is unaffected, the new columns are just null until resync.
+    Box Label Queue's per-fulfilment gap (0071/0063's `fulfilment_ref`, still unpopulated) is
+    NOT addressed by this — LBL's ask was invoicing-specific; revisit box labels separately if
+    that's ever raised.
   - **Date floor** (0061): `cin7_instances.fulfilment_view_start_date` — orders whose
     `ship_by`/`order_date` predate it don't count toward `is_pick_today`/`is_ship_today`/
     `is_ready_to_invoice`/`is_ready_for_box_label`, but stay visible on Order Fulfillment's All
@@ -108,14 +140,19 @@ prune/rewrite entries here rather than appending forever once something is fully
     `qualifies_box_label` now compares the live quantity against that snapshot
     (`total_ready_for_box_label_qty > ready_qty_at_mark`) instead of checking `printed_at is null`,
     so genuine new growth self-heals the queue automatically, no per-fulfilment Cin7 tracking needed.
-    Considered and rejected a real per-fulfilment fix: Cin7's `Fulfilments[]` DOES carry a `TaskID`
-    per entry (`Cin7SaleFulfilment.TaskID`, `src/cin7/sales.ts`), but it's discarded at THREE points
-    today (`extractPickPackLineRows` in `sync-sales.ts` never captures it, `sale_pick_pack_lines` has
-    no column for it, and the report functions sum purely by SKU across the whole sale) — retrofitting
-    it would touch the sync pipeline, a new migration, AND the report functions, and would still not
-    solve tying a specific label FILE to a specific fulfilment (Cin7's attachment API has no such
-    linkage regardless — the same gap 0063 already hit). The snapshot approach fixes the actual
-    symptom with none of that. UI updated to match: the main table cell and the "found a BoxLabel
+    Considered and rejected a real per-fulfilment fix at the time: Cin7's `Fulfilments[]` DOES carry
+    a `TaskID` per entry (`Cin7SaleFulfilment.TaskID`, `src/cin7/sales.ts`), but it's discarded at
+    THREE points today (`extractPickPackLineRows` in `sync-sales.ts` never captures it,
+    `sale_pick_pack_lines` has no column for it, and the report functions sum purely by SKU across
+    the whole sale) — retrofitting it would touch the sync pipeline, a new migration, AND the report
+    functions, and would still not solve tying a specific label FILE to a specific fulfilment
+    (Cin7's attachment API has no such linkage regardless — the same gap 0063 already hit). The
+    snapshot approach fixes the actual symptom with none of that. **Update 2026-08-18 (0081)**: the
+    sync/migration/report retrofit described here as "considered and rejected" was later done for
+    Ready to Invoice specifically (see the "Fulfilment-grain Ready to Invoice" bullet above) — but
+    Box Label Queue's own gap (tying a label FILE to a fulfilment) is untouched by that, since Cin7
+    genuinely has no such linkage; this snapshot-quantity approach remains the right fix for Box
+    Label Queue regardless. UI updated to match: the main table cell and the "found a BoxLabel
     attachment in Cin7" banner both now check `is_ready_for_box_label` FIRST (show "Mark as printed"
     when there's live new-round quantity to acknowledge) before falling back to `box_label_printed_at`
     (show "Printed {date}" + Unmark when nothing new is outstanding) — checking `printed_at` alone
@@ -1378,6 +1415,74 @@ Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas
     stakes on data retention — the privacy policy/DPA drafts above explicitly flag "no retention
     policy" as unresolved; settle that before this feature goes from scoped to active, since a
     backup feature multiplies exactly the data volume that policy needs to cover.
+
+- **Fulfilment-grain Ready to Invoice, PR #58 incident + fix (2026-08-18)** — after shipping the
+  fulfilment-grain breakdown (see the LBL bullet above, migration `0081`), CI's fresh migration
+  bootstrap caught a real bug: `0081` had rebuilt `report_order_fulfillment` from an OUTDATED
+  (`0063`) copy of the function body, silently dropping every column three later migrations had
+  added (`0068`'s `has_backorder_with_po`/`has_backorder_no_po`, `0069`'s
+  `total_packed_qty`/`total_packed_qty_authorised`/`total_invoiced_qty`/
+  `total_backorder_po_outstanding_qty`, and `0071`'s box-label snapshot-requalify logic). Already
+  briefly applied live before CI caught it — fixed by rebuilding on `0071`'s actual latest body
+  plus the new fulfilment breakdown, verified column-by-column, and reapplied live. **Lesson,
+  same one this codebase has hit before in different forms**: before dropping/recreating a
+  function this codebase extends repeatedly (`report_order_fulfillment` alone has been rewritten
+  in 0033/0034/0035/0036/0061/0062/0063/0064/0068/0069/0071/0081/0082), grep every migration that
+  touches it — `grep -l "report_order_fulfillment\b" supabase/migrations/*.sql` — don't assume the
+  most recently *read* migration is the most recently *written* one.
+
+  Separately, real (not a bug) production impact from LBL's growth: `report_order_fulfillment_lines`
+  had no date filter at all, and LBL's real volume (28,365 line rows for "Lights by Linea" alone,
+  confirmed live 2026-08-18) crossed `MAX_RPC_ROWS` (`src/reports/query.ts`), breaking Order
+  Fulfillment's fetch entirely — unrelated to the `0081` bug above, a genuine scaling limit reached
+  for the first time. Fixed two ways (migration `0082`): (1) raised `MAX_RPC_ROWS` 25,000 → 75,000,
+  rebased on the actual worst-observed number (lines, not orders — the original 25,000 was sized off
+  order count alone, which undersized it for the lines report); (2) added an optional `p_from_date`
+  to both `report_order_fulfillment_lines` and `report_order_fulfillment` (default `null`, so every
+  existing caller — Invoicing Scheduler, Shipping/Picking Calendar, Fulfillment Cleanup Helper,
+  Production Tracking, the home page — is completely unaffected), with Order Fulfillment's own page
+  applying a client-side default of "last 12 months" (matching `DEFAULT_BACKFILL_MONTHS`) plus a
+  "Show all time" toggle to clear it. Deliberately NOT a server-side default inside the functions
+  themselves — that would have silently changed every other page's semantics for no request from
+  Anton. Live-verified: 28,365 → 23,430 lines with the 12-month default applied, comfortably under
+  the new cap either way. **Not yet addressed**: Invoicing Scheduler and the other pages sharing
+  `OrderFulfillmentFilters` could independently hit the same cap as LBL's data keeps growing, since
+  they don't pass `fromDate` — flagged, not fixed, since only Order Fulfillment was reported broken.
+
+  **Immediate follow-up incident, same day (0083)**: 0082 itself caused a live outage —
+  `report_order_fulfillment: canceling statement due to statement timeout`, reported by Anton
+  minutes after 0082 shipped. Root cause, confirmed via `EXPLAIN ANALYZE` against real LBL data
+  before touching anything further: 0082's `join sales s on ...` inside
+  `report_order_fulfillment_lines` (added to read `ship_by`/`order_date` for the new date filter)
+  was a MANDATORY join, so it widened every row flowing through the six pre-existing downstream
+  hash/merge joins (picked/packed/packed_authorised/invoiced/picked_locations/best_location/
+  backorder_eta) on EVERY call, including unfiltered ones — measured ~3.4s baseline → ~6.8s with
+  the join present. Worse, `report_order_fulfillment` passes `p_from_date` into its OWN internal
+  call to `report_order_fulfillment_lines` (inside `totals`), so the outer function paid that same
+  inflated cost too, even though — as 0082's own comment already said — that's not needed for
+  correctness (the outer `sales s` date filter already does the real work; an excluded sale's
+  totals just don't match anything and get dropped by the join). Outer function measured ~15s live,
+  well past whatever timeout the app's connection layer enforces.
+
+  Fix (0083), each half verified live with `EXPLAIN ANALYZE` before/after: (1)
+  `report_order_fulfillment_lines` — replaced the mandatory join with
+  `(p_from_date is null or exists (select 1 from sales ...))`. Confirmed live: with a literal
+  `null`, Postgres proves the `or` is always true and drops the `exists` from the plan ENTIRELY (no
+  `sales` reference appears at all) — cost back to baseline. With a real date, it plans as a hash
+  semi-join, correctly filtering without ever widening the row pipeline. (2) `report_order_fulfillment`
+  — stopped passing `p_from_date` to its internal `report_order_fulfillment_lines` call (always
+  `null` there now); the outer `sales s` filter alone remains sufficient for correctness, exactly as
+  0082's own comment argued but hadn't yet acted on. Live result: `report_order_fulfillment`
+  (single call, warm cache — the realistic steady state) down from ~15s to ~2.1s, unfiltered and
+  12-month-filtered alike; `report_order_fulfillment_lines` similarly restored to ~1.8-3.5s.
+  **Lesson**: a mandatory join added purely to support an optional filter parameter should almost
+  always be conditional (`param is null or exists (...)`) rather than unconditional — the cost of
+  widening every downstream join is paid by every caller, not just the ones that asked for
+  filtering, and that cost compounds badly through this codebase's already-long join chains. Should
+  have been caught before shipping 0082 by running `EXPLAIN ANALYZE` against real data first, the
+  same discipline this codebase's own [VALIDATE-API] convention already applies to live Cin7 calls
+  — extend that instinct to expensive SQL changes on tables at real client scale, not just external
+  API assumptions.
 
 ## Where to look next
 

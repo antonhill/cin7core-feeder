@@ -57,6 +57,12 @@ export const ORDER_FULFILLMENT_EXPORT_COLUMNS: OrderFulfillmentExportColumn[] = 
   { key: "is_pick_today", label: "Pick Today?", group: "Queue flags", get: (r) => bool(r.is_pick_today) },
   { key: "is_ship_today", label: "Ship Today?", group: "Queue flags", get: (r) => bool(r.is_ship_today) },
   { key: "is_ready_to_invoice", label: "Ready to Invoice?", group: "Queue flags", get: (r) => bool(r.is_ready_to_invoice) },
+  {
+    key: "ready_to_invoice_fulfilment_numbers",
+    label: "Ready Fulfilment(s)",
+    group: "Queue flags",
+    get: (r) => r.ready_to_invoice_fulfilment_numbers ?? "",
+  },
   { key: "is_ready_for_box_label", label: "Ready for Box Label?", group: "Queue flags", get: (r) => bool(r.is_ready_for_box_label) },
   { key: "has_backorder_with_po", label: "Has Backorder With PO", group: "Queue flags", get: (r) => bool(r.has_backorder_with_po) },
   { key: "has_backorder_no_po", label: "Has Backorder With NO PO", group: "Queue flags", get: (r) => bool(r.has_backorder_no_po) },

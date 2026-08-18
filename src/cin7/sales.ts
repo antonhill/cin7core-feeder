@@ -191,9 +191,27 @@ export interface Cin7SaleFulfilmentShip {
   Lines?: Cin7SaleFulfilmentShipLine[];
 }
 
-/** Confirmed live 2026-07-09: Fulfilments is a genuine array — a sale can have more than one (e.g. split picks), so "already picked/packed" must sum across every entry, not just read index 0. */
+/**
+ * Confirmed live 2026-07-09: Fulfilments is a genuine array — a sale can have
+ * more than one (e.g. split picks), so "already picked/packed" must sum
+ * across every entry, not just read index 0.
+ *
+ * `FulfillmentNumber`/`LinkedInvoiceNumber` confirmed live 2026-08-18 (LBL
+ * fulfilment-grain probe, real "Lights by Linea" multi-fulfilment orders) —
+ * present in the raw `/sale?ID=` JSON but previously undeclared here.
+ * `LinkedInvoiceNumber` is a direct cross-reference to `Cin7SaleInvoice.
+ * InvoiceNumber` (empty string, not null, when nothing's invoiced yet for
+ * that specific fulfilment) — this is what lets invoiced quantity be
+ * attributed to ONE fulfilment instead of summed across the whole sale,
+ * which the probe also confirmed is necessary: the same SKU can appear in
+ * more than one sibling fulfilment's Pack.Lines on the same sale (~1/3 of
+ * real multi-fulfilment orders checked), so summing by SKU alone across
+ * fulfilments would conflate two physically distinct pack events.
+ */
 export interface Cin7SaleFulfilment {
   TaskID?: string;
+  FulfillmentNumber?: number;
+  LinkedInvoiceNumber?: string;
   FulFilmentStatus?: string;
   Pick?: Cin7SaleFulfilmentPickPack;
   Pack?: Cin7SaleFulfilmentPickPack;
