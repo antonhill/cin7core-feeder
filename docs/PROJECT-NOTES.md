@@ -76,11 +76,43 @@ prune/rewrite entries here rather than appending forever once something is fully
   Fulfillment, Shipping Calendar, Invoicing Scheduler, and Picking Calendar all share one SQL-side
   source of truth: `report_order_fulfillment`/`report_order_fulfillment_lines`
   (`supabase/migrations/0061`-`0063`, `0065`, `0068`-`0069`; P4/P5.1's own tables are separate, see below).
-  **Known architecture limitation, accepted not fixed**: the
-  sync has no per-fulfilment Cin7 TaskID, so every "per-fulfilment" quantity comparison here
+  **Known architecture limitation, accepted not fixed** (partially closed 2026-08-18, see below):
+  the sync has no per-fulfilment Cin7 TaskID, so every "per-fulfilment" quantity comparison here
   (packed-vs-invoiced, pick-vs-pack) is actually per-SKU-across-the-whole-sale — fine for the
   common case, but a genuine multi-fulfilment split order can misattribute which specific
   fulfilment a partial quantity belongs to. Revisit if that ever needs to be exact.
+  - **Fulfilment-grain Ready to Invoice, 2026-08-18 (0081)**: LBL's actual flow needs the
+    Invoicing Clerk to see WHICH specific fulfilment on a multi-fulfilment SO is ready (e.g.
+    Fulfilment 1 of 3), not just that the order as a whole has something ready — the order-level
+    `is_ready_to_invoice`/`total_ready_to_invoice_qty` above already surfaced the order early
+    (sums across the whole sale, so it doesn't wait on every fulfilment), but couldn't say which
+    one. A live probe against real "Lights by Linea" multi-fulfilment orders (2026-08-18)
+    overturned the assumption behind 0071's "considered and rejected" note below: Cin7 DOES send
+    a `TaskID` per fulfilment (18/18 real orders checked, always populated, never colliding) AND a
+    genuine two-way `FulfillmentNumber`/`LinkedInvoiceNumber` cross-reference to
+    `Cin7SaleInvoice.InvoiceNumber` — both previously undeclared in `Cin7SaleFulfilment`
+    (`src/cin7/sales.ts`) and discarded by `extractPickPackLineRows`, exactly as 0071 described,
+    but retrievable without guessing at an allocation rule. Also confirmed live: the same SKU can
+    appear in more than one sibling fulfilment's `Pack.Lines` on the same sale (~1/3 of real
+    multi-fulfilment orders checked) — this is why summing by SKU alone across fulfilments (the
+    pre-0081 approach) isn't just imprecise but can genuinely conflate two distinct pack events.
+    **Scope kept deliberately narrow**: `sale_pick_pack_lines` now carries `fulfilment_task_id`/
+    `fulfilment_number`/`fulfilment_linked_invoice_number` per line, and `report_order_fulfillment`
+    gained two ADDITIVE columns (`ready_to_invoice_fulfilments` jsonb detail,
+    `ready_to_invoice_fulfilment_numbers` a quick "1" / "1, 3" display string) computed by joining
+    each fulfilment's own `linked_invoice_number` against `sale_lines` — invoiced qty is
+    attributed to the ONE fulfilment it actually covers, not summed sale-wide. Deliberately did
+    NOT re-derive `report_order_fulfillment_lines` or move the whole report to fulfilment grain —
+    Pick Today/Ship Today/Backorder/Box Label Queue weren't part of this ask and re-deriving them
+    would ripple into row identity/selection state across every Order Fulfillment tab for no
+    requested benefit. Surfaced on Order Fulfillment's "Fulfilment(s)" column and an Invoicing
+    Scheduler card badge. **Self-heals, no backfill**: existing `sale_pick_pack_lines` rows read
+    `fulfilment_task_id = null` until their sale's next detail sync (full delete+reinsert per sale,
+    same as always) — confirmed live post-migration that `report_order_fulfillment` still runs
+    clean and the order-level flag is unaffected, the new columns are just null until resync.
+    Box Label Queue's per-fulfilment gap (0071/0063's `fulfilment_ref`, still unpopulated) is
+    NOT addressed by this — LBL's ask was invoicing-specific; revisit box labels separately if
+    that's ever raised.
   - **Date floor** (0061): `cin7_instances.fulfilment_view_start_date` — orders whose
     `ship_by`/`order_date` predate it don't count toward `is_pick_today`/`is_ship_today`/
     `is_ready_to_invoice`/`is_ready_for_box_label`, but stay visible on Order Fulfillment's All
@@ -108,14 +140,19 @@ prune/rewrite entries here rather than appending forever once something is fully
     `qualifies_box_label` now compares the live quantity against that snapshot
     (`total_ready_for_box_label_qty > ready_qty_at_mark`) instead of checking `printed_at is null`,
     so genuine new growth self-heals the queue automatically, no per-fulfilment Cin7 tracking needed.
-    Considered and rejected a real per-fulfilment fix: Cin7's `Fulfilments[]` DOES carry a `TaskID`
-    per entry (`Cin7SaleFulfilment.TaskID`, `src/cin7/sales.ts`), but it's discarded at THREE points
-    today (`extractPickPackLineRows` in `sync-sales.ts` never captures it, `sale_pick_pack_lines` has
-    no column for it, and the report functions sum purely by SKU across the whole sale) — retrofitting
-    it would touch the sync pipeline, a new migration, AND the report functions, and would still not
-    solve tying a specific label FILE to a specific fulfilment (Cin7's attachment API has no such
-    linkage regardless — the same gap 0063 already hit). The snapshot approach fixes the actual
-    symptom with none of that. UI updated to match: the main table cell and the "found a BoxLabel
+    Considered and rejected a real per-fulfilment fix at the time: Cin7's `Fulfilments[]` DOES carry
+    a `TaskID` per entry (`Cin7SaleFulfilment.TaskID`, `src/cin7/sales.ts`), but it's discarded at
+    THREE points today (`extractPickPackLineRows` in `sync-sales.ts` never captures it,
+    `sale_pick_pack_lines` has no column for it, and the report functions sum purely by SKU across
+    the whole sale) — retrofitting it would touch the sync pipeline, a new migration, AND the report
+    functions, and would still not solve tying a specific label FILE to a specific fulfilment
+    (Cin7's attachment API has no such linkage regardless — the same gap 0063 already hit). The
+    snapshot approach fixes the actual symptom with none of that. **Update 2026-08-18 (0081)**: the
+    sync/migration/report retrofit described here as "considered and rejected" was later done for
+    Ready to Invoice specifically (see the "Fulfilment-grain Ready to Invoice" bullet above) — but
+    Box Label Queue's own gap (tying a label FILE to a fulfilment) is untouched by that, since Cin7
+    genuinely has no such linkage; this snapshot-quantity approach remains the right fix for Box
+    Label Queue regardless. UI updated to match: the main table cell and the "found a BoxLabel
     attachment in Cin7" banner both now check `is_ready_for_box_label` FIRST (show "Mark as printed"
     when there's live new-round quantity to acknowledge) before falling back to `box_label_printed_at`
     (show "Printed {date}" + Unmark when nothing new is outstanding) — checking `printed_at` alone

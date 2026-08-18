@@ -50,6 +50,7 @@ type OrderTableColumn =
   | "payment"
   | "pickableNow"
   | "readyToInvoiceQty"
+  | "readyToInvoiceFulfilments"
   | "boxLabelQty"
   | "boxLabelAction"
   | "paidInvoice";
@@ -66,6 +67,7 @@ const ORDER_TABLE_COLUMNS: OrderTableColumn[] = [
   "payment",
   "pickableNow",
   "readyToInvoiceQty",
+  "readyToInvoiceFulfilments",
   "boxLabelQty",
   "boxLabelAction",
   "paidInvoice",
@@ -83,6 +85,7 @@ const ORDER_TABLE_DEFAULT_WIDTHS: Record<OrderTableColumn, number> = {
   payment: 130,
   pickableNow: 120,
   readyToInvoiceQty: 140,
+  readyToInvoiceFulfilments: 140,
   boxLabelQty: 130,
   boxLabelAction: 170,
   paidInvoice: 140,
@@ -111,6 +114,8 @@ function orderTableSortValue(column: OrderTableColumn, row: OrderFulfillmentRow)
       return row.total_pickable_qty;
     case "readyToInvoiceQty":
       return row.total_ready_to_invoice_qty;
+    case "readyToInvoiceFulfilments":
+      return row.ready_to_invoice_fulfilment_numbers;
     case "boxLabelQty":
       return row.total_ready_for_box_label_qty;
     case "paidInvoice":
@@ -727,6 +732,7 @@ export default function OrderFulfillmentPage() {
                     <ResizableTh column="payment" label="Payment" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <ResizableTh column="pickableNow" label="Pickable Now" align="right" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <ResizableTh column="readyToInvoiceQty" label="Qty Awaiting Invoice" align="right" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                    <ResizableTh column="readyToInvoiceFulfilments" label="Fulfilment(s)" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <ResizableTh column="boxLabelQty" label="Qty Ready for Label" align="right" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <ResizableTh column="boxLabelAction" label="Box Label" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <ResizableTh column="paidInvoice" label="Paid / Invoice" align="right" onResizeStart={startResize} sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
@@ -790,6 +796,19 @@ export default function OrderFulfillmentPage() {
                         </td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium">{qty(row.total_pickable_qty)}</td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium">{qty(row.total_ready_to_invoice_qty)}</td>
+                        <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-xs text-slate-600">
+                          {row.ready_to_invoice_fulfilment_numbers ? (
+                            <span
+                              title={(row.ready_to_invoice_fulfilments ?? [])
+                                .map((f) => `Fulfilment ${f.fulfilment_number ?? "?"}: ${qty(f.ready_to_invoice_qty)} awaiting invoice`)
+                                .join("\n")}
+                            >
+                              #{row.ready_to_invoice_fulfilment_numbers}
+                            </span>
+                          ) : (
+                            <span className="text-slate-300">—</span>
+                          )}
+                        </td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium">{qty(row.total_ready_for_box_label_qty)}</td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                           {row.is_ready_for_box_label ? (

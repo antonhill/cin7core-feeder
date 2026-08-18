@@ -32,6 +32,8 @@ function order(overrides: Partial<OrderFulfillmentRow>): OrderFulfillmentRow {
     total_ready_to_invoice_qty: 0,
     is_ready_to_invoice: false,
     ready_to_invoice_hidden_by_floor: false,
+    ready_to_invoice_fulfilments: null,
+    ready_to_invoice_fulfilment_numbers: null,
     invoice_numbers: null,
     invoice_coverage_status: "not_invoiced",
     total_ready_for_box_label_qty: 0,

@@ -464,6 +464,22 @@ export interface OrderFulfillmentFilters {
   instanceIds?: string[];
 }
 
+/**
+ * One entry per fulfilment on this order that currently has a positive
+ * ready-to-invoice quantity (LBL fulfilment-grain requirement) — invoiced_qty
+ * is attributed to THIS fulfilment only via its own linked invoice number,
+ * not summed across the whole sale (see migration 0081's header comment for
+ * why: the same SKU can appear in more than one sibling fulfilment).
+ */
+export interface ReadyToInvoiceFulfilment {
+  fulfilment_task_id: string;
+  fulfilment_number: number | null;
+  linked_invoice_number: string | null;
+  packed_authorised_qty: number;
+  invoiced_qty: number;
+  ready_to_invoice_qty: number;
+}
+
 export interface OrderFulfillmentRow {
   cin7_sale_id: string;
   instance_id: string;
@@ -499,6 +515,10 @@ export interface OrderFulfillmentRow {
   is_ready_to_invoice: boolean;
   /** Same floor semantics as pick_today_hidden_by_floor/ship_today_hidden_by_floor, for the Ready to Invoice queue. */
   ready_to_invoice_hidden_by_floor: boolean;
+  /** Null when no fulfilment on this sale currently has a positive ready-to-invoice quantity, or the sale hasn't been re-synced since fulfilment identity started being captured (migration 0081) — self-heals on next detail sync. */
+  ready_to_invoice_fulfilments: ReadyToInvoiceFulfilment[] | null;
+  /** Comma-joined FulfillmentNumber(s) from ready_to_invoice_fulfilments, e.g. "1" or "1, 3" — a quick display string so the UI doesn't need to parse the jsonb array just to show which fulfilment(s) are ready. */
+  ready_to_invoice_fulfilment_numbers: string | null;
   /** Distinct AUTHORISED/PAID invoice numbers on this order, comma-joined — null when nothing's been finally invoiced yet (P2, "Box Label Queue"). */
   invoice_numbers: string | null;
   /** Requirement 3's shipping-view filter: "not_invoiced" | "partially_invoiced" | "invoiced", computed from real invoiced-vs-ordered quantities rather than trusting Cin7's own combined_invoice_status string. */

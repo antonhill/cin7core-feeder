@@ -41,6 +41,15 @@ function toDateOnly(value: string | null | undefined): string | null {
  * picks) into two independently-numbered line sequences — what matters for
  * "already picked" is the sum per SKU across the whole sale's fulfillment
  * history, not which specific fulfilment record a line came from.
+ *
+ * Each line also carries its OWNING fulfilment's identity
+ * (fulfilment_task_id/fulfilment_number/fulfilment_linked_invoice_number,
+ * confirmed live 2026-08-18 for the LBL fulfilment-grain follow-up) —
+ * previously discarded here even though "already picked" is correctly
+ * summed sale-wide, this is what lets report_order_fulfillment attribute
+ * READY-TO-INVOICE quantity to one specific fulfilment instead of the whole
+ * sale (see migration 0081's header comment for why that distinction
+ * matters: the same SKU can appear in more than one sibling fulfilment).
  */
 function extractPickPackLineRows(orgId: string, instanceId: string, saleId: string, fulfilments: Cin7SaleFulfilment[]) {
   const rows: {
@@ -62,11 +71,19 @@ function extractPickPackLineRows(orgId: string, instanceId: string, saleId: stri
     // sale. Every line from the same fulfilment shares its fulfilment's
     // status, same "flatten across Fulfilments[]" shape as quantity.
     status: string | null;
+    fulfilment_task_id: string | null;
+    fulfilment_number: number | null;
+    fulfilment_linked_invoice_number: string | null;
   }[] = [];
 
   let pickLineNumber = 0;
   let packLineNumber = 0;
   for (const fulfilment of fulfilments) {
+    const fulfilmentIdentity = {
+      fulfilment_task_id: fulfilment.TaskID ?? null,
+      fulfilment_number: fulfilment.FulfillmentNumber ?? null,
+      fulfilment_linked_invoice_number: fulfilment.LinkedInvoiceNumber ?? null,
+    };
     for (const line of fulfilment.Pick?.Lines ?? []) {
       rows.push({
         org_id: orgId,
@@ -80,6 +97,7 @@ function extractPickPackLineRows(orgId: string, instanceId: string, saleId: stri
         location: line.Location ?? null,
         batch_sn: line.BatchSN ?? null,
         status: fulfilment.Pick?.Status ?? null,
+        ...fulfilmentIdentity,
       });
     }
     for (const line of fulfilment.Pack?.Lines ?? []) {
@@ -95,6 +113,7 @@ function extractPickPackLineRows(orgId: string, instanceId: string, saleId: stri
         location: line.Location ?? null,
         batch_sn: line.BatchSN ?? null,
         status: fulfilment.Pack?.Status ?? null,
+        ...fulfilmentIdentity,
       });
     }
   }

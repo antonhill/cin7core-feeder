@@ -53,6 +53,16 @@ function InvoicingCard({ order, instanceName, cin7Url }: { order: OrderFulfillme
         <StatusBadge status={order.combined_invoice_status} wrap />
         <span className={shipped ? "text-emerald-600" : "text-slate-400"}>{shipped ? "Shipped" : "Not shipped"}</span>
       </div>
+      {order.ready_to_invoice_fulfilment_numbers && (
+        <div
+          className="mt-1 text-indigo-600"
+          title={(order.ready_to_invoice_fulfilments ?? [])
+            .map((f) => `Fulfilment ${f.fulfilment_number ?? "?"}: ${f.ready_to_invoice_qty.toLocaleString()} awaiting invoice`)
+            .join("\n")}
+        >
+          Fulfilment{order.ready_to_invoice_fulfilment_numbers.includes(",") ? "s" : ""} #{order.ready_to_invoice_fulfilment_numbers} ready
+        </div>
+      )}
       {order.ship_by && <div className="mt-1 text-slate-400">Ship by {order.ship_by.slice(0, 10)}</div>}
       {order.is_overdue && <div className="mt-1 font-semibold text-rose-600">Overdue</div>}
       {cin7Url && (
