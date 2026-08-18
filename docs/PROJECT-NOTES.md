@@ -1416,6 +1416,39 @@ Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas
     policy" as unresolved; settle that before this feature goes from scoped to active, since a
     backup feature multiplies exactly the data volume that policy needs to cover.
 
+- **Fulfilment-grain Ready to Invoice, PR #58 incident + fix (2026-08-18)** — after shipping the
+  fulfilment-grain breakdown (see the LBL bullet above, migration `0081`), CI's fresh migration
+  bootstrap caught a real bug: `0081` had rebuilt `report_order_fulfillment` from an OUTDATED
+  (`0063`) copy of the function body, silently dropping every column three later migrations had
+  added (`0068`'s `has_backorder_with_po`/`has_backorder_no_po`, `0069`'s
+  `total_packed_qty`/`total_packed_qty_authorised`/`total_invoiced_qty`/
+  `total_backorder_po_outstanding_qty`, and `0071`'s box-label snapshot-requalify logic). Already
+  briefly applied live before CI caught it — fixed by rebuilding on `0071`'s actual latest body
+  plus the new fulfilment breakdown, verified column-by-column, and reapplied live. **Lesson,
+  same one this codebase has hit before in different forms**: before dropping/recreating a
+  function this codebase extends repeatedly (`report_order_fulfillment` alone has been rewritten
+  in 0033/0034/0035/0036/0061/0062/0063/0064/0068/0069/0071/0081/0082), grep every migration that
+  touches it — `grep -l "report_order_fulfillment\b" supabase/migrations/*.sql` — don't assume the
+  most recently *read* migration is the most recently *written* one.
+
+  Separately, real (not a bug) production impact from LBL's growth: `report_order_fulfillment_lines`
+  had no date filter at all, and LBL's real volume (28,365 line rows for "Lights by Linea" alone,
+  confirmed live 2026-08-18) crossed `MAX_RPC_ROWS` (`src/reports/query.ts`), breaking Order
+  Fulfillment's fetch entirely — unrelated to the `0081` bug above, a genuine scaling limit reached
+  for the first time. Fixed two ways (migration `0082`): (1) raised `MAX_RPC_ROWS` 25,000 → 75,000,
+  rebased on the actual worst-observed number (lines, not orders — the original 25,000 was sized off
+  order count alone, which undersized it for the lines report); (2) added an optional `p_from_date`
+  to both `report_order_fulfillment_lines` and `report_order_fulfillment` (default `null`, so every
+  existing caller — Invoicing Scheduler, Shipping/Picking Calendar, Fulfillment Cleanup Helper,
+  Production Tracking, the home page — is completely unaffected), with Order Fulfillment's own page
+  applying a client-side default of "last 12 months" (matching `DEFAULT_BACKFILL_MONTHS`) plus a
+  "Show all time" toggle to clear it. Deliberately NOT a server-side default inside the functions
+  themselves — that would have silently changed every other page's semantics for no request from
+  Anton. Live-verified: 28,365 → 23,430 lines with the 12-month default applied, comfortably under
+  the new cap either way. **Not yet addressed**: Invoicing Scheduler and the other pages sharing
+  `OrderFulfillmentFilters` could independently hit the same cap as LBL's data keeps growing, since
+  they don't pass `fromDate` — flagged, not fixed, since only Order Fulfillment was reported broken.
+
 ## Where to look next
 
 - `docs/cin7-api-findings.md` — verified auth scheme, endpoints, rate limits, and every

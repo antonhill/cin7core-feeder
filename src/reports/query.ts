@@ -19,9 +19,17 @@ const RPC_PAGE_SIZE = 1000;
 // function's own comment above) — every other `.rpc()` call in this file is
 // accidentally bounded by that same 1000-row cap, but this one is genuinely
 // unbounded without its own explicit ceiling. Order Fulfillment's own
-// confirmed live scale is 9,915 orders for one instance; 25,000 leaves real
-// headroom for growth while still bounding worst-case memory/time.
-const MAX_RPC_ROWS = 25_000;
+// confirmed live scale was 9,915 orders for one instance when 25,000 was
+// picked (~2.5x headroom on the ORDER count) — but the same cap also bounds
+// report_order_fulfillment_LINES (per-SKU, several lines per order), and
+// LBL's real growth hit that first: confirmed live 2026-08-18, "Lights by
+// Linea" alone was at 28,365 line rows, already over the old cap, on 10,297
+// orders. Rebased on that actual worst-observed number with the same ~2.5x
+// multiplier (28,365 × 2.5 ≈ 70,900) rather than the order-count figure that
+// undersized it. Paired with default date-range scoping on Order
+// Fulfillment's own fetch (see OrderFulfillmentFilters.fromDate) so this
+// ceiling is a backstop, not the primary defense against unbounded growth.
+const MAX_RPC_ROWS = 75_000;
 
 async function fetchAllRpcRows<T>(db: SupabaseClient, fn: string, params: Record<string, unknown>): Promise<T[]> {
   const all: T[] = [];
@@ -462,6 +470,19 @@ export async function getSalesSyncStatus(db: SupabaseClient, orgId: string, inst
 
 export interface OrderFulfillmentFilters {
   instanceIds?: string[];
+  /**
+   * "YYYY-MM-DD", inclusive — filters both report_order_fulfillment and
+   * report_order_fulfillment_lines server-side to orders whose ship_by
+   * (falling back to order_date, same effective-date convention the
+   * qualification logic itself uses) is on or after this date; an order
+   * with neither date set is never excluded by this filter (nothing
+   * disappears just because its date is unknown). Omitted/undefined means
+   * no date filter — the original unbounded behavior every caller except
+   * Order Fulfillment's own default UI state still gets. Added 2026-08-18
+   * after LBL's real data volume hit MAX_RPC_ROWS on the unfiltered lines
+   * fetch — see that constant's own comment.
+   */
+  fromDate?: string;
 }
 
 /**
@@ -587,6 +608,7 @@ export async function getOrderFulfillmentReport(db: SupabaseClient, orgId: strin
   return fetchAllRpcRows<OrderFulfillmentRow>(db, "report_order_fulfillment", {
     p_org_id: orgId,
     p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
+    p_from_date: filters.fromDate ?? null,
   });
 }
 
@@ -595,6 +617,7 @@ export async function getOrderFulfillmentLines(db: SupabaseClient, orgId: string
   return fetchAllRpcRows<OrderFulfillmentLineRow>(db, "report_order_fulfillment_lines", {
     p_org_id: orgId,
     p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
+    p_from_date: filters.fromDate ?? null,
   });
 }
 

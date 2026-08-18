@@ -417,14 +417,21 @@ describe("getOrderFulfillmentReport", () => {
     const rows = await getOrderFulfillmentReport(db, "org1", {});
 
     expect(rows).toEqual([{ cin7_sale_id: "s1", is_pick_today: true }]);
-    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment", { p_org_id: "org1", p_instance_ids: null });
+    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment", { p_org_id: "org1", p_instance_ids: null, p_from_date: null });
   });
 
   it("passes through the instance filter", async () => {
     const { rpc } = stubPagedRpc([{ data: [], error: null }]);
     const db = { rpc } as unknown as SupabaseClient;
     await getOrderFulfillmentReport(db, "org1", { instanceIds: ["inst-1"] });
-    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment", { p_org_id: "org1", p_instance_ids: ["inst-1"] });
+    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment", { p_org_id: "org1", p_instance_ids: ["inst-1"], p_from_date: null });
+  });
+
+  it("passes through the fromDate filter", async () => {
+    const { rpc } = stubPagedRpc([{ data: [], error: null }]);
+    const db = { rpc } as unknown as SupabaseClient;
+    await getOrderFulfillmentReport(db, "org1", { fromDate: "2026-01-01" });
+    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment", { p_org_id: "org1", p_instance_ids: null, p_from_date: "2026-01-01" });
   });
 
   it("throws with the underlying error message on failure", async () => {
@@ -448,12 +455,12 @@ describe("getOrderFulfillmentReport", () => {
     expect(range).toHaveBeenNthCalledWith(2, 1000, 1999);
   });
 
-  it("security re-audit P1-7: throws a clear error instead of paging forever once matched rows exceed the 25,000-row cap", async () => {
+  it("security re-audit P1-7: throws a clear error instead of paging forever once matched rows exceed the 75,000-row cap", async () => {
     const fullPage = Array.from({ length: 1000 }, (_, i) => ({ cin7_sale_id: `s${i}` }));
     const { rpc } = stubPagedRpc([{ data: fullPage, error: null }]);
     const db = { rpc } as unknown as SupabaseClient;
 
-    await expect(getOrderFulfillmentReport(db, "org1", {})).rejects.toThrow(/over 25,000 rows.*narrow your filters/);
+    await expect(getOrderFulfillmentReport(db, "org1", {})).rejects.toThrow(/over 75,000 rows.*narrow your filters/);
   });
 });
 
@@ -465,7 +472,7 @@ describe("getOrderFulfillmentLines", () => {
     const rows = await getOrderFulfillmentLines(db, "org1", {});
 
     expect(rows).toEqual([{ cin7_sale_id: "s1", product_sku: "SKU-1", pickable_qty: 2 }]);
-    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment_lines", { p_org_id: "org1", p_instance_ids: null });
+    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment_lines", { p_org_id: "org1", p_instance_ids: null, p_from_date: null });
   });
 
   it("throws with the underlying error message on failure", async () => {

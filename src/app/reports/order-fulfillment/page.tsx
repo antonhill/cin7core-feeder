@@ -28,6 +28,21 @@ import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { ReportDescription } from "../ReportDescription";
 
+/**
+ * Default server-side fetch scope, added 2026-08-18 after LBL's real data
+ * volume (28,365 line rows for "Lights by Linea" alone) crossed the
+ * MAX_RPC_ROWS ceiling on the unfiltered fetch — see src/reports/query.ts's
+ * OrderFulfillmentFilters.fromDate. 12 months matches the sync's own
+ * DEFAULT_BACKFILL_MONTHS (src/sync/sync-sales.ts) — no reason for this
+ * page to ask the DB for a wider window than the sync itself backfills by
+ * default. "" (via the Show all time toggle) removes the filter entirely.
+ */
+function twelveMonthsAgoDateOnly(): string {
+  const d = new Date();
+  d.setMonth(d.getMonth() - 12);
+  return d.toISOString().slice(0, 10);
+}
+
 type Tab = "pick" | "ship" | "readyToInvoice" | "boxLabel" | "all";
 
 const TABS: { value: Tab; label: string }[] = [
@@ -178,6 +193,9 @@ export default function OrderFulfillmentPage() {
   const [options, setOptions] = useState<ReportFilterOptions | null>(null);
   const [optionsError, setOptionsError] = useState<string | null>(null);
   const [instanceIds, setInstanceIds] = useState<string[]>([]);
+  // "" means no server-side date filter (fetches everything, same as before
+  // this control existed) — see twelveMonthsAgoDateOnly's own comment.
+  const [fromDate, setFromDate] = useState<string>(twelveMonthsAgoDateOnly);
 
   const [orders, setOrders] = useState<OrderFulfillmentRow[] | null>(null);
   const [lines, setLines] = useState<OrderFulfillmentLineRow[]>([]);
@@ -332,7 +350,7 @@ export default function OrderFulfillmentPage() {
   function runLoad() {
     setLoadError(null);
     startLoadTransition(async () => {
-      const result = await loadOrderFulfillmentAction({ instanceIds: instanceIds.length ? instanceIds : undefined });
+      const result = await loadOrderFulfillmentAction({ instanceIds: instanceIds.length ? instanceIds : undefined, fromDate: fromDate || undefined });
       if (!result.ok) {
         setLoadError(result.error ?? "Unknown error");
         return;
@@ -355,7 +373,7 @@ export default function OrderFulfillmentPage() {
     });
   }, []);
 
-  // Keyed on instanceIds so toggling a checkbox reloads on its own — it
+  // Keyed on instanceIds/fromDate so toggling either reloads on its own — it
   // used to silently do nothing until the separate "Refresh" button was
   // clicked, which read as the filter being broken (it wasn't; nothing was
   // just re-fetching). Runs on mount too (instanceIds starts as []), which
@@ -365,7 +383,7 @@ export default function OrderFulfillmentPage() {
   // rather than running synchronously in the effect body — runLoad is for
   // the "Refresh" button, a real user event, where that's fine.
   useEffect(() => {
-    loadOrderFulfillmentAction({ instanceIds: instanceIds.length ? instanceIds : undefined }).then((result) => {
+    loadOrderFulfillmentAction({ instanceIds: instanceIds.length ? instanceIds : undefined, fromDate: fromDate || undefined }).then((result) => {
       if (!result.ok) {
         setLoadError(result.error ?? "Unknown error");
         return;
@@ -374,7 +392,7 @@ export default function OrderFulfillmentPage() {
       setOrders(result.data?.orders ?? []);
       setLines(result.data?.lines ?? []);
     });
-  }, [instanceIds]);
+  }, [instanceIds, fromDate]);
 
   function toggleInstance(id: string) {
     setInstanceIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -519,6 +537,33 @@ export default function OrderFulfillmentPage() {
                 {syncStatus.pendingDetail > 0 && ` — ${syncStatus.pendingDetail.toLocaleString()} still catching up on line detail`}
               </p>
             )}
+          </div>
+          <div>
+            <span className="text-sm font-medium text-slate-700">Data from</span>
+            <div className="mt-2 flex items-center gap-2">
+              {fromDate ? (
+                <>
+                  <input
+                    type="date"
+                    value={fromDate}
+                    onChange={(e) => setFromDate(e.target.value)}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+                  />
+                  <button type="button" onClick={() => setFromDate("")} className="text-sm font-medium text-indigo-600 hover:underline">
+                    Show all time
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setFromDate(twelveMonthsAgoDateOnly())}
+                  className="text-sm font-medium text-indigo-600 hover:underline"
+                >
+                  Showing all time — limit to last 12 months
+                </button>
+              )}
+            </div>
+            <p className="mt-2 text-xs text-slate-400">Limits what&rsquo;s fetched, not just what&rsquo;s shown — narrower loads faster on large accounts.</p>
           </div>
           <div className="flex items-center gap-2">
             {isSalesStale && <StaleBadge label="Behind — sync recommended" />}
