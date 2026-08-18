@@ -1449,6 +1449,41 @@ Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas
   `OrderFulfillmentFilters` could independently hit the same cap as LBL's data keeps growing, since
   they don't pass `fromDate` — flagged, not fixed, since only Order Fulfillment was reported broken.
 
+  **Immediate follow-up incident, same day (0083)**: 0082 itself caused a live outage —
+  `report_order_fulfillment: canceling statement due to statement timeout`, reported by Anton
+  minutes after 0082 shipped. Root cause, confirmed via `EXPLAIN ANALYZE` against real LBL data
+  before touching anything further: 0082's `join sales s on ...` inside
+  `report_order_fulfillment_lines` (added to read `ship_by`/`order_date` for the new date filter)
+  was a MANDATORY join, so it widened every row flowing through the six pre-existing downstream
+  hash/merge joins (picked/packed/packed_authorised/invoiced/picked_locations/best_location/
+  backorder_eta) on EVERY call, including unfiltered ones — measured ~3.4s baseline → ~6.8s with
+  the join present. Worse, `report_order_fulfillment` passes `p_from_date` into its OWN internal
+  call to `report_order_fulfillment_lines` (inside `totals`), so the outer function paid that same
+  inflated cost too, even though — as 0082's own comment already said — that's not needed for
+  correctness (the outer `sales s` date filter already does the real work; an excluded sale's
+  totals just don't match anything and get dropped by the join). Outer function measured ~15s live,
+  well past whatever timeout the app's connection layer enforces.
+
+  Fix (0083), each half verified live with `EXPLAIN ANALYZE` before/after: (1)
+  `report_order_fulfillment_lines` — replaced the mandatory join with
+  `(p_from_date is null or exists (select 1 from sales ...))`. Confirmed live: with a literal
+  `null`, Postgres proves the `or` is always true and drops the `exists` from the plan ENTIRELY (no
+  `sales` reference appears at all) — cost back to baseline. With a real date, it plans as a hash
+  semi-join, correctly filtering without ever widening the row pipeline. (2) `report_order_fulfillment`
+  — stopped passing `p_from_date` to its internal `report_order_fulfillment_lines` call (always
+  `null` there now); the outer `sales s` filter alone remains sufficient for correctness, exactly as
+  0082's own comment argued but hadn't yet acted on. Live result: `report_order_fulfillment`
+  (single call, warm cache — the realistic steady state) down from ~15s to ~2.1s, unfiltered and
+  12-month-filtered alike; `report_order_fulfillment_lines` similarly restored to ~1.8-3.5s.
+  **Lesson**: a mandatory join added purely to support an optional filter parameter should almost
+  always be conditional (`param is null or exists (...)`) rather than unconditional — the cost of
+  widening every downstream join is paid by every caller, not just the ones that asked for
+  filtering, and that cost compounds badly through this codebase's already-long join chains. Should
+  have been caught before shipping 0082 by running `EXPLAIN ANALYZE` against real data first, the
+  same discipline this codebase's own [VALIDATE-API] convention already applies to live Cin7 calls
+  — extend that instinct to expensive SQL changes on tables at real client scale, not just external
+  API assumptions.
+
 ## Where to look next
 
 - `docs/cin7-api-findings.md` — verified auth scheme, endpoints, rate limits, and every
