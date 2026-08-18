@@ -682,14 +682,23 @@ export async function debugTestSaleShipByWriteBack(instanceId: string, orderNumb
     actor = { userId: current.userId, email: current.email };
     const creds = await loadInstanceCreds(instanceId);
     const result = await testSaleShipByWriteBack(creds, orderNumber);
+    // Security re-audit adversarial-verification fix: testSaleShipByWriteBack
+    // catches its own PUT failure internally and returns normally rather
+    // than throwing (see its own doc comment / return shape) — logging a
+    // flat "success" here regardless of `result.putSucceeded` would record
+    // a FALSE success for a write that actually failed. `updateSaleShipBy`
+    // is a plain PUT (never `nonIdempotentCreate`), so `ambiguous` cannot
+    // genuinely occur for this diagnostic — only success/failed apply.
     await logPrivilegedWrite({
       orgId,
       instanceId,
       actor,
       action: "diagnostics.sale_shipby_writeback",
-      outcome: "success",
-      summary: `Diagnostic ShipBy write-back succeeded on order ${orderNumber}`,
-      detail: { orderNumber },
+      outcome: result.putSucceeded ? "success" : "failed",
+      summary: result.putSucceeded
+        ? `Diagnostic ShipBy write-back succeeded on order ${orderNumber}`
+        : `Diagnostic ShipBy write-back failed on order ${orderNumber}: ${result.putError ?? "unknown error"}`,
+      detail: { orderNumber, putSucceeded: result.putSucceeded, putError: result.putError },
     });
     return { ok: true, message: JSON.stringify(result, null, 2) };
   } catch (e) {
@@ -732,14 +741,23 @@ export async function debugTestProductSupplierLink(instanceId: string, input: st
 
     const creds = await loadInstanceCreds(instanceId);
     const result = await testProductSupplierLink(creds, sku, supplierName);
+    // Security re-audit adversarial-verification fix: testProductSupplierLink
+    // tries several PUT shapes, each catching its own failure internally and
+    // returning normally — logging a flat "success" here regardless of
+    // whether any attempt actually succeeded would record a FALSE success.
+    // Every attempt here is a PUT to an existing product (never
+    // `nonIdempotentCreate`), so `ambiguous` cannot genuinely occur.
+    const anySucceeded = result.attempts.some((a) => a.succeeded);
     await logPrivilegedWrite({
       orgId,
       instanceId,
       actor,
       action: "diagnostics.product_supplier_link",
-      outcome: "success",
-      summary: `Diagnostic product/supplier link write succeeded (${sku} / ${supplierName})`,
-      detail: { sku, supplierName },
+      outcome: anySucceeded ? "success" : "failed",
+      summary: anySucceeded
+        ? `Diagnostic product/supplier link write succeeded (${sku} / ${supplierName})`
+        : `Diagnostic product/supplier link write failed (${sku} / ${supplierName}) — all ${result.attempts.length} shape(s) rejected`,
+      detail: { sku, supplierName, attemptCount: result.attempts.length, anySucceeded },
     });
     return { ok: true, message: JSON.stringify(result, null, 2) };
   } catch (e) {
@@ -784,14 +802,29 @@ export async function debugTestCreatePurchaseOrder(instanceId: string, input: st
 
     const creds = await loadInstanceCreds(instanceId);
     const result = await testCreatePurchaseOrder(creds, sku, supplierName, quantity, locationName);
+    // Security re-audit adversarial-verification fix: testCreatePurchaseOrder
+    // tries several POST/PUT shapes, each catching its own failure
+    // internally (including ambiguous nonIdempotentCreate failures — see
+    // tryPurchaseRequest/tryPurchaseOrderLines) and returning normally —
+    // logging a flat "success" here regardless of the actual attempts
+    // would record a FALSE success for a create that never happened, or
+    // silently swallow a genuine ambiguous outcome (Cin7 may have created a
+    // real DRAFT PO despite every attempt reporting failure).
+    const anySucceeded = result.attempts.some((a) => a.succeeded);
+    const anyAmbiguous = result.attempts.some((a) => !a.succeeded && a.ambiguous);
+    const outcome = anySucceeded ? "success" : anyAmbiguous ? "ambiguous" : "failed";
     await logPrivilegedWrite({
       orgId,
       instanceId,
       actor,
       action: "diagnostics.create_purchase_order",
-      outcome: "success",
-      summary: `Diagnostic test Purchase Order created (${sku} x${quantity} from ${supplierName})`,
-      detail: { sku, supplierName, quantity, locationName },
+      outcome,
+      summary: anySucceeded
+        ? `Diagnostic test Purchase Order created (${sku} x${quantity} from ${supplierName})`
+        : anyAmbiguous
+          ? `Diagnostic test Purchase Order ambiguous (network failure on at least one attempt — Cin7 may have created it anyway, no reconciliation exists for this diagnostic tool) (${sku} x${quantity})`
+          : `Diagnostic test Purchase Order failed — all ${result.attempts.length} attempt(s) rejected (${sku} x${quantity})`,
+      detail: { sku, supplierName, quantity, locationName, attemptCount: result.attempts.length, anySucceeded, anyAmbiguous },
     });
     return { ok: true, message: JSON.stringify(result, null, 2) };
   } catch (e) {

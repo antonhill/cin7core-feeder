@@ -1,14 +1,21 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { upsertInstance, deleteInstance, debugTestCreatePurchaseOrder, debugPushOneCustomerAndSupplier } from "@/app/settings/instances/actions";
+import {
+  upsertInstance,
+  deleteInstance,
+  debugTestCreatePurchaseOrder,
+  debugPushOneCustomerAndSupplier,
+  debugTestSaleShipByWriteBack,
+  debugTestProductSupplierLink,
+} from "@/app/settings/instances/actions";
 import { requirePrivilegedOrgAdmin, requirePrivilegedSuperAdmin } from "@/lib/require-privileged";
 import { requireCurrentOrg } from "@/lib/current-org";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { createServiceRoleClient } from "@/supabase/server";
 import { getBillingStatus } from "@/lib/billing";
 import { logActivity } from "@/lib/activity-log";
-import { testCreatePurchaseOrder } from "@/cin7/debug";
+import { testCreatePurchaseOrder, testSaleShipByWriteBack, testProductSupplierLink } from "@/cin7/debug";
 import { pushCustomer } from "@/cin7/customers";
 import { pushSupplier } from "@/cin7/suppliers";
 import { Cin7ApiError } from "@/cin7/http";
@@ -239,35 +246,139 @@ describe("debugTestCreatePurchaseOrder — security closure Blockers 2+3: guard 
     expect(logActivity).not.toHaveBeenCalled();
   });
 
-  it("logs a success outcome when the Cin7 create succeeds", async () => {
+  // Security re-audit adversarial-verification fix: testCreatePurchaseOrder
+  // NEVER rejects in the real implementation — tryPurchaseRequest/
+  // tryPurchaseOrderLines catch their own Cin7ApiError internally and
+  // return `{succeeded: false, ...}` in the `attempts` array. Mocking a
+  // rejection (the previous version of these tests) doesn't exercise the
+  // real code path at all; these tests now mock the real resolved shape.
+
+  it("logs a success outcome when at least one attempt actually succeeded", async () => {
     vi.mocked(createServiceRoleClient).mockReturnValue(
       fakeDb({ cin7_instances: { data: { account_id: "acc", application_key_encrypted: "enc" }, error: null } }) as never
     );
-    vi.mocked(testCreatePurchaseOrder).mockResolvedValue({ succeeded: true } as never);
+    vi.mocked(testCreatePurchaseOrder).mockResolvedValue({
+      attempts: [{ shape: "s1", endpoint: "/purchase", succeeded: true, linesPopulatedIn: "Order" }],
+    } as never);
     const result = await debugTestCreatePurchaseOrder("inst-1", VALID_INPUT);
     expect(result.ok).toBe(true);
     const detail = vi.mocked(logActivity).mock.calls[0][1].detail as Record<string, unknown>;
     expect(detail.outcome).toBe("success");
   });
 
-  it("logs an 'ambiguous' outcome (not flat 'failed') on a Cin7ApiError with ambiguous=true", async () => {
+  it("logs an 'ambiguous' outcome (not flat 'failed') when every attempt fails but at least one was ambiguous", async () => {
     vi.mocked(createServiceRoleClient).mockReturnValue(
       fakeDb({ cin7_instances: { data: { account_id: "acc", application_key_encrypted: "enc" }, error: null } }) as never
     );
-    vi.mocked(testCreatePurchaseOrder).mockRejectedValue(new Cin7ApiError(0, "network lost", false, true));
+    vi.mocked(testCreatePurchaseOrder).mockResolvedValue({
+      attempts: [{ shape: "s1", endpoint: "/purchase", succeeded: false, error: "network lost", ambiguous: true }],
+    } as never);
     const result = await debugTestCreatePurchaseOrder("inst-1", VALID_INPUT);
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true); // the diagnostic ITSELF completed; the write outcome is reported via the log/message
     const detail = vi.mocked(logActivity).mock.calls[0][1].detail as Record<string, unknown>;
     expect(detail.outcome).toBe("ambiguous");
   });
 
-  it("logs a definite 'failed' outcome (not 'ambiguous') on a non-ambiguous Cin7ApiError", async () => {
+  it("logs a definite 'failed' outcome (not 'ambiguous') when every attempt fails and none were ambiguous", async () => {
     vi.mocked(createServiceRoleClient).mockReturnValue(
       fakeDb({ cin7_instances: { data: { account_id: "acc", application_key_encrypted: "enc" }, error: null } }) as never
     );
-    vi.mocked(testCreatePurchaseOrder).mockRejectedValue(new Cin7ApiError(400, "rejected", false, false));
+    vi.mocked(testCreatePurchaseOrder).mockResolvedValue({
+      attempts: [{ shape: "s1", endpoint: "/purchase", succeeded: false, error: "rejected", ambiguous: false }],
+    } as never);
     const result = await debugTestCreatePurchaseOrder("inst-1", VALID_INPUT);
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
+    const detail = vi.mocked(logActivity).mock.calls[0][1].detail as Record<string, unknown>;
+    expect(detail.outcome).toBe("failed");
+  });
+
+  it("does NOT log a false 'success' when testCreatePurchaseOrder resolves normally but every attempt actually failed — the exact bug an adversarial verification pass found", async () => {
+    vi.mocked(createServiceRoleClient).mockReturnValue(
+      fakeDb({ cin7_instances: { data: { account_id: "acc", application_key_encrypted: "enc" }, error: null } }) as never
+    );
+    vi.mocked(testCreatePurchaseOrder).mockResolvedValue({
+      attempts: [
+        { shape: "s1", endpoint: "/purchase", succeeded: false, error: "bad request", ambiguous: false },
+        { shape: "s2", endpoint: "/advanced-purchase", succeeded: false, error: "bad request", ambiguous: false },
+      ],
+    } as never);
+    await debugTestCreatePurchaseOrder("inst-1", VALID_INPUT);
+    const detail = vi.mocked(logActivity).mock.calls[0][1].detail as Record<string, unknown>;
+    expect(detail.outcome).not.toBe("success");
+    expect(detail.outcome).toBe("failed");
+  });
+});
+
+describe("debugTestSaleShipByWriteBack — security closure Blocker 3 adversarial-verification fix", () => {
+  it("logs 'success' only when the real PUT actually succeeded (putSucceeded: true)", async () => {
+    vi.mocked(createServiceRoleClient).mockReturnValue(
+      fakeDb({ cin7_instances: { data: { account_id: "acc", application_key_encrypted: "enc" }, error: null } }) as never
+    );
+    vi.mocked(testSaleShipByWriteBack).mockResolvedValue({
+      saleId: "s1",
+      orderNumber: "SO-1",
+      shipByTested: null,
+      putSucceeded: true,
+      unexpectedChanges: [],
+    } as never);
+    await debugTestSaleShipByWriteBack("inst-1", "SO-1");
+    const detail = vi.mocked(logActivity).mock.calls[0][1].detail as Record<string, unknown>;
+    expect(detail.outcome).toBe("success");
+  });
+
+  it("does NOT log a false 'success' when the underlying PUT failed (putSucceeded: false) — testSaleShipByWriteBack resolves normally on failure, it never throws", async () => {
+    vi.mocked(createServiceRoleClient).mockReturnValue(
+      fakeDb({ cin7_instances: { data: { account_id: "acc", application_key_encrypted: "enc" }, error: null } }) as never
+    );
+    vi.mocked(testSaleShipByWriteBack).mockResolvedValue({
+      saleId: "s1",
+      orderNumber: "SO-1",
+      shipByTested: null,
+      putSucceeded: false,
+      putError: "[400] validation failed",
+      unexpectedChanges: [],
+    } as never);
+    await debugTestSaleShipByWriteBack("inst-1", "SO-1");
+    const detail = vi.mocked(logActivity).mock.calls[0][1].detail as Record<string, unknown>;
+    expect(detail.outcome).toBe("failed");
+    expect(detail.putError).toBe("[400] validation failed");
+  });
+});
+
+describe("debugTestProductSupplierLink — security closure Blocker 3 adversarial-verification fix", () => {
+  const VALID_INPUT = "SKU1,Supplier Co";
+
+  it("logs 'success' only when at least one attempt actually succeeded", async () => {
+    vi.mocked(createServiceRoleClient).mockReturnValue(
+      fakeDb({ cin7_instances: { data: { account_id: "acc", application_key_encrypted: "enc" }, error: null } }) as never
+    );
+    vi.mocked(testProductSupplierLink).mockResolvedValue({
+      sku: "SKU1",
+      supplierName: "Supplier Co",
+      supplierFound: true,
+      fullRecordHadId: true,
+      attempts: [{ shape: "ID + SupplierName", succeeded: true }],
+    } as never);
+    await debugTestProductSupplierLink("inst-1", VALID_INPUT);
+    const detail = vi.mocked(logActivity).mock.calls[0][1].detail as Record<string, unknown>;
+    expect(detail.outcome).toBe("success");
+  });
+
+  it("does NOT log a false 'success' when every attempt failed — testProductSupplierLink resolves normally on failure, it never throws", async () => {
+    vi.mocked(createServiceRoleClient).mockReturnValue(
+      fakeDb({ cin7_instances: { data: { account_id: "acc", application_key_encrypted: "enc" }, error: null } }) as never
+    );
+    vi.mocked(testProductSupplierLink).mockResolvedValue({
+      sku: "SKU1",
+      supplierName: "Supplier Co",
+      supplierFound: true,
+      fullRecordHadId: true,
+      attempts: [
+        { shape: "ID + SupplierName", succeeded: false, error: "Suppliers is invalid" },
+        { shape: "ID only", succeeded: false, error: "Suppliers is invalid" },
+      ],
+    } as never);
+    await debugTestProductSupplierLink("inst-1", VALID_INPUT);
     const detail = vi.mocked(logActivity).mock.calls[0][1].detail as Record<string, unknown>;
     expect(detail.outcome).toBe("failed");
   });
