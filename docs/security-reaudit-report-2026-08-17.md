@@ -1,10 +1,12 @@
 # Cin7 Core Feeder — Security Re-Audit Remediation Report
 
-**Date:** 2026-08-17 (round 1), updated 2026-08-17 (round 2), updated 2026-08-17 (round 3)
-**Scope:** All 18 items from the re-audit. Round 1 covered Anton's own priority order of 7 structural blockers (P0-1 through P0-7, P1-3). Round 2 covered a further 6 of the remaining 11 deferred items (P1-1, P1-4, P1-6, P1-8, P1-9, P2/CI). Round 3 was a "final sign-off" pass — not new items, but a deeper re-audit of the P0 areas already marked FIXED (looking for gaps a first pass could have missed), plus bringing the 2 remaining highest-severity deferred items (P1-2, P1-5) into scope. 2 items remain DEFERRED: P1-7 and P2 (API optimisation).
+**Date:** 2026-08-17 (round 1), updated 2026-08-17 (round 2), updated 2026-08-17 (round 3), updated 2026-08-18 (P1-7), updated 2026-08-18 (round 4 — final closure)
+**Scope:** All 18 items from the re-audit. Round 1 covered Anton's own priority order of 7 structural blockers (P0-1 through P0-7, P1-3). Round 2 covered a further 6 of the remaining 11 deferred items (P1-1, P1-4, P1-6, P1-8, P1-9, P2/CI). Round 3 was a "final sign-off" pass — not new items, but a deeper re-audit of the P0 areas already marked FIXED (looking for gaps a first pass could have missed), plus bringing the 2 remaining highest-severity deferred items (P1-2, P1-5) into scope; it also closed P2 (API optimisation) as not-currently-justified and investigated (without implementing) P1-7 plus 4 further side-findings. P1-7 was then implemented as its own follow-up pass on 2026-08-18. **All 18 original items were resolved** by P1-7. Round 4 was a dedicated closure investigation (12 parallel read-only agents, see `docs/security-final-closure-matrix.md`) covering areas beyond the original 18 — it found 7 sign-off blockers (2 newly discovered, 5 reclassifications of what round 3 had filed as lower-priority side-findings) and closed all 7, per Anton's explicit decisions. Full detail lives in the closure matrix, not re-narrated here — see the round 4 section below for a pointer.
 **PRs (round 1):** [#37](https://github.com/antonhill/cin7core-feeder/pull/37) (P0-1, P0-2, P0-5, P0-6, P0-7, P1-3) → [#38](https://github.com/antonhill/cin7core-feeder/pull/38) (P0-3, P0-4, stacked on #37). Merge order: #37 then #38. [#36](https://github.com/antonhill/cin7core-feeder/pull/36) was an earlier, incomplete first pass at P0-3 — closed as superseded by #38.
 **PR (round 2):** [#40](https://github.com/antonhill/cin7core-feeder/pull/40) (P1-1, P1-4, P1-6, P1-8, P1-9, P2/CI) — merged `70edefe` on 2026-08-17.
-**PR (round 3):** [#55](https://github.com/antonhill/cin7core-feeder/pull/55) (P1-2, P1-5, plus gap-closures on P0-2/P0-3/P0-4/P0-5) — open, not yet merged.
+**PR (round 3):** [#55](https://github.com/antonhill/cin7core-feeder/pull/55) (P1-2, P1-5, plus gap-closures on P0-2/P0-3/P0-4/P0-5) — merged `9d4cfb4` on 2026-08-17.
+**PR (P1-7):** [#56](https://github.com/antonhill/cin7core-feeder/pull/56) (import/export resource boundaries) — merged `5cdf6ea` on 2026-08-18.
+**PR (round 4 — final closure):** [#57](https://github.com/antonhill/cin7core-feeder/pull/57) (7 sign-off blockers — see `docs/security-final-closure-matrix.md`) — open, not yet merged.
 
 ## A note on process
 
@@ -33,13 +35,13 @@ P0-3's first pass ([#36](https://github.com/antonhill/cin7core-feeder/pull/36)) 
 | P1-4 | **FIXED** (round 2) | Lemon Squeezy webhook: checkout-token binding, two-stage Zod validation, unknown-status left untouched instead of defaulting to canceled |
 | P1-5 | **FIXED** (round 3, Anton-approved 2026-08-17) | PO claim / Stock Transfer claim / sync_locks flipped to fail-closed per the approved decision table; 2 other lock families deliberately left fail-open |
 | P1-6 | **FIXED** (round 2) | Single `CRON_SECRET` (timing-safe compare), unsafe `/api/import` route removed entirely |
-| P1-7 | DEFERRED (round 3: investigated, not implemented) | Export files classified (14 Cin7-round-trip vs. 1 human-facing + 14 XLSX), concrete import/export limits proposed, formula-injection gap confirmed — findings exist, no code written yet |
+| P1-7 | **FIXED** (2026-08-18) | Shared import limits (10MB / 50k rows / 200 columns / 10k-char fields) + binary-file sniffing; the one genuinely-unbounded export (Order Fulfillment) capped at 25k rows; XLSX exports gained the same row/cell-length caps; formula-injection protection added to the one human-facing CSV export |
 | P1-8 | **FIXED** (round 2) | `shouldCreateUser:false`, atomic self-serve org+owner RPC, explicit active-org selection/switcher |
 | P1-9 | **FIXED** (round 2) | Magic-byte org-logo content sniffing (SVG removed), all 6 security headers added |
 | P2 (API optimisation) | **NOT CURRENTLY JUSTIFIED** (round 3) | Investigated: Customer/Supplier/Product are never full-scanned by the recurring cron at all — nothing to optimise today |
 | P2 (CI and sign-off) | **FIXED** (round 2) | Full CI pipeline: lint/tsc/vitest/build, dependency audit, secret scan, clean-bootstrap migration + RLS/security test matrix |
 
-1 item remains DEFERRED (P1-7, not yet investigated). P2/API optimisation is now investigated and closed as NOT CURRENTLY JUSTIFIED — see its own section below for why implementing it would be complexity without a measurable benefit today.
+All 18 original items are now resolved: 16 FIXED, plus P2/API optimisation investigated and closed as NOT CURRENTLY JUSTIFIED (see its own section below for why implementing it would be complexity without a measurable benefit today). 4 further findings surfaced during round 3's investigation phase — outside the original 18 — remain open; see "Also investigated in round 3, not yet implemented" below.
 
 ---
 
@@ -380,7 +382,7 @@ Round 3 was framed as a final sign-off pass, not a new remediation round: re-exa
 - `src/middleware.ts` — the `.limit(1)` query replaced with fetching every membership and resolving via `resolveActiveOrgId(cookieOrgId, membershipOrgIds)`, reading the cookie via `request.cookies.get(ACTIVE_ORG_COOKIE)` (matching the existing `IMPERSONATED_ORG_COOKIE` read pattern).
 - `src/lib/require-privileged.ts` (new) — `requirePrivilegedOrgAdmin()`/`requirePrivilegedSuperAdmin()` compose the existing `requireOrgAdmin`/`requireSuperAdmin` role checks with a real `supabase.auth.mfa.getAuthenticatorAssuranceLevel()` check (`currentLevel === "aal2"`, not just "a factor is enrolled"). Deliberately mirrors middleware's own trial-org AAL2 exemption (a super-admin always needs AAL2; an ordinary org owner/admin only once their org's billing is write-allowed) — enforcing it unconditionally would have made a trial-org admin's page load fine (middleware doesn't force enrolment yet) while the Server Action that page calls on load rejected them, the exact "the two checks disagree" bug this item exists to close, just inverted.
 - Applied to 13 call sites: `src/app/settings/instances/actions.ts` (`listInstances`, `upsertInstance`, `deleteInstance`), `src/actions/billing.ts` (`getCheckoutUrlAction`, `getManageSubscriptionUrlAction`), `src/app/settings/members/actions.ts` (`inviteTeamMemberAction`, `removeTeamMemberAction`, `setTeamMemberModulesAction`), `src/app/admin/actions.ts` (`createOrgAndInvite`, `inviteMemberToOrg`, `removeMemberFromOrg`, `setOrgDisabledModules`, `deleteOrganization`), `src/actions/org-switch.ts` (`setImpersonatedOrgAction`).
-- Deliberately NOT upgraded (documented, not silent): `uploadOrgLogo` (branding-only, no credentials/money/access consequence), `listInstances`'s/`listTeamMembersAction`'s/`listOrgsForAdmin`'s/`listOrgsForSwitcherAction`'s read-only siblings, `loadInstanceCreds` and the ~25 diagnostic actions funnelling through it (that's P1-7-adjacent diagnostics-authorization work, out of round 3's P0 scope — see DEFERRED below), `clearImpersonatedOrgAction` (exiting impersonation isn't gated).
+- Deliberately NOT upgraded (documented, not silent): `uploadOrgLogo` (branding-only, no credentials/money/access consequence), `listInstances`'s/`listTeamMembersAction`'s/`listOrgsForAdmin`'s/`listOrgsForSwitcherAction`'s read-only siblings, `loadInstanceCreds` and the ~25 diagnostic actions funnelling through it (diagnostics-authorization work, out of round 3's P0 scope — see "Also investigated in round 3, not yet implemented" below), `clearImpersonatedOrgAction` (exiting impersonation isn't gated).
 
 **Tests:** `src/__tests__/middleware.test.ts` — rewritten for multi-membership fixtures; new describe block with the brief's own required scenarios: member-in-A/admin-in-B-with-B-active, admin-in-A/member-in-B-with-B-active, stale/invalid active-org cookie, no-cookie fallback, and module-block-uses-active-org. `src/lib/__tests__/require-privileged.test.ts` (new, 12 tests) — AAL2 pass/fail at every currentLevel/nextLevel combination, role-check-fails-before-AAL2-check ordering, AAL-read-error fails closed, the trial-org exemption itself, and confirms a super-admin is held to the bar even on a trialing org. Every downstream action-level test file (`billing.test.ts`, `org-switch.test.ts`) updated to mock the new guard.
 
@@ -501,7 +503,84 @@ CI run (all 4 jobs green on the first push): PR [#55](https://github.com/antonhi
 Migration confirmed live via Supabase `list_migrations`/direct `pg_policies` re-query (project `cin7toolbox`, `pnzwjqjovxxdikxtfngq`):
 - `0078_fix_admin_only_settings_rls` — 4 tables confirmed `is_org_admin`-gated, 3 tables confirmed zero policies, 0 remaining `anon` grants on any public table.
 
-PR [#55](https://github.com/antonhill/cin7core-feeder/pull/55) open against `main`, not yet merged.
+PR [#55](https://github.com/antonhill/cin7core-feeder/pull/55) merged to `main` at commit `9d4cfb4` on 2026-08-17.
+
+---
+
+## FIXED items — detail (P1-7, 2026-08-18)
+
+Implemented as a dedicated follow-up pass, using round 3's own investigation (brief item 10, summarized in the now-superseded "DEFERRED items" note below) as the ready-to-implement spec: export files classified (14 Cin7-round-trip templates vs. 1 human-facing CSV export + 14 XLSX export actions), zero import size/row/column/field limits found anywhere, `fetchAllRpcRows` (used only by Order Fulfillment) identified as the one genuinely-unbounded export path — every other report function was accidentally capped by PostgREST's own ~1000-row max-rows config — and zero formula-injection protection found anywhere.
+
+**Files changed:**
+- `src/lib/csv-upload-limits.ts` (new) — the shared chokepoint every CSV import surface funnels through: `checkUploadSize` (10MB, checked before `file.text()` reads the whole upload into memory), `looksLikeText` (NUL-byte sniffing to reject a binary file uploaded with a spoofed `.csv` extension — same principle as P1-9's image-magic-byte sniffing, applied to text), `assertCsvWithinLimits` (50,000 rows / 200 columns / 10,000 characters per field, checked immediately after `Papa.parse`, before any per-row zod validation runs).
+- `src/import/csv.ts` — `parseCsv` (used by Products/BOM/Suppliers/Customers/Addresses) calls `assertCsvWithinLimits` right after the `fatalErrors` check.
+- `src/reports/stocktake-assistant/build.ts` — `parseStocktakeFile` wraps the same call in try/catch, converting a thrown limit error into this function's own `{rows: [], error: string}` contract rather than throwing.
+- `src/app/import/actions.ts`, `src/app/stocktake-assistant/actions.ts` — both upload actions call `checkUploadSize` before reading the file and `looksLikeText` right after, before handing off to the parser.
+- `next.config.ts` — `experimental.serverActions.bodySizeLimit` set to `10mb` to match the application-level check (previously unbounded at the framework level).
+- `src/reports/query.ts` — `fetchAllRpcRows` (Order Fulfillment's own explicit past-PostgREST's-cap pager) now throws a clear "narrow your filters" error once matched rows exceed `MAX_RPC_ROWS = 25,000`, instead of paging forever.
+- `src/reports/xlsx-writer.ts` — `renderXlsxBase64`, the single shared rendering chokepoint every one of the ~14 XLSX export actions funnels through, gained `assertSheetWithinLimits`: the same 25,000-row cap plus a 10,000-character cell-length cap.
+- `src/export/csv-format.ts` — new `sanitizeCsvField`/`toSanitizedCsv`, deliberately kept separate from the existing `csvField`/`toCsv` (shared by all 14 Cin7-round-trip exports, which must keep byte-exact values — altering a SKU or account code that happens to start with `-` would corrupt a reimport into Cin7). Prefixes a value starting with `=`, `+`, `-`, `@`, or a leading control character with a single quote, so a spreadsheet app (Excel/Sheets/LibreOffice) displays it as literal text instead of evaluating it as a formula (e.g. `=cmd|'/c calc'!A1`).
+- `src/export/fulfillment-cleanup-included-sales-csv.ts` — `buildIncludedSalesCsv`, the **one** human-facing CSV export in the app (every other CSV export round-trips into Cin7), switched from `toCsv` to `toSanitizedCsv`.
+
+**Tests:**
+- `src/lib/__tests__/csv-upload-limits.test.ts` (new, 13 tests) — size/text/row/column/field-length checks, at-limit and over-limit boundaries.
+- `src/import/__tests__/csv.test.ts` — 2 new tests: rejects a 201-column file before validating any row, rejects a single over-length field naming the row and column.
+- `src/reports/stocktake-assistant/__tests__/build.test.ts` — 1 new test confirming an over-length field returns this function's own error contract rather than throwing.
+- `src/reports/__tests__/query.test.ts` — 1 new test proving `fetchAllRpcRows` throws once matched rows exceed 25,000 rather than paging forever.
+- `src/reports/__tests__/xlsx-writer.test.ts` (new, 6 tests) — row-count and cell-length caps, at-limit boundaries, non-string cells ignored for length checks.
+- `src/export/__tests__/csv-format.test.ts` (new, 8 tests) — `sanitizeCsvField` prefixes `=`/`+`/`-`/`@`/control-char-led values, leaves normal values and mid-string occurrences untouched; confirms `csvField`/`toCsv` (the 14 Cin7-round-trip exports) are completely unaffected.
+
+**Live evidence:** N/A (pure application-code change, no schema/migration involved).
+
+---
+
+## Verification output (P1-7, final)
+
+```
+$ npx tsc --noEmit
+(clean, no output)
+
+$ npx eslint src
+(clean, no output)
+
+$ npx vitest run
+ Test Files  125 passed (125)
+      Tests  1183 passed (1183)
+
+$ npm run build
+✓ Compiled successfully
+(all 50 routes built, no errors)
+```
+
+CI run (all jobs green): PR [#56](https://github.com/antonhill/cin7core-feeder/pull/56) — [run #32069338816](https://github.com/antonhill/cin7core-feeder/actions/runs/32069338816)
+- `Install, lint, typecheck, test, build`: success
+- `Dependency vulnerability scan`: success
+- `Secret scan`: success
+- `Clean migration bootstrap + RLS/security test matrix`: success
+- `Vercel Preview Comments`: success
+
+PR [#56](https://github.com/antonhill/cin7core-feeder/pull/56) merged to `main` at commit `5cdf6ea` on 2026-08-18.
+
+---
+
+## Round 4: final security closure (2026-08-18)
+
+Round 4 was a dedicated closure investigation, run as its own multi-phase engagement rather than folded into this report's own round structure — full detail, evidence, and the underlying methodology live in **`docs/security-final-closure-matrix.md`**, not repeated here. Summary:
+
+**Investigation phase:** 12 parallel, independent, read-only agents re-derived a complete surface for 12 security properties (Cin7 network gateway, every Cin7 POST, privileged Server Actions, active-org resolution, RLS/DB permission matrix, service-role usage, write-integrity locks/claims, internal API routes, diagnostic surface, Cin7 write audit coverage, import/export boundaries, credential encryption) directly against current `main` and live Supabase state, rather than trusting this report's own prior classifications. Five inventories came back clean; seven findings met the sign-off-blocker bar.
+
+**Seven sign-off blockers found and closed**, per Anton's explicit decisions D1–D5 (documented in the closure matrix):
+1. `requirePrivilegedOrgAdmin` failed open on a Supabase read error (the identical bug class P1-1 fixed elsewhere, reintroduced in the guard round 3 built).
+2. 27 of 31 diagnostic Server Actions were gated by `requireOrgAdmin` instead of `requireSuperAdmin` (extends and closes round 3's own "diagnostics authorization" side-finding, item 5 below).
+3. Zero audit logging existed on the diagnostic surface, including 4 actions that make real Cin7 writes (extends round 3's own "Cin7 write audit-log coverage" side-finding, item 6 below).
+4. **New finding**, never named in any prior round: `category_instances`' RLS policy — the very table round 1's P0-5 fix touched — was named `"org admins manage..."` but actually gated on `is_org_member`, not `is_org_admin`.
+5. **New finding**: the PO/Stock Transfer creation-claim RPCs' TTL-expiry reclaim logic (built in round 1, hardened in round 3's P1-5) never distinguished an `ambiguous` claim from a `pending`/`completed` one, letting an unresolved ambiguous claim silently become blindly re-creatable once its 15-minute TTL lapsed.
+6. `/api/sync*`'s 6 POST handlers still trusted a body-supplied `orgId` behind only `CRON_SECRET` (round 3's own "not urgent" side-finding, item 4 below — reclassified here as a blocker and closed by deletion).
+7. Purchase Order/Stock Transfer creation actions skipped audit logging entirely on a 100%-failed batch.
+
+**Closure:** PR [#57](https://github.com/antonhill/cin7core-feeder/pull/57) — all 7 blockers implemented, tested, and (for the 2 DB-facing ones) live-verified against production both before and after applying. `SECURITY SIGN-OFF COMPLETE` per the closure matrix's own acceptance checklist. Not yet merged, pending Anton's explicit instruction (this engagement's standing rule, followed for every PR across all 4 rounds).
+
+**Privacy policy** (`docs/legal/privacy-policy.md`) updated alongside — no longer claims "every write" is logged; now accurately describes the post-closure state (user-initiated/high-impact Cin7 writes and credential changes logged including failures; background sync logged at the run level).
 
 ---
 
@@ -509,15 +588,13 @@ PR [#55](https://github.com/antonhill/cin7core-feeder/pull/55) open against `mai
 
 Round 3's 12-item investigation phase covered more ground than the 6 items actually implemented this round (P0-only, per Anton's own sequencing choice — P1 items deferred to a follow-up round). 4 investigations produced real findings with no code written yet; recorded here so a future round doesn't redundantly re-investigate:
 
-- **`/api/sync*` on-demand routes (P1-6-adjacent):** confirmed **still NOT fixed** on `main` — all 6 routes still trust a body-supplied `orgId` after only a `CRON_SECRET` check, despite round 2's report noting Anton had started a background task for this. Good news: zero real callers found for any POST handler; 4 of 6 families already have a session-scoped Server Action replacement bypassing the route entirely. Low-risk, mechanical: delete `POST` from all 6 route files, keep only `GET` (the cron entry point).
-- **Diagnostics authorization (P1-9-adjacent):** 26 of 30 diagnostic Server Actions in `settings/instances/actions.ts` are gated by `requireOrgAdmin` (any customer org admin), not `requireSuperAdmin`, despite being documented everywhere as super-admin-only. Several return raw customer/supplier/sale PII to any org admin. Recommendation: every `debug*` action should call `requireSuperAdmin()` directly, independent of the shared `loadInstanceCreds` chokepoint.
-- **Cin7 write audit-log coverage:** the privacy policy makes an unqualified "every write" claim; reality is two-tier — Data Audit/Bulk Pricing/Reorder Points are fully and correctly logged, the sync/push pipeline only logs one aggregate count per instance per run (no per-record target), and shipment status changes, credential changes, and superadmin diagnostic writes aren't logged at all. No secret-leakage found. Recommendation: narrow the privacy-policy wording now (cheap, immediate), close the highest-value logging gaps as a follow-up.
-- **Credential encryption lifecycle (P3, hardening not a vulnerability):** current AES-256-GCM is sound; no version/keyId/AAD/rotation support. Small blast radius (1 module, 4 call sites), no-outage migration path designed (dual-format decrypt support, opportunistic re-encryption).
+- **`/api/sync*` on-demand routes (P1-6-adjacent):** confirmed **still NOT fixed** on `main` — all 6 routes still trust a body-supplied `orgId` after only a `CRON_SECRET` check, despite round 2's report noting Anton had started a background task for this. Good news: zero real callers found for any POST handler; 4 of 6 families already have a session-scoped Server Action replacement bypassing the route entirely. Low-risk, mechanical: delete `POST` from all 6 route files, keep only `GET` (the cron entry point). **Closed in round 4 (Blocker 6): all 6 POST handlers deleted.**
+- **Diagnostics authorization (P1-9-adjacent):** 26 of 30 diagnostic Server Actions in `settings/instances/actions.ts` are gated by `requireOrgAdmin` (any customer org admin), not `requireSuperAdmin`, despite being documented everywhere as super-admin-only. Several return raw customer/supplier/sale PII to any org admin. Recommendation: every `debug*` action should call `requireSuperAdmin()` directly, independent of the shared `loadInstanceCreds` chokepoint. **Closed in round 4 (Blockers 2 and 3): all 31 `debug*` actions now call `requirePrivilegedSuperAdmin()` directly and the 4 write-capable ones are audit-logged.**
+- **Cin7 write audit-log coverage:** the privacy policy makes an unqualified "every write" claim; reality is two-tier — Data Audit/Bulk Pricing/Reorder Points are fully and correctly logged, the sync/push pipeline only logs one aggregate count per instance per run (no per-record target), and shipment status changes, credential changes, and superadmin diagnostic writes aren't logged at all. No secret-leakage found. Recommendation: narrow the privacy-policy wording now (cheap, immediate), close the highest-value logging gaps as a follow-up. **Partially closed in round 4: diagnostic writes and credential changes are now logged (Blocker 3), and PO/Transfer batches log unconditionally (Blocker 7); the privacy policy wording was narrowed. Sync-pipeline per-record logging and shipment-status logging remain hardening-tier, not implemented — Anton's own D3 decision.**
+- **Credential encryption lifecycle (P3, hardening not a vulnerability):** current AES-256-GCM is sound; no version/keyId/AAD/rotation support. Small blast radius (1 module, 4 call sites), no-outage migration path designed (dual-format decrypt support, opportunistic re-encryption). **Independently re-verified in round 4 (no live exploit found, confirmed genuinely pure hardening) — still not implemented, correctly deferred.**
 
-## DEFERRED items — not investigated (any pass)
+## All 18 original items resolved
 
-Round 1 covered 7 items (P0-1 through P0-7, P1-3); round 2 covered 6 more (P1-1, P1-4, P1-6, P1-8, P1-9, P2/CI); round 3 resolved P1-2 and P1-5, closed P2/API optimisation as not-currently-justified, and investigated (without implementing) P1-7 plus the 4 items listed above. 1 of the original 18 items remains genuinely untouched:
+Round 1 covered 7 items (P0-1 through P0-7, P1-3); round 2 covered 6 more (P1-1, P1-4, P1-6, P1-8, P1-9, P2/CI); round 3 resolved P1-2 and P1-5, and closed P2/API optimisation as not-currently-justified; P1-7 (investigated in round 3, implemented 2026-08-18) was the last of the original 18 to close. None remain deferred or un-investigated.
 
-- **P1-7** — Import/export resource boundaries. Investigated in round 3 (see table above) — export classification, limit proposals, and the formula-injection gap are all documented, but no code was written. Implementation is the next step whenever this item is picked up.
-
-Carries real investigation findings (not zero evidence, per the note above) but no implementation — should be treated as ready-to-implement, not "fully open," for the next audit round.
+Of the 4 side-findings from round 3's investigation phase — listed under "Also investigated in round 3, not yet implemented" above — round 4 closed 3 of them (`/api/sync*` routes, diagnostics authorization, and the highest-value part of Cin7 write audit-log coverage) as part of its own 7-blocker closure (see the round 4 section above and `docs/security-final-closure-matrix.md` for full detail). Only **credential encryption lifecycle hardening** remains open, correctly deferred as non-blocking (no live exploit, hardening-only). A handful of narrower hardening items surfaced by round 4's own investigation (sync-pipeline per-record logging, shipment-status logging, and others in the closure matrix's Hardening Backlog) also remain open, non-blocking, for a future pass whenever picked up.
