@@ -24,6 +24,7 @@
     "src/app/migrate/actions.ts",
     "src/app/page.tsx",
     "src/app/pricing/actions.ts",
+    "src/app/quotes/actions.ts",
     "src/app/replenish/actions.ts",
     "src/app/replenish/reorder-points/actions.ts",
     "src/app/reports/actions.ts",

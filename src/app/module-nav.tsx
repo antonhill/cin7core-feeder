@@ -353,6 +353,25 @@ export const PRICING_MODULE: ModuleConfig = {
   blurb: "Filter one connected instance's products by Category, Supplier, or search, then set a flat price or apply a % increase across a chosen price tier — writes straight to Cin7.",
 };
 
+export function QuotesIcon({ className }: IconProps) {
+  return (
+    <GradientIcon className={className} from="#6366f1" to="#4338ca">
+      <path d="M6 3h7l5 5v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
+      <path d="M13 3v5h5" />
+      <path d="M8.5 13h7M8.5 16.5h4" />
+    </GradientIcon>
+  );
+}
+
+export const QUOTES_MODULE: ModuleConfig = {
+  href: "/quotes",
+  label: "Quotes",
+  gradient: SELF_COLORED_ICON_BADGE,
+  Icon: QuotesIcon,
+  blurb:
+    "Build a customer quote with the commercial impact of every line in view — selling price, discount, cost, gross profit and margin % per line, plus a weighted overall margin — then create it in Cin7 Core.",
+};
+
 export const REPLENISH_MODULE: ModuleConfig = {
   href: "/replenish",
   label: "Replenish",
@@ -500,6 +519,7 @@ export const MODULES: ModuleConfig[] = [
   REPORTS_MODULE,
   AUDIT_MODULE,
   PRICING_MODULE,
+  QUOTES_MODULE,
   REPLENISH_MODULE,
   SUPPLIER_PLANNER_MODULE,
   STOCKTAKE_MODULE,
