@@ -24,7 +24,7 @@ export interface QuoteActionResult<T> {
 }
 
 /** A line as submitted by the builder (inputs only — cost + computed figures are server-owned). */
-export interface QuoteLineDraftInput extends QuoteLineDraft {}
+export type QuoteLineDraftInput = QuoteLineDraft;
 
 export interface QuoteDraftInput {
   /** Present = update that draft; absent = create a new draft. */
