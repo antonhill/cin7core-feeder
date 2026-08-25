@@ -110,21 +110,28 @@ see margin. There is **no cost/margin-visibility permission** in the codebase (s
 
 ---
 
-## Open decisions (blocking Phase 1/3) — for Anton
+## Decisions (resolved 2026-08-25, Anton)
 
-1. **Safe Cin7 test target (§22) — CRITICAL, gates Phase 3.** A sandbox / throwaway test
-   customer to probe + verify quote creation. Without it, Cin7 submission is BLOCKED-EXTERNAL.
-2. **Margin/cost visibility (§33).** No permission exists. (a) new `can_view_cost` flag,
-   (b) owner/admin-only cost, or (c) accept module-access = full visibility.
-3. **Currency (§10).** ZAR-only v1 (recommended; zero FX infra exists) vs build multi-currency.
-4. **Member-write AAL2 (§32).** Recommended: No (matches existing precedent) — confirm.
-5. **Uncosted additional charges (§19).** Exclude from margin denominator vs include as
-   revenue with unknown cost.
+1. **Cin7 test target (§22):** a **sandbox / demo Cin7 Core account**. Phase 3 is unblocked once
+   that sandbox instance is wired into a test org/instance in Toolbox; probe there, never a
+   live customer.
+2. **Margin/cost visibility (§33):** **everyone with `quotes` module access sees cost + margin.**
+   Matches the existing precedent (Average Cost is already visible to module members in reports)
+   and the module's purpose. NO new cost-visibility permission is built. Cost/margin flow to the
+   quotes UI for any member who can open it.
+3. **Currency (§10):** **ZAR-only for V1.** Quote + cost + margin all in ZAR; flag/limit non-ZAR
+   customers. `quotes.currency`/`exchange_rate` columns kept in the schema for forward-compat but
+   V1 always ZAR (rate = 1). Multi-currency deferred to V2.
+4. **Member-write AAL2 (§32):** **No.** A quote-create Cin7 write requires only
+   `requireModuleWrite` (module + billing), matching pricing/stock-transfer member writes.
+5. **Uncosted additional charges (§19):** **excluded from margin.** An uncosted charge shows
+   `cost —, margin N/A` and is left OUT of the overall margin denominator (with a footer note);
+   never inflates the headline margin.
 
-## Recommended sequencing
-Phases 1–2 (data model + margin engine + RLS + local search + draft CRUD + builder UI) do NOT
-need Cin7-create and can start once decisions 2–5 are set. Phase 3 (Cin7 submission) waits on
-the safe test account (#1) + the live probe.
+## Sequencing
+Phases 1–2 (data model + margin engine + RLS + local search + draft CRUD + builder UI) don't need
+Cin7-create and proceed now. Phase 3 (Cin7 submission) proceeds once the sandbox instance is
+connected + the live `testCreateSaleQuote` probe has verified the contract.
 
 ---
 
