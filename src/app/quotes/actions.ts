@@ -117,6 +117,8 @@ export interface QuoteProductHit {
   averageCost: number | null;
   /** This product's synced price per tier, keyed by tier_code ("Tier1".."Tier10"). Drives the auto unit price. */
   tierPrices: Record<string, number>;
+  /** Cin7 Service-type item — not a stock product; the builder adds it as a CHARGE, not a product line. */
+  isService: boolean;
 }
 
 /**
@@ -134,7 +136,7 @@ export async function searchQuoteProductsAction(query: string): Promise<QuoteAct
     const like = `%${safe}%`;
     const { data, error } = await db
       .from("products")
-      .select("sku, name, average_cost")
+      .select("sku, name, average_cost, cin7_type")
       .eq("org_id", orgId)
       .eq("active", true)
       .or(`sku.ilike.${like},name.ilike.${like}`)
@@ -165,6 +167,7 @@ export async function searchQuoteProductsAction(query: string): Promise<QuoteAct
       name: p.name,
       averageCost: p.average_cost == null ? null : Number(p.average_cost),
       tierPrices: pricesBySku.get(p.sku) ?? {},
+      isService: p.cin7_type === "Service",
     }));
     return { ok: true, data: hits };
   } catch (e) {

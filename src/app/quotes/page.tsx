@@ -237,6 +237,25 @@ export default function QuotesPage() {
     ]);
   }
 
+  function addServiceCharge(hit: QuoteProductHit) {
+    // A Cin7 Service is a charge, not a product line — it has no product cost/margin. Added as a
+    // charge (excluded from margin by default, with the option to include an estimated cost), priced
+    // from the selected tier like a product. It goes to Cin7 as an additional charge.
+    const tierCode = selectedTierCode();
+    const tierPrice = tierCode && hit.tierPrices[tierCode] != null ? hit.tierPrices[tierCode] : 0;
+    setLines((prev) => [
+      ...prev,
+      { uid: uid(), lineType: "charge", productSku: "", productName: hit.name, cin7ProductId: null, averageCost: null, tierPrices: {}, marginIncluded: false, estimatedCost: "", quantity: "1", unitPrice: String(tierPrice), discountPct: "0", taxRatePct: defaultTaxRatePct },
+    ]);
+  }
+
+  function pickSearchHit(hit: QuoteProductHit) {
+    if (hit.isService) addServiceCharge(hit);
+    else addProductLine(hit);
+    setSearch("");
+    setResults([]);
+  }
+
   // --- product search ---
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<QuoteProductHit[]>([]);
@@ -620,14 +639,15 @@ export default function QuotesPage() {
                         <li key={r.sku}>
                           <button
                             type="button"
-                            onClick={() => { addProductLine(r); setSearch(""); setResults([]); }}
+                            onClick={() => pickSearchHit(r)}
                             className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-indigo-50"
                           >
                             <span>
                               <span className="font-medium text-slate-900">{r.name}</span>
                               <span className="ml-2 text-xs text-slate-400">{r.sku}</span>
+                              {r.isService && <span className="ml-2 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">service → charge</span>}
                             </span>
-                            <span className="text-xs text-slate-500">{r.averageCost == null ? "no cost" : `cost ${fmtMoney(r.averageCost)}`}</span>
+                            <span className="text-xs text-slate-500">{r.isService ? "added as charge" : r.averageCost == null ? "no cost" : `cost ${fmtMoney(r.averageCost)}`}</span>
                           </button>
                         </li>
                       ))}
