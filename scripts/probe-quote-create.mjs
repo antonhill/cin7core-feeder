@@ -113,7 +113,19 @@ async function main() {
 
   console.log("\n── context found ──");
   console.log("  product:", product ? { ID: product.ID ?? product.ProductID, SKU: product.SKU, Name: product.Name, AverageCost: product.AverageCost } : "NONE");
-  console.log("  customer:", customer ? { ID: customer.ID ?? customer.CustomerID, Name: customer.Name } : "NONE");
+  console.log(
+    "  customer:",
+    customer
+      ? {
+          ID: customer.ID ?? customer.CustomerID,
+          Name: customer.Name,
+          Location: customer.Location,
+          PriceTier: customer.PriceTier,
+          TaxRule: customer.TaxRule,
+          SalesRepresentative: customer.SalesRepresentative,
+        }
+      : "NONE",
+  );
   console.log("  location:", location ? { ID: location.ID, Name: location.Name } : (locations.json ? "shape? see raw above" : "NONE"));
 
   if (!DO_CREATE) {
@@ -131,21 +143,21 @@ async function main() {
   // Cin7 marks Location as required and Customer-or-CustomerID as required; SkipQuote:false keeps
   // it at the Quote stage. External ID is our reconciliation key (mirrors PO/Stock-Transfer).
   const today = new Date().toISOString().slice(0, 10);
-  const custName = customer.Name;
-  const locName = location?.Name ?? location;
+  // Use the CUSTOMER's own Cin7 defaults — these are guaranteed-valid references in this account,
+  // unlike a blind guess. Fall back to the first /ref/location only if the customer has no default.
+  const saleHeader = {
+    Customer: customer.Name,
+    Location: customer.Location || location?.Name || undefined,
+    SaleOrderDate: today,
+    SkipQuote: false, // false = keep it at the Quote stage (don't skip straight to an Order)
+    TaxInclusive: false,
+    ExternalID: `PROBE-${Date.now()}`,
+  };
+  if (customer.TaxRule) saleHeader.TaxRule = customer.TaxRule;
+  if (customer.PriceTier) saleHeader.PriceTier = customer.PriceTier;
+  if (customer.SalesRepresentative) saleHeader.SalesRepresentative = customer.SalesRepresentative;
   await sleep(PACE_MS);
-  const header = await cin7("/sale", {
-    method: "POST",
-    body: {
-      Customer: custName,
-      Location: locName,
-      SaleOrderDate: today,
-      SkipQuote: false,
-      TaxRule: "Tax on Sales", // common default; error will name the valid rule if wrong
-      TaxInclusive: false,
-      ExternalID: `PROBE-${Date.now()}`,
-    },
-  });
+  const header = await cin7("/sale", { method: "POST", body: saleHeader });
 
   const saleId = header.json?.ID ?? header.json?.SaleID;
   if (!saleId) {
