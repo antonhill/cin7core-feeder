@@ -301,6 +301,33 @@ export function taxRuleExists(creds: Cin7Credentials, name: string, cache: Map<s
   return cachedFieldExists(creds, REF_TAX_PATH, "Name", name, cache);
 }
 
+export interface Cin7TaxRule {
+  name: string;
+  /** Tax rate as a PERCENTAGE, e.g. 15 for 15%. */
+  rate: number;
+}
+
+/**
+ * Every tax rule with its rate (`/ref/tax`). Used by the Quotation builder to auto-fill a line's
+ * VAT % from the customer's tax rule (e.g. "Standard Rate Sales" → 15). Cin7's Rate field has been
+ * seen both as a percentage (15) and, on some resources, a fraction (0.15), so a value in (0,1] is
+ * normalised to a percentage defensively.
+ */
+export async function fetchAllTaxRules(creds: Cin7Credentials): Promise<Cin7TaxRule[]> {
+  const response = await cin7Request<Record<string, unknown>>(creds, REF_TAX_PATH, { query: { Page: 1, Limit: 100 } });
+  const arr = Object.values(response).find((v) => Array.isArray(v)) as Record<string, unknown>[] | undefined;
+  return (arr ?? [])
+    .filter((e) => typeof e.Name === "string" && e.Name)
+    .map((e) => {
+      // The rate field's exact name isn't separately confirmed for /ref/tax, so read the first of
+      // the plausible names. A value in (0,1] is treated as a fraction and scaled to a percentage.
+      const rawVal = e.Rate ?? e.TaxRate ?? e.Percentage ?? e.Value ?? 0;
+      const raw = typeof rawVal === "number" ? rawVal : Number(rawVal);
+      const rate = Number.isFinite(raw) ? (raw > 0 && raw <= 1 ? raw * 100 : raw) : 0;
+      return { name: e.Name as string, rate };
+    });
+}
+
 /**
  * PriceTier's list endpoint takes no filter params and is normally small
  * (Cin7 ships 10 fixed tiers) — fetched once and matched client-side, unlike

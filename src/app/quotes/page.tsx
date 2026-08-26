@@ -143,6 +143,7 @@ export default function QuotesPage() {
     setTaxInclusive(false);
     setNotes("");
     setLines([]);
+    setDefaultTaxRatePct("0");
     setEditorError(null);
     setSaveMsg(null);
   }
@@ -201,7 +202,7 @@ export default function QuotesPage() {
   function addChargeLine() {
     setLines((prev) => [
       ...prev,
-      { uid: uid(), lineType: "charge", productSku: "", productName: "", cin7ProductId: null, averageCost: null, tierPrices: {}, quantity: "1", unitPrice: "0", discountPct: "0", taxRatePct: "0" },
+      { uid: uid(), lineType: "charge", productSku: "", productName: "", cin7ProductId: null, averageCost: null, tierPrices: {}, quantity: "1", unitPrice: "0", discountPct: "0", taxRatePct: defaultTaxRatePct },
     ]);
   }
   function addProductLine(hit: QuoteProductHit) {
@@ -211,7 +212,7 @@ export default function QuotesPage() {
     const tierPrice = tierCode && hit.tierPrices[tierCode] != null ? hit.tierPrices[tierCode] : 0;
     setLines((prev) => [
       ...prev,
-      { uid: uid(), lineType: "product", productSku: hit.sku, productName: hit.name, cin7ProductId: null, averageCost: hit.averageCost, tierPrices: hit.tierPrices, quantity: "1", unitPrice: String(tierPrice), discountPct: "0", taxRatePct: "0" },
+      { uid: uid(), lineType: "product", productSku: hit.sku, productName: hit.name, cin7ProductId: null, averageCost: hit.averageCost, tierPrices: hit.tierPrices, quantity: "1", unitPrice: String(tierPrice), discountPct: "0", taxRatePct: defaultTaxRatePct },
     ]);
   }
 
@@ -265,10 +266,14 @@ export default function QuotesPage() {
     if (hit.priceTier && !priceTier) applyPriceTier(hit.priceTier);
     if (hit.salesRep) setSalesRep((p) => p || hit.salesRep || "");
     if (hit.location) setLocation((p) => p || hit.location || "");
+    if (hit.taxRule) applyCustomerTaxRule(hit.taxRule);
   }
 
   // --- reference data (Location / Price tier / Sales rep pick-lists) for the chosen instance ---
-  const [refData, setRefData] = useState<QuoteReferenceData>({ locations: [], priceTiers: [], salesReps: [] });
+  const [refData, setRefData] = useState<QuoteReferenceData>({ locations: [], priceTiers: [], salesReps: [], taxRules: [] });
+  // The VAT % new lines inherit, resolved from the customer's tax rule (Phase 3's submit re-derives
+  // the tax-rule NAME server-side from the customer, so it isn't kept in client state here).
+  const [defaultTaxRatePct, setDefaultTaxRatePct] = useState("0");
   const [isLoadingRef, startRefTransition] = useTransition();
   useEffect(() => {
     if (!instanceId) return;
@@ -302,6 +307,16 @@ export default function QuotesPage() {
         l.lineType === "product" && l.tierPrices[tierCode] != null ? { ...l, unitPrice: String(l.tierPrices[tierCode]) } : l,
       ),
     );
+  }
+
+  // Resolve the customer's tax rule (e.g. "Standard Rate Sales") to a VAT % and apply it to every
+  // line, and remember it as the default new lines inherit. Kept as the quote's tax rule for submit.
+  function applyCustomerTaxRule(taxRuleName: string) {
+    const rule = refData.taxRules.find((r) => r.name === taxRuleName);
+    if (!rule) return;
+    const pct = String(rule.rate);
+    setDefaultTaxRatePct(pct);
+    setLines((prev) => prev.map((l) => ({ ...l, taxRatePct: pct })));
   }
 
   // --- live totals (client-side, same engine as the server) ---
