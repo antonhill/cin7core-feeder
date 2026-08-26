@@ -203,6 +203,21 @@ export function companyContactExists(creds: Cin7Credentials, name: string, cache
   return cachedFieldExists(creds, ME_CONTACTS_PATH, "Name", name, cache);
 }
 
+/**
+ * Every Company Contact name (`/me/contacts`) — the reference book a Sale's
+ * `SalesRepresentative` resolves against (confirmed by Cin7's own error text
+ * "...was not found in Company Contacts reference book"; see companyContactExists).
+ * Small list; used by the Quotation module's sales-rep picker so a rep is chosen
+ * from the account's real contacts rather than free-typed.
+ */
+export async function fetchAllCompanyContacts(creds: Cin7Credentials): Promise<string[]> {
+  const response = await cin7Request<Record<string, unknown>>(creds, ME_CONTACTS_PATH, { query: { Page: 1, Limit: 100 } });
+  const names = extractEntries(response)
+    .map((e) => e.Name)
+    .filter((n): n is string => Boolean(n));
+  return [...new Set(names)].sort((a, b) => a.localeCompare(b));
+}
+
 /** Tries Code first (the common case — CSV account fields are usually the numeric code), then Name, since Cin7 accepts either. */
 export async function accountExists(creds: Cin7Credentials, codeOrName: string, cache: Map<string, boolean>): Promise<boolean> {
   if (await cachedFieldExists(creds, REF_ACCOUNT_PATH, "Code", codeOrName, cache)) return true;
@@ -301,6 +316,17 @@ export async function priceTierExists(creds: Cin7Credentials, name: string, cach
   const found = (response.PriceTiers ?? []).some((t) => t.Name?.toLowerCase() === target);
   cache.set(cacheKey, found);
   return found;
+}
+
+/**
+ * Every price-tier name (`/ref/priceTier` — the same small, unfiltered list
+ * priceTierExists reads; Cin7 ships 10 fixed tiers). Used by the Quotation
+ * module's price-tier picker so a tier is chosen from the account's real tiers
+ * rather than free-typed.
+ */
+export async function fetchAllPriceTiers(creds: Cin7Credentials): Promise<string[]> {
+  const response = await cin7Request<{ PriceTiers?: { Code?: number; Name?: string }[] }>(creds, REF_PRICE_TIER_PATH);
+  return (response.PriceTiers ?? []).map((t) => t.Name).filter((n): n is string => Boolean(n));
 }
 
 /**
