@@ -318,15 +318,24 @@ export async function priceTierExists(creds: Cin7Credentials, name: string, cach
   return found;
 }
 
+export interface Cin7PriceTier {
+  /** 1..10 — the tier's Cin7 index; maps to the product's PriceTier{code} / the local price_tiers tier_code "Tier{code}". */
+  code: number;
+  name: string;
+}
+
 /**
- * Every price-tier name (`/ref/priceTier` — the same small, unfiltered list
- * priceTierExists reads; Cin7 ships 10 fixed tiers). Used by the Quotation
- * module's price-tier picker so a tier is chosen from the account's real tiers
- * rather than free-typed.
+ * Every price tier with its Code and Name (`/ref/priceTier` — the same small,
+ * unfiltered list priceTierExists reads; Cin7 ships 10 fixed tiers). The Code is
+ * what maps a tier NAME to a product's actual price (PriceTier{code}, stored
+ * locally as price_tiers.tier_code "Tier{code}") — so the Quotation builder can
+ * auto-fill a line's unit price from the chosen tier.
  */
-export async function fetchAllPriceTiers(creds: Cin7Credentials): Promise<string[]> {
+export async function fetchAllPriceTiers(creds: Cin7Credentials): Promise<Cin7PriceTier[]> {
   const response = await cin7Request<{ PriceTiers?: { Code?: number; Name?: string }[] }>(creds, REF_PRICE_TIER_PATH);
-  return (response.PriceTiers ?? []).map((t) => t.Name).filter((n): n is string => Boolean(n));
+  return (response.PriceTiers ?? [])
+    .filter((t): t is { Code: number; Name: string } => typeof t.Code === "number" && Boolean(t.Name))
+    .map((t) => ({ code: t.Code, name: t.Name }));
 }
 
 /**
