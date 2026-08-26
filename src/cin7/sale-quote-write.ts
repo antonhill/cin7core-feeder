@@ -20,6 +20,8 @@ export interface SaleQuoteHeaderInput {
   priceTier?: string | null;
   salesRep?: string | null;
   externalId: string;
+  /** The Sale's internal Note (not customer-facing) — we write the estimated margin summary here. */
+  note?: string | null;
 }
 
 export interface SaleQuoteLineInput {
@@ -62,6 +64,7 @@ export function buildSaleHeaderBody(h: SaleQuoteHeaderInput): Record<string, unk
   };
   if (h.priceTier) body.PriceTier = h.priceTier;
   if (h.salesRep) body.SalesRepresentative = h.salesRep;
+  if (h.note) body.Note = h.note;
   return body;
 }
 

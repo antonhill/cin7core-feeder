@@ -550,6 +550,14 @@ export async function submitQuoteAction(quoteId: string): Promise<QuoteActionRes
     const taxRules = await fetchAllTaxRules(creds);
     const taxRatePct = taxRules.find((t) => t.name === taxRule)?.rate ?? 0;
 
+    // Write the estimated margin into the Sale's internal Note (not customer-facing), appended to
+    // any note the user entered on the quote, so the commercial basis travels with the Cin7 sale.
+    const fmtR = (n: unknown) => `R${Number(n ?? 0).toFixed(2)}`;
+    const marginPct = q.overall_margin_pct == null ? "N/A" : `${Number(q.overall_margin_pct).toFixed(1)}%`;
+    const scopeNote = q.margin_scope === "products_only" ? " (products only — charges excluded)" : "";
+    const marginSummary = `Toolbox estimated margin: ${marginPct}${scopeNote} — est. GP ${fmtR(q.estimated_gp)} on ${fmtR(q.margin_revenue_ex_tax)} ex-VAT revenue.`;
+    const note = [String(q.notes ?? "").trim(), marginSummary].filter(Boolean).join("\n");
+
     const externalId = `QUOTE-${quoteId}`;
     const header = {
       customer: q.customer_name,
@@ -560,6 +568,7 @@ export async function submitQuoteAction(quoteId: string): Promise<QuoteActionRes
       priceTier: q.price_tier,
       salesRep: q.sales_rep,
       externalId,
+      note,
     };
     const lines: SaleQuoteLineInput[] = productLines.map((l) => ({
       productSku: String(l.product_sku),

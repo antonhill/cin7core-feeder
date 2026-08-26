@@ -40,6 +40,11 @@ describe("buildSaleHeaderBody", () => {
   it("passes the tax-inclusive flag through", () => {
     expect(buildSaleHeaderBody({ ...baseHeader, taxInclusive: true }).TaxInclusive).toBe(true);
   });
+
+  it("writes the internal Note when provided, omits it otherwise", () => {
+    expect(buildSaleHeaderBody({ ...baseHeader, note: "Toolbox estimated margin: 40.9%" }).Note).toBe("Toolbox estimated margin: 40.9%");
+    expect("Note" in buildSaleHeaderBody({ ...baseHeader, note: null })).toBe(false);
+  });
 });
 
 describe("buildQuoteBody", () => {
