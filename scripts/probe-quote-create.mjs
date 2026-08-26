@@ -168,11 +168,14 @@ async function main() {
 
   // ── Step 3: add quote lines (ROUND 1 GUESS — refine from the error). ──
   // /sale/quote is a distinct sub-resource (docs/cin7-api-findings.md §13h; QuoteStatuses unconfirmed).
+  // Round 2: POST /sale worked; /sale/quote rejected with "'TaxRule' attribute is required."
+  // The DEAR sale-quote LINE model carries its own TaxRule — add it (the customer's valid rule).
   await sleep(PACE_MS);
   await cin7("/sale/quote", {
     method: "POST",
     body: {
       SaleID: saleId,
+      Memo: null,
       Status: "DRAFT",
       Lines: [
         {
@@ -183,9 +186,11 @@ async function main() {
           Price: 100,
           Discount: 0,
           Tax: 0,
+          TaxRule: customer.TaxRule,
           Total: 100,
         },
       ],
+      AdditionalCharges: [],
     },
   });
 
