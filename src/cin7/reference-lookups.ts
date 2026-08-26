@@ -307,25 +307,29 @@ export interface Cin7TaxRule {
   rate: number;
 }
 
+interface Cin7TaxRuleEntry {
+  Name?: string;
+  /** Rate as a percentage, e.g. 15 or 15.5. Confirmed live 2026-08-26 (/ref/tax → TaxRuleList). */
+  TaxPercent?: number;
+  IsActive?: boolean;
+}
+
 /**
- * Every tax rule with its rate (`/ref/tax`). Used by the Quotation builder to auto-fill a line's
- * VAT % from the customer's tax rule (e.g. "Standard Rate Sales" → 15). Cin7's Rate field has been
- * seen both as a percentage (15) and, on some resources, a fraction (0.15), so a value in (0,1] is
- * normalised to a percentage defensively.
+ * Every tax rule with its rate (`/ref/tax` → `TaxRuleList`, each entry carrying `TaxPercent`,
+ * confirmed live). Used by the Quotation builder to auto-fill a line's VAT % from the customer's
+ * tax rule (e.g. "Standard Rate Sales" → 15). Active rules are listed first so a name-lookup prefers
+ * the active one when a name is duplicated across active/inactive rules.
  */
 export async function fetchAllTaxRules(creds: Cin7Credentials): Promise<Cin7TaxRule[]> {
-  const response = await cin7Request<Record<string, unknown>>(creds, REF_TAX_PATH, { query: { Page: 1, Limit: 100 } });
-  const arr = Object.values(response).find((v) => Array.isArray(v)) as Record<string, unknown>[] | undefined;
-  return (arr ?? [])
-    .filter((e) => typeof e.Name === "string" && e.Name)
+  const response = await cin7Request<{ TaxRuleList?: Cin7TaxRuleEntry[] }>(creds, REF_TAX_PATH, { query: { Page: 1, Limit: 100 } });
+  return (response.TaxRuleList ?? [])
+    .filter((e): e is Cin7TaxRuleEntry & { Name: string } => Boolean(e.Name))
     .map((e) => {
-      // The rate field's exact name isn't separately confirmed for /ref/tax, so read the first of
-      // the plausible names. A value in (0,1] is treated as a fraction and scaled to a percentage.
-      const rawVal = e.Rate ?? e.TaxRate ?? e.Percentage ?? e.Value ?? 0;
-      const raw = typeof rawVal === "number" ? rawVal : Number(rawVal);
-      const rate = Number.isFinite(raw) ? (raw > 0 && raw <= 1 ? raw * 100 : raw) : 0;
-      return { name: e.Name as string, rate };
-    });
+      const raw = typeof e.TaxPercent === "number" ? e.TaxPercent : Number(e.TaxPercent);
+      return { name: e.Name, rate: Number.isFinite(raw) ? raw : 0, active: e.IsActive !== false };
+    })
+    .sort((a, b) => Number(b.active) - Number(a.active))
+    .map(({ name, rate }) => ({ name, rate }));
 }
 
 /**
