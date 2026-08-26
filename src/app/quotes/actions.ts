@@ -5,7 +5,7 @@ import { requireModuleAccess, requireModuleWrite } from "@/lib/authorization";
 import { QUOTES_MODULE } from "@/app/module-nav";
 import { resolveQuoteLines, productSkusFor, type QuoteLineDraft } from "@/lib/quote-build";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
-import { fetchAllLocations, fetchAllPriceTiers, fetchAllCompanyContacts } from "@/cin7/reference-lookups";
+import { fetchAllLocations, fetchAllPriceTiers, fetchAllCompanyContacts, type Cin7PriceTier } from "@/cin7/reference-lookups";
 
 // Draft CRUD for the Quotation + Margin module.
 //
@@ -90,6 +90,8 @@ export interface QuoteProductHit {
   sku: string;
   name: string;
   averageCost: number | null;
+  /** This product's synced price per tier, keyed by tier_code ("Tier1".."Tier10"). Drives the auto unit price. */
+  tierPrices: Record<string, number>;
 }
 
 /**
@@ -114,10 +116,30 @@ export async function searchQuoteProductsAction(query: string): Promise<QuoteAct
       .order("sku", { ascending: true })
       .limit(20);
     if (error) throw new Error(error.message);
+
+    // Attach each product's synced tier prices (price_tiers.tier_code = "Tier1".."Tier10")
+    // so the builder can auto-fill the unit price from the chosen tier without a Cin7 call.
+    const skus = (data ?? []).map((p) => p.sku);
+    const pricesBySku = new Map<string, Record<string, number>>();
+    if (skus.length > 0) {
+      const { data: tiers, error: tErr } = await db
+        .from("price_tiers")
+        .select("product_sku, tier_code, amount")
+        .eq("org_id", orgId)
+        .in("product_sku", skus);
+      if (tErr) throw new Error(tErr.message);
+      for (const t of tiers ?? []) {
+        const m = pricesBySku.get(t.product_sku) ?? {};
+        m[t.tier_code] = Number(t.amount);
+        pricesBySku.set(t.product_sku, m);
+      }
+    }
+
     const hits: QuoteProductHit[] = (data ?? []).map((p) => ({
       sku: p.sku,
       name: p.name,
       averageCost: p.average_cost == null ? null : Number(p.average_cost),
+      tierPrices: pricesBySku.get(p.sku) ?? {},
     }));
     return { ok: true, data: hits };
   } catch (e) {
@@ -166,7 +188,7 @@ export async function searchQuoteCustomersAction(query: string): Promise<QuoteAc
 
 export interface QuoteReferenceData {
   locations: string[];
-  priceTiers: string[];
+  priceTiers: Cin7PriceTier[];
   salesReps: string[];
 }
 

@@ -20,6 +20,7 @@ import {
   type QuoteLineDraftInput,
   type QuoteCustomerHit,
   type QuoteReferenceData,
+  type QuoteProductHit,
 } from "./actions";
 
 // The interactive quote builder. Every margin figure shown here is computed CLIENT-SIDE by the
@@ -58,6 +59,8 @@ interface EditorLine {
   cin7ProductId: string | null;
   /** Display-only quote-time cost; the server re-sources this on save. */
   averageCost: number | null;
+  /** This product's synced price per tier_code ("Tier1".."Tier10") — drives the auto unit price. */
+  tierPrices: Record<string, number>;
   // Numeric fields kept as strings so the inputs can be empty / mid-typing.
   quantity: string;
   unitPrice: string;
@@ -177,6 +180,7 @@ export default function QuotesPage() {
           productName: l.productName ?? "",
           cin7ProductId: l.cin7ProductId ?? null,
           averageCost: l.averageCost,
+          tierPrices: {},
           quantity: String(l.quantity),
           unitPrice: String(l.unitPrice),
           discountPct: String(l.discountPct ?? 0),
@@ -197,19 +201,23 @@ export default function QuotesPage() {
   function addChargeLine() {
     setLines((prev) => [
       ...prev,
-      { uid: uid(), lineType: "charge", productSku: "", productName: "", cin7ProductId: null, averageCost: null, quantity: "1", unitPrice: "0", discountPct: "0", taxRatePct: "0" },
+      { uid: uid(), lineType: "charge", productSku: "", productName: "", cin7ProductId: null, averageCost: null, tierPrices: {}, quantity: "1", unitPrice: "0", discountPct: "0", taxRatePct: "0" },
     ]);
   }
-  function addProductLine(hit: { sku: string; name: string; averageCost: number | null }) {
+  function addProductLine(hit: QuoteProductHit) {
+    // Auto-price from the currently-selected tier; falls back to 0 if no tier is chosen or the
+    // product has no price at that tier (the user can still type one).
+    const tierCode = selectedTierCode();
+    const tierPrice = tierCode && hit.tierPrices[tierCode] != null ? hit.tierPrices[tierCode] : 0;
     setLines((prev) => [
       ...prev,
-      { uid: uid(), lineType: "product", productSku: hit.sku, productName: hit.name, cin7ProductId: null, averageCost: hit.averageCost, quantity: "1", unitPrice: "0", discountPct: "0", taxRatePct: "0" },
+      { uid: uid(), lineType: "product", productSku: hit.sku, productName: hit.name, cin7ProductId: null, averageCost: hit.averageCost, tierPrices: hit.tierPrices, quantity: "1", unitPrice: String(tierPrice), discountPct: "0", taxRatePct: "0" },
     ]);
   }
 
   // --- product search ---
   const [search, setSearch] = useState("");
-  const [results, setResults] = useState<{ sku: string; name: string; averageCost: number | null }[]>([]);
+  const [results, setResults] = useState<QuoteProductHit[]>([]);
   const [isSearching, startSearchTransition] = useTransition();
   useEffect(() => {
     const q = search.trim();
@@ -253,7 +261,8 @@ export default function QuotesPage() {
     setCustResults([]);
     setShowCustResults(false);
     // Pre-fill the customer's Cin7 defaults, but never overwrite a choice already made.
-    if (hit.priceTier) setPriceTier((p) => p || hit.priceTier || "");
+    // The tier is applied through applyPriceTier so any lines already added get repriced too.
+    if (hit.priceTier && !priceTier) applyPriceTier(hit.priceTier);
     if (hit.salesRep) setSalesRep((p) => p || hit.salesRep || "");
     if (hit.location) setLocation((p) => p || hit.location || "");
   }
@@ -273,6 +282,26 @@ export default function QuotesPage() {
   // isn't in the fetched list (e.g. a rep no longer active) still shows selected rather than blank.
   function withCurrent(list: string[], current: string): string[] {
     return current && !list.includes(current) ? [current, ...list] : list;
+  }
+
+  // The local price_tiers key ("Tier{code}") for the currently-selected tier NAME, or null.
+  function selectedTierCode(): string | null {
+    const code = refData.priceTiers.find((t) => t.name === priceTier)?.code;
+    return code != null ? `Tier${code}` : null;
+  }
+
+  // Selecting a price tier re-prices every product line from that tier's synced price — the whole
+  // point of choosing a tier. A line whose product has no price at that tier is left unchanged.
+  function applyPriceTier(tierName: string) {
+    setPriceTier(tierName);
+    const code = refData.priceTiers.find((t) => t.name === tierName)?.code;
+    const tierCode = code != null ? `Tier${code}` : null;
+    if (!tierCode) return;
+    setLines((prev) =>
+      prev.map((l) =>
+        l.lineType === "product" && l.tierPrices[tierCode] != null ? { ...l, unitPrice: String(l.tierPrices[tierCode]) } : l,
+      ),
+    );
   }
 
   // --- live totals (client-side, same engine as the server) ---
@@ -444,9 +473,9 @@ export default function QuotesPage() {
               </label>
               <label className="flex flex-col gap-1.5 text-sm">
                 <span className="font-medium text-slate-700">Price tier</span>
-                <select value={priceTier} onChange={(e) => setPriceTier(e.target.value)} disabled={readOnly || !instanceId} className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50">
+                <select value={priceTier} onChange={(e) => applyPriceTier(e.target.value)} disabled={readOnly || !instanceId} className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50">
                   <option value="">{isLoadingRef && refData.priceTiers.length === 0 ? "Loading…" : "None"}</option>
-                  {withCurrent(refData.priceTiers, priceTier).map((t) => <option key={t} value={t}>{t}</option>)}
+                  {withCurrent(refData.priceTiers.map((t) => t.name), priceTier).map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
               </label>
               <label className="flex flex-col gap-1.5 text-sm">
