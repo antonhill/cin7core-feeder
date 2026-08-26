@@ -36,6 +36,13 @@ export interface QuoteLineInput {
   averageCost?: number | null;
   /** Line tax rate as a percent, e.g. 15 for 15%. Defaults to 0. */
   taxRatePct?: number;
+  /**
+   * When true, this line's cost is deliberately held OUT of the margin (e.g. a shipping/additional
+   * charge the user chose to exclude) — cost/GP/margin show as N/A and it never inflates the margin,
+   * even if an averageCost is present. Its revenue still counts toward the subtotal/total. Product
+   * lines never set this; it's the charge Exclude/Include control.
+   */
+  excludedFromMargin?: boolean;
 }
 
 export interface QuoteCalcOptions {
@@ -112,8 +119,10 @@ export function computeLine(line: QuoteLineInput, opts: QuoteCalcOptions = {}): 
     : revenueExTax * (taxRate / 100);
   const totalIncTax = revenueExTax + taxAmount;
 
-  const hasCost = hasUsableCost(line.averageCost);
-  const estimatedCost = hasCost ? num(line.averageCost) * qty : null;
+  // A cost counts toward the margin only if it's known AND not deliberately excluded. An excluded
+  // line (or one with an unknown cost) reports cost/GP/margin as N/A and never inflates the margin.
+  const costCounts = hasUsableCost(line.averageCost) && line.excludedFromMargin !== true;
+  const estimatedCost = costCounts ? num(line.averageCost) * qty : null;
   const estimatedGP = estimatedCost == null ? null : revenueExTax - estimatedCost;
   // N/A rather than divide-by-zero when there is no revenue to earn a margin against.
   const marginPct =
@@ -127,7 +136,7 @@ export function computeLine(line: QuoteLineInput, opts: QuoteCalcOptions = {}): 
     estimatedCost,
     estimatedGP,
     marginPct,
-    hasCost,
+    hasCost: costCounts,
   };
 }
 

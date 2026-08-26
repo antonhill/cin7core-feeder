@@ -32,6 +32,12 @@ export interface QuoteLineDraft {
   unitPrice: number;
   discountPct?: number;
   taxRatePct?: number;
+  /** Charge lines only: include this charge in the estimated margin (requires estimatedCost). Charges
+   * default to EXCLUDED — an unknown shipping cost must never masquerade as 100% margin. */
+  marginIncluded?: boolean;
+  /** Charge lines only: the user-entered per-unit estimated cost. Preserved even while excluded, so
+   * toggling include/exclude doesn't lose it; the margin only uses it when marginIncluded. */
+  estimatedCost?: number | null;
 }
 
 /** A line resolved with its server-sourced cost + computed snapshot, shaped for the quote_lines row. */
@@ -46,6 +52,8 @@ export interface ResolvedQuoteLineRow {
   discount_pct: number;
   tax_rate_pct: number;
   average_cost: number | null;
+  /** Whether this line counts toward the margin. Products: true. Charges: the Exclude/Include choice. */
+  margin_included: boolean;
   revenue_ex_tax: number;
   estimated_cost: number | null;
   estimated_gp: number | null;
@@ -81,8 +89,12 @@ export function resolveQuoteLines(
 ): ResolvedQuote {
   const engineInputs: QuoteLineInput[] = [];
   const lines: ResolvedQuoteLineRow[] = (drafts ?? []).map((d, i) => {
-    const averageCost =
-      d.lineType === "charge" ? null : costBySku.get(normaliseSku(d.productSku)) ?? null;
+    const isCharge = d.lineType === "charge";
+    // Product cost is server-sourced by SKU. A charge's cost is the user-entered estimate, stored
+    // regardless of mode (so toggling doesn't lose it); an EXCLUDED charge keeps it out of the margin.
+    const averageCost = isCharge ? d.estimatedCost ?? null : costBySku.get(normaliseSku(d.productSku)) ?? null;
+    const marginIncluded = isCharge ? d.marginIncluded === true : true;
+    const excludedFromMargin = isCharge && !marginIncluded;
 
     const input: QuoteLineInput = {
       quantity: d.quantity,
@@ -90,13 +102,14 @@ export function resolveQuoteLines(
       discountPct: d.discountPct,
       taxRatePct: d.taxRatePct,
       averageCost,
+      excludedFromMargin,
     };
     engineInputs.push(input);
 
     const r = computeLine(input, opts);
     return {
       line_number: i + 1,
-      line_type: d.lineType === "charge" ? "charge" : "product",
+      line_type: isCharge ? "charge" : "product",
       cin7_product_id: d.cin7ProductId ?? null,
       product_sku: d.productSku ?? null,
       product_name: d.productName ?? null,
@@ -105,6 +118,7 @@ export function resolveQuoteLines(
       discount_pct: Number(d.discountPct) || 0,
       tax_rate_pct: Number(d.taxRatePct) || 0,
       average_cost: averageCost,
+      margin_included: marginIncluded,
       revenue_ex_tax: r.revenueExTax,
       estimated_cost: r.estimatedCost,
       estimated_gp: r.estimatedGP,

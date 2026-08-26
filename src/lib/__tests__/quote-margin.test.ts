@@ -66,6 +66,15 @@ describe("computeLine", () => {
     expect(r.estimatedCost).toBeNull();
   });
 
+  it("excludedFromMargin forces cost/GP/margin to N/A even when a cost is present", () => {
+    const r = computeLine({ quantity: 1, unitPrice: 100, averageCost: 80, excludedFromMargin: true });
+    expect(r.revenueExTax).toBe(100); // revenue still counts toward subtotal/total
+    expect(r.estimatedCost).toBeNull();
+    expect(r.estimatedGP).toBeNull();
+    expect(r.marginPct).toBeNull();
+    expect(r.hasCost).toBe(false);
+  });
+
   it("a zero cost is a real, usable cost (100% margin), not 'missing'", () => {
     const r = computeLine({ quantity: 2, unitPrice: 50, averageCost: 0 });
     expect(r.hasCost).toBe(true);
@@ -151,6 +160,30 @@ describe("computeQuote", () => {
     expect(q.costedLineCount).toBe(1);
     expect(q.excludedFromMarginCount).toBe(1);
     expect(q.lineCount).toBe(2);
+  });
+
+  it("brief §5: a deliberately-excluded costed shipping charge stays out of the margin, in the subtotal", () => {
+    const q = computeQuote([
+      { quantity: 1, unitPrice: 120, averageCost: 50 }, // product, in margin
+      { quantity: 1, unitPrice: 100, averageCost: 80, excludedFromMargin: true }, // shipping, excluded
+    ]);
+    expect(q.subtotalExTax).toBe(220); // shipping revenue still counts
+    expect(q.marginRevenueExTax).toBe(120); // margin denominator = product only
+    expect(q.estimatedCost).toBe(50);
+    expect(q.estimatedGP).toBe(70);
+    expect(q.overallMarginPct).toBeCloseTo(58.3333, 3);
+    expect(q.excludedFromMarginCount).toBe(1);
+  });
+
+  it("brief §6: an included shipping charge participates fully in the weighted margin", () => {
+    const q = computeQuote([
+      { quantity: 1, unitPrice: 120, averageCost: 50 },
+      { quantity: 1, unitPrice: 100, averageCost: 80, excludedFromMargin: false },
+    ]);
+    expect(q.marginRevenueExTax).toBe(220);
+    expect(q.estimatedCost).toBe(130);
+    expect(q.estimatedGP).toBe(90);
+    expect(q.overallMarginPct).toBeCloseTo(40.909, 2);
   });
 
   it("all lines uncosted → overall margin is N/A (null), subtotal still correct", () => {
