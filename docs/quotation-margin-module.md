@@ -135,7 +135,104 @@ connected + the live `testCreateSaleQuote` probe has verified the contract.
 
 ---
 
-## Sections to complete in later phases (§44)
-Database schema · Permissions · Margin calculation · Cost basis · Multi-currency ·
-Cin7 API contract (post-probe) · Create/reconciliation lifecycle · API usage · Tests ·
-Security/RLS · Known limitations · Deferred V2 features · Verification results.
+---
+
+# Completion Report (V1 shipped 2026-08-26)
+
+**Status: COMPLETE and live.** All phases built, merged to `main`, deployed, and verified end-to-end
+against the Spark Demo Cin7 sandbox. The module ships **hidden by default** (migration `0085` seeds
+every org's `disabled_modules` with `/quotes`); it is enabled for the owner's org only. A super-admin
+enables it per org via `/admin`.
+
+### What was built (branch-per-phase, PR each)
+
+| Phase | Content | PRs |
+|---|---|---|
+| 0 — Discovery | This report's Phase 0 + decisions | #59 |
+| 1 — Data + engine | Margin engine, schema (`0084`), draft CRUD, module registration, hidden-by-default (`0085`) | #60, #61 base |
+| 2 — Builder UI | Live per-line margin + weighted footer; searchable customer/location/tier/rep; tier→price; customer tax rule→VAT %; live customer resolve | #61, #62, #66, #67, #68, #70, #72 |
+| 3 — Cin7 submission | `Submit to Cin7`: two-step create, idempotency, reconciliation, VAT, additional charges, tax-inclusive | #71, #72, #74, #76 |
+
+### Cin7 Sale/Quote CREATE contract — CONFIRMED LIVE (the Phase-0 blocker, resolved)
+
+Discovered via `scripts/probe-quote-create.mjs` (an iterative live probe against the sandbox, the same
+approach PO-create needed). Two steps, both `nonIdempotentCreate`, all references **by name**:
+
+1. **`POST /sale`** — header. Body: `{ Customer, Location, SaleOrderDate, SkipQuote:false, TaxInclusive,
+   TaxRule, PriceTier, SalesRepresentative, ExternalID }`. Returns `ID` (SaleID), `Order.SaleOrderNumber`
+   (e.g. `SO-00743`), `Status:"ESTIMATING"`, and echoes `ExternalID`.
+2. **`POST /sale/quote`** — lines + charges. Body: `{ SaleID, Memo, Status:"DRAFT", Lines:[{ ProductID,
+   SKU, Name, Quantity, Price, Discount, Tax, TaxRule, Total }], AdditionalCharges:[{ Description,
+   Comment, Quantity, Price, Discount, Tax, TaxRule, Total, Account }] }`. Returns Cin7's totals.
+
+**Non-obvious findings the probe pinned down:**
+- `TaxRule` is required on the header **and** every line/charge.
+- Cin7 **uses the `Tax` amount we send** on each line/charge (it does NOT derive it from `TaxRule`) —
+  sending `Tax:0` made VAT land as 0. We resolve the rate from `/ref/tax` (`TaxRuleList[].TaxPercent`)
+  and compute it.
+- `Total` is the **discounted line amount in the quote's tax mode** — net when tax-exclusive, **gross**
+  when tax-inclusive (Cin7 rejects a net Total in inclusive mode: *"Expected value is: <gross>"*).
+- Additional charges post to a GL revenue account (`Account` = the customer's `RevenueAccount`).
+- Reference books used: `/ref/location`, `/ref/priceTier`, `/ref/tax`, `/me/contacts` (sales reps),
+  `/customer` (live customer defaults).
+
+### Architecture & reuse (no parallel infra)
+
+- **Gateway:** every Cin7 call goes through `cin7Request` (`src/cin7/http.ts`) — rate-limited, retry/
+  deadline-bounded, credential-safe. Registered in `docs/cin7-post-classification.json` as
+  `RECONCILE_BEFORE_RETRY`.
+- **Idempotency/reconciliation:** mirrors PO/Stock-Transfer exactly. `quote_creation_claims` table +
+  `quote_creation_claim` RPC (migration `0084`, with `0080`'s "ambiguous never age-reclaims" rule
+  baked in). Wrappers in `src/lib/quote-submit.ts` (`claim` fail-closed, `settle`, `release`,
+  `mark-ambiguous`, `discard`). `ExternalID = QUOTE-<quoteId>` is the reconciliation key.
+- **Authz:** reads use `requireModuleAccess('/quotes')`; writes use `requireModuleWrite('/quotes')`
+  (module + billing; no AAL2, per decision #4).
+- **RLS:** org members read `quotes`/`quote_lines`; no client write policy (service-role writes only);
+  `quote_creation_claims` service-role only.
+
+### Margin calculation & cost basis
+
+`src/lib/quote-margin.ts` (pure, 26 tests) is the single source of truth, used **client-side** for the
+live builder and **server-side** on save (a client can never persist its own totals). Weighted overall
+margin from summed revenue/cost (never an average of line %s); margin on revenue **ex-tax**; a line
+whose cost is unknown is **excluded** from the margin (never costed as 0). Cost basis = the org's synced
+Cin7 **Average Cost** (`products.average_cost`), sourced server-side by SKU. Uncosted additional charges
+are excluded from margin (decision #5). ZAR-only V1 (decision #3).
+
+### Submit flow & failure handling (the money path)
+
+`submitQuoteAction` (`src/app/quotes/actions.ts`): validate draft → resolve the **live** customer tax
+rule + rate → **claim** → **create** (`src/cin7/sale-quote-write.ts` `createSaleQuote`, resolving each
+SKU's `ProductID` via `findProductBySku`) → settle + link (`status='submitted'`, `cin7_sale_id`,
+`cin7_quote_number`). Failure paths: concurrent submit blocked by the claim; a network-ambiguous
+outcome is never blindly retried and is reconciled by `ExternalID` on the next attempt (link if found,
+else retry fresh); a step-2 (lines) definite failure links the created header (no duplicate) with a
+warning to complete it in Cin7.
+
+### Verification (live, Spark Demo sandbox)
+
+- Tax-**exclusive** submit → `SO-00743` — products, prices, margins, tax rule, sales rep, account all
+  correct; VAT corrected (#72).
+- Additional **charges** → accepted with computed tax + revenue account (#74).
+- Tax-**inclusive** → probe `--inclusive` returned **MATCH** (net R150 / VAT R22.50 / total R172.50) (#76).
+- Static gates on every merge: `eslint` + `tsc` clean, full suite **1315 tests** green (37 engine/build +
+  11 submit-payload), `next build` compiles `/quotes`, Cin7-POST classification + service-role allowlist
+  + RLS guardrail tests all pass.
+
+### Known V1 limitations / deferred to V2
+
+- **Multi-currency** — ZAR-only; `currency`/`exchange_rate` columns exist for a future FX pass.
+- **Per-product tax rule** — all lines use the customer's tax rule (products' own `SaleTaxRule` not
+  resolved in V1).
+- **Sales-rep list** — all `/me/contacts` shown (not filtered to `Type:"Sale"` contacts).
+- **Cost/customer freshness** — cost from the last product sync; customer defaults are refreshed live at
+  pick time, but the picker list itself is the synced `customers` table (no continuous customer pull).
+- **Quote → Cin7 is one-directional** — once submitted, the quote is frozen in Toolbox; edits happen in
+  Cin7.
+
+### Key files
+
+`src/lib/quote-margin.ts` · `src/lib/quote-build.ts` · `src/lib/quote-submit.ts` ·
+`src/cin7/sale-quote-write.ts` · `src/cin7/reference-lookups.ts` (locations/tiers/tax/contacts) ·
+`src/app/quotes/actions.ts` · `src/app/quotes/page.tsx` · `supabase/migrations/0084_quotes.sql` +
+`0085_hide_quotes_module_by_default.sql` · `scripts/probe-quote-create.mjs` (discovery/verification tool).
