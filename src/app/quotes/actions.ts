@@ -6,7 +6,13 @@ import { QUOTES_MODULE } from "@/app/module-nav";
 import { resolveQuoteLines, productSkusFor, type QuoteLineDraft } from "@/lib/quote-build";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchCustomerDefaults, type Cin7CustomerDefaults } from "@/cin7/customers";
-import { createSaleQuote, findSaleByExternalId, SaleQuoteCreateError, type SaleQuoteLineInput } from "@/cin7/sale-quote-write";
+import {
+  createSaleQuote,
+  findSaleByExternalId,
+  SaleQuoteCreateError,
+  type SaleQuoteLineInput,
+  type SaleQuoteChargeInput,
+} from "@/cin7/sale-quote-write";
 import {
   claimQuoteCreation,
   settleQuoteCreation,
@@ -501,7 +507,7 @@ export async function submitQuoteAction(quoteId: string): Promise<QuoteActionRes
     const { data: lineRows, error: lErr } = await db.from("quote_lines").select("*").eq("quote_id", quoteId).order("line_number");
     if (lErr) throw new Error(lErr.message);
     const productLines = (lineRows ?? []).filter((l) => l.line_type !== "charge" && l.product_sku);
-    const chargeCount = (lineRows ?? []).length - productLines.length;
+    const chargeLines = (lineRows ?? []).filter((l) => l.line_type === "charge");
     if (productLines.length === 0) return { ok: false, error: "Add at least one product line before submitting." };
 
     const instanceId = q.instance_id;
@@ -530,6 +536,14 @@ export async function submitQuoteAction(quoteId: string): Promise<QuoteActionRes
     const lines: SaleQuoteLineInput[] = productLines.map((l) => ({
       productSku: String(l.product_sku),
       productName: l.product_name,
+      quantity: Number(l.quantity),
+      unitPrice: Number(l.unit_price),
+      discountPct: Number(l.discount_pct),
+      taxRule,
+      taxRatePct,
+    }));
+    const charges: SaleQuoteChargeInput[] = chargeLines.map((l) => ({
+      description: (l.product_name && String(l.product_name).trim()) || "Additional charge",
       quantity: Number(l.quantity),
       unitPrice: Number(l.unit_price),
       discountPct: Number(l.discount_pct),
@@ -579,12 +593,11 @@ export async function submitQuoteAction(quoteId: string): Promise<QuoteActionRes
 
     await setStatus("submitting");
     try {
-      const result = await createSaleQuote(creds, header, lines);
+      const result = await createSaleQuote(creds, header, lines, charges, custDefaults?.revenueAccount ?? null);
       const settled = await settleQuoteCreation(db, orgId, instanceId, quoteId, result.saleId, result.quoteNumber);
       if (!settled) await markQuoteCreationAmbiguous(db, orgId, instanceId, quoteId);
       await linkSubmitted(result.saleId, result.quoteNumber);
-      const warning = chargeCount > 0 ? `${chargeCount} charge line${chargeCount === 1 ? "" : "s"} were not sent to Cin7 (add them on the sale in Cin7).` : undefined;
-      return { ok: true, data: { cin7SaleId: result.saleId, cin7QuoteNumber: result.quoteNumber, warning } };
+      return { ok: true, data: { cin7SaleId: result.saleId, cin7QuoteNumber: result.quoteNumber } };
     } catch (e) {
       if (e instanceof SaleQuoteCreateError) {
         if (e.stage === "header" && !e.ambiguous) {

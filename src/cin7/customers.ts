@@ -171,6 +171,8 @@ export interface Cin7CustomerDefaults {
   priceTier: string | null;
   salesRep: string | null;
   location: string | null;
+  /** The customer's revenue GL account — additional charges post to it. */
+  revenueAccount: string | null;
 }
 
 /**
@@ -193,6 +195,7 @@ export async function fetchCustomerDefaults(creds: Cin7Credentials, name: string
     priceTier: str(match.PriceTier),
     salesRep: str(match.SalesRepresentative),
     location: str(match.Location),
+    revenueAccount: str(match.RevenueAccount),
   };
 }
 

@@ -52,15 +52,15 @@ describe("buildQuoteBody", () => {
     ["SKU-2", "prod-2"],
   ]);
 
-  it("targets the sale, is DRAFT, and carries no additional charges", () => {
-    const body = buildQuoteBody("sale-1", lines, idBySku) as { SaleID: string; Status: string; AdditionalCharges: unknown[] };
+  it("targets the sale, is DRAFT, and has no charges when none are passed", () => {
+    const body = buildQuoteBody("sale-1", lines, [], idBySku) as { SaleID: string; Status: string; AdditionalCharges: unknown[] };
     expect(body.SaleID).toBe("sale-1");
     expect(body.Status).toBe("DRAFT");
     expect(body.AdditionalCharges).toEqual([]);
   });
 
   it("maps each line with ProductID, TaxRule, net Total, and the COMPUTED tax (not 0)", () => {
-    const body = buildQuoteBody("sale-1", lines, idBySku) as {
+    const body = buildQuoteBody("sale-1", lines, [], idBySku) as {
       Lines: { ProductID?: string; SKU: string; Quantity: number; Price: number; Discount: number; TaxRule: string; Tax: number; Total: number }[];
     };
     // 200 net → 30 tax at 15%
@@ -69,12 +69,27 @@ describe("buildQuoteBody", () => {
     expect(body.Lines[1]).toMatchObject({ ProductID: "prod-2", SKU: "SKU-2", Total: 135, Tax: 20.25 });
   });
 
+  it("builds AdditionalCharges with computed tax and the revenue account", () => {
+    const charges = [{ description: "Delivery", quantity: 1, unitPrice: 50, discountPct: 0, taxRule: "Standard Rate Sales", taxRatePct: 15 }];
+    const body = buildQuoteBody("s", [], charges, new Map(), { revenueAccount: "191" }) as {
+      AdditionalCharges: { Description: string; Price: number; Tax: number; Total: number; TaxRule: string; Account?: string }[];
+    };
+    expect(body.AdditionalCharges[0]).toMatchObject({ Description: "Delivery", Price: 50, Discount: 0, Total: 50, Tax: 7.5, TaxRule: "Standard Rate Sales", Account: "191" });
+  });
+
+  it("omits the charge Account when no revenue account is known", () => {
+    const charges = [{ description: "Delivery", quantity: 1, unitPrice: 50, discountPct: 0, taxRule: "T", taxRatePct: 15 }];
+    const body = buildQuoteBody("s", [], charges, new Map()) as { AdditionalCharges: Record<string, unknown>[] };
+    expect("Account" in body.AdditionalCharges[0]).toBe(false);
+  });
+
   it("tax-inclusive: strips tax out of the price (150 incl @15% → net 130.43, tax 19.57)", () => {
     const body = buildQuoteBody(
       "s",
       [{ productSku: "X", productName: "X", quantity: 1, unitPrice: 150, discountPct: 0, taxRule: "T", taxRatePct: 15 }],
+      [],
       new Map([["X", "id"]]),
-      true,
+      { taxInclusive: true },
     ) as { Lines: { Total: number; Tax: number }[] };
     expect(body.Lines[0].Total).toBe(130.43);
     expect(body.Lines[0].Tax).toBe(19.57);
@@ -84,13 +99,14 @@ describe("buildQuoteBody", () => {
     const body = buildQuoteBody(
       "s",
       [{ productSku: "X", productName: "X", quantity: 1, unitPrice: 100, discountPct: 0, taxRule: "Zero", taxRatePct: 0 }],
+      [],
       new Map([["X", "id"]]),
     ) as { Lines: { Total: number; Tax: number }[] };
     expect(body.Lines[0]).toMatchObject({ Total: 100, Tax: 0 });
   });
 
   it("leaves ProductID undefined when the SKU isn't in the resolution map", () => {
-    const body = buildQuoteBody("sale-1", lines, new Map()) as { Lines: { ProductID?: string }[] };
+    const body = buildQuoteBody("sale-1", lines, [], new Map()) as { Lines: { ProductID?: string }[] };
     expect(body.Lines[0].ProductID).toBeUndefined();
   });
 
@@ -98,6 +114,7 @@ describe("buildQuoteBody", () => {
     const body = buildQuoteBody(
       "s",
       [{ productSku: "X", productName: "X", quantity: 1, unitPrice: 10, discountPct: 33.333, taxRule: "T", taxRatePct: 0 }],
+      [],
       new Map([["X", "id"]]),
     ) as { Lines: { Total: number }[] };
     // 10 × (1 - 0.33333) = 6.6667 → 6.67
