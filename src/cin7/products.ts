@@ -213,6 +213,26 @@ export async function findProductBySku(creds: Cin7Credentials, sku: string): Pro
 }
 
 /**
+ * Live fetch of one product's current price per tier, keyed "Tier1".."Tier10" (Cin7's PriceTier1-10),
+ * for the Quotation builder — always current, unlike the synced price_tiers table which only stores
+ * non-zero tiers from the last import. Includes genuine zeros so the builder can reprice accurately.
+ * Same SKU-exact-match safety as findProductBySku (an ignored filter mustn't return a wrong product).
+ */
+export async function fetchProductTierPrices(creds: Cin7Credentials, sku: string): Promise<Record<string, number>> {
+  const response = await cin7Request<{ Products?: Record<string, unknown>[] }>(creds, "/Product", {
+    query: { SKU: sku, page: 1, limit: 1 },
+  });
+  const p = response.Products?.[0];
+  if (!p || p.SKU !== sku) return {};
+  const out: Record<string, number> = {};
+  for (let i = 1; i <= 10; i++) {
+    const n = Number(p[`PriceTier${i}`]);
+    if (Number.isFinite(n)) out[`Tier${i}`] = n;
+  }
+  return out;
+}
+
+/**
  * P5.1 (LBL brief): which of these SKUs currently have Cin7's own
  * `BillOfMaterial` flag set (real GET /Product field, confirmed live
  * 2026-07-11 for Data Audit's own BOM roster — see

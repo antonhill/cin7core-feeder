@@ -15,6 +15,7 @@ import {
   submitQuoteAction,
   deleteQuoteAction,
   searchQuoteProductsAction,
+  getProductTierPricesAction,
   searchQuoteCustomersAction,
   resolveQuoteCustomerAction,
   loadQuoteReferenceDataAction,
@@ -226,15 +227,33 @@ export default function QuotesPage() {
       { uid: uid(), lineType: "charge", productSku: "", productName: "", cin7ProductId: null, averageCost: null, tierPrices: {}, marginIncluded: false, estimatedCost: "", quantity: "1", unitPrice: "0", discountPct: "0", taxRatePct: defaultTaxRatePct },
     ]);
   }
-  function addProductLine(hit: QuoteProductHit) {
-    // Auto-price from the currently-selected tier; falls back to 0 if no tier is chosen or the
-    // product has no price at that tier (the user can still type one).
+  function addProductLine(hit: QuoteProductHit): string {
+    // Auto-price from the currently-selected tier using the synced prices (instant); a live refresh
+    // (pickSearchHit) then replaces tierPrices with Cin7's current full set.
+    const lineUid = uid();
     const tierCode = selectedTierCode();
     const tierPrice = tierCode && hit.tierPrices[tierCode] != null ? hit.tierPrices[tierCode] : 0;
     setLines((prev) => [
       ...prev,
-      { uid: uid(), lineType: "product", productSku: hit.sku, productName: hit.name, cin7ProductId: null, averageCost: hit.averageCost, tierPrices: hit.tierPrices, marginIncluded: false, estimatedCost: "", quantity: "1", unitPrice: String(tierPrice), discountPct: "0", taxRatePct: defaultTaxRatePct },
+      { uid: lineUid, lineType: "product", productSku: hit.sku, productName: hit.name, cin7ProductId: null, averageCost: hit.averageCost, tierPrices: hit.tierPrices, marginIncluded: false, estimatedCost: "", quantity: "1", unitPrice: String(tierPrice), discountPct: "0", taxRatePct: defaultTaxRatePct },
     ]);
+    return lineUid;
+  }
+
+  // Replace a just-added product line's tier prices with Cin7's live, complete set (all 10 tiers incl
+  // genuine zeros), and reprice it to the selected tier — so tier toggling is always accurate.
+  const [isLoadingLiveTier, startLiveTierTransition] = useTransition();
+  function refreshLiveTierPrices(lineUid: string, sku: string) {
+    if (!instanceId) return;
+    startLiveTierTransition(async () => {
+      const res = await getProductTierPricesAction(instanceId, sku);
+      if (!res.ok || !res.data || Object.keys(res.data).length === 0) return;
+      const live = res.data;
+      const tierCode = selectedTierCode();
+      setLines((prev) =>
+        prev.map((l) => (l.uid === lineUid ? { ...l, tierPrices: live, unitPrice: String(tierCode && live[tierCode] != null ? live[tierCode] : num(l.unitPrice)) } : l)),
+      );
+    });
   }
 
   function addServiceCharge(hit: QuoteProductHit) {
@@ -251,7 +270,7 @@ export default function QuotesPage() {
 
   function pickSearchHit(hit: QuoteProductHit) {
     if (hit.isService) addServiceCharge(hit);
-    else addProductLine(hit);
+    else refreshLiveTierPrices(addProductLine(hit), hit.sku);
     setSearch("");
     setResults([]);
     setShowResults(false); // a late/stale search result can't reopen the closed dropdown
@@ -664,6 +683,7 @@ export default function QuotesPage() {
                 <button type="button" onClick={addChargeLine} className="rounded-full border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
                   + Add Line
                 </button>
+                {isLoadingLiveTier && <span className="flex items-center gap-1 text-xs text-slate-400"><Spinner /> live prices…</span>}
               </div>
             )}
 

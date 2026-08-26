@@ -6,6 +6,7 @@ import { QUOTES_MODULE } from "@/app/module-nav";
 import { resolveQuoteLines, productSkusFor, type QuoteLineDraft } from "@/lib/quote-build";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchCustomerDefaults, type Cin7CustomerDefaults } from "@/cin7/customers";
+import { fetchProductTierPrices } from "@/cin7/products";
 import {
   createSaleQuote,
   findSaleByExternalId,
@@ -170,6 +171,24 @@ export async function searchQuoteProductsAction(query: string): Promise<QuoteAct
       isService: p.cin7_type === "Service",
     }));
     return { ok: true, data: hits };
+  } catch (e) {
+    return { ok: false, error: errMsg(e) };
+  }
+}
+
+/**
+ * Live-fetch a product's current tier prices from Cin7 when it's added to a quote — always current,
+ * unlike the synced price_tiers (which only holds non-zero tiers from the last import). Keyed
+ * "Tier1".."Tier10". Read-only.
+ */
+export async function getProductTierPricesAction(instanceId: string, sku: string): Promise<QuoteActionResult<Record<string, number>>> {
+  if (!instanceId || !sku) return { ok: false, error: "Missing instance or SKU." };
+  try {
+    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href);
+    const db = createServiceRoleClient();
+    const creds = await loadCin7Credentials(db, orgId, instanceId);
+    const prices = await fetchProductTierPrices(creds, sku);
+    return { ok: true, data: prices };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
