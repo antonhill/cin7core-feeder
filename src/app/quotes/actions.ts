@@ -5,6 +5,7 @@ import { requireModuleAccess, requireModuleWrite } from "@/lib/authorization";
 import { QUOTES_MODULE } from "@/app/module-nav";
 import { resolveQuoteLines, productSkusFor, type QuoteLineDraft } from "@/lib/quote-build";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
+import { fetchCustomerDefaults, type Cin7CustomerDefaults } from "@/cin7/customers";
 import {
   fetchAllLocations,
   fetchAllPriceTiers,
@@ -190,6 +191,28 @@ export async function searchQuoteCustomersAction(query: string): Promise<QuoteAc
       taxRule: c.tax_rule ?? null,
     }));
     return { ok: true, data: hits };
+  } catch (e) {
+    return { ok: false, error: errMsg(e) };
+  }
+}
+
+export type QuoteCustomerResolved = Cin7CustomerDefaults;
+
+/**
+ * Live-fetch the picked customer's CURRENT Cin7 sale defaults (tax rule / price tier / sales rep /
+ * location) so the builder isn't bound to the last Migrate pull. One targeted Cin7 lookup by name.
+ */
+export async function resolveQuoteCustomerAction(
+  instanceId: string,
+  customerName: string,
+): Promise<QuoteActionResult<QuoteCustomerResolved | null>> {
+  if (!instanceId || !customerName) return { ok: false, error: "Choose an instance and a customer." };
+  try {
+    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href);
+    const db = createServiceRoleClient();
+    const creds = await loadCin7Credentials(db, orgId, instanceId);
+    const defaults = await fetchCustomerDefaults(creds, customerName);
+    return { ok: true, data: defaults };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }

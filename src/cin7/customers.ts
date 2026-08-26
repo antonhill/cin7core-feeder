@@ -165,6 +165,37 @@ export async function findCustomerByName(creds: Cin7Credentials, name: string): 
   return { id: first.ID };
 }
 
+export interface Cin7CustomerDefaults {
+  name: string;
+  taxRule: string | null;
+  priceTier: string | null;
+  salesRep: string | null;
+  location: string | null;
+}
+
+/**
+ * Live lookup of ONE customer's current sale defaults by exact Name (tax rule, price tier, sales
+ * rep, default location). Used by the Quotation builder so a picked customer's defaults reflect Cin7
+ * right now, not the last Migrate pull into the local `customers` table (the toolbox has no
+ * continuous customer sync). Returns null if no exact-name match is found.
+ */
+export async function fetchCustomerDefaults(creds: Cin7Credentials, name: string): Promise<Cin7CustomerDefaults | null> {
+  const response = await cin7Request<{ CustomerList?: Record<string, unknown>[] }>(creds, "/customer", {
+    query: { Name: name, page: 1, limit: 10 },
+  });
+  const target = name.toLowerCase();
+  const match = (response.CustomerList ?? []).find((c) => String(c.Name ?? "").toLowerCase() === target);
+  if (!match) return null;
+  const str = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
+  return {
+    name: String(match.Name ?? name),
+    taxRule: str(match.TaxRule),
+    priceTier: str(match.PriceTier),
+    salesRep: str(match.SalesRepresentative),
+    location: str(match.Location),
+  };
+}
+
 /**
  * Fetches every customer in this Cin7 instance (with nested Addresses[]/
  * Contacts[], per §10 in docs/cin7-api-findings.md) for a live full-fidelity

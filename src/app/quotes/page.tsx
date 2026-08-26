@@ -15,6 +15,7 @@ import {
   deleteQuoteAction,
   searchQuoteProductsAction,
   searchQuoteCustomersAction,
+  resolveQuoteCustomerAction,
   loadQuoteReferenceDataAction,
   type QuoteSummary,
   type QuoteLineDraftInput,
@@ -241,6 +242,7 @@ export default function QuotesPage() {
   const [custResults, setCustResults] = useState<QuoteCustomerHit[]>([]);
   const [showCustResults, setShowCustResults] = useState(false);
   const [isCustSearching, startCustTransition] = useTransition();
+  const [isResolvingCustomer, startResolveCustomer] = useTransition();
   useEffect(() => {
     const q = custSearch.trim();
     const t = setTimeout(() => {
@@ -256,17 +258,28 @@ export default function QuotesPage() {
     return () => clearTimeout(t);
   }, [custSearch]);
 
+  function applyCustomerDefaults(d: { priceTier: string | null; salesRep: string | null; location: string | null; taxRule: string | null }) {
+    // The customer drives these fields — apply unconditionally (tier via applyPriceTier so existing
+    // lines reprice; tax rule via applyCustomerTaxRule so the line VAT % follows).
+    if (d.priceTier) applyPriceTier(d.priceTier);
+    if (d.salesRep) setSalesRep(d.salesRep);
+    if (d.location) setLocation(d.location);
+    if (d.taxRule) applyCustomerTaxRule(d.taxRule);
+  }
+
   function pickCustomer(hit: QuoteCustomerHit) {
     setCustomerName(hit.name);
     setCustSearch("");
     setCustResults([]);
     setShowCustResults(false);
-    // Pre-fill the customer's Cin7 defaults, but never overwrite a choice already made.
-    // The tier is applied through applyPriceTier so any lines already added get repriced too.
-    if (hit.priceTier && !priceTier) applyPriceTier(hit.priceTier);
-    if (hit.salesRep) setSalesRep((p) => p || hit.salesRep || "");
-    if (hit.location) setLocation((p) => p || hit.location || "");
-    if (hit.taxRule) applyCustomerTaxRule(hit.taxRule);
+    // Apply the synced defaults immediately (optimistic), then refresh from LIVE Cin7 — the local
+    // customers table has no continuous sync, so a change made in Cin7 only shows via this lookup.
+    applyCustomerDefaults(hit);
+    if (!instanceId) return;
+    startResolveCustomer(async () => {
+      const res = await resolveQuoteCustomerAction(instanceId, hit.name);
+      if (res.ok && res.data) applyCustomerDefaults(res.data);
+    });
   }
 
   // --- reference data (Location / Price tier / Sales rep pick-lists) for the chosen instance ---
@@ -465,7 +478,7 @@ export default function QuotesPage() {
                   placeholder="Search customers…"
                   className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50"
                 />
-                {isCustSearching && <div className="absolute right-3 top-9"><Spinner /></div>}
+                {(isCustSearching || isResolvingCustomer) && <div className="absolute right-3 top-9"><Spinner /></div>}
                 {showCustResults && custResults.length > 0 && (
                   <ul className="absolute top-full z-10 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
                     {custResults.map((c) => (
