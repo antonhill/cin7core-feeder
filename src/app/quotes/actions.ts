@@ -511,6 +511,10 @@ export async function submitQuoteAction(quoteId: string): Promise<QuoteActionRes
     const custDefaults = await fetchCustomerDefaults(creds, q.customer_name);
     const taxRule = custDefaults?.taxRule ?? null;
     if (!taxRule) return { ok: false, error: `Customer "${q.customer_name}" has no tax rule in Cin7 — set one there, then submit.` };
+    // Cin7 uses the Tax amount we send on each line (it doesn't derive it from TaxRule), so resolve
+    // the rule's rate and compute per-line tax below.
+    const taxRules = await fetchAllTaxRules(creds);
+    const taxRatePct = taxRules.find((t) => t.name === taxRule)?.rate ?? 0;
 
     const externalId = `QUOTE-${quoteId}`;
     const header = {
@@ -530,6 +534,7 @@ export async function submitQuoteAction(quoteId: string): Promise<QuoteActionRes
       unitPrice: Number(l.unit_price),
       discountPct: Number(l.discount_pct),
       taxRule,
+      taxRatePct,
     }));
 
     const setStatus = (status: string, extra: Record<string, unknown> = {}) =>

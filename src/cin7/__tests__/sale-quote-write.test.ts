@@ -44,8 +44,8 @@ describe("buildSaleHeaderBody", () => {
 
 describe("buildQuoteBody", () => {
   const lines: SaleQuoteLineInput[] = [
-    { productSku: "SKU-1", productName: "Widget", quantity: 2, unitPrice: 100, discountPct: 0, taxRule: "Standard Rate Sales" },
-    { productSku: "SKU-2", productName: "Gadget", quantity: 3, unitPrice: 50, discountPct: 10, taxRule: "Standard Rate Sales" },
+    { productSku: "SKU-1", productName: "Widget", quantity: 2, unitPrice: 100, discountPct: 0, taxRule: "Standard Rate Sales", taxRatePct: 15 },
+    { productSku: "SKU-2", productName: "Gadget", quantity: 3, unitPrice: 50, discountPct: 10, taxRule: "Standard Rate Sales", taxRatePct: 15 },
   ];
   const idBySku = new Map([
     ["SKU-1", "prod-1"],
@@ -59,13 +59,34 @@ describe("buildQuoteBody", () => {
     expect(body.AdditionalCharges).toEqual([]);
   });
 
-  it("maps each line with its resolved ProductID, TaxRule, and a net ex-discount Total", () => {
+  it("maps each line with ProductID, TaxRule, net Total, and the COMPUTED tax (not 0)", () => {
     const body = buildQuoteBody("sale-1", lines, idBySku) as {
-      Lines: { ProductID?: string; SKU: string; Quantity: number; Price: number; Discount: number; TaxRule: string; Total: number }[];
+      Lines: { ProductID?: string; SKU: string; Quantity: number; Price: number; Discount: number; TaxRule: string; Tax: number; Total: number }[];
     };
-    expect(body.Lines[0]).toMatchObject({ ProductID: "prod-1", SKU: "SKU-1", Quantity: 2, Price: 100, Discount: 0, TaxRule: "Standard Rate Sales", Total: 200 });
-    // 50 × 3 × (1 - 10%) = 135
-    expect(body.Lines[1]).toMatchObject({ ProductID: "prod-2", SKU: "SKU-2", Quantity: 3, Price: 50, Discount: 10, Total: 135 });
+    // 200 net → 30 tax at 15%
+    expect(body.Lines[0]).toMatchObject({ ProductID: "prod-1", SKU: "SKU-1", Price: 100, Discount: 0, TaxRule: "Standard Rate Sales", Total: 200, Tax: 30 });
+    // 50 × 3 × 0.9 = 135 net → 20.25 tax
+    expect(body.Lines[1]).toMatchObject({ ProductID: "prod-2", SKU: "SKU-2", Total: 135, Tax: 20.25 });
+  });
+
+  it("tax-inclusive: strips tax out of the price (150 incl @15% → net 130.43, tax 19.57)", () => {
+    const body = buildQuoteBody(
+      "s",
+      [{ productSku: "X", productName: "X", quantity: 1, unitPrice: 150, discountPct: 0, taxRule: "T", taxRatePct: 15 }],
+      new Map([["X", "id"]]),
+      true,
+    ) as { Lines: { Total: number; Tax: number }[] };
+    expect(body.Lines[0].Total).toBe(130.43);
+    expect(body.Lines[0].Tax).toBe(19.57);
+  });
+
+  it("a 0% tax rule produces 0 tax", () => {
+    const body = buildQuoteBody(
+      "s",
+      [{ productSku: "X", productName: "X", quantity: 1, unitPrice: 100, discountPct: 0, taxRule: "Zero", taxRatePct: 0 }],
+      new Map([["X", "id"]]),
+    ) as { Lines: { Total: number; Tax: number }[] };
+    expect(body.Lines[0]).toMatchObject({ Total: 100, Tax: 0 });
   });
 
   it("leaves ProductID undefined when the SKU isn't in the resolution map", () => {
@@ -76,7 +97,7 @@ describe("buildQuoteBody", () => {
   it("rounds the Total to 2 decimals", () => {
     const body = buildQuoteBody(
       "s",
-      [{ productSku: "X", productName: "X", quantity: 1, unitPrice: 10, discountPct: 33.333, taxRule: "T" }],
+      [{ productSku: "X", productName: "X", quantity: 1, unitPrice: 10, discountPct: 33.333, taxRule: "T", taxRatePct: 0 }],
       new Map([["X", "id"]]),
     ) as { Lines: { Total: number }[] };
     // 10 × (1 - 0.33333) = 6.6667 → 6.67

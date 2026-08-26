@@ -29,6 +29,9 @@ export interface SaleQuoteLineInput {
   unitPrice: number;
   discountPct: number;
   taxRule: string;
+  /** The TaxRule's rate as a percent (e.g. 15). Cin7 USES the Tax amount we send on the line rather
+   * than recomputing from TaxRule, so we compute it — a 0 here is why VAT came through as 0 before. */
+  taxRatePct: number;
 }
 
 /** A create failure tagged with which step failed, whether the outcome is ambiguous, and (for a
@@ -62,27 +65,39 @@ export function buildSaleHeaderBody(h: SaleQuoteHeaderInput): Record<string, unk
   return body;
 }
 
-/** The POST /sale/quote body (pure). Total is the net ex-discount line total; Cin7 recomputes tax. */
+/**
+ * The POST /sale/quote body (pure). `Total` is the net (ex-tax, ex-discount) line total and `Tax`
+ * is the computed tax amount — Cin7 uses the Tax we send rather than deriving it from TaxRule, so we
+ * must compute it. In tax-inclusive mode the line's Price already includes tax, so net is the
+ * tax-stripped amount; otherwise net is the discounted price and tax is added on top.
+ */
 export function buildQuoteBody(
   saleId: string,
   lines: SaleQuoteLineInput[],
   productIdBySku: Map<string, string>,
+  taxInclusive = false,
 ): Record<string, unknown> {
   return {
     SaleID: saleId,
     Memo: null,
     Status: "DRAFT",
-    Lines: lines.map((l) => ({
-      ProductID: productIdBySku.get(l.productSku) ?? undefined,
-      SKU: l.productSku,
-      Name: l.productName,
-      Quantity: l.quantity,
-      Price: l.unitPrice,
-      Discount: l.discountPct,
-      Tax: 0,
-      TaxRule: l.taxRule,
-      Total: round2(l.unitPrice * l.quantity * (1 - l.discountPct / 100)),
-    })),
+    Lines: lines.map((l) => {
+      const discounted = l.unitPrice * l.quantity * (1 - l.discountPct / 100);
+      const rate = l.taxRatePct / 100;
+      const net = taxInclusive && rate > -1 ? discounted / (1 + rate) : discounted;
+      const tax = taxInclusive ? discounted - net : net * rate;
+      return {
+        ProductID: productIdBySku.get(l.productSku) ?? undefined,
+        SKU: l.productSku,
+        Name: l.productName,
+        Quantity: l.quantity,
+        Price: l.unitPrice,
+        Discount: l.discountPct,
+        Tax: round2(tax),
+        TaxRule: l.taxRule,
+        Total: round2(net),
+      };
+    }),
     AdditionalCharges: [],
   };
 }
@@ -144,7 +159,7 @@ export async function createSaleQuote(
     const quote = await cin7Request<QuoteCreateResponse>(creds, "/sale/quote", {
       method: "POST",
       nonIdempotentCreate: true,
-      body: buildQuoteBody(saleId, lines, productIdBySku),
+      body: buildQuoteBody(saleId, lines, productIdBySku, header.taxInclusive),
     });
     return {
       saleId,
