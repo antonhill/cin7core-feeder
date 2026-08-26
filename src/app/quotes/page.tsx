@@ -14,8 +14,12 @@ import {
   saveQuoteAction,
   deleteQuoteAction,
   searchQuoteProductsAction,
+  searchQuoteCustomersAction,
+  loadQuoteReferenceDataAction,
   type QuoteSummary,
   type QuoteLineDraftInput,
+  type QuoteCustomerHit,
+  type QuoteReferenceData,
 } from "./actions";
 
 // The interactive quote builder. Every margin figure shown here is computed CLIENT-SIDE by the
@@ -223,6 +227,54 @@ export default function QuotesPage() {
     return () => clearTimeout(t);
   }, [search]);
 
+  // --- customer search (typeahead over synced customers) ---
+  const [custSearch, setCustSearch] = useState("");
+  const [custResults, setCustResults] = useState<QuoteCustomerHit[]>([]);
+  const [showCustResults, setShowCustResults] = useState(false);
+  const [isCustSearching, startCustTransition] = useTransition();
+  useEffect(() => {
+    const q = custSearch.trim();
+    const t = setTimeout(() => {
+      if (q.length < 2) {
+        setCustResults([]);
+        return;
+      }
+      startCustTransition(async () => {
+        const res = await searchQuoteCustomersAction(q);
+        setCustResults(res.ok ? res.data ?? [] : []);
+      });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [custSearch]);
+
+  function pickCustomer(hit: QuoteCustomerHit) {
+    setCustomerName(hit.name);
+    setCustSearch("");
+    setCustResults([]);
+    setShowCustResults(false);
+    // Pre-fill the customer's Cin7 defaults, but never overwrite a choice already made.
+    if (hit.priceTier) setPriceTier((p) => p || hit.priceTier || "");
+    if (hit.salesRep) setSalesRep((p) => p || hit.salesRep || "");
+    if (hit.location) setLocation((p) => p || hit.location || "");
+  }
+
+  // --- reference data (Location / Price tier / Sales rep pick-lists) for the chosen instance ---
+  const [refData, setRefData] = useState<QuoteReferenceData>({ locations: [], priceTiers: [], salesReps: [] });
+  const [isLoadingRef, startRefTransition] = useTransition();
+  useEffect(() => {
+    if (!instanceId) return;
+    startRefTransition(async () => {
+      const res = await loadQuoteReferenceDataAction(instanceId);
+      if (res.ok && res.data) setRefData(res.data);
+    });
+  }, [instanceId]);
+
+  // A select's options always include its current value, so an auto-filled or stored value that
+  // isn't in the fetched list (e.g. a rep no longer active) still shows selected rather than blank.
+  function withCurrent(list: string[], current: string): string[] {
+    return current && !list.includes(current) ? [current, ...list] : list;
+  }
+
   // --- live totals (client-side, same engine as the server) ---
   const perLine = useMemo(() => lines.map((l) => computeLine(toEngineInput(l), { taxInclusive })), [lines, taxInclusive]);
   const totals = useMemo(() => computeQuote(lines.map(toEngineInput), { taxInclusive }), [lines, taxInclusive]);
@@ -358,21 +410,51 @@ export default function QuotesPage() {
                 <span className="font-medium text-slate-700">Instance</span>
                 <InstancePicker {...picker} onChange={picker.setInstanceId} />
               </label>
-              <label className="flex flex-col gap-1.5 text-sm">
+              <label className="relative flex flex-col gap-1.5 text-sm">
                 <span className="font-medium text-slate-700">Customer</span>
-                <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} disabled={readOnly} placeholder="Customer name" className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50" />
+                <input
+                  value={customerName}
+                  onChange={(e) => { setCustomerName(e.target.value); setCustSearch(e.target.value); setShowCustResults(true); }}
+                  onFocus={() => { if (custResults.length > 0) setShowCustResults(true); }}
+                  onBlur={() => setTimeout(() => setShowCustResults(false), 150)}
+                  disabled={readOnly}
+                  placeholder="Search customers…"
+                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50"
+                />
+                {isCustSearching && <div className="absolute right-3 top-9"><Spinner /></div>}
+                {showCustResults && custResults.length > 0 && (
+                  <ul className="absolute top-full z-10 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                    {custResults.map((c) => (
+                      <li key={c.name}>
+                        <button type="button" onMouseDown={(e) => { e.preventDefault(); pickCustomer(c); }} className="block w-full px-3 py-2 text-left text-sm hover:bg-indigo-50">
+                          <span className="font-medium text-slate-900">{c.name}</span>
+                          {(c.priceTier || c.salesRep) && <span className="ml-2 text-xs text-slate-400">{[c.priceTier, c.salesRep].filter(Boolean).join(" · ")}</span>}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </label>
               <label className="flex flex-col gap-1.5 text-sm">
                 <span className="font-medium text-slate-700">Location</span>
-                <input value={location} onChange={(e) => setLocation(e.target.value)} disabled={readOnly} placeholder="e.g. Main Warehouse" className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50" />
+                <select value={location} onChange={(e) => setLocation(e.target.value)} disabled={readOnly || !instanceId} className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50">
+                  <option value="">{isLoadingRef && refData.locations.length === 0 ? "Loading…" : "Choose a location"}</option>
+                  {withCurrent(refData.locations, location).map((l) => <option key={l} value={l}>{l}</option>)}
+                </select>
               </label>
               <label className="flex flex-col gap-1.5 text-sm">
                 <span className="font-medium text-slate-700">Price tier</span>
-                <input value={priceTier} onChange={(e) => setPriceTier(e.target.value)} disabled={readOnly} placeholder="Optional" className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50" />
+                <select value={priceTier} onChange={(e) => setPriceTier(e.target.value)} disabled={readOnly || !instanceId} className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50">
+                  <option value="">{isLoadingRef && refData.priceTiers.length === 0 ? "Loading…" : "None"}</option>
+                  {withCurrent(refData.priceTiers, priceTier).map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
               </label>
               <label className="flex flex-col gap-1.5 text-sm">
                 <span className="font-medium text-slate-700">Sales rep</span>
-                <input value={salesRep} onChange={(e) => setSalesRep(e.target.value)} disabled={readOnly} placeholder="Optional" className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50" />
+                <select value={salesRep} onChange={(e) => setSalesRep(e.target.value)} disabled={readOnly || !instanceId} className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50">
+                  <option value="">{isLoadingRef && refData.salesReps.length === 0 ? "Loading…" : "None"}</option>
+                  {withCurrent(refData.salesReps, salesRep).map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
               </label>
               <label className="flex items-center gap-2 text-sm sm:mt-6">
                 <input type="checkbox" checked={taxInclusive} onChange={(e) => setTaxInclusive(e.target.checked)} disabled={readOnly} className="h-4 w-4" />
@@ -414,7 +496,7 @@ export default function QuotesPage() {
                   )}
                 </div>
                 <button type="button" onClick={addChargeLine} className="rounded-full border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                  + Add charge
+                  + Add Line
                 </button>
               </div>
             )}

@@ -4,6 +4,8 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess, requireModuleWrite } from "@/lib/authorization";
 import { QUOTES_MODULE } from "@/app/module-nav";
 import { resolveQuoteLines, productSkusFor, type QuoteLineDraft } from "@/lib/quote-build";
+import { loadCin7Credentials } from "@/cin7/load-credentials";
+import { fetchAllLocations, fetchAllPriceTiers, fetchAllCompanyContacts } from "@/cin7/reference-lookups";
 
 // Draft CRUD for the Quotation + Margin module.
 //
@@ -118,6 +120,75 @@ export async function searchQuoteProductsAction(query: string): Promise<QuoteAct
       averageCost: p.average_cost == null ? null : Number(p.average_cost),
     }));
     return { ok: true, data: hits };
+  } catch (e) {
+    return { ok: false, error: errMsg(e) };
+  }
+}
+
+export interface QuoteCustomerHit {
+  name: string;
+  /** The customer's Cin7 defaults — used to pre-fill the quote when the customer is chosen. */
+  priceTier: string | null;
+  salesRep: string | null;
+  location: string | null;
+}
+
+/**
+ * Search the org's synced customers for the quote's customer picker (no free-typing — a customer
+ * that doesn't match Cin7 fails on submit). Returns the customer's own default price tier / sales
+ * rep / location so the builder can pre-fill them. Fast local read of the synced `customers` table.
+ */
+export async function searchQuoteCustomersAction(query: string): Promise<QuoteActionResult<QuoteCustomerHit[]>> {
+  try {
+    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href);
+    const safe = (query ?? "").replace(/[^\w\s.&'-]/g, "").trim();
+    if (safe.length < 2) return { ok: true, data: [] };
+    const db = createServiceRoleClient();
+    const { data, error } = await db
+      .from("customers")
+      .select("name, price_tier, sales_representative, location")
+      .eq("org_id", orgId)
+      .ilike("name", `%${safe}%`)
+      .order("name", { ascending: true })
+      .limit(20);
+    if (error) throw new Error(error.message);
+    const hits: QuoteCustomerHit[] = (data ?? []).map((c) => ({
+      name: c.name,
+      priceTier: c.price_tier ?? null,
+      salesRep: c.sales_representative ?? null,
+      location: c.location ?? null,
+    }));
+    return { ok: true, data: hits };
+  } catch (e) {
+    return { ok: false, error: errMsg(e) };
+  }
+}
+
+export interface QuoteReferenceData {
+  locations: string[];
+  priceTiers: string[];
+  salesReps: string[];
+}
+
+/**
+ * Load the pick-lists the builder's Location / Price tier / Sales rep selectors need, LIVE from the
+ * chosen instance's Cin7 reference books (locations `/ref/location`, tiers `/ref/priceTier`, reps
+ * `/me/contacts`). Fetched once when an instance is selected; the lists are small. loadCin7Credentials
+ * scopes by (instance, org) and throws otherwise, so it doubles as the instance-belongs-to-org check.
+ */
+export async function loadQuoteReferenceDataAction(instanceId: string): Promise<QuoteActionResult<QuoteReferenceData>> {
+  if (!instanceId) return { ok: false, error: "Choose a Cin7 instance." };
+  try {
+    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href);
+    const db = createServiceRoleClient();
+    const creds = await loadCin7Credentials(db, orgId, instanceId);
+    const [locations, priceTiers, salesReps] = await Promise.all([
+      fetchAllLocations(creds).then((ls) => ls.map((l) => l.name)),
+      fetchAllPriceTiers(creds),
+      fetchAllCompanyContacts(creds),
+    ]);
+    const uniqueSorted = (xs: string[]) => [...new Set(xs.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    return { ok: true, data: { locations: uniqueSorted(locations), priceTiers, salesReps } };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
