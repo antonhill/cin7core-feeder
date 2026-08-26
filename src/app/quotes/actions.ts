@@ -5,7 +5,14 @@ import { requireModuleAccess, requireModuleWrite } from "@/lib/authorization";
 import { QUOTES_MODULE } from "@/app/module-nav";
 import { resolveQuoteLines, productSkusFor, type QuoteLineDraft } from "@/lib/quote-build";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
-import { fetchAllLocations, fetchAllPriceTiers, fetchAllCompanyContacts, type Cin7PriceTier } from "@/cin7/reference-lookups";
+import {
+  fetchAllLocations,
+  fetchAllPriceTiers,
+  fetchAllCompanyContacts,
+  fetchAllTaxRules,
+  type Cin7PriceTier,
+  type Cin7TaxRule,
+} from "@/cin7/reference-lookups";
 
 // Draft CRUD for the Quotation + Margin module.
 //
@@ -153,6 +160,7 @@ export interface QuoteCustomerHit {
   priceTier: string | null;
   salesRep: string | null;
   location: string | null;
+  taxRule: string | null;
 }
 
 /**
@@ -168,7 +176,7 @@ export async function searchQuoteCustomersAction(query: string): Promise<QuoteAc
     const db = createServiceRoleClient();
     const { data, error } = await db
       .from("customers")
-      .select("name, price_tier, sales_representative, location")
+      .select("name, price_tier, sales_representative, location, tax_rule")
       .eq("org_id", orgId)
       .ilike("name", `%${safe}%`)
       .order("name", { ascending: true })
@@ -179,6 +187,7 @@ export async function searchQuoteCustomersAction(query: string): Promise<QuoteAc
       priceTier: c.price_tier ?? null,
       salesRep: c.sales_representative ?? null,
       location: c.location ?? null,
+      taxRule: c.tax_rule ?? null,
     }));
     return { ok: true, data: hits };
   } catch (e) {
@@ -190,6 +199,7 @@ export interface QuoteReferenceData {
   locations: string[];
   priceTiers: Cin7PriceTier[];
   salesReps: string[];
+  taxRules: Cin7TaxRule[];
 }
 
 /**
@@ -204,13 +214,14 @@ export async function loadQuoteReferenceDataAction(instanceId: string): Promise<
     const { orgId } = await requireModuleAccess(QUOTES_MODULE.href);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
-    const [locations, priceTiers, salesReps] = await Promise.all([
+    const [locations, priceTiers, salesReps, taxRules] = await Promise.all([
       fetchAllLocations(creds).then((ls) => ls.map((l) => l.name)),
       fetchAllPriceTiers(creds),
       fetchAllCompanyContacts(creds),
+      fetchAllTaxRules(creds),
     ]);
     const uniqueSorted = (xs: string[]) => [...new Set(xs.filter(Boolean))].sort((a, b) => a.localeCompare(b));
-    return { ok: true, data: { locations: uniqueSorted(locations), priceTiers, salesReps } };
+    return { ok: true, data: { locations: uniqueSorted(locations), priceTiers, salesReps, taxRules } };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
