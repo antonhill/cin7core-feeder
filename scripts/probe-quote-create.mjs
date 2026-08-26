@@ -193,7 +193,22 @@ async function main() {
           Total: 100,
         },
       ],
-      AdditionalCharges: [],
+      // Probe the additional-charge shape. UI columns: Description, Comment, Quantity, Price,
+      // Discount, Tax Rule, Total. Account = the customer's revenue GL (charges post to revenue).
+      // Cin7's validation error will name whatever's wrong/missing here.
+      AdditionalCharges: [
+        {
+          Description: "Delivery (probe charge)",
+          Comment: "",
+          Quantity: 1,
+          Price: 50,
+          Discount: 0,
+          Tax: 7.5,
+          TaxRule: customer.TaxRule,
+          Total: 50,
+          Account: customer.RevenueAccount,
+        },
+      ],
     },
   });
 
