@@ -357,9 +357,13 @@ export default function QuotesPage() {
     const tierCode = code != null ? `Tier${code}` : null;
     if (!tierCode) return;
     setLines((prev) =>
-      prev.map((l) =>
-        l.lineType === "product" && l.tierPrices[tierCode] != null ? { ...l, unitPrice: String(l.tierPrices[tierCode]) } : l,
-      ),
+      prev.map((l) => {
+        // Only reprice product lines we hold tier prices for (a freshly-searched product). A line
+        // with no tier data (e.g. loaded from a saved draft) is left alone — never zeroed. Where the
+        // product has no price at the chosen tier, use 0, matching how Cin7 itself reprices.
+        if (l.lineType !== "product" || Object.keys(l.tierPrices).length === 0) return l;
+        return { ...l, unitPrice: String(l.tierPrices[tierCode] ?? 0) };
+      }),
     );
   }
 
