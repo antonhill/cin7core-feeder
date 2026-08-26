@@ -65,27 +65,49 @@ export function buildSaleHeaderBody(h: SaleQuoteHeaderInput): Record<string, unk
   return body;
 }
 
-/**
- * The POST /sale/quote body (pure). `Total` is the net (ex-tax, ex-discount) line total and `Tax`
- * is the computed tax amount — Cin7 uses the Tax we send rather than deriving it from TaxRule, so we
- * must compute it. In tax-inclusive mode the line's Price already includes tax, so net is the
- * tax-stripped amount; otherwise net is the discounted price and tax is added on top.
- */
+/** An additional charge/service line (no product) — Description instead of a SKU. */
+export interface SaleQuoteChargeInput {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  discountPct: number;
+  taxRule: string;
+  taxRatePct: number;
+}
+
+export interface BuildQuoteOptions {
+  taxInclusive?: boolean;
+  /** Revenue GL account additional charges post to (the customer's). Omitted if unknown. */
+  revenueAccount?: string | null;
+}
+
+/** Net (ex-tax, ex-discount) total and the computed tax amount for one line/charge. Cin7 uses the
+ * Tax we send rather than deriving it from TaxRule, so we compute it. In tax-inclusive mode the
+ * price already includes tax (strip it out); otherwise tax is added on top of the discounted price. */
+function netAndTax(unitPrice: number, quantity: number, discountPct: number, taxRatePct: number, taxInclusive: boolean) {
+  const discounted = unitPrice * quantity * (1 - discountPct / 100);
+  const rate = taxRatePct / 100;
+  const net = taxInclusive && rate > -1 ? discounted / (1 + rate) : discounted;
+  const tax = taxInclusive ? discounted - net : net * rate;
+  return { net: round2(net), tax: round2(tax) };
+}
+
+/** The POST /sale/quote body (pure). Product lines → Lines[]; charge lines → AdditionalCharges[]
+ * (shape confirmed live 2026-08-26). */
 export function buildQuoteBody(
   saleId: string,
   lines: SaleQuoteLineInput[],
+  charges: SaleQuoteChargeInput[],
   productIdBySku: Map<string, string>,
-  taxInclusive = false,
+  opts: BuildQuoteOptions = {},
 ): Record<string, unknown> {
+  const taxInclusive = opts.taxInclusive === true;
   return {
     SaleID: saleId,
     Memo: null,
     Status: "DRAFT",
     Lines: lines.map((l) => {
-      const discounted = l.unitPrice * l.quantity * (1 - l.discountPct / 100);
-      const rate = l.taxRatePct / 100;
-      const net = taxInclusive && rate > -1 ? discounted / (1 + rate) : discounted;
-      const tax = taxInclusive ? discounted - net : net * rate;
+      const { net, tax } = netAndTax(l.unitPrice, l.quantity, l.discountPct, l.taxRatePct, taxInclusive);
       return {
         ProductID: productIdBySku.get(l.productSku) ?? undefined,
         SKU: l.productSku,
@@ -93,12 +115,25 @@ export function buildQuoteBody(
         Quantity: l.quantity,
         Price: l.unitPrice,
         Discount: l.discountPct,
-        Tax: round2(tax),
+        Tax: tax,
         TaxRule: l.taxRule,
-        Total: round2(net),
+        Total: net,
       };
     }),
-    AdditionalCharges: [],
+    AdditionalCharges: charges.map((c) => {
+      const { net, tax } = netAndTax(c.unitPrice, c.quantity, c.discountPct, c.taxRatePct, taxInclusive);
+      return {
+        Description: c.description,
+        Comment: "",
+        Quantity: c.quantity,
+        Price: c.unitPrice,
+        Discount: c.discountPct,
+        Tax: tax,
+        TaxRule: c.taxRule,
+        Total: net,
+        ...(opts.revenueAccount ? { Account: opts.revenueAccount } : {}),
+      };
+    }),
   };
 }
 
@@ -127,6 +162,8 @@ export async function createSaleQuote(
   creds: Cin7Credentials,
   header: SaleQuoteHeaderInput,
   lines: SaleQuoteLineInput[],
+  charges: SaleQuoteChargeInput[] = [],
+  revenueAccount: string | null = null,
 ): Promise<CreateSaleQuoteResult> {
   // Resolve ProductIDs by SKU (one live lookup per distinct SKU). A missing product is a definite,
   // pre-create failure — nothing has been created yet, so it's safe to surface and retry.
@@ -159,7 +196,7 @@ export async function createSaleQuote(
     const quote = await cin7Request<QuoteCreateResponse>(creds, "/sale/quote", {
       method: "POST",
       nonIdempotentCreate: true,
-      body: buildQuoteBody(saleId, lines, productIdBySku, header.taxInclusive),
+      body: buildQuoteBody(saleId, lines, charges, productIdBySku, { taxInclusive: header.taxInclusive, revenueAccount }),
     });
     return {
       saleId,
