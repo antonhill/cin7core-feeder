@@ -84,6 +84,45 @@ function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : "Unknown error";
 }
 
+export interface QuoteProductHit {
+  sku: string;
+  name: string;
+  averageCost: number | null;
+}
+
+/**
+ * Search the org's synced product catalogue for the builder's line picker. Returns SKU, name and
+ * the Cin7 Average Cost (the quote's cost basis) so the builder can show a live margin the moment a
+ * product is chosen — a fast local read, no live Cin7 call during interactive building. The query is
+ * sanitised to a safe charset before going into the PostgREST or() filter (no filter injection).
+ */
+export async function searchQuoteProductsAction(query: string): Promise<QuoteActionResult<QuoteProductHit[]>> {
+  try {
+    const { orgId } = await requireModuleAccess(QUOTES_MODULE.href);
+    const safe = (query ?? "").replace(/[^\w\s-]/g, "").trim();
+    if (safe.length < 2) return { ok: true, data: [] };
+    const db = createServiceRoleClient();
+    const like = `%${safe}%`;
+    const { data, error } = await db
+      .from("products")
+      .select("sku, name, average_cost")
+      .eq("org_id", orgId)
+      .eq("active", true)
+      .or(`sku.ilike.${like},name.ilike.${like}`)
+      .order("sku", { ascending: true })
+      .limit(20);
+    if (error) throw new Error(error.message);
+    const hits: QuoteProductHit[] = (data ?? []).map((p) => ({
+      sku: p.sku,
+      name: p.name,
+      averageCost: p.average_cost == null ? null : Number(p.average_cost),
+    }));
+    return { ok: true, data: hits };
+  } catch (e) {
+    return { ok: false, error: errMsg(e) };
+  }
+}
+
 /** List this org's quotes, newest first; optionally scoped to one instance. Read-only. */
 export async function listQuotesAction(instanceId?: string): Promise<QuoteActionResult<QuoteSummary[]>> {
   try {
