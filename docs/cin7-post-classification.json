@@ -8,6 +8,7 @@
     { "file": "src/cin7/reference-lookups.ts", "function": "ensureReferenceExists", "classification": "NON_IDEMPOTENT_CREATE" },
     { "file": "src/cin7/sales.ts", "function": "updateSaleShipBy", "classification": "VERIFIED_SAFE_POST_UPDATE" },
     { "file": "src/cin7/sales.ts", "function": "markSaleShipped", "classification": "IDEMPOTENT_POST" },
+    { "file": "src/cin7/sale-quote-write.ts", "function": "createSaleQuote", "classification": "RECONCILE_BEFORE_RETRY" },
     { "file": "src/cin7/products.ts", "function": "pushProduct", "classification": "NON_IDEMPOTENT_CREATE" },
     { "file": "src/cin7/work-centres.ts", "function": "createWorkCentre", "classification": "NON_IDEMPOTENT_CREATE" },
     { "file": "src/audit/apply-party-fixes.ts", "function": "applyPartyFixes", "classification": "VERIFIED_SAFE_POST_UPDATE" },
