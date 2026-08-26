@@ -81,15 +81,15 @@ export interface BuildQuoteOptions {
   revenueAccount?: string | null;
 }
 
-/** Net (ex-tax, ex-discount) total and the computed tax amount for one line/charge. Cin7 uses the
- * Tax we send rather than deriving it from TaxRule, so we compute it. In tax-inclusive mode the
- * price already includes tax (strip it out); otherwise tax is added on top of the discounted price. */
-function netAndTax(unitPrice: number, quantity: number, discountPct: number, taxRatePct: number, taxInclusive: boolean) {
-  const discounted = unitPrice * quantity * (1 - discountPct / 100);
+/** The line/charge `Total` and `Tax` Cin7 expects. `Total` is the discounted line amount IN THE
+ * QUOTE'S TAX MODE — net when tax-exclusive, GROSS (tax-inclusive) when tax-inclusive (confirmed
+ * live 2026-08-26: Cin7 rejects a net Total in inclusive mode, "Expected value is: <gross>"). `Tax`
+ * is the tax portion — Cin7 uses the value we send rather than deriving it from TaxRule. */
+function lineTotals(unitPrice: number, quantity: number, discountPct: number, taxRatePct: number, taxInclusive: boolean) {
+  const total = unitPrice * quantity * (1 - discountPct / 100);
   const rate = taxRatePct / 100;
-  const net = taxInclusive && rate > -1 ? discounted / (1 + rate) : discounted;
-  const tax = taxInclusive ? discounted - net : net * rate;
-  return { net: round2(net), tax: round2(tax) };
+  const tax = taxInclusive && rate > -1 ? total - total / (1 + rate) : total * rate;
+  return { total: round2(total), tax: round2(tax) };
 }
 
 /** The POST /sale/quote body (pure). Product lines → Lines[]; charge lines → AdditionalCharges[]
@@ -107,7 +107,7 @@ export function buildQuoteBody(
     Memo: null,
     Status: "DRAFT",
     Lines: lines.map((l) => {
-      const { net, tax } = netAndTax(l.unitPrice, l.quantity, l.discountPct, l.taxRatePct, taxInclusive);
+      const { total, tax } = lineTotals(l.unitPrice, l.quantity, l.discountPct, l.taxRatePct, taxInclusive);
       return {
         ProductID: productIdBySku.get(l.productSku) ?? undefined,
         SKU: l.productSku,
@@ -117,11 +117,11 @@ export function buildQuoteBody(
         Discount: l.discountPct,
         Tax: tax,
         TaxRule: l.taxRule,
-        Total: net,
+        Total: total,
       };
     }),
     AdditionalCharges: charges.map((c) => {
-      const { net, tax } = netAndTax(c.unitPrice, c.quantity, c.discountPct, c.taxRatePct, taxInclusive);
+      const { total, tax } = lineTotals(c.unitPrice, c.quantity, c.discountPct, c.taxRatePct, taxInclusive);
       return {
         Description: c.description,
         Comment: "",
@@ -130,7 +130,7 @@ export function buildQuoteBody(
         Discount: c.discountPct,
         Tax: tax,
         TaxRule: c.taxRule,
-        Total: net,
+        Total: total,
         ...(opts.revenueAccount ? { Account: opts.revenueAccount } : {}),
       };
     }),

@@ -42,14 +42,16 @@ const DO_CREATE = process.argv.includes("--create");
 const INCLUSIVE = process.argv.includes("--inclusive"); // with --create: test tax-INCLUSIVE mode
 const RATE = 15; // the probe customer's tax rule (Bad Debt) is 15% — used to compute line/charge tax
 
-// Mirror src/cin7/sale-quote-write.ts netAndTax so the probe payload matches the real code exactly.
-function netAndTax(unitPrice, quantity, discountPct, taxRatePct, taxInclusive) {
-  const discounted = unitPrice * quantity * (1 - discountPct / 100);
+// Mirror src/cin7/sale-quote-write.ts lineTotals: Total = discounted line total in the quote's tax
+// mode (gross when inclusive); Tax = the tax portion. net is kept only to compute the expected
+// ex-tax TotalBeforeTax for the verification print.
+function amounts(unitPrice, quantity, discountPct, taxRatePct, taxInclusive) {
+  const total = unitPrice * quantity * (1 - discountPct / 100);
   const rate = taxRatePct / 100;
-  const net = taxInclusive && rate > -1 ? discounted / (1 + rate) : discounted;
-  const tax = taxInclusive ? discounted - net : net * rate;
+  const net = taxInclusive && rate > -1 ? total / (1 + rate) : total;
+  const tax = taxInclusive ? total - net : total * rate;
   const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
-  return { net: r2(net), tax: r2(tax) };
+  return { total: r2(total), net: r2(net), tax: r2(tax) };
 }
 const TIMEOUT_MS = 20_000;
 const PACE_MS = 1300; // ~46/min, under Cin7's 60/min
@@ -189,8 +191,8 @@ async function main() {
   // payload. A gross Price (115) in inclusive mode should strip to net 100 + tax 15.
   const linePrice = INCLUSIVE ? 115 : 100;
   const chargePrice = INCLUSIVE ? 57.5 : 50;
-  const line = netAndTax(linePrice, 1, 0, RATE, INCLUSIVE);
-  const charge = netAndTax(chargePrice, 1, 0, RATE, INCLUSIVE);
+  const line = amounts(linePrice, 1, 0, RATE, INCLUSIVE);
+  const charge = amounts(chargePrice, 1, 0, RATE, INCLUSIVE);
   const expectedBeforeTax = line.net + charge.net;
   const expectedTax = line.tax + charge.tax;
 
@@ -202,16 +204,16 @@ async function main() {
       Memo: null,
       Status: "DRAFT",
       Lines: [
-        { ProductID: product?.ID ?? product?.ProductID, SKU: product?.SKU, Name: product?.Name, Quantity: 1, Price: linePrice, Discount: 0, Tax: line.tax, TaxRule: customer.TaxRule, Total: line.net },
+        { ProductID: product?.ID ?? product?.ProductID, SKU: product?.SKU, Name: product?.Name, Quantity: 1, Price: linePrice, Discount: 0, Tax: line.tax, TaxRule: customer.TaxRule, Total: line.total },
       ],
       AdditionalCharges: [
-        { Description: "Delivery (probe charge)", Comment: "", Quantity: 1, Price: chargePrice, Discount: 0, Tax: charge.tax, TaxRule: customer.TaxRule, Total: charge.net, Account: customer.RevenueAccount },
+        { Description: "Delivery (probe charge)", Comment: "", Quantity: 1, Price: chargePrice, Discount: 0, Tax: charge.tax, TaxRule: customer.TaxRule, Total: charge.total, Account: customer.RevenueAccount },
       ],
     },
   });
 
   console.log(`\n── ${INCLUSIVE ? "TAX-INCLUSIVE" : "tax-exclusive"} verification ──`);
-  console.log(`  we sent: line{Price:${linePrice}, Total(net):${line.net}, Tax:${line.tax}}  charge{Price:${chargePrice}, Total(net):${charge.net}, Tax:${charge.tax}}`);
+  console.log(`  we sent: line{Price:${linePrice}, Total:${line.total}, Tax:${line.tax}}  charge{Price:${chargePrice}, Total:${charge.total}, Tax:${charge.tax}}`);
   console.log(`  EXPECT   TotalBeforeTax:${expectedBeforeTax}  Tax:${expectedTax}  Total:${(expectedBeforeTax + expectedTax).toFixed(2)}`);
   console.log(`  CIN7     TotalBeforeTax:${quote.json?.TotalBeforeTax}  Tax:${quote.json?.Tax}  Total:${quote.json?.Total}`);
   const ok = quote.json && Math.abs((quote.json.TotalBeforeTax ?? -1) - expectedBeforeTax) < 0.01 && Math.abs((quote.json.Tax ?? -1) - expectedTax) < 0.01;
