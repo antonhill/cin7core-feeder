@@ -39,6 +39,18 @@ const BASE_URL = "https://inventory.dearsystems.com/ExternalApi/v2"; // canonica
 const ACCOUNT_ID = process.env.CIN7_ACCOUNT_ID;
 const APP_KEY = process.env.CIN7_APP_KEY;
 const DO_CREATE = process.argv.includes("--create");
+const INCLUSIVE = process.argv.includes("--inclusive"); // with --create: test tax-INCLUSIVE mode
+const RATE = 15; // the probe customer's tax rule (Bad Debt) is 15% — used to compute line/charge tax
+
+// Mirror src/cin7/sale-quote-write.ts netAndTax so the probe payload matches the real code exactly.
+function netAndTax(unitPrice, quantity, discountPct, taxRatePct, taxInclusive) {
+  const discounted = unitPrice * quantity * (1 - discountPct / 100);
+  const rate = taxRatePct / 100;
+  const net = taxInclusive && rate > -1 ? discounted / (1 + rate) : discounted;
+  const tax = taxInclusive ? discounted - net : net * rate;
+  const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+  return { net: r2(net), tax: r2(tax) };
+}
 const TIMEOUT_MS = 20_000;
 const PACE_MS = 1300; // ~46/min, under Cin7's 60/min
 
@@ -153,7 +165,7 @@ async function main() {
     Location: customer.Location || location?.Name || undefined,
     SaleOrderDate: today,
     SkipQuote: false, // false = keep it at the Quote stage (don't skip straight to an Order)
-    TaxInclusive: false,
+    TaxInclusive: INCLUSIVE,
     ExternalID: `PROBE-${Date.now()}`,
   };
   if (customer.TaxRule) saleHeader.TaxRule = customer.TaxRule;
@@ -173,47 +185,38 @@ async function main() {
   // /sale/quote is a distinct sub-resource (docs/cin7-api-findings.md §13h; QuoteStatuses unconfirmed).
   // Round 2: POST /sale worked; /sale/quote rejected with "'TaxRule' attribute is required."
   // The DEAR sale-quote LINE model carries its own TaxRule — add it (the customer's valid rule).
+  // Compute the line + charge exactly as the real code does (netAndTax), so this VERIFIES the app's
+  // payload. A gross Price (115) in inclusive mode should strip to net 100 + tax 15.
+  const linePrice = INCLUSIVE ? 115 : 100;
+  const chargePrice = INCLUSIVE ? 57.5 : 50;
+  const line = netAndTax(linePrice, 1, 0, RATE, INCLUSIVE);
+  const charge = netAndTax(chargePrice, 1, 0, RATE, INCLUSIVE);
+  const expectedBeforeTax = line.net + charge.net;
+  const expectedTax = line.tax + charge.tax;
+
   await sleep(PACE_MS);
-  await cin7("/sale/quote", {
+  const quote = await cin7("/sale/quote", {
     method: "POST",
     body: {
       SaleID: saleId,
       Memo: null,
       Status: "DRAFT",
       Lines: [
-        {
-          ProductID: product?.ID ?? product?.ProductID,
-          SKU: product?.SKU,
-          Name: product?.Name,
-          Quantity: 1,
-          Price: 100,
-          Discount: 0,
-          Tax: 0,
-          TaxRule: customer.TaxRule,
-          Total: 100,
-        },
+        { ProductID: product?.ID ?? product?.ProductID, SKU: product?.SKU, Name: product?.Name, Quantity: 1, Price: linePrice, Discount: 0, Tax: line.tax, TaxRule: customer.TaxRule, Total: line.net },
       ],
-      // Probe the additional-charge shape. UI columns: Description, Comment, Quantity, Price,
-      // Discount, Tax Rule, Total. Account = the customer's revenue GL (charges post to revenue).
-      // Cin7's validation error will name whatever's wrong/missing here.
       AdditionalCharges: [
-        {
-          Description: "Delivery (probe charge)",
-          Comment: "",
-          Quantity: 1,
-          Price: 50,
-          Discount: 0,
-          Tax: 7.5,
-          TaxRule: customer.TaxRule,
-          Total: 50,
-          Account: customer.RevenueAccount,
-        },
+        { Description: "Delivery (probe charge)", Comment: "", Quantity: 1, Price: chargePrice, Discount: 0, Tax: charge.tax, TaxRule: customer.TaxRule, Total: charge.net, Account: customer.RevenueAccount },
       ],
     },
   });
 
-  console.log("\n✅ Create attempt done. Paste the full output above and we refine the payloads round by round.");
-  console.log(`   (Sandbox now has a probe sale ${saleId} / ExternalID PROBE-*; delete these in Cin7 when done.)`);
+  console.log(`\n── ${INCLUSIVE ? "TAX-INCLUSIVE" : "tax-exclusive"} verification ──`);
+  console.log(`  we sent: line{Price:${linePrice}, Total(net):${line.net}, Tax:${line.tax}}  charge{Price:${chargePrice}, Total(net):${charge.net}, Tax:${charge.tax}}`);
+  console.log(`  EXPECT   TotalBeforeTax:${expectedBeforeTax}  Tax:${expectedTax}  Total:${(expectedBeforeTax + expectedTax).toFixed(2)}`);
+  console.log(`  CIN7     TotalBeforeTax:${quote.json?.TotalBeforeTax}  Tax:${quote.json?.Tax}  Total:${quote.json?.Total}`);
+  const ok = quote.json && Math.abs((quote.json.TotalBeforeTax ?? -1) - expectedBeforeTax) < 0.01 && Math.abs((quote.json.Tax ?? -1) - expectedTax) < 0.01;
+  console.log(`  ${ok ? "✅ MATCH — Cin7's totals equal what the app computes." : "❌ MISMATCH — Cin7 computed different totals; paste this so I can adjust."}`);
+  console.log(`\n   (Sandbox now has a probe sale ${saleId} / ExternalID PROBE-*; delete these in Cin7 when done.)`);
 }
 
 main().catch((e) => {
