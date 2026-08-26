@@ -63,6 +63,10 @@ interface EditorLine {
   averageCost: number | null;
   /** This product's synced price per tier_code ("Tier1".."Tier10") — drives the auto unit price. */
   tierPrices: Record<string, number>;
+  /** Charge lines only: include this charge in the margin (requires estimatedCost). Default false. */
+  marginIncluded: boolean;
+  /** Charge lines only: user-entered estimated cost (kept even while excluded, so a toggle back keeps it). */
+  estimatedCost: string;
   // Numeric fields kept as strings so the inputs can be empty / mid-typing.
   quantity: string;
   unitPrice: string;
@@ -75,26 +79,39 @@ function num(s: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** The charge's entered cost as a number, or null when blank (so a blank never reads as cost 0). */
+function chargeEnteredCost(l: EditorLine): number | null {
+  return l.estimatedCost.trim() === "" ? null : num(l.estimatedCost);
+}
+
 function toEngineInput(l: EditorLine): QuoteLineInput {
+  const isCharge = l.lineType === "charge";
   return {
     quantity: num(l.quantity),
     unitPrice: num(l.unitPrice),
     discountPct: num(l.discountPct),
     taxRatePct: num(l.taxRatePct),
-    averageCost: l.lineType === "charge" ? null : l.averageCost,
+    // Product cost is server-known (shown here). A charge only carries a cost when INCLUDED and a
+    // value is entered — so an excluded or cost-less charge is never counted (no phantom 100% margin).
+    averageCost: isCharge ? (l.marginIncluded ? chargeEnteredCost(l) : null) : l.averageCost,
+    excludedFromMargin: isCharge && !l.marginIncluded,
   };
 }
 
 function toDraftLine(l: EditorLine): QuoteLineDraftInput {
+  const isCharge = l.lineType === "charge";
   return {
     lineType: l.lineType,
     cin7ProductId: l.cin7ProductId,
-    productSku: l.lineType === "charge" ? null : l.productSku,
+    productSku: isCharge ? null : l.productSku,
     productName: l.productName,
     quantity: num(l.quantity),
     unitPrice: num(l.unitPrice),
     discountPct: num(l.discountPct),
     taxRatePct: num(l.taxRatePct),
+    // Charges carry their treatment + entered cost (preserved even while excluded).
+    marginIncluded: isCharge ? l.marginIncluded : undefined,
+    estimatedCost: isCharge ? chargeEnteredCost(l) : undefined,
   };
 }
 
@@ -184,6 +201,8 @@ export default function QuotesPage() {
           cin7ProductId: l.cin7ProductId ?? null,
           averageCost: l.averageCost,
           tierPrices: {},
+          marginIncluded: l.lineType === "charge" ? Boolean(l.marginIncluded) : false,
+          estimatedCost: l.lineType === "charge" && l.averageCost != null ? String(l.averageCost) : "",
           quantity: String(l.quantity),
           unitPrice: String(l.unitPrice),
           discountPct: String(l.discountPct ?? 0),
@@ -204,7 +223,7 @@ export default function QuotesPage() {
   function addChargeLine() {
     setLines((prev) => [
       ...prev,
-      { uid: uid(), lineType: "charge", productSku: "", productName: "", cin7ProductId: null, averageCost: null, tierPrices: {}, quantity: "1", unitPrice: "0", discountPct: "0", taxRatePct: defaultTaxRatePct },
+      { uid: uid(), lineType: "charge", productSku: "", productName: "", cin7ProductId: null, averageCost: null, tierPrices: {}, marginIncluded: false, estimatedCost: "", quantity: "1", unitPrice: "0", discountPct: "0", taxRatePct: defaultTaxRatePct },
     ]);
   }
   function addProductLine(hit: QuoteProductHit) {
@@ -214,7 +233,7 @@ export default function QuotesPage() {
     const tierPrice = tierCode && hit.tierPrices[tierCode] != null ? hit.tierPrices[tierCode] : 0;
     setLines((prev) => [
       ...prev,
-      { uid: uid(), lineType: "product", productSku: hit.sku, productName: hit.name, cin7ProductId: null, averageCost: hit.averageCost, tierPrices: hit.tierPrices, quantity: "1", unitPrice: String(tierPrice), discountPct: "0", taxRatePct: defaultTaxRatePct },
+      { uid: uid(), lineType: "product", productSku: hit.sku, productName: hit.name, cin7ProductId: null, averageCost: hit.averageCost, tierPrices: hit.tierPrices, marginIncluded: false, estimatedCost: "", quantity: "1", unitPrice: String(tierPrice), discountPct: "0", taxRatePct: defaultTaxRatePct },
     ]);
   }
 
@@ -337,6 +356,23 @@ export default function QuotesPage() {
   const perLine = useMemo(() => lines.map((l) => computeLine(toEngineInput(l), { taxInclusive })), [lines, taxInclusive]);
   const totals = useMemo(() => computeQuote(lines.map(toEngineInput), { taxInclusive }), [lines, taxInclusive]);
 
+  // Deliberately-excluded charges vs genuinely-unknown product costs are different states (brief §16):
+  // the first makes the headline "products only"; the second means the margin is incomplete.
+  const excludedChargeCount = lines.filter((l, i) => l.lineType === "charge" && !l.marginIncluded && (perLine[i]?.revenueExTax ?? 0) > 0).length;
+  const missingCostCount = lines.filter((l, i) => l.lineType !== "charge" && perLine[i]?.estimatedCost == null && (perLine[i]?.revenueExTax ?? 0) > 0).length;
+  const marginLabel = excludedChargeCount > 0 ? "Estimated margin (products only)" : "Estimated overall margin";
+
+  // Including a charge in the margin requires a valid, non-negative cost (mirrors the server).
+  function chargeCostError(): string | null {
+    for (const l of lines) {
+      if (l.lineType !== "charge" || !l.marginIncluded) continue;
+      const c = l.estimatedCost.trim();
+      if (c === "" || !Number.isFinite(Number(c))) return "Enter an estimated shipping cost before including shipping in margin.";
+      if (Number(c) < 0) return "Estimated cost can't be negative.";
+    }
+    return null;
+  }
+
   function currentQuoteInput() {
     return {
       quoteId,
@@ -354,6 +390,11 @@ export default function QuotesPage() {
   function save() {
     if (!instanceId) {
       setEditorError("Choose a Cin7 instance first.");
+      return;
+    }
+    const ce = chargeCostError();
+    if (ce) {
+      setEditorError(ce);
       return;
     }
     setEditorError(null);
@@ -374,6 +415,11 @@ export default function QuotesPage() {
   function submitToCin7() {
     if (!instanceId) {
       setEditorError("Choose a Cin7 instance first.");
+      return;
+    }
+    const ce = chargeCostError();
+    if (ce) {
+      setEditorError(ce);
       return;
     }
     setEditorError(null);
@@ -616,15 +662,33 @@ export default function QuotesPage() {
                   ) : (
                     lines.map((l, i) => {
                       const r = perLine[i];
+                      const excludedCharge = l.lineType === "charge" && !l.marginIncluded;
                       return (
                         <tr key={l.uid} className="border-b border-slate-100">
                           <td className="py-1.5 pr-3">
                             {l.lineType === "charge" ? (
-                              <input value={l.productName} onChange={(e) => updateLine(l.uid, { productName: e.target.value })} disabled={readOnly} placeholder="Charge description" className="w-full rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50" />
+                              <div>
+                                <input value={l.productName} onChange={(e) => updateLine(l.uid, { productName: e.target.value })} disabled={readOnly} placeholder="Charge description (e.g. Shipping)" className="w-full rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50" />
+                                {readOnly ? (
+                                  <div className="mt-1 text-xs text-slate-400">{l.marginIncluded ? "Included in margin" : "Excluded from margin"}</div>
+                                ) : (
+                                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                                    <label className="flex items-center gap-1"><input type="radio" name={`mt-${l.uid}`} checked={!l.marginIncluded} onChange={() => updateLine(l.uid, { marginIncluded: false })} /> Exclude from margin</label>
+                                    <label className="flex items-center gap-1"><input type="radio" name={`mt-${l.uid}`} checked={l.marginIncluded} onChange={() => updateLine(l.uid, { marginIncluded: true })} /> Include</label>
+                                    {l.marginIncluded && (
+                                      <span className="flex items-center gap-1">
+                                        <span>Est. cost R</span>
+                                        <input value={l.estimatedCost} onChange={(e) => updateLine(l.uid, { estimatedCost: e.target.value })} inputMode="decimal" placeholder="0.00" className="w-20 rounded border border-slate-200 px-2 py-0.5 text-right text-xs focus:border-indigo-500 focus:outline-none" />
+                                      </span>
+                                    )}
+                                    {l.marginIncluded && l.estimatedCost.trim() === "" && <span className="font-medium text-amber-600">enter a cost</span>}
+                                  </div>
+                                )}
+                              </div>
                             ) : (
                               <div>
                                 <div className="font-medium text-slate-900">{l.productName || l.productSku}</div>
-                                <div className="text-xs text-slate-400">{l.productSku}{l.averageCost == null && <span className="ml-1 text-amber-600">· no cost</span>}</div>
+                                <div className="text-xs text-slate-400">{l.productSku}{l.averageCost == null && <span className="ml-1 text-amber-600">· cost unavailable</span>}</div>
                               </div>
                             )}
                           </td>
@@ -635,7 +699,7 @@ export default function QuotesPage() {
                           <td className="py-1.5 px-2 text-right tabular-nums">{fmtMoney(r.revenueExTax)}</td>
                           <td className="py-1.5 px-2 text-right tabular-nums text-slate-500">{fmtMoney(r.estimatedCost)}</td>
                           <td className="py-1.5 px-2 text-right tabular-nums">{r.estimatedGP == null ? "—" : fmtMoney(r.estimatedGP)}</td>
-                          <td className={`py-1.5 px-2 text-right tabular-nums font-medium ${marginTone(r.marginPct)}`}>{fmtPct(r.marginPct)}</td>
+                          <td className={`py-1.5 px-2 text-right tabular-nums font-medium ${excludedCharge ? "text-slate-400" : marginTone(r.marginPct)}`}>{excludedCharge ? "—" : fmtPct(r.marginPct)}</td>
                           <td className="py-1.5 pl-2 text-right">
                             {!readOnly && <button type="button" onClick={() => removeLine(l.uid)} className="text-slate-300 hover:text-red-500" aria-label="Remove line">✕</button>}
                           </td>
@@ -654,10 +718,15 @@ export default function QuotesPage() {
               <div className="flex w-full max-w-xs justify-between font-semibold text-slate-900"><span>Total (incl. VAT)</span><span className="tabular-nums">{fmtMoney(totals.totalIncTax)}</span></div>
               <div className="mt-2 flex w-full max-w-xs justify-between text-slate-500"><span>Estimated cost</span><span className="tabular-nums">{fmtMoney(totals.estimatedCost)}</span></div>
               <div className="flex w-full max-w-xs justify-between text-slate-500"><span>Estimated GP</span><span className="tabular-nums">{fmtMoney(totals.estimatedGP)}</span></div>
-              <div className="flex w-full max-w-xs justify-between font-semibold"><span>Overall margin</span><span className={`tabular-nums ${marginTone(totals.overallMarginPct)}`}>{fmtPct(totals.overallMarginPct)}</span></div>
-              {totals.excludedFromMarginCount > 0 && (
-                <p className="mt-1 max-w-xs text-right text-xs text-amber-600">
-                  {totals.excludedFromMarginCount} line{totals.excludedFromMarginCount === 1 ? "" : "s"} excluded from the margin (no cost available).
+              <div className="flex w-full max-w-xs justify-between font-semibold"><span>{marginLabel}</span><span className={`tabular-nums ${marginTone(totals.overallMarginPct)}`}>{fmtPct(totals.overallMarginPct)}</span></div>
+              {excludedChargeCount > 0 && (
+                <p className="mt-1 max-w-xs text-right text-xs text-slate-500">
+                  {excludedChargeCount === 1 ? "1 charge" : `${excludedChargeCount} charges`} excluded from margin (e.g. shipping).
+                </p>
+              )}
+              {missingCostCount > 0 && (
+                <p className="max-w-xs text-right text-xs text-amber-600">
+                  {missingCostCount === 1 ? "1 line has" : `${missingCostCount} lines have`} no cost — margin incomplete.
                 </p>
               )}
             </div>

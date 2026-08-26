@@ -100,6 +100,8 @@ export interface QuoteDetail extends QuoteSummary {
   estimatedGp: number;
   marginRevenueExTax: number;
   costedLineCount: number;
+  /** 'overall' = margin covers everything; 'products_only' = a charge was deliberately excluded. */
+  marginScope: string;
   cin7SaleId: string | null;
   createdByEmail: string | null;
   lines: QuoteLineDetail[];
@@ -327,6 +329,7 @@ export async function getQuoteAction(quoteId: string): Promise<QuoteActionResult
       taxRatePct: Number(l.tax_rate_pct),
       lineNumber: Number(l.line_number),
       averageCost: l.average_cost == null ? null : Number(l.average_cost),
+      marginIncluded: Boolean(l.margin_included),
       revenueExTax: Number(l.revenue_ex_tax),
       estimatedCost: l.estimated_cost == null ? null : Number(l.estimated_cost),
       estimatedGp: l.estimated_gp == null ? null : Number(l.estimated_gp),
@@ -356,6 +359,7 @@ export async function getQuoteAction(quoteId: string): Promise<QuoteActionResult
         overallMarginPct: h.overall_margin_pct == null ? null : Number(h.overall_margin_pct),
         costedLineCount: Number(h.costed_line_count),
         excludedFromMarginCount: Number(h.excluded_from_margin_count),
+        marginScope: h.margin_scope ?? "overall",
         cin7SaleId: h.cin7_sale_id,
         cin7QuoteNumber: h.cin7_quote_number,
         createdByEmail: h.created_by_email,
@@ -388,6 +392,18 @@ export async function saveQuoteAction(input: QuoteDraftInput): Promise<QuoteActi
     if (instErr) throw new Error(instErr.message);
     if (!inst) return { ok: false, error: "That instance doesn't belong to your organization." };
 
+    // Including a charge in the margin requires a valid, non-negative estimated cost (brief §4) —
+    // never silently infer 0. The UI enforces this too, but the server is authoritative.
+    for (const l of input.lines ?? []) {
+      if (l.lineType === "charge" && l.marginIncluded === true) {
+        const cost = Number(l.estimatedCost);
+        if (l.estimatedCost == null || !Number.isFinite(cost)) {
+          return { ok: false, error: "Enter an estimated shipping cost before including shipping in margin." };
+        }
+        if (cost < 0) return { ok: false, error: "Estimated cost can't be negative." };
+      }
+    }
+
     // Source cost server-side from the org's synced Cin7 Average Cost. Never from the client.
     const skus = productSkusFor(input.lines);
     const costBySku = new Map<string, number | null>();
@@ -407,10 +423,19 @@ export async function saveQuoteAction(input: QuoteDraftInput): Promise<QuoteActi
       taxInclusive: input.taxInclusive === true,
     });
 
+    // The headline margin is 'products_only' when a revenue-bearing charge is deliberately excluded,
+    // otherwise 'overall' — drives the summary label ("Estimated margin (shipping excluded)").
+    const marginScope = (input.lines ?? []).some(
+      (l) => l.lineType === "charge" && l.marginIncluded !== true && (Number(l.unitPrice) || 0) > 0,
+    )
+      ? "products_only"
+      : "overall";
+
     const nowIso = new Date().toISOString();
     const header = {
       org_id: orgId,
       instance_id: input.instanceId,
+      margin_scope: marginScope,
       customer_name: input.customerName ?? null,
       cin7_customer_id: input.cin7CustomerId ?? null,
       price_tier: input.priceTier ?? null,

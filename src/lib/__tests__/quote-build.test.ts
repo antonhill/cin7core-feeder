@@ -49,6 +49,35 @@ describe("resolveQuoteLines", () => {
     expect(totals.excludedFromMarginCount).toBe(1);
   });
 
+  it("an EXCLUDED charge stores its entered cost but keeps it out of the margin", () => {
+    const costs = new Map<string, number | null>([["SKU-1", 50]]);
+    const { lines, totals } = resolveQuoteLines(
+      [product("SKU-1", { quantity: 1, unitPrice: 120 }), charge({ unitPrice: 100, marginIncluded: false, estimatedCost: 80 })],
+      costs,
+    );
+    expect(lines[1].average_cost).toBe(80); // preserved for a later toggle
+    expect(lines[1].margin_included).toBe(false);
+    expect(lines[1].estimated_cost).toBeNull(); // not counted
+    expect(lines[1].margin_pct).toBeNull();
+    expect(totals.subtotalExTax).toBe(220); // revenue still in the subtotal
+    expect(totals.marginRevenueExTax).toBe(120); // product only
+    expect(totals.overallMarginPct).toBeCloseTo(58.3333, 3);
+  });
+
+  it("an INCLUDED charge with a cost participates in the weighted margin", () => {
+    const costs = new Map<string, number | null>([["SKU-1", 50]]);
+    const { lines, totals } = resolveQuoteLines(
+      [product("SKU-1", { quantity: 1, unitPrice: 120 }), charge({ unitPrice: 100, marginIncluded: true, estimatedCost: 80 })],
+      costs,
+    );
+    expect(lines[1].margin_included).toBe(true);
+    expect(lines[1].estimated_cost).toBe(80);
+    expect(lines[1].margin_pct).toBeCloseTo(20, 6);
+    expect(totals.estimatedCost).toBe(130);
+    expect(totals.estimatedGP).toBe(90);
+    expect(totals.overallMarginPct).toBeCloseTo(40.909, 2);
+  });
+
   it("footer totals are weighted and match summed costed revenue, not an average of line %s", () => {
     const costs = new Map<string, number | null>([["BIG", 900], ["SMALL", 2]]);
     const drafts = [
