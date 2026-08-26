@@ -83,7 +83,7 @@ describe("buildQuoteBody", () => {
     expect("Account" in body.AdditionalCharges[0]).toBe(false);
   });
 
-  it("tax-inclusive: strips tax out of the price (150 incl @15% → net 130.43, tax 19.57)", () => {
+  it("tax-inclusive: Total is the GROSS line total (Cin7's rule), Tax is the portion (150 incl @15% → tax 19.57)", () => {
     const body = buildQuoteBody(
       "s",
       [{ productSku: "X", productName: "X", quantity: 1, unitPrice: 150, discountPct: 0, taxRule: "T", taxRatePct: 15 }],
@@ -91,7 +91,7 @@ describe("buildQuoteBody", () => {
       new Map([["X", "id"]]),
       { taxInclusive: true },
     ) as { Lines: { Total: number; Tax: number }[] };
-    expect(body.Lines[0].Total).toBe(130.43);
+    expect(body.Lines[0].Total).toBe(150);
     expect(body.Lines[0].Tax).toBe(19.57);
   });
 
