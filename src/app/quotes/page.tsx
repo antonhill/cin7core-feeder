@@ -254,11 +254,13 @@ export default function QuotesPage() {
     else addProductLine(hit);
     setSearch("");
     setResults([]);
+    setShowResults(false); // a late/stale search result can't reopen the closed dropdown
   }
 
   // --- product search ---
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<QuoteProductHit[]>([]);
+  const [showResults, setShowResults] = useState(false);
   const [isSearching, startSearchTransition] = useTransition();
   useEffect(() => {
     const q = search.trim();
@@ -628,18 +630,19 @@ export default function QuotesPage() {
                 <div className="relative flex-1 min-w-[16rem]">
                   <input
                     value={search}
-                    onChange={(e) => setSearch(e.target.value)}
+                    onChange={(e) => { setSearch(e.target.value); setShowResults(true); }}
+                    onBlur={() => setTimeout(() => setShowResults(false), 150)}
                     placeholder="Add a product — search by SKU or name…"
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
                   />
                   {isSearching && <div className="absolute right-3 top-2.5"><Spinner /></div>}
-                  {results.length > 0 && (
+                  {showResults && results.length > 0 && (
                     <ul className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
                       {results.map((r) => (
                         <li key={r.sku}>
                           <button
                             type="button"
-                            onClick={() => pickSearchHit(r)}
+                            onMouseDown={(e) => { e.preventDefault(); pickSearchHit(r); }}
                             className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-indigo-50"
                           >
                             <span>
