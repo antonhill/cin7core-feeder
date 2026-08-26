@@ -106,6 +106,9 @@ async function main() {
   const customers = await cin7("/customer", { query: { Page: 1, Limit: 1 } });
   await sleep(PACE_MS);
   const locations = await cin7("/ref/location", { query: { Page: 1, Limit: 5 } });
+  // Confirm the /ref/tax shape + the exact rate field name (the VAT% auto-fill depends on it).
+  await sleep(PACE_MS);
+  await cin7("/ref/tax", { query: { Page: 1, Limit: 100 } });
 
   const product = firstOf(products.json, ["Products", "ProductList"]);
   const customer = firstOf(customers.json, ["CustomerList", "Customers"]);
