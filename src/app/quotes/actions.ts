@@ -6,6 +6,15 @@ import { QUOTES_MODULE } from "@/app/module-nav";
 import { resolveQuoteLines, productSkusFor, type QuoteLineDraft } from "@/lib/quote-build";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchCustomerDefaults, type Cin7CustomerDefaults } from "@/cin7/customers";
+import { createSaleQuote, findSaleByExternalId, SaleQuoteCreateError, type SaleQuoteLineInput } from "@/cin7/sale-quote-write";
+import {
+  claimQuoteCreation,
+  settleQuoteCreation,
+  releaseQuoteCreation,
+  markQuoteCreationAmbiguous,
+  discardQuoteClaim,
+  QUOTE_CLAIM_TTL_SECONDS,
+} from "@/lib/quote-submit";
 import {
   fetchAllLocations,
   fetchAllPriceTiers,
@@ -453,6 +462,159 @@ export async function saveQuoteAction(input: QuoteDraftInput): Promise<QuoteActi
     }
 
     return { ok: true, data: { quoteId } };
+  } catch (e) {
+    return { ok: false, error: errMsg(e) };
+  }
+}
+
+export interface SubmitQuoteResult {
+  cin7SaleId: string;
+  cin7QuoteNumber: string | null;
+  warning?: string;
+}
+
+/**
+ * Create the quote in Cin7 Core (the money path). Mirrors the PO/Stock-Transfer safety pattern:
+ * a fail-closed idempotency claim (quote_creation_claim) guards against duplicate creates, an
+ * ExternalID (QUOTE-<id>) enables reconciliation, and an ambiguous (network) outcome is never
+ * blindly retried — the next attempt reconciles by ExternalID first. The customer's tax rule is
+ * taken LIVE from Cin7 at submit. Charge lines are not sent to Cin7 in V1 (surfaced as a warning).
+ */
+export async function submitQuoteAction(quoteId: string): Promise<QuoteActionResult<SubmitQuoteResult>> {
+  if (!quoteId) return { ok: false, error: "Missing quote id." };
+  try {
+    const { orgId } = await requireModuleWrite(QUOTES_MODULE.href);
+    const db = createServiceRoleClient();
+
+    const { data: q, error: qErr } = await db.from("quotes").select("*").eq("org_id", orgId).eq("id", quoteId).maybeSingle();
+    if (qErr) throw new Error(qErr.message);
+    if (!q) return { ok: false, error: "Quote not found." };
+    if (q.status === "submitted" && q.cin7_sale_id) {
+      return { ok: true, data: { cin7SaleId: q.cin7_sale_id, cin7QuoteNumber: q.cin7_quote_number } };
+    }
+    if (q.status !== "draft" && q.status !== "failed") {
+      return { ok: false, error: `This quote can't be submitted (status: ${q.status}).` };
+    }
+    if (!q.customer_name) return { ok: false, error: "Choose a customer before submitting." };
+    if (!q.location) return { ok: false, error: "Choose a location before submitting." };
+
+    const { data: lineRows, error: lErr } = await db.from("quote_lines").select("*").eq("quote_id", quoteId).order("line_number");
+    if (lErr) throw new Error(lErr.message);
+    const productLines = (lineRows ?? []).filter((l) => l.line_type !== "charge" && l.product_sku);
+    const chargeCount = (lineRows ?? []).length - productLines.length;
+    if (productLines.length === 0) return { ok: false, error: "Add at least one product line before submitting." };
+
+    const instanceId = q.instance_id;
+    const creds = await loadCin7Credentials(db, orgId, instanceId);
+
+    // Cin7 requires TaxRule on the header + each line — taken LIVE from the customer now.
+    const custDefaults = await fetchCustomerDefaults(creds, q.customer_name);
+    const taxRule = custDefaults?.taxRule ?? null;
+    if (!taxRule) return { ok: false, error: `Customer "${q.customer_name}" has no tax rule in Cin7 — set one there, then submit.` };
+
+    const externalId = `QUOTE-${quoteId}`;
+    const header = {
+      customer: q.customer_name,
+      location: q.location,
+      saleOrderDate: new Date().toISOString().slice(0, 10),
+      taxInclusive: Boolean(q.tax_inclusive),
+      taxRule,
+      priceTier: q.price_tier,
+      salesRep: q.sales_rep,
+      externalId,
+    };
+    const lines: SaleQuoteLineInput[] = productLines.map((l) => ({
+      productSku: String(l.product_sku),
+      productName: l.product_name,
+      quantity: Number(l.quantity),
+      unitPrice: Number(l.unit_price),
+      discountPct: Number(l.discount_pct),
+      taxRule,
+    }));
+
+    const setStatus = (status: string, extra: Record<string, unknown> = {}) =>
+      db.from("quotes").update({ status, updated_at: new Date().toISOString(), ...extra }).eq("org_id", orgId).eq("id", quoteId);
+    const linkSubmitted = (saleId: string, quoteNumber: string | null) =>
+      setStatus("submitted", { cin7_sale_id: saleId, cin7_quote_number: quoteNumber, external_id: externalId });
+
+    const sinceIso = new Date(Date.now() - QUOTE_CLAIM_TTL_SECONDS * 1000).toISOString();
+    let claim = await claimQuoteCreation(db, orgId, instanceId, quoteId);
+
+    if (!claim.claimed) {
+      if (claim.existingStatus === "completed" && claim.cin7SaleId) {
+        await linkSubmitted(claim.cin7SaleId, claim.quoteNumber);
+        return { ok: true, data: { cin7SaleId: claim.cin7SaleId, cin7QuoteNumber: claim.quoteNumber } };
+      }
+      if (claim.existingStatus === "pending") return { ok: false, error: "A submission for this quote is already in progress." };
+      if (claim.existingStatus === "guard_unavailable") return { ok: false, error: "Couldn't secure the submit guard — please try again in a moment." };
+      if (claim.existingStatus === "ambiguous") {
+        // A prior attempt's outcome is unknown — reconcile by our ExternalID before anything else.
+        const found = await findSaleByExternalId(creds, q.customer_name, externalId, sinceIso);
+        if (found) {
+          const settled = await settleQuoteCreation(db, orgId, instanceId, quoteId, found.saleId, found.quoteNumber);
+          if (!settled) await markQuoteCreationAmbiguous(db, orgId, instanceId, quoteId);
+          await linkSubmitted(found.saleId, found.quoteNumber);
+          return {
+            ok: true,
+            data: {
+              cin7SaleId: found.saleId,
+              cin7QuoteNumber: found.quoteNumber,
+              warning: "Recovered a sale created during an earlier network error — please verify its lines in Cin7.",
+            },
+          };
+        }
+        // No sale exists → discard the ambiguous claim and re-claim to create fresh.
+        await discardQuoteClaim(db, orgId, instanceId, quoteId);
+        claim = await claimQuoteCreation(db, orgId, instanceId, quoteId);
+        if (!claim.claimed) return { ok: false, error: "Couldn't secure the submit guard — please try again." };
+      } else {
+        return { ok: false, error: "Couldn't submit this quote right now — please try again." };
+      }
+    }
+
+    await setStatus("submitting");
+    try {
+      const result = await createSaleQuote(creds, header, lines);
+      const settled = await settleQuoteCreation(db, orgId, instanceId, quoteId, result.saleId, result.quoteNumber);
+      if (!settled) await markQuoteCreationAmbiguous(db, orgId, instanceId, quoteId);
+      await linkSubmitted(result.saleId, result.quoteNumber);
+      const warning = chargeCount > 0 ? `${chargeCount} charge line${chargeCount === 1 ? "" : "s"} were not sent to Cin7 (add them on the sale in Cin7).` : undefined;
+      return { ok: true, data: { cin7SaleId: result.saleId, cin7QuoteNumber: result.quoteNumber, warning } };
+    } catch (e) {
+      if (e instanceof SaleQuoteCreateError) {
+        if (e.stage === "header" && !e.ambiguous) {
+          await releaseQuoteCreation(db, orgId, instanceId, quoteId);
+          await setStatus("draft");
+          return { ok: false, error: e.message };
+        }
+        if (e.ambiguous) {
+          await markQuoteCreationAmbiguous(db, orgId, instanceId, quoteId);
+          await setStatus("failed");
+          return {
+            ok: false,
+            error: `Submit outcome unknown (network error). A sale may have been created — re-submit to reconcile, or check Cin7 for reference ${externalId}.`,
+          };
+        }
+        // stage 'lines', definite: the header exists but lines failed → link it (no duplicate on retry) + warn.
+        if (e.saleId) {
+          const settled = await settleQuoteCreation(db, orgId, instanceId, quoteId, e.saleId, e.quoteNumber ?? null);
+          if (!settled) await markQuoteCreationAmbiguous(db, orgId, instanceId, quoteId);
+          await linkSubmitted(e.saleId, e.quoteNumber ?? null);
+          return {
+            ok: true,
+            data: {
+              cin7SaleId: e.saleId,
+              cin7QuoteNumber: e.quoteNumber ?? null,
+              warning: `The sale was created (${e.quoteNumber ?? e.saleId}) but adding the lines failed: ${e.message}. Add/verify the lines in Cin7.`,
+            },
+          };
+        }
+        await setStatus("failed");
+        return { ok: false, error: e.message };
+      }
+      await setStatus("failed");
+      return { ok: false, error: errMsg(e) };
+    }
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }

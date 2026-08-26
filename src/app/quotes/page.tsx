@@ -12,6 +12,7 @@ import {
   listQuotesAction,
   getQuoteAction,
   saveQuoteAction,
+  submitQuoteAction,
   deleteQuoteAction,
   searchQuoteProductsAction,
   searchQuoteCustomersAction,
@@ -336,6 +337,20 @@ export default function QuotesPage() {
   const perLine = useMemo(() => lines.map((l) => computeLine(toEngineInput(l), { taxInclusive })), [lines, taxInclusive]);
   const totals = useMemo(() => computeQuote(lines.map(toEngineInput), { taxInclusive }), [lines, taxInclusive]);
 
+  function currentQuoteInput() {
+    return {
+      quoteId,
+      instanceId: instanceId as string,
+      customerName: customerName.trim() || undefined,
+      priceTier: priceTier.trim() || undefined,
+      salesRep: salesRep.trim() || undefined,
+      location: location.trim() || undefined,
+      taxInclusive,
+      notes: notes.trim() || undefined,
+      lines: lines.map(toDraftLine),
+    };
+  }
+
   function save() {
     if (!instanceId) {
       setEditorError("Choose a Cin7 instance first.");
@@ -344,17 +359,7 @@ export default function QuotesPage() {
     setEditorError(null);
     setSaveMsg(null);
     startSaveTransition(async () => {
-      const res = await saveQuoteAction({
-        quoteId,
-        instanceId,
-        customerName: customerName.trim() || undefined,
-        priceTier: priceTier.trim() || undefined,
-        salesRep: salesRep.trim() || undefined,
-        location: location.trim() || undefined,
-        taxInclusive,
-        notes: notes.trim() || undefined,
-        lines: lines.map(toDraftLine),
-      });
+      const res = await saveQuoteAction(currentQuoteInput());
       if (!res.ok || !res.data) {
         setEditorError(res.error ?? "Could not save the quote.");
         return;
@@ -362,6 +367,37 @@ export default function QuotesPage() {
       setQuoteId(res.data.quoteId);
       setSaveMsg("Draft saved.");
       loadList();
+    });
+  }
+
+  const [isSubmitting, startSubmitTransition] = useTransition();
+  function submitToCin7() {
+    if (!instanceId) {
+      setEditorError("Choose a Cin7 instance first.");
+      return;
+    }
+    setEditorError(null);
+    setSaveMsg(null);
+    startSubmitTransition(async () => {
+      // Persist the latest edits first, then create the sale in Cin7 from the saved quote.
+      const saved = await saveQuoteAction(currentQuoteInput());
+      if (!saved.ok || !saved.data) {
+        setEditorError(saved.error ?? "Could not save before submitting.");
+        return;
+      }
+      setQuoteId(saved.data.quoteId);
+      const res = await submitQuoteAction(saved.data.quoteId);
+      loadList();
+      if (!res.ok || !res.data) {
+        setEditorError(res.error ?? "Submit to Cin7 failed.");
+        // Reflect the server-side status change (draft/failed) so the button state stays correct.
+        const reload = await getQuoteAction(saved.data.quoteId);
+        if (reload.ok && reload.data) setStatus(reload.data.status);
+        return;
+      }
+      setStatus("submitted");
+      const ref = res.data.cin7QuoteNumber ?? res.data.cin7SaleId;
+      setSaveMsg(`Submitted to Cin7 as ${ref}.${res.data.warning ? " " + res.data.warning : ""}`);
     });
   }
 
@@ -632,13 +668,19 @@ export default function QuotesPage() {
 
           {!readOnly && (
             <div className="flex items-center justify-between">
-              <button type="button" onClick={removeQuote} disabled={isSaving} className="text-sm text-red-500 hover:text-red-700 disabled:opacity-50">
+              <button type="button" onClick={removeQuote} disabled={isSaving || isSubmitting} className="text-sm text-red-500 hover:text-red-700 disabled:opacity-50">
                 {quoteId ? "Delete draft" : "Discard"}
               </button>
-              <button type="button" onClick={save} disabled={isSaving} className="rounded-full bg-indigo-600 px-5 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
-                {isSaving && <Spinner className="mr-1.5" />}
-                {isSaving ? "Saving…" : "Save draft"}
-              </button>
+              <div className="flex items-center gap-3">
+                <button type="button" onClick={save} disabled={isSaving || isSubmitting} className="rounded-full border border-indigo-600 px-5 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50">
+                  {isSaving && <Spinner className="mr-1.5" />}
+                  {isSaving ? "Saving…" : "Save draft"}
+                </button>
+                <button type="button" onClick={submitToCin7} disabled={isSaving || isSubmitting || !instanceId} className="rounded-full bg-emerald-600 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
+                  {isSubmitting && <Spinner className="mr-1.5" />}
+                  {isSubmitting ? "Submitting…" : "Submit to Cin7"}
+                </button>
+              </div>
             </div>
           )}
         </section>
