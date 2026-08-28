@@ -1325,6 +1325,178 @@ implementing without a live probe first would repeat the exact mistake Phase 3.3
 avoid, and the cron-scheduled sync doesn't even list-scan those 3 endpoints today so the item's
 practical benefit is unclear until scoped further).
 
+**Superseded — see the round-3 and final-closure sections below.** P1-2, P1-5 and P1-7 were all
+subsequently actioned; only P2 (API optimisation) remains open, and round 3 closed it as
+NOT CURRENTLY JUSTIFIED rather than deferred. The paragraph above is kept as the record of what
+was still outstanding *at the end of round 2*.
+
+## Security re-audit round 3 (2026-08-17): P1-2, P1-5, P0 gap-closure (PR #55)
+
+Same discipline as round 2 — parallel read-only investigation agents first, each re-deriving its
+surface from current `main` and live Supabase state rather than trusting a prior round's
+classification. That method is the point: **every round so far has shipped real, verified fixes and
+still left sibling gaps a deeper pass found**, including in areas a previous round had already
+marked FIXED. Don't read an earlier round's "FIXED" as "this whole area is closed."
+
+- **P1-2 (AAL2 guard) — was deferred, now fixed, and the investigation found the *real* bug was
+  bigger than the item described.** `middleware.ts` resolved the active org with an unordered
+  `org_members` `.limit(1)`, **completely ignoring the `active_org_id` cookie** that
+  `requireCurrentOrg`/`getCurrentUserInfo` already honoured (round 2's own P1-8 fix) — a genuine
+  role/MFA-gating mismatch for a multi-org user: a member of Org A who is an *admin* of Org B, with
+  B active, could have middleware evaluate Org A and skip the MFA-enrolment gate that a Server
+  Action would still apply. Fixed by splitting the pure `resolveActiveOrgId`/`ACTIVE_ORG_COOKIE`
+  out into a dependency-free `src/lib/active-org-resolution.ts`, so middleware (Edge runtime) shares
+  the *exact same rule* without importing `next/headers` — the same "one shared rule, two callers
+  that can't drift" shape as `billing-status.ts` (Phase 1.5) and `findBlockedModule`
+  (Phase 1.1).
+  New `src/lib/require-privileged.ts` (`requirePrivilegedOrgAdmin`/`requirePrivilegedSuperAdmin`)
+  composes the existing role guards with a **real AAL2 check** via the session's own
+  `getAuthenticatorAssuranceLevel` — middleware's MFA gate only ever protected *page navigation*,
+  never a direct POST to a Server Action's endpoint. Applied to 13 call sites (instance credential
+  management, billing, member management, admin ops, impersonation start). It mirrors middleware's
+  own trial-org exemption deliberately, so the two checks can't disagree in either direction.
+- **`0078` — a live, directly-exploitable DB-level bypass, found by auditing policy *intent* against
+  the app's own guards.** Four admin-only settings tables (`ship_by_notification_settings`,
+  `ship_by_notification_reps`, `bom_alert_settings`, `picking_calendar_settings`) shipped with an
+  `is_org_member` **ALL** policy while every Server Action enforced `requireOrgAdmin` — so any
+  ordinary org member could bypass the app entirely with a direct PostgREST call using their own
+  session token. Fixed to `is_org_admin` (member-level SELECT unaffected). Three service-managed
+  log/queue tables (`ship_by_change_pending`, `ship_by_change_notifications`,
+  `bom_alert_notifications`) had no legitimate client access at all — both policies dropped
+  outright, matching the `billing_checkout_tokens` precedent. `anon`'s broad default table grants
+  were also revoked (dead surface — RLS already blocks `anon` everywhere via `auth.uid()` being
+  null — but it was unaudited). **This is the same class as round 2's `0052`**: a policy whose
+  *name* said admin-only while its predicate said member. Migration `0078` and its test were
+  verified live against production in a rolled-back transaction before applying.
+- **P1-5 (lock failure policy) — was deferred pending an explicit decision; Anton approved it
+  2026-08-17.** PO creation claim, Stock Transfer creation claim, and the per-instance `sync_locks`
+  now **FAIL CLOSED**, reversing this codebase's usual fail-open philosophy for exactly these three
+  — they are the genuine write-integrity backstops against a duplicate Cin7 mutation during a guard
+  outage. `sync_route_locks` and the `push_jobs`/`pull_jobs` job-chunk lock are **deliberately left
+  fail-open**: both are read/cache coordination, with `sync_locks` as the real backstop underneath
+  them. So the fail-open rule still holds everywhere except where a guard outage could duplicate a
+  real money document.
+- **Six Cin7 creates were missing `nonIdempotentCreate`** (customers, suppliers, products, work
+  centres, reference entries for Category/Brand/UOM, production BOM versions) — round 1's P0-2 had
+  only covered the PO/Stock-Transfer pair it named. Each of the six already has a find-by-identifier
+  function (SKU/Name/Code) providing reconciliation on the next sync attempt, since a thrown
+  ambiguous error leaves `sync_state`'s hash stale. The super-admin-only diagnostic PO-creation tool
+  in `debug.ts` is protected too, but only partially — **no reconciliation mechanism exists there**,
+  and that residual risk is documented rather than hidden.
+- **A quota accounting blind spot reopened P0-3's multi-worker race for reads.** A GET whose
+  `acquireCin7Slot` came back `"degrade"` fell through to the in-memory per-invocation throttle and
+  **sent the request anyway, completely unaccounted by the shared bucket**. `"degrade"` is now
+  treated identically to `"blocked"` in `cin7Request`, and the whole now-dead local throttle
+  machinery was deleted — so the in-memory fallback described in the Phase 2.1 section above no
+  longer exists. `cin7RawRequest` (the diagnostics escape hatch) previously had **zero** quota
+  participation and now acquires a real token first. Config gained upper-bound clamps and NaN
+  rejection — and `.env.example` had been shipping `RATE_LIMIT_RPS=1`, **exactly on Cin7's 60/min
+  ceiling rather than under it**; corrected to `0.8`.
+- **The hard operation deadline (P0-4) didn't actually bound everything.** Quota-acquisition wait,
+  the fetch `AbortSignal` timeout, and every retry backoff sleep are now each clamped to the
+  operation's *remaining* budget, recomputed fresh before each blocking sub-operation — two concrete
+  overrun timelines were traced showing a contended quota wait or a slow fetch-plus-backoff could
+  blow past `operationTimeoutMs` by seconds before the top-of-loop check caught it.
+- **P2 (API optimisation) closed as NOT CURRENTLY JUSTIFIED** with evidence, rather than deferred
+  again. Four further investigations (the `api/sync*` routes, diagnostics authorization, Cin7 write
+  audit-log coverage, credential encryption hardening) produced real findings but were out of that
+  round's P0-only scope — they're recorded in the re-audit report so a future round doesn't
+  redundantly re-investigate them.
+
+Verified: `tsc`/`eslint` clean, full suite **1152 tests**, `next build` clean (all 50 routes).
+
+## P1-7 — import/export resource boundaries (PR #56, 2026-08-18)
+
+Investigated as part of round 3, implemented on Anton's instruction. Three genuine gaps: no import
+size/row/column/field limits existed at all, one export path was truly unbounded, and there was zero
+formula-injection protection on the app's one human-facing CSV export.
+
+- **Imports**: new shared `src/lib/csv-upload-limits.ts` enforces upload size (10 MB), row count
+  (50k), column count (200) and per-field length (10k chars) at a **single chokepoint**
+  (`parseCsv`/`parseStocktakeFile`), *before* per-row zod validation runs. The import Server Actions
+  also reject an oversized upload before reading the file into memory, and sniff for NUL bytes to
+  reject binary content disguised as `.csv`. `next.config.ts` caps the Server Action body at 10 MB
+  to match — a limit enforced only in application code would be reachable past the framework's own
+  default.
+- **Exports**: `fetchAllRpcRows` (`src/reports/query.ts`) now throws past its row cap instead of
+  paging forever; every other report function turned out to be *accidentally* capped by PostgREST's
+  own max-rows config. `renderXlsxBase64` is the one chokepoint every XLSX export funnels through
+  and enforces the same cap plus a 10k-char cell limit. (The cap was 25,000 here; migration `0082`
+  later raised `MAX_RPC_ROWS` to 75,000 when LBL's real line volume crossed it — see the LBL
+  section above.)
+- **Formula injection**: `sanitizeCsvField`/`toSanitizedCsv` (`src/export/csv-format.ts`) prefix a
+  value starting with `=`/`+`/`-`/`@` or a control character with a single quote, so a spreadsheet
+  treats it as literal text. **Applied only to `buildIncludedSalesCsv`** — the one human-facing CSV
+  export. Every other CSV export round-trips back into Cin7 and must stay byte-exact, so those keep
+  the unchanged `csvField`/`toCsv`. Don't "fix" the others for consistency; the asymmetry is the
+  decision.
+
+## Security sign-off — final closure matrix (PR #57, 2026-08-18)
+
+`docs/security-final-closure-matrix.md` exists to replace *"FIXED after fixing the examples an audit
+named"* with a **finite, enumerated, testable definition of done**. Twelve parallel read-only
+investigation passes produced seven frozen blockers; scope was then frozen to exactly those seven,
+per Anton's decisions D1–D5. Status: `SECURITY SIGN-OFF COMPLETE`, all seven `PROVEN CLOSED`.
+
+- **`0079` (Blocker 4, decision D4)** — `category_instances` is now **service-role only**. Its one
+  policy was named `"org admins manage"` but was actually `is_org_member`-gated: an internal
+  name-vs-intent contradiction that **survived three prior rounds**, including round 1's P0-5 which
+  had reconstructed that very table's RLS into migration history without noticing the predicate was
+  wrong. Third instance of this class after `0052` and `0078` — hence one of the new regression
+  guards is specifically an RLS policy-name-vs-intent check.
+- **`0080` (Blocker 5, decision D5)** — both claim RPCs **never age-reclaim an `ambiguous` claim**,
+  forcing the caller's existing reconciliation path to run regardless of TTL. Without this, a claim
+  left ambiguous by a lost response could simply age out past its 15-minute TTL and be reclaimed by
+  a later attempt, which is exactly the blind retry the `ambiguous` status exists to prevent.
+- **Blocker 6 (decision D2)** — the six `/api/sync*` **POST handlers were deleted entirely**. Each
+  trusted a body-supplied `orgId` behind only a shared `CRON_SECRET` check — the identical shape
+  round 2's P1-6 had already found and removed in `/api/import`, and flagged then as a follow-up.
+  The GET handlers (the real Vercel Cron entry point) are untouched. Zero legitimate callers.
+- **Blockers 1–3, 7** — `requirePrivilegedOrgAdmin`'s own Supabase reads now fail closed (the same
+  destructure-`data`-ignore-`error` bug as round 2's P1-1, in the guard round 3 had just written);
+  all 31 `debug*` Server Actions call `requirePrivilegedSuperAdmin` **directly** instead of
+  inheriting `requireOrgAdmin` via `loadInstanceCreds`; write-capable diagnostics plus
+  `upsertInstance`/`deleteInstance` now write an audit trail (never the Application Key or a
+  decrypted credential); and the PO/Transfer batch actions log **every attempted batch
+  unconditionally**, not just when something was created, with ambiguous/blocked distinguished from
+  definite failure.
+- **Eight permanent regression guards** shipped alongside, each aimed at a specific class rather
+  than a specific bug: privileged-action inventory, diagnostics guard, service-role allowlist, a
+  repo-wide Cin7 gateway boundary check, the Cin7 POST classification registry
+  (`docs/cin7-post-classification.json`), the RLS policy-name-vs-intent check, ambiguous-claim
+  expiry tests, and an internal tenant-scoping route check.
+- **Privacy policy wording narrowed (decision D3)** — it no longer claims *every* write is logged.
+  It now accurately describes user-initiated/high-impact Cin7 writes and credential changes as
+  logged (including failures), and background sync as logged **at the run level, not per record**.
+  Keep `docs/legal/privacy-policy.md` and the `/privacy` page in sync by substance, as always.
+
+**The adversarial verification pass is the part worth internalizing.** After the seven blockers went
+CI-green, eight further agents re-derived each fix from actual code and live DB state, instructed to
+default to "the claim might be wrong." Five blockers survived. **Two were refuted:**
+
+1. **Blocker 3's audit logging was worse than the gap it replaced — it recorded false successes.**
+   Three of the four write-capable diagnostic wrappers branched on whether the *call itself* threw,
+   but the underlying `debug.ts` helpers **catch the real Cin7 write's failure internally and return
+   normally** — so a failed or genuinely ambiguous write was logged as `outcome: "success"`. Each
+   wrapper now inspects the real result (`putSucceeded`, `attempts.some(...)`) instead.
+   **Generalize this**: a wrapper that infers an outcome from throw/no-throw is wrong whenever the
+   thing it wraps handles its own errors — and a confidently wrong audit record is worse than no
+   record at all.
+2. **Blocker 6's regression guard didn't work**, though the underlying deletion was confirmed
+   complete. The test matched only the literal `body.orgId` shape of the deleted code; three
+   syntactically different reintroductions of the identical vulnerability (destructuring, a
+   renamed body variable, a `targetOrgId`-style property) all passed it. Replaced with a multi-step
+   scan tracking every request-body variable and any org-id-shaped property access off it. Its own
+   doc comment now states the residual limit out loud: a tenant id derived **indirectly** (a DB
+   lookup keyed by some other body field) still can't be caught by a text-level scan and needs
+   human review.
+
+Both were classified as incomplete closure of an existing blocker rather than new findings, so both
+were fixed in place instead of becoming an eighth blocker — that framing is what kept the frozen
+scope honest. Final verification: `tsc`/`eslint` clean, **1266/1266 tests** passing, production build
+clean; `0078`/`0079`/`0080` each verified live against production in `begin`/`rollback` transactions
+before applying and re-verified against real post-migration state afterward.
+
 ## Known gaps (scoped, not yet started — see Task #33 in project tracking)
 
 Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas):
@@ -1488,6 +1660,13 @@ Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas
 
 - `docs/cin7-api-findings.md` — verified auth scheme, endpoints, rate limits, and every
   Cin7-API-vs-docs discrepancy found so far, with the live evidence for each.
+- `docs/security-reaudit-report-2026-08-17.md` — the per-item FIXED/DEFERRED/NOT-APPLICABLE
+  classification across all three re-audit rounds, plus the four round-3 investigations that
+  produced findings but weren't implemented (read this before re-investigating anything).
+- `docs/security-final-closure-matrix.md` — the seven frozen sign-off blockers, decisions D1-D5,
+  the per-blocker closure evidence, and the adversarial verification pass. Its Section C is
+  authoritative for current state; §6 is preserved as the historical record of how each blocker
+  was found and must not be read as still-open.
 - `supabase/migrations/` — canonical schema, applied in order; `0001` is the org-scoped foundation.
 - `src/audit/`, `src/sync/`, `src/import/` — the three main domain areas; each has its own test
   suite (`npx vitest run`) that has caught real logic bugs before shipping more than once — trust
