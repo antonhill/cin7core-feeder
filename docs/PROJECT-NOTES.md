@@ -352,6 +352,81 @@ prune/rewrite entries here rather than appending forever once something is fully
   **If this function gets slow again**: check whether a new CTE has reintroduced a redundant scan
   of the same base table before reaching for indexes — that was the entire cost here, not missing
   indexes (all the relevant `(org_id, ...)` indexes were already in place).
+- **Quotation + Margin module** (`/quotes`, V1 shipped 2026-08-26, migrations `0084`-`0086`) — build a
+  quote line-by-line against synced products with **live per-line and weighted-overall margin**, then
+  submit it to Cin7 Core as a real Sale/Quote. Full phase-by-phase record, including the Phase 0
+  discovery inventory and the five owner decisions, is in `docs/quotation-margin-module.md` (brief of
+  record: `docs/quotation-margin-module-brief.md`) — that file is the detail; this entry is the
+  decisions and gotchas.
+  - **Ships hidden by default** (`0085`): `QUOTES_MODULE` is registered in `module-nav.tsx`'s
+    `MODULES`, and `disabled_modules` only lists *explicitly*-disabled hrefs, so without the seed
+    every org would have had a half-built module appear on deploy. Exactly mirrors `0065` (Picking
+    Calendar) — **including its accepted gap**: the seed covers existing orgs only, and the
+    self-serve org RPC (`0076`) leaves `disabled_modules` at `'{}'`, so a **brand-new org signs up
+    with Quotes ON**. A super-admin opts each new org in/out via `/admin`. Same tradeoff Anton
+    accepted for Picking Calendar rather than building a second default mechanism.
+  - **The Cin7 Sale/Quote CREATE contract was the Phase 0 blocker — now confirmed live** against the
+    Spark Demo sandbox via `scripts/probe-quote-create.mjs` (an iterative probe, the same approach PO
+    creation needed over 7 rounds; keep the script, it's the re-verification tool). **Two steps, both
+    `nonIdempotentCreate`, every reference by NAME, not id:**
+    1. `POST /sale` — header (`Customer`, `Location`, `SaleOrderDate`, `SkipQuote:false`,
+       `TaxInclusive`, `TaxRule`, `PriceTier`, `SalesRepresentative`, `ExternalID`) → returns `ID`,
+       `Order.SaleOrderNumber` (e.g. `SO-00743`), `Status:"ESTIMATING"`, and echoes `ExternalID`.
+    2. `POST /sale/quote` — `SaleID` + `Lines[]` + `AdditionalCharges[]`.
+    **Three non-obvious findings worth not rediscovering**: `TaxRule` is required on the header **and**
+    every line/charge; Cin7 **uses the `Tax` amount you send** rather than deriving it from `TaxRule`
+    (sending `Tax:0` silently landed VAT as 0 — resolve the rate from `/ref/tax`'s
+    `TaxRuleList[].TaxPercent` and compute it); and `Total` is the discounted line amount **in the
+    quote's tax mode** — net when tax-exclusive, **gross** when tax-inclusive (Cin7 rejects a net
+    Total in inclusive mode with "Expected value is: <gross>"). Additional charges also need an
+    `Account` (the customer's `RevenueAccount`).
+  - **`ExternalID = QUOTE-<quoteId>` is an exact reconciliation key** — a genuine improvement on the
+    PO/Stock-Transfer pattern, whose reconciliation is only a best-effort heuristic (newest matching
+    DRAFT in the TTL window) because their create responses carry no client-supplied reference.
+    `ExternalID` round-trips on Sale, so an ambiguous submit is reconciled exactly, not guessed at.
+    Otherwise the idempotency machinery mirrors `0055`/`0056` exactly — `quote_creation_claims` +
+    `quote_creation_claim` RPC (`0084`), with `0080`'s "ambiguous never age-reclaims" rule baked in
+    from the start, and the claim **fails closed**. Registered in
+    `docs/cin7-post-classification.json` as `RECONCILE_BEFORE_RETRY`.
+  - **Margin engine** (`src/lib/quote-margin.ts`, pure) is the single source of truth, run
+    **client-side** for the live builder and **again server-side on save** — a client can never
+    persist its own totals. Overall margin is **weighted from summed revenue/cost, never an average
+    of line percentages**; margin is on **ex-tax** revenue; **a line whose cost is unknown is excluded
+    from the margin, never costed as 0**. Cost basis is the org's synced Cin7 Average Cost
+    (`products.average_cost`), resolved server-side by SKU.
+  - **A charge is excluded from margin by default** (`0086`, `quote_lines.margin_included` default
+    `false`) — an unknown charge cost must never masquerade as 100% margin. Entering an estimated cost
+    opts a charge back in; the entered value is **preserved while excluded**, so toggling doesn't lose
+    it. `quotes.margin_scope` (`overall` / `products_only`) drives an honest headline label
+    ("Estimated margin (shipping excluded)") rather than silently reporting a products-only number as
+    the whole picture.
+  - **A Cin7 Service item (e.g. Shipping) becomes a CHARGE, not a product line.** Added from search as
+    a product line it carried R0 cost and showed a misleading 100% margin. The search now flags
+    `cin7_type='Service'`, labels it in the dropdown ("service → charge"), and adds it as a charge
+    (excluded from margin by default, priced from the selected tier), submitted to Cin7 as an
+    additional charge.
+  - **Tier prices are fetched LIVE from Cin7 when a product is added**, not read from `price_tiers`.
+    The synced table only holds non-zero tiers from the last *manual* import (products/customers/
+    price tiers are **not** cron-synced — only availability, sales, purchases and builds are), so tier
+    toggling was stale and couldn't distinguish "no price at this tier" from "not imported".
+    `fetchProductTierPrices` pulls the full `Tier1..Tier10` including genuine zeros — one call per
+    add. The line is added instantly from synced prices, then the live set swaps in. Repricing on a
+    tier change sets a product line to that tier's price **or 0 when unpriced** (matching Cin7);
+    lines with no tier data (a loaded draft) are deliberately left untouched so prices are never
+    zeroed on load.
+  - **The estimated margin is written to the Cin7 Sale's `Note`** on submit (a writable, *internal*
+    field — not customer-facing): overall margin %, scope, est. GP and ex-VAT revenue, appended to
+    any note the user typed, so the commercial basis travels with the sale.
+  - **Authorization**: reads `requireModuleAccess('/quotes')`, writes `requireModuleWrite('/quotes')`
+    — module + billing, **no AAL2** (decision #4, matching the existing `pricing`/`replenish` member-
+    write precedent; AAL2 stays reserved for admin/instance/billing actions). RLS: org members read
+    `quotes`/`quote_lines`, no client write policy (service-role writes only from guarded actions);
+    `quote_creation_claims` is service-role only.
+  - **V1 limitations, deliberate**: ZAR-only (decision #3 — `currency`/`exchange_rate` columns exist
+    for a future FX pass, always `1` today); all lines use the **customer's** tax rule (a product's own
+    `SaleTaxRule` is not resolved); the sales-rep picker shows all `/me/contacts` rather than
+    filtering to `Type:"Sale"`; and **a submitted quote is frozen in Toolbox — the flow is
+    one-directional**, later edits happen in Cin7.
 - **Data Audit** (`/audit`): pulls a chosen instance's products live and flags missing
   Brand/sales-pricing/inventory-setup/GL-accounts, near-duplicate Category/UOM/Tag values
   (Levenshtein-based), incomplete `AdditionalAttribute1-10` values within a category (with a
@@ -1660,6 +1735,11 @@ Reviewed 2026-07-06 for client-readiness beyond the first client (Casa das Natas
 
 - `docs/cin7-api-findings.md` — verified auth scheme, endpoints, rate limits, and every
   Cin7-API-vs-docs discrepancy found so far, with the live evidence for each.
+- `docs/quotation-margin-module.md` — the Quotation + Margin module's full implementation
+  report: Phase 0 discovery (what to reuse, the local-data inventory and its freshness
+  caveats), the five owner decisions, the live-confirmed Cin7 Sale/Quote create contract, and
+  the V1 verification evidence. `scripts/probe-quote-create.mjs` re-verifies that contract
+  against a sandbox instance.
 - `docs/security-reaudit-report-2026-08-17.md` — the per-item FIXED/DEFERRED/NOT-APPLICABLE
   classification across all three re-audit rounds, plus the four round-3 investigations that
   produced findings but weren't implemented (read this before re-investigating anything).
