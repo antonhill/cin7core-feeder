@@ -18,7 +18,18 @@ import type { CurrentOrg } from "@/lib/current-org";
  * as middleware's own /mfa-challenge redirect would have forced before
  * reaching this action via the normal page flow.
  */
-async function requireAal2(action: string): Promise<void> {
+/**
+ * Exported (CCT-ADR-0015, 2026-09-02) so a write family can require a
+ * step-up WITHOUT also requiring an org-admin role. That decision closed D1:
+ * there is no blanket admin/AAL2 rule for Cin7 writes, and each write family
+ * is classified on its own risk — Purchase Order creation requires AAL2 while
+ * remaining available to an ordinary member, so it needs this check on its
+ * own rather than requirePrivilegedOrgAdmin's role+AAL2 composite.
+ *
+ * Fails closed: an unreadable or indeterminate assurance state throws rather
+ * than proceeding (CCT-ADR-0011).
+ */
+export async function requireAal2(action: string): Promise<void> {
   const supabase = await createSessionClient();
   const { data: aal, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
   if (error) throw new Error(`Could not verify two-factor authentication status: ${error.message}`);

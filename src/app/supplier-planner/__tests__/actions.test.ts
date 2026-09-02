@@ -9,6 +9,8 @@ import { Cin7ApiError } from "@/cin7/http";
 import { claimPoCreation, settlePoCreation, releasePoCreation, markPoCreationAmbiguous, findLikelyCreatedPurchaseOrder } from "@/lib/po-idempotency";
 import { groupLinesForPurchaseOrders } from "@/reports/supplier-planner/build";
 import { logActivity } from "@/lib/activity-log";
+import { requireAal2 } from "@/lib/require-privileged";
+import { requireOrgAdmin } from "@/lib/require-org-admin";
 
 vi.mock("@/lib/authorization", () => ({ requireModuleAccess: vi.fn() }));
 vi.mock("@/lib/billing", () => ({ requireWriteAllowed: vi.fn() }));
@@ -36,6 +38,7 @@ vi.mock("@/reports/query", () => ({ getReorderReport: vi.fn(), getSupplierPlanLo
 vi.mock("@/cin7/reference-lookups", () => ({ fetchAllLocations: vi.fn() }));
 vi.mock("@/cin7/product-supplier-options", () => ({ fetchAllProductsForSupplierPlanning: vi.fn() }));
 vi.mock("@/lib/require-org-admin", () => ({ requireOrgAdmin: vi.fn() }));
+vi.mock("@/lib/require-privileged", () => ({ requireAal2: vi.fn(), requirePrivilegedOrgAdmin: vi.fn(), requirePrivilegedSuperAdmin: vi.fn() }));
 
 const CURRENT_ORG = { orgId: "org1", userId: "u1", email: "a@b.c" };
 const GROUP = {
@@ -62,6 +65,8 @@ beforeEach(() => {
   vi.mocked(findLikelyCreatedPurchaseOrder).mockReset().mockResolvedValue(null);
   vi.mocked(createPurchaseOrder).mockReset();
   vi.mocked(claimPoCreation).mockReset();
+  vi.mocked(requireAal2).mockReset().mockResolvedValue(undefined);
+  vi.mocked(requireOrgAdmin).mockReset();
 });
 
 describe("security closure Blocker 7: createSupplierPlanPurchaseOrdersAction logs unconditionally", () => {
@@ -145,5 +150,91 @@ describe("security closure Blocker 7: createSupplierPlanPurchaseOrdersAction log
     expect(result.ok).toBe(true);
     const detail = vi.mocked(logActivity).mock.calls[0][1].detail as Record<string, unknown>;
     expect(detail.created).toBe(1);
+  });
+});
+
+/**
+ * CCT-ADR-0015 (2026-09-02): Purchase Order creation stays available to an
+ * ordinary member but requires a step-up (AAL2). These tests pin both halves
+ * — the assurance requirement AND the deliberate absence of an admin-role
+ * requirement — so neither can be lost or over-tightened silently.
+ */
+describe("CCT-ADR-0015: PO creation requires AAL2 but not an admin role", () => {
+  it("an ordinary member with module access, write eligibility and AAL2 reaches PO creation", async () => {
+    vi.mocked(claimPoCreation).mockResolvedValue({ claimed: true, existingStatus: null } as never);
+    vi.mocked(createPurchaseOrder).mockResolvedValue({ taskId: "po-1", orderNumber: "PO-1" } as never);
+
+    const result = await createSupplierPlanPurchaseOrdersAction("inst-1", FAKE_LINES);
+
+    expect(requireAal2).toHaveBeenCalledTimes(1);
+    expect(createPurchaseOrder).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(true);
+  });
+
+  it("denies before Cin7 is called when the session has not stepped up", async () => {
+    vi.mocked(requireAal2).mockRejectedValue(new Error("Two-factor authentication is required to create a Purchase Order."));
+
+    const result = await createSupplierPlanPurchaseOrdersAction("inst-1", FAKE_LINES);
+
+    expect(result.ok).toBe(false);
+    // The whole point: no Cin7 traffic, and no claim taken, on an assurance failure.
+    expect(createPurchaseOrder).not.toHaveBeenCalled();
+    expect(claimPoCreation).not.toHaveBeenCalled();
+    expect(loadCin7Credentials).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when assurance state cannot be read at all", async () => {
+    vi.mocked(requireAal2).mockRejectedValue(new Error("Could not verify two-factor authentication status: network"));
+
+    const result = await createSupplierPlanPurchaseOrdersAction("inst-1", FAKE_LINES);
+
+    expect(result.ok).toBe(false);
+    expect(createPurchaseOrder).not.toHaveBeenCalled();
+  });
+
+  it("does NOT newly require an org-admin role", async () => {
+    vi.mocked(claimPoCreation).mockResolvedValue({ claimed: true, existingStatus: null } as never);
+    vi.mocked(createPurchaseOrder).mockResolvedValue({ taskId: "po-1", orderNumber: "PO-1" } as never);
+
+    const result = await createSupplierPlanPurchaseOrdersAction("inst-1", FAKE_LINES);
+
+    expect(requireOrgAdmin).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+  });
+
+  it("still applies the module gate before assurance", async () => {
+    vi.mocked(requireModuleAccess).mockRejectedValue(new Error("You don't have access to this feature."));
+
+    const result = await createSupplierPlanPurchaseOrdersAction("inst-1", FAKE_LINES);
+
+    expect(result.ok).toBe(false);
+    expect(requireAal2).not.toHaveBeenCalled();
+    expect(createPurchaseOrder).not.toHaveBeenCalled();
+  });
+
+  it("still applies the billing write gate before assurance", async () => {
+    vi.mocked(requireWriteAllowed).mockRejectedValue(new Error("read-only during the trial"));
+
+    const result = await createSupplierPlanPurchaseOrdersAction("inst-1", FAKE_LINES);
+
+    expect(result.ok).toBe(false);
+    expect(requireAal2).not.toHaveBeenCalled();
+    expect(createPurchaseOrder).not.toHaveBeenCalled();
+  });
+
+  it("leaves claim/reconciliation behaviour unchanged once assurance passes", async () => {
+    vi.mocked(claimPoCreation).mockResolvedValue({ claimed: true, existingStatus: null } as never);
+    vi.mocked(createPurchaseOrder).mockRejectedValue(new Cin7ApiError(0, "network", false, true));
+
+    const result = await createSupplierPlanPurchaseOrdersAction("inst-1", FAKE_LINES);
+
+    // An ambiguous create still marks the claim ambiguous rather than releasing it,
+    // and is still reported as ambiguous (not lumped in with a definite failure).
+    expect(markPoCreationAmbiguous).toHaveBeenCalledTimes(1);
+    expect(releasePoCreation).not.toHaveBeenCalled();
+    const detail = vi.mocked(logActivity).mock.calls[0][1].detail as Record<string, unknown>;
+    expect(detail.ambiguous).toBe(1);
+    expect(detail.failed).toBe(0);
+    void result;
   });
 });

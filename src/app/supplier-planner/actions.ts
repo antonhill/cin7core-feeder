@@ -4,6 +4,7 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
 import { SUPPLIER_PLANNER_MODULE } from "@/app/module-nav";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
+import { requireAal2 } from "@/lib/require-privileged";
 import { requireWriteAllowed } from "@/lib/billing";
 import { logActivity } from "@/lib/activity-log";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
@@ -241,6 +242,17 @@ export async function createSupplierPlanPurchaseOrdersAction(
   try {
     const { orgId, userId, email } = await requireModuleAccess(SUPPLIER_PLANNER_MODULE.href);
     await requireWriteAllowed(orgId);
+    // CCT-ADR-0015 (2026-09-02): Purchase Order creation is classified as an
+    // ordinary-member action that ALSO requires a step-up. It creates an
+    // external financial commitment to a supplier, and its reconciliation is
+    // the weakest in the codebase (findLikelyCreatedPurchaseOrder matches only
+    // supplier + DRAFT status, so two draft POs to the same supplier in the
+    // same window are indistinguishable). Deliberately requireAal2 and NOT
+    // requirePrivilegedOrgAdmin: an admin role is explicitly NOT required —
+    // purchasing staff who hold the operational context are usually ordinary
+    // members. Runs before loadCin7Credentials/createPurchaseOrder so a failed
+    // assurance check never reaches Cin7.
+    await requireAal2("create a Purchase Order");
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
 
