@@ -10,6 +10,7 @@ import { getLastImportKeys } from "@/import/last-batch";
 import { requireModuleAccess } from "@/lib/authorization";
 import { IMPORT_MODULE } from "@/app/module-nav";
 import { requireWriteAllowed } from "@/lib/billing";
+import { requireAal2 } from "@/lib/require-privileged";
 import { claimJobLock, releaseJobLock } from "@/lib/job-lock";
 import { checkUploadSize, looksLikeText } from "@/lib/csv-upload-limits";
 
@@ -229,6 +230,24 @@ async function runNextChunk(
  * chunk, so a small catalog still finishes in one round-trip exactly like
  * before. Call continuePushJobAction with the returned jobId in a loop
  * while status is "running" — see src/hooks/usePushJob.ts.
+ *
+ * CCT-ADR-0015 classifies the user-triggered catalog push as an ordinary-
+ * member action that also requires a step-up (AAL2) — one authorization
+ * family covering the whole push, whose blast radius is the broad external
+ * master-data surface a chunk can create or update (products, customers,
+ * suppliers, BOMs and reference records). Deliberately requireAal2 and NOT
+ * an admin guard: the assurance sits on the action, not on the role.
+ *
+ * The check runs before the push_jobs row is inserted, so a push that never
+ * passed assurance leaves no job row behind for a later continuation to
+ * pick up — and well before scope resolution, the chunk lock, credentials
+ * and any Cin7 write.
+ *
+ * It is deliberately NOT pushed down into runNextChunk/syncOrgInstances or
+ * any shared sync layer: the cron entry point (GET /api/sync) reaches
+ * syncOrgInstances with no user session at all and is authorized
+ * independently by assertInternalAuth, so a user-assurance check there would
+ * be unsatisfiable by a machine actor.
  */
 export async function startPushJobAction(
   instanceIds: string[],
@@ -239,6 +258,7 @@ export async function startPushJobAction(
   try {
     const { orgId, userId, email } = await requireModuleAccess(IMPORT_MODULE.href);
     await requireWriteAllowed(orgId);
+    await requireAal2("push catalog data to Cin7");
     const db = createServiceRoleClient();
 
     const scope = await resolveScope(db, orgId, scopeSelection);
@@ -256,7 +276,30 @@ export async function startPushJobAction(
   }
 }
 
-/** Runs the next budgeted chunk of an in-progress push job. Call repeatedly until the returned status is no longer "running". */
+/**
+ * Runs the next budgeted chunk of an in-progress push job. Call repeatedly
+ * until the returned status is no longer "running".
+ *
+ * Assurance is re-checked here on every WRITE-CAPABLE continuation, not
+ * just once at job creation — exactly the reasoning the billing re-check
+ * below already documents. A push can span many chunks over a long period,
+ * and the session's assurance level may have fallen below AAL2 since the
+ * job started; a stale first-chunk authorization must not authorize future
+ * external writes. Note a repeated CHECK is not a repeated CHALLENGE: a
+ * session still at AAL2 simply proceeds.
+ *
+ * Deliberately scoped to the running branch only. Returning the state of a
+ * job that is already done or failed writes nothing to Cin7, so it needs no
+ * assurance — requiring it there would block a user from even reading the
+ * outcome of a push that has already finished.
+ *
+ * When assurance fails on a running job the job is left completely
+ * untouched: still "running", outcomes intact, chunk lock never claimed and
+ * no Cin7 work attempted. The same job is therefore resumable once the user
+ * steps up again — the page's own mount effect rediscovers it via
+ * getActivePushJobAction (see src/hooks/usePushJob.ts) rather than starting
+ * a second job or resetting progress.
+ */
 export async function continuePushJobAction(jobId: string): Promise<PushJobResult> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(IMPORT_MODULE.href);
@@ -276,6 +319,11 @@ export async function continuePushJobAction(jobId: string): Promise<PushJobResul
       .single();
     if (error || !job) return { ok: false, error: "Push job not found" };
     if (job.status !== "running") return { ok: true, jobId: job.id, status: job.status, outcomes: job.outcomes };
+
+    // Write-capable from here on — see this function's own doc comment for
+    // why assurance is re-checked per chunk and why a failure here must
+    // leave the job running and resumable rather than failing it.
+    await requireAal2("push catalog data to Cin7");
 
     return await runNextChunk(db, job.id, orgId, job.instance_ids, job.scope, { userId, email }, job.outcomes ?? []);
   } catch (e) {
