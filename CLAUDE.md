@@ -1,4 +1,4 @@
-# Corefeeder — development governance
+# Cin7 Core Toolbox (`cin7core-feeder`) — development governance
 
 **Read this section before making any change. It governs *where* and *how* work happens.
 The project-specific instructions imported at the bottom of this file govern *what* the code
@@ -33,7 +33,7 @@ must do — nothing here weakens, overrides, or replaces them.**
 
 ## Checkout roles
 
-`/Users/antonhill/cin7core-feeder` is the **main/admin checkout only**.
+The canonical main checkout is `~/dev/cin7core-feeder`. It is the **main/admin checkout only**.
 
 **Permitted there:**
 
@@ -54,12 +54,46 @@ bug-fix implementation
 experimental coding
 ```
 
+## Task worktrees
+
+Material development happens in a **task worktree**, created for a piece of work and removed
+once that work is merged.
+
+- Task worktrees live beside the main checkout, under `~/dev/`.
+- Naming pattern: `~/dev/cin7core-feeder-<task-slug>`, where `<task-slug>` names the work
+  (e.g. `~/dev/cin7core-feeder-quote-tax-fix`).
+- Worktrees are **local-machine infrastructure**. They are not tracked in the repository and
+  will legitimately differ between machines. **No specific named worktree is required by this
+  contract** — never assume a particular one exists, and never treat one that happens to exist
+  on a given machine as canonical.
+- If you have been assigned an existing worktree, use that one. Otherwise create your own.
+
+Create one from the main checkout:
+
+```bash
+R="$HOME/dev/cin7core-feeder"
+W="$HOME/dev/cin7core-feeder-<task-slug>"
+
+git -C "$R" fetch origin
+git -C "$R" worktree add -b <branch-name> "$W" origin/main
+```
+
+After the PR is merged, clean up from the main checkout:
+
+```bash
+git -C "$R" worktree remove "$W"
+git -C "$R" branch -d <branch-name>
+```
+
+`worktree remove` refuses a dirty worktree and `branch -d` refuses an unmerged branch — that is
+intended. Forcing either is a destructive operation covered by principle 5.
+
 ## Mandatory preflight
 
 Run this in full before any implementation work, and act on what it reports:
 
 ```bash
-R=/Users/antonhill/cin7core-feeder
+R="$HOME/dev/cin7core-feeder"
 
 git -C "$R" fetch origin
 git -C "$R" status
@@ -70,11 +104,13 @@ git -C "$R" log --oneline HEAD..origin/main
 git -C "$R" worktree list
 ```
 
-Then verify the feature worktree you have been assigned. For the current feature worktree
-`/Users/antonhill/Toolbox New Feature Tree`:
+`git worktree list` is the authoritative answer to which worktrees exist on this machine — read
+it rather than assuming a path.
+
+Then verify the task worktree you are working in:
 
 ```bash
-W="/Users/antonhill/Toolbox New Feature Tree"
+W="$HOME/dev/cin7core-feeder-<task-slug>"
 
 git -C "$W" status
 git -C "$W" branch --show-current
