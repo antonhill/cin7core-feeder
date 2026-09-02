@@ -4,6 +4,7 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
 import { PRICING_MODULE } from "@/app/module-nav";
 import { requireWriteAllowed } from "@/lib/billing";
+import { requireAal2 } from "@/lib/require-privileged";
 import { logActivity } from "@/lib/activity-log";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsForPricing, type PricingFetchResult } from "@/cin7/pricing";
@@ -45,6 +46,15 @@ export async function loadPricingPreviewAction(instanceId: string): Promise<Pric
  * product (via the same `applyProductFixes` Data Audit's bulk fixes already
  * use), each carrying only the ID plus the single `PriceTierN` field being
  * changed.
+ *
+ * CCT-ADR-0015 classifies this as an ordinary-member action that also
+ * requires a step-up (AAL2), so it uses `requireAal2` and deliberately NOT an
+ * admin guard — the assurance sits on the action, not on the role. The check
+ * runs before credentials are loaded and before any fix payload is built, so
+ * a failed or unreadable assurance state can never reach a Cin7 write. It is
+ * NOT pushed down into `applyProductFixes`: that helper is shared with Data
+ * Audit bulk fixes and reorder-point edits, both of which ADR-0015 classifies
+ * as needing no added assurance.
  */
 export async function applyPriceUpdatesAction(
   instanceId: string,
@@ -56,6 +66,7 @@ export async function applyPriceUpdatesAction(
   try {
     const { orgId, userId, email } = await requireModuleAccess(PRICING_MODULE.href);
     await requireWriteAllowed(orgId);
+    await requireAal2("apply bulk price updates");
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
 
