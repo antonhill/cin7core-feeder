@@ -43,3 +43,7 @@ next-env.d.ts
 
 # local-only Claude Code skills
 .claude/skills/
+
+# local-only tooling artefacts (generated in-repo, not project config)
+.github/hooks/impeccable.json
+supabase/.temp/
