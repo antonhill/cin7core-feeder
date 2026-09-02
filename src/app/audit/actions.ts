@@ -4,6 +4,7 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
 import { AUDIT_MODULE } from "@/app/module-nav";
 import { requireWriteAllowed } from "@/lib/billing";
+import { requireAal2 } from "@/lib/require-privileged";
 import { logActivity } from "@/lib/activity-log";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchAllProductsWithBom } from "@/cin7/products";
@@ -76,7 +77,29 @@ export async function applyProductFixesAction(instanceId: string, fixes: Product
   }
 }
 
-/** Shared by the 4 near-duplicate-value merge actions below — same request shape, same activity-log entry shape. */
+/**
+ * Shared by the 4 near-duplicate-value merge actions below — same request
+ * shape, same activity-log entry shape — and the single enforcement boundary
+ * for the "merge near-duplicates" write family: all four delegate here, and
+ * nothing else does.
+ *
+ * CCT-ADR-0015 classifies merge as an ordinary-member action that also
+ * requires a step-up (AAL2), uniquely among Data Audit's five write families,
+ * because its targets are not fixed at confirmation time: each merge re-reads
+ * the instance and selects the products to rewrite at execution, so the
+ * operator cannot fully know its reach in advance. The other four families
+ * (bulk product field set, attribute template copy, supplier assignment, bulk
+ * party field set) act on an explicit, already-displayed target list and stay
+ * member-only with no added assurance.
+ *
+ * The check lives HERE and not in `applyProductFixes`/`applyPartyFixes`:
+ * those helpers are shared with the no-added-assurance families above (and
+ * with Replenish's reorder-point edits), so gating them would silently
+ * over-gate actions ADR-0015 deliberately left ungated. It also runs before
+ * credentials are loaded, so a failed or unreadable assurance state cannot
+ * reach a Cin7 write. Deliberately requireAal2 and NOT an admin guard — merge
+ * stays member-accessible.
+ */
 async function mergeAction(
   instanceId: string,
   fromNames: string[],
@@ -90,6 +113,7 @@ async function mergeAction(
   try {
     const { orgId, userId, email } = await requireModuleAccess(AUDIT_MODULE.href);
     await requireWriteAllowed(orgId);
+    await requireAal2(`merge ${fieldLabel} values`);
     const db = createServiceRoleClient();
     const creds = await loadCin7Credentials(db, orgId, instanceId);
     const result = await merge(creds, fromNames, toName);
