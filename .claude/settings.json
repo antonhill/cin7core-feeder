@@ -32,6 +32,9 @@
       "Bash(npx next:*)",
       "Bash(curl -s http://localhost:*)",
       "Bash(curl -sS http://localhost:*)"
+    ],
+    "additionalDirectories": [
+      "~/Obsidian/Spark Knowledge"
     ]
   }
 }

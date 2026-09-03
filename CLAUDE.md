@@ -150,10 +150,14 @@ working tree clean
 stop at PR-ready
 ```
 
-Note that this project's own standing rules add a requirement these generic checks do not
-cover: a `"use server"` file must be verified with a real production request, because
-`next build` passing does **not** prove it loads at runtime. See the standing rules in the
-imported project notes.
+Note that this project's own standing rule adds a requirement these generic checks do not
+cover: **a `"use server"` file must contain ONLY async function exports** — no exported
+consts, objects, or `export type {...}` re-exports. One non-function export fails the
+*whole module* at runtime request time, taking down every action in that file, not just the
+one you touched. `next build` succeeding does **not** prove this — it is a runtime-only
+check. Verify with a real production request (`next build && next start` + hit the route, or
+an actual Vercel deploy) after touching any actions file. This has caused two separate
+production outages already.
 
 ## Final report
 
@@ -173,9 +177,64 @@ PR readiness
 
 **Do not merge directly into `main`. Stop at PR-ready.**
 
+## Spark Knowledge (durable product/architecture/decision knowledge)
+
+**Source of truth, split three ways:**
+
+- **GitHub / code** — what the software actually does. Implementation truth.
+- **This file and `AGENTS.md`** — how Claude works in this repository: worktree governance,
+  preflight, completion requirements, and (in `AGENTS.md`) framework-version caveats. Never
+  product knowledge.
+- **Spark Knowledge (Obsidian)** — what Spark knows about the product: architecture, features,
+  external integrations, accepted decisions, history, terminology, and open questions. Why it's
+  built that way, and what's still unresolved.
+
+**`docs/PROJECT-NOTES.md` is retired.** It is no longer institutional memory and must never be
+read as current instructions or current product knowledge — see its own retirement notice for
+where each kind of content it used to hold now lives.
+
+**Vault root.** The knowledge root is stored once, home-relative, in
+`.claude/spark-knowledge.path` (`~/Obsidian/Spark Knowledge/02 Products/Cin7 Core Toolbox`) —
+read the root from that file rather than hard-coding it, expanding a leading `~` to `$HOME`. It
+stays portable across the same user's machines with no per-machine edit.
+
+**Filesystem access.** The vault is outside this repository, so Claude Code needs it granted
+explicitly. This project grants read access to `~/Obsidian/Spark Knowledge` (the vault only, not
+the whole home folder) via `permissions.additionalDirectories` in the committed
+`.claude/settings.json`, so a session started in this repo can read it without `--add-dir`.
+Because the grant lives in committed project settings, Claude Code shows a **one-time
+workspace-trust prompt** on first launch in this repo — approve it once and access persists. `~`
+expansion inside `additionalDirectories` is not officially documented; if a fresh session cannot
+read the vault, the supported fallback is a per-machine, git-ignored
+`.claude/settings.local.json` carrying an absolute `additionalDirectories` path.
+
+**Before material work**, load the minimum relevant context — never the whole vault:
+
+- `Cin7 Core Toolbox.md` (map), `Cin7 Core Toolbox Current State.md`,
+  `Cin7 Core Toolbox Global Principles.md`;
+- the relevant `Architecture/`, `Features/`, and `Integrations/` notes for the task's domain;
+- the applicable accepted ADRs, via `Decisions/Cin7 Core Toolbox Decisions.md` as the index;
+- `Open Questions.md` and `Decisions/Cin7 Core Toolbox Decisions.md`'s own Deferred Decisions
+  section, only when the task could touch an unresolved or deliberately-postponed matter.
+
+Use `/spark-context` to do this selectively for a task; `/spark-preflight` combines it with the
+worktree/preflight rules above; `/spark-close` checks after material work whether durable
+knowledge changed and writes back only what genuinely changed; `/record-decision` records an
+*explicitly human-approved* decision as the next `CCT-ADR-00NN`.
+
+**Never** assume Obsidian overrides current code. If code and a `current`-status note conflict:
+stop, name the conflict, and work out whether code changed without a knowledge write-back or the
+note is stale — do not silently pick one. Distinguish note types by their frontmatter `status`:
+`current` knowledge, `historical` audits/incidents (in `History/`), and `accepted` ADRs (in
+`Decisions/`) are different kinds of claim with different rules for how they may be touched.
+
+**Never**, from any of these four commands: silently rewrite an accepted ADR, rewrite a
+historical note to match current truth, promote an Open Question to a Decision without explicit
+human approval, copy a secret or credential into the vault, or update an unrelated note while
+closing a task.
+
 ---
 
 # Project-specific instructions
 
 @AGENTS.md
-@docs/PROJECT-NOTES.md
