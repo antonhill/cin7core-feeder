@@ -79,6 +79,12 @@ export async function getPurchasePlannerSettingsAction(): Promise<SupplierPlanAc
  */
 export async function savePurchasePlannerSettingsAction(settings: PurchasePlannerSettings): Promise<SupplierPlanActionResult<null>> {
   try {
+    // CCT-ADR-0010: a role guard answers WHO, never WHICH capability.
+    // requireOrgAdmin performs no module check, while requireModuleAccess
+    // narrows every non-super-admin by their allowed_modules — with no role
+    // condition — and applies the org's disabled_modules to everyone. So an
+    // owner/admin can pass the role check while being denied this module.
+    await requireModuleAccess(SUPPLIER_PLANNER_MODULE.href);
     const { orgId } = await requireOrgAdmin();
     const db = createServiceRoleClient();
     const { error } = await db.from("purchase_planner_settings").upsert(
