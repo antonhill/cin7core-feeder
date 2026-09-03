@@ -31,8 +31,17 @@ import { join, relative } from "node:path";
  *      exported async arrow binding would have escaped the whole-family claim
  *      entirely — a known syntactic escape has no place in a security
  *      regression test. Same approach as the Cin7 mutation registry guard.
- *      An exported callable this scanner cannot classify FAILS the test
- *      rather than being silently skipped.
+ *
+ *   3. EVERY top-level export shape is now accounted for, not just the two
+ *      the scanner could analyse. `export { x }`, `export { x } from "..."`,
+ *      `export * from "..."`, `export default x`, `export default wrap(x)`
+ *      and an anonymous `export default async function () {}` were all
+ *      silently invisible — six further escapes. The rule is conservative and
+ *      needs no call graph or re-export resolution: a shape whose guards
+ *      cannot be established LOCALLY is reported UNCLASSIFIED and FAILS the
+ *      test. Only shapes the AST proves are type-only (`export type { Foo }`,
+ *      `export { type Foo }`) are ignored, so a type re-export is not a false
+ *      positive.
  */
 const ROOT = join(__dirname, "..", "..", "..");
 const REPORTS_DIR = join(ROOT, "src", "app", "reports");
@@ -69,7 +78,7 @@ export interface DiscoveredAction {
   file: string;
   name: string;
   body: string;
-  /** True when the exported binding is callable but this scanner could not resolve a function body for it. */
+  /** True when the export is callable-or-unknown but this scanner could not establish its guards locally. */
   unclassified: boolean;
 }
 
@@ -78,21 +87,57 @@ function hasExportModifier(node: ts.Node): boolean {
 }
 
 /**
- * Every exported callable in one `actions.ts`, discovered from the AST:
- * function declarations, and `export const foo = async (...) => {}` /
- * `= async function () {}` bindings alike. A `"use server"` file may only
- * export async functions, so an exported binding whose initializer is not a
- * resolvable function is reported as unclassified rather than ignored.
+ * Every top-level export in one `actions.ts`, discovered from the AST.
+ *
+ * Analysable shapes (named function declarations, and `export const x =`
+ * arrow / function-expression bindings) come back with a real body to
+ * inspect. Every other export shape comes back UNCLASSIFIED, which fails the
+ * suite — deliberately, because this scanner resolves no imports and follows
+ * no re-exports, so it cannot prove such an export is guarded. Only exports
+ * the AST proves are type-only are dropped.
  */
 export function discoverExportedActions(relPath: string, sourceText: string): DiscoveredAction[] {
   const sourceFile = ts.createSourceFile(relPath, sourceText, ts.ScriptTarget.Latest, true);
   const found: DiscoveredAction[] = [];
+  const add = (name: string, body: string, unclassified: boolean) => found.push({ file: relPath, name, body, unclassified });
 
   for (const statement of sourceFile.statements) {
+    // `export { x }`, `export { x } from "..."`, `export * from "..."`,
+    // `export * as ns from "..."`. None carries an export MODIFIER, so these
+    // are matched on node kind rather than by hasExportModifier.
+    if (ts.isExportDeclaration(statement)) {
+      if (statement.isTypeOnly) continue; // `export type { Foo }` — proven type-only
+      const clause = statement.exportClause;
+      if (clause && ts.isNamedExports(clause)) {
+        for (const element of clause.elements) {
+          if (element.isTypeOnly) continue; // `export { type Foo }`
+          add(element.name.text, statement.getText(sourceFile), true);
+        }
+      } else if (clause && ts.isNamespaceExport(clause)) {
+        add(`* as ${clause.name.text}`, statement.getText(sourceFile), true);
+      } else {
+        // `export * from "..."` — an unbounded re-export surface.
+        add("* (star re-export)", statement.getText(sourceFile), true);
+      }
+      continue;
+    }
+
+    // `export default x`, `export default wrap(x)`, `export = x`.
+    if (ts.isExportAssignment(statement)) {
+      add("default", statement.getText(sourceFile), true);
+      continue;
+    }
+
     if (!hasExportModifier(statement)) continue;
 
-    if (ts.isFunctionDeclaration(statement) && statement.name) {
-      found.push({ file: relPath, name: statement.name.text, body: statement.getText(sourceFile), unclassified: false });
+    if (ts.isFunctionDeclaration(statement)) {
+      if (statement.name) {
+        add(statement.name.text, statement.getText(sourceFile), false);
+      } else {
+        // Anonymous `export default async function () {}` — no stable name to
+        // key an exemption on, so it is surfaced rather than analysed.
+        add("default (anonymous function)", statement.getText(sourceFile), true);
+      }
       continue;
     }
 
@@ -100,14 +145,13 @@ export function discoverExportedActions(relPath: string, sourceText: string): Di
       for (const decl of statement.declarationList.declarations) {
         if (!ts.isIdentifier(decl.name)) continue;
         const init = decl.initializer;
-        // Types and interfaces never reach here (they are not variable statements).
         if (!init) continue;
         if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
-          found.push({ file: relPath, name: decl.name.text, body: decl.getText(sourceFile), unclassified: false });
+          add(decl.name.text, decl.getText(sourceFile), false);
         } else if (ts.isCallExpression(init) || ts.isIdentifier(init) || ts.isPropertyAccessExpression(init)) {
           // Could be a callable produced elsewhere (a wrapper, a re-export) —
           // this scanner cannot see its guards, so fail rather than pass it.
-          found.push({ file: relPath, name: decl.name.text, body: decl.getText(sourceFile), unclassified: true });
+          add(decl.name.text, decl.getText(sourceFile), true);
         }
       }
     }
@@ -232,5 +276,61 @@ describe("report-action scanner discovery", () => {
     expect(find(`async function helper() {}`)).toEqual([]);
     expect(find(`export const LIMIT = 100;`)).toEqual([]);
     expect(find(`export interface Foo { a: string }`)).toEqual([]);
+  });
+
+  // Every remaining top-level export shape. None of these can be verified
+  // locally, so each must SURFACE — silently disappearing is the failure
+  // mode this whole scanner exists to prevent.
+
+  it("A. `export { loadThing };` cannot silently disappear", () => {
+    const found = find(`async function loadThing() {}\nexport { loadThing };`);
+    expect(found.map((a) => a.name)).toEqual(["loadThing"]);
+    expect(found[0].unclassified).toBe(true);
+  });
+
+  it("B. `export { loadThing } from \"./other\";` is unclassified", () => {
+    const found = find(`export { loadThing } from "./other";`);
+    expect(found.map((a) => a.name)).toEqual(["loadThing"]);
+    expect(found[0].unclassified).toBe(true);
+  });
+
+  it("C. `export * from \"./other\";` is unclassified", () => {
+    const found = find(`export * from "./other";`);
+    expect(found).toHaveLength(1);
+    expect(found[0].unclassified).toBe(true);
+    expect(found[0].name).toMatch(/star re-export/);
+  });
+
+  it("D. `export default loadThing;` is unclassified", () => {
+    const found = find(`export default loadThing;`);
+    expect(found.map((a) => a.name)).toEqual(["default"]);
+    expect(found[0].unclassified).toBe(true);
+  });
+
+  it("E. `export default wrap(loadThing);` is unclassified", () => {
+    const found = find(`export default wrap(loadThing);`);
+    expect(found.map((a) => a.name)).toEqual(["default"]);
+    expect(found[0].unclassified).toBe(true);
+  });
+
+  it("F. an anonymous `export default async function () {}` is surfaced, not ignored", () => {
+    const found = find(`export default async function () { return 1; }`);
+    expect(found).toHaveLength(1);
+    expect(found[0].unclassified).toBe(true);
+    expect(found[0].name).toMatch(/anonymous/);
+  });
+
+  it("G. `export type { SomeType };` is safely ignored — proven type-only, not a false positive", () => {
+    expect(find(`export type { SomeType };`)).toEqual([]);
+    expect(find(`export type { A } from "./other";`)).toEqual([]);
+    // Inline type specifiers inside a value export are dropped individually.
+    const mixed = find(`export { loadThing, type SomeType };`);
+    expect(mixed.map((a) => a.name)).toEqual(["loadThing"]);
+  });
+
+  it("also surfaces a namespace re-export", () => {
+    const found = find(`export * as helpers from "./other";`);
+    expect(found).toHaveLength(1);
+    expect(found[0].unclassified).toBe(true);
   });
 });
