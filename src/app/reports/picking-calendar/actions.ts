@@ -122,13 +122,27 @@ export async function getPickingCalendarSettingsAction(): Promise<PickingCalenda
 }
 
 /**
- * Gated to org owners/admins (requireOrgAdmin) — same reasoning as Purchase
- * Planner's savePurchasePlannerSettingsAction: this reshapes what every
- * user on the board sees, not a personal preference, so it shouldn't be
- * left open to any org member the way reading it is.
+ * Requires BOTH conditions, in this order and both before the DB client:
+ *
+ *   1. `requireModuleAccess(PICKING_CALENDAR_MODULE.href)` — the same module
+ *      gate the read actions above use.
+ *   2. `requireOrgAdmin()` — org owners/admins only, same reasoning as
+ *      Purchase Planner's savePurchasePlannerSettingsAction: this reshapes
+ *      what every user on the board sees, not a personal preference, so it
+ *      shouldn't be left open to any org member the way reading it is.
+ *
+ * The role guard does NOT subsume the module gate, and assuming it did was a
+ * real review finding here. `requireOrgAdmin` performs no module check at
+ * all, while `requireModuleAccess` narrows EVERY non-super-admin by their
+ * `org_members.allowed_modules` allow-list — with no role condition — and
+ * applies the org's `disabled_modules` to everyone. Team management can set
+ * `allowed_modules` for any member id, owners and admins included. So an
+ * owner or admin can pass the role check while being denied this module,
+ * either org-wide or individually.
  */
 export async function savePickingCalendarSettingsAction(offsetDays: number): Promise<PickingCalendarActionResult<null>> {
   try {
+    await requireModuleAccess(PICKING_CALENDAR_MODULE.href);
     const { orgId } = await requireOrgAdmin();
     const db = createServiceRoleClient();
     const { error } = await db.from("picking_calendar_settings").upsert(
