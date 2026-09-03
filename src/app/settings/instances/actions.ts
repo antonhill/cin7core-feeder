@@ -6,6 +6,8 @@ import { testConnection } from "@/cin7/client";
 import { CIN7_API_ORIGIN } from "@/cin7/api-origin";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { requirePrivilegedOrgAdmin } from "@/lib/require-privileged";
+import { requireModuleAccess } from "@/lib/authorization";
+import { INSTANCES_MODULE } from "@/app/module-nav";
 import { getBillingStatus } from "@/lib/billing";
 import { logActivity, type ActivityActor } from "@/lib/activity-log";
 
@@ -92,6 +94,12 @@ export async function listInstances(): Promise<ActionResult> {
   try {
     // Instance config carries Account IDs + key metadata — owner/admin only.
     // Security re-audit round 3, item 1 (P1-2): AAL2 required too — credential metadata.
+    // CCT-ADR-0010: the module boundary is re-established at the action
+    // itself, not inherited from middleware or a layout. A role guard
+    // answers WHO; it performs no module check at all, and an owner or
+    // admin can be denied this module org-wide via disabled_modules or
+    // individually via their own allowed_modules.
+    await requireModuleAccess(INSTANCES_MODULE.href);
     const { orgId } = await requirePrivilegedOrgAdmin("view Cin7 instance configuration");
     const db = createServiceRoleClient();
     // Security re-audit P0-1: base_url deliberately not selected — nothing
@@ -128,6 +136,12 @@ export async function upsertInstance(params: {
   try {
     // Create / update / replace-key — owner/admin only.
     // Security re-audit round 3, item 1 (P1-2): AAL2 required too — writes credentials.
+    // CCT-ADR-0010: the module boundary is re-established at the action
+    // itself, not inherited from middleware or a layout. A role guard
+    // answers WHO; it performs no module check at all, and an owner or
+    // admin can be denied this module org-wide via disabled_modules or
+    // individually via their own allowed_modules.
+    await requireModuleAccess(INSTANCES_MODULE.href);
     const { orgId, userId, email } = await requirePrivilegedOrgAdmin("manage Cin7 instances");
     const db = createServiceRoleClient();
     const actor: ActivityActor = { userId, email };
@@ -265,6 +279,10 @@ async function loadInstanceCreds(instanceId: string) {
 
 export async function testInstanceConnection(instanceId: string): Promise<TestConnectionResult> {
   try {
+    // Module boundary explicitly at the action; the org-admin role check
+    // stays inside loadInstanceCreds rather than being duplicated here.
+    // Effective path: module -> role -> credential read -> live Cin7 test.
+    await requireModuleAccess(INSTANCES_MODULE.href);
     const creds = await loadInstanceCreds(instanceId);
     const result = await testConnection(creds);
     return { ok: result.ok, message: `[${result.status || "network"}] ${result.message}` };
@@ -276,6 +294,12 @@ export async function testInstanceConnection(instanceId: string): Promise<TestCo
 export async function deleteInstance(instanceId: string): Promise<ActionResult> {
   try {
     // Security re-audit round 3, item 1 (P1-2): AAL2 required too — deletes credentials.
+    // CCT-ADR-0010: the module boundary is re-established at the action
+    // itself, not inherited from middleware or a layout. A role guard
+    // answers WHO; it performs no module check at all, and an owner or
+    // admin can be denied this module org-wide via disabled_modules or
+    // individually via their own allowed_modules.
+    await requireModuleAccess(INSTANCES_MODULE.href);
     const { orgId, userId, email } = await requirePrivilegedOrgAdmin("delete Cin7 instances");
     const db = createServiceRoleClient();
     const actor: ActivityActor = { userId, email };
