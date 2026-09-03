@@ -29,6 +29,24 @@ import { join, relative } from "node:path";
  * unrecognised dynamic shape fails loudly instead of passing silently. That
  * is the opposite of the old regex's default, which was to pass anything it
  * did not recognise.
+ *
+ * Two further bypasses were closed in review:
+ *
+ *   3. DELETE. http.ts's own method union is GET|POST|PUT|DELETE and it
+ *      paces anything that is not GET as a write, but the scanner only
+ *      recognised POST and PUT — so a future literal `method: "DELETE"`
+ *      would have passed silently. DELETE is now mutation-capable. There is
+ *      deliberately NO DELETE classification in the taxonomy: no DELETE call
+ *      site exists today, and when one is added the guard will fail for lack
+ *      of a registry row, forcing the taxonomy decision at that moment
+ *      rather than pre-inventing one.
+ *
+ *   4. GATEWAY ALIASING. The scanner recognises a gateway call by its callee
+ *      name, so `import { cin7Request as go }` — which still legitimately
+ *      travels through the gateway, and so passes cin7-gateway-boundary's
+ *      no-bare-fetch check — would have hidden a mutation from it. Rather
+ *      than building a cross-file call graph, aliasing and rebinding the
+ *      gateway identifiers is now forbidden outright and tested below.
  */
 
 const ROOT = join(__dirname, "..", "..", "..");
@@ -36,6 +54,13 @@ const REGISTRY_PATH = join(ROOT, "docs", "cin7-post-classification.json");
 
 /** The gateway helpers every Cin7 request must go through — see cin7-gateway-boundary.test.ts, which forbids bare fetch() alongside this. */
 const GATEWAY_FUNCTIONS = new Set(["cin7Request", "cin7RawRequest"]);
+/**
+ * Every method http.ts treats as a write. Kept in step with that file's own
+ * `method?: "GET" | "POST" | "PUT" | "DELETE"` union and its
+ * `(options.method ?? "GET") !== "GET"` write test — an invariant asserted
+ * below rather than assumed.
+ */
+const MUTATION_METHODS = new Set(["POST", "PUT", "DELETE"]);
 const GUARDED_DIRS = [join("src", "cin7"), join("src", "audit")];
 const VALID_CLASSIFICATIONS = new Set(["IDEMPOTENT_POST", "NON_IDEMPOTENT_CREATE", "RECONCILE_BEFORE_RETRY", "VERIFIED_SAFE_POST_UPDATE"]);
 
@@ -168,7 +193,7 @@ export function findMutationCalls(relPath: string, sourceText: string): Discover
               const resolved = resolveMethodExpression(methodProp.initializer);
               methods = resolved.values;
               if (resolved.unknown) shape = "dynamic";
-              else if (resolved.values.some((v) => v.toUpperCase() === "POST" || v.toUpperCase() === "PUT")) {
+              else if (resolved.values.some((v) => MUTATION_METHODS.has(v.toUpperCase()))) {
                 shape = resolved.values.length > 1 ? "conditional" : "literal";
               }
             } else if (methodProp) {
@@ -202,6 +227,115 @@ export function findMutationCalls(relPath: string, sourceText: string): Discover
 
   visit(sourceFile);
   return found;
+}
+
+const HTTP_MODULE_SPECIFIERS = new Set(["@/cin7/http", "./http", "../cin7/http", "@/cin7/http.js"]);
+
+export interface GatewayBinding {
+  file: string;
+  line: number;
+  kind: "aliased-import" | "namespace-import" | "rebound" | "non-call-reference";
+  detail: string;
+}
+
+/**
+ * Every place the gateway's identity could be lost.
+ *
+ * The mutation scanner recognises a gateway call by its callee name, so any
+ * alias or rebinding would hide the call from it while still travelling
+ * through the gateway — which means cin7-gateway-boundary.test.ts (bare
+ * fetch / duplicated credential headers) does not catch it either.
+ *
+ * The convention enforced here, chosen over building a cross-file call
+ * graph: **the gateway functions are imported under their own names and
+ * referenced only as the callee of a direct call.** A namespace import of
+ * the http module is forbidden too, so `http.cin7Request(...)` is not a
+ * second supported spelling — there is exactly one.
+ */
+export function findGatewayBindingViolations(relPath: string, sourceText: string): GatewayBinding[] {
+  const sourceFile = ts.createSourceFile(relPath, sourceText, ts.ScriptTarget.Latest, true);
+  const violations: GatewayBinding[] = [];
+  const at = (node: ts.Node) => sourceFile.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+
+  const visit = (node: ts.Node): void => {
+    // import { cin7Request as go } / import * as http from "@/cin7/http"
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && HTTP_MODULE_SPECIFIERS.has(node.moduleSpecifier.text)) {
+      const bindings = node.importClause?.namedBindings;
+      if (bindings && ts.isNamespaceImport(bindings)) {
+        violations.push({ file: relPath, line: at(node), kind: "namespace-import", detail: `import * as ${bindings.name.text} from "${node.moduleSpecifier.text}"` });
+      } else if (bindings && ts.isNamedImports(bindings)) {
+        for (const el of bindings.elements) {
+          if (el.propertyName && GATEWAY_FUNCTIONS.has(el.propertyName.text)) {
+            violations.push({ file: relPath, line: at(el), kind: "aliased-import", detail: `${el.propertyName.text} as ${el.name.text}` });
+          }
+        }
+      }
+    }
+
+    // const go = cin7Request  /  const go = something.cin7Request
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      const init = node.initializer;
+      const referenced =
+        (ts.isIdentifier(init) && GATEWAY_FUNCTIONS.has(init.text) && init.text) ||
+        (ts.isPropertyAccessExpression(init) && ts.isIdentifier(init.name) && GATEWAY_FUNCTIONS.has(init.name.text) && init.name.text);
+      if (referenced) {
+        violations.push({ file: relPath, line: at(node), kind: "rebound", detail: `${node.name.getText(sourceFile)} = ${init.getText(sourceFile)}` });
+      }
+    }
+
+    // Any other mention of the identifier that is not the callee of a call —
+    // passing it as an argument, returning it, storing it in an object, etc.
+    if (ts.isIdentifier(node) && GATEWAY_FUNCTIONS.has(node.text)) {
+      const parent = node.parent;
+      const isCallee = ts.isCallExpression(parent) && parent.expression === node;
+      const isImportName = ts.isImportSpecifier(parent) || ts.isImportClause(parent);
+      const isDeclarationName =
+        (ts.isFunctionDeclaration(parent) || ts.isVariableDeclaration(parent) || ts.isPropertySignature(parent) || ts.isMethodSignature(parent)) && (parent as { name?: ts.Node }).name === node;
+      const isPropertyName = (ts.isPropertyAccessExpression(parent) && parent.name === node) || ts.isPropertyAssignment(parent);
+      if (!isCallee && !isImportName && !isDeclarationName && !isPropertyName) {
+        violations.push({ file: relPath, line: at(node), kind: "non-call-reference", detail: node.text });
+      }
+    }
+
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+  return violations;
+}
+
+/**
+ * cin7RawRequest is treated as read-only by the mutation scanner. That is
+ * true only while http.ts keeps it GET-only, so the assumption is pinned
+ * here rather than trusted: if a future edit gives it a method or body
+ * option, or changes its hardcoded fetch method, this fails and the
+ * classification architecture has to be revisited before it can ship.
+ */
+export function rawRequestShape(httpSource: string): { params: string[]; fetchMethods: string[]; mutationLiterals: string[] } {
+  const sourceFile = ts.createSourceFile("http.ts", httpSource, ts.ScriptTarget.Latest, true);
+  let decl: ts.FunctionDeclaration | undefined;
+  const findDecl = (node: ts.Node): void => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === "cin7RawRequest") decl = node;
+    ts.forEachChild(node, findDecl);
+  };
+  findDecl(sourceFile);
+  if (!decl) return { params: ["(cin7RawRequest not found)"], fetchMethods: [], mutationLiterals: [] };
+
+  const params = decl.parameters.map((p) => p.name.getText(sourceFile));
+  const fetchMethods: string[] = [];
+  const mutationLiterals: string[] = [];
+  const walk = (node: ts.Node): void => {
+    if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name) && node.name.text === "method") {
+      fetchMethods.push(node.initializer.getText(sourceFile));
+    }
+    if (ts.isShorthandPropertyAssignment(node) && node.name.text === "method") fetchMethods.push("(shorthand)");
+    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && MUTATION_METHODS.has(node.text.toUpperCase())) {
+      mutationLiterals.push(node.text);
+    }
+    ts.forEachChild(node, walk);
+  };
+  walk(decl);
+  return { params, fetchMethods, mutationLiterals };
 }
 
 function toPosix(p: string): string {
@@ -285,6 +419,55 @@ describe("Cin7 POST/PUT classification registry", () => {
     }
   });
 
+  it("detects DELETE as a mutation, and no DELETE call site exists today", () => {
+    // http.ts's own union is GET|POST|PUT|DELETE and it paces anything that
+    // is not GET as a write, so DELETE must be mutation-capable here too.
+    expect(MUTATION_METHODS.has("DELETE")).toBe(true);
+
+    // There is deliberately no DELETE classification in the taxonomy. When
+    // the first DELETE call site appears, the "classified or exempt" check
+    // above fails for lack of a registry row, forcing the taxonomy decision
+    // then rather than pre-inventing one now.
+    const deletes = discovered.filter((d) => d.methods.some((m) => m.toUpperCase() === "DELETE"));
+    expect(deletes, "a DELETE call site now exists — classify it and decide its taxonomy").toEqual([]);
+  });
+
+  it("no source file aliases, rebinds or otherwise loses the gateway's identity", () => {
+    const violations: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) {
+          if (entry === "__tests__" || entry === "node_modules") continue;
+          walk(full);
+          continue;
+        }
+        if (!entry.endsWith(".ts") && !entry.endsWith(".tsx")) continue;
+        const rel = toPosix(relative(ROOT, full));
+        // http.ts declares and exports them; it is the definition, not a caller.
+        if (rel === "src/cin7/http.ts") continue;
+        for (const v of findGatewayBindingViolations(rel, readFileSync(full, "utf8"))) {
+          violations.push(`${v.file}:${v.line} ${v.kind} — ${v.detail}`);
+        }
+      }
+    };
+    walk(join(ROOT, "src"));
+    // An alias would still travel through the gateway (so cin7-gateway-boundary
+    // passes) while hiding the call from the mutation scanner above.
+    expect(violations).toEqual([]);
+  });
+
+  it("cin7RawRequest is still GET-only — the scanner's read-only assumption about it", () => {
+    const shape = rawRequestShape(readFileSync(join(ROOT, "src", "cin7", "http.ts"), "utf8"));
+
+    // Signature: creds, path, query — no method, body, options or init.
+    expect(shape.params).toEqual(["creds", "path", "query"]);
+    // Its fetch method is the literal "GET", not a variable or a parameter.
+    expect(shape.fetchMethods).toEqual(['"GET"']);
+    // No POST/PUT/DELETE literal anywhere in its body.
+    expect(shape.mutationLiterals).toEqual([]);
+  });
+
   it("the guarded surface is exhaustive — no gateway call site exists outside src/cin7/ and src/audit/", () => {
     const stray: string[] = [];
     const walk = (dir: string): void => {
@@ -365,6 +548,22 @@ describe("Cin7 mutation scanner — failure modes", () => {
     expect(find(`async function f(c, opts){ await cin7Request(c, "/t", opts); }`)[0].shape).toBe("dynamic");
   });
 
+  it("detects a literal DELETE — http.ts paces any non-GET as a write", () => {
+    const found = find(`async function removeThing(c){ await cin7Request(c, "/thing", { method: "DELETE" }); }`);
+    expect(found.map((f) => [f.function, f.shape])).toEqual([["removeThing", "literal"]]);
+  });
+
+  it("detects a conditional GET/DELETE — the DELETE branch is enough", () => {
+    const found = find(`async function maybeRemove(c, gone){ await cin7Request(c, "/t", { method: gone ? "DELETE" : "GET" }); }`);
+    expect(found).toHaveLength(1);
+    expect(found[0].shape).toBe("conditional");
+    expect(found[0].methods.sort()).toEqual(["DELETE", "GET"]);
+  });
+
+  it("does NOT classify an explicit literal GET as a mutation", () => {
+    expect(find(`async function read(c){ await cin7Request(c, "/thing", { method: "GET" }); }`)).toEqual([]);
+  });
+
   it("does NOT classify an ordinary GET as a mutation", () => {
     expect(find(`async function read(c){ await cin7Request(c, "/thing", { query: { page: 1 } }); }`)).toEqual([]);
     expect(find(`async function read2(c){ await cin7Request(c, "/thing"); }`)).toEqual([]);
@@ -413,5 +612,83 @@ describe("Cin7 mutation registry matching", () => {
   it("accepts an exempt function, and only that function in its file", () => {
     expect(unclassified([{ file: "src/cin7/debug.ts", function: "probeThing" }])).toEqual([]);
     expect(unclassified([{ file: "src/cin7/debug.ts", function: "newProbe" }])).toEqual(["src/cin7/debug.ts:newProbe"]);
+  });
+});
+
+/**
+ * The gateway-identity rules, against synthetic sources. Each case is a way
+ * a real mutation could travel through the gateway while the name-based
+ * mutation scanner above never saw it.
+ */
+describe("Cin7 gateway identity — alias and rebinding bypasses", () => {
+  const check = (src: string) => findGatewayBindingViolations("src/cin7/fixture.ts", src);
+
+  it("REJECTS an aliased import of cin7Request", () => {
+    const v = check(`import { cin7Request as go } from "@/cin7/http";\nasync function createThing(c){ await go(c, "/Thing", { method: "POST" }); }`);
+    expect(v.map((x) => x.kind)).toContain("aliased-import");
+  });
+
+  it("REJECTS an aliased import of cin7RawRequest", () => {
+    expect(check(`import { cin7RawRequest as raw } from "@/cin7/http";`).map((x) => x.kind)).toContain("aliased-import");
+  });
+
+  it("REJECTS a local rebinding of the gateway", () => {
+    expect(check(`import { cin7Request } from "@/cin7/http";\nconst go = cin7Request;`).map((x) => x.kind)).toContain("rebound");
+    expect(check(`const go = cin7RawRequest;`).map((x) => x.kind)).toContain("rebound");
+  });
+
+  it("REJECTS rebinding through a property access", () => {
+    expect(check(`const go = helpers.cin7Request;`).map((x) => x.kind)).toContain("rebound");
+  });
+
+  it("REJECTS a namespace import of the gateway module — one spelling only", () => {
+    const v = check(`import * as http from "@/cin7/http";\nasync function f(c){ await http.cin7Request(c, "/t", { method: "POST" }); }`);
+    expect(v.map((x) => x.kind)).toContain("namespace-import");
+  });
+
+  it("REJECTS passing the gateway around as a value", () => {
+    expect(check(`import { cin7Request } from "@/cin7/http";\nregister(cin7Request);`).map((x) => x.kind)).toContain("non-call-reference");
+  });
+
+  it("ACCEPTS the one sanctioned form — a direct named import, called directly", () => {
+    expect(check(`import { cin7Request } from "@/cin7/http";\nasync function pushThing(c){ await cin7Request(c, "/Thing", { method: "POST" }); }`)).toEqual([]);
+    expect(check(`import { cin7Request, cin7RawRequest, Cin7ApiError } from "@/cin7/http";\nasync function f(c){ await cin7RawRequest(c, "/t"); }`)).toEqual([]);
+  });
+
+  it("does not flag an unrelated import from another module", () => {
+    expect(check(`import { somethingElse as alias } from "@/lib/other";`)).toEqual([]);
+  });
+});
+
+describe("cin7RawRequest GET-only invariant", () => {
+  it("fails if the raw helper gains a method option", () => {
+    const shape = rawRequestShape(`
+      export async function cin7RawRequest(creds: C, path: string, query?: Q, options?: { method?: string }) {
+        const r = await fetch(url, { method: options?.method ?? "GET" });
+      }
+    `);
+    expect(shape.params).not.toEqual(["creds", "path", "query"]);
+    expect(shape.fetchMethods).not.toEqual(['"GET"']);
+  });
+
+  it("fails if the raw helper's fetch method becomes a write", () => {
+    const shape = rawRequestShape(`
+      export async function cin7RawRequest(creds: C, path: string, query?: Q) {
+        const r = await fetch(url, { method: "POST" });
+      }
+    `);
+    expect(shape.fetchMethods).toEqual(['"POST"']);
+    expect(shape.mutationLiterals).toContain("POST");
+  });
+
+  it("passes for the current GET-only shape", () => {
+    const shape = rawRequestShape(`
+      export async function cin7RawRequest(creds: C, path: string, query?: Q) {
+        const r = await fetch(url, { method: "GET", redirect: "manual" });
+      }
+    `);
+    expect(shape.params).toEqual(["creds", "path", "query"]);
+    expect(shape.fetchMethods).toEqual(['"GET"']);
+    expect(shape.mutationLiterals).toEqual([]);
   });
 });
