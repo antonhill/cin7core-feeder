@@ -8,9 +8,14 @@ Built for Casa das Natas (see `docs/`), designed to be reused across clients —
 
 ## Project notes
 
-See `docs/PROJECT-NOTES.md` for the current feature inventory, standing rules for recurring bug
-classes, and known gaps — read this before starting work in a new session, especially on a
-different machine (Claude Code's own session memory is per-device and doesn't travel with the repo).
+`docs/PROJECT-NOTES.md` is retired — it no longer holds the feature inventory or product
+reasoning. Current product/architecture/decision knowledge lives in the **Spark Knowledge**
+Obsidian vault instead, at `02 Products/Cin7 Core Toolbox` — start at `Cin7 Core Toolbox.md`
+(the product map) or `Cin7 Core Toolbox Current State.md` (the verified current baseline).
+`CLAUDE.md`'s own "Spark Knowledge" section explains how a session reaches it and how to load it
+selectively (`/spark-context`, `/spark-preflight`, `/record-decision`, `/spark-close`) — read
+that before starting work in a new session, especially on a different machine (Claude Code's own
+session memory is per-device and doesn't travel with the repo).
 
 ## Stack
 
