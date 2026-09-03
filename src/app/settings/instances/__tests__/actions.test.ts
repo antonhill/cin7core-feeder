@@ -1,14 +1,15 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import { upsertInstance, deleteInstance } from "@/app/settings/instances/actions";
+// Moved to the Diagnostics capability — see settings/diagnostics/actions.ts.
+// The assertions below are unchanged; only the import path moved with them.
 import {
-  upsertInstance,
-  deleteInstance,
   debugTestCreatePurchaseOrder,
   debugPushOneCustomerAndSupplier,
   debugTestSaleShipByWriteBack,
   debugTestProductSupplierLink,
-} from "@/app/settings/instances/actions";
+} from "@/app/settings/diagnostics/actions";
 import { requirePrivilegedOrgAdmin, requirePrivilegedSuperAdmin } from "@/lib/require-privileged";
 import { requireCurrentOrg } from "@/lib/current-org";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
@@ -115,7 +116,11 @@ beforeEach(() => {
 });
 
 describe("security closure Blocker 2: every debug* action must directly enforce requirePrivilegedSuperAdmin (permanent regression guard)", () => {
-  const source = fs.readFileSync(path.join(process.cwd(), "src/app/settings/instances/actions.ts"), "utf8");
+  // The debug* actions moved to the Diagnostics capability (see
+  // settings/diagnostics/actions.ts). This guard follows them: the invariant
+  // it protects is "every debug* action enforces requirePrivilegedSuperAdmin
+  // in its own body", not the file they happen to live in.
+  const source = fs.readFileSync(path.join(process.cwd(), "src/app/settings/diagnostics/actions.ts"), "utf8");
   const sigRe = /^export async function (debug\w+)\(/gm;
   const names: string[] = [];
   let m: RegExpExecArray | null;
