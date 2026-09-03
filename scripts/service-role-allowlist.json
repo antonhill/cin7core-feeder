@@ -41,6 +41,7 @@
     "src/app/reports/reorder-report/actions.ts",
     "src/app/reports/shipping-calendar/actions.ts",
     "src/app/reports/stock-health/actions.ts",
+    "src/app/settings/diagnostics/actions.ts",
     "src/app/settings/instances/actions.ts",
     "src/app/settings/members/actions.ts",
     "src/app/settings/notifications/actions.ts",

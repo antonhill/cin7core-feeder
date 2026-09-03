@@ -32,9 +32,9 @@ import {
   debugCheckProductAvailabilityForSkus,
   debugProbeWorkCentrePaths,
   debugPushOneCustomerAndSupplier,
-  listInstances,
-  type InstanceRecord,
-} from "../instances/actions";
+  listDiagnosticInstancesAction,
+  type DiagnosticInstance,
+} from "./actions";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { DIAGNOSTICS_MODULE } from "@/app/module-nav";
 
@@ -46,7 +46,7 @@ import { DIAGNOSTICS_MODULE } from "@/app/module-nav";
  * writes against a customer's live Cin7 account, not just reads).
  */
 export default function DiagnosticsPage() {
-  const [instances, setInstances] = useState<InstanceRecord[]>([]);
+  const [instances, setInstances] = useState<DiagnosticInstance[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; message: string }>>({});
@@ -63,7 +63,7 @@ export default function DiagnosticsPage() {
 
   useEffect(() => {
     startTransition(async () => {
-      const result = await listInstances();
+      const result = await listDiagnosticInstancesAction();
       if (!result.ok) {
         setError(result.error ?? "Unknown error");
         return;
