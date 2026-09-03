@@ -1,21 +1,90 @@
 {
-  "_comment": "Security re-audit final closure, regression guardrail #5. Every file under src/cin7/ or src/audit/ that sends a Cin7 POST or PUT-as-create must be listed here (or in exemptFiles) with an explicit classification — enforced by src/test/__tests__/cin7-post-classification.test.ts. Classification is one of: IDEMPOTENT_POST (Cin7 itself dedupes / re-sending is safe), NON_IDEMPOTENT_CREATE (carries nonIdempotentCreate:true; a retry after a network failure throws instead of silently resending), RECONCILE_BEFORE_RETRY (the caller has a full claim-table + reconciliation mechanism, not just the flag — the gold standard), VERIFIED_SAFE_POST_UPDATE (a PUT/POST against an already-existing, ID-targeted record — re-sending changes nothing new). See docs/security-final-closure-matrix.md section 6.2 for the investigation this registry snapshots (2026-08-18).",
+  "_comment": "Security re-audit final closure, regression guardrail #5. Every function under src/cin7/ or src/audit/ that can send a Cin7 mutation (POST, PUT or DELETE — http.ts paces anything that is not GET as a write) must appear here as an { file, function, classification } row, or in exemptFunctions with a reason — enforced at file+function granularity by src/test/__tests__/cin7-post-classification.test.ts, which discovers mutations from the TypeScript AST rather than by text match. `function` names the function that CONTAINS the mutating call, since that is what the guard can verify; where the classified behaviour depends on a caller (e.g. its existence check), the row carries a `note`. Classification is one of: IDEMPOTENT_POST (Cin7 itself dedupes / re-sending is safe), NON_IDEMPOTENT_CREATE (carries nonIdempotentCreate:true; a retry after a network failure throws instead of silently resending), RECONCILE_BEFORE_RETRY (the caller has a full claim-table + reconciliation mechanism, not just the flag — the gold standard), VERIFIED_SAFE_POST_UPDATE (a PUT/POST against an already-existing, ID-targeted record — re-sending changes nothing new). A function containing both a create and an update branch is classified by its create branch, the stronger of the two. There is deliberately NO DELETE classification: no DELETE call site exists today, and the guard will fail when the first one appears, forcing the taxonomy decision then. The gateway functions must be imported under their own names and called directly — aliasing, rebinding and namespace imports are rejected, so a call cannot travel through the gateway while hiding from this registry. See docs/security-final-closure-matrix.md section 6.2 for the investigation this registry snapshots (2026-08-18).",
   "entries": [
-    { "file": "src/cin7/customers.ts", "function": "pushCustomer", "classification": "NON_IDEMPOTENT_CREATE" },
-    { "file": "src/cin7/suppliers.ts", "function": "pushSupplier", "classification": "NON_IDEMPOTENT_CREATE" },
-    { "file": "src/cin7/purchase-write.ts", "function": "createPurchaseOrder", "classification": "RECONCILE_BEFORE_RETRY" },
-    { "file": "src/cin7/stock-transfers.ts", "function": "createStockTransfer", "classification": "RECONCILE_BEFORE_RETRY" },
-    { "file": "src/cin7/reference-lookups.ts", "function": "ensureReferenceExists", "classification": "NON_IDEMPOTENT_CREATE" },
-    { "file": "src/cin7/sales.ts", "function": "updateSaleShipBy", "classification": "VERIFIED_SAFE_POST_UPDATE" },
-    { "file": "src/cin7/sales.ts", "function": "markSaleShipped", "classification": "IDEMPOTENT_POST" },
-    { "file": "src/cin7/sale-quote-write.ts", "function": "createSaleQuote", "classification": "RECONCILE_BEFORE_RETRY" },
-    { "file": "src/cin7/products.ts", "function": "pushProduct", "classification": "NON_IDEMPOTENT_CREATE" },
-    { "file": "src/cin7/work-centres.ts", "function": "createWorkCentre", "classification": "NON_IDEMPOTENT_CREATE" },
-    { "file": "src/audit/apply-party-fixes.ts", "function": "applyPartyFixes", "classification": "VERIFIED_SAFE_POST_UPDATE" },
-    { "file": "src/audit/apply-fixes.ts", "function": "applyProductFixes", "classification": "VERIFIED_SAFE_POST_UPDATE" }
+    {
+      "file": "src/cin7/customers.ts",
+      "function": "pushCustomer",
+      "classification": "NON_IDEMPOTENT_CREATE"
+    },
+    {
+      "file": "src/cin7/suppliers.ts",
+      "function": "pushSupplier",
+      "classification": "NON_IDEMPOTENT_CREATE"
+    },
+    {
+      "file": "src/cin7/purchase-write.ts",
+      "function": "createPurchaseOrder",
+      "classification": "RECONCILE_BEFORE_RETRY"
+    },
+    {
+      "file": "src/cin7/stock-transfers.ts",
+      "function": "createStockTransfer",
+      "classification": "RECONCILE_BEFORE_RETRY"
+    },
+    {
+      "file": "src/cin7/reference-lookups.ts",
+      "function": "createReference",
+      "classification": "NON_IDEMPOTENT_CREATE",
+      "note": "The POST lives here; its reconciliation is the referenceExists check in the exported caller ensureReferenceExists, which re-checks before creating again on the next run."
+    },
+    {
+      "file": "src/cin7/sales.ts",
+      "function": "updateSaleShipBy",
+      "classification": "VERIFIED_SAFE_POST_UPDATE"
+    },
+    {
+      "file": "src/cin7/sales.ts",
+      "function": "markSaleShipped",
+      "classification": "IDEMPOTENT_POST"
+    },
+    {
+      "file": "src/cin7/sale-quote-write.ts",
+      "function": "createSaleQuote",
+      "classification": "RECONCILE_BEFORE_RETRY"
+    },
+    {
+      "file": "src/cin7/products.ts",
+      "function": "pushProduct",
+      "classification": "NON_IDEMPOTENT_CREATE"
+    },
+    {
+      "file": "src/cin7/work-centres.ts",
+      "function": "createWorkCentre",
+      "classification": "NON_IDEMPOTENT_CREATE"
+    },
+    {
+      "file": "src/cin7/production-bom.ts",
+      "function": "pushProductionBom",
+      "classification": "NON_IDEMPOTENT_CREATE",
+      "note": "method is `exists ? \"PUT\" : \"POST\"` with nonIdempotentCreate:!exists. Classified by the create branch. Reconciliation is findProductionBomVersion, re-checked on the next sync attempt — a find-then-create pattern, not a claim table, so NON_IDEMPOTENT_CREATE rather than RECONCILE_BEFORE_RETRY."
+    },
+    {
+      "file": "src/audit/apply-party-fixes.ts",
+      "function": "applyPartyFixes",
+      "classification": "VERIFIED_SAFE_POST_UPDATE"
+    },
+    {
+      "file": "src/audit/apply-fixes.ts",
+      "function": "applyProductFixes",
+      "classification": "VERIFIED_SAFE_POST_UPDATE"
+    }
   ],
-  "exemptFiles": [
-    "src/cin7/debug.ts"
+  "exemptFunctions": [
+    {
+      "file": "src/cin7/debug.ts",
+      "function": "tryPurchaseRequest",
+      "reason": "Diagnostic probe: method is a parameter, so the shape is trial-and-error across candidate requests rather than one classified operation. Carries nonIdempotentCreate on its POST branch, is super-admin+AAL2-gated (Blocker 2) and audit-logged including ambiguous outcomes (Blocker 3). Its lack of reconciliation is a named, accepted residual risk documented at the call site."
+    },
+    {
+      "file": "src/cin7/debug.ts",
+      "function": "tryPurchaseOrderLines",
+      "reason": "Same diagnostic probe pair as tryPurchaseRequest, same gating, same accepted residual."
+    },
+    {
+      "file": "src/cin7/debug.ts",
+      "function": "testProductSupplierLink",
+      "reason": "Diagnostic probe that PUTs an existing product by ID to discover which supplier-link payload shape Cin7 accepts. Update-only against an existing record (no create), super-admin+AAL2-gated. Exempt because it tries several candidate bodies in a loop rather than performing one classified operation."
+    }
   ],
-  "exemptFilesReason": "debug.ts's diagnostic probes build candidate POST/PUT shapes dynamically (trial-and-error against several plausible request shapes, see testCreatePurchaseOrder) rather than one static cin7Request( call site per function, resisting this file-level classification approach. Its two genuine create paths (tryPurchaseRequest/tryPurchaseOrderLines, reachable only via debugTestCreatePurchaseOrder) already carry nonIdempotentCreate + are super-admin+AAL2-gated (Blocker 2) + audit-logged including ambiguous outcomes (Blocker 3) — tracked there, not duplicated here."
+  "exemptFunctionsNote": "Exemptions are per FUNCTION, not per file: a new mutating function in an exempt file still fails the guard until it is classified or exempted deliberately. A stale exemption — one whose function no longer exists or no longer mutates — also fails."
 }
