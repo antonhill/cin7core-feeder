@@ -104,6 +104,11 @@ body {
   outline-offset: 2px;
 }
 
+/* The one Dialog primitive (src/components/ui/Dialog.tsx) uses the native <dialog> element for its built-in focus handling and top-layer stacking; this styles its browser-default backdrop rather than hand-rolling a separate overlay div. */
+dialog::backdrop {
+  background: color-mix(in srgb, var(--sidebar-bg) 50%, transparent);
+}
+
 /* Respect the OS-level reduced-motion preference app-wide, not per component. */
 @media (prefers-reduced-motion: reduce) {
   *,
