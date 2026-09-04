@@ -6,7 +6,11 @@
  * has a black theme" even though no component was actually styled for it.
  */
 :root {
-  --background: #f8fafc;
+  /* Level 0 (workspace) vs Level 1 (panel, always plain white) — a cooler,
+     slightly deeper neutral than a plain off-white so a white panel visibly
+     floats above the page rather than blending into it. Direction Option B,
+     approved 2026-09-04. */
+  --background: #eef1f6;
   --foreground: #0f172a;
   /* Dark sidebar palette — deliberately separate from the light content-area
      tokens above, since the sidebar is the one part of the UI that stays

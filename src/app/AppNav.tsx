@@ -276,7 +276,7 @@ export function AppNav({
         hasMultipleOrgs && <ActiveOrgSwitcher currentOrgId={orgId} />
       )}
 
-      <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-4">
+      <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-4">
         {links.map((link) => {
           const active = pathname.startsWith(link.href);
           const Icon = link.Icon;
@@ -284,16 +284,13 @@ export function AppNav({
             <Link
               key={link.href}
               href={link.href}
-              className={`group flex items-center gap-3 rounded-xl px-2.5 py-2 text-base font-medium transition-all ${
-                active ? "bg-sidebar-bg-raised text-sidebar-text-active shadow-sm" : "text-sidebar-text hover:bg-sidebar-bg-raised/60 hover:text-sidebar-text-active"
+              className={`group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                /* A solid indigo fill (not just a lighter navy tint) makes the active module unmistakable at a glance — direction Option B. Deliberately not a full pill: "compact operational," not bubbly. */
+                active ? "bg-primary text-white shadow-sm" : "text-sidebar-text hover:bg-sidebar-bg-raised/60 hover:text-sidebar-text-active"
               }`}
             >
-              {/* Every module icon now carries its own color (see module-nav.tsx's SELF_COLORED_ICON_BADGE) — link.gradient is the same neutral value for all of them, which read as a stark white square against this sidebar's dark background (confirmed live 2026-07-11). bg-sidebar-bg-raised (already used for the active/hover state just below) gives the chip a background native to this dark palette instead. */}
-              <span
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-bg-raised transition-transform ${
-                  active ? "shadow-sm" : "opacity-90 group-hover:scale-105 group-hover:opacity-100"
-                }`}
-              >
+              {/* Every module icon now carries its own color (see module-nav.tsx's SELF_COLORED_ICON_BADGE) — link.gradient is the same neutral value for all of them, which read as a stark white square against this sidebar's dark background (confirmed live 2026-07-11). This chip's own background is deliberately unchanged by the active state above: it stays on its native dark-sidebar chip color rather than sitting directly against the new indigo fill, which is what keeps every icon's own color readable regardless of which one is active. */}
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-bg-raised opacity-95 transition-transform group-hover:scale-105 group-hover:opacity-100">
                 <Icon className="h-5 w-5 shrink-0" />
               </span>
               <span className={`md:sr-only lg:not-sr-only ${active ? "font-semibold" : ""}`}>{link.label}</span>

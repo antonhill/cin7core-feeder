@@ -15,8 +15,9 @@ export function Table({ children, className = "" }: { children: React.ReactNode;
   );
 }
 
+/** A firmer two-tone rule (bg + a border a shade darker than the row dividers below it) reads as a real header boundary rather than one more thin gray line — direction Option B; deliberately not a literal black rule, which read as too harsh in the live app. */
 export function THead({ children }: { children: React.ReactNode }) {
-  return <thead className="border-b border-slate-200 bg-slate-50">{children}</thead>;
+  return <thead className="border-b-2 border-slate-300 bg-slate-50">{children}</thead>;
 }
 
 export function TBody({ children }: { children: React.ReactNode }) {
@@ -35,7 +36,7 @@ export function TH({
   return (
     <th
       scope="col"
-      className={`px-3 py-2 text-xs font-medium uppercase tracking-wide text-slate-500 ${align === "right" ? "text-right" : "text-left"} ${className}`}
+      className={`px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600 ${align === "right" ? "text-right" : "text-left"} ${className}`}
     >
       {children}
     </th>
@@ -61,6 +62,21 @@ export function TD({
   );
 }
 
-export function TR({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return <tr className={`hover:bg-slate-50 ${className}`}>{children}</tr>;
+/**
+ * `flagged` amplifies a row's EXISTING warning/danger state with a left-edge
+ * accent — it must only be passed for a condition the page already computes
+ * (needs-reorder, stockout risk, stale, etc.), never invented here. Purely a
+ * visual restatement of a fact the row's own data already carries.
+ */
+export function TR({
+  children,
+  className = "",
+  flagged,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  flagged?: "warning" | "danger";
+}) {
+  const flagClass = flagged === "danger" ? "border-l-2 border-l-danger" : flagged === "warning" ? "border-l-2 border-l-warning" : "";
+  return <tr className={`hover:bg-slate-50 ${flagClass} ${className}`}>{children}</tr>;
 }
