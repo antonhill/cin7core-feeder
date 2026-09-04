@@ -30,8 +30,14 @@ import type { PartyAuditIssue, PartyAuditIssueType, PartyAuditResult, PartyKind 
 import type { ApplyPartyFixesResult } from "@/audit/apply-party-fixes";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { AUDIT_MODULE } from "@/app/module-nav";
-import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { Alert } from "@/components/ui/Alert";
+import { Panel, PanelTitle } from "@/components/ui/Panel";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 type AuditScope = "products" | "customers" | "suppliers";
 
@@ -142,7 +148,7 @@ function IssueTypeSection({
   }
 
   return (
-    <details className="rounded-xl border border-amber-200 bg-amber-50 p-4" open={issues.length <= 5}>
+    <details className="rounded-lg border border-warning-border bg-warning-subtle p-4" open={issues.length <= 5}>
       <summary className="cursor-pointer font-medium text-amber-900">
         {config?.label ?? "Missing Sales Pricing"} — {issues.length} product{issues.length === 1 ? "" : "s"}
       </summary>
@@ -156,38 +162,28 @@ function IssueTypeSection({
       )}
 
       <div className="mt-3 flex flex-col gap-1.5 text-sm">
-        <label className="flex items-center gap-2 font-medium text-amber-900">
-          <input type="checkbox" checked={selected.size === issues.length && issues.length > 0} onChange={toggleAll} className="h-4 w-4" />
-          Select all
-        </label>
+        <Checkbox label="Select all" checked={selected.size === issues.length && issues.length > 0} onChange={toggleAll} className="border-amber-300" />
         {issues.map((issue) => (
           <label key={issue.productId} className="flex items-center gap-2 text-amber-800">
-            <input type="checkbox" checked={selected.has(issue.productId)} onChange={() => toggle(issue.productId)} className="h-4 w-4" />
+            <input type="checkbox" checked={selected.has(issue.productId)} onChange={() => toggle(issue.productId)} className="h-4 w-4 rounded border-amber-300 text-primary" />
             {issue.name} <span className="text-xs text-amber-600">({issue.sku})</span>
           </label>
         ))}
       </div>
 
       {config && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <input
-            type="text"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder={config.placeholder}
-            className="w-56 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
-          />
-          <button
-            type="button"
+        <div className="mt-3 flex flex-wrap items-end gap-2">
+          <Input label={config.field} hideLabel value={value} onChange={(e) => setValue(e.target.value)} placeholder={config.placeholder} className="w-56" />
+          <Button
+            size="sm"
             disabled={isApplying || selected.size === 0 || !value.trim()}
             onClick={() => {
               if (!confirm(`Set ${config.label} to "${value.trim()}" on ${selected.size} product(s)? This writes directly to Cin7.`)) return;
               onApply([...selected], config.field, value.trim());
             }}
-            className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
             Apply to {selected.size || ""} selected
-          </button>
+          </Button>
         </div>
       )}
     </details>
@@ -231,7 +227,7 @@ function PartyIssueSection({
   }
 
   return (
-    <details className="rounded-xl border border-amber-200 bg-amber-50 p-4" open={issues.length <= 5}>
+    <details className="rounded-lg border border-warning-border bg-warning-subtle p-4" open={issues.length <= 5}>
       <summary className="cursor-pointer font-medium text-amber-900">
         {PARTY_ISSUE_LABELS[type]} — {issues.length} {noun}
         {issues.length === 1 ? "" : "s"}
@@ -245,38 +241,28 @@ function PartyIssueSection({
       )}
 
       <div className="mt-3 flex flex-col gap-1.5 text-sm">
-        <label className="flex items-center gap-2 font-medium text-amber-900">
-          <input type="checkbox" checked={selected.size === issues.length && issues.length > 0} onChange={toggleAll} className="h-4 w-4" />
-          Select all
-        </label>
+        <Checkbox label="Select all" checked={selected.size === issues.length && issues.length > 0} onChange={toggleAll} className="border-amber-300" />
         {issues.map((issue) => (
           <label key={issue.partyId} className="flex items-center gap-2 text-amber-800">
-            <input type="checkbox" checked={selected.has(issue.partyId)} onChange={() => toggle(issue.partyId)} className="h-4 w-4" />
+            <input type="checkbox" checked={selected.has(issue.partyId)} onChange={() => toggle(issue.partyId)} className="h-4 w-4 rounded border-amber-300 text-primary" />
             {issue.name || "(unnamed)"}
           </label>
         ))}
       </div>
 
       {config && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <input
-            type="text"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder={config.placeholder}
-            className="w-56 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
-          />
-          <button
-            type="button"
+        <div className="mt-3 flex flex-wrap items-end gap-2">
+          <Input label={config.field} hideLabel value={value} onChange={(e) => setValue(e.target.value)} placeholder={config.placeholder} className="w-56" />
+          <Button
+            size="sm"
             disabled={isApplying || selected.size === 0 || !value.trim()}
             onClick={() => {
               if (!confirm(`Set ${config.label} to "${value.trim()}" on ${selected.size} ${noun}(s)? This writes directly to Cin7.`)) return;
               onApply([...selected], config.field, value.trim());
             }}
-            className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
             Apply to {selected.size || ""} selected
-          </button>
+          </Button>
         </div>
       )}
     </details>
@@ -295,32 +281,32 @@ function DuplicateGroupCard({
   const [keep, setKeep] = useState(group.names[0].name);
 
   return (
-    <div className="rounded-lg border border-amber-200 bg-white p-3 text-sm">
+    <div className="rounded-md border border-amber-200 bg-white p-3 text-sm">
       <ul className="flex flex-col gap-1.5">
         {group.names.map((n) => (
           <li key={n.name} className="flex items-center justify-between gap-2">
             <label className="flex items-center gap-2 text-slate-800">
-              <input type="radio" name={`keep-${group.names[0].name}`} checked={keep === n.name} onChange={() => setKeep(n.name)} className="h-4 w-4" />
+              <input type="radio" name={`keep-${group.names[0].name}`} checked={keep === n.name} onChange={() => setKeep(n.name)} className="h-4 w-4 text-primary" />
               &ldquo;{n.name}&rdquo;
             </label>
-            <span className="text-slate-400">
+            <span className="text-slate-500">
               {n.productCount} product{n.productCount === 1 ? "" : "s"}
             </span>
           </li>
         ))}
       </ul>
-      <button
-        type="button"
+      <Button
+        size="sm"
+        className="mt-2"
         disabled={isApplying}
         onClick={() => {
           const fromNames = group.names.map((n) => n.name).filter((name) => name !== keep);
           if (!confirm(`Merge ${fromNames.length} other value(s) into "${keep}"? This writes directly to Cin7.`)) return;
           onMerge(fromNames, keep);
         }}
-        className="mt-2 rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
       >
         Merge the rest into &ldquo;{keep}&rdquo;
-      </button>
+      </Button>
     </div>
   );
 }
@@ -357,16 +343,16 @@ function AttributeGapCard({
   }
 
   return (
-    <div className="rounded-lg border border-amber-200 bg-white p-3 text-sm">
+    <div className="rounded-md border border-amber-200 bg-white p-3 text-sm">
       <p className="font-medium text-amber-900">
         {group.category} — slot{group.slots.length === 1 ? "" : "s"} {group.slots.join(", ")} look under-filled
       </p>
       <ul className="mt-2 flex flex-col gap-1.5">
         {group.products.map((p) => (
           <li key={p.productId} className="flex items-center gap-2 text-slate-800">
-            <input type="checkbox" checked={selected.has(p.productId)} onChange={() => toggle(p.productId)} className="h-4 w-4" />
+            <input type="checkbox" checked={selected.has(p.productId)} onChange={() => toggle(p.productId)} className="h-4 w-4 rounded border-slate-300 text-primary" />
             {p.name}{" "}
-            <span className="text-xs text-slate-400">
+            <span className="text-xs text-slate-500">
               ({p.sku}) — missing slot{p.missingSlots.length === 1 ? "" : "s"} {p.missingSlots.join(", ")}
             </span>
           </li>
@@ -374,32 +360,24 @@ function AttributeGapCard({
       </ul>
 
       {group.templates.length > 0 ? (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-2 text-slate-700">
-            Copy from
-            <select
-              value={templateId}
-              onChange={(e) => setTemplateId(e.target.value)}
-              className="rounded-lg border border-slate-300 px-2 py-1 text-sm"
-            >
-              {group.templates.map((t) => (
-                <option key={t.productId} value={t.productId}>
-                  {t.name} ({t.sku})
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
+        <div className="mt-3 flex flex-wrap items-end gap-2">
+          <Select label="Copy from" value={templateId} onChange={(e) => setTemplateId(e.target.value)} className="w-56">
+            {group.templates.map((t) => (
+              <option key={t.productId} value={t.productId}>
+                {t.name} ({t.sku})
+              </option>
+            ))}
+          </Select>
+          <Button
+            size="sm"
             disabled={isApplying || !templateId || selected.size === 0}
             onClick={() => {
               if (!confirm(`Copy attribute values to ${selected.size} product(s)? This writes directly to Cin7.`)) return;
               onApply(templateId, [...selected]);
             }}
-            className="rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
             Copy to {selected.size} selected
-          </button>
+          </Button>
         </div>
       ) : (
         <p className="mt-2 text-xs text-amber-700">No fully-filled example product in this category to copy from.</p>
@@ -433,22 +411,19 @@ function SellableSection({
   }
 
   return (
-    <details className="rounded-xl border border-slate-200 bg-white p-4">
+    <details className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_10px_24px_-16px_rgba(15,23,42,0.18)]">
       <summary className="cursor-pointer font-medium text-slate-900">
         Sellable — bulk set Yes/No ({products.length} product{products.length === 1 ? "" : "s"} shown)
       </summary>
 
       <div className="mt-3 flex flex-col gap-1.5 text-sm">
-        <label className="flex items-center gap-2 font-medium text-slate-700">
-          <input type="checkbox" checked={selected.size === products.length && products.length > 0} onChange={toggleAll} className="h-4 w-4" />
-          Select all
-        </label>
+        <Checkbox label="Select all" checked={selected.size === products.length && products.length > 0} onChange={toggleAll} />
         <div className="flex max-h-64 flex-col gap-1.5 overflow-y-auto">
           {products.map((p) => (
             <label key={p.productId} className="flex items-center gap-2 text-slate-700">
-              <input type="checkbox" checked={selected.has(p.productId)} onChange={() => toggle(p.productId)} className="h-4 w-4" />
-              {p.name} <span className="text-xs text-slate-400">({p.sku})</span>
-              <span className={`text-xs font-medium ${p.sellable ? "text-emerald-600" : "text-slate-400"}`}>
+              <input type="checkbox" checked={selected.has(p.productId)} onChange={() => toggle(p.productId)} className="h-4 w-4 rounded border-slate-300 text-primary" />
+              {p.name} <span className="text-xs text-slate-500">({p.sku})</span>
+              <span className={`text-xs font-medium ${p.sellable ? "text-success" : "text-slate-400"}`}>
                 {p.sellable ? "Sellable" : "Not sellable"}
               </span>
             </label>
@@ -457,28 +432,28 @@ function SellableSection({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
           disabled={isApplying || selected.size === 0}
           onClick={() => {
             if (!confirm(`Set Sellable to Yes on ${selected.size} product(s)? This writes directly to Cin7.`)) return;
             onApply([...selected], true);
           }}
-          className="rounded-full bg-emerald-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
         >
           Set Sellable: Yes ({selected.size || 0})
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
           disabled={isApplying || selected.size === 0}
           onClick={() => {
             if (!confirm(`Set Sellable to No on ${selected.size} product(s)? This writes directly to Cin7.`)) return;
             onApply([...selected], false);
           }}
-          className="rounded-full bg-slate-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-500 disabled:opacity-50"
         >
           Set Sellable: No ({selected.size || 0})
-        </button>
+        </Button>
       </div>
     </details>
   );
@@ -514,22 +489,19 @@ function BomAssemblySection({
   }
 
   return (
-    <details className="rounded-xl border border-slate-200 bg-white p-4">
+    <details className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_10px_24px_-16px_rgba(15,23,42,0.18)]">
       <summary className="cursor-pointer font-medium text-slate-900">
         Products with an Assembly BOM — bulk Auto-Assembly/Auto-Disassembly ({products.length} product{products.length === 1 ? "" : "s"})
       </summary>
 
       <div className="mt-3 flex flex-col gap-1.5 text-sm">
-        <label className="flex items-center gap-2 font-medium text-slate-700">
-          <input type="checkbox" checked={selected.size === products.length && products.length > 0} onChange={toggleAll} className="h-4 w-4" />
-          Select all
-        </label>
+        <Checkbox label="Select all" checked={selected.size === products.length && products.length > 0} onChange={toggleAll} />
         <div className="flex max-h-64 flex-col gap-1.5 overflow-y-auto">
           {products.map((p) => (
             <label key={p.productId} className="flex items-center gap-2 text-slate-700">
-              <input type="checkbox" checked={selected.has(p.productId)} onChange={() => toggle(p.productId)} className="h-4 w-4" />
-              {p.name} <span className="text-xs text-slate-400">({p.sku})</span>
-              <span className="text-xs text-slate-400">
+              <input type="checkbox" checked={selected.has(p.productId)} onChange={() => toggle(p.productId)} className="h-4 w-4 rounded border-slate-300 text-primary" />
+              {p.name} <span className="text-xs text-slate-500">({p.sku})</span>
+              <span className="text-xs text-slate-500">
                 Auto-Assembly: {p.autoAssembly ? "Yes" : "No"} · Auto-Disassembly: {p.autoDisassembly ? "Yes" : "No"}
               </span>
             </label>
@@ -539,42 +511,22 @@ function BomAssemblySection({
 
       <div className="mt-3 flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Auto-Assembly</span>
-          <button
-            type="button"
-            disabled={isApplying || selected.size === 0}
-            onClick={() => apply("AutoAssembly", true, "Auto-Assembly")}
-            className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
-          >
+          <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Auto-Assembly</span>
+          <Button variant="secondary" size="sm" disabled={isApplying || selected.size === 0} onClick={() => apply("AutoAssembly", true, "Auto-Assembly")}>
             Yes ({selected.size || 0})
-          </button>
-          <button
-            type="button"
-            disabled={isApplying || selected.size === 0}
-            onClick={() => apply("AutoAssembly", false, "Auto-Assembly")}
-            className="rounded-full bg-slate-600 px-3 py-1 text-xs font-semibold text-white hover:bg-slate-500 disabled:opacity-50"
-          >
+          </Button>
+          <Button variant="secondary" size="sm" disabled={isApplying || selected.size === 0} onClick={() => apply("AutoAssembly", false, "Auto-Assembly")}>
             No ({selected.size || 0})
-          </button>
+          </Button>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Auto-Disassembly</span>
-          <button
-            type="button"
-            disabled={isApplying || selected.size === 0}
-            onClick={() => apply("AutoDisassembly", true, "Auto-Disassembly")}
-            className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
-          >
+          <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Auto-Disassembly</span>
+          <Button variant="secondary" size="sm" disabled={isApplying || selected.size === 0} onClick={() => apply("AutoDisassembly", true, "Auto-Disassembly")}>
             Yes ({selected.size || 0})
-          </button>
-          <button
-            type="button"
-            disabled={isApplying || selected.size === 0}
-            onClick={() => apply("AutoDisassembly", false, "Auto-Disassembly")}
-            className="rounded-full bg-slate-600 px-3 py-1 text-xs font-semibold text-white hover:bg-slate-500 disabled:opacity-50"
-          >
+          </Button>
+          <Button variant="secondary" size="sm" disabled={isApplying || selected.size === 0} onClick={() => apply("AutoDisassembly", false, "Auto-Disassembly")}>
             No ({selected.size || 0})
-          </button>
+          </Button>
         </div>
       </div>
     </details>
@@ -615,51 +567,40 @@ function MissingSupplierSection({
   }
 
   return (
-    <details className="rounded-xl border border-amber-200 bg-amber-50 p-4" open={issues.length <= 5}>
+    <details className="rounded-lg border border-warning-border bg-warning-subtle p-4" open={issues.length <= 5}>
       <summary className="cursor-pointer font-medium text-amber-900">
         Missing Supplier — {issues.length} product{issues.length === 1 ? "" : "s"}
       </summary>
 
       <div className="mt-3 flex flex-col gap-1.5 text-sm">
-        <label className="flex items-center gap-2 font-medium text-amber-900">
-          <input type="checkbox" checked={selected.size === issues.length && issues.length > 0} onChange={toggleAll} className="h-4 w-4" />
-          Select all
-        </label>
+        <Checkbox label="Select all" checked={selected.size === issues.length && issues.length > 0} onChange={toggleAll} className="border-amber-300" />
         {issues.map((issue) => (
           <label key={issue.productId} className="flex items-center gap-2 text-amber-800">
-            <input type="checkbox" checked={selected.has(issue.productId)} onChange={() => toggle(issue.productId)} className="h-4 w-4" />
+            <input type="checkbox" checked={selected.has(issue.productId)} onChange={() => toggle(issue.productId)} className="h-4 w-4 rounded border-amber-300 text-primary" />
             {issue.name} <span className="text-xs text-amber-600">({issue.sku})</span>
           </label>
         ))}
       </div>
 
       {supplierNames.length > 0 ? (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-2 text-amber-900">
-            Assign
-            <select
-              value={supplierName}
-              onChange={(e) => setSupplierName(e.target.value)}
-              className="rounded-lg border border-slate-300 px-2 py-1 text-sm"
-            >
-              {supplierNames.map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
+        <div className="mt-3 flex flex-wrap items-end gap-2">
+          <Select label="Assign" value={supplierName} onChange={(e) => setSupplierName(e.target.value)} className="w-56">
+            {supplierNames.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </Select>
+          <Button
+            size="sm"
             disabled={isApplying || selected.size === 0 || !supplierName}
             onClick={() => {
               if (!confirm(`Assign supplier "${supplierName}" to ${selected.size} product(s)? This writes directly to Cin7.`)) return;
               onApply([...selected], supplierName);
             }}
-            className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
           >
             Assign to {selected.size || 0} selected
-          </button>
+          </Button>
         </div>
       ) : (
         <p className="mt-2 text-xs text-amber-700">No suppliers exist in this Cin7 instance yet — nothing to assign.</p>
@@ -980,8 +921,8 @@ export default function AuditPage() {
             key={s}
             type="button"
             onClick={() => handleScopeChange(s)}
-            className={`rounded-full px-4 py-1.5 text-sm font-semibold capitalize transition ${
-              scope === s ? "bg-indigo-600 text-white" : "border border-slate-300 text-slate-600 hover:bg-slate-50"
+            className={`rounded-lg px-4 py-1.5 text-sm font-semibold capitalize transition ${
+              scope === s ? "bg-primary text-white shadow-sm" : "border border-slate-300 text-slate-700 hover:bg-slate-50"
             }`}
           >
             {s}
@@ -989,83 +930,89 @@ export default function AuditPage() {
         ))}
       </div>
 
-      <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="font-medium text-slate-900">Instance</p>
+      <Panel className="mt-4">
+        <PanelTitle>Instance</PanelTitle>
         <div className="mt-3">
           <InstancePicker {...picker} onChange={picker.setInstanceId} />
         </div>
 
-        <button
-          type="button"
-          onClick={handleScan}
-          disabled={isScanning || !instanceId}
-          className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-        >
-          {isScanning && <Spinner className="mr-1.5" />}
+        <Button className="mt-4" onClick={handleScan} disabled={!instanceId} loading={isScanning}>
           {isScanning ? "Scanning…" : `Scan ${scope}`}
-        </button>
+        </Button>
         {scope === "products" && scanError && (
-          <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{scanError}</p>
+          <div className="mt-4">
+            <Alert tone="danger">{scanError}</Alert>
+          </div>
         )}
         {scope !== "products" && partyScanError && (
-          <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{partyScanError}</p>
+          <div className="mt-4">
+            <Alert tone="danger">{partyScanError}</Alert>
+          </div>
         )}
-      </section>
+      </Panel>
 
       {!canWrite && (
-        <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          Available on a paid plan — this trial is read-only, so scanning works but fixes/merges below are disabled.
-        </p>
+        <div className="mt-4">
+          <Alert tone="warning">Available on a paid plan — this trial is read-only, so scanning works but fixes/merges below are disabled.</Alert>
+        </div>
       )}
 
       {scope === "products" && applyResult && (
-        <section className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-          <p className="font-medium text-emerald-900">{applyResult.succeeded} product{applyResult.succeeded === 1 ? "" : "s"} fixed</p>
-          {applyResult.failed.length > 0 && (
-            <ul className="mt-2 list-disc pl-5 text-sm text-red-700">
-              {applyResult.failed.map((f, i) => (
-                <li key={i}>
-                  {f.productId}: {f.error}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+        <div className="mt-6">
+          <Alert tone="success">
+            <p className="font-medium">{applyResult.succeeded} product{applyResult.succeeded === 1 ? "" : "s"} fixed</p>
+            {applyResult.failed.length > 0 && (
+              <ul className="mt-2 list-disc pl-5 text-danger">
+                {applyResult.failed.map((f, i) => (
+                  <li key={i}>
+                    {f.productId}: {f.error}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Alert>
+        </div>
       )}
       {scope === "products" && applyError && (
-        <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{applyError}</p>
+        <div className="mt-4">
+          <Alert tone="danger">{applyError}</Alert>
+        </div>
       )}
 
       {scope !== "products" && partyApplyResult && (
-        <section className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-          <p className="font-medium text-emerald-900">
-            {partyApplyResult.succeeded} {scope === "customers" ? "customer" : "supplier"}
-            {partyApplyResult.succeeded === 1 ? "" : "s"} fixed
-          </p>
-          {partyApplyResult.failed.length > 0 && (
-            <ul className="mt-2 list-disc pl-5 text-sm text-red-700">
-              {partyApplyResult.failed.map((f, i) => (
-                <li key={i}>
-                  {f.partyId}: {f.error}
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+        <div className="mt-6">
+          <Alert tone="success">
+            <p className="font-medium">
+              {partyApplyResult.succeeded} {scope === "customers" ? "customer" : "supplier"}
+              {partyApplyResult.succeeded === 1 ? "" : "s"} fixed
+            </p>
+            {partyApplyResult.failed.length > 0 && (
+              <ul className="mt-2 list-disc pl-5 text-danger">
+                {partyApplyResult.failed.map((f, i) => (
+                  <li key={i}>
+                    {f.partyId}: {f.error}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Alert>
+        </div>
       )}
       {scope !== "products" && partyApplyError && (
-        <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{partyApplyError}</p>
+        <div className="mt-4">
+          <Alert tone="danger">{partyApplyError}</Alert>
+        </div>
       )}
 
       {scope === "products" && result && (
         <section className="mt-6 flex flex-col gap-4">
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <Panel>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               {result.categories.length > 0 && (
                 <div className="flex-1">
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-medium text-slate-700">Category</p>
-                    <div className="flex gap-3 text-xs text-indigo-600">
+                    <div className="flex gap-3 text-xs text-primary">
                       <button type="button" onClick={() => setCategoryFilter(result.categories)} className="hover:underline">
                         Select all
                       </button>
@@ -1077,7 +1024,7 @@ export default function AuditPage() {
                   <div className="mt-2 flex max-h-40 flex-col gap-1 overflow-y-auto text-sm">
                     {result.categories.map((cat) => (
                       <label key={cat} className="flex items-center gap-2">
-                        <input type="checkbox" checked={categoryFilter.includes(cat)} onChange={() => toggleCategoryFilter(cat)} className="h-4 w-4" />
+                        <input type="checkbox" checked={categoryFilter.includes(cat)} onChange={() => toggleCategoryFilter(cat)} className="h-4 w-4 rounded border-slate-300 text-primary" />
                         {cat}
                       </label>
                     ))}
@@ -1086,19 +1033,12 @@ export default function AuditPage() {
               )}
 
               <div className="flex-1">
-                <p className="text-sm font-medium text-slate-700">Search</p>
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Part of a SKU or product name…"
-                  className="mt-2 w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
-                />
+                <Input label="Search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Part of a SKU or product name…" />
               </div>
             </div>
 
             {(categoryFilter.length > 0 || search.trim()) && (
-              <p className="mt-3 text-xs text-slate-400">
+              <p className="mt-3 text-xs text-slate-500">
                 {categoryFilter.length > 0 && `Category: ${categoryFilter.map((c) => `"${c}"`).join(", ")}. `}
                 {search.trim() && `Search: "${search.trim()}". `}
                 Near-duplicate category/UOM/tag groups below are unaffected, since those checks compare
@@ -1106,10 +1046,10 @@ export default function AuditPage() {
                 these filters.
               </p>
             )}
-          </div>
+          </Panel>
 
           {result.duplicateCategories.length > 0 && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <div className="rounded-lg border border-warning-border bg-warning-subtle p-4">
               <p className="font-medium text-amber-900">Near-duplicate categories — {result.duplicateCategories.length} group{result.duplicateCategories.length === 1 ? "" : "s"}</p>
               <div className="mt-3 flex flex-col gap-3">
                 {result.duplicateCategories.map((group, i) => (
@@ -1120,7 +1060,7 @@ export default function AuditPage() {
           )}
 
           {result.duplicateBrands.length > 0 && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <div className="rounded-lg border border-warning-border bg-warning-subtle p-4">
               <p className="font-medium text-amber-900">Near-duplicate brands — {result.duplicateBrands.length} group{result.duplicateBrands.length === 1 ? "" : "s"}</p>
               <div className="mt-3 flex flex-col gap-3">
                 {result.duplicateBrands.map((group, i) => (
@@ -1131,7 +1071,7 @@ export default function AuditPage() {
           )}
 
           {result.duplicateUOMs.length > 0 && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <div className="rounded-lg border border-warning-border bg-warning-subtle p-4">
               <p className="font-medium text-amber-900">Near-duplicate units of measure — {result.duplicateUOMs.length} group{result.duplicateUOMs.length === 1 ? "" : "s"}</p>
               <div className="mt-3 flex flex-col gap-3">
                 {result.duplicateUOMs.map((group, i) => (
@@ -1142,7 +1082,7 @@ export default function AuditPage() {
           )}
 
           {result.duplicateTags.length > 0 && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <div className="rounded-lg border border-warning-border bg-warning-subtle p-4">
               <p className="font-medium text-amber-900">Near-duplicate tags — {result.duplicateTags.length} group{result.duplicateTags.length === 1 ? "" : "s"}</p>
               <div className="mt-3 flex flex-col gap-3">
                 {result.duplicateTags.map((group, i) => (
@@ -1153,7 +1093,7 @@ export default function AuditPage() {
           )}
 
           {filteredAttributeGaps.length > 0 && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <div className="rounded-lg border border-warning-border bg-warning-subtle p-4">
               <p className="font-medium text-amber-900">
                 Attribute completeness — {filteredAttributeGaps.length} categor{filteredAttributeGaps.length === 1 ? "y" : "ies"} with a gap
               </p>
@@ -1192,27 +1132,19 @@ export default function AuditPage() {
             result.duplicateBrands.length === 0 &&
             result.duplicateUOMs.length === 0 &&
             result.duplicateTags.length === 0 && (
-            <p className="text-base text-slate-500">
-              {categoryFilter.length > 0 || search.trim()
-                ? "No issues found for the current filter."
-                : "No issues found — this catalog looks clean."}
-            </p>
+            <EmptyState
+              title={categoryFilter.length > 0 || search.trim() ? "No issues found for the current filter" : "No issues found"}
+              description={categoryFilter.length > 0 || search.trim() ? undefined : "This catalog looks clean."}
+            />
           )}
         </section>
       )}
 
       {scope !== "products" && partyResult && (
         <section className="mt-6 flex flex-col gap-4">
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <p className="text-sm font-medium text-slate-700">Search</p>
-            <input
-              type="text"
-              value={partySearch}
-              onChange={(e) => setPartySearch(e.target.value)}
-              placeholder={`Part of a ${scope === "customers" ? "customer" : "supplier"} name…`}
-              className="mt-2 w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
-            />
-          </div>
+          <Panel>
+            <Input label="Search" value={partySearch} onChange={(e) => setPartySearch(e.target.value)} placeholder={`Part of a ${scope === "customers" ? "customer" : "supplier"} name…`} />
+          </Panel>
 
           {PARTY_ISSUE_ORDER.filter((type) => partyIssuesByType.has(type)).map((type) => (
             <PartyIssueSection
@@ -1226,11 +1158,10 @@ export default function AuditPage() {
           ))}
 
           {partyIssuesByType.size === 0 && (
-            <p className="text-base text-slate-500">
-              {partySearch.trim()
-                ? "No issues found for the current filter."
-                : `No issues found — these ${scope} look clean.`}
-            </p>
+            <EmptyState
+              title={partySearch.trim() ? "No issues found for the current filter" : `No issues found`}
+              description={partySearch.trim() ? undefined : `These ${scope} look clean.`}
+            />
           )}
         </section>
       )}
