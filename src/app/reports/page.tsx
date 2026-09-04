@@ -23,6 +23,10 @@ import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { ReportDescription } from "./ReportDescription";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
+import { Alert } from "@/components/ui/Alert";
 
 type GroupBySelection = "none" | PivotGroupBy;
 
@@ -54,7 +58,7 @@ function MetricHeaderCells() {
   return (
     <>
       {METRIC_COLUMNS.map((col) => (
-        <th key={col.key} className="py-1 pr-4 text-right text-xs font-normal text-slate-400">
+        <th key={col.key} scope="col" className="py-1 pr-4 text-right text-xs font-normal text-slate-400">
           {col.label}
         </th>
       ))}
@@ -67,7 +71,7 @@ function MetricCells({ values, bold }: { values: PivotCellValues | null; bold?: 
   return (
     <>
       {METRIC_COLUMNS.map((col) => (
-        <td key={col.key} className={`py-2 pr-4 text-right ${bold ? "font-semibold" : ""}`}>
+        <td key={col.key} className={`py-2 pr-4 text-right tabular-nums ${bold ? "font-semibold" : ""}`}>
           {values ? formatCellMetric(col.key, values) : "—"}
         </td>
       ))}
@@ -98,24 +102,24 @@ function InvoiceLineDetail({
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="text-slate-500">
-                <th className="py-1 pr-4">Invoice #</th>
-                <th className="py-1 pr-4">Invoice date</th>
-                <th className="py-1 pr-4">Qty</th>
-                <th className="py-1 pr-4">Price</th>
-                <th className="py-1 pr-4">Total</th>
-                <th className="py-1 pr-4">Avg cost</th>
-                <th className="py-1 pr-4">Customer</th>
+                <th scope="col" className="py-1 pr-4">Invoice #</th>
+                <th scope="col" className="py-1 pr-4">Invoice date</th>
+                <th scope="col" className="py-1 pr-4">Qty</th>
+                <th scope="col" className="py-1 pr-4">Price</th>
+                <th scope="col" className="py-1 pr-4">Total</th>
+                <th scope="col" className="py-1 pr-4">Avg cost</th>
+                <th scope="col" className="py-1 pr-4">Customer</th>
               </tr>
             </thead>
             <tbody>
               {lines.map((line, i) => (
                 <tr key={i} className="border-t border-slate-200">
-                  <td className="py-1 pr-4">{line.invoiceNumber}</td>
+                  <td className="py-1 pr-4 font-mono">{line.invoiceNumber}</td>
                   <td className="py-1 pr-4">{line.invoiceDate ?? "—"}</td>
-                  <td className="py-1 pr-4">{line.quantity ?? "—"}</td>
-                  <td className="py-1 pr-4">{money(line.price)}</td>
-                  <td className="py-1 pr-4">{money(line.total)}</td>
-                  <td className="py-1 pr-4">{money(line.averageCost)}</td>
+                  <td className="py-1 pr-4 tabular-nums">{line.quantity ?? "—"}</td>
+                  <td className="py-1 pr-4 tabular-nums">{money(line.price)}</td>
+                  <td className="py-1 pr-4 tabular-nums">{money(line.total)}</td>
+                  <td className="py-1 pr-4 tabular-nums">{money(line.averageCost)}</td>
                   <td className="py-1 pr-4">{line.customerName ?? "—"}</td>
                 </tr>
               ))}
@@ -352,7 +356,7 @@ export default function ReportsPage() {
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="font-medium text-slate-900">Sales data</p>
+            <p className="text-base font-semibold text-slate-900">Sales data</p>
             {syncStatus && (
               <p className="mt-1 text-sm text-slate-500">
                 {syncStatus.totalSales} sale{syncStatus.totalSales === 1 ? "" : "s"} synced
@@ -369,12 +373,20 @@ export default function ReportsPage() {
             </button>
           </div>
         </div>
-        {syncError && <p className="mt-2 text-sm text-red-600">{syncError}</p>}
-        {optionsError && <p className="mt-2 text-sm text-red-600">{optionsError}</p>}
+        {syncError && (
+          <div className="mt-2">
+            <Alert tone="danger">{syncError}</Alert>
+          </div>
+        )}
+        {optionsError && (
+          <div className="mt-2">
+            <Alert tone="danger">{optionsError}</Alert>
+          </div>
+        )}
       </section>
 
       <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="font-medium text-slate-900">Filters</p>
+        <p className="text-base font-semibold text-slate-900">Filters</p>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <span className="text-sm font-medium text-slate-700">Instance(s)</span>
@@ -383,60 +395,37 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          <label className="flex flex-col gap-1.5 text-sm">
-            <span className="font-medium text-slate-700">Location</span>
-            <select value={location} onChange={(e) => setLocation(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2">
-              <option value="">All locations</option>
-              {(options?.locations ?? []).map((loc) => (
-                <option key={loc} value={loc}>
-                  {loc}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Select label="Location" value={location} onChange={(e) => setLocation(e.target.value)}>
+            <option value="">All locations</option>
+            {(options?.locations ?? []).map((loc) => (
+              <option key={loc} value={loc}>
+                {loc}
+              </option>
+            ))}
+          </Select>
 
-          <label className="flex flex-col gap-1.5 text-sm">
-            <span className="font-medium text-slate-700">Category</span>
-            <select
-              value={categoryCode}
-              onChange={(e) => setCategoryCode(e.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-2"
-            >
-              <option value="">All categories</option>
-              {(options?.categories ?? []).map((cat) => (
-                <option key={cat.code} value={cat.code}>
-                  {cat.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Select label="Category" value={categoryCode} onChange={(e) => setCategoryCode(e.target.value)}>
+            <option value="">All categories</option>
+            {(options?.categories ?? []).map((cat) => (
+              <option key={cat.code} value={cat.code}>
+                {cat.name}
+              </option>
+            ))}
+          </Select>
 
           <div className="grid grid-cols-2 gap-3">
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">From</span>
-              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2" />
-            </label>
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">To</span>
-              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2" />
-            </label>
+            <Input type="date" label="From" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            <Input type="date" label="To" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
           </div>
         </div>
 
         <div className="mt-4 flex flex-wrap items-end gap-4 border-t border-slate-100 pt-4">
-          <label className="flex flex-col gap-1.5 text-sm">
-            <span className="font-medium text-slate-700">Group columns by</span>
-            <select
-              value={groupBy}
-              onChange={(e) => setGroupBy(e.target.value as GroupBySelection)}
-              className="rounded-lg border border-slate-300 px-3 py-2"
-            >
-              <option value="none">None (today&rsquo;s flat table)</option>
-              <option value="location">Location</option>
-              <option value="category">Category</option>
-              <option value="both">Location × Category</option>
-            </select>
-          </label>
+          <Select label="Group columns by" value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBySelection)}>
+            <option value="none">None (today&rsquo;s flat table)</option>
+            <option value="location">Location</option>
+            <option value="category">Category</option>
+            <option value="both">Location × Category</option>
+          </Select>
 
           {groupBy !== "none" && (
             <p className="text-sm text-slate-500">Every metric (Qty/Revenue/COGS/Profit/Margin%) shows together per column.</p>
@@ -444,38 +433,37 @@ export default function ReportsPage() {
           <SearchInput value={search} onChange={setSearch} placeholder="Product name or SKU" />
         </div>
 
-        <button
-          type="button"
-          onClick={handleRunReport}
-          disabled={isRunning}
-          className="mt-5 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-        >
-          {isRunning && <Spinner className="mr-1.5" />}
-          {isRunning ? "Running…" : "Run report"}
-        </button>
+        <div className="mt-5">
+          <Button onClick={handleRunReport} loading={isRunning}>
+            {isRunning ? "Running…" : "Run report"}
+          </Button>
+        </div>
 
-        {reportError && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{reportError}</p>}
+        {reportError && (
+          <div className="mt-4">
+            <Alert tone="danger">{reportError}</Alert>
+          </div>
+        )}
       </section>
 
       {rows && (
         <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="font-medium text-slate-900">
+            <p className="text-base font-semibold text-slate-900">
               {filteredRows.length} product{filteredRows.length === 1 ? "" : "s"}
             </p>
             {filteredRows.length > 0 && (
-              <button
-                type="button"
-                onClick={handleExport}
-                disabled={isExporting}
-                className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
+              <Button variant="secondary" size="sm" onClick={handleExport} loading={isExporting}>
                 {isExporting ? "Exporting…" : "Export to Excel"}
-              </button>
+              </Button>
             )}
           </div>
-          {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
-          {filteredRows.length === 0 && <p className="mt-2 text-sm text-slate-400">No invoiced sales match these filters.</p>}
+          {exportError && (
+            <div className="mt-2">
+              <Alert tone="danger">{exportError}</Alert>
+            </div>
+          )}
+          {filteredRows.length === 0 && <p className="mt-2 text-sm text-slate-500">No invoiced sales match these filters.</p>}
 
           {filteredRows.length > 0 && (
             <div className="mt-4 overflow-x-auto">
@@ -500,13 +488,13 @@ export default function ReportsPage() {
                       >
                         <td className="py-2 pr-4">
                           <div className="font-medium text-slate-900">{row.product_name ?? row.product_sku}</div>
-                          <div className="text-xs text-slate-400">{row.product_sku}</div>
+                          <div className="font-mono text-xs text-slate-400">{row.product_sku}</div>
                         </td>
-                        <td className="py-2 pr-4">{row.quantity_sold}</td>
-                        <td className="py-2 pr-4">{money(row.revenue)}</td>
-                        <td className="py-2 pr-4">{money(row.cogs)}</td>
-                        <td className="py-2 pr-4">{money(row.profit)}</td>
-                        <td className="py-2 pr-4">{percent(row.margin_percent)}</td>
+                        <td className="py-2 pr-4 tabular-nums">{row.quantity_sold}</td>
+                        <td className="py-2 pr-4 tabular-nums">{money(row.revenue)}</td>
+                        <td className="py-2 pr-4 tabular-nums">{money(row.cogs)}</td>
+                        <td className="py-2 pr-4 tabular-nums">{money(row.profit)}</td>
+                        <td className="py-2 pr-4 tabular-nums">{percent(row.margin_percent)}</td>
                       </tr>
                       {expandedSku === row.product_sku && (
                         <InvoiceLineDetail colSpan={6} isLoading={isLoadingDetails} lines={details[row.product_sku]} />
@@ -523,23 +511,22 @@ export default function ReportsPage() {
       {pivotGrid && (
         <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="font-medium text-slate-900">
+            <p className="text-base font-semibold text-slate-900">
               {pivotGrid.rows.length} product{pivotGrid.rows.length === 1 ? "" : "s"} by{" "}
               {groupBy === "both" ? "Location × Category" : groupBy === "location" ? "Location" : "Category"}
             </p>
             {pivotGrid.rows.length > 0 && (
-              <button
-                type="button"
-                onClick={handleExport}
-                disabled={isExporting}
-                className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
+              <Button variant="secondary" size="sm" onClick={handleExport} loading={isExporting}>
                 {isExporting ? "Exporting…" : "Export to Excel"}
-              </button>
+              </Button>
             )}
           </div>
-          {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
-          {pivotGrid.rows.length === 0 && <p className="mt-2 text-sm text-slate-400">No invoiced sales match these filters.</p>}
+          {exportError && (
+            <div className="mt-2">
+              <Alert tone="danger">{exportError}</Alert>
+            </div>
+          )}
+          {pivotGrid.rows.length === 0 && <p className="mt-2 text-sm text-slate-500">No invoiced sales match these filters.</p>}
 
           {pivotGrid.rows.length > 0 && (
             <div className="mt-4 overflow-x-auto">
@@ -547,32 +534,33 @@ export default function ReportsPage() {
                 <thead>
                   {pivotGrid.columnGroups && (
                     <tr className="text-slate-500">
-                      <th className="py-1 pr-4" />
+                      <th scope="col" className="py-1 pr-4" />
                       {pivotGrid.columnGroups.map((group) => (
                         <th
                           key={group.label}
+                          scope="colgroup"
                           colSpan={group.span * METRIC_COLUMNS.length}
                           className="border-b border-slate-100 py-1 pr-4 text-center font-medium"
                         >
                           {group.label}
                         </th>
                       ))}
-                      <th colSpan={METRIC_COLUMNS.length} className="border-b border-slate-100 py-1 pr-4" />
+                      <th scope="col" colSpan={METRIC_COLUMNS.length} className="border-b border-slate-100 py-1 pr-4" />
                     </tr>
                   )}
                   <tr className="text-slate-500">
-                    <th className="py-1 pr-4" />
+                    <th scope="col" className="py-1 pr-4" />
                     {pivotGrid.columns.map((col) => (
-                      <th key={col.key} colSpan={METRIC_COLUMNS.length} className="border-b border-slate-100 py-1 pr-4 text-center font-medium">
+                      <th key={col.key} scope="colgroup" colSpan={METRIC_COLUMNS.length} className="border-b border-slate-100 py-1 pr-4 text-center font-medium">
                         {col.label}
                       </th>
                     ))}
-                    <th colSpan={METRIC_COLUMNS.length} className="border-b border-slate-100 py-1 pr-4 text-center font-semibold">
+                    <th scope="colgroup" colSpan={METRIC_COLUMNS.length} className="border-b border-slate-100 py-1 pr-4 text-center font-semibold">
                       Total
                     </th>
                   </tr>
                   <tr className="border-b border-slate-200 text-slate-500">
-                    <th className="py-2 pr-4">Product</th>
+                    <th scope="col" className="py-2 pr-4">Product</th>
                     {pivotGrid.columns.map((col) => (
                       <MetricHeaderCells key={col.key} />
                     ))}
@@ -588,7 +576,7 @@ export default function ReportsPage() {
                       >
                         <td className="py-2 pr-4">
                           <div className="font-medium text-slate-900">{row.productName}</div>
-                          <div className="text-xs text-slate-400">{row.productSku}</div>
+                          <div className="font-mono text-xs text-slate-400">{row.productSku}</div>
                         </td>
                         {pivotGrid.columns.map((col) => (
                           <MetricCells key={col.key} values={row.cells[col.key]} />
