@@ -68,6 +68,26 @@ export default async function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="flex h-full min-h-screen flex-col md:flex-row">
+        {/* TEMPORARY deployment-identity canary — proves this exact preview is serving feature/impeccable-reskin. Remove before this branch is ever merged; inline styles deliberately bypass Tailwind/tokens so it renders independently of anything else in this PR. */}
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            right: 0,
+            zIndex: 2147483647,
+            background: "#ff00aa",
+            color: "#fff",
+            fontFamily: "monospace",
+            fontSize: "11px",
+            fontWeight: 700,
+            letterSpacing: "0.05em",
+            padding: "3px 8px",
+            borderBottomLeftRadius: "6px",
+            pointerEvents: "none",
+          }}
+        >
+          RESKIN PREVIEW — {process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "local"}
+        </div>
         {(() => {
           const content = (
             <div className="flex flex-1 flex-col overflow-x-hidden overflow-y-auto">
