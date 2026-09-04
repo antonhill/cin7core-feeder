@@ -17,6 +17,12 @@ import {
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { NOTIFICATIONS_MODULE } from "@/app/module-nav";
 import { Spinner } from "@/app/Spinner";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { Alert } from "@/components/ui/Alert";
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/Table";
+import { Panel, PanelTitle } from "@/components/ui/Panel";
 
 function ccEmailsToText(emails: string[]): string {
   return emails.join("\n");
@@ -160,19 +166,20 @@ export default function NotificationsSettingsPage() {
         happen before turning this on.
       </ModuleHeader>
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="font-medium text-slate-900">Notification settings</p>
+      <Panel className="mt-6">
+        <PanelTitle>Notification settings</PanelTitle>
 
         {settings === null ? (
-          <div className="mt-4 flex items-center gap-2 text-sm text-slate-400">
+          <div className="mt-4 flex items-center gap-2 text-sm text-slate-500">
             <Spinner /> Loading…
           </div>
         ) : (
           <div className="mt-4 flex flex-col gap-4">
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="h-4 w-4 rounded border-slate-300" />
-              Send Ship By change emails for this org
-            </label>
+            <Checkbox
+              label="Send Ship By change emails for this org"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+            />
 
             <label className="flex flex-col gap-1.5 text-sm">
               <span className="font-medium text-slate-700">CC list (one email per line)</span>
@@ -181,132 +188,122 @@ export default function NotificationsSettingsPage() {
                 onChange={(e) => setCcText(e.target.value)}
                 rows={4}
                 placeholder="procurement@example.com"
-                className="w-full max-w-md rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                className="w-full max-w-md rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
               />
             </label>
 
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">Debounce window (minutes)</span>
-              <span className="text-xs text-slate-400">
-                Multiple date changes to the same order within this window collapse into one email carrying the final date.
-              </span>
-              <input
-                type="number"
-                min={0}
-                value={debounceMinutes}
-                onChange={(e) => setDebounceMinutes(Math.max(0, Number(e.target.value) || 0))}
-                className="w-24 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
-            </label>
+            <Input
+              type="number"
+              min={0}
+              label="Debounce window (minutes)"
+              helperText="Multiple date changes to the same order within this window collapse into one email carrying the final date."
+              value={debounceMinutes}
+              onChange={(e) => setDebounceMinutes(Math.max(0, Number(e.target.value) || 0))}
+              className="w-24"
+            />
 
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleSaveSettings}
-                disabled={isSavingSettings || !dirty}
-                className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {isSavingSettings && <Spinner className="mr-1.5" />}
+              <Button onClick={handleSaveSettings} disabled={!dirty} loading={isSavingSettings}>
                 {isSavingSettings ? "Saving…" : "Save"}
-              </button>
-              {savedOk && !dirty && <span className="text-sm text-emerald-600">Saved.</span>}
+              </Button>
+              {savedOk && !dirty && <span className="text-sm text-success">Saved.</span>}
             </div>
-            {settingsError && <p className="text-sm text-rose-600">{settingsError}</p>}
+            {settingsError && <Alert tone="danger">{settingsError}</Alert>}
           </div>
         )}
-      </section>
+      </Panel>
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="font-medium text-slate-900">Sales rep → email mapping</p>
+      <Panel className="mt-6">
+        <PanelTitle>Sales rep → email mapping</PanelTitle>
         <p className="mt-1 text-sm text-slate-500">
           Cin7&rsquo;s own sales rep field isn&rsquo;t always an email address — map each rep name to where their
           notifications should go.
         </p>
 
         {reps === null ? (
-          <div className="mt-4 flex items-center gap-2 text-sm text-slate-400">
+          <div className="mt-4 flex items-center gap-2 text-sm text-slate-500">
             <Spinner /> Loading…
           </div>
         ) : (
           <>
-            <table className="mt-4 w-full max-w-xl text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-slate-500">
-                  <th className="py-1.5 pr-4">Rep name (from Cin7)</th>
-                  <th className="py-1.5 pr-4">Email</th>
-                  <th className="py-1.5" />
-                </tr>
-              </thead>
-              <tbody>
-                {reps.map((rep) => (
-                  <tr key={rep.repName} className="border-b border-slate-100">
-                    <td className="py-1.5 pr-4">{rep.repName}</td>
-                    <td className="py-1.5 pr-4">{rep.email}</td>
-                    <td className="py-1.5 text-right">
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteRep(rep.repName)}
-                        disabled={isSavingRep}
-                        className="text-xs font-medium text-rose-600 hover:underline disabled:opacity-50"
-                      >
-                        {pendingDeleteRep === rep.repName ? <Spinner className="h-3 w-3" /> : "Remove"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {reps.length === 0 && (
-                  <tr>
-                    <td colSpan={3} className="py-2 text-slate-400">
-                      No mappings yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+            {reps.length === 0 ? (
+              <p className="mt-4 text-sm text-slate-500">No mappings yet.</p>
+            ) : (
+              <div className="mt-4 max-w-xl">
+                <Table>
+                  <THead>
+                    <tr>
+                      <TH>Rep name (from Cin7)</TH>
+                      <TH>Email</TH>
+                      <TH align="right"></TH>
+                    </tr>
+                  </THead>
+                  <TBody>
+                    {reps.map((rep) => (
+                      <TR key={rep.repName}>
+                        <TD>{rep.repName}</TD>
+                        <TD>{rep.email}</TD>
+                        <TD align="right">
+                          {/* Not the `link` Button variant — that's fixed to text-primary, and a Tailwind className override isn't guaranteed to win the cascade. Same precedent as Security's bare danger-toned Remove link. */}
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteRep(rep.repName)}
+                            disabled={isSavingRep}
+                            className="text-sm font-medium text-danger hover:underline disabled:opacity-50"
+                          >
+                            {pendingDeleteRep === rep.repName ? "Removing…" : "Remove"}
+                          </button>
+                        </TD>
+                      </TR>
+                    ))}
+                  </TBody>
+                </Table>
+              </div>
+            )}
 
             <div className="mt-4 flex flex-wrap items-end gap-3">
-              <label className="flex flex-col gap-1 text-sm text-slate-600">
-                Rep name
-                <input
+              <div>
+                <Input
                   type="text"
                   list="known-sales-reps"
+                  label="Rep name"
                   value={newRepName}
                   onChange={(e) => setNewRepName(e.target.value)}
                   placeholder="e.g. Wayne Roberts"
-                  className="w-52 rounded border border-slate-300 px-2 py-1 text-sm"
+                  className="w-52"
                 />
                 <datalist id="known-sales-reps">
                   {unmappedRepNames.map((name) => (
                     <option key={name} value={name} />
                   ))}
                 </datalist>
-              </label>
-              <label className="flex flex-col gap-1 text-sm text-slate-600">
-                Email
-                <input
-                  type="email"
-                  value={newRepEmail}
-                  onChange={(e) => setNewRepEmail(e.target.value)}
-                  placeholder="rep@example.com"
-                  className="w-52 rounded border border-slate-300 px-2 py-1 text-sm"
-                />
-              </label>
-              <button
-                type="button"
+              </div>
+              <Input
+                type="email"
+                label="Email"
+                value={newRepEmail}
+                onChange={(e) => setNewRepEmail(e.target.value)}
+                placeholder="rep@example.com"
+                className="w-52"
+              />
+              <Button
                 onClick={handleAddRep}
                 disabled={isSavingRep || !newRepName.trim() || !newRepEmail.trim()}
-                className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
               >
                 Add mapping
-              </button>
+              </Button>
             </div>
-            {repsError && <p className="mt-2 text-sm text-rose-600">{repsError}</p>}
+            {repsError && (
+              <div className="mt-2">
+                <Alert tone="danger">{repsError}</Alert>
+              </div>
+            )}
           </>
         )}
-      </section>
+      </Panel>
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="font-medium text-slate-900">BOM alert</p>
+      <Panel className="mt-6">
+        <PanelTitle>BOM alert</PanelTitle>
         <p className="mt-1 text-sm text-slate-500">
           When an order enters Authorised status and includes at least one assembly/BOM product, email your Warehouse
           Manager so assembly happens before picking — Cin7&rsquo;s own Pick Available flow doesn&rsquo;t print BOM
@@ -314,48 +311,36 @@ export default function NotificationsSettingsPage() {
         </p>
 
         {bomSettings === null ? (
-          <div className="mt-4 flex items-center gap-2 text-sm text-slate-400">
+          <div className="mt-4 flex items-center gap-2 text-sm text-slate-500">
             <Spinner /> Loading…
           </div>
         ) : (
           <div className="mt-4 flex flex-col gap-4">
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={bomEnabled}
-                onChange={(e) => setBomEnabled(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300"
-              />
-              Send BOM alert emails for this org
-            </label>
+            <Checkbox
+              label="Send BOM alert emails for this org"
+              checked={bomEnabled}
+              onChange={(e) => setBomEnabled(e.target.checked)}
+            />
 
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">Warehouse Manager email</span>
-              <input
-                type="email"
-                value={warehouseManagerEmail}
-                onChange={(e) => setWarehouseManagerEmail(e.target.value)}
-                placeholder="warehouse@example.com"
-                className="w-full max-w-md rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
-            </label>
+            <Input
+              type="email"
+              label="Warehouse Manager email"
+              value={warehouseManagerEmail}
+              onChange={(e) => setWarehouseManagerEmail(e.target.value)}
+              placeholder="warehouse@example.com"
+              className="max-w-md"
+            />
 
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleSaveBomSettings}
-                disabled={isSavingBomSettings || !bomDirty}
-                className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {isSavingBomSettings && <Spinner className="mr-1.5" />}
+              <Button onClick={handleSaveBomSettings} disabled={!bomDirty} loading={isSavingBomSettings}>
                 {isSavingBomSettings ? "Saving…" : "Save"}
-              </button>
-              {bomSavedOk && !bomDirty && <span className="text-sm text-emerald-600">Saved.</span>}
+              </Button>
+              {bomSavedOk && !bomDirty && <span className="text-sm text-success">Saved.</span>}
             </div>
-            {bomSettingsError && <p className="text-sm text-rose-600">{bomSettingsError}</p>}
+            {bomSettingsError && <Alert tone="danger">{bomSettingsError}</Alert>}
           </div>
         )}
-      </section>
+      </Panel>
     </main>
   );
 }

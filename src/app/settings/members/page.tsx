@@ -10,7 +10,11 @@ import {
 } from "./actions";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { TEAM_MEMBERS_MODULE, MODULES } from "@/app/module-nav";
-import { Spinner } from "@/app/Spinner";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { Alert } from "@/components/ui/Alert";
+import { Panel, PanelTitle } from "@/components/ui/Panel";
 
 function MemberRow({
   member,
@@ -40,49 +44,38 @@ function MemberRow({
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <Panel>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="font-medium text-slate-900">{member.email}</p>
           <p className="text-sm capitalize text-slate-500">{member.role}</p>
         </div>
-        <button
-          type="button"
-          onClick={() => onRemove(member.userId)}
-          disabled={isBusy}
-          className="shrink-0 rounded-full border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
-        >
+        <Button variant="destructive" size="sm" onClick={() => onRemove(member.userId)} disabled={isBusy}>
           Remove
-        </button>
+        </Button>
       </div>
 
       <div className="mt-4 flex flex-col gap-2 text-sm">
-        <label className="flex items-center gap-2 font-medium text-slate-700">
-          <input type="checkbox" checked={fullAccess} onChange={() => setFullAccess((v) => !v)} className="h-4 w-4" />
-          Full access (every module this org allows)
-        </label>
+        <Checkbox label="Full access (every module this org allows)" checked={fullAccess} onChange={() => setFullAccess((v) => !v)} />
 
         {!fullAccess && (
           <div className="ml-6 flex flex-col gap-1.5">
             {MODULES.map((m) => (
-              <label key={m.href} className="flex items-center gap-2 text-slate-600">
-                <input type="checkbox" checked={selected.has(m.href)} onChange={() => toggle(m.href)} className="h-4 w-4" />
-                {m.label}
-              </label>
+              <Checkbox key={m.href} label={m.label} checked={selected.has(m.href)} onChange={() => toggle(m.href)} />
             ))}
           </div>
         )}
 
-        <button
-          type="button"
+        <Button
+          size="sm"
           disabled={isBusy}
           onClick={() => onSaveModules(member.userId, fullAccess ? null : [...selected])}
-          className="mt-1 w-fit rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+          className="mt-1 w-fit"
         >
           Save access
-        </button>
+        </Button>
       </div>
-    </div>
+    </Panel>
   );
 }
 
@@ -164,39 +157,45 @@ export default function TeamMembersPage() {
         Anton on /admin) always stays disabled here too, regardless of what you grant.
       </ModuleHeader>
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Invite a teammate</h2>
-        <form onSubmit={handleInvite} className="mt-3 flex flex-wrap gap-2">
-          <input
-            type="email"
-            value={inviteEmail}
-            onChange={(e) => setInviteEmail(e.target.value)}
-            required
-            placeholder="teammate@example.com"
-            className="min-w-64 flex-1 rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none"
-          />
-          <button
-            type="submit"
-            disabled={isInviting}
-            className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-          >
-            {isInviting && <Spinner className="mr-1.5" />}
+      <Panel className="mt-6">
+        <PanelTitle>Invite a teammate</PanelTitle>
+        <form onSubmit={handleInvite} className="mt-3 flex flex-wrap items-end gap-2">
+          <div className="min-w-64 flex-1">
+            <Input
+              type="email"
+              label="Email"
+              hideLabel
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              required
+              placeholder="teammate@example.com"
+            />
+          </div>
+          <Button type="submit" loading={isInviting}>
             {isInviting ? "Inviting…" : "Send invite"}
-          </button>
+          </Button>
         </form>
         {inviteError && (
-          <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{inviteError}</p>
+          <div className="mt-3">
+            <Alert tone="danger">{inviteError}</Alert>
+          </div>
         )}
         {inviteSuccess && (
-          <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{inviteSuccess}</p>
+          <div className="mt-3">
+            <Alert tone="success">{inviteSuccess}</Alert>
+          </div>
         )}
-      </section>
+      </Panel>
 
       {loadError && (
-        <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>
+        <div className="mt-4">
+          <Alert tone="danger">{loadError}</Alert>
+        </div>
       )}
       {actionError && (
-        <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</p>
+        <div className="mt-4">
+          <Alert tone="danger">{actionError}</Alert>
+        </div>
       )}
 
       <div className="mt-6 flex flex-col gap-3">

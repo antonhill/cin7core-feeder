@@ -10,7 +10,10 @@ import {
 import type { OrderFulfillmentRow } from "@/reports/query";
 import { ReportDescription } from "../ReportDescription";
 import { CalendarBoard } from "../shipping-calendar/calendar-board";
-import { Spinner } from "@/app/Spinner";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Alert } from "@/components/ui/Alert";
+import { Panel } from "@/components/ui/Panel";
 
 /** Reuses is_pick_today (report_order_fulfillment, migrations 0061-0063) unchanged per the brief — no separate Picking Calendar qualification logic. */
 function isPickToday(order: OrderFulfillmentRow): boolean {
@@ -67,33 +70,29 @@ export default function PickingCalendarPage() {
         Calendar.
       </ReportDescription>
 
-      <section className="mt-6 flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <label className="flex flex-col gap-1 text-sm text-slate-600">
-          Show orders for picking this many working day(s) before Ship By
-          <input
-            type="number"
-            min={MIN_OFFSET_DAYS}
-            max={MAX_OFFSET_DAYS}
-            value={offsetDays ?? ""}
-            disabled={offsetDays === null || isSaving}
-            onChange={(e) => {
-              const value = Number(e.target.value);
-              if (Number.isFinite(value)) setOffsetDays(Math.min(MAX_OFFSET_DAYS, Math.max(MIN_OFFSET_DAYS, value)));
-            }}
-            className="w-24 rounded border border-slate-300 px-2 py-1 text-sm disabled:opacity-50"
-          />
-        </label>
-        <button
-          type="button"
-          onClick={handleSaveOffset}
-          disabled={offsetDays === null || isSaving || offsetDays === savedOffsetDays}
-          className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-        >
-          {isSaving && <Spinner className="mr-1.5" />}
+      <Panel className="mt-6 flex flex-wrap items-end gap-3">
+        <Input
+          type="number"
+          label="Show orders for picking this many working day(s) before Ship By"
+          min={MIN_OFFSET_DAYS}
+          max={MAX_OFFSET_DAYS}
+          value={offsetDays ?? ""}
+          disabled={offsetDays === null || isSaving}
+          onChange={(e) => {
+            const value = Number(e.target.value);
+            if (Number.isFinite(value)) setOffsetDays(Math.min(MAX_OFFSET_DAYS, Math.max(MIN_OFFSET_DAYS, value)));
+          }}
+          className="w-24"
+        />
+        <Button onClick={handleSaveOffset} disabled={offsetDays === null || offsetDays === savedOffsetDays} loading={isSaving}>
           {isSaving ? "Saving…" : "Save"}
-        </button>
-        {settingsError && <p className="w-full text-sm text-rose-600">{settingsError}</p>}
-      </section>
+        </Button>
+        {settingsError && (
+          <div className="w-full">
+            <Alert tone="danger">{settingsError}</Alert>
+          </div>
+        )}
+      </Panel>
 
       {savedOffsetDays !== null && (
         <CalendarBoard

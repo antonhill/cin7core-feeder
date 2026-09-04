@@ -20,9 +20,13 @@ import {
 import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
 import { matchesSearch } from "../text-search";
 import { SearchInput } from "../search-input";
-import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
+import { Button } from "@/components/ui/Button";
+import { Alert } from "@/components/ui/Alert";
+import { Badge } from "@/components/ui/Badge";
+import { Panel, PanelTitle } from "@/components/ui/Panel";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 type AssemblySortColumn = "assembly" | "components" | "totalCost" | "status";
 
@@ -294,7 +298,7 @@ export default function CostEstimatorPage() {
             onClick={() => setBomKind(tab.value)}
             className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${
               bomKind === tab.value
-                ? "bg-indigo-600 text-white"
+                ? "bg-primary text-white"
                 : "border border-slate-300 text-slate-600 hover:bg-slate-50"
             }`}
           >
@@ -309,17 +313,17 @@ export default function CostEstimatorPage() {
         label="Exporting to Excel…"
       />
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="font-medium text-slate-900">Instance</p>
+      <Panel>
+        <PanelTitle>Instance</PanelTitle>
         <div className="mt-3">
           <InstancePicker {...picker} onChange={picker.setInstanceId} />
         </div>
-      </section>
+      </Panel>
 
       {bomKind === "assembly" ? (
         <>
-          <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="font-medium text-slate-900">Cost basis</p>
+          <Panel className="mt-6">
+            <PanelTitle>Cost basis</PanelTitle>
             <div className="mt-2 flex flex-wrap gap-3 text-sm">
               {COST_BASIS_OPTIONS.map((opt) => (
                 <label key={opt.value} className="flex items-center gap-1.5">
@@ -328,32 +332,26 @@ export default function CostEstimatorPage() {
                     name="cost-basis"
                     checked={basis === opt.value}
                     onChange={() => handleBasisChange(opt.value)}
-                    className="h-4 w-4"
+                    className="h-4 w-4 text-primary"
                   />
                   {opt.label}
                 </label>
               ))}
             </div>
 
-            <button
-              type="button"
-              onClick={() => handleScan()}
-              disabled={isScanning || !instanceId}
-              className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-            >
-              {isScanning && <Spinner className="mr-1.5" />}
+            <Button onClick={() => handleScan()} disabled={!instanceId} loading={isScanning} className="mt-4">
               {isScanning ? "Estimating…" : "Estimate costs"}
-            </button>
+            </Button>
             {scanError && (
-              <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {scanError}
-              </p>
+              <div className="mt-4">
+                <Alert tone="danger">{scanError}</Alert>
+              </div>
             )}
-          </section>
+          </Panel>
 
           {estimates && (
             <section className="mt-6 flex flex-col gap-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4">
+              <Panel className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm text-slate-500">
                   {sortedEstimates.length} of {estimates.length} assembl
                   {estimates.length === 1 ? "y" : "ies"} · basis:{" "}
@@ -361,46 +359,32 @@ export default function CostEstimatorPage() {
                 </p>
                 <SearchInput value={assemblySearch} onChange={setAssemblySearch} placeholder="Assembly SKU or name" />
                 <div className="flex items-center gap-3">
-                  <p className="text-sm font-medium text-slate-700">
+                  <p className="text-sm font-medium text-slate-700 tabular-nums">
                     Total across all: {formatNumber(totalAcrossAssemblies)}
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => handleExport("summary")}
-                    disabled={isExporting || estimates.length === 0}
-                    className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                  >
+                  <Button variant="secondary" size="sm" onClick={() => handleExport("summary")} disabled={estimates.length === 0} loading={isExporting}>
                     {isExporting ? "Exporting…" : "Export summary .xlsx"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleExport("detail")}
-                    disabled={isExporting || estimates.length === 0}
-                    className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                  >
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => handleExport("detail")} disabled={estimates.length === 0} loading={isExporting}>
                     {isExporting ? "Exporting…" : "Export detail .xlsx"}
-                  </button>
+                  </Button>
                 </div>
-              </div>
+              </Panel>
               {incompleteCount > 0 && (
-                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                <Alert tone="warning">
                   {incompleteCount} assembl
                   {incompleteCount === 1 ? "y is" : "ies are"} missing cost data
                   for at least one component under this basis — those totals are
                   partial, not zero-cost.
-                </p>
+                </Alert>
               )}
-              {exportError && (
-                <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {exportError}
-                </p>
-              )}
+              {exportError && <Alert tone="danger">{exportError}</Alert>}
 
               {sortedEstimates.length > 0 ? (
-                <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
                   <table className="w-full text-left text-sm text-slate-700">
                     <thead>
-                      <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
+                      <tr className="border-b-2 border-slate-300 text-xs font-semibold uppercase tracking-wide text-slate-600">
                         <th className="w-8 px-2 py-2"></th>
                         <SortHeader label="Assembly" column="assembly" thClassName="px-4 py-2" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                         <SortHeader
@@ -440,27 +424,23 @@ export default function CostEstimatorPage() {
                               </td>
                               <td className="px-4 py-2 align-top">
                                 {estimate.assemblyName || "—"}{" "}
-                                <span className="text-xs text-slate-400">
+                                <span className="font-mono text-xs text-slate-400">
                                   ({estimate.assemblySku})
                                 </span>
                               </td>
-                              <td className="px-4 py-2 align-top text-right">
+                              <td className="px-4 py-2 align-top text-right tabular-nums">
                                 {estimate.lines.length}
                               </td>
-                              <td className="px-4 py-2 align-top text-right">
+                              <td className="px-4 py-2 align-top text-right tabular-nums">
                                 {estimate.totalCost !== null
                                   ? formatNumber(estimate.totalCost)
                                   : "N/A"}
                               </td>
                               <td className="px-4 py-2 align-top">
                                 {estimate.complete ? (
-                                  <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
-                                    Complete
-                                  </span>
+                                  <Badge tone="success">Complete</Badge>
                                 ) : (
-                                  <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
-                                    {estimate.missingCostCount} missing
-                                  </span>
+                                  <Badge tone="warning">{estimate.missingCostCount} missing</Badge>
                                 )}
                               </td>
                             </tr>
@@ -469,20 +449,20 @@ export default function CostEstimatorPage() {
                                 <td colSpan={5} className="px-4 py-4">
                                   <table className="w-full text-left text-sm text-slate-700">
                                     <thead>
-                                      <tr className="text-xs uppercase tracking-wide text-slate-400">
-                                        <th className="py-1 pr-4 font-medium">
+                                      <tr className="border-b border-slate-300 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                        <th className="py-1 pr-4">
                                           Component
                                         </th>
-                                        <th className="py-1 pr-4 text-right font-medium">
+                                        <th className="py-1 pr-4 text-right">
                                           Quantity
                                         </th>
-                                        <th className="py-1 pr-4 text-right font-medium">
+                                        <th className="py-1 pr-4 text-right">
                                           Wastage
                                         </th>
-                                        <th className="py-1 pr-4 text-right font-medium">
+                                        <th className="py-1 pr-4 text-right">
                                           Unit Cost
                                         </th>
-                                        <th className="py-1 pr-4 text-right font-medium">
+                                        <th className="py-1 pr-4 text-right">
                                           Line Cost
                                         </th>
                                       </tr>
@@ -495,22 +475,22 @@ export default function CostEstimatorPage() {
                                         >
                                           <td className="py-1 pr-4">
                                             {line.componentName || "—"}{" "}
-                                            <span className="text-xs text-slate-400">
+                                            <span className="font-mono text-xs text-slate-400">
                                               ({line.componentSku})
                                             </span>
                                           </td>
-                                          <td className="py-1 pr-4 text-right">
+                                          <td className="py-1 pr-4 text-right tabular-nums">
                                             {formatNumber(line.quantity)}
                                           </td>
-                                          <td className="py-1 pr-4 text-right">
+                                          <td className="py-1 pr-4 text-right tabular-nums">
                                             {formatNumber(line.wastageQuantity)}
                                           </td>
-                                          <td className="py-1 pr-4 text-right">
+                                          <td className="py-1 pr-4 text-right tabular-nums">
                                             {line.unitCost !== null
                                               ? formatNumber(line.unitCost)
                                               : "N/A"}
                                           </td>
-                                          <td className="py-1 pr-4 text-right">
+                                          <td className="py-1 pr-4 text-right tabular-nums">
                                             {line.lineCost !== null
                                               ? formatNumber(line.lineCost)
                                               : "N/A"}
@@ -529,18 +509,19 @@ export default function CostEstimatorPage() {
                   </table>
                 </div>
               ) : (
-                <p className="text-base text-slate-500">
-                  {estimates.length > 0 ? `Nothing matches "${assemblySearch}".` : "No Assembly BOMs found on this instance."}
-                </p>
+                <EmptyState
+                  title={estimates.length > 0 ? `Nothing matches "${assemblySearch}"` : "No Assembly BOMs found"}
+                  description={estimates.length > 0 ? undefined : "No Assembly BOMs were found on this instance."}
+                />
               )}
             </section>
           )}
         </>
       ) : (
         <>
-          <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="font-medium text-slate-900">Cost basis</p>
-            <p className="mt-1 text-xs text-slate-400">
+          <Panel className="mt-6">
+            <PanelTitle>Cost basis</PanelTitle>
+            <p className="mt-1 text-xs text-slate-500">
               Applies to material Components only — Resources (labor/machine)
               are shown at whatever cost their source Manufacture Order itself
               reported, since Cin7 has no confirmed &ldquo;current resource
@@ -554,33 +535,27 @@ export default function CostEstimatorPage() {
                     name="production-cost-basis"
                     checked={basis === opt.value}
                     onChange={() => handleBasisChange(opt.value)}
-                    className="h-4 w-4"
+                    className="h-4 w-4 text-primary"
                   />
                   {opt.label}
                 </label>
               ))}
             </div>
 
-            <button
-              type="button"
-              onClick={() => handleScanProduction()}
-              disabled={isScanningProduction || !instanceId}
-              className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-            >
-              {isScanningProduction && <Spinner className="mr-1.5" />}
+            <Button onClick={() => handleScanProduction()} disabled={!instanceId} loading={isScanningProduction} className="mt-4">
               {isScanningProduction ? "Estimating…" : "Estimate costs"}
-            </button>
+            </Button>
             {productionScanError && (
-              <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {productionScanError}
-              </p>
+              <div className="mt-4">
+                <Alert tone="danger">{productionScanError}</Alert>
+              </div>
             )}
-          </section>
+          </Panel>
 
           {productionResult && (
             <section className="mt-6 flex flex-col gap-4">
               {productionResult.skippedNoOrder > 0 && (
-                <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                <Alert tone="info">
                   {productionResult.totalProductionSkus} Production BOM product
                   {productionResult.totalProductionSkus === 1 ? "" : "s"} found
                   on this instance — {productionEstimates.length} have at least
@@ -591,9 +566,9 @@ export default function CostEstimatorPage() {
                     : " aren't"}{" "}
                   shown, since a Production BOM&rsquo;s recipe can only be read
                   from a completed order.
-                </p>
+                </Alert>
               )}
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4">
+              <Panel className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm text-slate-500">
                   {sortedProductionEstimates.length} of {productionEstimates.length} product
                   {productionEstimates.length === 1 ? "" : "s"} · basis:{" "}
@@ -601,54 +576,48 @@ export default function CostEstimatorPage() {
                 </p>
                 <SearchInput value={productionSearch} onChange={setProductionSearch} placeholder="Product SKU or name" />
                 <div className="flex items-center gap-3">
-                  <p className="text-sm font-medium text-slate-700">
+                  <p className="text-sm font-medium text-slate-700 tabular-nums">
                     Total across all: {formatNumber(totalAcrossProduction)}
                   </p>
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={() => handleExportProduction("summary")}
-                    disabled={
-                      isExportingProduction || productionEstimates.length === 0
-                    }
-                    className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    disabled={productionEstimates.length === 0}
+                    loading={isExportingProduction}
                   >
                     {isExportingProduction
                       ? "Exporting…"
                       : "Export summary .xlsx"}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={() => handleExportProduction("detail")}
-                    disabled={
-                      isExportingProduction || productionEstimates.length === 0
-                    }
-                    className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    disabled={productionEstimates.length === 0}
+                    loading={isExportingProduction}
                   >
                     {isExportingProduction
                       ? "Exporting…"
                       : "Export detail .xlsx"}
-                  </button>
+                  </Button>
                 </div>
-              </div>
+              </Panel>
               {incompleteProductionCount > 0 && (
-                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                <Alert tone="warning">
                   {incompleteProductionCount} product
                   {incompleteProductionCount === 1 ? " is" : "s are"} missing
                   cost data for at least one component under this basis — those
                   totals are partial, not zero-cost.
-                </p>
+                </Alert>
               )}
-              {productionExportError && (
-                <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {productionExportError}
-                </p>
-              )}
+              {productionExportError && <Alert tone="danger">{productionExportError}</Alert>}
 
               {sortedProductionEstimates.length > 0 ? (
-                <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
                   <table className="w-full text-left text-sm text-slate-700">
                     <thead>
-                      <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
+                      <tr className="border-b-2 border-slate-300 text-xs font-semibold uppercase tracking-wide text-slate-600">
                         <th className="w-8 px-2 py-2"></th>
                         <SortHeader
                           label="Product"
@@ -713,7 +682,7 @@ export default function CostEstimatorPage() {
                               </td>
                               <td className="px-4 py-2 align-top">
                                 {estimate.productName || "—"}{" "}
-                                <span className="text-xs text-slate-400">
+                                <span className="font-mono text-xs text-slate-400">
                                   ({estimate.productSku})
                                 </span>
                                 <div className="text-xs text-slate-400">
@@ -723,26 +692,22 @@ export default function CostEstimatorPage() {
                                     : ""}
                                 </div>
                               </td>
-                              <td className="px-4 py-2 align-top text-right">
+                              <td className="px-4 py-2 align-top text-right tabular-nums">
                                 {estimate.componentLines.length}
                               </td>
-                              <td className="px-4 py-2 align-top text-right">
+                              <td className="px-4 py-2 align-top text-right tabular-nums">
                                 {estimate.resourceLines.length}
                               </td>
-                              <td className="px-4 py-2 align-top text-right">
+                              <td className="px-4 py-2 align-top text-right tabular-nums">
                                 {estimate.totalCost !== null
                                   ? formatNumber(estimate.totalCost)
                                   : "N/A"}
                               </td>
                               <td className="px-4 py-2 align-top">
                                 {estimate.complete ? (
-                                  <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
-                                    Complete
-                                  </span>
+                                  <Badge tone="success">Complete</Badge>
                                 ) : (
-                                  <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
-                                    {estimate.missingCostCount} missing
-                                  </span>
+                                  <Badge tone="warning">{estimate.missingCostCount} missing</Badge>
                                 )}
                               </td>
                             </tr>
@@ -754,20 +719,20 @@ export default function CostEstimatorPage() {
                                   </p>
                                   <table className="w-full text-left text-sm text-slate-700">
                                     <thead>
-                                      <tr className="text-xs uppercase tracking-wide text-slate-400">
-                                        <th className="py-1 pr-4 font-medium">
+                                      <tr className="border-b border-slate-300 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                        <th className="py-1 pr-4">
                                           Component
                                         </th>
-                                        <th className="py-1 pr-4 text-right font-medium">
+                                        <th className="py-1 pr-4 text-right">
                                           Quantity
                                         </th>
-                                        <th className="py-1 pr-4 text-right font-medium">
+                                        <th className="py-1 pr-4 text-right">
                                           Wastage
                                         </th>
-                                        <th className="py-1 pr-4 text-right font-medium">
+                                        <th className="py-1 pr-4 text-right">
                                           Unit Cost
                                         </th>
-                                        <th className="py-1 pr-4 text-right font-medium">
+                                        <th className="py-1 pr-4 text-right">
                                           Line Cost
                                         </th>
                                       </tr>
@@ -781,24 +746,24 @@ export default function CostEstimatorPage() {
                                           >
                                             <td className="py-1 pr-4">
                                               {line.componentName || "—"}{" "}
-                                              <span className="text-xs text-slate-400">
+                                              <span className="font-mono text-xs text-slate-400">
                                                 ({line.componentSku})
                                               </span>
                                             </td>
-                                            <td className="py-1 pr-4 text-right">
+                                            <td className="py-1 pr-4 text-right tabular-nums">
                                               {formatNumber(line.quantity)}
                                             </td>
-                                            <td className="py-1 pr-4 text-right">
+                                            <td className="py-1 pr-4 text-right tabular-nums">
                                               {formatNumber(
                                                 line.wastageQuantity,
                                               )}
                                             </td>
-                                            <td className="py-1 pr-4 text-right">
+                                            <td className="py-1 pr-4 text-right tabular-nums">
                                               {line.unitCost !== null
                                                 ? formatNumber(line.unitCost)
                                                 : "N/A"}
                                             </td>
-                                            <td className="py-1 pr-4 text-right">
+                                            <td className="py-1 pr-4 text-right tabular-nums">
                                               {line.lineCost !== null
                                                 ? formatNumber(line.lineCost)
                                                 : "N/A"}
@@ -809,29 +774,29 @@ export default function CostEstimatorPage() {
                                     </tbody>
                                   </table>
 
-                                  <p className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                                  <p className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
                                     Resources
                                   </p>
                                   {estimate.resourceLines.length > 0 ? (
                                     <table className="w-full text-left text-sm text-slate-700">
                                       <thead>
-                                        <tr className="text-xs uppercase tracking-wide text-slate-400">
-                                          <th className="py-1 pr-4 font-medium">
+                                        <tr className="border-b border-slate-300 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                          <th className="py-1 pr-4">
                                             Resource
                                           </th>
-                                          <th className="py-1 pr-4 font-medium">
+                                          <th className="py-1 pr-4">
                                             Step
                                           </th>
-                                          <th className="py-1 pr-4 font-medium">
+                                          <th className="py-1 pr-4">
                                             Cost Type
                                           </th>
-                                          <th className="py-1 pr-4 text-right font-medium">
+                                          <th className="py-1 pr-4 text-right">
                                             Quantity
                                           </th>
-                                          <th className="py-1 pr-4 text-right font-medium">
+                                          <th className="py-1 pr-4 text-right">
                                             Cost
                                           </th>
-                                          <th className="py-1 pr-4 text-right font-medium">
+                                          <th className="py-1 pr-4 text-right">
                                             Total Cost
                                           </th>
                                         </tr>
@@ -845,7 +810,7 @@ export default function CostEstimatorPage() {
                                             >
                                               <td className="py-1 pr-4">
                                                 {line.resourceName || "—"}{" "}
-                                                <span className="text-xs text-slate-400">
+                                                <span className="font-mono text-xs text-slate-400">
                                                   ({line.resourceCode})
                                                 </span>
                                               </td>
@@ -856,15 +821,15 @@ export default function CostEstimatorPage() {
                                                 {line.costCalculationType ||
                                                   "—"}
                                               </td>
-                                              <td className="py-1 pr-4 text-right">
+                                              <td className="py-1 pr-4 text-right tabular-nums">
                                                 {formatNumber(line.quantity)}
                                               </td>
-                                              <td className="py-1 pr-4 text-right">
+                                              <td className="py-1 pr-4 text-right tabular-nums">
                                                 {line.cost !== null
                                                   ? formatNumber(line.cost)
                                                   : "N/A"}
                                               </td>
-                                              <td className="py-1 pr-4 text-right">
+                                              <td className="py-1 pr-4 text-right tabular-nums">
                                                 {line.totalCost !== null
                                                   ? formatNumber(line.totalCost)
                                                   : "N/A"}
@@ -890,11 +855,14 @@ export default function CostEstimatorPage() {
                   </table>
                 </div>
               ) : (
-                <p className="text-base text-slate-500">
-                  {productionEstimates.length > 0
-                    ? `Nothing matches "${productionSearch}".`
-                    : "No Production BOM products with a completed Manufacture Order were found on this instance."}
-                </p>
+                <EmptyState
+                  title={productionEstimates.length > 0 ? `Nothing matches "${productionSearch}"` : "No Production BOM products found"}
+                  description={
+                    productionEstimates.length > 0
+                      ? undefined
+                      : "No Production BOM products with a completed Manufacture Order were found on this instance."
+                  }
+                />
               )}
             </section>
           )}

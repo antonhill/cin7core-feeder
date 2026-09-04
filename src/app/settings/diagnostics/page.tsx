@@ -37,6 +37,10 @@ import {
 } from "./actions";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { DIAGNOSTICS_MODULE } from "@/app/module-nav";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Alert } from "@/components/ui/Alert";
+import { Panel } from "@/components/ui/Panel";
 
 /**
  * Super-admin only (gated by ./layout.tsx) — live debugging/field-discovery
@@ -347,288 +351,293 @@ export default function DiagnosticsPage() {
         Live debugging and field-discovery tools against a connected instance — super-admin only.
       </ModuleHeader>
 
-      {error && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+      {error && (
+        <div className="mt-4">
+          <Alert tone="danger">{error}</Alert>
+        </div>
+      )}
 
       <div className="mt-6 flex flex-col gap-3">
         {instances.map((inst) => (
-          <div key={inst.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-lg font-semibold text-slate-900">
-              {inst.name} <span className="text-sm font-normal text-slate-400">({inst.accountId})</span>
+          <Panel key={inst.id} className="p-5">
+            <p className="text-base font-semibold text-slate-900">
+              {inst.name} <span className="text-sm font-normal text-slate-500">({inst.accountId})</span>
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
-              <button onClick={() => handleFindBomExample(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+              <Button variant="secondary" size="sm" onClick={() => handleFindBomExample(inst.id)} disabled={isPending}>
                 Fetch BOM example
-              </button>
-              <button onClick={() => handleProbeWorkCentrePaths(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => handleProbeWorkCentrePaths(inst.id)} disabled={isPending}>
                 Probe Work Centre paths
-              </button>
-              <button onClick={() => handleFindCustomerSupplierExamples(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => handleFindCustomerSupplierExamples(inst.id)} disabled={isPending}>
                 Fetch Customer/Supplier example
-              </button>
-              <button onClick={() => handleFindFinishedGoodsExample(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => handleFindFinishedGoodsExample(inst.id)} disabled={isPending}>
                 Fetch Assembly (FinishedGoods) example
-              </button>
-              <button onClick={() => handleSurveyFinishedGoodsFields(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => handleSurveyFinishedGoodsFields(inst.id)} disabled={isPending}>
                 Survey Assembly fields (resources/services?)
-              </button>
-              <button onClick={() => handleSurveyCostBasisFields(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => handleSurveyCostBasisFields(inst.id)} disabled={isPending}>
                 Survey cost basis fields (Average/Latest/Fixed)
-              </button>
-              <button onClick={() => handleSurveyProductionBomFields(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => handleSurveyProductionBomFields(inst.id)} disabled={isPending}>
                 Survey Production BOM fields
-              </button>
-              <button onClick={() => handlePushOneCustomerAndSupplier(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => handlePushOneCustomerAndSupplier(inst.id)} disabled={isPending}>
                 Test push 1 customer + 1 supplier
-              </button>
-              <button onClick={() => handleCheckSaleStatuses(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => handleCheckSaleStatuses(inst.id)} disabled={isPending}>
                 Check sale statuses
-              </button>
+              </Button>
             </div>
             <div className="mt-3 flex items-center gap-2">
-              <input
-                type="text"
+              <Input
+                label="Customer or supplier name"
+                hideLabel
                 placeholder="Customer or supplier name"
                 value={refCheckNames[inst.id] ?? ""}
                 onChange={(e) => setRefCheckNames((prev) => ({ ...prev, [inst.id]: e.target.value }))}
-                className="w-64 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+                className="w-64"
               />
-              <button
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => handleCheckCustomerReferenceFields(inst.id)}
                 disabled={isPending || !(refCheckNames[inst.id] ?? "").trim()}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Check customer&rsquo;s reference fields
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => handleCheckSupplierReferenceFields(inst.id)}
                 disabled={isPending || !(refCheckNames[inst.id] ?? "").trim()}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Check supplier&rsquo;s reference fields
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => handleFetchCustomerByName(inst.id)}
                 disabled={isPending || !(refCheckNames[inst.id] ?? "").trim()}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Fetch this customer from Cin7
-              </button>
+              </Button>
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <input
-                type="text"
+              <Input
+                label="Account codes"
+                hideLabel
                 placeholder="Account codes, e.g. 800,801"
                 value={accountCodes[inst.id] ?? ""}
                 onChange={(e) => setAccountCodes((prev) => ({ ...prev, [inst.id]: e.target.value }))}
-                className="w-64 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+                className="w-64"
               />
-              <button
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => handleCompareAccounts(inst.id)}
                 disabled={isPending || !(accountCodes[inst.id] ?? "").trim()}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Compare account codes
-              </button>
+              </Button>
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <input
-                type="text"
+              <Input
+                label="SKUs to check"
+                hideLabel
                 placeholder="SKUs to check, e.g. F12-CPL-SBEP-DEMO,F12-CPL-SZPC-DEMO"
                 value={productionBomSkus[inst.id] ?? ""}
                 onChange={(e) => setProductionBomSkus((prev) => ({ ...prev, [inst.id]: e.target.value }))}
-                className="w-80 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+                className="w-80"
               />
-              <button
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => handleCheckProductionBomForSkus(inst.id)}
                 disabled={isPending || !(productionBomSkus[inst.id] ?? "").trim()}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Check Production BOM for SKUs
-              </button>
+              </Button>
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <input
-                type="text"
+              <Input
+                label="SKUs to check stock for"
+                hideLabel
                 placeholder="SKUs to check stock for, e.g. CC50X50-009,CC60X60-009"
                 value={availabilitySkus[inst.id] ?? ""}
                 onChange={(e) => setAvailabilitySkus((prev) => ({ ...prev, [inst.id]: e.target.value }))}
-                className="w-80 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+                className="w-80"
               />
-              <button
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => handleCheckProductAvailabilityForSkus(inst.id)}
                 disabled={isPending || !(availabilitySkus[inst.id] ?? "").trim()}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Check stock for SKUs
-              </button>
+              </Button>
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <input
-                type="text"
+              <Input
+                label="Manufacture Order number"
+                hideLabel
                 placeholder="Manufacture Order number, e.g. MO-00036"
                 value={productionOrderNumbers[inst.id] ?? ""}
                 onChange={(e) => setProductionOrderNumbers((prev) => ({ ...prev, [inst.id]: e.target.value }))}
-                className="w-80 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+                className="w-80"
               />
-              <button
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => handleFetchProductionOrderDetail(inst.id)}
                 disabled={isPending || !(productionOrderNumbers[inst.id] ?? "").trim()}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Fetch Production Order detail
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => handleSurveyProductionOrderRoutingTasks(inst.id)}
                 disabled={isPending || !(productionOrderNumbers[inst.id] ?? "").trim()}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Survey routing tasks (Type &quot;R&quot; rows, Adv. Mfg)
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => handleSurveyProductionOrderOperationStatus(inst.id)}
                 disabled={isPending || !(productionOrderNumbers[inst.id] ?? "").trim()}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Probe operation status fields/paths (Adv. Mfg)
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => handleSurveyProductionRun(inst.id)}
                 disabled={isPending || !(productionOrderNumbers[inst.id] ?? "").trim()}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Fetch /production/order/run (Adv. Mfg — actuals)
-              </button>
-              <button
-                onClick={() => handleSurveyProductionOrderStatuses(inst.id)}
-                disabled={isPending}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => handleSurveyProductionOrderStatuses(inst.id)} disabled={isPending}>
                 Survey Status/OrderStatus values (whole account, Adv. Mfg)
-              </button>
+              </Button>
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <button
-                onClick={() => handleSurveyPurchaseDetailFields(inst.id)}
-                disabled={isPending}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
+              <Button variant="secondary" size="sm" onClick={() => handleSurveyPurchaseDetailFields(inst.id)} disabled={isPending}>
                 Survey purchase detail fields (Inventory Movement Phase 1)
-              </button>
-              <button
-                onClick={() => handleSurveyProductAvailabilityFields(inst.id)}
-                disabled={isPending}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => handleSurveyProductAvailabilityFields(inst.id)} disabled={isPending}>
                 Survey product availability fields (Stock Health)
-              </button>
-              <button
-                onClick={() => handleSurveyProductSupplierOptionsFields(inst.id)}
-                disabled={isPending}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => handleSurveyProductSupplierOptionsFields(inst.id)} disabled={isPending}>
                 Survey Product Supplier Options fields (Replenish rebuild)
-              </button>
+              </Button>
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <input
-                type="text"
+              <Input
+                label="SKU"
+                hideLabel
                 placeholder="SKU e.g. New Item for Smart"
                 value={supplierOptionsSkus[inst.id] ?? ""}
                 onChange={(e) => setSupplierOptionsSkus((prev) => ({ ...prev, [inst.id]: e.target.value }))}
-                className="w-96 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+                className="w-96"
               />
-              <button
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => handleFindProductSupplierOptionsExample(inst.id)}
                 disabled={isPending || !(supplierOptionsSkus[inst.id] ?? "").trim()}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Fetch one SKU&apos;s Product Supplier Options (targeted, raw dump)
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => handleCheckProductSupplierOptionsForUnparsedFields(inst.id)}
                 disabled={isPending}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Check for a real MOQ field (Purchase Planner)
-              </button>
+              </Button>
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
-              <button
-                onClick={() => handleSurveySaleFulfillmentFields(inst.id)}
-                disabled={isPending}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
+              <Button variant="secondary" size="sm" onClick={() => handleSurveySaleFulfillmentFields(inst.id)} disabled={isPending}>
                 Survey sale fulfillment fields (Order Fulfillment Dashboard)
-              </button>
-              <button
-                onClick={() => handleSurveyBackorderEtaFields(inst.id)}
-                disabled={isPending}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => handleSurveyBackorderEtaFields(inst.id)} disabled={isPending}>
                 Survey backorder ETA fields (Order Fulfillment Dashboard)
-              </button>
+              </Button>
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <input
-                type="text"
+              <Input
+                label="Order Number to test-write against"
+                hideLabel
                 placeholder="Order Number to test-write against, e.g. SO-00583"
                 value={shipByTestOrderNumbers[inst.id] ?? ""}
                 onChange={(e) => setShipByTestOrderNumbers((prev) => ({ ...prev, [inst.id]: e.target.value }))}
-                className="w-80 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+                className="w-80"
               />
-              <button
+              {/* Genuine live Cin7 write, no confirmation step — a named, deliberately out-of-scope follow-up for this reskin (behaviour freeze), not something to add here. warning variant + unchanged title text are the only cues, exactly as before. */}
+              <Button
+                variant="warning"
+                size="sm"
                 onClick={() => handleTestSaleShipByWriteBack(inst.id)}
                 disabled={isPending || !(shipByTestOrderNumbers[inst.id] ?? "").trim()}
-                className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
                 title="Performs a real PUT against this order in Cin7 — a no-op (writes back its own current ShipBy unchanged) but a genuine write, not a read-only survey. Use a real test order, not a live customer's."
               >
                 Test ShipBy write-back (WRITES to Cin7 — no-op test)
-              </button>
+              </Button>
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <input
-                type="text"
+              <Input
+                label="SKU and supplier name"
+                hideLabel
                 placeholder='"SKU,Supplier Name" e.g. Cardboard80,Box Shop Packaging'
                 value={supplierLinkTests[inst.id] ?? ""}
                 onChange={(e) => setSupplierLinkTests((prev) => ({ ...prev, [inst.id]: e.target.value }))}
-                className="w-96 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+                className="w-96"
               />
-              <button
+              <Button
+                variant="warning"
+                size="sm"
                 onClick={() => handleTestProductSupplierLink(inst.id)}
                 disabled={isPending || !(supplierLinkTests[inst.id] ?? "").trim()}
-                className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
                 title="Performs a real PUT against this product in Cin7, adding a resolved SupplierID to its Suppliers array — a genuine write, not a no-op. Only safe to use on a product whose supplier link is currently missing/failing anyway."
               >
                 Test product-supplier link with resolved SupplierID (WRITES to Cin7)
-              </button>
+              </Button>
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <input
-                type="text"
+              <Input
+                label="SKU, supplier name, quantity, location name"
+                hideLabel
                 placeholder='"SKU,Supplier Name,Quantity,Location Name" e.g. Cardboard80,Box Shop Packaging,1,Main Warehouse'
                 value={createPoTests[inst.id] ?? ""}
                 onChange={(e) => setCreatePoTests((prev) => ({ ...prev, [inst.id]: e.target.value }))}
-                className="w-[30rem] rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+                className="w-[30rem]"
               />
-              <button
+              <Button
+                variant="warning"
+                size="sm"
                 onClick={() => handleTestCreatePurchaseOrder(inst.id)}
                 disabled={isPending || !(createPoTests[inst.id] ?? "").trim()}
-                className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
                 title="Creates a real DRAFT Purchase Order in Cin7 by trying several candidate payload shapes — a genuine write, not a no-op. No confirmed POST /purchase shape exists anywhere in this codebase yet. Use a real test supplier/SKU/location, not a live customer's — the created order is a draft you can void/delete in Cin7's own UI afterward."
               >
                 Test create Purchase Order (WRITES to Cin7 — creates a real DRAFT)
-              </button>
+              </Button>
             </div>
             {testResults[inst.id] && (
               <pre
-                className={`mt-3 max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs ${testResults[inst.id].ok ? "text-emerald-700" : "text-red-700"}`}
+                className={`mt-3 max-h-96 overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-xs ${testResults[inst.id].ok ? "text-success" : "text-danger"}`}
               >
                 {testResults[inst.id].message}
               </pre>
             )}
-          </div>
+          </Panel>
         ))}
-        {loaded && instances.length === 0 && <p className="text-base text-slate-500">No instances connected yet.</p>}
+        {loaded && instances.length === 0 && <p className="text-sm text-slate-500">No instances connected yet.</p>}
       </div>
     </main>
   );

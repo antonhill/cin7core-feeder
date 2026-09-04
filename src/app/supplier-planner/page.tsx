@@ -15,9 +15,17 @@ import {
 } from "./actions";
 import { groupLinesBySupplier, type SupplierPlanLine, type SupplierPlanMoverCategory, type SupplierPlanStatus } from "@/reports/supplier-planner/build";
 import type { Cin7Location } from "@/cin7/reference-lookups";
-import { Spinner } from "@/app/Spinner";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { SUPPLIER_PLANNER_MODULE } from "@/app/module-nav";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/Table";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Alert } from "@/components/ui/Alert";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Panel, PanelTitle } from "@/components/ui/Panel";
 
 type Period = "1m" | "3m" | "6m" | "9m" | "12m";
 
@@ -34,17 +42,17 @@ const BUFFER_OPTIONS = [0, 10, 20, 30];
 const MOVER_OPTIONS: SupplierPlanMoverCategory[] = ["Fast", "Medium", "Slow", "No movement"];
 const STATUS_OPTIONS: SupplierPlanStatus[] = ["Stockout risk", "Excess", "Healthy"];
 
-const MOVER_BADGE: Record<SupplierPlanMoverCategory, string> = {
-  Fast: "bg-emerald-100 text-emerald-700",
-  Medium: "bg-amber-100 text-amber-700",
-  Slow: "bg-rose-100 text-rose-700",
-  "No movement": "bg-slate-100 text-slate-500",
+const MOVER_TONE: Record<SupplierPlanMoverCategory, BadgeTone> = {
+  Fast: "success",
+  Medium: "warning",
+  Slow: "danger",
+  "No movement": "neutral",
 };
 
-const STATUS_BADGE: Record<SupplierPlanStatus, string> = {
-  "Stockout risk": "bg-rose-100 text-rose-700",
-  Excess: "bg-amber-100 text-amber-700",
-  Healthy: "bg-emerald-100 text-emerald-700",
+const STATUS_TONE: Record<SupplierPlanStatus, BadgeTone> = {
+  "Stockout risk": "danger",
+  Excess: "warning",
+  Healthy: "success",
 };
 
 function downloadBase64File(base64: string, filename: string, mimeType: string) {
@@ -112,21 +120,18 @@ function CollapsibleCheckboxFilter({
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center gap-2">
-        <span className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</span>
-        <button type="button" onClick={onClear} className="text-xs text-indigo-600 hover:underline">
+        <span className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</span>
+        <button type="button" onClick={onClear} className="text-xs text-primary hover:underline">
           Clear{selected.length > 0 ? ` (${selected.length})` : ""}
         </button>
       </div>
       <div className="flex max-w-2xl flex-wrap items-center gap-3">
         {visible.map((value) => (
-          <label key={value} className="flex items-center gap-1.5 text-sm text-slate-700">
-            <input type="checkbox" checked={selected.includes(value)} onChange={() => onToggle(value)} />
-            {value}
-          </label>
+          <Checkbox key={value} label={value} checked={selected.includes(value)} onChange={() => onToggle(value)} />
         ))}
       </div>
       {hasMore && (
-        <button type="button" onClick={() => setExpanded((e) => !e)} className="self-start text-xs text-indigo-600 hover:underline">
+        <button type="button" onClick={() => setExpanded((e) => !e)} className="self-start text-xs text-primary hover:underline">
           {expanded ? "Show less" : `Show all (${options.length})`}
         </button>
       )}
@@ -403,8 +408,8 @@ export default function SupplierPlannerPage() {
         lead time, use the Reorder Report instead.
       </ModuleHeader>
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="font-medium text-slate-900">Filters</p>
+      <Panel className="mt-6">
+        <PanelTitle>Filters</PanelTitle>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div>
             <span className="text-sm font-medium text-slate-700">Instance</span>
@@ -413,180 +418,143 @@ export default function SupplierPlannerPage() {
             </div>
           </div>
 
-          <label className="flex flex-col gap-1.5 text-sm">
-            <span className="font-medium text-slate-700">Sales period</span>
-            <select value={period} onChange={(e) => setPeriod(e.target.value as Period)} className="rounded-lg border border-slate-300 px-3 py-2">
-              {PERIOD_OPTIONS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Select label="Sales period" value={period} onChange={(e) => setPeriod(e.target.value as Period)}>
+            {PERIOD_OPTIONS.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </Select>
 
-          <label className="flex flex-col gap-1.5 text-sm">
-            <span className="font-medium text-slate-700">Buffer</span>
-            <select
-              value={bufferPercent}
-              onChange={(e) => setBufferPercent(Number(e.target.value))}
-              className="rounded-lg border border-slate-300 px-3 py-2"
-            >
-              {BUFFER_OPTIONS.map((b) => (
-                <option key={b} value={b}>
-                  +{b}%
-                </option>
-              ))}
-            </select>
-          </label>
+          <Select label="Buffer" value={bufferPercent} onChange={(e) => setBufferPercent(Number(e.target.value))}>
+            {BUFFER_OPTIONS.map((b) => (
+              <option key={b} value={b}>
+                +{b}%
+              </option>
+            ))}
+          </Select>
         </div>
 
         <div className="mt-5 border-t border-slate-100 pt-4">
           <p className="text-sm font-medium text-slate-700">Import supplier stock floor</p>
-          <p className="mt-1 max-w-2xl text-xs text-slate-400">
+          <p className="mt-1 max-w-2xl text-xs text-slate-500">
             For any supplier whose Currency differs from the home currency below, the suggested quantity never drops below N
             months of average sales — on top of, not instead of, the usual lead-time calculation. Leave home currency blank to
             turn this off. This might not suit every client, so it&apos;s a setting, not a fixed rule.
           </p>
           <div className="mt-3 flex flex-wrap items-end gap-3">
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">Home currency</span>
-              <input
-                type="text"
-                value={homeCurrency}
-                onChange={(e) => setHomeCurrency(e.target.value)}
-                placeholder="e.g. ZAR"
-                className="w-28 rounded-lg border border-slate-300 px-3 py-2 uppercase"
-                maxLength={3}
-              />
-            </label>
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">Months of stock (import)</span>
-              <input
-                type="number"
-                min={0}
-                step={0.5}
-                value={importStockMonths}
-                onChange={(e) => setImportStockMonths(Number(e.target.value))}
-                className="w-32 rounded-lg border border-slate-300 px-3 py-2"
-              />
-            </label>
-            <button
-              type="button"
-              onClick={handleSaveDefaults}
-              disabled={isSavingDefaults}
-              className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
-              {isSavingDefaults && <Spinner className="mr-1.5" />}
+            <Input
+              label="Home currency"
+              value={homeCurrency}
+              onChange={(e) => setHomeCurrency(e.target.value)}
+              placeholder="e.g. ZAR"
+              className="w-28 uppercase"
+              maxLength={3}
+            />
+            <Input
+              label="Months of stock (import)"
+              type="number"
+              min={0}
+              step={0.5}
+              value={importStockMonths}
+              onChange={(e) => setImportStockMonths(Number(e.target.value))}
+              className="w-32"
+            />
+            <Button variant="secondary" size="sm" onClick={handleSaveDefaults} loading={isSavingDefaults}>
               {isSavingDefaults ? "Saving…" : "Save as org default"}
-            </button>
+            </Button>
           </div>
           {saveDefaultsMessage && (
-            <p className={`mt-2 text-sm ${saveDefaultsMessage.ok ? "text-emerald-700" : "text-red-700"}`}>{saveDefaultsMessage.text}</p>
+            <div className="mt-2">
+              <Alert tone={saveDefaultsMessage.ok ? "success" : "danger"}>{saveDefaultsMessage.text}</Alert>
+            </div>
           )}
         </div>
 
-        <button
-          type="button"
-          onClick={handleRunPlan}
-          disabled={isRunning || !instanceId}
-          className="mt-5 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-        >
-          {isRunning && <Spinner className="mr-1.5" />}
-          {isRunning ? "Running…" : "Run plan"}
-        </button>
+        <div className="mt-5">
+          <Button onClick={handleRunPlan} disabled={!instanceId} loading={isRunning}>
+            {isRunning ? "Running…" : "Run plan"}
+          </Button>
+        </div>
 
-        {error && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
-      </section>
+        {error && (
+          <div className="mt-4">
+            <Alert tone="danger">{error}</Alert>
+          </div>
+        )}
+      </Panel>
 
       {lines && (
         <section className="mt-6 flex flex-col gap-6">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <Panel className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-slate-500">
               {visibleLines.length} line{visibleLines.length === 1 ? "" : "s"} across {grouped.size} supplier{grouped.size === 1 ? "" : "s"} —{" "}
               {needsReorderCount} need reordering at this buffer
             </p>
             <div className="flex flex-wrap items-center gap-3">
-              <input
-                type="text"
+              <Input
+                label="Search product, SKU, or supplier"
+                hideLabel
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search product, SKU, or supplier…"
-                className="w-64 rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+                className="h-8 w-64"
               />
-              <label className="flex items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox" checked={needsReorderOnly} onChange={(e) => setNeedsReorderOnly(e.target.checked)} />
-                Needs reorder only
-              </label>
-              <button
-                type="button"
-                onClick={handleExport}
-                disabled={isExporting || visibleLines.length === 0}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                {isExporting && <Spinner className="mr-1.5" />}
+              <Checkbox label="Needs reorder only" checked={needsReorderOnly} onChange={(e) => setNeedsReorderOnly(e.target.checked)} />
+              <Button variant="secondary" size="sm" onClick={handleExport} disabled={visibleLines.length === 0} loading={isExporting}>
                 {isExporting ? "Exporting…" : "Export to Excel"}
-              </button>
+              </Button>
             </div>
-          </div>
+          </Panel>
 
-          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">Receiving location</span>
-              <select
-                value={receivingLocationId}
-                onChange={(e) => setReceivingLocationId(e.target.value)}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="">Choose a location…</option>
-                {locations.map((loc) => (
-                  <option key={loc.id} value={loc.id}>
-                    {loc.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p className="max-w-md text-xs text-slate-400">
+          <Panel className="flex flex-wrap items-center gap-3">
+            <Select
+              label="Receiving location"
+              value={receivingLocationId}
+              onChange={(e) => setReceivingLocationId(e.target.value)}
+              className="w-56"
+            >
+              <option value="">Choose a location…</option>
+              {locations.map((loc) => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.name}
+                </option>
+              ))}
+            </Select>
+            <p className="max-w-md text-xs text-slate-500">
               Used for lines with no location of their own (most lines) when creating a PO — Cin7 needs exactly one receiving location per
               order. A line that already has its own specific location keeps that instead.
             </p>
-          </div>
+          </Panel>
 
-          <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <Panel className="flex flex-wrap gap-x-6 gap-y-2">
             <div className="flex flex-wrap items-center gap-3">
-              <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Mover</span>
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Mover</span>
               {MOVER_OPTIONS.map((m) => (
-                <label key={m} className="flex items-center gap-1.5 text-sm text-slate-700">
-                  <input type="checkbox" checked={moverFilter.has(m)} onChange={() => toggleMover(m)} />
-                  {m}
-                </label>
+                <Checkbox key={m} label={m} checked={moverFilter.has(m)} onChange={() => toggleMover(m)} />
               ))}
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Status</span>
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Status</span>
               {STATUS_OPTIONS.map((s) => (
-                <label key={s} className="flex items-center gap-1.5 text-sm text-slate-700">
-                  <input type="checkbox" checked={statusFilter.has(s)} onChange={() => toggleStatus(s)} />
-                  {s}
-                </label>
+                <Checkbox key={s} label={s} checked={statusFilter.has(s)} onChange={() => toggleStatus(s)} />
               ))}
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Currency</span>
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Currency</span>
               {availableCurrencies.map((c) => (
-                <label key={c} className="flex items-center gap-1.5 text-sm text-slate-700">
-                  <input type="checkbox" checked={currencyFilter === null || currencyFilter.has(c)} onChange={() => toggleCurrency(c)} />
-                  {c}
-                </label>
+                <Checkbox key={c} label={c} checked={currencyFilter === null || currencyFilter.has(c)} onChange={() => toggleCurrency(c)} />
               ))}
             </div>
-            <label className="flex items-center gap-1.5 text-sm text-slate-700">
-              <input type="checkbox" checked={showUnconfigured} onChange={(e) => setShowUnconfigured(e.target.checked)} />
-              Show unconfigured entries{!showUnconfigured && unconfiguredCount > 0 && ` (${unconfiguredCount} hidden)`}
-            </label>
-          </div>
+            <Checkbox
+              label={`Show unconfigured entries${!showUnconfigured && unconfiguredCount > 0 ? ` (${unconfiguredCount} hidden)` : ""}`}
+              checked={showUnconfigured}
+              onChange={(e) => setShowUnconfigured(e.target.checked)}
+            />
+          </Panel>
 
           {(availableSuppliers.length > 0 || availableBrands.length > 0 || availableCategories.length > 0) && (
-            <div className="flex flex-wrap gap-x-6 gap-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <Panel className="flex flex-wrap gap-x-6 gap-y-3">
               {availableSuppliers.length > 0 && (
                 <CollapsibleCheckboxFilter
                   label="Supplier"
@@ -614,15 +582,16 @@ export default function SupplierPlannerPage() {
                   onClear={() => setCategoryFilter([])}
                 />
               )}
-            </div>
+            </Panel>
           )}
 
-          {exportError && <p className="text-sm text-red-600">{exportError}</p>}
+          {exportError && <Alert tone="danger">{exportError}</Alert>}
 
           {visibleLines.length === 0 && (
-            <p className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-400 shadow-sm">
-              No products with a configured lead time match these filters.
-            </p>
+            <EmptyState
+              title="No matching products"
+              description="No products with a configured lead time match these filters."
+            />
           )}
 
           {[...grouped.entries()].map(([supplierName, supplierLines]) => {
@@ -639,31 +608,34 @@ export default function SupplierPlannerPage() {
                 ? "Choose a receiving location above — none of the selected lines have one of their own."
                 : undefined;
             return (
-              <div key={supplierName} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <Panel key={supplierName}>
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="font-semibold text-slate-900">
+                  <p className="text-base font-semibold text-slate-900">
                     {supplierName}{" "}
-                    <span className="ml-2 text-sm font-normal text-slate-400">
+                    <span className="ml-2 text-sm font-normal text-slate-500">
                       {supplierLines.length} line{supplierLines.length === 1 ? "" : "s"}
                     </span>
                   </p>
-                  <button
-                    type="button"
+                  <Button
+                    size="sm"
                     onClick={() => handleCreatePo(supplierName, supplierLines)}
                     disabled={createDisabled}
                     title={createTitle}
-                    className="rounded-full bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                    loading={isCreatingThisSupplier}
                   >
-                    {isCreatingThisSupplier && <Spinner className="mr-1.5" />}
                     {isCreatingThisSupplier ? "Creating…" : `Create PO${selectedCount > 0 ? ` (${selectedCount} line${selectedCount === 1 ? "" : "s"})` : ""}`}
-                  </button>
+                  </Button>
                 </div>
 
-                {poResult?.error && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{poResult.error}</p>}
+                {poResult?.error && (
+                  <div className="mt-3">
+                    <Alert tone="danger">{poResult.error}</Alert>
+                  </div>
+                )}
                 {poResult && (poResult.created.length > 0 || poResult.failed.length > 0 || (poResult.deduplicated?.length ?? 0) > 0) && (
                   <div className="mt-3 flex flex-col gap-2">
                     {(poResult.deduplicated?.length ?? 0) > 0 && (
-                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                      <Alert tone="warning">
                         {poResult.deduplicated!.length} PO{poResult.deduplicated!.length === 1 ? " was" : "s were"} already created moments ago for the same lines — returned the existing
                         {poResult.deduplicated!.length === 1 ? " one" : " ones"} instead of a duplicate:
                         <ul className="mt-1 list-disc pl-5">
@@ -673,10 +645,10 @@ export default function SupplierPlannerPage() {
                             </li>
                           ))}
                         </ul>
-                      </div>
+                      </Alert>
                     )}
                     {poResult.created.length > 0 && (
-                      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                      <Alert tone="success">
                         Created {poResult.created.length} draft PO{poResult.created.length === 1 ? "" : "s"} in Cin7 — review and authorize
                         {poResult.created.length === 1 ? " it" : " them"} there:
                         <ul className="mt-1 list-disc pl-5">
@@ -686,10 +658,10 @@ export default function SupplierPlannerPage() {
                             </li>
                           ))}
                         </ul>
-                      </div>
+                      </Alert>
                     )}
                     {poResult.failed.length > 0 && (
-                      <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                      <Alert tone="danger">
                         {poResult.failed.length} PO{poResult.failed.length === 1 ? "" : "s"} failed to create:
                         <ul className="mt-1 list-disc pl-5">
                           {poResult.failed.map((f) => (
@@ -698,93 +670,102 @@ export default function SupplierPlannerPage() {
                             </li>
                           ))}
                         </ul>
-                      </div>
+                      </Alert>
                     )}
                   </div>
                 )}
 
-                <div className="mt-3 overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-slate-500">
-                        <th className="py-2 pr-4">
+                <div className="mt-3">
+                  <Table>
+                    <THead>
+                      <tr>
+                        <TH>
                           <input
                             type="checkbox"
+                            aria-label={`Select all lines for ${supplierName}`}
                             checked={allSelected}
                             ref={(el) => {
                               if (el) el.indeterminate = selectedCount > 0 && selectedCount < supplierLines.length;
                             }}
                             onChange={() => toggleSupplierLines(supplierLines)}
-                            className="h-4 w-4"
+                            className="h-4 w-4 rounded border-slate-300 text-primary"
                           />
-                        </th>
-                        <th className="py-2 pr-4 font-medium">Product</th>
-                        <th className="py-2 pr-4 font-medium">Location</th>
-                        <th className="py-2 pr-4 text-right font-medium">Lead + Safety</th>
-                        <th className="py-2 pr-4 text-right font-medium">On Hand</th>
-                        <th className="py-2 pr-4 text-right font-medium">On Order</th>
-                        <th className="py-2 pr-4 text-right font-medium">Reorder At</th>
-                        <th className="py-2 pr-4 text-right font-medium">Suggested Qty</th>
-                        <th className="py-2 pr-4 text-right font-medium">Latest Price</th>
-                        <th className="py-2 pr-4 font-medium">Mover</th>
-                        <th className="py-2 pr-4 font-medium">Status</th>
+                        </TH>
+                        <TH>Product</TH>
+                        <TH>Location</TH>
+                        <TH align="right">Lead + Safety</TH>
+                        <TH align="right">On Hand</TH>
+                        <TH align="right">On Order</TH>
+                        <TH align="right">Reorder At</TH>
+                        <TH align="right">Suggested Qty</TH>
+                        <TH align="right">Latest Price</TH>
+                        <TH>Mover</TH>
+                        <TH>Status</TH>
                       </tr>
-                    </thead>
-                    <tbody>
+                    </THead>
+                    <TBody>
                       {supplierLines.map((line) => {
                         const key = lineKey(line);
                         const checked = !excludedLineKeys.has(key);
                         return (
-                          <tr key={key} className={`border-b border-slate-100 ${line.needsReorder ? "bg-amber-50/50" : ""} ${checked ? "" : "opacity-50"}`}>
-                            <td className="py-1.5 pr-4">
-                              <input type="checkbox" checked={checked} onChange={() => toggleLine(key)} className="h-4 w-4" />
-                            </td>
-                            <td className="py-2 pr-4">
+                          <TR
+                            key={key}
+                            flagged={line.needsReorder ? "warning" : undefined}
+                            className={`${line.needsReorder ? "bg-warning-subtle" : ""} ${checked ? "" : "opacity-50"}`}
+                          >
+                            <TD>
+                              <input
+                                type="checkbox"
+                                aria-label={`Select ${line.productName}`}
+                                checked={checked}
+                                onChange={() => toggleLine(key)}
+                                className="h-4 w-4 rounded border-slate-300 text-primary"
+                              />
+                            </TD>
+                            <TD>
                               <div className="font-medium text-slate-900">{line.productName}</div>
-                              <div className="text-xs text-slate-400">{line.productSku}</div>
+                              <div className="font-mono text-xs text-slate-500">{line.productSku}</div>
                               {line.pendingPurchaseOrder && (
                                 <span
-                                  className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"
                                   title={`Created ${new Date(line.pendingPurchaseOrder.createdAt).toLocaleString()} — not yet authorized in Cin7. Deselected by default to avoid a duplicate.`}
+                                  className="mt-1 inline-block"
                                 >
-                                  {line.pendingPurchaseOrder.orderNumber} pending authorization
+                                  <Badge tone="warning">{line.pendingPurchaseOrder.orderNumber} pending authorization</Badge>
                                 </span>
                               )}
-                            </td>
-                            <td className="py-2 pr-4 text-slate-500">{line.locationName ?? "All locations"}</td>
-                            <td className="py-2 pr-4 text-right">
+                            </TD>
+                            <TD className="text-slate-500">{line.locationName ?? "All locations"}</TD>
+                            <TD align="right" numeric>
                               {line.lead}+{line.safety}
-                            </td>
-                            <td className="py-2 pr-4 text-right">{qty(line.onHand)}</td>
-                            <td className="py-2 pr-4 text-right">{qty(line.onOrder)}</td>
-                            <td className="py-2 pr-4 text-right">{qty(line.threshold)}</td>
-                            <td className="py-2 pr-4 text-right font-medium">{qty(line.suggestedQty)}</td>
-                            <td className="py-2 pr-4 text-right">
+                            </TD>
+                            <TD align="right" numeric>{qty(line.onHand)}</TD>
+                            <TD align="right" numeric>{qty(line.onOrder)}</TD>
+                            <TD align="right" numeric>{qty(line.threshold)}</TD>
+                            <TD align="right" numeric className="font-medium">{qty(line.suggestedQty)}</TD>
+                            <TD align="right" numeric>
                               {money(line.cost, line.currency)}
                               {line.isImportSupplier && (
                                 <span
-                                  className="ml-1.5 inline-block rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700"
                                   title="Supplier's currency differs from this org's home currency — the import stock-floor was considered for this line."
+                                  className="ml-1.5 inline-block"
                                 >
-                                  Import
+                                  <Badge tone="info">Import</Badge>
                                 </span>
                               )}
-                            </td>
-                            <td className="py-2 pr-4">
-                              <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${MOVER_BADGE[line.moverCategory]}`}>
-                                {line.moverCategory}
-                              </span>
-                            </td>
-                            <td className="py-2 pr-4">
-                              <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_BADGE[line.status]}`}>{line.status}</span>
-                            </td>
-                          </tr>
+                            </TD>
+                            <TD>
+                              <Badge tone={MOVER_TONE[line.moverCategory]}>{line.moverCategory}</Badge>
+                            </TD>
+                            <TD>
+                              <Badge tone={STATUS_TONE[line.status]}>{line.status}</Badge>
+                            </TD>
+                          </TR>
                         );
                       })}
-                    </tbody>
-                  </table>
+                    </TBody>
+                  </Table>
                 </div>
-              </div>
+              </Panel>
             );
           })}
         </section>

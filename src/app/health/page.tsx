@@ -7,14 +7,19 @@ import { InstancePicker } from "@/app/InstancePicker";
 import type { DimensionResult, HealthTone, SystemHealthResult } from "@/health/system-health";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { HEALTH_MODULE } from "@/app/module-nav";
-import { Spinner } from "@/app/Spinner";
 import { compareNullable, SortHeader, type SortDirection } from "../reports/sortable-table";
+import { Button } from "@/components/ui/Button";
+import { Alert } from "@/components/ui/Alert";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Panel } from "@/components/ui/Panel";
 
-const TONE_STYLES: Record<HealthTone, { card: string; badge: string; label: string }> = {
-  green: { card: "border-emerald-200 bg-emerald-50", badge: "bg-emerald-100 text-emerald-800", label: "Healthy" },
-  amber: { card: "border-amber-200 bg-amber-50", badge: "bg-amber-100 text-amber-800", label: "Needs attention" },
-  red: { card: "border-red-200 bg-red-50", badge: "bg-red-100 text-red-800", label: "At risk" },
+const TONE_STYLES: Record<HealthTone, { card: string; label: string }> = {
+  green: { card: "border-success-border bg-success-subtle", label: "Healthy" },
+  amber: { card: "border-warning-border bg-warning-subtle", label: "Needs attention" },
+  red: { card: "border-danger-border bg-danger-subtle", label: "At risk" },
 };
+
+const TONE_BADGE: Record<HealthTone, BadgeTone> = { green: "success", amber: "warning", red: "danger" };
 
 function scoreTone(score: number): HealthTone {
   if (score >= 90) return "green";
@@ -73,8 +78,10 @@ function DimensionCard<T>({
     <details className={`rounded-xl border p-4 ${tone.card}`} open={dimension.flaggedCount > 0 && dimension.flaggedCount <= 5}>
       <summary className="flex cursor-pointer items-center justify-between gap-3">
         <span className="font-medium text-slate-900">{dimension.label}</span>
-        <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${tone.badge}`}>
-          {dimension.flaggedCount} / {dimension.totalScanned}
+        <span className="shrink-0 tabular-nums">
+          <Badge tone={TONE_BADGE[dimension.tone]}>
+            {dimension.flaggedCount} / {dimension.totalScanned}
+          </Badge>
         </span>
       </summary>
 
@@ -95,7 +102,7 @@ function DimensionCard<T>({
                       onSort={handleSort}
                     />
                   ) : (
-                    <th key={col.header} className="py-1.5 pr-4 font-medium">
+                    <th key={col.header} scope="col" className="py-1.5 pr-4 font-medium">
                       {col.header}
                     </th>
                   )
@@ -155,31 +162,29 @@ export default function SystemHealthPage() {
         product data quality, and scores each one — plus one overall health score. Read-only; nothing is written back.
       </ModuleHeader>
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <Panel className="mt-6">
         <p className="font-medium text-slate-900">Instance</p>
         <div className="mt-3">
           <InstancePicker {...picker} onChange={picker.setInstanceId} />
         </div>
 
-        <button
-          type="button"
-          onClick={handleScan}
-          disabled={isScanning || !instanceId}
-          className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-        >
-          {isScanning && <Spinner className="mr-1.5" />}
+        <Button onClick={handleScan} disabled={!instanceId} loading={isScanning} className="mt-4">
           {isScanning ? "Scanning…" : "Scan instance"}
-        </button>
-        {scanError && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{scanError}</p>}
-      </section>
+        </Button>
+        {scanError && (
+          <div className="mt-4">
+            <Alert tone="danger">{scanError}</Alert>
+          </div>
+        )}
+      </Panel>
 
       {result && overallTone && (
-        <section className={`mt-6 rounded-2xl border p-6 ${TONE_STYLES[overallTone].card}`}>
+        <section className={`mt-6 rounded-lg border p-6 ${TONE_STYLES[overallTone].card}`}>
           <p className="text-sm font-medium text-slate-600">Overall health score</p>
-          <p className="mt-1 text-5xl font-bold text-slate-900">{result.overallScore}</p>
-          <p className={`mt-2 inline-block rounded-full px-3 py-1 text-xs font-semibold ${TONE_STYLES[overallTone].badge}`}>
-            {TONE_STYLES[overallTone].label}
-          </p>
+          <p className="mt-1 text-4xl font-bold tabular-nums text-slate-900">{result.overallScore}</p>
+          <div className="mt-2">
+            <Badge tone={TONE_BADGE[overallTone]}>{TONE_STYLES[overallTone].label}</Badge>
+          </div>
         </section>
       )}
 
@@ -237,7 +242,7 @@ export default function SystemHealthPage() {
               { header: "Count", render: (i) => `${i.count} ${i.unit}`, sortValue: (i) => i.count },
             ]}
             footer={
-              <a href="/audit" className="text-sm font-medium text-indigo-600 hover:underline">
+              <a href="/audit" className="text-sm font-medium text-primary hover:underline">
                 Open Data Audit for full details →
               </a>
             }

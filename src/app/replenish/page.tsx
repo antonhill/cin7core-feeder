@@ -17,6 +17,12 @@ import type { ProductAvailabilitySyncStatus } from "@/reports/query";
 import { SNAPSHOT_STALE_HOURS, hoursSince, StaleBadge, staleSyncButtonClass } from "@/app/reports/sync-staleness";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
+import { Button } from "@/components/ui/Button";
+import { Select } from "@/components/ui/Select";
+import { Alert } from "@/components/ui/Alert";
+import { Badge } from "@/components/ui/Badge";
+import { Panel } from "@/components/ui/Panel";
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/Table";
 
 function qty(value: number): string {
   return value.toLocaleString();
@@ -166,7 +172,7 @@ export default function ReplenishPage() {
     <>
       <PageLoadingIndicator show={isLoadingPreview} label="Building replenish list…" />
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <Panel className="mt-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <span className="text-sm font-medium text-slate-700">Instance</span>
@@ -175,7 +181,7 @@ export default function ReplenishPage() {
             </div>
             {instanceId && (
               <div className="mt-2 flex items-center gap-3">
-                <p className="w-72 text-xs text-slate-400">
+                <p className="w-72 text-xs text-slate-500">
                   Stock levels
                   {syncStatus?.lastSyncedAt ? ` — last synced ${new Date(syncStatus.lastSyncedAt).toLocaleString()}` : syncStatus ? " — never synced yet" : ""}.
                 </p>
@@ -186,72 +192,69 @@ export default function ReplenishPage() {
                 </button>
               </div>
             )}
-            {syncStatusError && <p className="mt-2 text-xs text-red-600">{syncStatusError}</p>}
-            {syncError && <p className="mt-2 text-xs text-red-600">{syncError}</p>}
+            {syncStatusError && <p className="mt-2 text-xs text-danger">{syncStatusError}</p>}
+            {syncError && <p className="mt-2 text-xs text-danger">{syncError}</p>}
           </div>
-          <button
-            type="button"
-            onClick={handlePreview}
-            disabled={isLoadingPreview || !instanceId}
-            className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {isLoadingPreview && <Spinner className="mr-1.5" />}
+          <Button onClick={handlePreview} disabled={!instanceId} loading={isLoadingPreview}>
             {isLoadingPreview ? "Building…" : "Build replenish list"}
-          </button>
+          </Button>
         </div>
-        {previewError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{previewError}</p>}
-      </section>
+        {previewError && (
+          <div className="mt-3">
+            <Alert tone="danger">{previewError}</Alert>
+          </div>
+        )}
+      </Panel>
 
       {previewData && (
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <Panel className="mt-6">
           <div className="flex flex-wrap items-end justify-between gap-4 border-b border-slate-100 pb-4">
             <div>
-              <span className="text-sm font-medium text-slate-700">Source location</span>
-              <p className="mt-1 text-xs text-slate-400">Stock is pulled from here to top up every other location below its reorder point.</p>
-              <select
-                value={sourceLocation}
-                onChange={(e) => setSourceLocation(e.target.value)}
-                className="mt-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              >
+              <Select label="Source location" value={sourceLocation} onChange={(e) => setSourceLocation(e.target.value)} className="w-56">
                 <option value="">Choose a source location…</option>
                 {previewData.locations.map((loc) => (
                   <option key={loc} value={loc}>
                     {loc}
                   </option>
                 ))}
-              </select>
+              </Select>
+              <p className="mt-1 text-xs text-slate-500">Stock is pulled from here to top up every other location below its reorder point.</p>
             </div>
             {lines && lines.length > 0 && (
-              <button
-                type="button"
+              <Button
                 onClick={handleCreate}
                 disabled={writeDisabled || selectedLines.length === 0}
                 title={!canWrite ? "Writing to Cin7 is disabled on your current plan." : undefined}
-                className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                loading={isCreating}
               >
-                {isCreating && <Spinner className="mr-1.5" />}
                 {isCreating
                   ? "Creating…"
                   : selectedLines.length === 0
                     ? "Create Transfers"
                     : `Create ${new Set(selectedLines.map((l) => l.toLocation)).size} Transfer${new Set(selectedLines.map((l) => l.toLocation)).size === 1 ? "" : "s"} (${selectedLines.length} line${selectedLines.length === 1 ? "" : "s"})`}
-              </button>
+              </Button>
             )}
           </div>
 
           {previewData.skusWithNoThreshold.length > 0 && (
-            <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              {previewData.skusWithNoThreshold.length} product{previewData.skusWithNoThreshold.length === 1 ? " has" : "s have"} no reorder
-              minimum set anywhere (location-specific or global) on this instance, so they&rsquo;re never proposed here — set one in Cin7 first.
-            </p>
+            <div className="mt-4">
+              <Alert tone="warning">
+                {previewData.skusWithNoThreshold.length} product{previewData.skusWithNoThreshold.length === 1 ? " has" : "s have"} no reorder
+                minimum set anywhere (location-specific or global) on this instance, so they&rsquo;re never proposed here — set one in Cin7 first.
+              </Alert>
+            </div>
           )}
 
-          {createError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{createError}</p>}
+          {createError && (
+            <div className="mt-3">
+              <Alert tone="danger">{createError}</Alert>
+            </div>
+          )}
           {transferResult &&
             (transferResult.created.length > 0 || transferResult.failed.length > 0 || (transferResult.deduplicated?.length ?? 0) > 0) && (
               <div className="mt-3 flex flex-col gap-2">
                 {(transferResult.deduplicated?.length ?? 0) > 0 && (
-                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  <Alert tone="warning">
                     {transferResult.deduplicated!.length} transfer{transferResult.deduplicated!.length === 1 ? " was" : "s were"} already created
                     moments ago for the same lines — returned the existing
                     {transferResult.deduplicated!.length === 1 ? " one" : " ones"} instead of a duplicate:
@@ -262,10 +265,10 @@ export default function ReplenishPage() {
                         </li>
                       ))}
                     </ul>
-                  </div>
+                  </Alert>
                 )}
                 {transferResult.created.length > 0 && (
-                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                  <Alert tone="success">
                     Created {transferResult.created.length} draft transfer{transferResult.created.length === 1 ? "" : "s"} in Cin7 — review and
                     complete
                     {transferResult.created.length === 1 ? " it" : " them"} there:
@@ -276,10 +279,10 @@ export default function ReplenishPage() {
                         </li>
                       ))}
                     </ul>
-                  </div>
+                  </Alert>
                 )}
                 {transferResult.failed.length > 0 && (
-                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  <Alert tone="danger">
                     {transferResult.failed.length} transfer{transferResult.failed.length === 1 ? "" : "s"} failed to create:
                     <ul className="mt-1 list-disc pl-5">
                       {transferResult.failed.map((f) => (
@@ -288,69 +291,74 @@ export default function ReplenishPage() {
                         </li>
                       ))}
                     </ul>
-                  </div>
+                  </Alert>
                 )}
               </div>
             )}
 
-          {!sourceLocation && <p className="mt-4 text-sm text-slate-400">Choose a source location to see proposed transfers.</p>}
+          {!sourceLocation && <p className="mt-4 text-sm text-slate-500">Choose a source location to see proposed transfers.</p>}
 
           {sourceLocation && lines && lines.length === 0 && (
-            <p className="mt-4 text-sm text-slate-400">Every other location is at or above its reorder point — nothing to replenish.</p>
+            <p className="mt-4 text-sm text-slate-500">Every other location is at or above its reorder point — nothing to replenish.</p>
           )}
 
           {sourceLocation && lines && lines.length > 0 && (
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 text-slate-500">
-                    <th className="py-2 pr-4">
+            <div className="mt-4">
+              <Table>
+                <THead>
+                  <tr>
+                    <TH>
                       <input
                         type="checkbox"
+                        aria-label="Select all lines"
                         checked={excludedLineKeys.size === 0}
                         ref={(el) => {
                           if (el) el.indeterminate = excludedLineKeys.size > 0 && excludedLineKeys.size < lines.length;
                         }}
                         onChange={toggleAllLines}
-                        className="h-4 w-4"
+                        className="h-4 w-4 rounded border-slate-300 text-primary"
                       />
-                    </th>
-                    <th className="py-2 pr-4">Product</th>
-                    <th className="py-2 pr-4">To Location</th>
-                    <th className="py-2 pr-4 text-right">Quantity</th>
-                    <th className="py-2 pr-4"></th>
+                    </TH>
+                    <TH>Product</TH>
+                    <TH>To Location</TH>
+                    <TH align="right">Quantity</TH>
+                    <TH></TH>
                   </tr>
-                </thead>
-                <tbody>
+                </THead>
+                <TBody>
                   {lines.map((line: ReplenishLine) => {
                     const key = lineKey(line);
                     const checked = !excludedLineKeys.has(key);
                     return (
-                      <tr key={key} className={`border-b border-slate-100 ${checked ? "" : "opacity-50"}`}>
-                        <td className="py-1.5 pr-4">
-                          <input type="checkbox" checked={checked} onChange={() => toggleLine(key)} className="h-4 w-4" />
-                        </td>
-                        <td className="py-2 pr-4">
+                      <TR key={key} className={checked ? "" : "opacity-50"}>
+                        <TD>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${line.productName ?? line.productSku}`}
+                            checked={checked}
+                            onChange={() => toggleLine(key)}
+                            className="h-4 w-4 rounded border-slate-300 text-primary"
+                          />
+                        </TD>
+                        <TD>
                           <div className="font-medium text-slate-900">{line.productName ?? line.productSku}</div>
-                          <div className="text-xs text-slate-400">{line.productSku}</div>
-                        </td>
-                        <td className="py-2 pr-4">{line.toLocation}</td>
-                        <td className="py-2 pr-4 text-right font-medium">{qty(line.quantity)}</td>
-                        <td className="py-2 pr-4">
-                          {line.capped && (
-                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                              capped — source only had enough for {qty(line.quantity)}
-                            </span>
-                          )}
-                        </td>
-                      </tr>
+                          <div className="font-mono text-xs text-slate-500">{line.productSku}</div>
+                        </TD>
+                        <TD>{line.toLocation}</TD>
+                        <TD align="right" numeric className="font-medium">
+                          {qty(line.quantity)}
+                        </TD>
+                        <TD>
+                          {line.capped && <Badge tone="warning">capped — source only had enough for {qty(line.quantity)}</Badge>}
+                        </TD>
+                      </TR>
                     );
                   })}
-                </tbody>
-              </table>
+                </TBody>
+              </Table>
             </div>
           )}
-        </section>
+        </Panel>
       )}
     </>
   );

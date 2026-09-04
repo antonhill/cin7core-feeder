@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "ai-color-palette",
+        "value": "*",
+        "files": [
+          "src/app/AppNav.tsx"
+        ],
+        "createdAt": "2026-09-04T08:42:56.813Z",
+        "reason": "Pre-existing OrgPlaceholder fallback-avatar gradient (indigo-500→indigo-700), not introduced by the reskin — indigo is the approved primary brand color from the signed-off Phase 1 direction (Section H), used here as a single-hue tonal gradient on a small initials badge, not the multi-hue purple+cyan pattern the rule targets. Out of scope to change in a presentation-only reskin pass that didn't touch this line."
+      },
+      {
+        "rule": "gray-on-color",
+        "value": "*",
+        "files": [
+          "src/app/migrate/page.tsx"
+        ],
+        "createdAt": "2026-09-04T14:21:28.060Z",
+        "reason": "StepHeader's not-done step circle (text-slate-600 on bg-slate-200) and StatPill (text-slate-700 on bg-slate-100) are pre-existing neutral-on-neutral pairings carried forward unchanged from the already-reviewed Import & Sync page's identical pattern - not a saturated-color background, well above WCAG AA contrast. The gray-on-color heuristic targets colored/hue-bearing backgrounds, not neutral grayscale pairs."
+      }
+    ]
+  }
+}

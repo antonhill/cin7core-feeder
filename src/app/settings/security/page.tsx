@@ -5,7 +5,10 @@ import { useSearchParams } from "next/navigation";
 import { createBrowserSupabaseClient } from "@/supabase/browser";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { SECURITY_MODULE } from "@/app/module-nav";
-import { Spinner } from "@/app/Spinner";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Alert } from "@/components/ui/Alert";
+import { Panel } from "@/components/ui/Panel";
 
 interface MfaFactor {
   id: string;
@@ -135,20 +138,28 @@ export default function SecurityPage() {
       </ModuleHeader>
 
       {mfaRequired && verifiedFactors.length === 0 && (
-        <div className="mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-5 shadow-sm">
-          <p className="font-semibold text-amber-900">Two-factor authentication is required for your account.</p>
-          <p className="mt-1 text-sm text-amber-800">
-            Because you can change your organization&rsquo;s data or settings, you need to set up an authenticator app
-            before continuing. Finish the setup below to unlock the rest of the app.
-          </p>
+        <div className="mt-6">
+          <Alert tone="warning">
+            <p className="font-semibold text-amber-900">Two-factor authentication is required for your account.</p>
+            <p className="mt-1 text-amber-800">
+              Because you can change your organization&rsquo;s data or settings, you need to set up an authenticator app
+              before continuing. Finish the setup below to unlock the rest of the app.
+            </p>
+          </Alert>
         </div>
       )}
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        {loadError && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>}
-        {actionError && <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</p>}
+      <Panel className="mt-6">
+        {loadError && <Alert tone="danger">{loadError}</Alert>}
+        {actionError && (
+          <div className="mt-2">
+            <Alert tone="danger">{actionError}</Alert>
+          </div>
+        )}
         {actionSuccess && (
-          <p className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{actionSuccess}</p>
+          <div className="mt-2">
+            <Alert tone="success">{actionSuccess}</Alert>
+          </div>
         )}
 
         {!loaded && !loadError && <p className="text-base text-slate-500">Loading…</p>}
@@ -159,13 +170,14 @@ export default function SecurityPage() {
               <div className="flex flex-col gap-3">
                 <p className="font-medium text-slate-900">Two-factor authentication is enabled.</p>
                 {verifiedFactors.map((factor) => (
-                  <div key={factor.id} className="flex items-center justify-between rounded-lg border border-slate-200 px-4 py-3">
+                  <div key={factor.id} className="flex items-center justify-between rounded-md border border-slate-200 px-4 py-3">
                     <span className="text-sm text-slate-700">{factor.friendly_name || "Authenticator app"}</span>
+                    {/* Not the `link` Button variant — that's fixed to text-primary, and this destructive action needs the danger tone (same precedent as Quotes' bare Delete/Discard link). */}
                     <button
                       type="button"
                       onClick={() => handleRemove(factor.id)}
                       disabled={isSubmitting}
-                      className="text-sm font-medium text-red-600 hover:underline disabled:opacity-50"
+                      className="text-sm font-medium text-danger hover:underline disabled:opacity-50"
                     >
                       Remove
                     </button>
@@ -177,14 +189,9 @@ export default function SecurityPage() {
                 <p className="text-base text-slate-600">
                   Two-factor authentication isn&rsquo;t set up yet. Your account is protected only by your email sign-in code.
                 </p>
-                <button
-                  type="button"
-                  onClick={handleEnroll}
-                  disabled={isLoading || isSubmitting}
-                  className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-                >
+                <Button onClick={handleEnroll} disabled={isLoading} loading={isSubmitting} className="mt-4">
                   Set up two-factor authentication
-                </button>
+                </Button>
               </div>
             )}
           </>
@@ -198,40 +205,28 @@ export default function SecurityPage() {
             <p className="text-center text-sm text-slate-500">
               Can&rsquo;t scan it? Enter this code manually: <span className="font-mono">{pending.secret}</span>
             </p>
-            <label className="flex flex-col gap-1.5 text-base">
-              <span className="font-medium text-slate-700">6-digit code from the app</span>
-              <input
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                required
-                autoFocus
-                inputMode="numeric"
-                maxLength={6}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-center font-mono text-lg tracking-widest focus:border-indigo-500 focus:outline-none"
-                placeholder="000000"
-              />
-            </label>
+            <Input
+              label="6-digit code from the app"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              required
+              autoFocus
+              inputMode="numeric"
+              maxLength={6}
+              className="text-center font-mono text-lg tracking-widest"
+              placeholder="000000"
+            />
             <div className="flex gap-3">
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="flex-1 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-              >
-                {isSubmitting && <Spinner className="mr-1.5" />}
+              <Button type="submit" loading={isSubmitting} className="flex-1">
                 {isSubmitting ? "Verifying…" : "Verify & enable"}
-              </button>
-              <button
-                type="button"
-                onClick={handleCancelEnroll}
-                disabled={isSubmitting}
-                className="rounded-lg border border-slate-300 px-4 py-2.5 text-base font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
+              </Button>
+              <Button type="button" variant="secondary" onClick={handleCancelEnroll} disabled={isSubmitting}>
                 Cancel
-              </button>
+              </Button>
             </div>
           </form>
         )}
-      </section>
+      </Panel>
     </main>
   );
 }

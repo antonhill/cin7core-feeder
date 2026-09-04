@@ -23,6 +23,11 @@ import { SearchInput } from "../search-input";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
+import { Button } from "@/components/ui/Button";
+import { Alert } from "@/components/ui/Alert";
+import { Badge } from "@/components/ui/Badge";
+import { Panel } from "@/components/ui/Panel";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 type BackorderedSaleSortColumn = "orderNumber" | "customerName" | "customerReference" | "orderDate" | "totalBackorderQty";
 
@@ -279,7 +284,7 @@ export default function FulfillmentCleanupPage() {
       </ReportDescription>
       <PageLoadingIndicator show={isDownloading} label="Preparing CSV…" />
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <Panel>
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <span className="text-sm font-medium text-slate-700">Instance</span>
@@ -289,7 +294,7 @@ export default function FulfillmentCleanupPage() {
             {instanceId && (
               <div className="mt-2 flex flex-col gap-1.5">
                 <div className="flex items-center gap-3">
-                  <p className="w-72 text-xs text-slate-400">
+                  <p className="w-72 text-xs text-slate-500">
                     Stock levels
                     {stockSyncStatus?.lastSyncedAt
                       ? ` — last synced ${new Date(stockSyncStatus.lastSyncedAt).toLocaleString()}`
@@ -305,7 +310,7 @@ export default function FulfillmentCleanupPage() {
                   </button>
                 </div>
                 <div className="flex items-center gap-3">
-                  <p className="w-72 text-xs text-slate-400">
+                  <p className="w-72 text-xs text-slate-500">
                     Sales detail
                     {salesSyncStatus
                       ? salesSyncStatus.pendingDetail > 0
@@ -322,26 +327,40 @@ export default function FulfillmentCleanupPage() {
                 </div>
               </div>
             )}
-            {stockSyncStatusError && <p className="mt-2 text-xs text-red-600">{stockSyncStatusError}</p>}
-            {stockSyncError && <p className="mt-2 text-xs text-red-600">{stockSyncError}</p>}
-            {salesSyncStatusError && <p className="mt-2 text-xs text-red-600">{salesSyncStatusError}</p>}
-            {salesSyncError && <p className="mt-2 text-xs text-red-600">{salesSyncError}</p>}
+            {stockSyncStatusError && (
+              <div className="mt-2">
+                <Alert tone="danger">{stockSyncStatusError}</Alert>
+              </div>
+            )}
+            {stockSyncError && (
+              <div className="mt-2">
+                <Alert tone="danger">{stockSyncError}</Alert>
+              </div>
+            )}
+            {salesSyncStatusError && (
+              <div className="mt-2">
+                <Alert tone="danger">{salesSyncStatusError}</Alert>
+              </div>
+            )}
+            {salesSyncError && (
+              <div className="mt-2">
+                <Alert tone="danger">{salesSyncError}</Alert>
+              </div>
+            )}
           </div>
-          <button
-            type="button"
-            onClick={handlePreview}
-            disabled={isLoadingPreview || !instanceId}
-            className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {isLoadingPreview && <Spinner className="mr-1.5" />}
+          <Button onClick={handlePreview} disabled={!instanceId} loading={isLoadingPreview}>
             {isLoadingPreview ? "Building…" : "Build cleanup list"}
-          </button>
+          </Button>
         </div>
-        {previewError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{previewError}</p>}
-      </section>
+        {previewError && (
+          <div className="mt-3">
+            <Alert tone="danger">{previewError}</Alert>
+          </div>
+        )}
+      </Panel>
 
       {previewData && previewData.backorderedSales.length > 0 && (
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <Panel className="mt-6">
           <p className="font-medium text-slate-900">Exclude sales that should legitimately stay unfulfilled</p>
           <p className="mt-1 text-sm text-slate-500">
             Ticking a sale removes its share of each SKU&rsquo;s correction below — the rest of that SKU&rsquo;s
@@ -349,8 +368,8 @@ export default function FulfillmentCleanupPage() {
           </p>
           <div className="mt-4 overflow-x-auto">
             <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200">
+              <thead className="border-b-2 border-slate-300 bg-slate-50">
+                <tr>
                   <th className="py-2 pr-4"></th>
                   <SortHeader label="Order #" column="orderNumber" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                   <SortHeader label="Customer" column="customerName" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
@@ -372,9 +391,10 @@ export default function FulfillmentCleanupPage() {
                     <td className="py-1.5 pr-4">
                       <input
                         type="checkbox"
+                        aria-label={`Exclude order ${sale.orderNumber ?? sale.cin7SaleId}`}
                         checked={excludedSaleIds.has(sale.cin7SaleId)}
                         onChange={() => toggleExcluded(sale.cin7SaleId)}
-                        className="h-4 w-4"
+                        className="h-4 w-4 rounded border-slate-300 text-primary"
                       />
                     </td>
                     <td className="py-1.5 pr-4 font-medium text-slate-900">{sale.orderNumber ?? sale.cin7SaleId}</td>
@@ -387,11 +407,11 @@ export default function FulfillmentCleanupPage() {
               </tbody>
             </table>
           </div>
-        </section>
+        </Panel>
       )}
 
       {lines && (
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <Panel className="mt-6">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <p className="font-medium text-slate-900">
               {lines.length} line{lines.length === 1 ? "" : "s"} — {lines.filter((l) => l.action === "Zero").length} Zero,{" "}
@@ -401,89 +421,92 @@ export default function FulfillmentCleanupPage() {
             <SearchInput value={search} onChange={setSearch} placeholder="Product name or SKU" />
             {lines.length > 0 && (
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleDownloadIncludedSales}
-                  disabled={isDownloadingIncludedSales || includedSales.length === 0}
-                  className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                >
+                <Button variant="secondary" size="sm" onClick={handleDownloadIncludedSales} disabled={includedSales.length === 0} loading={isDownloadingIncludedSales}>
                   {isDownloadingIncludedSales ? "Preparing…" : "Export included sales"}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleDownload}
-                  disabled={isDownloading}
-                  className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                >
+                </Button>
+                <Button variant="secondary" size="sm" onClick={handleDownload} loading={isDownloading}>
                   {isDownloading ? "Preparing…" : "Download CSV"}
-                </button>
+                </Button>
               </div>
             )}
           </div>
-          {downloadError && <p className="mt-2 text-sm text-red-600">{downloadError}</p>}
-          {downloadedFilename && (
-            <p className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-              Downloaded {downloadedFilename} — review it, then import it into Cin7&rsquo;s Bulk Stock Adjustment screen yourself.
-            </p>
+          {downloadError && (
+            <div className="mt-2">
+              <Alert tone="danger">{downloadError}</Alert>
+            </div>
           )}
-          {includedSalesError && <p className="mt-2 text-sm text-red-600">{includedSalesError}</p>}
+          {downloadedFilename && (
+            <div className="mt-2">
+              <Alert tone="success">
+                Downloaded {downloadedFilename} — review it, then import it into Cin7&rsquo;s Bulk Stock Adjustment screen yourself.
+              </Alert>
+            </div>
+          )}
+          {includedSalesError && (
+            <div className="mt-2">
+              <Alert tone="danger">{includedSalesError}</Alert>
+            </div>
+          )}
           {includedSalesFilename && (
-            <p className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-              Downloaded {includedSalesFilename} — {includedSales.length} sale{includedSales.length === 1 ? "" : "s"} this cleanup run assumed would become fulfillable.
-            </p>
+            <div className="mt-2">
+              <Alert tone="success">
+                Downloaded {includedSalesFilename} — {includedSales.length} sale{includedSales.length === 1 ? "" : "s"} this cleanup run assumed would become fulfillable.
+              </Alert>
+            </div>
           )}
 
           {missingCostSkus.length > 0 && (
-            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              {missingCostSkus.length} SKU{missingCostSkus.length === 1 ? " has" : "s have"} no average cost on file, so its
-              UnitCost is blank below — fill it in by hand before importing: {missingCostSkus.join(", ")}
-            </p>
+            <div className="mt-3">
+              <Alert tone="warning">
+                {missingCostSkus.length} SKU{missingCostSkus.length === 1 ? " has" : "s have"} no average cost on file, so its
+                UnitCost is blank below — fill it in by hand before importing: {missingCostSkus.join(", ")}
+              </Alert>
+            </div>
           )}
 
           {lines.length === 0 && (
-            <p className="mt-4 text-sm text-slate-400">
-              {excludedSaleIds.size > 0
-                ? "Nothing left to correct — every remaining shortfall was covered by excluded sales."
-                : "Nothing is currently oversold on this instance."}
-            </p>
+            <div className="mt-4">
+              <EmptyState
+                title={excludedSaleIds.size > 0 ? "Nothing left to correct" : "Nothing oversold"}
+                description={
+                  excludedSaleIds.size > 0
+                    ? "Every remaining shortfall was covered by excluded sales."
+                    : "Nothing is currently oversold on this instance."
+                }
+              />
+            </div>
           )}
-          {lines.length > 0 && visibleLines.length === 0 && <p className="mt-4 text-sm text-slate-400">Nothing matches &ldquo;{search}&rdquo;.</p>}
+          {lines.length > 0 && visibleLines.length === 0 && <p className="mt-4 text-sm text-slate-500">Nothing matches &ldquo;{search}&rdquo;.</p>}
 
           {visibleLines.length > 0 && (
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 text-slate-500">
-                    <th className="py-2 pr-4">Action</th>
-                    <th className="py-2 pr-4">Product</th>
-                    <th className="py-2 pr-4">Location</th>
-                    <th className="py-2 pr-4">Bin</th>
-                    <th className="py-2 pr-4">Batch/SN</th>
-                    <th className="py-2 pr-4 text-right">Quantity</th>
-                    <th className="py-2 pr-4 text-right">Unit Cost</th>
+                <thead className="border-b-2 border-slate-300 bg-slate-50">
+                  <tr>
+                    <th scope="col" className="py-2 pr-4 text-xs font-semibold uppercase tracking-wide text-slate-600">Action</th>
+                    <th scope="col" className="py-2 pr-4 text-xs font-semibold uppercase tracking-wide text-slate-600">Product</th>
+                    <th scope="col" className="py-2 pr-4 text-xs font-semibold uppercase tracking-wide text-slate-600">Location</th>
+                    <th scope="col" className="py-2 pr-4 text-xs font-semibold uppercase tracking-wide text-slate-600">Bin</th>
+                    <th scope="col" className="py-2 pr-4 text-xs font-semibold uppercase tracking-wide text-slate-600">Batch/SN</th>
+                    <th scope="col" className="py-2 pr-4 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Quantity</th>
+                    <th scope="col" className="py-2 pr-4 text-right text-xs font-semibold uppercase tracking-wide text-slate-600">Unit Cost</th>
                   </tr>
                 </thead>
                 <tbody>
                   {visibleLines.map((line, i) => (
                     <tr key={i} className="border-b border-slate-100">
                       <td className="py-2 pr-4">
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                            line.action === "Zero" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"
-                          }`}
-                        >
-                          {line.action}
-                        </span>
+                        <Badge tone={line.action === "Zero" ? "warning" : "neutral"}>{line.action}</Badge>
                       </td>
                       <td className="py-2 pr-4">
                         <div className="font-medium text-slate-900">{line.productName ?? line.productSku}</div>
-                        <div className="text-xs text-slate-400">{line.productSku}</div>
+                        <div className="font-mono text-xs text-slate-500">{line.productSku}</div>
                       </td>
                       <td className="py-2 pr-4">{line.location ?? <span className="text-slate-300">—</span>}</td>
                       <td className="py-2 pr-4">{line.bin ?? <span className="text-slate-300">—</span>}</td>
                       <td className="py-2 pr-4">{line.batchSn ?? <span className="text-slate-300">—</span>}</td>
-                      <td className="py-2 pr-4 text-right font-medium">{qty(line.quantity)}</td>
-                      <td className="py-2 pr-4 text-right">
+                      <td className="py-2 pr-4 text-right font-medium tabular-nums">{qty(line.quantity)}</td>
+                      <td className="py-2 pr-4 text-right tabular-nums">
                         {line.unitCost === null ? <span className="text-slate-300">—</span> : line.unitCost.toFixed(2)}
                       </td>
                     </tr>
@@ -492,7 +515,7 @@ export default function FulfillmentCleanupPage() {
               </table>
             </div>
           )}
-        </section>
+        </Panel>
       )}
     </>
   );

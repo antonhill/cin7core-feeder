@@ -6,6 +6,10 @@ import type { BillingStatus } from "@/lib/billing";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { BILLING_MODULE } from "@/app/module-nav";
 import { Spinner } from "@/app/Spinner";
+import { Button } from "@/components/ui/Button";
+import { Alert } from "@/components/ui/Alert";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Panel } from "@/components/ui/Panel";
 
 const STATUS_LABEL: Record<BillingStatus["status"], string> = {
   trialing: "Free trial",
@@ -14,11 +18,11 @@ const STATUS_LABEL: Record<BillingStatus["status"], string> = {
   canceled: "Canceled",
 };
 
-const STATUS_BADGE: Record<BillingStatus["status"], string> = {
-  trialing: "bg-amber-100 text-amber-800",
-  active: "bg-emerald-100 text-emerald-800",
-  past_due: "bg-rose-100 text-rose-700",
-  canceled: "bg-slate-100 text-slate-600",
+const STATUS_TONE: Record<BillingStatus["status"], BadgeTone> = {
+  trialing: "warning",
+  active: "success",
+  past_due: "danger",
+  canceled: "neutral",
 };
 
 /** The lone impure read in this module — pass this function itself (not a call to it) as a useState initializer so it only ever runs once, outside render, same pattern used for "today" defaults elsewhere in this codebase. */
@@ -83,20 +87,18 @@ export default function BillingPage() {
         Trial status and subscription — payments are handled by Lemon Squeezy, not stored or processed here.
       </ModuleHeader>
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <Panel className="mt-6">
         {!loaded && (
           <div className="flex items-center gap-2 text-sm text-slate-500">
             <Spinner /> Loading…
           </div>
         )}
-        {loadError && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>}
+        {loadError && <Alert tone="danger">{loadError}</Alert>}
 
         {status && (
           <>
             <div className="flex items-center gap-3">
-              <span className={`rounded-full px-3 py-1 text-sm font-semibold ${STATUS_BADGE[status.status]}`}>
-                {STATUS_LABEL[status.status]}
-              </span>
+              <Badge tone={STATUS_TONE[status.status]}>{STATUS_LABEL[status.status]}</Badge>
               {status.status === "trialing" && (
                 <span className="text-sm text-slate-500">
                   {daysRemaining(status.trialEndsAt, now)} day
@@ -118,35 +120,27 @@ export default function BillingPage() {
               <>
                 <div className="mt-5 flex items-center gap-3">
                   {status.status === "active" ? (
-                    <button
-                      type="button"
-                      onClick={handleManage}
-                      disabled={isRedirecting}
-                      className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-                    >
-                      {isRedirecting && <Spinner className="mr-1.5" />}
+                    <Button onClick={handleManage} loading={isRedirecting}>
                       Manage subscription
-                    </button>
+                    </Button>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={handleSubscribe}
-                      disabled={isRedirecting}
-                      className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-                    >
-                      {isRedirecting && <Spinner className="mr-1.5" />}
+                    <Button onClick={handleSubscribe} loading={isRedirecting}>
                       {status.status === "past_due" ? "Update payment" : status.status === "canceled" ? "Subscribe again" : "Subscribe"}
-                    </button>
+                    </Button>
                   )}
                 </div>
-                {redirectError && <p className="mt-3 text-sm text-rose-600">{redirectError}</p>}
+                {redirectError && (
+                  <div className="mt-3">
+                    <Alert tone="danger">{redirectError}</Alert>
+                  </div>
+                )}
               </>
             ) : (
               <p className="mt-3 text-sm text-slate-500">Subscriptions aren&apos;t open yet — check back soon.</p>
             )}
           </>
         )}
-      </section>
+      </Panel>
     </main>
   );
 }

@@ -20,13 +20,19 @@ import { ExportColumnPicker } from "./ExportColumnPicker";
 import { StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { useResizableColumns, ColGroup, ResizableTh } from "../resizable-columns";
 import { compareNullable, type SortDirection } from "../sortable-table";
-import { StatusBadge } from "../status-badge";
+import { statusBadgeClass } from "../status-badge";
 import { matchesSearch } from "../text-search";
 import { SearchInput } from "../search-input";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { ReportDescription } from "../ReportDescription";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
+import { Alert } from "@/components/ui/Alert";
+import { Badge } from "@/components/ui/Badge";
+import { Panel } from "@/components/ui/Panel";
 
 /**
  * Default server-side fetch scope, added 2026-08-18 after LBL's real data
@@ -174,6 +180,37 @@ function money(value: number): string {
  */
 function isBoxLabelAttachment(filename: string | undefined): boolean {
   return Boolean(filename?.toLowerCase().startsWith("boxlabel"));
+}
+
+/**
+ * This page's own presentation of a Combined*Status — a small semantic dot
+ * plus the status's own neutral-colored text, instead of ../status-badge's
+ * solid-fill pill. Reuses `statusBadgeClass` exactly as-is (same status,
+ * same classification, same color family) purely to read off which of its
+ * four fixed color families a status falls into; the pill component and
+ * the classification function it wraps are both untouched, and this stays
+ * local to this page rather than becoming a second shared status component
+ * — five solid-colored pills per row (Picking/Packing/Shipping/Invoice/
+ * Payment) read as too much competing color once the surrounding table got
+ * more structure; a dot carries the same signal with far less visual
+ * weight, per the direction chosen 2026-09-04.
+ */
+function statusDotColor(status: string | null): string {
+  const cls = statusBadgeClass(status);
+  if (cls.includes("rose")) return "bg-rose-500";
+  if (cls.includes("amber")) return "bg-amber-500";
+  if (cls.includes("emerald")) return "bg-emerald-500";
+  return "bg-slate-400";
+}
+
+function StatusDot({ status }: { status: string | null }) {
+  if (!status) return <span className="text-xs text-slate-300">—</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium text-slate-700">
+      <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDotColor(status)}`} />
+      {status}
+    </span>
+  );
 }
 
 export default function OrderFulfillmentPage() {
@@ -524,7 +561,7 @@ export default function OrderFulfillmentPage() {
       </ReportDescription>
       <PageLoadingIndicator show={isExporting} label="Exporting to Excel…" />
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <Panel>
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <span className="text-sm font-medium text-slate-700">Instance(s)</span>
@@ -547,20 +584,17 @@ export default function OrderFulfillmentPage() {
                     type="date"
                     value={fromDate}
                     onChange={(e) => setFromDate(e.target.value)}
-                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+                    aria-label="Data from date"
+                    className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900"
                   />
-                  <button type="button" onClick={() => setFromDate("")} className="text-sm font-medium text-indigo-600 hover:underline">
+                  <Button variant="link" onClick={() => setFromDate("")}>
                     Show all time
-                  </button>
+                  </Button>
                 </>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => setFromDate(twelveMonthsAgoDateOnly())}
-                  className="text-sm font-medium text-indigo-600 hover:underline"
-                >
+                <Button variant="link" onClick={() => setFromDate(twelveMonthsAgoDateOnly())}>
                   Showing all time — limit to last 12 months
-                </button>
+                </Button>
               )}
             </div>
             <p className="mt-2 text-xs text-slate-400">Limits what&rsquo;s fetched, not just what&rsquo;s shown — narrower loads faster on large accounts.</p>
@@ -571,24 +605,30 @@ export default function OrderFulfillmentPage() {
               {isSyncing && <Spinner className="mr-1.5" />}
               {isSyncing ? "Syncing…" : "Sync sales now"}
             </button>
-            <button
-              type="button"
-              onClick={runLoad}
-              disabled={isLoading}
-              className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
-              {isLoading && <Spinner className="mr-1.5" />}
+            <Button variant="secondary" size="sm" onClick={runLoad} loading={isLoading}>
               {isLoading ? "Loading…" : "Refresh"}
-            </button>
+            </Button>
           </div>
         </div>
-        {loadError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>}
-        {syncError && <p className="mt-2 text-sm text-red-600">{syncError}</p>}
-        {optionsError && <p className="mt-2 text-sm text-red-600">{optionsError}</p>}
-      </section>
+        {loadError && (
+          <div className="mt-3">
+            <Alert tone="danger">{loadError}</Alert>
+          </div>
+        )}
+        {syncError && (
+          <div className="mt-2">
+            <Alert tone="danger">{syncError}</Alert>
+          </div>
+        )}
+        {optionsError && (
+          <div className="mt-2">
+            <Alert tone="danger">{optionsError}</Alert>
+          </div>
+        )}
+      </Panel>
 
       {orders && (
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <Panel className="mt-6">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <div className="flex gap-1">
               {TABS.map((t) => (
@@ -597,110 +637,88 @@ export default function OrderFulfillmentPage() {
                   type="button"
                   onClick={() => setTab(t.value)}
                   className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
-                    tab === t.value ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50"
+                    tab === t.value ? "bg-primary text-white" : "text-slate-600 hover:bg-slate-50"
                   }`}
                 >
                   {t.label}
-                  {counts && <span className="ml-1.5 opacity-75">({counts[t.value]})</span>}
+                  {counts && <span className={tab === t.value ? "ml-1.5 text-primary-subtle" : "ml-1.5 text-slate-400"}>({counts[t.value]})</span>}
                 </button>
               ))}
             </div>
             {visibleRows.length > 0 && (
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowColumnPicker(true)}
-                  className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                  title="Choose which columns Export to Excel includes"
-                >
+                <Button variant="secondary" size="sm" onClick={() => setShowColumnPicker(true)} title="Choose which columns Export to Excel includes">
                   Columns…
-                </button>
-                <button
-                  type="button"
-                  onClick={handleExport}
-                  disabled={isExporting}
-                  className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                >
+                </Button>
+                <Button variant="secondary" size="sm" onClick={handleExport} loading={isExporting}>
                   {isExporting ? "Exporting…" : "Export to Excel"}
-                </button>
+                </Button>
               </div>
             )}
           </div>
-          {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
+          {exportError && (
+            <div className="mt-2">
+              <Alert tone="danger">{exportError}</Alert>
+            </div>
+          )}
           {hiddenByFloorCount > 0 && (
-            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              {hiddenByFloorCount} older order{hiddenByFloorCount === 1 ? "" : "s"} hidden by the start-date setting — visible under All
-              Orders, or adjust the setting on{" "}
-              <a href="/settings/instances" className="underline">
-                Instances
-              </a>
-              .
-            </p>
+            <div className="mt-3">
+              <Alert tone="warning">
+                {hiddenByFloorCount} older order{hiddenByFloorCount === 1 ? "" : "s"} hidden by the start-date setting — visible under All
+                Orders, or adjust the setting on{" "}
+                <a href="/settings/instances" className="underline">
+                  Instances
+                </a>
+                .
+              </Alert>
+            </div>
           )}
 
           <div className="mt-4 flex flex-wrap items-end gap-3">
             <SearchInput value={search} onChange={setSearch} placeholder="Order #, customer, or SKU" />
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">Payment</span>
-              <select value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2">
-                <option value="">All</option>
-                {paymentStatusOptions.map((status) => (
-                  <option key={status} value={status}>
-                    {status}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">Ship by from</span>
-              <input type="date" value={shipByFrom} onChange={(e) => setShipByFrom(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2" />
-            </label>
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">Ship by to</span>
-              <input type="date" value={shipByTo} onChange={(e) => setShipByTo(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2" />
-            </label>
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">Backorders</span>
-              <select
-                value={backorderFilter}
-                onChange={(e) => setBackorderFilter(e.target.value as "all" | "fulfillable" | "backorder")}
-                className="rounded-lg border border-slate-300 px-3 py-2"
-              >
-                <option value="all">All orders</option>
-                <option value="fulfillable">Fully fulfillable only (no backorders)</option>
-                <option value="backorder">Has backorders only</option>
-              </select>
-            </label>
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">Backorder PO status</span>
-              <select
-                value={backorderPoFilter}
-                onChange={(e) => setBackorderPoFilter(e.target.value as typeof backorderPoFilter)}
-                className="rounded-lg border border-slate-300 px-3 py-2"
-                title="Based on PO linkage (is a backordered line actually covered by an open purchase order?), not order status — separate from the Backorders filter above, which is just a quantity check"
-              >
-                <option value="">All</option>
-                <option value="with_po">Has backorder with PO</option>
-                <option value="no_po">Has backorder with NO open PO</option>
-              </select>
-            </label>
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">Invoice coverage</span>
-              <select
-                value={invoiceCoverageFilter}
-                onChange={(e) => setInvoiceCoverageFilter(e.target.value as typeof invoiceCoverageFilter)}
-                className="rounded-lg border border-slate-300 px-3 py-2"
-                title="Based on real invoiced-vs-ordered quantities, not Cin7's own invoice status field"
-              >
-                <option value="">All</option>
-                <option value="not_invoiced">Not invoiced</option>
-                <option value="partially_invoiced">Partially invoiced</option>
-                <option value="invoiced">Invoiced</option>
-              </select>
-            </label>
+            <Select label="Payment" value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)}>
+              <option value="">All</option>
+              {paymentStatusOptions.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </Select>
+            <Input type="date" label="Ship by from" value={shipByFrom} onChange={(e) => setShipByFrom(e.target.value)} />
+            <Input type="date" label="Ship by to" value={shipByTo} onChange={(e) => setShipByTo(e.target.value)} />
+            <Select
+              label="Backorders"
+              value={backorderFilter}
+              onChange={(e) => setBackorderFilter(e.target.value as "all" | "fulfillable" | "backorder")}
+            >
+              <option value="all">All orders</option>
+              <option value="fulfillable">Fully fulfillable only (no backorders)</option>
+              <option value="backorder">Has backorders only</option>
+            </Select>
+            <Select
+              label="Backorder PO status"
+              value={backorderPoFilter}
+              onChange={(e) => setBackorderPoFilter(e.target.value as typeof backorderPoFilter)}
+              title="Based on PO linkage (is a backordered line actually covered by an open purchase order?), not order status — separate from the Backorders filter above, which is just a quantity check"
+            >
+              <option value="">All</option>
+              <option value="with_po">Has backorder with PO</option>
+              <option value="no_po">Has backorder with NO open PO</option>
+            </Select>
+            <Select
+              label="Invoice coverage"
+              value={invoiceCoverageFilter}
+              onChange={(e) => setInvoiceCoverageFilter(e.target.value as typeof invoiceCoverageFilter)}
+              title="Based on real invoiced-vs-ordered quantities, not Cin7's own invoice status field"
+            >
+              <option value="">All</option>
+              <option value="not_invoiced">Not invoiced</option>
+              <option value="partially_invoiced">Partially invoiced</option>
+              <option value="invoiced">Invoiced</option>
+            </Select>
             {(search || paymentFilter || shipByFrom || shipByTo || backorderFilter !== "all" || backorderPoFilter || invoiceCoverageFilter) && (
-              <button
-                type="button"
+              <Button
+                variant="secondary"
                 onClick={() => {
                   setSearch("");
                   setPaymentFilter("");
@@ -710,35 +728,26 @@ export default function OrderFulfillmentPage() {
                   setBackorderPoFilter("");
                   setInvoiceCoverageFilter("");
                 }}
-                className="rounded-full border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
               >
                 Clear filters
-              </button>
+              </Button>
             )}
           </div>
 
           {visibleRows.length === 0 && <p className="mt-4 text-sm text-slate-400">Nothing matches these filters.</p>}
 
           {selectedSaleIds.size > 0 && (
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2.5">
-              <span className="text-sm font-medium text-indigo-900">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-primary-border bg-primary-subtle px-4 py-2.5">
+              <span className="text-sm font-medium text-primary">
                 {selectedSaleIds.size} order{selectedSaleIds.size === 1 ? "" : "s"} selected for picking
               </span>
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowPickList(true)}
-                  className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
-                >
+                <Button size="sm" onClick={() => setShowPickList(true)}>
                   Generate batch pick list
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedSaleIds(new Set())}
-                  className="rounded-full border border-indigo-300 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-100"
-                >
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => setSelectedSaleIds(new Set())}>
                   Clear selection
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -749,10 +758,11 @@ export default function OrderFulfillmentPage() {
                 <ColGroup columns={ORDER_TABLE_COLUMNS} widths={columnWidths} />
                 <thead>
                   <tr className="border-b border-slate-200 text-slate-500">
-                    <th className="overflow-hidden py-2 pr-4">
+                    <th scope="col" className="overflow-hidden py-2 pr-4">
                       <input
                         type="checkbox"
                         title="Select all visible orders"
+                        aria-label="Select all visible orders"
                         checked={visibleRows.every((r) => selectedSaleIds.has(r.cin7_sale_id))}
                         onChange={(e) => {
                           setSelectedSaleIds((prev) => {
@@ -788,18 +798,25 @@ export default function OrderFulfillmentPage() {
                     <Fragment key={row.cin7_sale_id}>
                       <tr
                         onClick={() => setExpandedSaleId(expandedSaleId === row.cin7_sale_id ? null : row.cin7_sale_id)}
-                        className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
+                        className={`cursor-pointer border-b border-slate-100 hover:bg-slate-50 ${
+                          row.is_overdue
+                            ? "border-l-2 border-l-danger"
+                            : !row.is_overdue && row.is_pick_today && (row.days_open ?? 0) >= STUCK_AFTER_DAYS
+                              ? "border-l-2 border-l-warning"
+                              : ""
+                        }`}
                       >
                         <td className="overflow-hidden py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                           <input
                             type="checkbox"
+                            aria-label={`Select order ${row.order_number ?? row.cin7_sale_id} for picking`}
                             checked={selectedSaleIds.has(row.cin7_sale_id)}
                             onChange={() => toggleSelected(row.cin7_sale_id)}
                             className="h-4 w-4"
                           />
                         </td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4">
-                          <div className="truncate font-medium text-slate-900">{row.order_number ?? row.cin7_sale_id}</div>
+                          <div className="truncate font-mono font-medium text-slate-900">{row.order_number ?? row.cin7_sale_id}</div>
                           <div className="truncate text-xs text-slate-400">{row.customer_name}</div>
                           {(options?.instances.length ?? 0) > 1 && (
                             <div className="truncate text-xs text-slate-300">
@@ -810,37 +827,34 @@ export default function OrderFulfillmentPage() {
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4">
                           <div>{row.ship_by ?? <span className="text-slate-300">—</span>}</div>
                           {row.is_overdue && (
-                            <span className="mt-0.5 inline-block whitespace-nowrap rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">
-                              Overdue
+                            <span className="mt-0.5 inline-block">
+                              <Badge tone="danger">Overdue</Badge>
                             </span>
                           )}
                           {!row.is_overdue && row.is_pick_today && (row.days_open ?? 0) >= STUCK_AFTER_DAYS && (
-                            <span
-                              title={`Open ${row.days_open} days without being fully picked`}
-                              className="mt-0.5 inline-block whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"
-                            >
-                              Stuck ({row.days_open}d)
+                            <span className="mt-0.5 inline-block" title={`Open ${row.days_open} days without being fully picked`}>
+                              <Badge tone="warning">Stuck ({row.days_open}d)</Badge>
                             </span>
                           )}
                         </td>
                         <td className="overflow-hidden py-2 pr-4">
-                          <StatusBadge status={row.combined_picking_status} />
+                          <StatusDot status={row.combined_picking_status} />
                         </td>
                         <td className="overflow-hidden py-2 pr-4">
-                          <StatusBadge status={row.combined_packing_status} />
+                          <StatusDot status={row.combined_packing_status} />
                         </td>
                         <td className="overflow-hidden py-2 pr-4">
-                          <StatusBadge status={row.combined_shipping_status} />
+                          <StatusDot status={row.combined_shipping_status} />
                         </td>
                         <td className="overflow-hidden py-2 pr-4">
-                          <StatusBadge status={row.combined_invoice_status} />
+                          <StatusDot status={row.combined_invoice_status} />
                         </td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-xs text-slate-600">{row.invoice_numbers ?? "—"}</td>
                         <td className="overflow-hidden py-2 pr-4">
-                          <StatusBadge status={row.combined_payment_status} />
+                          <StatusDot status={row.combined_payment_status} />
                         </td>
-                        <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium">{qty(row.total_pickable_qty)}</td>
-                        <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium">{qty(row.total_ready_to_invoice_qty)}</td>
+                        <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium tabular-nums">{qty(row.total_pickable_qty)}</td>
+                        <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium tabular-nums">{qty(row.total_ready_to_invoice_qty)}</td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-xs text-slate-600">
                           {row.ready_to_invoice_fulfilment_numbers ? (
                             <span
@@ -854,20 +868,20 @@ export default function OrderFulfillmentPage() {
                             <span className="text-slate-300">—</span>
                           )}
                         </td>
-                        <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium">{qty(row.total_ready_for_box_label_qty)}</td>
+                        <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium tabular-nums">{qty(row.total_ready_for_box_label_qty)}</td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                           {row.is_ready_for_box_label ? (
-                            <button
-                              type="button"
+                            <Button
+                              variant="secondary"
+                              size="sm"
                               onClick={() => handleMarkBoxLabelPrinted(row.instance_id, row.cin7_sale_id)}
-                              disabled={markingPrintedSaleId === row.cin7_sale_id}
-                              className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                              loading={markingPrintedSaleId === row.cin7_sale_id}
                             >
                               {markingPrintedSaleId === row.cin7_sale_id ? "Marking…" : "Mark as printed"}
-                            </button>
+                            </Button>
                           ) : row.box_label_printed_at ? (
                             <span className="inline-flex items-center gap-1.5">
-                              <span className="text-xs text-emerald-600" title={row.box_label_printed_by_email ?? undefined}>
+                              <span className="text-xs text-success" title={row.box_label_printed_by_email ?? undefined}>
                                 Printed {row.box_label_printed_at.slice(0, 10)}
                               </span>
                               <button
@@ -884,7 +898,7 @@ export default function OrderFulfillmentPage() {
                             <span className="text-xs text-slate-300">—</span>
                           )}
                         </td>
-                        <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right">
+                        <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right tabular-nums">
                           {money(row.paid_amount)} / {money(row.invoice_amount)}
                         </td>
                       </tr>
@@ -892,8 +906,9 @@ export default function OrderFulfillmentPage() {
                         <tr>
                           <td colSpan={ORDER_TABLE_COLUMNS.length} className="bg-slate-50 px-4 py-3">
                             <div className="mb-3 flex items-center justify-between">
-                              <button
-                                type="button"
+                              <Button
+                                variant="secondary"
+                                size="sm"
                                 onClick={() => handleViewDocuments(row.instance_id, row.cin7_sale_id)}
                                 disabled={isLoadingAttachments || options?.instances.find((i) => i.id === row.instance_id)?.active === false}
                                 title={
@@ -901,26 +916,37 @@ export default function OrderFulfillmentPage() {
                                     ? "Instance disconnected — documents unavailable"
                                     : undefined
                                 }
-                                className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                               >
                                 {isLoadingAttachments && !attachmentsBySaleId[row.cin7_sale_id] ? "Loading documents…" : "View documents"}
-                              </button>
+                              </Button>
                             </div>
-                            {attachmentsError && <p className="mb-2 text-xs text-red-600">{attachmentsError}</p>}
-                            {markPrintedError && <p className="mb-2 text-xs text-red-600">{markPrintedError}</p>}
+                            {attachmentsError && (
+                              <div className="mb-2">
+                                <Alert tone="danger">{attachmentsError}</Alert>
+                              </div>
+                            )}
+                            {markPrintedError && (
+                              <div className="mb-2">
+                                <Alert tone="danger">{markPrintedError}</Alert>
+                              </div>
+                            )}
                             {row.is_ready_for_box_label &&
                               attachmentsBySaleId[row.cin7_sale_id]?.some((att) => isBoxLabelAttachment(att.FileName)) && (
-                                <p className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                                  A box label attachment already exists on this sale in Cin7.
-                                  <button
-                                    type="button"
-                                    onClick={() => handleMarkBoxLabelPrinted(row.instance_id, row.cin7_sale_id)}
-                                    disabled={markingPrintedSaleId === row.cin7_sale_id}
-                                    className="rounded-full border border-amber-300 bg-white px-2.5 py-1 font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-50"
-                                  >
-                                    {markingPrintedSaleId === row.cin7_sale_id ? "Marking…" : "Mark as printed"}
-                                  </button>
-                                </p>
+                                <div className="mb-3">
+                                  <Alert tone="warning">
+                                    <span className="flex flex-wrap items-center gap-2">
+                                      A box label attachment already exists on this sale in Cin7.
+                                      <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        onClick={() => handleMarkBoxLabelPrinted(row.instance_id, row.cin7_sale_id)}
+                                        loading={markingPrintedSaleId === row.cin7_sale_id}
+                                      >
+                                        {markingPrintedSaleId === row.cin7_sale_id ? "Marking…" : "Mark as printed"}
+                                      </Button>
+                                    </span>
+                                  </Alert>
+                                </div>
                               )}
                             {attachmentsBySaleId[row.cin7_sale_id] && (
                               <div className="mb-3">
@@ -934,7 +960,7 @@ export default function OrderFulfillmentPage() {
                                           href={att.DownloadUrl}
                                           target="_blank"
                                           rel="noreferrer"
-                                          className="rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                                          className="rounded-full border border-primary-border bg-primary-subtle px-3 py-1 text-xs font-medium text-primary hover:opacity-80"
                                         >
                                           {att.FileName ?? "Document"}
                                         </a>
@@ -950,17 +976,17 @@ export default function OrderFulfillmentPage() {
                               <table className="w-full text-left text-xs">
                                 <thead>
                                   <tr className="text-slate-500">
-                                    <th className="py-1 pr-4">Product</th>
-                                    <th className="py-1 pr-4 text-right">Ordered</th>
-                                    <th className="py-1 pr-4 text-right">Backordered</th>
-                                    <th className="py-1 pr-4 text-right">Picked</th>
-                                    <th className="py-1 pr-4 text-right">Packed</th>
-                                    <th className="py-1 pr-4 text-right">Pickable Now</th>
-                                    <th className="py-1 pr-4 text-right">Packed (Authorised)</th>
-                                    <th className="py-1 pr-4 text-right">Invoiced</th>
-                                    <th className="py-1 pr-4">Picked From</th>
-                                    <th className="py-1 pr-4">Suggested Pick Location</th>
-                                    <th className="py-1 pr-4">Backorder ETA</th>
+                                    <th scope="col" className="py-1 pr-4">Product</th>
+                                    <th scope="col" className="py-1 pr-4 text-right">Ordered</th>
+                                    <th scope="col" className="py-1 pr-4 text-right">Backordered</th>
+                                    <th scope="col" className="py-1 pr-4 text-right">Picked</th>
+                                    <th scope="col" className="py-1 pr-4 text-right">Packed</th>
+                                    <th scope="col" className="py-1 pr-4 text-right">Pickable Now</th>
+                                    <th scope="col" className="py-1 pr-4 text-right">Packed (Authorised)</th>
+                                    <th scope="col" className="py-1 pr-4 text-right">Invoiced</th>
+                                    <th scope="col" className="py-1 pr-4">Picked From</th>
+                                    <th scope="col" className="py-1 pr-4">Suggested Pick Location</th>
+                                    <th scope="col" className="py-1 pr-4">Backorder ETA</th>
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -968,15 +994,15 @@ export default function OrderFulfillmentPage() {
                                     <tr key={i} className="border-t border-slate-200">
                                       <td className="whitespace-nowrap py-1 pr-4">
                                         <div className="font-medium text-slate-900">{line.product_name ?? line.product_sku}</div>
-                                        <div className="text-slate-400">{line.product_sku}</div>
+                                        <div className="font-mono text-slate-400">{line.product_sku}</div>
                                       </td>
-                                      <td className="whitespace-nowrap py-1 pr-4 text-right">{qty(line.ordered_qty)}</td>
-                                      <td className="whitespace-nowrap py-1 pr-4 text-right">{qty(line.backorder_qty)}</td>
-                                      <td className="whitespace-nowrap py-1 pr-4 text-right">{qty(line.picked_qty)}</td>
-                                      <td className="whitespace-nowrap py-1 pr-4 text-right">{qty(line.packed_qty)}</td>
-                                      <td className="whitespace-nowrap py-1 pr-4 text-right font-medium">{qty(line.pickable_qty)}</td>
-                                      <td className="whitespace-nowrap py-1 pr-4 text-right">{qty(line.packed_qty_authorised)}</td>
-                                      <td className="whitespace-nowrap py-1 pr-4 text-right">{qty(line.invoiced_qty)}</td>
+                                      <td className="whitespace-nowrap py-1 pr-4 text-right tabular-nums">{qty(line.ordered_qty)}</td>
+                                      <td className="whitespace-nowrap py-1 pr-4 text-right tabular-nums">{qty(line.backorder_qty)}</td>
+                                      <td className="whitespace-nowrap py-1 pr-4 text-right tabular-nums">{qty(line.picked_qty)}</td>
+                                      <td className="whitespace-nowrap py-1 pr-4 text-right tabular-nums">{qty(line.packed_qty)}</td>
+                                      <td className="whitespace-nowrap py-1 pr-4 text-right font-medium tabular-nums">{qty(line.pickable_qty)}</td>
+                                      <td className="whitespace-nowrap py-1 pr-4 text-right tabular-nums">{qty(line.packed_qty_authorised)}</td>
+                                      <td className="whitespace-nowrap py-1 pr-4 text-right tabular-nums">{qty(line.invoiced_qty)}</td>
                                       <td className="whitespace-nowrap py-1 pr-4 text-slate-500">{line.picked_from_locations ?? "—"}</td>
                                       <td className="whitespace-nowrap py-1 pr-4 text-slate-500">
                                         {line.suggested_pick_location
@@ -1008,7 +1034,7 @@ export default function OrderFulfillmentPage() {
               </table>
             </div>
           )}
-        </section>
+        </Panel>
       )}
       </div>
 
@@ -1028,22 +1054,12 @@ export default function OrderFulfillmentPage() {
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 print:static print:bg-transparent print:overflow-visible">
           <div className="mx-auto my-8 max-w-3xl rounded-2xl bg-white p-8 shadow-xl print:my-0 print:max-w-none print:rounded-none print:shadow-none">
             <div className="mb-6 flex items-center justify-between print:hidden">
-              <h2 className="text-lg font-semibold text-slate-900">Batch Pick List</h2>
+              <h2 className="text-base font-semibold text-slate-900">Batch Pick List</h2>
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
-                >
-                  Print
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowPickList(false)}
-                  className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                >
+                <Button onClick={() => window.print()}>Print</Button>
+                <Button variant="secondary" onClick={() => setShowPickList(false)}>
                   Close
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -1059,9 +1075,9 @@ export default function OrderFulfillmentPage() {
               <table className="w-full text-left text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 text-slate-500">
-                    <th className="py-1.5 pr-4">Location</th>
-                    <th className="py-1.5 pr-4">Product</th>
-                    <th className="py-1.5 pr-4 text-right">Qty to Pick</th>
+                    <th scope="col" className="py-1.5 pr-4">Location</th>
+                    <th scope="col" className="py-1.5 pr-4">Product</th>
+                    <th scope="col" className="py-1.5 pr-4 text-right">Qty to Pick</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1070,9 +1086,9 @@ export default function OrderFulfillmentPage() {
                       <td className="py-1.5 pr-4">{row.suggestedPickLocation ?? <span className="text-slate-300">—</span>}</td>
                       <td className="py-1.5 pr-4">
                         <div className="font-medium text-slate-900">{row.productName ?? row.productSku}</div>
-                        <div className="text-xs text-slate-400">{row.productSku}</div>
+                        <div className="font-mono text-xs text-slate-400">{row.productSku}</div>
                       </td>
-                      <td className="py-1.5 pr-4 text-right font-medium">{qty(row.totalQty)}</td>
+                      <td className="py-1.5 pr-4 text-right font-medium tabular-nums">{qty(row.totalQty)}</td>
                     </tr>
                   ))}
                 </tbody>

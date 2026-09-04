@@ -16,10 +16,16 @@ import { REPORT_SOURCES, REPORT_SOURCE_KEYS, type ReportSourceKey } from "@/repo
 import type { CustomReportFilters } from "@/reports/custom/facts";
 import type { CustomReportRow } from "@/reports/custom/aggregate";
 import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
-import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { ReportDescription } from "../ReportDescription";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { Alert } from "@/components/ui/Alert";
+import { Panel, PanelTitle } from "@/components/ui/Panel";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 /** "dim:<index>" or "measure:<index>" — a plain string rather than a fixed union, since dimensions/measures are user-chosen and vary per source. Unlike every other report here, aggregateCustomReport has no fixed row order at all (Map iteration order), so sorting matters more on this page than anywhere else. */
 type CustomSortColumn = string;
@@ -213,22 +219,26 @@ export default function CustomReportPage() {
       </ReportDescription>
       <PageLoadingIndicator show={isExporting} label="Exporting to Excel…" />
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <p className="font-medium text-slate-900">Saved reports</p>
-        {savedError && <p className="mt-2 text-sm text-red-600">{savedError}</p>}
-        {savedReports.length === 0 && <p className="mt-2 text-sm text-slate-400">None saved yet.</p>}
+      <Panel>
+        <PanelTitle>Saved reports</PanelTitle>
+        {savedError && (
+          <div className="mt-2">
+            <Alert tone="danger">{savedError}</Alert>
+          </div>
+        )}
+        {savedReports.length === 0 && <p className="mt-2 text-sm text-slate-500">None saved yet.</p>}
         {savedReports.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-2">
             {savedReports.map((saved) => (
               <div key={saved.id} className="flex items-center gap-2 rounded-full border border-slate-200 py-1 pl-3.5 pr-2 text-sm">
-                <button type="button" onClick={() => handleLoadSaved(saved)} className="font-medium text-indigo-700 hover:underline">
+                <button type="button" onClick={() => handleLoadSaved(saved)} className="font-medium text-primary hover:underline">
                   {saved.name}
                 </button>
-                <span className="text-xs text-slate-400">{REPORT_SOURCES[saved.source].label}</span>
+                <span className="text-xs text-slate-500">{REPORT_SOURCES[saved.source].label}</span>
                 <button
                   type="button"
                   onClick={() => handleDeleteSaved(saved.id)}
-                  className="rounded-full px-1.5 text-xs text-slate-400 hover:bg-slate-100 hover:text-red-600"
+                  className="rounded-full px-1.5 text-xs text-slate-400 hover:bg-slate-100 hover:text-danger"
                   aria-label={`Delete ${saved.name}`}
                 >
                   ×
@@ -237,15 +247,15 @@ export default function CustomReportPage() {
             ))}
           </div>
         )}
-      </section>
+      </Panel>
 
       <div className="mt-6">
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="font-medium text-slate-900">Build a report</p>
+        <Panel>
+          <PanelTitle>Build a report</PanelTitle>
 
-          <label className="mt-4 flex flex-col gap-1.5 text-sm">
-            <span className="font-medium text-slate-700">Data source</span>
-            <select
+          <div className="mt-4 max-w-xs">
+            <Select
+              label="Data source"
               value={source}
               onChange={(e) => {
                 setSource(e.target.value as ReportSourceKey);
@@ -253,30 +263,26 @@ export default function CustomReportPage() {
                 setMeasureKeys([]);
                 setResult(null);
               }}
-              className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2"
             >
               {REPORT_SOURCE_KEYS.map((key) => (
                 <option key={key} value={key}>
                   {REPORT_SOURCES[key].label}
                 </option>
               ))}
-            </select>
-          </label>
+            </Select>
+          </div>
 
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <span className="text-sm font-medium text-slate-700">Group by (dimensions)</span>
               <div className="mt-2 flex flex-col gap-1.5">
                 {sourceConfig.dimensions.map((dim) => (
-                  <label key={dim.key} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={dimensionKeys.includes(dim.key)}
-                      onChange={() => setDimensionKeys((prev) => toggleInArray(prev, dim.key))}
-                      className="h-4 w-4"
-                    />
-                    {dim.label}
-                  </label>
+                  <Checkbox
+                    key={dim.key}
+                    label={dim.label}
+                    checked={dimensionKeys.includes(dim.key)}
+                    onChange={() => setDimensionKeys((prev) => toggleInArray(prev, dim.key))}
+                  />
                 ))}
               </div>
             </div>
@@ -285,15 +291,12 @@ export default function CustomReportPage() {
               <span className="text-sm font-medium text-slate-700">Measures</span>
               <div className="mt-2 flex flex-col gap-1.5">
                 {sourceConfig.measures.map((measure) => (
-                  <label key={measure.key} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={measureKeys.includes(measure.key)}
-                      onChange={() => setMeasureKeys((prev) => toggleInArray(prev, measure.key))}
-                      className="h-4 w-4"
-                    />
-                    {measure.label}
-                  </label>
+                  <Checkbox
+                    key={measure.key}
+                    label={measure.label}
+                    checked={measureKeys.includes(measure.key)}
+                    onChange={() => setMeasureKeys((prev) => toggleInArray(prev, measure.key))}
+                  />
                 ))}
               </div>
             </div>
@@ -308,75 +311,73 @@ export default function CustomReportPage() {
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <label className="flex flex-col gap-1.5 text-sm">
-                <span className="font-medium text-slate-700">From</span>
-                <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2" />
-              </label>
-              <label className="flex flex-col gap-1.5 text-sm">
-                <span className="font-medium text-slate-700">To</span>
-                <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2" />
-              </label>
+              <Input type="date" label="From" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+              <Input type="date" label="To" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
             </div>
           </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={handleRunReport}
-              disabled={isRunning || (!dimensionKeys.length && !measureKeys.length)}
-              className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-            >
-              {isRunning && <Spinner className="mr-1.5" />}
+            <Button onClick={handleRunReport} disabled={!dimensionKeys.length && !measureKeys.length} loading={isRunning}>
               {isRunning ? "Running…" : "Run report"}
-            </button>
+            </Button>
 
-            <input
-              type="text"
+            <Input
+              label="Name this report to save it"
+              hideLabel
               value={reportName}
               onChange={(e) => setReportName(e.target.value)}
               placeholder="Name this report to save it"
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
             />
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={isSaving || !reportName.trim()}
-              className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
+            <Button variant="secondary" onClick={handleSave} disabled={!reportName.trim()} loading={isSaving}>
               {isSaving ? "Saving…" : "Save"}
-            </button>
+            </Button>
           </div>
 
-          {reportError && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{reportError}</p>}
-          {saveError && <p className="mt-2 text-sm text-red-600">{saveError}</p>}
-          {optionsError && <p className="mt-2 text-sm text-red-600">{optionsError}</p>}
-        </section>
+          {reportError && (
+            <div className="mt-4">
+              <Alert tone="danger">{reportError}</Alert>
+            </div>
+          )}
+          {saveError && (
+            <div className="mt-2">
+              <Alert tone="danger">{saveError}</Alert>
+            </div>
+          )}
+          {optionsError && (
+            <div className="mt-2">
+              <Alert tone="danger">{optionsError}</Alert>
+            </div>
+          )}
+        </Panel>
 
         {result && (
-          <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <Panel className="mt-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="font-medium text-slate-900">
+              <p className="text-base font-semibold text-slate-900">
                 {result.rows.length} row{result.rows.length === 1 ? "" : "s"}
               </p>
               {result.rows.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleExport}
-                  disabled={isExporting}
-                  className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                >
+                <Button variant="secondary" size="sm" onClick={handleExport} loading={isExporting}>
                   {isExporting ? "Exporting…" : "Export to Excel"}
-                </button>
+                </Button>
               )}
             </div>
-            {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
-            {result.rows.length === 0 && <p className="mt-2 text-sm text-slate-400">No data matches these filters.</p>}
+            {exportError && (
+              <div className="mt-2">
+                <Alert tone="danger">{exportError}</Alert>
+              </div>
+            )}
+            {result.rows.length === 0 && (
+              <div className="mt-2">
+                <EmptyState title="No matching data" description="No data matches these filters." />
+              </div>
+            )}
 
             {result.rows.length > 0 && (
               <div className="mt-4 overflow-x-auto">
                 <table className="w-full text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-slate-500">
+                  <thead className="bg-slate-50">
+                    <tr className="border-b-2 border-slate-300 text-slate-500">
                       {dimensionLabels.map((label, i) => (
                         <SortHeader
                           key={label}
@@ -402,14 +403,14 @@ export default function CustomReportPage() {
                   </thead>
                   <tbody>
                     {sortedRows.map((row, i) => (
-                      <tr key={i} className="border-b border-slate-100">
+                      <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                         {row.dimensionValues.map((value, j) => (
                           <td key={j} className="py-2 pr-4">
                             {value}
                           </td>
                         ))}
                         {row.measureValues.map((value, j) => (
-                          <td key={j} className="py-2 pr-4 text-right">
+                          <td key={j} className="py-2 pr-4 text-right tabular-nums">
                             {formatMeasure(value)}
                           </td>
                         ))}
@@ -417,12 +418,12 @@ export default function CustomReportPage() {
                     ))}
                   </tbody>
                   <tfoot>
-                    <tr className="border-t border-slate-200 font-semibold text-slate-700">
+                    <tr className="border-t-2 border-slate-300 font-semibold text-slate-700">
                       <td className="py-2 pr-4" colSpan={Math.max(dimensionLabels.length, 1)}>
                         Total
                       </td>
                       {result.totals.map((value, j) => (
-                        <td key={j} className="py-2 pr-4 text-right">
+                        <td key={j} className="py-2 pr-4 text-right tabular-nums">
                           {formatMeasure(value)}
                         </td>
                       ))}
@@ -431,7 +432,7 @@ export default function CustomReportPage() {
                 </table>
               </div>
             )}
-          </section>
+          </Panel>
         )}
       </div>
     </>

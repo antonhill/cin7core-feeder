@@ -25,6 +25,13 @@ import {
   type QuoteReferenceData,
   type QuoteProductHit,
 } from "./actions";
+import { Button } from "@/components/ui/Button";
+import { Select } from "@/components/ui/Select";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { Badge } from "@/components/ui/Badge";
+import { Alert } from "@/components/ui/Alert";
+import { Panel } from "@/components/ui/Panel";
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/Table";
 
 // The interactive quote builder. Every margin figure shown here is computed CLIENT-SIDE by the
 // same pure engine the server uses (src/lib/quote-margin.ts) — so the numbers on screen match what
@@ -43,9 +50,9 @@ function fmtPct(n: number | null | undefined): string {
 }
 function marginTone(pct: number | null): string {
   if (pct == null) return "text-slate-400";
-  if (pct < 0) return "text-red-600";
-  if (pct < 15) return "text-amber-600";
-  return "text-emerald-600";
+  if (pct < 0) return "text-danger";
+  if (pct < 15) return "text-warning";
+  return "text-success";
 }
 
 let uidSeq = 0;
@@ -521,55 +528,49 @@ export default function QuotesPage() {
         <section className="mt-8">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-slate-900">Your quotes</h2>
-            <button
-              type="button"
-              onClick={newQuote}
-              className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
-            >
-              New quote
-            </button>
+            <Button onClick={newQuote}>New quote</Button>
           </div>
 
           <PageLoadingIndicator show={isLoadingList} label="Loading quotes…" />
-          {listError && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{listError}</p>}
+          {listError && (
+            <div className="mb-4">
+              <Alert tone="danger">{listError}</Alert>
+            </div>
+          )}
 
-          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-slate-500">
-                  <th className="px-4 py-2.5">Customer</th>
-                  <th className="px-4 py-2.5">Status</th>
-                  <th className="px-4 py-2.5 text-right">Total (incl. VAT)</th>
-                  <th className="px-4 py-2.5 text-right">Margin&nbsp;%</th>
-                  <th className="px-4 py-2.5">Updated</th>
+          <Table>
+            <THead>
+              <tr>
+                <TH>Customer</TH>
+                <TH>Status</TH>
+                <TH align="right">Total (incl. VAT)</TH>
+                <TH align="right">Margin&nbsp;%</TH>
+                <TH>Updated</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {quotes.length === 0 && !isLoadingList ? (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
+                    No quotes yet. Click <span className="font-medium">New quote</span> to build one.
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {quotes.length === 0 && !isLoadingList ? (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
-                      No quotes yet. Click <span className="font-medium">New quote</span> to build one.
-                    </td>
-                  </tr>
-                ) : (
-                  quotes.map((q) => (
-                    <tr key={q.id} className="cursor-pointer border-b border-slate-100 hover:bg-slate-50" onClick={() => openQuote(q.id)}>
-                      <td className="px-4 py-2.5 font-medium text-slate-900">{q.customerName || <span className="text-slate-400">Untitled</span>}</td>
-                      <td className="px-4 py-2.5">
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${q.status === "draft" ? "bg-slate-100 text-slate-600" : "bg-emerald-100 text-emerald-700"}`}>
-                          {q.status}
-                        </span>
-                        {q.cin7QuoteNumber ? <span className="ml-2 text-xs text-slate-400">{q.cin7QuoteNumber}</span> : null}
-                      </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums">{fmtMoney(q.totalIncTax)}</td>
-                      <td className={`px-4 py-2.5 text-right tabular-nums font-medium ${marginTone(q.overallMarginPct)}`}>{fmtPct(q.overallMarginPct)}</td>
-                      <td className="px-4 py-2.5 text-slate-500">{new Date(q.updatedAt).toLocaleDateString()}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+              ) : (
+                quotes.map((q) => (
+                  <TR key={q.id} className="cursor-pointer" onClick={() => openQuote(q.id)}>
+                    <TD className="font-medium text-slate-900">{q.customerName || <span className="font-normal text-slate-400">Untitled</span>}</TD>
+                    <TD>
+                      <Badge tone={q.status === "draft" ? "neutral" : "success"}>{q.status}</Badge>
+                      {q.cin7QuoteNumber ? <span className="ml-2 text-xs text-slate-400">{q.cin7QuoteNumber}</span> : null}
+                    </TD>
+                    <TD align="right" numeric>{fmtMoney(q.totalIncTax)}</TD>
+                    <TD align="right" numeric className={`font-medium ${marginTone(q.overallMarginPct)}`}>{fmtPct(q.overallMarginPct)}</TD>
+                    <TD className="text-slate-500">{new Date(q.updatedAt).toLocaleDateString()}</TD>
+                  </TR>
+                ))
+              )}
+            </TBody>
+          </Table>
         </section>
       ) : (
         <section className="mt-8 flex flex-col gap-6">
@@ -579,15 +580,11 @@ export default function QuotesPage() {
             <button type="button" onClick={() => { setMode("list"); loadList(); }} className="text-sm text-slate-500 hover:text-slate-800">
               ← Back to quotes
             </button>
-            {readOnly && (
-              <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-                Submitted to Cin7 — read only
-              </span>
-            )}
+            {readOnly && <Badge tone="success">Submitted to Cin7 — read only</Badge>}
           </div>
 
           {/* Quote settings */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <Panel>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <label className="flex flex-col gap-1.5 text-sm">
                 <span className="font-medium text-slate-700">Instance</span>
@@ -602,14 +599,14 @@ export default function QuotesPage() {
                   onBlur={() => setTimeout(() => setShowCustResults(false), 150)}
                   disabled={readOnly}
                   placeholder="Search customers…"
-                  className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50"
+                  className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
                 />
                 {(isCustSearching || isResolvingCustomer) && <div className="absolute right-3 top-9"><Spinner /></div>}
                 {showCustResults && custResults.length > 0 && (
                   <ul className="absolute top-full z-10 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
                     {custResults.map((c) => (
                       <li key={c.name}>
-                        <button type="button" onMouseDown={(e) => { e.preventDefault(); pickCustomer(c); }} className="block w-full px-3 py-2 text-left text-sm hover:bg-indigo-50">
+                        <button type="button" onMouseDown={(e) => { e.preventDefault(); pickCustomer(c); }} className="block w-full px-3 py-2 text-left text-sm hover:bg-primary-subtle">
                           <span className="font-medium text-slate-900">{c.name}</span>
                           {(c.priceTier || c.salesRep) && <span className="ml-2 text-xs text-slate-400">{[c.priceTier, c.salesRep].filter(Boolean).join(" · ")}</span>}
                         </button>
@@ -618,36 +615,41 @@ export default function QuotesPage() {
                   </ul>
                 )}
               </label>
-              <label className="flex flex-col gap-1.5 text-sm">
-                <span className="font-medium text-slate-700">Location</span>
-                <select value={location} onChange={(e) => setLocation(e.target.value)} disabled={readOnly || !instanceId} className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50">
-                  <option value="">{isLoadingRef && refData.locations.length === 0 ? "Loading…" : "Choose a location"}</option>
-                  {withCurrent(refData.locations, location).map((l) => <option key={l} value={l}>{l}</option>)}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1.5 text-sm">
-                <span className="font-medium text-slate-700">Price tier</span>
-                <select value={priceTier} onChange={(e) => applyPriceTier(e.target.value)} disabled={readOnly || !instanceId} className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50">
-                  <option value="">{isLoadingRef && refData.priceTiers.length === 0 ? "Loading…" : "None"}</option>
-                  {withCurrent(refData.priceTiers.map((t) => t.name), priceTier).map((t) => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1.5 text-sm">
-                <span className="font-medium text-slate-700">Sales rep</span>
-                <select value={salesRep} onChange={(e) => setSalesRep(e.target.value)} disabled={readOnly || !instanceId} className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50">
-                  <option value="">{isLoadingRef && refData.salesReps.length === 0 ? "Loading…" : "None"}</option>
-                  {withCurrent(refData.salesReps, salesRep).map((r) => <option key={r} value={r}>{r}</option>)}
-                </select>
-              </label>
-              <label className="flex items-center gap-2 text-sm sm:mt-6">
-                <input type="checkbox" checked={taxInclusive} onChange={(e) => setTaxInclusive(e.target.checked)} disabled={readOnly} className="h-4 w-4" />
-                <span className="font-medium text-slate-700">Prices include VAT</span>
-              </label>
+              <Select
+                label="Location"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                disabled={readOnly || !instanceId}
+              >
+                <option value="">{isLoadingRef && refData.locations.length === 0 ? "Loading…" : "Choose a location"}</option>
+                {withCurrent(refData.locations, location).map((l) => <option key={l} value={l}>{l}</option>)}
+              </Select>
+              <Select
+                label="Price tier"
+                value={priceTier}
+                onChange={(e) => applyPriceTier(e.target.value)}
+                disabled={readOnly || !instanceId}
+              >
+                <option value="">{isLoadingRef && refData.priceTiers.length === 0 ? "Loading…" : "None"}</option>
+                {withCurrent(refData.priceTiers.map((t) => t.name), priceTier).map((t) => <option key={t} value={t}>{t}</option>)}
+              </Select>
+              <Select
+                label="Sales rep"
+                value={salesRep}
+                onChange={(e) => setSalesRep(e.target.value)}
+                disabled={readOnly || !instanceId}
+              >
+                <option value="">{isLoadingRef && refData.salesReps.length === 0 ? "Loading…" : "None"}</option>
+                {withCurrent(refData.salesReps, salesRep).map((r) => <option key={r} value={r}>{r}</option>)}
+              </Select>
+              <div className="sm:mt-6">
+                <Checkbox label="Prices include VAT" checked={taxInclusive} onChange={(e) => setTaxInclusive(e.target.checked)} disabled={readOnly} />
+              </div>
             </div>
-          </div>
+          </Panel>
 
           {/* Line editor */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <Panel>
             {!readOnly && (
               <div className="mb-4 flex flex-wrap items-start gap-3">
                 <div className="relative flex-1 min-w-[16rem]">
@@ -656,7 +658,7 @@ export default function QuotesPage() {
                     onChange={(e) => { setSearch(e.target.value); setShowResults(true); }}
                     onBlur={() => setTimeout(() => setShowResults(false), 150)}
                     placeholder="Add a product — search by SKU or name…"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                    className="h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400"
                   />
                   {isSearching && <div className="absolute right-3 top-2.5"><Spinner /></div>}
                   {showResults && results.length > 0 && (
@@ -666,12 +668,16 @@ export default function QuotesPage() {
                           <button
                             type="button"
                             onMouseDown={(e) => { e.preventDefault(); pickSearchHit(r); }}
-                            className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-indigo-50"
+                            className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-primary-subtle"
                           >
                             <span>
                               <span className="font-medium text-slate-900">{r.name}</span>
                               <span className="ml-2 text-xs text-slate-400">{r.sku}</span>
-                              {r.isService && <span className="ml-2 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">service → charge</span>}
+                              {r.isService && (
+                                <span className="ml-2">
+                                  <Badge tone="primary">service → charge</Badge>
+                                </span>
+                              )}
                             </span>
                             <span className="text-xs text-slate-500">{r.isService ? "added as charge" : r.averageCost == null ? "no cost" : `cost ${fmtMoney(r.averageCost)}`}</span>
                           </button>
@@ -680,9 +686,7 @@ export default function QuotesPage() {
                     </ul>
                   )}
                 </div>
-                <button type="button" onClick={addChargeLine} className="rounded-full border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                  + Add Line
-                </button>
+                <Button variant="secondary" onClick={addChargeLine}>+ Add Line</Button>
                 {isLoadingLiveTier && <span className="flex items-center gap-1 text-xs text-slate-400"><Spinner /> live prices…</span>}
               </div>
             )}
@@ -690,7 +694,7 @@ export default function QuotesPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
-                  <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-400">
+                  <tr className="border-b-2 border-slate-300 text-xs font-semibold uppercase tracking-wide text-slate-600">
                     <th className="py-2 pr-3">Item</th>
                     <th className="py-2 px-2 text-right">Qty</th>
                     <th className="py-2 px-2 text-right">Unit price</th>
@@ -715,7 +719,7 @@ export default function QuotesPage() {
                           <td className="py-1.5 pr-3">
                             {l.lineType === "charge" ? (
                               <div>
-                                <input value={l.productName} onChange={(e) => updateLine(l.uid, { productName: e.target.value })} disabled={readOnly} placeholder="Charge description (e.g. Shipping)" className="w-full rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50" />
+                                <input value={l.productName} onChange={(e) => updateLine(l.uid, { productName: e.target.value })} disabled={readOnly} placeholder="Charge description (e.g. Shipping)" className="w-full rounded border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50" />
                                 {readOnly ? (
                                   <div className="mt-1 text-xs text-slate-400">{l.marginIncluded ? "Included in margin" : "Excluded from margin"}</div>
                                 ) : (
@@ -725,30 +729,30 @@ export default function QuotesPage() {
                                     {l.marginIncluded && (
                                       <span className="flex items-center gap-1">
                                         <span>Est. cost R</span>
-                                        <input value={l.estimatedCost} onChange={(e) => updateLine(l.uid, { estimatedCost: e.target.value })} inputMode="decimal" placeholder="0.00" className="w-20 rounded border border-slate-200 px-2 py-0.5 text-right text-xs focus:border-indigo-500 focus:outline-none" />
+                                        <input value={l.estimatedCost} onChange={(e) => updateLine(l.uid, { estimatedCost: e.target.value })} inputMode="decimal" placeholder="0.00" className="w-20 rounded border border-slate-200 px-2 py-0.5 text-right text-xs" />
                                       </span>
                                     )}
-                                    {l.marginIncluded && l.estimatedCost.trim() === "" && <span className="font-medium text-amber-600">enter a cost</span>}
+                                    {l.marginIncluded && l.estimatedCost.trim() === "" && <span className="font-medium text-warning">enter a cost</span>}
                                   </div>
                                 )}
                               </div>
                             ) : (
                               <div>
                                 <div className="font-medium text-slate-900">{l.productName || l.productSku}</div>
-                                <div className="text-xs text-slate-400">{l.productSku}{l.averageCost == null && <span className="ml-1 text-amber-600">· cost unavailable</span>}</div>
+                                <div className="text-xs text-slate-400">{l.productSku}{l.averageCost == null && <span className="ml-1 text-warning">· cost unavailable</span>}</div>
                               </div>
                             )}
                           </td>
-                          <td className="py-1.5 px-2 text-right"><input value={l.quantity} onChange={(e) => updateLine(l.uid, { quantity: e.target.value })} disabled={readOnly} inputMode="decimal" className="w-16 rounded border border-slate-200 px-2 py-1 text-right text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50" /></td>
-                          <td className="py-1.5 px-2 text-right"><input value={l.unitPrice} onChange={(e) => updateLine(l.uid, { unitPrice: e.target.value })} disabled={readOnly} inputMode="decimal" className="w-24 rounded border border-slate-200 px-2 py-1 text-right text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50" /></td>
-                          <td className="py-1.5 px-2 text-right"><input value={l.discountPct} onChange={(e) => updateLine(l.uid, { discountPct: e.target.value })} disabled={readOnly} inputMode="decimal" className="w-16 rounded border border-slate-200 px-2 py-1 text-right text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50" /></td>
-                          <td className="py-1.5 px-2 text-right"><input value={l.taxRatePct} onChange={(e) => updateLine(l.uid, { taxRatePct: e.target.value })} disabled={readOnly} inputMode="decimal" className="w-16 rounded border border-slate-200 px-2 py-1 text-right text-sm focus:border-indigo-500 focus:outline-none disabled:bg-slate-50" /></td>
+                          <td className="py-1.5 px-2 text-right"><input value={l.quantity} onChange={(e) => updateLine(l.uid, { quantity: e.target.value })} disabled={readOnly} inputMode="decimal" className="w-16 rounded border border-slate-200 px-2 py-1 text-right text-sm disabled:bg-slate-50" /></td>
+                          <td className="py-1.5 px-2 text-right"><input value={l.unitPrice} onChange={(e) => updateLine(l.uid, { unitPrice: e.target.value })} disabled={readOnly} inputMode="decimal" className="w-24 rounded border border-slate-200 px-2 py-1 text-right text-sm disabled:bg-slate-50" /></td>
+                          <td className="py-1.5 px-2 text-right"><input value={l.discountPct} onChange={(e) => updateLine(l.uid, { discountPct: e.target.value })} disabled={readOnly} inputMode="decimal" className="w-16 rounded border border-slate-200 px-2 py-1 text-right text-sm disabled:bg-slate-50" /></td>
+                          <td className="py-1.5 px-2 text-right"><input value={l.taxRatePct} onChange={(e) => updateLine(l.uid, { taxRatePct: e.target.value })} disabled={readOnly} inputMode="decimal" className="w-16 rounded border border-slate-200 px-2 py-1 text-right text-sm disabled:bg-slate-50" /></td>
                           <td className="py-1.5 px-2 text-right tabular-nums">{fmtMoney(r.revenueExTax)}</td>
                           <td className="py-1.5 px-2 text-right tabular-nums text-slate-500">{fmtMoney(r.estimatedCost)}</td>
                           <td className="py-1.5 px-2 text-right tabular-nums">{r.estimatedGP == null ? "—" : fmtMoney(r.estimatedGP)}</td>
                           <td className={`py-1.5 px-2 text-right tabular-nums font-medium ${excludedCharge ? "text-slate-400" : marginTone(r.marginPct)}`}>{excludedCharge ? "—" : fmtPct(r.marginPct)}</td>
                           <td className="py-1.5 pl-2 text-right">
-                            {!readOnly && <button type="button" onClick={() => removeLine(l.uid)} className="text-slate-300 hover:text-red-500" aria-label="Remove line">✕</button>}
+                            {!readOnly && <button type="button" onClick={() => removeLine(l.uid)} className="text-slate-300 hover:text-danger" aria-label="Remove line">✕</button>}
                           </td>
                         </tr>
                       );
@@ -772,30 +776,28 @@ export default function QuotesPage() {
                 </p>
               )}
               {missingCostCount > 0 && (
-                <p className="max-w-xs text-right text-xs text-amber-600">
+                <p className="max-w-xs text-right text-xs text-warning">
                   {missingCostCount === 1 ? "1 line has" : `${missingCostCount} lines have`} no cost — margin incomplete.
                 </p>
               )}
             </div>
-          </div>
+          </Panel>
 
-          {editorError && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{editorError}</p>}
-          {saveMsg && <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{saveMsg}</p>}
+          {editorError && <Alert tone="danger">{editorError}</Alert>}
+          {saveMsg && <Alert tone="success">{saveMsg}</Alert>}
 
           {!readOnly && (
             <div className="flex items-center justify-between">
-              <button type="button" onClick={removeQuote} disabled={isSaving || isSubmitting} className="text-sm text-red-500 hover:text-red-700 disabled:opacity-50">
+              <button type="button" onClick={removeQuote} disabled={isSaving || isSubmitting} className="text-sm text-danger hover:text-danger-hover disabled:opacity-50">
                 {quoteId ? "Delete draft" : "Discard"}
               </button>
               <div className="flex items-center gap-3">
-                <button type="button" onClick={save} disabled={isSaving || isSubmitting} className="rounded-full border border-indigo-600 px-5 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50">
-                  {isSaving && <Spinner className="mr-1.5" />}
+                <Button variant="secondary" onClick={save} disabled={isSaving || isSubmitting} loading={isSaving}>
                   {isSaving ? "Saving…" : "Save draft"}
-                </button>
-                <button type="button" onClick={submitToCin7} disabled={isSaving || isSubmitting || !instanceId} className="rounded-full bg-emerald-600 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
-                  {isSubmitting && <Spinner className="mr-1.5" />}
+                </Button>
+                <Button variant="primary" onClick={submitToCin7} disabled={isSaving || isSubmitting || !instanceId} loading={isSubmitting}>
                   {isSubmitting ? "Submitting…" : "Submit to Cin7"}
-                </button>
+                </Button>
               </div>
             </div>
           )}

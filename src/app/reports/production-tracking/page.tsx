@@ -30,6 +30,13 @@ import { StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
 import { Spinner } from "@/app/Spinner";
 import { ReportDescription } from "../ReportDescription";
+import { Panel, PanelTitle } from "@/components/ui/Panel";
+import { Dialog } from "@/components/ui/Dialog";
+import { Input } from "@/components/ui/Input";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { Alert } from "@/components/ui/Alert";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Badge } from "@/components/ui/Badge";
 
 type SortColumn = "orderNumber" | "product" | "currentOperation" | "listStatus" | "requiredByDate" | "daysLate" | "wipActualCost" | "totalWastage";
 
@@ -81,29 +88,38 @@ function ProductionOrderDetailPanel({
 }) {
   if (isLoading)
     return (
-      <p className="px-4 py-3 text-sm text-slate-500">
-        <Spinner className="mr-1.5" />
+      <p className="flex items-center gap-1.5 px-4 py-3 text-sm text-slate-500">
+        <Spinner />
         Loading operations…
       </p>
     );
-  if (error) return <p className="px-4 py-3 text-sm text-red-700">{error}</p>;
+  if (error)
+    return (
+      <div className="px-4 py-3">
+        <Alert tone="danger">{error}</Alert>
+      </div>
+    );
   if (!operations || operations.length === 0)
-    return <p className="px-4 py-3 text-sm text-slate-500">No operation detail synced yet for this order.</p>;
+    return (
+      <div className="px-4 py-3">
+        <EmptyState title="No operation detail yet" description="No operation detail synced yet for this order." />
+      </div>
+    );
 
   return (
     <div className="overflow-x-auto px-4 py-4">
       <table className="w-full text-left text-sm text-slate-700">
-        <thead>
-          <tr className="text-xs uppercase tracking-wide text-slate-400">
-            <th className="py-1 pr-4 font-medium">Operation</th>
-            <th className="py-1 pr-4 font-medium">Work Centre</th>
-            <th className="py-1 pr-4 font-medium">Status</th>
-            <th className="py-1 pr-4 text-right font-medium">Planned Time</th>
-            <th className="py-1 pr-4 text-right font-medium">Actual Time</th>
-            <th className="py-1 pr-4 font-medium">Input (from previous stage)</th>
-            <th className="py-1 pr-4 text-right font-medium">Component Wastage</th>
-            <th className="py-1 pr-4 text-right font-medium">Actual Cost</th>
-            <th className="py-1 pr-4 text-right font-medium">Cost so far</th>
+        <thead className="bg-slate-50">
+          <tr className="border-b-2 border-slate-300 text-xs font-semibold uppercase tracking-wide text-slate-600">
+            <th scope="col" className="py-1.5 pr-4">Operation</th>
+            <th scope="col" className="py-1.5 pr-4">Work Centre</th>
+            <th scope="col" className="py-1.5 pr-4">Status</th>
+            <th scope="col" className="py-1.5 pr-4 text-right">Planned Time</th>
+            <th scope="col" className="py-1.5 pr-4 text-right">Actual Time</th>
+            <th scope="col" className="py-1.5 pr-4">Input (from previous stage)</th>
+            <th scope="col" className="py-1.5 pr-4 text-right">Component Wastage</th>
+            <th scope="col" className="py-1.5 pr-4 text-right">Actual Cost</th>
+            <th scope="col" className="py-1.5 pr-4 text-right">Cost so far</th>
           </tr>
         </thead>
         <tbody>
@@ -125,40 +141,40 @@ function ProductionOrderDetailPanel({
             return (
               <tr
                 key={op.operationOrder}
-                className={`border-t ${shortfall ? "border-red-200 bg-red-50" : overproduction ? "border-amber-200 bg-amber-50" : "border-slate-100"}`}
+                className={`border-t ${shortfall ? "border-l-2 border-l-danger border-slate-100 bg-danger-subtle" : overproduction ? "border-l-2 border-l-warning border-slate-100 bg-warning-subtle" : "border-slate-100"}`}
               >
                 <td className="py-1 pr-4">{op.operationName ?? "—"}</td>
                 <td className="py-1 pr-4">{op.workCenterName ?? "—"}</td>
                 <td className="py-1 pr-4">{op.status ?? "—"}</td>
-                <td className="py-1 pr-4 text-right">{op.plannedTime ?? "—"}</td>
-                <td className="py-1 pr-4 text-right">{op.actualTime ?? "—"}</td>
+                <td className="py-1 pr-4 text-right tabular-nums">{op.plannedTime ?? "—"}</td>
+                <td className="py-1 pr-4 text-right tabular-nums">{op.actualTime ?? "—"}</td>
                 <td className="py-1 pr-4 text-xs">
                   {hasInputData ? (
                     <>
                       Received {qty(op.inputActualQty ?? 0)} of {qty(op.inputExpectedQty ?? 0)} expected
                       {(op.inputWastageQty ?? 0) > 0 && (
-                        <span className="text-rose-600"> — {qty(op.inputWastageQty ?? 0)} lost upstream</span>
+                        <span className="text-danger"> — {qty(op.inputWastageQty ?? 0)} lost upstream</span>
                       )}
                       {shortfall &&
                         (upstreamWastage > 0 ? (
-                          <span className="font-semibold text-rose-700">
+                          <span className="font-semibold text-danger">
                             {" "}
                             — ⚠ {qty(shortfallQty)} short — flagged as {qty(upstreamWastage)} wastage in {upstream?.operationName ?? "the previous stage"}
                           </span>
                         ) : (
-                          <span className="font-semibold text-rose-700"> — ⚠ {qty(shortfallQty)} short (not flagged as wastage)</span>
+                          <span className="font-semibold text-danger"> — ⚠ {qty(shortfallQty)} short (not flagged as wastage)</span>
                         ))}
                       {overproduction && (
-                        <span className="font-semibold text-amber-700"> — ▲ {qty(overQty)} over-received</span>
+                        <span className="font-semibold text-warning"> — ▲ {qty(overQty)} over-received</span>
                       )}
                     </>
                   ) : (
                     <span className="text-slate-400">Not tracked for this stage</span>
                   )}
                 </td>
-                <td className="py-1 pr-4 text-right">{op.wastageQty ? qty(op.wastageQty) : "—"}</td>
-                <td className="py-1 pr-4 text-right">{stageCost ? money(stageCost) : "—"}</td>
-                <td className="py-1 pr-4 text-right font-medium">
+                <td className="py-1 pr-4 text-right tabular-nums">{op.wastageQty ? qty(op.wastageQty) : "—"}</td>
+                <td className="py-1 pr-4 text-right tabular-nums">{stageCost ? money(stageCost) : "—"}</td>
+                <td className="py-1 pr-4 text-right font-medium tabular-nums">
                   {money(cumulativeCostThroughStage(operations, op.operationOrder))}
                 </td>
               </tr>
@@ -186,34 +202,36 @@ function ProductionOrderCard({ row, today, onOpenDetail }: { row: ProductionTrac
   return (
     <div
       onClick={() => onOpenDetail(row.productionOrderId)}
-      className={`min-w-0 cursor-pointer overflow-hidden rounded-lg border p-2 text-xs shadow-sm transition hover:border-indigo-300 ${
-        shortfall ? "border-red-400 bg-red-50" : overproduction ? "border-amber-400 bg-amber-50" : "border-slate-200 bg-white"
+      className={`min-w-0 cursor-pointer overflow-hidden rounded-md border p-2 text-xs shadow-sm transition hover:border-primary-border ${
+        shortfall
+          ? "border-l-2 border-l-danger border-slate-200 bg-danger-subtle"
+          : overproduction
+            ? "border-l-2 border-l-warning border-slate-200 bg-warning-subtle"
+            : "border-slate-200 bg-white"
       }`}
     >
       <div className="truncate font-medium text-slate-900">{row.orderNumber ?? row.productionOrderId}</div>
       <div className="truncate text-slate-500">{row.productName ?? row.productSku ?? "—"}</div>
       {row.tags && <div className="truncate text-slate-400">🏷 {row.tags}</div>}
-      <div className="mt-1 text-slate-400">Qty planned: {row.plannedQuantity !== null ? qty(row.plannedQuantity) : "—"}</div>
+      <div className="mt-1 tabular-nums text-slate-400">Qty planned: {row.plannedQuantity !== null ? qty(row.plannedQuantity) : "—"}</div>
       {row.actualOutputQty !== null && (
-        <div className={row.plannedQuantity !== null && row.actualOutputQty < row.plannedQuantity ? "font-semibold text-red-700" : "text-slate-400"}>
+        <div className={`tabular-nums ${row.plannedQuantity !== null && row.actualOutputQty < row.plannedQuantity ? "font-semibold text-danger" : "text-slate-400"}`}>
           Actual out: {qty(row.actualOutputQty)}
         </div>
       )}
       {shortfall && (
-        <div className="mt-1 rounded bg-red-100 px-1.5 py-0.5 font-semibold text-red-700">
+        <div className="mt-1 rounded bg-danger-subtle px-1.5 py-0.5 font-semibold text-danger">
           ⚠ Short input: {qty(row.currentInputActualQty ?? 0)} of {qty(row.currentInputExpectedQty ?? 0)} expected
         </div>
       )}
       {overproduction && (
-        <div className="mt-1 rounded bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-700">
+        <div className="mt-1 rounded bg-warning-subtle px-1.5 py-0.5 font-semibold text-warning">
           ▲ Over-received: {qty(row.currentInputActualQty ?? 0)} of {qty(row.currentInputExpectedQty ?? 0)} expected
         </div>
       )}
       <div className="mt-1 flex flex-wrap items-center gap-1">
-        {late && <span className="rounded-full bg-rose-100 px-2 py-0.5 font-semibold text-rose-700">{days}d late</span>}
-        {row.totalWastage > 0 && (
-          <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">component wastage</span>
-        )}
+        {late && <Badge tone="danger">{days}d late</Badge>}
+        {row.totalWastage > 0 && <Badge tone="warning">component wastage</Badge>}
       </div>
       {row.listStatus !== "COMPLETED" && row.listStatus !== "VOIDED" && (
         <div className="mt-1 text-slate-400">WIP: {row.wipActualCost ? money(row.wipActualCost) : "—"}</div>
@@ -274,59 +292,47 @@ function ProductionOrderDetailModal({
 }) {
   const reconciliation = operations ? reconcileInputFlow(operations) : null;
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50" onClick={onClose}>
-      <div className="mx-auto my-8 max-w-6xl rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">{row.orderNumber ?? row.productionOrderId}</h2>
-            <p className="text-sm text-slate-500">
-              {row.productName ?? row.productSku} — {row.currentOperationName ?? currentStageFallbackLabel(row)}
-              {row.currentWorkCenterName && ` (${row.currentWorkCenterName})`}
-            </p>
-            {row.tags && <p className="text-sm text-slate-500">🏷 {row.tags}</p>}
-            <p className="text-sm text-slate-500">
-              Qty planned: {row.plannedQuantity !== null ? qty(row.plannedQuantity) : "—"}
-            </p>
-            {row.actualOutputQty !== null && (
-              <p
-                className={`text-sm ${
-                  row.plannedQuantity !== null && row.actualOutputQty < row.plannedQuantity ? "font-semibold text-red-700" : "text-slate-500"
-                }`}
-              >
-                Actual out: {qty(row.actualOutputQty)}
-              </p>
-            )}
-            {reconciliation && (
-              <p
-                className={`mt-2 inline-block rounded-lg px-3 py-1.5 text-sm font-medium ${
-                  reconciliation.netDeviationQty < 0 ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"
-                }`}
-              >
-                {qty(Math.abs(reconciliation.netDeviationQty))} {reconciliation.netDeviationQty < 0 ? "short" : "over"} overall as of{" "}
-                {reconciliation.finalOperationName}
-                {reconciliation.originOperationName !== reconciliation.finalOperationName && (
-                  <>
-                    {" "}
-                    — first appeared at {reconciliation.originOperationName}
-                    {reconciliation.originDeviationQty === reconciliation.netDeviationQty
-                      ? ", unchanged since (no additional loss/gain downstream)"
-                      : ` (${qty(Math.abs(reconciliation.originDeviationQty))} there, now ${qty(Math.abs(reconciliation.netDeviationQty))})`}
-                  </>
-                )}
-              </p>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+    <Dialog open onClose={onClose} title={row.orderNumber ?? row.productionOrderId} size="xl">
+      <div className="-mx-5 -mt-4 mb-2 px-5">
+        <p className="text-sm text-slate-500">
+          {row.productName ?? row.productSku} — {row.currentOperationName ?? currentStageFallbackLabel(row)}
+          {row.currentWorkCenterName && ` (${row.currentWorkCenterName})`}
+        </p>
+        {row.tags && <p className="text-sm text-slate-500">🏷 {row.tags}</p>}
+        <p className="text-sm tabular-nums text-slate-500">Qty planned: {row.plannedQuantity !== null ? qty(row.plannedQuantity) : "—"}</p>
+        {row.actualOutputQty !== null && (
+          <p
+            className={`text-sm tabular-nums ${
+              row.plannedQuantity !== null && row.actualOutputQty < row.plannedQuantity ? "font-semibold text-danger" : "text-slate-500"
+            }`}
           >
-            Close
-          </button>
-        </div>
+            Actual out: {qty(row.actualOutputQty)}
+          </p>
+        )}
+        {reconciliation && (
+          <p
+            className={`mt-2 inline-block rounded-md px-3 py-1.5 text-sm font-medium tabular-nums ${
+              reconciliation.netDeviationQty < 0 ? "bg-danger-subtle text-danger" : "bg-warning-subtle text-warning"
+            }`}
+          >
+            {qty(Math.abs(reconciliation.netDeviationQty))} {reconciliation.netDeviationQty < 0 ? "short" : "over"} overall as of{" "}
+            {reconciliation.finalOperationName}
+            {reconciliation.originOperationName !== reconciliation.finalOperationName && (
+              <>
+                {" "}
+                — first appeared at {reconciliation.originOperationName}
+                {reconciliation.originDeviationQty === reconciliation.netDeviationQty
+                  ? ", unchanged since (no additional loss/gain downstream)"
+                  : ` (${qty(Math.abs(reconciliation.originDeviationQty))} there, now ${qty(Math.abs(reconciliation.netDeviationQty))})`}
+              </>
+            )}
+          </p>
+        )}
+      </div>
+      <div className="-mx-5">
         <ProductionOrderDetailPanel operations={operations} isLoading={isLoading} error={error} />
       </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -517,8 +523,8 @@ export default function ProductionTrackingPage() {
         operation costs recorded so far and may not reconcile exactly to your GL&rsquo;s WIP account.
       </ReportDescription>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="font-medium text-slate-900">Instance</p>
+      <Panel>
+        <PanelTitle>Instance</PanelTitle>
         <div className="mt-3">
           <InstancePicker {...picker} onChange={picker.setInstanceId} />
         </div>
@@ -543,40 +549,46 @@ export default function ProductionTrackingPage() {
             </div>
           </div>
         )}
-        {syncError && <p className="mt-2 text-sm text-red-600">{syncError}</p>}
-        {loadError && <p className="mt-2 text-sm text-red-600">{loadError}</p>}
-      </section>
+        {syncError && (
+          <div className="mt-2">
+            <Alert tone="danger">{syncError}</Alert>
+          </div>
+        )}
+        {loadError && (
+          <div className="mt-2">
+            <Alert tone="danger">{loadError}</Alert>
+          </div>
+        )}
+      </Panel>
 
       {isLoadingRows && (
-        <p className="mt-6 text-sm text-slate-500">
-          <Spinner className="mr-1.5" />
+        <p className="mt-6 flex items-center gap-1.5 text-sm text-slate-500">
+          <Spinner />
           Loading…
         </p>
       )}
 
       {rows && !isLoadingRows && (
         <section className="mt-6 flex flex-col gap-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4">
+          <Panel className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="font-medium text-slate-900">
                 {summary?.open ?? 0} order{summary?.open === 1 ? "" : "s"} shown
-                {summary && summary.late > 0 && <span className="ml-2 text-rose-700">· {summary.late} late</span>}
+                {summary && summary.late > 0 && <span className="ml-2 text-danger">· {summary.late} late</span>}
               </p>
-              <p className="mt-1 text-sm text-slate-500">Estimated WIP cost: {money(summary?.wipTotal ?? 0)}</p>
+              <p className="mt-1 text-sm text-slate-500 tabular-nums">Estimated WIP cost: {money(summary?.wipTotal ?? 0)}</p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              <input
-                type="text"
+              <Input
+                label="Search product name or SKU"
+                hideLabel
                 value={productSearch}
                 onChange={(e) => setProductSearch(e.target.value)}
                 placeholder="Search product name or SKU…"
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm text-slate-700 placeholder:text-slate-400 focus:border-indigo-400 focus:outline-none"
+                className="h-8 rounded-full"
               />
               {viewMode === "table" && (
-                <label className="flex items-center gap-2 text-sm text-slate-700">
-                  <input type="checkbox" checked={includeCompleted} onChange={handleToggleIncludeCompleted} className="h-4 w-4" />
-                  Include completed/voided orders
-                </label>
+                <Checkbox label="Include completed/voided orders" checked={includeCompleted} onChange={handleToggleIncludeCompleted} />
               )}
               <div className="flex gap-1.5">
                 {VIEW_MODE_TABS.map((tab) => (
@@ -585,7 +597,7 @@ export default function ProductionTrackingPage() {
                     type="button"
                     onClick={() => setViewMode(tab.value)}
                     className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
-                      viewMode === tab.value ? "bg-indigo-600 text-white" : "border border-slate-300 text-slate-600 hover:bg-slate-50"
+                      viewMode === tab.value ? "bg-primary text-white" : "border border-slate-300 text-slate-600 hover:bg-slate-50"
                     }`}
                   >
                     {tab.label}
@@ -593,36 +605,38 @@ export default function ProductionTrackingPage() {
                 ))}
               </div>
             </div>
-          </div>
+          </Panel>
 
           {viewMode === "status" && (
-            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 text-sm">
+            <Panel className="flex flex-wrap items-center gap-3 text-sm">
               <span className="font-medium text-slate-700">Columns:</span>
               {PRODUCTION_STATUS_ORDER.map((status) => (
-                <label key={status} className="flex items-center gap-1.5 text-slate-600">
-                  <input type="checkbox" checked={!hiddenStatuses.has(status)} onChange={() => toggleStatusColumn(status)} className="h-4 w-4" />
-                  {status}
-                </label>
+                <Checkbox key={status} label={status} checked={!hiddenStatuses.has(status)} onChange={() => toggleStatusColumn(status)} />
               ))}
-            </div>
+            </Panel>
           )}
 
           {rows.length === 0 ? (
-            <p className="text-base text-slate-500">
-              {includeCompleted ? "No production orders on this instance yet." : "No open production orders right now — every order is completed or voided."}
-            </p>
+            <EmptyState
+              title={includeCompleted ? "No production orders yet" : "No open production orders"}
+              description={
+                includeCompleted
+                  ? "No production orders on this instance yet."
+                  : "Every order is completed or voided right now."
+              }
+            />
           ) : sortedRows.length === 0 ? (
-            <p className="text-base text-slate-500">No orders match &ldquo;{productSearch}&rdquo;.</p>
+            <EmptyState title="No matching orders" description={`No orders match "${productSearch}".`} />
           ) : viewMode === "board" ? (
             <BoardView columns={groupByWorkCentre(sortedRows)} today={today} onOpenDetail={handleOpenModal} />
           ) : viewMode === "status" ? (
             <BoardView columns={groupByStatus(sortedRows, hiddenStatuses)} today={today} onOpenDetail={handleOpenModal} />
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
               <table className="w-full text-left text-sm text-slate-700">
-                <thead>
-                  <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
-                    <th className="w-8 px-2 py-2"></th>
+                <thead className="bg-slate-50">
+                  <tr className="border-b-2 border-slate-300 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    <th scope="col" className="w-8 px-2 py-2"></th>
                     <SortHeader label="Order #" column="orderNumber" thClassName="px-4 py-2" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <SortHeader label="Product" column="product" thClassName="px-4 py-2" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <SortHeader
@@ -684,9 +698,9 @@ export default function ProductionTrackingPage() {
                           onClick={() => handleToggleExpand(row.productionOrderId)}
                           className={`cursor-pointer border-b last:border-0 ${
                             shortfall
-                              ? "border-red-200 bg-red-50 hover:bg-red-100"
+                              ? "border-l-2 border-l-danger border-slate-100 bg-danger-subtle hover:bg-red-100"
                               : overproduction
-                                ? "border-amber-200 bg-amber-50 hover:bg-amber-100"
+                                ? "border-l-2 border-l-warning border-slate-100 bg-warning-subtle hover:bg-amber-100"
                                 : "border-slate-100 hover:bg-slate-50"
                           }`}
                         >
@@ -705,27 +719,21 @@ export default function ProductionTrackingPage() {
                               <span className="text-slate-400">{currentStageFallbackLabel(row)}</span>
                             )}
                             {shortfall && (
-                              <div className="text-xs font-semibold text-red-700">
+                              <div className="text-xs font-semibold text-danger">
                                 ⚠ Short input: {qty(row.currentInputActualQty ?? 0)} of {qty(row.currentInputExpectedQty ?? 0)} expected
                               </div>
                             )}
                             {overproduction && (
-                              <div className="text-xs font-semibold text-amber-700">
+                              <div className="text-xs font-semibold text-warning">
                                 ▲ Over-received: {qty(row.currentInputActualQty ?? 0)} of {qty(row.currentInputExpectedQty ?? 0)} expected
                               </div>
                             )}
                           </td>
                           <td className="px-4 py-2 align-top">{row.listStatus ?? "—"}</td>
                           <td className="px-4 py-2 align-top">{dateOnly(row.requiredByDate)}</td>
-                          <td className="px-4 py-2 align-top text-right">
-                            {late ? (
-                              <span className="rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-semibold text-rose-700">{days}d late</span>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                          <td className="px-4 py-2 align-top text-right">{row.wipActualCost ? money(row.wipActualCost) : "—"}</td>
-                          <td className="px-4 py-2 align-top text-right">{row.totalWastage ? qty(row.totalWastage) : "—"}</td>
+                          <td className="px-4 py-2 align-top text-right">{late ? <Badge tone="danger">{days}d late</Badge> : "—"}</td>
+                          <td className="px-4 py-2 align-top text-right tabular-nums">{row.wipActualCost ? money(row.wipActualCost) : "—"}</td>
+                          <td className="px-4 py-2 align-top text-right tabular-nums">{row.totalWastage ? qty(row.totalWastage) : "—"}</td>
                         </tr>
                         {isExpanded && (
                           <tr className="border-b border-slate-100 bg-slate-50 last:border-0">
