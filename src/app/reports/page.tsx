@@ -27,6 +27,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Alert } from "@/components/ui/Alert";
+import { Panel, PanelTitle } from "@/components/ui/Panel";
 
 type GroupBySelection = "none" | PivotGroupBy;
 
@@ -58,7 +59,7 @@ function MetricHeaderCells() {
   return (
     <>
       {METRIC_COLUMNS.map((col) => (
-        <th key={col.key} scope="col" className="py-1 pr-4 text-right text-xs font-normal text-slate-400">
+        <th key={col.key} scope="col" className="py-1 pr-4 text-right text-xs font-semibold text-slate-500">
           {col.label}
         </th>
       ))}
@@ -101,14 +102,14 @@ function InvoiceLineDetail({
         {lines && (
           <table className="w-full text-left text-xs">
             <thead>
-              <tr className="text-slate-500">
-                <th scope="col" className="py-1 pr-4">Invoice #</th>
-                <th scope="col" className="py-1 pr-4">Invoice date</th>
-                <th scope="col" className="py-1 pr-4">Qty</th>
-                <th scope="col" className="py-1 pr-4">Price</th>
-                <th scope="col" className="py-1 pr-4">Total</th>
-                <th scope="col" className="py-1 pr-4">Avg cost</th>
-                <th scope="col" className="py-1 pr-4">Customer</th>
+              <tr className="border-b border-slate-300 text-slate-600">
+                <th scope="col" className="py-1 pr-4 font-semibold">Invoice #</th>
+                <th scope="col" className="py-1 pr-4 font-semibold">Invoice date</th>
+                <th scope="col" className="py-1 pr-4 font-semibold">Qty</th>
+                <th scope="col" className="py-1 pr-4 font-semibold">Price</th>
+                <th scope="col" className="py-1 pr-4 font-semibold">Total</th>
+                <th scope="col" className="py-1 pr-4 font-semibold">Avg cost</th>
+                <th scope="col" className="py-1 pr-4 font-semibold">Customer</th>
               </tr>
             </thead>
             <tbody>
@@ -353,7 +354,7 @@ export default function ReportsPage() {
         profitability per product, category, or location at a glance, not just revenue.
       </ReportDescription>
       <PageLoadingIndicator show={isExporting} label="Exporting to Excel…" />
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <Panel>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-base font-semibold text-slate-900">Sales data</p>
@@ -383,10 +384,10 @@ export default function ReportsPage() {
             <Alert tone="danger">{optionsError}</Alert>
           </div>
         )}
-      </section>
+      </Panel>
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-base font-semibold text-slate-900">Filters</p>
+      <Panel className="mt-6">
+        <PanelTitle>Filters</PanelTitle>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <span className="text-sm font-medium text-slate-700">Instance(s)</span>
@@ -444,10 +445,10 @@ export default function ReportsPage() {
             <Alert tone="danger">{reportError}</Alert>
           </div>
         )}
-      </section>
+      </Panel>
 
       {rows && (
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <Panel className="mt-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-base font-semibold text-slate-900">
               {filteredRows.length} product{filteredRows.length === 1 ? "" : "s"}
@@ -468,8 +469,8 @@ export default function ReportsPage() {
           {filteredRows.length > 0 && (
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 text-slate-500">
+                <thead className="border-b-2 border-slate-300 bg-slate-50">
+                  <tr>
                     <SortHeader label="Product" column="product" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <SortHeader label="Qty sold" column="quantity_sold" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <SortHeader label="Revenue" column="revenue" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
@@ -505,11 +506,11 @@ export default function ReportsPage() {
               </table>
             </div>
           )}
-        </section>
+        </Panel>
       )}
 
       {pivotGrid && (
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <Panel className="mt-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-base font-semibold text-slate-900">
               {pivotGrid.rows.length} product{pivotGrid.rows.length === 1 ? "" : "s"} by{" "}
@@ -531,36 +532,36 @@ export default function ReportsPage() {
           {pivotGrid.rows.length > 0 && (
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-left text-sm">
-                <thead>
+                <thead className="bg-slate-50">
                   {pivotGrid.columnGroups && (
-                    <tr className="text-slate-500">
+                    <tr>
                       <th scope="col" className="py-1 pr-4" />
                       {pivotGrid.columnGroups.map((group) => (
                         <th
                           key={group.label}
                           scope="colgroup"
                           colSpan={group.span * METRIC_COLUMNS.length}
-                          className="border-b border-slate-100 py-1 pr-4 text-center font-medium"
+                          className="border-b border-slate-200 py-1 pr-4 text-center font-semibold text-slate-600"
                         >
                           {group.label}
                         </th>
                       ))}
-                      <th scope="col" colSpan={METRIC_COLUMNS.length} className="border-b border-slate-100 py-1 pr-4" />
+                      <th scope="col" colSpan={METRIC_COLUMNS.length} className="border-b border-slate-200 py-1 pr-4" />
                     </tr>
                   )}
-                  <tr className="text-slate-500">
+                  <tr>
                     <th scope="col" className="py-1 pr-4" />
                     {pivotGrid.columns.map((col) => (
-                      <th key={col.key} scope="colgroup" colSpan={METRIC_COLUMNS.length} className="border-b border-slate-100 py-1 pr-4 text-center font-medium">
+                      <th key={col.key} scope="colgroup" colSpan={METRIC_COLUMNS.length} className="border-b border-slate-200 py-1 pr-4 text-center font-semibold text-slate-600">
                         {col.label}
                       </th>
                     ))}
-                    <th scope="colgroup" colSpan={METRIC_COLUMNS.length} className="border-b border-slate-100 py-1 pr-4 text-center font-semibold">
+                    <th scope="colgroup" colSpan={METRIC_COLUMNS.length} className="border-b border-slate-200 py-1 pr-4 text-center font-bold text-slate-700">
                       Total
                     </th>
                   </tr>
-                  <tr className="border-b border-slate-200 text-slate-500">
-                    <th scope="col" className="py-2 pr-4">Product</th>
+                  <tr className="border-b-2 border-slate-300">
+                    <th scope="col" className="py-2 pr-4 text-xs font-semibold uppercase tracking-wide text-slate-600">Product</th>
                     {pivotGrid.columns.map((col) => (
                       <MetricHeaderCells key={col.key} />
                     ))}
@@ -594,7 +595,7 @@ export default function ReportsPage() {
                   ))}
                 </tbody>
                 <tfoot>
-                  <tr className="border-t border-slate-200 font-semibold text-slate-700">
+                  <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold text-slate-700">
                     <td className="py-2 pr-4">Total</td>
                     {pivotGrid.columns.map((col) => (
                       <MetricCells key={col.key} values={pivotGrid.totals[col.key]} />
@@ -605,7 +606,7 @@ export default function ReportsPage() {
               </table>
             </div>
           )}
-        </section>
+        </Panel>
       )}
     </>
   );
