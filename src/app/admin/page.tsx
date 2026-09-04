@@ -15,47 +15,44 @@ import { ModuleHeader } from "@/app/ModuleHeader";
 import { ADMIN_MODULE, MODULES } from "@/app/module-nav";
 import { Spinner } from "@/app/Spinner";
 import { isEligibleForTrialAutoDeletion, trialAutoDeletionDate } from "@/lib/trial-expiry";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { Alert } from "@/components/ui/Alert";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Panel } from "@/components/ui/Panel";
 
 /** Small status badge: trial countdown (or "past grace, will auto-delete soon"), or the plain subscription status once an org has converted. */
 function SubscriptionBadge({ status, trialEndsAt }: { status: string; trialEndsAt: string | null }) {
   if (status !== "trialing") {
-    const tone =
-      status === "active"
-        ? "bg-emerald-100 text-emerald-800"
-        : status === "past_due"
-          ? "bg-amber-100 text-amber-800"
-          : "bg-slate-100 text-slate-600";
-    return <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${tone}`}>{status}</span>;
+    const tone: BadgeTone = status === "active" ? "success" : status === "past_due" ? "warning" : "neutral";
+    return <Badge tone={tone}>{status}</Badge>;
   }
 
-  if (!trialEndsAt) return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">trialing</span>;
+  if (!trialEndsAt) return <Badge tone="neutral">trialing</Badge>;
 
   const now = new Date();
   const eligible = isEligibleForTrialAutoDeletion(status, trialEndsAt, now);
   if (eligible) {
-    return (
-      <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-800">
-        trial expired — eligible for auto-delete
-      </span>
-    );
+    return <Badge tone="danger">trial expired — eligible for auto-delete</Badge>;
   }
 
   const trialEnd = new Date(trialEndsAt);
   if (trialEnd.getTime() > now.getTime()) {
     const daysLeft = Math.ceil((trialEnd.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
     return (
-      <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-800">
+      <Badge tone="primary">
         trial · {daysLeft} day{daysLeft === 1 ? "" : "s"} left
-      </span>
+      </Badge>
     );
   }
 
   const deleteDate = trialAutoDeletionDate(trialEndsAt);
   const daysUntilDelete = Math.ceil((deleteDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
   return (
-    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+    <Badge tone="warning">
       trial ended · auto-deletes in {daysUntilDelete} day{daysUntilDelete === 1 ? "" : "s"}
-    </span>
+    </Badge>
   );
 }
 
@@ -108,62 +105,47 @@ export default function AdminPage() {
     <main className="mx-auto w-full max-w-4xl px-6 py-12">
       <ModuleHeader module={ADMIN_MODULE}>Every organization using Cin7 Core Toolbox.</ModuleHeader>
 
-      <section className="mt-10 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-xl font-semibold text-slate-900">Create org &amp; invite first user</h2>
+      <Panel className="mt-10">
+        <h2 className="text-base font-semibold text-slate-900">Create org &amp; invite first user</h2>
         <form onSubmit={handleCreate} className="mt-4 flex flex-col gap-4">
-          <label className="flex flex-col gap-1.5 text-base">
-            <span className="font-medium text-slate-700">Organization name</span>
-            <input
-              value={orgName}
-              onChange={(e) => setOrgName(e.target.value)}
-              required
-              className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none"
-              placeholder="Casa das Natas"
-            />
-          </label>
-          <label className="flex flex-col gap-1.5 text-base">
-            <span className="font-medium text-slate-700">First user&apos;s email</span>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none"
-              placeholder="owner@casadasnatas.com"
-            />
-          </label>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-          >
-            {isSubmitting && <Spinner className="mr-1.5" />}
+          <Input
+            label="Organization name"
+            value={orgName}
+            onChange={(e) => setOrgName(e.target.value)}
+            required
+            placeholder="Casa das Natas"
+          />
+          <Input
+            type="email"
+            label="First user's email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            placeholder="owner@casadasnatas.com"
+          />
+          <Button type="submit" loading={isSubmitting} className="self-start">
             {isSubmitting ? "Creating…" : "Create org & send invite"}
-          </button>
-          {formError && (
-            <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{formError}</p>
-          )}
-          {formSuccess && (
-            <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-              {formSuccess}
-            </p>
-          )}
+          </Button>
+          {formError && <Alert tone="danger">{formError}</Alert>}
+          {formSuccess && <Alert tone="success">{formSuccess}</Alert>}
         </form>
-      </section>
+      </Panel>
 
       <section className="mt-10">
-        <h2 className="text-xl font-semibold text-slate-900">Organizations</h2>
+        <h2 className="text-base font-semibold text-slate-900">Organizations</h2>
         {loadError && (
-          <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>
+          <div className="mt-3">
+            <Alert tone="danger">{loadError}</Alert>
+          </div>
         )}
         <div className="mt-4 flex flex-col gap-3">
           {orgs.map((org) => (
             <OrgCard key={org.id} org={org} onMembersChanged={refresh} />
           ))}
           {loaded && orgs.length === 0 && !loadError && (
-            <p className="text-base text-slate-500">No organizations yet.</p>
+            <p className="text-sm text-slate-500">No organizations yet.</p>
           )}
-          {isPending && !loaded && <p className="text-base text-slate-500">Loading…</p>}
+          {isPending && !loaded && <p className="text-sm text-slate-500">Loading…</p>}
         </div>
       </section>
     </main>
@@ -269,9 +251,9 @@ function OrgCard({ org, onMembersChanged }: { org: OrgSummary; onMembersChanged:
   }
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <Panel className="p-5">
       <div className="flex items-start gap-4">
-        <label className="group relative flex h-14 w-14 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+        <label className="group relative flex h-14 w-14 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
           {logoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element -- external per-org logo URL
             <img src={logoUrl} alt={`${org.name} logo`} className="h-full w-full object-contain" />
@@ -286,7 +268,7 @@ function OrgCard({ org, onMembersChanged }: { org: OrgSummary; onMembersChanged:
         </label>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-lg font-semibold text-slate-900">{org.name}</p>
+            <p className="text-base font-semibold text-slate-900">{org.name}</p>
             <SubscriptionBadge status={org.subscriptionStatus} trialEndsAt={org.trialEndsAt} />
           </div>
           <p className="mt-1 text-sm text-slate-500">
@@ -298,15 +280,16 @@ function OrgCard({ org, onMembersChanged }: { org: OrgSummary; onMembersChanged:
               {org.members.map((member) => (
                 <li key={member.userId} className="flex items-center justify-between gap-2 text-sm text-slate-600">
                   <span className="truncate">{member.email}</span>
-                  <button
-                    type="button"
+                  <Button
+                    variant="destructive"
+                    size="sm"
                     onClick={() => handleRemoveMember(member.userId, member.email)}
                     disabled={isRemoving && removingUserId === member.userId}
-                    className="shrink-0 rounded-full border border-red-200 px-2.5 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                    loading={isRemoving && removingUserId === member.userId}
+                    className="shrink-0"
                   >
-                    {isRemoving && removingUserId === member.userId && <Spinner className="mr-1.5" />}
                     {isRemoving && removingUserId === member.userId ? "Removing…" : "Remove"}
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>
@@ -316,60 +299,66 @@ function OrgCard({ org, onMembersChanged }: { org: OrgSummary; onMembersChanged:
         </div>
       </div>
       {logoError && (
-        <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-700">{logoError}</p>
+        <div className="mt-2">
+          <Alert tone="danger">{logoError}</Alert>
+        </div>
       )}
       {removeError && (
-        <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-700">{removeError}</p>
+        <div className="mt-2">
+          <Alert tone="danger">{removeError}</Alert>
+        </div>
       )}
 
       <form onSubmit={handleAddMember} className="mt-4 flex gap-2">
-        <input
+        <Input
           type="email"
+          label="Add a member by email"
+          hideLabel
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
-          className="flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
           placeholder="colleague@example.com"
+          className="flex-1"
         />
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-        >
-          {isSubmitting && <Spinner className="mr-1.5" />}
+        <Button type="submit" variant="secondary" loading={isSubmitting}>
           {isSubmitting ? "Adding…" : "Add member"}
-        </button>
+        </Button>
       </form>
-      {error && <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm text-red-700">{error}</p>}
+      {error && (
+        <div className="mt-2">
+          <Alert tone="danger">{error}</Alert>
+        </div>
+      )}
       {success && (
-        <p className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm text-emerald-700">
-          {success}
-        </p>
+        <div className="mt-2">
+          <Alert tone="success">{success}</Alert>
+        </div>
       )}
 
-      <details className="mt-4 rounded-lg border border-slate-200 p-3">
+      <details className="mt-4 rounded-md border border-slate-200 p-3">
         <summary className="cursor-pointer text-sm font-medium text-slate-700">
-          Modules {disabledModules.length > 0 && <span className="text-slate-400">({disabledModules.length} hidden)</span>}
+          Modules {disabledModules.length > 0 && <span className="text-slate-500">({disabledModules.length} hidden)</span>}
         </summary>
-        <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
           {MODULES.map((module) => (
-            <label key={module.href} className="flex items-center gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={!disabledModules.includes(module.href)}
-                onChange={(e) => handleToggleModule(module.href, e.target.checked)}
-                disabled={isSavingModules}
-                className="h-4 w-4"
-              />
-              {module.label}
-            </label>
+            <Checkbox
+              key={module.href}
+              label={module.label}
+              checked={!disabledModules.includes(module.href)}
+              onChange={(e) => handleToggleModule(module.href, e.target.checked)}
+              disabled={isSavingModules}
+            />
           ))}
         </div>
-        {moduleError && <p className="mt-2 text-sm text-red-700">{moduleError}</p>}
+        {moduleError && (
+          <div className="mt-2">
+            <Alert tone="danger">{moduleError}</Alert>
+          </div>
+        )}
       </details>
 
-      <details className="mt-4 rounded-lg border border-red-200 p-3">
-        <summary className="cursor-pointer text-sm font-medium text-red-700">Danger zone</summary>
+      <details className="mt-4 rounded-md border border-danger-border p-3">
+        <summary className="cursor-pointer text-sm font-medium text-danger">Danger zone</summary>
         <div className="mt-3 flex flex-col gap-2">
           <p className="text-sm text-slate-600">
             Permanently deletes <strong>{org.name}</strong> and everything in it — Cin7 instances, products,
@@ -377,25 +366,27 @@ function OrgCard({ org, onMembersChanged }: { org: OrgSummary; onMembersChanged:
             to confirm.
           </p>
           <div className="flex gap-2">
-            <input
+            <Input
+              label="Organization name to confirm"
+              hideLabel
               value={confirmDeleteName}
               onChange={(e) => setConfirmDeleteName(e.target.value)}
               placeholder={org.name}
-              className="flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-red-500 focus:outline-none"
+              className="flex-1"
             />
-            <button
-              type="button"
+            <Button
+              variant="destructive"
               onClick={handleDeleteOrg}
-              disabled={isDeleting || confirmDeleteName.trim() !== org.name}
-              className="shrink-0 rounded-lg bg-red-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-red-500 disabled:opacity-50"
+              disabled={confirmDeleteName.trim() !== org.name}
+              loading={isDeleting}
+              className="shrink-0"
             >
-              {isDeleting && <Spinner className="mr-1.5" />}
               {isDeleting ? "Deleting…" : "Delete organization"}
-            </button>
+            </Button>
           </div>
-          {deleteError && <p className="text-sm text-red-700">{deleteError}</p>}
+          {deleteError && <Alert tone="danger">{deleteError}</Alert>}
         </div>
       </details>
-    </div>
+    </Panel>
   );
 }
