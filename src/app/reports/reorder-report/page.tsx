@@ -28,6 +28,15 @@ import type { Cin7Location } from "@/cin7/reference-lookups";
 // codebase (see cin7core-feeder-project memory), since it doesn't get
 // elided by Next's "use server" transform under Turbopack.
 import type { CreatedPurchaseOrder, FailedPurchaseOrder } from "@/app/supplier-planner/actions";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/Table";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Alert } from "@/components/ui/Alert";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Panel, PanelTitle } from "@/components/ui/Panel";
 
 type ReorderSortColumn = "product" | "on_hand" | "on_order" | "avg_unit_cost" | "weeks_of_cover" | "reorder_threshold" | "mover_category" | "status";
 
@@ -48,17 +57,17 @@ const PERIOD_OPTIONS: { value: Period; label: string; months: number }[] = [
 
 const BUFFER_OPTIONS = [0, 10, 20, 30];
 
-const MOVER_BADGE: Record<ReorderReportRow["mover_category"], string> = {
-  Fast: "bg-emerald-100 text-emerald-700",
-  Medium: "bg-amber-100 text-amber-700",
-  Slow: "bg-rose-100 text-rose-700",
-  "No movement": "bg-slate-100 text-slate-500",
+const MOVER_TONE: Record<ReorderReportRow["mover_category"], BadgeTone> = {
+  Fast: "success",
+  Medium: "warning",
+  Slow: "danger",
+  "No movement": "neutral",
 };
 
-const STATUS_BADGE: Record<ReorderReportRow["status"], string> = {
-  "Stockout risk": "bg-rose-100 text-rose-700",
-  Excess: "bg-amber-100 text-amber-700",
-  Healthy: "bg-emerald-100 text-emerald-700",
+const STATUS_TONE: Record<ReorderReportRow["status"], BadgeTone> = {
+  "Stockout risk": "danger",
+  Excess: "warning",
+  Healthy: "success",
 };
 
 const MOVER_OPTIONS: ReorderReportRow["mover_category"][] = ["Fast", "Medium", "Slow", "No movement"];
@@ -134,21 +143,18 @@ function CollapsibleCheckboxFilter({
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center gap-2">
-        <span className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</span>
-        <button type="button" onClick={onClear} className="text-xs text-indigo-600 hover:underline">
+        <span className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</span>
+        <button type="button" onClick={onClear} className="text-xs text-primary hover:underline">
           Clear{selected.length > 0 ? ` (${selected.length})` : ""}
         </button>
       </div>
       <div className="flex max-w-2xl flex-wrap items-center gap-3">
         {visible.map((value) => (
-          <label key={value} className="flex items-center gap-1.5 text-sm text-slate-700">
-            <input type="checkbox" checked={selected.includes(value)} onChange={() => onToggle(value)} />
-            {value}
-          </label>
+          <Checkbox key={value} label={value} checked={selected.includes(value)} onChange={() => onToggle(value)} />
         ))}
       </div>
       {hasMore && (
-        <button type="button" onClick={() => setExpanded((e) => !e)} className="self-start text-xs text-indigo-600 hover:underline">
+        <button type="button" onClick={() => setExpanded((e) => !e)} className="self-start text-xs text-primary hover:underline">
           {expanded ? "Show less" : `Show all (${options.length})`}
         </button>
       )}
@@ -536,10 +542,10 @@ export default function ReorderReportPage() {
         refresh them below before running the report if you need the latest numbers.
       </ReportDescription>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <Panel>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="font-medium text-slate-900">Stock levels</p>
+            <p className="text-base font-semibold text-slate-900">Stock levels</p>
             {syncStatus && (
               <p className="mt-1 text-sm text-slate-500">
                 {syncStatus.totalRows.toLocaleString()} row{syncStatus.totalRows === 1 ? "" : "s"} synced
@@ -555,12 +561,20 @@ export default function ReorderReportPage() {
             </button>
           </div>
         </div>
-        {syncError && <p className="mt-2 text-sm text-red-600">{syncError}</p>}
-        {optionsError && <p className="mt-2 text-sm text-red-600">{optionsError}</p>}
-      </section>
+        {syncError && (
+          <div className="mt-2">
+            <Alert tone="danger">{syncError}</Alert>
+          </div>
+        )}
+        {optionsError && (
+          <div className="mt-2">
+            <Alert tone="danger">{optionsError}</Alert>
+          </div>
+        )}
+      </Panel>
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="font-medium text-slate-900">Filters</p>
+      <Panel className="mt-6">
+        <PanelTitle>Filters</PanelTitle>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div>
             <span className="text-sm font-medium text-slate-700">Instance(s)</span>
@@ -569,139 +583,120 @@ export default function ReorderReportPage() {
             </div>
           </div>
 
-          <label className="flex flex-col gap-1.5 text-sm">
-            <span className="font-medium text-slate-700">Sales period</span>
-            <select value={period} onChange={(e) => setPeriod(e.target.value as Period)} className="rounded-lg border border-slate-300 px-3 py-2">
-              {PERIOD_OPTIONS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Select label="Sales period" value={period} onChange={(e) => setPeriod(e.target.value as Period)}>
+            {PERIOD_OPTIONS.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </Select>
 
-          <label className="flex flex-col gap-1.5 text-sm">
-            <span className="font-medium text-slate-700">Buffer</span>
-            <select
-              value={bufferPercent}
-              onChange={(e) => setBufferPercent(Number(e.target.value))}
-              className="rounded-lg border border-slate-300 px-3 py-2"
-            >
-              {BUFFER_OPTIONS.map((b) => (
-                <option key={b} value={b}>
-                  +{b}%
-                </option>
-              ))}
-            </select>
-          </label>
+          <Select label="Buffer" value={bufferPercent} onChange={(e) => setBufferPercent(Number(e.target.value))}>
+            {BUFFER_OPTIONS.map((b) => (
+              <option key={b} value={b}>
+                +{b}%
+              </option>
+            ))}
+          </Select>
         </div>
 
-        <button
-          type="button"
-          onClick={handleRunReport}
-          disabled={isRunning}
-          className="mt-5 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-        >
-          {isRunning && <Spinner className="mr-1.5" />}
-          {isRunning ? "Running…" : "Run report"}
-        </button>
+        <div className="mt-5">
+          <Button onClick={handleRunReport} loading={isRunning}>
+            {isRunning ? "Running…" : "Run report"}
+          </Button>
+        </div>
 
-        {reportError && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{reportError}</p>}
-      </section>
+        {reportError && (
+          <div className="mt-4">
+            <Alert tone="danger">{reportError}</Alert>
+          </div>
+        )}
+      </Panel>
 
       {rows && (
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <Panel className="mt-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="font-medium text-slate-900">
+              <p className="text-base font-semibold text-slate-900">
                 {visibleRows.length} product{visibleRows.length === 1 ? "" : "s"}
               </p>
               <p className="mt-1 text-sm text-slate-500">{needsReorderCount} need reordering at this buffer</p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              <SearchInput
-                value={search}
-                onChange={setSearch}
-                placeholder="Product name or SKU"
-                className="w-56 rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
-              />
-              <label className="flex items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox" checked={needsReorderOnly} onChange={(e) => setNeedsReorderOnly(e.target.checked)} />
-                Needs reorder only
-              </label>
-              <button
-                type="button"
-                onClick={handleExport}
-                disabled={isExporting || visibleRows.length === 0}
-                className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                {isExporting && <Spinner className="mr-1.5" />}
+              <SearchInput value={search} onChange={setSearch} placeholder="Product name or SKU" />
+              <Checkbox label="Needs reorder only" checked={needsReorderOnly} onChange={(e) => setNeedsReorderOnly(e.target.checked)} />
+              <Button variant="secondary" size="sm" onClick={handleExport} disabled={visibleRows.length === 0} loading={isExporting}>
                 {isExporting ? "Exporting…" : "Export to Excel"}
-              </button>
+              </Button>
             </div>
           </div>
 
           <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
             <div className="flex flex-wrap items-center gap-3">
-              <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Mover</span>
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Mover</span>
               {MOVER_OPTIONS.map((m) => (
-                <label key={m} className="flex items-center gap-1.5 text-sm text-slate-700">
-                  <input type="checkbox" checked={moverFilter.has(m)} onChange={() => toggleMover(m)} />
-                  {m}
-                  {m === "No movement" && !moverFilter.has(m) && noMovementCount > 0 && (
-                    <span className="text-slate-400">({noMovementCount} hidden)</span>
-                  )}
-                </label>
+                <Checkbox
+                  key={m}
+                  label={m === "No movement" && !moverFilter.has(m) && noMovementCount > 0 ? `${m} (${noMovementCount} hidden)` : m}
+                  checked={moverFilter.has(m)}
+                  onChange={() => toggleMover(m)}
+                />
               ))}
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Status</span>
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Status</span>
               {STATUS_OPTIONS.map((s) => (
-                <label key={s} className="flex items-center gap-1.5 text-sm text-slate-700">
-                  <input type="checkbox" checked={statusFilter.has(s)} onChange={() => toggleStatus(s)} />
-                  {s}
-                </label>
+                <Checkbox key={s} label={s} checked={statusFilter.has(s)} onChange={() => toggleStatus(s)} />
               ))}
             </div>
           </div>
 
-          {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
-          {visibleRows.length === 0 && <p className="mt-2 text-sm text-slate-400">No stock or movement data matches these filters.</p>}
+          {exportError && (
+            <div className="mt-2">
+              <Alert tone="danger">{exportError}</Alert>
+            </div>
+          )}
+          {visibleRows.length === 0 && (
+            <div className="mt-2">
+              <EmptyState title="No matching products" description="No stock or movement data matches these filters." />
+            </div>
+          )}
 
           {visibleRows.length > 0 && (
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 text-slate-500">
-                    <SortHeader label="Product" column="product" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
-                    <SortHeader label="Weeks of Stock" column="weeks_of_cover" align="right" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
-                    <SortHeader label="Qty on Hand" column="on_hand" align="right" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
-                    <SortHeader label="On Order" column="on_order" align="right" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
-                    <SortHeader label="Reorder At" column="reorder_threshold" align="right" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
-                    <SortHeader label="Avg Unit Cost" column="avg_unit_cost" align="right" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
-                    <SortHeader label="Mover" column="mover_category" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
-                    <SortHeader label="Status" column="status" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
+                <thead className="border-b-2 border-slate-300 bg-slate-50">
+                  <tr className="text-slate-600">
+                    <SortHeader label="Product" column="product" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} thClassName="py-2 px-3 font-semibold" />
+                    <SortHeader label="Weeks of Stock" column="weeks_of_cover" align="right" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} thClassName="py-2 px-3 font-semibold" />
+                    <SortHeader label="Qty on Hand" column="on_hand" align="right" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} thClassName="py-2 px-3 font-semibold" />
+                    <SortHeader label="On Order" column="on_order" align="right" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} thClassName="py-2 px-3 font-semibold" />
+                    <SortHeader label="Reorder At" column="reorder_threshold" align="right" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} thClassName="py-2 px-3 font-semibold" />
+                    <SortHeader label="Avg Unit Cost" column="avg_unit_cost" align="right" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} thClassName="py-2 px-3 font-semibold" />
+                    <SortHeader label="Mover" column="mover_category" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} thClassName="py-2 px-3 font-semibold" />
+                    <SortHeader label="Status" column="status" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} thClassName="py-2 px-3 font-semibold" />
                   </tr>
                 </thead>
                 <tbody>
                   {sortedRows.map((row) => (
-                    <tr key={row.product_sku} className={`border-b border-slate-100 ${row.needs_reorder ? "bg-amber-50/50" : ""}`}>
-                      <td className="py-2 pr-4">
+                    <tr
+                      key={row.product_sku}
+                      className={`border-b border-slate-100 hover:bg-slate-50 ${row.needs_reorder ? "border-l-2 border-l-warning bg-warning-subtle" : ""}`}
+                    >
+                      <td className="px-3 py-2">
                         <div className="font-medium text-slate-900">{row.product_name ?? row.product_sku}</div>
-                        <div className="text-xs text-slate-400">{row.product_sku}</div>
+                        <div className="font-mono text-xs text-slate-500">{row.product_sku}</div>
                       </td>
-                      <td className="py-2 pr-4 text-right">{row.weeks_of_cover ?? "—"}</td>
-                      <td className="py-2 pr-4 text-right">{qty(row.on_hand)}</td>
-                      <td className="py-2 pr-4 text-right">{qty(row.on_order)}</td>
-                      <td className="py-2 pr-4 text-right">{qty(row.reorder_threshold)}</td>
-                      <td className="py-2 pr-4 text-right">{money(row.avg_unit_cost)}</td>
-                      <td className="py-2 pr-4">
-                        <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${MOVER_BADGE[row.mover_category]}`}>
-                          {row.mover_category}
-                        </span>
+                      <td className="px-3 py-2 text-right tabular-nums">{row.weeks_of_cover ?? "—"}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{qty(row.on_hand)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{qty(row.on_order)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{qty(row.reorder_threshold)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{money(row.avg_unit_cost)}</td>
+                      <td className="px-3 py-2">
+                        <Badge tone={MOVER_TONE[row.mover_category]}>{row.mover_category}</Badge>
                       </td>
-                      <td className="py-2 pr-4">
-                        <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_BADGE[row.status]}`}>{row.status}</span>
+                      <td className="px-3 py-2">
+                        <Badge tone={STATUS_TONE[row.status]}>{row.status}</Badge>
                       </td>
                     </tr>
                   ))}
@@ -709,13 +704,13 @@ export default function ReorderReportPage() {
               </table>
             </div>
           )}
-        </section>
+        </Panel>
       )}
 
       {rows && (
         <section className="mt-6 flex flex-col gap-6">
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-            <p className="font-medium text-slate-900">Suppliers &amp; purchase orders</p>
+          <Panel>
+            <p className="text-base font-semibold text-slate-900">Suppliers &amp; purchase orders</p>
             {instanceIds.length !== 1 ? (
               <p className="mt-2 text-sm text-slate-500">
                 Select exactly one instance above to load live supplier data and create Purchase Orders — a supplier
@@ -729,33 +724,31 @@ export default function ReorderReportPage() {
                     {visibleRows.length === 1 ? "" : "s"} currently shown above, and lets you create draft Purchase Orders for
                     whichever ones need reordering.
                   </p>
-                  <button
-                    type="button"
-                    onClick={handleLoadSuppliers}
-                    disabled={isLoadingSuppliers || visibleRows.length === 0}
-                    className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-                  >
-                    {isLoadingSuppliers && <Spinner className="mr-1.5" />}
-                    {isLoadingSuppliers ? "Loading suppliers…" : "Load supplier data"}
-                  </button>
+                  <div className="mt-4">
+                    <Button onClick={handleLoadSuppliers} disabled={visibleRows.length === 0} loading={isLoadingSuppliers}>
+                      {isLoadingSuppliers ? "Loading suppliers…" : "Load supplier data"}
+                    </Button>
+                  </div>
                   {supplierError && (
-                    <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{supplierError}</p>
+                    <div className="mt-4">
+                      <Alert tone="danger">{supplierError}</Alert>
+                    </div>
                   )}
                 </>
               )
             )}
-          </div>
+          </Panel>
 
           {supplierLines !== null && (
             <>
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <Panel className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="text-sm text-slate-500">
                     {visibleSupplierLines.length} line{visibleSupplierLines.length === 1 ? "" : "s"} across {groupedSupplierLines.size}{" "}
                     supplier{groupedSupplierLines.size === 1 ? "" : "s"}
                   </p>
                   {noSupplierCount > 0 && (
-                    <p className="mt-0.5 text-xs text-slate-400">
+                    <p className="mt-0.5 text-xs text-slate-500">
                       {noSupplierCount} of {visibleRows.length} product{visibleRows.length === 1 ? "" : "s"} above{" "}
                       {noSupplierCount === 1 ? "has" : "have"} no supplier configured in Cin7 and {noSupplierCount === 1 ? "isn't" : "aren't"}{" "}
                       shown below.
@@ -763,58 +756,45 @@ export default function ReorderReportPage() {
                   )}
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
-                  <input
-                    type="text"
+                  <Input
+                    label="Search product, SKU, or supplier"
+                    hideLabel
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="Search product, SKU, or supplier…"
-                    className="w-64 rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+                    className="h-8 w-64"
                   />
-                  <button
-                    type="button"
-                    onClick={handleLoadSuppliers}
-                    disabled={isLoadingSuppliers}
-                    className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    {isLoadingSuppliers && <Spinner className="mr-1.5" />}
+                  <Button variant="secondary" size="sm" onClick={handleLoadSuppliers} loading={isLoadingSuppliers}>
                     {isLoadingSuppliers ? "Reloading…" : "Reload supplier data"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleExportSuppliers}
-                    disabled={isExportingSuppliers || visibleSupplierLines.length === 0}
-                    className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    {isExportingSuppliers && <Spinner className="mr-1.5" />}
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={handleExportSuppliers} disabled={visibleSupplierLines.length === 0} loading={isExportingSuppliers}>
                     {isExportingSuppliers ? "Exporting…" : "Export to Excel"}
-                  </button>
+                  </Button>
                 </div>
-              </div>
+              </Panel>
 
-              <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <label className="flex flex-col gap-1.5 text-sm">
-                  <span className="font-medium text-slate-700">Receiving location</span>
-                  <select
-                    value={receivingLocationId}
-                    onChange={(e) => setReceivingLocationId(e.target.value)}
-                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  >
-                    <option value="">Choose a location…</option>
-                    {supplierLocations.map((loc) => (
-                      <option key={loc.id} value={loc.id}>
-                        {loc.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <p className="max-w-md text-xs text-slate-400">
+              <Panel className="flex flex-wrap items-center gap-3">
+                <Select
+                  label="Receiving location"
+                  value={receivingLocationId}
+                  onChange={(e) => setReceivingLocationId(e.target.value)}
+                  className="w-56"
+                >
+                  <option value="">Choose a location…</option>
+                  {supplierLocations.map((loc) => (
+                    <option key={loc.id} value={loc.id}>
+                      {loc.name}
+                    </option>
+                  ))}
+                </Select>
+                <p className="max-w-md text-xs text-slate-500">
                   Every line here needs a receiving location — this report has no per-location supplier data, so Cin7
                   needs exactly one chosen up front for any PO created below.
                 </p>
-              </div>
+              </Panel>
 
               {(availableSuppliers.length > 0 || availableBrands.length > 0 || availableCategories.length > 0 || availableCurrencies.length > 0) && (
-                <div className="flex flex-wrap gap-x-6 gap-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <Panel className="flex flex-wrap gap-x-6 gap-y-3">
                   {availableSuppliers.length > 0 && (
                     <CollapsibleCheckboxFilter
                       label="Supplier"
@@ -844,26 +824,21 @@ export default function ReorderReportPage() {
                   )}
                   {availableCurrencies.length > 0 && (
                     <div className="flex flex-col gap-1.5">
-                      <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Currency</span>
+                      <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Currency</span>
                       <div className="flex flex-wrap items-center gap-3">
                         {availableCurrencies.map((c) => (
-                          <label key={c} className="flex items-center gap-1.5 text-sm text-slate-700">
-                            <input type="checkbox" checked={currencyFilter === null || currencyFilter.has(c)} onChange={() => toggleCurrency(c)} />
-                            {c}
-                          </label>
+                          <Checkbox key={c} label={c} checked={currencyFilter === null || currencyFilter.has(c)} onChange={() => toggleCurrency(c)} />
                         ))}
                       </div>
                     </div>
                   )}
-                </div>
+                </Panel>
               )}
 
-              {exportSuppliersError && <p className="text-sm text-red-600">{exportSuppliersError}</p>}
+              {exportSuppliersError && <Alert tone="danger">{exportSuppliersError}</Alert>}
 
               {visibleSupplierLines.length === 0 && (
-                <p className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-400 shadow-sm">
-                  No products with a configured supplier match these filters.
-                </p>
+                <EmptyState title="No matching products" description="No products with a configured supplier match these filters." />
               )}
 
               {[...groupedSupplierLines.entries()].map(([supplierName, groupLines]) => {
@@ -879,35 +854,36 @@ export default function ReorderReportPage() {
                     ? "Choose a receiving location above — this report has no location of its own to fall back on."
                     : undefined;
                 return (
-                  <div key={supplierName} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <Panel key={supplierName}>
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <p className="font-semibold text-slate-900">
+                      <p className="text-base font-semibold text-slate-900">
                         {supplierName}{" "}
-                        <span className="ml-2 text-sm font-normal text-slate-400">
+                        <span className="ml-2 text-sm font-normal text-slate-500">
                           {groupLines.length} line{groupLines.length === 1 ? "" : "s"}
                         </span>
                       </p>
-                      <button
-                        type="button"
+                      <Button
+                        size="sm"
                         onClick={() => handleCreatePo(supplierName, groupLines)}
                         disabled={createDisabled}
                         title={createTitle}
-                        className="rounded-full bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                        loading={isCreatingThisSupplier}
                       >
-                        {isCreatingThisSupplier && <Spinner className="mr-1.5" />}
                         {isCreatingThisSupplier
                           ? "Creating…"
                           : `Create PO${selectedCount > 0 ? ` (${selectedCount} line${selectedCount === 1 ? "" : "s"})` : ""}`}
-                      </button>
+                      </Button>
                     </div>
 
                     {poResult?.error && (
-                      <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{poResult.error}</p>
+                      <div className="mt-3">
+                        <Alert tone="danger">{poResult.error}</Alert>
+                      </div>
                     )}
                     {poResult && (poResult.created.length > 0 || poResult.failed.length > 0) && (
                       <div className="mt-3 flex flex-col gap-2">
                         {poResult.created.length > 0 && (
-                          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                          <Alert tone="success">
                             Created {poResult.created.length} draft PO{poResult.created.length === 1 ? "" : "s"} in Cin7 — review and
                             authorize {poResult.created.length === 1 ? "it" : "them"} there:
                             <ul className="mt-1 list-disc pl-5">
@@ -918,10 +894,10 @@ export default function ReorderReportPage() {
                                 </li>
                               ))}
                             </ul>
-                          </div>
+                          </Alert>
                         )}
                         {poResult.failed.length > 0 && (
-                          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                          <Alert tone="danger">
                             {poResult.failed.length} PO{poResult.failed.length === 1 ? "" : "s"} failed to create:
                             <ul className="mt-1 list-disc pl-5">
                               {poResult.failed.map((f) => (
@@ -930,82 +906,82 @@ export default function ReorderReportPage() {
                                 </li>
                               ))}
                             </ul>
-                          </div>
+                          </Alert>
                         )}
                       </div>
                     )}
 
-                    <div className="mt-3 overflow-x-auto">
-                      <table className="w-full text-left text-sm">
-                        <thead>
-                          <tr className="border-b border-slate-200 text-slate-500">
-                            <th className="py-2 pr-4">
+                    <div className="mt-3">
+                      <Table>
+                        <THead>
+                          <tr>
+                            <TH>
                               <input
                                 type="checkbox"
+                                aria-label={`Select all lines for ${supplierName}`}
                                 checked={allSelected}
                                 ref={(el) => {
                                   if (el) el.indeterminate = selectedCount > 0 && selectedCount < groupLines.length;
                                 }}
                                 onChange={() => toggleSupplierLines(groupLines)}
-                                className="h-4 w-4"
+                                className="h-4 w-4 rounded border-slate-300 text-primary"
                               />
-                            </th>
-                            <th className="py-2 pr-4 font-medium">Product</th>
-                            <th className="py-2 pr-4 text-right font-medium">On Hand</th>
-                            <th className="py-2 pr-4 text-right font-medium">On Order</th>
-                            <th className="py-2 pr-4 text-right font-medium">Reorder At</th>
-                            <th className="py-2 pr-4 text-right font-medium">Suggested Qty</th>
-                            <th className="py-2 pr-4 text-right font-medium">Latest Price</th>
-                            <th className="py-2 pr-4 font-medium">Mover</th>
-                            <th className="py-2 pr-4 font-medium">Status</th>
+                            </TH>
+                            <TH>Product</TH>
+                            <TH align="right">On Hand</TH>
+                            <TH align="right">On Order</TH>
+                            <TH align="right">Reorder At</TH>
+                            <TH align="right">Suggested Qty</TH>
+                            <TH align="right">Latest Price</TH>
+                            <TH>Mover</TH>
+                            <TH>Status</TH>
                           </tr>
-                        </thead>
-                        <tbody>
+                        </THead>
+                        <TBody>
                           {groupLines.map((line) => {
                             const key = lineKey(line);
                             const checked = !excludedLineKeys.has(key);
                             return (
-                              <tr
-                                key={key}
-                                className={`border-b border-slate-100 ${line.needsReorder ? "bg-amber-50/50" : ""} ${checked ? "" : "opacity-50"}`}
-                              >
-                                <td className="py-1.5 pr-4">
-                                  <input type="checkbox" checked={checked} onChange={() => toggleLine(key)} className="h-4 w-4" />
-                                </td>
-                                <td className="py-2 pr-4">
+                              <TR key={key} flagged={line.needsReorder ? "warning" : undefined} className={`${line.needsReorder ? "bg-warning-subtle" : ""} ${checked ? "" : "opacity-50"}`}>
+                                <TD>
+                                  <input
+                                    type="checkbox"
+                                    aria-label={`Select ${line.productName}`}
+                                    checked={checked}
+                                    onChange={() => toggleLine(key)}
+                                    className="h-4 w-4 rounded border-slate-300 text-primary"
+                                  />
+                                </TD>
+                                <TD>
                                   <div className="font-medium text-slate-900">{line.productName}</div>
-                                  <div className="text-xs text-slate-400">{line.productSku}</div>
+                                  <div className="font-mono text-xs text-slate-500">{line.productSku}</div>
                                   {line.pendingPurchaseOrder && (
                                     <span
-                                      className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"
                                       title={`Created ${new Date(line.pendingPurchaseOrder.createdAt).toLocaleString()} — not yet authorized in Cin7. Deselected by default to avoid a duplicate.`}
+                                      className="mt-1 inline-block"
                                     >
-                                      {line.pendingPurchaseOrder.orderNumber} pending authorization
+                                      <Badge tone="warning">{line.pendingPurchaseOrder.orderNumber} pending authorization</Badge>
                                     </span>
                                   )}
-                                </td>
-                                <td className="py-2 pr-4 text-right">{qty(line.onHand)}</td>
-                                <td className="py-2 pr-4 text-right">{qty(line.onOrder)}</td>
-                                <td className="py-2 pr-4 text-right">{qty(line.threshold)}</td>
-                                <td className="py-2 pr-4 text-right font-medium">{qty(line.suggestedQty)}</td>
-                                <td className="py-2 pr-4 text-right">{lineMoney(line.cost, line.currency)}</td>
-                                <td className="py-2 pr-4">
-                                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${MOVER_BADGE[line.moverCategory]}`}>
-                                    {line.moverCategory}
-                                  </span>
-                                </td>
-                                <td className="py-2 pr-4">
-                                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_BADGE[line.status]}`}>
-                                    {line.status}
-                                  </span>
-                                </td>
-                              </tr>
+                                </TD>
+                                <TD align="right" numeric>{qty(line.onHand)}</TD>
+                                <TD align="right" numeric>{qty(line.onOrder)}</TD>
+                                <TD align="right" numeric>{qty(line.threshold)}</TD>
+                                <TD align="right" numeric className="font-medium">{qty(line.suggestedQty)}</TD>
+                                <TD align="right" numeric>{lineMoney(line.cost, line.currency)}</TD>
+                                <TD>
+                                  <Badge tone={MOVER_TONE[line.moverCategory]}>{line.moverCategory}</Badge>
+                                </TD>
+                                <TD>
+                                  <Badge tone={STATUS_TONE[line.status]}>{line.status}</Badge>
+                                </TD>
+                              </TR>
                             );
                           })}
-                        </tbody>
-                      </table>
+                        </TBody>
+                      </Table>
                     </div>
-                  </div>
+                  </Panel>
                 );
               })}
             </>
