@@ -8,10 +8,13 @@ import { usePullJob } from "@/hooks/usePullJob";
 import { InstancePicker } from "@/app/InstancePicker";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { getBillingStatusAction } from "@/actions/billing";
-import { Spinner } from "@/app/Spinner";
 import type { ImportKind } from "@/import/run-import";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { MIGRATE_MODULE } from "@/app/module-nav";
+import { Button } from "@/components/ui/Button";
+import { Alert } from "@/components/ui/Alert";
+import { Badge } from "@/components/ui/Badge";
+import { Panel } from "@/components/ui/Panel";
 
 const KIND_LABELS: Record<string, string> = {
   products: "Products",
@@ -32,12 +35,12 @@ function StepHeader({ step, title, done }: { step: number; title: string; done: 
     <div className="flex items-center gap-3">
       <span
         className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${
-          done ? "bg-indigo-600 text-white" : "bg-slate-200 text-slate-600"
+          done ? "bg-primary text-white" : "bg-slate-200 text-slate-600"
         }`}
       >
         {step}
       </span>
-      <h2 className="text-xl font-semibold text-slate-900">{title}</h2>
+      <h2 className="text-base font-semibold text-slate-900">{title}</h2>
     </div>
   );
 }
@@ -45,13 +48,9 @@ function StepHeader({ step, title, done }: { step: number; title: string; done: 
 function StatPill({ label, value, tone = "neutral" }: { label: string; value: number; tone?: "neutral" | "bad" }) {
   if (!value) return null;
   return (
-    <span
-      className={`rounded-full px-3 py-1 text-sm font-medium ${
-        tone === "bad" ? "bg-red-50 text-red-700" : "bg-slate-100 text-slate-700"
-      }`}
-    >
-      {value} {label}
-    </span>
+    <Badge tone={tone === "bad" ? "danger" : "neutral"}>
+      <span className="tabular-nums">{value}</span> {label}
+    </Badge>
   );
 }
 
@@ -100,34 +99,32 @@ export default function MigratePage() {
         then push the pulled data into another.
       </ModuleHeader>
 
-      <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-        Pulling overwrites the org&apos;s canonical data for any product SKU or customer/supplier
-        Name that also exists in the source instance — canonical data isn&apos;t scoped to a
-        single instance. Only use this when you want the source instance to become the org&apos;s
-        source of truth.
+      <div className="mt-6">
+        <Alert tone="warning">
+          Pulling overwrites the org&apos;s canonical data for any product SKU or customer/supplier
+          Name that also exists in the source instance — canonical data isn&apos;t scoped to a
+          single instance. Only use this when you want the source instance to become the org&apos;s
+          source of truth.
+        </Alert>
       </div>
 
       <div className="mt-6 flex flex-col gap-6">
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <Panel>
           <StepHeader step={1} title="Pull from a source instance" done={pull.status === "done"} />
 
           <div className="mt-5 pl-11">
             <InstancePicker {...picker} onChange={setSourceId} />
 
-            <button
-              type="button"
-              onClick={handlePull}
-              disabled={pull.isPulling || pull.status === "running" || !sourceId}
-              className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-            >
-              {(pull.isPulling || pull.status === "running") && <Spinner className="mr-1.5" />}
-              {pull.status === "running" ? "Pulling… (may take a while for a large catalog)" : "Pull all data"}
-            </button>
+            <div className="mt-4">
+              <Button onClick={handlePull} disabled={!sourceId} loading={pull.isPulling || pull.status === "running"}>
+                {pull.status === "running" ? "Pulling… (may take a while for a large catalog)" : "Pull all data"}
+              </Button>
+            </div>
 
             {pull.error && (
-              <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {pull.error}
-              </p>
+              <div className="mt-4">
+                <Alert tone="danger">{pull.error}</Alert>
+              </div>
             )}
 
             {pull.results && (
@@ -137,7 +134,7 @@ export default function MigratePage() {
                   if (!result) return null;
                   const committedCount = result.rowCount - result.errorCount;
                   return (
-                    <div key={kind} className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                    <Alert key={kind} tone="success">
                       <p className="font-medium text-emerald-900">
                         {KIND_LABELS[kind]}: {result.committed ? `${committedCount} row${committedCount === 1 ? "" : "s"} pulled` : "nothing to commit"}
                         {result.errorCount > 0 && ` — ${result.errorCount} invalid`}
@@ -170,17 +167,17 @@ export default function MigratePage() {
                           </ul>
                         </details>
                       )}
-                    </div>
+                    </Alert>
                   );
                 })}
               </div>
             )}
           </div>
-        </section>
+        </Panel>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <Panel>
           <StepHeader step={2} title="Push into another instance" done={push.status === "done"} />
-          <p className="mt-1 pl-11 text-base text-slate-500">
+          <p className="mt-1 pl-11 text-sm text-slate-500">
             Pushes only what was just pulled (scoped to the most recent import of each kind), not
             the org&apos;s whole catalog. The source instance is excluded here to avoid pushing
             data straight back to where it came from.
@@ -194,40 +191,37 @@ export default function MigratePage() {
               emptyMessage="Load instances above and pick a source first."
             />
 
-            <button
-              type="button"
-              onClick={handlePush}
-              disabled={push.isPushing || push.status === "running" || targetIds.length === 0 || pull.status !== "done" || !canWrite}
-              className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-            >
-              {(push.isPushing || push.status === "running") && <Spinner className="mr-1.5" />}
-              {push.status === "running"
-                ? "Pushing… (may take a while for a large catalog)"
-                : `Push to ${targetIds.length || ""} instance${targetIds.length === 1 ? "" : "s"}`}
-            </button>
+            <div className="mt-4">
+              <Button
+                onClick={handlePush}
+                disabled={targetIds.length === 0 || pull.status !== "done" || !canWrite}
+                loading={push.isPushing || push.status === "running"}
+              >
+                {push.status === "running"
+                  ? "Pushing… (may take a while for a large catalog)"
+                  : `Push to ${targetIds.length || ""} instance${targetIds.length === 1 ? "" : "s"}`}
+              </Button>
+            </div>
             {!canWrite && (
-              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                Available on a paid plan — this trial is read-only.
-              </p>
+              <div className="mt-2">
+                <Alert tone="warning">Available on a paid plan — this trial is read-only.</Alert>
+              </div>
             )}
 
             {push.error && (
-              <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {push.error}
-              </p>
+              <div className="mt-4">
+                <Alert tone="danger">{push.error}</Alert>
+              </div>
             )}
 
             {push.outcomes && (
               <div className="mt-4 flex flex-col gap-3">
                 {push.outcomes.map((outcome) => (
-                  <div
-                    key={outcome.instanceId}
-                    className={`rounded-xl border p-4 ${outcome.ok ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}
-                  >
+                  <Alert key={outcome.instanceId} tone={outcome.ok ? "success" : "danger"}>
                     <p className={`font-medium ${outcome.ok ? "text-emerald-900" : "text-red-900"}`}>
                       {outcome.instanceName ?? outcome.instanceId}
                     </p>
-                    {!outcome.ok && <p className="mt-1 text-sm text-red-700">{outcome.error}</p>}
+                    {!outcome.ok && <p className="mt-1 text-sm text-danger">{outcome.error}</p>}
                     {outcome.ok && (
                       <div className="mt-2 flex flex-wrap gap-2">
                         <StatPill label="products created" value={outcome.productsCreated ?? 0} />
@@ -260,12 +254,12 @@ export default function MigratePage() {
                         </ul>
                       </details>
                     )}
-                  </div>
+                  </Alert>
                 ))}
               </div>
             )}
           </div>
-        </section>
+        </Panel>
       </div>
     </main>
   );
