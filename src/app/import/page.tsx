@@ -20,6 +20,7 @@ import { Select } from "@/components/ui/Select";
 import { Input } from "@/components/ui/Input";
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
+import { Panel, PanelTitle } from "@/components/ui/Panel";
 
 const INITIAL_STATE: ImportActionState = { status: "idle" };
 
@@ -149,7 +150,7 @@ export default function ImportPage() {
 
       <div className="mt-10 flex flex-col gap-6">
         {/* Step 1 — Import */}
-        <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+        <Panel>
           <StepHeader step={1} title="Import a CSV" done={state.status === "success"} />
 
           <form action={formAction} className="mt-5 flex flex-col gap-4">
@@ -228,10 +229,10 @@ export default function ImportPage() {
               </Alert>
             </div>
           )}
-        </section>
+        </Panel>
 
         {/* Step 2 — Choose instance(s) */}
-        <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+        <Panel>
           <StepHeader step={2} title="Choose instance(s)" done={selectedIds.length > 0} />
           <p className="mt-1 pl-11 text-sm text-slate-500">
             Pushes your org&apos;s current canonical data (products + Assembly BOM + Customers +
@@ -266,14 +267,14 @@ export default function ImportPage() {
               />
             )}
           </div>
-        </section>
+        </Panel>
 
         {/* Step 3 — Push */}
-        <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+        <Panel>
           <StepHeader step={3} title="Push to Cin7 Core" done={push.status === "done"} />
 
           <div className="mt-5 pl-11">
-            <p className="text-sm font-medium text-slate-700">Scope</p>
+            <PanelTitle>Scope</PanelTitle>
             <p className="mt-1 text-sm text-slate-500">
               &ldquo;Just last import&rdquo; pushes only the rows from your most recent committed
               import of that type, instead of the whole org catalog. Since you only ever import one
@@ -396,7 +397,7 @@ export default function ImportPage() {
               </div>
             )}
           </div>
-        </section>
+        </Panel>
       </div>
     </main>
   );
