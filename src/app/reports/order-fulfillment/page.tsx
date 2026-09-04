@@ -32,6 +32,7 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
+import { Panel } from "@/components/ui/Panel";
 
 /**
  * Default server-side fetch scope, added 2026-08-18 after LBL's real data
@@ -529,7 +530,7 @@ export default function OrderFulfillmentPage() {
       </ReportDescription>
       <PageLoadingIndicator show={isExporting} label="Exporting to Excel…" />
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <Panel>
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <span className="text-sm font-medium text-slate-700">Instance(s)</span>
@@ -593,10 +594,10 @@ export default function OrderFulfillmentPage() {
             <Alert tone="danger">{optionsError}</Alert>
           </div>
         )}
-      </section>
+      </Panel>
 
       {orders && (
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <Panel className="mt-6">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <div className="flex gap-1">
               {TABS.map((t) => (
@@ -766,7 +767,13 @@ export default function OrderFulfillmentPage() {
                     <Fragment key={row.cin7_sale_id}>
                       <tr
                         onClick={() => setExpandedSaleId(expandedSaleId === row.cin7_sale_id ? null : row.cin7_sale_id)}
-                        className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
+                        className={`cursor-pointer border-b border-slate-100 hover:bg-slate-50 ${
+                          row.is_overdue
+                            ? "border-l-2 border-l-danger"
+                            : !row.is_overdue && row.is_pick_today && (row.days_open ?? 0) >= STUCK_AFTER_DAYS
+                              ? "border-l-2 border-l-warning"
+                              : ""
+                        }`}
                       >
                         <td className="overflow-hidden py-2 pr-4" onClick={(e) => e.stopPropagation()}>
                           <input
@@ -996,7 +1003,7 @@ export default function OrderFulfillmentPage() {
               </table>
             </div>
           )}
-        </section>
+        </Panel>
       )}
       </div>
 
