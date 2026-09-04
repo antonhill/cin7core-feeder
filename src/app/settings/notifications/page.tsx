@@ -244,15 +244,15 @@ export default function NotificationsSettingsPage() {
                         <TD>{rep.repName}</TD>
                         <TD>{rep.email}</TD>
                         <TD align="right">
-                          <Button
-                            variant="link"
+                          {/* Not the `link` Button variant — that's fixed to text-primary, and a Tailwind className override isn't guaranteed to win the cascade. Same precedent as Security's bare danger-toned Remove link. */}
+                          <button
+                            type="button"
                             onClick={() => handleDeleteRep(rep.repName)}
                             disabled={isSavingRep}
-                            loading={pendingDeleteRep === rep.repName}
-                            className="text-danger"
+                            className="text-sm font-medium text-danger hover:underline disabled:opacity-50"
                           >
-                            Remove
-                          </Button>
+                            {pendingDeleteRep === rep.repName ? "Removing…" : "Remove"}
+                          </button>
                         </TD>
                       </TR>
                     ))}
