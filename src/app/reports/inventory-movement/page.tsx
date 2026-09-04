@@ -8,10 +8,15 @@ import type { InventoryMovementRow } from "@/reports/query";
 import { compareNullable, SortHeader, type SortDirection } from "../sortable-table";
 import { matchesSearch } from "../text-search";
 import { SearchInput } from "../search-input";
-import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { ReportDescription } from "../ReportDescription";
+import { Button } from "@/components/ui/Button";
+import { Select } from "@/components/ui/Select";
+import { Alert } from "@/components/ui/Alert";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Panel, PanelTitle } from "@/components/ui/Panel";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 type MovementSortColumn =
   | "product"
@@ -38,11 +43,11 @@ const PERIOD_OPTIONS: { value: Period; label: string; months: number }[] = [
   { value: "12m", label: "Previous 12 months", months: 12 },
 ];
 
-const MOVER_BADGE: Record<InventoryMovementRow["mover_category"], string> = {
-  Fast: "bg-emerald-100 text-emerald-700",
-  Medium: "bg-amber-100 text-amber-700",
-  Slow: "bg-rose-100 text-rose-700",
-  "No movement": "bg-slate-100 text-slate-500",
+const MOVER_TONE: Record<InventoryMovementRow["mover_category"], BadgeTone> = {
+  Fast: "success",
+  Medium: "warning",
+  Slow: "danger",
+  "No movement": "neutral",
 };
 
 /** "YYYY-MM-DD" for today minus N months, in local time — matches the date-only columns this report filters against. */
@@ -196,8 +201,8 @@ export default function InventoryMovementPage() {
       </ReportDescription>
       <PageLoadingIndicator show={isExporting} label="Exporting to Excel…" />
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="font-medium text-slate-900">Filters</p>
+      <Panel>
+        <PanelTitle>Filters</PanelTitle>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <span className="text-sm font-medium text-slate-700">Instance(s)</span>
@@ -206,39 +211,40 @@ export default function InventoryMovementPage() {
             </div>
           </div>
 
-          <label className="flex flex-col gap-1.5 text-sm">
-            <span className="font-medium text-slate-700">Period</span>
-            <select value={period} onChange={(e) => setPeriod(e.target.value as Period)} className="rounded-lg border border-slate-300 px-3 py-2">
-              {PERIOD_OPTIONS.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Select label="Period" value={period} onChange={(e) => setPeriod(e.target.value as Period)}>
+            {PERIOD_OPTIONS.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </Select>
 
           <SearchInput value={search} onChange={setSearch} placeholder="Product name or SKU" />
         </div>
 
-        <button
-          type="button"
-          onClick={handleRunReport}
-          disabled={isRunning}
-          className="mt-5 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-        >
-          {isRunning && <Spinner className="mr-1.5" />}
-          {isRunning ? "Running…" : "Run report"}
-        </button>
+        <div className="mt-5">
+          <Button onClick={handleRunReport} loading={isRunning}>
+            {isRunning ? "Running…" : "Run report"}
+          </Button>
+        </div>
 
-        {reportError && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{reportError}</p>}
-        {optionsError && <p className="mt-2 text-sm text-red-600">{optionsError}</p>}
-      </section>
+        {reportError && (
+          <div className="mt-4">
+            <Alert tone="danger">{reportError}</Alert>
+          </div>
+        )}
+        {optionsError && (
+          <div className="mt-2">
+            <Alert tone="danger">{optionsError}</Alert>
+          </div>
+        )}
+      </Panel>
 
       {rows && (
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <Panel className="mt-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="font-medium text-slate-900">
+              <p className="text-base font-semibold text-slate-900">
                 {filteredRows.length} product{filteredRows.length === 1 ? "" : "s"}
               </p>
               {summary && (
@@ -248,25 +254,28 @@ export default function InventoryMovementPage() {
               )}
             </div>
             {filteredRows.length > 0 && (
-              <button
-                type="button"
-                onClick={handleExport}
-                disabled={isExporting}
-                className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
+              <Button variant="secondary" size="sm" onClick={handleExport} loading={isExporting}>
                 {isExporting ? "Exporting…" : "Export to Excel"}
-              </button>
+              </Button>
             )}
           </div>
-          {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
-          {rows.length === 0 && <p className="mt-2 text-sm text-slate-400">No inventory movement in this period.</p>}
-          {rows.length > 0 && filteredRows.length === 0 && <p className="mt-2 text-sm text-slate-400">Nothing matches &ldquo;{search}&rdquo;.</p>}
+          {exportError && (
+            <div className="mt-2">
+              <Alert tone="danger">{exportError}</Alert>
+            </div>
+          )}
+          {rows.length === 0 && (
+            <div className="mt-2">
+              <EmptyState title="No inventory movement" description="No inventory movement in this period." />
+            </div>
+          )}
+          {rows.length > 0 && filteredRows.length === 0 && <p className="mt-2 text-sm text-slate-500">Nothing matches &ldquo;{search}&rdquo;.</p>}
 
           {filteredRows.length > 0 && (
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 text-slate-500">
+                <thead className="bg-slate-50">
+                  <tr className="border-b-2 border-slate-300 text-slate-600">
                     <SortHeader label="Product" column="product" sortColumn={sortColumn} sortDirection={sortDirection} onSort={handleSort} />
                     <SortHeader
                       label="Purchased In"
@@ -315,22 +324,20 @@ export default function InventoryMovementPage() {
                 </thead>
                 <tbody>
                   {sortedRows.map((row) => (
-                    <tr key={row.product_sku} className="border-b border-slate-100">
+                    <tr key={row.product_sku} className="border-b border-slate-100 hover:bg-slate-50">
                       <td className="py-2 pr-4">
                         <div className="font-medium text-slate-900">{row.product_name ?? row.product_sku}</div>
-                        <div className="text-xs text-slate-400">{row.product_sku}</div>
+                        <div className="font-mono text-xs text-slate-500">{row.product_sku}</div>
                       </td>
-                      <td className="py-2 pr-4 text-right">{qty(row.qty_in_purchases)}</td>
-                      <td className="py-2 pr-4 text-right">{qty(row.qty_in_assemblies)}</td>
-                      <td className="py-2 pr-4 text-right font-medium">{qty(row.total_in)}</td>
-                      <td className="py-2 pr-4 text-right">{qty(row.qty_out_sales)}</td>
-                      <td className="py-2 pr-4 text-right">{qty(row.qty_out_consumption)}</td>
-                      <td className="py-2 pr-4 text-right font-medium">{qty(row.total_out)}</td>
-                      <td className="py-2 pr-4 text-right">{qty(row.net_change)}</td>
+                      <td className="py-2 pr-4 text-right tabular-nums">{qty(row.qty_in_purchases)}</td>
+                      <td className="py-2 pr-4 text-right tabular-nums">{qty(row.qty_in_assemblies)}</td>
+                      <td className="py-2 pr-4 text-right font-medium tabular-nums">{qty(row.total_in)}</td>
+                      <td className="py-2 pr-4 text-right tabular-nums">{qty(row.qty_out_sales)}</td>
+                      <td className="py-2 pr-4 text-right tabular-nums">{qty(row.qty_out_consumption)}</td>
+                      <td className="py-2 pr-4 text-right font-medium tabular-nums">{qty(row.total_out)}</td>
+                      <td className="py-2 pr-4 text-right tabular-nums">{qty(row.net_change)}</td>
                       <td className="py-2 pr-4">
-                        <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${MOVER_BADGE[row.mover_category]}`}>
-                          {row.mover_category}
-                        </span>
+                        <Badge tone={MOVER_TONE[row.mover_category]}>{row.mover_category}</Badge>
                       </td>
                     </tr>
                   ))}
@@ -338,7 +345,7 @@ export default function InventoryMovementPage() {
               </table>
             </div>
           )}
-        </section>
+        </Panel>
       )}
     </>
   );

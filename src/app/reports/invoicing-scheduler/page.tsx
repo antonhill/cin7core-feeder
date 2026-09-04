@@ -11,6 +11,10 @@ import { matchesSearch } from "../text-search";
 import { SearchInput } from "../search-input";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { cin7SaleUrl } from "@/cin7/web-url";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Alert } from "@/components/ui/Alert";
+import { Panel } from "@/components/ui/Panel";
 
 const DAY_COUNT = 7;
 
@@ -41,7 +45,7 @@ function InvoicingCard({ order, instanceName, cin7Url }: { order: OrderFulfillme
       <div className="flex items-start gap-1.5">
         <span
           title={shipped ? "Already shipped" : "Not shipped yet"}
-          className={`mt-1 h-2 w-2 shrink-0 rounded-full ${shipped ? "bg-emerald-500" : "bg-slate-300"}`}
+          className={`mt-1 h-2 w-2 shrink-0 rounded-full ${shipped ? "bg-success" : "bg-slate-300"}`}
         />
         <div className="min-w-0 flex-1">
           <div className="truncate font-medium text-slate-900">{order.order_number ?? order.cin7_sale_id}</div>
@@ -51,11 +55,11 @@ function InvoicingCard({ order, instanceName, cin7Url }: { order: OrderFulfillme
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-1">
         <StatusBadge status={order.combined_invoice_status} wrap />
-        <span className={shipped ? "text-emerald-600" : "text-slate-400"}>{shipped ? "Shipped" : "Not shipped"}</span>
+        <span className={shipped ? "text-success" : "text-slate-400"}>{shipped ? "Shipped" : "Not shipped"}</span>
       </div>
       {order.ready_to_invoice_fulfilment_numbers && (
         <div
-          className="mt-1 text-indigo-600"
+          className="mt-1 text-primary"
           title={(order.ready_to_invoice_fulfilments ?? [])
             .map((f) => `Fulfilment ${f.fulfilment_number ?? "?"}: ${f.ready_to_invoice_qty.toLocaleString()} awaiting invoice`)
             .join("\n")}
@@ -64,9 +68,9 @@ function InvoicingCard({ order, instanceName, cin7Url }: { order: OrderFulfillme
         </div>
       )}
       {order.ship_by && <div className="mt-1 text-slate-400">Ship by {order.ship_by.slice(0, 10)}</div>}
-      {order.is_overdue && <div className="mt-1 font-semibold text-rose-600">Overdue</div>}
+      {order.is_overdue && <div className="mt-1 font-semibold text-danger">Overdue</div>}
       {cin7Url && (
-        <a href={cin7Url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block font-medium text-indigo-600 underline">
+        <a href={cin7Url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block font-medium text-primary underline">
           Open in Cin7 ↗
         </a>
       )}
@@ -88,9 +92,9 @@ function DayColumn({
   isToday: boolean;
 }) {
   return (
-    <div className={`flex flex-col rounded-xl border bg-slate-50/50 p-2 ${isToday ? "border-indigo-300 ring-1 ring-indigo-200" : "border-slate-200"}`}>
+    <div className={`flex flex-col rounded-lg border bg-slate-50/50 p-2 ${isToday ? "border-primary-border ring-1 ring-primary-subtle" : "border-slate-200"}`}>
       <div className="mb-2 flex items-center justify-between px-1">
-        <span className={`text-xs font-semibold ${isToday ? "text-indigo-700" : "text-slate-600"}`}>{formatDayLabel(day)}</span>
+        <span className={`text-xs font-semibold ${isToday ? "text-primary" : "text-slate-600"}`}>{formatDayLabel(day)}</span>
         <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">{orders.length}</span>
       </div>
       <div className="flex flex-col gap-1.5">
@@ -206,7 +210,7 @@ A calendar of sales that have a packed, authorised fulfilment not yet covered by
         here writes to Cin7.
       </ReportDescription>
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <Panel className="mt-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <span className="text-sm font-medium text-slate-700">Instance(s)</span>
@@ -214,64 +218,56 @@ A calendar of sales that have a packed, authorised fulfilment not yet covered by
               <InstanceMultiPicker instances={instances} selectedIds={instanceIds} onToggle={toggleInstance} wrap />
             </div>
           </div>
-          <label className="flex flex-col gap-1.5 text-sm">
-            <span className="font-medium text-slate-700">Show on calendar</span>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                value={offsetDays}
-                onChange={(e) => setOffsetDays(Number(e.target.value) || 0)}
-                className="w-20 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
-              />
-              <span className="text-slate-500">
-                day{Math.abs(offsetDays) === 1 ? "" : "s"} {offsetDays < 0 ? "before" : offsetDays > 0 ? "after" : "on"} Ship By
-              </span>
-            </div>
-          </label>
+          <div className="flex items-end gap-2">
+            <Input
+              type="number"
+              label="Show on calendar"
+              value={offsetDays}
+              onChange={(e) => setOffsetDays(Number(e.target.value) || 0)}
+              className="w-20"
+            />
+            <span className="pb-2 text-sm text-slate-500">
+              day{Math.abs(offsetDays) === 1 ? "" : "s"} {offsetDays < 0 ? "before" : offsetDays > 0 ? "after" : "on"} Ship By
+            </span>
+          </div>
           <SearchInput
             value={search}
             onChange={setSearch}
             placeholder="Order #, customer, or SKU"
-            className="w-56 rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+            className="w-56 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
           />
         </div>
-        {loadError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>}
-        {hiddenByFloorCount > 0 && (
-          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            {hiddenByFloorCount} older order{hiddenByFloorCount === 1 ? "" : "s"} hidden by the start-date setting — visible on Order
-            Fulfillment&rsquo;s All Orders tab, or adjust the setting on{" "}
-            <a href="/settings/instances" className="underline">
-              Instances
-            </a>
-            .
-          </p>
+        {loadError && (
+          <div className="mt-3">
+            <Alert tone="danger">{loadError}</Alert>
+          </div>
         )}
-      </section>
+        {hiddenByFloorCount > 0 && (
+          <div className="mt-3">
+            <Alert tone="warning">
+              {hiddenByFloorCount} older order{hiddenByFloorCount === 1 ? "" : "s"} hidden by the start-date setting — visible on Order
+              Fulfillment&rsquo;s All Orders tab, or adjust the setting on{" "}
+              <a href="/settings/instances" className="underline">
+                Instances
+              </a>
+              .
+            </Alert>
+          </div>
+        )}
+      </Panel>
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <Panel className="mt-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setWeekStart((w) => addDays(w, -7))}
-              className="rounded-full border border-slate-300 px-3 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
+            <Button variant="secondary" size="sm" onClick={() => setWeekStart((w) => addDays(w, -7))}>
               ← Prev week
-            </button>
-            <button
-              type="button"
-              onClick={() => setWeekStart(today)}
-              className="rounded-full border border-slate-300 px-3 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => setWeekStart(today)}>
               This week
-            </button>
-            <button
-              type="button"
-              onClick={() => setWeekStart((w) => addDays(w, 7))}
-              className="rounded-full border border-slate-300 px-3 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => setWeekStart((w) => addDays(w, 7))}>
               Next week →
-            </button>
+            </Button>
           </div>
           <p className="text-sm text-slate-500">
             {formatDayLabel(days[0])} – {formatDayLabel(days[days.length - 1])}
@@ -292,7 +288,7 @@ A calendar of sales that have a packed, authorised fulfilment not yet covered by
             ))}
           </div>
         )}
-      </section>
+      </Panel>
     </>
   );
 }
