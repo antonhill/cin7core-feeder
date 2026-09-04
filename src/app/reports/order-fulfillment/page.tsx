@@ -20,7 +20,7 @@ import { ExportColumnPicker } from "./ExportColumnPicker";
 import { StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { useResizableColumns, ColGroup, ResizableTh } from "../resizable-columns";
 import { compareNullable, type SortDirection } from "../sortable-table";
-import { StatusBadge } from "../status-badge";
+import { statusBadgeClass } from "../status-badge";
 import { matchesSearch } from "../text-search";
 import { SearchInput } from "../search-input";
 import { Spinner } from "@/app/Spinner";
@@ -180,6 +180,37 @@ function money(value: number): string {
  */
 function isBoxLabelAttachment(filename: string | undefined): boolean {
   return Boolean(filename?.toLowerCase().startsWith("boxlabel"));
+}
+
+/**
+ * This page's own presentation of a Combined*Status — a small semantic dot
+ * plus the status's own neutral-colored text, instead of ../status-badge's
+ * solid-fill pill. Reuses `statusBadgeClass` exactly as-is (same status,
+ * same classification, same color family) purely to read off which of its
+ * four fixed color families a status falls into; the pill component and
+ * the classification function it wraps are both untouched, and this stays
+ * local to this page rather than becoming a second shared status component
+ * — five solid-colored pills per row (Picking/Packing/Shipping/Invoice/
+ * Payment) read as too much competing color once the surrounding table got
+ * more structure; a dot carries the same signal with far less visual
+ * weight, per the direction chosen 2026-09-04.
+ */
+function statusDotColor(status: string | null): string {
+  const cls = statusBadgeClass(status);
+  if (cls.includes("rose")) return "bg-rose-500";
+  if (cls.includes("amber")) return "bg-amber-500";
+  if (cls.includes("emerald")) return "bg-emerald-500";
+  return "bg-slate-400";
+}
+
+function StatusDot({ status }: { status: string | null }) {
+  if (!status) return <span className="text-xs text-slate-300">—</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium text-slate-700">
+      <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDotColor(status)}`} />
+      {status}
+    </span>
+  );
 }
 
 export default function OrderFulfillmentPage() {
@@ -807,20 +838,20 @@ export default function OrderFulfillmentPage() {
                           )}
                         </td>
                         <td className="overflow-hidden py-2 pr-4">
-                          <StatusBadge status={row.combined_picking_status} />
+                          <StatusDot status={row.combined_picking_status} />
                         </td>
                         <td className="overflow-hidden py-2 pr-4">
-                          <StatusBadge status={row.combined_packing_status} />
+                          <StatusDot status={row.combined_packing_status} />
                         </td>
                         <td className="overflow-hidden py-2 pr-4">
-                          <StatusBadge status={row.combined_shipping_status} />
+                          <StatusDot status={row.combined_shipping_status} />
                         </td>
                         <td className="overflow-hidden py-2 pr-4">
-                          <StatusBadge status={row.combined_invoice_status} />
+                          <StatusDot status={row.combined_invoice_status} />
                         </td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-xs text-slate-600">{row.invoice_numbers ?? "—"}</td>
                         <td className="overflow-hidden py-2 pr-4">
-                          <StatusBadge status={row.combined_payment_status} />
+                          <StatusDot status={row.combined_payment_status} />
                         </td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium tabular-nums">{qty(row.total_pickable_qty)}</td>
                         <td className="overflow-hidden whitespace-nowrap py-2 pr-4 text-right font-medium tabular-nums">{qty(row.total_ready_to_invoice_qty)}</td>
