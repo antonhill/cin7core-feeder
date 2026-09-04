@@ -15,6 +15,11 @@ import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { IMPORT_MODULE } from "@/app/module-nav";
 import { Spinner } from "@/app/Spinner";
+import { Button } from "@/components/ui/Button";
+import { Select } from "@/components/ui/Select";
+import { Input } from "@/components/ui/Input";
+import { Alert } from "@/components/ui/Alert";
+import { Badge } from "@/components/ui/Badge";
 
 const INITIAL_STATE: ImportActionState = { status: "idle" };
 
@@ -75,26 +80,23 @@ function StepHeader({ step, title, done }: { step: number; title: string; done: 
     <div className="flex items-center gap-3">
       <span
         className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${
-          done ? "bg-indigo-600 text-white" : "bg-slate-200 text-slate-600"
+          done ? "bg-primary text-white" : "bg-slate-200 text-slate-600"
         }`}
       >
         {step}
       </span>
-      <h2 className="text-xl font-semibold text-slate-900">{title}</h2>
+      <h2 className="text-base font-semibold text-slate-900">{title}</h2>
     </div>
   );
 }
 
+/** Small inline count pill — e.g. "12 products created" — that renders nothing when the count is zero, so a result panel only surfaces what actually happened. */
 function StatPill({ label, value, tone = "neutral" }: { label: string; value: number; tone?: "neutral" | "bad" }) {
   if (!value) return null;
   return (
-    <span
-      className={`rounded-full px-3 py-1 text-sm font-medium ${
-        tone === "bad" ? "bg-red-50 text-red-700" : "bg-slate-100 text-slate-700"
-      }`}
-    >
-      {value} {label}
-    </span>
+    <Badge tone={tone === "bad" ? "danger" : "neutral"}>
+      <span className="tabular-nums">{value}</span> {label}
+    </Badge>
   );
 }
 
@@ -141,135 +143,115 @@ export default function ImportPage() {
     setScopeSelection((prev) => ({ ...prev, [key]: mode }));
   }
 
-
   return (
     <main className="mx-auto w-full max-w-4xl px-6 py-12">
       <ModuleHeader module={IMPORT_MODULE}>Import a CSV, choose where it goes, then push it to Cin7 Core.</ModuleHeader>
 
       <div className="mt-10 flex flex-col gap-6">
         {/* Step 1 — Import */}
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
           <StepHeader step={1} title="Import a CSV" done={state.status === "success"} />
 
           <form action={formAction} className="mt-5 flex flex-col gap-4">
             <div className="grid grid-cols-2 gap-3">
-              <label className="flex flex-col gap-1.5 text-base">
-                <span className="font-medium text-slate-700">Import type</span>
-                <select
-                  name="kind"
-                  required
-                  className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none"
-                >
-                  {KINDS.map((k) => (
-                    <option key={k.value} value={k.value}>
-                      {k.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <Select name="kind" label="Import type" required>
+                {KINDS.map((k) => (
+                  <option key={k.value} value={k.value}>
+                    {k.label}
+                  </option>
+                ))}
+              </Select>
 
-              <label className="flex flex-col gap-1.5 text-base">
-                <span className="font-medium text-slate-700">CSV file</span>
-                <input
-                  name="file"
-                  type="file"
-                  accept=".csv,text/csv"
-                  required
-                  className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
-                />
-              </label>
+              <Input name="file" type="file" accept=".csv,text/csv" required label="CSV file" />
             </div>
 
-            <button
-              type="submit"
-              disabled={isImportPending}
-              className="mt-1 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-            >
-              {isImportPending && <Spinner className="mr-1.5" />}
+            <Button type="submit" loading={isImportPending} disabled={isImportPending} className="mt-1 self-start">
               {isImportPending ? "Importing…" : "Import"}
-            </button>
+            </Button>
           </form>
 
           {state.status === "error" && (
-            <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {state.message}
-            </p>
+            <div className="mt-4">
+              <Alert tone="danger">{state.message}</Alert>
+            </div>
           )}
 
           {state.status === "success" && state.result && (
-            <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-              <p className="font-medium text-emerald-900">
-                {state.result.committed
-                  ? `Imported ${state.result.rowCount - state.result.errorCount} row${state.result.rowCount - state.result.errorCount === 1 ? "" : "s"}`
-                  : "Nothing to commit"}
-                {state.result.errorCount > 0 && ` — ${state.result.errorCount} invalid`}
-              </p>
-              {state.result.commitSummary && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {Object.entries(state.result.commitSummary).map(([key, value]) => (
-                    <StatPill key={key} label={humanizeKey(key).toLowerCase()} value={value} />
-                  ))}
-                </div>
-              )}
-              {state.result.invalidRows.length > 0 && (
-                <details className="mt-3">
-                  <summary className="cursor-pointer text-sm font-medium text-emerald-900">
-                    {state.result.invalidRows.length} invalid row{state.result.invalidRows.length === 1 ? "" : "s"} — details
-                  </summary>
-                  <ul className="mt-2 flex flex-col gap-1.5 text-sm text-red-700">
-                    {state.result.invalidRows.map((r) => (
-                      <li key={r.rowNumber}>
-                        <span className="font-medium">Row {r.rowNumber}:</span>
-                        <ul className="list-disc pl-5">
-                          {r.errors.map((err, i) => (
-                            <li key={i}>{err}</li>
-                          ))}
-                        </ul>
-                      </li>
+            <div className="mt-5">
+              <Alert tone="success">
+                <p className="font-medium text-emerald-900">
+                  {state.result.committed
+                    ? `Imported ${state.result.rowCount - state.result.errorCount} row${state.result.rowCount - state.result.errorCount === 1 ? "" : "s"}`
+                    : "Nothing to commit"}
+                  {state.result.errorCount > 0 && ` — ${state.result.errorCount} invalid`}
+                </p>
+                {state.result.commitSummary && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {Object.entries(state.result.commitSummary).map(([key, value]) => (
+                      <StatPill key={key} label={humanizeKey(key).toLowerCase()} value={value} />
                     ))}
-                  </ul>
-                </details>
-              )}
-              {state.result.warnings.length > 0 && (
-                <details className="mt-3">
-                  <summary className="cursor-pointer text-sm font-medium text-amber-800">
-                    {state.result.warnings.length} warning{state.result.warnings.length === 1 ? "" : "s"} — fix before pushing
-                  </summary>
-                  <ul className="mt-2 list-disc pl-5 text-sm text-amber-700">
-                    {state.result.warnings.map((w, i) => (
-                      <li key={i}>
-                        Row {w.rowNumber}: {w.message}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )}
+                  </div>
+                )}
+                {state.result.invalidRows.length > 0 && (
+                  <details className="mt-3">
+                    <summary className="cursor-pointer text-sm font-medium text-emerald-900">
+                      {state.result.invalidRows.length} invalid row{state.result.invalidRows.length === 1 ? "" : "s"} — details
+                    </summary>
+                    <ul className="mt-2 flex flex-col gap-1.5 text-sm text-danger">
+                      {state.result.invalidRows.map((r) => (
+                        <li key={r.rowNumber}>
+                          <span className="font-medium">Row {r.rowNumber}:</span>
+                          <ul className="list-disc pl-5">
+                            {r.errors.map((err, i) => (
+                              <li key={i}>{err}</li>
+                            ))}
+                          </ul>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+                {state.result.warnings.length > 0 && (
+                  <details className="mt-3">
+                    <summary className="cursor-pointer text-sm font-medium text-warning">
+                      {state.result.warnings.length} warning{state.result.warnings.length === 1 ? "" : "s"} — fix before pushing
+                    </summary>
+                    <ul className="mt-2 list-disc pl-5 text-sm text-warning">
+                      {state.result.warnings.map((w, i) => (
+                        <li key={i}>
+                          Row {w.rowNumber}: {w.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </Alert>
             </div>
           )}
         </section>
 
         {/* Step 2 — Choose instance(s) */}
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
           <StepHeader step={2} title="Choose instance(s)" done={selectedIds.length > 0} />
-          <p className="mt-1 pl-11 text-base text-slate-500">
+          <p className="mt-1 pl-11 text-sm text-slate-500">
             Pushes your org&apos;s current canonical data (products + Assembly BOM + Customers +
             Suppliers, each with their addresses) to whichever instances you select here.
           </p>
 
           <div className="mt-5 pl-11">
             {picker.isLoading && picker.selectableInstances.length === 0 && (
-              <p className="text-sm text-slate-500">
-                <Spinner className="mr-1.5" />
+              <p className="flex items-center gap-1.5 text-sm text-slate-500">
+                <Spinner />
                 Loading instances…
               </p>
             )}
 
             {picker.error && (
-              <p className="text-sm text-red-600">
+              <p className="text-sm text-danger">
                 {picker.error}{" "}
-                <button type="button" onClick={picker.reload} className="font-medium underline hover:no-underline">
+                <Button variant="link" onClick={picker.reload}>
                   Retry
-                </button>
+                </Button>
               </p>
             )}
 
@@ -287,11 +269,11 @@ export default function ImportPage() {
         </section>
 
         {/* Step 3 — Push */}
-        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <section className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
           <StepHeader step={3} title="Push to Cin7 Core" done={push.status === "done"} />
 
           <div className="mt-5 pl-11">
-            <p className="text-base font-medium text-slate-700">Scope</p>
+            <p className="text-sm font-medium text-slate-700">Scope</p>
             <p className="mt-1 text-sm text-slate-500">
               &ldquo;Just last import&rdquo; pushes only the rows from your most recent committed
               import of that type, instead of the whole org catalog. Since you only ever import one
@@ -318,7 +300,7 @@ export default function ImportPage() {
                         onClick={() => setScopeFor(key, mode)}
                         className={`px-3 py-1 text-sm font-medium transition-colors ${
                           scopeSelection[key] === mode
-                            ? "bg-indigo-600 text-white"
+                            ? "bg-primary text-white"
                             : "bg-white text-slate-600 hover:bg-slate-50"
                         }`}
                       >
@@ -330,40 +312,38 @@ export default function ImportPage() {
               ))}
             </div>
 
-            <button
+            {/* This push is one of the four AAL2 step-up-gated Cin7-write families (Import & Sync catalog push, CCT-ADR-0015) — the step-up itself happens server-side in the action; nothing here changes when/whether it fires. */}
+            <Button
               type="button"
               onClick={handlePush}
+              loading={push.isPushing || push.status === "running"}
               disabled={push.isPushing || push.status === "running" || selectedIds.length === 0 || !canWrite}
-              className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
+              className="mt-4"
             >
-              {(push.isPushing || push.status === "running") && <Spinner className="mr-1.5" />}
               {push.status === "running"
                 ? "Pushing… (may take a while for a large catalog)"
                 : `Push to ${selectedIds.length || ""} instance${selectedIds.length === 1 ? "" : "s"}`}
-            </button>
+            </Button>
             {!canWrite && (
-              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                Available on a paid plan — this trial is read-only.
-              </p>
+              <div className="mt-2">
+                <Alert tone="warning">Available on a paid plan — this trial is read-only.</Alert>
+              </div>
             )}
 
             {push.error && (
-              <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {push.error}
-              </p>
+              <div className="mt-4">
+                <Alert tone="danger">{push.error}</Alert>
+              </div>
             )}
 
             {push.outcomes && (
               <div className="mt-4 flex flex-col gap-3">
                 {push.outcomes.map((outcome) => (
-                  <div
-                    key={outcome.instanceId}
-                    className={`rounded-xl border p-4 ${outcome.ok ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}
-                  >
+                  <Alert key={outcome.instanceId} tone={outcome.ok ? "success" : "danger"}>
                     <p className={`font-medium ${outcome.ok ? "text-emerald-900" : "text-red-900"}`}>
                       {outcome.instanceName ?? outcome.instanceId}
                     </p>
-                    {!outcome.ok && <p className="mt-1 text-sm text-red-700">{outcome.error}</p>}
+                    {!outcome.ok && <p className="mt-1 text-sm text-danger">{outcome.error}</p>}
                     {outcome.ok && (
                       <div className="mt-2 flex flex-wrap gap-2">
                         <StatPill label="products created" value={outcome.productsCreated ?? 0} />
@@ -387,7 +367,7 @@ export default function ImportPage() {
                         <summary className="cursor-pointer text-sm font-medium text-red-900">
                           {outcome.errors.length} error{outcome.errors.length === 1 ? "" : "s"} — details
                         </summary>
-                        <ul className="mt-2 flex flex-col gap-1.5 text-sm text-red-700">
+                        <ul className="mt-2 flex flex-col gap-1.5 text-sm text-danger">
                           {outcome.errors.map((e, i) => (
                             <li key={i}>
                               <span className="font-medium">{e.sku}:</span>
@@ -401,7 +381,7 @@ export default function ImportPage() {
                                   <summary className="cursor-pointer text-xs text-red-900/70 hover:text-red-900">
                                     raw response
                                   </summary>
-                                  <pre className="mt-1 overflow-x-auto rounded bg-red-900/5 p-2 text-xs text-red-900">
+                                  <pre className="mt-1 overflow-x-auto rounded bg-red-900/5 p-2 font-mono text-xs text-red-900">
                                     {e.raw}
                                   </pre>
                                 </details>
@@ -411,7 +391,7 @@ export default function ImportPage() {
                         </ul>
                       </details>
                     )}
-                  </div>
+                  </Alert>
                 ))}
               </div>
             )}
