@@ -5,10 +5,46 @@ import { currentWeekStart, mondayOf, addDays, formatDayLabel, todayIso } from ".
 import type { OrderFulfillmentRow, OrderFulfillmentLineRow, OrderFulfillmentFilters } from "@/reports/query";
 import type { MarkShippedInput } from "@/cin7/sales";
 import type { InstancePickerItem } from "@/actions/instances";
-import { StatusBadge } from "../status-badge";
+import { StatusBadge, statusBadgeClass } from "../status-badge";
 import { matchesSearch } from "../text-search";
 import { Spinner } from "@/app/Spinner";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
+import { Alert } from "@/components/ui/Alert";
+import { Badge } from "@/components/ui/Badge";
+import { Panel } from "@/components/ui/Panel";
+import { Dialog } from "@/components/ui/Dialog";
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/Table";
+
+/**
+ * The order-detail modal's own status row (5 Combined*Status fields at once
+ * — Picking/Packing/Shipping/Invoice/Payment) is the same "too many
+ * saturated pills" cluster Order Fulfilment's table row was, and gets the
+ * same fix: a small dot plus the status's own neutral-colored text, reusing
+ * statusBadgeClass exactly as-is (read only, to pick a dot color) rather
+ * than touching the shared classifier or component. OrderCard's own compact
+ * `wrap`-mode pills (2 per card, not 5) don't have that clutter problem and
+ * are left as the original StatusBadge.
+ */
+function statusDotColor(status: string | null): string {
+  const cls = statusBadgeClass(status);
+  if (cls.includes("rose")) return "bg-rose-500";
+  if (cls.includes("amber")) return "bg-amber-500";
+  if (cls.includes("emerald")) return "bg-emerald-500";
+  return "bg-slate-400";
+}
+
+function StatusDot({ status }: { status: string | null }) {
+  if (!status) return <span className="text-xs text-slate-300">—</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium text-slate-700">
+      <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDotColor(status)}`} />
+      {status}
+    </span>
+  );
+}
 
 /** What the page's onMarkShipped callback resolves to — enough for MarkAsShippedSection to render success/error itself, without needing the full action result shape. */
 interface MarkShippedOutcome {
@@ -91,24 +127,26 @@ function MarkAsShippedSection({
 
   if (shippedResult) {
     return (
-      <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-        <p className="font-medium">Marked as shipped in Cin7.</p>
-        <p className="mt-1">
-          Cin7&rsquo;s API has no box-label endpoint —{" "}
-          <a href={shippedResult.cin7WebUrl} target="_blank" rel="noopener noreferrer" className="underline">
-            open Cin7 Core
-          </a>{" "}
-          to print it from there.
-        </p>
+      <div className="mt-4">
+        <Alert tone="success">
+          <p className="font-medium">Marked as shipped in Cin7.</p>
+          <p className="mt-1">
+            Cin7&rsquo;s API has no box-label endpoint —{" "}
+            <a href={shippedResult.cin7WebUrl} target="_blank" rel="noopener noreferrer" className="underline">
+              open Cin7 Core
+            </a>{" "}
+            to print it from there.
+          </p>
+        </Alert>
       </div>
     );
   }
 
   if (level !== "ready") {
     return (
-      <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-        Not ready to ship yet — Cin7 requires this order to be fully packed first ({READINESS_LABEL[level]}).
-      </p>
+      <div className="mt-4">
+        <Alert tone="warning">Not ready to ship yet — Cin7 requires this order to be fully packed first ({READINESS_LABEL[level]}).</Alert>
+      </div>
     );
   }
 
@@ -131,20 +169,21 @@ function MarkAsShippedSection({
 
   return (
     <form onSubmit={handleSubmit} className="mt-4 flex flex-wrap items-end gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-      <label className="flex flex-col gap-1 text-sm text-slate-600">
-        Shipment date
+      <Input
+        type="date"
+        label="Shipment date"
+        value={shipmentDate}
+        onChange={(e) => setShipmentDate(e.target.value)}
+        required
+        disabled={isSubmitting}
+        className="h-8"
+      />
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="calendar-board-carrier" className="text-sm font-medium text-slate-700">
+          Carrier
+        </label>
         <input
-          type="date"
-          value={shipmentDate}
-          onChange={(e) => setShipmentDate(e.target.value)}
-          required
-          disabled={isSubmitting}
-          className="rounded border border-slate-300 px-2 py-1 text-sm disabled:opacity-50"
-        />
-      </label>
-      <label className="flex flex-col gap-1 text-sm text-slate-600">
-        Carrier
-        <input
+          id="calendar-board-carrier"
           type="text"
           list="calendar-board-carriers"
           value={carrier}
@@ -152,34 +191,27 @@ function MarkAsShippedSection({
           required
           disabled={isSubmitting}
           placeholder="e.g. DEFAULT Carrier"
-          className="w-48 rounded border border-slate-300 px-2 py-1 text-sm disabled:opacity-50"
+          className="h-8 w-48 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 disabled:opacity-50"
         />
         <datalist id="calendar-board-carriers">
           {carrierOptions.map((name) => (
             <option key={name} value={name} />
           ))}
         </datalist>
-      </label>
-      <label className="flex flex-col gap-1 text-sm text-slate-600">
-        Tracking number
-        <input
-          type="text"
-          value={trackingNumber}
-          onChange={(e) => setTrackingNumber(e.target.value)}
-          placeholder="Optional"
-          disabled={isSubmitting}
-          className="w-40 rounded border border-slate-300 px-2 py-1 text-sm disabled:opacity-50"
-        />
-      </label>
-      <button
-        type="submit"
-        disabled={isSubmitting || !carrier.trim()}
-        className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-      >
-        {isSubmitting && <Spinner className="mr-1.5" />}
+      </div>
+      <Input
+        type="text"
+        label="Tracking number"
+        value={trackingNumber}
+        onChange={(e) => setTrackingNumber(e.target.value)}
+        placeholder="Optional"
+        disabled={isSubmitting}
+        className="h-8 w-40"
+      />
+      <Button type="submit" size="sm" disabled={!carrier.trim()} loading={isSubmitting}>
         {isSubmitting ? "Marking shipped…" : "Mark as Shipped"}
-      </button>
-      {submitError && <p className="w-full text-sm text-rose-600">{submitError}</p>}
+      </Button>
+      {submitError && <Alert tone="danger">{submitError}</Alert>}
     </form>
   );
 }
@@ -226,14 +258,14 @@ function OrderCard({
         <StatusBadge status={order.combined_invoice_status} wrap />
         <StatusBadge status={order.combined_payment_status} wrap />
       </div>
-      {order.is_overdue && <div className="mt-1 font-semibold text-rose-600">Overdue</div>}
+      {order.is_overdue && <div className="mt-1 font-semibold text-danger">Overdue</div>}
       {isPending && (
-        <div className="mt-1 flex items-center gap-1 text-indigo-500">
+        <div className="mt-1 flex items-center gap-1 text-primary">
           <Spinner className="h-3 w-3" /> Saving…
         </div>
       )}
       {error && (
-        <div className="mt-1 text-rose-600" title={error}>
+        <div className="mt-1 text-danger" title={error}>
           Failed — reverted
         </div>
       )}
@@ -348,88 +380,76 @@ function OrderDetailModal({
   const rawBucketDate = order.ship_by ? addDays(order.ship_by.slice(0, 10), -offsetDays) : null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50" onClick={onClose}>
-      <div className="mx-auto my-8 max-w-2xl rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">{order.order_number ?? order.cin7_sale_id}</h2>
-            <p className="text-sm text-slate-500">{order.customer_name}</p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
-            Close
-          </button>
-        </div>
+    <Dialog open onClose={onClose} title={order.order_number ?? order.cin7_sale_id}>
+      <p className="-mt-2 mb-3 text-sm text-slate-500">{order.customer_name}</p>
 
-        <div className="flex flex-wrap gap-1.5">
-          <StatusBadge status={order.combined_picking_status} />
-          <StatusBadge status={order.combined_packing_status} />
-          <StatusBadge status={order.combined_shipping_status} />
-          <StatusBadge status={order.combined_invoice_status} />
-          <StatusBadge status={order.combined_payment_status} />
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          <p className="text-sm text-slate-600">
-            {dateLabel}: <span className="font-medium text-slate-900">{rawBucketDate ?? "—"}</span>
-            {order.is_overdue && (
-              <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">Overdue</span>
-            )}
-          </p>
-          {offsetDays !== 0 && <p className="text-sm text-slate-400">Ship By: {order.ship_by ?? "—"}</p>}
-          <label className="flex items-center gap-1.5 text-sm text-slate-500">
-            Move to
-            <input
-              type="date"
-              value={effectiveBucketDate}
-              disabled={isPending || !instanceActive}
-              title={!instanceActive ? "Instance disconnected — can't reschedule" : undefined}
-              onChange={(e) => e.target.value && onReschedule(order.cin7_sale_id, e.target.value)}
-              className="rounded border border-slate-300 px-2 py-1 text-sm text-slate-700 disabled:opacity-50"
-            />
-            {isPending && <Spinner className="h-3 w-3" />}
-          </label>
-          {!instanceActive && (
-            <p className="w-full text-sm text-slate-400">Instance disconnected — read-only.</p>
-          )}
-        </div>
-
-        {instanceActive && markShipped && (
-          <MarkAsShippedSection order={order} onMarkShipped={markShipped.onMarkShipped} loadCarriers={markShipped.loadCarriers} />
-        )}
-
-        <h3 className="mt-6 mb-2 text-sm font-semibold text-slate-700">Order lines</h3>
-        {lines.length === 0 ? (
-          <p className="text-sm text-slate-400">No line detail synced for this order yet.</p>
-        ) : (
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 text-slate-500">
-                <th className="py-1.5 pr-4">SKU</th>
-                <th className="py-1.5 pr-4">Product</th>
-                <th className="py-1.5 pr-4 text-right">Ordered</th>
-                <th className="py-1.5 pr-4 text-right">Backorder</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((line, i) => (
-                <tr key={i} className="border-b border-slate-100 last:border-0">
-                  <td className="py-1.5 pr-4">{line.product_sku}</td>
-                  <td className="py-1.5 pr-4">{line.product_name ?? "—"}</td>
-                  <td className="py-1.5 pr-4 text-right">{qty(line.ordered_qty)}</td>
-                  <td className="py-1.5 pr-4 text-right">
-                    {line.backorder_qty > 0 ? <span className="font-semibold text-rose-600">{qty(line.backorder_qty)}</span> : "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+        <StatusDot status={order.combined_picking_status} />
+        <StatusDot status={order.combined_packing_status} />
+        <StatusDot status={order.combined_shipping_status} />
+        <StatusDot status={order.combined_invoice_status} />
+        <StatusDot status={order.combined_payment_status} />
       </div>
-    </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <p className="text-sm text-slate-600">
+          {dateLabel}: <span className="font-medium text-slate-900">{rawBucketDate ?? "—"}</span>
+          {order.is_overdue && (
+            <span className="ml-2 inline-block">
+              <Badge tone="danger">Overdue</Badge>
+            </span>
+          )}
+        </p>
+        {offsetDays !== 0 && <p className="text-sm text-slate-400">Ship By: {order.ship_by ?? "—"}</p>}
+        <label className="flex items-center gap-1.5 text-sm text-slate-500">
+          Move to
+          <input
+            type="date"
+            value={effectiveBucketDate}
+            disabled={isPending || !instanceActive}
+            title={!instanceActive ? "Instance disconnected — can't reschedule" : undefined}
+            onChange={(e) => e.target.value && onReschedule(order.cin7_sale_id, e.target.value)}
+            className="h-8 rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-700 disabled:opacity-50"
+          />
+          {isPending && <Spinner className="h-3 w-3" />}
+        </label>
+        {!instanceActive && <p className="w-full text-sm text-slate-400">Instance disconnected — read-only.</p>}
+      </div>
+
+      {instanceActive && markShipped && (
+        <MarkAsShippedSection order={order} onMarkShipped={markShipped.onMarkShipped} loadCarriers={markShipped.loadCarriers} />
+      )}
+
+      <h3 className="mt-6 mb-2 text-sm font-semibold text-slate-700">Order lines</h3>
+      {lines.length === 0 ? (
+        <p className="text-sm text-slate-400">No line detail synced for this order yet.</p>
+      ) : (
+        <Table>
+          <THead>
+            <tr>
+              <TH>SKU</TH>
+              <TH>Product</TH>
+              <TH align="right">Ordered</TH>
+              <TH align="right">Backorder</TH>
+            </tr>
+          </THead>
+          <TBody>
+            {lines.map((line, i) => (
+              <TR key={i}>
+                <TD className="font-mono">{line.product_sku}</TD>
+                <TD>{line.product_name ?? "—"}</TD>
+                <TD align="right" numeric>
+                  {qty(line.ordered_qty)}
+                </TD>
+                <TD align="right" numeric>
+                  {line.backorder_qty > 0 ? <span className="font-semibold text-danger">{qty(line.backorder_qty)}</span> : "—"}
+                </TD>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
+      )}
+    </Dialog>
   );
 }
 
@@ -607,7 +627,7 @@ export function CalendarBoard({ offsetDays, dateLabel, qualifies, hiddenByFloor,
 
   return (
     <>
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <Panel className="mt-6">
         {instances.length > 0 && (
           <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-slate-100 pb-4">
             <span className="text-sm font-medium text-slate-700">Instance(s)</span>
@@ -617,55 +637,51 @@ export function CalendarBoard({ offsetDays, dateLabel, qualifies, hiddenByFloor,
         )}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setWeekStart((w) => addDays(w, -7))}
-              className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
+            <Button variant="secondary" size="sm" onClick={() => setWeekStart((w) => addDays(w, -7))}>
               ← Prev week
-            </button>
-            <button
-              type="button"
-              onClick={() => setWeekStart(currentWeekStart())}
-              className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => setWeekStart(currentWeekStart())}>
               This week
-            </button>
-            <button
-              type="button"
-              onClick={() => setWeekStart((w) => addDays(w, 7))}
-              className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => setWeekStart((w) => addDays(w, 7))}>
               Next week →
-            </button>
+            </Button>
             <span className="ml-2 text-sm font-medium text-slate-600">
               {formatDayLabel(weekStart)} – {formatDayLabel(addDays(weekStart, DAY_COUNT - 1))}
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <input
+            <Input
               type="text"
+              label="Search"
+              hideLabel
               placeholder="Order #, customer, or SKU"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-56 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
+              className="h-8 w-56"
             />
-            <select
+            <Select
+              label="Invoice coverage"
+              hideLabel
               value={invoiceCoverageFilter}
               onChange={(e) => setInvoiceCoverageFilter(e.target.value as typeof invoiceCoverageFilter)}
-              className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
               title="Based on real invoiced-vs-ordered quantities, not Cin7's own invoice status field"
+              className="h-8"
             >
               <option value="">Any invoice coverage</option>
               <option value="not_invoiced">Not invoiced</option>
               <option value="partially_invoiced">Partially invoiced</option>
               <option value="invoiced">Invoiced</option>
-            </select>
+            </Select>
             {isLoading && <Spinner />}
           </div>
         </div>
 
-        {loadError && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>}
+        {loadError && (
+          <div className="mt-4">
+            <Alert tone="danger">{loadError}</Alert>
+          </div>
+        )}
 
         {unscheduledCount > 0 && (
           <p className="mt-3 text-sm text-slate-400">
@@ -673,14 +689,16 @@ export function CalendarBoard({ offsetDays, dateLabel, qualifies, hiddenByFloor,
           </p>
         )}
         {hiddenByFloorCount > 0 && (
-          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            {hiddenByFloorCount} older order{hiddenByFloorCount === 1 ? "" : "s"} hidden by the start-date setting — visible on Order
-            Fulfillment&rsquo;s All Orders tab, or adjust the setting on{" "}
-            <a href="/settings/instances" className="underline">
-              Instances
-            </a>
-            .
-          </p>
+          <div className="mt-3">
+            <Alert tone="warning">
+              {hiddenByFloorCount} older order{hiddenByFloorCount === 1 ? "" : "s"} hidden by the start-date setting — visible on Order
+              Fulfillment&rsquo;s All Orders tab, or adjust the setting on{" "}
+              <a href="/settings/instances" className="underline">
+                Instances
+              </a>
+              .
+            </Alert>
+          </div>
         )}
 
         {orders && (
@@ -704,7 +722,7 @@ export function CalendarBoard({ offsetDays, dateLabel, qualifies, hiddenByFloor,
             ))}
           </div>
         )}
-      </section>
+      </Panel>
 
       {detailOrder && (
         <OrderDetailModal

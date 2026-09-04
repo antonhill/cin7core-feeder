@@ -11,6 +11,14 @@ import { downloadBase64File } from "@/reports/download-base64-file";
 import { StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { Spinner } from "@/app/Spinner";
 import { ReportDescription } from "../ReportDescription";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { Alert } from "@/components/ui/Alert";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Panel, PanelTitle } from "@/components/ui/Panel";
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/Table";
 
 function money(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
@@ -241,10 +249,10 @@ export default function NatasReportPage() {
         invoiced amount.
       </ReportDescription>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <Panel>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="font-medium text-slate-900">Sales data</p>
+            <p className="text-base font-semibold text-slate-900">Sales data</p>
             {syncStatus && (
               <p className="mt-1 text-sm text-slate-500">
                 {syncStatus.totalSales} sale{syncStatus.totalSales === 1 ? "" : "s"} synced
@@ -261,154 +269,155 @@ export default function NatasReportPage() {
             </button>
           </div>
         </div>
-        {syncError && <p className="mt-2 text-sm text-red-600">{syncError}</p>}
-      </section>
+        {syncError && (
+          <div className="mt-2">
+            <Alert tone="danger">{syncError}</Alert>
+          </div>
+        )}
+      </Panel>
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="font-medium text-slate-900">Filters</p>
-        {optionsError && <p className="mt-2 text-sm text-red-600">{optionsError}</p>}
+      <Panel className="mt-6">
+        <PanelTitle>Filters</PanelTitle>
+        {optionsError && (
+          <div className="mt-2">
+            <Alert tone="danger">{optionsError}</Alert>
+          </div>
+        )}
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
             <span className="text-sm font-medium text-slate-700">Instance(s)</span>
             <div className="mt-2 flex flex-col gap-1.5">
               {(options?.instances ?? []).map((inst) => (
-                <label key={inst.id} className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={instanceIds.includes(inst.id)} onChange={() => toggleInstance(inst.id)} className="h-4 w-4" />
-                  {inst.name}
-                </label>
+                <Checkbox key={inst.id} label={inst.name} checked={instanceIds.includes(inst.id)} onChange={() => toggleInstance(inst.id)} />
               ))}
               {options && options.instances.length === 0 && <p className="text-sm text-slate-400">No instances connected.</p>}
             </div>
           </div>
 
-          <label className="flex flex-col gap-1.5 text-sm">
-            <span className="font-medium text-slate-700">Location</span>
-            <select value={location} onChange={(e) => setLocation(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2">
-              <option value="">All locations</option>
-              {(options?.locations ?? []).map((loc) => (
-                <option key={loc} value={loc}>
-                  {loc}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Select label="Location" value={location} onChange={(e) => setLocation(e.target.value)}>
+            <option value="">All locations</option>
+            {(options?.locations ?? []).map((loc) => (
+              <option key={loc} value={loc}>
+                {loc}
+              </option>
+            ))}
+          </Select>
 
           <div className="grid grid-cols-2 gap-3">
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">From</span>
-              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2" />
-            </label>
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">To</span>
-              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-lg border border-slate-300 px-3 py-2" />
-            </label>
+            <Input type="date" label="From" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+            <Input type="date" label="To" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={handleRunReport}
-          disabled={isRunning}
-          className="mt-5 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-        >
-          {isRunning && <Spinner className="mr-1.5" />}
-          {isRunning ? "Running…" : "Run report"}
-        </button>
+        <div className="mt-5">
+          <Button onClick={handleRunReport} loading={isRunning}>
+            {isRunning ? "Running…" : "Run report"}
+          </Button>
+        </div>
 
-        {reportError && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{reportError}</p>}
-      </section>
+        {reportError && (
+          <div className="mt-4">
+            <Alert tone="danger">{reportError}</Alert>
+          </div>
+        )}
+      </Panel>
 
       {unmapped.length > 0 && (
-        <section className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-5">
-          <p className="font-medium text-amber-900">
-            {unmapped.length} SKU{unmapped.length === 1 ? "" : "s"} not recognized as a known Nata Type
-          </p>
-          <p className="mt-1 text-sm text-amber-800">
-            These &ldquo;Nata&rdquo;-category sale lines didn&rsquo;t match a known flavor prefix, so they&rsquo;re
-            excluded from the totals below rather than being miscounted. Add a new rule to `NATA_TYPE_RULES` in{" "}
-            <code>src/reports/natas-report.ts</code> if this is a real new flavor.
-          </p>
-          <ul className="mt-3 flex flex-col gap-1 text-sm text-amber-900">
-            {unmapped.map((u) => (
-              <li key={u.sku}>
-                {u.name ?? u.sku} ({u.sku}) — qty {u.quantity}
-              </li>
-            ))}
-          </ul>
-        </section>
+        <div className="mt-6">
+          <Alert tone="warning">
+            <p className="font-medium">
+              {unmapped.length} SKU{unmapped.length === 1 ? "" : "s"} not recognized as a known Nata Type
+            </p>
+            <p className="mt-1">
+              These &ldquo;Nata&rdquo;-category sale lines didn&rsquo;t match a known flavor prefix, so they&rsquo;re
+              excluded from the totals below rather than being miscounted. Add a new rule to `NATA_TYPE_RULES` in{" "}
+              <code>src/reports/natas-report.ts</code> if this is a real new flavor.
+            </p>
+            <ul className="mt-3 flex flex-col gap-1">
+              {unmapped.map((u) => (
+                <li key={u.sku}>
+                  {u.name ?? u.sku} ({u.sku}) — qty {u.quantity}
+                </li>
+              ))}
+            </ul>
+          </Alert>
+        </div>
       )}
 
       {rows && (
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <Panel className="mt-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="font-medium text-slate-900">
+            <p className="text-base font-semibold text-slate-900">
               {rows.length} row{rows.length === 1 ? "" : "s"}
             </p>
             {rows.length > 0 && (
-              <button
-                type="button"
-                onClick={handleExport}
-                disabled={isExporting}
-                className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
+              <Button variant="secondary" size="sm" onClick={handleExport} loading={isExporting}>
                 {isExporting ? "Exporting…" : "Export to Excel"}
-              </button>
+              </Button>
             )}
           </div>
-          {exportError && <p className="mt-2 text-sm text-red-600">{exportError}</p>}
+          {exportError && (
+            <div className="mt-2">
+              <Alert tone="danger">{exportError}</Alert>
+            </div>
+          )}
 
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 border-b border-slate-100 pb-4">
             {COLUMNS.map((col) => (
-              <label key={col.key} className="flex items-center gap-1.5 text-sm text-slate-600">
-                <input type="checkbox" checked={visibleKeys.has(col.key)} onChange={() => toggleColumn(col.key)} className="h-4 w-4" />
-                {col.label}
-              </label>
+              <Checkbox key={col.key} label={col.label} checked={visibleKeys.has(col.key)} onChange={() => toggleColumn(col.key)} />
             ))}
           </div>
 
-          {rows.length === 0 && <p className="mt-2 text-sm text-slate-400">No matching Nata sales.</p>}
+          {rows.length === 0 && <EmptyState title="No matching Nata sales" />}
 
           {rows.length > 0 && visibleColumns.length > 0 && (
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 text-slate-500">
+            <div className="mt-4">
+              <Table>
+                <THead>
+                  <tr>
                     {visibleColumns.map((col) => (
-                      <th key={col.key} className="py-2 pr-4">
+                      <TH key={col.key} align={col.key === "month" || col.key === "location" || col.key === "nataType" ? "left" : "right"}>
                         {col.label}
-                      </th>
+                      </TH>
                     ))}
                   </tr>
-                </thead>
-                <tbody>
+                </THead>
+                <TBody>
                   {displayRows.map((row) => (
-                    <tr key={`${row.month}|${row.location}|${row.nataType}`} className="border-b border-slate-100">
+                    <TR key={`${row.month}|${row.location}|${row.nataType}`}>
                       {visibleColumns.map((col) => (
-                        <td key={col.key} className="py-2 pr-4">
+                        <TD
+                          key={col.key}
+                          align={col.key === "month" || col.key === "location" || col.key === "nataType" ? "left" : "right"}
+                          numeric={col.key !== "month" && col.key !== "location" && col.key !== "nataType"}
+                        >
                           {col.render(row)}
-                        </td>
+                        </TD>
                       ))}
-                    </tr>
+                    </TR>
                   ))}
-                </tbody>
+                </TBody>
                 {totals && (
                   <tfoot>
-                    <tr className="border-t border-slate-200 font-semibold text-slate-700">
+                    <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold text-slate-700">
                       {visibleColumns.map((col) => (
-                        <td key={col.key} className="py-2 pr-4">
+                        <td
+                          key={col.key}
+                          className={`px-3 py-2 ${col.key === "month" || col.key === "location" || col.key === "nataType" ? "text-left" : "text-right tabular-nums"}`}
+                        >
                           {col.renderTotal(totals)}
                         </td>
                       ))}
                     </tr>
                   </tfoot>
                 )}
-              </table>
+              </Table>
             </div>
           )}
           {rows.length > 0 && visibleColumns.length === 0 && (
             <p className="mt-4 text-sm text-slate-400">No columns selected — check at least one above.</p>
           )}
-        </section>
+        </Panel>
       )}
     </>
   );
