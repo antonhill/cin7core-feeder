@@ -25,6 +25,7 @@ import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/Table";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Alert } from "@/components/ui/Alert";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Panel, PanelTitle } from "@/components/ui/Panel";
 
 type Period = "1m" | "3m" | "6m" | "9m" | "12m";
 
@@ -407,8 +408,8 @@ export default function SupplierPlannerPage() {
         lead time, use the Reorder Report instead.
       </ModuleHeader>
 
-      <section className="mt-6 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="text-base font-semibold text-slate-900">Filters</p>
+      <Panel className="mt-6">
+        <PanelTitle>Filters</PanelTitle>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
           <div>
             <span className="text-sm font-medium text-slate-700">Instance</span>
@@ -481,11 +482,11 @@ export default function SupplierPlannerPage() {
             <Alert tone="danger">{error}</Alert>
           </div>
         )}
-      </section>
+      </Panel>
 
       {lines && (
         <section className="mt-6 flex flex-col gap-6">
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <Panel className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-slate-500">
               {visibleLines.length} line{visibleLines.length === 1 ? "" : "s"} across {grouped.size} supplier{grouped.size === 1 ? "" : "s"} —{" "}
               {needsReorderCount} need reordering at this buffer
@@ -504,9 +505,9 @@ export default function SupplierPlannerPage() {
                 {isExporting ? "Exporting…" : "Export to Excel"}
               </Button>
             </div>
-          </div>
+          </Panel>
 
-          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <Panel className="flex flex-wrap items-center gap-3">
             <Select
               label="Receiving location"
               value={receivingLocationId}
@@ -524,9 +525,9 @@ export default function SupplierPlannerPage() {
               Used for lines with no location of their own (most lines) when creating a PO — Cin7 needs exactly one receiving location per
               order. A line that already has its own specific location keeps that instead.
             </p>
-          </div>
+          </Panel>
 
-          <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <Panel className="flex flex-wrap gap-x-6 gap-y-2">
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Mover</span>
               {MOVER_OPTIONS.map((m) => (
@@ -550,10 +551,10 @@ export default function SupplierPlannerPage() {
               checked={showUnconfigured}
               onChange={(e) => setShowUnconfigured(e.target.checked)}
             />
-          </div>
+          </Panel>
 
           {(availableSuppliers.length > 0 || availableBrands.length > 0 || availableCategories.length > 0) && (
-            <div className="flex flex-wrap gap-x-6 gap-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <Panel className="flex flex-wrap gap-x-6 gap-y-3">
               {availableSuppliers.length > 0 && (
                 <CollapsibleCheckboxFilter
                   label="Supplier"
@@ -581,7 +582,7 @@ export default function SupplierPlannerPage() {
                   onClear={() => setCategoryFilter([])}
                 />
               )}
-            </div>
+            </Panel>
           )}
 
           {exportError && <Alert tone="danger">{exportError}</Alert>}
@@ -607,7 +608,7 @@ export default function SupplierPlannerPage() {
                 ? "Choose a receiving location above — none of the selected lines have one of their own."
                 : undefined;
             return (
-              <div key={supplierName} className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+              <Panel key={supplierName}>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="text-base font-semibold text-slate-900">
                     {supplierName}{" "}
@@ -707,7 +708,11 @@ export default function SupplierPlannerPage() {
                         const key = lineKey(line);
                         const checked = !excludedLineKeys.has(key);
                         return (
-                          <TR key={key} className={`${line.needsReorder ? "bg-warning-subtle" : ""} ${checked ? "" : "opacity-50"}`}>
+                          <TR
+                            key={key}
+                            flagged={line.needsReorder ? "warning" : undefined}
+                            className={`${line.needsReorder ? "bg-warning-subtle" : ""} ${checked ? "" : "opacity-50"}`}
+                          >
                             <TD>
                               <input
                                 type="checkbox"
@@ -760,7 +765,7 @@ export default function SupplierPlannerPage() {
                     </TBody>
                   </Table>
                 </div>
-              </div>
+              </Panel>
             );
           })}
         </section>
