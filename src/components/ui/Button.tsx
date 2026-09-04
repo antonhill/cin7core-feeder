@@ -1,12 +1,14 @@
 import { Spinner } from "@/app/Spinner";
 
-export type ButtonVariant = "primary" | "secondary" | "destructive" | "ghost" | "link";
+export type ButtonVariant = "primary" | "secondary" | "destructive" | "warning" | "ghost" | "link";
 export type ButtonSize = "sm" | "md";
 
 const VARIANT_CLASSES: Record<ButtonVariant, string> = {
   primary: "border border-transparent bg-primary text-white shadow-sm hover:bg-primary-hover",
   secondary: "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-400",
   destructive: "border border-transparent bg-danger text-white shadow-sm hover:bg-danger-hover",
+  /** A genuinely consequential action that isn't destructive/irreversible in the `destructive` sense — e.g. a live external-system write. Solid fill, not a tint, so it reads as assertive rather than merely decorative. */
+  warning: "border border-transparent bg-warning text-white shadow-sm hover:opacity-90",
   ghost: "border border-transparent text-slate-600 hover:bg-slate-100",
   link: "border border-transparent text-primary underline-offset-2 hover:underline p-0! h-auto!",
 };
