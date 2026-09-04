@@ -10,6 +10,13 @@ import { compareNullable, SortHeader, type SortDirection } from "../sortable-tab
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
 import { ReportDescription } from "../ReportDescription";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { Alert } from "@/components/ui/Alert";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Panel, PanelTitle } from "@/components/ui/Panel";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 type AssemblySortColumn = "assemblyNumber" | "product" | "status" | "date" | "quantity" | "totalCost";
 
@@ -52,10 +59,10 @@ function downloadBase64File(base64: string, filename: string, mimeType: string) 
  * a voided assembly never shows here regardless of filter selection.
  */
 const STATUS_OPTIONS = [
-  { value: "DRAFT", label: "Draft", badge: "bg-slate-100 text-slate-700" },
-  { value: "AUTHORISED", label: "Authorised", badge: "bg-amber-100 text-amber-800" },
-  { value: "IN PROGRESS", label: "In Progress", badge: "bg-indigo-100 text-indigo-800" },
-  { value: "COMPLETED", label: "Completed", badge: "bg-emerald-100 text-emerald-800" },
+  { value: "DRAFT", label: "Draft", tone: "neutral" as BadgeTone },
+  { value: "AUTHORISED", label: "Authorised", tone: "warning" as BadgeTone },
+  { value: "IN PROGRESS", label: "In Progress", tone: "primary" as BadgeTone },
+  { value: "COMPLETED", label: "Completed", tone: "success" as BadgeTone },
 ] as const;
 
 const ALL_STATUS_VALUES = STATUS_OPTIONS.map((s) => s.value);
@@ -115,7 +122,7 @@ function AssemblyDetailPanel({
         Loading components…
       </p>
     );
-  if (error) return <p className="px-4 py-3 text-sm text-red-700">{error}</p>;
+  if (error) return <p className="px-4 py-3 text-sm text-danger">{error}</p>;
   if (!detail) return null;
 
   const orderLines = detail.OrderLines ?? [];
@@ -141,11 +148,11 @@ function AssemblyDetailPanel({
                   <td className="py-1 pr-4">
                     {line.Name || "—"} <span className="text-xs text-slate-400">({line.ProductCode || "—"})</span>
                   </td>
-                  <td className="py-1 pr-4 text-right">
+                  <td className="py-1 pr-4 text-right tabular-nums">
                     {formatNumber(line.TotalQuantity ?? line.Quantity ?? 0)} {line.Unit ?? ""}
                   </td>
-                  <td className="py-1 pr-4 text-right">{line.WastagePercent ? `${formatNumber(line.WastagePercent)}%` : "—"}</td>
-                  <td className="py-1 pr-4 text-right">{formatNumber(line.TotalCost ?? 0)}</td>
+                  <td className="py-1 pr-4 text-right tabular-nums">{line.WastagePercent ? `${formatNumber(line.WastagePercent)}%` : "—"}</td>
+                  <td className="py-1 pr-4 text-right tabular-nums">{formatNumber(line.TotalCost ?? 0)}</td>
                 </tr>
               ))}
             </tbody>
@@ -175,11 +182,11 @@ function AssemblyDetailPanel({
                     {line.Name || "—"} <span className="text-xs text-slate-400">({line.ProductCode || "—"})</span>
                   </td>
                   <td className="py-1 pr-4">{line.BatchSN || "—"}</td>
-                  <td className="py-1 pr-4 text-right">
+                  <td className="py-1 pr-4 text-right tabular-nums">
                     {formatNumber(line.Quantity ?? 0)} {line.Unit ?? ""}
                   </td>
-                  <td className="py-1 pr-4 text-right">{formatNumber(line.Cost ?? 0)}</td>
-                  <td className="py-1 pr-4 text-right">{formatNumber((line.Quantity ?? 0) * (line.Cost ?? 0))}</td>
+                  <td className="py-1 pr-4 text-right tabular-nums">{formatNumber(line.Cost ?? 0)}</td>
+                  <td className="py-1 pr-4 text-right tabular-nums">{formatNumber((line.Quantity ?? 0) * (line.Cost ?? 0))}</td>
                 </tr>
               ))}
             </tbody>
@@ -398,90 +405,77 @@ export default function AssembliesPage() {
         show={isExportingDetail}
         label={detailExportProgress ? `Fetching component details… (${detailExportProgress.done} of ${detailExportProgress.total})` : "Preparing detail export…"}
       />
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <p className="font-medium text-slate-900">Instance</p>
-        <div className="mt-3">
-          <InstancePicker {...picker} onChange={picker.setInstanceId} />
-        </div>
+      <Panel>
+        <PanelTitle className="mb-3">Instance</PanelTitle>
+        <InstancePicker {...picker} onChange={picker.setInstanceId} />
 
-        <button
-          type="button"
-          onClick={handleScan}
-          disabled={isScanning || !instanceId}
-          className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50"
-        >
-          {isScanning && <Spinner className="mr-1.5" />}
-          {isScanning ? "Scanning…" : "Scan assemblies"}
-        </button>
-        {scanError && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{scanError}</p>}
-      </section>
+        <div className="mt-4">
+          <Button onClick={handleScan} disabled={!instanceId} loading={isScanning}>
+            {isScanning ? "Scanning…" : "Scan assemblies"}
+          </Button>
+        </div>
+        {scanError && (
+          <div className="mt-4">
+            <Alert tone="danger">{scanError}</Alert>
+          </div>
+        )}
+      </Panel>
 
       {assemblies && (
         <section className="mt-6 flex flex-col gap-4">
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <Panel className="p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p className="text-sm font-medium text-slate-700">Status</p>
-                <div className="mt-2 flex flex-wrap gap-3 text-sm">
+                <PanelTitle className="mb-2">Status</PanelTitle>
+                <div className="flex flex-wrap gap-4">
                   {STATUS_OPTIONS.map((s) => (
-                    <label key={s.value} className="flex items-center gap-1.5">
-                      <input type="checkbox" checked={statusFilter.has(s.value)} onChange={() => toggleStatus(s.value)} className="h-4 w-4" />
-                      {s.label}
-                    </label>
+                    <Checkbox key={s.value} label={s.label} checked={statusFilter.has(s.value)} onChange={() => toggleStatus(s.value)} />
                   ))}
                 </div>
               </div>
 
               <div className="flex-1 sm:max-w-xs">
-                <p className="text-sm font-medium text-slate-700">Search</p>
-                <input
-                  type="text"
+                <Input
+                  label="Search"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Assembly number or product…"
-                  className="mt-2 w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
                 />
               </div>
             </div>
-          </div>
+          </Panel>
 
           <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
             <p>
               {filtered.length} of {assemblies.length} assembl{assemblies.length === 1 ? "y" : "ies"} shown
             </p>
             <div className="flex items-center gap-3">
-              <p className="font-medium text-slate-700">
+              <p className="font-medium text-slate-700 tabular-nums">
                 Total quantity: {formatNumber(totals.quantity)} · Total cost: {formatNumber(totals.cost)}
               </p>
-              <button
-                type="button"
-                onClick={handleExport}
-                disabled={isExporting || filtered.length === 0}
-                className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                {isExporting && <Spinner className="mr-1.5" />}
+              <Button variant="secondary" size="sm" onClick={handleExport} disabled={filtered.length === 0} loading={isExporting}>
                 {isExporting ? "Exporting…" : "Export .xlsx"}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={handleExportDetail}
                 disabled={isExportingDetail || filtered.length === 0}
-                className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                 title="Includes every component line and the estimated (planned) vs actual (as-built) total per assembly."
               >
                 Export detail (planned vs actual) .xlsx
-              </button>
+              </Button>
             </div>
           </div>
-          {exportError && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{exportError}</p>}
-          {detailExportError && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{detailExportError}</p>}
+          {exportError && <Alert tone="danger">{exportError}</Alert>}
+          {detailExportError && <Alert tone="danger">{detailExportError}</Alert>}
 
           {filtered.length > 0 ? (
-            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
               <table className="w-full text-left text-sm text-slate-700">
                 <thead>
-                  <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
-                    <th className="w-8 px-2 py-2"></th>
+                  <tr className="border-b-2 border-slate-300 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    <th scope="col" className="w-8 px-2 py-2"></th>
                     <SortHeader
                       label="Assembly #"
                       column="assemblyNumber"
@@ -529,13 +523,11 @@ export default function AssembliesPage() {
                             {a.ProductName || "—"} <span className="text-xs text-slate-400">({a.ProductCode || "—"})</span>
                           </td>
                           <td className="px-4 py-2 align-top">
-                            <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusOption?.badge ?? "bg-slate-100 text-slate-700"}`}>
-                              {statusOption?.label ?? a.Status ?? "—"}
-                            </span>
+                            <Badge tone={statusOption?.tone ?? "neutral"}>{statusOption?.label ?? a.Status ?? "—"}</Badge>
                           </td>
                           <td className="px-4 py-2 align-top">{dateOnly(a.Date)}</td>
-                          <td className="px-4 py-2 align-top text-right">{formatNumber(a.Quantity ?? 0)}</td>
-                          <td className="px-4 py-2 align-top text-right">{formatNumber(totalCost(a))}</td>
+                          <td className="px-4 py-2 align-top text-right tabular-nums">{formatNumber(a.Quantity ?? 0)}</td>
+                          <td className="px-4 py-2 align-top text-right tabular-nums">{formatNumber(totalCost(a))}</td>
                         </tr>
                         {isExpanded && (
                           <tr className="border-b border-slate-100 bg-slate-50 last:border-0">
@@ -555,7 +547,7 @@ export default function AssembliesPage() {
               </table>
             </div>
           ) : (
-            <p className="text-base text-slate-500">No assemblies match the current filter.</p>
+            <EmptyState title="No matching assemblies" description="No assemblies match the current filter." />
           )}
         </section>
       )}
