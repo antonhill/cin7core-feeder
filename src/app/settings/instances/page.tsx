@@ -5,7 +5,12 @@ import { useSearchParams } from "next/navigation";
 import { deleteInstance, listInstances, testInstanceConnection, upsertInstance, type InstanceRecord } from "./actions";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { INSTANCES_MODULE } from "@/app/module-nav";
-import { Spinner } from "@/app/Spinner";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { Dialog } from "@/components/ui/Dialog";
+import { Alert } from "@/components/ui/Alert";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 export default function InstancesSettingsPage() {
   return (
@@ -72,6 +77,10 @@ function InstancesSettingsPageInner() {
   }
 
   function handleDelete(instanceId: string) {
+    // Native confirm() left as-is deliberately — replacing it with the new
+    // ConfirmDialog primitive is a confirmation-semantics change, out of
+    // scope for this presentation-only reskin (see the Diagnostics
+    // follow-up note in the same review package).
     if (!confirm("Delete this Cin7 Core instance connection?")) return;
     setError(null);
     startTransition(async () => {
@@ -90,24 +99,23 @@ function InstancesSettingsPageInner() {
     <main className="mx-auto w-full max-w-4xl px-6 py-12">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <ModuleHeader module={INSTANCES_MODULE}>Connect and manage the Cin7 Core instances your org syncs to.</ModuleHeader>
-        <button
-          onClick={() => setModalTarget("new")}
-          className="shrink-0 rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500"
-        >
+        <Button onClick={() => setModalTarget("new")} className="shrink-0">
           + Add instance
-        </button>
+        </Button>
       </div>
 
       {error && (
-        <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+        <div className="mt-4">
+          <Alert tone="danger">{error}</Alert>
+        </div>
       )}
 
       <div className="mt-6 flex flex-col gap-3">
         {instances.map((inst) => (
-          <div key={inst.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-center justify-between">
+          <div key={inst.id} className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="text-lg font-semibold text-slate-900">
+                <p className="text-base font-semibold text-slate-900">
                   {inst.name} {!inst.active && <span className="text-sm font-normal text-slate-400">(inactive)</span>}
                 </p>
                 <p className="text-sm text-slate-500">
@@ -115,125 +123,71 @@ function InstancesSettingsPageInner() {
                 </p>
               </div>
               <div className="flex flex-wrap justify-end gap-2">
-                <button onClick={() => handleTest(inst.id)} disabled={isPending} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                <Button variant="secondary" size="sm" onClick={() => handleTest(inst.id)} disabled={isPending}>
                   Test connection
-                </button>
-                <button onClick={() => setModalTarget(inst.id)} className="rounded-full border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => setModalTarget(inst.id)}>
                   Edit
-                </button>
-                <button onClick={() => handleDelete(inst.id)} className="rounded-full border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50">
+                </Button>
+                <Button variant="destructive" size="sm" onClick={() => handleDelete(inst.id)}>
                   Delete
-                </button>
+                </Button>
               </div>
             </div>
             {testResults[inst.id] && (
               <pre
-                className={`mt-3 max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-xs ${testResults[inst.id].ok ? "text-emerald-700" : "text-red-700"}`}
+                className={`mt-3 max-h-96 overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-xs ${testResults[inst.id].ok ? "text-success" : "text-danger"}`}
               >
                 {testResults[inst.id].message}
               </pre>
             )}
           </div>
         ))}
-        {loaded && instances.length === 0 && <p className="text-base text-slate-500">No instances connected yet.</p>}
+        {loaded && instances.length === 0 && (
+          <EmptyState
+            title="No instances connected yet"
+            description="Connect a Cin7 Core instance to start syncing products, customers, and reports."
+            action={<Button onClick={() => setModalTarget("new")}>+ Add instance</Button>}
+          />
+        )}
       </div>
 
-      {modalTarget && (
-        <InstanceModal
-          instance={editingInstance}
-          isPending={isPending}
-          onClose={() => setModalTarget(null)}
-          onSubmit={(form) => handleSave(form, editingInstance?.id)}
-        />
-      )}
-    </main>
-  );
-}
-
-function InstanceModal({
-  instance,
-  isPending,
-  onSubmit,
-  onClose,
-}: {
-  instance?: InstanceRecord;
-  isPending: boolean;
-  onSubmit: (form: FormData) => void;
-  onClose: () => void;
-}) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
-      onClick={onClose}
-      role="presentation"
-    >
-      <div
-        className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="instance-modal-title"
-      >
-        <div className="flex items-center justify-between">
-          <h2 id="instance-modal-title" className="text-xl font-semibold text-slate-900">
-            {instance ? "Edit instance" : "Add an instance"}
-          </h2>
-          <button onClick={onClose} aria-label="Close" className="text-slate-400 hover:text-slate-700">
-            ✕
-          </button>
-        </div>
-
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            onSubmit(new FormData(e.currentTarget));
-          }}
-          className="mt-4 flex flex-col gap-3"
-        >
-          <label className="flex flex-col gap-1.5 text-base">
-            <span className="font-medium text-slate-700">Name</span>
-            <input name="name" defaultValue={instance?.name} required autoFocus className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none" />
-          </label>
-          <label className="flex flex-col gap-1.5 text-base">
-            <span className="font-medium text-slate-700">Account ID</span>
-            <input name="accountId" defaultValue={instance?.accountId} required className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none" />
-          </label>
-          <label className="flex flex-col gap-1.5 text-base">
-            <span className="font-medium text-slate-700">
-              Application key {instance && <span className="text-sm font-normal text-slate-400">(leave blank to keep current)</span>}
-            </span>
-            <input name="applicationKey" type="password" className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none" />
-          </label>
-          <label className="flex items-center gap-2 text-base">
-            <input name="active" type="checkbox" defaultChecked={instance?.active ?? true} className="h-4 w-4" />
-            Active
-          </label>
-          <label className="flex flex-col gap-1.5 text-base">
-            <span className="font-medium text-slate-700">
-              Fulfilment view start date <span className="text-sm font-normal text-slate-400">(optional)</span>
-            </span>
-            <input
+      <Dialog open={modalTarget !== null} onClose={() => setModalTarget(null)} title={editingInstance ? "Edit instance" : "Add an instance"}>
+        {modalTarget && (
+          <form
+            id="instance-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSave(new FormData(e.currentTarget), editingInstance?.id);
+            }}
+            className="flex flex-col gap-4"
+          >
+            <Input name="name" label="Name" defaultValue={editingInstance?.name} required autoFocus />
+            <Input name="accountId" label="Account ID" defaultValue={editingInstance?.accountId} required />
+            <Input
+              name="applicationKey"
+              type="password"
+              label="Application key"
+              helperText={editingInstance ? "Leave blank to keep current" : undefined}
+            />
+            <Checkbox name="active" label="Active" defaultChecked={editingInstance?.active ?? true} />
+            <Input
               name="fulfilmentViewStartDate"
               type="date"
-              defaultValue={instance?.fulfilmentViewStartDate ?? ""}
-              className="rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none"
+              label="Fulfilment view start date"
+              helperText="Orders dated before this hide from Pick Today, Ship Today, and the Shipping Calendar — useful while cleaning up old history. Leave blank to show everything."
             />
-            <span className="text-sm text-slate-500">
-              Orders dated before this hide from Pick Today, Ship Today, and the Shipping Calendar — useful while
-              cleaning up old history. Leave blank to show everything.
-            </span>
-          </label>
-          <div className="mt-2 flex gap-2">
-            <button type="submit" disabled={isPending} className="rounded-lg bg-indigo-600 px-4 py-2.5 text-base font-semibold text-white transition hover:bg-indigo-500 disabled:opacity-50">
-              {isPending && <Spinner className="mr-1.5" />}
-              {isPending ? "Saving…" : instance ? "Save" : "Add"}
-            </button>
-            <button type="button" onClick={onClose} className="rounded-lg border border-slate-300 px-4 py-2.5 text-base font-medium text-slate-700 hover:bg-slate-50">
-              Cancel
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="secondary" onClick={() => setModalTarget(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" loading={isPending}>
+                {editingInstance ? "Save" : "Add"}
+              </Button>
+            </div>
+          </form>
+        )}
+      </Dialog>
+    </main>
   );
 }
