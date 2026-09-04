@@ -29,30 +29,30 @@
    * actually need: a solid fill, a hover fill, a subtle background, and a
    * border tone. Reskin direction, approved 2026-09-04.
    */
-  --color-primary: #4f46e5; /* indigo-600 */
-  --color-primary-hover: #4338ca; /* indigo-700 */
-  --color-primary-subtle: #eef2ff; /* indigo-50 */
-  --color-primary-border: #6366f1; /* indigo-500 — also the keyboard focus-ring color */
+  --primary: #4f46e5; /* indigo-600 */
+  --primary-hover: #4338ca; /* indigo-700 */
+  --primary-subtle: #eef2ff; /* indigo-50 */
+  --primary-border: #6366f1; /* indigo-500 — also the keyboard focus-ring color */
 
-  --color-success: #059669; /* emerald-600 */
-  --color-success-hover: #047857; /* emerald-700 */
-  --color-success-subtle: #ecfdf5; /* emerald-50 */
-  --color-success-border: #6ee7b7; /* emerald-300 */
+  --success: #059669; /* emerald-600 */
+  --success-hover: #047857; /* emerald-700 */
+  --success-subtle: #ecfdf5; /* emerald-50 */
+  --success-border: #6ee7b7; /* emerald-300 */
 
-  --color-warning: #d97706; /* amber-600 */
-  --color-warning-subtle: #fffbeb; /* amber-50 */
-  --color-warning-border: #fcd34d; /* amber-300 */
+  --warning: #d97706; /* amber-600 */
+  --warning-subtle: #fffbeb; /* amber-50 */
+  --warning-border: #fcd34d; /* amber-300 */
 
-  --color-danger: #dc2626; /* red-600 */
-  --color-danger-hover: #b91c1c; /* red-700 */
-  --color-danger-subtle: #fef2f2; /* red-50 */
-  --color-danger-border: #fca5a5; /* red-300 */
+  --danger: #dc2626; /* red-600 */
+  --danger-hover: #b91c1c; /* red-700 */
+  --danger-subtle: #fef2f2; /* red-50 */
+  --danger-border: #fca5a5; /* red-300 */
 
-  --color-info: #0284c7; /* sky-600 */
-  --color-info-subtle: #f0f9ff; /* sky-50 */
-  --color-info-border: #7dd3fc; /* sky-300 */
+  --info: #0284c7; /* sky-600 */
+  --info-subtle: #f0f9ff; /* sky-50 */
+  --info-border: #7dd3fc; /* sky-300 */
 
-  --color-focus-ring: #6366f1; /* indigo-500 — the one focus-ring color used everywhere, on light and dark surfaces alike */
+  --focus-ring: #6366f1; /* indigo-500 — the one focus-ring color used everywhere, on light and dark surfaces alike */
 }
 
 @theme inline {
@@ -64,25 +64,25 @@
   --color-sidebar-text: var(--sidebar-text);
   --color-sidebar-text-active: var(--sidebar-text-active);
 
-  --color-primary: var(--color-primary);
-  --color-primary-hover: var(--color-primary-hover);
-  --color-primary-subtle: var(--color-primary-subtle);
-  --color-primary-border: var(--color-primary-border);
-  --color-success: var(--color-success);
-  --color-success-hover: var(--color-success-hover);
-  --color-success-subtle: var(--color-success-subtle);
-  --color-success-border: var(--color-success-border);
-  --color-warning: var(--color-warning);
-  --color-warning-subtle: var(--color-warning-subtle);
-  --color-warning-border: var(--color-warning-border);
-  --color-danger: var(--color-danger);
-  --color-danger-hover: var(--color-danger-hover);
-  --color-danger-subtle: var(--color-danger-subtle);
-  --color-danger-border: var(--color-danger-border);
-  --color-info: var(--color-info);
-  --color-info-subtle: var(--color-info-subtle);
-  --color-info-border: var(--color-info-border);
-  --color-focus-ring: var(--color-focus-ring);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-subtle: var(--primary-subtle);
+  --color-primary-border: var(--primary-border);
+  --color-success: var(--success);
+  --color-success-hover: var(--success-hover);
+  --color-success-subtle: var(--success-subtle);
+  --color-success-border: var(--success-border);
+  --color-warning: var(--warning);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-warning-border: var(--warning-border);
+  --color-danger: var(--danger);
+  --color-danger-hover: var(--danger-hover);
+  --color-danger-subtle: var(--danger-subtle);
+  --color-danger-border: var(--danger-border);
+  --color-info: var(--info);
+  --color-info-subtle: var(--info-subtle);
+  --color-info-border: var(--info-border);
+  --color-focus-ring: var(--focus-ring);
 
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
@@ -104,7 +104,7 @@ body {
  * replacing it with something at least as visible.
  */
 :focus-visible {
-  outline: 2px solid var(--color-focus-ring);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
