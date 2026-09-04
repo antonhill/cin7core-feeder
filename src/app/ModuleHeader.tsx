@@ -12,7 +12,7 @@ export function ModuleHeader({ module, children }: { module: ModuleConfig; child
           <Icon className="h-5 w-5" />
         </span>
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-slate-900">{module.label}</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900">{module.label}</h1>
           <div className="max-w-2xl text-sm leading-snug text-slate-500">{children}</div>
         </div>
       </div>

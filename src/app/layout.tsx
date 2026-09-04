@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { AppNav } from "./AppNav";
+import { AppShell } from "./AppShell";
 import TourGuide from "./tour-guide";
 import { getCurrentUserInfo } from "@/actions/auth";
 import { clearImpersonatedOrgAction } from "@/actions/org-switch";
@@ -67,39 +67,53 @@ export default async function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="flex h-full min-h-screen flex-row">
-        {email && (
-          <AppNav
-            key={orgId}
-            userEmail={email}
-            isSuperAdmin={isSuperAdmin}
-            isOrgAdmin={isOrgAdmin}
-            orgId={orgId}
-            orgName={orgName}
-            orgLogoUrl={orgLogoUrl}
-            disabledModules={disabledModules}
-            showBilling={checkoutAvailableFor(subscriptionStatus)}
-            hasMultipleOrgs={hasMultipleOrgs}
-          />
-        )}
-        <div className="flex flex-1 flex-col overflow-x-hidden overflow-y-auto">
-          {isImpersonating && (
-            <div className="flex flex-wrap items-center justify-between gap-2 bg-amber-500 px-4 py-2 text-sm font-semibold text-white print:hidden">
-              <span>Viewing as {orgName ?? "another organization"} (master user)</span>
-              <form action={clearImpersonatedOrgAction}>
-                <button type="submit" className="rounded-full border border-white/60 px-3 py-0.5 text-xs font-semibold hover:bg-white/10">
-                  Exit
-                </button>
-              </form>
+      <body className="flex h-full min-h-screen flex-col md:flex-row">
+        {(() => {
+          const content = (
+            <div className="flex flex-1 flex-col overflow-x-hidden overflow-y-auto">
+              {isImpersonating && (
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-warning px-4 py-2 text-sm font-semibold text-white print:hidden">
+                  <span>Viewing as {orgName ?? "another organization"} (master user)</span>
+                  <form action={clearImpersonatedOrgAction}>
+                    <button type="submit" className="rounded-full border border-white/60 px-3 py-0.5 text-xs font-semibold hover:bg-white/10">
+                      Exit
+                    </button>
+                  </form>
+                </div>
+              )}
+              {trialDaysLeft !== null && (
+                <div className="bg-warning-subtle px-4 py-2 text-center text-sm font-medium text-amber-900 print:hidden">
+                  Trial — {trialDaysLeft} day{trialDaysLeft === 1 ? "" : "s"} left. Connect 1 instance, read-only until you subscribe.
+                </div>
+              )}
+              {children}
             </div>
-          )}
-          {trialDaysLeft !== null && (
-            <div className="bg-amber-100 px-4 py-2 text-center text-sm font-medium text-amber-900 print:hidden">
-              Trial — {trialDaysLeft} day{trialDaysLeft === 1 ? "" : "s"} left. Connect 1 instance, read-only until you subscribe.
-            </div>
-          )}
-          {children}
-        </div>
+          );
+
+          return email ? (
+            // key={orgId}: remounts the whole shell (including AppNav's own
+            // logo state) on an org switch — see AppNav's own comment on why
+            // a useEffect-based sync is the wrong tool here.
+            <AppShell
+              key={orgId}
+              nav={{
+                userEmail: email,
+                isSuperAdmin,
+                isOrgAdmin,
+                orgId,
+                orgName,
+                orgLogoUrl,
+                disabledModules,
+                showBilling: checkoutAvailableFor(subscriptionStatus),
+                hasMultipleOrgs,
+              }}
+            >
+              {content}
+            </AppShell>
+          ) : (
+            content
+          );
+        })()}
         {orgId && <TourGuide orgId={orgId} disabledModules={disabledModules} />}
       </body>
     </html>
