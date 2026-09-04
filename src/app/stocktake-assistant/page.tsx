@@ -7,8 +7,15 @@ import { ModuleHeader } from "@/app/ModuleHeader";
 import { STOCKTAKE_MODULE } from "@/app/module-nav";
 import { loadStocktakeLocationsAction, previewStocktakeAction, type StocktakePreviewData } from "./actions";
 import { setBulkChecked, mergeStocktakeFile, buildStocktakeCsv, type ConfirmationLine, type StocktakeStage } from "@/reports/stocktake-assistant/build";
-import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
+import { Button } from "@/components/ui/Button";
+import { Select } from "@/components/ui/Select";
+import { Input } from "@/components/ui/Input";
+import { Alert } from "@/components/ui/Alert";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Panel } from "@/components/ui/Panel";
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/Table";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 function triggerCsvDownload(csv: string, filename: string) {
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
@@ -25,6 +32,11 @@ function triggerCsvDownload(csv: string, filename: string) {
 function stageLabel(stage: StocktakeStage): string {
   return stage === "pick" ? "Picked" : "Packed";
 }
+
+const STAGE_TONE: Record<StocktakeStage, BadgeTone> = {
+  pick: "warning",
+  pack: "info",
+};
 
 export default function StocktakeAssistantPage() {
   const picker = useInstancePicker();
@@ -117,58 +129,45 @@ export default function StocktakeAssistantPage() {
 
       <PageLoadingIndicator show={isLoadingPreview} label="Reading file…" />
 
-      <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <Panel className="mt-8">
         <form onSubmit={handlePreview} className="flex flex-col gap-4">
           <div className="grid gap-4 sm:grid-cols-3">
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">Instance</span>
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-slate-700">Instance</span>
               <InstancePicker {...picker} onChange={picker.setInstanceId} />
-            </label>
+            </div>
 
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">Stocktake location</span>
-              <select
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                disabled={!instanceId || isLoadingLocations}
-                className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none disabled:opacity-50"
-              >
-                <option value="">{isLoadingLocations ? "Loading…" : "Choose a location"}</option>
-                {locations.map((l) => (
-                  <option key={l} value={l}>
-                    {l}
-                  </option>
-                ))}
-              </select>
-              {locationsError && <span className="text-xs text-red-600">{locationsError}</span>}
-            </label>
+            <Select
+              label="Stocktake location"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              disabled={!instanceId || isLoadingLocations}
+              error={locationsError ?? undefined}
+            >
+              <option value="">{isLoadingLocations ? "Loading…" : "Choose a location"}</option>
+              {locations.map((l) => (
+                <option key={l} value={l}>
+                  {l}
+                </option>
+              ))}
+            </Select>
 
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-slate-700">Stocktake CSV</span>
-              <input
-                name="file"
-                type="file"
-                accept=".csv,text/csv"
-                required
-                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:border-indigo-500 focus:outline-none"
-              />
-            </label>
+            <Input name="file" type="file" accept=".csv,text/csv" required label="Stocktake CSV" />
           </div>
 
-          <button
-            type="submit"
-            disabled={isLoadingPreview || !instanceId || !location}
-            className="self-start rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {isLoadingPreview && <Spinner className="mr-1.5" />}
+          <Button type="submit" disabled={!instanceId || !location} loading={isLoadingPreview} className="self-start">
             {isLoadingPreview ? "Reading…" : "Check for picked/packed stock"}
-          </button>
+          </Button>
         </form>
-        {previewError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{previewError}</p>}
-      </section>
+        {previewError && (
+          <div className="mt-3">
+            <Alert tone="danger">{previewError}</Alert>
+          </div>
+        )}
+      </Panel>
 
       {previewData && (
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <Panel className="mt-6">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <div>
               <p className="font-medium text-slate-900">
@@ -183,59 +182,63 @@ export default function StocktakeAssistantPage() {
             </div>
             {confirmationLines.length > 0 && (
               <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={() => bulkSet(false, "pick")} className="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                <Button variant="secondary" size="sm" type="button" onClick={() => bulkSet(false, "pick")}>
                   Skip all Picked
-                </button>
-                <button type="button" onClick={() => bulkSet(false, "pack")} className="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                </Button>
+                <Button variant="secondary" size="sm" type="button" onClick={() => bulkSet(false, "pack")}>
                   Skip all Packed
-                </button>
-                <button type="button" onClick={() => bulkSet(true)} className="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                </Button>
+                <Button variant="secondary" size="sm" type="button" onClick={() => bulkSet(true)}>
                   Recheck all
-                </button>
+                </Button>
               </div>
             )}
           </div>
 
           {confirmationLines.length === 0 ? (
-            <p className="mt-4 text-sm text-slate-400">No open orders currently have picked or packed stock at this location.</p>
+            <div className="mt-4">
+              <EmptyState title="No picked or packed stock" description="No open orders currently have picked or packed stock at this location." />
+            </div>
           ) : (
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 text-slate-500">
-                    <th className="py-2 pr-4"></th>
-                    <th className="py-2 pr-4">Product</th>
-                    <th className="py-2 pr-4">Status</th>
-                    <th className="py-2 pr-4 text-right">Quantity</th>
+            <div className="mt-4">
+              <Table>
+                <THead>
+                  <tr>
+                    <TH />
+                    <TH>Product</TH>
+                    <TH>Status</TH>
+                    <TH align="right">Quantity</TH>
                   </tr>
-                </thead>
-                <tbody>
+                </THead>
+                <TBody>
                   {sortedLines.map((line) => {
                     const index = confirmationLines.indexOf(line);
                     return (
-                      <tr key={`${line.productSku}-${line.stage}`} className="border-b border-slate-100 hover:bg-slate-50">
-                        <td className="py-1.5 pr-4">
-                          <input type="checkbox" checked={line.checked} onChange={() => toggleLine(index)} className="h-4 w-4" />
-                        </td>
-                        <td className="py-1.5 pr-4">
+                      <TR key={`${line.productSku}-${line.stage}`}>
+                        <TD>
+                          <input
+                            type="checkbox"
+                            aria-label={`Include ${line.productName ?? line.productSku} (${stageLabel(line.stage)})`}
+                            checked={line.checked}
+                            onChange={() => toggleLine(index)}
+                            className="h-4 w-4 rounded border-slate-300 text-primary"
+                          />
+                        </TD>
+                        <TD>
                           <div className="font-medium text-slate-900">{line.productName ?? line.productSku}</div>
-                          <div className="text-xs text-slate-400">{line.productSku}</div>
-                        </td>
-                        <td className="py-1.5 pr-4">
-                          <span
-                            className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                              line.stage === "pick" ? "bg-amber-100 text-amber-700" : "bg-sky-100 text-sky-700"
-                            }`}
-                          >
-                            {stageLabel(line.stage)}
-                          </span>
-                        </td>
-                        <td className="py-1.5 pr-4 text-right font-medium">{line.quantity.toLocaleString()}</td>
-                      </tr>
+                          <div className="font-mono text-xs text-slate-400">{line.productSku}</div>
+                        </TD>
+                        <TD>
+                          <Badge tone={STAGE_TONE[line.stage]}>{stageLabel(line.stage)}</Badge>
+                        </TD>
+                        <TD align="right" numeric className="font-medium">
+                          {line.quantity.toLocaleString()}
+                        </TD>
+                      </TR>
                     );
                   })}
-                </tbody>
-              </table>
+                </TBody>
+              </Table>
             </div>
           )}
 
@@ -243,20 +246,18 @@ export default function StocktakeAssistantPage() {
             <p className="text-sm text-slate-500">
               {checkedCount} of {confirmationLines.length} line{confirmationLines.length === 1 ? "" : "s"} will be added.
             </p>
-            <button
-              type="button"
-              onClick={handleDownload}
-              className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
-            >
+            <Button type="button" onClick={handleDownload}>
               Download stocktake file
-            </button>
+            </Button>
           </div>
           {downloadedFilename && (
-            <p className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-              Downloaded {downloadedFilename} — review the new rows and place each quantity in the right Bin before importing into Cin7.
-            </p>
+            <div className="mt-2">
+              <Alert tone="success">
+                Downloaded {downloadedFilename} — review the new rows and place each quantity in the right Bin before importing into Cin7.
+              </Alert>
+            </div>
           )}
-        </section>
+        </Panel>
       )}
     </main>
   );

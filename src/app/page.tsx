@@ -6,6 +6,9 @@ import { getOrderFulfillmentReport, getStockHealthReport, getProductAvailability
 import { StaleBadge, hoursSince, SNAPSHOT_STALE_HOURS } from "@/app/reports/sync-staleness";
 import MarketingHome from "@/app/marketing-home";
 import OnboardingChecklist from "@/app/onboarding-checklist";
+import { Panel } from "@/components/ui/Panel";
+import { Badge } from "@/components/ui/Badge";
+import { Alert } from "@/components/ui/Alert";
 
 interface HomeStats {
   activeInstances: number;
@@ -99,19 +102,26 @@ function StatCard({
   Icon: (props: { className?: string }) => React.ReactElement;
 }) {
   return (
-    <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <Panel className="flex items-center gap-4">
       <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm ${gradient}`}>
         <Icon className="h-5 w-5" />
       </span>
       <div>
-        <p className="text-2xl font-bold leading-none text-slate-900">{value.toLocaleString()}</p>
-        <p className="mt-1 text-xs font-medium uppercase tracking-wide text-slate-400">{label}</p>
+        <p className="text-2xl font-bold leading-none tabular-nums text-slate-900">{value.toLocaleString()}</p>
+        <p className="mt-1 text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
       </div>
-    </div>
+    </Panel>
   );
 }
 
-const CARD_CLASS = "block rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-lg";
+/**
+ * ShipTodayCard/StockHealthCard/the module tiles below all need real
+ * anchor-tag navigation semantics (a Link, not the Panel section element),
+ * so they stay hand-styled rather than wrapping Panel — but their surface
+ * language (radius, two-layer shadow) is aligned to match it exactly.
+ */
+const CARD_CLASS =
+  "block rounded-lg border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_10px_24px_-16px_rgba(15,23,42,0.18)] transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-lg";
 
 /** Deliberately distinguishes "nothing urgent" from a bare 0 — an empty ready-to-ship count is the single most important state to get right here, since it should read as reassuring, not ambiguous. */
 function ShipTodayCard({ readyToShip, overdue }: ShipTodayStats) {
@@ -125,11 +135,11 @@ function ShipTodayCard({ readyToShip, overdue }: ShipTodayStats) {
         <p className="text-base font-semibold leading-tight text-slate-900">All caught up — nothing to ship today</p>
       ) : (
         <div>
-          <p className="flex items-center gap-2 text-2xl font-bold leading-none text-slate-900">
+          <p className="flex items-center gap-2 text-2xl font-bold leading-none tabular-nums text-slate-900">
             {readyToShip.toLocaleString()}
-            {overdue > 0 && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">{overdue} overdue</span>}
+            {overdue > 0 && <Badge tone="danger">{overdue} overdue</Badge>}
           </p>
-          <p className="mt-1 text-xs font-medium uppercase tracking-wide text-slate-400">Ready to ship today</p>
+          <p className="mt-1 text-xs font-medium uppercase tracking-wide text-slate-500">Ready to ship today</p>
         </div>
       )}
     </Link>
@@ -170,17 +180,17 @@ function StockHealthCard({ summary, activeInstances }: { summary: StockHealthSum
         <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br shadow-sm ${SELF_COLORED_ICON_BADGE}`}>
           <StockLevelsIcon className="h-5 w-5" />
         </span>
-        <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Stock health</p>
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Stock health</p>
       </div>
       <div className="mt-4 flex h-2.5 overflow-hidden rounded-full bg-slate-100">
-        {healthy > 0 && <div className="bg-emerald-500" style={{ width: `${(healthy / totalProducts) * 100}%` }} />}
-        {stockoutRisk > 0 && <div className="bg-rose-500" style={{ width: `${(stockoutRisk / totalProducts) * 100}%` }} />}
-        {excess > 0 && <div className="bg-amber-500" style={{ width: `${(excess / totalProducts) * 100}%` }} />}
+        {healthy > 0 && <div className="bg-success" style={{ width: `${(healthy / totalProducts) * 100}%` }} />}
+        {stockoutRisk > 0 && <div className="bg-danger" style={{ width: `${(stockoutRisk / totalProducts) * 100}%` }} />}
+        {excess > 0 && <div className="bg-warning" style={{ width: `${(excess / totalProducts) * 100}%` }} />}
       </div>
-      <p className="mt-2.5 text-sm text-slate-600">
+      <p className="mt-2.5 text-sm tabular-nums text-slate-600">
         {stockoutRisk} stockout risk, {excess} excess, {healthy} healthy
       </p>
-      <p className="mt-1.5 flex items-center gap-2 text-xs text-slate-400">
+      <p className="mt-1.5 flex items-center gap-2 text-xs text-slate-500">
         {lastSyncedAt ? `As of ${new Date(lastSyncedAt).toLocaleString()}` : "Not yet synced"}
         {isStale && <StaleBadge label="Stale — sync recommended" />}
       </p>
@@ -202,21 +212,21 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ b
       <div className="flex items-center gap-4">
         <ToolboxLogo className="h-14 w-14 shrink-0 shadow-md" />
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Cin7 Core Toolbox</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Cin7 Core Toolbox</h1>
           <p className="mt-1 max-w-2xl text-base text-slate-500">Do amazing things that you cannot do in Cin7 Core.</p>
         </div>
       </div>
 
       {blockedModule && (
-        <p className="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          {blockedModule.label} isn&rsquo;t enabled for your organization — ask your admin if you need access.
-        </p>
+        <div className="mt-6">
+          <Alert tone="warning">{blockedModule.label} isn&rsquo;t enabled for your organization — ask your admin if you need access.</Alert>
+        </div>
       )}
 
       {teamAccessDenied && (
-        <p className="mt-6 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          Only your organization&rsquo;s owner or admin can manage team access.
-        </p>
+        <div className="mt-6">
+          <Alert tone="warning">Only your organization&rsquo;s owner or admin can manage team access.</Alert>
+        </div>
       )}
 
       {orgId && <OnboardingChecklist orgId={orgId} hasInstance={stats.activeInstances > 0} />}
@@ -229,7 +239,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ b
 
       {orgId && (
         <div className="mt-8">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400">Today</h2>
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Today</h2>
           <div className="mt-3 grid gap-4 sm:grid-cols-2">
             <ShipTodayCard readyToShip={shipToday.readyToShip} overdue={shipToday.overdue} />
             <StockHealthCard summary={stockHealth} activeInstances={stats.activeInstances} />
@@ -244,7 +254,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ b
             <Link
               key={module.href}
               href={module.href}
-              className="group rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-1 hover:border-slate-300 hover:shadow-lg"
+              className="group rounded-lg border border-slate-200 bg-white p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_10px_24px_-16px_rgba(15,23,42,0.18)] transition hover:-translate-y-1 hover:border-slate-300 hover:shadow-lg"
             >
               <span
                 className={`flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-sm transition-transform group-hover:scale-105 ${module.gradient}`}

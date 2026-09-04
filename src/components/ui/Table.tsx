@@ -29,7 +29,8 @@ export function TH({
   align = "left",
   className = "",
 }: {
-  children: React.ReactNode;
+  /** Optional — an action/controls column legitimately has no label. */
+  children?: React.ReactNode;
   align?: "left" | "right";
   className?: string;
 }) {
@@ -49,7 +50,8 @@ export function TD({
   numeric = false,
   className = "",
 }: {
-  children: React.ReactNode;
+  /** Optional — a conditionally-rendered cell (e.g. a badge that only sometimes appears) legitimately has nothing some of the time. */
+  children?: React.ReactNode;
   align?: "left" | "right";
   /** Applies `tabular-nums` so numeric columns line up — the reskin's default numeric treatment. Reach for `font-mono` separately, only on identifiers/SKUs/codes where a fixed-width face genuinely helps, never as a blanket "this is a number" costume. */
   numeric?: boolean;
