@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "ai-color-palette",
+        "value": "*",
+        "files": [
+          "src/app/AppNav.tsx"
+        ],
+        "createdAt": "2026-09-04T08:42:56.813Z",
+        "reason": "Pre-existing OrgPlaceholder fallback-avatar gradient (indigo-500→indigo-700), not introduced by the reskin — indigo is the approved primary brand color from the signed-off Phase 1 direction (Section H), used here as a single-hue tonal gradient on a small initials badge, not the multi-hue purple+cyan pattern the rule targets. Out of scope to change in a presentation-only reskin pass that didn't touch this line."
+      }
+    ]
+  }
+}
