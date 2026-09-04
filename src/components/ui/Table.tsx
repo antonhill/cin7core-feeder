@@ -74,11 +74,16 @@ export function TR({
   children,
   className = "",
   flagged,
-}: {
+  ...props
+}: React.HTMLAttributes<HTMLTableRowElement> & {
   children: React.ReactNode;
   className?: string;
   flagged?: "warning" | "danger";
 }) {
   const flagClass = flagged === "danger" ? "border-l-2 border-l-danger" : flagged === "warning" ? "border-l-2 border-l-warning" : "";
-  return <tr className={`hover:bg-slate-50 ${flagClass} ${className}`}>{children}</tr>;
+  return (
+    <tr className={`hover:bg-slate-50 ${flagClass} ${className}`} {...props}>
+      {children}
+    </tr>
+  );
 }
