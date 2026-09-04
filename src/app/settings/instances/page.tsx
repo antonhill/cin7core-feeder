@@ -11,6 +11,7 @@ import { Checkbox } from "@/components/ui/Checkbox";
 import { Dialog } from "@/components/ui/Dialog";
 import { Alert } from "@/components/ui/Alert";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Panel } from "@/components/ui/Panel";
 
 export default function InstancesSettingsPage() {
   return (
@@ -112,7 +113,7 @@ function InstancesSettingsPageInner() {
 
       <div className="mt-6 flex flex-col gap-3">
         {instances.map((inst) => (
-          <div key={inst.id} className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <Panel key={inst.id}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-base font-semibold text-slate-900">
@@ -141,7 +142,7 @@ function InstancesSettingsPageInner() {
                 {testResults[inst.id].message}
               </pre>
             )}
-          </div>
+          </Panel>
         ))}
         {loaded && instances.length === 0 && (
           <EmptyState
