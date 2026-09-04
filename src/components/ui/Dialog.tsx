@@ -3,6 +3,12 @@
 import { useEffect, useId, useRef } from "react";
 import { Button } from "./Button";
 
+const SIZE_CLASSES = {
+  md: "max-w-lg",
+  lg: "max-w-3xl",
+  xl: "max-w-6xl",
+} as const;
+
 export interface DialogProps {
   open: boolean;
   onClose: () => void;
@@ -10,6 +16,8 @@ export interface DialogProps {
   children: React.ReactNode;
   /** Right-aligned action row below the body — e.g. Cancel/Confirm buttons. */
   footer?: React.ReactNode;
+  /** "md" (default, ~32rem) fits a form or confirmation; "lg"/"xl" are for content that genuinely needs the width — a wide data table, not a general excuse to go bigger. */
+  size?: keyof typeof SIZE_CLASSES;
 }
 
 /**
@@ -24,7 +32,7 @@ export interface DialogProps {
  * is what reports every path back — Escape, backdrop click, or an explicit
  * close — through the same channel.
  */
-export function Dialog({ open, onClose, title, children, footer }: DialogProps) {
+export function Dialog({ open, onClose, title, children, footer, size = "md" }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
 
@@ -49,7 +57,7 @@ export function Dialog({ open, onClose, title, children, footer }: DialogProps) 
       onClose={onClose}
       onClick={handleBackdropClick}
       aria-labelledby={titleId}
-      className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-0 shadow-lg backdrop:bg-transparent"
+      className={`w-full ${SIZE_CLASSES[size]} rounded-lg border border-slate-200 bg-white p-0 shadow-lg backdrop:bg-transparent`}
     >
       <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
         <h2 id={titleId} className="text-base font-semibold text-slate-900">
