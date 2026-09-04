@@ -10,8 +10,14 @@ import { filterPriceableProducts, buildPriceUpdateLines, type PriceUpdateMode, t
 import type { ApplyFixesResult } from "@/audit/apply-fixes";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { PRICING_MODULE } from "@/app/module-nav";
-import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/Table";
+import { Alert } from "@/components/ui/Alert";
+import { Panel, PanelTitle } from "@/components/ui/Panel";
 
 function money(value: number): string {
   return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -134,6 +140,8 @@ export default function PricingPage() {
   function handleApply() {
     if (!instanceId || selectedLines.length === 0 || !previewData) return;
     const tierLabel = previewData.tierLabels[tierIndex];
+    // Native confirm() left as-is deliberately — this is a confirmation-
+    // semantics change, out of scope for the reskin.
     if (!confirm(`Update "${tierLabel}" on ${selectedLines.length} product(s)? This writes directly to Cin7.`)) return;
     setApplyError(null);
     setApplyResult(null);
@@ -159,7 +167,7 @@ export default function PricingPage() {
       </ModuleHeader>
       <PageLoadingIndicator show={isLoadingPreview} label="Loading products…" />
 
-      <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <Panel className="mt-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <span className="text-sm font-medium text-slate-700">Instance</span>
@@ -167,41 +175,36 @@ export default function PricingPage() {
               <InstancePicker {...picker} onChange={picker.setInstanceId} />
             </div>
           </div>
-          <button
-            type="button"
-            onClick={handleLoadProducts}
-            disabled={isLoadingPreview || !instanceId}
-            className="rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {isLoadingPreview && <Spinner className="mr-1.5" />}
+          <Button onClick={handleLoadProducts} disabled={!instanceId} loading={isLoadingPreview}>
             {isLoadingPreview ? "Loading…" : "Load products"}
-          </button>
+          </Button>
         </div>
-        {previewError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{previewError}</p>}
-      </section>
+        {previewError && (
+          <div className="mt-3">
+            <Alert tone="danger">{previewError}</Alert>
+          </div>
+        )}
+      </Panel>
 
       {previewData && (
-        <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <Panel className="mt-6">
           <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-start sm:justify-between">
             {categories.length > 0 && (
               <div className="flex-1">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-slate-700">Category</p>
-                  <div className="flex gap-3 text-xs text-indigo-600">
-                    <button type="button" onClick={() => setCategoryFilter(categories)} className="hover:underline">
+                  <PanelTitle>Category</PanelTitle>
+                  <div className="flex gap-3 text-xs">
+                    <Button variant="link" onClick={() => setCategoryFilter(categories)}>
                       Select all
-                    </button>
-                    <button type="button" onClick={() => setCategoryFilter([])} className="hover:underline">
+                    </Button>
+                    <Button variant="link" onClick={() => setCategoryFilter([])}>
                       Clear
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 <div className="mt-2 flex max-h-40 flex-col gap-1 overflow-y-auto text-sm">
                   {categories.map((cat) => (
-                    <label key={cat} className="flex items-center gap-2">
-                      <input type="checkbox" checked={categoryFilter.includes(cat)} onChange={() => toggleCategoryFilter(cat)} className="h-4 w-4" />
-                      {cat}
-                    </label>
+                    <Checkbox key={cat} label={cat} checked={categoryFilter.includes(cat)} onChange={() => toggleCategoryFilter(cat)} />
                   ))}
                 </div>
               </div>
@@ -210,55 +213,43 @@ export default function PricingPage() {
             {suppliers.length > 0 && (
               <div className="flex-1">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-slate-700">Supplier</p>
-                  <div className="flex gap-3 text-xs text-indigo-600">
-                    <button type="button" onClick={() => setSupplierFilter(suppliers)} className="hover:underline">
+                  <PanelTitle>Supplier</PanelTitle>
+                  <div className="flex gap-3 text-xs">
+                    <Button variant="link" onClick={() => setSupplierFilter(suppliers)}>
                       Select all
-                    </button>
-                    <button type="button" onClick={() => setSupplierFilter([])} className="hover:underline">
+                    </Button>
+                    <Button variant="link" onClick={() => setSupplierFilter([])}>
                       Clear
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 <div className="mt-2 flex max-h-40 flex-col gap-1 overflow-y-auto text-sm">
                   {suppliers.map((sup) => (
-                    <label key={sup} className="flex items-center gap-2">
-                      <input type="checkbox" checked={supplierFilter.includes(sup)} onChange={() => toggleSupplierFilter(sup)} className="h-4 w-4" />
-                      {sup}
-                    </label>
+                    <Checkbox key={sup} label={sup} checked={supplierFilter.includes(sup)} onChange={() => toggleSupplierFilter(sup)} />
                   ))}
                 </div>
               </div>
             )}
 
             <div className="flex-1">
-              <p className="text-sm font-medium text-slate-700">Search</p>
-              <input
-                type="text"
+              <Input
+                label="Search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Part of a SKU or product name…"
-                className="mt-2 w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+                helperText={`${filteredProducts.length} product(s) match.`}
               />
-              <p className="mt-2 text-xs text-slate-400">{filteredProducts.length} product(s) match.</p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-end gap-4 border-b border-slate-100 py-4">
-            <div>
-              <p className="text-sm font-medium text-slate-700">Price tier</p>
-              <select
-                value={tierIndex}
-                onChange={(e) => setTierIndex(Number(e.target.value))}
-                className="mt-2 rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              >
-                {previewData.tierLabels.map((label, i) => (
-                  <option key={label} value={i}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Select label="Price tier" value={tierIndex} onChange={(e) => setTierIndex(Number(e.target.value))} className="w-44">
+              {previewData.tierLabels.map((label, i) => (
+                <option key={label} value={i}>
+                  {label}
+                </option>
+              ))}
+            </Select>
 
             <div>
               <p className="text-sm font-medium text-slate-700">Mode</p>
@@ -266,8 +257,8 @@ export default function PricingPage() {
                 <button
                   type="button"
                   onClick={() => setMode("set")}
-                  className={`rounded-full border px-3 py-1.5 text-sm font-medium ${
-                    mode === "set" ? "border-indigo-600 bg-indigo-50 text-indigo-700" : "border-slate-300 text-slate-700 hover:bg-slate-50"
+                  className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ${
+                    mode === "set" ? "border-primary-border bg-primary-subtle text-primary" : "border-slate-300 text-slate-700 hover:bg-slate-50"
                   }`}
                 >
                   Set exact price
@@ -275,8 +266,10 @@ export default function PricingPage() {
                 <button
                   type="button"
                   onClick={() => setMode("increase_percent")}
-                  className={`rounded-full border px-3 py-1.5 text-sm font-medium ${
-                    mode === "increase_percent" ? "border-indigo-600 bg-indigo-50 text-indigo-700" : "border-slate-300 text-slate-700 hover:bg-slate-50"
+                  className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ${
+                    mode === "increase_percent"
+                      ? "border-primary-border bg-primary-subtle text-primary"
+                      : "border-slate-300 text-slate-700 hover:bg-slate-50"
                   }`}
                 >
                   Increase by %
@@ -284,100 +277,114 @@ export default function PricingPage() {
               </div>
             </div>
 
-            <div>
-              <p className="text-sm font-medium text-slate-700">{mode === "set" ? "New price" : "% increase"}</p>
-              <input
-                type="number"
-                step="0.01"
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                placeholder={mode === "set" ? "e.g. 99.99" : "e.g. 10"}
-                className="mt-2 w-32 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
-              />
-            </div>
+            <Input
+              label={mode === "set" ? "New price" : "% increase"}
+              type="number"
+              step="0.01"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder={mode === "set" ? "e.g. 99.99" : "e.g. 10"}
+              className="w-32"
+            />
 
             {selectedLines.length > 0 && (
-              <button
-                type="button"
+              <Button
                 onClick={handleApply}
                 disabled={writeDisabled}
+                loading={isApplying}
                 title={!canWrite ? "Writing to Cin7 is disabled on your current plan." : undefined}
-                className="ml-auto rounded-full bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                className="ml-auto"
               >
-                {isApplying && <Spinner className="mr-1.5" />}
                 {isApplying ? "Updating…" : `Update ${selectedLines.length} product${selectedLines.length === 1 ? "" : "s"}`}
-              </button>
+              </Button>
             )}
           </div>
 
-          {applyError && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{applyError}</p>}
+          {applyError && (
+            <div className="mt-3">
+              <Alert tone="danger">{applyError}</Alert>
+            </div>
+          )}
           {applyResult && (
-            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-              Updated {applyResult.succeeded} product{applyResult.succeeded === 1 ? "" : "s"} in Cin7.
-              {applyResult.failed.length > 0 && (
-                <>
-                  <p className="mt-1 font-medium text-red-700">{applyResult.failed.length} failed:</p>
-                  <ul className="mt-1 list-disc pl-5 text-red-700">
-                    {applyResult.failed.map((f, i) => (
-                      <li key={i}>
-                        {f.productId}: {f.error}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
+            <div className="mt-3">
+              <Alert tone="success">
+                Updated {applyResult.succeeded} product{applyResult.succeeded === 1 ? "" : "s"} in Cin7.
+                {applyResult.failed.length > 0 && (
+                  <>
+                    <p className="mt-1 font-medium text-danger">{applyResult.failed.length} failed:</p>
+                    <ul className="mt-1 list-disc pl-5 text-danger">
+                      {applyResult.failed.map((f, i) => (
+                        <li key={i}>
+                          {f.productId}: {f.error}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </Alert>
             </div>
           )}
 
-          {!valueIsValid && <p className="mt-4 text-sm text-slate-400">Enter a value above to see the proposed price changes.</p>}
+          {!valueIsValid && <p className="mt-4 text-sm text-slate-500">Enter a value above to see the proposed price changes.</p>}
 
           {valueIsValid && allCandidateLines.length === 0 && (
-            <p className="mt-4 text-sm text-slate-400">Nothing would change — every filtered product already matches this value in {tierLabel}.</p>
+            <p className="mt-4 text-sm text-slate-500">Nothing would change — every filtered product already matches this value in {tierLabel}.</p>
           )}
 
           {valueIsValid && allCandidateLines.length > 0 && (
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 text-slate-500">
-                    <th className="py-2 pr-4">
+            <div className="mt-4">
+              <Table>
+                <THead>
+                  <tr>
+                    <TH>
                       <input
                         type="checkbox"
+                        aria-label="Select all products"
                         checked={excludedProductIds.size === 0}
                         ref={(el) => {
                           if (el) el.indeterminate = excludedProductIds.size > 0 && excludedProductIds.size < allCandidateLines.length;
                         }}
                         onChange={toggleAllLines}
-                        className="h-4 w-4"
+                        className="h-4 w-4 rounded border-slate-300 text-primary"
                       />
-                    </th>
-                    <th className="py-2 pr-4">Product</th>
-                    <th className="py-2 pr-4 text-right">Current</th>
-                    <th className="py-2 pr-4 text-right">New</th>
+                    </TH>
+                    <TH>Product</TH>
+                    <TH align="right">Current</TH>
+                    <TH align="right">New</TH>
                   </tr>
-                </thead>
-                <tbody>
+                </THead>
+                <TBody>
                   {allCandidateLines.map((line: PriceUpdateLine) => {
                     const checked = !excludedProductIds.has(line.productId);
                     return (
-                      <tr key={line.productId} className={`border-b border-slate-100 ${checked ? "" : "opacity-50"}`}>
-                        <td className="py-1.5 pr-4">
-                          <input type="checkbox" checked={checked} onChange={() => toggleLine(line.productId)} className="h-4 w-4" />
-                        </td>
-                        <td className="py-2 pr-4">
+                      <TR key={line.productId} className={checked ? "" : "opacity-50"}>
+                        <TD>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${line.name}`}
+                            checked={checked}
+                            onChange={() => toggleLine(line.productId)}
+                            className="h-4 w-4 rounded border-slate-300 text-primary"
+                          />
+                        </TD>
+                        <TD>
                           <div className="font-medium text-slate-900">{line.name}</div>
-                          <div className="text-xs text-slate-400">{line.sku}</div>
-                        </td>
-                        <td className="py-2 pr-4 text-right text-slate-500">{money(line.currentValue)}</td>
-                        <td className="py-2 pr-4 text-right font-medium">{money(line.newValue)}</td>
-                      </tr>
+                          <div className="font-mono text-xs text-slate-500">{line.sku}</div>
+                        </TD>
+                        <TD align="right" numeric className="text-slate-500">
+                          {money(line.currentValue)}
+                        </TD>
+                        <TD align="right" numeric className="font-medium">
+                          {money(line.newValue)}
+                        </TD>
+                      </TR>
                     );
                   })}
-                </tbody>
-              </table>
+                </TBody>
+              </Table>
             </div>
           )}
-        </section>
+        </Panel>
       )}
     </main>
   );
