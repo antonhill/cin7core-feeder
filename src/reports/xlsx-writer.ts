@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import type { SheetExport } from "@/reports/export-xlsx";
+import { formatCount } from "@/lib/format-count";
 
 // Security re-audit P1-7: resource boundaries for exports — none existed
 // before this. This is the ONE shared rendering chokepoint every XLSX export
@@ -14,14 +15,14 @@ const MAX_XLSX_CELL_LENGTH = 10_000;
 
 function assertSheetWithinLimits(sheet: SheetExport): void {
   if (sheet.data.length > MAX_XLSX_ROWS) {
-    throw new Error(`This export has ${sheet.data.length.toLocaleString()} rows — the maximum is ${MAX_XLSX_ROWS.toLocaleString()}. Narrow your filters and try again.`);
+    throw new Error(`This export has ${formatCount(sheet.data.length)} rows — the maximum is ${formatCount(MAX_XLSX_ROWS)}. Narrow your filters and try again.`);
   }
   for (let r = 0; r < sheet.data.length; r++) {
     const row = sheet.data[r];
     for (let c = 0; c < row.length; c++) {
       const cell = row[c];
       if (typeof cell === "string" && cell.length > MAX_XLSX_CELL_LENGTH) {
-        throw new Error(`Row ${r + 1}, column ${c + 1} is ${cell.length.toLocaleString()} characters — the maximum is ${MAX_XLSX_CELL_LENGTH.toLocaleString()}.`);
+        throw new Error(`Row ${r + 1}, column ${c + 1} is ${formatCount(cell.length)} characters — the maximum is ${formatCount(MAX_XLSX_CELL_LENGTH)}.`);
       }
     }
   }
