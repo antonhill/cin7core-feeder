@@ -18,6 +18,16 @@
  *
  * `en-US` is chosen only because a comma is what these messages have always
  * rendered as in CI and in production, so nothing user-visible changes.
+ *
+ * ALSO used, deliberately, by the dashboard (`src/app/page.tsx`). That is a
+ * Server Component, so its KPI counts are rendered into the initial HTML with
+ * whatever locale the serving machine has — the same ambient-locale problem in a
+ * display context rather than a message one. Pinning the separator there keeps
+ * the server-rendered markup deterministic and hydration-safe. Note this is a
+ * choice about a thousands separator only: the dashboard's *timestamp* is a
+ * different question and is rendered in the viewer's own locale and timezone by
+ * `src/app/local-timestamp.tsx`, because a wrong timezone is a wrong value, not
+ * a formatting preference.
  */
 export function formatCount(value: number): string {
   return value.toLocaleString("en-US");

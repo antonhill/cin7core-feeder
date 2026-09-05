@@ -4,6 +4,8 @@ import { getCurrentUserInfo } from "@/actions/auth";
 import { createServiceRoleClient } from "@/supabase/server";
 import { getShipTodayCounts, getStockHealthReport, getProductAvailabilitySyncStatus } from "@/reports/query";
 import { StaleBadge, hoursSince, SNAPSHOT_STALE_HOURS } from "@/app/reports/sync-staleness";
+import { formatCount } from "@/lib/format-count";
+import LocalTimestamp from "@/app/local-timestamp";
 import MarketingHome from "@/app/marketing-home";
 import OnboardingChecklist from "@/app/onboarding-checklist";
 import { Panel } from "@/components/ui/Panel";
@@ -110,7 +112,7 @@ function StatCard({
         <Icon className="h-5 w-5" />
       </span>
       <div>
-        <p className="text-2xl font-bold leading-none tabular-nums text-slate-900">{value.toLocaleString()}</p>
+        <p className="text-2xl font-bold leading-none tabular-nums text-slate-900">{formatCount(value)}</p>
         <p className="mt-1 text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
       </div>
     </Panel>
@@ -139,8 +141,8 @@ function ShipTodayCard({ readyToShip, overdue }: ShipTodayStats) {
       ) : (
         <div>
           <p className="flex items-center gap-2 text-2xl font-bold leading-none tabular-nums text-slate-900">
-            {readyToShip.toLocaleString()}
-            {overdue > 0 && <Badge tone="danger">{overdue} overdue</Badge>}
+            {formatCount(readyToShip)}
+            {overdue > 0 && <Badge tone="danger">{formatCount(overdue)} overdue</Badge>}
           </p>
           <p className="mt-1 text-xs font-medium uppercase tracking-wide text-slate-500">Ready to ship today</p>
         </div>
@@ -191,10 +193,10 @@ function StockHealthCard({ summary, activeInstances }: { summary: StockHealthSum
         {excess > 0 && <div className="bg-warning" style={{ width: `${(excess / totalProducts) * 100}%` }} />}
       </div>
       <p className="mt-2.5 text-sm tabular-nums text-slate-600">
-        {stockoutRisk} stockout risk, {excess} excess, {healthy} healthy
+        {formatCount(stockoutRisk)} stockout risk, {formatCount(excess)} excess, {formatCount(healthy)} healthy
       </p>
       <p className="mt-1.5 flex items-center gap-2 text-xs text-slate-500">
-        {lastSyncedAt ? `As of ${new Date(lastSyncedAt).toLocaleString()}` : "Not yet synced"}
+        {lastSyncedAt ? <>As of <LocalTimestamp iso={lastSyncedAt} /></> : "Not yet synced"}
         {isStale && <StaleBadge label="Stale — sync recommended" />}
       </p>
     </Link>
