@@ -612,6 +612,35 @@ export async function getOrderFulfillmentReport(db: SupabaseClient, orgId: strin
   });
 }
 
+export interface ShipTodayCounts {
+  shipToday: number;
+  overdue: number;
+}
+
+/**
+ * The home page's "Ship Today" card needs exactly two numbers. It used to get
+ * them from getOrderFulfillmentReport(db, orgId, {}) — an unfiltered fetch of
+ * every order row, which for a real client (LBL, 10,887 orders) meant 11 paged
+ * PostgREST calls, each one re-executing the whole ~4.4s report from scratch,
+ * only to count two booleans and discard the other 40-odd columns. That is what
+ * pushed individual calls past PostgREST's 8s statement_timeout and left the
+ * home page rendering as a blank error screen (2026-09-05).
+ *
+ * report_ship_today_counts (0087) computes the same two numbers directly from
+ * `sales` — neither is_ship_today nor is_overdue depends on any of the
+ * line-level aggregation, so none of it needs to run. One call, ~12ms.
+ */
+export async function getShipTodayCounts(db: SupabaseClient, orgId: string, filters: OrderFulfillmentFilters = {}): Promise<ShipTodayCounts> {
+  const { data, error } = await db
+    .rpc("report_ship_today_counts", {
+      p_org_id: orgId,
+      p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
+    })
+    .maybeSingle<{ ship_today_count: number; overdue_count: number }>();
+  if (error) throw new Error(`report_ship_today_counts: ${error.message}`);
+  return { shipToday: Number(data?.ship_today_count ?? 0), overdue: Number(data?.overdue_count ?? 0) };
+}
+
 /** Per-SKU detail behind an order's row (report_order_fulfillment_lines, 0033) — fetched for every order in the current result set up front (a plain DB read, not a rate-limited Cin7 call), so expanding a row is instant. */
 export async function getOrderFulfillmentLines(db: SupabaseClient, orgId: string, filters: OrderFulfillmentFilters): Promise<OrderFulfillmentLineRow[]> {
   return fetchAllRpcRows<OrderFulfillmentLineRow>(db, "report_order_fulfillment_lines", {
