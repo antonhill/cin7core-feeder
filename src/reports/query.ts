@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { PivotGroupBy, PivotSourceRow } from "@/reports/pivot";
 import type { InstancePickerItem } from "@/actions/instances";
+import { formatCount } from "@/lib/format-count";
 
 const RPC_PAGE_SIZE = 1000;
 
@@ -39,7 +40,7 @@ async function fetchAllRpcRows<T>(db: SupabaseClient, fn: string, params: Record
     const rows = (data ?? []) as T[];
     all.push(...rows);
     if (all.length > MAX_RPC_ROWS) {
-      throw new Error(`This report matched over ${MAX_RPC_ROWS.toLocaleString()} rows — narrow your filters (date range, instance selection) and try again.`);
+      throw new Error(`This report matched over ${formatCount(MAX_RPC_ROWS)} rows — narrow your filters (date range, instance selection) and try again.`);
     }
     if (rows.length < RPC_PAGE_SIZE) break;
   }
