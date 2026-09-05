@@ -1,3 +1,5 @@
+import { formatCount } from "@/lib/format-count";
+
 /**
  * Security re-audit P1-7: resource boundaries for CSV imports — none existed
  * before this. Shared by every import surface (Products/BOM/Suppliers/
@@ -50,7 +52,7 @@ export function assertCsvWithinLimits(data: Record<string, unknown>[], fields: s
     throw new Error(`This file has ${fields.length} columns — the maximum is ${MAX_CSV_COLUMNS}. Is this the right file?`);
   }
   if (data.length > MAX_CSV_ROWS) {
-    throw new Error(`This file has ${data.length.toLocaleString()} rows — the maximum is ${MAX_CSV_ROWS.toLocaleString()}. Split it into smaller files.`);
+    throw new Error(`This file has ${formatCount(data.length)} rows — the maximum is ${formatCount(MAX_CSV_ROWS)}. Split it into smaller files.`);
   }
   for (let i = 0; i < data.length; i++) {
     const row = data[i];
@@ -58,7 +60,7 @@ export function assertCsvWithinLimits(data: Record<string, unknown>[], fields: s
       const value = row[key];
       if (typeof value === "string" && value.length > MAX_CSV_FIELD_LENGTH) {
         throw new Error(
-          `Row ${i + 1}, column "${key}" is ${value.length.toLocaleString()} characters — the maximum is ${MAX_CSV_FIELD_LENGTH.toLocaleString()}.`
+          `Row ${i + 1}, column "${key}" is ${formatCount(value.length)} characters — the maximum is ${formatCount(MAX_CSV_FIELD_LENGTH)}.`
         );
       }
     }
