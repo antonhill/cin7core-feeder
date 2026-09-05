@@ -11,6 +11,7 @@ import {
   getProductAvailabilitySyncStatus,
   getOrderFulfillmentReport,
   getOrderFulfillmentLines,
+  getShipTodayCounts,
 } from "@/reports/query";
 
 describe("getProductSalesReport", () => {
@@ -479,5 +480,41 @@ describe("getOrderFulfillmentLines", () => {
     const { rpc } = stubPagedRpc([{ data: null, error: { message: "boom" } }]);
     const db = { rpc } as unknown as SupabaseClient;
     await expect(getOrderFulfillmentLines(db, "org1", {})).rejects.toThrow("report_order_fulfillment_lines: boom");
+  });
+});
+
+describe("getShipTodayCounts", () => {
+  /** A single-row .rpc().maybeSingle() — deliberately NOT the paged shape the full report uses, since that paging (one full recompute of the report per page) is exactly what this function exists to avoid. */
+  function stubSingleRpc(result: { data: unknown; error: { message: string } | null }) {
+    const maybeSingle = vi.fn(() => Promise.resolve(result));
+    const rpc = vi.fn(() => ({ maybeSingle }));
+    return { rpc, maybeSingle };
+  }
+
+  it("calls the report_ship_today_counts RPC and maps both counts", async () => {
+    const { rpc } = stubSingleRpc({ data: { ship_today_count: 271, overdue_count: 6396 }, error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+
+    await expect(getShipTodayCounts(db, "org1")).resolves.toEqual({ shipToday: 271, overdue: 6396 });
+    expect(rpc).toHaveBeenCalledWith("report_ship_today_counts", { p_org_id: "org1", p_instance_ids: null });
+  });
+
+  it("passes through the instance filter", async () => {
+    const { rpc } = stubSingleRpc({ data: { ship_today_count: 0, overdue_count: 0 }, error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+    await getShipTodayCounts(db, "org1", { instanceIds: ["inst-1"] });
+    expect(rpc).toHaveBeenCalledWith("report_ship_today_counts", { p_org_id: "org1", p_instance_ids: ["inst-1"] });
+  });
+
+  it("returns zeros when the org has no sales at all (maybeSingle yields null)", async () => {
+    const { rpc } = stubSingleRpc({ data: null, error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+    await expect(getShipTodayCounts(db, "org1")).resolves.toEqual({ shipToday: 0, overdue: 0 });
+  });
+
+  it("throws with the underlying error message on failure", async () => {
+    const { rpc } = stubSingleRpc({ data: null, error: { message: "boom" } });
+    const db = { rpc } as unknown as SupabaseClient;
+    await expect(getShipTodayCounts(db, "org1")).rejects.toThrow("report_ship_today_counts: boom");
   });
 });

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { MODULES, ToolboxLogo, InstancesIcon, AdminIcon, ActivityIcon, ShipTodayIcon, StockLevelsIcon, SELF_COLORED_ICON_BADGE } from "@/app/module-nav";
 import { getCurrentUserInfo } from "@/actions/auth";
 import { createServiceRoleClient } from "@/supabase/server";
-import { getOrderFulfillmentReport, getStockHealthReport, getProductAvailabilitySyncStatus } from "@/reports/query";
+import { getShipTodayCounts, getStockHealthReport, getProductAvailabilitySyncStatus } from "@/reports/query";
 import { StaleBadge, hoursSince, SNAPSHOT_STALE_HOURS } from "@/app/reports/sync-staleness";
 import MarketingHome from "@/app/marketing-home";
 import OnboardingChecklist from "@/app/onboarding-checklist";
@@ -41,16 +41,19 @@ interface ShipTodayStats {
   overdue: number;
 }
 
-/** Reuses the existing Order Fulfillment report query (org-wide, pre-synced — no live Cin7 call) rather than computing anything new. */
+/**
+ * Two aggregate counts straight from the DB (org-wide, pre-synced — no live
+ * Cin7 call). Deliberately NOT getOrderFulfillmentReport(db, orgId, {}), which
+ * this used to call: that pulls every order row through paged PostgREST calls,
+ * each re-running the full report, just to count two booleans here. See
+ * getShipTodayCounts' own comment.
+ */
 async function getShipTodayCount(orgId: string | null): Promise<ShipTodayStats> {
   if (!orgId) return { readyToShip: 0, overdue: 0 };
 
   const db = createServiceRoleClient();
-  const rows = await getOrderFulfillmentReport(db, orgId, {});
-  return {
-    readyToShip: rows.filter((r) => r.is_ship_today).length,
-    overdue: rows.filter((r) => r.is_overdue).length,
-  };
+  const { shipToday, overdue } = await getShipTodayCounts(db, orgId);
+  return { readyToShip: shipToday, overdue };
 }
 
 interface StockHealthSummary {
