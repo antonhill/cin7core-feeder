@@ -1025,3 +1025,247 @@ describe("syncInstance — bulk reads page past PostgREST's max-rows cap", () =>
     expect(pushedSkus.every((sku) => sku.startsWith("SKU"))).toBe(true);
   });
 });
+
+/**
+ * P1: deterministic pre-flight failures must stop consuming every invocation
+ * while remaining visibly failed. Production motivation (LBL, 2026-09-06):
+ * 3,864 of 3,876 failures were missing-reference problems, re-validated every
+ * fifteen minutes, and the run died at the duration ceiling before reaching
+ * the customer or supplier phase.
+ */
+describe("syncInstance — persistent failure policy", () => {
+  const FUTURE = new Date(Date.now() + 10 * 60_000).toISOString();
+  const PAST = new Date(Date.now() - 10 * 60_000).toISOString();
+
+  function failingProductSetup(syncStateOver: Record<string, unknown> = {}) {
+    return {
+      cin7_instances: [instanceRow],
+      products: [{ org_id: "org1", sku: "SKU1", name: "A", content_hash: "hash-a", inventory_account: "6100/001" }],
+      sync_state: [
+        {
+          org_id: "org1",
+          instance_id: "inst-1",
+          sku: "SKU1",
+          synced_hash: null,
+          last_status: "failed",
+          failure_class: "reference_validation",
+          failure_fingerprint: "hash-a",
+          consecutive_failures: 1,
+          next_retry_at: FUTURE,
+          ...syncStateOver,
+        },
+      ],
+      price_tiers: [],
+      assembly_bom_lines: [],
+      production_bom_versions: [],
+    };
+  }
+
+  it("records a first deterministic failure with its class, fingerprint and a future retry", async () => {
+    vi.mocked(accountExists).mockResolvedValue(false);
+    const { db, upserts } = createFakeDb({
+      cin7_instances: [instanceRow],
+      products: [{ org_id: "org1", sku: "SKU1", name: "A", content_hash: "hash-a", inventory_account: "6100/001" }],
+      sync_state: [],
+      price_tiers: [],
+      assembly_bom_lines: [],
+      production_bom_versions: [],
+    });
+
+    const summary = await syncInstance(db, "org1", "inst-1");
+
+    expect(summary.productsFailed).toBe(1);
+    const row = upserts.sync_state[0];
+    expect(row.last_status).toBe("failed");
+    expect(row.failure_class).toBe("reference_validation");
+    expect(row.failure_fingerprint).toBe("hash-a");
+    expect(row.next_retry_at).toEqual(expect.any(String));
+    // The invariant: a failure never asserts a push that did not happen.
+    expect(row.synced_hash).toBeUndefined();
+    expect(pushProduct).not.toHaveBeenCalled();
+  });
+
+  it("suppresses an identical deterministic failure inside its backoff, and does not re-validate it", async () => {
+    vi.mocked(accountExists).mockResolvedValue(false);
+    const { db, upserts } = createFakeDb(failingProductSetup());
+
+    const summary = await syncInstance(db, "org1", "inst-1");
+
+    expect(summary.productsFailureSuppressed).toBe(1);
+    expect(summary.productsFailed).toBe(0);
+    // The expensive parts are what we skipped: no Cin7 reference lookup, no
+    // write. That is the invocation budget this whole change exists to return.
+    expect(accountExists).not.toHaveBeenCalled();
+    expect(upserts.sync_state).toBeUndefined();
+  });
+
+  it("keeps the row FAILED and never advances synced_hash while suppressed", async () => {
+    const setup = failingProductSetup();
+    const { db, upserts } = createFakeDb(setup);
+
+    await syncInstance(db, "org1", "inst-1");
+
+    expect(setup.sync_state[0].last_status).toBe("failed");
+    expect(setup.sync_state[0].synced_hash).toBeNull();
+    expect(upserts.sync_state).toBeUndefined();
+  });
+
+  it("re-attempts once the backoff has elapsed", async () => {
+    vi.mocked(accountExists).mockResolvedValue(false);
+    const { db } = createFakeDb(failingProductSetup({ next_retry_at: PAST }));
+
+    const summary = await syncInstance(db, "org1", "inst-1");
+
+    expect(summary.productsFailureSuppressed).toBe(0);
+    expect(summary.productsFailed).toBe(1);
+    expect(accountExists).toHaveBeenCalled();
+  });
+
+  it("re-attempts immediately when the product's content changed", async () => {
+    vi.mocked(accountExists).mockResolvedValue(false);
+    // fingerprint is for the OLD content; the product now hashes differently
+    const { db } = createFakeDb(failingProductSetup({ failure_fingerprint: "hash-OLD" }));
+
+    const summary = await syncInstance(db, "org1", "inst-1");
+
+    expect(summary.productsFailureSuppressed).toBe(0);
+    expect(summary.productsFailed).toBe(1);
+  });
+
+  it("recovers cleanly: a later success clears every policy field", async () => {
+    vi.mocked(accountExists).mockResolvedValue(true);
+    vi.mocked(locationExists).mockResolvedValue(true);
+    vi.mocked(taxRuleExists).mockResolvedValue(true);
+    vi.mocked(pushProduct).mockResolvedValue({ cin7Id: "c1", status: "updated" });
+    const { db, upserts } = createFakeDb(failingProductSetup({ next_retry_at: PAST }));
+
+    await syncInstance(db, "org1", "inst-1");
+
+    const row = upserts.sync_state[0];
+    expect(row.last_status).toBe("updated");
+    expect(row.synced_hash).toBe("hash-a");
+    expect(row.failure_class).toBeNull();
+    expect(row.failure_fingerprint).toBeNull();
+    expect(row.consecutive_failures).toBe(0);
+    expect(row.next_retry_at).toBeNull();
+  });
+
+  it("never suppresses a transient failure, so a rate limit keeps retrying", async () => {
+    vi.mocked(accountExists).mockResolvedValue(true);
+    vi.mocked(locationExists).mockResolvedValue(true);
+    vi.mocked(taxRuleExists).mockResolvedValue(true);
+    vi.mocked(pushProduct).mockRejectedValue(new Cin7ApiError(429, "You have reached 60 calls per 60 seconds API limit.", true));
+    const { db, upserts } = createFakeDb(failingProductSetup({ failure_class: "transient", next_retry_at: null }));
+
+    const summary = await syncInstance(db, "org1", "inst-1");
+
+    expect(summary.productsFailureSuppressed).toBe(0);
+    expect(summary.productsFailed).toBe(1);
+    const row = upserts.sync_state[0];
+    expect(row.failure_class).toBe("transient");
+    expect(row.next_retry_at).toBeNull(); // eligible again immediately
+  });
+
+  it("never suppresses an ambiguous write", async () => {
+    vi.mocked(accountExists).mockResolvedValue(true);
+    vi.mocked(locationExists).mockResolvedValue(true);
+    vi.mocked(taxRuleExists).mockResolvedValue(true);
+    vi.mocked(pushProduct).mockRejectedValue(new Cin7ApiError(0, "connection reset", false, true));
+    const { db, upserts } = createFakeDb(failingProductSetup({ failure_class: null, next_retry_at: null }));
+
+    await syncInstance(db, "org1", "inst-1");
+
+    const row = upserts.sync_state[0];
+    expect(row.failure_class).toBe("ambiguous");
+    expect(row.next_retry_at).toBeNull();
+    expect(row.synced_hash).toBeUndefined();
+  });
+
+  it("does not suppress a pre-existing failure that has no policy state yet", async () => {
+    vi.mocked(accountExists).mockResolvedValue(false);
+    // Exactly the shape every row had before the migration.
+    const { db } = createFakeDb(
+      failingProductSetup({ failure_class: null, failure_fingerprint: null, consecutive_failures: 0, next_retry_at: null })
+    );
+
+    const summary = await syncInstance(db, "org1", "inst-1");
+
+    expect(summary.productsFailureSuppressed).toBe(0);
+    expect(summary.productsFailed).toBe(1);
+  });
+
+  it("keeps suppression scoped to its own instance", async () => {
+    vi.mocked(accountExists).mockResolvedValue(false);
+    const setup = failingProductSetup();
+    // Another instance's suppression must not silence this one.
+    setup.sync_state.push({ ...setup.sync_state[0], instance_id: "inst-2" });
+    const { db } = createFakeDb(setup);
+
+    const summary = await syncInstance(db, "org1", "inst-1");
+    expect(summary.productsFailureSuppressed).toBe(1);
+
+    const other = createFakeDb({ ...setup, cin7_instances: [{ ...instanceRow, id: "inst-2" }] });
+    const summary2 = await syncInstance(other.db, "org1", "inst-2");
+    expect(summary2.productsFailureSuppressed).toBe(1);
+  });
+
+  it("still skips an unchanged successful product by content hash, unaffected by the policy", async () => {
+    const { db } = createFakeDb({
+      cin7_instances: [instanceRow],
+      products: [{ org_id: "org1", sku: "SKU1", name: "A", content_hash: "hash-a" }],
+      sync_state: [{ org_id: "org1", instance_id: "inst-1", sku: "SKU1", synced_hash: "hash-a", last_status: "updated" }],
+      price_tiers: [],
+      assembly_bom_lines: [],
+      production_bom_versions: [],
+    });
+
+    const summary = await syncInstance(db, "org1", "inst-1");
+
+    expect(summary.productsSkipped).toBe(1);
+    expect(summary.productsFailureSuppressed).toBe(0);
+  });
+
+  it("stops thousands of identical failures crowding out later products", async () => {
+    // The production shape in miniature: many suppressed failures ahead of
+    // real work, which must still be reached in the same run.
+    vi.mocked(accountExists).mockResolvedValue(true);
+    vi.mocked(locationExists).mockResolvedValue(true);
+    vi.mocked(taxRuleExists).mockResolvedValue(true);
+    vi.mocked(pushProduct).mockResolvedValue({ cin7Id: "c", status: "created" });
+
+    const failing = Array.from({ length: 2_000 }, (_, i) => ({
+      org_id: "org1",
+      sku: `FAIL${String(i).padStart(5, "0")}`,
+      name: `F${i}`,
+      content_hash: `fh${i}`,
+      inventory_account: "6100/001",
+    }));
+    const fresh = [{ org_id: "org1", sku: "ZZZ-NEW", name: "New", content_hash: "new-hash" }];
+
+    const { db } = createFakeDb({
+      cin7_instances: [instanceRow],
+      products: [...failing, ...fresh],
+      sync_state: failing.map((p) => ({
+        org_id: "org1",
+        instance_id: "inst-1",
+        sku: p.sku,
+        synced_hash: null,
+        last_status: "failed",
+        failure_class: "reference_validation",
+        failure_fingerprint: p.content_hash,
+        consecutive_failures: 3,
+        next_retry_at: FUTURE,
+      })),
+      price_tiers: [],
+      assembly_bom_lines: [],
+      production_bom_versions: [],
+    });
+
+    const summary = await syncInstance(db, "org1", "inst-1");
+
+    expect(summary.productsFailureSuppressed).toBe(2_000);
+    // The point of the whole change: the new product is still reached.
+    expect(summary.productsCreated).toBe(1);
+    expect(pushProduct).toHaveBeenCalledTimes(1);
+  });
+});
