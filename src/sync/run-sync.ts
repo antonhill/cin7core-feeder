@@ -1,5 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchAllRows } from "@/supabase/fetch-all-rows";
+import {
+  classifyPushError,
+  failureStateUpdate,
+  shouldSuppressRetry,
+  CLEARED_FAILURE_STATE,
+} from "@/sync/failure-policy";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { pushProduct, type CanonicalProductRow } from "@/cin7/products";
 import type { CanonicalAssemblyBomLineRow } from "@/cin7/assembly-bom";
@@ -38,6 +44,8 @@ export interface SyncRunSummary {
   productsCreated: number;
   productsUpdated: number;
   productsSkipped: number;
+  /** Deterministic failures left alone this run because nothing changed and their backoff had not elapsed. Distinct from productsFailed: these stay `failed`, they were simply not re-proved. */
+  productsFailureSuppressed: number;
   productsFailed: number;
   productionBomsPushed: number;
   productionBomsFailed: number;
@@ -79,9 +87,11 @@ interface DescribedError {
 class MultilineError extends Error {
   constructor(
     public readonly lines: string[],
-    public readonly raw?: string
+    public readonly raw?: string,
+    /** The untouched original, so failure classification can still see a Cin7ApiError through the wrapper. */
+    cause?: unknown
   ) {
-    super(lines.join(" | "));
+    super(lines.join(" | "), cause === undefined ? undefined : { cause });
     this.name = "MultilineError";
   }
 }
@@ -171,6 +181,7 @@ export async function syncInstance(
     productsCreated: 0,
     productsUpdated: 0,
     productsSkipped: 0,
+    productsFailureSuppressed: 0,
     productsFailed: 0,
     productionBomsPushed: 0,
     productionBomsFailed: 0,
@@ -212,16 +223,30 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
   // Was unbounded AND had its error discarded: a failed read yielded an empty
   // map, which reads as "nothing has ever synced" and re-pushes the whole
   // catalog. Both are fixed here — paged, and failing closed.
-  const syncStates = await fetchAllRows<{ sku: string; synced_hash: string | null; cin7_id: string | null }>("sync_state", (from, to) =>
+  const syncStates = await fetchAllRows<
+    {
+      sku: string;
+      synced_hash: string | null;
+      cin7_id: string | null;
+      last_status: string | null;
+      failure_class: string | null;
+      failure_fingerprint: string | null;
+      consecutive_failures: number | null;
+      next_retry_at: string | null;
+    }
+  >("sync_state", (from, to) =>
     db
       .from("sync_state")
-      .select("sku, synced_hash, cin7_id")
+      .select("sku, synced_hash, cin7_id, last_status, failure_class, failure_fingerprint, consecutive_failures, next_retry_at")
       .eq("org_id", orgId)
       .eq("instance_id", instanceId)
       .order("sku", { ascending: true })
       .range(from, to)
   );
   const syncedHashBySku = new Map(syncStates.map((s) => [s.sku, s.synced_hash]));
+  // Retry state for a previously-failed row, evaluated in memory over rows
+  // already read — no extra query, and no per-product round trip.
+  const failureStateBySku = new Map(syncStates.map((s) => [s.sku, s]));
   // Production BOM addresses products by Cin7 ID, not SKU — tracked here so a
   // product created earlier in this same run is immediately usable below.
   const cin7IdBySku = new Map(syncStates.map((s) => [s.sku, s.cin7_id]));
@@ -242,6 +267,16 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
     if (overBudget()) break;
     if (syncedHashBySku.has(product.sku) && syncedHashBySku.get(product.sku) === product.content_hash) {
       summary.productsSkipped++;
+      continue;
+    }
+
+    // A deterministic failure that nothing has changed for is left alone until
+    // its backoff elapses. It stays `failed` and stays diagnosable — this only
+    // decides whether to spend an invocation re-proving it, which for LBL was
+    // 3,864 reference failures re-validated every fifteen minutes.
+    const priorFailure = failureStateBySku.get(product.sku);
+    if (priorFailure && shouldSuppressRetry(priorFailure, product.content_hash, new Date())) {
+      summary.productsFailureSuppressed++;
       continue;
     }
 
@@ -297,6 +332,10 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
             last_synced_at: new Date().toISOString(),
             last_status: "failed",
             last_error: preflightIssues.join("; "),
+            // Deterministic by construction: pre-flight decided this without
+            // ever calling Cin7, so the class is known from the site itself
+            // rather than inferred from the message.
+            ...failureStateUpdate("reference_validation", product.content_hash, priorFailure?.consecutive_failures ?? 0, new Date()),
           },
           { onConflict: "org_id,instance_id,sku" }
         );
@@ -331,7 +370,12 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
         pushResult = await pushProduct(creds, product, priceTiers ?? [], bomLinesTyped, cin7IdBySku, refCache, supplierIdCache);
       } catch (e) {
         const described = describeError(e);
-        throw new MultilineError(["Product push failed", ...described.lines], described.raw);
+        // Carry the original as `cause`: the wrapper is what produces the
+        // readable message, but the failure POLICY needs the untouched
+        // Cin7ApiError to tell a 429 from a missing account. Without this the
+        // classifier only ever sees a MultilineError and calls everything
+        // "unknown" — which a test caught.
+        throw new MultilineError(["Product push failed", ...described.lines], described.raw, e);
       }
 
       await db.from("sync_state").upsert(
@@ -344,6 +388,9 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
           last_synced_at: new Date().toISOString(),
           last_status: pushResult.status,
           last_error: null,
+          // A recovered product carries no residue: nothing about its previous
+          // failures should influence the next one.
+          ...CLEARED_FAILURE_STATE,
         },
         { onConflict: "org_id,instance_id,sku" }
       );
@@ -363,6 +410,10 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
           last_synced_at: new Date().toISOString(),
           last_status: "failed",
           last_error: lines.join("; "),
+          // Uses Cin7ApiError's own retryable/ambiguous flags, so a 429 or a
+          // possibly-committed write can never be suppressed as though it were
+          // a missing account.
+          ...failureStateUpdate(classifyPushError(e), product.content_hash, priorFailure?.consecutive_failures ?? 0, new Date()),
         },
         { onConflict: "org_id,instance_id,sku" }
       );

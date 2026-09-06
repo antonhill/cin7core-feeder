@@ -153,6 +153,7 @@ function mergeOutcomes(prior: InstanceSyncOutcome[], next: InstanceSyncOutcome[]
       productsCreated: sum(p.productsCreated, n.productsCreated),
       productsUpdated: sum(p.productsUpdated, n.productsUpdated),
       productsSkipped: sum(p.productsSkipped, n.productsSkipped),
+      productsFailureSuppressed: sum(p.productsFailureSuppressed, n.productsFailureSuppressed),
       productsFailed: sum(p.productsFailed, n.productsFailed),
       productionBomsPushed: sum(p.productionBomsPushed, n.productionBomsPushed),
       productionBomsFailed: sum(p.productionBomsFailed, n.productionBomsFailed),
