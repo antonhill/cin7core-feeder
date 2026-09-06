@@ -36,7 +36,14 @@ export async function GET(req: Request) {
   try {
     assertInternalAuth(req);
     const db = createServiceRoleClient();
-    const results = await runCronRotation(db, "sync", (orgId) => syncOrgInstances(db, orgId));
+    // The budget is what makes this route yield instead of being killed:
+    // syncOrgInstances -> syncInstance -> overBudget() is inert without it,
+    // so the push ran until the platform stopped it and the rotation never
+    // advanced. Positional args are the existing signature
+    // (instanceIds, scope, actor) — every org, default scope, system actor.
+    const results = await runCronRotation(db, "sync", (orgId, budgetMs) =>
+      syncOrgInstances(db, orgId, undefined, {}, "system", budgetMs)
+    );
     return NextResponse.json({ results });
   } catch (e) {
     if (e instanceof UnauthorizedError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

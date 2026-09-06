@@ -205,3 +205,111 @@ describe("runCronRotation", () => {
     expect(upserts).toHaveLength(0);
   });
 });
+
+/**
+ * Fairness regression cover. Production, 2026-09-06: /api/sync omitted the
+ * budget its own callee already accepted, so the push ran until the platform
+ * killed it, `markAttempted` (in a `finally`) never ran, and one organization
+ * held the front of the rotation for 47 days while three others went unsynced.
+ */
+describe("runCronRotation — budget and fairness", () => {
+  const attempt = (org: string, at: string | null) => ({ sync_route: "sync", org_id: org, last_attempted_at: at });
+
+  it("hands each org the REMAINING budget, not the whole of it", async () => {
+    // The dangerous shape: org A finishes late, org B then starts with a full
+    // budget and runs past the platform ceiling. B must get what is left.
+    const { db } = createFakeDb(
+      [{ org_id: "a", active: true }, { org_id: "b", active: true }],
+      [attempt("a", "2026-01-01T00:00:00Z"), attempt("b", "2026-02-01T00:00:00Z")]
+    );
+    const budgets: number[] = [];
+    let clock = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+
+    await runCronRotation(db, "sync", async (_orgId, budgetMs) => {
+      budgets.push(budgetMs);
+      clock += 100_000; // each org burns 100s
+      return [];
+    });
+
+    expect(budgets).toHaveLength(2);
+    expect(budgets[0]).toBe(TIME_BUDGET_MS);
+    expect(budgets[1]).toBe(TIME_BUDGET_MS - 100_000);
+    // Sum of what any org was allowed can never exceed the window.
+    expect(budgets[1]).toBeLessThan(budgets[0]);
+  });
+
+  it("stops starting orgs once the budget is exhausted", async () => {
+    const { db, upserts } = createFakeDb(
+      [{ org_id: "a", active: true }, { org_id: "b", active: true }],
+      [attempt("a", "2026-01-01T00:00:00Z"), attempt("b", "2026-02-01T00:00:00Z")]
+    );
+    let clock = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+
+    const seen: string[] = [];
+    await runCronRotation(db, "sync", async (orgId) => {
+      seen.push(orgId);
+      clock += TIME_BUDGET_MS; // first org consumes everything
+      return [];
+    });
+
+    expect(seen).toEqual(["a"]);
+    // Crucially it still marked the org it ran — that is what lets "b" go first
+    // next tick instead of "a" holding the front forever.
+    expect(upserts.map((u) => u.org_id)).toEqual(["a"]);
+  });
+
+  it("advances the attempt marker for an org that yields on budget", async () => {
+    const { db, upserts } = createFakeDb([{ org_id: "big", active: true }], [attempt("big", "2026-01-01T00:00:00Z")]);
+
+    // A budgeted org returns normally rather than being killed — so the
+    // `finally` runs. This is the whole fix in one assertion.
+    await runCronRotation(db, "sync", async () => []);
+
+    expect(upserts).toHaveLength(1);
+    expect(upserts[0].org_id).toBe("big");
+    expect(upserts[0].last_attempted_at).toEqual(expect.any(String));
+  });
+
+  it("rotates to the starved org on the next cycle once the big org is marked", async () => {
+    // Cycle 1: "big" is stalest, runs, gets marked with a fresh timestamp.
+    const cycle1 = createFakeDb(
+      [{ org_id: "big", active: true }, { org_id: "small", active: true }],
+      [attempt("big", "2026-01-01T00:00:00Z"), attempt("small", "2026-06-01T00:00:00Z")]
+    );
+    let clock = 1_000;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const firstSeen: string[] = [];
+    await runCronRotation(cycle1.db, "sync", async (orgId) => {
+      firstSeen.push(orgId);
+      clock += TIME_BUDGET_MS;
+      return [];
+    });
+    expect(firstSeen).toEqual(["big"]);
+
+    // Cycle 2: "big" now carries the newest timestamp, so "small" sorts first.
+    const cycle2 = createFakeDb(
+      [{ org_id: "big", active: true }, { org_id: "small", active: true }],
+      [attempt("big", cycle1.upserts[0].last_attempted_at), attempt("small", "2026-06-01T00:00:00Z")]
+    );
+    const secondSeen: string[] = [];
+    await runCronRotation(cycle2.db, "sync", async (orgId) => {
+      secondSeen.push(orgId);
+      clock += TIME_BUDGET_MS;
+      return [];
+    });
+
+    expect(secondSeen).toEqual(["small"]);
+  });
+
+  it("still marks an org whose sync throws, so a broken org cannot hold the front either", async () => {
+    const { db, upserts } = createFakeDb([{ org_id: "a", active: true }], [attempt("a", "2026-01-01T00:00:00Z")]);
+
+    await runCronRotation(db, "sync", async () => {
+      throw new Error("sync exploded");
+    });
+
+    expect(upserts.map((u) => u.org_id)).toEqual(["a"]);
+  });
+});

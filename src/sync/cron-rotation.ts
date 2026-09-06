@@ -63,6 +63,20 @@ async function markAttempted(db: SupabaseClient, syncRoute: string, orgId: strin
  * marked regardless of its sync outcome (success or thrown error) so one
  * permanently-broken org can't monopolize the front of the queue forever.
  *
+ * **`syncOrg` receives the REMAINING budget, and must honour it.** Checking
+ * the clock only between orgs is not enough on its own: it bounds how many
+ * orgs start, not how long one of them runs. An org that never returns takes
+ * the whole invocation down with it, and because `markAttempted` below is in
+ * a `finally`, a process the platform kills never reaches it — so that org
+ * keeps the oldest attempt timestamp, sorts first again next tick, and
+ * starves every other org indefinitely. That is not hypothetical: `/api/sync`
+ * omitted the budget and its rotation sat frozen for 47 days while three
+ * organizations went unsynced.
+ *
+ * The budget passed is what is LEFT of TIME_BUDGET_MS, not the whole of it.
+ * Handing each org the full budget would let a second org start late and run
+ * past the platform ceiling — the exact failure this is meant to prevent.
+ *
  * `syncOrg` is expected to already catch its own per-instance failures
  * (every syncOrg* function in src/sync/ does) — this wrapper only guards
  * against `syncOrg` itself throwing, so one org's unexpected failure
@@ -71,17 +85,18 @@ async function markAttempted(db: SupabaseClient, syncRoute: string, orgId: strin
 export async function runCronRotation<R>(
   db: SupabaseClient,
   syncRoute: string,
-  syncOrg: (orgId: string) => Promise<R[]>
+  syncOrg: (orgId: string, budgetMs: number) => Promise<R[]>
 ): Promise<R[]> {
   const startedAt = Date.now();
   const orgIds = await eligibleOrgIdsOldestFirst(db, syncRoute);
 
   const results: R[] = [];
   for (const orgId of orgIds) {
-    if (Date.now() - startedAt >= TIME_BUDGET_MS) break;
+    const remainingMs = TIME_BUDGET_MS - (Date.now() - startedAt);
+    if (remainingMs <= 0) break;
 
     try {
-      results.push(...(await syncOrg(orgId)));
+      results.push(...(await syncOrg(orgId, remainingMs)));
     } catch (e) {
       // syncOrg is expected to catch its own per-instance failures — this
       // guards against syncOrg itself throwing, so one org's unexpected
