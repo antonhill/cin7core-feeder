@@ -1,10 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { fetchAllRows } from "@/supabase/fetch-all-rows";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
-import { pushProduct } from "@/cin7/products";
+import { pushProduct, type CanonicalProductRow } from "@/cin7/products";
 import type { CanonicalAssemblyBomLineRow } from "@/cin7/assembly-bom";
 import { pushProductionBom, createProductionBomRefCaches } from "@/cin7/production-bom";
-import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
-import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
+import { pushCustomer, type CanonicalCustomerRow, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
+import { pushSupplier, type CanonicalSupplierRow, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import { Cin7ApiError } from "@/cin7/http";
 import {
   accountExists,
@@ -185,9 +186,12 @@ export async function syncInstance(
     truncated: false,
   };
 
-  let productsQuery = db
-    .from("products")
-    .select(
+  // Ordered by sku: unique per org (products' own key), so range paging can
+  // neither repeat nor skip a row between pages.
+  const products = await fetchAllRows<CanonicalProductRow & { content_hash: string }>("products", (from, to) => {
+    let q = db
+      .from("products")
+      .select(
       "sku, name, description, category_code, brand, uom_code, barcode, active, status, cin7_type, costing_method, \
 length, width, height, weight, carton_length, carton_width, carton_height, carton_inner_quantity, carton_quantity, \
 weight_units, dimension_units, minimum_before_reorder, reorder_quantity, default_location, \
@@ -198,24 +202,29 @@ additional_attribute_5, additional_attribute_6, additional_attribute_7, addition
 additional_attribute_10, discount_name, comma_delimited_tags, stock_locator, purchase_tax_rule, sale_tax_rule, \
 short_description, sellable, pick_zones, always_show_quantity, internal_note, hs_code, country_of_origin, content_hash"
     )
-    .eq("org_id", orgId);
-  if (scope.productSkus) productsQuery = productsQuery.in("sku", scope.productSkus);
-  const { data: products, error: productsError } = await productsQuery;
-  if (productsError) throw new Error(productsError.message);
+      .eq("org_id", orgId)
+      .order("sku", { ascending: true })
+      .range(from, to);
+    if (scope.productSkus) q = q.in("sku", scope.productSkus);
+    return q;
+  });
 
-  const { data: syncStates } = await db
-    .from("sync_state")
-    .select("sku, synced_hash, cin7_id")
-    .eq("org_id", orgId)
-    .eq("instance_id", instanceId);
-  const syncedHashBySku = new Map(
-    (syncStates ?? []).map((s: { sku: string; synced_hash: string | null }) => [s.sku, s.synced_hash])
+  // Was unbounded AND had its error discarded: a failed read yielded an empty
+  // map, which reads as "nothing has ever synced" and re-pushes the whole
+  // catalog. Both are fixed here — paged, and failing closed.
+  const syncStates = await fetchAllRows<{ sku: string; synced_hash: string | null; cin7_id: string | null }>("sync_state", (from, to) =>
+    db
+      .from("sync_state")
+      .select("sku, synced_hash, cin7_id")
+      .eq("org_id", orgId)
+      .eq("instance_id", instanceId)
+      .order("sku", { ascending: true })
+      .range(from, to)
   );
+  const syncedHashBySku = new Map(syncStates.map((s) => [s.sku, s.synced_hash]));
   // Production BOM addresses products by Cin7 ID, not SKU — tracked here so a
   // product created earlier in this same run is immediately usable below.
-  const cin7IdBySku = new Map(
-    (syncStates ?? []).map((s: { sku: string; cin7_id: string | null }) => [s.sku, s.cin7_id])
-  );
+  const cin7IdBySku = new Map(syncStates.map((s) => [s.sku, s.cin7_id]));
   // Shared across every product this run — a Category/Brand/UOM
   // confirmed/created for one product doesn't need a second lookup for the
   // next with the same one.
@@ -229,7 +238,7 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
   // wrong value is often repeated across many rows.
   const refCheckCache = new Map<string, boolean>();
 
-  for (const product of products ?? []) {
+  for (const product of products) {
     if (overBudget()) break;
     if (syncedHashBySku.has(product.sku) && syncedHashBySku.get(product.sku) === product.content_hash) {
       summary.productsSkipped++;
@@ -404,34 +413,43 @@ short_description, sellable, pick_zones, always_show_quantity, internal_note, hs
     }
   }
 
-  let customersQuery = db
-    .from("customers")
-    .select(
+  // Ordered by name: unique per org (the key customer_sync_state conflicts on).
+  const customers = overBudget()
+    ? []
+    : await fetchAllRows<CanonicalCustomerRow & { content_hash: string }>("customers", (from, to) => {
+        let q = db
+          .from("customers")
+          .select(
       "name, status, currency, payment_term, tax_rule, account_receivable, sale_account, price_tier, discount, \
 credit_limit, carrier, sales_representative, location, tax_number, tags, display_name, is_legal_entity, is_bill_parent, \
 attribute_set, additional_attribute_1, additional_attribute_2, additional_attribute_3, additional_attribute_4, \
 additional_attribute_5, additional_attribute_6, additional_attribute_7, additional_attribute_8, \
 additional_attribute_9, additional_attribute_10, comments, content_hash"
     )
-    .eq("org_id", orgId);
-  if (scope.customerNames) customersQuery = customersQuery.in("name", scope.customerNames);
-  const { data: customers } = overBudget() ? { data: [] } : await customersQuery;
+          .eq("org_id", orgId)
+          .order("name", { ascending: true })
+          .range(from, to);
+        if (scope.customerNames) q = q.in("name", scope.customerNames);
+        return q;
+      });
 
-  const { data: customerSyncStates } = await db
-    .from("customer_sync_state")
-    .select("name, synced_hash, cin7_id")
-    .eq("org_id", orgId)
-    .eq("instance_id", instanceId);
-  const syncedHashByCustomerName = new Map(
-    (customerSyncStates ?? []).map((s: { name: string; synced_hash: string | null }) => [s.name, s.synced_hash])
+  const customerSyncStates = await fetchAllRows<{ name: string; synced_hash: string | null; cin7_id: string | null }>(
+    "customer_sync_state",
+    (from, to) =>
+      db
+        .from("customer_sync_state")
+        .select("name, synced_hash, cin7_id")
+        .eq("org_id", orgId)
+        .eq("instance_id", instanceId)
+        .order("name", { ascending: true })
+        .range(from, to)
   );
+  const syncedHashByCustomerName = new Map(customerSyncStates.map((s) => [s.name, s.synced_hash]));
   // Stored Cin7 ID per customer — lets pushCustomer skip the find-by-Name GET
   // for an already-synced customer (Phase 3.2).
-  const cin7IdByCustomerName = new Map(
-    (customerSyncStates ?? []).map((s: { name: string; cin7_id: string | null }) => [s.name, s.cin7_id])
-  );
+  const cin7IdByCustomerName = new Map(customerSyncStates.map((s) => [s.name, s.cin7_id]));
 
-  for (const customer of customers ?? []) {
+  for (const customer of customers) {
     if (overBudget()) break;
     if (syncedHashByCustomerName.has(customer.name) && syncedHashByCustomerName.get(customer.name) === customer.content_hash) {
       summary.customersSkipped++;
@@ -538,33 +556,44 @@ additional_attribute_9, additional_attribute_10, comments, content_hash"
     }
   }
 
-  let suppliersQuery = db
-    .from("suppliers")
-    .select(
+  // Ordered by name: unique per org (the key supplier_sync_state conflicts on).
+  const suppliers = overBudget()
+    ? []
+    : await fetchAllRows<CanonicalSupplierRow & { content_hash: string }>("suppliers", (from, to) => {
+        let q = db
+          .from("suppliers")
+          .select(
       "name, status, currency, payment_term, tax_rule, account_payable, discount, tax_number, attribute_set, \
 additional_attribute_1, additional_attribute_2, additional_attribute_3, additional_attribute_4, \
 additional_attribute_5, additional_attribute_6, additional_attribute_7, additional_attribute_8, \
 additional_attribute_9, additional_attribute_10, comments, content_hash"
     )
-    .eq("org_id", orgId);
-  if (scope.supplierNames) suppliersQuery = suppliersQuery.in("name", scope.supplierNames);
-  const { data: suppliers } = overBudget() ? { data: [] } : await suppliersQuery;
+          .eq("org_id", orgId)
+          .order("name", { ascending: true })
+          .range(from, to);
+        if (scope.supplierNames) q = q.in("name", scope.supplierNames);
+        return q;
+      });
 
-  const { data: supplierSyncStates } = await db
-    .from("supplier_sync_state")
-    .select("name, synced_hash, cin7_id")
-    .eq("org_id", orgId)
-    .eq("instance_id", instanceId);
-  const syncedHashBySupplierName = new Map(
-    (supplierSyncStates ?? []).map((s: { name: string; synced_hash: string | null }) => [s.name, s.synced_hash])
+  const supplierSyncStates = await fetchAllRows<{ name: string; synced_hash: string | null; cin7_id: string | null }>(
+    "supplier_sync_state",
+    (from, to) =>
+      db
+        .from("supplier_sync_state")
+        .select("name, synced_hash, cin7_id")
+        .eq("org_id", orgId)
+        .eq("instance_id", instanceId)
+        .order("name", { ascending: true })
+        .range(from, to)
   );
+  const syncedHashBySupplierName = new Map(supplierSyncStates.map((s) => [s.name, s.synced_hash]));
   // Stored Cin7 ID per supplier — lets pushSupplier skip the find-by-Name GET
   // for an already-synced supplier (Phase 3.2).
   const cin7IdBySupplierName = new Map(
     (supplierSyncStates ?? []).map((s: { name: string; cin7_id: string | null }) => [s.name, s.cin7_id])
   );
 
-  for (const supplier of suppliers ?? []) {
+  for (const supplier of suppliers) {
     if (overBudget()) break;
     if (syncedHashBySupplierName.has(supplier.name) && syncedHashBySupplierName.get(supplier.name) === supplier.content_hash) {
       summary.suppliersSkipped++;
