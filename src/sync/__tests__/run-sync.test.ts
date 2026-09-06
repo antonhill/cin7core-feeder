@@ -40,19 +40,56 @@ vi.mock("@/cin7/reference-lookups", () => ({
 }));
 vi.mock("@/cin7/crypto", () => ({ decrypt: (v: string) => `decrypted:${v}` }));
 
-/** Minimal in-memory stand-in for the chained query shapes run-sync.ts actually issues. */
-function createFakeDb(tables: Record<string, Record<string, unknown>[]>) {
+/**
+ * Minimal in-memory stand-in for the chained query shapes run-sync.ts issues.
+ *
+ * It deliberately **emulates PostgREST's max-rows cap** (FAKE_MAX_ROWS): every
+ * response is truncated to at most that many rows, with no error and no flag,
+ * exactly as the real thing does. That is what makes the >1,000-row tests
+ * below genuine regression tests — against the previous unbounded reads they
+ * fail, because only the first page ever came back.
+ */
+const FAKE_MAX_ROWS = 1000;
+
+function createFakeDb(tables: Record<string, Record<string, unknown>[]>, failPageAt?: { table: string; from: number }) {
   const upserts: Record<string, Record<string, unknown>[]> = {};
+  const requests: { table: string; from?: number; to?: number }[] = [];
 
   function builder(table: string) {
     const rows = tables[table] ?? [];
     const filters: [string, unknown][] = [];
-    const matching = () => rows.filter((r) => filters.every(([col, val]) => r[col] === val));
+    const inFilters: [string, unknown[]][] = [];
+    let orderBy: { col: string; asc: boolean } | null = null;
+    let range: { from: number; to: number } | null = null;
+
+    const matching = () => {
+      let out = rows.filter((r) => filters.every(([col, val]) => r[col] === val));
+      out = out.filter((r) => inFilters.every(([col, vals]) => vals.includes(r[col])));
+      if (orderBy) {
+        const { col, asc } = orderBy;
+        out = [...out].sort((a, b) => String(a[col]).localeCompare(String(b[col])) * (asc ? 1 : -1));
+      }
+      if (range) out = out.slice(range.from, range.to + 1);
+      // The cap applies whether or not the caller paged — that is the bug.
+      return out.slice(0, FAKE_MAX_ROWS);
+    };
 
     const api = {
       select: () => api,
       eq: (col: string, val: unknown) => {
         filters.push([col, val]);
+        return api;
+      },
+      in: (col: string, vals: unknown[]) => {
+        inFilters.push([col, vals]);
+        return api;
+      },
+      order: (col: string, opts?: { ascending?: boolean }) => {
+        orderBy = { col, asc: opts?.ascending !== false };
+        return api;
+      },
+      range: (from: number, to: number) => {
+        range = { from, to };
         return api;
       },
       single: async () => {
@@ -63,14 +100,19 @@ function createFakeDb(tables: Record<string, Record<string, unknown>[]>) {
         upserts[table] = [...(upserts[table] ?? []), ...(Array.isArray(payload) ? payload : [payload])];
         return { error: null };
       },
-      then: (resolve: (v: { data: unknown[]; error: null }) => void) => {
+      then: (resolve: (v: { data: unknown[] | null; error: { message: string } | null }) => void) => {
+        requests.push({ table, from: range?.from, to: range?.to });
+        if (failPageAt && failPageAt.table === table && range?.from === failPageAt.from) {
+          resolve({ data: null, error: { message: "simulated page failure" } });
+          return;
+        }
         resolve({ data: matching(), error: null });
       },
     };
     return api;
   }
 
-  return { db: { from: builder } as unknown as SupabaseClient, upserts };
+  return { db: { from: builder } as unknown as SupabaseClient, upserts, requests };
 }
 
 beforeEach(() => {
@@ -858,5 +900,128 @@ describe("syncInstance", () => {
         { sku: "XYZ Supplier", error: ["PaymentTerm 'cashe' was not found in the payment terms reference book"] },
       ]);
     });
+  });
+});
+
+/**
+ * Regression cover for the silent PostgREST truncation found on LBL
+ * (2026-09-06): the bulk reads in run-sync.ts were unbounded, so a catalog
+ * larger than the max-rows cap was only ever partly considered — no error, no
+ * warning, just a prefix. createFakeDb emulates that cap, so every test here
+ * fails against the pre-fix implementation.
+ */
+describe("syncInstance — bulk reads page past PostgREST's max-rows cap", () => {
+  function productSet(n: number, hash = "h") {
+    return Array.from({ length: n }, (_, i) => ({
+      org_id: "org1",
+      // zero-padded so lexical order (what .order("sku") gives) is stable
+      sku: `SKU${String(i).padStart(5, "0")}`,
+      name: `P${i}`,
+      content_hash: `${hash}${i}`,
+    }));
+  }
+
+  it("considers every product when the catalog exceeds one page", async () => {
+    const products = productSet(2_500);
+    const { db } = createFakeDb({
+      cin7_instances: [instanceRow],
+      products,
+      sync_state: [],
+      price_tiers: [],
+      assembly_bom_lines: [],
+      production_bom_versions: [],
+    });
+    vi.mocked(pushProduct).mockResolvedValue({ cin7Id: "c", status: "created" });
+
+    const summary = await syncInstance(db, "org1", "inst-1");
+
+    // 2,500 > FAKE_MAX_ROWS: the old unbounded read returned 1,000 and stopped.
+    expect(pushProduct).toHaveBeenCalledTimes(2_500);
+    expect(summary.productsCreated).toBe(2_500);
+  });
+
+  it("considers every sync_state row, so nothing beyond the first page is re-pushed as new", async () => {
+    const products = productSet(2_500);
+    // Every product is already synced — but only if all 2,500 sync_state rows
+    // are read. Truncated, the tail looks unsynced and is pushed again.
+    const sync_state = products.map((p) => ({
+      org_id: "org1",
+      instance_id: "inst-1",
+      sku: p.sku,
+      synced_hash: p.content_hash,
+    }));
+    const { db } = createFakeDb({
+      cin7_instances: [instanceRow],
+      products,
+      sync_state,
+      price_tiers: [],
+      assembly_bom_lines: [],
+      production_bom_versions: [],
+    });
+
+    const summary = await syncInstance(db, "org1", "inst-1");
+
+    expect(summary.productsSkipped).toBe(2_500);
+    expect(pushProduct).not.toHaveBeenCalled();
+  });
+
+  it("handles a final partial page and an exact multiple of the page size alike", async () => {
+    for (const n of [2_500, 2_000]) {
+      vi.mocked(pushProduct).mockReset().mockResolvedValue({ cin7Id: "c", status: "created" });
+      const { db } = createFakeDb({
+        cin7_instances: [instanceRow],
+        products: productSet(n),
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+      });
+
+      await syncInstance(db, "org1", "inst-1");
+
+      expect(pushProduct, `n=${n}`).toHaveBeenCalledTimes(n);
+    }
+  });
+
+  it("fails the whole read when a later page errors, rather than silently syncing a prefix", async () => {
+    const { db } = createFakeDb(
+      {
+        cin7_instances: [instanceRow],
+        products: productSet(2_500),
+        sync_state: [],
+        price_tiers: [],
+        assembly_bom_lines: [],
+        production_bom_versions: [],
+      },
+      { table: "products", from: 1_000 } // page 2 fails
+    );
+    vi.mocked(pushProduct).mockResolvedValue({ cin7Id: "c", status: "created" });
+
+    await expect(syncInstance(db, "org1", "inst-1")).rejects.toThrow(/products: simulated page failure/);
+  });
+
+  it("keeps organization scoping intact across pages", async () => {
+    const mine = productSet(1_500);
+    const theirs = Array.from({ length: 1_500 }, (_, i) => ({
+      org_id: "org2",
+      sku: `OTHER${String(i).padStart(5, "0")}`,
+      name: `X${i}`,
+      content_hash: `x${i}`,
+    }));
+    const { db } = createFakeDb({
+      cin7_instances: [instanceRow],
+      products: [...theirs, ...mine],
+      sync_state: [],
+      price_tiers: [],
+      assembly_bom_lines: [],
+      production_bom_versions: [],
+    });
+    vi.mocked(pushProduct).mockResolvedValue({ cin7Id: "c", status: "created" });
+
+    await syncInstance(db, "org1", "inst-1");
+
+    expect(pushProduct).toHaveBeenCalledTimes(1_500);
+    const pushedSkus = vi.mocked(pushProduct).mock.calls.map((c) => (c[1] as { sku: string }).sku);
+    expect(pushedSkus.every((sku) => sku.startsWith("SKU"))).toBe(true);
   });
 });
