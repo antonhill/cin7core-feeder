@@ -480,6 +480,15 @@ describe("getOrderFulfillmentReport", () => {
     await expect(getOrderFulfillmentReport(db, "org1", {})).resolves.toEqual([]);
   });
 
+  it("returns [] when the envelope carries a null rows value", async () => {
+    // Distinct from a missing envelope: the wrapper coalesces empty results
+    // to [], but the application must not depend on that to avoid handing a
+    // null back to callers that immediately .filter() over it.
+    const { rpc } = stubJsonRpc({ data: { row_count: 0, rows: null }, error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+    await expect(getOrderFulfillmentReport(db, "org1", {})).resolves.toEqual([]);
+  });
+
   it("returns [] when the wrapper itself yields no envelope", async () => {
     const { rpc } = stubJsonRpc({ data: null, error: null });
     const db = { rpc } as unknown as SupabaseClient;
