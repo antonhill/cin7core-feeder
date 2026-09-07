@@ -12,10 +12,10 @@
  * expensive to find in the sync engine, where an unbounded `products` read had
  * been quietly considering a fraction of a large client's catalog.
  *
- * This is the table-select analogue of that file's own `fetchAllRpcRows`, kept
+ * This is the table-select analogue of that file's single-call report reader, kept
  * to the same shape deliberately — page until a short page, fail closed on any
  * error — so the codebase has one paging idea rather than two. It differs in
- * one respect: there is **no row ceiling**. `fetchAllRpcRows` throws past
+ * one respect: there is **no row ceiling**. The report reader throws past
  * MAX_RPC_ROWS because a report that large is a user-facing mistake worth
  * refusing; a sync must process whatever the client actually has, so a cap
  * here would reintroduce the very truncation this exists to prevent.

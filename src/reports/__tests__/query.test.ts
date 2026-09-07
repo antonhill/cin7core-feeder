@@ -402,84 +402,129 @@ describe("getProductAvailabilitySyncStatus", () => {
   });
 });
 
-/** getOrderFulfillmentReport/Lines page through .rpc() with .range() (see fetchAllRpcRows) — this stubs one page's worth of {data, error} per range() call, mirroring the real chained shape rather than a bare rpc().then(). */
-function stubPagedRpc(pages: { data: unknown[] | null; error: { message: string } | null }[]) {
-  let call = 0;
-  const range = vi.fn(() => Promise.resolve(pages[Math.min(call++, pages.length - 1)]));
-  const rpc = vi.fn(() => ({ range }));
-  return { rpc, range };
+/**
+ * The two Order Fulfilment reports now make ONE `.rpc().single()` call each
+ * against a `_json` wrapper (migration 0089), instead of looping `.range()`.
+ * That loop re-executed the whole set-returning report per page — 33 full
+ * executions and ~30s of database work at the largest client's default view.
+ * This stub mirrors the single-call chained shape; a test below asserts no
+ * `.range()` is used, because reintroducing it would silently restore the
+ * amplification.
+ */
+function stubJsonRpc(result: { data: unknown; error: { message: string } | null }) {
+  const single = vi.fn(() => Promise.resolve(result));
+  const range = vi.fn();
+  const rpc = vi.fn(() => ({ single, range }));
+  return { rpc, single, range };
 }
 
+const envelope = (rows: unknown[], rowCount?: number) => ({
+  data: { row_count: rowCount ?? rows.length, rows },
+  error: null,
+});
+
 describe("getOrderFulfillmentReport", () => {
-  it("calls the report_order_fulfillment RPC with null defaults for unset filters", async () => {
-    const { rpc } = stubPagedRpc([{ data: [{ cin7_sale_id: "s1", is_pick_today: true }], error: null }]);
+  it("calls the JSON wrapper once with null defaults for unset filters", async () => {
+    const { rpc, single, range } = stubJsonRpc(envelope([{ cin7_sale_id: "s1", is_pick_today: true }]));
     const db = { rpc } as unknown as SupabaseClient;
 
     const rows = await getOrderFulfillmentReport(db, "org1", {});
 
     expect(rows).toEqual([{ cin7_sale_id: "s1", is_pick_today: true }]);
-    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment", { p_org_id: "org1", p_instance_ids: null, p_from_date: null });
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(single).toHaveBeenCalledTimes(1);
+    expect(range).not.toHaveBeenCalled();
+    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment_json", { p_org_id: "org1", p_instance_ids: null, p_from_date: null });
   });
 
-  it("passes through the instance filter", async () => {
-    const { rpc } = stubPagedRpc([{ data: [], error: null }]);
+  it("passes through the instance filter unchanged", async () => {
+    const { rpc } = stubJsonRpc(envelope([]));
     const db = { rpc } as unknown as SupabaseClient;
     await getOrderFulfillmentReport(db, "org1", { instanceIds: ["inst-1"] });
-    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment", { p_org_id: "org1", p_instance_ids: ["inst-1"], p_from_date: null });
+    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment_json", { p_org_id: "org1", p_instance_ids: ["inst-1"], p_from_date: null });
   });
 
-  it("passes through the fromDate filter", async () => {
-    const { rpc } = stubPagedRpc([{ data: [], error: null }]);
+  it("passes through the fromDate filter unchanged", async () => {
+    const { rpc } = stubJsonRpc(envelope([]));
     const db = { rpc } as unknown as SupabaseClient;
     await getOrderFulfillmentReport(db, "org1", { fromDate: "2026-01-01" });
-    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment", { p_org_id: "org1", p_instance_ids: null, p_from_date: "2026-01-01" });
+    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment_json", { p_org_id: "org1", p_instance_ids: null, p_from_date: "2026-01-01" });
   });
 
   it("throws with the underlying error message on failure", async () => {
-    const { rpc } = stubPagedRpc([{ data: null, error: { message: "boom" } }]);
+    const { rpc } = stubJsonRpc({ data: null, error: { message: "boom" } });
     const db = { rpc } as unknown as SupabaseClient;
-    await expect(getOrderFulfillmentReport(db, "org1", {})).rejects.toThrow("report_order_fulfillment: boom");
+    await expect(getOrderFulfillmentReport(db, "org1", {})).rejects.toThrow("report_order_fulfillment_json: boom");
   });
 
-  it("pages past PostgREST's 1000-row cap instead of silently truncating", async () => {
-    const fullPage = Array.from({ length: 1000 }, (_, i) => ({ cin7_sale_id: `s${i}` }));
-    const { rpc, range } = stubPagedRpc([
-      { data: fullPage, error: null },
-      { data: [{ cin7_sale_id: "s1000" }], error: null },
-    ]);
+  it("returns every row in one call — no paging, whatever the size", async () => {
+    // The old shape needed 3 round trips for this; the amplification it caused
+    // is the entire reason for the change.
+    const rows = Array.from({ length: 2_500 }, (_, i) => ({ cin7_sale_id: `s${i}` }));
+    const { rpc, single, range } = stubJsonRpc(envelope(rows));
     const db = { rpc } as unknown as SupabaseClient;
 
-    const rows = await getOrderFulfillmentReport(db, "org1", {});
+    const result = await getOrderFulfillmentReport(db, "org1", {});
 
-    expect(rows).toHaveLength(1001);
-    expect(range).toHaveBeenNthCalledWith(1, 0, 999);
-    expect(range).toHaveBeenNthCalledWith(2, 1000, 1999);
+    expect(result).toHaveLength(2_500);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(single).toHaveBeenCalledTimes(1);
+    expect(range).not.toHaveBeenCalled();
   });
 
-  it("security re-audit P1-7: throws a clear error instead of paging forever once matched rows exceed the 75,000-row cap", async () => {
-    const fullPage = Array.from({ length: 1000 }, (_, i) => ({ cin7_sale_id: `s${i}` }));
-    const { rpc } = stubPagedRpc([{ data: fullPage, error: null }]);
+  it("returns [] rather than null or undefined for an empty result", async () => {
+    // json_agg yields NULL over an empty set; the wrapper coalesces it, and
+    // this pins the application side of that contract too.
+    const { rpc } = stubJsonRpc(envelope([]));
     const db = { rpc } as unknown as SupabaseClient;
+    await expect(getOrderFulfillmentReport(db, "org1", {})).resolves.toEqual([]);
+  });
 
+  it("returns [] when the wrapper itself yields no envelope", async () => {
+    const { rpc } = stubJsonRpc({ data: null, error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+    await expect(getOrderFulfillmentReport(db, "org1", {})).resolves.toEqual([]);
+  });
+
+  it("throws past the 75,000-row ceiling, using the count the wrapper reports", async () => {
+    // The wrapper returns [] past the ceiling — the row array is deliberately
+    // NOT the thing that proves the breach, so the payload stays bounded.
+    const { rpc } = stubJsonRpc(envelope([], 75_001));
+    const db = { rpc } as unknown as SupabaseClient;
     await expect(getOrderFulfillmentReport(db, "org1", {})).rejects.toThrow(/over 75,000 rows.*narrow your filters/);
+  });
+
+  it("allows exactly 75,000 rows", async () => {
+    const { rpc } = stubJsonRpc(envelope([{ cin7_sale_id: "s1" }], 75_000));
+    const db = { rpc } as unknown as SupabaseClient;
+    await expect(getOrderFulfillmentReport(db, "org1", {})).resolves.toHaveLength(1);
   });
 });
 
 describe("getOrderFulfillmentLines", () => {
-  it("calls the report_order_fulfillment_lines RPC with null defaults for unset filters", async () => {
-    const { rpc } = stubPagedRpc([{ data: [{ cin7_sale_id: "s1", product_sku: "SKU-1", pickable_qty: 2 }], error: null }]);
+  it("calls the JSON wrapper once with null defaults for unset filters", async () => {
+    const { rpc, range } = stubJsonRpc(envelope([{ cin7_sale_id: "s1", product_sku: "SKU-1", pickable_qty: 2 }]));
     const db = { rpc } as unknown as SupabaseClient;
 
     const rows = await getOrderFulfillmentLines(db, "org1", {});
 
     expect(rows).toEqual([{ cin7_sale_id: "s1", product_sku: "SKU-1", pickable_qty: 2 }]);
-    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment_lines", { p_org_id: "org1", p_instance_ids: null, p_from_date: null });
+    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment_lines_json", { p_org_id: "org1", p_instance_ids: null, p_from_date: null });
+    expect(range).not.toHaveBeenCalled();
   });
 
   it("throws with the underlying error message on failure", async () => {
-    const { rpc } = stubPagedRpc([{ data: null, error: { message: "boom" } }]);
+    const { rpc } = stubJsonRpc({ data: null, error: { message: "boom" } });
     const db = { rpc } as unknown as SupabaseClient;
-    await expect(getOrderFulfillmentLines(db, "org1", {})).rejects.toThrow("report_order_fulfillment_lines: boom");
+    await expect(getOrderFulfillmentLines(db, "org1", {})).rejects.toThrow("report_order_fulfillment_lines_json: boom");
+  });
+
+  it("returns [] for an empty result and enforces the same ceiling", async () => {
+    const empty = stubJsonRpc(envelope([]));
+    await expect(getOrderFulfillmentLines({ rpc: empty.rpc } as unknown as SupabaseClient, "org1", {})).resolves.toEqual([]);
+
+    const over = stubJsonRpc(envelope([], 75_001));
+    await expect(getOrderFulfillmentLines({ rpc: over.rpc } as unknown as SupabaseClient, "org1", {})).rejects.toThrow(/over 75,000 rows/);
   });
 });
 
