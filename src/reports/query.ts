@@ -11,40 +11,48 @@ const RPC_PAGE_SIZE = 1000;
  * actually returns — confirmed live 2026-08-04: Order Fulfillment's "All
  * Orders" count was silently stuck at exactly 1000 while the DB itself had
  * 9,915 orders, and none of the org's 32 real Pick Today orders happened to
- * fall in that arbitrary first slice. `.rpc()` needs explicit `.range()`
- * paging to get every row back; without it, this fails silently (no error,
- * just a truncated result) rather than throwing.
+ * fall in that arbitrary first slice.
+ *
+ * Paging around that cap with `.range()` was the obvious fix and the wrong
+ * one at scale. PostgREST does not stream one execution across pages: every
+ * range request is an independent statement, so a set-returning report ran
+ * again in full for each page and all but that page's slice was thrown away.
+ * At the largest client's default view that was **33 complete executions and
+ * ~30 seconds of database work** to deliver about 2.5 seconds of unique
+ * computation (measured 2026-09-07).
+ *
+ * The two Order Fulfilment reports now call a `_json` wrapper (migration
+ * 0089) that aggregates the whole result into ONE PostgREST row, so the
+ * expensive function executes once. The 75,000-row ceiling that used to live
+ * in the page loop moved into those wrappers with it — see
+ * MAX_RPC_ROWS below.
  */
-// Security re-audit P1-7: this is the one report function in this file that
-// deliberately pages PAST PostgREST's own implicit max-rows cap (see this
-// function's own comment above) — every other `.rpc()` call in this file is
-// accidentally bounded by that same 1000-row cap, but this one is genuinely
-// unbounded without its own explicit ceiling. Order Fulfillment's own
-// confirmed live scale was 9,915 orders for one instance when 25,000 was
-// picked (~2.5x headroom on the ORDER count) — but the same cap also bounds
-// report_order_fulfillment_LINES (per-SKU, several lines per order), and
-// LBL's real growth hit that first: confirmed live 2026-08-18, "Lights by
-// Linea" alone was at 28,365 line rows, already over the old cap, on 10,297
-// orders. Rebased on that actual worst-observed number with the same ~2.5x
-// multiplier (28,365 × 2.5 ≈ 70,900) rather than the order-count figure that
-// undersized it. Paired with default date-range scoping on Order
-// Fulfillment's own fetch (see OrderFulfillmentFilters.fromDate) so this
-// ceiling is a backstop, not the primary defense against unbounded growth.
 const MAX_RPC_ROWS = 75_000;
 
-async function fetchAllRpcRows<T>(db: SupabaseClient, fn: string, params: Record<string, unknown>): Promise<T[]> {
-  const all: T[] = [];
-  for (let from = 0; ; from += RPC_PAGE_SIZE) {
-    const { data, error } = await db.rpc(fn, params).range(from, from + RPC_PAGE_SIZE - 1);
-    if (error) throw new Error(`${fn}: ${error.message}`);
-    const rows = (data ?? []) as T[];
-    all.push(...rows);
-    if (all.length > MAX_RPC_ROWS) {
-      throw new Error(`This report matched over ${formatCount(MAX_RPC_ROWS)} rows — narrow your filters (date range, instance selection) and try again.`);
-    }
-    if (rows.length < RPC_PAGE_SIZE) break;
+interface ReportJsonEnvelope<T> {
+  row_count: number;
+  rows: T[];
+}
+
+/**
+ * Calls a `_json` report wrapper once and unwraps its envelope.
+ *
+ * The wrapper counts server-side and returns an empty array past the
+ * ceiling, so the row limit is enforced before a large payload is ever
+ * built. The user-facing wording stays here, unchanged from when the page
+ * loop owned it.
+ */
+async function fetchReportJson<T>(db: SupabaseClient, fn: string, params: Record<string, unknown>): Promise<T[]> {
+  const { data, error } = await db.rpc(fn, params).single<ReportJsonEnvelope<T>>();
+  if (error) throw new Error(`${fn}: ${error.message}`);
+
+  const envelope = data ?? { row_count: 0, rows: [] };
+  if (envelope.row_count > MAX_RPC_ROWS) {
+    throw new Error(`This report matched over ${formatCount(MAX_RPC_ROWS)} rows — narrow your filters (date range, instance selection) and try again.`);
   }
-  return all;
+  // The wrapper coalesces an empty result to [], but a null envelope from a
+  // no-row response must not become undefined here either.
+  return envelope.rows ?? [];
 }
 
 export interface SalesReportFilters {
@@ -606,7 +614,7 @@ export interface OrderFulfillmentLineRow {
  * excluded — nothing that needs action drops out of sight.
  */
 export async function getOrderFulfillmentReport(db: SupabaseClient, orgId: string, filters: OrderFulfillmentFilters): Promise<OrderFulfillmentRow[]> {
-  return fetchAllRpcRows<OrderFulfillmentRow>(db, "report_order_fulfillment", {
+  return fetchReportJson<OrderFulfillmentRow>(db, "report_order_fulfillment_json", {
     p_org_id: orgId,
     p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
     p_from_date: filters.fromDate ?? null,
@@ -644,7 +652,7 @@ export async function getShipTodayCounts(db: SupabaseClient, orgId: string, filt
 
 /** Per-SKU detail behind an order's row (report_order_fulfillment_lines, 0033) — fetched for every order in the current result set up front (a plain DB read, not a rate-limited Cin7 call), so expanding a row is instant. */
 export async function getOrderFulfillmentLines(db: SupabaseClient, orgId: string, filters: OrderFulfillmentFilters): Promise<OrderFulfillmentLineRow[]> {
-  return fetchAllRpcRows<OrderFulfillmentLineRow>(db, "report_order_fulfillment_lines", {
+  return fetchReportJson<OrderFulfillmentLineRow>(db, "report_order_fulfillment_lines_json", {
     p_org_id: orgId,
     p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
     p_from_date: filters.fromDate ?? null,
