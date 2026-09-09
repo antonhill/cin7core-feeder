@@ -18,10 +18,6 @@ function isSchedulable(order: OrderFulfillmentRow): boolean {
   return order.combined_shipping_status !== "SHIPPED" && order.combined_shipping_status !== "VOIDED" && !order.ship_today_hidden_by_floor;
 }
 
-function hiddenByFloor(order: OrderFulfillmentRow): boolean {
-  return order.ship_today_hidden_by_floor;
-}
-
 export default function ShippingCalendarPage() {
   return (
     <>
@@ -36,7 +32,6 @@ export default function ShippingCalendarPage() {
         offsetDays={0}
         dateLabel="Ship By"
         qualifies={isSchedulable}
-        hiddenByFloor={hiddenByFloor}
         loadOrders={loadShippingCalendarOrdersAction}
         writeShipBy={updateOrderShipByAction}
         markShipped={{ onMarkShipped: markOrderShippedAction, loadCarriers: loadCarriersAction }}

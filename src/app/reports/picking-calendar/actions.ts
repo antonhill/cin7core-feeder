@@ -12,6 +12,8 @@ import {
   getOrderFulfillmentReport,
   getOrderFulfillmentLines,
   getReportFilterOptions,
+  getCalendarBannerCounts,
+  toCalendarErrorMessage,
   type OrderFulfillmentRow,
   type OrderFulfillmentLineRow,
   type OrderFulfillmentFilters,
@@ -28,6 +30,9 @@ export interface PickingCalendarData {
   orders: OrderFulfillmentRow[];
   lines: OrderFulfillmentLineRow[];
   instances: InstancePickerItem[];
+  /** Global, NOT window-scoped — see getCalendarBannerCounts. */
+  unscheduledCount: number;
+  floorHiddenCount: number;
 }
 
 /**
@@ -43,14 +48,18 @@ export async function loadPickingCalendarOrdersAction(filters: OrderFulfillmentF
   try {
     const { orgId } = await requireModuleAccess(PICKING_CALENDAR_MODULE.href);
     const db = createServiceRoleClient();
-    const [orders, lines, options] = await Promise.all([
+    const [orders, lines, options, counts] = await Promise.all([
       getOrderFulfillmentReport(db, orgId, filters),
       getOrderFulfillmentLines(db, orgId, filters),
       getReportFilterOptions(db, orgId),
+      getCalendarBannerCounts(db, orgId, "picking", filters.instanceIds),
     ]);
-    return { ok: true, data: { orders, lines, instances: options.instances } };
+    return {
+      ok: true,
+      data: { orders, lines, instances: options.instances, unscheduledCount: counts.unscheduledCount, floorHiddenCount: counts.floorHiddenCount },
+    };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+    return { ok: false, error: toCalendarErrorMessage(e, "loadPickingCalendarOrdersAction") };
   }
 }
 

@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { currentWeekStart, mondayOf, addDays, formatDayLabel, todayIso } from "./date-utils";
+import { currentWeekStart, mondayOf, addDays, formatDayLabel, todayIso, shipByWindowForWeek, CALENDAR_DAY_COUNT } from "./date-utils";
 import type { OrderFulfillmentRow, OrderFulfillmentLineRow, OrderFulfillmentFilters } from "@/reports/query";
 import type { MarkShippedInput } from "@/cin7/sales";
 import type { InstancePickerItem } from "@/actions/instances";
 import { StatusBadge, statusBadgeClass } from "../status-badge";
 import { matchesSearch } from "../text-search";
+import { mergeCarriedOrders } from "./carried-orders";
 import { Spinner } from "@/app/Spinner";
 import { InstanceMultiPicker } from "@/app/InstanceMultiPicker";
 import { Button } from "@/components/ui/Button";
@@ -63,9 +64,18 @@ interface CalendarData {
   orders: OrderFulfillmentRow[];
   lines: OrderFulfillmentLineRow[];
   instances: InstancePickerItem[];
+  /**
+   * Both GLOBAL, not scoped to the fetched week — the grid rows are windowed
+   * now (migration 0090) and these two counts deliberately are not. An order
+   * with no Ship By date belongs to no week, so deriving `unscheduledCount`
+   * from the windowed rows would not narrow it, it would corrupt it
+   * (measured on real data: 106 reported instead of 4,264).
+   */
+  unscheduledCount: number;
+  floorHiddenCount: number;
 }
 
-const DAY_COUNT = 7;
+const DAY_COUNT = CALENDAR_DAY_COUNT;
 
 type Readiness = "ready" | "in_progress" | "not_started";
 
@@ -460,8 +470,6 @@ export interface CalendarBoardProps {
   dateLabel: string;
   /** Which orders belong on this board at all — isSchedulable for Shipping Calendar, is_pick_today for Picking Calendar. Re-checked at render too, so an order that stops qualifying (e.g. just marked shipped) disappears immediately. */
   qualifies: (order: OrderFulfillmentRow) => boolean;
-  /** Counts toward the "N older orders hidden by the start-date setting" banner — ship_today_hidden_by_floor / pick_today_hidden_by_floor. */
-  hiddenByFloor: (order: OrderFulfillmentRow) => boolean;
   loadOrders: (filters: OrderFulfillmentFilters) => Promise<CalendarActionResult<CalendarData>>;
   writeShipBy: (instanceId: string, saleId: string, shipBy: string) => Promise<CalendarActionResult<void>>;
   /** Only Shipping Calendar passes this — gates whether the modal offers a "Mark as Shipped" form. */
@@ -471,13 +479,20 @@ export interface CalendarBoardProps {
   };
 }
 
-export function CalendarBoard({ offsetDays, dateLabel, qualifies, hiddenByFloor, loadOrders, writeShipBy, markShipped }: CalendarBoardProps) {
+export function CalendarBoard({ offsetDays, dateLabel, qualifies, loadOrders, writeShipBy, markShipped }: CalendarBoardProps) {
   const [weekStart, setWeekStart] = useState(currentWeekStart);
   const [orders, setOrders] = useState<OrderFulfillmentRow[] | null>(null);
-  // P5.3 (LBL brief): counted separately from `orders` at load time, since
-  // `orders` itself already has floor-hidden rows filtered out by `qualifies`
-  // — this is the only place that count is still visible.
+  // Both counts come from the server as of 0090 (report_calendar_banner_counts).
+  //
+  // P5.3 (LBL brief) originally derived hiddenByFloorCount from the full
+  // fetch, since `orders` itself already has floor-hidden rows filtered out
+  // by `qualifies` and this is the only place the count is still visible.
+  // That is no longer possible: both counts are facts about the whole org,
+  // and the rows fetched here are one week. An order with no ship_by belongs
+  // to no week at all, so deriving unscheduledCount from these rows would not
+  // narrow it — it would corrupt it (measured: 106 instead of 4,264).
   const [hiddenByFloorCount, setHiddenByFloorCount] = useState(0);
+  const [unscheduledCount, setUnscheduledCount] = useState(0);
   const [lines, setLines] = useState<OrderFulfillmentLineRow[]>([]);
   const [instances, setInstances] = useState<InstancePickerItem[]>([]);
   const [instanceIds, setInstanceIds] = useState<string[]>([]);
@@ -493,6 +508,17 @@ export function CalendarBoard({ offsetDays, dateLabel, qualifies, hiddenByFloor,
   // write-back round-trip resolves; reverted if the write fails. Kept in raw
   // ship_by space (what's actually written), not bucket-date space.
   const [shipByOverrides, setShipByOverrides] = useState<Record<string, string>>({});
+  // Orders the user has just moved, kept by value.
+  //
+  // The fetch is windowed to the visible week (0090), and handleReschedule
+  // jumps the board to the week a card was moved into. That jump re-fetches
+  // immediately, while the Cin7 write-back and its `sales` mirror are still
+  // in flight — so the moved order is not yet in the new window's rows, and
+  // without this the card the user just dragged would vanish until something
+  // else triggered a reload. Merged back in below; the override date decides
+  // which day it lands on, so a carried order only appears in the week it
+  // was actually moved to.
+  const [movedOrders, setMovedOrders] = useState<Record<string, OrderFulfillmentRow>>({});
   const [pendingSaleIds, setPendingSaleIds] = useState<Set<string>>(new Set());
   const [writeErrors, setWriteErrors] = useState<Record<string, string>>({});
   const [draggedOverDay, setDraggedOverDay] = useState<string | null>(null);
@@ -506,20 +532,30 @@ export function CalendarBoard({ offsetDays, dateLabel, qualifies, hiddenByFloor,
   // statement ahead of the fetch) — a setState call directly in the effect
   // body, even before an async call, still trips
   // react-hooks/set-state-in-effect.
+  //
+  // weekStart and offsetDays joined the dependency list with migration 0090:
+  // the fetch is now bounded to the ship_by range that can land on the
+  // visible week, so changing the week (or the Picking Calendar lead time,
+  // which shifts that range) has to re-fetch. Before this the board pulled
+  // the org's ENTIRE order history once and paged through it in the browser
+  // — ~30 MB of JSON to draw 64 cards, which is what exhausted the 8s
+  // statement timeout.
   useEffect(() => {
-    loadOrders({ instanceIds: instanceIds.length ? instanceIds : undefined }).then((result) => {
+    const { shipByFrom, shipByTo } = shipByWindowForWeek(weekStart, offsetDays);
+    loadOrders({ instanceIds: instanceIds.length ? instanceIds : undefined, shipByFrom, shipByTo }).then((result) => {
       if (!result.ok || !result.data) {
         setLoadError(result.error ?? "Unknown error");
         return;
       }
       setLoadError(null);
       setOrders(result.data.orders.filter(qualifies));
-      setHiddenByFloorCount(result.data.orders.filter(hiddenByFloor).length);
+      setHiddenByFloorCount(result.data.floorHiddenCount);
+      setUnscheduledCount(result.data.unscheduledCount);
       setLines(result.data.lines);
       setInstances(result.data.instances);
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- qualifies/hiddenByFloor/loadOrders are passed fresh every render by the caller; re-running on their identity would refetch on every keystroke elsewhere on the page
-  }, [instanceIds]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- qualifies/loadOrders are passed fresh every render by the caller; re-running on their identity would refetch on every keystroke elsewhere on the page
+  }, [instanceIds, weekStart, offsetDays]);
 
   function toggleInstance(id: string) {
     setInstanceIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -540,8 +576,10 @@ export function CalendarBoard({ offsetDays, dateLabel, qualifies, hiddenByFloor,
     return map;
   }, [lines]);
 
+  const visibleOrders = useMemo(() => (orders === null ? null : mergeCarriedOrders(orders, movedOrders)), [orders, movedOrders]);
+
   const searchedOrders = useMemo(() => {
-    let rows = orders ?? [];
+    let rows = visibleOrders ?? [];
     // P5.4 (LBL brief): matches order #/customer OR any line's SKU/product
     // name — linesBySaleId is already fetched for the detail modal, so this
     // is free (no extra query). Shared by both Shipping and Picking
@@ -555,7 +593,7 @@ export function CalendarBoard({ offsetDays, dateLabel, qualifies, hiddenByFloor,
     }
     if (invoiceCoverageFilter) rows = rows.filter((o) => o.invoice_coverage_status === invoiceCoverageFilter);
     return rows;
-  }, [orders, search, invoiceCoverageFilter, linesBySaleId]);
+  }, [visibleOrders, search, invoiceCoverageFilter, linesBySaleId]);
 
   const ordersByDay = useMemo(() => {
     const map = new Map<string, OrderFulfillmentRow[]>();
@@ -574,8 +612,7 @@ export function CalendarBoard({ offsetDays, dateLabel, qualifies, hiddenByFloor,
     return map;
   }, [searchedOrders, days, shipByOverrides, offsetDays, qualifies]);
 
-  const unscheduledCount = searchedOrders.filter((o) => !o.ship_by).length;
-  const detailOrder = detailSaleId ? (orders ?? []).find((o) => o.cin7_sale_id === detailSaleId) : undefined;
+  const detailOrder = detailSaleId ? (visibleOrders ?? []).find((o) => o.cin7_sale_id === detailSaleId) : undefined;
 
   /** Shared by both the drag-drop and the per-card date picker — a drop target is always a day already on screen, but the date picker can name any date, including one in a different week (jumped to below so the moved card is visible right away). `newBucketDate` is in bucket-date space (the day column it landed on); the actual Cin7 write converts it back to ship_by via + offsetDays. */
   function handleReschedule(saleId: string, newBucketDate: string) {
@@ -586,6 +623,7 @@ export function CalendarBoard({ offsetDays, dateLabel, qualifies, hiddenByFloor,
     if (previousShipBy && previousShipBy.slice(0, 10) === newShipBy) return;
 
     setShipByOverrides((prev) => ({ ...prev, [saleId]: newShipBy }));
+    setMovedOrders((prev) => ({ ...prev, [saleId]: order }));
     setWriteErrors((prev) => {
       const next = { ...prev };
       delete next[saleId];
@@ -607,6 +645,11 @@ export function CalendarBoard({ offsetDays, dateLabel, qualifies, hiddenByFloor,
           delete next[saleId];
           return next;
         });
+        setMovedOrders((prev) => {
+          const next = { ...prev };
+          delete next[saleId];
+          return next;
+        });
         setWriteErrors((prev) => ({ ...prev, [saleId]: result.error ?? "Unknown error" }));
       }
     });
@@ -618,6 +661,11 @@ export function CalendarBoard({ offsetDays, dateLabel, qualifies, hiddenByFloor,
     const result = await markShipped.onMarkShipped(instanceId, saleId, input);
     if (!result.ok) return result;
     setOrders((prev) => (prev ? prev.map((o) => (o.cin7_sale_id === saleId ? { ...o, combined_shipping_status: "SHIPPED" } : o)) : prev));
+    // Same update for a carried copy — otherwise an order moved and then
+    // marked shipped in the same visit would keep its card on the grid.
+    setMovedOrders((prev) =>
+      prev[saleId] ? { ...prev, [saleId]: { ...prev[saleId], combined_shipping_status: "SHIPPED" } } : prev
+    );
     return result;
   }
 
@@ -701,7 +749,7 @@ export function CalendarBoard({ offsetDays, dateLabel, qualifies, hiddenByFloor,
           </div>
         )}
 
-        {orders && (
+        {visibleOrders && (
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-7">
             {days.map((day) => (
               <DayColumn

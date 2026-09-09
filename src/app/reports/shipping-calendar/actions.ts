@@ -11,6 +11,8 @@ import {
   getOrderFulfillmentReport,
   getOrderFulfillmentLines,
   getReportFilterOptions,
+  getCalendarBannerCounts,
+  toCalendarErrorMessage,
   type OrderFulfillmentRow,
   type OrderFulfillmentLineRow,
   type OrderFulfillmentFilters,
@@ -27,21 +29,40 @@ export interface ShippingCalendarData {
   orders: OrderFulfillmentRow[];
   lines: OrderFulfillmentLineRow[];
   instances: InstancePickerItem[];
+  /** Global, NOT window-scoped — see getCalendarBannerCounts. */
+  unscheduledCount: number;
+  floorHiddenCount: number;
 }
 
-/** Every order (+ per-SKU line detail, for the click-to-expand card view), optionally scoped to a subset of connected instances — same instanceIds filter Order Fulfillment uses, since a multi-instance org needs the same ability to isolate one instance's shipments here. */
+/**
+ * The visible week's orders (+ per-SKU line detail, for the click-to-expand
+ * card view), optionally scoped to a subset of connected instances — same
+ * instanceIds filter Order Fulfillment uses, since a multi-instance org
+ * needs the same ability to isolate one instance's shipments here.
+ *
+ * `filters.shipByFrom`/`shipByTo` carry the visible week (migration 0090).
+ * They are what stopped this action fetching the org's entire order history
+ * on every open — ~30 MB of JSON across two concurrent calls, which is what
+ * exhausted the 8s statement timeout. The two banner counts are GLOBAL facts
+ * that a windowed fetch cannot serve, so they come from their own cheap
+ * aggregate rather than from these rows.
+ */
 export async function loadShippingCalendarOrdersAction(filters: OrderFulfillmentFilters = {}): Promise<ShippingCalendarActionResult<ShippingCalendarData>> {
   try {
     const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
-    const [orders, lines, options] = await Promise.all([
+    const [orders, lines, options, counts] = await Promise.all([
       getOrderFulfillmentReport(db, orgId, filters),
       getOrderFulfillmentLines(db, orgId, filters),
       getReportFilterOptions(db, orgId),
+      getCalendarBannerCounts(db, orgId, "shipping", filters.instanceIds),
     ]);
-    return { ok: true, data: { orders, lines, instances: options.instances } };
+    return {
+      ok: true,
+      data: { orders, lines, instances: options.instances, unscheduledCount: counts.unscheduledCount, floorHiddenCount: counts.floorHiddenCount },
+    };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+    return { ok: false, error: toCalendarErrorMessage(e, "loadShippingCalendarOrdersAction") };
   }
 }
 

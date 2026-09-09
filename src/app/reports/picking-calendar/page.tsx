@@ -20,10 +20,6 @@ function isPickToday(order: OrderFulfillmentRow): boolean {
   return order.is_pick_today;
 }
 
-function hiddenByFloor(order: OrderFulfillmentRow): boolean {
-  return order.pick_today_hidden_by_floor;
-}
-
 const MIN_OFFSET_DAYS = 0;
 const MAX_OFFSET_DAYS = 7;
 // Mirrors the private default inside actions.ts — only used here as a
@@ -99,7 +95,6 @@ export default function PickingCalendarPage() {
           offsetDays={savedOffsetDays}
           dateLabel="Pick By"
           qualifies={isPickToday}
-          hiddenByFloor={hiddenByFloor}
           loadOrders={loadPickingCalendarOrdersAction}
           writeShipBy={updatePickingShipByAction}
         />
