@@ -74,8 +74,20 @@
 -- is exactly how 0082 silently reverted 0064's consolidation and how 0081
 -- dropped three migrations' worth of columns.
 
+-- All four are DROPPED, not CREATE OR REPLACE'd. Replacing cannot change a
+-- parameter list: it would leave the old three-argument function in place
+-- beside the new five-argument one, and a three-argument call then matches
+-- BOTH (the new one via its defaults). Postgres rejects that outright --
+-- `ERROR 42725: function report_order_fulfillment_json(p_org_id => uuid,
+-- p_instance_ids => uuid[], p_from_date => date) is not unique` -- which
+-- would break Order Fulfillment and every not-yet-redeployed caller the
+-- instant this migration ran. Verified on a throwaway pair of overloads
+-- before writing this. Dropping first leaves exactly one candidate, and the
+-- trailing defaults keep three-argument callers working unchanged.
 drop function if exists report_order_fulfillment(uuid, uuid[], date);
 drop function if exists report_order_fulfillment_lines(uuid, uuid[], date);
+drop function if exists report_order_fulfillment_json(uuid, uuid[], date);
+drop function if exists report_order_fulfillment_lines_json(uuid, uuid[], date);
 
 create function report_order_fulfillment_lines(
   p_org_id uuid,
@@ -517,11 +529,12 @@ returns table (
 $$;
 
 
--- The 0089 JSON wrappers, re-created to carry the window through. Body
+-- The 0089 JSON wrappers, dropped and recreated to carry the window
+-- through (see the drop block above for why not CREATE OR REPLACE). Body
 -- unchanged otherwise -- json_agg (NOT jsonb_agg) and the `limit 75001`
 -- ceiling are both load-bearing and both still asserted by tests; see 0089's
 -- header for why.
-create or replace function report_order_fulfillment_json(
+create function report_order_fulfillment_json(
   p_org_id uuid,
   p_instance_ids uuid[] default null,
   p_from_date date default null,
@@ -539,7 +552,7 @@ returns json language sql stable set search_path = public as $$
   ) t;
 $$;
 
-create or replace function report_order_fulfillment_lines_json(
+create function report_order_fulfillment_lines_json(
   p_org_id uuid,
   p_instance_ids uuid[] default null,
   p_from_date date default null,

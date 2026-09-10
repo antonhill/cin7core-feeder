@@ -116,6 +116,26 @@ describe("calendar ship_by window (migration 0090)", () => {
     }
   });
 
+  it("drops the old three-argument signature of every function it widens", () => {
+    // CREATE OR REPLACE cannot change a parameter list. Left as a replace,
+    // the old three-argument function survives beside the new five-argument
+    // one and a three-argument call matches both:
+    //   ERROR 42725: function ... is not unique
+    // which breaks Order Fulfillment and every not-yet-redeployed caller the
+    // moment this migration runs.
+    for (const fn of [
+      "report_order_fulfillment",
+      "report_order_fulfillment_lines",
+      "report_order_fulfillment_json",
+      "report_order_fulfillment_lines_json",
+    ]) {
+      expect(body0090).toContain(`drop function if exists ${fn}(uuid, uuid[], date);`);
+      // ...and is therefore created, not replaced.
+      expect(body0090).toContain(`create function ${fn}(`);
+      expect(body0090).not.toContain(`create or replace function ${fn}(`);
+    }
+  });
+
   it("adds the window parameters to all four functions that take them", () => {
     // Both report functions and both JSON wrappers — a wrapper left on the
     // old signature would compile and then silently ignore the window.
