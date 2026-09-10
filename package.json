@@ -14,7 +14,7 @@
     "@supabase/supabase-js": "^2.110.0",
     "exceljs": "^4.4.0",
     "next": "16.3.0",
-    "papaparse": "^5.5.4",
+    "papaparse": "^5.6.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "resend": "^6.20.0",
