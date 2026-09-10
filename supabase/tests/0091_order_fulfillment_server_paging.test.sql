@@ -213,7 +213,7 @@ end $$;
 -- prove the EXISTS against sale_order_lines works, which is the half the
 -- browser used to do from its own copy of every line.
 do $$
-declare ids text[];
+declare got_ids text[];
 begin
   create temp table s_res(label text, ids text[]) on commit drop;
 
@@ -236,18 +236,18 @@ begin
     from jsonb_array_elements((report_order_fulfillment_all_page_json(pg_temp.org(), null, null, null,
       '%',null,null,null,null,null,null,null,null,1000,0) -> 'rows')::jsonb) j;
 
-  select ids into ids from s_res where label='order number';
-  perform pg_temp.assert_eq(ids, array['p-3'], 'search by order number');
-  select ids into ids from s_res where label='customer (case-insensitive)';
-  perform pg_temp.assert_eq(ids, array['p-2'], 'search by customer, case-insensitively');
-  select ids into ids from s_res where label='sku';
-  perform pg_temp.assert_eq(ids, array['p-4'], 'search by line SKU');
-  select ids into ids from s_res where label='product name substring';
-  perform pg_temp.assert_eq(ids, array['p-5'], 'search by line product name, mid-word');
-  select ids into ids from s_res where label='whitespace only = no filter';
-  perform pg_temp.assert_eq(cardinality(ids), (select count(*)::int from pg_temp.old_tab('all')), 'blank search matches everything');
-  select ids into ids from s_res where label='percent is literal, not a wildcard';
-  perform pg_temp.assert_eq(cardinality(ids), 0, 'a bare % matches nothing (not ILIKE)');
+  select r.ids into got_ids from s_res r where r.label='order number';
+  perform pg_temp.assert_eq(got_ids, array['p-3'], 'search by order number');
+  select r.ids into got_ids from s_res r where r.label='customer (case-insensitive)';
+  perform pg_temp.assert_eq(got_ids, array['p-2'], 'search by customer, case-insensitively');
+  select r.ids into got_ids from s_res r where r.label='sku';
+  perform pg_temp.assert_eq(got_ids, array['p-4'], 'search by line SKU');
+  select r.ids into got_ids from s_res r where r.label='product name substring';
+  perform pg_temp.assert_eq(got_ids, array['p-5'], 'search by line product name, mid-word');
+  select r.ids into got_ids from s_res r where r.label='whitespace only = no filter';
+  perform pg_temp.assert_eq(cardinality(got_ids), (select count(*)::int from pg_temp.old_tab('all')), 'blank search matches everything');
+  select r.ids into got_ids from s_res r where r.label='percent is literal, not a wildcard';
+  perform pg_temp.assert_eq(cardinality(got_ids), 0, 'a bare % matches nothing (not ILIKE)');
 end $$;
 
 -- ------------------------------------------------------------ 7. filters
