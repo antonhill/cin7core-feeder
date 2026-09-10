@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
 import { REPORTS_MODULE } from "@/app/module-nav";
-import { getOrderFulfillmentReport, getOrderFulfillmentLines, getReportFilterOptions, getCalendarBannerCounts, toCalendarErrorMessage } from "@/reports/query";
+import { getOrderFulfillmentReport, getOrderFulfillmentLines, getReportFilterOptions, getCalendarBannerCounts, toReportErrorMessage } from "@/reports/query";
 import type { OrderFulfillmentRow, OrderFulfillmentLineRow, OrderFulfillmentFilters } from "@/reports/query";
 import type { InstancePickerItem } from "@/actions/instances";
 
@@ -35,7 +35,7 @@ export async function loadInvoicingSchedulerOrdersAction(filters: OrderFulfillme
     ]);
     return { ok: true, data: { orders, lines, instances: options.instances, floorHiddenCount: counts.floorHiddenCount } };
   } catch (e) {
-    return { ok: false, error: toCalendarErrorMessage(e, "loadInvoicingSchedulerOrdersAction") };
+    return { ok: false, error: toReportErrorMessage(e, "loadInvoicingSchedulerOrdersAction") };
   }
 }
 

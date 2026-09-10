@@ -13,7 +13,7 @@ import {
   getOrderFulfillmentLines,
   getReportFilterOptions,
   getCalendarBannerCounts,
-  toCalendarErrorMessage,
+  toReportErrorMessage,
   type OrderFulfillmentRow,
   type OrderFulfillmentLineRow,
   type OrderFulfillmentFilters,
@@ -59,7 +59,7 @@ export async function loadPickingCalendarOrdersAction(filters: OrderFulfillmentF
       data: { orders, lines, instances: options.instances, unscheduledCount: counts.unscheduledCount, floorHiddenCount: counts.floorHiddenCount },
     };
   } catch (e) {
-    return { ok: false, error: toCalendarErrorMessage(e, "loadPickingCalendarOrdersAction") };
+    return { ok: false, error: toReportErrorMessage(e, "loadPickingCalendarOrdersAction") };
   }
 }
 

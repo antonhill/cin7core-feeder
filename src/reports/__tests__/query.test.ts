@@ -203,7 +203,7 @@ describe("getSaleLineDetails", () => {
 });
 
 describe("getReportFilterOptions", () => {
-  it("dedupes and sorts locations, passes through instances/categories", async () => {
+  it("dedupes and sorts locations and payment statuses, passes through instances/categories", async () => {
     const db = {
       from: (table: string) => {
         if (table === "cin7_instances") {
@@ -212,11 +212,21 @@ describe("getReportFilterOptions", () => {
           };
         }
         if (table === "sales") {
+          // One scan now yields BOTH the location list and the payment-status
+          // list — Order Fulfillment's payment dropdown can no longer derive
+          // its options from the rows it fetched, because it only fetches a page.
           return {
             select: () => ({
-              eq: () => ({
-                not: () => Promise.resolve({ data: [{ location: "Main Warehouse" }, { location: "Main Warehouse" }, { location: "Secondary" }], error: null }),
-              }),
+              eq: () =>
+                Promise.resolve({
+                  data: [
+                    { location: "Main Warehouse", combined_payment_status: "PAID" },
+                    { location: "Main Warehouse", combined_payment_status: "UNPAID" },
+                    { location: "Secondary", combined_payment_status: "PAID" },
+                    { location: null, combined_payment_status: null },
+                  ],
+                  error: null,
+                }),
             }),
           };
         }
@@ -234,6 +244,8 @@ describe("getReportFilterOptions", () => {
     expect(options.instances).toEqual([{ id: "inst-1", name: "Spark Demo", active: true }]);
     expect(options.locations).toEqual(["Main Warehouse", "Secondary"]);
     expect(options.categories).toEqual([{ code: "WIDGETS", name: "Widgets" }]);
+    // Nulls dropped, deduped, sorted — same treatment as locations.
+    expect(options.paymentStatuses).toEqual(["PAID", "UNPAID"]);
   });
 });
 

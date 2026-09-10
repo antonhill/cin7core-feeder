@@ -4,7 +4,8 @@ import { Fragment, useEffect, useMemo, useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
 import { loadReportFilterOptionsAction, loadSalesSyncStatusAction, triggerSalesSyncAction } from "../actions";
 import {
-  loadOrderFulfillmentAction,
+  loadOrderFulfillmentPageAction,
+  loadOrderFulfillmentLinesAction,
   exportOrderFulfillmentXlsxAction,
   loadSaleAttachmentsAction,
   markBoxLabelPrintedAction,
@@ -12,16 +13,17 @@ import {
   loadOrderFulfillmentExportColumnsAction,
   saveOrderFulfillmentExportColumnsAction,
 } from "./actions";
-import type { ReportFilterOptions, OrderFulfillmentRow, OrderFulfillmentLineRow, SalesSyncStatus } from "@/reports/query";
+import { ORDER_FULFILLMENT_PAGE_SIZE } from "@/reports/query";
+import type { ReportFilterOptions, SalesSyncStatus, OrderFulfillmentRow, OrderFulfillmentLineRow, OrderFulfillmentTabCounts, OrderFulfillmentTableQuery } from "@/reports/query";
 import type { Cin7SaleAttachment } from "@/cin7/sales";
 import { buildBatchPickList } from "@/reports/order-fulfillment/pick-list";
 import { DEFAULT_ORDER_FULFILLMENT_EXPORT_COLUMN_KEYS } from "@/reports/order-fulfillment-export-columns";
 import { ExportColumnPicker } from "./ExportColumnPicker";
 import { StaleBadge, staleSyncButtonClass } from "../sync-staleness";
 import { useResizableColumns, ColGroup, ResizableTh } from "../resizable-columns";
-import { compareNullable, type SortDirection } from "../sortable-table";
+import { type SortDirection } from "../sortable-table";
+import type { OrderTableColumn } from "./sort-contract";
 import { statusBadgeClass } from "../status-badge";
-import { matchesSearch } from "../text-search";
 import { SearchInput } from "../search-input";
 import { Spinner } from "@/app/Spinner";
 import { PageLoadingIndicator } from "@/app/PageLoadingIndicator";
@@ -59,22 +61,6 @@ const TABS: { value: Tab; label: string }[] = [
   { value: "all", label: "All Orders" },
 ];
 
-type OrderTableColumn =
-  | "select"
-  | "order"
-  | "shipBy"
-  | "picking"
-  | "packing"
-  | "shipping"
-  | "invoice"
-  | "invoiceNumbers"
-  | "payment"
-  | "pickableNow"
-  | "readyToInvoiceQty"
-  | "readyToInvoiceFulfilments"
-  | "boxLabelQty"
-  | "boxLabelAction"
-  | "paidInvoice";
 
 const ORDER_TABLE_COLUMNS: OrderTableColumn[] = [
   "select",
@@ -113,38 +99,6 @@ const ORDER_TABLE_DEFAULT_WIDTHS: Record<OrderTableColumn, number> = {
 };
 
 /** The "select" checkbox column has no sensible sort value; every other column maps to one field (or, for Order, falls back to customer name so an order with no number still sorts sensibly). "boxLabelAction" isn't sortable either — it's a button, not data. */
-function orderTableSortValue(column: OrderTableColumn, row: OrderFulfillmentRow): string | number | null {
-  switch (column) {
-    case "order":
-      return row.order_number ?? row.customer_name;
-    case "shipBy":
-      return row.ship_by;
-    case "picking":
-      return row.combined_picking_status;
-    case "packing":
-      return row.combined_packing_status;
-    case "shipping":
-      return row.combined_shipping_status;
-    case "invoice":
-      return row.combined_invoice_status;
-    case "invoiceNumbers":
-      return row.invoice_numbers;
-    case "payment":
-      return row.combined_payment_status;
-    case "pickableNow":
-      return row.total_pickable_qty;
-    case "readyToInvoiceQty":
-      return row.total_ready_to_invoice_qty;
-    case "readyToInvoiceFulfilments":
-      return row.ready_to_invoice_fulfilment_numbers;
-    case "boxLabelQty":
-      return row.total_ready_for_box_label_qty;
-    case "paidInvoice":
-      return row.paid_amount;
-    default:
-      return null;
-  }
-}
 
 /** An order open this many days or more without being fully picked is probably stuck, not just "next in line" — a plain default, not meant to be precisely tuned. */
 const STUCK_AFTER_DAYS = 7;
@@ -234,7 +188,21 @@ export default function OrderFulfillmentPage() {
   // this control existed) — see twelveMonthsAgoDateOnly's own comment.
   const [fromDate, setFromDate] = useState<string>(twelveMonthsAgoDateOnly);
 
-  const [orders, setOrders] = useState<OrderFulfillmentRow[] | null>(null);
+  // One page of the current tab, not the whole 12-month set (migration 0091).
+  // `null` still means "not loaded yet", as before.
+  const [pageRows, setPageRows] = useState<OrderFulfillmentRow[] | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
+  // Paging state is keyed on the query it belongs to. Any change that
+  // narrows the set invalidates the page number — page 4 of a filtered
+  // result is not page 4 of the unfiltered one — and deriving that here
+  // rather than resetting it from an effect avoids both a cascading render
+  // and react-hooks/set-state-in-effect.
+  const [paging, setPaging] = useState<{ key: string; index: number }>({ key: "", index: 0 });
+  // The nine badge/floor counts, from report_order_fulfillment_tab_counts.
+  // Never derived from `pageRows` — they are facts about the whole set.
+  const [serverCounts, setServerCounts] = useState<OrderFulfillmentTabCounts | null>(null);
+  // Line detail for THIS PAGE's rows only, so expanding a row is still
+  // instant without fetching every line the org has.
   const [lines, setLines] = useState<OrderFulfillmentLineRow[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, startLoadTransition] = useTransition();
@@ -251,6 +219,8 @@ export default function OrderFulfillmentPage() {
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
+  // Search is server-side now, so a keystroke would otherwise be a query.
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [paymentFilter, setPaymentFilter] = useState("");
   const [shipByFrom, setShipByFrom] = useState("");
   const [shipByTo, setShipByTo] = useState("");
@@ -301,7 +271,10 @@ export default function OrderFulfillmentPage() {
   const [attachmentsError, setAttachmentsError] = useState<string | null>(null);
   const [isLoadingAttachments, startAttachmentsTransition] = useTransition();
 
-  const [selectedSaleIds, setSelectedSaleIds] = useState<Set<string>>(new Set());
+  // Row objects, not just ids: a selection can now span pages, and the batch
+  // pick list needs the orders themselves after the user has paged away.
+  const [selectedOrders, setSelectedOrders] = useState<OrderFulfillmentRow[]>([]);
+  const [pickListLines, setPickListLines] = useState<OrderFulfillmentLineRow[]>([]);
   const [showPickList, setShowPickList] = useState(false);
 
   // P2 (LBL brief) Box Label Queue — per-sale so one row's in-flight click
@@ -309,13 +282,14 @@ export default function OrderFulfillmentPage() {
   const [markingPrintedSaleId, setMarkingPrintedSaleId] = useState<string | null>(null);
   const [markPrintedError, setMarkPrintedError] = useState<string | null>(null);
 
-  function toggleSelected(saleId: string) {
-    setSelectedSaleIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(saleId)) next.delete(saleId);
-      else next.add(saleId);
-      return next;
-    });
+  // Keeps the row object, not just the id: a selection survives paging, and
+  // the batch pick list needs the order after the user has paged away from it.
+  function toggleSelected(row: OrderFulfillmentRow) {
+    setSelectedOrders((prev) =>
+      prev.some((o) => o.cin7_sale_id === row.cin7_sale_id)
+        ? prev.filter((o) => o.cin7_sale_id !== row.cin7_sale_id)
+        : [...prev, row]
+    );
   }
 
   function refreshSyncStatus() {
@@ -354,7 +328,7 @@ export default function OrderFulfillmentPage() {
    * P2 (LBL brief) Box Label Queue: records the Toolbox-local "printed"
    * flag — never a Cin7 write — then refetches the report so this row's
    * is_ready_for_box_label/box_label_printed_at reflect the new state
-   * immediately (a plain DB read behind loadOrderFulfillmentAction, not a
+   * immediately (a plain DB read behind loadOrderFulfillmentPageAction, not a
    * Cin7 call, so this is cheap).
    */
   function handleMarkBoxLabelPrinted(instanceId: string, saleId: string) {
@@ -384,16 +358,57 @@ export default function OrderFulfillmentPage() {
     });
   }
 
+  /** Identity of the current narrowing; when it changes, the page number resets to the first page. */
+  const queryKey = JSON.stringify([
+    tab, instanceIds, fromDate, debouncedSearch, paymentFilter, shipByFrom, shipByTo,
+    backorderFilter, backorderPoFilter, invoiceCoverageFilter, sortColumn, sortDirection,
+  ]);
+  const pageIndex = paging.key === queryKey ? paging.index : 0;
+  const setPageIndex = (next: number | ((prev: number) => number)) =>
+    setPaging({ key: queryKey, index: Math.max(0, typeof next === "function" ? next(pageIndex) : next) });
+
+  /**
+   * Everything the server needs to produce this page. Assembled once so the
+   * table load, the export and the effect dependencies can never disagree
+   * about what "the current view" is.
+   */
+  const tableQuery: OrderFulfillmentTableQuery = useMemo(
+    () => ({
+      tab,
+      instanceIds: instanceIds.length ? instanceIds : undefined,
+      fromDate: fromDate || undefined,
+      search: debouncedSearch || undefined,
+      paymentStatus: paymentFilter || undefined,
+      shipByFrom: shipByFrom || undefined,
+      shipByTo: shipByTo || undefined,
+      backorder: backorderFilter,
+      backorderPo: backorderPoFilter || undefined,
+      invoiceCoverage: invoiceCoverageFilter || undefined,
+      sort: sortColumn,
+      sortDir: sortDirection,
+      limit: ORDER_FULFILLMENT_PAGE_SIZE,
+      offset: pageIndex * ORDER_FULFILLMENT_PAGE_SIZE,
+    }),
+    [tab, instanceIds, fromDate, debouncedSearch, paymentFilter, shipByFrom, shipByTo,
+     backorderFilter, backorderPoFilter, invoiceCoverageFilter, sortColumn, sortDirection, pageIndex]
+  );
+
+  function applyPageResult(result: Awaited<ReturnType<typeof loadOrderFulfillmentPageAction>>) {
+    if (!result.ok || !result.data) {
+      setLoadError(result.error ?? "Unknown error");
+      return;
+    }
+    setLoadError(null);
+    setPageRows(result.data.page.rows);
+    setTotalCount(result.data.page.totalCount);
+    setServerCounts(result.data.counts);
+    setLines(result.data.lines);
+  }
+
   function runLoad() {
     setLoadError(null);
     startLoadTransition(async () => {
-      const result = await loadOrderFulfillmentAction({ instanceIds: instanceIds.length ? instanceIds : undefined, fromDate: fromDate || undefined });
-      if (!result.ok) {
-        setLoadError(result.error ?? "Unknown error");
-        return;
-      }
-      setOrders(result.data?.orders ?? []);
-      setLines(result.data?.lines ?? []);
+      applyPageResult(await loadOrderFulfillmentPageAction(tableQuery));
     });
   }
 
@@ -410,26 +425,35 @@ export default function OrderFulfillmentPage() {
     });
   }, []);
 
-  // Keyed on instanceIds/fromDate so toggling either reloads on its own — it
-  // used to silently do nothing until the separate "Refresh" button was
-  // clicked, which read as the filter being broken (it wasn't; nothing was
-  // just re-fetching). Runs on mount too (instanceIds starts as []), which
-  // is also why the previous separate initial-load call was removed rather
-  // than kept alongside this one. Direct .then() here (not runLoad/
-  // startTransition) so every setState stays inside a .then() callback
-  // rather than running synchronously in the effect body — runLoad is for
-  // the "Refresh" button, a real user event, where that's fine.
+  // 300ms debounce: search moved server-side with migration 0091, so an
+  // undebounced keystroke would be a round trip per character. Everything
+  // else here changes on a click, not a keypress, and needs no debounce.
   useEffect(() => {
-    loadOrderFulfillmentAction({ instanceIds: instanceIds.length ? instanceIds : undefined, fromDate: fromDate || undefined }).then((result) => {
-      if (!result.ok) {
-        setLoadError(result.error ?? "Unknown error");
-        return;
-      }
-      setLoadError(null);
-      setOrders(result.data?.orders ?? []);
-      setLines(result.data?.lines ?? []);
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // The single data load. Keyed on the whole query, so every tab switch,
+  // filter, sort, search and page turn re-fetches exactly one page — the
+  // page used to fetch the org's entire 12-month set once and do all of this
+  // in the browser. Direct .then() so setState stays inside the callback.
+  useEffect(() => {
+    loadOrderFulfillmentPageAction(tableQuery).then(applyPageResult);
+  }, [tableQuery]);
+
+  // Lines for the batch pick list, fetched only when it is opened and only
+  // for the selected orders — which may no longer be on the current page.
+  useEffect(() => {
+    if (!showPickList || selectedOrders.length === 0) {
+      return;
+    }
+    loadOrderFulfillmentLinesAction(
+      selectedOrders.map((o) => o.cin7_sale_id),
+      instanceIds.length ? instanceIds : undefined
+    ).then((result) => {
+      if (result.ok) setPickListLines(result.data ?? []);
     });
-  }, [instanceIds, fromDate]);
+  }, [showPickList, selectedOrders, instanceIds]);
 
   function toggleInstance(id: string) {
     setInstanceIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -445,94 +469,69 @@ export default function OrderFulfillmentPage() {
     return map;
   }, [lines]);
 
-  const paymentStatusOptions = useMemo(() => {
-    if (!orders) return [];
-    return [...new Set(orders.map((o) => o.combined_payment_status).filter((s): s is string => Boolean(s)))].sort();
-  }, [orders]);
+  // From the org-wide filter options, not from the rows on screen: with
+  // paging, deriving the dropdown from the fetched rows would silently shrink
+  // it to whatever the current page happens to contain.
+  const paymentStatusOptions = options?.paymentStatuses ?? [];
 
-  const visibleRows = useMemo(() => {
-    if (!orders) return [];
-    let rows = orders;
-    if (tab === "pick") rows = rows.filter((o) => o.is_pick_today);
-    else if (tab === "ship") rows = rows.filter((o) => o.is_ship_today);
-    else if (tab === "readyToInvoice") rows = rows.filter((o) => o.is_ready_to_invoice);
-    else if (tab === "boxLabel") rows = rows.filter((o) => o.is_ready_for_box_label);
+  // The server has already applied the tab, all seven filters, the search
+  // and the sort, and returned exactly this page. What used to be
+  // visibleRows -> sortedRows in the browser is now just the rows we were
+  // given, which is the whole point: a page cannot be sliced correctly until
+  // everything that narrows the set has been applied.
+  const rows = pageRows ?? [];
 
-    // P5.4 (LBL brief): matches order #/customer OR any line's SKU/product
-    // name on the order — linesBySaleId is already fetched for the row
-    // expand panel, so this is free (no extra query).
-    if (search.trim()) {
-      rows = rows.filter(
-        (o) =>
-          matchesSearch(search, o.order_number, o.customer_name) ||
-          (linesBySaleId.get(o.cin7_sale_id) ?? []).some((l) => matchesSearch(search, l.product_sku, l.product_name))
-      );
-    }
-    if (paymentFilter) rows = rows.filter((o) => o.combined_payment_status === paymentFilter);
-    if (shipByFrom) rows = rows.filter((o) => o.ship_by !== null && o.ship_by >= shipByFrom);
-    if (shipByTo) rows = rows.filter((o) => o.ship_by !== null && o.ship_by <= shipByTo);
-    if (backorderFilter === "fulfillable") rows = rows.filter((o) => o.total_backorder_qty === 0);
-    else if (backorderFilter === "backorder") rows = rows.filter((o) => o.total_backorder_qty > 0);
-    // P5.2: PO-linkage-based, independent of backorderFilter above — see
-    // that state's own comment. "No open PO" is the actionable procurement
-    // list; "with PO" and "no PO" aren't mutually exclusive (a mixed order
-    // can match both), so each is its own straightforward boolean filter.
-    if (backorderPoFilter === "with_po") rows = rows.filter((o) => o.has_backorder_with_po);
-    else if (backorderPoFilter === "no_po") rows = rows.filter((o) => o.has_backorder_no_po);
-    // P2 requirement 3: scope any tab (most useful on Ship Today / Box Label
-    // Queue) to real invoice coverage, computed server-side from quantities
-    // rather than Cin7's own combined_invoice_status string.
-    if (invoiceCoverageFilter) rows = rows.filter((o) => o.invoice_coverage_status === invoiceCoverageFilter);
-
-    return rows;
-  }, [orders, tab, search, paymentFilter, shipByFrom, shipByTo, backorderFilter, backorderPoFilter, invoiceCoverageFilter, linesBySaleId]);
-
-  const sortedRows = useMemo(() => {
-    if (!sortColumn) return visibleRows;
-    const copy = [...visibleRows];
-    copy.sort((a, b) => {
-      const cmp = compareNullable(orderTableSortValue(sortColumn, a), orderTableSortValue(sortColumn, b));
-      return sortDirection === "asc" ? cmp : -cmp;
-    });
-    return copy;
-  }, [visibleRows, sortColumn, sortDirection]);
-
-  const counts = orders
+  const counts = serverCounts
     ? {
-        pick: orders.filter((o) => o.is_pick_today).length,
-        ship: orders.filter((o) => o.is_ship_today).length,
-        readyToInvoice: orders.filter((o) => o.is_ready_to_invoice).length,
-        boxLabel: orders.filter((o) => o.is_ready_for_box_label).length,
-        all: orders.length,
+        pick: serverCounts.pickCount,
+        ship: serverCounts.shipCount,
+        readyToInvoice: serverCounts.readyToInvoiceCount,
+        boxLabel: serverCounts.boxLabelCount,
+        all: serverCounts.allCount,
       }
     : null;
 
   // P5.3 (LBL brief): orders older than the instance's fulfilment_view_start_date
   // are excluded from is_pick_today/is_ship_today/is_ready_to_invoice (see
-  // report_order_fulfillment, migrations 0061/0062) but still returned here —
+  // report_order_fulfillment, migrations 0061/0062) but still counted here —
   // All Orders must keep seeing everything, only the queue tabs are gated.
-  // Counted from the full `orders` set (not visibleRows) since the point is
-  // "how many are hidden from this tab overall," not a count that shrinks as
-  // the user narrows their own search.
-  const hiddenByFloorCount = orders
+  // Now served by report_order_fulfillment_tab_counts, which counts over the
+  // whole set: the point is "how many are hidden from this tab overall", and
+  // a page could never answer that.
+  const hiddenByFloorCount = serverCounts
     ? tab === "pick"
-      ? orders.filter((o) => o.pick_today_hidden_by_floor).length
+      ? serverCounts.pickFloorCount
       : tab === "ship"
-        ? orders.filter((o) => o.ship_today_hidden_by_floor).length
+        ? serverCounts.shipFloorCount
         : tab === "readyToInvoice"
-          ? orders.filter((o) => o.ready_to_invoice_hidden_by_floor).length
+          ? serverCounts.readyToInvoiceFloorCount
           : tab === "boxLabel"
-            ? orders.filter((o) => o.box_label_hidden_by_floor).length
+            ? serverCounts.boxLabelFloorCount
             : 0
     : 0;
 
-  const selectedOrders = useMemo(() => (orders ?? []).filter((o) => selectedSaleIds.has(o.cin7_sale_id)), [orders, selectedSaleIds]);
-  const pickList = useMemo(() => buildBatchPickList(selectedOrders, linesBySaleId), [selectedOrders, linesBySaleId]);
+  const pageCount = Math.max(1, Math.ceil(totalCount / ORDER_FULFILLMENT_PAGE_SIZE));
+  const pageFirstRow = totalCount === 0 ? 0 : pageIndex * ORDER_FULFILLMENT_PAGE_SIZE + 1;
+  const pageLastRow = Math.min((pageIndex + 1) * ORDER_FULFILLMENT_PAGE_SIZE, totalCount);
+
+  const selectedSaleIds = useMemo(() => new Set(selectedOrders.map((o) => o.cin7_sale_id)), [selectedOrders]);
+  const pickListLinesBySaleId = useMemo(() => {
+    const map = new Map<string, OrderFulfillmentLineRow[]>();
+    for (const line of pickListLines) {
+      const existing = map.get(line.cin7_sale_id);
+      if (existing) existing.push(line);
+      else map.set(line.cin7_sale_id, [line]);
+    }
+    return map;
+  }, [pickListLines]);
+  const pickList = useMemo(() => buildBatchPickList(selectedOrders, pickListLinesBySaleId), [selectedOrders, pickListLinesBySaleId]);
 
   function handleExport() {
     setExportError(null);
     startExportTransition(async () => {
-      const result = await exportOrderFulfillmentXlsxAction(visibleRows, exportColumnKeys);
+      // The complete filtered result set, rebuilt server-side from the same
+      // query the table used — not the rows this browser happens to hold.
+      const result = await exportOrderFulfillmentXlsxAction(tableQuery, exportColumnKeys);
       if (!result.ok || !result.data) {
         setExportError(result.error ?? "Unknown error");
         return;
@@ -627,7 +626,7 @@ export default function OrderFulfillmentPage() {
         )}
       </Panel>
 
-      {orders && (
+      {pageRows && (
         <Panel className="mt-6">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <div className="flex gap-1">
@@ -645,7 +644,7 @@ export default function OrderFulfillmentPage() {
                 </button>
               ))}
             </div>
-            {visibleRows.length > 0 && (
+            {rows.length > 0 && (
               <div className="flex items-center gap-2">
                 <Button variant="secondary" size="sm" onClick={() => setShowColumnPicker(true)} title="Choose which columns Export to Excel includes">
                   Columns…
@@ -734,7 +733,7 @@ export default function OrderFulfillmentPage() {
             )}
           </div>
 
-          {visibleRows.length === 0 && <p className="mt-4 text-sm text-slate-400">Nothing matches these filters.</p>}
+          {rows.length === 0 && <p className="mt-4 text-sm text-slate-400">Nothing matches these filters.</p>}
 
           {selectedSaleIds.size > 0 && (
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-primary-border bg-primary-subtle px-4 py-2.5">
@@ -745,14 +744,14 @@ export default function OrderFulfillmentPage() {
                 <Button size="sm" onClick={() => setShowPickList(true)}>
                   Generate batch pick list
                 </Button>
-                <Button variant="secondary" size="sm" onClick={() => setSelectedSaleIds(new Set())}>
+                <Button variant="secondary" size="sm" onClick={() => setSelectedOrders([])}>
                   Clear selection
                 </Button>
               </div>
             </div>
           )}
 
-          {visibleRows.length > 0 && (
+          {rows.length > 0 && (
             <div className="mt-4 overflow-x-auto">
               <table className="w-full table-fixed text-left text-xs">
                 <ColGroup columns={ORDER_TABLE_COLUMNS} widths={columnWidths} />
@@ -763,15 +762,15 @@ export default function OrderFulfillmentPage() {
                         type="checkbox"
                         title="Select all visible orders"
                         aria-label="Select all visible orders"
-                        checked={visibleRows.every((r) => selectedSaleIds.has(r.cin7_sale_id))}
+                        checked={rows.length > 0 && rows.every((r) => selectedSaleIds.has(r.cin7_sale_id))}
                         onChange={(e) => {
-                          setSelectedSaleIds((prev) => {
-                            const next = new Set(prev);
-                            for (const r of visibleRows) {
-                              if (e.target.checked) next.add(r.cin7_sale_id);
-                              else next.delete(r.cin7_sale_id);
+                          setSelectedOrders((prev) => {
+                            const byId = new Map(prev.map((o) => [o.cin7_sale_id, o]));
+                            for (const r of rows) {
+                              if (e.target.checked) byId.set(r.cin7_sale_id, r);
+                              else byId.delete(r.cin7_sale_id);
                             }
-                            return next;
+                            return [...byId.values()];
                           });
                         }}
                         className="h-4 w-4"
@@ -794,7 +793,7 @@ export default function OrderFulfillmentPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedRows.map((row) => (
+                  {rows.map((row) => (
                     <Fragment key={row.cin7_sale_id}>
                       <tr
                         onClick={() => setExpandedSaleId(expandedSaleId === row.cin7_sale_id ? null : row.cin7_sale_id)}
@@ -811,7 +810,7 @@ export default function OrderFulfillmentPage() {
                             type="checkbox"
                             aria-label={`Select order ${row.order_number ?? row.cin7_sale_id} for picking`}
                             checked={selectedSaleIds.has(row.cin7_sale_id)}
-                            onChange={() => toggleSelected(row.cin7_sale_id)}
+                            onChange={() => toggleSelected(row)}
                             className="h-4 w-4"
                           />
                         </td>
@@ -1032,6 +1031,35 @@ export default function OrderFulfillmentPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {totalCount > ORDER_FULFILLMENT_PAGE_SIZE && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3">
+              <p className="text-sm text-slate-500">
+                Showing {pageFirstRow.toLocaleString()}&ndash;{pageLastRow.toLocaleString()} of {totalCount.toLocaleString()}
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={pageIndex === 0 || isLoading}
+                  onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
+                >
+                  Previous
+                </Button>
+                <span className="text-sm text-slate-500">
+                  Page {pageIndex + 1} of {pageCount.toLocaleString()}
+                </span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={pageIndex + 1 >= pageCount || isLoading}
+                  onClick={() => setPageIndex((p) => p + 1)}
+                >
+                  Next
+                </Button>
+              </div>
             </div>
           )}
         </Panel>
