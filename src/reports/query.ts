@@ -35,6 +35,27 @@ interface ReportJsonEnvelope<T> {
 }
 
 /**
+ * A raw failure from the database itself (a timeout, a dropped connection, a
+ * PostgREST-level error) as opposed to something the user can act on.
+ *
+ * It exists so the calendars can tell those two apart in their catch blocks:
+ * "This report matched over 75,000 rows — narrow your filters" is worth
+ * showing verbatim, whereas
+ * `report_order_fulfillment_json: canceling statement due to statement
+ * timeout` is an internal detail that reached real users on the Shipping
+ * Calendar. `technicalMessage` keeps the original for logging — see
+ * toUserFacingMessage.
+ */
+export class ReportQueryError extends Error {
+  readonly technicalMessage: string;
+  constructor(technicalMessage: string) {
+    super("The report could not be loaded. Please try again.");
+    this.name = "ReportQueryError";
+    this.technicalMessage = technicalMessage;
+  }
+}
+
+/**
  * Calls a `_json` report wrapper once and unwraps its envelope.
  *
  * The wrapper counts server-side and returns an empty array past the
@@ -44,7 +65,7 @@ interface ReportJsonEnvelope<T> {
  */
 async function fetchReportJson<T>(db: SupabaseClient, fn: string, params: Record<string, unknown>): Promise<T[]> {
   const { data, error } = await db.rpc(fn, params).single<ReportJsonEnvelope<T>>();
-  if (error) throw new Error(`${fn}: ${error.message}`);
+  if (error) throw new ReportQueryError(`${fn}: ${error.message}`);
 
   const envelope = data ?? { row_count: 0, rows: [] };
   if (envelope.row_count > MAX_RPC_ROWS) {
@@ -53,6 +74,28 @@ async function fetchReportJson<T>(db: SupabaseClient, fn: string, params: Record
   // The wrapper coalesces an empty result to [], but a null envelope from a
   // no-row response must not become undefined here either.
   return envelope.rows ?? [];
+}
+
+/**
+ * Turns whatever a calendar action caught into something safe to render.
+ *
+ * A raw database failure used to reach users verbatim — the Shipping
+ * Calendar showed `report_order_fulfillment_json: canceling statement due to
+ * statement timeout`, which names an internal function and tells the reader
+ * nothing they can act on. Those become a generic retry message, with the
+ * original written to the server log so it is still there for diagnosis.
+ *
+ * Everything else passes through untouched, deliberately: "This report
+ * matched over 75,000 rows — narrow your filters" and the authorization
+ * errors from requireModuleAccess are all messages the user can act on, and
+ * genericising those would be a regression, not a fix.
+ */
+export function toCalendarErrorMessage(e: unknown, context: string): string {
+  if (e instanceof ReportQueryError) {
+    console.error(`[${context}] ${e.technicalMessage}`);
+    return e.message;
+  }
+  return e instanceof Error ? e.message : "Unknown error";
 }
 
 export interface SalesReportFilters {
@@ -492,6 +535,22 @@ export interface OrderFulfillmentFilters {
    * fetch — see that constant's own comment.
    */
   fromDate?: string;
+  /**
+   * "YYYY-MM-DD", inclusive on both ends — bounds the result to orders whose
+   * `ship_by` falls in the window, so the three calendars fetch the week
+   * they are about to draw instead of the org's whole history (migration
+   * 0090). Deliberately a plain `ship_by` comparison rather than fromDate's
+   * `coalesce(ship_by, order_date)`: every calendar buckets cards on
+   * ship_by alone, and coalesce() would defeat sales_ship_by_idx.
+   *
+   * Orders with no ship_by fall outside every window by design. They were
+   * never drawn on any grid, but they ARE counted in Shipping/Picking
+   * Calendar's "no Ship By date set" banner — which is why that count comes
+   * from getCalendarBannerCounts and not from these rows. Omitted means no
+   * window: the pre-0090 behaviour every non-calendar caller still gets.
+   */
+  shipByFrom?: string;
+  shipByTo?: string;
 }
 
 /**
@@ -618,6 +677,8 @@ export async function getOrderFulfillmentReport(db: SupabaseClient, orgId: strin
     p_org_id: orgId,
     p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
     p_from_date: filters.fromDate ?? null,
+    p_ship_by_from: filters.shipByFrom ?? null,
+    p_ship_by_to: filters.shipByTo ?? null,
   });
 }
 
@@ -656,7 +717,57 @@ export async function getOrderFulfillmentLines(db: SupabaseClient, orgId: string
     p_org_id: orgId,
     p_instance_ids: filters.instanceIds?.length ? filters.instanceIds : null,
     p_from_date: filters.fromDate ?? null,
+    p_ship_by_from: filters.shipByFrom ?? null,
+    p_ship_by_to: filters.shipByTo ?? null,
   });
+}
+
+/**
+ * The calendar type a banner count is being asked for. Matches
+ * report_calendar_banner_counts' own `p_calendar` values exactly — that
+ * function returns NO ROWS for anything else, so a typo surfaces here as a
+ * thrown error rather than as a plausible-looking 0 on screen.
+ */
+export type CalendarKind = "shipping" | "picking" | "invoicing";
+
+export interface CalendarBannerCounts {
+  /** Qualifying orders with no Ship By date at all — "N open order(s) have no Ship By date set". Always 0 for "invoicing", which has never shown this banner. */
+  unscheduledCount: number;
+  /** Orders suppressed by their instance's fulfilment_view_start_date floor — "N older orders hidden by the start-date setting". */
+  floorHiddenCount: number;
+}
+
+/**
+ * The two GLOBAL banner counts behind a calendar grid.
+ *
+ * These are facts about the whole org, not about the visible week, so they
+ * cannot come from the windowed fetch that draws the grid. Measured on real
+ * data when this split was made: computing the unscheduled count from a
+ * week-windowed fetch would have reported 106 instead of 4,264, because an
+ * order with no Ship By date belongs to no week at all — windowing that
+ * number does not narrow it, it corrupts it.
+ *
+ * report_calendar_banner_counts (0090) is built on report_order_fulfillment
+ * itself rather than reimplementing the qualification rules, so these stay
+ * exact by construction. It returns two integers instead of the 14 MB these
+ * pages used to fetch and count in the browser.
+ */
+export async function getCalendarBannerCounts(
+  db: SupabaseClient,
+  orgId: string,
+  calendar: CalendarKind,
+  instanceIds?: string[]
+): Promise<CalendarBannerCounts> {
+  const { data, error } = await db
+    .rpc("report_calendar_banner_counts", {
+      p_org_id: orgId,
+      p_calendar: calendar,
+      p_instance_ids: instanceIds?.length ? instanceIds : null,
+    })
+    .maybeSingle<{ unscheduled_count: number; floor_hidden_count: number }>();
+  if (error) throw new ReportQueryError(`report_calendar_banner_counts: ${error.message}`);
+  if (!data) throw new ReportQueryError(`report_calendar_banner_counts returned no row for calendar "${calendar}"`);
+  return { unscheduledCount: Number(data.unscheduled_count), floorHiddenCount: Number(data.floor_hidden_count) };
 }
 
 export interface StocktakeStagedStockRow {

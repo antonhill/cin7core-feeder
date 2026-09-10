@@ -35,3 +35,24 @@ export function formatDayLabel(dateIso: string): string {
   const d = new Date(`${dateIso}T00:00:00Z`);
   return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 }
+
+/** Days shown on the scheduler grid — a Monday-anchored week. */
+export const CALENDAR_DAY_COUNT = 7;
+
+/**
+ * The `ship_by` range that can land on the visible week (migration 0090).
+ *
+ * This page buckets a card under `ship_by + offsetDays` ("invoice N days
+ * after ship"), which is the OPPOSITE direction to CalendarBoard's
+ * `ship_by - offsetDays`. Inverting it for [weekStart, weekStart + 6] gives
+ * a ship_by range shifted back by offsetDays. Do not replace this with
+ * shipping-calendar's version — same name, opposite sign.
+ *
+ * Both bounds inclusive, matching the SQL window.
+ */
+export function shipByWindowForWeek(weekStart: string, offsetDays: number): { shipByFrom: string; shipByTo: string } {
+  return {
+    shipByFrom: addDays(weekStart, -offsetDays),
+    shipByTo: addDays(weekStart, CALENDAR_DAY_COUNT - 1 - offsetDays),
+  };
+}

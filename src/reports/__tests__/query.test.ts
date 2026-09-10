@@ -12,6 +12,8 @@ import {
   getOrderFulfillmentReport,
   getOrderFulfillmentLines,
   getShipTodayCounts,
+  getCalendarBannerCounts,
+  ReportQueryError,
 } from "@/reports/query";
 
 describe("getProductSalesReport", () => {
@@ -434,27 +436,36 @@ describe("getOrderFulfillmentReport", () => {
     expect(rpc).toHaveBeenCalledTimes(1);
     expect(single).toHaveBeenCalledTimes(1);
     expect(range).not.toHaveBeenCalled();
-    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment_json", { p_org_id: "org1", p_instance_ids: null, p_from_date: null });
+    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment_json", { p_org_id: "org1", p_instance_ids: null, p_from_date: null, p_ship_by_from: null, p_ship_by_to: null });
   });
 
   it("passes through the instance filter unchanged", async () => {
     const { rpc } = stubJsonRpc(envelope([]));
     const db = { rpc } as unknown as SupabaseClient;
     await getOrderFulfillmentReport(db, "org1", { instanceIds: ["inst-1"] });
-    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment_json", { p_org_id: "org1", p_instance_ids: ["inst-1"], p_from_date: null });
+    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment_json", { p_org_id: "org1", p_instance_ids: ["inst-1"], p_from_date: null, p_ship_by_from: null, p_ship_by_to: null });
   });
 
   it("passes through the fromDate filter unchanged", async () => {
     const { rpc } = stubJsonRpc(envelope([]));
     const db = { rpc } as unknown as SupabaseClient;
     await getOrderFulfillmentReport(db, "org1", { fromDate: "2026-01-01" });
-    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment_json", { p_org_id: "org1", p_instance_ids: null, p_from_date: "2026-01-01" });
+    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment_json", { p_org_id: "org1", p_instance_ids: null, p_from_date: "2026-01-01", p_ship_by_from: null, p_ship_by_to: null });
   });
 
-  it("throws with the underlying error message on failure", async () => {
+  it("throws a ReportQueryError that hides the raw failure but keeps it for logging", async () => {
+    // Regression: `report_order_fulfillment_json: canceling statement due to
+    // statement timeout` reached real users on the Shipping Calendar. The raw
+    // text has to survive for the server log, but must not be the message a
+    // page renders.
     const { rpc } = stubJsonRpc({ data: null, error: { message: "boom" } });
     const db = { rpc } as unknown as SupabaseClient;
-    await expect(getOrderFulfillmentReport(db, "org1", {})).rejects.toThrow("report_order_fulfillment_json: boom");
+    await expect(getOrderFulfillmentReport(db, "org1", {})).rejects.toThrow(ReportQueryError);
+    await expect(getOrderFulfillmentReport(db, "org1", {})).rejects.toThrow("The report could not be loaded. Please try again.");
+    await getOrderFulfillmentReport(db, "org1", {}).catch((e) => {
+      expect(e).toBeInstanceOf(ReportQueryError);
+      expect((e as ReportQueryError).technicalMessage).toBe("report_order_fulfillment_json: boom");
+    });
   });
 
   it("returns every row in one call — no paging, whatever the size", async () => {
@@ -518,14 +529,23 @@ describe("getOrderFulfillmentLines", () => {
     const rows = await getOrderFulfillmentLines(db, "org1", {});
 
     expect(rows).toEqual([{ cin7_sale_id: "s1", product_sku: "SKU-1", pickable_qty: 2 }]);
-    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment_lines_json", { p_org_id: "org1", p_instance_ids: null, p_from_date: null });
+    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment_lines_json", { p_org_id: "org1", p_instance_ids: null, p_from_date: null, p_ship_by_from: null, p_ship_by_to: null });
     expect(range).not.toHaveBeenCalled();
   });
 
-  it("throws with the underlying error message on failure", async () => {
+  it("throws a ReportQueryError that hides the raw failure but keeps it for logging", async () => {
+    // Regression: `report_order_fulfillment_lines_json: canceling statement due to
+    // statement timeout` reached real users on the Shipping Calendar. The raw
+    // text has to survive for the server log, but must not be the message a
+    // page renders.
     const { rpc } = stubJsonRpc({ data: null, error: { message: "boom" } });
     const db = { rpc } as unknown as SupabaseClient;
-    await expect(getOrderFulfillmentLines(db, "org1", {})).rejects.toThrow("report_order_fulfillment_lines_json: boom");
+    await expect(getOrderFulfillmentLines(db, "org1", {})).rejects.toThrow(ReportQueryError);
+    await expect(getOrderFulfillmentLines(db, "org1", {})).rejects.toThrow("The report could not be loaded. Please try again.");
+    await getOrderFulfillmentLines(db, "org1", {}).catch((e) => {
+      expect(e).toBeInstanceOf(ReportQueryError);
+      expect((e as ReportQueryError).technicalMessage).toBe("report_order_fulfillment_lines_json: boom");
+    });
   });
 
   it("returns [] for an empty result and enforces the same ceiling", async () => {
@@ -570,5 +590,117 @@ describe("getShipTodayCounts", () => {
     const { rpc } = stubSingleRpc({ data: null, error: { message: "boom" } });
     const db = { rpc } as unknown as SupabaseClient;
     await expect(getShipTodayCounts(db, "org1")).rejects.toThrow("report_ship_today_counts: boom");
+  });
+});
+
+describe("calendar ship_by window (migration 0090)", () => {
+  it.each([
+    ["getOrderFulfillmentReport", "report_order_fulfillment_json", getOrderFulfillmentReport],
+    ["getOrderFulfillmentLines", "report_order_fulfillment_lines_json", getOrderFulfillmentLines],
+  ])("%s forwards the window to %s", async (_label, fn, call) => {
+    const { rpc } = stubJsonRpc(envelope([]));
+    const db = { rpc } as unknown as SupabaseClient;
+
+    await call(db, "org1", { shipByFrom: "2026-09-07", shipByTo: "2026-09-13" });
+
+    expect(rpc).toHaveBeenCalledWith(fn, {
+      p_org_id: "org1",
+      p_instance_ids: null,
+      p_from_date: null,
+      p_ship_by_from: "2026-09-07",
+      p_ship_by_to: "2026-09-13",
+    });
+  });
+
+  it("keeps the window independent of the fromDate filter Order Fulfillment uses", async () => {
+    const { rpc } = stubJsonRpc(envelope([]));
+    const db = { rpc } as unknown as SupabaseClient;
+
+    await getOrderFulfillmentReport(db, "org1", { fromDate: "2026-01-01", shipByFrom: "2026-09-07", shipByTo: "2026-09-13" });
+
+    expect(rpc).toHaveBeenCalledWith("report_order_fulfillment_json", {
+      p_org_id: "org1",
+      p_instance_ids: null,
+      p_from_date: "2026-01-01",
+      p_ship_by_from: "2026-09-07",
+      p_ship_by_to: "2026-09-13",
+    });
+  });
+
+  it("sends nulls when no window is given, so non-calendar callers keep the pre-0090 behaviour", async () => {
+    const { rpc } = stubJsonRpc(envelope([]));
+    const db = { rpc } as unknown as SupabaseClient;
+
+    await getOrderFulfillmentReport(db, "org1", { instanceIds: ["inst-1"] });
+
+    expect(rpc).toHaveBeenCalledWith(
+      "report_order_fulfillment_json",
+      expect.objectContaining({ p_ship_by_from: null, p_ship_by_to: null })
+    );
+  });
+});
+
+describe("getCalendarBannerCounts", () => {
+  function stubSingleRpc(result: { data: unknown; error: { message: string } | null }) {
+    const maybeSingle = vi.fn(() => Promise.resolve(result));
+    const rpc = vi.fn(() => ({ maybeSingle }));
+    return { rpc, maybeSingle };
+  }
+
+  it.each(["shipping", "picking", "invoicing"] as const)("asks report_calendar_banner_counts for the %s calendar", async (calendar) => {
+    const { rpc } = stubSingleRpc({ data: { unscheduled_count: 4264, floor_hidden_count: 12 }, error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+
+    const counts = await getCalendarBannerCounts(db, "org1", calendar);
+
+    expect(rpc).toHaveBeenCalledWith("report_calendar_banner_counts", {
+      p_org_id: "org1",
+      p_calendar: calendar,
+      p_instance_ids: null,
+    });
+    expect(counts).toEqual({ unscheduledCount: 4264, floorHiddenCount: 12 });
+  });
+
+  it("scopes to the selected instances", async () => {
+    const { rpc } = stubSingleRpc({ data: { unscheduled_count: 0, floor_hidden_count: 0 }, error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+
+    await getCalendarBannerCounts(db, "org1", "shipping", ["inst-1", "inst-2"]);
+
+    expect(rpc).toHaveBeenCalledWith(
+      "report_calendar_banner_counts",
+      expect.objectContaining({ p_instance_ids: ["inst-1", "inst-2"] })
+    );
+  });
+
+  it("treats an empty instance list as no filter, matching the report calls", async () => {
+    const { rpc } = stubSingleRpc({ data: { unscheduled_count: 0, floor_hidden_count: 0 }, error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+
+    await getCalendarBannerCounts(db, "org1", "shipping", []);
+
+    expect(rpc).toHaveBeenCalledWith("report_calendar_banner_counts", expect.objectContaining({ p_instance_ids: null }));
+  });
+
+  it("throws rather than reporting 0 when the function returns no row", async () => {
+    // report_calendar_banner_counts returns no rows for an unrecognised
+    // calendar name. A plausible-looking 0 on screen would be worse than an
+    // error, so this must not silently become { 0, 0 }.
+    const { rpc } = stubSingleRpc({ data: null, error: null });
+    const db = { rpc } as unknown as SupabaseClient;
+
+    await expect(getCalendarBannerCounts(db, "org1", "shipping")).rejects.toThrow(ReportQueryError);
+  });
+
+  it("hides a raw database failure but keeps it for logging", async () => {
+    const { rpc } = stubSingleRpc({ data: null, error: { message: "canceling statement due to statement timeout" } });
+    const db = { rpc } as unknown as SupabaseClient;
+
+    await getCalendarBannerCounts(db, "org1", "shipping").catch((e) => {
+      expect(e).toBeInstanceOf(ReportQueryError);
+      expect((e as ReportQueryError).message).toBe("The report could not be loaded. Please try again.");
+      expect((e as ReportQueryError).technicalMessage).toContain("canceling statement due to statement timeout");
+    });
+    expect.assertions(3);
   });
 });

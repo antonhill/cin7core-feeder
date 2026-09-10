@@ -3,7 +3,7 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
 import { REPORTS_MODULE } from "@/app/module-nav";
-import { getOrderFulfillmentReport, getOrderFulfillmentLines, getReportFilterOptions } from "@/reports/query";
+import { getOrderFulfillmentReport, getOrderFulfillmentLines, getReportFilterOptions, getCalendarBannerCounts, toCalendarErrorMessage } from "@/reports/query";
 import type { OrderFulfillmentRow, OrderFulfillmentLineRow, OrderFulfillmentFilters } from "@/reports/query";
 import type { InstancePickerItem } from "@/actions/instances";
 
@@ -18,6 +18,8 @@ export interface InvoicingSchedulerData {
   /** P5.4 (LBL brief): line-level SKU detail, fetched so the page's search box can match by SKU too — same cheap DB read shipping-calendar's own action already does, not a Cin7 call. */
   lines: OrderFulfillmentLineRow[];
   instances: InstancePickerItem[];
+  /** Global, NOT window-scoped — see getCalendarBannerCounts. This page has never shown an unscheduled banner, so only the floor count is rendered. */
+  floorHiddenCount: number;
 }
 
 /** Read-only — nothing here writes to Cin7, so unlike every write feature in this app there's no requireWriteAllowed gate. */
@@ -25,14 +27,15 @@ export async function loadInvoicingSchedulerOrdersAction(filters: OrderFulfillme
   try {
     const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
-    const [orders, lines, options] = await Promise.all([
+    const [orders, lines, options, counts] = await Promise.all([
       getOrderFulfillmentReport(db, orgId, filters),
       getOrderFulfillmentLines(db, orgId, filters),
       getReportFilterOptions(db, orgId),
+      getCalendarBannerCounts(db, orgId, "invoicing", filters.instanceIds),
     ]);
-    return { ok: true, data: { orders, lines, instances: options.instances } };
+    return { ok: true, data: { orders, lines, instances: options.instances, floorHiddenCount: counts.floorHiddenCount } };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+    return { ok: false, error: toCalendarErrorMessage(e, "loadInvoicingSchedulerOrdersAction") };
   }
 }
 

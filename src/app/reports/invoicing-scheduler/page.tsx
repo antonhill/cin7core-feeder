@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { loadInvoicingSchedulerOrdersAction, loadInstanceOriginsAction, type InstanceOrigin } from "./actions";
-import { currentWeekStart, addDays, formatDayLabel } from "./date-utils";
+import { currentWeekStart, addDays, formatDayLabel, shipByWindowForWeek, CALENDAR_DAY_COUNT } from "./date-utils";
 import type { OrderFulfillmentRow, OrderFulfillmentLineRow } from "@/reports/query";
 import type { InstancePickerItem } from "@/actions/instances";
 import { ReportDescription } from "../ReportDescription";
@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/Input";
 import { Alert } from "@/components/ui/Alert";
 import { Panel } from "@/components/ui/Panel";
 
-const DAY_COUNT = 7;
+const DAY_COUNT = CALENDAR_DAY_COUNT;
 
 /**
  * LBL brief P1: `combined_invoice_status` is a sale-level aggregate, so it
@@ -136,19 +136,26 @@ export default function InvoicingSchedulerPage() {
   // effect: only setState from inside the .then() callback, never
   // synchronously in the effect body, to stay clear of
   // react-hooks/set-state-in-effect.
+  // weekStart and offsetDays are dependencies as of migration 0090: the
+  // fetch is bounded to the ship_by range that can land on the visible week,
+  // and this page's "invoice N days after ship" offset shifts that range, so
+  // both have to re-fetch. Before this the page pulled the org's ENTIRE
+  // order history once and filtered it in the browser — the same unbounded
+  // pattern that made Shipping Calendar time out.
   useEffect(() => {
-    loadInvoicingSchedulerOrdersAction({ instanceIds: instanceIds.length ? instanceIds : undefined }).then((result) => {
+    const { shipByFrom, shipByTo } = shipByWindowForWeek(weekStart, offsetDays);
+    loadInvoicingSchedulerOrdersAction({ instanceIds: instanceIds.length ? instanceIds : undefined, shipByFrom, shipByTo }).then((result) => {
       if (!result.ok || !result.data) {
         setLoadError(result.error ?? "Unknown error");
         return;
       }
       setLoadError(null);
       setOrders(result.data.orders.filter(needsInvoicing));
-      setHiddenByFloorCount(result.data.orders.filter((o) => o.ready_to_invoice_hidden_by_floor).length);
+      setHiddenByFloorCount(result.data.floorHiddenCount);
       setLines(result.data.lines);
       setInstances(result.data.instances);
     });
-  }, [instanceIds]);
+  }, [instanceIds, weekStart, offsetDays]);
 
   useEffect(() => {
     loadInstanceOriginsAction().then((result) => {
