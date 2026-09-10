@@ -68,8 +68,14 @@ export function orderTableSortValue(column: OrderTableColumn, row: OrderFulfillm
 
 /**
  * The full row comparator the table used: compareNullable on the column's
- * sort value, direction applied, NULLS LAST in both directions, ties broken
- * by the report's own priority-queue order and then cin7_sale_id.
+ * sort value, then the whole result negated for `desc`.
+ *
+ * THAT NEGATION IS THE SUBTLE PART. compareNullable's own docstring says
+ * "nulls sort last regardless of direction" — but the page negated its
+ * return value wholesale, so descending actually put nulls FIRST. The
+ * docstring describes compareNullable in isolation; this is what the table
+ * really did, and it is what the SQL has to reproduce. A parity test caught
+ * the difference after the SQL was first written to match the docstring.
  *
  * The tiebreak is what the SQL reproduces: JavaScript's sort is stable, so
  * ties previously kept the order report_order_fulfillment returned them in
@@ -82,6 +88,8 @@ export function compareOrderRows(
   return (a, b) => {
     if (column) {
       const cmp = compareNullable(orderTableSortValue(column, a), orderTableSortValue(column, b));
+      // Negated wholesale for desc — including compareNullable's nulls-last,
+      // which is why desc puts nulls first. Matches the page verbatim.
       if (cmp !== 0) return direction === "asc" ? cmp : -cmp;
     }
     // Priority-queue tiebreak: undated last, then by ship_by, then a stable id.

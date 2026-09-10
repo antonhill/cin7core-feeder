@@ -330,12 +330,15 @@ begin
   select array_agg(j->>'cin7_sale_id') into got
     from jsonb_array_elements((report_order_fulfillment_all_page_json(pg_temp.org(), null, null, null,
       null,null,null,null,null,null,null,'shipBy','desc',1000,0) -> 'rows')::jsonb) j;
-  perform pg_temp.assert((got)[cardinality(got)] = 'p-7', 'sort shipBy DESC still puts the undated row last');
+  -- Nulls FIRST on desc: the page negated compareNullable's result wholesale,
+  -- so this is the behaviour the table had, not what compareNullable's own
+  -- docstring describes. See 0091's SORT PARITY note.
+  perform pg_temp.assert((got)[1] = 'p-7', 'sort shipBy DESC puts the undated row FIRST (negated comparator)');
 
   select array_agg(j->>'cin7_sale_id') into got
     from jsonb_array_elements((report_order_fulfillment_all_page_json(pg_temp.org(), null, null, null,
       null,null,null,null,null,null,null,'paidInvoice','desc',1000,0) -> 'rows')::jsonb) j;
-  select array_agg(r.cin7_sale_id order by r.paid_amount desc nulls last, (r.ship_by is null), r.ship_by, r.cin7_sale_id) into want
+  select array_agg(r.cin7_sale_id order by r.paid_amount desc nulls first, (r.ship_by is null), r.ship_by, r.cin7_sale_id) into want
     from report_order_fulfillment(pg_temp.org(), null, null) r;
   perform pg_temp.assert_eq(got, want, 'numeric sort desc, nulls last, priority-queue tiebreak');
 

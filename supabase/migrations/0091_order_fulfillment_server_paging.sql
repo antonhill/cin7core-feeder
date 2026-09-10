@@ -611,9 +611,12 @@ $$;
 -- product-name half is an EXISTS against sale_order_lines, since the page can
 -- no longer hold every order's lines.
 --
--- SORT PARITY. compareNullable puts nulls last in BOTH directions, so every
--- key says `nulls last` explicitly rather than relying on Postgres's default
--- (nulls-last for asc but nulls-FIRST for desc). Ties fall back to the
+-- SORT PARITY, and the trap in it. compareNullable's docstring says nulls
+-- sort last "regardless of direction", but the page negated its return value
+-- wholesale for desc — so descending really put nulls FIRST. The SQL was
+-- first written to match the docstring and a parity test caught it. Hence
+-- `asc nulls last` paired with `desc nulls first`: that is the behaviour the
+-- table actually had, not the behaviour its comment claimed. Ties fall back to the
 -- report's own priority-queue order and then cin7_sale_id, which reproduces
 -- JavaScript's stable sort AND makes paging deterministic -- without a unique
 -- tiebreaker a row can repeat on one page and vanish from the next.
@@ -705,9 +708,9 @@ returns json language sql stable set search_path = public as $$
     select * from keyed r
     order by
       case when coalesce(p_sort_dir, 'asc') <> 'desc' then r.sort_num end asc nulls last,
-      case when coalesce(p_sort_dir, 'asc') =  'desc' then r.sort_num end desc nulls last,
+      case when coalesce(p_sort_dir, 'asc') =  'desc' then r.sort_num end desc nulls first,
       case when coalesce(p_sort_dir, 'asc') <> 'desc' then r.sort_txt end asc nulls last,
-      case when coalesce(p_sort_dir, 'asc') =  'desc' then r.sort_txt end desc nulls last,
+      case when coalesce(p_sort_dir, 'asc') =  'desc' then r.sort_txt end desc nulls first,
       (r.ship_by is null) asc, r.ship_by asc, r.cin7_sale_id asc
     limit greatest(coalesce(p_limit, 100), 0)
     offset greatest(coalesce(p_offset, 0), 0)
@@ -812,9 +815,9 @@ returns json language sql stable set search_path = public as $$
     select * from keyed r
     order by
       case when coalesce(p_sort_dir, 'asc') <> 'desc' then r.sort_num end asc nulls last,
-      case when coalesce(p_sort_dir, 'asc') =  'desc' then r.sort_num end desc nulls last,
+      case when coalesce(p_sort_dir, 'asc') =  'desc' then r.sort_num end desc nulls first,
       case when coalesce(p_sort_dir, 'asc') <> 'desc' then r.sort_txt end asc nulls last,
-      case when coalesce(p_sort_dir, 'asc') =  'desc' then r.sort_txt end desc nulls last,
+      case when coalesce(p_sort_dir, 'asc') =  'desc' then r.sort_txt end desc nulls first,
       (r.ship_by is null) asc, r.ship_by asc, r.cin7_sale_id asc
     limit greatest(coalesce(p_limit, 100), 0)
     offset greatest(coalesce(p_offset, 0), 0)
