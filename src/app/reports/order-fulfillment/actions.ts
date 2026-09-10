@@ -4,9 +4,13 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
 import { REPORTS_MODULE } from "@/app/module-nav";
 import {
-  getOrderFulfillmentReport,
-  getOrderFulfillmentLines,
-  type OrderFulfillmentFilters,
+  getOrderFulfillmentPage,
+  getOrderFulfillmentTabCounts,
+  getOrderFulfillmentLinesForSales,
+  toReportErrorMessage,
+  type OrderFulfillmentTableQuery,
+  type OrderFulfillmentPage,
+  type OrderFulfillmentTabCounts,
   type OrderFulfillmentRow,
   type OrderFulfillmentLineRow,
 } from "@/reports/query";
@@ -24,48 +28,111 @@ export interface OrderFulfillmentActionResult<T> {
 }
 
 export interface OrderFulfillmentData {
-  orders: OrderFulfillmentRow[];
+  /** One page of the current tab, already filtered, searched and sorted in SQL. */
+  page: OrderFulfillmentPage;
+  /** The nine badge/floor counts, over the whole set — never derived from `page`. */
+  counts: OrderFulfillmentTabCounts;
+  /** Line detail for the page's own rows only. */
   lines: OrderFulfillmentLineRow[];
 }
 
-/** Loads both the order-level rows and every order's line detail in one round trip — a plain DB read for the whole result set, not a rate-limited per-order Cin7 call, so every row's drill-down is already in hand before the user expands it. */
-export async function loadOrderFulfillmentAction(filters: OrderFulfillmentFilters): Promise<OrderFulfillmentActionResult<OrderFulfillmentData>> {
+/**
+ * One page of the table, plus the nine counts, plus that page's line detail.
+ *
+ * Replaces a fetch of the org's entire 12-month set (8,533 orders / 11 MB +
+ * 23,571 lines / 12 MB, two concurrent calls) with three bounded ones. The
+ * counts come from their own aggregate rather than from the page, because
+ * they are facts about the whole set and a page cannot produce them.
+ *
+ * Lines are fetched for the page's sale ids only — the row-expand panel and
+ * the batch pick list ask for what they need separately.
+ */
+export async function loadOrderFulfillmentPageAction(
+  query: OrderFulfillmentTableQuery
+): Promise<OrderFulfillmentActionResult<OrderFulfillmentData>> {
   try {
     const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
-    const [orders, lines] = await Promise.all([getOrderFulfillmentReport(db, orgId, filters), getOrderFulfillmentLines(db, orgId, filters)]);
-    return { ok: true, data: { orders, lines } };
+    const [page, counts] = await Promise.all([
+      getOrderFulfillmentPage(db, orgId, query),
+      getOrderFulfillmentTabCounts(db, orgId, query),
+    ]);
+    const lines = await getOrderFulfillmentLinesForSales(
+      db,
+      orgId,
+      page.rows.map((r) => r.cin7_sale_id),
+      query.instanceIds
+    );
+    return { ok: true, data: { page, counts, lines } };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+    return { ok: false, error: toReportErrorMessage(e, "loadOrderFulfillmentPageAction") };
+  }
+}
+
+/** Line detail for an explicit set of orders — an expanded row, or the orders selected for a batch pick list. Never the whole org. */
+export async function loadOrderFulfillmentLinesAction(
+  saleIds: string[],
+  instanceIds?: string[]
+): Promise<OrderFulfillmentActionResult<OrderFulfillmentLineRow[]>> {
+  try {
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
+    const db = createServiceRoleClient();
+    return { ok: true, data: await getOrderFulfillmentLinesForSales(db, orgId, saleIds, instanceIds) };
+  } catch (e) {
+    return { ok: false, error: toReportErrorMessage(e, "loadOrderFulfillmentLinesAction") };
   }
 }
 
 /**
- * Renders whatever's currently on screen (the client already has the
- * filtered rows) into a real .xlsx file — same pattern as every other
- * report's export action. `columnKeys` (P5.5) is the user's column-picker
- * selection, passed straight through to buildOrderFulfillmentSheet — omitted
- * falls back to the original fixed column set.
+ * Builds the .xlsx server-side from the SAME filter/search/sort contract the
+ * table uses, so an export is the complete filtered result set rather than
+ * whichever page happens to be on screen.
+ *
+ * It used to take `rows` — the browser posted its own filtered array back,
+ * which is why next.config.ts still raises serverActions.bodySizeLimit to
+ * 10mb. With paging the client no longer holds the full set, so it posts a
+ * query instead and the server re-runs it.
+ *
+ * Fetched in chunks rather than one call: a single unfiltered All Orders
+ * export is ~8,500 rows, and json_agg over that measured 2,075-6,936ms —
+ * i.e. flirting with the same 8s statement_timeout this whole stream exists
+ * to fix. Each chunk is its own bounded statement, so no single query can
+ * time out however large the export is. EXPORT_CHUNK_ROWS trades a re-run of
+ * the hydration per chunk for that guarantee.
  */
-export async function exportOrderFulfillmentXlsxAction(rows: OrderFulfillmentRow[], columnKeys?: string[]): Promise<OrderFulfillmentActionResult<string>> {
+const EXPORT_CHUNK_ROWS = 2_000;
+const EXPORT_MAX_ROWS = 75_000;
+
+export async function exportOrderFulfillmentXlsxAction(
+  query: OrderFulfillmentTableQuery,
+  columnKeys?: string[]
+): Promise<OrderFulfillmentActionResult<string>> {
   try {
-    await requireModuleAccess(REPORTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(REPORTS_MODULE.href);
+    const db = createServiceRoleClient();
+
+    const rows: OrderFulfillmentRow[] = [];
+    let offset = 0;
+    for (;;) {
+      const page = await getOrderFulfillmentPage(db, orgId, { ...query, limit: EXPORT_CHUNK_ROWS, offset });
+      rows.push(...page.rows);
+      offset += EXPORT_CHUNK_ROWS;
+      if (rows.length >= page.totalCount || page.rows.length === 0) break;
+      if (rows.length >= EXPORT_MAX_ROWS) {
+        return {
+          ok: false,
+          error: `This export matched over ${EXPORT_MAX_ROWS.toLocaleString()} rows — narrow your filters (date range, instance selection) and try again.`,
+        };
+      }
+    }
+
     const sheet = buildOrderFulfillmentSheet(rows, columnKeys);
     return { ok: true, data: await renderXlsxBase64(sheet, "Order Fulfillment") };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+    return { ok: false, error: toReportErrorMessage(e, "exportOrderFulfillmentXlsxAction") };
   }
 }
 
-/**
- * P5.5 (LBL brief): the export column-picker's saved selection — genuinely
- * per-user, not per-org, unlike every other settings table in this app
- * (order_fulfillment_export_columns, migration 0070). Returns null when the
- * user has never customized their columns yet, distinct from an (invalid)
- * empty array — the client falls back to the default column set either way,
- * but null vs [] lets it distinguish "never set" from "explicitly saved as
- * empty" if that ever matters later.
- */
 export async function loadOrderFulfillmentExportColumnsAction(): Promise<OrderFulfillmentActionResult<string[] | null>> {
   try {
     const { orgId, userId } = await requireModuleAccess(REPORTS_MODULE.href);
@@ -79,7 +146,7 @@ export async function loadOrderFulfillmentExportColumnsAction(): Promise<OrderFu
     if (error) return { ok: false, error: error.message };
     return { ok: true, data: (data?.columns as string[] | undefined) ?? null };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+    return { ok: false, error: toReportErrorMessage(e, "loadOrderFulfillmentExportColumnsAction") };
   }
 }
 
@@ -95,7 +162,7 @@ export async function saveOrderFulfillmentExportColumnsAction(columns: string[])
     if (error) return { ok: false, error: error.message };
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+    return { ok: false, error: toReportErrorMessage(e, "saveOrderFulfillmentExportColumnsAction") };
   }
 }
 
@@ -115,7 +182,7 @@ export async function loadSaleAttachmentsAction(instanceId: string, saleId: stri
     const detail = await fetchSaleDetail(creds, saleId);
     return { ok: true, data: detail.Attachments ?? [] };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+    return { ok: false, error: toReportErrorMessage(e, "loadSaleAttachmentsAction") };
   }
 }
 
@@ -150,14 +217,14 @@ export async function markBoxLabelPrintedAction(instanceId: string, saleId: stri
     const { orgId, userId, email } = await requireModuleAccess(REPORTS_MODULE.href);
     const db = createServiceRoleClient();
 
-    const { data: lineRows, error: lineError } = await db
-      .rpc("report_order_fulfillment_lines", { p_org_id: orgId, p_instance_ids: [instanceId] })
-      .eq("cin7_sale_id", saleId);
-    if (lineError) return { ok: false, error: lineError.message };
-    const readyQtyAtMark = ((lineRows ?? []) as { ready_for_box_label_qty: number }[]).reduce(
-      (sum, row) => sum + (row.ready_for_box_label_qty ?? 0),
-      0
-    );
+    // Targeted at this ONE sale (migration 0091). It previously called
+    // report_order_fulfillment_lines with no date filter at all and then
+    // narrowed with PostgREST's .eq(), which computed every line the org has
+    // ever had — ~30,510 rows — to read one order's quantities. That call is
+    // visible in pg_stat_statements at 1,429 invocations, mean 765ms, max
+    // 7,707ms. The _fs form joins the id list into the scans instead.
+    const lineRows = await getOrderFulfillmentLinesForSales(db, orgId, [saleId], [instanceId]);
+    const readyQtyAtMark = lineRows.reduce((sum, row) => sum + (row.ready_for_box_label_qty ?? 0), 0);
 
     const { error } = await db.from("box_label_print_state").upsert(
       {
@@ -182,7 +249,7 @@ export async function markBoxLabelPrintedAction(instanceId: string, saleId: stri
 
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+    return { ok: false, error: toReportErrorMessage(e, "markBoxLabelPrintedAction") };
   }
 }
 
@@ -217,6 +284,6 @@ export async function unmarkBoxLabelPrintedAction(instanceId: string, saleId: st
 
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+    return { ok: false, error: toReportErrorMessage(e, "unmarkBoxLabelPrintedAction") };
   }
 }

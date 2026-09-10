@@ -77,7 +77,7 @@ async function fetchReportJson<T>(db: SupabaseClient, fn: string, params: Record
 }
 
 /**
- * Turns whatever a calendar action caught into something safe to render.
+ * Turns whatever a report action caught into something safe to render.
  *
  * A raw database failure used to reach users verbatim — the Shipping
  * Calendar showed `report_order_fulfillment_json: canceling statement due to
@@ -90,7 +90,7 @@ async function fetchReportJson<T>(db: SupabaseClient, fn: string, params: Record
  * errors from requireModuleAccess are all messages the user can act on, and
  * genericising those would be a regression, not a fix.
  */
-export function toCalendarErrorMessage(e: unknown, context: string): string {
+export function toReportErrorMessage(e: unknown, context: string): string {
   if (e instanceof ReportQueryError) {
     console.error(`[${context}] ${e.technicalMessage}`);
     return e.message;
@@ -237,6 +237,8 @@ export interface ReportFilterOptions {
   instances: InstancePickerItem[];
   locations: string[];
   categories: { code: string; name: string }[];
+  /** Distinct combined_payment_status across every order in the org — Order Fulfillment's payment dropdown, which can no longer derive its options from a page. */
+  paymentStatuses: string[];
 }
 
 /**
@@ -260,7 +262,12 @@ export interface ReportFilterOptions {
 export async function getReportFilterOptions(db: SupabaseClient, orgId: string, instanceIds?: string[]): Promise<ReportFilterOptions> {
   const scopedInstanceIds = instanceIds?.length ? instanceIds : null;
 
-  let locationsQuery = db.from("sales").select("location").eq("org_id", orgId).not("location", "is", null);
+  // `combined_payment_status` rides along on the same scan the location list
+  // already does. Order Fulfillment's payment filter used to derive its
+  // options from the full row set it had fetched; now that it only fetches a
+  // page, the option list has to come from somewhere that still sees every
+  // order, or the dropdown would silently shrink to whatever is on screen.
+  let locationsQuery = db.from("sales").select("location, combined_payment_status").eq("org_id", orgId);
   if (scopedInstanceIds) locationsQuery = locationsQuery.in("instance_id", scopedInstanceIds);
 
   const [instancesRes, locationsRes] = await Promise.all([
@@ -270,13 +277,16 @@ export async function getReportFilterOptions(db: SupabaseClient, orgId: string, 
   if (instancesRes.error) throw new Error(instancesRes.error.message);
   if (locationsRes.error) throw new Error(locationsRes.error.message);
 
-  const locations = [...new Set((locationsRes.data ?? []).map((r: { location: string }) => r.location).filter(Boolean))].sort();
+  const salesRows = (locationsRes.data ?? []) as { location: string | null; combined_payment_status: string | null }[];
+  const locations = [...new Set(salesRows.map((r) => r.location).filter((v): v is string => Boolean(v)))].sort();
+  const paymentStatuses = [...new Set(salesRows.map((r) => r.combined_payment_status).filter((v): v is string => Boolean(v)))].sort();
   const categories = await getCategoriesForInstances(db, orgId, scopedInstanceIds);
 
   return {
     instances: instancesRes.data ?? [],
     locations,
     categories,
+    paymentStatuses,
   };
 }
 
@@ -768,6 +778,177 @@ export async function getCalendarBannerCounts(
   if (error) throw new ReportQueryError(`report_calendar_banner_counts: ${error.message}`);
   if (!data) throw new ReportQueryError(`report_calendar_banner_counts returned no row for calendar "${calendar}"`);
   return { unscheduledCount: Number(data.unscheduled_count), floorHiddenCount: Number(data.floor_hidden_count) };
+}
+
+/** Which Order Fulfillment tab is being asked for. The four queues share one candidate set; "all" is the browse tab and uses a different SQL path (migration 0091). */
+export type OrderFulfillmentTab = "pick" | "ship" | "readyToInvoice" | "boxLabel" | "all";
+
+/** The page's tab names are the UI's vocabulary; `p_queue`'s are the SQL's. Translated here so only one place knows both. */
+const QUEUE_ARG: Record<Exclude<OrderFulfillmentTab, "all">, string> = {
+  pick: "pick",
+  ship: "ship",
+  readyToInvoice: "invoice",
+  boxLabel: "box_label",
+};
+
+/** Rows per page. 100 because that is what the report's own row budget was already measured against (a page of 100 is ~141 kB); the table had no page size before, having rendered every row. */
+export const ORDER_FULFILLMENT_PAGE_SIZE = 100;
+
+/**
+ * Everything the Order Fulfillment table narrows by. All of it is applied in
+ * SQL before the page is sliced — a page is only correct once everything
+ * that narrows the set has already been applied, which is why none of these
+ * can stay in the browser.
+ *
+ * Field names deliberately mirror the page's own state so the mapping to
+ * `p_*` arguments is the only translation step.
+ */
+export interface OrderFulfillmentTableQuery {
+  tab: OrderFulfillmentTab;
+  instanceIds?: string[];
+  /** "YYYY-MM-DD" — the "Data from" control. Empty/undefined is the Show all time case. */
+  fromDate?: string;
+  search?: string;
+  paymentStatus?: string;
+  shipByFrom?: string;
+  shipByTo?: string;
+  backorder?: "all" | "fulfillable" | "backorder";
+  backorderPo?: "" | "with_po" | "no_po";
+  invoiceCoverage?: "" | "not_invoiced" | "partially_invoiced" | "invoiced";
+  /** Column key from the table's own sort state; null means the report's natural priority-queue order. */
+  sort?: string | null;
+  sortDir?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+}
+
+export interface OrderFulfillmentPage {
+  /** Rows matching every filter, BEFORE the page slice — what the pager needs. */
+  totalCount: number;
+  rows: OrderFulfillmentRow[];
+}
+
+export interface OrderFulfillmentTabCounts {
+  allCount: number;
+  pickCount: number;
+  shipCount: number;
+  readyToInvoiceCount: number;
+  boxLabelCount: number;
+  pickFloorCount: number;
+  shipFloorCount: number;
+  readyToInvoiceFloorCount: number;
+  boxLabelFloorCount: number;
+}
+
+interface ReportPageEnvelope<T> {
+  total_count: number;
+  rows: T[];
+}
+
+/**
+ * The queue tabs and All Orders use DIFFERENT SQL functions, and that is a
+ * measured decision rather than an inconsistency.
+ *
+ * A queue tab hydrates only the ~284 candidate orders that could possibly
+ * qualify for any queue (report_order_fulfillment_queue_candidates), so it
+ * runs in ~600ms. All Orders has no queue predicate to narrow on, and
+ * routing it through the id-driven path measured 2,459ms against 1,369ms for
+ * the unbounded function — so it keeps the unbounded hydration and pays a
+ * ~1.4s floor for a page-sized payload. Forcing one path for tidiness would
+ * make one of the two slower.
+ */
+export async function getOrderFulfillmentPage(
+  db: SupabaseClient,
+  orgId: string,
+  query: OrderFulfillmentTableQuery
+): Promise<OrderFulfillmentPage> {
+  const fn = query.tab === "all" ? "report_order_fulfillment_all_page_json" : "report_order_fulfillment_queue_page_json";
+  const { data, error } = await db
+    .rpc(fn, {
+      p_org_id: orgId,
+      p_instance_ids: query.instanceIds?.length ? query.instanceIds : null,
+      p_from_date: query.fromDate || null,
+      // "all" has no queue predicate; the SQL treats null as "no tab filter".
+      p_queue: query.tab === "all" ? null : QUEUE_ARG[query.tab],
+      p_search: query.search?.trim() ? query.search : null,
+      p_payment_status: query.paymentStatus || null,
+      p_ship_by_from: query.shipByFrom || null,
+      p_ship_by_to: query.shipByTo || null,
+      p_backorder: query.backorder && query.backorder !== "all" ? query.backorder : null,
+      p_backorder_po: query.backorderPo || null,
+      p_invoice_coverage: query.invoiceCoverage || null,
+      p_sort: query.sort || null,
+      p_sort_dir: query.sortDir ?? "asc",
+      p_limit: query.limit ?? ORDER_FULFILLMENT_PAGE_SIZE,
+      p_offset: query.offset ?? 0,
+    })
+    .single<ReportPageEnvelope<OrderFulfillmentRow>>();
+  if (error) throw new ReportQueryError(`${fn}: ${error.message}`);
+  return { totalCount: Number(data?.total_count ?? 0), rows: data?.rows ?? [] };
+}
+
+/**
+ * The nine badge/floor counts, from report_order_fulfillment_tab_counts.
+ *
+ * Deliberately NOT derived from the page: the page is one slice of one tab,
+ * and these are facts about the whole 12-month set. Costs ~610ms and returns
+ * nine integers, against the 11 MB the page used to fetch and count in the
+ * browser.
+ */
+export async function getOrderFulfillmentTabCounts(
+  db: SupabaseClient,
+  orgId: string,
+  query: Pick<OrderFulfillmentTableQuery, "instanceIds" | "fromDate">
+): Promise<OrderFulfillmentTabCounts> {
+  const { data, error } = await db
+    .rpc("report_order_fulfillment_tab_counts", {
+      p_org_id: orgId,
+      p_instance_ids: query.instanceIds?.length ? query.instanceIds : null,
+      p_from_date: query.fromDate || null,
+    })
+    .maybeSingle<{
+      all_count: number; pick_count: number; ship_count: number;
+      ready_to_invoice_count: number; box_label_count: number;
+      pick_floor_count: number; ship_floor_count: number;
+      ready_to_invoice_floor_count: number; box_label_floor_count: number;
+    }>();
+  if (error) throw new ReportQueryError(`report_order_fulfillment_tab_counts: ${error.message}`);
+  if (!data) throw new ReportQueryError("report_order_fulfillment_tab_counts returned no row");
+  return {
+    allCount: Number(data.all_count),
+    pickCount: Number(data.pick_count),
+    shipCount: Number(data.ship_count),
+    readyToInvoiceCount: Number(data.ready_to_invoice_count),
+    boxLabelCount: Number(data.box_label_count),
+    pickFloorCount: Number(data.pick_floor_count),
+    shipFloorCount: Number(data.ship_floor_count),
+    readyToInvoiceFloorCount: Number(data.ready_to_invoice_floor_count),
+    boxLabelFloorCount: Number(data.box_label_floor_count),
+  };
+}
+
+/**
+ * Per-SKU detail for an EXPLICIT set of orders (report_order_fulfillment_lines_fs).
+ *
+ * Replaces fetching every line the org has: the page now asks only for the
+ * sale ids it actually needs — the visible page, an expanded row, or the
+ * orders selected for a batch pick list. An empty list short-circuits
+ * without a round trip.
+ */
+export async function getOrderFulfillmentLinesForSales(
+  db: SupabaseClient,
+  orgId: string,
+  saleIds: string[],
+  instanceIds?: string[]
+): Promise<OrderFulfillmentLineRow[]> {
+  if (!saleIds.length) return [];
+  const { data, error } = await db.rpc("report_order_fulfillment_lines_fs", {
+    p_org_id: orgId,
+    p_instance_ids: instanceIds?.length ? instanceIds : null,
+    p_sale_ids: saleIds,
+  });
+  if (error) throw new ReportQueryError(`report_order_fulfillment_lines_fs: ${error.message}`);
+  return (data ?? []) as OrderFulfillmentLineRow[];
 }
 
 export interface StocktakeStagedStockRow {

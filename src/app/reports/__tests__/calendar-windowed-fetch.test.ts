@@ -62,7 +62,7 @@ describe("calendar windowed fetch", () => {
     vi.mocked(createServiceRoleClient).mockReturnValue({} as never);
     vi.mocked(getOrderFulfillmentReport).mockResolvedValue([]);
     vi.mocked(getOrderFulfillmentLines).mockResolvedValue([]);
-    vi.mocked(getReportFilterOptions).mockResolvedValue({ instances: [], locations: [], categories: [] });
+    vi.mocked(getReportFilterOptions).mockResolvedValue({ instances: [], locations: [], categories: [], paymentStatuses: [] });
     vi.mocked(getCalendarBannerCounts).mockResolvedValue({ unscheduledCount: 4264, floorHiddenCount: 12 });
   });
 
