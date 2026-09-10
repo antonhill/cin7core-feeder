@@ -46,7 +46,9 @@
 -- required. The _fs bodies are therefore GENERATED from 0090's, not retyped,
 -- and a test asserts their column lists stay identical -- rebuilding these
 -- from a stale copy is how 0082 reverted 0064 and how 0081 dropped three
--- migrations' worth of columns.
+-- migrations' worth of columns. Generation copies comments too, so the ones
+-- describing 0090's ship_by window were reviewed and rewritten rather than
+-- left to describe a mechanism these functions do not have.
 --
 -- RESIDUAL, MEASURED: _fs carries ~170ms of fixed cost regardless of id
 -- count (1 id 168ms, 10 ids 169ms) from best_location / purchase_* /
@@ -261,20 +263,16 @@ returns table (
       sum(backorder_po_outstanding_qty) as total_backorder_po_outstanding_qty,
       bool_or(backorder_qty > 0 and backorder_po_number is not null) as has_backorder_with_po,
       bool_or(backorder_qty > 0 and backorder_po_number is null) as has_backorder_no_po
-    -- Deliberately always null here, NOT p_from_date — see this migration's
-    -- header comment. Correctness for which ORDERS appear still comes from
-    -- the date filter on `sales s` below (cheap: a scalar comparison on a
-    -- table already being scanned); any sale that filter excludes simply
-    -- won't match a row here and gets dropped by that join, same reasoning
-    -- 0082 already documented but hadn't yet acted on.
-    -- p_from_date stays null here -- 0083's reasoning is unchanged. The
-    -- ship_by window IS passed through, and is safe for exactly the reason
-    -- 0083 gives for not needing to: the outer `sales s` filter below is
-    -- the sole source of correctness for which orders appear, so narrowing
-    -- `totals` by the SAME window can only drop rows this LEFT JOIN would
-    -- never have matched. Without this the window would leave the outer
-    -- function computing every line the org has ever had (measured: 861ms
-    -- of an unwindowed call's ~1,032ms) to return one week of orders.
+    -- p_sale_ids goes straight through to the lines function, which is the
+    -- whole mechanism: it is what prunes the line-level joins at source.
+    --
+    -- This function has NO p_from_date and NO ship_by window -- it is driven
+    -- entirely by an explicit id list, and the caller
+    -- (report_order_fulfillment_queue_candidates) owns the date scoping. The
+    -- comment 0090 carried here, about passing a ship_by window through and
+    -- deliberately holding p_from_date at null, does not apply and has been
+    -- replaced rather than inherited: a comment describing a mechanism the
+    -- code no longer has is how 0082 came to revert 0064.
     from report_order_fulfillment_lines_fs(p_org_id, p_instance_ids, p_sale_ids)
     group by cin7_sale_id
   ),
