@@ -9,21 +9,28 @@ import {
   listOrganizationsForScorecardAssignmentAction,
   listScorecardDefinitionsAction,
   listOrgScorecardAssignmentsAction,
+  listOrganizationInstancesAction,
   setOrgWarehousePerformanceModuleAction,
   assignScorecardToOrgAction,
   type OrganizationSummary,
   type ScorecardDefinitionSummary,
   type OrgScorecardAssignment,
+  type InstanceSummary,
 } from "./actions";
 
 /**
  * Super-admin-only configuration screen (gated by /admin/layout.tsx's
  * requireSuperAdmin, same as every other /admin/* route): which
- * organisation has the Warehouse Performance module switched on, and which
- * scorecard_definition it's assigned. Deliberately the ONLY place these two
- * decisions are made — no organisation id is hardcoded anywhere in this
- * feature's code (see 0092's own migration comment); this page is that
- * configuration step made real.
+ * organisation has the Warehouse Performance module switched on, which
+ * scorecard_definition it's assigned, and which of that org's Cin7
+ * instances the scorecard's automated evidence is scoped to. Instance
+ * scoping matters whenever one Toolbox organisation spans more than one
+ * real business — confirmed live: "I-Light and LBL" is one organisation
+ * with two instances, "Lights by Linea" and "I-Light" — leaving scoping
+ * unset would silently mix both businesses' orders into one scorecard.
+ * No organisation id is hardcoded anywhere in this feature's code (see
+ * 0092's own migration comment); this page is that configuration step
+ * made real.
  */
 export default function WarehouseScorecardsAdminPage() {
   const [orgs, setOrgs] = useState<OrganizationSummary[] | null>(null);
@@ -32,6 +39,11 @@ export default function WarehouseScorecardsAdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [busyOrgId, setBusyOrgId] = useState<string | null>(null);
   const [, startLoad] = useTransition();
+
+  const [expandedOrgId, setExpandedOrgId] = useState<string | null>(null);
+  const [orgInstances, setOrgInstances] = useState<InstanceSummary[] | null>(null);
+  const [selectedInstanceIds, setSelectedInstanceIds] = useState<string[]>([]);
+  const [instancesError, setInstancesError] = useState<string | null>(null);
 
   function load() {
     startLoad(async () => {
@@ -83,12 +95,48 @@ export default function WarehouseScorecardsAdminPage() {
     load();
   }
 
+  async function handleExpandInstances(org: OrganizationSummary, assignment: OrgScorecardAssignment | undefined) {
+    if (expandedOrgId === org.id) {
+      setExpandedOrgId(null);
+      return;
+    }
+    setExpandedOrgId(org.id);
+    setOrgInstances(null);
+    setInstancesError(null);
+    setSelectedInstanceIds(assignment?.instanceIds ?? []);
+    const res = await listOrganizationInstancesAction(org.id);
+    if (!res.ok) {
+      setInstancesError(res.error ?? "Unknown error");
+      return;
+    }
+    setOrgInstances(res.data ?? []);
+  }
+
+  function toggleInstance(id: string) {
+    setSelectedInstanceIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  async function handleSaveInstanceScope(org: OrganizationSummary, assignment: OrgScorecardAssignment | undefined) {
+    if (!assignment) return;
+    setBusyOrgId(org.id);
+    const res = await assignScorecardToOrgAction(org.id, assignment.scorecardDefinitionId, true, selectedInstanceIds);
+    setBusyOrgId(null);
+    if (!res.ok) {
+      setError(res.error ?? "Unknown error");
+      return;
+    }
+    setExpandedOrgId(null);
+    load();
+  }
+
   return (
     <main className="mx-auto w-full max-w-4xl px-6 py-12">
       <h1 className="text-[22px] font-bold tracking-tight text-slate-900">Warehouse Scorecards</h1>
       <p className="mt-1 max-w-2xl text-sm leading-snug text-slate-500">
-        Turn the Warehouse Performance module on for an organization and assign it a scorecard. No organization is
-        hardcoded anywhere in this feature — this is the one place that assignment is made.
+        Turn the Warehouse Performance module on for an organization, assign it a scorecard, and — for an
+        organization with more than one connected Cin7 instance — scope the scorecard to the specific instance(s) it
+        should measure. No organization is hardcoded anywhere in this feature; this is the one place these
+        assignments are made.
       </p>
 
       {error && (
@@ -108,41 +156,86 @@ export default function WarehouseScorecardsAdminPage() {
                   <th className="py-1.5 pr-4">Organization</th>
                   <th className="py-1.5 pr-4">Module</th>
                   <th className="py-1.5 pr-4">Assigned scorecard</th>
+                  <th className="py-1.5 pr-4">Instances</th>
                   <th className="py-1.5 pr-4">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {orgs.map((org) => {
                   const assignment = assignments?.find((a) => a.organizationId === org.id && a.enabled);
+                  const isExpanded = expandedOrgId === org.id;
                   return (
-                    <tr key={org.id} className="border-t border-slate-100">
-                      <td className="py-1.5 pr-4 font-medium text-slate-900">{org.name}</td>
-                      <td className="py-1.5 pr-4">
-                        <Badge tone={org.moduleEnabled ? "success" : "neutral"}>{org.moduleEnabled ? "Enabled" : "Disabled"}</Badge>
-                      </td>
-                      <td className="py-1.5 pr-4 text-slate-600">{assignment?.scorecardName ?? "—"}</td>
-                      <td className="py-1.5 pr-4">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Button size="sm" variant="secondary" loading={busyOrgId === org.id} onClick={() => handleToggleModule(org.id, !org.moduleEnabled)}>
-                            {org.moduleEnabled ? "Disable module" : "Enable module"}
-                          </Button>
-                          {definitions && definitions.length > 0 && (
-                            <select
-                              className="rounded border border-slate-300 px-2 py-1 text-xs"
-                              value={assignment?.scorecardDefinitionId ?? ""}
-                              onChange={(e) => e.target.value && handleAssign(org.id, e.target.value)}
-                            >
-                              <option value="">Assign scorecard…</option>
-                              {definitions.map((d) => (
-                                <option key={d.id} value={d.id}>
-                                  {d.name}
-                                </option>
-                              ))}
-                            </select>
+                    <>
+                      <tr key={org.id} className="border-t border-slate-100">
+                        <td className="py-1.5 pr-4 font-medium text-slate-900">{org.name}</td>
+                        <td className="py-1.5 pr-4">
+                          <Badge tone={org.moduleEnabled ? "success" : "neutral"}>{org.moduleEnabled ? "Enabled" : "Disabled"}</Badge>
+                        </td>
+                        <td className="py-1.5 pr-4 text-slate-600">{assignment?.scorecardName ?? "—"}</td>
+                        <td className="py-1.5 pr-4">
+                          {assignment ? (
+                            <button type="button" className="text-xs text-primary underline-offset-2 hover:underline" onClick={() => handleExpandInstances(org, assignment)}>
+                              {assignment.instanceIds ? `${assignment.instanceIds.length} instance${assignment.instanceIds.length === 1 ? "" : "s"}` : "All instances"}
+                            </button>
+                          ) : (
+                            <span className="text-xs text-slate-400">—</span>
                           )}
-                        </div>
-                      </td>
-                    </tr>
+                        </td>
+                        <td className="py-1.5 pr-4">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button size="sm" variant="secondary" loading={busyOrgId === org.id} onClick={() => handleToggleModule(org.id, !org.moduleEnabled)}>
+                              {org.moduleEnabled ? "Disable module" : "Enable module"}
+                            </Button>
+                            {definitions && definitions.length > 0 && (
+                              <select
+                                className="rounded border border-slate-300 px-2 py-1 text-xs"
+                                value={assignment?.scorecardDefinitionId ?? ""}
+                                onChange={(e) => e.target.value && handleAssign(org.id, e.target.value)}
+                              >
+                                <option value="">Assign scorecard…</option>
+                                {definitions.map((d) => (
+                                  <option key={d.id} value={d.id}>
+                                    {d.name}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr className="border-t border-slate-100 bg-slate-50">
+                          <td colSpan={5} className="px-3 py-3">
+                            <p className="text-xs font-medium text-slate-600">
+                              Scope &ldquo;{assignment?.scorecardName}&rdquo; to specific instances for {org.name} — leave everything unchecked for
+                              &ldquo;all instances&rdquo; (the default, correct only when this organization has exactly one real business behind it).
+                            </p>
+                            {instancesError && (
+                              <div className="mt-2">
+                                <Alert tone="danger">{instancesError}</Alert>
+                              </div>
+                            )}
+                            {!orgInstances && !instancesError && <p className="mt-2 text-xs text-slate-500">Loading instances…</p>}
+                            {orgInstances && orgInstances.length === 0 && <p className="mt-2 text-xs text-slate-500">No connected instances.</p>}
+                            {orgInstances && orgInstances.length > 0 && (
+                              <div className="mt-2 flex flex-col gap-1.5">
+                                {orgInstances.map((inst) => (
+                                  <label key={inst.id} className="flex items-center gap-2 text-xs text-slate-700">
+                                    <input type="checkbox" checked={selectedInstanceIds.includes(inst.id)} onChange={() => toggleInstance(inst.id)} />
+                                    {inst.name}
+                                  </label>
+                                ))}
+                                <div className="mt-2">
+                                  <Button size="sm" loading={busyOrgId === org.id} onClick={() => handleSaveInstanceScope(org, assignment)}>
+                                    Save scope
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </>
                   );
                 })}
               </tbody>

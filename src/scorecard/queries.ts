@@ -57,6 +57,18 @@ export interface OrgScorecard {
   reviewFrequency: string;
   sections: SectionDefinition[];
   metrics: MetricDefinition[];
+  /**
+   * Which of this org's Cin7 instances the scorecard's automated evidence
+   * (dashboard, bottleneck queues) should be scoped to — null/empty means
+   * every instance on the org, which is WRONG whenever an org's Toolbox
+   * tenant spans more than one real business (confirmed live: "I-Light and
+   * LBL" is one org with two instances, "Lights by Linea" and "I-Light" —
+   * without this, LBL's own scorecard would silently include I-Light's
+   * orders too). Stored in organization_scorecards.settings rather than a
+   * new column, since it's per-assignment configuration, not part of the
+   * shared scorecard template.
+   */
+  instanceIds: string[] | null;
 }
 
 /**
@@ -70,12 +82,15 @@ export interface OrgScorecard {
 export async function getEnabledOrgScorecard(db: Db, orgId: string): Promise<OrgScorecard | null> {
   const { data: assignment, error: assignmentError } = await db
     .from("organization_scorecards")
-    .select("id, scorecard_definition_id")
+    .select("id, scorecard_definition_id, settings")
     .eq("organization_id", orgId)
     .eq("enabled", true)
     .maybeSingle();
   if (assignmentError) throw new Error(assignmentError.message);
   if (!assignment) return null;
+
+  const settings = (assignment.settings ?? {}) as { instanceIds?: string[] };
+  const instanceIds = Array.isArray(settings.instanceIds) && settings.instanceIds.length > 0 ? settings.instanceIds : null;
 
   const { data: definition, error: definitionError } = await db
     .from("scorecard_definitions")
@@ -110,6 +125,7 @@ export async function getEnabledOrgScorecard(db: Db, orgId: string): Promise<Org
     reviewFrequency: definition.review_frequency,
     sections: (sectionRows ?? []).map(toSectionDefinition),
     metrics: (metricRows ?? []).map(toMetricDefinition),
+    instanceIds,
   };
 }
 

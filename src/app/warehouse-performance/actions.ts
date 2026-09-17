@@ -91,7 +91,10 @@ export async function getWarehousePerformanceDashboardAction(): Promise<ActionRe
     const reviews = await listReviews(db, orgId, scorecard.scorecardDefinitionId, 3);
     const previousFinal = reviews.find((r) => r.id !== currentReview.id && r.status === "final") ?? null;
 
-    const { data: bottleneckRows, error: bottleneckError } = await db.rpc("report_scorecard_bottleneck_summary", { p_org_id: orgId });
+    const { data: bottleneckRows, error: bottleneckError } = await db.rpc("report_scorecard_bottleneck_summary", {
+      p_org_id: orgId,
+      p_instance_ids: scorecard.instanceIds,
+    });
     if (bottleneckError) throw new Error(bottleneckError.message);
 
     const actionsOpen = await listActions(db, orgId, "open");
@@ -320,7 +323,9 @@ export async function listBottleneckOrdersAction(queue: string): Promise<ActionR
     if (!VALID_QUEUES.includes(queue as (typeof VALID_QUEUES)[number])) return { ok: false, error: "Unknown queue." };
     const { orgId } = await requireModuleAccess(WAREHOUSE_PERFORMANCE_MODULE.href);
     const db = createServiceRoleClient();
-    const { data, error } = await db.rpc("report_scorecard_bottleneck_orders", { p_org_id: orgId, p_queue: queue });
+    const scorecard = await getEnabledOrgScorecard(db, orgId);
+    if (!scorecard) return { ok: false, error: "Warehouse Performance is not configured for your organization." };
+    const { data, error } = await db.rpc("report_scorecard_bottleneck_orders", { p_org_id: orgId, p_queue: queue, p_instance_ids: scorecard.instanceIds });
     if (error) throw new Error(error.message);
     return {
       ok: true,

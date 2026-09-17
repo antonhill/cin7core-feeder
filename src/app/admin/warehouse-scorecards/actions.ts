@@ -52,6 +52,30 @@ export async function listOrganizationsForScorecardAssignmentAction(): Promise<A
   }
 }
 
+export interface InstanceSummary {
+  id: string;
+  name: string;
+}
+
+/**
+ * Lists an organisation's connected Cin7 instances, for scoping a scorecard
+ * assignment to one business when a Toolbox tenant spans more than one
+ * (confirmed live: "I-Light and LBL" is one organisation with two
+ * instances, "Lights by Linea" and "I-Light" — without instance scoping,
+ * LBL's own scorecard would silently include I-Light's orders too).
+ */
+export async function listOrganizationInstancesAction(organizationId: string): Promise<ActionResult<InstanceSummary[]>> {
+  try {
+    await requireSuperAdmin();
+    const db = createServiceRoleClient();
+    const { data, error } = await db.from("cin7_instances").select("id, name").eq("org_id", organizationId).order("name");
+    if (error) throw new Error(error.message);
+    return { ok: true, data: (data ?? []) as InstanceSummary[] };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
 export interface ScorecardDefinitionSummary {
   id: string;
   name: string;
@@ -77,6 +101,7 @@ export interface OrgScorecardAssignment {
   scorecardDefinitionId: string;
   scorecardName: string;
   enabled: boolean;
+  instanceIds: string[] | null;
 }
 
 export async function listOrgScorecardAssignmentsAction(): Promise<ActionResult<OrgScorecardAssignment[]>> {
@@ -85,7 +110,7 @@ export async function listOrgScorecardAssignmentsAction(): Promise<ActionResult<
     const db = createServiceRoleClient();
     const { data, error } = await db
       .from("organization_scorecards")
-      .select("id, organization_id, scorecard_definition_id, enabled, organizations(name), scorecard_definitions(name)")
+      .select("id, organization_id, scorecard_definition_id, enabled, settings, organizations(name), scorecard_definitions(name)")
       .order("created_at", { ascending: false });
     if (error) throw new Error(error.message);
     return {
@@ -96,11 +121,13 @@ export async function listOrgScorecardAssignmentsAction(): Promise<ActionResult<
           organization_id: string;
           scorecard_definition_id: string;
           enabled: boolean;
+          settings: { instanceIds?: string[] } | null;
           organizations: { name: string } | { name: string }[] | null;
           scorecard_definitions: { name: string } | { name: string }[] | null;
         }) => {
           const org = Array.isArray(r.organizations) ? r.organizations[0] : r.organizations;
           const def = Array.isArray(r.scorecard_definitions) ? r.scorecard_definitions[0] : r.scorecard_definitions;
+          const instanceIds = r.settings?.instanceIds;
           return {
             id: r.id,
             organizationId: r.organization_id,
@@ -108,6 +135,7 @@ export async function listOrgScorecardAssignmentsAction(): Promise<ActionResult<
             scorecardDefinitionId: r.scorecard_definition_id,
             scorecardName: def?.name ?? "Unknown",
             enabled: r.enabled,
+            instanceIds: Array.isArray(instanceIds) && instanceIds.length > 0 ? instanceIds : null,
           };
         }
       ),
@@ -145,7 +173,12 @@ export async function setOrgWarehousePerformanceModuleAction(organizationId: str
  * shape as setOrgDisabledModules, never resolved from the caller's own
  * session the way a member-facing action would be.
  */
-export async function assignScorecardToOrgAction(organizationId: string, scorecardDefinitionId: string, enabled: boolean): Promise<ActionResult<null>> {
+export async function assignScorecardToOrgAction(
+  organizationId: string,
+  scorecardDefinitionId: string,
+  enabled: boolean,
+  instanceIds?: string[] | null
+): Promise<ActionResult<null>> {
   try {
     await requirePrivilegedSuperAdmin("assign a Warehouse Performance scorecard to an organization");
     const db = createServiceRoleClient();
@@ -160,9 +193,20 @@ export async function assignScorecardToOrgAction(organizationId: string, scoreca
       if (disableError) throw new Error(disableError.message);
     }
 
-    const { error } = await db
-      .from("organization_scorecards")
-      .upsert({ organization_id: organizationId, scorecard_definition_id: scorecardDefinitionId, enabled }, { onConflict: "organization_id,scorecard_definition_id" });
+    // instanceIds: undefined (not passed) leaves settings untouched on an
+    // existing row; an explicit array (including []) replaces it. null and
+    // [] both mean "every instance on the org" (see queries.ts).
+    const settings = instanceIds === undefined ? undefined : { instanceIds: instanceIds ?? [] };
+
+    const { error } = await db.from("organization_scorecards").upsert(
+      {
+        organization_id: organizationId,
+        scorecard_definition_id: scorecardDefinitionId,
+        enabled,
+        ...(settings !== undefined ? { settings } : {}),
+      },
+      { onConflict: "organization_id,scorecard_definition_id" }
+    );
     if (error) throw new Error(error.message);
     return { ok: true };
   } catch (e) {

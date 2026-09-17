@@ -148,6 +148,41 @@ describe("corrective actions require BOTH module access and the org-admin role t
   });
 });
 
+describe("listBottleneckOrdersAction scopes the RPC to the org's configured instances", () => {
+  it("threads organization_scorecards.settings.instanceIds through to p_instance_ids, so a multi-brand org's scorecard never silently mixes another instance's orders in", async () => {
+    const rpc = vi.fn(() => Promise.resolve({ data: [], error: null }));
+    const scopedDbFrom = vi.fn((table: string) => {
+      if (table === "organization_scorecards")
+        return queryStub({ data: { id: "assignment-1", scorecard_definition_id: "def-1", settings: { instanceIds: ["instance-lbl"] } }, error: null });
+      if (table === "scorecard_definitions") return queryStub({ data: { id: "def-1", name: "LBL Scorecard", review_frequency: "monthly", active: true }, error: null });
+      if (table === "scorecard_sections") return queryStub({ data: [], error: null });
+      if (table === "scorecard_metric_definitions") return queryStub({ data: [], error: null });
+      return queryStub({ data: null, error: null });
+    });
+    vi.mocked(createServiceRoleClient).mockReturnValue({ from: scopedDbFrom, rpc } as never);
+
+    await listBottleneckOrdersAction("ready_to_pick");
+
+    expect(rpc).toHaveBeenCalledWith("report_scorecard_bottleneck_orders", { p_org_id: "org1", p_queue: "ready_to_pick", p_instance_ids: ["instance-lbl"] });
+  });
+
+  it("passes null (every instance) when no scoping is configured — the pre-fix default", async () => {
+    const rpc = vi.fn(() => Promise.resolve({ data: [], error: null }));
+    const unscopedDbFrom = vi.fn((table: string) => {
+      if (table === "organization_scorecards") return queryStub({ data: { id: "assignment-1", scorecard_definition_id: "def-1", settings: {} }, error: null });
+      if (table === "scorecard_definitions") return queryStub({ data: { id: "def-1", name: "Scorecard", review_frequency: "monthly", active: true }, error: null });
+      if (table === "scorecard_sections") return queryStub({ data: [], error: null });
+      if (table === "scorecard_metric_definitions") return queryStub({ data: [], error: null });
+      return queryStub({ data: null, error: null });
+    });
+    vi.mocked(createServiceRoleClient).mockReturnValue({ from: unscopedDbFrom, rpc } as never);
+
+    await listBottleneckOrdersAction("ready_to_pick");
+
+    expect(rpc).toHaveBeenCalledWith("report_scorecard_bottleneck_orders", { p_org_id: "org1", p_queue: "ready_to_pick", p_instance_ids: null });
+  });
+});
+
 describe("listBottleneckOrdersAction validates the queue before it can reach SQL", () => {
   it("rejects an unrecognised queue name without calling the database", async () => {
     const result = await listBottleneckOrdersAction("not_a_real_queue");
@@ -157,6 +192,17 @@ describe("listBottleneckOrdersAction validates the queue before it can reach SQL
   });
 
   it("accepts each of the four real queue names", async () => {
+    // listBottleneckOrdersAction looks up the org's scorecard configuration
+    // before calling the RPC (needed for instance scoping) — mock a
+    // minimal valid one so the flow reaches the RPC at all.
+    dbFrom.mockImplementation((table: string) => {
+      if (table === "organization_scorecards") return queryStub({ data: { id: "assignment-1", scorecard_definition_id: "def-1", settings: {} }, error: null });
+      if (table === "scorecard_definitions") return queryStub({ data: { id: "def-1", name: "Test Scorecard", review_frequency: "monthly", active: true }, error: null });
+      if (table === "scorecard_sections") return queryStub({ data: [], error: null });
+      if (table === "scorecard_metric_definitions") return queryStub({ data: [], error: null });
+      return queryStub({ data: null, error: null });
+    });
+
     for (const queue of ["ready_to_pick", "packed_not_invoiced", "invoiced_not_shipped", "backorders_awaiting_stock"]) {
       const result = await listBottleneckOrdersAction(queue);
       expect(result.ok).toBe(true);
