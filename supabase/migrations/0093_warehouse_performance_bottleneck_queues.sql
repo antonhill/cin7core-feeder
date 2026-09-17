@@ -34,7 +34,21 @@
 --     A real fix needs Cin7 to expose (and this product to sync) a
 --     fulfilment-level pack timestamp — a Phase 2 candidate, not built here.
 
-create or replace view scorecard_bottleneck_orders_v as
+-- security_invoker = true is load-bearing, not a style choice: without it,
+-- this view defaults to the CREATOR's (migration role's) privileges rather
+-- than the querying session's, which bypasses sales' own org-scoped RLS
+-- policy for anyone who queries this view directly via PostgREST — a real
+-- cross-tenant data leak, not a theoretical one (caught live by
+-- Supabase's security advisor against the actual production project
+-- immediately after this migration first shipped, before it was ever
+-- exposed further). The two wrapping functions below are unaffected by
+-- this setting (SQL-language functions default to SECURITY INVOKER
+-- already, and the application always calls them via the service-role
+-- client, which bypasses RLS regardless of this setting) — this closes
+-- only the direct-view-access path a raw authenticated or anon session
+-- could otherwise use to read every organisation's sales/order data
+-- through this one view.
+create or replace view scorecard_bottleneck_orders_v with (security_invoker = true) as
 with pickable as (
   select ol.org_id, ol.instance_id, ol.cin7_sale_id,
     sum(greatest(coalesce(ol.quantity, 0) - coalesce(ol.backorder_quantity, 0) - coalesce(pk.qty, 0), 0)) as pickable_qty

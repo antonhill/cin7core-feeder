@@ -66,7 +66,7 @@ create index if not exists scorecard_sections_definition_idx on scorecard_sectio
 -- (old_table/new_table) is only a valid identifier in the specific trigger
 -- invocation that bound it, so a single body referencing both would fail
 -- whenever fired by an INSERT-only or DELETE-only statement.
-create or replace function check_scorecard_section_weights_on_upsert() returns trigger language plpgsql as $$
+create or replace function check_scorecard_section_weights_on_upsert() returns trigger language plpgsql set search_path = public as $$
 declare
   affected_ids uuid[];
   bad_id uuid;
@@ -92,7 +92,7 @@ begin
 end;
 $$;
 
-create or replace function check_scorecard_section_weights_on_delete() returns trigger language plpgsql as $$
+create or replace function check_scorecard_section_weights_on_delete() returns trigger language plpgsql set search_path = public as $$
 declare
   affected_ids uuid[];
   bad_id uuid;
@@ -258,7 +258,7 @@ create index if not exists scorecard_reviews_org_period_idx on scorecard_reviews
 -- overall Warehouse Health Score must not change"). Only scorecard_actions
 -- linked to a finalised review, or activity elsewhere, may still evolve —
 -- this trigger only touches scorecard_reviews itself.
-create or replace function prevent_finalised_review_mutation() returns trigger language plpgsql as $$
+create or replace function prevent_finalised_review_mutation() returns trigger language plpgsql set search_path = public as $$
 begin
   if old.status = 'final' and (
     new.overall_score is distinct from old.overall_score
@@ -313,7 +313,7 @@ create table if not exists scorecard_metric_results (
 
 create index if not exists scorecard_metric_results_review_idx on scorecard_metric_results (review_id);
 
-create or replace function prevent_finalised_result_mutation() returns trigger language plpgsql as $$
+create or replace function prevent_finalised_result_mutation() returns trigger language plpgsql set search_path = public as $$
 declare
   review_status scorecard_review_status;
 begin

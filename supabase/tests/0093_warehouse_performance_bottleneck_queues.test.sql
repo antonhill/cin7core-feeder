@@ -4,6 +4,47 @@
 
 begin;
 
+-- --- REGRESSION: scorecard_bottleneck_orders_v must be security_invoker ----
+-- Caught live once already: without security_invoker, this view runs as
+-- its creator (bypassing sales' own org-scoped RLS), so a raw authenticated
+-- or anon session querying it directly via PostgREST could read every
+-- organisation's data through this one view. Confirmed via
+-- pg_catalog.pg_class.reloptions rather than the advisor API, so this
+-- guard runs in CI, not just when someone happens to run the advisor.
+do $$
+declare
+  opts text[];
+begin
+  select reloptions into opts from pg_class where relname = 'scorecard_bottleneck_orders_v' and relkind = 'v';
+  if opts is null or not ('security_invoker=true' = any(opts)) then
+    raise exception 'scorecard_bottleneck_orders_v must be created WITH (security_invoker = true) -- got reloptions %', opts;
+  end if;
+end $$;
+
+-- --- REGRESSION: every scorecard trigger function must pin search_path -----
+do $$
+declare
+  bad_fn text;
+begin
+  select p.proname into bad_fn
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public'
+    and p.proname in (
+      'check_scorecard_section_weights_on_upsert',
+      'check_scorecard_section_weights_on_delete',
+      'prevent_finalised_review_mutation',
+      'prevent_finalised_result_mutation'
+    )
+    and not exists (
+      select 1 from unnest(coalesce(p.proconfig, '{}'::text[])) cfg where cfg like 'search_path=%'
+    )
+  limit 1;
+  if bad_fn is not null then
+    raise exception 'function % has no pinned search_path -- every scorecard trigger function must set one', bad_fn;
+  end if;
+end $$;
+
 insert into organizations (id, name) values ('00000000-0000-0000-0000-0000000000e1', 'Bottleneck Test Org A');
 insert into organizations (id, name) values ('00000000-0000-0000-0000-0000000000e2', 'Bottleneck Test Org B');
 insert into cin7_instances (id, org_id, name, account_id, application_key_encrypted)
