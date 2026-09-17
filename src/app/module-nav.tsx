@@ -213,6 +213,17 @@ export function PickingCalendarIcon({ className }: IconProps) {
   );
 }
 
+export function WarehousePerformanceIcon({ className }: IconProps) {
+  return (
+    <GradientIcon className={className} from="#0d9488" to="#115e59">
+      <path d="M3 20h18" />
+      <rect x="5" y="12" width="3.5" height="8" rx="0.5" />
+      <rect x="10.25" y="7" width="3.5" height="13" rx="0.5" />
+      <rect x="15.5" y="3" width="3.5" height="17" rx="0.5" />
+    </GradientIcon>
+  );
+}
+
 export function StocktakeIcon({ className }: IconProps) {
   return (
     <GradientIcon className={className} from="#ea580c" to="#9a3412">
@@ -420,6 +431,26 @@ export const PICKING_CALENDAR_MODULE: ModuleConfig = {
   blurb: "A drag-to-reschedule week view offset N working days before Ship By, for planning when to pick rather than when to ship.",
 };
 
+// Generic scorecard engine + client configuration (see
+// src/scorecard/ and supabase/migrations/0092-0095) — Lights by Linea is
+// the first configured client, not a hardcoded one: which org sees this
+// module is the ordinary disabled_modules toggle below; which scorecard
+// DEFINITION that org gets is a separate, additional gate
+// (organization_scorecards, org-scoped) checked inside every action in
+// src/app/warehouse-performance/. Off by default for every existing org
+// (migration 0094, mirroring Picking Calendar/Quotes) — a super-admin opts
+// an org in via /admin, then separately assigns it a scorecard via the
+// warehouse-scorecards admin action, both post-deploy configuration steps,
+// neither a code change.
+export const WAREHOUSE_PERFORMANCE_MODULE: ModuleConfig = {
+  href: "/warehouse-performance",
+  label: "Warehouse Performance",
+  gradient: SELF_COLORED_ICON_BADGE,
+  Icon: WarehousePerformanceIcon,
+  blurb:
+    "A monthly warehouse operations scorecard — order flow, picking/packing accuracy, stock accuracy, dispatch, Cin7 process compliance and warehouse organisation, each with evidence, history and corrective actions.",
+};
+
 export const HEALTH_MODULE: ModuleConfig = {
   href: "/health",
   label: "System Health",
@@ -525,6 +556,7 @@ export const MODULES: ModuleConfig[] = [
   STOCKTAKE_MODULE,
   PICKING_CALENDAR_MODULE,
   HEALTH_MODULE,
+  WAREHOUSE_PERFORMANCE_MODULE,
   INSTANCES_MODULE,
   ACTIVITY_MODULE,
 ];
