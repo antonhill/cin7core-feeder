@@ -137,6 +137,54 @@ begin
   if n <> 0 then raise exception 'draft-invoiced / unlinked fulfilments must not appear in Invoiced but Not Shipped or unclear'; end if;
 end $$;
 
+-- Multi-invoice link ("INV-A,INV-B"): the fulfilment is invoiced, counted ONCE, with both invoices' totals.
+do $$
+declare
+  org uuid := '00000000-0000-0000-0000-0000000000f1';
+  inst uuid := '00000000-0000-0000-0000-0000000000f3';
+  r record;
+begin
+  insert into sales (org_id, instance_id, cin7_sale_id, order_number, order_date, combined_shipping_status)
+    values (org, inst, 'MULTI-1', 'SO-MULTI-1', current_date - 6, 'NOT SHIPPED');
+  insert into sale_lines (org_id, instance_id, cin7_sale_id, invoice_number, line_number, product_sku, quantity, total, invoice_status, invoice_date)
+    values (org, inst, 'MULTI-1', 'INV-M1', 0, 'A', 2, 20, 'PAID', current_date - 5),
+           (org, inst, 'MULTI-1', 'INV-M2', 0, 'A', 3, 30, 'AUTHORISED', current_date - 4);
+  insert into sale_pick_pack_lines (org_id, instance_id, cin7_sale_id, stage, line_number, product_sku, quantity, status, fulfilment_task_id, fulfilment_number, fulfilment_linked_invoice_number, ship_status)
+    values (org, inst, 'MULTI-1', 'pack', 0, 'A', 5, 'AUTHORISED', 'MULTI-F1', 1, 'INV-M1,INV-M2', 'NOT AVAILABLE');
+  select * into r from scorecard_bottleneck_orders_v where org_id = org and cin7_sale_id = 'MULTI-1';
+  if r.ship_outstanding_qty <> 5 then raise exception 'multi-invoice fulfilment must count its pack qty once (5), got %', r.ship_outstanding_qty; end if;
+  if r.ship_outstanding_value <> 50 then raise exception 'multi-invoice value should be both invoice totals (50), got %', r.ship_outstanding_value; end if;
+  if r.ship_outstanding_since <> current_date - 5 then raise exception 'multi-invoice age should use the oldest invoice, got %', r.ship_outstanding_since; end if;
+end $$;
+
+-- NULL ship_status is "unclear" only while the sale is non-terminal at order level; PARTIALLY AUTHORISED is unclear regardless.
+do $$
+declare
+  org uuid := '00000000-0000-0000-0000-0000000000f1';
+  inst uuid := '00000000-0000-0000-0000-0000000000f3';
+  c record;
+  sid text;
+  r record;
+begin
+  for c in
+    select * from (values
+      ('NULLTERM', null, 'SHIPPED',     false),
+      ('NULLOPEN', null, 'SHIPPING',    true),
+      ('PARTTERM', 'PARTIALLY AUTHORISED', 'SHIPPED', true)
+    ) as t(label, ship_status, lbl, exp_unclear)
+  loop
+    sid := 'SC-' || c.label;
+    insert into sales (org_id, instance_id, cin7_sale_id, order_number, order_date, combined_shipping_status) values (org, inst, sid, 'SO-' || sid, current_date - 5, c.lbl);
+    insert into sale_lines (org_id, instance_id, cin7_sale_id, invoice_number, line_number, product_sku, quantity, total, invoice_status, invoice_date)
+      values (org, inst, sid, 'INV-' || sid, 0, 'X', 5, 250, 'AUTHORISED', current_date - 4);
+    insert into sale_pick_pack_lines (org_id, instance_id, cin7_sale_id, stage, line_number, product_sku, quantity, status, fulfilment_task_id, fulfilment_number, fulfilment_linked_invoice_number, ship_status)
+      values (org, inst, sid, 'pack', 0, 'X', 5, 'AUTHORISED', sid || '-F', 1, 'INV-' || sid, c.ship_status);
+    select * into r from scorecard_bottleneck_orders_v where org_id = org and cin7_sale_id = sid;
+    if r.qualifies_shipment_state_unclear <> c.exp_unclear then raise exception '% : expected unclear %, got %', c.label, c.exp_unclear, r.qualifies_shipment_state_unclear; end if;
+    if r.qualifies_invoiced_not_shipped then raise exception '% : an unclear fulfilment must never count in the queue', c.label; end if;
+  end loop;
+end $$;
+
 -- Summary: unclear orders are excluded from the queue count and surfaced separately.
 do $$
 declare
@@ -145,12 +193,13 @@ declare
   u record;
 begin
   select current_count into q from report_scorecard_bottleneck_summary(org) where queue = 'invoiced_not_shipped';
-  -- Outstanding orders from the matrix: DRAFT, NA, VOIDED + MIX-1 = 4. Unclear (NULL/PARTIAL/AUTHNODATE/UNSEEN) are not counted.
-  if q <> 4 then raise exception 'invoiced_not_shipped count should be 4 (unclear and shipped excluded), got %', q; end if;
+  -- Outstanding orders: DRAFT, NA, VOIDED, MIX-1, MULTI-1 = 5. Unclear fulfilments are not counted.
+  if q <> 5 then raise exception 'invoiced_not_shipped count should be 5 (unclear and shipped excluded), got %', q; end if;
   select * into u from report_scorecard_shipment_unclear_summary(org);
-  if u.current_count <> 4 or u.unclear_qty <> 20 then raise exception 'unclear summary should be 4 orders / 20 units, got % / %', u.current_count, u.unclear_qty; end if;
+  -- Matrix: NULLSTATE (NOT SHIPPED label), PARTIAL, AUTHNODATE, UNSEEN + SC-NULLOPEN + SC-PARTTERM = 6 orders / 30 units (SC-NULLTERM is terminal-scoped out).
+  if u.current_count <> 6 or u.unclear_qty <> 30 then raise exception 'unclear summary should be 6 orders / 30 units, got % / %', u.current_count, u.unclear_qty; end if;
   select count(*) into q from report_scorecard_bottleneck_orders(org, 'shipment_state_unclear');
-  if q <> 4 then raise exception 'unclear drill-down should list 4 orders, got %', q; end if;
+  if q <> 6 then raise exception 'unclear drill-down should list 6 orders, got %', q; end if;
 end $$;
 
 -- Ship-state columns exist, are nullable, and the table kept its RLS.

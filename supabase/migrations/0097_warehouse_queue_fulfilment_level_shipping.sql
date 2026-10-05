@@ -15,6 +15,7 @@
 --   anything else: NULL (not yet synced), PARTIALLY AUTHORISED (no safe quantity
 --   derivation proven), AUTHORISED without a shipment date, or a value we have
 --   never seen                                           -> UNCLEAR
+--   (NULL is scoped to non-terminal sales — see the view's comment)
 -- UNCLEAR fulfilments never count as shipped or unshipped: they are excluded
 -- from the queue's KPI totals and surfaced separately as "shipment state
 -- unclear" until resolved.
@@ -109,8 +110,13 @@ authorised_invoices as (
   where invoice_status in ('AUTHORISED', 'PAID')
   group by org_id, instance_id, cin7_sale_id, invoice_number
 ),
+-- A fulfilment's linked invoice field can name SEVERAL invoices, comma-joined
+-- (seen live: "INV-11685,INV-11686,INV-11689"), so match on any of them and
+-- aggregate back to one row per fulfilment so its pack quantity is counted once.
 fulfilment_ship_class as (
-  select fp.org_id, fp.instance_id, fp.cin7_sale_id, fp.pack_qty, ai.invoice_date, ai.invoice_total,
+  select fp.org_id, fp.instance_id, fp.cin7_sale_id, fp.fulfilment_task_id, fp.pack_qty,
+    min(ai.invoice_date) as invoice_date, sum(ai.invoice_total) as invoice_total,
+    (fp.ship_status is null) as ship_null,
     case
       when fp.ship_status = 'AUTHORISED' and fp.shipped_at is not null then 'shipped'
       when fp.ship_status in ('VOIDED', 'DRAFT', 'NOT AVAILABLE') then 'outstanding'
@@ -119,8 +125,9 @@ fulfilment_ship_class as (
   from fulfilment_pack fp
   join authorised_invoices ai
     on ai.org_id = fp.org_id and ai.instance_id = fp.instance_id and ai.cin7_sale_id = fp.cin7_sale_id
-   and ai.invoice_number = fp.linked_invoice
+   and ai.invoice_number = any (string_to_array(replace(fp.linked_invoice, ' ', ''), ','))
   where coalesce(fp.linked_invoice, '') <> '' and fp.pack_qty > 0
+  group by fp.org_id, fp.instance_id, fp.cin7_sale_id, fp.fulfilment_task_id, fp.pack_qty, fp.ship_status, fp.shipped_at
 ),
 ship_outstanding as (
   select org_id, instance_id, cin7_sale_id,
@@ -128,7 +135,9 @@ ship_outstanding as (
     min(invoice_date) filter (where ship_class = 'outstanding') as outstanding_since,
     sum(invoice_total) filter (where ship_class = 'outstanding') as outstanding_value,
     sum(pack_qty) filter (where ship_class = 'unclear') as unclear_qty,
-    count(*) filter (where ship_class = 'unclear') as unclear_fulfilments
+    count(*) filter (where ship_class = 'unclear') as unclear_fulfilments,
+    sum(pack_qty) filter (where ship_class = 'unclear' and ship_null) as unclear_null_qty,
+    count(*) filter (where ship_class = 'unclear' and ship_null) as unclear_null_fulfilments
   from fulfilment_ship_class
   group by org_id, instance_id, cin7_sale_id
 )
@@ -162,8 +171,19 @@ select
   coalesce(so.outstanding_qty, 0) as ship_outstanding_qty,
   so.outstanding_since as ship_outstanding_since,
   coalesce(so.outstanding_value, 0) as ship_outstanding_value,
-  coalesce(so.unclear_qty, 0) as ship_unclear_qty,
-  (coalesce(so.unclear_fulfilments, 0) > 0) as qualifies_shipment_state_unclear
+  -- A fulfilment whose ship_status is still NULL (never re-synced since 0096) is
+  -- "unclear" ONLY while its sale is not terminal at order level. Without this
+  -- scope every historical sale that was never backfilled (the targeted backfill
+  -- deliberately covers only open sales) would be flagged unclear — thousands of
+  -- false alarms. The order label is used here strictly to EXCLUDE (SHIPPED /
+  -- VOIDED / NOT AVAILABLE cannot carry outstanding shipping work); it is never
+  -- used to qualify anything. PARTIALLY AUTHORISED and unseen non-NULL statuses
+  -- are unclear regardless of the label.
+  coalesce(so.unclear_qty, 0)
+    - case when coalesce(s.combined_shipping_status in ('SHIPPED', 'VOIDED', 'NOT AVAILABLE'), false) then coalesce(so.unclear_null_qty, 0) else 0 end as ship_unclear_qty,
+  ((coalesce(so.unclear_fulfilments, 0) - coalesce(so.unclear_null_fulfilments, 0)) > 0
+    or (coalesce(so.unclear_null_fulfilments, 0) > 0
+        and not coalesce(s.combined_shipping_status in ('SHIPPED', 'VOIDED', 'NOT AVAILABLE'), false))) as qualifies_shipment_state_unclear
 from sales s
 left join pickable pick on pick.org_id = s.org_id and pick.instance_id = s.instance_id and pick.cin7_sale_id = s.cin7_sale_id
 left join packed_authorised pa on pa.org_id = s.org_id and pa.instance_id = s.instance_id and pa.cin7_sale_id = s.cin7_sale_id
