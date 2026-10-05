@@ -51,6 +51,25 @@ function toDateOnly(value: string | null | undefined): string | null {
  * sale (see migration 0081's header comment for why that distinction
  * matters: the same SKU can appear in more than one sibling fulfilment).
  */
+/**
+ * The fulfilment's Ship.Status verbatim, plus the latest ShipmentDate among Ship
+ * lines that are actually IsShipped === true (null when none are). Deliberately
+ * does NOT infer anything from the sale-level CombinedShippingStatus, and does
+ * not interpret the status — classification (AUTHORISED vs PARTIALLY AUTHORISED
+ * vs VOIDED ...) belongs to the queue SQL (migration 0097).
+ */
+function extractShipState(fulfilment: Cin7SaleFulfilment): { ship_status: string | null; shipped_at: string | null } {
+  const shippedDates = (fulfilment.Ship?.Lines ?? [])
+    .filter((line) => line.IsShipped === true)
+    .map((line) => toDateOnly(line.ShipmentDate))
+    .filter((d): d is string => Boolean(d))
+    .sort();
+  return {
+    ship_status: fulfilment.Ship?.Status ?? null,
+    shipped_at: shippedDates.length ? shippedDates[shippedDates.length - 1] : null,
+  };
+}
+
 function extractPickPackLineRows(orgId: string, instanceId: string, saleId: string, fulfilments: Cin7SaleFulfilment[]) {
   const rows: {
     org_id: string;
@@ -74,6 +93,12 @@ function extractPickPackLineRows(orgId: string, instanceId: string, saleId: stri
     fulfilment_task_id: string | null;
     fulfilment_number: number | null;
     fulfilment_linked_invoice_number: string | null;
+    // The owning fulfilment's Ship state (live contract verified 2026-10-05,
+    // see migration 0096). Ship.Lines carry no SKU/quantity, so shipment is
+    // recorded per FULFILMENT and denormalised onto its lines like `status`.
+    // null ship_status = Cin7 sent no Ship object = UNKNOWN, never "unshipped".
+    ship_status: string | null;
+    shipped_at: string | null;
   }[] = [];
 
   let pickLineNumber = 0;
@@ -83,6 +108,7 @@ function extractPickPackLineRows(orgId: string, instanceId: string, saleId: stri
       fulfilment_task_id: fulfilment.TaskID ?? null,
       fulfilment_number: fulfilment.FulfillmentNumber ?? null,
       fulfilment_linked_invoice_number: fulfilment.LinkedInvoiceNumber ?? null,
+      ...extractShipState(fulfilment),
     };
     for (const line of fulfilment.Pick?.Lines ?? []) {
       rows.push({
