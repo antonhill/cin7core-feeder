@@ -29,6 +29,8 @@ export interface DashboardSummary {
   headlines: HeadlineSummary[];
   previousOverallScore: number | null;
   changeFromPrevious: number | null;
+  /** Orders with an invoiced fulfilment whose Ship state cannot be classified — EXCLUDED from every bottleneck total above, shown separately until resolved. */
+  shipmentStateUnclear: { currentCount: number; oldestAgeDays: number | null; unclearQty: number };
   bottleneckSummary: { queue: string; currentCount: number; oldestAgeDays: number | null; outsideSlaCount: number | null; totalValue: number | null }[];
   openActionsCount: number;
   overdueActionsCount: number;
@@ -97,6 +99,13 @@ export async function getWarehousePerformanceDashboardAction(): Promise<ActionRe
     });
     if (bottleneckError) throw new Error(bottleneckError.message);
 
+    const { data: unclearRows, error: unclearError } = await db.rpc("report_scorecard_shipment_unclear_summary", {
+      p_org_id: orgId,
+      p_instance_ids: scorecard.instanceIds,
+    });
+    if (unclearError) throw new Error(unclearError.message);
+    const unclear = (unclearRows ?? [])[0] as { current_count: number; oldest_age_days: number | null; unclear_qty: number } | undefined;
+
     const actionsOpen = await listActions(db, orgId, "open");
     const today = new Date().toISOString().slice(0, 10);
 
@@ -113,6 +122,11 @@ export async function getWarehousePerformanceDashboardAction(): Promise<ActionRe
         headlines,
         previousOverallScore: previousFinal?.overall_score ?? null,
         changeFromPrevious: overall !== null && previousFinal?.overall_score != null ? Math.round((overall - previousFinal.overall_score) * 100) / 100 : null,
+        shipmentStateUnclear: {
+          currentCount: unclear?.current_count ?? 0,
+          oldestAgeDays: unclear?.oldest_age_days ?? null,
+          unclearQty: Number(unclear?.unclear_qty ?? 0),
+        },
         bottleneckSummary: (bottleneckRows ?? []).map((r: { queue: string; current_count: number; oldest_age_days: number | null; outside_sla_count: number | null; total_value: number | null }) => ({
           queue: r.queue,
           currentCount: r.current_count,
@@ -316,7 +330,7 @@ export interface BottleneckOrderRow {
   hasOpenPo: boolean;
 }
 
-const VALID_QUEUES = ["ready_to_pick", "packed_not_invoiced", "invoiced_not_shipped", "backorders_awaiting_stock"] as const;
+const VALID_QUEUES = ["ready_to_pick", "packed_not_invoiced", "invoiced_not_shipped", "backorders_awaiting_stock", "shipment_state_unclear"] as const;
 
 export async function listBottleneckOrdersAction(queue: string): Promise<ActionResult<BottleneckOrderRow[]>> {
   try {

@@ -48,6 +48,7 @@ const QUEUE_LABEL: Record<string, string> = {
   packed_not_invoiced: "Packed but Not Invoiced",
   invoiced_not_shipped: "Invoiced but Not Shipped",
   backorders_awaiting_stock: "Backorders Awaiting Stock",
+  shipment_state_unclear: "Shipment state unclear",
 };
 
 function StatusBadge({ status }: { status: ScoreStatus }) {
@@ -186,6 +187,7 @@ function OverviewTab({ dashboard }: { dashboard: DashboardSummary }) {
             </div>
           ))}
         </div>
+        <UnclearNotice unclear={dashboard.shipmentStateUnclear} />
       </Panel>
 
       <Panel>
@@ -350,6 +352,24 @@ function MetricRow({
   );
 }
 
+/**
+ * Orders whose invoiced fulfilments have no classifiable Ship state (not yet
+ * synced, or PARTIALLY AUTHORISED). They are deliberately NOT counted in any
+ * queue above — silently counting them as shipped or unshipped would misstate
+ * the bottleneck — so they are called out here instead.
+ */
+function UnclearNotice({ unclear, onOpen }: { unclear: DashboardSummary["shipmentStateUnclear"]; onOpen?: () => void }) {
+  if (unclear.currentCount === 0) return null;
+  const text = `Shipment state unclear: ${unclear.currentCount} order${unclear.currentCount === 1 ? "" : "s"} (${unclear.unclearQty.toLocaleString()} units) — excluded from the queues above until resolved.`;
+  return onOpen ? (
+    <button type="button" onClick={onOpen} className="mt-3 text-left text-xs text-slate-600 underline hover:text-primary">
+      {text}
+    </button>
+  ) : (
+    <p className="mt-3 text-xs text-slate-600">{text}</p>
+  );
+}
+
 function BottlenecksTab({ dashboard }: { dashboard: DashboardSummary }) {
   const [openQueue, setOpenQueue] = useState<string | null>(null);
   const [orders, setOrders] = useState<BottleneckOrderRow[] | null>(null);
@@ -388,6 +408,8 @@ function BottlenecksTab({ dashboard }: { dashboard: DashboardSummary }) {
           </button>
         ))}
       </div>
+
+      <UnclearNotice unclear={dashboard.shipmentStateUnclear} onOpen={() => drillDown("shipment_state_unclear")} />
 
       {openQueue && (
         <Panel>

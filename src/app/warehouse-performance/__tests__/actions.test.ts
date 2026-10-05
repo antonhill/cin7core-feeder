@@ -191,7 +191,7 @@ describe("listBottleneckOrdersAction validates the queue before it can reach SQL
     expect(requireModuleAccess).not.toHaveBeenCalled();
   });
 
-  it("accepts each of the four real queue names", async () => {
+  it("accepts each real queue name, including the separate shipment_state_unclear list", async () => {
     // listBottleneckOrdersAction looks up the org's scorecard configuration
     // before calling the RPC (needed for instance scoping) — mock a
     // minimal valid one so the flow reaches the RPC at all.
@@ -203,7 +203,7 @@ describe("listBottleneckOrdersAction validates the queue before it can reach SQL
       return queryStub({ data: null, error: null });
     });
 
-    for (const queue of ["ready_to_pick", "packed_not_invoiced", "invoiced_not_shipped", "backorders_awaiting_stock"]) {
+    for (const queue of ["ready_to_pick", "packed_not_invoiced", "invoiced_not_shipped", "backorders_awaiting_stock", "shipment_state_unclear"]) {
       const result = await listBottleneckOrdersAction(queue);
       expect(result.ok).toBe(true);
     }

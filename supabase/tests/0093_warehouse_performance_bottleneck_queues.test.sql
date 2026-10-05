@@ -122,7 +122,11 @@ begin
   if n <> 1 then raise exception 'a DRAFT invoice must not count as invoiced for Packed but Not Invoiced'; end if;
 end $$;
 
--- --- Invoiced but Not Shipped: qualifies on invoiced qty + non-terminal shipping status
+-- --- Invoiced but Not Shipped (fulfilment-level since 0097) ---------------
+-- Originally qualified on invoiced qty + the order-level shipping label; 0097
+-- replaced that with per-fulfilment Ship state (see
+-- 0097_warehouse_queue_fulfilment_level_shipping.test.sql for the full
+-- matrix). This block keeps the 0093-era age/queue-shape checks valid.
 do $$
 declare
   org uuid := '00000000-0000-0000-0000-0000000000e1';
@@ -134,20 +138,20 @@ begin
     values (org, inst, 'INS-1', 'SO-INS-1', 'Customer C', current_date - 10, 'NOT SHIPPED');
   insert into sale_lines (org_id, instance_id, cin7_sale_id, invoice_number, line_number, product_sku, quantity, invoice_status, invoice_date)
     values (org, inst, 'INS-1', 'INV-2', 1, 'SKU-3', 4, 'PAID', current_date - 2);
+  insert into sale_pick_pack_lines (org_id, instance_id, cin7_sale_id, stage, line_number, product_sku, quantity, status, fulfilment_task_id, fulfilment_number, fulfilment_linked_invoice_number, ship_status)
+    values (org, inst, 'INS-1', 'pack', 1, 'SKU-3', 4, 'AUTHORISED', 'INS-1-F1', 1, 'INV-2', 'NOT AVAILABLE');
 
   select count(*) into n from scorecard_bottleneck_orders_v where org_id = org and cin7_sale_id = 'INS-1' and qualifies_invoiced_not_shipped;
-  if n <> 1 then raise exception 'INS-1 should qualify for Invoiced but Not Shipped'; end if;
+  if n <> 1 then raise exception 'INS-1 should qualify for Invoiced but Not Shipped (invoiced fulfilment, ship not available)'; end if;
 
-  -- Ages from the latest real INVOICE date (2 days ago), not order_date (10
-  -- days ago) — this is the queue with genuine "when was it invoiced"
-  -- evidence available, unlike Packed but Not Invoiced (see 0093's header).
+  -- Ages from the OUTSTANDING fulfilment's own invoice date (2 days ago), not order_date (10).
   select age_days into age from report_scorecard_bottleneck_orders(org, 'invoiced_not_shipped') where cin7_sale_id = 'INS-1';
   if age <> 2 then raise exception 'INS-1 age should be 2 (days since invoice_date), got %', age; end if;
 
-  -- Shipped -> no longer qualifies, regardless of invoiced qty.
-  update sales set combined_shipping_status = 'SHIPPED' where org_id = org and cin7_sale_id = 'INS-1';
+  -- Fulfilment confirmed shipped -> no longer qualifies.
+  update sale_pick_pack_lines set ship_status = 'AUTHORISED', shipped_at = current_date - 1 where org_id = org and cin7_sale_id = 'INS-1';
   select count(*) into n from scorecard_bottleneck_orders_v where org_id = org and cin7_sale_id = 'INS-1' and qualifies_invoiced_not_shipped;
-  if n <> 0 then raise exception 'a SHIPPED sale must not qualify for Invoiced but Not Shipped'; end if;
+  if n <> 0 then raise exception 'a fulfilment confirmed shipped must not qualify for Invoiced but Not Shipped'; end if;
 end $$;
 
 -- --- Backorders Awaiting Stock: qualifies on backorder qty; no PO data -> has_open_po = false
