@@ -421,6 +421,40 @@ describe("syncInstanceSales — detail phase", () => {
     ]);
   });
 
+  it("persists each fulfilment's own Ship.Status and the ShipmentDate of its IsShipped lines (never from the sale-level label)", async () => {
+    vi.mocked(fetchSaleDetail).mockResolvedValueOnce({
+      ID: "sale-1",
+      Invoices: [],
+      Fulfilments: [
+        {
+          TaskID: "f1",
+          Pick: { Status: "AUTHORISED", Lines: [{ SKU: "SKU-A", Quantity: 8 }] },
+          Pack: { Status: "AUTHORISED", Lines: [{ SKU: "SKU-A", Quantity: 8 }] },
+          Ship: { Status: "AUTHORISED", Lines: [{ ShipmentDate: "2026-09-07T00:00:00", IsShipped: true }] },
+        },
+        { TaskID: "f2", Pack: { Status: "AUTHORISED", Lines: [{ SKU: "SKU-B", Quantity: 1 }] }, Ship: { Status: "DRAFT", Lines: [{ ShipmentDate: "2026-10-01T00:00:00", IsShipped: false }] } },
+        { TaskID: "f3", Pack: { Status: "AUTHORISED", Lines: [{ SKU: "SKU-C", Quantity: 2 }] }, Ship: { Status: "PARTIALLY AUTHORISED", Lines: [] } },
+        { TaskID: "f4", Pack: { Status: "AUTHORISED", Lines: [{ SKU: "SKU-D", Quantity: 3 }] } },
+      ],
+    });
+    const { db, calls } = makeFakeDb({ syncState: { last_list_synced_at: null }, existingSales: [], pendingSales: [{ cin7_sale_id: "sale-1" }] });
+
+    await syncInstanceSales(db, "org1", "inst-1");
+
+    const insertCall = calls.find((c) => c.table === "sale_pick_pack_lines" && c.op === "insert");
+    const rows = insertCall?.args[0] as { stage: string; product_sku: string; ship_status: string | null; shipped_at: string | null }[];
+    // Denormalised onto BOTH the pick and pack line of the fulfilment.
+    expect(rows.filter((r) => r.product_sku === "SKU-A")).toEqual([
+      expect.objectContaining({ stage: "pick", ship_status: "AUTHORISED", shipped_at: "2026-09-07" }),
+      expect.objectContaining({ stage: "pack", ship_status: "AUTHORISED", shipped_at: "2026-09-07" }),
+    ]);
+    // A dated line with IsShipped=false is NOT a shipment date.
+    expect(rows.find((r) => r.product_sku === "SKU-B")).toMatchObject({ ship_status: "DRAFT", shipped_at: null });
+    expect(rows.find((r) => r.product_sku === "SKU-C")).toMatchObject({ ship_status: "PARTIALLY AUTHORISED", shipped_at: null });
+    // No Ship object at all = unknown (null), never coerced to a status.
+    expect(rows.find((r) => r.product_sku === "SKU-D")).toMatchObject({ ship_status: null, shipped_at: null });
+  });
+
   it("skips sale_pick_pack_lines insert when there are no fulfilments yet", async () => {
     vi.mocked(fetchSaleDetail).mockResolvedValueOnce({ ID: "sale-1", Invoices: [] });
     const { db, calls } = makeFakeDb({ syncState: { last_list_synced_at: null }, existingSales: [], pendingSales: [{ cin7_sale_id: "sale-1" }] });
