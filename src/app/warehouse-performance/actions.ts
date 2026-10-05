@@ -1,5 +1,6 @@
 "use server";
 
+import { mapDashboardQueueRows, type DashboardQueueRow } from "@/scorecard/queue-summary";
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
@@ -93,18 +94,15 @@ export async function getWarehousePerformanceDashboardAction(): Promise<ActionRe
     const reviews = await listReviews(db, orgId, scorecard.scorecardDefinitionId, 3);
     const previousFinal = reviews.find((r) => r.id !== currentReview.id && r.status === "final") ?? null;
 
-    const { data: bottleneckRows, error: bottleneckError } = await db.rpc("report_scorecard_bottleneck_summary", {
+    // ONE call for the whole queue panel (the four KPI queues + the shipment-unclear
+    // count): the queue view is evaluated once instead of once per RPC, which is what
+    // keeps this page inside PostgREST's 8 s statement timeout on a cold cache.
+    const { data: queueRows, error: queueError } = await db.rpc("report_scorecard_bottleneck_dashboard", {
       p_org_id: orgId,
       p_instance_ids: scorecard.instanceIds,
     });
-    if (bottleneckError) throw new Error(bottleneckError.message);
-
-    const { data: unclearRows, error: unclearError } = await db.rpc("report_scorecard_shipment_unclear_summary", {
-      p_org_id: orgId,
-      p_instance_ids: scorecard.instanceIds,
-    });
-    if (unclearError) throw new Error(unclearError.message);
-    const unclear = (unclearRows ?? [])[0] as { current_count: number; oldest_age_days: number | null; unclear_qty: number } | undefined;
+    if (queueError) throw new Error(queueError.message);
+    const { bottleneckSummary, shipmentStateUnclear } = mapDashboardQueueRows(queueRows as DashboardQueueRow[] | null);
 
     const actionsOpen = await listActions(db, orgId, "open");
     const today = new Date().toISOString().slice(0, 10);
@@ -122,18 +120,8 @@ export async function getWarehousePerformanceDashboardAction(): Promise<ActionRe
         headlines,
         previousOverallScore: previousFinal?.overall_score ?? null,
         changeFromPrevious: overall !== null && previousFinal?.overall_score != null ? Math.round((overall - previousFinal.overall_score) * 100) / 100 : null,
-        shipmentStateUnclear: {
-          currentCount: unclear?.current_count ?? 0,
-          oldestAgeDays: unclear?.oldest_age_days ?? null,
-          unclearQty: Number(unclear?.unclear_qty ?? 0),
-        },
-        bottleneckSummary: (bottleneckRows ?? []).map((r: { queue: string; current_count: number; oldest_age_days: number | null; outside_sla_count: number | null; total_value: number | null }) => ({
-          queue: r.queue,
-          currentCount: r.current_count,
-          oldestAgeDays: r.oldest_age_days,
-          outsideSlaCount: r.outside_sla_count,
-          totalValue: r.total_value,
-        })),
+        shipmentStateUnclear,
+        bottleneckSummary,
         openActionsCount: actionsOpen.length,
         overdueActionsCount: actionsOpen.filter((a) => a.due_date && a.due_date < today).length,
       },
