@@ -49,6 +49,7 @@ const QUEUE_LABEL: Record<string, string> = {
   invoiced_not_shipped: "Invoiced but Not Shipped",
   backorders_awaiting_stock: "Backorders Awaiting Stock",
   shipment_state_unclear: "Shipment state unclear",
+  closed_shipped_uninvoiced: "Closed / Shipped but Uninvoiced",
 };
 
 function StatusBadge({ status }: { status: ScoreStatus }) {
@@ -188,6 +189,7 @@ function OverviewTab({ dashboard }: { dashboard: DashboardSummary }) {
           ))}
         </div>
         <UnclearNotice unclear={dashboard.shipmentStateUnclear} />
+        <ClosedUninvoicedNotice control={dashboard.closedShippedUninvoiced} />
       </Panel>
 
       <Panel>
@@ -370,6 +372,23 @@ function UnclearNotice({ unclear, onOpen }: { unclear: DashboardSummary["shipmen
   );
 }
 
+/**
+ * Commercial control, deliberately NOT one of the four warehouse KPI queues: orders Cin7 has
+ * closed and fully shipped whose packed quantity still exceeds what was invoiced. It is a
+ * question for whoever owns invoicing/revenue, not for the warehouse, so it is shown apart.
+ */
+function ClosedUninvoicedNotice({ control, onOpen }: { control: DashboardSummary["closedShippedUninvoiced"]; onOpen?: () => void }) {
+  if (control.currentCount === 0) return null;
+  const text = `Closed / Shipped but Uninvoiced: ${control.currentCount} order${control.currentCount === 1 ? "" : "s"} · ${control.uninvoicedQty.toLocaleString()} units${control.oldestAgeDays !== null ? ` · oldest ${control.oldestAgeDays}d` : ""} — a commercial control, not warehouse work.`;
+  return onOpen ? (
+    <button type="button" onClick={onOpen} className="mt-3 block text-left text-xs text-slate-600 underline hover:text-primary">
+      {text}
+    </button>
+  ) : (
+    <p className="mt-3 text-xs text-slate-600">{text}</p>
+  );
+}
+
 function BottlenecksTab({ dashboard }: { dashboard: DashboardSummary }) {
   const [openQueue, setOpenQueue] = useState<string | null>(null);
   const [orders, setOrders] = useState<BottleneckOrderRow[] | null>(null);
@@ -410,6 +429,7 @@ function BottlenecksTab({ dashboard }: { dashboard: DashboardSummary }) {
       </div>
 
       <UnclearNotice unclear={dashboard.shipmentStateUnclear} onOpen={() => drillDown("shipment_state_unclear")} />
+      <ClosedUninvoicedNotice control={dashboard.closedShippedUninvoiced} onOpen={() => drillDown("closed_shipped_uninvoiced")} />
 
       {openQueue && (
         <Panel>
@@ -417,6 +437,17 @@ function BottlenecksTab({ dashboard }: { dashboard: DashboardSummary }) {
           {error && <Alert tone="danger">{error}</Alert>}
           {!error && !orders && <p className="mt-2 text-sm text-slate-500">Loading…</p>}
           {orders && orders.length === 0 && <p className="mt-2 text-sm text-slate-500">Nothing in this queue.</p>}
+          {orders && orders.length > 0 && openQueue === "closed_shipped_uninvoiced" && (
+            <p className="mt-2 text-xs text-slate-600">
+              Value is each order&apos;s uninvoiced units priced at that SKU&apos;s own invoiced price on the same order (ex tax); an order shows
+              &ldquo;not calculable&rdquo; when a SKU has no invoice line to price it from.{" "}
+              {(() => {
+                const priced = orders.filter((o) => o.invoiceAmount !== null);
+                const total = priced.reduce((sum, o) => sum + (o.invoiceAmount ?? 0), 0);
+                return `Priced total: $${Math.round(total).toLocaleString()} across ${priced.length} of ${orders.length} orders.`;
+              })()}
+            </p>
+          )}
           {orders && orders.length > 0 && (
             <div className="mt-3 overflow-x-auto">
               <table className="w-full text-left text-sm">
@@ -427,7 +458,7 @@ function BottlenecksTab({ dashboard }: { dashboard: DashboardSummary }) {
                     <th className="py-1.5 pr-4">Age (days)</th>
                     <th className="py-1.5 pr-4">Ship by</th>
                     <th className="py-1.5 pr-4">Qty</th>
-                    <th className="py-1.5 pr-4">Open PO</th>
+                    <th className="py-1.5 pr-4">{openQueue === "closed_shipped_uninvoiced" ? "Value (ex tax)" : "Open PO"}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -438,7 +469,9 @@ function BottlenecksTab({ dashboard }: { dashboard: DashboardSummary }) {
                       <td className="py-1.5 pr-4 tabular-nums">{o.ageDays ?? "—"}</td>
                       <td className="py-1.5 pr-4">{o.shipBy ?? "—"}</td>
                       <td className="py-1.5 pr-4 tabular-nums">{o.relevantQty ?? "—"}</td>
-                      <td className="py-1.5 pr-4">{o.hasOpenPo ? "Yes" : "No"}</td>
+                      <td className="py-1.5 pr-4">
+                        {openQueue === "closed_shipped_uninvoiced" ? (o.invoiceAmount === null ? "not calculable" : `$${Math.round(o.invoiceAmount).toLocaleString()}`) : o.hasOpenPo ? "Yes" : "No"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

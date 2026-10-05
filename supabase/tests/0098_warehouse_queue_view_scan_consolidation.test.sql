@@ -98,7 +98,7 @@ declare
   n integer;
 begin
   select count(*) into n from report_scorecard_bottleneck_dashboard(org);
-  if n <> 5 then raise exception 'dashboard function must return exactly 5 rows, got %', n; end if;
+  if n <> 6 then raise exception 'dashboard function must return exactly 6 rows (4 KPI queues + unclear + closed control), got %', n; end if;
 
   for s in select * from report_scorecard_bottleneck_summary(org) loop
     select * into d from report_scorecard_bottleneck_dashboard(org) where queue = s.queue;
@@ -118,7 +118,7 @@ begin
 
   -- An org with no sales: zeros / nulls, never an error.
   select count(*) into n from report_scorecard_bottleneck_dashboard('00000000-0000-0000-0000-0000000000a9'::uuid);
-  if n <> 5 then raise exception 'empty org must still return 5 rows, got %', n; end if;
+  if n <> 6 then raise exception 'empty org must still return 6 rows, got %', n; end if;
   select count(*) into n from report_scorecard_bottleneck_dashboard('00000000-0000-0000-0000-0000000000a9'::uuid) where current_count <> 0;
   if n <> 0 then raise exception 'empty org must have zero counts'; end if;
 end $$;

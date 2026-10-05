@@ -26,13 +26,30 @@ describe("mapDashboardQueueRows", () => {
     expect(shipmentStateUnclear).toEqual({ currentCount: 3, oldestAgeDays: 9, unclearQty: 42 });
   });
 
+  it("maps the closed/shipped-but-uninvoiced control apart from the KPI queues", () => {
+    const m = mapDashboardQueueRows([
+      row("ready_to_pick", 1),
+      row("closed_shipped_uninvoiced", 6, { oldest_age_days: 950, closed_uninvoiced_qty: 900 }),
+    ]);
+    expect(m.bottleneckSummary.map((q) => q.queue)).toEqual(["ready_to_pick"]);
+    expect(m.closedShippedUninvoiced).toEqual({ currentCount: 6, oldestAgeDays: 950, uninvoicedQty: 900 });
+  });
+
+  it("an older function without the control row yields a zero control (no throw)", () => {
+    expect(mapDashboardQueueRows([row("ready_to_pick", 1)]).closedShippedUninvoiced).toEqual({ currentCount: 0, oldestAgeDays: null, uninvoicedQty: 0 });
+  });
+
   it("never lets the unclear row leak into the KPI queues", () => {
     const { bottleneckSummary } = mapDashboardQueueRows([row("ready_to_pick", 1), row("shipment_state_unclear", 5, { unclear_qty: 9 })]);
     expect(bottleneckSummary.map((q) => q.queue)).toEqual(["ready_to_pick"]);
   });
 
   it("an empty/missing result yields no queues and a zero unclear count (no throw)", () => {
-    expect(mapDashboardQueueRows(null)).toEqual({ bottleneckSummary: [], shipmentStateUnclear: { currentCount: 0, oldestAgeDays: null, unclearQty: 0 } });
+    expect(mapDashboardQueueRows(null)).toEqual({
+      bottleneckSummary: [],
+      shipmentStateUnclear: { currentCount: 0, oldestAgeDays: null, unclearQty: 0 },
+      closedShippedUninvoiced: { currentCount: 0, oldestAgeDays: null, uninvoicedQty: 0 },
+    });
     expect(mapDashboardQueueRows([]).shipmentStateUnclear.unclearQty).toBe(0);
   });
 
