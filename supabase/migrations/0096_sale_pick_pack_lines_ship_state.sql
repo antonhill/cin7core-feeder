@@ -28,8 +28,14 @@
 -- never "shipped" and never "unshipped". Existing rows are NULL until their
 -- sale's detail is re-synced (a targeted backfill, not a full re-sync).
 --
--- Additive and nullable: nothing reads these columns until migration 0097, so
--- applying this migration alone changes no behaviour.
+-- Additive and nullable: nothing reads these columns until a later migration
+-- redefines the queue on them, so applying this migration alone changes no
+-- behaviour.
+--
+-- NOTE: applied to production on 2026-10-05 (via the Supabase migration tool,
+-- recorded as sale_pick_pack_lines_ship_state) AHEAD of the sync code that
+-- populates it, so this file exists to keep the repo's migration history and a
+-- clean bootstrap in step with production. It is idempotent (if not exists).
 
 alter table sale_pick_pack_lines
   add column if not exists ship_status text,
