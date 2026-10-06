@@ -1,6 +1,6 @@
 "use server";
 
-import { mapDashboardQueueRows, type DashboardQueueRow } from "@/scorecard/queue-summary";
+import { mapDashboardQueueRows, type ClosedShippedUninvoiced, type DashboardQueueRow } from "@/scorecard/queue-summary";
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
@@ -32,6 +32,8 @@ export interface DashboardSummary {
   changeFromPrevious: number | null;
   /** Orders with an invoiced fulfilment whose Ship state cannot be classified — EXCLUDED from every bottleneck total above, shown separately until resolved. */
   shipmentStateUnclear: { currentCount: number; oldestAgeDays: number | null; unclearQty: number };
+  /** Commercial control, NOT a warehouse KPI queue: Cin7-closed/shipped orders whose packed quantity exceeds invoiced quantity. */
+  closedShippedUninvoiced: ClosedShippedUninvoiced;
   bottleneckSummary: { queue: string; currentCount: number; oldestAgeDays: number | null; outsideSlaCount: number | null; totalValue: number | null }[];
   openActionsCount: number;
   overdueActionsCount: number;
@@ -102,7 +104,7 @@ export async function getWarehousePerformanceDashboardAction(): Promise<ActionRe
       p_instance_ids: scorecard.instanceIds,
     });
     if (queueError) throw new Error(queueError.message);
-    const { bottleneckSummary, shipmentStateUnclear } = mapDashboardQueueRows(queueRows as DashboardQueueRow[] | null);
+    const { bottleneckSummary, shipmentStateUnclear, closedShippedUninvoiced } = mapDashboardQueueRows(queueRows as DashboardQueueRow[] | null);
 
     const actionsOpen = await listActions(db, orgId, "open");
     const today = new Date().toISOString().slice(0, 10);
@@ -121,6 +123,7 @@ export async function getWarehousePerformanceDashboardAction(): Promise<ActionRe
         previousOverallScore: previousFinal?.overall_score ?? null,
         changeFromPrevious: overall !== null && previousFinal?.overall_score != null ? Math.round((overall - previousFinal.overall_score) * 100) / 100 : null,
         shipmentStateUnclear,
+        closedShippedUninvoiced,
         bottleneckSummary,
         openActionsCount: actionsOpen.length,
         overdueActionsCount: actionsOpen.filter((a) => a.due_date && a.due_date < today).length,
@@ -318,7 +321,7 @@ export interface BottleneckOrderRow {
   hasOpenPo: boolean;
 }
 
-const VALID_QUEUES = ["ready_to_pick", "packed_not_invoiced", "invoiced_not_shipped", "backorders_awaiting_stock", "shipment_state_unclear"] as const;
+const VALID_QUEUES = ["ready_to_pick", "packed_not_invoiced", "invoiced_not_shipped", "backorders_awaiting_stock", "shipment_state_unclear", "closed_shipped_uninvoiced"] as const;
 
 export async function listBottleneckOrdersAction(queue: string): Promise<ActionResult<BottleneckOrderRow[]>> {
   try {
