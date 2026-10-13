@@ -51,7 +51,7 @@ drinker, slat, penning, lighting, door + mat's dependency).
 
 * Two organisations are named "NewQuip POC". Only `e1aea782-…` has a connected Cin7 instance (also "NewQuip POC",
   active). `1a1a7fd8-…` has none. **Anton to confirm which is intended** — only `e1aea782-…` is allowed through the gate.
-* **Both have 0 synced products.** The Toolbox catalogue for NewQuip has not been imported/synced, so no SKU, price
+* *(Superseded by the catalogue section below — written before the Migrate pull.)* **Both had 0 synced products.** The Toolbox catalogue for NewQuip has not been imported/synced, so no SKU, price
   tier, Average Cost or active flag could be read for any of the eight products. Every mapping is therefore
   **UNMAPPED** (not "ambiguous": there are no candidates). *Action: run the product sync/Migrate for the NewQuip
   instance, then reload the POC — discovery (`discoverGrowerProductsAction`) will propose candidates by keyword
@@ -109,3 +109,51 @@ Rollback: `drop table newquip_grower_configurations;` — additive, no existing 
 | Override behaviour | — | per-room integer, estimator may override any line | Who may override; must overrides be flagged on the quote? | POC allows any override, shown as MANUAL |
 | Pricing model (Q-PRICE) | workbook: EUR/USD × markup | Cin7 tier price | Price from Cin7 tier or from cost × markup/FX? | Budget uses the chosen tier only |
 | SKU mapping | NewQuip catalogue not yet synced | — | Confirm SKU for each of the 8+1 items | Lines stay UNMAPPED and unpriced |
+
+## Catalogue mapping evidence (read-only, after Migrate → Pull, 2026-10-13)
+
+Org `e1aea782-…`, instance `30eac8f2-…`. This section records **product identification only**. It changes no rule
+classification above; product matching and engineering calculation are separate concerns.
+
+### Verified catalogue (local tables)
+products 12,595 (all active; 5 Service, rest Stock) · customers 1,124 · suppliers 1,204 · assembly BOM lines 5 (assemblies
+`CP001`, `NQ3173` — neither is a Grower item) · product availability 13,464 rows covering 12,590 SKUs, all linked to a
+product by SKU · **price_tiers: 0 rows**.
+
+### Price-tier representation
+Tier prices are not columns on `products`; they live in `price_tiers (org_id, product_sku, tier_code "Tier1".."Tier10",
+amount)`. The Migrate pull maps Cin7's `PriceTier1..10` from `GET /Product` and **stores only amounts > 0**
+(`toCanonicalPriceTiers`). Zero rows therefore means every pulled product had all ten tiers 0/absent in that response. It
+does not prove Cin7 holds no prices: the Quotes builder deliberately re-reads tiers live per SKU
+(`fetchProductTierPrices`) because the synced table can be incomplete. **Not yet resolved** whether NewQuip's trial has
+selling prices at all.
+
+### Average Cost coverage — populated but mostly a placeholder
+12,595/12,595 non-null; 12,590 > 0 (5 are 0). But **10,795 products (86%) have Average Cost exactly 50** and 11,026
+availability rows have on-hand exactly 1,000 — the signature of seeded/demo data, not real costing. Only 1,795 products
+carry a distinct cost. Treat any cost of exactly 50 as **not trustworthy** until NewQuip confirms.
+
+### Grower mapping table (nothing auto-confirmed)
+| # | Grower output | Status | Candidate SKU(s) — exact Cin7 name | Cost / avail | Candidates | Confidence | Reasoning |
+|---|---|---|---|---|---|---|---|
+| 1 | 13.39t bulk feed tank | **UNMAPPED** | none for 13.39t. Near: `SYSH-2750-4` "1658 TONS SILO (NEWQUIP BRANDED) - DONT QUOTE"; `KNQ112` "8TON SILO (SQUARE)"; `NQ2176` "SILO 109MT INCL LADDER" | 50 / 1000 | 0 usable | — | No product states 13.39t; the one NewQuip-branded silo is flagged DONT QUOTE. |
+| 2 | M75 Flex auger system | **UNMAPPED** | no "system" product. Components only, e.g. `T1750005` "AUGER M75", `T024` control unit, `T020` drop kit | 50 / 1000 | 0 as a package | — | The Topigs line is a package of parts; no assembly/BOM exists for it (BOM has only `CP001`, `NQ3173`). Needs Sean's BOM. |
+| 3 | CCM feeder for growers | **AMBIGUOUS** | `PNQ082` "CCM FEEDER FOR GROWERS WITH MONOFLO NIPPLE"; `PNQ002` "CCM FEEDER FOR GROWERS"; `PNQ082-WINDOW` "CCM FEEDER INCL MONOFLO NIPPLE & WINDOW (GROWERS)" | 50 / 1000 each | 3 | medium-high for `PNQ082` | Topigs line says "Incl. monoflo drinking nipples" → `PNQ082` is the textual match; not confirmed. |
+| 4 | Feed saver mat 1m × 1m | **AMBIGUOUS** (one strong candidate) | `ERT053` "FEED SAVER MAT 8/10MM ANTI-SLID (1000X1000MM)" | 50 / 1000 | 1 strong (+3 other sizes) | high | Only 1000×1000 mat. Kept AMBIGUOUS: the POC never auto-maps a single unconfirmed candidate. |
+| 5 | Grower cup drinker (incl. 800mm SST pipe & bracket) | **AMBIGUOUS** | `NB3542-03` "CUP DRINKERS (NEW TYPE) GROWER & FINISHER"; `NB3543-30` "CUP DRINKERS (OLD TYPE) 30WP/ GROWER & FINISHER"; `QCA00005` "CUP DRINKER (245CM SST PIPE) FOR SOW" | 102.25 / 1337; 84.46 / 1197; 50 / 1000 | 3 | medium for `NB3542-03` | Matches the POC's CUP_NEW selection and has real (non-50) cost; but the Topigs line also bundles pipe + bracket (separate SKUs `NQ2886`/`NQSP0016`). |
+| 6 | Concrete slat 1.2m × 0.45m | **AMBIGUOUS** | `NQ1161` "CONCRETE SLAT (12x045M)"; `NQ2341` "CONCRETE SLAT (1200x458x70)"; `NQ2773` "CONCRETE SLAT (115M X 045M)" | 170.29 / 9638; 50 / 1000; 50 / 1000 | 3 | medium-high for `NQ1161` | `12x045M` = 1.2 × 0.45 m and carries genuine cost and stock; workbook size is 1200×450×70 so `NQ2341` (458 wide) is the alternative. |
+| 7 | PP Green 50mm × 0.9m vented penning | **UNMAPPED** | no 50mm green vented product. Near: `BPP007` "PP 50MM VENTI 1M HIGH (BLACK) (PER METER)"; `BPP013` "PP 35MM VENTI 800MM HIGH(RECYCLED GREEN-PER METER)" | 50 / 1000 | 0 exact | — | Topigs line is a priced package incl. posts & fastening; catalogue holds per-metre panels and parts. |
+| 8 | FORTIS 1.2 5000K LED | **UNMAPPED** | none. Only unrelated lighting, e.g. `ONC1000000265` "TULEX-HO-120-BASIC-3000K (LED TUBE LIGHT)" (3000K, different brand) | 50 / 1000 | 0 | — | No "FORTIS" anywhere in the 12,595 products. |
+| 9 | PVC SST door (incl. frame, new type) | **AMBIGUOUS** | `NQ3118` / `NQ3119` / `NQ3120` "POLYPROP SINGLE DOOR INCL SST (…)"; `ERT013`/`ERT015` "PVC DOOR WITH ALU FRME & RUB JNT 2000x1000MM"; `NQ2837`/`NQ2900` "PVC DOOR 2MX800MM INCLUDING FRAME" | all 50 / 1000 | ≥8 | low | Many sizes/materials; no size in the Topigs line. |
+
+Product IDs: the `products` table is keyed by `(org_id, sku)`; Cin7's product GUID is not stored locally (not read this pass).
+
+### Commercial readiness
+* **Mapped:** none. **Ambiguous:** 3, 4, 5, 6, 9. **Unmapped:** 1, 2, 7, 8.
+* **Selling price: blocked for every item** — `price_tiers` is empty, so a mapped product would still be "no price"
+  (the POC reports it; it is never priced at 0).
+* **Cost / margin:** a cost exists for every candidate, but 86% of the catalogue sits at exactly 50, which looks seeded;
+  only `NQ1161` (170.29), `NB3542-03` (102.25) and `NB3543-30` (84.46) look real. GP/margin would compute but not mean much.
+* **Availability:** present for every candidate, and also mostly the 1,000 placeholder (real: slat 9,638; drinkers 1,337/1,197).
+* **To unblock:** (a) check in Cin7 whether any Grower product has a PriceTier set; (b) Sean/NewQuip confirm the SKUs in the
+  AMBIGUOUS rows and supply or create tank, Flex, penning and lighting products or package definitions.
