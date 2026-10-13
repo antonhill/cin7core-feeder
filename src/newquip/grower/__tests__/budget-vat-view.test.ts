@@ -100,3 +100,17 @@ describe("BOM view", () => {
     expect(quantityProvenance(c.lines.find((l) => l.itemKey === "cup_drinker")!, undefined)).toBe("awaiting_validation");
   });
 });
+
+import { priceTierPanelState } from "../bom-view";
+describe("price tier panel never sits on Loading… indefinitely", () => {
+  it("covers every state", () => {
+    expect(priceTierPanelState({ hasInstance: false, status: "idle", tierCount: 0 })).toBe("choose_instance");
+    expect(priceTierPanelState({ hasInstance: true, status: "loading", tierCount: 0 })).toBe("loading");
+    expect(priceTierPanelState({ hasInstance: true, status: "failed", tierCount: 0 })).toBe("failed");
+    expect(priceTierPanelState({ hasInstance: true, status: "ready", tierCount: 0 })).toBe("no_tiers");
+    expect(priceTierPanelState({ hasInstance: true, status: "ready", tierCount: 10 })).toBe("ready");
+  });
+  it("a settled lookup (ready or failed) is never reported as loading", () => {
+    for (const status of ["ready", "failed"] as const) for (const tierCount of [0, 3]) expect(priceTierPanelState({ hasInstance: true, status, tierCount })).not.toBe("loading");
+  });
+});

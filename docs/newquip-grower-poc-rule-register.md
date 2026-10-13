@@ -172,3 +172,64 @@ module uses — and the existing engine for the arithmetic. The previous POC pic
 "standard", which is order-dependent and can pick the wrong rule. The rate shown beside the customer is read from Cin7 at run
 time; if it is not 15% for the Topigs reference, that is NewQuip's Cin7 tax configuration to correct in Cin7 (the POC does not
 write to Cin7 and will not hard-code a rate).
+
+---
+
+## Product / package decomposition (discovery, 2026-10-13)
+
+**Commercial mapping discovery only. No engineering-rule classification above changed.** Sources: the Topigs workbook's
+costing sheets (`AS.23.4015.07` summary → `W1`, `CCM`, `cup`, `G Posts (2)`, `FX`), the legacy ERP **Inventory Master**
+(15 Sep 2026, Evolution item export with real average/latest/highest unit costs), and the synced Cin7 catalogue.
+
+### What the workbook actually is
+Each Grower summary line is priced by a **costing sheet that lists real part codes and quantities**:
+`sell (ZAR ex-VAT) = (Σ EUR/USD part cost × ROE [EUR 19.08, USD 16.58] × freight/duty) [+ local ZAR parts] × markup`
+(markup 1.15 on most lines, 1.075 on penning). Per-house sell total on the Topigs quote = **R977,143.40** (×12 = R11,725,720.80;
+reconciles with `P99`/`P101`). So the earlier assumption "one quoted output = one SKU" is wrong for several lines.
+
+### Master table
+| Output | Likely type | Likely SKU / components | Source evidence | Cin7 evidence | Price/cost trust | NewQuip question | Confidence |
+|---|---|---|---|---|---|---|---|
+| 1 13.39t bulk tank | **A single SKU** | `SYSH-2750-3` | ERP "13.39 TONS SILO (NEWQUIP BRANDED)", Shandong Yuyun (USD). Sell R30,799 = ROUNDUP(36,234 × 85%) (typed list price less 15%) | Cin7 "1339 TONS SILO (NEWQUIP BRANDED)" (decimal lost). `SYSH-2750-4` = 16.58t "DON'T QUOTE" — not it | Cin7 cost 50 = SUSPECT; ERP avg R19,541 | Tank-size selection rule (engineering) only | **High** |
+| 2 M75 Flex system | **B multi-SKU package** (not a Cin7 assembly) | `NQ1163` auger/m ×134, `T2750300` tube ×40, `T2750015` clamps ×48, `T2750301` elbow ×8, `NQ1984` drop kit ×18, `NQ.TUBE.63` drop tube ×5 (=ROUNDUP(drops/4)), `T3750001` control unit ×2, `TSA3750505` double unloader ×1, `T3000365` level switch ×2, `TRA1.1KW3PH` 1.5HP drive ×2, support post ×52 @R760 (SKU cell truncated "KNQ"; candidate `NQ2601`), `KNQ160` wall plate ×4 | `W1` sheet: coded lines with quantity formulas driven by system length (50), gable-to-silo (10), #augers (2), #drops (18). Sell R96,442 = ((€1,158.38 × 19.08 × 1.18) + R57,781.60) × 1.15. Description: "2 × lines of ±49.5m, incl. 18 × drop kits & support posts" | All components present in Cin7 **except `NQ.TUBE.63` and `TRA1.1KW3PH`** (present in ERP). Cin7 BOM holds only `CP001`, `NQ3173` | Cin7 costs mostly 50 = SUSPECT; ERP costs agree with workbook (e.g. T3750001 R1,711 vs €77.27 × 19.08 × 1.18 ≈ R1,739) | Are `W1` quantity formulas current? Support-post SKU; create/rename the 2 missing SKUs (data task) | High (composition) / Medium (quantities) |
+| 3 CCM feeder | **A single SKU** (nipples bundled in the SKU) | `PNQ082` | `CCM` sheet: `PNQ082` "…WITH MONOFLO NIPPLE FOR GROWERS" Activate = 1 (€310, 300/container); `PNQ002` Activate = 0 (€203). Sell R8,163 each | Cin7 `PNQ082` ✓ (`PNQ082-WINDOW` = window variant) | Cin7 cost 50 SUSPECT; ERP avg R3,045 (hi R7,248, mixed history) | Confirm `PNQ082` is current | **High** |
+| 4 Feed saver mat 1×1 m | **A single SKU** (likely) | `ERT053` | Price R919 = ROUNDUP(33 × 19.08 × 1.2 × 1.15) + R50; **no code in workbook**; description "1m × 1m under CCM feeder" | Cin7 `ERT053` "…ANTI-SLID (1000X1000MM)" — the only 1000×1000 mat. Not in ERP master (zero stock) | cost 50 SUSPECT | Confirm `ERT053` | Medium-high |
+| 5 Grower cup drinker | **B multi-SKU package** | per drinker: `QCA00003` cup ×1, `NQ1380` 800mm SST pipe ×1, `NQ2784` backing plate ×1, `NQ2886` bracket ×1, `NQ1386` bolt ×5, `NYNUT` nut ×5, `NQ1017` washer ×5 | `cup` sheet "GROWER CUP" block; subtotal R475.99 × 1.15 = **R548** | All 7 in Cin7. **Current matcher candidates `NB3542-03`/`NB3543-30` (Ningbo cups) are NOT the sourced cup** — `QCA00003` (Qingdao) is | `NQ1380` ERP R168.40 = workbook R169.30 ✓; others 50 SUSPECT | None for composition; per-pen quantity is engineering | **High** |
+| 6 Concrete slat 1.2 × 0.45 | **A single SKU + separate delivery** | `NQ1161`; delivery R51.22/slat | R254.22 = **203 + 51.22**: 203 ≈ ERP latest cost R193.60 × 1.05; 51.22 = crane-truck delivery bundled into the line | Cin7 `NQ1161` "(12x045M)" ✓ real stock 9,638 and a non-placeholder cost (R170.29); `NQ2341` (458 wide) is an alternative, not in the source. Delivery services exist: `DEL001`, `NQ1148` | `NQ1161` cost = UNKNOWN-plausible (ERP avg R184.22) | How is the R51.22 delivery derived (per slat? per truck)? | **High** (SKU) |
+| 7 PP Green 50 × 0.9 m vented penning | **B multi-SKU package, layout-driven** | PP 50mm venti 0.9m panels (244.87 m total, 7 length groups) + SST posts/brackets/caps + `KNQ074` plastic door kit ×20, `KNQ085` cap ×20, hardware `NQ1175`×165, `NQ1089`×165, `NQ1386`×598, `NYNUT`×598, `NQ1017`×1196/165, `NQ2072`×104, `NQ1086`×329, `NQ1126`×329, `NQ1199`×121 | `G Posts (2)`: panels R135,257 + hardware R152,529 → **R287,786 for 20 pens (R14,390/pen)**; quantities are typed layout figures. Colour cell reads **"green?"** (the source itself is unsure) | No 0.9m green 50mm panel found; `BPP007` (1m black venti) / `BPP013` (35mm green) are near misses. The "25 candidates" are panels/posts/hardware, **not alternatives for one package** | 50 SUSPECT; `KNQ074` ERP R697 vs workbook R695.60 ✓ | PP panel SKU/colour; layout (drawing) → quantities | Medium |
+| 8 FORTIS 1.2 5000K LED | **B multi-SKU package (3 SKUs)** | `HNQ7046` ×1 + clip ×3 + cable ×1 | `FX` sheet: €25.50 + 3 × €0.74 + €1.37 = €29.09 → ×1.2 × 19.08 × 1.15 × 1.15 = **R881 each** | Cin7/ERP name `HNQ7046` = **"FERAX 24W ON/OFF"** (Hato). ERP avg R484.29 ≈ €25.5 × 19.08 = R486.5 ⇒ same item under the FERAX name. **Workbook labels `HNQ7088` clip / `HNQ7093` cable; ERP/Cin7 have them the other way round** (by price magnitude the workbook codes are swapped) | 50 SUSPECT | Confirm FORTIS = FERAX 24W (HNQ7046); which of HNQ7088/7093 is clip vs cable | Medium-high |
+| 9 PVC SST door (new type) | **E unknown** | candidates only: `NQ3444` "PVC SINGLE DOORS" (ERP avg R9,390), `NQ3537/3538` PVC single door SST & HDG 800×2m, `NQ3118/9/20` polyprop | No code, no price (cell "excluded"), qty 4 typed. Nothing narrows it | 14 plausible, all cost 50 | SUSPECT | Which door SKU and size | Low — **leave NEWQUIP CONFIRMATION REQUIRED** |
+
+Cin7 name caveat: Cin7 names have lost decimal points relative to the ERP ("13.39" → "1339", "1.2x0.45M" → "12x045M"). Toolbox's
+pull path does not strip characters (`str()` is a pass-through), so this most likely came with NewQuip's own Cin7 load — unconfirmed.
+
+### Commercial-field trust (every candidate)
+* **Average Cost = 50** (86% of the catalogue) → **SUSPECT**. Any other value → **UNKNOWN** (plausible where it matches the ERP: `NQ1163` R51 vs R52, `NQ1380` R122 vs R168 does *not*). Nothing is **TRUSTWORTHY** until NewQuip confirms.
+* **Availability = 1000** → **SUSPECT**; others **UNKNOWN**.
+* The **ERP Inventory Master is the better historic cost source** (real receipts, supplier names), but is a different system and date.
+
+### Answer: A–E
+**A. Likely single-SKU:** tank `SYSH-2750-3`, feeder `PNQ082`, mat `ERT053` (likely), slat `NQ1161`.
+**B. Likely multi-SKU packages:** Flex (≈12 components), cup drinker (7), penning (≈20 lines), FORTIS lighting (3).
+**C. Manual commercial lines:** slat **delivery** (R51.22/slat) and any freight/installation lines.
+**D. Missing / historic:** none truly missing — FORTIS is `HNQ7046` under the FERAX name; `NQ.TUBE.63` and `TRA1.1KW3PH` are missing from Cin7 (present in ERP); the door is unidentified; `SYSH-2750-4` is "don't quote".
+
+### Historic Topigs pricing — suitable as a labelled fallback? **PARTIAL**
+Clean per-unit historic sell (ZAR, ex-VAT, 15% VAT added at foot) exists for 8 of 9 lines: tank R30,799; Flex R96,442 (package); feeder R8,163; mat R919;
+drinker R548; slat R254.22 (203 + 51.22 delivery); penning R287,786 (package, 20 pens); lighting R881. **Door: none.** Currency: costs are EUR/USD
+converted at ROE 19.08/16.58 (`C68`/`C69`) with freight and a 1.15 (1.075 penning) markup; the sheet also holds an older ROE (18.83). It is **historic**
+(dated, FX-dependent) and must be a separate price source — `CURRENT CIN7` / `HISTORIC TOPIGS` / `MANUAL ESTIMATOR` / `NO PRICE` — never shown as Cin7 pricing.
+
+### Does the POC need multi-SKU package support? **YES**
+The POC assumes **commercial output → one Cin7 SKU** (`resolveMapping` returns one `sku`; `BridgeLine` carries one SKU). That fits tank, feeder, mat, slat but not Flex, drinker,
+penning or lighting. **Smallest change:** a typed mapping on the commercial output —
+`{ kind: "single", sku } | { kind: "package", components: [{ sku, qtyPerUnit | qtyRule, uom, note }] } | { kind: "manual" }` — kept in code (reviewed constants), not the
+database. The bridge prices each component through the existing quote engine and the package line is their sum; component quantities that the workbook fixes (drinker 1/1/1/1/5/5/5,
+lighting 1/3/1) are data, while layout-driven ones (Flex, penning) stay manual until NewQuip confirms. Candidate search then applies only to single-SKU outputs; package
+definitions come from the workbook, not keyword matching. **Not built in this pass.** (The current matcher also misses two sourced SKUs: `QCA00003` and `HNQ7046`.)
+
+### Revised questions for Sean
+*Provable without him (now proven or evidenced):* tank, feeder and slat SKUs; drinker/lighting/Flex/penning **composition and part codes**; historic sell prices and pricing chain.
+*NewQuip only needs to confirm:* `ERT053` for the mat; FORTIS = FERAX 24W `HNQ7046` and the clip/cable code swap; Flex support-post SKU; create/rename `NQ.TUBE.63` and
+`TRA1.1KW3PH` in Cin7; the door SKU/size; PP panel SKU and colour ("green?"); slat delivery as a separate charge; whether the `W1`/`FX`/`cup`/`G Posts` figures are current; whether Cin7 costs (50) and stock (1000) are placeholders.
+*Genuinely engineering (Sean):* feeder, drinker, slat, light and door **quantity rules**; tank sizing; Flex system layout (#augers, #drops=18, run length); penning layout → quantities; the meaning of "rooms"; override authority; pricing policy (Cin7 tier vs cost × markup × FX).

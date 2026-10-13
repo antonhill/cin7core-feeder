@@ -17,7 +17,7 @@ import { calculateGrowerHouse } from "@/newquip/grower/calculate";
 import { TOPIGS_GROWER_INPUT } from "@/newquip/grower/fixture";
 import { GROWER_RULES } from "@/newquip/grower/rules";
 import { resolveVat } from "@/newquip/grower/tax";
-import { splitBomLines, quantityProvenance } from "@/newquip/grower/bom-view";
+import { splitBomLines, quantityProvenance, priceTierPanelState, type RefLookupStatus } from "@/newquip/grower/bom-view";
 import { resolveMapping, type MappingCandidate, type MappingResolution } from "@/newquip/grower/mapping";
 import { buildBudgetQuote, type BridgeLine, type BudgetQuote, type ProductCommercials } from "@/newquip/grower/quote-bridge";
 import type { GeneratedLine, GrowerConfigurationInput, GrowerItemKey, OptionalItemKey, RuleStatus } from "@/newquip/grower/types";
@@ -92,7 +92,9 @@ export default function NewquipGrowerPage() {
   const [project, setProject] = useState("");
   const [priceTier, setPriceTier] = useState("");
   const [refData, setRefData] = useState<QuoteReferenceData>({ locations: [], priceTiers: [], salesReps: [], taxRules: [] });
-  const [refLoaded, setRefLoaded] = useState(false);
+  const [refStatus, setRefStatus] = useState<RefLookupStatus>("idle");
+  const [refError, setRefError] = useState<string | null>(null);
+  const [refAttempt, setRefAttempt] = useState(0);
   const [, startTransition] = useTransition();
 
   useEffect(() => {
@@ -110,11 +112,27 @@ export default function NewquipGrowerPage() {
   useEffect(() => {
     if (!instanceId) return;
     startTransition(async () => {
-      const res = await loadQuoteReferenceDataAction(instanceId);
-      if (res.ok && res.data) setRefData(res.data);
-      setRefLoaded(true);
+      setRefStatus("loading");
+      setRefError(null);
+      try {
+        // Bounded: the action makes several live Cin7 reads; never leave the panel on "Loading…" forever.
+        const res = await Promise.race([
+          loadQuoteReferenceDataAction(instanceId),
+          new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timed out after 30s")), 30000)),
+        ]);
+        if (res.ok && res.data) {
+          setRefData(res.data);
+          setRefStatus("ready");
+        } else {
+          setRefError(res.error ?? "unknown error");
+          setRefStatus("failed");
+        }
+      } catch (e) {
+        setRefError(e instanceof Error ? e.message : "unknown error");
+        setRefStatus("failed");
+      }
     });
-  }, [instanceId]);
+  }, [instanceId, refAttempt]);
 
   function pickCustomer(c: QuoteCustomerHit) {
     setCustomerName(c.name);
@@ -229,7 +247,7 @@ export default function NewquipGrowerPage() {
   );
   const bridgeBy = new Map(budget.lines.map((l) => [l.itemKey, l]));
   const [open, setOpen] = useState<GrowerItemKey | null>(null);
-  const noTiers = refLoaded && refData.priceTiers.length === 0;
+  const tierPanel = priceTierPanelState({ hasInstance: Boolean(instanceId), status: refStatus, tierCount: refData.priceTiers.length });
 
   return (
     <main className="mx-auto w-full max-w-[96rem] px-6 py-12">
@@ -261,13 +279,16 @@ export default function NewquipGrowerPage() {
                 )}
               </label>
               <label className="flex flex-col gap-1 text-sm"><span className="font-medium text-slate-700">Project / reference</span><input value={project} onChange={(e) => setProject(e.target.value)} placeholder="e.g. AS.23.4015.07" className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm" /></label>
-              {!instanceId ? (
+              {tierPanel === "choose_instance" ? (
                 <p className="text-sm text-slate-500"><span className="font-medium text-slate-700">Selling price:</span> choose an instance to load Cin7 price tiers.</p>
-              ) : noTiers ? (
+              ) : tierPanel === "failed" ? (
+                <p className="text-sm text-danger"><span className="font-medium">Selling price:</span> price lookup failed ({refError}).{" "}
+                  <button type="button" onClick={() => setRefAttempt((n) => n + 1)} className="underline">Retry</button></p>
+              ) : tierPanel === "no_tiers" ? (
                 <p className="text-sm text-warning"><span className="font-medium">Selling price:</span> No Cin7 price tier currently available.</p>
               ) : (
-                <Select label="Price tier" value={priceTier} onChange={(e) => setPriceTier(e.target.value)} disabled={!refLoaded}>
-                  <option value="">{refLoaded ? "Choose a price tier" : "Loading…"}</option>
+                <Select label="Price tier" value={priceTier} onChange={(e) => setPriceTier(e.target.value)} disabled={tierPanel === "loading"}>
+                  <option value="">{tierPanel === "loading" ? "Loading Cin7 price tiers…" : customerName ? "Choose a price tier" : "Choose a customer, or a price tier"}</option>
                   {refData.priceTiers.map((t) => <option key={t.code} value={t.name}>{t.name}</option>)}
                 </Select>
               )}
