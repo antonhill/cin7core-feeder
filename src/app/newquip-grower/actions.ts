@@ -4,7 +4,7 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
 import { QUOTES_MODULE } from "@/app/module-nav";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
-import { MAPPING_HINTS, type MappingCandidate } from "@/newquip/grower/mapping";
+import { MAPPING_MATCHERS, isPlausibleCandidate, type MappingCandidate } from "@/newquip/grower/mapping";
 import type { ProductCommercials } from "@/newquip/grower/quote-bridge";
 
 // READ-ONLY server actions for the NewQuip Grower POC. They only SELECT from the org's already-synced
@@ -31,30 +31,48 @@ function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : "Unknown error";
 }
 
-/** For each item, propose candidate products by keyword from the synced catalogue. Never auto-confirms. */
+/**
+ * For each item, propose PLAUSIBLE candidates from the synced catalogue. Plausibility is the single shared
+ * definition in mapping.ts (isPlausibleCandidate) — SQL only pre-filters. Never auto-confirms.
+ */
 export async function discoverGrowerProductsAction(): Promise<GrowerActionResult<Record<string, MappingCandidate[]>>> {
   try {
     const orgId = await authorise();
     const db = createServiceRoleClient();
     const out: Record<string, MappingCandidate[]> = {};
-    for (const hint of MAPPING_HINTS) {
+    const costBySku = new Map<string, number | null>();
+    for (const m of MAPPING_MATCHERS) {
       const found = new Map<string, MappingCandidate>();
-      for (const kw of hint.keywords) {
-        const safe = kw.replace(/[^\w\s.-]/g, "").trim();
+      for (const seed of m.seeds) {
+        const safe = seed.replace(/[^\w\s.-]/g, "").trim();
         if (safe.length < 2) continue;
         const like = `%${safe}%`;
         const { data, error } = await db
           .from("products")
-          .select("sku, name")
+          .select("sku, name, average_cost")
           .eq("org_id", orgId)
           .eq("active", true)
           .or(`sku.ilike.${like},name.ilike.${like}`)
           .order("sku", { ascending: true })
-          .limit(10);
+          .limit(500);
         if (error) throw new Error(error.message);
-        for (const p of data ?? []) found.set(p.sku, { sku: p.sku, name: p.name });
+        for (const p of data ?? []) {
+          if (!isPlausibleCandidate(m.itemKey, p.name)) continue;
+          const cost = p.average_cost == null ? null : Number(p.average_cost);
+          costBySku.set(p.sku, cost);
+          found.set(p.sku, { sku: p.sku, name: p.name, averageCost: cost, reason: m.reason });
+        }
       }
-      out[hint.itemKey] = [...found.values()].slice(0, 10);
+      out[m.itemKey] = [...found.values()].slice(0, 25);
+    }
+
+    const skus = [...costBySku.keys()];
+    if (skus.length > 0) {
+      const { data: avail, error } = await db.from("product_availability").select("product_sku, available").eq("org_id", orgId).in("product_sku", skus);
+      if (error) throw new Error(error.message);
+      const totals = new Map<string, number>();
+      for (const a of avail ?? []) totals.set(a.product_sku, (totals.get(a.product_sku) ?? 0) + Number(a.available ?? 0));
+      for (const list of Object.values(out)) for (const c of list) c.available = totals.has(c.sku) ? totals.get(c.sku)! : null;
     }
     return { ok: true, data: out };
   } catch (e) {

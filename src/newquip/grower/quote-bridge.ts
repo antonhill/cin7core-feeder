@@ -34,9 +34,14 @@ export interface BridgeLine {
   marginPct: number | null;
 }
 
+/** How much of the budget can be trusted as money. Drives the headline — never show a zero total as a quote. */
+export type BudgetState = "awaiting_pricing" | "partial" | "complete";
+
 export interface BudgetQuote {
   lines: BridgeLine[];
   totals: QuoteResult;
+  state: BudgetState;
+  pricedLineCount: number;
   /** True while any line that should be on the quote is missing a quantity/mapping/price/cost. */
   incomplete: boolean;
   blockers: string[];
@@ -126,10 +131,14 @@ export function buildBudgetQuote(
     });
   }
 
+  const incomplete = blockers.length > 0;
+  const state: BudgetState = engineLines.length === 0 ? "awaiting_pricing" : incomplete ? "partial" : "complete";
   return {
     lines: bridge,
     totals: computeQuote(engineLines, { taxInclusive: opts.taxInclusive }),
-    incomplete: blockers.length > 0,
+    state,
+    pricedLineCount: engineLines.length,
+    incomplete,
     blockers,
   };
 }

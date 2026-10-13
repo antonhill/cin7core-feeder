@@ -140,11 +140,11 @@ carry a distinct cost. Treat any cost of exactly 50 as **not trustworthy** until
 | 2 | M75 Flex auger system | **UNMAPPED** | no "system" product. Components only, e.g. `T1750005` "AUGER M75", `T024` control unit, `T020` drop kit | 50 / 1000 | 0 as a package | — | The Topigs line is a package of parts; no assembly/BOM exists for it (BOM has only `CP001`, `NQ3173`). Needs Sean's BOM. |
 | 3 | CCM feeder for growers | **AMBIGUOUS** | `PNQ082` "CCM FEEDER FOR GROWERS WITH MONOFLO NIPPLE"; `PNQ002` "CCM FEEDER FOR GROWERS"; `PNQ082-WINDOW` "CCM FEEDER INCL MONOFLO NIPPLE & WINDOW (GROWERS)" | 50 / 1000 each | 3 | medium-high for `PNQ082` | Topigs line says "Incl. monoflo drinking nipples" → `PNQ082` is the textual match; not confirmed. |
 | 4 | Feed saver mat 1m × 1m | **AMBIGUOUS** (one strong candidate) | `ERT053` "FEED SAVER MAT 8/10MM ANTI-SLID (1000X1000MM)" | 50 / 1000 | 1 strong (+3 other sizes) | high | Only 1000×1000 mat. Kept AMBIGUOUS: the POC never auto-maps a single unconfirmed candidate. |
-| 5 | Grower cup drinker (incl. 800mm SST pipe & bracket) | **AMBIGUOUS** | `NB3542-03` "CUP DRINKERS (NEW TYPE) GROWER & FINISHER"; `NB3543-30` "CUP DRINKERS (OLD TYPE) 30WP/ GROWER & FINISHER"; `QCA00005` "CUP DRINKER (245CM SST PIPE) FOR SOW" | 102.25 / 1337; 84.46 / 1197; 50 / 1000 | 3 | medium for `NB3542-03` | Matches the POC's CUP_NEW selection and has real (non-50) cost; but the Topigs line also bundles pipe + bracket (separate SKUs `NQ2886`/`NQSP0016`). |
-| 6 | Concrete slat 1.2m × 0.45m | **AMBIGUOUS** | `NQ1161` "CONCRETE SLAT (12x045M)"; `NQ2341` "CONCRETE SLAT (1200x458x70)"; `NQ2773` "CONCRETE SLAT (115M X 045M)" | 170.29 / 9638; 50 / 1000; 50 / 1000 | 3 | medium-high for `NQ1161` | `12x045M` = 1.2 × 0.45 m and carries genuine cost and stock; workbook size is 1200×450×70 so `NQ2341` (458 wide) is the alternative. |
+| 5 | Grower cup drinker (incl. 800mm SST pipe & bracket) | **AMBIGUOUS** | `NB3542-03` "CUP DRINKERS (NEW TYPE) GROWER & FINISHER"; `NB3543-30` "CUP DRINKERS (OLD TYPE) 30WP/ GROWER & FINISHER" (`QCA00005` is for SOW — excluded) | 102.25 / 1337; 84.46 / 1197 | 2 | medium for `NB3542-03` | Matches the POC's CUP_NEW selection and has real (non-50) cost; but the Topigs line also bundles pipe + bracket (separate SKUs `NQ2886`/`NQSP0016`). |
+| 6 | Concrete slat 1.2m × 0.45m | **AMBIGUOUS** | `NQ1161` "CONCRETE SLAT (12x045M)"; `NQ2341` "CONCRETE SLAT (1200x458x70)" (`NQ2773` is 1.15 m — excluded) | 170.29 / 9638; 50 / 1000 | 2 | medium-high for `NQ1161` | `12x045M` = 1.2 × 0.45 m and carries genuine cost and stock; workbook size is 1200×450×70 so `NQ2341` (458 wide) is the alternative. |
 | 7 | PP Green 50mm × 0.9m vented penning | **UNMAPPED** | no 50mm green vented product. Near: `BPP007` "PP 50MM VENTI 1M HIGH (BLACK) (PER METER)"; `BPP013` "PP 35MM VENTI 800MM HIGH(RECYCLED GREEN-PER METER)" | 50 / 1000 | 0 exact | — | Topigs line is a priced package incl. posts & fastening; catalogue holds per-metre panels and parts. |
 | 8 | FORTIS 1.2 5000K LED | **UNMAPPED** | none. Only unrelated lighting, e.g. `ONC1000000265` "TULEX-HO-120-BASIC-3000K (LED TUBE LIGHT)" (3000K, different brand) | 50 / 1000 | 0 | — | No "FORTIS" anywhere in the 12,595 products. |
-| 9 | PVC SST door (incl. frame, new type) | **AMBIGUOUS** | `NQ3118` / `NQ3119` / `NQ3120` "POLYPROP SINGLE DOOR INCL SST (…)"; `ERT013`/`ERT015` "PVC DOOR WITH ALU FRME & RUB JNT 2000x1000MM"; `NQ2837`/`NQ2900` "PVC DOOR 2MX800MM INCLUDING FRAME" | all 50 / 1000 | ≥8 | low | Many sizes/materials; no size in the Topigs line. |
+| 9 | PVC SST door (incl. frame, new type) | **AMBIGUOUS** | `NQ3118` / `NQ3119` / `NQ3120` "POLYPROP SINGLE DOOR INCL SST (…)"; `ERT013`/`ERT015` "PVC DOOR WITH ALU FRME & RUB JNT 2000x1000MM"; `NQ2837`/`NQ2900` "PVC DOOR 2MX800MM INCLUDING FRAME" | all 50 / 1000 | 4 | low | Names an SST/aluminium frame (`NQ2837` etc. name neither — excluded). Many sizes; no size in the Topigs line. |
 
 Product IDs: the `products` table is keyed by `(org_id, sku)`; Cin7's product GUID is not stored locally (not read this pass).
 
@@ -157,3 +157,18 @@ Product IDs: the `products` table is keyed by `(org_id, sku)`; Cin7's product GU
 * **Availability:** present for every candidate, and also mostly the 1,000 placeholder (real: slat 9,638; drinkers 1,337/1,197).
 * **To unblock:** (a) check in Cin7 whether any Grower product has a PriceTier set; (b) Sean/NewQuip confirm the SKUs in the
   AMBIGUOUS rows and supply or create tank, Flex, penning and lighting products or package definitions.
+
+### Status semantics — single definition (`src/newquip/grower/mapping.ts`)
+`isPlausibleCandidate(item, name)` (every `include` pattern, no `exclude` pattern) is the only definition of a candidate;
+`resolveMapping` is the only status derivation. **MAPPED** = one explicitly confirmed product; **AMBIGUOUS** = ≥1 plausible
+candidate, none confirmed (a single candidate is never auto-confirmed); **UNMAPPED** = no plausible candidate. The earlier
+UI showed UNMAPPED items as AMBIGUOUS because runtime discovery used loose single-keyword hits (any part containing
+"silo", "M75", "penning"), whereas the audit applied judgement; both now use the shared matcher. Confirmations are
+client-session state only (persistence needs the unapplied migration).
+
+### VAT
+The budget uses the **customer's Cin7 tax rule**, matched by exact name against `/ref/tax` — the same authority the Quotes
+module uses — and the existing engine for the arithmetic. The previous POC picked the first tax rule whose name contained
+"standard", which is order-dependent and can pick the wrong rule. The rate shown beside the customer is read from Cin7 at run
+time; if it is not 15% for the Topigs reference, that is NewQuip's Cin7 tax configuration to correct in Cin7 (the POC does not
+write to Cin7 and will not hard-code a rate).
