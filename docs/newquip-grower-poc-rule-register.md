@@ -233,3 +233,38 @@ definitions come from the workbook, not keyword matching. **Not built in this pa
 *NewQuip only needs to confirm:* `ERT053` for the mat; FORTIS = FERAX 24W `HNQ7046` and the clip/cable code swap; Flex support-post SKU; create/rename `NQ.TUBE.63` and
 `TRA1.1KW3PH` in Cin7; the door SKU/size; PP panel SKU and colour ("green?"); slat delivery as a separate charge; whether the `W1`/`FX`/`cup`/`G Posts` figures are current; whether Cin7 costs (50) and stock (1000) are placeholders.
 *Genuinely engineering (Sean):* feeder, drinker, slat, light and door **quantity rules**; tank sizing; Flex system layout (#augers, #drops=18, run length); penning layout → quantities; the meaning of "rooms"; override authority; pricing policy (Cin7 tier vs cost × markup × FX).
+
+---
+
+## Implemented commercial mapping structure (Phase 2 — package foundation)
+
+Code: `src/newquip/grower/commercial.ts` (model + reviewed constants), `mapping.ts` (candidate precedence / status),
+`quote-bridge.ts` (pricing). **Engineering rule classifications are unchanged**; nothing here computes how many units are needed.
+
+Three concerns are kept apart:
+| Concern | Lives in | Question it answers |
+|---|---|---|
+| Engineering rule | `rules.ts` | How many commercial units are needed? (all still awaiting NewQuip) |
+| Package definition | `commercial.ts` | What makes up ONE commercial unit? |
+| Cin7 commercial data | looked up at run time | What does each component cost/sell for today? (never stored in code) |
+
+`CommercialMapping = single | package | manual | unresolved`. A **single** mapping carries a *source-backed recommendation* — documentary
+evidence, **not** NewQuip's approval; it stays AMBIGUOUS ("Source-backed — confirm") and `sku = null` until a person confirms it in the session.
+Precedence: (1) source-backed SKU, listed first and flagged; (2) explicit human confirmation → MAPPED; (3) plausible catalogue candidates; (4) UNMAPPED.
+Package outputs skip fuzzy search entirely (its hits were components, not alternatives).
+
+| Output | Mapping | Detail |
+|---|---|---|
+| Bulk tank | single → `SYSH-2750-3` | recommendation; `SYSH-2750-4` excluded |
+| CCM feeder | single → `PNQ082` | recommendation |
+| Feed saver mat | single → `ERT053` | recommendation (medium-high) |
+| Concrete slat | single → `NQ1161` | recommendation; **delivery is a separate manual line** (`concrete_slat_delivery`, historic R51.22/unit, documentation only) |
+| Cup drinker | **package, 7 components** | `QCA00003` ×1, `NQ1380` ×1, `NQ2784` ×1, `NQ2886` ×1, `NQ1386` ×5, `NYNUT` ×5, `NQ1017` ×5 — *source_fixed* composition (not an engineering quantity) |
+| LED light | **package, 3 components** | `HNQ7046` ×1 source-backed; clip ×3 and cable ×1 **identity unresolved** (`HNQ7088`/`HNQ7093` contenders, no SKU assigned) |
+| M75 Flex | **package, 12 components** | codes + Topigs quantities kept as *historic reference* (`requires_validation`, `qtyPerUnit = null`); `NQ.TUBE.63`, `TRA1.1KW3PH` flagged not in Cin7; support post unresolved (`NQ2601` candidate) |
+| Penning | **package, layout-driven** | families + sourced codes; all quantities *requires_validation*; panel SKU/colour not invented |
+| PVC SST door | **unresolved** | NEWQUIP CONFIRMATION REQUIRED |
+
+Pricing behaviour: a package is priced component-by-component through the existing quote engine and contributes to totals **only when every
+component is priced** (all-or-nothing); otherwise it is *package incomplete* and adds nothing. Historic Topigs quantities and prices are never used.
+Average Cost = 50 and availability = 1000 are flagged *suspect* (data warning, not blocker). The package must also be explicitly confirmed ("Use this package").

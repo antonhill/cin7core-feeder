@@ -4,7 +4,8 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
 import { QUOTES_MODULE } from "@/app/module-nav";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
-import { MAPPING_MATCHERS, isPlausibleCandidate, type MappingCandidate } from "@/newquip/grower/mapping";
+import { MAPPING_MATCHERS, isPlausibleCandidate, mergeCandidates, type MappingCandidate } from "@/newquip/grower/mapping";
+import { COMMERCIAL_MAPPINGS, singleMappings } from "@/newquip/grower/commercial";
 import type { ProductCommercials } from "@/newquip/grower/quote-bridge";
 
 // READ-ONLY server actions for the NewQuip Grower POC. They only SELECT from the org's already-synced
@@ -42,6 +43,9 @@ export async function discoverGrowerProductsAction(): Promise<GrowerActionResult
     const out: Record<string, MappingCandidate[]> = {};
     const costBySku = new Map<string, number | null>();
     for (const m of MAPPING_MATCHERS) {
+      // Package outputs are NOT a choice between interchangeable products — their pieces are defined in
+      // commercial.ts, so fuzzy search is skipped for them (it would present components as alternatives).
+      if (COMMERCIAL_MAPPINGS[m.itemKey]?.kind === "package") { out[m.itemKey] = []; continue; }
       const found = new Map<string, MappingCandidate>();
       for (const seed of m.seeds) {
         const safe = seed.replace(/[^\w\s.-]/g, "").trim();
@@ -66,6 +70,21 @@ export async function discoverGrowerProductsAction(): Promise<GrowerActionResult
       out[m.itemKey] = [...found.values()].slice(0, 25);
     }
 
+    // Source-backed recommendations take precedence over fuzzy candidates (exact SKU lookup, never confirmed here).
+    const recs = singleMappings();
+    if (recs.length > 0) {
+      const { data, error } = await db.from("products").select("sku, name, average_cost").eq("org_id", orgId).eq("active", true).in("sku", recs.map((r) => r.recommendedSku));
+      if (error) throw new Error(error.message);
+      const bySku = new Map((data ?? []).map((p) => [p.sku, p]));
+      for (const r of recs) {
+        const p = bySku.get(r.recommendedSku);
+        if (!p) continue; // recommended SKU not in this catalogue → plausible candidates only
+        const cost = p.average_cost == null ? null : Number(p.average_cost);
+        costBySku.set(p.sku, cost);
+        out[r.itemKey] = mergeCandidates({ sku: p.sku, name: p.name, averageCost: cost, reason: "Recommended from NewQuip source" }, out[r.itemKey] ?? []);
+      }
+    }
+
     const skus = [...costBySku.keys()];
     if (skus.length > 0) {
       const { data: avail, error } = await db.from("product_availability").select("product_sku, available").eq("org_id", orgId).in("product_sku", skus);
@@ -84,7 +103,7 @@ export async function discoverGrowerProductsAction(): Promise<GrowerActionResult
 export async function lookupGrowerProductsAction(skus: string[]): Promise<GrowerActionResult<ProductCommercials[]>> {
   try {
     const orgId = await authorise();
-    const wanted = [...new Set((skus ?? []).map((s) => String(s).trim()).filter(Boolean))].slice(0, 50);
+    const wanted = [...new Set((skus ?? []).map((s) => String(s).trim()).filter(Boolean))].slice(0, 120);
     if (wanted.length === 0) return { ok: true, data: [] };
     const db = createServiceRoleClient();
     const { data: prods, error } = await db
@@ -105,6 +124,10 @@ export async function lookupGrowerProductsAction(skus: string[]): Promise<Grower
       m[t.tier_code] = Number(t.amount);
       bySku.set(t.product_sku, m);
     }
+    const { data: avail, error: aErr } = await db.from("product_availability").select("product_sku, available").eq("org_id", orgId).in("product_sku", wanted);
+    if (aErr) throw new Error(aErr.message);
+    const availBySku = new Map<string, number>();
+    for (const a of avail ?? []) availBySku.set(a.product_sku, (availBySku.get(a.product_sku) ?? 0) + Number(a.available ?? 0));
     return {
       ok: true,
       data: (prods ?? []).map((p) => ({
@@ -113,6 +136,7 @@ export async function lookupGrowerProductsAction(skus: string[]): Promise<Grower
         active: Boolean(p.active),
         averageCost: p.average_cost == null ? null : Number(p.average_cost),
         tierPrices: bySku.get(p.sku) ?? {},
+        available: availBySku.has(p.sku) ? availBySku.get(p.sku)! : null,
       })),
     };
   } catch (e) {

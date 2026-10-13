@@ -16,10 +16,11 @@ import { discoverGrowerProductsAction, lookupGrowerProductsAction } from "./acti
 import { calculateGrowerHouse } from "@/newquip/grower/calculate";
 import { TOPIGS_GROWER_INPUT } from "@/newquip/grower/fixture";
 import { GROWER_RULES } from "@/newquip/grower/rules";
+import { packageFor, manualLinesFor, referencedSkus, type PackageMapping } from "@/newquip/grower/commercial";
 import { resolveVat } from "@/newquip/grower/tax";
 import { splitBomLines, quantityProvenance, priceTierPanelState, type RefLookupStatus } from "@/newquip/grower/bom-view";
 import { resolveMapping, type MappingCandidate, type MappingResolution } from "@/newquip/grower/mapping";
-import { buildBudgetQuote, type BridgeLine, type BudgetQuote, type ProductCommercials } from "@/newquip/grower/quote-bridge";
+import { buildBudgetQuote, type BridgeComponent, type BridgeLine, type BudgetQuote, type DataTrust, type ProductCommercials } from "@/newquip/grower/quote-bridge";
 import type { GeneratedLine, GrowerConfigurationInput, GrowerItemKey, OptionalItemKey, RuleStatus } from "@/newquip/grower/types";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
@@ -60,6 +61,8 @@ const BRIDGE_SHORT: Record<BridgeLine["status"], string> = {
   unmapped: "Awaiting product",
   product_missing: "Product unavailable",
   no_price: "Awaiting price",
+  package_unconfirmed: "Package awaiting confirmation",
+  package_incomplete: "Package incomplete",
 };
 
 type NumField = "lengthM" | "widthM" | "rooms" | "totalPens" | "hospitalPens" | "pigsPerBuilding";
@@ -189,6 +192,8 @@ export default function NewquipGrowerPage() {
   const [confirmed, setConfirmed] = useState<Partial<Record<GrowerItemKey, string>>>({});
   const [products, setProducts] = useState<Map<string, ProductCommercials>>(new Map());
   const [liveTiers, setLiveTiers] = useState<Record<string, Record<string, number>>>({});
+  const [confirmedPackages, setConfirmedPackages] = useState<Set<GrowerItemKey>>(new Set());
+  const [openPkg, setOpenPkg] = useState<GrowerItemKey | null>(null);
   const [lookupError, setLookupError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -199,21 +204,29 @@ export default function NewquipGrowerPage() {
     });
   }, []);
 
-  const confirmedKey = JSON.stringify(Object.values(confirmed).filter(Boolean).sort());
+  // Looked up read-only from the synced catalogue: every confirmed SKU plus every SKU the commercial
+  // mappings name (recommendations and package components), so package detail can show name/cost/stock.
+  const lookupKey = JSON.stringify([...new Set([...Object.values(confirmed).filter(Boolean), ...referencedSkus()])].sort());
   useEffect(() => {
-    const skus = JSON.parse(confirmedKey) as string[];
-    if (skus.length === 0) return;
+    const skus = JSON.parse(lookupKey) as string[];
     startTransition(async () => {
       const res = await lookupGrowerProductsAction(skus);
       if (res.ok && res.data) setProducts(new Map(res.data.map((p) => [p.sku, p])));
       else setLookupError(res.error ?? "Product lookup failed.");
     });
-  }, [confirmedKey]);
+  }, [lookupKey]);
 
   // The synced price_tiers table only keeps non-zero tiers and can be empty; reuse the Quotes module's
-  // existing LIVE per-SKU tier read (read-only GET) for confirmed products.
+  // existing LIVE per-SKU tier read (read-only GET). Only for CONFIRMED products, and for confirmed
+  // packages' components whose quantity is a fixed composition (layout-driven packages can't be priced anyway).
+  const liveSkuKey = JSON.stringify(
+    [...new Set([
+      ...Object.values(confirmed).filter(Boolean),
+      ...[...confirmedPackages].flatMap((k) => (packageFor(k)?.components ?? []).filter((c) => c.sku && c.qtyPerUnit != null).map((c) => c.sku!)),
+    ])].sort(),
+  );
   useEffect(() => {
-    const skus = JSON.parse(confirmedKey) as string[];
+    const skus = JSON.parse(liveSkuKey) as string[];
     if (!instanceId || skus.length === 0) return;
     startTransition(async () => {
       const entries = await Promise.all(skus.map(async (sku) => [sku, await getProductTierPricesAction(instanceId, sku)] as const));
@@ -221,7 +234,7 @@ export default function NewquipGrowerPage() {
       for (const [sku, r] of entries) if (r.ok && r.data && Object.keys(r.data).length > 0) next[sku] = r.data;
       setLiveTiers(next);
     });
-  }, [confirmedKey, instanceId]);
+  }, [liveSkuKey, instanceId]);
 
   const commercials = useMemo(() => {
     const m = new Map<string, ProductCommercials>();
@@ -242,8 +255,8 @@ export default function NewquipGrowerPage() {
   })();
 
   const budget = useMemo(
-    () => buildBudgetQuote(result.lines, mappings, commercials, { tierCode, taxRatePct, taxInclusive: false }),
-    [result.lines, mappings, commercials, tierCode, taxRatePct],
+    () => buildBudgetQuote(result.lines, mappings, commercials, { tierCode, taxRatePct, taxInclusive: false, confirmedPackages }),
+    [result.lines, mappings, commercials, tierCode, taxRatePct, confirmedPackages],
   );
   const bridgeBy = new Map(budget.lines.map((l) => [l.itemKey, l]));
   const [open, setOpen] = useState<GrowerItemKey | null>(null);
@@ -361,6 +374,11 @@ export default function NewquipGrowerPage() {
                   sku={confirmed[l.itemKey] ?? ""}
                   setSku={(v) => setConfirmed((p) => ({ ...p, [l.itemKey]: v || undefined }))}
                   rooms={input.rooms}
+                  pkg={packageFor(l.itemKey)}
+                  pkgConfirmed={confirmedPackages.has(l.itemKey)}
+                  pkgOpen={openPkg === l.itemKey}
+                  togglePkg={() => setOpenPkg(openPkg === l.itemKey ? null : l.itemKey)}
+                  setPkgConfirmed={(on) => setConfirmedPackages((prev) => new Set([...[...prev].filter((k) => k !== l.itemKey), ...(on ? [l.itemKey] : [])]))}
                 />
               ))}
             </ul>
@@ -409,6 +427,12 @@ function BudgetPanel({ budget, taxRatePct, vatResolved, totalLines }: { budget: 
           <ul className="mt-1 list-disc pl-5">{budget.blockers.map((b) => <li key={b}>{b}</li>)}</ul>
         </details>
       )}
+      {budget.warnings.length > 0 && (
+        <details className="mt-3 text-xs text-slate-600">
+          <summary className="cursor-pointer font-medium text-slate-500">{budget.warnings.length} data warning{budget.warnings.length === 1 ? "" : "s"}</summary>
+          <ul className="mt-1 list-disc pl-5">{budget.warnings.map((w) => <li key={w}>{w}</li>)}</ul>
+        </details>
+      )}
       <div className="mt-4"><Button variant="secondary" disabled>Save / submit — not available in this POC</Button></div>
     </Panel>
   );
@@ -418,10 +442,53 @@ function Row({ k, v, bold }: { k: string; v: string; bold?: boolean }) {
   return <div className={`flex justify-between ${bold ? "font-semibold text-slate-900" : "text-slate-600"}`}><span>{k}</span><span className="tabular-nums">{v}</span></div>;
 }
 
+const TRUST_LABEL: Record<DataTrust, string> = { suspect: "placeholder — suspect", unknown: "unverified", missing: "missing" };
+
+function PackageDetail({ pkg, comps, confirmed }: { pkg: PackageMapping; comps: BridgeComponent[]; confirmed: boolean }) {
+  return (
+    <div className="mt-3 rounded-md border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">
+      <p className="text-slate-500">{pkg.provenance}</p>
+      {!confirmed && <p className="mt-1 text-warning">Confirm the package to price it. Components with an unsettled SKU or layout-dependent quantity keep the package INCOMPLETE.</p>}
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="border-b border-slate-200 text-[11px] uppercase tracking-wide text-slate-500">
+              <th className="py-1 pr-3">SKU</th><th className="pr-3">Component</th><th className="pr-3 text-right">Qty</th><th className="pr-3">Mapping</th>
+              <th className="pr-3 text-right">Price</th><th className="pr-3 text-right">Cost</th><th className="text-right">Stock</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pkg.components.map((c) => {
+              const x = comps.find((k) => k.id === c.id);
+              return (
+                <tr key={c.id} className="border-b border-slate-100 align-top">
+                  <td className="py-1 pr-3 font-medium text-slate-800">{c.sku ?? (c.candidateSkus?.length ? `${c.candidateSkus.join(" / ")}?` : "—")}</td>
+                  <td className="pr-3">{c.description}{c.note ? <div className="text-slate-400">{c.note}</div> : null}</td>
+                  <td className="pr-3 text-right tabular-nums">
+                    {c.qtyPerUnit != null ? `${c.qtyPerUnit} per unit` : <span className="text-warning">awaiting validation<div className="text-slate-400">Topigs ref: {c.historicTopigsQty ?? "—"}</div></span>}
+                  </td>
+                  <td className="pr-3">
+                    <Badge tone={c.identity === "source_backed" ? "info" : "warning"}>{c.identity === "source_backed" ? "Source-backed" : c.identity === "uncertain" ? "Identity unresolved" : "No SKU identified"}</Badge>
+                    {x && x.status === "not_in_catalogue" && <div className="text-warning">not in Cin7</div>}
+                  </td>
+                  <td className="pr-3 text-right tabular-nums">{x?.unitPrice != null ? fmtMoney(x.unitPrice) : <span className="text-slate-400">—</span>}</td>
+                  <td className="pr-3 text-right tabular-nums">{x?.averageCost != null ? <>{fmtMoney(x.averageCost)}{x.costTrust === "suspect" && <div className="text-warning">{TRUST_LABEL.suspect}</div>}</> : <span className="text-slate-400">—</span>}</td>
+                  <td className="text-right tabular-nums">{x?.available != null ? <>{x.available}{x.availabilityTrust === "suspect" && <div className="text-warning">{TRUST_LABEL.suspect}</div>}</> : <span className="text-slate-400">—</span>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function BomRow(p: {
   l: GeneratedLine; b: BridgeLine | undefined; m: MappingResolution | undefined; isOpen: boolean; toggle: () => void;
   override: string; source: OverrideSource | undefined; setOverride: (v: string) => void; clearOverride: () => void; useTopigs: () => void;
   sku: string; setSku: (v: string) => void; rooms: number;
+  pkg: PackageMapping | undefined; pkgConfirmed: boolean; pkgOpen: boolean; togglePkg: () => void; setPkgConfirmed: (on: boolean) => void;
 }) {
   const { l, b, m } = p;
   const def = GROWER_RULES.find((d) => d.id === l.ruleId);
@@ -458,7 +525,17 @@ function BomRow(p: {
 
         {/* Product */}
         <div className="text-xs">
-          {m?.status === "UNMAPPED" ? (
+          {p.pkg ? (
+            <>
+              <div className="font-medium text-slate-800">{p.pkg.components.length}-component package</div>
+              <div className="mt-0.5 text-slate-500">Package sourced from the NewQuip workbook · {p.pkgConfirmed ? "confirmed this session" : "awaiting NewQuip confirmation"}</div>
+              <div className="mt-1 flex flex-wrap items-center gap-3">
+                <Badge tone={p.pkgConfirmed ? "success" : "warning"}>{p.pkgConfirmed ? "Confirmed" : "Needs confirmation"}</Badge>
+                <button type="button" onClick={p.togglePkg} className="text-primary hover:underline">{p.pkgOpen ? "Hide components" : "View components"}</button>
+                <label className="flex items-center gap-1 text-slate-600"><input type="checkbox" checked={p.pkgConfirmed} onChange={(e) => p.setPkgConfirmed(e.target.checked)} /> Use this package</label>
+              </div>
+            </>
+          ) : m?.status === "UNMAPPED" ? (
             <div className="text-slate-500">Product: no matching Cin7 product found</div>
           ) : (
             <>
@@ -468,11 +545,14 @@ function BomRow(p: {
                 aria-label={`Cin7 product for ${l.label}`}
                 className="h-8 w-full rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-900"
               >
-                <option value="">{(m?.candidates.length ?? 0) === 1 ? "1 Cin7 candidate — select to confirm" : `${m?.candidates.length ?? 0} Cin7 candidates — select product`}</option>
-                {(m?.candidates ?? []).map((c) => <option key={c.sku} value={c.sku}>{candidateLabel(c)}</option>)}
+                <option value="">
+                  {m?.awaitingConfirmationOfRecommendation ? "Recommended from NewQuip source — select to confirm"
+                    : (m?.candidates.length ?? 0) === 1 ? "1 Cin7 candidate — select to confirm" : `${m?.candidates.length ?? 0} Cin7 candidates — select product`}
+                </option>
+                {(m?.candidates ?? []).map((c) => <option key={c.sku} value={c.sku}>{c.recommended ? "★ Recommended — " : ""}{candidateLabel(c)}</option>)}
               </select>
               <div className="mt-1 flex items-center gap-2">
-                {m && <Badge tone={MAP_TONE[m.status]}>{m.status === "MAPPED" ? "Confirmed" : m.status === "AMBIGUOUS" ? "Needs confirmation" : "Unmapped"}</Badge>}
+                {m && <Badge tone={MAP_TONE[m.status]}>{m.status === "MAPPED" ? "Confirmed" : m.awaitingConfirmationOfRecommendation ? "Source-backed — confirm" : m.status === "AMBIGUOUS" ? "Needs confirmation" : "Unmapped"}</Badge>}
                 {chosen && <span className="truncate text-slate-500">{chosen.sku}</span>}
               </div>
             </>
@@ -497,6 +577,8 @@ function BomRow(p: {
         </div>
       </div>
 
+      {p.pkg && p.pkgOpen && <PackageDetail pkg={p.pkg} comps={b?.components ?? []} confirmed={p.pkgConfirmed} />}
+
       {p.isOpen && (
         <div className="mt-3 rounded-md bg-slate-50 px-4 py-3 text-xs text-slate-600">
           <div className="flex flex-wrap items-center gap-2">
@@ -510,6 +592,7 @@ function BomRow(p: {
           {def && <p className="mt-1"><span className="font-medium text-slate-700">Open question for NewQuip:</span> {def.seanQuestion}</p>}
           <p className="mt-1 text-slate-500">Quantities are per reference unit, multiplied by {Number.isFinite(p.rooms) ? p.rooms : "?"} (the workbook calls this “Rooms”; its exact meaning is awaiting NewQuip confirmation).</p>
           {m && <p className="mt-2"><span className="font-medium text-slate-700">Product mapping:</span> {m.note}{chosen?.reason ? ` Match basis: ${chosen.reason}.` : m.candidates[0]?.reason ? ` Match basis: ${m.candidates[0].reason}.` : ""}</p>}
+          {manualLinesFor(l.itemKey).map((ml) => <p key={ml.id} className="mt-1"><span className="font-medium text-slate-700">Separate commercial line:</span> {ml.description} — {ml.reason} Historic Topigs reference R{ml.historicTopigsPerUnitZar}/unit (not used in totals).</p>)}
           {b && b.status !== "priced" && b.status !== "not_selected" && <p className="mt-1 text-warning">Pricing: {b.reason}</p>}
           {b?.status === "priced" && <p className="mt-1">Pricing: {fmtMoney(b.unitPrice)} per unit (Cin7 price tier); cost {b.averageCost == null ? "unknown" : fmtMoney(b.averageCost)}; project quantity {b.quantity}.</p>}
           <label className="mt-3 flex items-center gap-2">

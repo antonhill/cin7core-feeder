@@ -63,6 +63,20 @@ export interface MappingCandidate {
   averageCost?: number | null;
   available?: number | null;
   reason?: string;
+  /** True for the source-backed recommendation (documentary evidence) — NOT a human confirmation. */
+  recommended?: boolean;
+}
+
+/**
+ * Precedence (never automatic confirmation):
+ *   1. exact source-backed SKU, listed first and flagged `recommended`
+ *   2. (human confirmation is applied later, by resolveMapping)
+ *   3. plausible catalogue candidates, de-duplicated against the recommendation
+ *   4. nothing → UNMAPPED
+ */
+export function mergeCandidates(recommended: MappingCandidate | null, plausible: MappingCandidate[]): MappingCandidate[] {
+  if (!recommended) return plausible;
+  return [{ ...recommended, recommended: true }, ...plausible.filter((c) => c.sku !== recommended.sku)];
 }
 
 export interface MappingResolution {
@@ -70,6 +84,8 @@ export interface MappingResolution {
   status: MappingStatus;
   sku: string | null;
   candidates: MappingCandidate[];
+  /** A source-backed recommendation exists but nobody has confirmed it yet. */
+  awaitingConfirmationOfRecommendation: boolean;
   note: string;
 }
 
@@ -87,17 +103,21 @@ export function resolveMapping(
   const sku = confirmedSku?.trim() || null;
   if (sku) {
     const exists = candidates.some((c) => c.sku === sku) || catalogue.has(sku);
-    if (!exists) return { itemKey, status: "UNMAPPED", sku: null, candidates, note: `Confirmed SKU ${sku} not found in the synced catalogue.` };
-    return { itemKey, status: "MAPPED", sku, candidates, note: "Confirmed." };
+    if (!exists) return { itemKey, status: "UNMAPPED", sku: null, candidates, awaitingConfirmationOfRecommendation: false, note: `Confirmed SKU ${sku} not found in the synced catalogue.` };
+    return { itemKey, status: "MAPPED", sku, candidates, awaitingConfirmationOfRecommendation: false, note: "Confirmed." };
   }
   if (candidates.length >= 1) {
+    const rec = candidates.find((c) => c.recommended);
     return {
       itemKey,
       status: "AMBIGUOUS",
       sku: null,
       candidates,
-      note: `REQUIRES NEWQUIP SKU CONFIRMATION — ${candidates.length === 1 ? "one candidate, not yet confirmed" : `${candidates.length} candidates`}.`,
+      awaitingConfirmationOfRecommendation: Boolean(rec),
+      note: rec
+        ? `Recommended from NewQuip source: ${rec.sku} — awaiting NewQuip confirmation (not yet confirmed).`
+        : `REQUIRES NEWQUIP SKU CONFIRMATION — ${candidates.length === 1 ? "one candidate, not yet confirmed" : `${candidates.length} candidates`}.`,
     };
   }
-  return { itemKey, status: "UNMAPPED", sku: null, candidates: [], note: "No plausible product in the synced catalogue." };
+  return { itemKey, status: "UNMAPPED", sku: null, candidates: [], awaitingConfirmationOfRecommendation: false, note: "No plausible product in the synced catalogue." };
 }
