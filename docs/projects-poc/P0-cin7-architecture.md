@@ -48,6 +48,8 @@ The repo contains **no Cin7 invoice-create contract**: no `POST /sale/invoice` w
 
 Do not build `POST /sale/invoice` code until probes 1–4 pass. If question 3 fails, fall back to Option C or re-scope; do not improvise undocumented endpoints.
 
+> Evidence legend: **PROVEN** = confirmed on a real Cin7 account and recorded here; **OBSERVED** = seen in a real read-only GET response; **UNVERIFIED** = anything else. §1 items are PROVEN; §2 items are UNVERIFIED; nothing is OBSERVED yet.
+
 ## 6. Read-only probe — status (owner-approved GET-only on the NewQuip TRIAL instance)
 
 **NOT YET RUN — blocked on credentials, not on approval.**
@@ -59,3 +61,6 @@ Do not build `POST /sale/invoice` code until probes 1–4 pass. If question 3 fa
 ## 7. Xero connection finding
 
 **XERO BEHAVIOUR = UNVERIFIED / DEFERRED.** The Toolbox stores no Xero connection metadata (`grep` of `src/` and migrations finds Xero mentioned only in comments about Cin7's own Xero/QuickBooks sync). Whether NewQuip's Cin7 account has Xero connected cannot be proven from Toolbox data, and no Xero read, write or configuration change was made. This does not block the POC.
+
+## 8. Gate V3 evidence (migration chain, not Cin7)
+Full-chain replay of migrations 0001→0101 (102 files, no duplicate numbers) in PGlite on generic Supabase-platform stubs only (`auth`, roles, `storage`): all applied in order; 77 tables, all with RLS enabled (matches `scripts/migration-audit.mjs`); 0101 needs no app-table stubs. 24/26 repo SQL tests pass on that chain; the 2 failures (0058/0059, lock-expiry timing) fail identically **without** 0101. This is NOT the repository's normal mechanism (`supabase start` + `db reset`, needs Docker, unavailable here) — see the final report.

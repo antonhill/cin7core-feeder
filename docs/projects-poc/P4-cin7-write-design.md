@@ -1,6 +1,15 @@
 # Projects POC — Gate P4: Cin7 write-design report
 
 **Status: DESIGN ONLY. No Cin7 write exists in code. P5 (one trial draft invoice) needs Anton's separate, explicit approval.**
+
+### Evidence legend (used throughout P0 and P4)
+- **PROVEN** — confirmed against a real Cin7 account and recorded in this repo (e.g. the `/sale` + `/sale/quote` create contract, 2026-08-26).
+- **OBSERVED** — seen in a real GET response from the read-only probe. **Nothing is OBSERVED yet: the probe has not been run** (no Toolbox credentials on the build machine; see `gate-runbooks.md`).
+- **UNVERIFIED** — everything else, including every invoice-create detail below. An item stays UNVERIFIED until it is PROVEN by an authorised probe.
+
+### Updates since first draft
+- Role policy recorded as provisional: `provisional-role-policy.md`.
+- Stale-claim policy implemented: a stale draft is rejected at approval (`STALE_DRAFT`) and never silently recalculated; the user explicitly recalculates, which creates a new draft (new snapshot, `supersedes_claim_id` lineage) and cancels the old one (`CANCELLED_BEFORE_WRITE`, original lines/snapshot untouched). §6 step 2.1's "re-verify snapshot hash" therefore also gates P5: a claim whose snapshot is stale can never reach `CIN7_PENDING`.
 Every item marked **UNVERIFIED** has no evidence in this repository or from Cin7 documentation retrievable in this session; it must be settled by the read-only probe (P0 §6) and then one authorised create probe before any code is written.
 
 ## 1. Invoice endpoint
