@@ -3,7 +3,7 @@ import { FakeDb } from "./fake-db";
 import { goldenFixtureBaseline } from "../baseline";
 import { ProjectInvariantError } from "../claim-engine";
 import {
-  approveClaim, cancelDraftClaim, createClaimDraft, loadProjectView, previewClaim, recalculateStaleDraft, recordProgress,
+  approveClaim, cancelDraftClaim, createClaimDraft, createProjectFromBaseline, loadProjectView, previewClaim, recalculateStaleDraft, recordProgress,
   seedGoldenFixture, submitClaimForApproval,
 } from "../project-store";
 
@@ -257,5 +257,116 @@ describe("stale draft policy", () => {
     const { db, projectId, draft } = await staleDraft();
     expect(await code(recalculateStaleDraft(db as never, ORG_B, "x@b", projectId, draft.claimId))).toBe("Claim not found.");
     expect(claim(db, draft.claimId).status).toBe("DRAFT");
+  });
+});
+
+// ── Owner-approved stale semantic: stale only when an input that can change THIS claim's result changes ──
+describe("what makes a draft stale (and what does not)", () => {
+  // A project with NO committed claim yet, so its commercial baseline can still legitimately move.
+  async function draftOnFreshProject() {
+    const db = new FakeDb();
+    const projectId = await createProjectFromBaseline(db as never, ORG_A, "a@a", goldenFixtureBaseline(), { reference: "P-STALE", name: "Stale semantics" });
+    const v0 = (await loadProjectView(db as never, ORG_A, projectId))!;
+    const stage = (name: string) => v0.stages.find((s) => s.name === name)!;
+    const rec = (name: string, rep: string, app: string | null, c = "x") => recordProgress(db as never, ORG_A, "a@a", { projectId, stageId: stage(name).id, reportedPct: rep, approvedPct: app, comment: c });
+    await rec("Deposit / Commencement", "100", "100");
+    await rec("Manufacturing", "50", "50");
+    const draft = await createClaimDraft(db as never, ORG_A, "pm@a", projectId);
+    await submitClaimForApproval(db as never, ORG_A, projectId, draft.claimId);
+    const claim = () => db.rows("project_claims").find((c) => c.id === draft.claimId)!;
+    const proj = () => db.rows("projects").find((p) => p.id === projectId)!;
+    const stageRow = (name: string) => db.rows("project_stages").find((r) => r.name === name)!;
+    return { db, projectId, draft, rec, claim, proj, stageRow, stage };
+  }
+  const approve = (f: { db: FakeDb; projectId: string; draft: { claimId: string } }) => approveClaim(f.db as never, ORG_A, "mgr@a", f.projectId, f.draft.claimId);
+
+  it("baseline: the untouched draft approves", async () => {
+    const f = await draftOnFreshProject();
+    await approve(f);
+    expect(f.claim().status).toBe("APPROVED");
+  });
+
+  describe("STALES the draft", () => {
+    it("commercial completion of a CLAIMED stage changes", async () => {
+      const f = await draftOnFreshProject();
+      await f.rec("Manufacturing", "50", "60");
+      expect(await code(approve(f))).toBe("STALE_DRAFT");
+    });
+    it("the value of a CLAIMED stage changes (schedule kept balanced)", async () => {
+      const f = await draftOnFreshProject();
+      (f.stageRow("Deposit / Commencement").value_cents as number) += 10_000;
+      (f.stageRow("Commissioning").value_cents as number) -= 10_000;
+      expect(await code(approve(f))).toBe("STALE_DRAFT");
+    });
+    it("the tax input applicable to the claim changes", async () => {
+      const f = await draftOnFreshProject();
+      f.proj().tax_rate_bps = 1000;
+      expect(await code(approve(f))).toBe("STALE_DRAFT");
+    });
+    it("the customer changes", async () => {
+      const f = await draftOnFreshProject();
+      f.proj().customer_name = "A Different Customer";
+      expect(await code(approve(f))).toBe("STALE_DRAFT");
+    });
+    it("the currency changes", async () => {
+      const f = await draftOnFreshProject();
+      f.proj().currency = "USD";
+      expect(await code(approve(f))).toBe("STALE_DRAFT");
+    });
+    it("the contract value / capacity changes (stage absorbs it, schedule still balanced)", async () => {
+      const f = await draftOnFreshProject();
+      (f.proj().original_contract_cents as number) += 10_000;
+      (f.stageRow("Commissioning").value_cents as number) += 10_000;
+      expect(await code(approve(f))).toBe("STALE_DRAFT");
+    });
+    it("value already reserved elsewhere on a claimed stage (a competing claim was approved first)", async () => {
+      const f = await draftOnFreshProject();
+      // an overlapping claim on Manufacturing is drafted, submitted and approved FIRST
+      const other = await createClaimDraft(f.db as never, ORG_A, "pm@a", f.projectId, [f.stage("Manufacturing").id]);
+      expect(other.claimId).not.toBe(f.draft.claimId);
+      await submitClaimForApproval(f.db as never, ORG_A, f.projectId, other.claimId);
+      await approveClaim(f.db as never, ORG_A, "mgr@a", f.projectId, other.claimId);
+      // the original draft (Deposit + Manufacturing) is now stale: Manufacturing's value is already committed
+      expect(await code(approve(f))).toBe("STALE_DRAFT");
+      expect(f.claim().status).toBe("READY_FOR_APPROVAL");
+    });
+  });
+
+  describe("does NOT stale the draft", () => {
+    it("approved completion of an UNRELATED, unclaimed stage changes", async () => {
+      const f = await draftOnFreshProject();
+      await f.rec("Delivery", "25", "25", "unrelated stage");
+      await approve(f);
+      expect(f.claim().status).toBe("APPROVED");
+    });
+    it("physical progress anywhere changes (it never feeds a claim)", async () => {
+      const f = await draftOnFreshProject();
+      await f.rec("Installation", "40", null);
+      await f.rec("Manufacturing", "90", null); // claimed stage, but PHYSICAL only
+      await approve(f);
+      expect(f.claim().status).toBe("APPROVED");
+    });
+  });
+
+  describe("explicit recalculation honours the same rule", () => {
+    it("a non-stale draft is refused", async () => {
+      const f = await draftOnFreshProject();
+      await f.rec("Delivery", "25", "25", "unrelated");
+      expect(await code(recalculateStaleDraft(f.db as never, ORG_A, "pm@a", f.projectId, f.draft.claimId))).toBe("STALE_DRAFT");
+      expect(f.claim().status).toBe("READY_FOR_APPROVAL");
+    });
+    it("a baseline-only change (customer) still produces a NEW draft that supersedes the old one", async () => {
+      const f = await draftOnFreshProject();
+      const oldBaseline = f.claim().baseline_hash;
+      const oldSnapshot = f.claim().snapshot_hash;
+      f.proj().customer_name = "A Different Customer";
+      const r = await recalculateStaleDraft(f.db as never, ORG_A, "pm@a", f.projectId, f.draft.claimId);
+      expect(r.newClaimId).not.toBe(f.draft.claimId); // not collapsed into the old draft
+      const fresh = f.db.rows("project_claims").find((c) => c.id === r.newClaimId)!;
+      expect(fresh.baseline_hash).not.toBe(oldBaseline);
+      expect(fresh.snapshot_hash).toBe(oldSnapshot); // same amounts, different baseline
+      expect(fresh.supersedes_claim_id).toBe(f.draft.claimId);
+      expect(f.claim().status).toBe("CANCELLED_BEFORE_WRITE");
+    });
   });
 });

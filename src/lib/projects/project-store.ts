@@ -78,6 +78,7 @@ export function baselineHashFor(view: Pick<ProjectView, "project" | "stages">): 
     customerId: view.project.customer_name,
     contractCents: view.project.original_contract_cents,
     taxRateBps: view.project.tax_rate_bps,
+    currency: view.project.currency,
     stages,
   });
   return createHash("sha256").update(canonical).digest("hex");
@@ -250,9 +251,9 @@ export async function createClaimDraft(
   const p = await previewClaim(db, orgId, projectId, selectedStageIds);
 
   // Same content already sitting as an open draft -> idempotent no-op.
-  const open = (await db.from("project_claims").select("id, snapshot_hash, status").eq("org_id", orgId).eq("project_id", projectId).in("status", ["DRAFT", "READY_FOR_APPROVAL"]));
+  const open = (await db.from("project_claims").select("id, snapshot_hash, baseline_hash, status").eq("org_id", orgId).eq("project_id", projectId).in("status", ["DRAFT", "READY_FOR_APPROVAL"]));
   if (open.error) fail(`check open drafts: ${open.error.message}`);
-  const existing = (open.data as { id: string; snapshot_hash: string }[]).find((c) => c.snapshot_hash === p.snapshotHash);
+  const existing = (open.data as { id: string; snapshot_hash: string; baseline_hash: string }[]).find((c) => c.snapshot_hash === p.snapshotHash && c.baseline_hash === p.baselineHash);
   if (existing) return { claimId: existing.id, duplicate: true };
 
   const key = claimIdempotencyKey(projectId, p.nextSeq, p.snapshotHash);
@@ -295,14 +296,18 @@ export async function submitClaimForApproval(db: Db, orgId: string, projectId: s
  * Approval freezes the snapshot; it does NOT create anything in Cin7.
  */
 export async function approveClaim(db: Db, orgId: string, approverEmail: string, projectId: string, claimId: string): Promise<void> {
-  const c = await db.from("project_claims").select("id, status, snapshot_hash").eq("org_id", orgId).eq("project_id", projectId).eq("id", claimId).maybeSingle();
+  const c = await db.from("project_claims").select("id, status, snapshot_hash, baseline_hash").eq("org_id", orgId).eq("project_id", projectId).eq("id", claimId).maybeSingle();
   if (c.error) fail(c.error.message);
-  const claim = c.data as { status: string; snapshot_hash: string } | null;
+  const claim = c.data as { status: string; snapshot_hash: string; baseline_hash: string } | null;
   if (!claim) fail("Claim not found.");
   if (claim.status !== "READY_FOR_APPROVAL") fail("Only a claim that is READY_FOR_APPROVAL can be approved.");
   const lines = must(await db.from("project_claim_lines").select("stage_id").eq("org_id", orgId).eq("claim_id", claimId), "load claim lines") as { stage_id: string }[];
   const fresh = await previewClaim(db, orgId, projectId, lines.map((l) => l.stage_id), claimId);
-  if (fresh.snapshotHash !== claim.snapshot_hash) {
+  // STALE = any input capable of changing THIS claim's financial result has moved: the claimed stages'
+  // approved completion / value / prior commitments / tax rate (snapshot hash), or the commercial baseline
+  // — customer, currency, contract, tax, schedule (baseline hash). Progress on UNRELATED stages is in
+  // neither hash, so it never stales a draft.
+  if (fresh.snapshotHash !== claim.snapshot_hash || fresh.baselineHash !== claim.baseline_hash) {
     // POLICY: a stale financial claim is REJECTED, never silently recalculated or mutated. The user must
     // explicitly recalculate (recalculateStaleDraft), which supersedes this draft with a new one.
     throw new ProjectInvariantError("STALE_DRAFT", "This draft is stale: progress or prior claims have changed since it was drafted. Recalculate it explicitly; it will be superseded by a freshly calculated draft.");
@@ -361,16 +366,16 @@ export async function seedGoldenFixture(db: Db, orgId: string, email: string, ba
 export async function recalculateStaleDraft(
   db: Db, orgId: string, email: string, projectId: string, claimId: string,
 ): Promise<{ newClaimId: string; supersededClaimId: string }> {
-  const c = await db.from("project_claims").select("id, status, snapshot_hash").eq("org_id", orgId).eq("project_id", projectId).eq("id", claimId).maybeSingle();
+  const c = await db.from("project_claims").select("id, status, snapshot_hash, baseline_hash").eq("org_id", orgId).eq("project_id", projectId).eq("id", claimId).maybeSingle();
   if (c.error) fail(c.error.message);
-  const old = c.data as { status: string; snapshot_hash: string } | null;
+  const old = c.data as { status: string; snapshot_hash: string; baseline_hash: string } | null;
   if (!old) fail("Claim not found.");
   if (old.status !== "DRAFT" && old.status !== "READY_FOR_APPROVAL") fail("Only a DRAFT or READY_FOR_APPROVAL claim can be recalculated.");
   const lines = must(await db.from("project_claim_lines").select("stage_id").eq("org_id", orgId).eq("claim_id", claimId), "load claim lines") as { stage_id: string }[];
   const stageIds = lines.map((l) => l.stage_id);
 
   const fresh = await previewClaim(db, orgId, projectId, stageIds, claimId);
-  if (fresh.snapshotHash === old.snapshot_hash) {
+  if (fresh.snapshotHash === old.snapshot_hash && fresh.baselineHash === old.baseline_hash) {
     throw new ProjectInvariantError("STALE_DRAFT", "This draft is not stale — it already matches current project state.");
   }
   // 1) new draft first (so a failure leaves the original draft intact), 2) then supersede the old one.
