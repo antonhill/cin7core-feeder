@@ -64,3 +64,48 @@ Do not build `POST /sale/invoice` code until probes 1–4 pass. If question 3 fa
 
 ## 8. Gate V3 evidence (migration chain, not Cin7)
 Full-chain replay of migrations 0001→0101 (102 files, no duplicate numbers) in PGlite on generic Supabase-platform stubs only (`auth`, roles, `storage`): all applied in order; 77 tables, all with RLS enabled (matches `scripts/migration-audit.mjs`); 0101 needs no app-table stubs. 24/26 repo SQL tests pass on that chain; the 2 failures (0058/0059, lock-expiry timing) fail identically **without** 0101. This is NOT the repository's normal mechanism (`supabase start` + `db reset`, needs Docker, unavailable here) — see the final report.
+
+## 9. Gate V1 — read-only invoice probe: PREPARED, NOT RUN
+
+**Status: NOT RUN. There are NO NewQuip observations yet.** This machine has no Toolbox credentials (no `SUPABASE_SERVICE_ROLE_KEY` / `ENCRYPTION_KEY`); per owner direction the probe is **prepared here and run by the owner** in a trusted environment that already holds them. Nothing in this section is NewQuip evidence until the output is pasted back.
+
+### How it is run (GET only; NewQuip trial org only)
+```
+# 1. resolve org + instance by NAME only — decrypts nothing, calls Cin7 not at all
+node scripts/probe-sale-invoices-readonly.mjs --org-name "NewQuip" --dry-run
+# 2. the probe (add --instance-name "<name>" if the org has several active instances)
+node scripts/probe-sale-invoices-readonly.mjs --org-name "NewQuip" --max 100
+```
+(Alternative with raw `CIN7_ACCOUNT_ID` / `CIN7_APP_KEY` for the trial account is still supported.) Read-only guarantees, all pinned by tests: one HTTP call site (GET); database reads are `select` only on `organizations` / `cin7_instances`; org must resolve uniquely and the instance must be unique and active or the script stops; the decrypted key stays in memory, is never printed or written; output is structure/counts only with reference-style text reduced to a masked shape; decrypt is proven byte-compatible with `src/cin7/crypto.ts`. The analysis code was self-tested against canned Cin7-shaped data (including a multi-invoice sale); that is NOT NewQuip evidence.
+
+### What the probe captures
+List level (all sales, no per-sale calls): invoice-state × picking × packing × shipping cross-tab. Per sale (up to `--max`, partially/invoiced first): invoice count/ids/numbers/statuses/dates/totals, lines vs `AdditionalCharges`, reference fields (`Memo`, `Reference`, `ExternalID`, …) as shapes, the invoice-side `LinkedFulfillmentNumber` and fulfilment-side `LinkedInvoiceNumber`, fulfilment pick/pack/ship statuses, and ordered / packed / invoiced quantities (to see whether invoicing and fulfilment are independent).
+
+### Already recorded in this repository — a DIFFERENT account (LBL), historical, NOT NewQuip
+Classification: **OBSERVED on the LBL account, as recorded in repo comments** — not re-verified, not NewQuip, never to be upgraded to PROVEN.
+- `Invoices[]` is an array; a Sale "can be invoiced more than once over its life (e.g. partial shipments)" (`src/cin7/sales.ts`).
+- Invoice `Status` values AUTHORISED, DRAFT, PAID seen live 2026-08-15; no VOIDED example seen (`src/cin7/sales.ts`).
+- Invoices and fulfilments carry a two-way cross-reference — `Fulfilments[].LinkedInvoiceNumber` ↔ invoice `LinkedFulfillmentNumber` — confirmed live 2026-08-18; LBL's own flow is **one invoice per fulfilment** on multi-fulfilment sales (`supabase/migrations/0081_fulfilment_grain_invoicing.sql`).
+- PROVEN from the documented API spec: credit-note lines reuse `SaleInvoiceLineModel` (`docs/cin7-api-findings.md` §13f). Nothing recorded states whether invoice `AdditionalCharges` exist or can be created.
+
+**Reading (hypothesis only, to be tested on NewQuip):** on LBL, Cin7's multi-invoice behaviour looks **fulfilment-coupled** (an invoice covers a fulfilment). If NewQuip's data shows the same, Option A (progress invoices not tied to physical fulfilment) is at risk. The decisive NewQuip question is therefore: *does any invoice exist that is NOT linked to a fulfilment, or that was raised before packing?*
+
+### Decision rules the NewQuip result will be judged against (set BEFORE seeing data)
+| NewQuip observation | Recommendation |
+|---|---|
+| ≥1 sale with >1 invoice **and** ≥1 invoice not linked to a fulfilment / invoiced before any pack (invoiced qty > packed qty) | **OPTION A — PROVISIONALLY VIABLE** (still needs the P5 create proof; create contract stays UNVERIFIED) |
+| >1 invoice per sale exist but every invoice is linked to a fulfilment and none precedes packing | **OPTION C — FALLBACK MORE LIKELY** |
+| no sale with >1 invoice in the sample | **INSUFFICIENT EVIDENCE** (do not manufacture an example) |
+
+### Observations table (to be filled from the owner's run — sanitized)
+| Item | Result |
+|---|---|
+| Sales in list / inspected / with invoices / with >1 invoice | _pending_ |
+| Invoice object keys; id field used | _pending_ |
+| Invoice statuses observed | _pending_ |
+| Totals independent per invoice? Invoice sum vs order lines total | _pending_ |
+| Invoice ↔ fulfilment: linked count / not linked / invoiced-before-pack / part-packed-and-invoiced | _pending_ |
+| Reference fields present (`Memo`/`Reference`/`ExternalID`/number/id) | _pending_ |
+| Line detail returned in `GET /sale`? `AdditionalCharges` on invoices? | _pending_ — an observed charge line on an existing invoice would be OBSERVED only, never proof that the API accepts creating one |
+| `POST /sale/invoice` contract | **UNVERIFIED** — a GET response cannot prove a create contract |
+| Xero | **UNVERIFIED / DEFERRED** |

@@ -58,19 +58,19 @@ describe('src/app/projects/actions.ts honours the "use server" rule', () => {
   });
 });
 
-describe("the read-only Cin7 probe script can only read", () => {
+describe("the read-only Cin7 probe script can only read (see also probe-support.test.ts)", () => {
   const script = readFileSync(join(ROOT, "scripts/probe-sale-invoices-readonly.mjs"), "utf8");
   it("contains no write verbs and a single network function", () => {
     expect(script).not.toMatch(/\b(POST|PUT|PATCH|DELETE)\b/);
     expect(script).not.toMatch(/method:\s*["'](?!GET)/);
     expect(script.match(/\bfetch\(/g)).toHaveLength(1);
   });
-  it("never prints credentials", () => {
-    // the secret VALUES (bare identifiers) must never be passed to console or interpolated into output
-    expect(script).not.toMatch(/console\.\w+\(\s*(ACCOUNT_ID|APP_KEY)\b/);
-    expect(script).not.toMatch(/\$\{\s*(ACCOUNT_ID|APP_KEY)\s*\}/);
-    // the only places the key value is used: its declaration, the presence check and the auth header
-    const uses = script.split("\n").filter((l) => /(?<![A-Z0-9_"'])APP_KEY\b/.test(l) && !/CIN7_APP_KEY/.test(l) && !l.trim().startsWith("//"));
-    expect(uses.every((l) => /headers:|!APP_KEY|const APP_KEY/.test(l))).toBe(true);
+  it("never prints or persists secret values", () => {
+    // secret VALUES (identifiers / process.env reads) must not reach console or a template literal
+    expect(script).not.toMatch(/console\.\w+\(\s*(APP_KEY|ACCOUNT_ID|process\.env)/);
+    expect(script).not.toMatch(/console\.\w+\([^)]*,\s*(APP_KEY|process\.env\.\w+)\s*[,)]/);
+    expect(script).not.toMatch(/\$\{\s*(APP_KEY|process\.env\.(SUPABASE_SERVICE_ROLE_KEY|ENCRYPTION_KEY))/);
+    expect(script).not.toMatch(/writeFile|appendFile|createWriteStream/);
+    expect(script).not.toMatch(/application_key_encrypted[^\n]*console|console[^\n]*application_key_encrypted/);
   });
 });

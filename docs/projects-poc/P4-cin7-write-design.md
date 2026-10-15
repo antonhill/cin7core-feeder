@@ -7,6 +7,11 @@
 - **OBSERVED** — seen in a real GET response from the read-only probe. **Nothing is OBSERVED yet: the probe has not been run** (no Toolbox credentials on the build machine; see `gate-runbooks.md`).
 - **UNVERIFIED** — everything else, including every invoice-create detail below. An item stays UNVERIFIED until it is PROVEN by an authorised probe.
 
+### V1 status (read-only probe)
+**Prepared, NOT RUN — no NewQuip observations exist yet.** See `P0-cin7-architecture.md` §9 for the run commands, what is captured, the pre-committed decision rules (A / C / INSUFFICIENT EVIDENCE) and the observations table awaiting the owner's run. Current standing recommendation: **INSUFFICIENT EVIDENCE.**
+
+**New risk flagged from the repository's own LBL records (OBSERVED on another account, not NewQuip):** Cin7's multi-invoice behaviour there is fulfilment-coupled (invoice ↔ fulfilment cross-reference; one invoice per fulfilment). Unknown #1 for Option A is now whether an invoice can exist **without** a fulfilment link / before packing. A GET probe can show whether such invoices exist; only the P5 create proof can show whether the API will create one.
+
 ### Updates since first draft
 - Role policy recorded as provisional: `provisional-role-policy.md`.
 - Stale-claim policy implemented: a stale draft is rejected at approval (`STALE_DRAFT`) and never silently recalculated; the user explicitly recalculates, which creates a new draft (new snapshot, `supersedes_claim_id` lineage) and cancels the old one (`CANCELLED_BEFORE_WRITE`, original lines/snapshot untouched). §6 step 2.1's "re-verify snapshot hash" therefore also gates P5: a claim whose snapshot is stale can never reach `CIN7_PENDING`.
