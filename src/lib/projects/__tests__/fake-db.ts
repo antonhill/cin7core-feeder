@@ -21,7 +21,10 @@ export class FakeDb {
   }
 
   from(table: string) {
-    const db = this;
+    const rowsOf = (t: string) => this.rows(t);
+    const nextTs = () => this.ts();
+    const nextId = () => ++this.seq;
+    const writes = this.writes;
     let op: "select" | "insert" | "update" = "select";
     let payload: Row | Row[] = [];
     const filters: Array<(r: Row) => boolean> = [];
@@ -35,19 +38,19 @@ export class FakeDb {
         const out: Row[] = [];
         for (const r of incoming) {
           for (const cols of UNIQUE[table] ?? []) {
-            if (db.rows(table).some((e) => cols.every((c) => e[c] === r[c]))) return { data: null, error: { message: `duplicate key value violates unique constraint (${cols.join(",")})` } };
+            if (rowsOf(table).some((e) => cols.every((c) => e[c] === r[c]))) return { data: null, error: { message: `duplicate key value violates unique constraint (${cols.join(",")})` } };
           }
-          const row: Row = { id: `id-${++db.seq}`, created_at: db.ts(), ...r };
-          db.rows(table).push(row);
-          db.writes.push({ table, op: "insert" });
+          const row: Row = { id: `id-${nextId()}`, created_at: nextTs(), ...r };
+          rowsOf(table).push(row);
+          writes.push({ table, op: "insert" });
           out.push(row);
         }
         return { data: returning ? out : null, error: null };
       }
-      let matched = db.rows(table).filter((r) => filters.every((f) => f(r)));
+      let matched = rowsOf(table).filter((r) => filters.every((f) => f(r)));
       if (op === "update") {
         for (const r of matched) Object.assign(r, payload);
-        db.writes.push({ table, op: "update" });
+        writes.push({ table, op: "update" });
         return { data: returning ? matched : null, error: null };
       }
       if (order) {

@@ -35,7 +35,7 @@ const ALL: Array<[string, () => Promise<{ ok: boolean; error?: string }>]> = [
   ["approveClaimAction", () => actions.approveClaimAction("p1", "c1")],
   ["cancelDraftClaimAction", () => actions.cancelDraftClaimAction("p1", "c1")],
 ];
-const storeFns = Object.values(store).filter((f): f is ReturnType<typeof vi.fn> => typeof f === "function");
+const storeFns = Object.values(store).filter((f) => typeof f === "function") as unknown as Array<ReturnType<typeof vi.fn>>;
 
 describe("every Projects action re-establishes module access first", () => {
   it.each(ALL)("%s: module denied -> error and NO store call", async (_name, run) => {
