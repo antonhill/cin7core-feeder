@@ -161,6 +161,11 @@ create table if not exists project_claims (
   -- Positive proof that no Cin7 document exists. REQUIRED to move a RESERVING claim to a released state.
   no_write_evidence jsonb,
 
+  -- Audit lineage for the stale-draft policy: a recalculated draft points at the stale draft it
+  -- supersedes (that draft is CANCELLED_BEFORE_WRITE with its original lines untouched). Plain FK,
+  -- NO ACTION: it must never run a SET NULL update through the frozen-claim guard on org deletion.
+  supersedes_claim_id uuid,
+
   author_email   text not null,
   approver_email text,
   approved_at    timestamptz,
@@ -175,6 +180,8 @@ create table if not exists project_claims (
   check (status not in ('APPROVED', 'CIN7_PENDING', 'CIN7_CREATED', 'RECONCILED', 'FAILED_UNCERTAIN')
          or (approver_email is not null and approved_at is not null))
 );
+
+alter table project_claims add constraint project_claims_supersedes_fk foreign key (supersedes_claim_id) references project_claims (id);
 
 create index if not exists project_claims_project_idx on project_claims (project_id, claim_seq);
 
@@ -348,6 +355,11 @@ begin
     if not project_schedule_balanced(new.project_id) then
       raise exception 'project_claims: project % stage values do not reconcile to the contract', new.project_id;
     end if;
+    if new.supersedes_claim_id is not null and not exists (
+      select 1 from project_claims where id = new.supersedes_claim_id and project_id = new.project_id and org_id = new.org_id
+    ) then
+      raise exception 'project_claims: supersedes_claim_id must reference a claim of the same project';
+    end if;
     return new;
   end if;
 
@@ -378,7 +390,8 @@ begin
        or new.idempotency_key is distinct from old.idempotency_key
        or new.author_email is distinct from old.author_email
        or new.approver_email is distinct from old.approver_email
-       or new.approved_at is distinct from old.approved_at then
+       or new.approved_at is distinct from old.approved_at
+       or new.supersedes_claim_id is distinct from old.supersedes_claim_id then
       raise exception 'project_claims %: financial values are frozen once the claim is approved', old.id;
     end if;
   end if;

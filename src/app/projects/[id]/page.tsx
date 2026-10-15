@@ -18,6 +18,7 @@ import {
   createClaimDraftAction,
   getProjectAction,
   previewClaimAction,
+  recalculateStaleDraftAction,
   recordProgressAction,
   submitClaimForApprovalAction,
   type ClaimPreviewResult,
@@ -278,7 +279,10 @@ export default function ProjectDetailPage() {
                 {view.claims.length === 0 && <TR><TD>No claims yet.</TD></TR>}
                 {view.claims.map((cl) => (
                   <TR key={cl.id}>
-                    <TD>{cl.claim_number}</TD>
+                    <TD>
+                      {cl.claim_number}
+                      {cl.supersedes_claim_id && <span className="ml-2 text-xs text-slate-500">supersedes {view.claims.find((x) => x.id === cl.supersedes_claim_id)?.claim_number ?? "an earlier draft"}</span>}
+                    </TD>
                     <TD>{cl.claim_date}</TD>
                     <TD>
                       <Badge tone={CLAIM_TONE[cl.status] ?? "neutral"}>{cl.status}</Badge>
@@ -292,6 +296,7 @@ export default function ProjectDetailPage() {
                       <div className="flex gap-1">
                         {cl.status === "DRAFT" && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.")} disabled={isWorking}>Submit</Button>}
                         {cl.status === "READY_FOR_APPROVAL" && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.")} disabled={isWorking}>Approve</Button>}
+                        {(cl.status === "DRAFT" || cl.status === "READY_FOR_APPROVAL") && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.")} disabled={isWorking}>Recalculate</Button>}
                         {(cl.status === "DRAFT" || cl.status === "READY_FOR_APPROVAL") && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), "Claim cancelled.")} disabled={isWorking}>Cancel</Button>}
                       </div>
                     </TD>

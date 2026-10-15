@@ -131,6 +131,18 @@ do $$ begin
   end if;
 end $$;
 
+-- ── stale-draft lineage: a superseding draft references its predecessor ────
+insert into project_claims (id, org_id, project_id, claim_seq, claim_number, claim_date, tax_rate_bps, subtotal_cents, tax_cents, total_cents, snapshot_hash, baseline_hash, idempotency_key, author_email, supersedes_claim_id)
+values ('00000000-0000-0000-0000-0000000000e2','00000000-0000-0000-0000-0000000000b1','00000000-0000-0000-0000-0000000000c1',2,'PRJ-001-C2',current_date,1500,0,0,0,'snap2','base1','idem-2','a@x','00000000-0000-0000-0000-0000000000e1');
+select pg_temp.expect_denied($q$insert into project_claims (org_id, project_id, claim_seq, claim_number, claim_date, tax_rate_bps, subtotal_cents, tax_cents, total_cents, snapshot_hash, baseline_hash, idempotency_key, author_email, supersedes_claim_id)
+  values ('00000000-0000-0000-0000-0000000000b1','00000000-0000-0000-0000-0000000000c1',3,'PRJ-001-C3',current_date,1500,0,0,0,'s','b','idem-3','a@x','00000000-0000-0000-0000-0000000000ff')$q$, 'supersedes a claim that does not exist / other project');
+-- the superseded (released) claim keeps its lines untouched and stays final
+do $$ begin
+  if (select count(*) from project_claim_lines where claim_id = '00000000-0000-0000-0000-0000000000e1') <> 1 then
+    raise exception 'superseded claim must keep its original lines';
+  end if;
+end $$;
+
 -- ── one Cin7 link per claim ─────────────────────────────────────────────────
 insert into project_cin7_links (org_id, project_id, claim_id, external_id)
 values ('00000000-0000-0000-0000-0000000000b1','00000000-0000-0000-0000-0000000000c1','00000000-0000-0000-0000-0000000000e1','PRJ-001-C1');

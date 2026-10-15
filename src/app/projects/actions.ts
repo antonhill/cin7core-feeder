@@ -18,6 +18,7 @@ import {
   listProjectViews,
   loadProjectView,
   previewClaim,
+  recalculateStaleDraft,
   recordProgress,
   seedGoldenFixture,
   submitClaimForApproval,
@@ -155,6 +156,19 @@ export async function cancelDraftClaimAction(projectId: string, claimId: string)
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
     await cancelDraftClaim(createServiceRoleClient(), orgId, projectId, claimId);
     return { ok: true, data: null };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/** Explicitly recalculates a STALE draft: a new draft is calculated fresh and the old one is superseded (cancelled, history kept). */
+export async function recalculateStaleDraftAction(projectId: string, claimId: string): Promise<ActionResult<{ newClaimId: string; supersededClaimId: string }>> {
+  try {
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const db = createServiceRoleClient();
+    const r = await recalculateStaleDraft(db, orgId, email ?? "unknown", projectId, claimId);
+    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.claim_superseded", summary: "Recalculated a stale project claim draft (old draft superseded; local only, no Cin7 write)", detail: { projectId, ...r } });
+    return { ok: true, data: r };
   } catch (e) {
     return { ok: false, error: message(e) };
   }

@@ -29,6 +29,8 @@ export interface ProgressEventRow {
 export interface ClaimRow {
   id: string; claim_seq: number; claim_number: string; claim_date: string; status: string;
   subtotal_cents: number; tax_cents: number; total_cents: number;
+  /** Audit lineage: the stale draft this claim superseded, if any. */
+  supersedes_claim_id?: string | null;
 }
 export interface ClaimLineRow { claim_id: string; stage_id: string; current_claim_cents: number }
 export interface AllocationRow {

@@ -11,7 +11,7 @@ vi.mock("@/lib/activity-log", () => ({ logActivity: vi.fn(() => Promise.resolve(
 vi.mock("@/lib/projects/project-store", () => ({
   approveClaim: vi.fn(), cancelDraftClaim: vi.fn(), createClaimDraft: vi.fn(() => Promise.resolve({ claimId: "c1", duplicate: false })),
   listProjectViews: vi.fn(() => Promise.resolve([])), loadProjectView: vi.fn(() => Promise.resolve(null)),
-  previewClaim: vi.fn(), recordProgress: vi.fn(), seedGoldenFixture: vi.fn(() => Promise.resolve("p1")), submitClaimForApproval: vi.fn(),
+  previewClaim: vi.fn(), recalculateStaleDraft: vi.fn(), recordProgress: vi.fn(), seedGoldenFixture: vi.fn(() => Promise.resolve("p1")), submitClaimForApproval: vi.fn(),
 }));
 
 const SESSION = { orgId: "org-session", userId: "u1", email: "u@x" };
@@ -34,6 +34,7 @@ const ALL: Array<[string, () => Promise<{ ok: boolean; error?: string }>]> = [
   ["submitClaimForApprovalAction", () => actions.submitClaimForApprovalAction("p1", "c1")],
   ["approveClaimAction", () => actions.approveClaimAction("p1", "c1")],
   ["cancelDraftClaimAction", () => actions.cancelDraftClaimAction("p1", "c1")],
+  ["recalculateStaleDraftAction", () => actions.recalculateStaleDraftAction("p1", "c1")],
 ];
 const storeFns = Object.values(store).filter((f) => typeof f === "function") as unknown as Array<ReturnType<typeof vi.fn>>;
 

@@ -3,7 +3,7 @@ import { FakeDb } from "./fake-db";
 import { goldenFixtureBaseline } from "../baseline";
 import { ProjectInvariantError } from "../claim-engine";
 import {
-  approveClaim, cancelDraftClaim, createClaimDraft, loadProjectView, previewClaim, recordProgress,
+  approveClaim, cancelDraftClaim, createClaimDraft, loadProjectView, previewClaim, recalculateStaleDraft, recordProgress,
   seedGoldenFixture, submitClaimForApproval,
 } from "../project-store";
 
@@ -166,5 +166,96 @@ describe("progress rules", () => {
     const { db, projectId } = await seeded();
     db.rows("projects").find((p) => p.id === projectId)!.tax_rate_bps = 0;
     expect(await code(previewClaim(db as never, ORG_A, projectId))).toBe("BASELINE_MUTATED");
+  });
+});
+
+// ── Gate V4: stale-draft policy ─────────────────────────────────────────────
+describe("stale draft policy", () => {
+  async function staleDraft() {
+    const { db, projectId } = await seeded();
+    const draft = await createClaimDraft(db as never, ORG_A, "pm@a", projectId);
+    // project state moves on after drafting: Manufacturing approved to 100% (draft said 65%)
+    const v = (await loadProjectView(db as never, ORG_A, projectId))!;
+    const mfg = v.stages.find((s) => s.name === "Manufacturing")!;
+    await recordProgress(db as never, ORG_A, "mgr@a", { projectId, stageId: mfg.id, reportedPct: "100", approvedPct: "100", comment: "moved on" });
+    return { db, projectId, draft };
+  }
+  const claim = (db: FakeDb, id: string) => db.rows("project_claims").find((c) => c.id === id)!;
+  const linesOf = (db: FakeDb, id: string) => JSON.stringify(db.rows("project_claim_lines").filter((l) => l.claim_id === id));
+
+  it("a stale draft cannot be approved (distinct STALE_DRAFT error)", async () => {
+    const { db, projectId, draft } = await staleDraft();
+    await submitClaimForApproval(db as never, ORG_A, projectId, draft.claimId);
+    expect(await code(approveClaim(db as never, ORG_A, "mgr@a", projectId, draft.claimId))).toBe("STALE_DRAFT");
+    expect(claim(db, draft.claimId).status).toBe("READY_FOR_APPROVAL"); // untouched
+  });
+
+  it("a rejected approval does NOT silently recalculate or mutate anything", async () => {
+    const { db, projectId, draft } = await staleDraft();
+    await submitClaimForApproval(db as never, ORG_A, projectId, draft.claimId);
+    const beforeClaims = JSON.stringify(db.rows("project_claims"));
+    const beforeLines = JSON.stringify(db.rows("project_claim_lines"));
+    await code(approveClaim(db as never, ORG_A, "mgr@a", projectId, draft.claimId));
+    expect(JSON.stringify(db.rows("project_claims"))).toBe(beforeClaims);
+    expect(JSON.stringify(db.rows("project_claim_lines"))).toBe(beforeLines);
+    expect(db.rows("project_claims")).toHaveLength(2); // opening claim + the one stale draft — no new draft appeared
+  });
+
+  it("explicit recalculation creates a NEW snapshot and supersedes the old draft with lineage", async () => {
+    const { db, projectId, draft } = await staleDraft();
+    const oldHash = claim(db, draft.claimId).snapshot_hash;
+    const r = await recalculateStaleDraft(db as never, ORG_A, "pm@a", projectId, draft.claimId);
+    expect(r.supersededClaimId).toBe(draft.claimId);
+    const fresh = claim(db, r.newClaimId);
+    expect(fresh.snapshot_hash).not.toBe(oldHash);
+    expect(fresh.status).toBe("DRAFT");
+    expect(fresh.supersedes_claim_id).toBe(draft.claimId);
+    expect(claim(db, draft.claimId).status).toBe("CANCELLED_BEFORE_WRITE");
+    // fresh numbers reflect current state: Manufacturing 100% = R3m, less R1.5m already committed = R1.5m
+    const mfg = db.rows("project_claim_lines").find((l) => l.claim_id === r.newClaimId && l.stage_name === "Manufacturing")!;
+    expect(mfg.current_claim_cents).toBe(R(1_500_000));
+  });
+
+  it("the prior draft's financial snapshot and lines are preserved untouched (audit history)", async () => {
+    const { db, projectId, draft } = await staleDraft();
+    const hashBefore = claim(db, draft.claimId).snapshot_hash;
+    const totalBefore = claim(db, draft.claimId).total_cents;
+    const linesBefore = linesOf(db, draft.claimId);
+    await recalculateStaleDraft(db as never, ORG_A, "pm@a", projectId, draft.claimId);
+    expect(claim(db, draft.claimId).snapshot_hash).toBe(hashBefore);
+    expect(claim(db, draft.claimId).total_cents).toBe(totalBefore);
+    expect(linesOf(db, draft.claimId)).toBe(linesBefore);
+    const ev = claim(db, draft.claimId).no_write_evidence as { method: string; detail: string };
+    expect(ev.method).toBe("NEVER_SENT");
+    expect(ev.detail).toContain("Superseded");
+  });
+
+  it("no duplicate committed value: the superseded draft reserves nothing and the new one can be approved once", async () => {
+    const { db, projectId, draft } = await staleDraft();
+    const r = await recalculateStaleDraft(db as never, ORG_A, "pm@a", projectId, draft.claimId);
+    let v = (await loadProjectView(db as never, ORG_A, projectId))!;
+    expect(v.commercial.committedCents).toBe(R(2_500_000)); // only the opening claim reserves; no draft does
+    await submitClaimForApproval(db as never, ORG_A, projectId, r.newClaimId);
+    await approveClaim(db as never, ORG_A, "mgr@a", projectId, r.newClaimId);
+    v = (await loadProjectView(db as never, ORG_A, projectId))!;
+    const mfgStage = v.stages.find((s) => s.name === "Manufacturing")!;
+    expect(mfgStage.committedCents).toBe(R(3_000_000)); // 1.5m + 1.5m, never double-counted
+    expect(v.commercial.committedCents).toBe(R(2_500_000) + R(1_500_000) + R(500_000)); // + Delivery 25% = R500k
+    // the superseded draft can no longer be approved, recalculated or resurrected
+    expect(await code(approveClaim(db as never, ORG_A, "mgr@a", projectId, draft.claimId))).toBeDefined();
+    expect(await code(recalculateStaleDraft(db as never, ORG_A, "pm@a", projectId, draft.claimId))).toMatch(/Only a DRAFT/);
+  });
+
+  it("a draft that is not stale is refused for recalculation (no churn)", async () => {
+    const { db, projectId } = await seeded();
+    const d = await createClaimDraft(db as never, ORG_A, "pm@a", projectId);
+    expect(await code(recalculateStaleDraft(db as never, ORG_A, "pm@a", projectId, d.claimId))).toBe("STALE_DRAFT");
+    expect(claim(db, d.claimId).status).toBe("DRAFT");
+  });
+
+  it("another organisation cannot recalculate or supersede the draft", async () => {
+    const { db, projectId, draft } = await staleDraft();
+    expect(await code(recalculateStaleDraft(db as never, ORG_B, "x@b", projectId, draft.claimId))).toBe("Claim not found.");
+    expect(claim(db, draft.claimId).status).toBe("DRAFT");
   });
 });

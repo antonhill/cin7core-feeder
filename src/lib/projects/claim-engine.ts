@@ -51,7 +51,8 @@ export type ProjectInvariantCode =
   | "ILLEGAL_CLAIM_TRANSITION"
   | "RELEASE_REQUIRES_NO_WRITE_EVIDENCE"
   | "UNRESOLVED_CLAIM_BLOCKS_BILLING"
-  | "SNAPSHOT_MUTATED";
+  | "SNAPSHOT_MUTATED"
+  | "STALE_DRAFT";
 
 // ---------------------------------------------------------------------------------------------
 // Primitives
