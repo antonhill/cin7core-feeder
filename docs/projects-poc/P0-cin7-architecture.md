@@ -1,6 +1,7 @@
 # Projects POC — Gate P0: Cin7 architecture finding
 
 Status: **INCOMPLETE BY DESIGN — Cin7 invoice behaviour is NOT yet proven. No Cin7 write is authorised or implemented.**
+Updated after owner decisions (read-only probe approved; Xero unassumed; migration 0101 reserved).
 Base: `origin/main` @ `866b4e8`. Branch `feature/newquip-projects-poc`.
 
 ## 1. What the repository PROVES today
@@ -46,3 +47,15 @@ The repo contains **no Cin7 invoice-create contract**: no `POST /sale/invoice` w
 ## 5. STOP conditions
 
 Do not build `POST /sale/invoice` code until probes 1–4 pass. If question 3 fails, fall back to Option C or re-scope; do not improvise undocumented endpoints.
+
+## 6. Read-only probe — status (owner-approved GET-only on the NewQuip TRIAL instance)
+
+**NOT YET RUN — blocked on credentials, not on approval.**
+
+- The Toolbox credential path (`loadCin7Credentials`) needs the Toolbox's `SUPABASE_SERVICE_ROLE_KEY` and `ENCRYPTION_KEY`. Neither exists on this machine: the only `.env.local` files found belong to the unrelated `cashflowforecaster` project, which must not be used here. No Toolbox `.env.local` exists in any worktree.
+- Nothing was fetched, so there is **no evidence yet** for: multiple `Invoices[]`, invoice IDs/statuses/totals, line representation, invoice-vs-fulfilment coupling, or reconciliation references. Nothing below is inferred.
+- **To close this gap** a person with the NewQuip trial credentials runs `scripts/probe-sale-invoices-readonly.mjs` (GET-only, prints structure/counts only — no keys, names or addresses; a test pins that it contains no write verbs and a single network function). Paste its output here and this section is updated with the evidence.
+
+## 7. Xero connection finding
+
+**XERO BEHAVIOUR = UNVERIFIED / DEFERRED.** The Toolbox stores no Xero connection metadata (`grep` of `src/` and migrations finds Xero mentioned only in comments about Cin7's own Xero/QuickBooks sync). Whether NewQuip's Cin7 account has Xero connected cannot be proven from Toolbox data, and no Xero read, write or configuration change was made. This does not block the POC.
