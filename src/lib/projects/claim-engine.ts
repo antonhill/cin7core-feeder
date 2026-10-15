@@ -46,7 +46,12 @@ export type ProjectInvariantCode =
   | "NOTHING_TO_CLAIM"
   | "INVALID_TAX_RATE"
   | "MISSING_COMMERCIAL_DATA"
-  | "BASELINE_MUTATED";
+  | "BASELINE_MUTATED"
+  | "UNKNOWN_CLAIM_STATUS"
+  | "ILLEGAL_CLAIM_TRANSITION"
+  | "RELEASE_REQUIRES_NO_WRITE_EVIDENCE"
+  | "UNRESOLVED_CLAIM_BLOCKS_BILLING"
+  | "SNAPSHOT_MUTATED";
 
 // ---------------------------------------------------------------------------------------------
 // Primitives
@@ -153,21 +158,98 @@ export function checkSchedule(contractCents: Cents, stages: StageInput[]): Sched
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Claim states whose amounts count as ALREADY BILLED (reserved) against a stage. APPROVED counts
- * as soon as it is approved — otherwise a second claim drafted before the first is sent would
- * re-bill the same value. CIN7_PENDING stays counted while its outcome is ambiguous. FAILED is
- * excluded: a claim may only be moved to FAILED once reconciliation has PROVEN no Cin7 invoice
- * exists (the same "never assume a failed request created nothing" rule as quote/PO creation).
+ * FINANCIAL COMMITMENT MODEL. Every claim status is classified explicitly as RESERVING (its value
+ * counts as already billed against the stage) or RELEASED (its value is free to be re-claimed).
+ *
+ * THE INVARIANT: an ambiguous failure must never become re-billable automatically. A timeout can
+ * leave a real Cin7 invoice behind, so an uncertain failure keeps RESERVING until reconciliation
+ * positively proves no invoice exists. Only a positively established no-write outcome releases.
+ *
+ *   DRAFT / READY_FOR_APPROVAL ......... released (nothing committed yet)
+ *   APPROVED ........................... reserves  (approved the moment it exists; a second claim drafted
+ *                                                   before this one is sent must not re-bill it)
+ *   CIN7_PENDING ....................... reserves  (a write was attempted; outcome not yet known)
+ *   CIN7_CREATED / RECONCILED .......... reserves
+ *   FAILED_UNCERTAIN ................... reserves  AND blocks any new claim touching its stages
+ *   FAILED_CONFIRMED_NO_WRITE .......... released  (reconciliation proved no Cin7 document exists)
+ *   CANCELLED_BEFORE_WRITE ............. released  (cancelled before any Cin7 call was made)
+ *
+ * An unrecognised status THROWS rather than defaulting either way (fail closed).
  */
-export const COMMITTED_CLAIM_STATUSES = ["APPROVED", "CIN7_PENDING", "CIN7_CREATED", "RECONCILED"] as const;
-export type ClaimStatus =
-  | "DRAFT"
-  | "READY_FOR_APPROVAL"
-  | "APPROVED"
-  | "CIN7_PENDING"
-  | "CIN7_CREATED"
-  | "RECONCILED"
-  | "FAILED";
+export const CLAIM_STATUSES = [
+  "DRAFT",
+  "READY_FOR_APPROVAL",
+  "APPROVED",
+  "CIN7_PENDING",
+  "CIN7_CREATED",
+  "RECONCILED",
+  "FAILED_UNCERTAIN",
+  "FAILED_CONFIRMED_NO_WRITE",
+  "CANCELLED_BEFORE_WRITE",
+] as const;
+export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
+
+export const RESERVING_CLAIM_STATUSES: readonly ClaimStatus[] = [
+  "APPROVED",
+  "CIN7_PENDING",
+  "CIN7_CREATED",
+  "RECONCILED",
+  "FAILED_UNCERTAIN",
+];
+export const RELEASED_CLAIM_STATUSES: readonly ClaimStatus[] = [
+  "DRAFT",
+  "READY_FOR_APPROVAL",
+  "FAILED_CONFIRMED_NO_WRITE",
+  "CANCELLED_BEFORE_WRITE",
+];
+/** Statuses that block NEW billing of the same stages until a human/reconciliation resolves them. */
+export const BLOCKING_CLAIM_STATUSES: readonly ClaimStatus[] = ["FAILED_UNCERTAIN"];
+
+export function isClaimStatus(value: string): value is ClaimStatus {
+  return (CLAIM_STATUSES as readonly string[]).includes(value);
+}
+
+export function reservesValue(status: string): boolean {
+  if (!isClaimStatus(status)) {
+    throw new ProjectInvariantError("UNKNOWN_CLAIM_STATUS", `Unknown claim status "${status}".`);
+  }
+  return RESERVING_CLAIM_STATUSES.includes(status);
+}
+
+/** Positive proof that no Cin7 document exists — the ONLY thing that may release an uncertain claim. */
+export interface NoWriteEvidence {
+  /** How absence was established, e.g. "ExternalID lookup returned no sale" (never "request failed"). */
+  method: "EXTERNAL_ID_LOOKUP_EMPTY" | "NEVER_SENT";
+  checkedAt: string; // ISO timestamp
+  detail: string;
+}
+
+/** Legal claim status transitions. Releasing a reserved claim requires NoWriteEvidence. */
+const TRANSITIONS: Record<ClaimStatus, readonly ClaimStatus[]> = {
+  DRAFT: ["READY_FOR_APPROVAL", "CANCELLED_BEFORE_WRITE"],
+  READY_FOR_APPROVAL: ["DRAFT", "APPROVED", "CANCELLED_BEFORE_WRITE"],
+  APPROVED: ["CIN7_PENDING", "CANCELLED_BEFORE_WRITE"],
+  CIN7_PENDING: ["CIN7_CREATED", "FAILED_UNCERTAIN", "FAILED_CONFIRMED_NO_WRITE"],
+  CIN7_CREATED: ["RECONCILED"],
+  RECONCILED: [],
+  FAILED_UNCERTAIN: ["CIN7_CREATED", "FAILED_CONFIRMED_NO_WRITE"],
+  FAILED_CONFIRMED_NO_WRITE: [],
+  CANCELLED_BEFORE_WRITE: [],
+};
+
+export function assertClaimTransition(from: ClaimStatus, to: ClaimStatus, evidence?: NoWriteEvidence | null): void {
+  if (!TRANSITIONS[from].includes(to)) {
+    throw new ProjectInvariantError("ILLEGAL_CLAIM_TRANSITION", `A claim cannot move from ${from} to ${to}.`);
+  }
+  // Moving from a reserving state to a released one gives value back — only on positive proof.
+  const releasesReservation = reservesValue(from) && !reservesValue(to);
+  if (releasesReservation && !evidence) {
+    throw new ProjectInvariantError(
+      "RELEASE_REQUIRES_NO_WRITE_EVIDENCE",
+      `Releasing a ${from} claim requires positive evidence that no Cin7 document exists.`,
+    );
+  }
+}
 
 export interface CommittedClaimLine {
   stageId: string;
@@ -175,14 +257,14 @@ export interface CommittedClaimLine {
 }
 export interface PriorClaim {
   claimId: string;
-  status: ClaimStatus;
+  status: ClaimStatus | string; // validated at runtime; unknown values throw
   lines: CommittedClaimLine[];
 }
 
 export function priorBilledByStage(priorClaims: PriorClaim[]): Map<string, Cents> {
   const out = new Map<string, Cents>();
   for (const c of priorClaims) {
-    if (!(COMMITTED_CLAIM_STATUSES as readonly string[]).includes(c.status)) continue;
+    if (!reservesValue(c.status)) continue;
     for (const l of c.lines) {
       assertCents(l.currentClaimCents, "Prior claim line");
       out.set(l.stageId, (out.get(l.stageId) ?? 0) + l.currentClaimCents);
@@ -280,6 +362,21 @@ export function computeProgressClaim(input: ClaimInput): ProgressClaimCalc {
 
   const billed = priorBilledByStage(priorClaims);
   for (const id of billed.keys()) if (!stageById.has(id)) throw new ProjectInvariantError("UNKNOWN_STAGE", `A prior claim references unknown stage "${id}".`);
+
+  // An UNCERTAIN prior claim may or may not exist in Cin7. Until reconciliation resolves it, billing
+  // any stage it touched is refused outright (not merely reduced) — no automatic path to a duplicate.
+  for (const c of priorClaims) {
+    if (!isClaimStatus(c.status)) throw new ProjectInvariantError("UNKNOWN_CLAIM_STATUS", `Unknown claim status "${c.status}".`);
+    if (!BLOCKING_CLAIM_STATUSES.includes(c.status)) continue;
+    for (const l of c.lines) {
+      if (!selected || selected.has(l.stageId)) {
+        throw new ProjectInvariantError(
+          "UNRESOLVED_CLAIM_BLOCKS_BILLING",
+          `Claim ${c.claimId} has an uncertain Cin7 outcome on stage "${l.stageId}"; reconcile it before billing that stage again.`,
+        );
+      }
+    }
+  }
 
   const lines: StageClaimLine[] = [];
   let subtotal = 0;

@@ -9,6 +9,12 @@ import {
   priorBilledByStage,
   randsToCents,
   ProjectInvariantError,
+  assertClaimTransition,
+  reservesValue,
+  CLAIM_STATUSES,
+  RESERVING_CLAIM_STATUSES,
+  RELEASED_CLAIM_STATUSES,
+  type ClaimStatus,
   type ClaimInput,
   type PriorClaim,
   type StageInput,
@@ -142,7 +148,7 @@ describe("golden claim #2 subtracts claim #1 (no re-billing)", () => {
   it("an APPROVED-but-not-yet-sent claim already reserves its value; FAILED/DRAFT do not", () => {
     const approved = { ...claim1, status: "APPROVED" as const };
     expect(priorBilledByStage([approved]).get("mfg")).toBe(R(450_000));
-    expect(priorBilledByStage([{ ...claim1, status: "FAILED" }]).size).toBe(0);
+    expect(priorBilledByStage([{ ...claim1, status: "FAILED_CONFIRMED_NO_WRITE" }]).size).toBe(0);
     expect(priorBilledByStage([{ ...claim1, status: "DRAFT" }]).size).toBe(0);
     expect(priorBilledByStage([{ ...claim1, status: "CIN7_PENDING" }]).get("delivery")).toBe(R(500_000));
   });
@@ -228,5 +234,96 @@ describe("money & percent arithmetic", () => {
     expect(code(() => percentToBps("-1"))).toBe("COMPLETION_OUT_OF_RANGE");
     expect(randsToCents("450000.5")).toBe(45_000_050);
     expect(code(() => randsToCents("1.234"))).toBe("NOT_INTEGER_MONEY");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Financial commitment states (P1 safety correction)
+// ---------------------------------------------------------------------------------------------
+describe("financial commitment states", () => {
+  const mfgClaim = (status: ClaimStatus | string): PriorClaim => ({
+    claimId: "c-x",
+    status,
+    lines: [{ stageId: "mfg", currentClaimCents: R(450_000) }],
+  });
+  const input = (status: ClaimStatus | string, over: Partial<ClaimInput> = {}) =>
+    goldenInput({
+      priorClaims: [PRIOR_0, mfgClaim(status)],
+      progress: [{ stageId: "mfg", approvedBps: 6_500 }, { stageId: "delivery", approvedBps: 2_500 }],
+      ...over,
+    });
+  // PRIOR_0 already billed mfg R1.5m; with 65% approved the room for mfg is exactly R450k.
+
+  it("every status is classified exactly once as reserving or released", () => {
+    const all = [...RESERVING_CLAIM_STATUSES, ...RELEASED_CLAIM_STATUSES].sort();
+    expect(all).toEqual([...CLAIM_STATUSES].sort());
+  });
+  it.each(["DRAFT", "READY_FOR_APPROVAL"] as const)("%s does NOT reserve — future claimable is unchanged", (st) => {
+    const r = computeProgressClaim(input(st, { selectedStageIds: ["mfg"] }));
+    expect(r.lines[0].currentClaimCents).toBe(R(450_000));
+  });
+  it.each(["APPROVED", "CIN7_PENDING", "CIN7_CREATED", "RECONCILED"] as const)("%s RESERVES — it reduces future claimable", (st) => {
+    expect(code(() => computeProgressClaim(input(st, { selectedStageIds: ["mfg"] })))).toBe("NOTHING_TO_CLAIM");
+    expect(priorBilledByStage([mfgClaim(st)]).get("mfg")).toBe(R(450_000));
+  });
+  it("FAILED_UNCERTAIN keeps the value reserved", () => {
+    expect(reservesValue("FAILED_UNCERTAIN")).toBe(true);
+    expect(priorBilledByStage([mfgClaim("FAILED_UNCERTAIN")]).get("mfg")).toBe(R(450_000));
+  });
+  it("FAILED_UNCERTAIN also BLOCKS any new claim touching its stage (no automatic re-bill path)", () => {
+    expect(code(() => computeProgressClaim(input("FAILED_UNCERTAIN")))).toBe("UNRESOLVED_CLAIM_BLOCKS_BILLING");
+    // even a larger approval on that stage cannot slip an overlapping claim through
+    expect(
+      code(() => computeProgressClaim(input("FAILED_UNCERTAIN", { progress: [{ stageId: "mfg", approvedBps: 10_000 }], selectedStageIds: ["mfg"] }))),
+    ).toBe("UNRESOLVED_CLAIM_BLOCKS_BILLING");
+    // a stage the uncertain claim did not touch remains billable
+    const r = computeProgressClaim(input("FAILED_UNCERTAIN", { selectedStageIds: ["delivery"] }));
+    expect(r.lines.map((l) => l.stageId)).toEqual(["delivery"]);
+  });
+  it("the R950k timeout scenario cannot be billed twice", () => {
+    // Claim #1 (R950k) timed out ambiguously. Cin7 may or may not hold the invoice.
+    const uncertain: PriorClaim = {
+      claimId: "claim-1",
+      status: "FAILED_UNCERTAIN",
+      lines: [{ stageId: "mfg", currentClaimCents: R(450_000) }, { stageId: "delivery", currentClaimCents: R(500_000) }],
+    };
+    expect(code(() => computeProgressClaim(goldenInput({ priorClaims: [PRIOR_0, uncertain] })))).toBe("UNRESOLVED_CLAIM_BLOCKS_BILLING");
+  });
+  it("FAILED_CONFIRMED_NO_WRITE and CANCELLED_BEFORE_WRITE release the value", () => {
+    for (const st of ["FAILED_CONFIRMED_NO_WRITE", "CANCELLED_BEFORE_WRITE"] as const) {
+      expect(reservesValue(st)).toBe(false);
+      const r = computeProgressClaim(input(st, { selectedStageIds: ["mfg"] }));
+      expect(r.lines[0].currentClaimCents).toBe(R(450_000));
+    }
+  });
+  it("an unknown status fails closed (and the legacy bare 'FAILED' is no longer valid)", () => {
+    expect(code(() => reservesValue("FAILED"))).toBe("UNKNOWN_CLAIM_STATUS");
+    expect(code(() => computeProgressClaim(input("FAILED")))).toBe("UNKNOWN_CLAIM_STATUS");
+  });
+  it("releasing a reserved claim needs positive no-write evidence", () => {
+    const ev = { method: "EXTERNAL_ID_LOOKUP_EMPTY" as const, checkedAt: "2026-10-15T00:00:00Z", detail: "no sale carries ExternalID" };
+    expect(code(() => assertClaimTransition("FAILED_UNCERTAIN", "FAILED_CONFIRMED_NO_WRITE"))).toBe("RELEASE_REQUIRES_NO_WRITE_EVIDENCE");
+    expect(code(() => assertClaimTransition("CIN7_PENDING", "FAILED_CONFIRMED_NO_WRITE"))).toBe("RELEASE_REQUIRES_NO_WRITE_EVIDENCE");
+    expect(() => assertClaimTransition("FAILED_UNCERTAIN", "FAILED_CONFIRMED_NO_WRITE", ev)).not.toThrow();
+    // a timeout can only move to UNCERTAIN — never straight to a released state
+    expect(() => assertClaimTransition("CIN7_PENDING", "FAILED_UNCERTAIN")).not.toThrow();
+  });
+  it("illegal transitions are rejected (no resurrecting released claims, no skipping approval)", () => {
+    expect(code(() => assertClaimTransition("DRAFT", "CIN7_PENDING"))).toBe("ILLEGAL_CLAIM_TRANSITION");
+    expect(code(() => assertClaimTransition("FAILED_CONFIRMED_NO_WRITE", "APPROVED"))).toBe("ILLEGAL_CLAIM_TRANSITION");
+    expect(code(() => assertClaimTransition("RECONCILED", "DRAFT"))).toBe("ILLEGAL_CLAIM_TRANSITION");
+    // an approved claim can only be cancelled while no write was attempted
+    expect(() => assertClaimTransition("APPROVED", "CANCELLED_BEFORE_WRITE", { method: "NEVER_SENT", checkedAt: "2026-10-15T00:00:00Z", detail: "no Cin7 call made" })).not.toThrow();
+    expect(code(() => assertClaimTransition("APPROVED", "CANCELLED_BEFORE_WRITE"))).toBe("RELEASE_REQUIRES_NO_WRITE_EVIDENCE");
+  });
+});
+
+describe("tax is resolved input, not hard-coded", () => {
+  it("the same claim yields different tax for different resolved rates", () => {
+    const at = (bps: number) => computeProgressClaim(goldenInput({ taxRateBps: bps }));
+    expect(at(0).taxCents).toBe(0);
+    expect(at(1500).taxCents).toBe(R(142_500));
+    expect(at(1000).taxCents).toBe(R(95_000));
+    expect(at(0).totalCents).toBe(R(950_000));
   });
 });
