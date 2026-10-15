@@ -436,11 +436,12 @@ export function computeProgressClaim(input: ClaimInput): ProgressClaimCalc {
  * under a committed claim and the next claim must fail closed. Variations will be additive rows,
  * never an edit of this snapshot.
  */
-export function canonicalBaseline(b: { orgId: string; customerId: string; contractCents: Cents; stages: StageInput[] }): string {
+export function canonicalBaseline(b: { orgId: string; customerId: string; contractCents: Cents; taxRateBps?: Bps; stages: StageInput[] }): string {
   return JSON.stringify({
     o: b.orgId,
     c: b.customerId,
     v: b.contractCents,
+    t: b.taxRateBps ?? null,
     s: b.stages.map((s) => [s.id, s.name, s.valueCents]),
   });
 }
