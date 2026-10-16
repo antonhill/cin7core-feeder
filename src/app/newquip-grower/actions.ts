@@ -2,10 +2,11 @@
 
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
+import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { QUOTES_MODULE } from "@/app/module-nav";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
 import { MAPPING_MATCHERS, isPlausibleCandidate, mergeCandidates, type MappingCandidate } from "@/newquip/grower/mapping";
-import { COMMERCIAL_MAPPINGS, singleMappings } from "@/newquip/grower/commercial";
+import { COMMERCIAL_MAPPINGS, manualSelectionSkusFor, singleMappings } from "@/newquip/grower/commercial";
 import type { ProductCommercials } from "@/newquip/grower/quote-bridge";
 
 // READ-ONLY server actions for the NewQuip Grower POC. They only SELECT from the org's already-synced
@@ -28,6 +29,30 @@ async function authorise(): Promise<string> {
   return orgId;
 }
 
+/**
+ * Cost, ROE, freight and mark-up are NOT rep-visible (Sean Round 1 sign-off #6). Only an org owner/admin (the estimator
+ * role in this interim build) receives Average Cost. Enforced HERE, server-side: a rep's browser never receives it.
+ * Any failure to establish the role fails CLOSED (no cost).
+ */
+async function canViewCommercials(): Promise<boolean> {
+  try {
+    await requireOrgAdmin("view Grower costs");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** DISPLAY ONLY: whether the UI may show cost / margin. The data itself is withheld server-side for non-admins. */
+export async function getGrowerViewerAction(): Promise<GrowerActionResult<{ canViewCommercials: boolean }>> {
+  try {
+    await authorise();
+    return { ok: true, data: { canViewCommercials: await canViewCommercials() } };
+  } catch (e) {
+    return { ok: false, error: errMsg(e) };
+  }
+}
+
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : "Unknown error";
 }
@@ -39,13 +64,15 @@ function errMsg(e: unknown): string {
 export async function discoverGrowerProductsAction(): Promise<GrowerActionResult<Record<string, MappingCandidate[]>>> {
   try {
     const orgId = await authorise();
+    const showCost = await canViewCommercials();
     const db = createServiceRoleClient();
     const out: Record<string, MappingCandidate[]> = {};
     const costBySku = new Map<string, number | null>();
     for (const m of MAPPING_MATCHERS) {
       // Package outputs are NOT a choice between interchangeable products — their pieces are defined in
       // commercial.ts, so fuzzy search is skipped for them (it would present components as alternatives).
-      if (COMMERCIAL_MAPPINGS[m.itemKey]?.kind === "package") { out[m.itemKey] = []; continue; }
+      const kind = COMMERCIAL_MAPPINGS[m.itemKey]?.kind;
+      if (kind === "package" || kind === "estimator_priced") { out[m.itemKey] = []; continue; }
       const found = new Map<string, MappingCandidate>();
       for (const seed of m.seeds) {
         const safe = seed.replace(/[^\w\s.-]/g, "").trim();
@@ -62,9 +89,20 @@ export async function discoverGrowerProductsAction(): Promise<GrowerActionResult
         if (error) throw new Error(error.message);
         for (const p of data ?? []) {
           if (!isPlausibleCandidate(m.itemKey, p.name)) continue;
-          const cost = p.average_cost == null ? null : Number(p.average_cost);
+          const cost = !showCost || p.average_cost == null ? null : Number(p.average_cost);
           costBySku.set(p.sku, cost);
           found.set(p.sku, { sku: p.sku, name: p.name, averageCost: cost, reason: m.reason });
+        }
+      }
+      // Estimator-chosen candidates (e.g. PVC doors): exact SKUs the estimator picks between BY HAND — never auto-confirmed.
+      const manualSkus = manualSelectionSkusFor(m.itemKey);
+      if (manualSkus.length > 0) {
+        const { data, error } = await db.from("products").select("sku, name, average_cost").eq("org_id", orgId).eq("active", true).in("sku", manualSkus);
+        if (error) throw new Error(error.message);
+        for (const p of data ?? []) {
+          const cost = !showCost || p.average_cost == null ? null : Number(p.average_cost);
+          costBySku.set(p.sku, cost);
+          found.set(p.sku, { sku: p.sku, name: p.name, averageCost: cost, reason: "Estimator selection — size is in the product description" });
         }
       }
       out[m.itemKey] = [...found.values()].slice(0, 25);
@@ -79,7 +117,7 @@ export async function discoverGrowerProductsAction(): Promise<GrowerActionResult
       for (const r of recs) {
         const p = bySku.get(r.recommendedSku);
         if (!p) continue; // recommended SKU not in this catalogue → plausible candidates only
-        const cost = p.average_cost == null ? null : Number(p.average_cost);
+        const cost = !showCost || p.average_cost == null ? null : Number(p.average_cost);
         costBySku.set(p.sku, cost);
         out[r.itemKey] = mergeCandidates({ sku: p.sku, name: p.name, averageCost: cost, reason: "Recommended from NewQuip source" }, out[r.itemKey] ?? []);
       }
@@ -103,6 +141,7 @@ export async function discoverGrowerProductsAction(): Promise<GrowerActionResult
 export async function lookupGrowerProductsAction(skus: string[]): Promise<GrowerActionResult<ProductCommercials[]>> {
   try {
     const orgId = await authorise();
+    const showCost = await canViewCommercials();
     const wanted = [...new Set((skus ?? []).map((s) => String(s).trim()).filter(Boolean))].slice(0, 120);
     if (wanted.length === 0) return { ok: true, data: [] };
     const db = createServiceRoleClient();
@@ -134,7 +173,7 @@ export async function lookupGrowerProductsAction(skus: string[]): Promise<Grower
         sku: p.sku,
         name: p.name,
         active: Boolean(p.active),
-        averageCost: p.average_cost == null ? null : Number(p.average_cost),
+        averageCost: !showCost || p.average_cost == null ? null : Number(p.average_cost),
         tierPrices: bySku.get(p.sku) ?? {},
         available: availBySku.has(p.sku) ? availBySku.get(p.sku)! : null,
       })),

@@ -10,6 +10,8 @@ export function splitBomLines(lines: GeneratedLine[]): { primary: GeneratedLine[
 
 export type QuantityProvenance =
   | "verified_calculation" // a verified rule produced it
+  | "system_default" // a confirmed minimum/default produced it (overridable)
+  | "estimator_input" // the quantity comes from dedicated estimator inputs (e.g. penning running metres)
   | "manual_topigs_reference" // estimator chose to use the historic Topigs figure
   | "manual_entry" // estimator typed a figure
   | "awaiting_validation"; // no trustworthy quantity
@@ -20,6 +22,8 @@ export type QuantityProvenance =
  */
 export function quantityProvenance(line: GeneratedLine, overrideSource: "historic" | "typed" | undefined): QuantityProvenance {
   if (line.basis === "system_calculated") return "verified_calculation";
+  if (line.basis === "system_default") return "system_default";
+  if (line.basis === "estimator_input") return "estimator_input";
   if (line.basis === "manual_override") return overrideSource === "historic" ? "manual_topigs_reference" : "manual_entry";
   return "awaiting_validation";
 }
@@ -36,4 +40,30 @@ export function priceTierPanelState(a: { hasInstance: boolean; status: RefLookup
   if (a.status === "failed") return "failed";
   if (a.status === "idle" || a.status === "loading") return "loading";
   return a.tierCount === 0 ? "no_tiers" : "ready";
+}
+
+/**
+ * The three kinds of value the estimator must be able to tell apart at a glance (+ whether the estimator has supplied it):
+ *   AUTO-CALCULATED            a confirmed engineering rule produced it
+ *   DEFAULT / SUGGESTED        a known basis; the estimator may override (visibly, with a reason)
+ *   ESTIMATOR INPUT REQUIRED   the rule is situational or unresolved — nothing is guessed
+ * `estimator_input` is the same third kind once the estimator HAS entered it.
+ */
+export type ValueKind = "auto_calculated" | "default_suggested" | "estimator_input_required" | "estimator_input";
+
+export const VALUE_KIND_LABEL: Record<ValueKind, string> = {
+  auto_calculated: "AUTO-CALCULATED",
+  default_suggested: "DEFAULT / SUGGESTED",
+  estimator_input_required: "ESTIMATOR INPUT REQUIRED",
+  estimator_input: "ESTIMATOR INPUT",
+};
+
+export function valueKindOf(line: Pick<GeneratedLine, "basis">): ValueKind {
+  switch (line.basis) {
+    case "system_calculated": return "auto_calculated";
+    case "system_default": return "default_suggested";
+    case "manual_override":
+    case "estimator_input": return "estimator_input";
+    default: return "estimator_input_required";
+  }
 }

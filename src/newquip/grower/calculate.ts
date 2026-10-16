@@ -67,7 +67,12 @@ export function validateGrowerInput(input: GrowerConfigurationInput): InputIssue
   checkNumber(issues, "rooms", input.rooms, { positive: true, integer: true });
   checkNumber(issues, "totalPens", input.totalPens, { positive: true, integer: true });
   checkNumber(issues, "hospitalPens", input.hospitalPens, { integer: true });
-  checkNumber(issues, "pigsPerBuilding", input.pigsPerBuilding, { positive: true, integer: true });
+  checkNumber(issues, "pigsPerRoom", input.pigsPerRoom, { positive: true, integer: true });
+  if (input.slattedFloorAreaM2 != null) checkNumber(issues, "slattedFloorAreaM2", input.slattedFloorAreaM2, { positive: false });
+  if (input.penningRunningMetresPerRoom != null) checkNumber(issues, "penningRunningMetresPerRoom", input.penningRunningMetresPerRoom, { positive: false });
+  if (input.penningPigSize != null && !["SMALL", "MEDIUM", "LARGE"].includes(input.penningPigSize)) {
+    issues.push({ field: "penningPigSize", code: "invalid_pig_size", message: "Pig size must be small, medium or large." });
+  }
   if (
     Number.isFinite(input.hospitalPens) &&
     Number.isFinite(input.totalPens) &&
@@ -109,6 +114,13 @@ export function evaluateRule(
   if (def.classification === "verified" && def.verifiedCompute) {
     return { basis: "system_calculated", quantityPerRoom: def.verifiedCompute(input) };
   }
+  // A confirmed minimum/default produces a quantity, but it is labelled a DEFAULT and stays overridable.
+  if (def.defaultCompute) {
+    return { basis: "system_default", quantityPerRoom: def.defaultCompute(input) };
+  }
+  // The quantity is itself an explicit estimator input on dedicated fields (e.g. penning running metres).
+  const typed = def.estimatorInput?.(input);
+  if (typed != null) return { basis: "estimator_input", quantityPerRoom: typed };
   void hypothesisOf;
   return { basis: "awaiting_validation", quantityPerRoom: null };
 }
@@ -141,6 +153,27 @@ export function explainLine(line: Omit<GeneratedLine, "explanation">, def: Growe
           `Result: ${line.quantityPerRoom} per room × ${rooms} rooms = ${line.projectQuantity}`,
         ],
       };
+    case "system_default":
+      return {
+        kind: "provisional",
+        headline: `${line.label}: DEFAULT minimum — an estimator or the customer may override`,
+        steps: [
+          `Rule ${line.ruleId}: ${def.evidence}`,
+          `Default: ${line.quantityPerRoom} per room × ${rooms} rooms = ${line.projectQuantity}`,
+          histText,
+        ],
+      };
+    case "estimator_input":
+      return {
+        kind: "manual",
+        headline: `${line.label}: quantity from estimator inputs`,
+        steps: [
+          `Estimator input: ${line.quantityPerRoom} ${line.unit === "running_metre" ? "running metres" : "units"} per room × ${rooms} rooms = ${line.projectQuantity}`,
+          ...(inputs.length ? [`Inputs: ${inputs.join(", ")}`] : []),
+          histText,
+          `Evidence: ${def.evidence}`,
+        ],
+      };
     case "manual_override":
       return {
         kind: "manual",
@@ -148,6 +181,8 @@ export function explainLine(line: Omit<GeneratedLine, "explanation">, def: Growe
         steps: [
           `Rule ${line.ruleId} is not being applied — a manual override is in effect`,
           `Override: ${line.quantityPerRoom} per room × ${rooms} rooms = ${line.projectQuantity}`,
+          line.overrideReason ? `Reason: ${line.overrideReason}` : "Reason: NOT GIVEN — an override needs a reason",
+          ...(line.defaultQuantityPerRoom != null ? [`System default retained: ${line.defaultQuantityPerRoom} per room`] : []),
           histText,
           `Rule status: ${def.classification.replace("_", " ")}`,
         ],
@@ -201,9 +236,14 @@ export function calculateGrowerHouse(input: GrowerConfigurationInput): GrowerCal
     if (selector && input[selector] !== SUPPORTED_SELECTIONS[selector]) continue; // unsupported → no line, issue already raised
 
     const { basis, quantityPerRoom } = evaluateRule(def, input, hypothesisOf);
+    const reason = input.quantityOverrideReasons?.[def.itemKey]?.trim() || null;
     const base = {
       itemKey: def.itemKey,
       label: def.label,
+      unit: def.unit ?? ("each" as const),
+      defaultQuantityPerRoom: def.defaultCompute ? def.defaultCompute(input) : null,
+      overrideReason: basis === "manual_override" ? reason : null,
+      inputRequired: basis === "awaiting_validation" ? (def.inputRequiredMessage?.(input) ?? null) : null,
       ruleId: def.id,
       ruleStatus: def.classification,
       basis,

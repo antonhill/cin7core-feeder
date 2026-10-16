@@ -26,16 +26,16 @@ MANUAL = estimator decision, not a formula · REQUIRES NEWQUIP VALIDATION = infe
 | Rule ID | Output | Source inputs | Topigs observed (per room) | Provisional relationship | Evidence | Confidence | Class | Mode | Override | Cin7 SKU | Mapping | Sean? |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | GROWER-GEO-001 | Floor area (derived) | length, width | 714.285 m² | length × width | workbook B77 | high | **VERIFIED** | automatic | n/a | n/a | n/a | no |
-| GROWER-ROOMS-001 | Project qty (derived) | rooms | ×12 | per-room × rooms | workbook P101 | high | **VERIFIED** | automatic | n/a | n/a | n/a | confirm meaning of "room" (Q0) |
+| GROWER-ROOMS-001 | Project qty (derived) | rooms | ×12 | per-room × rooms | workbook P101; **Sean R2 #1: a room is an actual room within a building (6 buildings × 2 rooms = 12)** | high | **VERIFIED** | automatic | n/a | n/a | n/a | **confirmed (R2)** |
 | GROWER-TANK-001 | 13.39t bulk feed tank | pigs/building | 1 | none ("based on 650 kg/m³") | D83 typed | none | REQUIRES NEWQUIP VALIDATION | manual | yes | unmapped | UNMAPPED | **yes** |
-| GROWER-AUGER-001 | M75 Flex auger system | length, rooms | 1 ("2 x lines") | none | D84 typed | none | REQUIRES NEWQUIP VALIDATION | manual | yes | unmapped | UNMAPPED | **yes** |
-| GROWER-FEEDER-001 | CCM feeder | total pens, hospital pens | 18 | total − hospital = 18 | E85 typed `=18` | medium | REQUIRES NEWQUIP VALIDATION | automatic | yes | unmapped | UNMAPPED | **yes** |
+| GROWER-AUGER-001 | M75 Flex auger system | length, rooms | 1 ("2 x lines") | none | D84 typed. **Sean R2 #6: formulas in worksheet W / W1 (hidden K–O) are still current — NOT yet ported (workbook not in repo)** | none | REQUIRES NEWQUIP VALIDATION | manual | yes | package | Master SKUs (R2) | **needs the workbook** |
+| GROWER-FEEDER-001 | CCM feeder | pigs/room, pens | 18 | **R2 #2: depends on pigs per pen and feeder capacity; CCM = 45 pigs (PNQ082).** Rounding / split-pen rule OPEN | E85 typed `=18` | medium | REQUIRES NEWQUIP VALIDATION | manual (estimator enters quantity) | yes | PNQ082 | source-backed | **Round 3 (HIGH)** |
 | GROWER-MAT-001 | Feed saver mat | (feeder) | 18 | = feeder qty | E86 formula `=E85` | high | PROVISIONAL | automatic | yes | unmapped | UNMAPPED | confirm (depends on feeders) |
-| GROWER-DRINKER-001 | Grower cup drinker | pens | 54 | 3 × feeders (54 = 3×18, one data point) | E87 typed | low | REQUIRES NEWQUIP VALIDATION | automatic | yes | unmapped | UNMAPPED | **yes** |
-| GROWER-SLAT-001 | Concrete slat 1.2×0.45 | length, width | 1320 | floor(L/0.45) × floor(W/1.2) = 110 × 12 | E88 typed `=110*12`; area ÷ 0.54 m² ≈ 1323 | medium | REQUIRES NEWQUIP VALIDATION | automatic | yes | unmapped | UNMAPPED | **yes** |
-| GROWER-PEN-001 | PP Green 50×0.9 vented penning pkg | pens | 1 ("20 pens") | none | row 95 | none | REQUIRES NEWQUIP VALIDATION | manual | yes | unmapped | UNMAPPED | **yes** |
-| GROWER-LIGHT-001 | FORTIS 1.2 5000K LED | length, width | 38 | area ÷ 14 = 51.0 (workbook guide) — **contradicted** by 38 | D97 formula vs E97 typed | low | REQUIRES NEWQUIP VALIDATION | automatic | yes | unmapped | UNMAPPED | **yes** |
-| GROWER-DOOR-001 | PVC SST door (not in brief's list) | — | 4 | none | row 98 | none | REQUIRES NEWQUIP VALIDATION | manual | yes | unmapped | UNMAPPED | yes |
+| GROWER-DRINKER-001 | Grower cup drinker | pigs/room | 54 | **R2 #3: 15 pigs per drinker.** Rounding / minimum / hospital pens OPEN. Suggested (unrounded) 600 ÷ 15 = 40 ≠ Topigs 54 | E87 typed | medium | REQUIRES NEWQUIP VALIDATION | manual (suggested) | yes | package (+ Master NB3542-03 recorded, not chosen) | package | **Round 3 (HIGH)** |
+| GROWER-SLAT-001 | Concrete slat 1.2×0.45 | **slatted floor area (estimator input)** | 1320 | **R2 #4: driven by the actual slatted floor area; layouts/walkways vary — NO footprint-derived assumption.** Area → units / wastage OPEN | E88 typed `=110*12` | medium | REQUIRES NEWQUIP VALIDATION | manual | yes | NQ1161 | source-backed | **Round 3 (HIGH)** |
+| GROWER-PEN-001 | PP penning | **pig size + running metres (estimator inputs)** | 244.87 m of panel (sold as 1 package) | **R2 #7: priced per RUNNING METRE by pig size (small/medium/large); NOT m².** Rates/SKUs not supplied | G Posts (2) rows 41–47 | medium | MANUAL | manual | yes | KNQPP005–008 family (historic) | estimator-priced | **Round 3 (HIGH)** |
+| GROWER-LIGHT-001 | FORTIS 1.2 5000K LED | length, width | 38 | **R2 #5: minimum 1 light per 25 m²** (rounded up → 29 for 714.285 m²; Sean: "about 29"); customer may ask for more — Topigs' 38 was a customer-specific override. The area ÷ 14 guide is NOT the rule | D97 vs E97 | high | PROVISIONAL (rounding up is our reading) | default (overridable, reason required) | yes | **FORTIS 1.2: SKU REQUIRED** (HNQ7046 = historic FERAX surrogate) | unmapped | confirm round-up |
+| GROWER-DOOR-001 | PVC SST door | — | 4 | **R2 #11: selection is ALWAYS manual; size is in the Cin7 description.** No sizing formula | row 98 | high | REQUIRES NEWQUIP VALIDATION | manual | yes | candidates NQ2114/2113/2112/2161/2281 | manual selection | no (by design) |
 | GROWER-OPT-001 | Thomas-CL1 controller | option flag | 0 (excluded) | — | row 89 | none | MANUAL | manual | yes | unmapped | UNMAPPED | yes |
 | GROWER-OPT-002 | Silo weighing | option flag | 0 | — | row 90 | none | MANUAL | manual | yes | unmapped | UNMAPPED | yes |
 | GROWER-OPT-003 | Control panel CL1 & BF | option flag | 0 (`=E89`) | follows controller | row 91 | low | MANUAL | manual | yes | unmapped | UNMAPPED | yes |
@@ -253,6 +253,8 @@ evidence, **not** NewQuip's approval; it stays AMBIGUOUS ("Source-backed — con
 Precedence: (1) source-backed SKU, listed first and flagged; (2) explicit human confirmation → MAPPED; (3) plausible catalogue candidates; (4) UNMAPPED.
 Package outputs skip fuzzy search entirely (its hits were components, not alternatives).
 
+> **Partly superseded by the Round 2 section at the end of this file** (LED light, M75 SKUs/drive unit, penning, drinker, PVC door).
+
 | Output | Mapping | Detail |
 |---|---|---|
 | Bulk tank | single → `SYSH-2750-3` | recommendation; `SYSH-2750-4` excluded |
@@ -268,3 +270,40 @@ Package outputs skip fuzzy search entirely (its hits were components, not altern
 Pricing behaviour: a package is priced component-by-component through the existing quote engine and contributes to totals **only when every
 component is priced** (all-or-nothing); otherwise it is *package incomplete* and adds nothing. Historic Topigs quantities and prices are never used.
 Average Cost = 50 and availability = 1000 are flagged *suspect* (data warning, not blocker). The package must also be explicitly confirmed ("Use this package").
+
+
+---
+
+## Round 2 (2026-10-16) — what Sean confirmed, what the build does, what stays OPEN
+
+Sources: `NewQuip_Grower_POC_Sean_Validation_v3_Round2 feedback.xlsx` (Sean / Shirnel / Rene, 14/10/2026) and the owner's Round 2
+brief (which also cites `NewQuip Master 05 Oct 2026 NEW.xlsx`). **Neither the Master nor the Topigs workbook is in this repository or
+on the build machine**, so Master-derived facts below are recorded *as stated in the owner's brief* and are NOT independently verified here.
+
+| # | Topic | Confirmed | Build behaviour | Still OPEN |
+|---|---|---|---|---|
+| 1 | Rooms | An actual room within a building; Topigs = 6 buildings × 2 rooms = 12 | Labels/help say *rooms*; dims, pens, pigs are per room; `pigsPerBuilding` renamed `pigsPerRoom` (assumes Sean's "±600 / building" is per room — 20 pens × 30) | — |
+| 2 | Feeders | Depends on pigs/pen and capacity; CCM = 45 pigs; PNQ082 | Capacity shown; quantity = estimator entry ("ESTIMATOR INPUT REQUIRED"); no ceil() | Rounding, split/hospital pens (R3 #3) |
+| 3 | Drinkers | 15 pigs per drinker; NB3542-03 per the Master | Unrounded suggestion (40 for Topigs, ≠ historic 54); estimator confirms. The existing 7-part package is kept; **NB3542-03 recorded as an alternative identity, never priced** (Sean R1 confirmed the 7 parts; the two sources conflict) | Rounding / minimum / hospital (R3 #4); which representation prices the drinker |
+| 4 | Slats | Driven by actual slatted floor area; layouts vary | `slattedFloorAreaM2` estimator input; the footprint-derived hypothesis is **removed**; final quantity estimator-entered | Area → units, wastage (R3 #5) |
+| 5 | Lighting | Minimum 1 per 25 m²; customer may exceed; Topigs 38 = customer override | DEFAULT = ceil(area/25) (29/room); override is visible, keeps the default, needs a reason | Whole-light rounding (our reading, matches Sean's "about 29") |
+| 6 | FORTIS | FORTIS 1.2 is current; HNQ7046 (FERAX 24W) was a historic surrogate; no FORTIS SKU | "FORTIS 1.2 — SKU REQUIRED / UNMAPPED"; HNQ7046 shown as surrogate only; package stays incomplete | FORTIS SKU (R3 #8) |
+| 7 | M75 | Hidden W/W1 formulas (K–O) still current; Master SKUs NQ1223, NQ1227, NQ1764, NQ1942, NQ.TUBE.75 | SKUs updated; main auger tube, clear drop tube and NQ.TUBE.63 kept distinct; **formulas NOT ported — the workbook is not available** | The workbook itself |
+| 8 | Drive unit | TRA1.1KW3PH → NQ3132 (1.5HP, 1.1kW, 380V); Master Retail shows 0 | NQ3132 mapped; **PRICING EXCEPTION — never priced, never zero** | Price treatment (R3 #7) |
+| 9 | Penning | Running metres, not m²; by pig size; SKU per size (KNQPP005–008, new sizes new SKUs) | Pig size + running-metre inputs; **no rate invented**; ESTIMATOR PRICING REQUIRED; old 17-part layout BOM removed from code (it is in git history / this register's earlier sections) | Rates / SKUs (R3 #6) |
+| 10 | PVC doors | Manual selection; size in the Cin7 description | Manual select among NQ2114/2113/2112/2161/2281; no sizing formula | — |
+| 11 | Delivery / installation | Service reports, courier invoices, distance | Estimator-entered ex-VAT amounts (delivery, installation, slat delivery); required before a budget is "complete" | — |
+| 12 | Day-to-day pricing | Retail price (an output of the controlled model) | Cin7 price tier; cost/ROE/freight/MU not exposed; **Average Cost is withheld server-side from non-admins** | Tier behaviour (R3 #10) |
+| 13 | Project pricing | "Cost + 20%" (unresolved meaning) | **No formula.** Project quotes show ESTIMATOR PRICING REQUIRED; an estimator-entered selling price is the only total | R3 #1 (BLOCKER) |
+| 14 | Price source | Excel Master today | `pricing-source.ts` descriptor; interim = Cin7 synced price tiers; swappable | R3 #2 (BLOCKER) |
+| 15 | Ventilation | Fans were in an earlier quote not yet ingested | Marked **PENDING REFERENCE QUOTE VALIDATION**; no fan/cooling/controller rule | R3 #9 |
+
+Round 3 open items (all **OPEN**; `src/newquip/grower/round3.ts`, shown in the UI): BLOCKERS 1 project pricing meaning, 2 price source of truth ·
+HIGH 3 feeder rounding, 4 drinker rounding/minimum, 5 slat area→units, 6 penning rates/products, 7 NQ3132 pricing ·
+MEDIUM 8 FORTIS SKU, 9 fan/cooling/controller scope, 10 customer/agent price-tier behaviour.
+
+Conflict flagged: Sean's Round 1 sheet marked the feeder "Change needed → PNQ082-WINDOW", but the owner's Round 2 brief (Master) confirms PNQ082.
+The code follows the newer brief and does not auto-confirm either.
+
+Beta UX: every quantity carries one of AUTO-CALCULATED (none yet — no item rule is verified), DEFAULT / SUGGESTED (lighting minimum), or
+ESTIMATOR INPUT REQUIRED / ESTIMATOR INPUT. Overrides capture a reason (Sean R1: "they must give a reason"); a missing reason blocks the budget.

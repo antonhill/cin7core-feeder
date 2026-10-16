@@ -29,12 +29,18 @@ describe("budget state (no misleading R0.00 quote)", () => {
     expect(b.incomplete).toBe(true);
     expect(b.totals.subtotalExTax).toBeGreaterThan(0);
   });
-  it("all lines priced → complete", () => {
+  it("all lines priced, override reasoned and delivery/installation entered → complete", () => {
     const calc = calculateGrowerHouse(TOPIGS_GROWER_INPUT);
-    const only = calc.lines.filter((l) => l.itemKey === "feeder").map((l) => ({ ...l, projectQuantity: 216, quantityPerRoom: 18, basis: "manual_override" as const }));
-    const b = buildBudgetQuote(only, mapped({ feeder: "F" }), new Map([["F", prod("F", 100, 200)]]), opts);
+    const only = calc.lines.filter((l) => l.itemKey === "feeder").map((l) => ({ ...l, projectQuantity: 216, quantityPerRoom: 18, basis: "manual_override" as const, overrideReason: "per pen layout" }));
+    const withCharges = { ...opts, estimatorCharges: { delivery: 12000, installation: 8000 } };
+    const b = buildBudgetQuote(only, mapped({ feeder: "F" }), new Map([["F", prod("F", 100, 200)]]), withCharges);
     expect(b.state).toBe("complete");
     expect(b.incomplete).toBe(false);
+    // …and without the estimator-entered charges / reason it is NOT complete.
+    const bare = buildBudgetQuote(only.map((l) => ({ ...l, overrideReason: null })), mapped({ feeder: "F" }), new Map([["F", prod("F", 100, 200)]]), opts);
+    expect(bare.state).toBe("partial");
+    expect(bare.blockers).toEqual(expect.arrayContaining(["Delivery: estimator-entered amount required", "Installation: estimator-entered amount required"]));
+    expect(bare.blockers.some((x) => /override reason required/.test(x))).toBe(true);
   });
   it("missing price / cost / quantity never become zero revenue", () => {
     const calc = calculateGrowerHouse({ ...TOPIGS_GROWER_INPUT, quantityOverrides: { feeder: 18 } });

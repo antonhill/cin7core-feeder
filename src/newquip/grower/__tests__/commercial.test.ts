@@ -82,10 +82,13 @@ describe("grower cup drinker package", () => {
 
 describe("FORTIS lighting package", () => {
   const pkg = packageFor("led_light")!;
-  it("resolves as a package with HNQ7046 as the sourced luminaire (×1) and clip ×3, cable ×1", () => {
+  it("resolves as a package whose luminaire is FORTIS 1.2 — SKU REQUIRED; HNQ7046 is only a historic surrogate", () => {
     expect(commercialMappingFor("led_light")?.kind).toBe("package");
     const [lum, clip, cable] = pkg.components;
-    expect(lum).toMatchObject({ sku: "HNQ7046", qtyPerUnit: 1, identity: "source_backed" });
+    expect(lum).toMatchObject({ id: "luminaire", sku: null, qtyPerUnit: 1, identity: "unidentified", skuRequired: "FORTIS 1.2 — SKU REQUIRED / UNMAPPED" });
+    expect(lum.historicSurrogate).toEqual({ sku: "HNQ7046", name: "FERAX 24W ON/OFF" });
+    expect(lum.description).toContain("FORTIS 1.2");
+    expect(lum.candidateSkus).toBeUndefined(); // the surrogate is NOT offered as a candidate
     expect(clip).toMatchObject({ id: "clip", qtyPerUnit: 3 });
     expect(cable).toMatchObject({ id: "cable", qtyPerUnit: 1 });
   });
@@ -104,7 +107,10 @@ describe("FORTIS lighting package", () => {
     const b = buildBudgetQuote(calc.lines, new Map(), products, opts(["led_light"]));
     const line = b.lines.find((l) => l.itemKey === "led_light")!;
     expect(line.status).toBe("package_incomplete");
-    expect(line.components!.filter((c) => c.status === "identity_unresolved").map((c) => c.id)).toEqual(["clip", "cable"]);
+    // HNQ7046 is present and priced in the catalogue, yet it is NEVER silently substituted for the FORTIS.
+    expect(line.components!.filter((c) => c.status === "identity_unresolved").map((c) => c.id)).toEqual(["luminaire", "clip", "cable"]);
+    expect(line.components!.find((c) => c.id === "luminaire")!.reason).toBe("FORTIS 1.2 — SKU REQUIRED / UNMAPPED");
+    expect(line.components!.some((c) => c.sku === "HNQ7046" && c.status === "priced")).toBe(false);
     expect(line.revenueExTax).toBeNull();
     expect(b.totals.subtotalExTax).toBe(0);
     expect(b.state).toBe("awaiting_pricing");
@@ -113,23 +119,41 @@ describe("FORTIS lighting package", () => {
 
 describe("M75 Flex package", () => {
   const pkg = packageFor("flex_auger")!;
-  it("resolves as a package of the ~12 sourced components", () => {
+  it("resolves as a package of the ~12 components, using the Master SKUs for the M75 tube, elbow, clamp, drop kit and drop tube", () => {
     expect(commercialMappingFor("flex_auger")?.kind).toBe("package");
     expect(pkg.components).toHaveLength(12);
     const skus = pkg.components.map((c) => c.sku);
-    expect(skus).toEqual(expect.arrayContaining(["NQ1163", "NQ1984", "NQ.TUBE.63", "T3750001", "TSA3750505", "TRA1.1KW3PH"]));
+    expect(skus).toEqual(expect.arrayContaining(["NQ1163", "NQ1223", "NQ1227", "NQ1764", "NQ1942", "NQ.TUBE.75", "T3750001", "TSA3750505", "NQ3132"]));
+    const by = (id: string) => pkg.components.find((c) => c.id === id)!;
+    expect([by("tube").sku, by("elbow").sku, by("clamps").sku, by("dropkit").sku, by("droptube").sku]).toEqual(["NQ1223", "NQ1227", "NQ1764", "NQ1942", "NQ.TUBE.75"]);
+  });
+  it("keeps the M75 MAIN auger tube distinct from the clear DROP tube, and never conflates either with NQ.TUBE.63", () => {
+    const tube = pkg.components.find((c) => c.id === "tube")!;
+    const drop = pkg.components.find((c) => c.id === "droptube")!;
+    expect(tube.sku).not.toBe(drop.sku);
+    expect(tube.description).toMatch(/AUGER PIPE/);
+    expect(drop.description).toMatch(/clear drop tube/i);
+    expect(pkg.components.some((c) => c.sku === "NQ.TUBE.63")).toBe(false);
+    expect(drop.note).toMatch(/NQ\.TUBE\.63/);
+    expect(drop.note).toMatch(/NOT the auger pipe/);
+  });
+  it("the drive unit is NQ3132 (replacing TRA1.1KW3PH) and is a PRICING EXCEPTION, never quoted as zero", () => {
+    const drive = pkg.components.find((c) => c.id === "drive")!;
+    expect(drive.sku).toBe("NQ3132");
+    expect(drive.description).toBe("1.5HP DRIVE UNIT (1.1KW) 380V");
+    expect(pkg.components.some((c) => c.sku === "TRA1.1KW3PH")).toBe(false);
+    expect(drive.pricingException).toMatch(/PRICING EXCEPTION — ESTIMATOR REVIEW REQUIRED/);
   });
   it("historic Topigs quantities are references, NOT verified engineering rules", () => {
     expect(pkg.components.every((c) => c.quantityStatus === "requires_validation" && c.qtyPerUnit === null)).toBe(true);
     expect(pkg.components.find((c) => c.sku === "NQ1163")!.historicTopigsQty).toBe(134);
-    expect(pkg.components.find((c) => c.sku === "NQ1984")!.historicTopigsQty).toBe(18);
+    expect(pkg.components.find((c) => c.sku === "NQ1942")!.historicTopigsQty).toBe(18);
     expect(GROWER_RULES.find((r) => r.itemKey === "flex_auger")!.classification).toBe("requires_validation");
   });
-  it("the unsettled support post is not assigned a SKU; two SKUs are flagged as missing from Cin7", () => {
+  it("the unsettled support post is not assigned a SKU", () => {
     const post = pkg.components.find((c) => c.id === "post")!;
     expect(post.sku).toBeNull();
     expect(post.candidateSkus).toEqual(["NQ2601"]);
-    expect(pkg.components.filter((c) => c.note?.includes("NOT found in Cin7")).map((c) => c.sku).sort()).toEqual(["NQ.TUBE.63", "TRA1.1KW3PH"]);
   });
   it("historic quantities are never priced: even with every price present the package stays incomplete", () => {
     const calc = withQty({ flex_auger: 1 });
@@ -142,20 +166,23 @@ describe("M75 Flex package", () => {
   });
 });
 
-describe("PP Green penning package", () => {
-  const pkg = packageFor("penning_package")!;
-  it("resolves as a layout-driven package; fuzzy candidates are components, not alternatives", () => {
-    expect(commercialMappingFor("penning_package")?.kind).toBe("package");
-    expect(pkg.layoutDriven).toBe(true);
+describe("Penning (Round 2: per RUNNING METRE, by pig size)", () => {
+  it("is estimator-priced, not a package and not square-metre priced", () => {
+    const e = commercialMappingFor("penning_package")!;
+    expect(e.kind).toBe("estimator_priced");
+    expect(packageFor("penning_package")).toBeUndefined();
     expect(recommendedSkuFor("penning_package")).toBeUndefined();
+    if (e.kind === "estimator_priced") {
+      expect(e.unit).toBe("running metre");
+      expect(e.reason).toMatch(/ESTIMATOR PRICING REQUIRED/);
+      expect(e.historicSkus).toEqual(["KNQPP005", "KNQPP006", "KNQPP007", "KNQPP008"]);
+      expect(`${e.unit} ${e.reason}`).not.toMatch(/square|m²|sqm/i);
+    }
   });
-  it("quantities are layout-dependent and REQUIRE VALIDATION; KNQ074 ×20 is a historic reference only", () => {
-    expect(pkg.components.every((c) => c.quantityStatus === "requires_validation" && c.qtyPerUnit === null)).toBe(true);
-    expect(pkg.components.find((c) => c.sku === "KNQ074")!.historicTopigsQty).toBe(20);
-    expect(GROWER_RULES.find((r) => r.itemKey === "penning_package")!.classification).toBe("requires_validation");
-  });
-  it("the panel SKU is not invented", () => {
-    expect(pkg.components.find((c) => c.id === "panels")!.sku).toBeNull();
+  it("its rule quantity is in running metres, and no rate is invented", () => {
+    const rule = GROWER_RULES.find((r) => r.itemKey === "penning_package")!;
+    expect(rule.unit).toBe("running_metre");
+    expect(JSON.stringify(rule)).not.toMatch(/per square|m² pricing|price per m²/i);
   });
 });
 

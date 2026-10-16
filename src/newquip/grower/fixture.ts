@@ -12,12 +12,17 @@ export const TOPIGS_GROWER_INPUT: GrowerConfigurationInput = {
   rooms: 12,
   totalPens: 20,
   hospitalPens: 2,
-  pigsPerBuilding: 600,
+  pigsPerRoom: 600,
   selectedFeederType: "CCM",
   selectedDrinkerType: "CUP_NEW",
   selectedFlooringType: "CONCRETE_1200X450X70",
   selectedPenningType: "PP_GREEN_VENTED",
   selectedLightingType: "FORTIS_1_2_5000K",
+  // Round 2: these are ESTIMATOR INPUTS. The Topigs slatted area / penning metres are not independently confirmed, so the
+  // golden input leaves them unset rather than back-filling them from the historic quote.
+  slattedFloorAreaM2: null,
+  penningPigSize: null,
+  penningRunningMetresPerRoom: null,
   optionalEquipment: {
     controller: false,
     silo_weighing: false,
@@ -37,7 +42,8 @@ export const TOPIGS_GROWER_HISTORIC: Record<GrowerItemKey, number> = {
   feed_saver_mat: 18,
   cup_drinker: 54,
   concrete_slat: 1320,
-  penning_package: 1,
+  // metres of panel (G Posts rows 41–47); the historic quote sold the penning as ONE package (qty 1). Round 2: penning is per running metre.
+  penning_package: 244.87,
   led_light: 38,
   pvc_door: 4,
   controller: 0,
@@ -51,3 +57,9 @@ export const TOPIGS_GROWER_HISTORIC: Record<GrowerItemKey, number> = {
 
 /** Verified derived figure for the golden input (workbook B77). */
 export const TOPIGS_FLOOR_AREA_M2 = 714.285;
+
+/**
+ * The Topigs historic lighting quantity (38 per room) is a CUSTOMER-SPECIFIC OVERRIDE of the 1-per-25 m² minimum
+ * (Sean Round 2 #5: "the farmer wanted more lights"). The golden validation applies it as a VISIBLE override.
+ */
+export const TOPIGS_LIGHT_OVERRIDE = { quantityOverrides: { led_light: 38 }, quantityOverrideReasons: { led_light: "Customer-specific: farmer asked for more than the 1-per-25 m² minimum (Topigs quote, Sean Round 2 #5)" } } as const;

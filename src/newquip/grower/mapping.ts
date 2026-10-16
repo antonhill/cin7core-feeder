@@ -37,6 +37,8 @@ export const MAPPING_MATCHERS: MappingMatcher[] = [
   { itemKey: "feed_saver_mat", seeds: ["feed saver"], include: [/feed saver mat/i, /1000\s*x\s*1000|\b1\s*m\s*x\s*1\s*m\b/i], exclude: [], reason: "feed saver mat, 1000 × 1000 mm" },
   { itemKey: "cup_drinker", seeds: ["cup drinker"], include: [/cup drinker/i, /grower/i], exclude: [/nipple|bracket|backing|socket|manifold|\bsow\b/i], reason: "cup drinker for growers" },
   { itemKey: "concrete_slat", seeds: ["concrete slat"], include: [/concrete slat/i, /\(12\s*x\s*0?45|\(1200\s*x\s*45\d/i], exclude: [/mould|fastener|frame/i], reason: "concrete slat, 1.2 × 0.45 m" },
+  // NOTE: penning is ESTIMATOR-PRICED per running metre (Round 2) — discovery skips it; this matcher is kept only as the
+  // legacy plausibility definition and is never used to price anything.
   { itemKey: "penning_package", seeds: ["venti"], include: [/\bPP\b/i, /50\s*mm/i, /venti/i, /green/i], exclude: [], reason: "PP 50mm green vented penning" },
   { itemKey: "led_light", seeds: ["fortis"], include: [/fortis/i], exclude: [], reason: "FORTIS LED lighting" },
   { itemKey: "pvc_door", seeds: ["door"], include: [/door/i, /pvc|polyp\w*/i, /sst|alu/i], exclude: [/post|handle|latch|hinge|\bcap\b|trap|channel/i], reason: "PVC/polypropylene door with SST or aluminium frame" },

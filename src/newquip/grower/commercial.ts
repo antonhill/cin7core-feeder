@@ -37,6 +37,15 @@ export interface PackageComponent {
   /** Known gaps, e.g. "present in the legacy ERP but not in Cin7". */
   note?: string;
   evidence: string;
+  /** Shown instead of a SKU while none is confirmed (e.g. FORTIS 1.2). */
+  skuRequired?: string;
+  /** A HISTORIC SURROGATE used in an old quote. Shown for context only — NEVER substituted or priced. */
+  historicSurrogate?: { sku: string; name: string };
+  /**
+   * The component is a PRICING EXCEPTION: it is never priced automatically, even if a price appears, until NewQuip
+   * confirms the commercial treatment (e.g. NQ3132 shows Retail 0 in the Master). Value = the reason shown to the estimator.
+   */
+  pricingException?: string;
 }
 
 export interface SingleSkuMapping {
@@ -56,6 +65,21 @@ export interface PackageMapping {
   /** True when component quantities depend on the physical layout (penning, Flex). */
   layoutDriven: boolean;
   components: PackageComponent[];
+  /**
+   * A DIFFERENT representation of the same output seen in a later source (e.g. a single sellable SKU in the Master).
+   * Recorded, never priced automatically — which representation prices the output is for NewQuip to confirm.
+   */
+  alternativeIdentity?: { sku: string; description: string; note: string };
+}
+
+/** Priced per a unit the estimator supplies (e.g. penning per running metre by pig size). No automatic price. */
+export interface EstimatorPricedMapping {
+  kind: "estimator_priced";
+  itemKey: GrowerItemKey;
+  unit: string;
+  reason: string;
+  /** Historic SKU family, for the estimator's reference only. */
+  historicSkus?: string[];
 }
 
 /** A commercial charge that is not a physical SKU (e.g. delivery). Documented; not priced in this POC. */
@@ -74,9 +98,11 @@ export interface UnresolvedMapping {
   kind: "unresolved";
   itemKey: GrowerItemKey;
   reason: string;
+  /** Candidates the estimator chooses between BY HAND (e.g. PVC doors — the size is in the Cin7 description). Never auto-confirmed. */
+  manualSelectionSkus?: string[];
 }
 
-export type CommercialMapping = SingleSkuMapping | PackageMapping | ManualMapping | UnresolvedMapping;
+export type CommercialMapping = SingleSkuMapping | PackageMapping | ManualMapping | UnresolvedMapping | EstimatorPricedMapping;
 
 const single = (itemKey: GrowerItemKey, recommendedSku: string, basis: string, confidence: SingleSkuMapping["confidence"] = "high"): SingleSkuMapping => ({
   kind: "single", itemKey, recommendedSku, basis, confidence,
@@ -105,6 +131,11 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
   cup_drinker: {
     kind: "package", itemKey: "cup_drinker", name: "Grower cup drinker", layoutDriven: false,
     provenance: `${WB} sheet 'cup', GROWER CUP block (rows 43–49); subtotal R475.99 × 1.15 = R548 per drinker.`,
+    alternativeIdentity: {
+      sku: "NB3542-03",
+      description: "CUP DRINKERS (NEW TYPE) GROWER & FINISHER",
+      note: "The NewQuip Master (05 Oct 2026, per the owner's Round 2 brief) lists this as the current drinker product. Sean Round 1 separately confirmed the 7-part composition. Which representation prices the drinker is NOT settled — it is never chosen automatically (Round 3).",
+    },
     components: [
       fixed("cup", "QCA00003", "Round drinking cup – large (11cm SS pipe) – grower", 1, "cup!B43"),
       fixed("pipe", "NQ1380", "Water pipe 1/2in SST 800mm", 1, "cup!B44"),
@@ -117,9 +148,16 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
   },
   led_light: {
     kind: "package", itemKey: "led_light", name: "FORTIS 1.2 5000K LED light", layoutDriven: false,
-    provenance: `${WB} sheet 'FX': €25.50 + 3 × €0.74 + €1.37 = €29.09 per light. Sold as FORTIS; named 'FERAX 24W ON/OFF' in the ERP and Cin7.`,
+    provenance: `${WB} sheet 'FX': €25.50 + 3 × €0.74 + €1.37 = €29.09 per light (priced on the FERAX 24W ON/OFF, HNQ7046, as a historic surrogate for the FORTIS 1.2).`,
     components: [
-      { ...fixed("luminaire", "HNQ7046", "FORTIS 1.2 5000K luminaire (Cin7/ERP name: FERAX 24W ON/OFF)", 1, "FX!A4; ERP avg R484.29 ≈ €25.5 × 19.08"), },
+      {
+        id: "luminaire", sku: null, identity: "unidentified", quantityStatus: "source_fixed", qtyPerUnit: 1,
+        description: "FORTIS 1.2 5000K luminaire",
+        skuRequired: "FORTIS 1.2 — SKU REQUIRED / UNMAPPED",
+        historicSurrogate: { sku: "HNQ7046", name: "FERAX 24W ON/OFF" },
+        note: "FORTIS 1.2 is the newer/current product and has NO SKU yet (Sean Round 2 #9). The historic quote used HNQ7046 (FERAX 24W ON/OFF) as a surrogate; it is NOT the FORTIS and is never substituted automatically.",
+        evidence: "Sean Round 2 #9; FX!A4 (workbook) — Ferax = HNQ7046, FORTIS has no code",
+      },
       {
         id: "clip", sku: null, candidateSkus: ["HNQ7088", "HNQ7093"], identity: "uncertain", quantityStatus: "source_fixed", qtyPerUnit: 3,
         description: "Mounting clip",
@@ -139,51 +177,41 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
     provenance: `${WB} sheet 'W1' (Topigs case: 2 × lines of ±49.5m, 18 drop kits). Quantities below are the HISTORIC TOPIGS PACKAGE REFERENCE — formula-driven in the workbook, not authorised engineering rules.`,
     components: [
       layout("auger", "NQ1163", "Auger M-75 (new), per metre", 134, "W1 row 71"),
-      layout("tube", "T2750300", "Tube M75 (white) 3075mm with cone", 40, "W1 row 52"),
-      layout("clamps", "T2750015", "Tube clamps M75", 48, "W1 row 56"),
-      layout("elbow", "T2750301", "M75 PVC elbow (white) radius 1.5m", 8, "W1 row 64"),
-      layout("dropkit", "NQ1984", "M75 drop kit (pig/sheep, excl. knobs & nylon rope)", 18, "W1 row 13; input B2 = 18 drops"),
-      layout("droptube", "NQ.TUBE.63", "63mm clear drop tube (2m)", 5, "W1 row 14 = ROUNDUP(drops / 4)", { note: "In the legacy ERP but NOT found in Cin7 under this SKU." }),
+      layout("tube", "NQ1223", "TUBE M75 (WHITE) / AUGER PIPE (NEW TYPE) — the M75 MAIN auger tube", 40, "W1 row 52; SKU per the NewQuip Master (workbook listed T2750300)", { note: "The M75 main auger tube. NOT the clear drop tube and NOT NQ.TUBE.63." }),
+      layout("clamps", "NQ1764", "M75 tube clamp", 48, "W1 row 56; SKU per the NewQuip Master (workbook listed T2750015)"),
+      layout("elbow", "NQ1227", "M75 PVC ELBOW (NEW TYPE)", 8, "W1 row 64; SKU per the NewQuip Master (workbook listed T2750301)"),
+      layout("dropkit", "NQ1942", "M75 complete drop kit", 18, "W1 row 13; input B2 = 18 drops; SKU per the NewQuip Master (workbook listed NQ1984)"),
+      layout("droptube", "NQ.TUBE.75", "M75 clear drop tube", 5, "W1 row 14 = ROUNDUP(drops / 4); SKU per the NewQuip Master", {
+        note: "Clear DROP tube — distinct from the M75 main auger tube (NQ1223). The workbook listed NQ.TUBE.63 (63mm clear drop tube, still a valid SKU per Sean Round 2 #10); that is a different item and is NOT the auger pipe.",
+      }),
       layout("control", "T3750001", "M75 control unit with safety switch", 2, "W1 row 39"),
       layout("unloader", "TSA3750505", "M75 unloader double right/left (new type)", 1, "W1 row 35"),
       layout("levelswitch", "T3000365", "Feed level switch dia 75mm", 2, "W1 row 18"),
-      layout("drive", "TRA1.1KW3PH", "1.5HP drive unit (1.1kW) 380V", 2, "W1 row 77", { note: "In the legacy ERP but NOT found in Cin7 under this SKU." }),
+      layout("drive", "NQ3132", "1.5HP DRIVE UNIT (1.1KW) 380V", 2, "W1 row 77; replaces TRA1.1KW3PH (Sean Round 2 #10)", {
+        note: "Replaces the legacy TRA1.1KW3PH.",
+        pricingException: "PRICING EXCEPTION — ESTIMATOR REVIEW REQUIRED: the Master shows Retail 0 for NQ3132. It is never quoted as zero; NewQuip must confirm the current commercial price treatment.",
+      }),
       layout("post", null, "Support post (SST)", 52, "W1 row 83 — SKU cell truncated ('KNQ'), price R760", {
         candidateSkus: ["NQ2601"], identity: "uncertain", note: "NQ2601 'HEAVY DUTY SUPPORT POST SST(1M)' is a likely match but NOT confirmed.",
       }),
       layout("wallplate", "KNQ160", "Wall plate (SST) kit for M55 & M75 auger", 4, "W1 row 97"),
     ],
   },
+  // ---- estimator-priced ----
+  // Penning is priced per RUNNING METRE by pig size (Sean Round 2 #7) — not per m² and not by the old 17-part layout BOM.
+  // The current rates/products are not yet supplied, so no price is derived: the estimator prices it (Round 3).
   penning_package: {
-    kind: "package", itemKey: "penning_package", name: "PP Green 50mm × 0.9m vented penning", layoutDriven: true,
-    provenance: `${WB} sheet 'G Posts (2)': panels R135,257 + hardware R152,529 = R287,786 for 20 pens. Quantities are typed layout figures — HISTORIC REFERENCE only. Colour cell reads 'green?'.`,
-    components: [
-      layout("panels", null, "PP 50mm venti 0.9m high panels (total length, metres)", 244.87, "G Posts (2) rows 41–47", {
-        note: "No 0.9m green 50mm panel found in Cin7 (BPP007 is 1m black; BPP013 is 35mm green). SKU and colour to be confirmed.",
-      }),
-      layout("doorkit", "KNQ074", "Plastic door kit (gates for 50mm PP penning)", 20, "G Posts (2) row 10"),
-      layout("doorcap", "KNQ085", "Cap for door SST / 50mm panel", 20, "G Posts (2) row 11"),
-      layout("starter", null, "SST starter post 800mm-H", 55, "G Posts (2) row 14 (no code)"),
-      layout("starterfoot", null, "SST double bracket (foot) for starter", 55, "G Posts (2) row 13 (no code)"),
-      layout("hdpost", null, "SST heavy duty support post (50mm panel)", 104, "G Posts (2) row 15 (no code)", {
-        candidateSkus: ["KNQ050-900", "KNQ050-1000"], identity: "uncertain", note: "Cin7 has 50mm-panel support posts of two heights; not confirmed.",
-      }),
-      layout("footangled", null, "SST foot bracket (angled)", 121, "G Posts (2) row 16 (no code)"),
-      layout("coachscrew", "NQ1175", "Coach screw M8×60 SST", 165, "G Posts (2) row 18"),
-      layout("washerscrew", "NQ1017", "Washer M8×25×2 SST (coach screws)", 165, "G Posts (2) row 19"),
-      layout("wallplug", "NQ1089", "Wall plug grey No.10", 165, "G Posts (2) row 20"),
-      layout("bolt", "NQ1386", "Bolt M8×65 SST", 598, "G Posts (2) row 21"),
-      layout("washerbolt", "NQ1017", "Washer M8×25×2 SST (bolts)", 1196, "G Posts (2) row 22"),
-      layout("nut", "NYNUT", "Nylock nut M8 SST", 598, "G Posts (2) row 23"),
-      layout("dtbar", "NQ2072", "M10×90mm SST double T-bar", 104, "G Posts (2) row 24"),
-      layout("washerm10", "NQ1086", "Washer M10×40×3 SST", 329, "G Posts (2) row 25"),
-      layout("nutm10", "NQ1126", "Nylock nut M10 SST", 329, "G Posts (2) row 26"),
-      layout("stbar", "NQ1199", "Single T-bar M10 SST", 121, "G Posts (2) row 27"),
-    ],
+    kind: "estimator_priced", itemKey: "penning_package", unit: "running metre",
+    reason: "ESTIMATOR PRICING REQUIRED — penning is priced per running metre for each pig size (small / medium / large). A SKU is opened per size; the current rates/products have not been supplied (Round 3).",
+    historicSkus: ["KNQPP005", "KNQPP006", "KNQPP007", "KNQPP008"],
   },
 
   // ---- unresolved ----
-  pvc_door: { kind: "unresolved", itemKey: "pvc_door", reason: "NEWQUIP CONFIRMATION REQUIRED — no code or price in the source; Cin7 has many PVC/polypropylene doors." },
+  pvc_door: {
+    kind: "unresolved", itemKey: "pvc_door",
+    reason: "MANUAL SELECTION — the estimator picks the door product; its size is in the Cin7 product description. There is no automatic door-sizing rule (Sean Round 2 #11).",
+    manualSelectionSkus: ["NQ2114", "NQ2113", "NQ2112", "NQ2161", "NQ2281"],
+  },
 };
 
 /** Commercial charges that accompany an item but are not part of its physical SKU. */
@@ -203,6 +231,17 @@ export function commercialMappingFor(itemKey: GrowerItemKey): CommercialMapping 
 export function packageFor(itemKey: GrowerItemKey): PackageMapping | undefined {
   const m = COMMERCIAL_MAPPINGS[itemKey];
   return m?.kind === "package" ? m : undefined;
+}
+
+export function estimatorPricedFor(itemKey: GrowerItemKey): EstimatorPricedMapping | undefined {
+  const m = COMMERCIAL_MAPPINGS[itemKey];
+  return m?.kind === "estimator_priced" ? m : undefined;
+}
+
+/** SKUs an estimator may pick BETWEEN by hand for an item (never auto-confirmed). */
+export function manualSelectionSkusFor(itemKey: GrowerItemKey): string[] {
+  const m = COMMERCIAL_MAPPINGS[itemKey];
+  return m?.kind === "unresolved" ? (m.manualSelectionSkus ?? []) : [];
 }
 
 export function manualLinesFor(itemKey: GrowerItemKey): ManualMapping[] {
@@ -225,6 +264,7 @@ export function referencedSkus(): string[] {
     if (!m) continue;
     if (m.kind === "single") out.add(m.recommendedSku);
     if (m.kind === "package") for (const c of m.components) { if (c.sku) out.add(c.sku); c.candidateSkus?.forEach((s) => out.add(s)); }
+    if (m.kind === "unresolved") m.manualSelectionSkus?.forEach((s) => out.add(s));
   }
   return [...out];
 }

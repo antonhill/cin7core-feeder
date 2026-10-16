@@ -1,7 +1,8 @@
 import { computeLine, computeQuote, type QuoteLineInput, type QuoteResult } from "@/lib/quote-margin";
 import type { GeneratedLine, GrowerItemKey } from "./types";
 import type { MappingResolution } from "./mapping";
-import { manualLinesFor, packageFor, type PackageComponent } from "./commercial";
+import { estimatorPricedFor, manualLinesFor, packageFor, type PackageComponent } from "./commercial";
+import { CURRENT_PRICE_SOURCE, PROJECT_PRICING_NOTICE, type PriceSourceDescriptor, type QuoteType } from "./pricing-source";
 
 // Feeds generated, mapped lines into the EXISTING quote engine (src/lib/quote-margin.ts). No tax, margin,
 // GP or total arithmetic is re-implemented here. A line is only costed when it has a quantity, a confirmed
@@ -42,9 +43,25 @@ export type BridgeLineStatus =
   | "product_missing"
   | "no_price"
   | "package_unconfirmed"
-  | "package_incomplete";
+  | "package_incomplete"
+  | "estimator_pricing_required"; // penning (per running metre) and every line of a PROJECT quote
 
-export type BridgeComponentStatus = "priced" | "no_quantity" | "identity_unresolved" | "not_in_catalogue" | "no_price";
+export type BridgeComponentStatus = "priced" | "no_quantity" | "identity_unresolved" | "not_in_catalogue" | "no_price" | "pricing_exception";
+
+/** Commercial charges the ESTIMATOR enters by hand (no automatic freight/installation model — Sean Round 2 #12). */
+export type ChargeKey = "delivery" | "installation" | "concrete_slat_delivery";
+export const CHARGE_LABEL: Record<ChargeKey, string> = {
+  delivery: "Delivery",
+  installation: "Installation",
+  concrete_slat_delivery: "Concrete slat delivery",
+};
+export interface BridgeCharge {
+  key: ChargeKey;
+  label: string;
+  /** Estimator-entered ex-VAT amount, or null while not entered. */
+  amountExTax: number | null;
+  status: "entered" | "required";
+}
 
 export interface BridgeComponent {
   id: string;
@@ -98,6 +115,11 @@ export interface BudgetQuote {
   blockers: string[];
   /** Data-quality warnings that do not block pricing (e.g. seeded placeholder costs). */
   warnings: string[];
+  charges: BridgeCharge[];
+  quoteType: QuoteType;
+  /** Set for a PROJECT quote: the visible "ESTIMATOR PRICING REQUIRED" statement. */
+  pricingNotice: string | null;
+  priceSource: PriceSourceDescriptor;
 }
 
 export interface BudgetOptions {
@@ -107,6 +129,18 @@ export interface BudgetOptions {
   taxInclusive: boolean;
   /** Output items whose package definition a person has explicitly confirmed this session. */
   confirmedPackages?: ReadonlySet<GrowerItemKey>;
+  /** Day-to-day (tier price) or Project (ESTIMATOR PRICING REQUIRED). Defaults to day-to-day. */
+  quoteType?: QuoteType;
+  /** Estimator-entered ex-VAT delivery / installation / slat-delivery amounts. */
+  estimatorCharges?: Partial<Record<ChargeKey, number | null>>;
+  /** Estimator-entered ex-VAT selling price for a PROJECT quote (no formula is applied). */
+  projectSellingPriceExTax?: number | null;
+  /**
+   * True when the viewer may not see cost/ROE/freight/mark-up (a normal rep). Cost is then absent from the data, so a
+   * missing cost is NOT a blocker and no cost, GP or margin is reported.
+   */
+  withholdCost?: boolean;
+  priceSource?: PriceSourceDescriptor;
 }
 
 const emptyLine = (g: GeneratedLine) => ({
@@ -151,7 +185,9 @@ function evaluateComponent(
     estimatedCost: null as number | null,
   };
   // Identity first: an uncertain/unidentified component can't be priced, whatever its quantity.
-  if (!c.sku) return { comp: { ...base, quantity: null, status: "identity_unresolved", reason: c.identity === "uncertain" ? "SKU identity not settled — awaiting NewQuip" : "No SKU identified in the source" }, input: null };
+  if (!c.sku) return { comp: { ...base, quantity: null, status: "identity_unresolved", reason: c.skuRequired ?? (c.identity === "uncertain" ? "SKU identity not settled — awaiting NewQuip" : "No SKU identified in the source") }, input: null };
+  // A pricing exception is never priced automatically, whatever the catalogue says (e.g. NQ3132 Retail 0).
+  if (c.pricingException) return { comp: { ...base, quantity: c.quantityStatus === "source_fixed" && c.qtyPerUnit != null ? c.qtyPerUnit * packageUnits : null, status: "pricing_exception", reason: c.pricingException }, input: null };
   // Quantity: only a source-fixed composition is usable; the Topigs historic figure is never priced.
   if (c.quantityStatus !== "source_fixed" || c.qtyPerUnit == null) return { comp: { ...base, quantity: null, status: "no_quantity", reason: "Quantity depends on layout — awaiting NewQuip validation" }, input: null };
   const quantity = c.qtyPerUnit * packageUnits;
@@ -174,6 +210,8 @@ export function buildBudgetQuote(
   const blockers: string[] = [];
   const warnings: string[] = [];
   let pricedOutputs = 0;
+  const projectMode = opts.quoteType === "project";
+  const withhold = Boolean(opts.withholdCost);
 
   for (const g of generated) {
     if (g.basis === "not_selected") {
@@ -181,13 +219,33 @@ export function buildBudgetQuote(
       continue;
     }
     if (g.projectQuantity == null) {
-      bridge.push({ ...emptyLine(g), status: "no_quantity", reason: "Rule awaiting NewQuip validation — no quantity." });
-      blockers.push(`${g.label}: no validated quantity`);
+      bridge.push({ ...emptyLine(g), status: "no_quantity", reason: g.inputRequired ? `Estimator input required — ${g.inputRequired}` : "Rule awaiting NewQuip validation — no quantity." });
+      blockers.push(`${g.label}: ${g.inputRequired ? `estimator input required — ${g.inputRequired}` : "no validated quantity"}`);
+      continue;
+    }
+    // Sean Round 1: an estimator must give a reason for any override. Missing → flagged, never defaulted.
+    if (g.basis === "manual_override" && !g.overrideReason) blockers.push(`${g.label}: override reason required`);
+
+    // A separate manual charge (e.g. slat delivery) is never folded into the SKU. It is covered by the estimator-entered
+    // charge of the same name; until that is entered it blocks the budget.
+    for (const m of manualLinesFor(g.itemKey)) {
+      const entered = opts.estimatorCharges?.[m.id as ChargeKey];
+      if (!isAmount(entered)) blockers.push(`${m.description}: estimator-entered amount required (separate from the SKU)`);
+    }
+
+    // PROJECT quote: no automatic selling price exists (rule unresolved) — the estimator prices it.
+    if (projectMode) {
+      bridge.push({ ...emptyLine(g), status: "estimator_pricing_required", reason: PROJECT_PRICING_NOTICE });
       continue;
     }
 
-    // A separate manual charge (e.g. slat delivery) is never folded into the SKU; flag it until it has a price.
-    for (const m of manualLinesFor(g.itemKey)) blockers.push(`${m.description}: manual charge not priced (separate from the SKU)`);
+    // Estimator-priced output (penning: per running metre, by pig size) — no rate is invented.
+    const estPriced = estimatorPricedFor(g.itemKey);
+    if (estPriced) {
+      bridge.push({ ...emptyLine(g), status: "estimator_pricing_required", reason: estPriced.reason });
+      blockers.push(`${g.label}: ESTIMATOR PRICING REQUIRED (per ${estPriced.unit}, by pig size)`);
+      continue;
+    }
 
     // ---- PACKAGE ----
     const pkg = packageFor(g.itemKey);
@@ -211,8 +269,8 @@ export function buildBudgetQuote(
       const revenue = comps.reduce((a, c) => a + (c.revenueExTax ?? 0), 0);
       const anyCostMissing = comps.some((c) => c.estimatedCost == null);
       const cost = anyCostMissing ? null : comps.reduce((a, c) => a + (c.estimatedCost ?? 0), 0);
-      if (anyCostMissing) blockers.push(`${g.label}: a component has no Average Cost — margin incomplete`);
-      if (comps.some((c) => c.costTrust === "suspect")) warnings.push(`${g.label}: package uses placeholder Average Cost (50) on some components`);
+      if (anyCostMissing && !withhold) blockers.push(`${g.label}: a component has no Average Cost — margin incomplete`);
+      if (!withhold && comps.some((c) => c.costTrust === "suspect")) warnings.push(`${g.label}: package uses placeholder Average Cost (50) on some components`);
       bridge.push({ ...emptyLine(g), status: "priced", reason: "Package priced from its components.", revenueExTax: revenue, estimatedCost: cost, estimatedGP: cost == null ? null : revenue - cost, marginPct: cost == null || revenue <= 0 ? null : ((revenue - cost) / revenue) * 100, costMissing: anyCostMissing, components: comps });
       continue;
     }
@@ -242,8 +300,8 @@ export function buildBudgetQuote(
     const r = computeLine(input, { taxInclusive: opts.taxInclusive });
     const costMissing = p.averageCost == null;
     const trust = costTrust(p.averageCost);
-    if (costMissing) blockers.push(`${g.label}: no Average Cost — margin incomplete`);
-    if (trust === "suspect") warnings.push(`${g.label}: ${m.sku} Average Cost is the placeholder 50 — margin not reliable`);
+    if (costMissing && !withhold) blockers.push(`${g.label}: no Average Cost — margin incomplete`);
+    if (trust === "suspect" && !withhold) warnings.push(`${g.label}: ${m.sku} Average Cost is the placeholder 50 — margin not reliable`);
     bridge.push({
       ...emptyLine(g),
       sku: m.sku,
@@ -260,15 +318,49 @@ export function buildBudgetQuote(
     });
   }
 
+  // Estimator-entered commercial charges (separate lines; uncosted, so they never touch the margin).
+  const anyQuantified = generated.some((g) => g.basis !== "not_selected" && g.projectQuantity != null);
+  const charges: BridgeCharge[] = (Object.keys(CHARGE_LABEL) as ChargeKey[])
+    .filter((k) => k !== "concrete_slat_delivery" || generated.some((g) => g.itemKey === "concrete_slat" && g.basis !== "not_selected" && g.projectQuantity != null))
+    .map((k) => {
+      const v = opts.estimatorCharges?.[k];
+      return { key: k, label: CHARGE_LABEL[k], amountExTax: isAmount(v) ? v : null, status: isAmount(v) ? ("entered" as const) : ("required" as const) };
+    });
+  for (const c of charges) {
+    if (c.amountExTax != null) {
+      engineLines.push({ quantity: 1, unitPrice: c.amountExTax, taxRatePct: opts.taxRatePct, averageCost: null, excludedFromMargin: true });
+    } else if (c.key !== "concrete_slat_delivery" && anyQuantified) {
+      blockers.push(`${c.label}: estimator-entered amount required`);
+    }
+  }
+  if (projectMode) {
+    if (isAmount(opts.projectSellingPriceExTax)) {
+      engineLines.push({ quantity: 1, unitPrice: opts.projectSellingPriceExTax, taxRatePct: opts.taxRatePct, averageCost: null, excludedFromMargin: true });
+      pricedOutputs += 1;
+    } else {
+      blockers.push("Project selling price: ESTIMATOR PRICING REQUIRED (no automatic project price exists)");
+    }
+  }
+
   const incomplete = blockers.length > 0;
   const state: BudgetState = pricedOutputs === 0 ? "awaiting_pricing" : incomplete ? "partial" : "complete";
+  const totals = computeQuote(engineLines, { taxInclusive: opts.taxInclusive });
   return {
     lines: bridge,
-    totals: computeQuote(engineLines, { taxInclusive: opts.taxInclusive }),
+    // A viewer who may not see cost must not receive cost, GP or margin through the totals either.
+    totals: withhold ? { ...totals, estimatedCost: 0, estimatedGP: 0, overallMarginPct: null } : totals,
     state,
     pricedLineCount: pricedOutputs,
     incomplete,
     blockers,
     warnings,
+    charges,
+    quoteType: projectMode ? "project" : "day_to_day",
+    pricingNotice: projectMode ? PROJECT_PRICING_NOTICE : null,
+    priceSource: opts.priceSource ?? CURRENT_PRICE_SOURCE,
   };
+}
+
+function isAmount(v: number | null | undefined): v is number {
+  return typeof v === "number" && Number.isFinite(v) && v > 0;
 }

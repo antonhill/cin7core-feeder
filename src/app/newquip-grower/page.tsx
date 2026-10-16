@@ -12,16 +12,20 @@ import {
   type QuoteCustomerHit,
   type QuoteReferenceData,
 } from "@/app/quotes/actions";
-import { discoverGrowerProductsAction, lookupGrowerProductsAction } from "./actions";
+import { discoverGrowerProductsAction, getGrowerViewerAction, lookupGrowerProductsAction } from "./actions";
 import { calculateGrowerHouse } from "@/newquip/grower/calculate";
 import { TOPIGS_GROWER_INPUT } from "@/newquip/grower/fixture";
 import { GROWER_RULES } from "@/newquip/grower/rules";
-import { packageFor, manualLinesFor, referencedSkus, type PackageMapping } from "@/newquip/grower/commercial";
+import { packageFor, manualLinesFor, referencedSkus, estimatorPricedFor, commercialMappingFor, type PackageMapping } from "@/newquip/grower/commercial";
 import { resolveVat } from "@/newquip/grower/tax";
-import { splitBomLines, quantityProvenance, priceTierPanelState, type RefLookupStatus } from "@/newquip/grower/bom-view";
+import { splitBomLines, quantityProvenance, priceTierPanelState, valueKindOf, VALUE_KIND_LABEL, type RefLookupStatus, type ValueKind } from "@/newquip/grower/bom-view";
+import { CURRENT_PRICE_SOURCE, QUOTE_TYPE_LABEL, type QuoteType } from "@/newquip/grower/pricing-source";
+import { ROUND3_OPEN_ITEMS, ROOMS_HELP, VENTILATION_SCOPE_STATUS } from "@/newquip/grower/round3";
+import { CCM_FEEDER_CAPACITY_PIGS } from "@/newquip/grower/rules";
 import { resolveMapping, type MappingCandidate, type MappingResolution } from "@/newquip/grower/mapping";
 import { buildBudgetQuote, type BridgeComponent, type BridgeLine, type BudgetQuote, type DataTrust, type ProductCommercials } from "@/newquip/grower/quote-bridge";
-import type { GeneratedLine, GrowerConfigurationInput, GrowerItemKey, OptionalItemKey, RuleStatus } from "@/newquip/grower/types";
+import type { ChargeKey } from "@/newquip/grower/quote-bridge";
+import type { GeneratedLine, GrowerConfigurationInput, GrowerItemKey, OptionalItemKey, PenningPigSize, RuleStatus } from "@/newquip/grower/types";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Alert } from "@/components/ui/Alert";
@@ -63,16 +67,26 @@ const BRIDGE_SHORT: Record<BridgeLine["status"], string> = {
   no_price: "Awaiting price",
   package_unconfirmed: "Package awaiting confirmation",
   package_incomplete: "Package incomplete",
+  estimator_pricing_required: "Estimator pricing required",
 };
 
-type NumField = "lengthM" | "widthM" | "rooms" | "totalPens" | "hospitalPens" | "pigsPerBuilding";
+const KIND_TONE: Record<ValueKind, BadgeTone> = { auto_calculated: "success", default_suggested: "info", estimator_input_required: "warning", estimator_input: "neutral" };
+const PIG_SIZE_LABEL: Record<PenningPigSize, string> = { SMALL: "Small", MEDIUM: "Medium", LARGE: "Large" };
+const CHARGE_HELP: Record<ChargeKey, string> = {
+  delivery: "From the courier invoice — truck size (6 / 12 / 18 m) × truck price; distance affects it.",
+  installation: "From the teams' service reports — days × daily rate.",
+  concrete_slat_delivery: "Truck price / slat weight, by distance.",
+};
+
+type NumField = "lengthM" | "widthM" | "rooms" | "totalPens" | "hospitalPens" | "pigsPerRoom";
 type OverrideSource = "historic" | "typed";
 
-function NumInput({ label, value, onChange, unit, title }: { label: string; value: string; onChange: (v: string) => void; unit?: string; title?: string }) {
+function NumInput({ label, value, onChange, unit, title, hint }: { label: string; value: string; onChange: (v: string) => void; unit?: string; title?: string; hint?: string }) {
   return (
     <label className="flex flex-col gap-1 text-sm" title={title}>
       <span className="font-medium text-slate-700">{label}{unit ? <span className="ml-1 font-normal text-slate-400">({unit})</span> : null}</span>
       <input value={value} onChange={(e) => onChange(e.target.value)} inputMode="decimal" className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm tabular-nums text-slate-900" />
+      {hint ? <span className="text-xs text-slate-400">{hint}</span> : null}
     </label>
   );
 }
@@ -160,11 +174,25 @@ export default function NewquipGrowerPage() {
   const g = TOPIGS_GROWER_INPUT;
   const [nums, setNums] = useState<Record<NumField, string>>({
     lengthM: String(g.lengthM), widthM: String(g.widthM), rooms: String(g.rooms),
-    totalPens: String(g.totalPens), hospitalPens: String(g.hospitalPens), pigsPerBuilding: String(g.pigsPerBuilding),
+    totalPens: String(g.totalPens), hospitalPens: String(g.hospitalPens), pigsPerRoom: String(g.pigsPerRoom),
   });
   const [optional, setOptional] = useState<Record<OptionalItemKey, boolean>>(g.optionalEquipment);
   const [overrides, setOverrides] = useState<Partial<Record<GrowerItemKey, string>>>({});
   const [overrideSource, setOverrideSource] = useState<Partial<Record<GrowerItemKey, OverrideSource>>>({});
+  // ESTIMATOR INPUTS (Round 2): slatted floor area, penning size + running metres, delivery/installation amounts, project price.
+  const [slatArea, setSlatArea] = useState("");
+  const [penSize, setPenSize] = useState<PenningPigSize | "">("");
+  const [penMetres, setPenMetres] = useState("");
+  const [overrideReasons, setOverrideReasons] = useState<Partial<Record<GrowerItemKey, string>>>({});
+  const [quoteType, setQuoteType] = useState<QuoteType>("day_to_day");
+  const [chargeText, setChargeText] = useState<Partial<Record<ChargeKey, string>>>({});
+  const [projectPrice, setProjectPrice] = useState("");
+  // Display only: cost / margin are withheld SERVER-SIDE from non-admins; until resolved, assume no.
+  const [canViewCommercials, setCanViewCommercials] = useState(false);
+  useEffect(() => {
+    getGrowerViewerAction().then((r) => setCanViewCommercials(Boolean(r.ok && r.data?.canViewCommercials)));
+  }, []);
+  const numOrNull = (s: string | undefined): number | null => (s == null || s.trim() === "" ? null : Number(s));
   const setNum = (k: NumField) => (v: string) => setNums((p) => ({ ...p, [k]: v }));
   const setOverride = (k: GrowerItemKey, v: string, src: OverrideSource) => {
     setOverrides((p) => ({ ...p, [k]: v }));
@@ -177,11 +205,15 @@ export default function NewquipGrowerPage() {
     return {
       ...g,
       lengthM: Number(nums.lengthM), widthM: Number(nums.widthM), rooms: Number(nums.rooms),
-      totalPens: Number(nums.totalPens), hospitalPens: Number(nums.hospitalPens), pigsPerBuilding: Number(nums.pigsPerBuilding),
+      totalPens: Number(nums.totalPens), hospitalPens: Number(nums.hospitalPens), pigsPerRoom: Number(nums.pigsPerRoom),
       optionalEquipment: optional,
       quantityOverrides: ov,
+      quantityOverrideReasons: overrideReasons,
+      slattedFloorAreaM2: numOrNull(slatArea),
+      penningPigSize: penSize === "" ? null : penSize,
+      penningRunningMetresPerRoom: numOrNull(penMetres),
     };
-  }, [g, nums, optional, overrides]);
+  }, [g, nums, optional, overrides, overrideReasons, slatArea, penSize, penMetres]);
 
   const result = useMemo(() => calculateGrowerHouse(input), [input]);
   // Optional equipment that isn't selected stays out of the primary BOM (its definition and rule are untouched).
@@ -255,8 +287,15 @@ export default function NewquipGrowerPage() {
   })();
 
   const budget = useMemo(
-    () => buildBudgetQuote(result.lines, mappings, commercials, { tierCode, taxRatePct, taxInclusive: false, confirmedPackages }),
-    [result.lines, mappings, commercials, tierCode, taxRatePct, confirmedPackages],
+    () => buildBudgetQuote(result.lines, mappings, commercials, {
+      tierCode, taxRatePct, taxInclusive: false, confirmedPackages,
+      quoteType,
+      estimatorCharges: { delivery: numOrNull(chargeText.delivery), installation: numOrNull(chargeText.installation), concrete_slat_delivery: numOrNull(chargeText.concrete_slat_delivery) },
+      projectSellingPriceExTax: numOrNull(projectPrice),
+      withholdCost: !canViewCommercials,
+      priceSource: CURRENT_PRICE_SOURCE,
+    }),
+    [result.lines, mappings, commercials, tierCode, taxRatePct, confirmedPackages, quoteType, chargeText, projectPrice, canViewCommercials],
   );
   const bridgeBy = new Map(budget.lines.map((l) => [l.itemKey, l]));
   const [open, setOpen] = useState<GrowerItemKey | null>(null);
@@ -265,11 +304,11 @@ export default function NewquipGrowerPage() {
   return (
     <main className="mx-auto w-full max-w-[96rem] px-6 py-12">
       <ModuleHeader module={{ ...QUOTES_MODULE, label: "NewQuip Grower House" }}>
-        Interim POC — configure a Grower House and see the generated bill of materials priced from Cin7. Quantities appear only where the rule is validated; everything else shows its historic Topigs reference and awaits NewQuip.
+        NewQuip internal beta — configure a Grower House and see the generated bill of materials. Every value is labelled AUTO-CALCULATED (a confirmed rule), DEFAULT / SUGGESTED (known basis, overridable) or ESTIMATOR INPUT REQUIRED (situational or unresolved — nothing is guessed).
       </ModuleHeader>
 
       <div className="mt-4 flex flex-col gap-2">
-        <Alert tone="warning">Budget preview only — read-only. Nothing is saved or sent to Cin7. Engineering rules marked “awaiting validation” are NOT confirmed by NewQuip.</Alert>
+        <Alert tone="warning">Budget preview only — read-only. Nothing is saved or sent to Cin7. Items marked ESTIMATOR INPUT REQUIRED are not confirmed engineering rules: an estimator must review this budget before it is relied on.</Alert>
         {lookupError && <Alert tone="danger">{lookupError}</Alert>}
       </div>
 
@@ -292,6 +331,10 @@ export default function NewquipGrowerPage() {
                 )}
               </label>
               <label className="flex flex-col gap-1 text-sm"><span className="font-medium text-slate-700">Project / reference</span><input value={project} onChange={(e) => setProject(e.target.value)} placeholder="e.g. AS.23.4015.07" className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm" /></label>
+              <Select label="Quote type" value={quoteType} onChange={(e) => setQuoteType(e.target.value as QuoteType)}>
+                <option value="day_to_day">{QUOTE_TYPE_LABEL.day_to_day} — tier price</option>
+                <option value="project">{QUOTE_TYPE_LABEL.project} — ESTIMATOR PRICING REQUIRED</option>
+              </Select>
               {tierPanel === "choose_instance" ? (
                 <p className="text-sm text-slate-500"><span className="font-medium text-slate-700">Selling price:</span> choose an instance to load Cin7 price tiers.</p>
               ) : tierPanel === "failed" ? (
@@ -305,6 +348,7 @@ export default function NewquipGrowerPage() {
                   {refData.priceTiers.map((t) => <option key={t.code} value={t.name}>{t.name}</option>)}
                 </Select>
               )}
+              <p className="text-xs text-slate-500"><span className="font-medium text-slate-700">Price source:</span> {CURRENT_PRICE_SOURCE.label}. {CURRENT_PRICE_SOURCE.notice}</p>
               <p className="text-xs text-slate-500">
                 VAT:{" "}
                 {vat.status === "resolved" ? <span className="font-medium text-slate-700">{vat.ratePct}% — {vat.ruleName} (customer’s Cin7 tax rule)</span>
@@ -315,32 +359,60 @@ export default function NewquipGrowerPage() {
           </Panel>
 
           <Panel>
-            <PanelTitle>Building &amp; pens</PanelTitle>
+            <PanelTitle>Rooms, pens &amp; pigs</PanelTitle>
+            <p className="mt-1 text-xs text-slate-500">Dimensions, pens and pigs describe ONE room. {ROOMS_HELP}</p>
             <div className="mt-3 grid grid-cols-2 gap-3">
-              <NumInput label="Length" unit="m" value={nums.lengthM} onChange={setNum("lengthM")} />
-              <NumInput label="Width" unit="m" value={nums.widthM} onChange={setNum("widthM")} />
-              <NumInput label="Rooms" value={nums.rooms} onChange={setNum("rooms")} title="Source-workbook term; its exact meaning is awaiting NewQuip confirmation." />
-              <NumInput label="Pigs / building" value={nums.pigsPerBuilding} onChange={setNum("pigsPerBuilding")} />
-              <NumInput label="Total pens" value={nums.totalPens} onChange={setNum("totalPens")} />
+              <NumInput label="Room length" unit="m" value={nums.lengthM} onChange={setNum("lengthM")} />
+              <NumInput label="Room width" unit="m" value={nums.widthM} onChange={setNum("widthM")} />
+              <NumInput label="Number of rooms" value={nums.rooms} onChange={setNum("rooms")} title={ROOMS_HELP} hint="e.g. 6 buildings × 2 rooms = 12" />
+              <NumInput label="Pigs / room" value={nums.pigsPerRoom} onChange={setNum("pigsPerRoom")} hint="Suggestions only" />
+              <NumInput label="Total pens (per room)" value={nums.totalPens} onChange={setNum("totalPens")} />
               <NumInput label="Hospital / split pens" value={nums.hospitalPens} onChange={setNum("hospitalPens")} />
             </div>
-            <p className="mt-3 text-xs text-slate-500">Floor area (verified: length × width): <span className="font-medium tabular-nums text-slate-700">{result.derived.floorAreaM2 == null ? "—" : `${result.derived.floorAreaM2.toFixed(3)} m²`}</span></p>
+            <p className="mt-3 text-xs text-slate-500">Room floor area (length × width): <span className="font-medium tabular-nums text-slate-700">{result.derived.floorAreaM2 == null ? "—" : `${result.derived.floorAreaM2.toFixed(3)} m²`}</span></p>
+          </Panel>
+
+          <Panel>
+            <PanelTitle>Estimator inputs</PanelTitle>
+            <p className="mt-1 text-xs text-slate-500">Layouts vary, so these are entered, never derived. Per ONE room.</p>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <NumInput label="Slatted floor area" unit="m²" value={slatArea} onChange={setSlatArea} hint="Actual slatted area — walkways vary" />
+              <NumInput label="Penning running metres" unit="m" value={penMetres} onChange={setPenMetres} hint="Running metres, not m²" />
+              <Select label="Penning pig size" value={penSize} onChange={(e) => setPenSize(e.target.value as PenningPigSize | "")}>
+                <option value="">Choose size…</option>
+                {(Object.keys(PIG_SIZE_LABEL) as PenningPigSize[]).map((s) => <option key={s} value={s}>{PIG_SIZE_LABEL[s]}</option>)}
+              </Select>
+            </div>
+          </Panel>
+
+          <Panel>
+            <PanelTitle>Delivery &amp; installation</PanelTitle>
+            <p className="mt-1 text-xs text-slate-500">ESTIMATOR-ENTERED amounts (ex VAT). There is no automatic freight or installation model.</p>
+            <div className="mt-3 grid gap-3">
+              {(Object.keys(CHARGE_HELP) as ChargeKey[]).map((k) => (
+                <NumInput key={k} label={k === "delivery" ? "Delivery" : k === "installation" ? "Installation" : "Concrete slat delivery"} unit="R ex VAT" value={chargeText[k] ?? ""} onChange={(v) => setChargeText((p) => ({ ...p, [k]: v }))} hint={CHARGE_HELP[k]} />
+              ))}
+              {quoteType === "project" && (
+                <NumInput label="Project selling price" unit="R ex VAT" value={projectPrice} onChange={setProjectPrice} hint="ESTIMATOR PRICING REQUIRED — no 'Cost + 20%' formula is applied" />
+              )}
+            </div>
           </Panel>
 
           <Panel>
             <PanelTitle>Equipment selection</PanelTitle>
             <dl className="mt-3 grid grid-cols-[6rem_1fr] gap-y-1.5 text-sm">
-              <dt className="text-slate-500">Feeding</dt><dd>CCM feeder · M75 Flex · 13.39t tank</dd>
-              <dt className="text-slate-500">Drinking</dt><dd>Grower cup drinker</dd>
+              <dt className="text-slate-500">Feeding</dt><dd>CCM feeder (PNQ082 · {CCM_FEEDER_CAPACITY_PIGS} pigs per feeder) · M75 Flex · 13.39t tank</dd>
+              <dt className="text-slate-500">Drinking</dt><dd>Grower cup drinker (15 pigs per drinker)</dd>
               <dt className="text-slate-500">Flooring</dt><dd>Concrete slat 1.2 × 0.45 m</dd>
-              <dt className="text-slate-500">Penning</dt><dd>PP Green 50 mm × 0.9 m vented</dd>
-              <dt className="text-slate-500">Lighting</dt><dd>FORTIS 1.2 5000K LED</dd>
+              <dt className="text-slate-500">Penning</dt><dd>PP penning — per running metre, by pig size</dd>
+              <dt className="text-slate-500">Lighting</dt><dd>FORTIS 1.2 5000K LED — SKU REQUIRED / UNMAPPED</dd>
             </dl>
             <p className="mt-2 text-xs text-slate-400">The POC supports only the Topigs Grower selections; alternatives need rules from NewQuip.</p>
           </Panel>
 
           <Panel>
             <PanelTitle>Optional equipment</PanelTitle>
+            <p className="mt-1 text-xs text-warning">Ventilation / cooling scope: {VENTILATION_SCOPE_STATUS}. No fan, cooling or controller rule is defined yet.</p>
             <div className="mt-3 grid gap-2">
               {(Object.keys(OPTIONAL_LABELS) as OptionalItemKey[]).map((k) => (
                 <Checkbox key={k} label={OPTIONAL_LABELS[k]} checked={optional[k]} onChange={(e) => setOptional((p) => ({ ...p, [k]: e.target.checked }))} />
@@ -355,7 +427,7 @@ export default function NewquipGrowerPage() {
           <Panel>
             <div className="flex items-baseline justify-between">
               <PanelTitle>Generated bill of materials</PanelTitle>
-              <span className="text-xs text-slate-500">Reference multiplier: ×{Number.isFinite(input.rooms) ? input.rooms : "?"}</span>
+              <span className="text-xs text-slate-500">Per-room quantities × {Number.isFinite(input.rooms) ? input.rooms : "?"} rooms</span>
             </div>
             <ul className="mt-3 divide-y divide-slate-100">
               {bomLines.map((l) => (
@@ -374,6 +446,8 @@ export default function NewquipGrowerPage() {
                   sku={confirmed[l.itemKey] ?? ""}
                   setSku={(v) => setConfirmed((p) => ({ ...p, [l.itemKey]: v || undefined }))}
                   rooms={input.rooms}
+                  reason={overrideReasons[l.itemKey] ?? ""}
+                  setReason={(v) => setOverrideReasons((p) => ({ ...p, [l.itemKey]: v }))}
                   pkg={packageFor(l.itemKey)}
                   pkgConfirmed={confirmedPackages.has(l.itemKey)}
                   pkgOpen={openPkg === l.itemKey}
@@ -385,14 +459,15 @@ export default function NewquipGrowerPage() {
             {optionalOffCount > 0 && <p className="mt-3 text-xs text-slate-400">{optionalOffCount} optional item{optionalOffCount === 1 ? "" : "s"} not selected — switch them on under Optional equipment.</p>}
           </Panel>
 
-          <BudgetPanel budget={budget} taxRatePct={taxRatePct} vatResolved={vat.status === "resolved"} totalLines={bomLines.length} />
+          <BudgetPanel budget={budget} taxRatePct={taxRatePct} vatResolved={vat.status === "resolved"} totalLines={bomLines.length} showCommercials={canViewCommercials} />
+          <Round3Panel />
         </div>
       </div>
     </main>
   );
 }
 
-function BudgetPanel({ budget, taxRatePct, vatResolved, totalLines }: { budget: BudgetQuote; taxRatePct: number; vatResolved: boolean; totalLines: number }) {
+function BudgetPanel({ budget, taxRatePct, vatResolved, totalLines, showCommercials }: { budget: BudgetQuote; taxRatePct: number; vatResolved: boolean; totalLines: number; showCommercials: boolean }) {
   const t = budget.totals;
   return (
     <Panel>
@@ -403,6 +478,8 @@ function BudgetPanel({ budget, taxRatePct, vatResolved, totalLines }: { budget: 
         </Badge>
       </div>
 
+      {budget.pricingNotice && <div className="mt-3"><Alert tone="warning">{budget.pricingNotice}</Alert></div>}
+      <p className="mt-2 text-xs text-slate-500"><span className="font-medium text-slate-700">Price source:</span> {budget.priceSource.label}. {budget.priceSource.notice}</p>
       {budget.state === "awaiting_pricing" ? (
         <p className="mt-3 text-sm text-slate-600">No current selling price available yet. Totals appear once at least one line has a quantity, a confirmed Cin7 product and a selling price.</p>
       ) : (
@@ -414,10 +491,19 @@ function BudgetPanel({ budget, taxRatePct, vatResolved, totalLines }: { budget: 
             <Row k={budget.state === "partial" ? "Partial subtotal (excl. VAT)" : "Subtotal (excl. VAT)"} v={fmtMoney(t.subtotalExTax)} />
             <Row k={vatResolved ? `VAT (${taxRatePct}%)` : "VAT"} v={vatResolved ? fmtMoney(t.taxTotal) : "choose a customer"} />
             <Row k={budget.state === "partial" ? "Partial total (incl. VAT)" : "Total (incl. VAT)"} v={vatResolved ? fmtMoney(t.totalIncTax) : "—"} bold />
-            <Row k="Estimated cost" v={fmtMoney(t.estimatedCost)} />
-            <Row k="Estimated GP" v={fmtMoney(t.estimatedGP)} />
-            <Row k="Estimated overall margin" v={fmtPct(t.overallMarginPct)} bold />
+            {showCommercials && (
+              <>
+                <Row k="Estimated cost" v={fmtMoney(t.estimatedCost)} />
+                <Row k="Estimated GP" v={fmtMoney(t.estimatedGP)} />
+                <Row k="Estimated overall margin" v={fmtPct(t.overallMarginPct)} bold />
+              </>
+            )}
           </div>
+          {budget.charges.length > 0 && (
+            <ul className="mt-3 max-w-sm text-xs text-slate-600">
+              {budget.charges.map((c) => <li key={c.key} className="flex justify-between"><span>{c.label} <span className="text-slate-400">(estimator-entered)</span></span><span className="tabular-nums">{c.amountExTax == null ? <span className="text-warning">required</span> : fmtMoney(c.amountExTax)}</span></li>)}
+            </ul>
+          )}
         </>
       )}
 
@@ -438,6 +524,24 @@ function BudgetPanel({ budget, taxRatePct, vatResolved, totalLines }: { budget: 
   );
 }
 
+function Round3Panel() {
+  return (
+    <Panel>
+      <PanelTitle>Open for Round 3 — not resolved</PanelTitle>
+      <p className="mt-1 text-xs text-slate-500">These are still OPEN with NewQuip. Nothing below is silently assumed in this budget.</p>
+      <ul className="mt-3 divide-y divide-slate-100 text-xs">
+        {ROUND3_OPEN_ITEMS.map((i) => (
+          <li key={i.n} className="py-2">
+            <div className="flex items-center gap-2"><Badge tone={i.priority === "BLOCKER" ? "danger" : i.priority === "HIGH" ? "warning" : "neutral"}>{i.priority}</Badge><span className="font-medium text-slate-800">{i.topic}</span><span className="text-slate-400">OPEN</span></div>
+            <div className="mt-1 text-slate-600">{i.question}</div>
+            <div className="mt-0.5 text-slate-500"><span className="font-medium">Meanwhile:</span> {i.interim}</div>
+          </li>
+        ))}
+      </ul>
+    </Panel>
+  );
+}
+
 function Row({ k, v, bold }: { k: string; v: string; bold?: boolean }) {
   return <div className={`flex justify-between ${bold ? "font-semibold text-slate-900" : "text-slate-600"}`}><span>{k}</span><span className="tabular-nums">{v}</span></div>;
 }
@@ -448,6 +552,7 @@ function PackageDetail({ pkg, comps, confirmed }: { pkg: PackageMapping; comps: 
   return (
     <div className="mt-3 rounded-md border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">
       <p className="text-slate-500">{pkg.provenance}</p>
+      {pkg.alternativeIdentity && <p className="mt-1 text-warning">Also seen as a single product: {pkg.alternativeIdentity.sku} — {pkg.alternativeIdentity.description}. {pkg.alternativeIdentity.note}</p>}
       {!confirmed && <p className="mt-1 text-warning">Confirm the package to price it. Components with an unsettled SKU or layout-dependent quantity keep the package INCOMPLETE.</p>}
       <div className="mt-2 overflow-x-auto">
         <table className="w-full text-left">
@@ -462,7 +567,7 @@ function PackageDetail({ pkg, comps, confirmed }: { pkg: PackageMapping; comps: 
               const x = comps.find((k) => k.id === c.id);
               return (
                 <tr key={c.id} className="border-b border-slate-100 align-top">
-                  <td className="py-1 pr-3 font-medium text-slate-800">{c.sku ?? (c.candidateSkus?.length ? `${c.candidateSkus.join(" / ")}?` : "—")}</td>
+                  <td className="py-1 pr-3 font-medium text-slate-800">{c.sku ?? c.skuRequired ?? (c.candidateSkus?.length ? `${c.candidateSkus.join(" / ")}?` : "—")}{c.historicSurrogate && <div className="font-normal text-slate-400">historic surrogate only: {c.historicSurrogate.sku} ({c.historicSurrogate.name}) — not the FORTIS</div>}</td>
                   <td className="pr-3">{c.description}{c.note ? <div className="text-slate-400">{c.note}</div> : null}</td>
                   <td className="pr-3 text-right tabular-nums">
                     {c.qtyPerUnit != null ? `${c.qtyPerUnit} per unit` : <span className="text-warning">awaiting validation<div className="text-slate-400">Topigs ref: {c.historicTopigsQty ?? "—"}</div></span>}
@@ -470,6 +575,7 @@ function PackageDetail({ pkg, comps, confirmed }: { pkg: PackageMapping; comps: 
                   <td className="pr-3">
                     <Badge tone={c.identity === "source_backed" ? "info" : "warning"}>{c.identity === "source_backed" ? "Source-backed" : c.identity === "uncertain" ? "Identity unresolved" : "No SKU identified"}</Badge>
                     {x && x.status === "not_in_catalogue" && <div className="text-warning">not in Cin7</div>}
+                    {x && x.status === "pricing_exception" && <div className="text-warning">{x.reason}</div>}
                   </td>
                   <td className="pr-3 text-right tabular-nums">{x?.unitPrice != null ? fmtMoney(x.unitPrice) : <span className="text-slate-400">—</span>}</td>
                   <td className="pr-3 text-right tabular-nums">{x?.averageCost != null ? <>{fmtMoney(x.averageCost)}{x.costTrust === "suspect" && <div className="text-warning">{TRUST_LABEL.suspect}</div>}</> : <span className="text-slate-400">—</span>}</td>
@@ -487,7 +593,7 @@ function PackageDetail({ pkg, comps, confirmed }: { pkg: PackageMapping; comps: 
 function BomRow(p: {
   l: GeneratedLine; b: BridgeLine | undefined; m: MappingResolution | undefined; isOpen: boolean; toggle: () => void;
   override: string; source: OverrideSource | undefined; setOverride: (v: string) => void; clearOverride: () => void; useTopigs: () => void;
-  sku: string; setSku: (v: string) => void; rooms: number;
+  sku: string; setSku: (v: string) => void; rooms: number; reason: string; setReason: (v: string) => void;
   pkg: PackageMapping | undefined; pkgConfirmed: boolean; pkgOpen: boolean; togglePkg: () => void; setPkgConfirmed: (on: boolean) => void;
 }) {
   const { l, b, m } = p;
@@ -495,6 +601,9 @@ function BomRow(p: {
   const hist = l.historicReference.quantityPerRoom;
   const prov = quantityProvenance(l, p.source);
   const manual = prov === "manual_topigs_reference" || prov === "manual_entry";
+  const kind = valueKindOf(l);
+  const estPriced = estimatorPricedFor(l.itemKey);
+  const manualDoor = commercialMappingFor(l.itemKey)?.kind === "unresolved";
   const chosen = m?.candidates.find((c) => c.sku === p.sku);
 
   return (
@@ -503,21 +612,37 @@ function BomRow(p: {
         {/* Item + calculation state */}
         <div>
           <div className="font-medium text-slate-900">{l.label}</div>
+          <div className="mt-1"><Badge tone={KIND_TONE[kind]}>{VALUE_KIND_LABEL[kind]}</Badge></div>
           <div className="mt-1 space-y-0.5 text-xs">
             {manual ? (
               <>
                 <div className="flex items-center gap-2">
-                  <Badge tone="neutral">{prov === "manual_topigs_reference" ? "MANUAL / HISTORIC REFERENCE" : "MANUAL"}</Badge>
+                  <Badge tone="neutral">{l.defaultQuantityPerRoom != null ? "OVERRIDE" : prov === "manual_topigs_reference" ? "MANUAL / HISTORIC REFERENCE" : "MANUAL"}</Badge>
                   <span className="font-semibold tabular-nums text-slate-800">{l.quantityPerRoom}</span>
                 </div>
+                {l.defaultQuantityPerRoom != null && <div className="text-slate-500">Overrides the default of {l.defaultQuantityPerRoom} per room</div>}
                 <div className="text-slate-500">{prov === "manual_topigs_reference" ? "Topigs reference quantity — not a verified calculation" : "Estimator entry — not a verified calculation"}</div>
+                {!l.overrideReason && <div className="text-danger">Reason required — open “Why?” and say why this was overridden</div>}
               </>
             ) : prov === "verified_calculation" ? (
               <div className="text-slate-700">Calculated: <span className="font-semibold tabular-nums">{l.quantityPerRoom}</span> <span className="text-slate-400">· {STATUS_LABEL[l.ruleStatus]}</span></div>
+            ) : prov === "system_default" ? (
+              <div className="text-slate-700">Default minimum: <span className="font-semibold tabular-nums">{l.quantityPerRoom}</span> per room <span className="text-slate-400">· 1 per 25 m² — the customer may ask for more</span></div>
+            ) : prov === "estimator_input" ? (
+              <div className="text-slate-700">Entered: <span className="font-semibold tabular-nums">{l.quantityPerRoom}</span>{l.unit === "running_metre" ? " running metres" : ""} per room</div>
             ) : (
               <>
-                <div className="text-slate-500">Historic reference: <span className="font-medium tabular-nums text-slate-700">{hist ?? "—"}</span>{hist != null ? " / unit" : ""}</div>
-                <div className="text-warning">Calculation: awaiting validation</div>
+                <div className="text-slate-500">Historic reference: <span className="font-medium tabular-nums text-slate-700">{hist ?? "—"}</span>{hist != null ? (l.unit === "running_metre" ? " m" : " / unit") : ""}</div>
+                <div className="text-warning">{l.inputRequired ?? "Estimator to enter / confirm the quantity"}</div>
+                {l.hypothesis && (
+                  <div className="text-slate-500">
+                    Suggested basis: {l.hypothesis.expression}
+                    {l.hypothesis.value != null && Number.isInteger(l.hypothesis.value) && (
+                      <button type="button" onClick={() => p.setOverride(String(l.hypothesis!.value))} className="ml-2 text-primary hover:underline">Use {l.hypothesis.value}</button>
+                    )}
+                    {l.hypothesis.caveat && <div className="text-slate-400">{l.hypothesis.caveat}</div>}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -535,10 +660,17 @@ function BomRow(p: {
                 <label className="flex items-center gap-1 text-slate-600"><input type="checkbox" checked={p.pkgConfirmed} onChange={(e) => p.setPkgConfirmed(e.target.checked)} /> Use this package</label>
               </div>
             </>
+          ) : estPriced ? (
+            <>
+              <div className="font-medium text-slate-800">Priced per {estPriced.unit}, by pig size</div>
+              <div className="mt-0.5 text-warning">ESTIMATOR PRICING REQUIRED — no SKU or rate is applied</div>
+              <div className="mt-0.5 text-slate-500">Historic SKU family {estPriced.historicSkus?.join(" / ")}; new sizes get new SKUs.</div>
+            </>
           ) : m?.status === "UNMAPPED" ? (
             <div className="text-slate-500">Product: no matching Cin7 product found</div>
           ) : (
             <>
+              {manualDoor && <div className="mb-1 text-slate-500">Manual selection — the size is in the Cin7 product description.</div>}
               <select
                 value={p.sku}
                 onChange={(e) => p.setSku(e.target.value)}
@@ -590,16 +722,22 @@ function BomRow(p: {
           {Object.keys(l.inputsUsed).length > 0 && <p className="mt-2">Inputs used: {Object.entries(l.inputsUsed).map(([k, v]) => `${k} = ${v}`).join(", ")}</p>}
           <p className="mt-2"><span className="font-medium text-slate-700">Historic source:</span> {l.historicReference.source}</p>
           {def && <p className="mt-1"><span className="font-medium text-slate-700">Open question for NewQuip:</span> {def.seanQuestion}</p>}
-          <p className="mt-1 text-slate-500">Quantities are per reference unit, multiplied by {Number.isFinite(p.rooms) ? p.rooms : "?"} (the workbook calls this “Rooms”; its exact meaning is awaiting NewQuip confirmation).</p>
+          <p className="mt-1 text-slate-500">Quantities are per room, multiplied by {Number.isFinite(p.rooms) ? p.rooms : "?"} rooms (an actual room within a building — confirmed by NewQuip).</p>
           {m && <p className="mt-2"><span className="font-medium text-slate-700">Product mapping:</span> {m.note}{chosen?.reason ? ` Match basis: ${chosen.reason}.` : m.candidates[0]?.reason ? ` Match basis: ${m.candidates[0].reason}.` : ""}</p>}
           {manualLinesFor(l.itemKey).map((ml) => <p key={ml.id} className="mt-1"><span className="font-medium text-slate-700">Separate commercial line:</span> {ml.description} — {ml.reason} Historic Topigs reference R{ml.historicTopigsPerUnitZar}/unit (not used in totals).</p>)}
           {b && b.status !== "priced" && b.status !== "not_selected" && <p className="mt-1 text-warning">Pricing: {b.reason}</p>}
           {b?.status === "priced" && <p className="mt-1">Pricing: {fmtMoney(b.unitPrice)} per unit (Cin7 price tier); cost {b.averageCost == null ? "unknown" : fmtMoney(b.averageCost)}; project quantity {b.quantity}.</p>}
           <label className="mt-3 flex items-center gap-2">
-            <span className="font-medium text-slate-700">Manual quantity per unit</span>
+            <span className="font-medium text-slate-700">{l.defaultQuantityPerRoom != null ? "Override quantity per room" : "Quantity per room"}</span>
             <input value={p.override} onChange={(e) => p.setOverride(e.target.value)} inputMode="decimal" placeholder="enter qty" className="w-24 rounded border border-slate-300 px-2 py-1 text-right" />
-            <span className="text-slate-400">(marked MANUAL — not verified)</span>
+            <span className="text-slate-400">(marked {l.defaultQuantityPerRoom != null ? "OVERRIDE" : "MANUAL"} — not verified)</span>
           </label>
+          {manual && (
+            <label className="mt-2 flex items-center gap-2">
+              <span className="font-medium text-slate-700">Reason</span>
+              <input value={p.reason} onChange={(e) => p.setReason(e.target.value)} placeholder="why this quantity? (required)" className="w-72 rounded border border-slate-300 px-2 py-1" />
+            </label>
+          )}
         </div>
       )}
     </li>

@@ -15,17 +15,21 @@ describe("A. VERIFIED calculations (golden Topigs input)", () => {
     expect(r.derived.rooms).toBe(12);
   });
 
-  it("emits NO system-calculated quantity while no item rule is verified", () => {
+  it("emits NO verified (system-calculated) quantity while no item rule is verified", () => {
     expect(r.lines.some((l) => l.basis === "system_calculated")).toBe(false);
     expect(r.lines.some((l) => l.ruleStatus === "verified")).toBe(false);
   });
 
-  it("every non-optional line is awaiting validation with a null quantity", () => {
-    for (const l of r.lines.filter((x) => x.basis !== "not_selected")) {
+  it("only the confirmed lighting MINIMUM yields a quantity (a labelled DEFAULT); every other line awaits the estimator", () => {
+    for (const l of r.lines.filter((x) => x.basis !== "not_selected" && x.itemKey !== "led_light")) {
       expect(l.basis).toBe("awaiting_validation");
       expect(l.quantityPerRoom).toBeNull();
       expect(l.projectQuantity).toBeNull();
     }
+    const light = r.lines.find((l) => l.itemKey === "led_light")!;
+    expect(light.basis).toBe("system_default");
+    expect(light.quantityPerRoom).toBe(29); // ceil(714.285 / 25) — Sean's own "about 29"
+    expect(light.projectQuantity).toBe(29 * 12);
   });
 
   it("optional equipment that is switched off is a real 0, not_selected", () => {
@@ -47,29 +51,35 @@ describe("B. historic reference outputs awaiting rule validation", () => {
     }
   });
 
-  it("hypotheses are displayed but are labelled awaiting validation and never priced", () => {
+  it("suggestions are displayed but never priced, and no longer back-fit the historic figures", () => {
     const by = Object.fromEntries(r.lines.map((l) => [l.itemKey, l]));
-    // These hypothesis VALUES are computed from the inputs (not hard-coded). That they reproduce the
-    // historic figure is an observation to put to NewQuip, not a verification.
-    expect(by.feeder.hypothesis?.value).toBe(18);
-    expect(by.feed_saver_mat.hypothesis?.value).toBe(18);
-    expect(by.cup_drinker.hypothesis?.value).toBe(54);
-    expect(by.concrete_slat.hypothesis?.value).toBe(1320);
-    expect(by.led_light.hypothesis?.value).not.toBe(TOPIGS_GROWER_HISTORIC.led_light); // guide cell contradicts history
+    // Feeder / mat: only the CONFIRMED capacity is shown — no quantity, no ceil(), no "total − hospital" guess.
+    expect(by.feeder.hypothesis?.value).toBeNull();
+    expect(by.feeder.hypothesis?.expression).toContain("45 pigs per feeder");
+    expect(by.feed_saver_mat.hypothesis?.value).toBeNull();
+    // Drinker: 600 pigs ÷ 15 = 40, UNROUNDED and flagged as only a suggestion. It deliberately differs from Topigs' 54.
+    expect(by.cup_drinker.hypothesis?.value).toBe(40);
+    expect(by.cup_drinker.hypothesis?.value).not.toBe(TOPIGS_GROWER_HISTORIC.cup_drinker);
+    expect(by.cup_drinker.hypothesis?.caveat).toMatch(/SUGGESTED only/);
+    // Slats: NO slatted area entered → no suggestion at all (never derived from the building footprint).
+    expect(by.concrete_slat.hypothesis?.value).toBeNull();
+    expect(by.concrete_slat.hypothesis?.caveat).toMatch(/ESTIMATOR INPUT REQUIRED/);
     expect(by.feeder.ruleStatus).toBe("requires_validation");
     expect(by.feed_saver_mat.ruleStatus).toBe("provisional");
-    for (const l of Object.values(by).filter((x) => x.basis !== "not_selected")) expect(l.projectQuantity).toBeNull();
+    for (const l of Object.values(by).filter((x) => x.basis === "awaiting_validation")) expect(l.projectQuantity).toBeNull();
   });
 
-  it("hypotheses follow the inputs (not hard-coded to Topigs)", () => {
-    const r2 = calculateGrowerHouse(clone({ totalPens: 30, hospitalPens: 4, lengthM: 36, widthM: 12 }));
+  it("suggestions follow the inputs (not hard-coded to Topigs)", () => {
+    const r2 = calculateGrowerHouse(clone({ pigsPerRoom: 300, slattedFloorAreaM2: 108 }));
     const by = Object.fromEntries(r2.lines.map((l) => [l.itemKey, l]));
-    expect(by.feeder.hypothesis?.value).toBe(26);
-    expect(by.concrete_slat.hypothesis?.value).toBe(80 * 10);
+    expect(by.cup_drinker.hypothesis?.value).toBe(20);
+    expect(by.concrete_slat.hypothesis?.value).toBe(200); // 108 m² ÷ 0.54 m² per slat (arithmetic only)
   });
 
-  it("slat hypothesis tolerates binary float error (49.5/0.45)", () => {
-    expect(calculateGrowerHouse(TOPIGS_GROWER_INPUT).lines.find((l) => l.itemKey === "concrete_slat")!.hypothesis?.value).toBe(1320);
+  it("the slat suggestion depends ONLY on the slatted area — never on the building footprint or walkways", () => {
+    const a = calculateGrowerHouse(clone({ slattedFloorAreaM2: 500 })).lines.find((l) => l.itemKey === "concrete_slat")!;
+    const b = calculateGrowerHouse(clone({ slattedFloorAreaM2: 500, lengthM: 20, widthM: 10 })).lines.find((l) => l.itemKey === "concrete_slat")!;
+    expect(a.hypothesis?.value).toBe(b.hypothesis?.value);
   });
 });
 
@@ -125,7 +135,7 @@ describe("invalid inputs", () => {
     ["hospital > total", { hospitalPens: 21 }, "hospitalPens"],
     ["zero length", { lengthM: 0 }, "lengthM"],
     ["NaN width", { widthM: NaN }, "widthM"],
-    ["Infinity pigs", { pigsPerBuilding: Infinity }, "pigsPerBuilding"],
+    ["Infinity pigs", { pigsPerRoom: Infinity }, "pigsPerRoom"],
   ];
   for (const [name, patch, field] of cases) {
     it(`rejects ${name} and generates no lines (never a negative quantity)`, () => {
@@ -153,11 +163,11 @@ describe("invalid inputs", () => {
 
 describe("explainability is data-driven", () => {
   const r = calculateGrowerHouse(TOPIGS_GROWER_INPUT);
-  it("provisional/awaiting lines show historic, hypothesis and status", () => {
+  it("provisional/awaiting lines show historic, suggested basis and status", () => {
     const f = r.lines.find((l) => l.itemKey === "feeder")!;
     expect(f.explanation.kind).toBe("awaiting");
     expect(f.explanation.steps.join("\n")).toContain("Historic Topigs quantity: 18 per room");
-    expect(f.explanation.steps.join("\n")).toContain("20 total pens − 2 hospital pens = 18");
+    expect(f.explanation.steps.join("\n")).toContain("45 pigs per feeder");
     expect(f.explanation.steps.join("\n")).toContain("awaiting NewQuip validation");
     expect(r.lines.find((l) => l.itemKey === "feed_saver_mat")!.explanation.kind).toBe("provisional");
   });
