@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Panel } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatBps, formatCents, type ProjectView } from "@/lib/projects/project-view";
-import { listProjectsAction, seedGoldenProjectAction } from "./actions";
+import { getViewerPermissionsAction, listProjectsAction, seedGoldenProjectAction } from "./actions";
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<ProjectView[] | null>(null);
@@ -28,6 +28,11 @@ export default function ProjectsPage() {
     });
   }
   useEffect(load, []);
+  // Display only: the fixture action itself re-checks the owner/admin role on the server.
+  const [canAdmin, setCanAdmin] = useState(false);
+  useEffect(() => {
+    getViewerPermissionsAction().then((r) => setCanAdmin(Boolean(r.ok && r.data?.canApprove)));
+  }, []);
 
   function seed() {
     startSeeding(async () => {
@@ -52,9 +57,11 @@ export default function ProjectsPage() {
 
       <div className="mt-6 flex items-center justify-between">
         <p className="text-sm text-slate-500">{projects ? `${projects.length} project${projects.length === 1 ? "" : "s"}` : isLoading ? "Loading…" : ""}</p>
-        <Button variant="secondary" size="sm" onClick={seed} loading={isSeeding}>
-          Create golden fixture project
-        </Button>
+        {canAdmin && (
+          <Button variant="secondary" size="sm" onClick={seed} loading={isSeeding}>
+            Create golden fixture project
+          </Button>
+        )}
       </div>
 
       <div className="mt-3">
@@ -74,7 +81,7 @@ export default function ProjectsPage() {
                 <TH align="right">Approved completion</TH>
                 <TH align="right">Invoiced / committed</TH>
                 <TH align="right">Currently claimable</TH>
-                <TH align="right">Remaining</TH>
+                <TH align="right">Remaining to bill / commit</TH>
                 <TH>Status</TH>
               </tr>
             </THead>

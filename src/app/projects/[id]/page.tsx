@@ -17,6 +17,7 @@ import {
   cancelDraftClaimAction,
   createClaimDraftAction,
   getProjectAction,
+  getViewerPermissionsAction,
   previewClaimAction,
   recalculateStaleDraftAction,
   recordProgressAction,
@@ -67,6 +68,11 @@ export default function ProjectDetailPage() {
     });
   }
   useEffect(load, [id]);
+  // Display only: every mutating action re-checks the owner/admin role on the server.
+  const [canApprove, setCanApprove] = useState(false);
+  useEffect(() => {
+    getViewerPermissionsAction().then((r) => setCanApprove(Boolean(r.ok && r.data?.canApprove)));
+  }, []);
 
   function run(fn: () => Promise<{ ok: boolean; error?: string }>, done?: string) {
     startWorking(async () => {
@@ -159,7 +165,7 @@ export default function ProjectDetailPage() {
               <Stat label="Earned / certified to date" value={formatCents(c.earnedCents)} hint="Stage value × APPROVED completion" />
               <Stat label="Invoiced / committed" value={formatCents(c.committedCents)} hint="Approved, sent or uncertain claims" />
               <Stat label="Currently claimable" value={formatCents(c.claimableCents)} />
-              <Stat label="Remaining contract value" value={formatCents(c.remainingCents)} />
+              <Stat label="Remaining to bill / commit" value={formatCents(c.remainingCents)} hint="Contract value − invoiced / committed (not − earned)" />
             </div>
           </div>
         </div>
@@ -184,7 +190,7 @@ export default function ProjectDetailPage() {
                 <TH align="right" className="bg-emerald-50 text-emerald-800">Billed / committed</TH>
                 <TH align="right" className="bg-emerald-50 text-emerald-800">Billed % of stage</TH>
                 <TH align="right">Currently claimable</TH>
-                <TH align="right">Remaining</TH>
+                <TH align="right">Remaining to bill / commit</TH>
               </tr>
             </THead>
             <TBody>
@@ -206,7 +212,14 @@ export default function ProjectDetailPage() {
           </Table>
           <div className="grid gap-4 lg:grid-cols-2">
             {view.stages.map((s) => (
-              <ProgressForm key={s.id} stage={s} disabled={isWorking} onSubmit={(rep, app, comment) => run(() => recordProgressAction(id, s.id, rep, app, comment), `Progress recorded for ${s.name}.`)} />
+              <ProgressForm
+                key={s.id}
+                stage={s}
+                disabled={isWorking}
+                canApprove={canApprove}
+                onPhysical={(reported, comment) => run(() => recordProgressAction(id, s.id, reported, null, comment), `Physical progress recorded for ${s.name}. Commercial approval and claims are unchanged.`)}
+                onCommercial={(approved, comment) => run(() => recordProgressAction(id, s.id, (s.reportedBps / 100).toString(), approved, comment), `Commercial approval recorded for ${s.name}. Nothing was claimed or sent to Cin7.`)}
+              />
             ))}
           </div>
         </div>
@@ -295,7 +308,8 @@ export default function ProjectDetailPage() {
                     <TD>
                       <div className="flex gap-1">
                         {cl.status === "DRAFT" && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.")} disabled={isWorking}>Submit</Button>}
-                        {cl.status === "READY_FOR_APPROVAL" && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.")} disabled={isWorking}>Approve</Button>}
+                        {cl.status === "READY_FOR_APPROVAL" && canApprove && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.")} disabled={isWorking}>Approve</Button>}
+                        {cl.status === "READY_FOR_APPROVAL" && !canApprove && <span className="self-center text-xs text-slate-500">Awaiting owner/admin approval</span>}
                         {(cl.status === "DRAFT" || cl.status === "READY_FOR_APPROVAL") && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.")} disabled={isWorking}>Recalculate</Button>}
                         {(cl.status === "DRAFT" || cl.status === "READY_FOR_APPROVAL") && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), "Claim cancelled.")} disabled={isWorking}>Cancel</Button>}
                       </div>
@@ -311,29 +325,68 @@ export default function ProjectDetailPage() {
   );
 }
 
-function ProgressForm({ stage, disabled, onSubmit }: { stage: StageView; disabled: boolean; onSubmit: (reported: string, approved: string | null, comment: string) => void }) {
-  const [reported, setReported] = useState((stage.reportedBps / 100).toString());
-  const [approved, setApproved] = useState((stage.approvedBps / 100).toString());
+function ProgressForm({
+  stage,
+  disabled,
+  canApprove,
+  onPhysical,
+  onCommercial,
+}: {
+  stage: StageView;
+  disabled: boolean;
+  canApprove: boolean;
+  onPhysical: (reported: string, comment: string) => void;
+  onCommercial: (approved: string, comment: string) => void;
+}) {
+  const currentReported = (stage.reportedBps / 100).toString();
+  const currentApproved = (stage.approvedBps / 100).toString();
+  const [reported, setReported] = useState(currentReported);
+  const [approved, setApproved] = useState(currentApproved);
   const [comment, setComment] = useState("");
+  const [localError, setLocalError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
-  const approvedChanged = approved !== (stage.approvedBps / 100).toString();
+
+  function submitCommercial() {
+    if (approved === currentApproved) return setLocalError("Enter a different approved percentage to record an approval.");
+    if (!comment.trim()) return setLocalError("A reason is required when approved commercial completion changes.");
+    setLocalError(null);
+    onCommercial(approved, comment);
+  }
+
   return (
     <Panel>
       <div className="flex items-center justify-between">
         <PanelTitle>{stage.name}</PanelTitle>
         <Button size="sm" variant="ghost" onClick={() => setOpen(!open)}>{open ? "Hide" : "Update progress"}</Button>
       </div>
+      <p className="mt-1 text-xs text-slate-500">
+        Physical {formatBps(stage.reportedBps)} · Commercial approval {formatBps(stage.approvedBps)} · Billed / committed {formatBps(stage.committedBps)}
+      </p>
       {open && (
-        <div className="mt-3 space-y-3">
-          <Input label="Reported physical completion (%)" value={reported} onChange={(e) => setReported(e.target.value)} inputMode="decimal" />
-          <Input label="Approved commercial completion (%) — manager only" value={approved} onChange={(e) => setApproved(e.target.value)} inputMode="decimal" helperText="Leave unchanged to record physical progress only." />
-          <Input label="Comment / reason" value={comment} onChange={(e) => setComment(e.target.value)} helperText={approvedChanged ? "Required when approved completion changes." : undefined} />
-          <Button size="sm" disabled={disabled} onClick={() => onSubmit(reported, approvedChanged ? approved : null, comment)}>Record progress</Button>
+        <div className="mt-3 space-y-4">
+          <Input label="Comment / reason" value={comment} onChange={(e) => setComment(e.target.value)} helperText="Optional for physical progress; required for a commercial approval." />
+          <div className="space-y-2 rounded-md border border-sky-200 bg-sky-50/40 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-sky-800">Report physical progress</p>
+            <Input label={`Physical completion (%) — now ${formatBps(stage.reportedBps)}`} value={reported} onChange={(e) => setReported(e.target.value)} inputMode="decimal" />
+            <p className="text-xs text-slate-500">Informational. Does not change commercial approval and never creates or changes a claim.</p>
+            <Button size="sm" variant="secondary" disabled={disabled || reported === currentReported} onClick={() => { setLocalError(null); onPhysical(reported, comment); }}>Record physical progress</Button>
+          </div>
+          {canApprove ? (
+            <div className="space-y-2 rounded-md border border-indigo-200 bg-indigo-50/40 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-indigo-800">Approve commercial progress (owner/admin)</p>
+              <Input label={`Approved commercial completion (%) — now ${formatBps(stage.approvedBps)}, physical ${formatBps(stage.reportedBps)}`} value={approved} onChange={(e) => setApproved(e.target.value)} inputMode="decimal" />
+              <p className="text-xs text-slate-500">This is the only completion that drives a claim. Recording it creates no claim and sends nothing to Cin7.</p>
+              <Button size="sm" disabled={disabled} onClick={submitCommercial}>Approve commercial progress</Button>
+            </div>
+          ) : (
+            <p className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">Commercial approval is set by an organisation owner or admin.</p>
+          )}
+          {localError && <Alert tone="warning">{localError}</Alert>}
         </div>
       )}
       {stage.history.length > 0 && (
         <details className="mt-3 text-xs text-slate-600">
-          <summary className="cursor-pointer">History ({stage.history.length})</summary>
+          <summary className="cursor-pointer">Progress history ({stage.history.length})</summary>
           <ul className="mt-2 space-y-1">
             {stage.history.map((h) => (
               <li key={h.id}>

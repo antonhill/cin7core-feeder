@@ -62,6 +62,25 @@ export async function getProjectAction(projectId: string): Promise<ActionResult<
   }
 }
 
+/**
+ * DISPLAY ONLY: tells the UI whether to show owner/admin controls (approve commercial completion, approve claims,
+ * create the fixture). Every mutating action above still enforces the role server-side; hiding a button is a
+ * convenience, never the control.
+ */
+export async function getViewerPermissionsAction(): Promise<ActionResult<{ canApprove: boolean }>> {
+  try {
+    await requireModuleAccess(PROJECTS_MODULE.href);
+    try {
+      await requireOrgAdmin("approve in Projects");
+      return { ok: true, data: { canApprove: true } };
+    } catch {
+      return { ok: true, data: { canApprove: false } };
+    }
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
 /** Creates the deterministic golden POC project (R10m, six stages, opening claim) in the caller's org. */
 export async function seedGoldenProjectAction(): Promise<ActionResult<{ projectId: string }>> {
   try {
