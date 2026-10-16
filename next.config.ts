@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { buildContentSecurityPolicy } from "./src/lib/csp";
 
 // Security re-audit P1-9: this app has no legitimate need to be
 // framed/embedded (confirmed: no <iframe> usage anywhere in src/app) and
@@ -15,19 +16,10 @@ import type { NextConfig } from "next";
 // A nonce-based strict CSP is a further-hardening step, deliberately not
 // attempted here without its own dedicated, separately-verified change (see
 // PROJECT-NOTES.md's P1-9 entry).
-const SUPABASE_ORIGIN = "https://pnzwjqjovxxdikxtfngq.supabase.co";
-
-const CSP = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
-  "style-src 'self' 'unsafe-inline'",
-  `img-src 'self' data: ${SUPABASE_ORIGIN}`,
-  "font-src 'self' data:",
-  `connect-src 'self' ${SUPABASE_ORIGIN}`,
-  "frame-ancestors 'none'",
-  "base-uri 'self'",
-  "form-action 'self' https://*.lemonsqueezy.com",
-].join("; ");
+// The Supabase origin is derived from NEXT_PUBLIC_SUPABASE_URL (see src/lib/csp.ts), not hard-coded:
+// production keeps allowing the production project, and any other environment (e.g. a branch-specific
+// Preview pointing at an isolated test project) allows exactly its own origin.
+const CSP = buildContentSecurityPolicy(process.env.NEXT_PUBLIC_SUPABASE_URL);
 
 const SECURITY_HEADERS = [
   { key: "Content-Security-Policy", value: CSP },

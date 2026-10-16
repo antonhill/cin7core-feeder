@@ -224,6 +224,16 @@ export function WarehousePerformanceIcon({ className }: IconProps) {
   );
 }
 
+export function ProjectsIcon({ className }: IconProps) {
+  return (
+    <GradientIcon className={className} from="#4f46e5" to="#312e81">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 9h18M8 9v11" />
+      <path d="m11.5 14.5 2 2 4-4" />
+    </GradientIcon>
+  );
+}
+
 export function StocktakeIcon({ className }: IconProps) {
   return (
     <GradientIcon className={className} from="#ea580c" to="#9a3412">
@@ -451,6 +461,19 @@ export const WAREHOUSE_PERFORMANCE_MODULE: ModuleConfig = {
     "A monthly warehouse operations scorecard — order flow, picking/packing accuracy, stock accuracy, dispatch, Cin7 process compliance and warehouse organisation, each with evidence, history and corrective actions.",
 };
 
+// Projects POC (percentage-completion project billing) — src/app/projects/, src/lib/projects/,
+// supabase/migrations/0101. Toolbox-local: baseline, stages, completion and progress claims. The POC
+// has NO Cin7 write path. Off by default for every existing org (migration 0101, mirroring
+// Warehouse Performance/Picking Calendar/Quotes); a super-admin opts an org in via /admin.
+export const PROJECTS_MODULE: ModuleConfig = {
+  href: "/projects",
+  label: "Projects",
+  gradient: SELF_COLORED_ICON_BADGE,
+  Icon: ProjectsIcon,
+  blurb:
+    "Percentage-completion project billing: an agreed contract value split into stages, commercial completion approved per stage, and progress claims calculated against what has already been billed.",
+};
+
 export const HEALTH_MODULE: ModuleConfig = {
   href: "/health",
   label: "System Health",
@@ -557,6 +580,7 @@ export const MODULES: ModuleConfig[] = [
   PICKING_CALENDAR_MODULE,
   HEALTH_MODULE,
   WAREHOUSE_PERFORMANCE_MODULE,
+  PROJECTS_MODULE,
   INSTANCES_MODULE,
   ACTIVITY_MODULE,
 ];
