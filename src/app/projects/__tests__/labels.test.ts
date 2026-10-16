@@ -30,4 +30,18 @@ describe("Projects terminology", () => {
     expect(detail).toContain("Approve commercial progress");
     expect(detail).toMatch(/recordProgressAction\(id, s\.id, reported, null, comment\)/);
   });
+  it("privileged controls wait for a resolved permission (loading | member | admin) and fail closed", () => {
+    expect(detail).toContain('type ViewerPermission = "loading" | "member" | "admin"');
+    expect(detail).toContain('useState<ViewerPermission>("loading")');
+    expect(detail).toContain('r.ok && r.data?.canApprove ? "admin" : "member"');
+    expect(detail).toContain('perm === "admin"');
+    expect(detail).toContain('perm === "member"');
+    expect(detail).not.toContain("canApprove}"); // no boolean default that could flash admin controls
+    expect(list).toContain("useState<boolean | null>(null)");
+    expect(list).toContain("canAdmin === true");
+  });
+  it("progress forms clear only after a confirmed save", () => {
+    expect(detail).toMatch(/if \(await save\) \{\s*setComment\(""\)/);
+    expect(detail).toContain("Resolves true only when the action succeeded");
+  });
 });

@@ -29,7 +29,8 @@ export default function ProjectsPage() {
   }
   useEffect(load, []);
   // Display only: the fixture action itself re-checks the owner/admin role on the server.
-  const [canAdmin, setCanAdmin] = useState(false);
+  // Unknown (nothing rendered) until resolved, so the admin button never flashes for a member; failure => no button.
+  const [canAdmin, setCanAdmin] = useState<boolean | null>(null);
   useEffect(() => {
     getViewerPermissionsAction().then((r) => setCanAdmin(Boolean(r.ok && r.data?.canApprove)));
   }, []);
@@ -57,7 +58,7 @@ export default function ProjectsPage() {
 
       <div className="mt-6 flex items-center justify-between">
         <p className="text-sm text-slate-500">{projects ? `${projects.length} project${projects.length === 1 ? "" : "s"}` : isLoading ? "Loading…" : ""}</p>
-        {canAdmin && (
+        {canAdmin === true && (
           <Button variant="secondary" size="sm" onClick={seed} loading={isSeeding}>
             Create golden fixture project
           </Button>
@@ -95,11 +96,11 @@ export default function ProjectsPage() {
                   </TD>
                   <TD>{p.project.customer_name}</TD>
                   <TD>{p.project.name}</TD>
-                  <TD align="right" className="tabular-nums">{formatCents(p.commercial.revisedContractCents)}</TD>
+                  <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(p.commercial.revisedContractCents)}</TD>
                   <TD align="right" className="tabular-nums">{formatBps(p.commercial.approvedCompletionBps)}</TD>
-                  <TD align="right" className="tabular-nums">{formatCents(p.commercial.committedCents)}</TD>
-                  <TD align="right" className="tabular-nums">{formatCents(p.commercial.claimableCents)}</TD>
-                  <TD align="right" className="tabular-nums">{formatCents(p.commercial.remainingCents)}</TD>
+                  <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(p.commercial.committedCents)}</TD>
+                  <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(p.commercial.claimableCents)}</TD>
+                  <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(p.commercial.remainingCents)}</TD>
                   <TD>
                     <Badge tone={p.project.status === "ACTIVE" ? "success" : "neutral"}>{p.project.status}</Badge>
                   </TD>

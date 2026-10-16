@@ -25,6 +25,7 @@ import {
   type ClaimPreviewResult,
 } from "../actions";
 
+type ViewerPermission = "loading" | "member" | "admin";
 type Tab = "overview" | "stages" | "components" | "claims";
 const TABS: { value: Tab; label: string }[] = [
   { value: "overview", label: "Overview" },
@@ -69,19 +70,27 @@ export default function ProjectDetailPage() {
   }
   useEffect(load, [id]);
   // Display only: every mutating action re-checks the owner/admin role on the server.
-  const [canApprove, setCanApprove] = useState(false);
+  // LOADING until known, so privileged controls (and the non-admin explanation) never flash; any failure => MEMBER (fail closed).
+  const [perm, setPerm] = useState<ViewerPermission>("loading");
   useEffect(() => {
-    getViewerPermissionsAction().then((r) => setCanApprove(Boolean(r.ok && r.data?.canApprove)));
+    getViewerPermissionsAction().then((r) => setPerm(r.ok && r.data?.canApprove ? "admin" : "member"));
   }, []);
 
-  function run(fn: () => Promise<{ ok: boolean; error?: string }>, done?: string) {
-    startWorking(async () => {
-      const res = await fn();
-      if (!res.ok) return setError(res.error ?? "Unknown error");
-      setError(null);
-      setNotice(done ?? null);
-      setPreview(null);
-      load();
+  /** Resolves true only when the action succeeded (forms use this to reset themselves; a failure keeps their input). */
+  function run(fn: () => Promise<{ ok: boolean; error?: string }>, done?: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      startWorking(async () => {
+        const res = await fn();
+        if (!res.ok) {
+          setError(res.error ?? "Unknown error");
+          return resolve(false);
+        }
+        setError(null);
+        setNotice(done ?? null);
+        setPreview(null);
+        load();
+        resolve(true);
+      });
     });
   }
 
@@ -197,15 +206,15 @@ export default function ProjectDetailPage() {
               {view.stages.map((s) => (
                 <TR key={s.id}>
                   <TD>{s.name}{s.belowCommitted && <span className="ml-2"><Badge tone="warning">approval below billed</Badge></span>}</TD>
-                  <TD align="right" className="tabular-nums">{formatCents(s.valueCents)}</TD>
+                  <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(s.valueCents)}</TD>
                   <TD align="right" className="tabular-nums">{formatBps(s.shareBps)}</TD>
                   <TD align="right" className="bg-sky-50/40 tabular-nums">{formatBps(s.reportedBps)}</TD>
                   <TD align="right" className="bg-indigo-50/40 tabular-nums">{formatBps(s.approvedBps)}</TD>
-                  <TD align="right" className="bg-indigo-50/40 tabular-nums">{formatCents(s.earnedCents)}</TD>
-                  <TD align="right" className="bg-emerald-50/40 tabular-nums">{formatCents(s.committedCents)}</TD>
+                  <TD align="right" className="bg-indigo-50/40 tabular-nums whitespace-nowrap">{formatCents(s.earnedCents)}</TD>
+                  <TD align="right" className="bg-emerald-50/40 tabular-nums whitespace-nowrap">{formatCents(s.committedCents)}</TD>
                   <TD align="right" className="bg-emerald-50/40 tabular-nums">{formatBps(s.committedBps)}</TD>
-                  <TD align="right" className="font-semibold tabular-nums">{formatCents(s.claimableCents)}</TD>
-                  <TD align="right" className="tabular-nums">{formatCents(s.remainingCents)}</TD>
+                  <TD align="right" className="font-semibold tabular-nums whitespace-nowrap">{formatCents(s.claimableCents)}</TD>
+                  <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(s.remainingCents)}</TD>
                 </TR>
               ))}
             </TBody>
@@ -216,7 +225,7 @@ export default function ProjectDetailPage() {
                 key={s.id}
                 stage={s}
                 disabled={isWorking}
-                canApprove={canApprove}
+                perm={perm}
                 onPhysical={(reported, comment) => run(() => recordProgressAction(id, s.id, reported, null, comment), `Physical progress recorded for ${s.name}. Commercial approval and claims are unchanged.`)}
                 onCommercial={(approved, comment) => run(() => recordProgressAction(id, s.id, (s.reportedBps / 100).toString(), approved, comment), `Commercial approval recorded for ${s.name}. Nothing was claimed or sent to Cin7.`)}
               />
@@ -235,7 +244,7 @@ export default function ProjectDetailPage() {
                 <TR key={a.id}>
                   <TD>{a.sku ? <span className="font-mono text-xs">{a.sku}</span> : null} {a.description}</TD>
                   <TD align="right" className="tabular-nums">{a.quantity}</TD>
-                  <TD align="right" className="tabular-nums">{formatCents(a.sales_value_cents)}</TD>
+                  <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(a.sales_value_cents)}</TD>
                   <TD align="right" className="tabular-nums">{a.estimated_cost_cents === null ? "—" : formatCents(a.estimated_cost_cents)}</TD>
                   <TD>{view.stages.find((s) => s.id === a.stage_id)?.name ?? "—"}</TD>
                 </TR>
@@ -266,11 +275,11 @@ export default function ProjectDetailPage() {
                     {preview.calc.lines.map((l) => (
                       <TR key={l.stageId}>
                         <TD>{l.stageName}</TD>
-                        <TD align="right" className="tabular-nums">{formatCents(l.stageValueCents)}</TD>
+                        <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(l.stageValueCents)}</TD>
                         <TD align="right" className="tabular-nums">{formatBps(l.approvedBps)}</TD>
-                        <TD align="right" className="tabular-nums">{formatCents(l.earnedToDateCents)}</TD>
-                        <TD align="right" className="tabular-nums">{formatCents(l.previouslyBilledCents)} ({formatBps(l.previouslyBilledBps)})</TD>
-                        <TD align="right" className="font-semibold tabular-nums">{formatCents(l.currentClaimCents)}</TD>
+                        <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(l.earnedToDateCents)}</TD>
+                        <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(l.previouslyBilledCents)} ({formatBps(l.previouslyBilledBps)})</TD>
+                        <TD align="right" className="font-semibold tabular-nums whitespace-nowrap">{formatCents(l.currentClaimCents)}</TD>
                       </TR>
                     ))}
                   </TBody>
@@ -301,15 +310,15 @@ export default function ProjectDetailPage() {
                       <Badge tone={CLAIM_TONE[cl.status] ?? "neutral"}>{cl.status}</Badge>
                       <span className="ml-2 text-xs text-slate-500">{cl.reserves ? "reserves value" : "no reservation"}</span>
                     </TD>
-                    <TD align="right" className="tabular-nums">{formatCents(cl.subtotal_cents)}</TD>
-                    <TD align="right" className="tabular-nums">{formatCents(cl.tax_cents)}</TD>
-                    <TD align="right" className="tabular-nums">{formatCents(cl.total_cents)}</TD>
+                    <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(cl.subtotal_cents)}</TD>
+                    <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(cl.tax_cents)}</TD>
+                    <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(cl.total_cents)}</TD>
                     <TD>{cl.cin7 ? `${cl.cin7.cin7_invoice_number ?? "—"} (${cl.cin7.cin7_status ?? "—"})` : "Not sent to Cin7"}</TD>
                     <TD>
                       <div className="flex gap-1">
                         {cl.status === "DRAFT" && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.")} disabled={isWorking}>Submit</Button>}
-                        {cl.status === "READY_FOR_APPROVAL" && canApprove && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.")} disabled={isWorking}>Approve</Button>}
-                        {cl.status === "READY_FOR_APPROVAL" && !canApprove && <span className="self-center text-xs text-slate-500">Awaiting owner/admin approval</span>}
+                        {cl.status === "READY_FOR_APPROVAL" && perm === "admin" && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.")} disabled={isWorking}>Approve</Button>}
+                        {cl.status === "READY_FOR_APPROVAL" && perm === "member" && <span className="self-center text-xs text-slate-500">Awaiting owner/admin approval</span>}
                         {(cl.status === "DRAFT" || cl.status === "READY_FOR_APPROVAL") && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.")} disabled={isWorking}>Recalculate</Button>}
                         {(cl.status === "DRAFT" || cl.status === "READY_FOR_APPROVAL") && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), "Claim cancelled.")} disabled={isWorking}>Cancel</Button>}
                       </div>
@@ -328,15 +337,16 @@ export default function ProjectDetailPage() {
 function ProgressForm({
   stage,
   disabled,
-  canApprove,
+  perm,
   onPhysical,
   onCommercial,
 }: {
   stage: StageView;
   disabled: boolean;
-  canApprove: boolean;
-  onPhysical: (reported: string, comment: string) => void;
-  onCommercial: (approved: string, comment: string) => void;
+  perm: ViewerPermission;
+  /** Resolve true on success: the form then clears its comment and collapses. A failure leaves everything as typed. */
+  onPhysical: (reported: string, comment: string) => Promise<boolean>;
+  onCommercial: (approved: string, comment: string) => Promise<boolean>;
 }) {
   const currentReported = (stage.reportedBps / 100).toString();
   const currentApproved = (stage.approvedBps / 100).toString();
@@ -346,18 +356,35 @@ function ProgressForm({
   const [localError, setLocalError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
 
+  // Inputs restart from the latest saved values every time the form is opened (after a save, or if someone else changed the stage).
+  function toggle() {
+    if (!open) {
+      setReported(currentReported);
+      setApproved(currentApproved);
+    }
+    setOpen(!open);
+  }
+
+  async function finish(save: Promise<boolean>) {
+    if (await save) {
+      setComment("");
+      setLocalError(null);
+      setOpen(false);
+    }
+  }
+
   function submitCommercial() {
     if (approved === currentApproved) return setLocalError("Enter a different approved percentage to record an approval.");
     if (!comment.trim()) return setLocalError("A reason is required when approved commercial completion changes.");
     setLocalError(null);
-    onCommercial(approved, comment);
+    void finish(onCommercial(approved, comment));
   }
 
   return (
     <Panel>
       <div className="flex items-center justify-between">
         <PanelTitle>{stage.name}</PanelTitle>
-        <Button size="sm" variant="ghost" onClick={() => setOpen(!open)}>{open ? "Hide" : "Update progress"}</Button>
+        <Button size="sm" variant="ghost" onClick={toggle}>{open ? "Hide" : "Update progress"}</Button>
       </div>
       <p className="mt-1 text-xs text-slate-500">
         Physical {formatBps(stage.reportedBps)} · Commercial approval {formatBps(stage.approvedBps)} · Billed / committed {formatBps(stage.committedBps)}
@@ -369,18 +396,18 @@ function ProgressForm({
             <p className="text-xs font-semibold uppercase tracking-wide text-sky-800">Report physical progress</p>
             <Input label={`Physical completion (%) — now ${formatBps(stage.reportedBps)}`} value={reported} onChange={(e) => setReported(e.target.value)} inputMode="decimal" />
             <p className="text-xs text-slate-500">Informational. Does not change commercial approval and never creates or changes a claim.</p>
-            <Button size="sm" variant="secondary" disabled={disabled || reported === currentReported} onClick={() => { setLocalError(null); onPhysical(reported, comment); }}>Record physical progress</Button>
+            <Button size="sm" variant="secondary" disabled={disabled || reported === currentReported} onClick={() => { setLocalError(null); void finish(onPhysical(reported, comment)); }}>Record physical progress</Button>
           </div>
-          {canApprove ? (
+          {perm === "admin" ? (
             <div className="space-y-2 rounded-md border border-indigo-200 bg-indigo-50/40 p-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-indigo-800">Approve commercial progress (owner/admin)</p>
               <Input label={`Approved commercial completion (%) — now ${formatBps(stage.approvedBps)}, physical ${formatBps(stage.reportedBps)}`} value={approved} onChange={(e) => setApproved(e.target.value)} inputMode="decimal" />
               <p className="text-xs text-slate-500">This is the only completion that drives a claim. Recording it creates no claim and sends nothing to Cin7.</p>
               <Button size="sm" disabled={disabled} onClick={submitCommercial}>Approve commercial progress</Button>
             </div>
-          ) : (
+          ) : perm === "member" ? (
             <p className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">Commercial approval is set by an organisation owner or admin.</p>
-          )}
+          ) : null}
           {localError && <Alert tone="warning">{localError}</Alert>}
         </div>
       )}
