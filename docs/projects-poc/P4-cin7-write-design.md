@@ -1,21 +1,28 @@
 # Projects POC — Gate P4: Cin7 write-design report
 
-**Status: DESIGN ONLY. No Cin7 write exists in code. P5 (one trial draft invoice) needs Anton's separate, explicit approval.**
+**Status: DESIGN ONLY. V1 = PASS; Option A is PROVISIONALLY VIABLE. No Cin7 write exists in code and none has ever been made (LIVE CIN7 WRITES: NONE). P5 (one trial draft invoice) is NOT AUTHORISED and needs Anton's separate, explicit approval.**
 
 ### Evidence legend (used throughout P0 and P4)
 - **PROVEN** — confirmed against a real Cin7 account and recorded in this repo (e.g. the `/sale` + `/sale/quote` create contract, 2026-08-26).
-- **OBSERVED** — seen in a real GET response from the read-only probe. **Nothing is OBSERVED yet: the probe has not been run** (no Toolbox credentials on the build machine; see `gate-runbooks.md`).
+- **OBSERVED** — seen in a real GET response from the read-only V1 probe on the NewQuip trial org (2026-10-16). OBSERVED is never upgraded to PROVEN.
 - **UNVERIFIED** — everything else, including every invoice-create detail below. An item stays UNVERIFIED until it is PROVEN by an authorised probe.
 
-### V1 status (read-only probe)
-**Prepared, NOT RUN — no NewQuip observations exist yet.** See `P0-cin7-architecture.md` §9 for the run commands, what is captured, the pre-committed decision rules (A / C / INSUFFICIENT EVIDENCE) and the observations table awaiting the owner's run. Current standing recommendation: **INSUFFICIENT EVIDENCE.**
+### V1 status (read-only probe) — PASS
+**V1 = PASS for architecture discovery.** See `P0-cin7-architecture.md` §9 for the full evidence, caveats and decision-rule outcome. OBSERVED in the NewQuip trial org (GET only):
+- one Sale can contain multiple invoices — **but that example was created manually in the Cin7 UI by Anton, not through the API**;
+- invoices can exist before packing, and invoiced quantity can exceed packed quantity;
+- an invoice can exist without a fulfilment;
+- invoice value can be carried through `AdditionalCharges` (existing charge lines only);
+- the invoice id field is `TaskID`; `InvoiceNumber` is present; `Memo` was empty on every invoice seen; no invoice-level searchable reference was observed.
 
-**New risk flagged from the repository's own LBL records (OBSERVED on another account, not NewQuip):** Cin7's multi-invoice behaviour there is fulfilment-coupled (invoice ↔ fulfilment cross-reference; one invoice per fulfilment). Unknown #1 for Option A is now whether an invoice can exist **without** a fulfilment link / before packing. A GET probe can show whether such invoices exist; only the P5 create proof can show whether the API will create one.
+**Architecture:** Option A (Toolbox Project → one Cin7 Advanced Sale → multiple progress invoices) is **PROVISIONALLY VIABLE**; Option C (one Sale per claim) is retained as the fallback. The earlier LBL-derived worry (invoicing fulfilment-coupled, from another account) is not borne out on NewQuip, but the API's ability to CREATE any of this is untested.
+
+**Still UNVERIFIED — these are the P5 questions:** `POST /sale/invoice` endpoint; exact request body; API creation of a second invoice on an existing Sale; draft / non-authorised invoice status on create; a writable and searchable idempotency/reference field; writable free-text `AdditionalCharges` on an invoice; invoice-total constraints; Xero behaviour.
 
 ### Updates since first draft
 - Role policy recorded as provisional: `provisional-role-policy.md`.
 - Stale-claim policy implemented: a stale draft is rejected at approval (`STALE_DRAFT`) and never silently recalculated; the user explicitly recalculates, which creates a new draft (new snapshot, `supersedes_claim_id` lineage) and cancels the old one (`CANCELLED_BEFORE_WRITE`, original lines/snapshot untouched). §6 step 2.1's "re-verify snapshot hash" therefore also gates P5: a claim whose snapshot is stale can never reach `CIN7_PENDING`.
-Every item marked **UNVERIFIED** has no evidence in this repository or from Cin7 documentation retrievable in this session; it must be settled by the read-only probe (P0 §6) and then one authorised create probe before any code is written.
+Every item marked **UNVERIFIED** has no create-side evidence in this repository or from Cin7 documentation retrievable in this session; the read-only probe (P0 §9) has run, so what remains must be settled by one authorised create probe (P5) before any code is written.
 
 ## 1. Invoice endpoint
 
@@ -49,7 +56,7 @@ Money would be converted from integer cents to a 2-dp number only at this edge. 
 
 ## 3. Relationship to the Advanced Sale (anchor)
 
-Preferred (Option A, see P0): one Advanced Sale per Project, created from the approved baseline with **one service/charge line per stage** (value = stage value), so progress invoices are partial invoices of stage lines and no stock is drawn down. **UNVERIFIED:** (a) that Cin7 allows partial/multiple invoices against such lines; (b) that an invoice may precede fulfilment; (c) whether the Sale total must cover all invoices. Fallback (Option C): one small Sale per claim, `ExternalID = <project>/<claim>`, fully provable with the existing create contract.
+Preferred (Option A, see P0): one Advanced Sale per Project, created from the approved baseline with **one service/charge line per stage** (value = stage value), so progress invoices are partial invoices of stage lines and no stock is drawn down. **OBSERVED (V1, read-only):** a Sale can hold several invoices (a UI-created fixture) and an invoice can precede fulfilment. **UNVERIFIED:** (a) that the **API** allows a second/partial invoice against such lines; (b) that the API can create an invoice before fulfilment; (c) whether the Sale total must cover all invoices. Fallback (Option C): one small Sale per claim, `ExternalID = <project>/<claim>`, fully provable with the existing create contract.
 
 ## 4. Free-text / service-line requirements
 
@@ -57,8 +64,8 @@ If `AdditionalCharges` is rejected on invoices, stage lines need a Service-type 
 
 ## 5. Fulfilment, multiple-invoice and Xero implications
 
-- **Fulfilment:** the Toolbox allocates BOM lines to stages for visibility only; physical stock moves stay on separate Cin7 documents. Whether Cin7 couples an invoice to fulfilment state is **UNVERIFIED** — this is precisely what the read-only probe inspects (`Invoices[]` vs `Fulfilments[]` states). If invoicing requires fulfilment, Option A fails and Option C is used.
-- **Multiple invoices per sale:** Sales model `Invoices[]` as an array (`src/cin7/sales.ts`) and the warehouse queue already handles multi-invoice fulfilment links (0097), so the read side tolerates it; whether Cin7 will CREATE a second invoice on a sale is **UNVERIFIED**.
+- **Fulfilment:** the Toolbox allocates BOM lines to stages for visibility only; physical stock moves stay on separate Cin7 documents. **OBSERVED (V1, NewQuip):** invoices exist before packing and without a fulfilment link, so existing invoices are not coupled to fulfilment state. Whether the **API** will create an invoice that is not tied to a fulfilment is **UNVERIFIED**; if it refuses, Option A fails and Option C is used.
+- **Multiple invoices per sale:** Sales model `Invoices[]` as an array (`src/cin7/sales.ts`) and the warehouse queue already handles multi-invoice fulfilment links (0097). **OBSERVED (V1):** one NewQuip Sale carries 2 invoices — created manually in the Cin7 UI by Anton. Whether the API can CREATE a second invoice on an existing Sale is **UNVERIFIED**.
 - **Xero:** **UNVERIFIED / DEFERRED.** Connection state is not knowable from Toolbox data. If connected, each authorised Cin7 invoice would presumably sync as its own Xero invoice (reference/number uniqueness unverified). The Toolbox does not touch Xero; Xero Projects is not used.
 
 ## 6. Idempotency mechanism (design — the money-critical part)
@@ -92,4 +99,4 @@ After create (and on demand): re-read the Cin7 invoice and verify **customer, re
 
 ## 10. Recommendation
 
-Do **not** proceed to P5 until the read-only probe has been run on the trial instance. Outcomes decide the anchor: multiple invoices present and decoupled from fulfilment ⇒ Option A; otherwise Option C.
+The read-only probe has run (V1 = PASS): **Option A is PROVISIONALLY VIABLE**, with Option C retained as the fallback. **P5 is NOT AUTHORISED** and needs Anton's separate, explicit approval, a reviewed exact payload, idempotency key and reconciliation plan, and the NewQuip POC trial organisation only. P5 must settle the UNVERIFIED items above; if the API cannot create a second invoice on an existing Sale, or cannot create a charge-only invoice, fall back to Option C.
