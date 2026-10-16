@@ -1,7 +1,21 @@
 # Projects POC — P5 design: creating a second progress invoice on an existing Sale
 
-**Status: DESIGN + PREFLIGHT ONLY. Stage 1 preflight PASSED; the Stage 2 write was NOT implemented (blocked by the execution environment) and NOT executed. POST count 0. LIVE CIN7 WRITES: NONE. HOSTED MIGRATIONS: NONE. NOT MERGED.**
+**Status: DESIGN + PREFLIGHT + ONE REJECTED HUMAN ATTEMPT. Attempt 1 (human-operated) returned HTTP 400 (missing/invalid charge `Total`) and was FAILED_CONFIRMED_NO_WRITE; successful Cin7 writes: 0. Attempt 2 NOT approved. HOSTED MIGRATIONS: NONE. NOT MERGED.** (Statements below that say "POST count 0" describe the earlier agent-side closeout; see the Attempt 1 section.)
 **P5 readiness: READY FOR OWNER WRITE APPROVAL** (see the final precheck section; this is not an authorisation). The remaining unknowns are runtime proofs, not architecture. Nothing here is code; no endpoint was called to produce it.
+
+## P5 ATTEMPT 1 (2026-10-16, human-operated): HTTP 400 — FAILED_CONFIRMED_NO_WRITE
+**Supersedes the "POST count 0" statements below, which describe the earlier agent-environment closeout.** The owner (not the agent) executed one `POST /sale/invoice` with their own Cin7 credentials, using the first approved payload (hash `120d46cf…f399`, no `Total` on the charge).
+- **HTTP 400.** Response: an array with one error, `ErrorCode: 400`, message: *Additional Charge (<description>) attribute 'Total' doesn't match with Total value expected. Expected value is: 100.* (OBSERVED, owner-supplied.)
+- **Classification: `FAILED_CONFIRMED_NO_WRITE`.** Positive evidence = the explicit validation 400 **plus** the AFTER `GET /sale`, which showed: no new invoice; P5 Memo token absent; `INV-00016` still VOIDED with total 0; order AUTHORISED, Sale ORDERED, totals unchanged 1000 / 150 / 1150; `Fulfilments` `[]`; picked 0, packed 0, shipped 0; COGS 0; `InventoryMovements` `[]`.
+- **This is a request-schema discovery, not a product failure.** The request reached Cin7 and was rejected at validation before any invoice was created.
+- **Observed API rule (OBSERVED):** `AdditionalCharges[].Total` is validated against the charge (Quantity × Price) — for this tax-exclusive charge the expected value was `100`, i.e. net, tax not added in. It must be supplied and consistent.
+- **Counters:** P5 write attempts **1**; successful Cin7 writes **0**. Hosted migrations none. Not merged. No retry was performed; attempt 2 is a new attempt, not a retry.
+- **Corrected candidate payload (NOT APPROVED — needs fresh owner approval; valid only for business date 2026-10-16):** identical to the first payload except `"Total": 100` is added to the AdditionalCharge. Canonical SHA-256 (same canonicalisation, re-computed independently): **`d7fa9f67c733e5f052517f2ec343acc7ec2318d5b14accd2566ff7c9af40fca5`**. This hash is not write approval; a later date needs a new payload, new hash and new approval.
+```json
+{"SaleID":"4fe3d99c-241d-4404-8795-4c448842108b","TaskID":"00000000-0000-0000-0000-000000000000","CombineAdditionalCharges":false,"Memo":"NEWQUIP-PROJECTS-POC-P5-SO-00015-INV-001","Status":"DRAFT","InvoiceDate":"2026-10-16","InvoiceDueDate":"2026-11-15","Lines":[],"AdditionalCharges":[{"Description":"NEWQUIP PROJECTS POC — API MULTI-INVOICE TEST","Quantity":1,"Price":100,"Tax":15,"Total":100,"TaxRule":"Standard Rate Sales","Account":"200","Comment":"Controlled P5 trial"}]}
+```
+- **Still unproven (Option A remains PROVISIONALLY VIABLE, NOT API WRITE-PROVEN):** `Lines: []` acceptance, API creation of another invoice task on this Advanced Sale, Memo echo, POST response shape, no fulfilment/stock/Xero side effects. Further field validations may surface; each needs the same stop → reconcile → re-approve cycle.
+- **Implication for the Toolbox design:** any future write module must send `Total` on every charge (net when tax-exclusive; tax-inclusive behaviour UNVERIFIED), computed consistently with Quantity × Price.
 
 ## P5 EXECUTION STATUS (closeout, 2026-10-16): PREFLIGHT PASSED — WRITE NOT IMPLEMENTED, NOT EXECUTED
 - **Stage 1 (read-only preflight) PASSED** on a Preview-only, GET-only, SELECT-only probe deployed from commit `e383101` on a temporary branch (no write code in that deployment; a static test enforced it). The owner reviewed the result before approving.
