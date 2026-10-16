@@ -3,6 +3,54 @@
 **Status: DESIGN ONLY. P5 is NOT AUTHORISED. LIVE CIN7 WRITES: NONE. HOSTED MIGRATIONS: NONE. NOT MERGED.**
 **P5 readiness: NOT READY** (§13). The remaining blockers are operational (fixture, snapshot, Xero, rollback, real values), not architectural. Nothing here is code; no endpoint was called to produce it.
 
+## P5 read-only precheck result (2026-10-16) — OBSERVED, GET only, NewQuip POC trial org
+Disposable Sale **SO-00015**, SaleID `4fe3d99c-241d-4404-8795-4c448842108b`, read once via `GET /sale?ID=` by a temporary Preview-only probe (branch, deployment and worktree since deleted). No fulfilment read was needed (`Fulfilments: []`). Nothing was written.
+
+**Before snapshot (sanitised):** Type **Advanced Sale** (so: Advanced Sale CONFIRMED, multi-invoice capable per the docs); `Order.Status` AUTHORISED; sale `Status` ORDERED; currency ZAR (rate 1); tax rule Standard Rate Sales; Terms "30 days"; `SaleOrderDate` 2026-10-16; one order line, Quantity 1, Price 1000, Tax 150, Total 1000, `AverageCost` 50; order `TotalBeforeTax` 1000 / `Tax` 150 / `Total` 1150; no order-level AdditionalCharges; `DefaultAccount` shape "999" (3 digits); Memo/Note/ExternalID empty; `CustomerReference` shape "A9 / aaaa" (the "P5 / test" reference). Fulfilment: count 0; `CombinedPickingStatus` NOT PICKED, `CombinedPackingStatus` NOT PACKED, `CombinedShippingStatus` NOT SHIPPED, `FulFilmentStatus` NOT FULFILLED; picked/packed/shipped qty therefore 0 (no fulfilment records); `COGSAmount` 0; `InventoryMovements` and `Transactions` empty; `CombinedInvoiceStatus` NOT INVOICED; `CombinedPaymentStatus` UNPAID. Memo token `NEWQUIP-PROJECTS-POC-P5-SO-00015-INV-001` and its prefix are **absent**. P5 test claim id: `SO-00015-INV-001` (documented only, never written to Cin7).
+
+### BLOCKER 1 — the Sale already has one DRAFT invoice (the "invoice count 0" precondition is FALSE)
+`Invoices[]` holds **one** invoice: `INV-00016`, `Status` **DRAFT**, `TaskID` `7761500a-8ff0-43dc-86aa-d8ca77c1ff54`, `InvoiceDate` 2026-10-16, `InvoiceDueDate` 2026-11-15, one product line (qty 1, price 1000, tax 150, `Account` "200"), `TotalBeforeTax` 1000 / `Tax` 150 / `Total` 1150, `Paid` 0, no payments, `Memo` empty, no AdditionalCharges, no `LinkedFulfillmentNumber`. It invoices the **entire order value**. How it came to exist is **UNKNOWN** (this design did not ask for one; Cin7 may create a draft invoice when an Advanced Sale order is authorised — UNVERIFIED, and if true it is itself a significant finding for Option A, because every API-created and authorised project Sale could arrive with a full-value draft invoice). Consequences: (a) adding the R100 test charge would bring invoiced value to R1,100 against a R1,000 order — **over-invoicing, which this phase must not test**; (b) whether Cin7 allows a second DRAFT beside an existing one is UNVERIFIED; (c) the baseline count is 1, not 0. **P5 cannot proceed on this Sale as it stands.** Owner decision needed: delete `INV-00016` in the Cin7 UI (drafts are deletable — owner-confirmed — but the effect of deleting a draft on Xero is UNVERIFIED) and have the Sale re-read to confirm count 0, or choose a different disposable Sale.
+
+### Other observations
+- **TaskID semantics:** OBSERVED that the invoice `TaskID` (`7761…`) is **not equal** to the parent SaleID. Whether it is unique per invoice cannot be established from one invoice → uniqueness UNVERIFIED. Design stays: SaleID = parent, `InvoiceNumber` = human identifier, `Memo` = reconciliation token.
+- **Due date:** OBSERVED on INV-00016: InvoiceDate 2026-10-16 → InvoiceDueDate 2026-11-15 under "30 days" terms (date + 30 days). One data point; if P5 runs on another day, the due date is recomputed as InvoiceDate + 30 days and re-approved.
+- **Account format discrepancy (BLOCKER 2):** the read model shows the invoice line `Account` as **"200"**, whereas the owner-stated candidate is **"200: Sales"**. Which form POST accepts for an AdditionalCharge is UNVERIFIED. The payload below uses the owner-stated value; a rejection is a STOP, not a retry with a guess.
+- **Date format (BLOCKER 3):** reads show `2026-10-16T00:00:00`; the accepted POST format is UNVERIFIED.
+
+### Filled candidate payload (NOT APPROVED — blocked by 1–3)
+```jsonc
+POST /sale/invoice
+{
+  "SaleID": "4fe3d99c-241d-4404-8795-4c448842108b",
+  "TaskID": "00000000-0000-0000-0000-000000000000",
+  "CombineAdditionalCharges": false,
+  "Memo": "NEWQUIP-PROJECTS-POC-P5-SO-00015-INV-001",
+  "Status": "DRAFT",
+  "InvoiceDate": "2026-10-16",          // execution date; format UNVERIFIED
+  "InvoiceDueDate": "2026-11-15",       // InvoiceDate + 30 days (OBSERVED convention)
+  "Lines": [],
+  "AdditionalCharges": [
+    {
+      "Description": "NEWQUIP PROJECTS POC — API MULTI-INVOICE TEST",
+      "Quantity": 1,
+      "Price": 100.00,
+      "Tax": 15.00,
+      "TaxRule": "Standard Rate Sales",
+      "Account": "200: Sales",          // read model shows "200" — format UNVERIFIED
+      "Comment": "Controlled P5 trial"
+    }
+  ]
+}
+```
+Differences from the official request model as supplied: none found, but `Discount`/`Total` are omitted on the charge by design (a required-field rejection is a STOP).
+
+### Expected response and read-back assertions (documented, not run)
+The exact POST response body is UNVERIFIED (not in the supplied docs). Assertions rest on the follow-up `GET /sale?ID=`: exactly one **new** invoice beyond the pre-existing baseline, `Status` DRAFT; `TotalBeforeTax` 100.00, `Tax` 15.00, `Total` 115.00; `Memo` equals the token exactly; the single AdditionalCharge description equals `NEWQUIP PROJECTS POC — API MULTI-INVOICE TEST`; `InvoiceNumber` generated by Cin7 and distinct from `INV-00016`; `InvoiceDate`/`InvoiceDueDate` as sent; `LinkedFulfillmentNumber` empty; `Fulfilments` still `[]`; picking/packing/shipping still NOT PICKED/NOT PACKED/NOT SHIPPED; `FulFilmentStatus` NOT FULFILLED; `COGSAmount` 0; `InventoryMovements` empty; order lines and order totals unchanged (1000 / 150 / 1150); `INV-00016` (if still present) unchanged. Any Xero or accounting effect → STOP.
+
+### Xero, correction, readiness
+Xero: CONNECTED (owner-confirmed). Whether a DRAFT Cin7 invoice syncs to Xero: **UNVERIFIED** (not claimed safe) — BLOCKER 4. Correction path: deleting a DRAFT invoice in the Cin7 UI is owner-confirmed; its Xero interaction is UNVERIFIED.
+**P5 READINESS: NOT READY.** Remaining blockers: (1) pre-existing DRAFT `INV-00016` / invoice count 1 / capacity; (2) AdditionalCharge `Account` format; (3) POST date format; (4) draft-to-Xero sync unestablished; (5) exact POST response not documented; (6) owner's written approval of the final payload. After blocker 1 is resolved, a fresh read-only snapshot is required.
+
 ## Evidence classes
 - **PROVEN** — confirmed against a real Cin7 account and recorded in this repo.
 - **OBSERVED** — seen in a real GET response (V1 probe, NewQuip trial org).
@@ -113,4 +161,4 @@ P5 stays NOT READY, and a started P5 stops, if any of these is true: disposable 
 ## 13. Readiness
 P5 becomes **READY FOR OWNER WRITE APPROVAL** only when all exist: (1) disposable Advanced Sale; (2) before snapshot; (3) exact TaxRule; (4) exact Account; (5) exact due date; (6) Xero state known; (7) draft correction path known; (8) exact payload filled with real fixture values; (9) Memo reconciliation plan accepted; (10) exact expected response documented; (11) exact stop/recovery plan documented.
 
-**Current state: (1)–(8) and (10) are missing; (9) and (11) are designed above, awaiting acceptance. NOT READY.**
+**Current state (after the 2026-10-16 precheck, see the top section):** disposable Advanced Sale exists (1), before snapshot captured (2), TaxRule known (3), due-date convention observed (5), Xero state known = connected (6), draft deletion confirmed (7 — Xero effect of deletion unverified), payload filled (8, blocked), plan (9) and stop/recovery (11) designed. Missing or blocking: Account format (4), the pre-existing DRAFT invoice breaking the zero-invoice baseline, draft-to-Xero sync, date format, exact response (10). **NOT READY.**
