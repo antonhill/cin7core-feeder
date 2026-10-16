@@ -1,5 +1,12 @@
 # Projects POC — Gate P4: Cin7 write-design report
 
+> **CURRENT STATUS (post-P5, 2026-10-16) — READ THIS FIRST. This banner supersedes every "UNVERIFIED", "PROVISIONALLY VIABLE", "P5 NOT AUTHORISED" and "LIVE CIN7 WRITES: NONE" statement below; those describe the state when this section was written and are kept as history.**
+> - **V1 PASS. P5 PASS** (two human-operated attempts on the NewQuip POC trial org: #1 HTTP 400 no-write; #2 HTTP 200 -> one DRAFT invoice INV-00019 on Advanced Sale SO-00015). Full evidence: `P5-design-multi-invoice-write.md`.
+> - **Option A (Toolbox Project -> one Cin7 Advanced Sale -> multiple progress invoices) is API WRITE-PROVEN FOR CONTROLLED POC. Option C (one Sale per claim) stays as the fallback.** This is NOT production-readiness: one org, one Sale, one DRAFT invoice, one charge.
+> - Proven on that fixture: `POST /sale/invoice` with `Status: DRAFT`; `Lines: []` accepted; AdditionalCharges-only invoice accepted (each charge must carry a consistent `Total`, net = Quantity x Price); invoice `TaskID` differs from the parent `SaleID`; `InvoiceNumber` is generated; `Memo` is writable and echoed exactly by the POST and a later GET (the reconciliation field - NOT `ExternalID`); no fulfilment, pick/pack/ship, stock, COGS or transaction effect; the DRAFT consumed R115 of invoice capacity (R1,150 -> R1,035) in the Cin7 UI.
+> - **Still untested / out of scope:** Xero behaviour of a DRAFT or authorised invoice; tax-inclusive or multi-charge invoices; AUTHORISED invoices; rate limits; concurrency; over-invoicing rejection.
+> - **The Toolbox has NO production Cin7 claim writer** (guarded by `no-cin7-write.test.ts`). Production Cin7 invoice writing remains a separately designed, reviewed and authorised step.
+
 **Status: DESIGN ONLY. V1 = PASS; Option A is PROVISIONALLY VIABLE. No Cin7 write exists in code and none has ever been made (LIVE CIN7 WRITES: NONE). P5 (one trial draft invoice) is NOT AUTHORISED and needs Anton's separate, explicit approval.**
 
 ### Evidence legend (used throughout P0 and P4)
