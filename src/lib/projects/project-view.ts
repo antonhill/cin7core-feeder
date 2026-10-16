@@ -162,7 +162,8 @@ export function formatCents(cents: Cents): string {
   const abs = Math.abs(cents);
   const rands = Math.floor(abs / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   const c = (abs % 100).toString().padStart(2, "0");
-  return `${neg ? "-" : ""}R ${rands}.${c}`;
+  // U+00A0 (non-breaking) so the currency symbol can never wrap away from the amount.
+  return `${neg ? "-" : ""}R\u00A0${rands}.${c}`;
 }
 
 /** bps -> "65%" / "62.5%" / "0.25%" (trims trailing zeros). */

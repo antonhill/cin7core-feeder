@@ -26,6 +26,7 @@ beforeEach(() => {
 
 const ALL: Array<[string, () => Promise<{ ok: boolean; error?: string }>]> = [
   ["listProjectsAction", () => actions.listProjectsAction()],
+  ["getViewerPermissionsAction", () => actions.getViewerPermissionsAction()],
   ["getProjectAction", () => actions.getProjectAction("p1")],
   ["seedGoldenProjectAction", () => actions.seedGoldenProjectAction()],
   ["recordProgressAction", () => actions.recordProgressAction("p1", "s1", "10", null, "")],
@@ -71,6 +72,20 @@ describe("unauthorised approval is rejected", () => {
     expect(r.ok).toBe(true);
     expect(requireOrgAdmin).not.toHaveBeenCalled();
     expect(store.recordProgress).toHaveBeenCalled();
+  });
+});
+
+describe("viewer permissions are display-only", () => {
+  it("reports canApprove=true for an owner/admin and false (not an error) for a plain module user", async () => {
+    expect(await actions.getViewerPermissionsAction()).toEqual({ ok: true, data: { canApprove: true } });
+    vi.mocked(requireOrgAdmin).mockRejectedValue(new Error(NOT_ADMIN));
+    expect(await actions.getViewerPermissionsAction()).toEqual({ ok: true, data: { canApprove: false } });
+  });
+  it("hiding the controls does not relax the server: a non-admin still cannot approve", async () => {
+    vi.mocked(requireOrgAdmin).mockRejectedValue(new Error(NOT_ADMIN));
+    expect((await actions.approveClaimAction("p1", "c1")).ok).toBe(false);
+    expect((await actions.recordProgressAction("p1", "s1", "50", "40", "reason")).ok).toBe(false);
+    expect((await actions.seedGoldenProjectAction()).ok).toBe(false);
   });
 });
 

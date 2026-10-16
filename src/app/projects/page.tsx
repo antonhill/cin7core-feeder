@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Panel } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatBps, formatCents, type ProjectView } from "@/lib/projects/project-view";
-import { listProjectsAction, seedGoldenProjectAction } from "./actions";
+import { getViewerPermissionsAction, listProjectsAction, seedGoldenProjectAction } from "./actions";
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<ProjectView[] | null>(null);
@@ -28,6 +28,12 @@ export default function ProjectsPage() {
     });
   }
   useEffect(load, []);
+  // Display only: the fixture action itself re-checks the owner/admin role on the server.
+  // Unknown (nothing rendered) until resolved, so the admin button never flashes for a member; failure => no button.
+  const [canAdmin, setCanAdmin] = useState<boolean | null>(null);
+  useEffect(() => {
+    getViewerPermissionsAction().then((r) => setCanAdmin(Boolean(r.ok && r.data?.canApprove)));
+  }, []);
 
   function seed() {
     startSeeding(async () => {
@@ -38,7 +44,7 @@ export default function ProjectsPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-6 py-12">
+    <main className="mx-auto w-full max-w-[1480px] px-6 py-12">
       <ModuleHeader module={PROJECTS_MODULE}>
         Proof of concept — billing against an agreed contract value by approved stage completion. Local only: nothing on this
         screen creates or changes anything in Cin7.
@@ -52,9 +58,11 @@ export default function ProjectsPage() {
 
       <div className="mt-6 flex items-center justify-between">
         <p className="text-sm text-slate-500">{projects ? `${projects.length} project${projects.length === 1 ? "" : "s"}` : isLoading ? "Loading…" : ""}</p>
-        <Button variant="secondary" size="sm" onClick={seed} loading={isSeeding}>
-          Create golden fixture project
-        </Button>
+        {canAdmin === true && (
+          <Button variant="secondary" size="sm" onClick={seed} loading={isSeeding}>
+            Create golden fixture project
+          </Button>
+        )}
       </div>
 
       <div className="mt-3">
@@ -74,25 +82,32 @@ export default function ProjectsPage() {
                 <TH align="right">Approved completion</TH>
                 <TH align="right">Invoiced / committed</TH>
                 <TH align="right">Currently claimable</TH>
-                <TH align="right">Remaining</TH>
+                <TH align="right">Remaining to bill / commit</TH>
                 <TH>Status</TH>
               </tr>
             </THead>
             <TBody>
               {projects.map((p) => (
                 <TR key={p.project.id}>
-                  <TD>
+                  <TD className="whitespace-nowrap">
                     <Link className="font-medium text-indigo-700 hover:underline" href={`/projects/${p.project.id}`}>
                       {p.project.project_reference}
                     </Link>
                   </TD>
                   <TD>{p.project.customer_name}</TD>
                   <TD>{p.project.name}</TD>
-                  <TD align="right" className="tabular-nums">{formatCents(p.commercial.revisedContractCents)}</TD>
-                  <TD align="right" className="tabular-nums">{formatBps(p.commercial.approvedCompletionBps)}</TD>
-                  <TD align="right" className="tabular-nums">{formatCents(p.commercial.committedCents)}</TD>
-                  <TD align="right" className="tabular-nums">{formatCents(p.commercial.claimableCents)}</TD>
-                  <TD align="right" className="tabular-nums">{formatCents(p.commercial.remainingCents)}</TD>
+                  <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(p.commercial.revisedContractCents)}</TD>
+                  <TD align="right" className="whitespace-nowrap tabular-nums">
+                    <span className="flex items-center justify-end gap-2.5">
+                      <span className="block h-1.5 w-20 overflow-hidden rounded-full bg-slate-200/80" aria-hidden>
+                        <span className="block h-full rounded-full bg-indigo-500" style={{ width: `${Math.max(0, Math.min(100, p.commercial.approvedCompletionBps / 100))}%` }} />
+                      </span>
+                      <span className="w-14 text-right font-semibold text-indigo-700">{formatBps(p.commercial.approvedCompletionBps)}</span>
+                    </span>
+                  </TD>
+                  <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(p.commercial.committedCents)}</TD>
+                  <TD align="right" className="tabular-nums whitespace-nowrap font-semibold text-indigo-700">{formatCents(p.commercial.claimableCents)}</TD>
+                  <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(p.commercial.remainingCents)}</TD>
                   <TD>
                     <Badge tone={p.project.status === "ACTIVE" ? "success" : "neutral"}>{p.project.status}</Badge>
                   </TD>
