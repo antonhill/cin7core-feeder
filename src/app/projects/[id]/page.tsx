@@ -39,12 +39,62 @@ const CLAIM_TONE: Record<string, BadgeTone> = {
   RECONCILED: "success", FAILED_UNCERTAIN: "danger", FAILED_CONFIRMED_NO_WRITE: "neutral", CANCELLED_BEFORE_WRITE: "neutral",
 };
 
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+type BarTone = "sky" | "indigo" | "emerald";
+const BAR_FILL: Record<BarTone, string> = { sky: "bg-sky-500", indigo: "bg-indigo-500", emerald: "bg-emerald-500" };
+const BAR_TEXT: Record<BarTone, string> = { sky: "text-sky-700", indigo: "text-indigo-700", emerald: "text-emerald-700" };
+
+/** Display-only meter for a basis-point percentage (never used for money maths). */
+function Meter({ bps, tone, className = "w-20" }: { bps: number; tone: BarTone; className?: string }) {
+  const pct = Math.max(0, Math.min(100, bps / 100));
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-1 text-lg font-semibold tabular-nums text-slate-900">{value}</p>
-      {hint && <p className="mt-0.5 text-xs text-slate-500">{hint}</p>}
+    <span className={`block h-1.5 overflow-hidden rounded-full bg-slate-200/80 ${className}`} aria-hidden>
+      <span className={`block h-full rounded-full ${BAR_FILL[tone]}`} style={{ width: `${pct}%` }} />
+    </span>
+  );
+}
+
+function PctCell({ bps, tone }: { bps: number; tone: BarTone }) {
+  return (
+    <span className="flex items-center justify-end gap-2.5">
+      <Meter bps={bps} tone={tone} className="w-14" />
+      <span className={`w-11 text-right font-semibold tabular-nums ${BAR_TEXT[tone]}`}>{formatBps(bps)}</span>
+    </span>
+  );
+}
+
+function Kpi({ label, value, hint, accent = false }: { label: string; value: string; hint?: string; accent?: boolean }) {
+  return (
+    <div
+      className={`rounded-2xl border p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_12px_28px_-18px_rgba(15,23,42,0.25)] ${
+        accent ? "border-indigo-200 bg-gradient-to-br from-indigo-50 to-white" : "border-slate-200 bg-white"
+      }`}
+    >
+      <p className={`text-[11px] font-semibold uppercase tracking-wider ${accent ? "text-indigo-700" : "text-slate-500"}`}>{label}</p>
+      <p className={`mt-2 whitespace-nowrap text-2xl font-bold tabular-nums tracking-tight ${accent ? "text-indigo-900" : "text-slate-900"}`}>{value}</p>
+      {hint && <p className="mt-1 text-xs leading-snug text-slate-500">{hint}</p>}
+    </div>
+  );
+}
+
+/** Contract bar for the hero: share of the revised contract that is invoiced/committed, claimable now, and not yet approved for billing. */
+function ContractBar({ contract, committed, claimable }: { contract: number; committed: number; claimable: number }) {
+  const share = (n: number) => (contract > 0 ? Math.max(0, Math.min(100, (n / contract) * 100)) : 0);
+  const committedPct = share(committed);
+  const claimablePct = Math.min(share(claimable), 100 - committedPct);
+  return (
+    <div className="flex h-3 w-full overflow-hidden rounded-full bg-white/15" role="img" aria-label="Contract value split into invoiced / committed, claimable now and not yet approved for billing">
+      <div className="h-full bg-emerald-400" style={{ width: `${committedPct}%` }} />
+      <div className="h-full bg-amber-300" style={{ width: `${claimablePct}%` }} />
+    </div>
+  );
+}
+
+function LegendDot({ className, label, value }: { className: string; label: string; value: string }) {
+  return (
+    <div className="flex items-center gap-2.5">
+      <span className={`h-2.5 w-2.5 rounded-full ${className}`} aria-hidden />
+      <span className="text-sm text-indigo-100">{label}</span>
+      <span className="text-sm font-semibold tabular-nums text-white">{value}</span>
     </div>
   );
 }
@@ -108,7 +158,7 @@ export default function ProjectDetailPage() {
 
   if (!view) {
     return (
-      <main className="mx-auto w-full max-w-6xl px-6 py-12">
+      <main className="mx-auto w-full max-w-[1480px] px-6 py-12">
         <ModuleHeader module={PROJECTS_MODULE}>{isLoading ? "Loading project…" : "Project"}</ModuleHeader>
         {error && <div className="mt-6"><Alert tone="danger">{error}</Alert></div>}
       </main>
@@ -117,7 +167,7 @@ export default function ProjectDetailPage() {
   const { project, commercial: c } = view;
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-6 py-12">
+    <main className="mx-auto w-full max-w-[1480px] px-6 py-12">
       <ModuleHeader module={PROJECTS_MODULE}>
         <Link href="/projects" className="text-indigo-700 hover:underline">← All projects</Link>
         {" · "}
@@ -135,24 +185,71 @@ export default function ProjectDetailPage() {
         <div className="mt-6"><Alert tone="danger">Stage values do not reconcile to the contract value — claiming is blocked.</Alert></div>
       )}
 
-      <nav className="mt-6 flex gap-1 border-b border-slate-200" aria-label="Project sections">
-        {TABS.map((t) => (
-          <button
-            key={t.value}
-            onClick={() => setTab(t.value)}
-            aria-current={tab === t.value ? "page" : undefined}
-            className={`px-4 py-2 text-sm font-medium ${tab === t.value ? "border-b-2 border-indigo-600 text-indigo-700" : "text-slate-500 hover:text-slate-800"}`}
-          >
-            {t.label}
-          </button>
-        ))}
+      <nav className="mt-6 inline-flex max-w-full gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1 shadow-sm" aria-label="Project sections">
+        {TABS.map((t) => {
+          const count = t.value === "stages" ? view.stages.length : t.value === "claims" ? view.claims.length : null;
+          return (
+            <button
+              key={t.value}
+              onClick={() => setTab(t.value)}
+              aria-current={tab === t.value ? "page" : undefined}
+              className={`flex items-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                tab === t.value ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+              }`}
+            >
+              {t.label}
+              {count !== null && (
+                <span className={`rounded-full px-1.5 text-xs tabular-nums ${tab === t.value ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"}`}>{count}</span>
+              )}
+            </button>
+          );
+        })}
       </nav>
 
       {tab === "overview" && (
         <div className="mt-6 space-y-6">
+          <section className="overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-950 via-indigo-900 to-indigo-700 p-7 text-white shadow-[0_20px_40px_-24px_rgba(49,46,129,0.7)]">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-md bg-white/10 px-2 py-0.5 font-mono text-xs text-indigo-100">{project.project_reference}</span>
+                  <span className="rounded-md bg-emerald-400/20 px-2 py-0.5 text-xs font-semibold text-emerald-200">{project.status}</span>
+                </div>
+                <h2 className="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">{project.name}</h2>
+                <p className="mt-1 text-indigo-200">{project.customer_name}</p>
+              </div>
+              <div className="lg:text-right">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-indigo-200">Revised contract value (ex VAT)</p>
+                <p className="mt-1 whitespace-nowrap text-4xl font-bold tabular-nums tracking-tight sm:text-5xl">{formatCents(c.revisedContractCents)}</p>
+              </div>
+            </div>
+            <div className="mt-7">
+              <ContractBar contract={c.revisedContractCents} committed={c.committedCents} claimable={c.claimableCents} />
+              <div className="mt-4 flex flex-wrap gap-x-8 gap-y-2">
+                <LegendDot className="bg-emerald-400" label="Invoiced / committed" value={formatCents(c.committedCents)} />
+                <LegendDot className="bg-amber-300" label="Claimable now" value={formatCents(c.claimableCents)} />
+                <LegendDot className="bg-white/25" label="Not yet approved for billing" value={formatCents(Math.max(0, c.revisedContractCents - c.committedCents - c.claimableCents))} />
+              </div>
+            </div>
+          </section>
+
+          <div>
+            <h2 className="mb-3 text-sm font-semibold text-slate-700">Commercial position (ex VAT)</h2>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <Kpi label="Original contract value" value={formatCents(c.originalContractCents)} />
+              <Kpi label="Approved variations" value={formatCents(c.approvedVariationsCents)} hint="Variations are out of POC scope" />
+              <Kpi label="Revised contract value" value={formatCents(c.revisedContractCents)} />
+              <Kpi label="Approved completion" value={formatBps(c.approvedCompletionBps)} hint="Earned ÷ contract" />
+              <Kpi label="Earned / certified to date" value={formatCents(c.earnedCents)} hint="Stage value × APPROVED completion" />
+              <Kpi label="Invoiced / committed" value={formatCents(c.committedCents)} hint="Approved, sent or uncertain claims" />
+              <Kpi label="Currently claimable" value={formatCents(c.claimableCents)} hint="Earned − invoiced / committed" accent />
+              <Kpi label="Remaining to bill / commit" value={formatCents(c.remainingCents)} hint="Contract value − invoiced / committed (not − earned)" />
+            </div>
+          </div>
+
           <Panel>
-            <PanelTitle>Project</PanelTitle>
-            <dl className="mt-3 grid grid-cols-1 gap-x-8 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            <PanelTitle>Project details</PanelTitle>
+            <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
               {[
                 ["Customer", project.customer_name], ["Project reference", project.project_reference],
                 ["Originating quote", project.originating_quote_ref ?? "—"], ["Salesperson", project.salesperson ?? "—"],
@@ -160,69 +257,107 @@ export default function ProjectDetailPage() {
                 ["Target completion", project.target_completion_date ?? "—"], ["Status", project.status],
                 ["Tax", `${project.tax_rule ?? "—"} (${formatBps(project.tax_rate_bps)})`],
               ].map(([k, v]) => (
-                <div key={k}><dt className="text-xs text-slate-500">{k}</dt><dd className="font-medium text-slate-900">{v}</dd></div>
+                <div key={k}><dt className="text-xs text-slate-500">{k}</dt><dd className="mt-0.5 font-medium text-slate-900">{v}</dd></div>
               ))}
             </dl>
           </Panel>
-          <div>
-            <h2 className="mb-2 text-sm font-semibold text-slate-700">Commercial position (ex VAT)</h2>
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <Stat label="Original contract value" value={formatCents(c.originalContractCents)} />
-              <Stat label="Approved variations" value={formatCents(c.approvedVariationsCents)} hint="Variations are out of POC scope" />
-              <Stat label="Revised contract value" value={formatCents(c.revisedContractCents)} />
-              <Stat label="Approved completion" value={formatBps(c.approvedCompletionBps)} hint="Earned ÷ contract" />
-              <Stat label="Earned / certified to date" value={formatCents(c.earnedCents)} hint="Stage value × APPROVED completion" />
-              <Stat label="Invoiced / committed" value={formatCents(c.committedCents)} hint="Approved, sent or uncertain claims" />
-              <Stat label="Currently claimable" value={formatCents(c.claimableCents)} />
-              <Stat label="Remaining to bill / commit" value={formatCents(c.remainingCents)} hint="Contract value − invoiced / committed (not − earned)" />
-            </div>
-          </div>
         </div>
       )}
 
       {tab === "stages" && (
-        <div className="mt-6 space-y-4">
-          <Alert tone="info">
-            Three different things, deliberately not one &ldquo;% complete&rdquo;: <strong>Physical progress</strong> is what the team reports on site;
-            <strong> Commercial approval</strong> is what a manager has approved for billing; <strong>Billed / committed</strong> is what claims already hold.
-            Only commercial approval drives a claim.
-          </Alert>
-          <Table>
-            <THead>
-              <tr>
-                <TH className="bg-slate-50" >Stage</TH>
-                <TH align="right">Value</TH>
-                <TH align="right">% of contract</TH>
-                <TH align="right" className="bg-sky-50 text-sky-800">Physical progress (reported)</TH>
-                <TH align="right" className="bg-indigo-50 text-indigo-800">Commercial approval</TH>
-                <TH align="right" className="bg-indigo-50 text-indigo-800">Earned to date</TH>
-                <TH align="right" className="bg-emerald-50 text-emerald-800">Billed / committed</TH>
-                <TH align="right" className="bg-emerald-50 text-emerald-800">Billed % of stage</TH>
-                <TH align="right">Currently claimable</TH>
-                <TH align="right">Remaining to bill / commit</TH>
-              </tr>
-            </THead>
-            <TBody>
-              {view.stages.map((s) => (
-                <TR key={s.id}>
-                  <TD>{s.name}{s.belowCommitted && <span className="ml-2"><Badge tone="warning">approval below billed</Badge></span>}</TD>
-                  <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(s.valueCents)}</TD>
-                  <TD align="right" className="tabular-nums">{formatBps(s.shareBps)}</TD>
-                  <TD align="right" className="bg-sky-50/40 tabular-nums">{formatBps(s.reportedBps)}</TD>
-                  <TD align="right" className="bg-indigo-50/40 tabular-nums">{formatBps(s.approvedBps)}</TD>
-                  <TD align="right" className="bg-indigo-50/40 tabular-nums whitespace-nowrap">{formatCents(s.earnedCents)}</TD>
-                  <TD align="right" className="bg-emerald-50/40 tabular-nums whitespace-nowrap">{formatCents(s.committedCents)}</TD>
-                  <TD align="right" className="bg-emerald-50/40 tabular-nums">{formatBps(s.committedBps)}</TD>
-                  <TD align="right" className="font-semibold tabular-nums whitespace-nowrap">{formatCents(s.claimableCents)}</TD>
-                  <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(s.remainingCents)}</TD>
-                </TR>
-              ))}
-            </TBody>
-          </Table>
-          <div className="grid gap-4 lg:grid-cols-2">
-            {view.stages.map((s) => (
+        <div className="mt-6 space-y-6">
+          <section aria-label="What the three progress measures mean" className="grid gap-3 md:grid-cols-3">
+            {[
+              { tone: "sky" as const, title: "Physical progress", text: "What the team reports on site. Informational only." },
+              { tone: "indigo" as const, title: "Commercial approval", text: "What a manager has approved for billing. Only this drives a claim." },
+              { tone: "emerald" as const, title: "Billed / committed", text: "What claims already hold, including approved and uncertain claims." },
+            ].map((x) => (
+              <div key={x.title} className="flex gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${BAR_FILL[x.tone]}`} aria-hidden />
+                <div>
+                  <p className={`text-sm font-semibold ${BAR_TEXT[x.tone]}`}>{x.title}</p>
+                  <p className="mt-0.5 text-xs leading-snug text-slate-600">{x.text}</p>
+                </div>
+              </div>
+            ))}
+          </section>
+          <p className="sr-only">
+            Three different things, deliberately not one &ldquo;% complete&rdquo;. Only commercial approval drives a claim.
+          </p>
+
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_14px_30px_-20px_rgba(15,23,42,0.3)]">
+            <table className="w-full min-w-[1180px] border-separate border-spacing-0 text-sm">
+              <thead>
+                <tr className="text-[11px] font-semibold uppercase tracking-wider">
+                  <th className="sticky left-0 z-10 bg-white" />
+                  <th colSpan={2} className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-right text-slate-500">Contract</th>
+                  <th className="border-b border-sky-100 bg-sky-50 px-3 py-2 text-right text-sky-700">Physical</th>
+                  <th colSpan={2} className="border-b border-indigo-100 bg-indigo-50 px-3 py-2 text-right text-indigo-700">Commercial</th>
+                  <th colSpan={2} className="border-b border-emerald-100 bg-emerald-50 px-3 py-2 text-right text-emerald-700">Billed</th>
+                  <th colSpan={2} className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-right text-slate-500">Position</th>
+                </tr>
+                <tr className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+                  <th className="sticky left-0 z-10 border-b-2 border-slate-300 bg-white px-3 py-3 text-left">Stage</th>
+                  <th className="leading-tight border-b-2 border-slate-300 bg-slate-50 px-3 py-3 text-right">Value</th>
+                  <th className="leading-tight border-b-2 border-slate-300 bg-slate-50 px-3 py-3 text-right">% of contract</th>
+                  <th className="leading-tight border-b-2 border-sky-200 bg-sky-50 px-3 py-3 text-right text-sky-800">Physical (reported)</th>
+                  <th className="leading-tight border-b-2 border-indigo-200 bg-indigo-50 px-3 py-3 text-right text-indigo-800">Commercial approval</th>
+                  <th className="leading-tight border-b-2 border-indigo-200 bg-indigo-50 px-3 py-3 text-right text-indigo-800">Earned to date</th>
+                  <th className="leading-tight border-b-2 border-emerald-200 bg-emerald-50 px-3 py-3 text-right text-emerald-800">Billed / committed</th>
+                  <th className="leading-tight border-b-2 border-emerald-200 bg-emerald-50 px-3 py-3 text-right text-emerald-800">Billed % of stage</th>
+                  <th className="leading-tight border-b-2 border-slate-300 bg-slate-50 px-3 py-3 text-right">Currently claimable</th>
+                  <th className="leading-tight border-b-2 border-slate-300 bg-slate-50 px-3 py-3 text-right">Remaining to bill / commit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {view.stages.map((s) => (
+                  <tr key={s.id} className="group transition-colors hover:bg-indigo-50/40">
+                    <td className="sticky left-0 z-10 min-w-[190px] border-b border-slate-100 bg-white px-3 py-3.5 font-medium text-slate-900 group-hover:bg-indigo-50/40">
+                      {s.name}
+                      {s.belowCommitted && <span className="ml-2 align-middle"><Badge tone="warning">approval below billed</Badge></span>}
+                    </td>
+                    <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3.5 text-right tabular-nums">{formatCents(s.valueCents)}</td>
+                    <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3.5 text-right tabular-nums text-slate-500">{formatBps(s.shareBps)}</td>
+                    <td className="whitespace-nowrap border-b border-slate-100 bg-sky-50/30 px-3 py-3.5"><PctCell bps={s.reportedBps} tone="sky" /></td>
+                    <td className="whitespace-nowrap border-b border-slate-100 bg-indigo-50/30 px-3 py-3.5"><PctCell bps={s.approvedBps} tone="indigo" /></td>
+                    <td className="whitespace-nowrap border-b border-slate-100 bg-indigo-50/30 px-3 py-3.5 text-right tabular-nums">{formatCents(s.earnedCents)}</td>
+                    <td className="whitespace-nowrap border-b border-slate-100 bg-emerald-50/30 px-3 py-3.5 text-right tabular-nums">{formatCents(s.committedCents)}</td>
+                    <td className="whitespace-nowrap border-b border-slate-100 bg-emerald-50/30 px-3 py-3.5"><PctCell bps={s.committedBps} tone="emerald" /></td>
+                    <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3.5 text-right">
+                      {s.claimableCents > 0 ? (
+                        <span className="inline-block rounded-lg bg-indigo-600 px-2.5 py-1 text-sm font-semibold tabular-nums text-white shadow-sm">{formatCents(s.claimableCents)}</span>
+                      ) : (
+                        <span className="tabular-nums text-slate-400">{formatCents(s.claimableCents)}</span>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3.5 text-right tabular-nums">{formatCents(s.remainingCents)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="font-semibold text-slate-900">
+                  <td className="sticky left-0 z-10 bg-slate-50 px-3 py-3.5">Project total</td>
+                  <td className="whitespace-nowrap bg-slate-50 px-3 py-3.5 text-right tabular-nums">{formatCents(c.originalContractCents)}</td>
+                  <td className="bg-slate-50 px-3 py-3.5" />
+                  <td className="bg-slate-50 px-3 py-3.5" />
+                  <td className="whitespace-nowrap bg-slate-50 px-3 py-3.5 text-right tabular-nums text-indigo-700">{formatBps(c.approvedCompletionBps)}</td>
+                  <td className="whitespace-nowrap bg-slate-50 px-3 py-3.5 text-right tabular-nums">{formatCents(c.earnedCents)}</td>
+                  <td className="whitespace-nowrap bg-slate-50 px-3 py-3.5 text-right tabular-nums">{formatCents(c.committedCents)}</td>
+                  <td className="bg-slate-50 px-3 py-3.5" />
+                  <td className="whitespace-nowrap bg-slate-50 px-3 py-3.5 text-right tabular-nums text-indigo-700">{formatCents(c.claimableCents)}</td>
+                  <td className="whitespace-nowrap bg-slate-50 px-3 py-3.5 text-right tabular-nums">{formatCents(c.remainingCents)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          <p className="text-xs text-slate-500">Scroll the table sideways on narrow screens — the stage name stays in view.</p>
+
+          <h2 className="text-sm font-semibold text-slate-700">Update progress by stage</h2>
+          <div className="grid gap-4 xl:grid-cols-2">
+            {view.stages.map((s, i) => (
               <ProgressForm
                 key={s.id}
+                index={i + 1}
                 stage={s}
                 disabled={isWorking}
                 perm={perm}
@@ -335,12 +470,14 @@ export default function ProjectDetailPage() {
 }
 
 function ProgressForm({
+  index,
   stage,
   disabled,
   perm,
   onPhysical,
   onCommercial,
 }: {
+  index: number;
   stage: StageView;
   disabled: boolean;
   perm: ViewerPermission;
@@ -382,13 +519,28 @@ function ProgressForm({
 
   return (
     <Panel>
-      <div className="flex items-center justify-between">
-        <PanelTitle>{stage.name}</PanelTitle>
-        <Button size="sm" variant="ghost" onClick={toggle}>{open ? "Hide" : "Update progress"}</Button>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-bold text-indigo-700">{index}</span>
+          <p className="truncate text-sm font-semibold text-slate-900">{stage.name}</p>
+        </div>
+        <Button size="sm" variant={open ? "ghost" : "secondary"} onClick={toggle}>{open ? "Hide" : "Update progress"}</Button>
       </div>
-      <p className="mt-1 text-xs text-slate-500">
-        Physical {formatBps(stage.reportedBps)} · Commercial approval {formatBps(stage.approvedBps)} · Billed / committed {formatBps(stage.committedBps)}
-      </p>
+      <div className="mt-4 grid grid-cols-3 gap-4">
+        {([
+          ["Physical", stage.reportedBps, "sky"],
+          ["Commercial approval", stage.approvedBps, "indigo"],
+          ["Billed / committed", stage.committedBps, "emerald"],
+        ] as const).map(([label, bps, tone]) => (
+          <div key={label}>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="truncate text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</span>
+              <span className={`text-sm font-semibold tabular-nums ${BAR_TEXT[tone]}`}>{formatBps(bps)}</span>
+            </div>
+            <Meter bps={bps} tone={tone} className="mt-1.5 w-full" />
+          </div>
+        ))}
+      </div>
       {open && (
         <div className="mt-3 space-y-4">
           <Input label="Comment / reason" value={comment} onChange={(e) => setComment(e.target.value)} helperText="Optional for physical progress; required for a commercial approval." />
