@@ -370,20 +370,38 @@ export default function ProjectDetailPage() {
       )}
 
       {tab === "components" && (
-        <div className="mt-6 space-y-3">
-          <Alert tone="info">Scope allocation is for visibility and later cost control. It never determines the amount of a progress claim — the Schedule of Values does.</Alert>
+        <div className="mt-6 space-y-4">
+          <div className="flex items-start gap-3 rounded-2xl border border-sky-200 bg-sky-50/70 p-4">
+            <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-sky-500" aria-hidden />
+            <p className="text-sm text-sky-900">
+              <span className="font-semibold">Scope allocation is for visibility and later cost control.</span> It never determines the amount of a progress claim — the Schedule of Values does.
+            </p>
+          </div>
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-base font-semibold text-slate-900">Components / scope</h2>
+            <p className="text-xs text-slate-500">{view.allocations.length} line{view.allocations.length === 1 ? "" : "s"}</p>
+          </div>
           <Table>
             <THead><tr><TH>SKU / description</TH><TH align="right">Qty</TH><TH align="right">Sales value</TH><TH align="right">Estimated cost</TH><TH>Allocated stage</TH></tr></THead>
             <TBody>
-              {view.allocations.map((a) => (
-                <TR key={a.id}>
-                  <TD>{a.sku ? <span className="font-mono text-xs">{a.sku}</span> : null} {a.description}</TD>
-                  <TD align="right" className="tabular-nums">{a.quantity}</TD>
-                  <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(a.sales_value_cents)}</TD>
-                  <TD align="right" className="tabular-nums">{a.estimated_cost_cents === null ? "—" : formatCents(a.estimated_cost_cents)}</TD>
-                  <TD>{view.stages.find((s) => s.id === a.stage_id)?.name ?? "—"}</TD>
-                </TR>
-              ))}
+              {view.allocations.length === 0 && <TR><TD>No scope lines.</TD></TR>}
+              {view.allocations.map((a) => {
+                const stageName = view.stages.find((s) => s.id === a.stage_id)?.name;
+                return (
+                  <TR key={a.id}>
+                    <TD>
+                      {a.sku ? <span className="mr-2 rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-700">{a.sku}</span> : null}
+                      <span className="font-medium text-slate-900">{a.description}</span>
+                    </TD>
+                    <TD align="right" className="tabular-nums whitespace-nowrap">{a.quantity}</TD>
+                    <TD align="right" className="tabular-nums whitespace-nowrap font-medium">{formatCents(a.sales_value_cents)}</TD>
+                    <TD align="right" className="tabular-nums whitespace-nowrap text-slate-600">{a.estimated_cost_cents === null ? "—" : formatCents(a.estimated_cost_cents)}</TD>
+                    <TD className="whitespace-nowrap">
+                      {stageName ? <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">{stageName}</span> : <span className="text-slate-400">Unallocated</span>}
+                    </TD>
+                  </TR>
+                );
+              })}
             </TBody>
           </Table>
         </div>
@@ -392,9 +410,14 @@ export default function ProjectDetailPage() {
       {tab === "claims" && (
         <div className="mt-6 space-y-6">
           <Panel>
-            <PanelTitle>Create progress claim</PanelTitle>
-            <p className="mt-1 text-sm text-slate-500">Preview first. Creating a claim saves a local draft only — it does not create anything in Cin7.</p>
-            <div className="mt-3 flex gap-2">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <PanelTitle>Create progress claim</PanelTitle>
+                <p className="mt-1 text-sm text-slate-500">Preview first. Creating a claim saves a local draft only — it does not create anything in Cin7.</p>
+              </div>
+              <span className="whitespace-nowrap rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">Not sent to Cin7</span>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
               <Button variant="secondary" size="sm" onClick={doPreview} loading={isWorking}>Preview claim</Button>
               {preview && (
                 <Button size="sm" onClick={() => run(() => createClaimDraftAction(id), "Draft claim saved locally.")} loading={isWorking}>Save as draft claim</Button>
@@ -402,58 +425,72 @@ export default function ProjectDetailPage() {
             </div>
             {previewError && <div className="mt-3"><Alert tone="warning">{previewError}</Alert></div>}
             {preview && (
-              <div className="mt-4 space-y-3">
-                <p className="text-sm font-medium text-slate-700">Claim {preview.claimNumber}</p>
+              <div className="mt-5 space-y-4">
+                <p className="text-sm font-medium text-slate-700">Claim {preview.claimNumber} <span className="font-normal text-slate-500">· preview only, nothing saved yet</span></p>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-white p-5">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-indigo-700">Currently claimable (ex VAT)</p>
+                    <p className="mt-2 whitespace-nowrap text-3xl font-bold tabular-nums tracking-tight text-indigo-900">{formatCents(preview.calc.subtotalCents)}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">VAT ({formatBps(preview.taxRateBps)})</p>
+                    <p className="mt-2 whitespace-nowrap text-2xl font-bold tabular-nums tracking-tight text-slate-900">{formatCents(preview.calc.taxCents)}</p>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Total (inc VAT)</p>
+                    <p className="mt-2 whitespace-nowrap text-2xl font-bold tabular-nums tracking-tight text-slate-900">{formatCents(preview.calc.totalCents)}</p>
+                  </div>
+                </div>
                 <Table>
                   <THead><tr><TH>Stage</TH><TH align="right">Stage value</TH><TH align="right">Approved %</TH><TH align="right">Earned to date</TH><TH align="right">Previously billed / committed</TH><TH align="right">This claim</TH></tr></THead>
                   <TBody>
                     {preview.calc.lines.map((l) => (
                       <TR key={l.stageId}>
-                        <TD>{l.stageName}</TD>
+                        <TD className="font-medium text-slate-900">{l.stageName}</TD>
                         <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(l.stageValueCents)}</TD>
-                        <TD align="right" className="tabular-nums">{formatBps(l.approvedBps)}</TD>
+                        <TD align="right" className="tabular-nums whitespace-nowrap font-semibold text-indigo-700">{formatBps(l.approvedBps)}</TD>
                         <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(l.earnedToDateCents)}</TD>
-                        <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(l.previouslyBilledCents)} ({formatBps(l.previouslyBilledBps)})</TD>
-                        <TD align="right" className="font-semibold tabular-nums whitespace-nowrap">{formatCents(l.currentClaimCents)}</TD>
+                        <TD align="right" className="tabular-nums whitespace-nowrap text-slate-600">{formatCents(l.previouslyBilledCents)} ({formatBps(l.previouslyBilledBps)})</TD>
+                        <TD align="right" className="tabular-nums whitespace-nowrap bg-indigo-50/60 font-bold text-indigo-900">{formatCents(l.currentClaimCents)}</TD>
                       </TR>
                     ))}
                   </TBody>
                 </Table>
-                <dl className="ml-auto grid max-w-xs grid-cols-2 gap-1 text-sm">
-                  <dt className="text-slate-500">Current claim (ex VAT)</dt><dd className="text-right font-semibold tabular-nums">{formatCents(preview.calc.subtotalCents)}</dd>
-                  <dt className="text-slate-500">VAT ({formatBps(preview.taxRateBps)})</dt><dd className="text-right tabular-nums">{formatCents(preview.calc.taxCents)}</dd>
-                  <dt className="text-slate-500">Total</dt><dd className="text-right font-semibold tabular-nums">{formatCents(preview.calc.totalCents)}</dd>
-                </dl>
               </div>
             )}
           </Panel>
 
           <div>
-            <h2 className="mb-2 text-sm font-semibold text-slate-700">Claim history</h2>
+            <div className="mb-2 flex items-baseline justify-between">
+              <h2 className="text-base font-semibold text-slate-900">Claim history</h2>
+              <p className="text-xs text-slate-500">{view.claims.length} claim{view.claims.length === 1 ? "" : "s"}</p>
+            </div>
             <Table>
-              <THead><tr><TH>Claim #</TH><TH>Date</TH><TH>Financial status</TH><TH align="right">Ex VAT</TH><TH align="right">VAT</TH><TH align="right">Total</TH><TH>Cin7</TH><TH>Actions</TH></tr></THead>
+              <THead><tr><TH>Claim #</TH><TH>Date</TH><TH>Status</TH><TH>Reservation</TH><TH align="right">Ex VAT</TH><TH align="right">VAT</TH><TH align="right">Total</TH><TH>Cin7</TH><TH>Actions</TH></tr></THead>
               <TBody>
                 {view.claims.length === 0 && <TR><TD>No claims yet.</TD></TR>}
                 {view.claims.map((cl) => (
                   <TR key={cl.id}>
-                    <TD>
+                    <TD className="whitespace-nowrap font-semibold text-slate-900">
                       {cl.claim_number}
-                      {cl.supersedes_claim_id && <span className="ml-2 text-xs text-slate-500">supersedes {view.claims.find((x) => x.id === cl.supersedes_claim_id)?.claim_number ?? "an earlier draft"}</span>}
+                      {cl.supersedes_claim_id && <span className="ml-2 text-xs font-normal text-slate-500">supersedes {view.claims.find((x) => x.id === cl.supersedes_claim_id)?.claim_number ?? "an earlier draft"}</span>}
                     </TD>
-                    <TD>{cl.claim_date}</TD>
-                    <TD>
-                      <Badge tone={CLAIM_TONE[cl.status] ?? "neutral"}>{cl.status}</Badge>
-                      <span className="ml-2 text-xs text-slate-500">{cl.reserves ? "reserves value" : "no reservation"}</span>
+                    <TD className="whitespace-nowrap">{cl.claim_date}</TD>
+                    <TD className="whitespace-nowrap"><Badge tone={CLAIM_TONE[cl.status] ?? "neutral"}>{cl.status}</Badge></TD>
+                    <TD className="whitespace-nowrap text-xs">
+                      {cl.reserves
+                        ? <span className="font-medium text-indigo-700">{cl.status === "FAILED_UNCERTAIN" ? "Value stays reserved (outcome uncertain)" : "Reserves value"}</span>
+                        : <span className="text-slate-500">No reservation</span>}
                     </TD>
                     <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(cl.subtotal_cents)}</TD>
                     <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(cl.tax_cents)}</TD>
-                    <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(cl.total_cents)}</TD>
-                    <TD>{cl.cin7 ? `${cl.cin7.cin7_invoice_number ?? "—"} (${cl.cin7.cin7_status ?? "—"})` : "Not sent to Cin7"}</TD>
+                    <TD align="right" className="tabular-nums whitespace-nowrap font-semibold">{formatCents(cl.total_cents)}</TD>
+                    <TD className="whitespace-nowrap">{cl.cin7 ? `${cl.cin7.cin7_invoice_number ?? "—"} (${cl.cin7.cin7_status ?? "—"})` : <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-medium text-slate-600">Not sent to Cin7</span>}</TD>
                     <TD>
-                      <div className="flex gap-1">
+                      <div className="flex flex-wrap items-center gap-1">
                         {cl.status === "DRAFT" && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.")} disabled={isWorking}>Submit</Button>}
                         {cl.status === "READY_FOR_APPROVAL" && perm === "admin" && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.")} disabled={isWorking}>Approve</Button>}
-                        {cl.status === "READY_FOR_APPROVAL" && perm === "member" && <span className="self-center text-xs text-slate-500">Awaiting owner/admin approval</span>}
+                        {cl.status === "READY_FOR_APPROVAL" && perm === "member" && <span className="self-center whitespace-nowrap text-xs text-slate-500">Awaiting owner/admin approval</span>}
                         {(cl.status === "DRAFT" || cl.status === "READY_FOR_APPROVAL") && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.")} disabled={isWorking}>Recalculate</Button>}
                         {(cl.status === "DRAFT" || cl.status === "READY_FOR_APPROVAL") && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), "Claim cancelled.")} disabled={isWorking}>Cancel</Button>}
                       </div>
