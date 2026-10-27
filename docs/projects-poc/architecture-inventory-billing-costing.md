@@ -1,8 +1,19 @@
 # Architecture review: project materials, manufacturing, progress billing and project costing
 
-Status: **PROPOSAL FOR OWNER DECISION. Nothing here is built, approved or tested against Cin7.** Written 2026-10-27 for NewQuip (PRs #121 and #122, both DRAFT). No Cin7 write, no hosted schema change and no inventory/manufacturing automation is proposed for immediate action. INV-00021 is untouched. Production writes stay disabled.
+Status: **REVISED 2026-10-27 after owner direction (see §0). Proposal; nothing here is built or tested against Cin7.** Written 2026-10-27 for NewQuip (PRs #121 and #122, both DRAFT). No Cin7 write, no hosted schema change and no inventory/manufacturing automation is proposed for immediate action. INV-00021 is untouched. Production writes stay disabled.
 
 Evidence legend: **PROVEN** = confirmed live and recorded in this repo. **OBSERVED** = seen in a real read-only response. **REPO** = established by repo code/docs. **UNVERIFIED** = general Cin7 knowledge or inference; must be tested on a disposable Sale before anything depends on it. Nothing UNVERIFIED is treated as fact below.
+
+---
+
+## 0. Owner direction (2026-10-27)
+
+| Decision | Outcome | Consequence in this document |
+|---|---|---|
+| **D1** Billing/physical model | **DEFERRED.** One-Sale (A) and two-Sale (B) stay candidates until real Cin7 inventory, invoicing and accounting behaviour is proven. | R1 is a *hypothesis*, not a recommendation. §6 keeps both models; §19 defines the proofs that decide it. |
+| **D5** Master data and costing | **APPROVED IN PRINCIPLE.** Cin7 is master for SKU identity, inventory, stock transactions and valuation. Toolbox owns project scope, project-specific BOM mapping, quantities, versions and estimated-versus-actual reporting. Missing SKU mappings are visible exceptions. Placeholder costs are not valid margin inputs. **No financial margin from unverified costs.** | §7.3 becomes a hard rule; §18 lists the minimum data corrections; the exception classes in §8.2 are mandatory. |
+
+Also asked for: T0/T1/T2 proof specifications (§19), a manufacturing-method assessment (§17), the minimum data corrections for a representative project BOM (§18), and a first proof (§21). All documentation only: no Cin7 write, no Supabase mutation, PRs #121/#122 untouched, nothing pushed.
 
 ---
 
@@ -20,10 +31,10 @@ Evidence legend: **PROVEN** = confirmed live and recorded in this repo. **OBSERV
 
 **Recommendation (subject to proof tests T1–T6 and accountant sign-off)**
 
-- **R1. Two linked Advanced Sales per project (target model B):** a *commercial* Sale carries the contract value and is invoiced progressively (revenue lives only here); a *physical* Sale carries the real SKUs and quantities, drives allocation, purchasing demand and fulfilment, and carries **no revenue**. Toolbox links them and owns the project view. This is the only model that makes double revenue structurally impossible. The single-Sale model (A) stays a candidate only if T1–T3 pass.
+- **R1. (Hypothesis, D1 deferred.) Two linked Advanced Sales per project (candidate model B):** a *commercial* Sale carries the contract value and is invoiced progressively (revenue lives only here); a *physical* Sale carries the real SKUs and quantities, drives allocation, purchasing demand and fulfilment, and carries **no revenue**. Toolbox links them and owns the project view. It is the only candidate that makes double revenue structurally impossible, but it is **not approved**: the single-Sale model (A) stays fully open until T1/T2 show how Cin7 actually behaves.
 - **R2. Toolbox owns scope, BOM versions, project cost ledger, claims and the document links; Cin7 owns every transaction it records** (stock, orders, production, dispatch, invoices, VAT, accounting). Sync is read-mostly: Toolbox writes only the documents it creates, once, behind the existing posting state machine.
 - **R3. Build in this order:** data hygiene and SKU/BOM mapping, then Toolbox-only BOM model, then read-only demand/cost visibility, and only then Cin7 writes (physical Sale, then production). Costing visibility comes **before** any new Cin7 write.
-- **R4. Freeze PR #122 as a draft.** Its writer is still the right shape for the commercial Sale in model B, but nothing is re-enabled until the owner decisions in §13 are made.
+- **R4. Freeze PR #122 as a draft.** Its writer fits the commercial Sale in model B and a charge-invoice flow in model A; nothing is re-enabled until D1 is decided.
 
 ---
 
@@ -43,6 +54,10 @@ Evidence legend: **PROVEN** = confirmed live and recorded in this repo. **OBSERV
 | P5: a charge-only DRAFT invoice on an Advanced Sale is accepted; fulfilment, stock and COGS stay 0; UI "amount to invoice" fell by the charge incl. VAT | P5 doc (OBSERVED) |
 | `AdditionalCharges[].Tax` is a VAT **amount**; Cin7 uses what it is sent | INV-00021 incident |
 | Not proven: Xero effects, authorised-invoice COGS timing, over-invoicing rejection, concurrency | P0 banner |
+| **The NewQuip POC trial catalogue is seeded.** 10,795 of 12,595 products have `average_cost` exactly 50; 11,021 stock rows have `on_hand` exactly 1,000; seeded stock sits in location MSTR at exactly R50.0000 a unit (stock value 50,000 per 1,000). Real receipts show up in other locations (e.g. `NQ1161` in PROJ: 8,638 units at R184.22). Costing method is FIFO for every product. | OBSERVED (read-only query of the Toolbox sync tables, 2026-10-27) |
+| No synced product has a revenue, COGS or inventory account, and stock SKUs have no sale tax rule (only `DEL001` does): either Cin7 applies defaults or the sync does not capture them. | OBSERVED (same query); meaning UNVERIFIED |
+| NewQuip trial has 2 assembly builds, 4 consumption lines, **0 production orders, 0 Production BOM versions, 0 operations**, 11 purchases, 34 receipt lines. Two assemblies exist (`CP001`: 2 components; `NQ3173`: 3 components, all components at placeholder cost 50). | OBSERVED (same query) |
+| A Sale whose only invoice is a DRAFT charge-only invoice (SO-00015/INV-00019, SO-00019/INV-00021) shows **no invoice number** in the Toolbox cache and `NOT INVOICED`. Existing features that read invoices (e.g. the Closed/Shipped-but-Uninvoiced control) will not see such invoices. | OBSERVED (cache query) |
 
 ---
 
@@ -161,11 +176,15 @@ Toolbox shows a **project demand view** (read-only): per BOM line, required vs `
 | Needs new proof | T1–T3 | T4–T5 | Contract/VAT review |
 | Reversal on cancel | Hard to untangle | Cancel each Sale independently | Simple |
 
-### 6.3 Reasoning for B
+### 6.3 Reasoning for B (hypothesis, not a decision; D1 deferred)
 
 - In model A the order total already includes the product lines. A charge invoice consumes that capacity; shipping the lines then offers an invoice for the same value. Either Cin7 allows it (revenue duplicated), blocks it (physical delivery stalls), or the lines are priced at zero (which is model B inside one document, with worse reporting). None of these is acceptable without proof.
 - In model B revenue lives on one document by construction, and the physical Sale can be zero-priced, so no fulfilment can ever bill.
 - B fits the already-built writer: the commercial Sale is the Advanced Sale PR #122 links to. Its contract value, VAT and over-invoicing bound can be enforced against that Sale's order total.
+
+### 6.3a Reasoning for A (equally open)
+
+- One document, one customer-facing Sale, native Cin7 reporting, no linking layer. If Cin7 treats a charge invoice as consuming the order's invoiceable value (P5 UI suggests so) **and** refuses to invoice shipped lines beyond it, model A is safe and simpler. Only T1/T2 can show this. If shipments would offer a second invoice for the same value, A is unsafe without a hold-back mechanism.
 
 ### 6.4 Costs of B (must be accepted knowingly)
 
@@ -198,9 +217,13 @@ Project margin = commercial revenue (invoiced on the commercial Sale, ex VAT) mi
 - Documents created by people in Cin7 are attached with an explicit **link** (a manager chooses PO/build/adjustment and role) stored in `project_cin7_documents`; no fuzzy matching.
 - Read-only sync into a `project_cost_events` table (document, line, SKU, qty, unit cost, date, state). The ledger is derived and re-buildable; nothing in it is hand-edited.
 
-### 7.3 Pre-conditions
+### 7.3 Cost trust: hard rule (D5)
 
-Costs of `50` or zero are rejected as `COST_UNTRUSTED`; the project then shows Estimated only. Average cost behaviour (average vs FIFO setting) must be confirmed per instance.
+- Every cost input has a **trust state**: `VERIFIED` (receipt-derived or explicitly attested by the product owner for that SKU, with date and who), `UNVERIFIED`, or `PLACEHOLDER` (cost exactly 50, zero, missing, or from a seeded layer).
+- Heuristics only ever *downgrade*: a heuristic can mark a cost PLACEHOLDER but can never mark it VERIFIED. Only attestation or a traceable receipt does.
+- **No financial margin, gross profit or WIP value is computed or displayed from a non-VERIFIED cost.** The function returns "not available" with the list of blocking SKUs. Quantities, mapped SKUs, Estimated *units* and Cin7-reported figures may still be shown, clearly labelled.
+- Missing SKU mappings and untrusted costs are **visible exceptions** on the project (`UNMAPPED_SKU`, `COST_UNTRUSTED`), never silent zeros.
+- Valuation is Cin7's (FIFO here). Toolbox displays Cin7's figures and never re-values stock.
 
 ---
 
@@ -336,7 +359,7 @@ Disposable NewQuip POC trial org only; throwaway customer; new Project and claim
 | Wrong amounts in Cin7 (INV-00021 shape) | Mismatch surfaced with figures; never RECONCILED |
 | Unmapped or untrusted-cost SKU | Physical Sale blocked; costing shows Estimated only |
 
-**Proof tests before any build (all on a disposable Sale, human-operated first, as P5 was)**
+**Proof tests before any build (all on a disposable Sale, human-operated first, as P5 was; T0, T1 and T2 are specified in full in §19)**
 
 - **T0** Create a product-line sale, authorise it, confirm allocation.
 - **T1** Add a charge-only DRAFT invoice to a Sale with product lines; read "amount to invoice".
@@ -348,22 +371,25 @@ Disposable NewQuip POC trial org only; throwaway customer; new Project and claim
 
 ---
 
-## 13. Unresolved owner decisions (with recommended default)
+## 13. Owner decisions
 
-| # | Decision | Recommended default |
-|---|---|---|
-| D1 | Billing/physical model: A (one Sale), B (two linked Sales) or C (deposits) | **B**, unless T1–T3 prove A |
-| D2 | Revenue recognition and VAT treatment (§11 Q1, Q2) | Accountant to confirm before T4 |
-| D3 | Multi-SKU packages: Cin7 assemblies, or components on the Sale | Components on the Sale first; assemblies only for true builds |
-| D4 | Assembly vs Advanced Manufacturing for NewQuip fabrication | Decide from how NewQuip builds today |
-| D5 | Who maintains SKU mappings and sanctions placeholder costs | NewQuip product owner; blocking |
-| D6 | Wastage policy (explicit % lines vs adjustments) and substitution approval authority | Explicit line, manager approval |
-| D7 | Variations: edit the authorised Sale (if T6 allows) or one Sale per variation | **One linked Sale per variation** |
-| D8 | Toolbox may create POs/builds, or only read | Read first |
-| D9 | Installation: capitalised vs expensed; where labour is recorded | Accountant |
-| D10 | Cost basis for margin before costs are cleaned | Estimated only; no margin figures shown |
-| D11 | Sandbox for proofs: NewQuip POC trial vs the Spark Demo sandbox | Spark Demo for T0–T6, NewQuip trial only for the final scenario |
-| D12 | Fate of PR #122 | Stay DRAFT; reuse as the commercial-Sale writer if D1 = B |
+| # | Decision | Status | Note |
+|---|---|---|---|
+| D1 | Billing/physical model: A, B or C | **DEFERRED** by owner | Decided by T1/T2 evidence plus accountant input |
+| D2 | Revenue recognition and VAT treatment (§11 Q1, Q2) | Open | Accountant; needed before any AUTHORISED invoice test and before T4 |
+| D3 | Multi-SKU packages: Cin7 assemblies or components on the Sale | Open | §17 recommends components on the Sale first |
+| D4 | Assembly vs Advanced Manufacturing for NewQuip fabrication | Open | §17; needs NewQuip's actual process |
+| D5 | Master data and costing ownership | **APPROVED IN PRINCIPLE** | Terms in §0 and §7.3 |
+| D6 | Wastage policy and substitution approval authority | Open | Explicit line, manager approval |
+| D7 | Variations: edit the authorised Sale or one Sale per variation | Open | Depends on T6 |
+| D8 | Toolbox may create POs/builds, or only read | Open | Read first |
+| D9 | Installation: capitalised vs expensed | Open | Accountant |
+| D10 | Margin before costs are cleaned | **Resolved by D5** | Not computed from unverified costs |
+| D11 | Sandbox for proofs: NewQuip POC trial or Spark Demo | Open, **blocks T0** | §21 proposes the NewQuip trial for T0–T2 (tax rule, account 200 and Xero context match), Spark Demo as the alternative |
+| D12 | Fate of PR #122 | Open | Stays DRAFT, flag OFF |
+| D13 | Which Cin7 location a project's physical Sale picks from (MSTR holds seeded stock; PROJ holds real receipts) | Open, new | Affects cost and availability |
+| D14 | Who attests SKU costs as VERIFIED, and how it is recorded | Open, new | Needed by §7.3 |
+| D15 | State of the Cin7 setting "Default Load Advanced Sales Order" for the instance | Open, new | A Sale created in Sales -> Sales is Simple unless this is on; SO-00018 was Simple |
 
 ---
 
@@ -375,7 +401,7 @@ Disposable NewQuip POC trial org only; throwaway customer; new Project and claim
 | 1 | Read-only fact finding: costing method, UOM, reference fields, existing sale-order fixture | None | Report |
 | 2 | Data hygiene: SKU mappings, placeholder costs, price tiers, package decisions | Product edits only by NewQuip, in Cin7 | Mapping sign-off |
 | 3 | Toolbox-only ProjectBom model, versions, substitutions, variation deltas, demand view (read) | None | Review |
-| 4 | Proof tests T0–T6, human-operated on disposable Sales | Human only | Evidence recorded |
+| 4 | Proof tests T0, T1, T2 (§19) then T3–T6, human-operated on disposable Sales; D1 is decided from this evidence | Human only | Evidence recorded and reviewed |
 | 5 | Cost ledger from read-only sync; margin hidden until data gate passes | None | Review |
 | 6 | Commercial Sale writer (the #122 path, re-proven) | Behind flag | Owner approval |
 | 7 | Physical Sale writer (T0 result) | Behind flag | Owner approval |
@@ -388,3 +414,177 @@ Disposable NewQuip POC trial org only; throwaway customer; new Project and claim
 
 - **#121 (POC):** unaffected as a commercial POC; its limits (no physical flow) should be stated in its description.
 - **#122 (claim writer):** now corrected for VAT amounts and NaN handling (`09631d2`). It remains DRAFT, unpushed beyond `5718fa2`, flag OFF. It is a candidate for the commercial-Sale writer under model B; nothing is re-enabled before D1 and D2.
+
+---
+
+## 16. Evidence status and what changed in this revision
+
+Added: owner decisions (§0), observed catalogue facts (§2), cost-trust rule (§7.3), decisions D13–D15 (§13), and §17–§21 below. Nothing in §3–§12 asserts a Cin7 behaviour that has not been tagged PROVEN, OBSERVED, REPO or UNVERIFIED.
+
+---
+
+## 17. Manufacturing method: assembly, production BOM, or direct consumption
+
+**Facts.** NewQuip trial: 2 assembly builds, 0 production orders/BOM versions/operations; the Toolbox can read production runs and push a Production BOM and work centres but cannot yet create a production order (UNVERIFIED). The contract's Manufacturing stage is a large share of value, so *something* is made, but the trial data does not show how NewQuip really builds. This is a process question the owner must answer (D4); the assessment below is conditional.
+
+| Item class | Recommended mechanism | Why | Cost recorded |
+|---|---|---|---|
+| Bought and sold as-is (feeder, mat, slat, tank, cup, LED) | **Direct stock consumption** by sale fulfilment | Nothing is built; fewest transactions, fewest ways to double-consume | FIFO layer at ship |
+| Kit shipped as a set (drinker, M75 package, penning kit) | **Direct consumption of components on the Sale** first; **Assembly** only if the kit must be stocked, serialised or sold as one SKU (D3) | A kit that is just "pick these 7 SKUs" needs no build document; an assembly adds a consuming transaction that must not be repeated on the Sale | Components at FIFO; assembly adds service lines |
+| Simple fabrication with labour (cut, drill, weld, galvanise) with no WIP tracking need | **Assembly with service components** (`BillOfMaterialsServices`) | One transaction, captures labour as a service cost, supported by the BOM write already in the repo | Components plus service lines |
+| Multi-operation fabrication where WIP, work centres and resource time matter | **Production BOM + production order** (Advanced Manufacturing) | Only mechanism with operations, planned vs actual consumption and WIP; Toolbox already reads actual runs | Material plus resource cost; WIP state |
+| Moving stock to a project location | **Stock transfer** (optional) | Changes location only; never a consumption | None |
+
+**Conclusion: a combination, defaulting to the simplest mechanism that satisfies the cost question.** Start with direct consumption for everything; add Assembly only for items that are genuinely built or must be one SKU; adopt Production BOM only if NewQuip confirms it needs per-project WIP and resource costing. Mixing is allowed only under the §5.2 rule: **one consuming transaction per material**. A component that is consumed by an assembly build must not also appear as a line on the physical Sale.
+
+**What is needed to decide D4:** a walk-through of how one real house kit is built today (steps, who, where, whether labour hours are recorded), whether NewQuip already uses Cin7 Production, and the accountant's view on WIP (§11 Q5).
+
+---
+
+## 18. Minimum data corrections for a representative NewQuip project BOM
+
+Representative BOM = the nine Grower outputs in the rule register (about 37 distinct SKUs). Read-only comparison against the Toolbox sync of the NewQuip trial:
+
+| Check | Result |
+|---|---|
+| SKUs present in Cin7 | 35 of 37. **Absent:** `NQ.TUBE.63` (drop tube), `TRA1.1KW3PH` (1.5HP drive; Cin7 has other drives, e.g. `NQ1142` 1/2HP) |
+| Cost verifiable | **13** of 35 have a plausible non-50 FIFO cost (`KNQ074`, `KNQ085`, `KNQ160`, `NQ1017`, `NQ1086`, `NQ1089`, `NQ1126`, `NQ1161`, `NQ1163`, `NQ1175`, `NQ1199`, `NQ1380`, `NQ1386`). **22** are exactly R50.00 with seeded stock of 1,000: the tank, feeder (both variants), mat, LED trio, drinker cup/bracket/plate, M75 auger parts, control, drives, posts and fixings. `DEL001` is a zero-cost service |
+| Seeded stock | Those 22 show 1,000 at MSTR valued at exactly R50.00 each: an invented FIFO layer. Shipping from it would book COGS of R50, not a real cost |
+| Product accounts and tax rules | Not present in the sync for any of them; unknown whether Cin7 defaults apply |
+| Units of measure | Quantities are expressed in metres or running metres for the auger and penning, but the SKUs carry UOM `Item`; per-metre pricing/cost is unconfirmed |
+| Identity defects | `HNQ7046` is named FERAX 24W (not FORTIS); `HNQ7088`/`HNQ7093` clip/cable labels disagree between workbook and Cin7; support-post SKU truncated (`NQ2601` candidate); no 0.9 m green penning panel found; PVC door has 14 candidates and no confirmed SKU; names lost decimals |
+| Locations | MSTR (seeded), PROJ (real history), CPT and one more; no project location policy |
+
+### Minimum corrections (ordered; all are NewQuip actions in Cin7 or sign-offs, not Toolbox code)
+
+1. **Confirm identities** for the unresolved items (PVC door, penning panels, FORTIS/FERAX, clip/cable, support post, drop tube, 1.5HP drive) and create or fix the two absent SKUs. *Unblocks:* `UNMAPPED_SKU` clearing.
+2. **Replace the seeded layers** for the BOM SKUs with real stock: either adjust the seeded 1,000 to the true quantity and receive through purchases at real cost, or re-cost, so FIFO holds genuine layers. *Unblocks:* any COGS, WIP or margin figure.
+3. **Attest costs** (D14): for each BOM SKU, a named owner confirms the cost basis (receipt, supplier quote or workbook landed cost) and date. *Unblocks:* `VERIFIED` state (§7.3).
+4. **Fix UOM** for metre-based SKUs (or state the pack size in the BOM line) so quantities mean what the rule engine produced.
+5. **Record the account/tax defaults** Cin7 applies to stock SKUs (revenue 200, COGS, inventory, sale tax rule) so accounting expectations in §19 can be stated exactly.
+6. **Choose the picking location** for project stock (D13).
+7. **Set or record** "Default Load Advanced Sales Order" (D15) so every project Sale is Advanced.
+8. **Package decision** (D3): which packages become assemblies; define those BOMs.
+
+For the *proof tests only* (§19) none of 1–8 is required: the proofs use one seeded SKU whose layer is known (R50.00 at MSTR) so the expected COGS is exact. They are **not** evidence of a real project cost.
+
+---
+
+## 19. Controlled proof specifications: T0, T1, T2
+
+**Common rules.** NewQuip POC trial org (or Spark Demo, D11); throwaway customer; no real claim, project or `PRJ-NQ-Q-0001`; **human-operated in the Cin7 UI**, not through Toolbox code, so Cin7's behaviour is separated from our writer; every invoice stays **DRAFT**; no invoice is authorised in T0–T2; nothing is run until the owner approves the literal fixture sheet in writing; observation is by a read-only inspector (a temporary Preview page like the SO-00018 diagnostic, GET-only, projecting only the fields below, with tests) plus owner screenshots. Any deviation from an expectation is a **finding**, not a failure to be hidden.
+
+**Shared fixture (proposed).** One Advanced Sale, status AUTHORISED, tax rule Standard Rate Sales, terms 30 days, ZAR, location **MSTR**, one product line: SKU `NQ2886` (stock; bracket), qty **2**, price **R500.00** ex VAT, so order total **R1,000.00 / VAT R150.00 / R1,150.00**. Before values (OBSERVED in the Toolbox cache): `NQ2886` MSTR on hand 1,000, allocated 0, available 1,000, stock value R50,000.00 (R50.0000 a unit), costing FIFO.
+
+### T0: physical Advanced Sale, authorised, allocation
+
+**Question answered.** Does an Advanced Sale with a product line reserve stock without invoicing, fulfilling or costing anything?
+
+**Evidence required before authorising**
+- E0.1 D11 decided (instance) and the fixture sheet signed: customer, SKU, qty, price, location, tax rule, terms.
+- E0.2 A saved read-only "before" snapshot of the SKU's availability row and the highest existing SO number.
+- E0.3 The Cin7 setting "Default Load Advanced Sales Order" recorded, and the Sale confirmed Advanced after creation.
+- E0.4 The read-only inspector deployed on a Preview, with tests proving GET-only, field projection and manager-only access.
+- E0.5 Who captures accounting evidence (the Sale's journal view in Cin7, and the Xero state) and where it is stored.
+- E0.6 Rollback written: void the Sale order; expected allocation back to 0.
+
+**Steps (human).** Create the Sale in the UI as Advanced; add the line; authorise the order; do nothing else. Read via the inspector. Then (T0b) void it only if the fixture is not needed for T1/T2, and read again to prove reversal.
+
+**Expected outcomes (hypotheses; UNVERIFIED)**
+
+| Area | Expectation |
+|---|---|
+| Sale | Type "Advanced Sale"; Order.Status AUTHORISED; sale Status ORDERED |
+| Inventory | `NQ2886` MSTR: on hand 1,000 (unchanged), allocated 2, available 998; stock value unchanged R50,000.00 |
+| Fulfilment | `Fulfilments` empty; picking/packing/shipping NOT PICKED/NOT PACKED/NOT SHIPPED; FulFilmentStatus NOT FULFILLED |
+| Accounting | No journals; no inventory, COGS or revenue movement; `COGSAmount` 0; `InventoryMovements` empty |
+| VAT | Order shows VAT R150.00 as a *quote of tax*; **no VAT liability** (no invoice) |
+| Revenue / COGS | None / None |
+| Xero | Nothing sent |
+
+**Pass.** All rows match. **Stop.** Type is Simple; stock does not allocate; any journal appears; any invoice or fulfilment appears. **Decides.** Whether a physical Sale can drive demand (needed by both models).
+
+### T1: charge-only progress invoice on a Sale that has product lines
+
+**Question answered.** When a Sale already carries priced product lines, what does a progress invoice made of AdditionalCharges consume, and what does Cin7 say is still invoiceable? Run in the **worst case for model A**: the charge bills 100% of the order value.
+
+**Evidence required before authorising**
+- E1.1 T0 passed and recorded; fixture still AUTHORISED with qty 2.
+- E1.2 The Xero connection state recorded (which organisation, demo or real, and whether sync is automatic); DRAFT invoices proven not to sync, or the owner accepts the effect.
+- E1.3 The literal invoice sheet signed: one AdditionalCharge, R1,000.00 ex VAT, Tax **R150.00 as an amount**, Total R1,000.00 (net), Standard Rate Sales, account 200, DRAFT, memo `T1-<date>`, dates.
+- E1.4 Before snapshot taken (Sale, availability, "amount to invoice" screenshot).
+- E1.5 Written statement that no invoice will be authorised in T1.
+
+**Steps (human).** Create the DRAFT charge-only invoice in the UI exactly as signed. Read back; screenshot "amount to invoice", invoice lines, order tab.
+
+**Expected outcomes (hypotheses)**
+
+| Area | Expectation |
+|---|---|
+| Invoice | One DRAFT invoice; ex VAT R1,000.00; VAT R150.00; total R1,150.00; memo exact |
+| Order | Lines and totals unchanged R1,000 / R150 / R1,150 |
+| Amount to invoice | Falls from R1,150.00 by the invoice value, to R0.00 (P5 saw R1,150 to R1,035 for R115) |
+| Product line invoiced quantity | Unchanged at 0 of 2 (charge invoice does not invoice quantity) |
+| Inventory | Allocated 2, on hand 1,000, available 998: unchanged |
+| Fulfilment / COGS | None; `COGSAmount` 0 |
+| Accounting | DRAFT: no journals. (Authorising would debit receivables R1,150, credit sales account 200 R1,000, credit output VAT R150; **not** done in T1) |
+| Revenue / VAT | None recognised while DRAFT |
+| Xero | Nothing, if DRAFT does not sync (E1.2) |
+
+**Pass.** Rows match. **Findings to record either way.** Whether "invoiced quantity" for the product line moved; whether Cin7 blocks or warns; whether it shows over-invoicing. **Stop.** Cin7 authorises or posts anything; an unexpected journal or Xero effect. **Optional T1-AUTH** (authorise the invoice) is a **separate gate**, only with E1.2 showing a demo Xero organisation and the accountant's written answers to §11 Q1–Q3, because it creates real receivable, revenue and VAT entries. **Decides.** Half of D1: does the charge invoice consume the order's invoiceable value.
+
+### T2: partial shipment of the product lines after a charge invoice exists
+
+**Question answered (the decisive one for D1).** After 100% of the order value has been billed by a charge invoice, what do shipping and invoicing the product lines do to revenue, VAT, COGS and stock?
+
+**Evidence required before authorising**
+- E2.1 T0 and T1 (DRAFT) passed.
+- E2.2 Fulfilment workflow settings recorded (pick/pack/ship steps, any "invoice on ship" or auto-authorise setting).
+- E2.3 A documented reversal path for a shipped fulfilment (void/un-authorise), with the acceptable residue stated: at worst 1 unit of seeded stock and one R50.00 FIFO cost movement in a trial org.
+- E2.4 The FIFO layer for `NQ2886` MSTR recorded (R50,000 / 1,000), so COGS can be predicted exactly.
+- E2.5 Accountant's written position on where COGS posts (§11 Q3) or an explicit decision to treat T2 accounting as observation only.
+- E2.6 Owner approval of the literal step list; no invoice authorised.
+
+**Steps (human).** Pick, pack and ship **1 of 2** units. Read back. Then open the Sale's invoice options **without authorising**: record what Cin7 offers for the shipped unit; if it allows a DRAFT product-line invoice, create it at R500.00 and record total drafted value against the order. Do not authorise anything.
+
+**Expected outcomes (hypotheses; the discriminating ones are in bold)**
+
+| Area | Expectation |
+|---|---|
+| Fulfilment | Shipped for 1 unit; status partially fulfilled; Sale not closed |
+| Inventory | `NQ2886` MSTR: on hand 999, allocated 1, available 998; stock value R49,950.00 |
+| COGS | R50.00 (1 x R50.0000 FIFO layer), recorded at ship or at invoice (**timing is a finding**) |
+| Accounting | Inventory credit, COGS debit R50.00 at the recognition point; no revenue |
+| Revenue / VAT | None while all invoices are DRAFT |
+| **Invoiceable value after the charge invoice** | **H1:** Cin7 still offers the shipped unit at R500.00 (+R75 VAT), so potential billing R1,500 on a R1,000 order: **model A unsafe without a hold-back**. **H2:** Cin7 offers nothing / reports R0 left to invoice: **model A safe for billing**, with revenue split by account to be reviewed. **H3:** Cin7 auto-creates an invoice on ship: record and stop (a billing event model A cannot control) |
+| Xero | Nothing from DRAFT; fulfilment effects recorded as observed |
+
+**Pass.** The behaviour is recorded completely (it need not match a hypothesis). **Stop.** Any invoice is authorised; unexpected COGS amount other than R50.00; any journal outside the expected set. **Decides.** The other half of D1 (A vs B), plus when COGS is recognised, which feeds the cost ledger design.
+
+---
+
+## 20. Test matrix
+
+| ID | Question | Prerequisites | Operator | Reversible | Decides | Status |
+|---|---|---|---|---|---|---|
+| T0 | Product-line Advanced Sale authorised: allocation only? | D11, fixture sheet, inspector, rollback | Human (UI) | Yes (void order) | Demand model for A and B | Specified, not approved |
+| T1 | Charge-only invoice on a Sale with product lines: what is consumed? (DRAFT; T1-AUTH separate) | T0, Xero state, literal invoice sheet | Human (UI) | Yes (void DRAFT) | D1 (half) | Specified, not approved |
+| T2 | Ship product lines after a full charge invoice: revenue, VAT, COGS, stock | T0, T1, fulfilment settings, reversal path | Human (UI) | Mostly (void fulfilment) | D1 (decisive), COGS timing | Specified, not approved |
+| T3 | Invoice beyond the order total: rejected? | T1, T2 | Human | Yes | Over-invoicing guard | Not specified |
+| T4 | Zero-priced physical Sale: ship, COGS, VAT, reports | D1 leaning B, accountant | Human | Mostly | Model B viability, VAT | Not specified |
+| T5 | API creation of builds, production orders, adjustments; reference fields; Make-to-Order | D4 | Human then Toolbox | Mostly | §17 mechanism | Not specified |
+| T6 | Edit an authorised order line or require a new Sale | T0 | Human | Yes | D7 | Not specified |
+
+---
+
+## 21. Proposed first proof: **T0**
+
+**Why T0 first, and not T2 (the most informative).** T2 cannot run without T0's fixture, so T0 is the mandatory first step regardless of which test matters most. T0 is also the smallest and fully reversible step: it needs no invoice, no fulfilment, no cost and no Xero effect; it proves the physical-Sale prerequisite that both models rely on; it validates the read-only inspector that T1 and T2 will use; and it records the instance setting (D15) that made SO-00018 a Simple Sale. The fixture is deliberately left AUTHORISED (not voided) so T1 and T2 reuse it.
+
+**What the owner needs to decide to start**
+1. D11: run on the NewQuip POC trial (recommended for parity with tax rule, account 200 and Xero) or Spark Demo.
+2. Approve the shared fixture (customer, `NQ2886`, qty 2, R500.00, MSTR) or substitute one.
+3. Approve a temporary read-only inspector page (same pattern as the SO-00018 diagnostic), which I would build and test before T0, with no Cin7 write and removed afterwards.
+4. Confirm who performs the Cin7 UI steps and who captures the accounting/journal evidence.
+
+Until those are given: no Cin7 write, no inspector deployed, nothing pushed.
