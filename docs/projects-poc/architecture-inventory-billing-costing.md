@@ -448,8 +448,8 @@ Representative BOM = the nine Grower outputs in the rule register (about 37 dist
 | Check | Result |
 |---|---|
 | SKUs present in Cin7 | 35 of 37. **Absent:** `NQ.TUBE.63` (drop tube), `TRA1.1KW3PH` (1.5HP drive; Cin7 has other drives, e.g. `NQ1142` 1/2HP) |
-| Cost verifiable | **13** of 35 have a plausible non-50 FIFO cost (`KNQ074`, `KNQ085`, `KNQ160`, `NQ1017`, `NQ1086`, `NQ1089`, `NQ1126`, `NQ1161`, `NQ1163`, `NQ1175`, `NQ1199`, `NQ1380`, `NQ1386`). **22** are exactly R50.00 with seeded stock of 1,000: the tank, feeder (both variants), mat, LED trio, drinker cup/bracket/plate, M75 auger parts, control, drives, posts and fixings. `DEL001` is a zero-cost service |
-| Seeded stock | Those 22 show 1,000 at MSTR valued at exactly R50.00 each: an invented FIFO layer. Shipping from it would book COGS of R50, not a real cost |
+| Cost verifiable | **13** of 35 have a plausible non-50 FIFO cost (`KNQ074`, `KNQ085`, `KNQ160`, `NQ1017`, `NQ1086`, `NQ1089`, `NQ1126`, `NQ1161`, `NQ1163`, `NQ1175`, `NQ1199`, `NQ1380`, `NQ1386`). **21** are exactly R50.00 with seeded stock of 1,000: the tank, feeder (both variants), mat, LED trio, drinker cup/bracket/plate, M75 auger parts, control, drives, posts and fixings. `DEL001` is a zero-cost service |
+| Seeded stock | Those 21 show 1,000 at MSTR valued at exactly R50.00 each: an invented FIFO layer. Shipping from it would book COGS of R50, not a real cost |
 | Product accounts and tax rules | Not present in the sync for any of them; unknown whether Cin7 defaults apply |
 | Units of measure | Quantities are expressed in metres or running metres for the auger and penning, but the SKUs carry UOM `Item`; per-metre pricing/cost is unconfirmed |
 | Identity defects | `HNQ7046` is named FERAX 24W (not FORTIS); `HNQ7088`/`HNQ7093` clip/cable labels disagree between workbook and Cin7; support-post SKU truncated (`NQ2601` candidate); no 0.9 m green penning panel found; PVC door has 14 candidates and no confirmed SKU; names lost decimals |
