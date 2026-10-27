@@ -6,6 +6,7 @@
  */
 
 import Image from "next/image";
+import { isNewquipPocOrg } from "@/newquip/access";
 import { useId } from "react";
 
 type IconProps = { className?: string };
@@ -584,6 +585,42 @@ export const MODULES: ModuleConfig[] = [
   INSTANCES_MODULE,
   ACTIVITY_MODULE,
 ];
+
+// NewQuip Solution Builder (the Grower quote/configurator, src/app/newquip-grower/). Deliberately NOT in MODULES: a MODULES entry is
+// on by default for every org, would add a home tile and an /admin toggle, and hiding it would need a disabled_modules migration.
+// It is a single-client capability, gated by the same immutable NewQuip org id the routes themselves enforce
+// (src/newquip/access.ts) and by the same Quotes module access those routes require. The link is navigation only — the route
+// layout and every server action re-check access independently.
+export const SOLUTION_BUILDER_MODULE: ModuleConfig = {
+  href: "/newquip-grower",
+  label: "Solution Builder",
+  gradient: SELF_COLORED_ICON_BADGE,
+  Icon: TemplateIcon,
+  blurb: "Build a NewQuip Grower house solution: configure, review, quote, approve and hand over to a Project.",
+};
+
+/**
+ * The left-navigation links for an org: its enabled modules, plus Solution Builder where NewQuip's capability applies, placed
+ * straight after Quotes (or, if Quotes is hidden, before Projects). Pure so it is directly unit-testable.
+ */
+export function buildNavLinks(orgId: string | null, disabledModules: string[], isSuperAdmin: boolean): ModuleConfig[] {
+  const visible = MODULES.filter((m) => !disabledModules.includes(m.href));
+  const showBuilder = orgId != null && isNewquipPocOrg(orgId) && !disabledModules.includes(QUOTES_MODULE.href);
+  let links = visible;
+  if (showBuilder) {
+    let at = visible.findIndex((m) => m.href === QUOTES_MODULE.href);
+    if (at >= 0) at += 1;
+    else at = visible.findIndex((m) => m.href === PROJECTS_MODULE.href);
+    if (at < 0) at = visible.length;
+    links = [...visible.slice(0, at), SOLUTION_BUILDER_MODULE, ...visible.slice(at)];
+  }
+  return isSuperAdmin ? [...links, ADMIN_MODULE] : links;
+}
+
+/** Active for the link's own route and everything nested under it (a segment boundary, so /projects never matches /projects-x). */
+export function isNavLinkActive(pathname: string, href: string): boolean {
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
 
 /**
  * If `pathname` falls under a module this org has disabled, returns that
