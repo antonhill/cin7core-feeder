@@ -13,6 +13,14 @@ begin
 end $$;
 create or replace function pg_temp.reset_role() returns void language plpgsql as $$
 begin perform set_config('role', 'postgres', true); end $$;
+-- RLS with no UPDATE/DELETE policy filters the rows out: the statement succeeds but touches ZERO rows (it does not raise).
+-- Passes if the statement raises OR changes nothing; fails only if it actually changed a row.
+create or replace function pg_temp.expect_no_rows_changed(sql text, label text) returns void language plpgsql as $$
+declare n bigint;
+begin
+  begin execute sql; get diagnostics n = row_count; exception when others then return; end;
+  if n > 0 then raise exception 'EXPECTED NO ROWS CHANGED but % row(s) changed: %', n, label; end if;
+end $$;
 create or replace function pg_temp.expect_denied(sql text, label text) returns void language plpgsql as $$
 begin
   begin execute sql; exception when others then return; end;
@@ -88,7 +96,7 @@ do $$ begin
   if (select count(*) from project_variations) <> 1 then raise exception 'member A should see its variation'; end if;
 end $$;
 select pg_temp.expect_denied($q$insert into newquip_quotes (org_id, quote_ref) values ('00000000-0000-0000-0000-0000000001b1', 'Q-X')$q$, 'member insert quote');
-select pg_temp.expect_denied($q$update project_variations set title = 'y'$q$, 'member update variation');
+select pg_temp.expect_no_rows_changed($q$update project_variations set title = 'y'$q$, 'member update variation');
 select pg_temp.reset_role();
 select pg_temp.act_as('00000000-0000-0000-0000-0000000001a2');
 do $$ begin

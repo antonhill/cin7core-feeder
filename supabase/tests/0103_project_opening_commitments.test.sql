@@ -13,6 +13,14 @@ begin
 end $$;
 create or replace function pg_temp.reset_role() returns void language plpgsql as $$
 begin perform set_config('role', 'postgres', true); end $$;
+-- RLS with no UPDATE/DELETE policy filters the rows out: the statement succeeds but touches ZERO rows (it does not raise).
+-- Passes if the statement raises OR changes nothing; fails only if it actually changed a row.
+create or replace function pg_temp.expect_no_rows_changed(sql text, label text) returns void language plpgsql as $$
+declare n bigint;
+begin
+  begin execute sql; get diagnostics n = row_count; exception when others then return; end;
+  if n > 0 then raise exception 'EXPECTED NO ROWS CHANGED but % row(s) changed: %', n, label; end if;
+end $$;
 create or replace function pg_temp.expect_denied(sql text, label text) returns void language plpgsql as $$
 begin
   begin execute sql; exception when others then return; end;
@@ -58,7 +66,7 @@ select pg_temp.expect_denied($q$delete from project_opening_commitments where id
 -- RLS
 select pg_temp.act_as('00000000-0000-0000-0000-0000000003a1');
 do $$ begin if (select count(*) from project_opening_commitments) <> 1 then raise exception 'member A should see its row'; end if; end $$;
-select pg_temp.expect_denied($q$update project_opening_commitments set amount_cents = 2$q$, 'member update');
+select pg_temp.expect_no_rows_changed($q$update project_opening_commitments set amount_cents = 2$q$, 'member update');
 select pg_temp.expect_denied($q$insert into project_opening_commitments (org_id, project_id, stage_id, amount_cents, reason, recorded_by_email) values ('00000000-0000-0000-0000-0000000003b1','00000000-0000-0000-0000-0000000003c1','00000000-0000-0000-0000-0000000003d1',1,'r','m@x')$q$, 'member insert');
 select pg_temp.reset_role();
 select pg_temp.act_as('00000000-0000-0000-0000-0000000003a2');
