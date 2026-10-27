@@ -214,7 +214,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
     /** The line could not be priced the normal way: a valid estimator resolution rescues it (visibly), otherwise it blocks. */
     const fail = (line: Omit<BridgeLine, "pricedBy">, blocker: string): void => {
       if (validResolution(resolution)) {
-        bridge.push({ ...priceByPerson(g, resolution.unitPriceExVat, "estimator_resolution", `Estimator-resolved price (${line.reason}) — reason: ${resolution.reason.trim()}`, line.sku), components: line.components });
+        bridge.push({ ...priceByPerson(g, resolution.unitPriceExVat, "estimator_resolution", `POC MANUAL PRICE OVERRIDE (${line.reason}) — reason: ${resolution.reason.trim()}`, line.sku), components: line.components });
         return;
       }
       bridge.push({ ...line, pricedBy: null });

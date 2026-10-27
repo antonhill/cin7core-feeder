@@ -414,8 +414,8 @@ export default function QuoteEditorPage() {
 
           {(budget?.lines ?? []).some((b) => ["unmapped", "not_in_price_source", "supplier_quote_required", "package_unconfirmed", "package_incomplete"].includes(b.status) || b.pricedBy === "estimator_resolution") && (
             <Panel>
-              <PanelTitle>Pricing exceptions — resolve with a price and a reason</PanelTitle>
-              <p className="mt-2 text-xs text-slate-500">A line the price source cannot price (no SKU yet, not in the workbook, or a zero price needing a supplier quote) is never quoted at R0. Enter the commercial unit price and why.</p>
+              <PanelTitle>POC MANUAL PRICE OVERRIDE — pricing exceptions</PanelTitle>
+              <p className="mt-2 text-xs text-slate-500">A line the price source cannot price (no SKU yet, not in the workbook, or a zero price needing a supplier quote) is never quoted at R0. Enter the commercial unit price and why (e.g. “Master workbook has no usable price for this SKU. Temporary POC estimator value only.”). This is a quote input — it is never written back to the Master snapshot.</p>
               <div className="mt-4 space-y-4">
                 {(budget?.lines ?? []).filter((b) => ["unmapped", "not_in_price_source", "supplier_quote_required", "package_unconfirmed", "package_incomplete"].includes(b.status) || b.pricedBy === "estimator_resolution").map((b) => {
                   const k = b.itemKey as GrowerItemKey;
