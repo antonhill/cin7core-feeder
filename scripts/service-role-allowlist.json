@@ -20,6 +20,7 @@
     "src/app/api/sync/route.ts",
     "src/app/api/webhooks/lemonsqueezy/route.ts",
     "src/app/audit/actions.ts",
+    "src/app/cin7-proof/t0/page.tsx",
     "src/app/health/actions.ts",
     "src/app/import/actions.ts",
     "src/app/migrate/actions.ts",
