@@ -3,6 +3,7 @@ import * as actions from "../actions";
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import * as store from "@/lib/projects/project-store";
+import * as variationStore from "@/lib/projects/variation-store";
 
 vi.mock("@/lib/authorization", () => ({ requireModuleAccess: vi.fn() }));
 vi.mock("@/lib/require-org-admin", () => ({ requireOrgAdmin: vi.fn() }));
@@ -12,6 +13,10 @@ vi.mock("@/lib/projects/project-store", () => ({
   approveClaim: vi.fn(), cancelDraftClaim: vi.fn(), createClaimDraft: vi.fn(() => Promise.resolve({ claimId: "c1", duplicate: false })),
   listProjectViews: vi.fn(() => Promise.resolve([])), loadProjectView: vi.fn(() => Promise.resolve(null)),
   previewClaim: vi.fn(), recalculateStaleDraft: vi.fn(), recordProgress: vi.fn(), seedGoldenFixture: vi.fn(() => Promise.resolve("p1")), submitClaimForApproval: vi.fn(),
+}));
+
+vi.mock("@/lib/projects/variation-store", () => ({
+  raiseVariation: vi.fn(() => Promise.resolve({ variationId: "v1", code: "V001" })), repriceVariation: vi.fn(), approveVariation: vi.fn(), rejectVariation: vi.fn(),
 }));
 
 const SESSION = { orgId: "org-session", userId: "u1", email: "u@x" };
@@ -36,8 +41,12 @@ const ALL: Array<[string, () => Promise<{ ok: boolean; error?: string }>]> = [
   ["approveClaimAction", () => actions.approveClaimAction("p1", "c1")],
   ["cancelDraftClaimAction", () => actions.cancelDraftClaimAction("p1", "c1")],
   ["recalculateStaleDraftAction", () => actions.recalculateStaleDraftAction("p1", "c1")],
+  ["raiseVariationAction", () => actions.raiseVariationAction("p1", "V001 – Additional Ventilation", "", "480000")],
+  ["repriceVariationAction", () => actions.repriceVariationAction("p1", "v1", "480000")],
+  ["approveVariationAction", () => actions.approveVariationAction("p1", "v1")],
+  ["rejectVariationAction", () => actions.rejectVariationAction("p1", "v1", "no")],
 ];
-const storeFns = Object.values(store).filter((f) => typeof f === "function") as unknown as Array<ReturnType<typeof vi.fn>>;
+const storeFns = [...Object.values(store), ...Object.values(variationStore)].filter((f) => typeof f === "function") as unknown as Array<ReturnType<typeof vi.fn>>;
 
 describe("every Projects action re-establishes module access first", () => {
   it.each(ALL)("%s: module denied -> error and NO store call", async (_name, run) => {
@@ -66,6 +75,18 @@ describe("unauthorised approval is rejected", () => {
   it("seeding the fixture needs the org-admin role", async () => {
     expect((await actions.seedGoldenProjectAction()).ok).toBe(false);
     expect(store.seedGoldenFixture).not.toHaveBeenCalled();
+  });
+  it("approving or rejecting a VARIATION needs the org-admin (manager) role", async () => {
+    expect(await actions.approveVariationAction("p1", "v1")).toEqual({ ok: false, error: NOT_ADMIN });
+    expect((await actions.rejectVariationAction("p1", "v1", "no")).ok).toBe(false);
+    expect(variationStore.approveVariation).not.toHaveBeenCalled();
+    expect(variationStore.rejectVariation).not.toHaveBeenCalled();
+  });
+  it("raising and pricing a variation (estimator) does not need the admin role", async () => {
+    expect((await actions.raiseVariationAction("p1", "Additional Ventilation", "", "480000")).ok).toBe(true);
+    expect((await actions.repriceVariationAction("p1", "v1", "500000")).ok).toBe(true);
+    expect(requireOrgAdmin).not.toHaveBeenCalled();
+    expect(variationStore.raiseVariation).toHaveBeenCalledWith(expect.anything(), "org-session", "u@x", expect.objectContaining({ amountCents: 48_000_000 }));
   });
   it("recording only PHYSICAL progress does not need the admin role", async () => {
     const r = await actions.recordProgressAction("p1", "s1", "50", null, "");

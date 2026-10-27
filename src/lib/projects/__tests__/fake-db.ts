@@ -4,6 +4,8 @@ type Row = Record<string, unknown>;
 const UNIQUE: Record<string, string[][]> = {
   projects: [["org_id", "project_reference"]],
   project_claims: [["project_id", "claim_seq"], ["org_id", "idempotency_key"], ["org_id", "claim_number"]],
+  newquip_quotes: [["org_id", "quote_ref"]],
+  project_variations: [["project_id", "code"]],
 };
 
 export class FakeDb {

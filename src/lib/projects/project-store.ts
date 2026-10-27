@@ -17,6 +17,7 @@ import {
 } from "./claim-engine";
 import { freezeClaimSnapshot, hashClaimSnapshot } from "./claim-snapshot";
 import type { ApprovedCommercialBaseline } from "./baseline";
+import type { VariationRow } from "./variations";
 import {
   buildProjectView,
   type AllocationRow, type Cin7LinkRow, type ClaimLineRow, type ClaimRow,
@@ -40,13 +41,14 @@ export async function loadProjectView(db: Db, orgId: string, projectId: string):
   const { data: project, error } = await db.from("projects").select("*").eq("org_id", orgId).eq("id", projectId).maybeSingle();
   if (error) fail(`load project: ${error.message}`);
   if (!project) return null; // includes "belongs to another org"
-  const [stages, events, claims, claimLines, allocations, links] = await Promise.all([
+  const [stages, events, claims, claimLines, allocations, links, variations] = await Promise.all([
     db.from("project_stages").select("*").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_progress_events").select("*").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_claims").select("*").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_claim_lines").select("claim_id, stage_id, current_claim_cents").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_stage_allocations").select("*").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_cin7_links").select("claim_id, cin7_invoice_number, cin7_status, reconciled_at").eq("org_id", orgId).eq("project_id", projectId),
+    db.from("project_variations").select("*").eq("org_id", orgId).eq("project_id", projectId),
   ]);
   return buildProjectView({
     project: project as ProjectRow,
@@ -56,6 +58,9 @@ export async function loadProjectView(db: Db, orgId: string, projectId: string):
     claimLines: must(claimLines, "load claim lines") as ClaimLineRow[],
     allocations: must(allocations, "load allocations") as AllocationRow[],
     links: must(links, "load links") as Cin7LinkRow[],
+    // Deploy-order safety: until migration 0102 is applied the table does not exist, and no variation can exist either — so a
+    // missing table reads as "no variations" rather than breaking every project screen. Any OTHER error still fails closed.
+    variations: variations.error && /does not exist|schema cache/i.test(variations.error.message) ? [] : (must(variations, "load variations") as VariationRow[]),
   });
 }
 

@@ -9,6 +9,9 @@ import path from "node:path";
 
 const ROOT = path.resolve(__dirname, "../../../");
 const DIRS = [path.join(ROOT, "newquip"), path.join(ROOT, "app/newquip-grower")];
+// The quote store legitimately writes to the LOCAL database (that is the POC's persistence); it is scanned separately below
+// for every Cin7/Xero/network pattern, just not for local Supabase mutations.
+const STORE_DIRS = [path.join(ROOT, "lib/newquip-quotes")];
 
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap((f) => {
@@ -17,7 +20,9 @@ function files(dir: string): string[] {
     return /\.(ts|tsx)$/.test(f) ? [p] : [];
   });
 }
-const sources = DIRS.flatMap(files).map((p) => ({ p: path.relative(ROOT, p), s: readFileSync(p, "utf8") }));
+const read = (dirs: string[]) => dirs.flatMap(files).map((p) => ({ p: path.relative(ROOT, p), s: readFileSync(p, "utf8") }));
+const sources = read(DIRS);
+const storeSources = read(STORE_DIRS);
 
 const FORBIDDEN: [string, RegExp][] = [
   ["Cin7 sale/quote write module", /@\/cin7\/sale-quote-write/],
@@ -28,7 +33,8 @@ const FORBIDDEN: [string, RegExp][] = [
   ["quote submit idempotency", /@\/lib\/quote-submit/],
   ["raw fetch", /\bfetch\s*\(/],
   ["mutating HTTP verb", /method\s*:\s*["'](POST|PUT|PATCH|DELETE)["']/],
-  ["supabase insert/update/upsert/delete", /\.(insert|update|upsert|delete)\s*\(/],
+  // (a hash digest's `.update(` is not a database write)
+  ["supabase insert/update/upsert/delete", /(?<!createHash\("sha256"\))\.(insert|update|upsert|delete)\s*\(/],
   ["supabase rpc", /\.rpc\s*\(/],
 ];
 
@@ -42,6 +48,14 @@ describe("NewQuip POC has no Cin7 write capability", () => {
   }
 });
 
+const STORE_FORBIDDEN = FORBIDDEN.filter(([what]) => !/supabase insert/.test(what));
+describe("the quote store has no Cin7 / Xero / network write capability", () => {
+  it("found store files to scan", () => expect(storeSources.length).toBeGreaterThan(1));
+  for (const [what, re] of [...STORE_FORBIDDEN, ["Xero", /xero/i] as [string, RegExp], ["Cin7 import of any kind", /@\/cin7\//] as [string, RegExp]]) {
+    it(`no ${what}`, () => expect(storeSources.filter(({ s }) => re.test(s)).map(({ p }) => p)).toEqual([]));
+  }
+});
+
 describe("actions file honours the 'use server' rule", () => {
   const actions = readFileSync(path.join(ROOT, "app/newquip-grower/actions.ts"), "utf8");
   it("exports only async functions or erased types", () => {
@@ -50,9 +64,11 @@ describe("actions file honours the 'use server' rule", () => {
     for (const e of exports) expect(e).toMatch(/^(async function |interface |type )/);
     expect(actions).not.toMatch(/export\s+(const|let|var|\{|default)/);
   });
-  it("every action is gated by the NewQuip org check", () => {
-    const fnCount = (actions.match(/^export async function/gm) ?? []).length;
-    expect(fnCount).toBeGreaterThan(0);
-    expect((actions.match(/await authorise\(\)/g) ?? []).length).toBe(fnCount);
+  it("every action is gated by the NewQuip org check (directly, or through the shared step() that authorises first)", () => {
+    const fns = [...actions.matchAll(/^export async function (\w+)[^{]*\{([\s\S]*?)\n\}/gm)];
+    expect(fns.length).toBeGreaterThan(8);
+    for (const [, name, body] of fns) expect(body, name).toMatch(/await authorise\(\)|return step\(/);
+    const stepFn = /async function step\([\s\S]*?\n\}/.exec(actions)![0];
+    expect(stepFn).toContain("await authorise()");
   });
 });

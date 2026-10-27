@@ -23,6 +23,8 @@ import {
   seedGoldenFixture,
   submitClaimForApproval,
 } from "@/lib/projects/project-store";
+import { approveVariation, raiseVariation, rejectVariation, repriceVariation } from "@/lib/projects/variation-store";
+import { randsToCents } from "@/lib/projects/claim-engine";
 import type { ProjectView } from "@/lib/projects/project-view";
 import type { ProgressClaimCalc } from "@/lib/projects/claim-engine";
 
@@ -188,6 +190,58 @@ export async function recalculateStaleDraftAction(projectId: string, claimId: st
     const r = await recalculateStaleDraft(db, orgId, email ?? "unknown", projectId, claimId);
     await logActivity(db, { orgId, actor: { userId, email }, action: "projects.claim_superseded", summary: "Recalculated a stale project claim draft (old draft superseded; local only, no Cin7 write)", detail: { projectId, ...r } });
     return { ok: true, data: r };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+// ── Variations (the ONLY way scope/value changes after acceptance) ──────────
+// Raise / price: any module member (rep + estimator tiers; the manager tier includes them). Approve / reject: org owner/admin
+// (manager) only. original_contract_cents never changes; revised = original + APPROVED variations. Nothing reaches Cin7.
+
+export async function raiseVariationAction(projectId: string, title: string, description: string, amountRands: string): Promise<ActionResult<{ variationId: string; code: string }>> {
+  try {
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const db = createServiceRoleClient();
+    const r = await raiseVariation(db, orgId, email ?? "unknown", { projectId, title, description, amountCents: randsToCents(amountRands) });
+    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.variation_raised", summary: `Raised project variation ${r.code} (draft; contract value unchanged; no Cin7 write)`, detail: { projectId, variationId: r.variationId } });
+    return { ok: true, data: r };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+export async function repriceVariationAction(projectId: string, variationId: string, amountRands: string): Promise<ActionResult<null>> {
+  try {
+    const { orgId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    await repriceVariation(createServiceRoleClient(), orgId, email ?? "unknown", projectId, variationId, randsToCents(amountRands));
+    return { ok: true, data: null };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+export async function approveVariationAction(projectId: string, variationId: string): Promise<ActionResult<null>> {
+  try {
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    await requireOrgAdmin("approve a variation");
+    const db = createServiceRoleClient();
+    await approveVariation(db, orgId, email ?? "unknown", projectId, variationId);
+    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.variation_approved", summary: "Approved a project variation (revised contract value increased; original unchanged; no Cin7 write)", detail: { projectId, variationId } });
+    return { ok: true, data: null };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+export async function rejectVariationAction(projectId: string, variationId: string, reason: string): Promise<ActionResult<null>> {
+  try {
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    await requireOrgAdmin("reject a variation");
+    const db = createServiceRoleClient();
+    await rejectVariation(db, orgId, email ?? "unknown", projectId, variationId, reason);
+    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.variation_rejected", summary: "Rejected a project variation (no contract value change; no Cin7 write)", detail: { projectId, variationId } });
+    return { ok: true, data: null };
   } catch (e) {
     return { ok: false, error: message(e) };
   }

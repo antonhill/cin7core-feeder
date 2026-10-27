@@ -39,6 +39,11 @@ export interface ApprovedCommercialBaseline {
   salesperson: string | null;
   lines: BaselineLine[];
   suggestedStages: SuggestedStage[];
+  /**
+   * Opaque origin metadata (e.g. which template/rule set/quote revision produced this baseline). The Projects engine never
+   * reads it — it is stored with the snapshot so a project can always explain where its contract came from.
+   */
+  provenance?: Record<string, unknown> | null;
 }
 
 const R = (rands: number): Cents => rands * 100;
