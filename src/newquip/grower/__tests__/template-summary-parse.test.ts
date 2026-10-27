@@ -87,6 +87,22 @@ describe("Master workbook snapshot builder", () => {
   it("rejects non-numeric figures", () => {
     expect(() => parseMasterRows([["SKU", "Cost", "ROE", "Freight", "MU", "Retail Price ex VAT"], ["PNQ082", "abc", 1, 1, 1, 1]], ["PNQ082"])).toThrow(/non-numeric/);
   });
+  it("parses the REAL Master 'P L' layout: Code / ROE Group / ROE / F Group / Freight / MU Group / MU / Retail Price (excl VAT)", () => {
+    const real = [
+      ["", "", ""],
+      ["Group", "Code", "Description", "Cost", "ROE Group", "ROE", "F Group", "Freight", "MU Group ", "MU", "Retail Price (excl VAT)", "Active"],
+      ["002", "PNQ082", "CCM FEEDER WITH MONOFLO NIPPLE FOR GROWERS", 310, "€", 19.5, 2, 1.25, 4, 1.25, 9446, true],
+      ["002", "NQ1161", "CONCRETE SLAT (1.2x0.45M)", null, null, null, null, 1, null, null, 0, true], // blank price
+      ["002", "NQ3132", "1.5HP DRIVE UNIT", 5, "R", 1, 1, 1, 4, 1.43, undefined, true], // formula without a cached result
+      ["002", "PNQ082", "duplicate row", 1, "€", 1, 1, 1, 1, 1, 1, true],
+    ];
+    const r = parseMasterRows(real, ["PNQ082", "NQ1161", "NQ3132", "ERT053"]);
+    expect(r.entries.PNQ082).toMatchObject({ cost: 310, roe: 19.5, freight: 1.25, mu: 1.25, retailExVat: 9446 });
+    expect(r.unpriced.sort()).toEqual(["NQ1161", "NQ3132"]);
+    expect(r.entries.NQ3132).toMatchObject({ cost: 0, retailExVat: 0 }); // => supplier quote required, never invented
+    expect(r.duplicates).toEqual(["PNQ082"]);
+    expect(r.missing).toEqual(["ERT053"]);
+  });
   it("covers every SKU the Grower mappings reference, including the feeder window variant", () => {
     expect(referencedSkus()).toEqual(expect.arrayContaining(["PNQ082", "PNQ082-WINDOW", "NQ1161", "NQ3132"]));
   });

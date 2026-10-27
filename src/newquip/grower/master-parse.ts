@@ -21,6 +21,10 @@ const DESC = (h: string) => h === "description" || h === "name" || h === "produc
 export interface ParseResult {
   entries: Record<string, SnapshotEntry>;
   missing: string[];
+  /** SKUs present in the workbook whose price cells are blank / uncached: recorded as zero, i.e. SUPPLIER QUOTE REQUIRED — never guessed. */
+  unpriced: string[];
+  /** SKUs that appear more than once; the FIRST row wins. */
+  duplicates: string[];
   rowsRead: number;
 }
 
@@ -36,23 +40,28 @@ export function parseMasterRows(rows: unknown[][], wantedSkus: readonly string[]
   const col = {
     sku: at(COLS.sku), cost: at(COLS.cost), roe: at(COLS.roe), freight: at(COLS.freight), mu: at(COLS.mu), retail: at(COLS.retailExVat), desc: at(DESC),
   };
-  // Strict: a blank or non-numeric cell is NaN (rejected below) — it is never quietly read as 0.
-  const num = (v: unknown): number => {
+  // Strict: text that is not a number is NaN and rejected below. A genuinely BLANK cell (or a formula with no cached result) is
+  // `null`: the row is then "unpriced" and recorded as zero => supplier-quote-required, never a guessed price.
+  const num = (v: unknown): number | null => {
     if (typeof v === "number") return v;
-    const t = String(v ?? "").trim().replace(/[\sR,]/g, "");
+    if (v == null || v === "") return null;
+    const t = String(v).trim().replace(/[\sR,]/g, "");
     return /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : NaN;
   };
   const entries: Record<string, SnapshotEntry> = {};
+  const unpriced: string[] = [];
+  const duplicates: string[] = [];
   for (const r of rows.slice(headerIdx + 1)) {
     const sku = String(r[col.sku] ?? "").trim();
     if (!sku || !wanted.has(sku)) continue;
-    const e: SnapshotEntry = {
-      sku,
-      description: col.desc >= 0 ? String(r[col.desc] ?? "").trim() : "",
-      cost: num(r[col.cost]), roe: num(r[col.roe]), freight: num(r[col.freight]), mu: num(r[col.mu]), retailExVat: num(r[col.retail]),
-    };
-    if (![e.cost, e.roe, e.freight, e.mu, e.retailExVat].every(Number.isFinite)) throw new Error(`Master workbook: ${sku} has a non-numeric Cost/ROE/Freight/MU/Retail value.`);
-    entries[sku] = e;
+    if (entries[sku]) { duplicates.push(sku); continue; }
+    const f = [r[col.cost], r[col.roe], r[col.freight], r[col.mu], r[col.retail]].map(num);
+    if (f.some((x) => x !== null && Number.isNaN(x))) throw new Error(`Master workbook: ${sku} has a non-numeric Cost/ROE/Freight/MU/Retail value.`);
+    // Unpriced = no usable cost or retail. Nothing is invented: the whole row becomes zero.
+    const blank = f[0] === null || f[4] === null;
+    if (blank) unpriced.push(sku);
+    const [cost, roe, freight, mu, retail] = blank ? [0, f[1] ?? 0, f[2] ?? 0, f[3] ?? 0, 0] : (f as number[]);
+    entries[sku] = { sku, description: col.desc >= 0 ? String(r[col.desc] ?? "").trim() : "", cost, roe, freight, mu, retailExVat: retail };
   }
-  return { entries, missing: [...wanted].filter((s) => !entries[s]), rowsRead: rows.length - headerIdx - 1 };
+  return { entries, missing: [...wanted].filter((x) => !entries[x]), unpriced, duplicates, rowsRead: rows.length - headerIdx - 1 };
 }

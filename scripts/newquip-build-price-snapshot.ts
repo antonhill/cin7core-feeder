@@ -18,10 +18,20 @@ async function main() {
   const ws = wb.getWorksheet(sheetName);
   if (!ws) throw new Error(`Sheet "${sheetName}" not found. Sheets: ${wb.worksheets.map((w) => w.name).join(", ")}`);
   const rows: unknown[][] = [];
+  // Cell values: formula cells give their CACHED result (a formula with no cached result is blank, never recomputed or guessed).
+  const flat = (c: unknown): unknown => {
+    if (c && typeof c === "object" && !(c instanceof Date)) {
+      const o = c as { result?: unknown; richText?: { text: string }[]; formula?: string; sharedFormula?: string };
+      if (o.richText) return o.richText.map((t) => t.text).join("");
+      if ("result" in o) return o.result;
+      if (o.formula || o.sharedFormula) return null;
+    }
+    return c;
+  };
   ws.eachRow({ includeEmpty: false }, (row) => {
-    rows.push((row.values as unknown[]).slice(1).map((c) => (c && typeof c === "object" && "result" in (c as object) ? (c as { result: unknown }).result : c)));
+    rows.push((row.values as unknown[]).slice(1).map(flat));
   });
-  const { entries, missing, rowsRead } = parseMasterRows(rows, referencedSkus());
+  const { entries, missing, unpriced, duplicates, rowsRead } = parseMasterRows(rows, referencedSkus());
   const out = {
     id: "newquip-master-poc",
     label: "NewQuip Master workbook – POC controlled snapshot",
@@ -32,6 +42,6 @@ async function main() {
     entries,
   };
   writeFileSync(path.join(__dirname, "../src/newquip/grower/snapshot/newquip-master-poc.snapshot.json"), JSON.stringify(out, null, 2) + "\n");
-  console.log(`rows read: ${rowsRead}; SKUs written: ${Object.keys(entries).length}; missing from workbook: ${missing.length ? missing.join(", ") : "none"}`);
+  console.log(`rows read: ${rowsRead}; SKUs written: ${Object.keys(entries).length}; missing from workbook: ${missing.length ? missing.join(", ") : "none"}; unpriced (blank => supplier quote required): ${unpriced.join(", ") || "none"}; duplicate rows ignored: ${duplicates.join(", ") || "none"}; sha256 ${out.sha256}`);
 }
 main().catch((e) => { console.error(e instanceof Error ? e.message : e); process.exit(1); });
