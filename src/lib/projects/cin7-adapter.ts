@@ -10,7 +10,12 @@ import type { Cin7Port, Cin7SaleView } from "./cin7-posting-store";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 
-const cents = (n: unknown): number => Math.round(Number(n ?? 0) * 100);
+/** Cin7 money (rands) -> integer cents, or null when it is missing / not a finite number. Missing is NEVER zero. */
+const cents = (n: unknown): number | null => {
+  if (n === null || n === undefined || n === "") return null;
+  const v = Number(n);
+  return Number.isFinite(v) ? Math.round(v * 100) : null;
+};
 
 export function buildCin7Port(db: Db, orgId: string, instanceId: string): Cin7Port {
   const creds = () => loadCin7Credentials(db, orgId, instanceId);

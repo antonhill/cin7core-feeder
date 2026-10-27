@@ -15,7 +15,12 @@ export interface ProgressInvoiceCharge {
   description: string;
   /** Ex-VAT amount, in rands. */
   priceExVat: number;
-  taxRatePct: number;
+  /**
+   * The VAT as a MONETARY AMOUNT in rands for this charge (e.g. 75000 for R500,000 at 15%) - NOT a percentage. Cin7 uses the Tax value it is
+   * sent and does not derive it from TaxRule (src/cin7/sale-quote-write.ts, confirmed live 2026-08-26). The P5 fixture (R100 at 15%) could
+   * not tell a rate from an amount - both were 15 - which is how a rate was sent as R15 of VAT on a R500,000 charge.
+   */
+  taxAmount: number;
   comment?: string;
 }
 
@@ -34,6 +39,11 @@ export interface ProgressInvoiceInput {
 
 /** The exact request body. Pure. `Lines` is ALWAYS empty: a progress invoice never touches stock. */
 export function buildProgressInvoiceBody(i: ProgressInvoiceInput): Record<string, unknown> {
+  // Never send a non-finite or negative money value. These would be silently accepted or turned into NaN further down.
+  for (const c of i.charges) {
+    if (!Number.isFinite(c.priceExVat) || c.priceExVat <= 0) throw new Error("Invoice charge amount must be a positive, finite number.");
+    if (!Number.isFinite(c.taxAmount) || c.taxAmount < 0) throw new Error("Invoice charge VAT must be a non-negative, finite amount.");
+  }
   return {
     SaleID: i.saleId,
     TaskID: ZERO_GUID,
@@ -48,7 +58,7 @@ export function buildProgressInvoiceBody(i: ProgressInvoiceInput): Record<string
       Quantity: 1,
       Price: c.priceExVat,
       Discount: 0,
-      Tax: c.taxRatePct,
+      Tax: c.taxAmount,
       // Cin7 validates Total against Quantity x Price: NET, tax not added in (observed 2026-10-16, attempt 1 -> HTTP 400).
       Total: c.priceExVat,
       TaxRule: i.taxRule,
@@ -60,7 +70,11 @@ export function buildProgressInvoiceBody(i: ProgressInvoiceInput): Record<string
 
 export type CreateInvoiceOutcome =
   /** Cin7 returned positive evidence: an invoice carrying OUR memo. */
-  | { kind: "created"; invoiceNumber: string; taskId: string; status: string; totalBeforeTax: number; tax: number; total: number }
+  /**
+   * `totalBeforeTax` / `tax` / `total` are what Cin7 echoed in the POST response, or null when it did not (or sent something that is not a
+   * finite number). NEVER NaN: the caller must verify missing amounts by reading the Sale back.
+   */
+  | { kind: "created"; invoiceNumber: string; taskId: string; status: string; totalBeforeTax: number | null; tax: number | null; total: number | null }
   /** Cin7 definitively rejected the request (4xx): nothing was created. */
   | { kind: "rejected"; httpStatus: number; message: string }
   /** The outcome is unknown (timeout, dropped connection, 5xx, or a 200 without our memo). NEVER retry blindly. */
@@ -70,6 +84,12 @@ interface InvoiceResponse {
   SaleID?: string;
   Invoices?: Array<{ InvoiceNumber?: string; TaskID?: string; Memo?: string; Status?: string; TotalBeforeTax?: number; Tax?: number; Total?: number }>;
 }
+
+const finiteOrNull = (v: unknown): number | null => {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
 
 /** Sends the request ONCE (nonIdempotentCreate: no automatic resend) and classifies the result. Never throws for a Cin7 outcome. */
 export async function createSaleProgressInvoice(creds: Cin7Credentials, input: ProgressInvoiceInput): Promise<CreateInvoiceOutcome> {
@@ -89,9 +109,9 @@ export async function createSaleProgressInvoice(creds: Cin7Credentials, input: P
       invoiceNumber: inv.InvoiceNumber!,
       taskId: inv.TaskID!,
       status: inv.Status ?? "UNKNOWN",
-      totalBeforeTax: Number(inv.TotalBeforeTax ?? NaN),
-      tax: Number(inv.Tax ?? NaN),
-      total: Number(inv.Total ?? NaN),
+      totalBeforeTax: finiteOrNull(inv.TotalBeforeTax),
+      tax: finiteOrNull(inv.Tax),
+      total: finiteOrNull(inv.Total),
     };
   } catch (e) {
     if (e instanceof Cin7ApiError) {

@@ -20,16 +20,23 @@ class FakePort implements Cin7Port {
   async fetchSale(): Promise<Cin7SaleView> { this.reads++; return structuredClone(this.sale); }
   async createInvoice(req: InvoiceRequest): Promise<InvoiceOutcome> {
     this.created.push(req);
+    this.landedOnCreate?.(req);
     if (this.next === "throw") throw new Error("boom");
     if (this.next) return this.next;
+    // Models Cin7: it uses the Tax it is SENT (it does not derive VAT from the rate) - the behaviour the first live post exposed.
     const sub = req.charges.reduce((n, c) => n + c.priceExVat, 0);
-    const tax = Math.round(sub * 15) / 100;
-    return { kind: "created", invoiceNumber: "INV-00100", taskId: "task-1", status: "DRAFT", totalBeforeTax: sub, tax, total: sub + tax };
+    const tax = req.charges.reduce((n, c) => n + c.taxAmount, 0);
+    const t = { totalBeforeTax: sub, tax, total: sub + tax };
+    return this.echoTotals ? { kind: "created", invoiceNumber: "INV-00100", taskId: "task-1", status: "DRAFT", ...t } : { kind: "created", invoiceNumber: "INV-00100", taskId: "task-1", status: "DRAFT", totalBeforeTax: null, tax: null, total: null };
   }
+  echoTotals = true;
+  /** Lets a test place the invoice Cin7 holds at the moment the POST lands (what a read-back would then see). */
+  landedOnCreate: ((req: InvoiceRequest) => void) | null = null;
   /** What Cin7 would hold after the request landed. */
-  landed(req: InvoiceRequest, over: Partial<{ subtotalCents: number; taxCents: number; totalCents: number; status: string }> = {}) {
+  landed(req: InvoiceRequest, over: Partial<{ subtotalCents: number | null; taxCents: number | null; totalCents: number | null; status: string }> = {}) {
     const sub = Math.round(req.charges.reduce((n, c) => n + c.priceExVat, 0) * 100);
-    this.sale.invoices.push({ invoiceNumber: "INV-00100", taskId: "task-1", memo: req.memo, status: over.status ?? "DRAFT", subtotalCents: over.subtotalCents ?? sub, taxCents: over.taxCents ?? Math.round(sub * 0.15), totalCents: over.totalCents ?? Math.round(sub * 1.15) });
+    const tax = Math.round(req.charges.reduce((n, c) => n + c.taxAmount, 0) * 100);
+    this.sale.invoices.push({ invoiceNumber: "INV-00100", taskId: "task-1", memo: req.memo, status: over.status ?? "DRAFT", subtotalCents: "subtotalCents" in over ? over.subtotalCents! : sub, taxCents: "taxCents" in over ? over.taxCents! : tax, totalCents: "totalCents" in over ? over.totalCents! : sub + tax });
   }
 }
 
@@ -116,7 +123,8 @@ describe("a successful post", () => {
     expect(port.created).toHaveLength(1);
     const req = port.created[0];
     expect(req.charges.map((c) => [c.description, c.priceExVat])).toEqual([["PRJ-NQ-Q-0001 - Manufacturing progress claim C01", 450_000], ["PRJ-NQ-Q-0001 - Delivery progress claim C01", 500_000]]);
-    expect(req.charges.every((c) => c.taxRatePct === 15)).toBe(true);
+    // VAT is sent as the frozen per-line AMOUNT (R67,500 + R75,000 = R142,500), never as the rate.
+    expect(req.charges.map((c) => c.taxAmount)).toEqual([67_500, 75_000]);
     expect(row()).toMatchObject({ posting_state: "CREATED", amount_ex_vat_cents: R(950_000), tax_cents: R(142_500), total_cents: R(1_092_500), cin7_invoice_number: "INV-00100", cin7_task_id: "task-1", attempt_count: 1 });
   });
   it("the request body has NO stock lines, a DRAFT status, the stable memo, net charge totals and the linked tax rule / account", async () => {
@@ -125,7 +133,8 @@ describe("a successful post", () => {
     expect(body.Lines).toEqual([]);
     expect(body).toMatchObject({ SaleID: SALE_ID, Status: "DRAFT", CombineAdditionalCharges: false, Memo: "NEWQUIP-PROJECTS:PRJ-NQ-Q-0001:PRJ-NQ-Q-0001-C01", TaskID: "00000000-0000-0000-0000-000000000000" });
     expect(body.AdditionalCharges).toHaveLength(2);
-    for (const c of body.AdditionalCharges) expect(c).toMatchObject({ Quantity: 1, Discount: 0, Tax: 15, TaxRule: "Standard Rate Sales", Account: "200", Total: c.Price });
+    expect(body.AdditionalCharges.map((c) => c.Tax)).toEqual([67_500, 75_000]);
+    for (const c of body.AdditionalCharges) expect(c).toMatchObject({ Quantity: 1, Discount: 0, TaxRule: "Standard Rate Sales", Account: "200", Total: c.Price });
   });
   it("memo and idempotency key are stable and follow the contract", async () => {
     await post();
@@ -164,6 +173,60 @@ describe("a successful post", () => {
     const r = await post();
     expect(r.message).toMatch(/does not match the approved claim/);
     expect(row()).toMatchObject({ posting_state: "CREATED", last_error_code: "AMOUNT_MISMATCH" });
+  });
+  describe("regression: the first live post (INV-00021) - R30 VAT and NaN reconciliation", () => {
+    const INV21 = { invoiceNumber: "INV-00021", taskId: "task-21", status: "DRAFT" };
+    it("the invoice carries the correct VAT: Cin7 uses the Tax sent, so the correct amounts reconcile at the time of posting", async () => {
+      const r = await post();
+      expect(r.message).toBe("Created in Cin7 as INV-00100.");
+      expect(row().last_error_code ?? null).toBeNull();
+    });
+    it("a POST that echoes NO totals is verified by a read-back, and a wrong invoice (R950,000 / R30 / R950,030) is an explicit mismatch with real figures - never NaN", async () => {
+      port.echoTotals = false;
+      port.landedOnCreate = (req) => port.landed(req, { taxCents: R(30), totalCents: R(950_030) });
+      const r = await post();
+      expect(r.state).toBe("CREATED");
+      expect(r.message).toMatch(/VAT R30\.00 vs approved R142500\.00/);
+      expect(r.message).toMatch(/total R950030\.00 vs approved R1092500\.00/);
+      expect(JSON.stringify(row())).not.toMatch(/NaN/);
+      expect(row()).toMatchObject({ posting_state: "CREATED", last_error_code: "AMOUNT_MISMATCH", cin7_invoice_number: "INV-00100" });
+    });
+    it("a POST with no totals AND an unreadable read-back is flagged as unverified (not matched, not NaN)", async () => {
+      port.echoTotals = false;
+      port.landedOnCreate = (req) => port.landed(req, { subtotalCents: null, taxCents: null, totalCents: null });
+      const r = await post();
+      expect(r.message).toMatch(/not returned by Cin7/);
+      expect(JSON.stringify(row())).not.toMatch(/NaN/);
+      expect(row()).toMatchObject({ posting_state: "CREATED", last_error_code: "AMOUNT_MISMATCH" });
+    });
+    it("with the invoice already created (INV-00021 shape): reconcile reports the real figures, never RECONCILES, and creates NOTHING", async () => {
+      port.echoTotals = false;
+      await post();
+      port.sale.invoices = [{ ...INV21, memo: String(row().memo), subtotalCents: R(950_000), taxCents: R(30), totalCents: R(950_030) }];
+      const before = port.created.length;
+      const r = await rec();
+      expect(r.message).toMatch(/VAT R30\.00 vs approved R142500\.00/);
+      expect(row()).toMatchObject({ posting_state: "CREATED", last_error_code: "AMOUNT_MISMATCH" });
+      expect(row().reconciled_at ?? null).toBeNull();
+      expect(JSON.stringify(row())).not.toMatch(/NaN/);
+      expect(port.created).toHaveLength(before);
+      expect((await post()).alreadyPosted).toBe(true);
+      expect(port.created).toHaveLength(before);
+      expect(ctx.db.rows("project_claim_cin7_postings")).toHaveLength(1);
+    });
+    it("reconcile with missing (null) Cin7 totals is a mismatch, not zero and not a match", async () => {
+      await post();
+      port.sale.invoices = [{ ...INV21, memo: String(row().memo), subtotalCents: null, taxCents: null, totalCents: null }];
+      const r = await rec();
+      expect(r.message).toMatch(/not returned by Cin7/);
+      expect(row().posting_state).toBe("CREATED");
+    });
+    it("once the invoice in Cin7 carries the correct amounts, reconcile succeeds and still creates nothing", async () => {
+      await post();
+      port.sale.invoices = [{ ...INV21, memo: String(row().memo), subtotalCents: R(950_000), taxCents: R(142_500), totalCents: R(1_092_500) }];
+      expect((await rec()).state).toBe("RECONCILED");
+      expect(port.created).toHaveLength(1);
+    });
   });
 });
 
@@ -285,6 +348,15 @@ describe("pure rules", () => {
     expect(buildPostingPlan({ projectRef: "P", claim, lines: [{ stage_name: "A", current_claim_cents: 1000, tax_cents: 149 }], link }).ok).toBe(false);
     expect(buildPostingPlan({ projectRef: "P", claim: { ...claim, subtotal_cents: 999 }, lines, link }).ok).toBe(false);
     expect(buildPostingPlan({ projectRef: "P", claim: { ...claim, status: "DRAFT" }, lines, link }).ok).toBe(false);
+  });
+  it("matchInvoices never matches a missing or non-finite amount (null / NaN are not zero)", () => {
+    const inv = { invoiceNumber: "I", taskId: "t", memo: "M", status: "DRAFT", subtotalCents: 100, taxCents: 15, totalCents: 115 };
+    const p = { memo: "M", amount_ex_vat_cents: 100, tax_cents: 15, total_cents: 115 };
+    expect(matchInvoices([inv], p).kind).toBe("matched");
+    for (const bad of [{ subtotalCents: null }, { taxCents: null }, { totalCents: null }, { subtotalCents: NaN }, { totalCents: Infinity }]) {
+      expect(matchInvoices([{ ...inv, ...bad } as never], p).kind).toBe("mismatch");
+    }
+    expect(matchInvoices([{ ...inv, taxCents: 0 }], { ...p, tax_cents: 0, total_cents: 100 }).kind).toBe("mismatch");
   });
   it("matchInvoices matches by EXACT memo only", () => {
     const inv = { invoiceNumber: "I", taskId: "t", memo: "M", status: "DRAFT", subtotalCents: 1, taxCents: 0, totalCents: 1 };

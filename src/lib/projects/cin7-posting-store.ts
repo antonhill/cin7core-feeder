@@ -7,7 +7,7 @@ import "server-only";
 //   gates -> eligibility -> persist PENDING (unique per claim = the concurrency lock) -> ONE external call -> record the outcome.
 import type { createServiceRoleClient } from "@/supabase/server";
 import {
-  MESSAGES, POST_CONFIRMATION_TEXT, buildPostingPlan, canSend, isStalePending, matchInvoices, rands,
+  MESSAGES, POST_CONFIRMATION_TEXT, amountDifferences, buildPostingPlan, canSend, isStalePending, matchInvoices, rands,
   type PostingClaim, type PostingClaimLine, type PostingDisplayState, type PostingState, type ReadInvoice,
 } from "./cin7-posting";
 
@@ -16,10 +16,11 @@ type Db = ReturnType<typeof createServiceRoleClient>;
 // ── the port (structurally identical to src/cin7/sale-invoice-write.ts; declared here so this module has no Cin7 import) ──
 export interface InvoiceRequest {
   saleId: string; memo: string; invoiceDate: string; invoiceDueDate: string; taxRule: string; account: string;
-  charges: Array<{ description: string; priceExVat: number; taxRatePct: number; comment?: string }>;
+  /** `taxAmount` is the VAT in rands (a monetary amount, NOT a percentage). */
+  charges: Array<{ description: string; priceExVat: number; taxAmount: number; comment?: string }>;
 }
 export type InvoiceOutcome =
-  | { kind: "created"; invoiceNumber: string; taskId: string; status: string; totalBeforeTax: number; tax: number; total: number }
+  | { kind: "created"; invoiceNumber: string; taskId: string; status: string; totalBeforeTax: number | null; tax: number | null; total: number | null }
   | { kind: "rejected"; httpStatus: number; message: string }
   | { kind: "uncertain"; reason: string };
 export interface Cin7SaleView { id: string; saleNumber: string | null; type: string | null; orderStatus: string | null; taxRule: string | null; invoices: ReadInvoice[] }
@@ -193,7 +194,7 @@ export async function postClaimToCin7(
   try {
     outcome = await port.createInvoice({
       saleId: link.cin7_sale_id, memo: plan.memo, invoiceDate: today(now), invoiceDueDate: addDays(now, 30), taxRule: link.tax_rule, account: link.revenue_account,
-      charges: plan.charges.map((ch) => ({ description: ch.description, priceExVat: rands(ch.amountCents), taxRatePct: plan.taxRatePct, comment: `Toolbox claim ${claim.claim_number}` })),
+      charges: plan.charges.map((ch) => ({ description: ch.description, priceExVat: rands(ch.amountCents), taxAmount: rands(ch.taxCents), comment: `Toolbox claim ${claim.claim_number}` })),
     });
   } catch {
     outcome = { kind: "uncertain", reason: "Unexpected error while calling Cin7." };
@@ -205,14 +206,24 @@ export async function postClaimToCin7(
   let state: PostingState;
   let message: string;
   if (outcome.kind === "created") {
-    const cents = (n: number) => Math.round(n * 100);
-    const same = cents(outcome.totalBeforeTax) === plan.subtotalCents && cents(outcome.tax) === plan.taxCents && cents(outcome.total) === plan.totalCents;
+    // The invoice EXISTS (it carries our memo), so nothing below may un-create it or allow a re-send. Verify the AMOUNTS from what Cin7
+    // holds: the POST echo when it carries finite numbers, otherwise a READ-ONLY read-back. Missing/unreadable is never a match.
+    const cents = (n: number | null) => (typeof n === "number" && Number.isFinite(n) ? Math.round(n * 100) : null);
+    let seen = { subtotalCents: cents(outcome.totalBeforeTax), taxCents: cents(outcome.tax), totalCents: cents(outcome.total) };
+    if (seen.subtotalCents === null || seen.taxCents === null || seen.totalCents === null) {
+      try {
+        const back = matchInvoices((await port.fetchSale(link.cin7_sale_id)).invoices, { memo: plan.memo, amount_ex_vat_cents: plan.subtotalCents, tax_cents: plan.taxCents, total_cents: plan.totalCents });
+        if (back.kind === "matched" || back.kind === "mismatch") seen = { subtotalCents: back.invoice.subtotalCents, taxCents: back.invoice.taxCents, totalCents: back.invoice.totalCents };
+      } catch { /* the read-back is best effort; the invoice is already recorded below */ }
+    }
+    const differences = amountDifferences(seen, { amount_ex_vat_cents: plan.subtotalCents, tax_cents: plan.taxCents, total_cents: plan.totalCents });
+    const same = differences.length === 0;
     state = "CREATED";
     patch = {
       posting_state: "CREATED", cin7_invoice_number: outcome.invoiceNumber, cin7_task_id: outcome.taskId, cin7_status: outcome.status, completed_at: done,
-      ...(same ? {} : { last_error_code: "AMOUNT_MISMATCH", last_error_message: `${MESSAGES.mismatch} Cin7 returned ex VAT ${outcome.totalBeforeTax}, VAT ${outcome.tax}, total ${outcome.total}.` }),
+      ...(same ? {} : { last_error_code: "AMOUNT_MISMATCH", last_error_message: trunc(`${MESSAGES.mismatch} ${differences.join("; ")}.`) }),
     };
-    message = same ? `Created in Cin7 as ${outcome.invoiceNumber}.` : `Created in Cin7 as ${outcome.invoiceNumber}, but ${MESSAGES.mismatch}`;
+    message = same ? `Created in Cin7 as ${outcome.invoiceNumber}.` : `Created in Cin7 as ${outcome.invoiceNumber}, but ${MESSAGES.mismatch} ${differences.join("; ")}.`;
   } else if (outcome.kind === "rejected") {
     state = "FAILED_CONFIRMED_NO_WRITE";
     patch = { posting_state: state, last_error_code: `HTTP_${outcome.httpStatus}`, last_error_message: trunc(outcome.message), completed_at: done };
