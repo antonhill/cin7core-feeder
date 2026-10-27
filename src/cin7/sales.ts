@@ -136,6 +136,12 @@ export interface Cin7SaleInvoice {
    */
   Status?: string;
   Lines?: Cin7SaleInvoiceLine[];
+  /** Observed on the P5 proof (2026-10): the invoice's own task id, our Memo echoed back, and its ex-VAT / VAT / total amounts. */
+  TaskID?: string;
+  Memo?: string;
+  TotalBeforeTax?: number;
+  Tax?: number;
+  Total?: number;
 }
 
 /** One Order line — confirmed live 2026-07-09. BackorderQuantity is what's NOT currently available to pick; Order.Lines[] itself is sometimes empty on older/legacy sales even when Fulfilments[] has real data, so its absence means "no backorder data available," not "zero backordered." */
@@ -148,6 +154,8 @@ export interface Cin7SaleOrderLine {
 
 export interface Cin7SaleOrder {
   SaleOrderNumber?: string;
+  /** Observed on the P5 precheck: the Order's own status, e.g. AUTHORISED. */
+  Status?: string;
   Lines?: Cin7SaleOrderLine[];
 }
 
@@ -258,6 +266,9 @@ export interface Cin7SaleDetail {
   SalesRepresentative?: string | null;
   /** An array because a single Sale can be invoiced more than once over its life (e.g. partial shipments) — each with its own InvoiceNumber/InvoiceDate/Lines. */
   Invoices?: Cin7SaleInvoice[];
+  /** Observed on the P5 read-only precheck: "Advanced Sale" / "Simple Sale"; the sale-level tax rule name. */
+  Type?: string;
+  TaxRule?: string;
   Order?: Cin7SaleOrder;
   Fulfilments?: Cin7SaleFulfilment[];
   Attachments?: Cin7SaleAttachment[];

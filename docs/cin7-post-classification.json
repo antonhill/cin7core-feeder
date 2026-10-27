@@ -67,6 +67,11 @@
       "file": "src/audit/apply-fixes.ts",
       "function": "applyProductFixes",
       "classification": "VERIFIED_SAFE_POST_UPDATE"
+    },
+    {
+      "file": "src/cin7/sale-invoice-write.ts",
+      "function": "createSaleProgressInvoice",
+      "classification": "NON_IDEMPOTENT_CREATE"
     }
   ],
   "exemptFunctions": [

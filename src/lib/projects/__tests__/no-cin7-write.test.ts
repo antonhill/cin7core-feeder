@@ -19,6 +19,13 @@ function files(dir: string): string[] {
   });
 }
 const sources = DIRS.flatMap((d) => files(join(ROOT, d)));
+/**
+ * DELIBERATE EDIT (Cin7 claim posting slice): the Cin7 write path is allowed to exist in exactly ONE Projects file — the adapter that
+ * implements the store's injected port. Every other Projects file still may not import Cin7, and nothing in the module may call fetch
+ * or mention Xero. The write itself lives in src/cin7/sale-invoice-write.ts (classified in docs/cin7-post-classification.json) and is
+ * only reachable through cin7-posting-store.ts's flag/manager/state gates.
+ */
+const CIN7_ADAPTER = "src/lib/projects/cin7-adapter.ts";
 
 describe("Projects POC has no Cin7 / external write path", () => {
   it("found source files to check", () => expect(sources.length).toBeGreaterThan(5));
@@ -28,13 +35,19 @@ describe("Projects POC has no Cin7 / external write path", () => {
     const visit = (n: ts.Node) => {
       if (ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) {
         const spec = (n.moduleSpecifier as ts.StringLiteral | undefined)?.text ?? "";
-        if (/(^|\/)cin7(\/|$)|xero|lemonsqueezy|resend|@\/sync|@\/import/.test(spec)) bad.push(`import ${spec}`);
+        const isAdapter = file.replace(ROOT + "/", "") === CIN7_ADAPTER;
+        const re = isAdapter ? /xero|lemonsqueezy|resend|@\/sync|@\/import/ : /(^|\/)cin7(\/|$)|xero|lemonsqueezy|resend|@\/sync|@\/import/;
+        if (re.test(spec)) bad.push(`import ${spec}`);
       }
       if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "fetch") bad.push("fetch()");
       ts.forEachChild(n, visit);
     };
     visit(sf);
     expect(bad).toEqual([]);
+  });
+  it("only the adapter imports Cin7, and the store/rules/actions reach Cin7 solely through it", () => {
+    const importers = sources.filter((f) => /from "@\/cin7\//.test(readFileSync(f, "utf8"))).map((f) => f.replace(ROOT + "/", ""));
+    expect(importers).toEqual([CIN7_ADAPTER]);
   });
   it("no source mentions the invoice-create endpoint", () => {
     for (const f of sources) expect(readFileSync(f, "utf8")).not.toMatch(/sale\/invoice|\/saleInvoice|nonIdempotentCreate/i);

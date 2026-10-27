@@ -7,6 +7,8 @@ const UNIQUE: Record<string, string[][]> = {
   newquip_quotes: [["org_id", "quote_ref"]],
   project_variations: [["project_id", "code"]],
   project_opening_commitments: [["project_id", "stage_id"]],
+  project_cin7_sale_links: [["project_id"], ["org_id", "cin7_sale_id"]],
+  project_claim_cin7_postings: [["claim_id"], ["org_id", "idempotency_key"], ["org_id", "memo"]],
 };
 
 export class FakeDb {
