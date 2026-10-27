@@ -6,6 +6,7 @@ const UNIQUE: Record<string, string[][]> = {
   project_claims: [["project_id", "claim_seq"], ["org_id", "idempotency_key"], ["org_id", "claim_number"]],
   newquip_quotes: [["org_id", "quote_ref"]],
   project_variations: [["project_id", "code"]],
+  project_opening_commitments: [["project_id", "stage_id"]],
 };
 
 export class FakeDb {

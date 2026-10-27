@@ -18,6 +18,7 @@ import {
 import { freezeClaimSnapshot, hashClaimSnapshot } from "./claim-snapshot";
 import type { ApprovedCommercialBaseline } from "./baseline";
 import type { VariationRow } from "./variations";
+import { openingAsPriorClaim, type OpeningCommitmentRow } from "./opening-commitments";
 import {
   buildProjectView,
   type AllocationRow, type Cin7LinkRow, type ClaimLineRow, type ClaimRow,
@@ -41,7 +42,7 @@ export async function loadProjectView(db: Db, orgId: string, projectId: string):
   const { data: project, error } = await db.from("projects").select("*").eq("org_id", orgId).eq("id", projectId).maybeSingle();
   if (error) fail(`load project: ${error.message}`);
   if (!project) return null; // includes "belongs to another org"
-  const [stages, events, claims, claimLines, allocations, links, variations] = await Promise.all([
+  const [stages, events, claims, claimLines, allocations, links, variations, opening] = await Promise.all([
     db.from("project_stages").select("*").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_progress_events").select("*").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_claims").select("*").eq("org_id", orgId).eq("project_id", projectId),
@@ -49,6 +50,7 @@ export async function loadProjectView(db: Db, orgId: string, projectId: string):
     db.from("project_stage_allocations").select("*").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_cin7_links").select("claim_id, cin7_invoice_number, cin7_status, reconciled_at").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_variations").select("*").eq("org_id", orgId).eq("project_id", projectId),
+    db.from("project_opening_commitments").select("*").eq("org_id", orgId).eq("project_id", projectId),
   ]);
   return buildProjectView({
     project: project as ProjectRow,
@@ -61,6 +63,8 @@ export async function loadProjectView(db: Db, orgId: string, projectId: string):
     // Deploy-order safety: until migration 0102 is applied the table does not exist, and no variation can exist either — so a
     // missing table reads as "no variations" rather than breaking every project screen. Any OTHER error still fails closed.
     variations: variations.error && /does not exist|schema cache/i.test(variations.error.message) ? [] : (must(variations, "load variations") as VariationRow[]),
+    // Same deploy-order safety for the opening-commitments table (migration 0103).
+    openingCommitments: opening.error && /does not exist|schema cache/i.test(opening.error.message) ? [] : (must(opening, "load opening commitments") as OpeningCommitmentRow[]),
   });
 }
 
@@ -199,13 +203,47 @@ export interface ClaimPreview {
 async function priorClaimsOf(db: Db, orgId: string, projectId: string, excludeClaimId?: string): Promise<PriorClaim[]> {
   const claims = must(await db.from("project_claims").select("id, status").eq("org_id", orgId).eq("project_id", projectId), "load prior claims") as { id: string; status: string }[];
   const lines = must(await db.from("project_claim_lines").select("claim_id, stage_id, current_claim_cents").eq("org_id", orgId).eq("project_id", projectId), "load prior claim lines") as ClaimLineRow[];
-  return claims
+  const opening = must(await db.from("project_opening_commitments").select("stage_id, amount_cents").eq("org_id", orgId).eq("project_id", projectId), "load opening commitments") as OpeningCommitmentRow[];
+  return [openingAsPriorClaim(opening), ...claims
     .filter((c) => c.id !== excludeClaimId)
     .map((c) => ({
       claimId: c.id,
       status: c.status,
       lines: lines.filter((l) => l.claim_id === c.id).map((l) => ({ stageId: l.stage_id, currentClaimCents: l.current_claim_cents })),
-    }));
+    }))];
+}
+
+/**
+ * Sets the opening commitments (value committed before the Toolbox claim workflow). LOCAL ONLY: creates no claim and no Cin7
+ * link, and changes no progress or contract value. Allowed only while the project has NO claims (they freeze afterwards).
+ */
+export async function setOpeningCommitments(
+  db: Db, orgId: string, email: string,
+  input: { projectId: string; reason: string; items: Array<{ stageId: string; amountCents: number }> },
+): Promise<void> {
+  if (!input.reason.trim()) fail("A reason is required.");
+  const view = await loadProjectView(db, orgId, input.projectId);
+  if (!view) fail("Project not found.");
+  if (view.claims.length > 0) fail("This project already has a claim — opening commitments are frozen.");
+  const byId = new Map(view.stages.map((s) => [s.id, s]));
+  for (const it of input.items) {
+    const st = byId.get(it.stageId) ?? fail("Stage not found in this project.");
+    if (!Number.isInteger(it.amountCents) || it.amountCents < 0) fail("An opening commitment must be zero or a positive whole number of cents.");
+    if (it.amountCents > st.valueCents) fail(`${st.name}: an opening commitment cannot exceed the stage value.`);
+  }
+  const existing = new Map(view.openingCommitments.map((o) => [o.stage_id, o]));
+  for (const it of input.items) {
+    const cur = existing.get(it.stageId);
+    if (cur) {
+      if (cur.amount_cents === it.amountCents && cur.reason === input.reason.trim()) continue;
+      const r = await db.from("project_opening_commitments").update({ amount_cents: it.amountCents, reason: input.reason.trim(), recorded_by_email: email, recorded_at: new Date().toISOString() })
+        .eq("org_id", orgId).eq("project_id", input.projectId).eq("stage_id", it.stageId).select("id");
+      if (r.error) fail(`save opening commitment: ${r.error.message}`);
+    } else if (it.amountCents > 0) {
+      const r = await db.from("project_opening_commitments").insert({ org_id: orgId, project_id: input.projectId, stage_id: it.stageId, amount_cents: it.amountCents, reason: input.reason.trim(), recorded_by_email: email });
+      if (r.error) fail(`save opening commitment: ${r.error.message}`);
+    }
+  }
 }
 
 /** PURE-READ: calculates a claim. Writes nothing and touches nothing outside the local DB. */

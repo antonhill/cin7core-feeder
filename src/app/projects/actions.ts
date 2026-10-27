@@ -21,6 +21,7 @@ import {
   recalculateStaleDraft,
   recordProgress,
   seedGoldenFixture,
+  setOpeningCommitments,
   submitClaimForApproval,
 } from "@/lib/projects/project-store";
 import { approveVariation, raiseVariation, rejectVariation, repriceVariation } from "@/lib/projects/variation-store";
@@ -241,6 +242,23 @@ export async function rejectVariationAction(projectId: string, variationId: stri
     const db = createServiceRoleClient();
     await rejectVariation(db, orgId, email ?? "unknown", projectId, variationId, reason);
     await logActivity(db, { orgId, actor: { userId, email }, action: "projects.variation_rejected", summary: "Rejected a project variation (no contract value change; no Cin7 write)", detail: { projectId, variationId } });
+    return { ok: true, data: null };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/**
+ * Manager/admin only. Records value already committed / certified BEFORE this project entered the Toolbox claim workflow.
+ * Local only — creates no claim and no Cin7 link; frozen once any claim exists.
+ */
+export async function setOpeningCommitmentsAction(projectId: string, items: Array<{ stageId: string; rands: string }>, reason: string): Promise<ActionResult<null>> {
+  try {
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    await requireOrgAdmin("set opening commitments");
+    const db = createServiceRoleClient();
+    await setOpeningCommitments(db, orgId, email ?? "unknown", { projectId, reason, items: items.map((i) => ({ stageId: i.stageId, amountCents: randsToCents(i.rands.trim() === "" ? "0" : i.rands) })) });
+    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.opening_commitments_set", summary: "Set project opening commitments (prior certified value; no claim, no Cin7 write)", detail: { projectId } });
     return { ok: true, data: null };
   } catch (e) {
     return { ok: false, error: message(e) };

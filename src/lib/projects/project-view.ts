@@ -2,6 +2,7 @@
 // stored rows. Three notions stay separate in the output: reported PHYSICAL %, APPROVED commercial %
 // and BILLED/COMMITTED. Nothing here writes, and nothing here reads Cin7.
 import { BPS_FULL, applyBps, reservesValue, isClaimStatus, type Bps, type Cents } from "./claim-engine";
+import type { OpeningCommitmentRow } from "./opening-commitments";
 import { cin7PocRepresentation, contractPosition, type CommitmentRepresentation, type VariationRow } from "./variations";
 
 export interface ProjectRow {
@@ -80,6 +81,10 @@ export interface ProjectView {
   claims: Array<ClaimRow & { reserves: boolean; cin7: Cin7LinkRow | null }>;
   allocations: AllocationRow[];
   variations: VariationRow[];
+  /** Value committed before the Toolbox claim workflow (already included in each stage's committed amount). */
+  openingCommitments: OpeningCommitmentRow[];
+  /** Opening commitments may be set/edited only while the project has no claims. */
+  openingCommitmentsLocked: boolean;
   /** Display-only representation of the intended Cin7 documents (nothing is sent). */
   cin7Representation: CommitmentRepresentation[];
 }
@@ -95,6 +100,7 @@ export function buildProjectView(input: {
   allocations: AllocationRow[];
   links: Cin7LinkRow[];
   variations?: VariationRow[];
+  openingCommitments?: OpeningCommitmentRow[];
 }): ProjectView {
   const { project } = input;
   const stages = [...input.stages].sort((a, b) => a.sort_order - b.sort_order);
@@ -106,6 +112,8 @@ export function buildProjectView(input: {
     if (!reservingClaimIds.has(l.claim_id)) continue;
     committedByStage.set(l.stage_id, (committedByStage.get(l.stage_id) ?? 0) + l.current_claim_cents);
   }
+  const openingRows = input.openingCommitments ?? [];
+  for (const o of openingRows) committedByStage.set(o.stage_id, (committedByStage.get(o.stage_id) ?? 0) + o.amount_cents);
 
   const stageViews: StageView[] = stages.map((s) => {
     const history = input.events
@@ -161,6 +169,8 @@ export function buildProjectView(input: {
       .sort((a, b) => b.claim_seq - a.claim_seq)
       .map((c) => ({ ...c, reserves: isClaimStatus(c.status) && reservesValue(c.status), cin7: linkByClaim.get(c.id) ?? null })),
     allocations: input.allocations,
+    openingCommitments: openingRows,
+    openingCommitmentsLocked: input.claims.length > 0,
     variations: [...variationRows].sort((a, b) => (a.code < b.code ? -1 : 1)),
     cin7Representation: cin7PocRepresentation(project.original_contract_cents, variationRows),
   };
