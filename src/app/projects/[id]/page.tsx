@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatBps, formatCents, type ProjectView, type StageView } from "@/lib/projects/project-view";
+import { VariationsPanel } from "./VariationsPanel";
 import {
   approveClaimAction,
   cancelDraftClaimAction,
@@ -26,12 +27,13 @@ import {
 } from "../actions";
 
 type ViewerPermission = "loading" | "member" | "admin";
-type Tab = "overview" | "stages" | "components" | "claims";
+type Tab = "overview" | "stages" | "components" | "claims" | "variations";
 const TABS: { value: Tab; label: string }[] = [
   { value: "overview", label: "Overview" },
   { value: "stages", label: "Stages" },
   { value: "components", label: "Components / scope" },
   { value: "claims", label: "Claims" },
+  { value: "variations", label: "Variations" },
 ];
 
 const CLAIM_TONE: Record<string, BadgeTone> = {
@@ -187,7 +189,7 @@ export default function ProjectDetailPage() {
 
       <nav className="mt-6 inline-flex max-w-full gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1 shadow-sm" aria-label="Project sections">
         {TABS.map((t) => {
-          const count = t.value === "stages" ? view.stages.length : t.value === "claims" ? view.claims.length : null;
+          const count = t.value === "stages" ? view.stages.length : t.value === "claims" ? view.claims.length : t.value === "variations" ? view.variations.length : null;
           return (
             <button
               key={t.value}
@@ -237,7 +239,7 @@ export default function ProjectDetailPage() {
             <h2 className="mb-3 text-sm font-semibold text-slate-700">Commercial position (ex VAT)</h2>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <Kpi label="Original contract value" value={formatCents(c.originalContractCents)} />
-              <Kpi label="Approved variations" value={formatCents(c.approvedVariationsCents)} hint="Variations are out of POC scope" />
+              <Kpi label="Approved variations" value={formatCents(c.approvedVariationsCents)} hint="Approved variations only" />
               <Kpi label="Revised contract value" value={formatCents(c.revisedContractCents)} />
               <Kpi label="Approved completion" value={formatBps(c.approvedCompletionBps)} hint="Earned ÷ contract" />
               <Kpi label="Earned / certified to date" value={formatCents(c.earnedCents)} hint="Stage value × APPROVED completion" />
@@ -406,6 +408,8 @@ export default function ProjectDetailPage() {
           </Table>
         </div>
       )}
+
+      {tab === "variations" && <VariationsPanel view={view} isAdmin={perm === "admin"} run={run} working={isWorking} />}
 
       {tab === "claims" && (
         <div className="mt-6 space-y-6">
