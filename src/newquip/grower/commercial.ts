@@ -48,6 +48,12 @@ export interface PackageComponent {
   pricingException?: string;
 }
 
+/** CCM feeder product by variant (Sean final): the window option is the SAME feeder with a window — a variant, not a conflict. */
+export const FEEDER_SKU_BY_VARIANT = { STANDARD: "PNQ082", WINDOW: "PNQ082-WINDOW" } as const;
+export function feederSkuFor(variant: "STANDARD" | "WINDOW" | undefined): string {
+  return FEEDER_SKU_BY_VARIANT[variant ?? "STANDARD"];
+}
+
 export interface SingleSkuMapping {
   kind: "single";
   itemKey: GrowerItemKey;
@@ -65,6 +71,12 @@ export interface PackageMapping {
   /** True when component quantities depend on the physical layout (penning, Flex). */
   layoutDriven: boolean;
   components: PackageComponent[];
+  /**
+   * M75 (Sean final): the system size is a client preference chosen manually by experienced reps, so the commercial price is
+   * an ESTIMATOR INPUT. The components below are a labelled REFERENCE of the historic Topigs package — never priced, never
+   * authoritative engineering.
+   */
+  estimatorPriced?: boolean;
   /**
    * A DIFFERENT representation of the same output seen in a later source (e.g. a single sellable SKU in the Master).
    * Recorded, never priced automatically — which representation prices the output is for NewQuip to confirm.
@@ -120,8 +132,9 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
   // ---- single SKU (source-backed recommendations) ----
   bulk_tank: single("bulk_tank", "SYSH-2750-3",
     "Legacy ERP: '13.39 TONS SILO (NEWQUIP BRANDED)'. Cin7 name shows '1339 TONS' (decimal point lost). NOT SYSH-2750-4 (16.58t, DON'T QUOTE)."),
+  // The recommended SKU shown here is the STANDARD variant; the product actually mapped follows the feeder variant (feederSkuFor).
   feeder: single("feeder", "PNQ082",
-    `${WB} sheet CCM: PNQ082 'CCM FEEDER … WITH MONOFLO NIPPLE FOR GROWERS' is activated, PNQ002 deactivated. PNQ082-WINDOW is a window variant.`),
+    `CONFIRMED (Sean): standard CCM feeder = PNQ082; PNQ082-WINDOW where the customer wants the window option. ${WB} sheet CCM: PNQ082 'CCM FEEDER … WITH MONOFLO NIPPLE FOR GROWERS' is activated, PNQ002 deactivated.`),
   feed_saver_mat: single("feed_saver_mat", "ERT053",
     "Only 1000 × 1000 mm feed saver mat in Cin7; the workbook gives no code (price formula only).", "medium-high"),
   concrete_slat: single("concrete_slat", "NQ1161",
@@ -173,8 +186,8 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
     ],
   },
   flex_auger: {
-    kind: "package", itemKey: "flex_auger", name: "M75 Flex auger system", layoutDriven: true,
-    provenance: `${WB} sheet 'W1' (Topigs case: 2 × lines of ±49.5m, 18 drop kits). Quantities below are the HISTORIC TOPIGS PACKAGE REFERENCE — formula-driven in the workbook, not authorised engineering rules.`,
+    kind: "package", itemKey: "flex_auger", name: "M75 feed distribution system", layoutDriven: true, estimatorPriced: true,
+    provenance: `${WB} sheet 'W1' (Topigs case: 2 × lines of ±49.5m, 18 drop kits). Quantities below are the HISTORIC TOPIGS PACKAGE REFERENCE — formula-driven in the workbook, NOT authorised engineering and NOT priced: M75 is an ESTIMATOR INPUT (Sean final), priced by the estimator as a system.`,
     components: [
       layout("auger", "NQ1163", "Auger M-75 (new), per metre", 134, "W1 row 71"),
       layout("tube", "NQ1223", "TUBE M75 (WHITE) / AUGER PIPE (NEW TYPE) — the M75 MAIN auger tube", 40, "W1 row 52; SKU per the NewQuip Master (workbook listed T2750300)", { note: "The M75 main auger tube. NOT the clear drop tube and NOT NQ.TUBE.63." }),
@@ -189,7 +202,7 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
       layout("levelswitch", "T3000365", "Feed level switch dia 75mm", 2, "W1 row 18"),
       layout("drive", "NQ3132", "1.5HP DRIVE UNIT (1.1KW) 380V", 2, "W1 row 77; replaces TRA1.1KW3PH (Sean Round 2 #10)", {
         note: "Replaces the legacy TRA1.1KW3PH.",
-        pricingException: "PRICING EXCEPTION — ESTIMATOR REVIEW REQUIRED: the Master shows Retail 0 for NQ3132. It is never quoted as zero; NewQuip must confirm the current commercial price treatment.",
+        pricingException: "N/A — SUPPLIER QUOTE REQUIRED: the Master shows Retail 0 for NQ3132. It is never quoted as zero. If the job needs it, the estimator resolves the commercial amount or prices the higher-level manual M75 solution.",
       }),
       layout("post", null, "Support post (SST)", 52, "W1 row 83 — SKU cell truncated ('KNQ'), price R760", {
         candidateSkus: ["NQ2601"], identity: "uncertain", note: "NQ2601 'HEAVY DUTY SUPPORT POST SST(1M)' is a likely match but NOT confirmed.",
@@ -197,12 +210,12 @@ export const COMMERCIAL_MAPPINGS: Partial<Record<GrowerItemKey, CommercialMappin
       layout("wallplate", "KNQ160", "Wall plate (SST) kit for M55 & M75 auger", 4, "W1 row 97"),
     ],
   },
-  // ---- estimator-priced ----
-  // Penning is priced per RUNNING METRE by pig size (Sean Round 2 #7) — not per m² and not by the old 17-part layout BOM.
-  // The current rates/products are not yet supplied, so no price is derived: the estimator prices it (Round 3).
+  // ---- rate-priced ----
+  // Penning is priced per RUNNING METRE by pig size (Sean final: R1,300 / R1,500 / R2,200 ex VAT). No SKU is needed for the POC
+  // commercial result; the SKU mapping (historic family KNQPP005–008) is a future production concern.
   penning_package: {
     kind: "estimator_priced", itemKey: "penning_package", unit: "running metre",
-    reason: "ESTIMATOR PRICING REQUIRED — penning is priced per running metre for each pig size (small / medium / large). A SKU is opened per size; the current rates/products have not been supplied (Round 3).",
+    reason: "NewQuip penning by pig-size / running-metre basis (small R1,300 · medium R1,500 · large R2,200 per running metre ex VAT). SKU mapping is a future production concern.",
     historicSkus: ["KNQPP005", "KNQPP006", "KNQPP007", "KNQPP008"],
   },
 
@@ -259,7 +272,7 @@ export function recommendedSkuFor(itemKey: GrowerItemKey): SingleSkuMapping | un
 
 /** Every SKU the commercial mappings name (recommendations + package components + contenders). For catalogue lookups. */
 export function referencedSkus(): string[] {
-  const out = new Set<string>();
+  const out = new Set<string>(Object.values(FEEDER_SKU_BY_VARIANT));
   for (const m of Object.values(COMMERCIAL_MAPPINGS)) {
     if (!m) continue;
     if (m.kind === "single") out.add(m.recommendedSku);

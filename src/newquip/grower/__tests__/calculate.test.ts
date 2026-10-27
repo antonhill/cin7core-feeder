@@ -6,7 +6,7 @@ import type { GrowerConfigurationInput } from "../types";
 
 const clone = (o: Partial<GrowerConfigurationInput> = {}): GrowerConfigurationInput => ({ ...structuredClone(TOPIGS_GROWER_INPUT), ...o });
 
-describe("A. VERIFIED calculations (golden Topigs input)", () => {
+describe("A. confirmed calculations (golden Topigs input)", () => {
   const r = calculateGrowerHouse(TOPIGS_GROWER_INPUT);
 
   it("derives the floor area as length × width (workbook B77)", () => {
@@ -15,12 +15,7 @@ describe("A. VERIFIED calculations (golden Topigs input)", () => {
     expect(r.derived.rooms).toBe(12);
   });
 
-  it("emits NO verified (system-calculated) quantity while no item rule is verified", () => {
-    expect(r.lines.some((l) => l.basis === "system_calculated")).toBe(false);
-    expect(r.lines.some((l) => l.ruleStatus === "verified")).toBe(false);
-  });
-
-  it("only the confirmed lighting MINIMUM yields a quantity (a labelled DEFAULT); every other line awaits the estimator", () => {
+  it("lighting is the only line that yields a quantity before the estimator has entered anything: a labelled DEFAULT", () => {
     for (const l of r.lines.filter((x) => x.basis !== "not_selected" && x.itemKey !== "led_light")) {
       expect(l.basis).toBe("awaiting_validation");
       expect(l.quantityPerRoom).toBeNull();
@@ -41,45 +36,19 @@ describe("A. VERIFIED calculations (golden Topigs input)", () => {
   });
 });
 
-describe("B. historic reference outputs awaiting rule validation", () => {
+describe("B. historic reference outputs are never quantities", () => {
   const r = calculateGrowerHouse(TOPIGS_GROWER_INPUT);
   it("carries the Topigs historic quantity on every line as REFERENCE ONLY", () => {
     for (const l of r.lines) {
       expect(l.historicReference.quantityPerRoom).toBe(TOPIGS_GROWER_HISTORIC[l.itemKey]);
-      // the historic figure never leaks into the calculated quantity
       if (l.basis === "awaiting_validation") expect(l.quantityPerRoom).toBeNull();
     }
   });
-
-  it("suggestions are displayed but never priced, and no longer back-fit the historic figures", () => {
-    const by = Object.fromEntries(r.lines.map((l) => [l.itemKey, l]));
-    // Feeder / mat: only the CONFIRMED capacity is shown — no quantity, no ceil(), no "total − hospital" guess.
-    expect(by.feeder.hypothesis?.value).toBeNull();
-    expect(by.feeder.hypothesis?.expression).toContain("45 pigs per feeder");
-    expect(by.feed_saver_mat.hypothesis?.value).toBeNull();
-    // Drinker: 600 pigs ÷ 15 = 40, UNROUNDED and flagged as only a suggestion. It deliberately differs from Topigs' 54.
-    expect(by.cup_drinker.hypothesis?.value).toBe(40);
-    expect(by.cup_drinker.hypothesis?.value).not.toBe(TOPIGS_GROWER_HISTORIC.cup_drinker);
-    expect(by.cup_drinker.hypothesis?.caveat).toMatch(/SUGGESTED only/);
-    // Slats: NO slatted area entered → no suggestion at all (never derived from the building footprint).
-    expect(by.concrete_slat.hypothesis?.value).toBeNull();
-    expect(by.concrete_slat.hypothesis?.caveat).toMatch(/ESTIMATOR INPUT REQUIRED/);
-    expect(by.feeder.ruleStatus).toBe("requires_validation");
-    expect(by.feed_saver_mat.ruleStatus).toBe("provisional");
-    for (const l of Object.values(by).filter((x) => x.basis === "awaiting_validation")) expect(l.projectQuantity).toBeNull();
-  });
-
-  it("suggestions follow the inputs (not hard-coded to Topigs)", () => {
-    const r2 = calculateGrowerHouse(clone({ pigsPerRoom: 300, slattedFloorAreaM2: 108 }));
-    const by = Object.fromEntries(r2.lines.map((l) => [l.itemKey, l]));
-    expect(by.cup_drinker.hypothesis?.value).toBe(20);
-    expect(by.concrete_slat.hypothesis?.value).toBe(200); // 108 m² ÷ 0.54 m² per slat (arithmetic only)
-  });
-
-  it("the slat suggestion depends ONLY on the slatted area — never on the building footprint or walkways", () => {
-    const a = calculateGrowerHouse(clone({ slattedFloorAreaM2: 500 })).lines.find((l) => l.itemKey === "concrete_slat")!;
-    const b = calculateGrowerHouse(clone({ slattedFloorAreaM2: 500, lengthM: 20, widthM: 10 })).lines.find((l) => l.itemKey === "concrete_slat")!;
-    expect(a.hypothesis?.value).toBe(b.hypothesis?.value);
+  it("the mat default follows the estimator-confirmed feeder quantity and is empty until then", () => {
+    expect(r.lines.find((l) => l.itemKey === "feed_saver_mat")!.basis).toBe("awaiting_validation");
+    const r2 = calculateGrowerHouse(clone({ estimatorQuantities: { feeder: 14 } }));
+    const mat = r2.lines.find((l) => l.itemKey === "feed_saver_mat")!;
+    expect(mat).toMatchObject({ basis: "system_default", quantityPerRoom: 14, projectQuantity: 14 * 12 });
   });
 });
 
@@ -101,14 +70,14 @@ describe("overrides", () => {
   it("a manual override supplies the quantity, flagged manual, ×rooms", () => {
     const r = calculateGrowerHouse(clone({ quantityOverrides: { feeder: 18 } }));
     const l = r.lines.find((x) => x.itemKey === "feeder")!;
-    expect(l).toMatchObject({ basis: "manual_override", quantityPerRoom: 18, projectQuantity: 216, overrideState: "manual_override", ruleStatus: "requires_validation" });
+    expect(l).toMatchObject({ basis: "manual_override", quantityPerRoom: 18, projectQuantity: 216, overrideState: "manual_override", ruleStatus: "manual" });
     expect(l.explanation.kind).toBe("manual");
   });
   it("an override on an optional item that is off stays 0 / not_selected", () => {
     const r = calculateGrowerHouse(clone({ quantityOverrides: { manure_plug: 5 } }));
     expect(r.lines.find((x) => x.itemKey === "manure_plug")!.quantityPerRoom).toBe(0);
   });
-  it("a selected optional item awaits a manual entry", () => {
+  it("a selected optional item awaits an estimator entry (engineering review)", () => {
     const r = calculateGrowerHouse(clone({ optionalEquipment: { ...TOPIGS_GROWER_INPUT.optionalEquipment, cone_fans: true } }));
     expect(r.lines.find((x) => x.itemKey === "cone_fans")!.basis).toBe("awaiting_validation");
   });
@@ -163,13 +132,10 @@ describe("invalid inputs", () => {
 
 describe("explainability is data-driven", () => {
   const r = calculateGrowerHouse(TOPIGS_GROWER_INPUT);
-  it("provisional/awaiting lines show historic, suggested basis and status", () => {
+  it("awaiting lines show historic, capacity basis and the rule evidence", () => {
     const f = r.lines.find((l) => l.itemKey === "feeder")!;
-    expect(f.explanation.kind).toBe("awaiting");
     expect(f.explanation.steps.join("\n")).toContain("Historic Topigs quantity: 18 per room");
     expect(f.explanation.steps.join("\n")).toContain("45 pigs per feeder");
-    expect(f.explanation.steps.join("\n")).toContain("awaiting NewQuip validation");
-    expect(r.lines.find((l) => l.itemKey === "feed_saver_mat")!.explanation.kind).toBe("provisional");
   });
   it("an item with no proposed relationship says so", () => {
     const t = r.lines.find((l) => l.itemKey === "bulk_tank")!;

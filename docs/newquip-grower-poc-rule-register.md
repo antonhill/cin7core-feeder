@@ -1,5 +1,14 @@
 # NewQuip Grower House POC — rule register & validation checkpoint
 
+> **SUPERSEDED IN PART — 2026-10-27.** Sean's FINAL feedback (see `docs/newquip-poc-final-implementation-matrix.md` and
+> `src/newquip/grower/final-feedback.ts`) overrides the Round 1 / Round 2 classifications and every "Round 3 open item" below.
+> In short: pigs are **per room**; lighting `ceil(area / 25)` is a **confirmed default** (override needs a reason); the CCM feeder
+> (45 pigs; PNQ082, PNQ082-WINDOW as a variant) and drinker (15 pigs) quantities are **suggested basis → estimator confirms**;
+> slats, M75 (no W/W1 port), doors and tank are **estimator input by design**; penning is **running metres × R1,300 / R1,500 / R2,200**;
+> NQ3132 is **N/A — supplier quote required** (never R0); ventilation is **optional, engineering review**; the POC price source is
+> the **NewQuip Master workbook snapshot**; Project pricing is **landed cost + 20%**. Rule ids below are unchanged.
+
+
 Status: **INTERIM** (built before NewQuip's business-rule questionnaire). Source: Topigs Warden quotation
 `AS.23.4015.07` (xlsm + pdf), `Growers.xlsx` (input form only — no formulas), Inventory Master (not yet mined).
 Engine: `src/newquip/grower/rules.ts` (the code is the table; this file must list every rule id — enforced by

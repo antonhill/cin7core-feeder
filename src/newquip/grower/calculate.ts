@@ -17,7 +17,9 @@ import type {
 //   (a) the rule is classified "verified" AND has a verifiedCompute  → system_calculated, or
 //   (b) an estimator supplied an explicit override                     → manual_override, or
 //   (c) an optional item is switched off                               → 0, not_selected.
-// Every other line has quantity null ("awaiting_validation"). Hypotheses are shown, never priced.
+//   (d) the rule is an ESTIMATOR INPUT by design and the estimator supplied it   → estimator_input
+//   (e) a confirmed minimum/default exists                                        → system_default (overridable, with a reason)
+// Every other line has quantity null ("awaiting_validation"). Hypotheses and suggestions are shown, never priced.
 
 /** The single option per selector the POC has rules for; anything else is an unsupported selection. */
 export const SUPPORTED_SELECTIONS = {
@@ -91,9 +93,19 @@ export function validateGrowerInput(input: GrowerConfigurationInput): InputIssue
     }
   }
   for (const [key, qty] of Object.entries(input.quantityOverrides ?? {})) {
+    if (qty === undefined) continue; // a cleared field (JSON drops it anyway)
     if (typeof qty !== "number" || !Number.isFinite(qty) || qty < 0) {
       issues.push({ field: `quantityOverrides.${key}`, code: "negative_override", message: "An override must be a number ≥ 0." });
     }
+  }
+  for (const [key, qty] of Object.entries(input.estimatorQuantities ?? {})) {
+    if (qty === undefined) continue;
+    if (typeof qty !== "number" || !Number.isFinite(qty) || qty < 0) {
+      issues.push({ field: `estimatorQuantities.${key}`, code: "negative_estimator_quantity", message: "A quantity must be a number ≥ 0." });
+    }
+  }
+  if (input.feederVariant != null && input.feederVariant !== "STANDARD" && input.feederVariant !== "WINDOW") {
+    issues.push({ field: "feederVariant", code: "invalid_feeder_variant", message: "Feeder variant must be standard or window." });
   }
   return issues;
 }
@@ -107,6 +119,8 @@ export function evaluateRule(
   if (def.optionalKey && !input.optionalEquipment[def.optionalKey]) {
     return { basis: "not_selected", quantityPerRoom: 0 };
   }
+  // A customer-driven exclusion of a normally-required section — honoured only with a reason.
+  if (input.exclusions?.[def.itemKey]?.trim()) return { basis: "not_selected", quantityPerRoom: 0 };
   const override = input.quantityOverrides?.[def.itemKey];
   if (def.overrideAllowed && override !== undefined) {
     return { basis: "manual_override", quantityPerRoom: override };
@@ -114,9 +128,15 @@ export function evaluateRule(
   if (def.classification === "verified" && def.verifiedCompute) {
     return { basis: "system_calculated", quantityPerRoom: def.verifiedCompute(input) };
   }
+  // A quantity that is an ESTIMATOR INPUT by design (feeders, drinkers, slats, M75, doors, ventilation scope).
+  if (def.estimatorEntry) {
+    const entered = input.estimatorQuantities?.[def.itemKey];
+    if (entered !== undefined) return { basis: "estimator_input", quantityPerRoom: entered };
+  }
   // A confirmed minimum/default produces a quantity, but it is labelled a DEFAULT and stays overridable.
   if (def.defaultCompute) {
-    return { basis: "system_default", quantityPerRoom: def.defaultCompute(input) };
+    const d = def.defaultCompute(input);
+    if (d != null) return { basis: "system_default", quantityPerRoom: d };
   }
   // The quantity is itself an explicit estimator input on dedicated fields (e.g. penning running metres).
   const typed = def.estimatorInput?.(input);
@@ -166,9 +186,10 @@ export function explainLine(line: Omit<GeneratedLine, "explanation">, def: Growe
     case "estimator_input":
       return {
         kind: "manual",
-        headline: `${line.label}: quantity from estimator inputs`,
+        headline: `${line.label}: quantity confirmed by the estimator (manual by design)`,
         steps: [
           `Estimator input: ${line.quantityPerRoom} ${line.unit === "running_metre" ? "running metres" : "units"} per room × ${rooms} rooms = ${line.projectQuantity}`,
+          ...(line.suggestedQuantityPerRoom != null ? [`Suggested basis (not authoritative): ${line.suggestedQuantityPerRoom} per room`] : []),
           ...(inputs.length ? [`Inputs: ${inputs.join(", ")}`] : []),
           histText,
           `Evidence: ${def.evidence}`,
@@ -190,8 +211,10 @@ export function explainLine(line: Omit<GeneratedLine, "explanation">, def: Growe
     case "not_selected":
       return {
         kind: "not_selected",
-        headline: `${line.label}: optional, not selected`,
-        steps: [`Switch the option on to include it; its quantity then needs a manual entry (rule ${line.ruleId}).`, histText],
+        headline: line.exclusionReason ? `${line.label}: excluded at the customer's request` : `${line.label}: optional, not selected`,
+        steps: line.exclusionReason
+          ? [`Customer-driven exclusion — reason: ${line.exclusionReason}`, `Clear the exclusion to include it again (rule ${line.ruleId}).`]
+          : [`Switch the option on to include it; its quantity then needs a manual entry (rule ${line.ruleId}).`, histText],
       };
     default: {
       const h = line.hypothesis;
@@ -242,6 +265,8 @@ export function calculateGrowerHouse(input: GrowerConfigurationInput): GrowerCal
       label: def.label,
       unit: def.unit ?? ("each" as const),
       defaultQuantityPerRoom: def.defaultCompute ? def.defaultCompute(input) : null,
+      suggestedQuantityPerRoom: def.suggested ? def.suggested(input) : null,
+      exclusionReason: input.exclusions?.[def.itemKey]?.trim() || null,
       overrideReason: basis === "manual_override" ? reason : null,
       inputRequired: basis === "awaiting_validation" ? (def.inputRequiredMessage?.(input) ?? null) : null,
       ruleId: def.id,
@@ -251,7 +276,8 @@ export function calculateGrowerHouse(input: GrowerConfigurationInput): GrowerCal
       projectQuantity: quantityPerRoom == null ? null : quantityPerRoom * rooms,
       overrideState: basis === "manual_override" ? ("manual_override" as const) : ("none" as const),
       historicReference: { quantityPerRoom: def.historic.quantityPerRoom, source: def.historic.source },
-      hypothesis: def.hypothesis && basis === "awaiting_validation" ? def.hypothesis(input, hypothesisOf) : null,
+      // A suggestion/capacity basis stays visible next to an estimator-confirmed quantity (suggestion ≠ authoritative quantity).
+      hypothesis: def.hypothesis && (basis === "awaiting_validation" || basis === "estimator_input") ? def.hypothesis(input, hypothesisOf) : null,
       inputsUsed: usedInputs(def, input),
     };
     lines.push({ ...base, explanation: explainLine(base, def, rooms) });

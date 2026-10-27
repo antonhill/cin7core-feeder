@@ -1,41 +1,46 @@
-// PRICE SOURCE — which controlled source the budget's selling prices come from, kept explicit and swappable.
+// PRICE SOURCE — which controlled source the quote's selling prices come from, kept explicit and swappable.
 //
-// The production price source of truth is UNRESOLVED (Round 3 BLOCKER): the NewQuip "Master" Excel (Cost, ROE, Freight,
-// MU → Retail Price ex VAT) versus Cin7 Core. The budget engine (quote-bridge.ts) therefore never reads a source directly:
-// it is handed `ProductCommercials` (see quote-bridge.ts) by whoever loaded them. Swapping the source means supplying a
-// different loader and descriptor — nothing in the engine changes.
-//
-// For the POC / beta the loader is the org's synced Cin7 price tiers (plus the Quotes module's live per-SKU tier read).
+// FINAL (Sean, 2026-10-27): "Cin7 contains demo data, so use the workbook for the POC." The POC price authority is the
+// NewQuip Master workbook, loaded as a CONTROLLED SNAPSHOT of only the products the POC needs (workbook-price-source.ts).
+// The quote engine (quote-bridge.ts) never reads a source directly: it is handed `ProductCommercials`, built here from
+// whichever `PriceSource` is plugged in. Swapping to Cin7 Core later means supplying another PriceSource — nothing in the
+// engine or the UI changes. No workbook price is scattered through UI components.
 
-export type PriceSourceId = "cin7_synced_price_tiers" | "newquip_master_excel" | "cin7_core_live";
+export type PriceSourceId = "newquip_master_workbook_snapshot" | "cin7_core_live";
+
+export type QuoteType = "day_to_day" | "project";
+export const QUOTE_TYPE_LABEL: Record<QuoteType, string> = { day_to_day: "Day-to-day", project: "Project" };
 
 export interface PriceSourceDescriptor {
   id: PriceSourceId;
+  /** Shown beside every quote. */
   label: string;
   /** What the figures are, in plain words. */
   basis: string;
-  /** True while NewQuip has not chosen this as the production source. */
-  provisional: boolean;
-  /** Shown beside every budget so nobody mistakes the figures for a final commercial price. */
+  /** When / where the snapshot came from (provenance stays visible). */
+  provenance: string;
+  /** Shown beside every quote so nobody mistakes POC figures for a production price list. */
   notice: string;
 }
 
-/** The currently validated controlled source used by the POC / internal beta. */
-export const CURRENT_PRICE_SOURCE: PriceSourceDescriptor = {
-  id: "cin7_synced_price_tiers",
-  label: "Cin7 synced price tiers (interim)",
-  basis: "Selling price = the customer's / chosen Cin7 price tier for each SKU (Sean Round 1: 'tier price').",
-  provisional: true,
-  notice: "Interim price source — the production source of truth (NewQuip Master Excel vs Cin7 Core) is UNRESOLVED (Round 3).",
+/** The result of asking a price source for ONE product at ONE quote type. Never a silent zero. */
+export type PriceResult =
+  | { status: "priced"; unitPriceExVat: number; landedCostExVat: number }
+  | { status: "supplier_quote_required"; reason: string }
+  | { status: "not_in_source"; reason: string };
+
+export interface PriceSource {
+  descriptor: PriceSourceDescriptor;
+  priceFor(sku: string, quoteType: QuoteType): PriceResult;
+  /** True when the source can price this SKU at all (used for mapping existence). */
+  has(sku: string): boolean;
+}
+
+/** Day-to-day = workbook Retail ex VAT. Project = landed cost + 20% (Sean): landed = Cost × ROE × Freight, NOT Retail MU + 20%. */
+export const PRICING_RULE_NOTICE =
+  "Day-to-day = workbook Retail Price ex VAT. Project = landed cost (Cost × ROE × Freight) + 20%.";
+
+export const QUOTE_TYPE_BASIS: Record<QuoteType, string> = {
+  day_to_day: "Workbook Retail Price ex VAT",
+  project: "Landed cost (Cost × ROE × Freight) + 20% markup",
 };
-
-/** How the rep chose to price this quote (Sean Round 1 commercial #2: 'select if this is a Day-to-day or a project'). */
-export type QuoteType = "day_to_day" | "project";
-
-export const QUOTE_TYPE_LABEL: Record<QuoteType, string> = { day_to_day: "Day-to-day", project: "Project" };
-
-/**
- * Project pricing is UNRESOLVED: Sean said "Project = cost + 20% mark-up" but the Master proves Cost, ROE, Freight and MU
- * are distinct and MU is not universally 20%. No formula is applied — the estimator supplies the selling price.
- */
-export const PROJECT_PRICING_NOTICE = "ESTIMATOR PRICING REQUIRED — Project pricing ('Cost + 20%') is not yet defined, so nothing is calculated automatically.";

@@ -81,3 +81,36 @@ The created Project can demonstrate:
 - No production Supabase migration push.
 - Never silently price a required item at zero.
 - Never replace an unresolved product identity with a historic surrogate.
+
+
+---
+
+## Implementation status (branch `feature/newquip-poc-final`, PR #121)
+
+**Built.** Grower House Template v1 (read-only detail) → configuration → estimator review / readiness (DRAFT · BLOCKED · READY) →
+customer summary → `REP_DRAFT → ESTIMATOR_REVIEW → MANAGER_APPROVED_FINAL` → sealed accepted baseline → Quote→Project adapter →
+physical vs commercial progress → R950,000 golden claim → Variations (V001 R480,000 → revised R10,480,000, original untouched) →
+display-only Cin7 representation (`SO-POC-001` / `SO-POC-002`, NOT SENT TO CIN7). No Cin7 or Xero write path exists.
+
+**Two things must happen before this works against a live database** (neither can be done from a branch):
+
+1. **Migration `0102_newquip_quotes_and_variations.sql`** — creates `newquip_quotes` and `project_variations` and adds the
+   original-contract guard. Written and covered by `supabase/tests/0102_*.test.sql` (run by CI's clean-bootstrap job). **NOT applied
+   to hosted Supabase** — owner approval required. Until applied, project screens still load (a missing `project_variations` table
+   reads as "no variations") but the quote workflow and Variations cannot save.
+2. **NewQuip Master price snapshot** — the Master workbook was not available to the build, so
+   `src/newquip/grower/snapshot/newquip-master-poc.snapshot.json` is an honest EMPTY stub and every product line reports
+   "no price in the price source" (the quote stays BLOCKED rather than quoting zero). Generate it with
+   `npx tsx scripts/newquip-build-price-snapshot.ts "<NewQuip Master.xlsx>" "<sheet>" <YYYY-MM-DD>` — it reads Cost, ROE, Freight, MU and
+   Retail Price ex VAT by column NAME, keeps only the POC SKUs, records the file hash and date, and lists any SKU the workbook lacks.
+
+**Role model (POC).** The platform has two org tiers. `member` = rep + estimator (draft, hand off, estimator inputs, PHYSICAL progress,
+raise/price variations). `owner/admin` additionally = manager (final approval, COMMERCIAL progress approval, variation approval, cost
+visibility). Fails closed. A per-user rep/estimator/manager role table is post-POC.
+
+**Deliberately manual by design (not defects once supplied):** M75 configuration and price, slat quantity, feeder and drinker final
+quantity, doors, bulk tank, ventilation scope (engineering review), delivery, installation.
+
+**Genuinely post-POC:** per-user role table; FORTIS 1.2 SKU and clip/cable identity; penning SKU mapping; feeder/drinker rounding rules;
+AS.03 ingestion; customer tax rule from Cin7 (POC uses a fixed VAT 15% basis); credit/omission variations; a variation-aware claim
+engine (claims still run on the original contract schedule); Cin7 push (separately authorised, never in this POC).

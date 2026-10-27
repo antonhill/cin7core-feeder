@@ -1,0 +1,9 @@
+{
+  "id": "newquip-master-poc",
+  "label": "NewQuip Master workbook – POC controlled snapshot",
+  "sourceFile": "NOT YET IMPORTED — run scripts/newquip-build-price-snapshot.ts against the NewQuip Master workbook",
+  "sourceSheet": null,
+  "sourceDate": "not imported",
+  "sha256": null,
+  "entries": {}
+}
