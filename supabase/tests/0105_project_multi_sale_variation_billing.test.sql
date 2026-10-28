@@ -68,7 +68,10 @@ insert into project_variation_stages (org_id, variation_id, sort_order, name, bp
 select pg_temp.expect_denied($q$insert into project_variation_stages (org_id, variation_id, sort_order, name, bps) values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005f1',3,'Dup order',1)$q$, 'duplicate sort order');
 select pg_temp.expect_denied($q$update project_variations set status = 'APPROVED', decided_by_email = 'm@x', decided_at = now() where id = '00000000-0000-0000-0000-0000000005f1'$q$, 'approve a schedule totalling 99.99%');
 update project_variation_stages set bps = 3334 where variation_id = '00000000-0000-0000-0000-0000000005f1' and sort_order = 3;
+update project_variations set estimated_cost_cents = 700000 where id = '00000000-0000-0000-0000-0000000005f1';
+select pg_temp.expect_denied($q$update project_variations set estimated_cost_cents = -1 where id = '00000000-0000-0000-0000-0000000005f2'$q$, 'negative estimated cost');
 update project_variations set status = 'APPROVED', decided_by_email = 'm@x', decided_at = now() where id = '00000000-0000-0000-0000-0000000005f1';
+select pg_temp.expect_denied($q$update project_variations set estimated_cost_cents = 1 where id = '00000000-0000-0000-0000-0000000005f1'$q$, 'change the estimated cost after approval');
 select pg_temp.expect_denied($q$insert into project_variation_stages (org_id, variation_id, sort_order, name, bps) values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005f1',4,'Late',1)$q$, 'add a stage after approval');
 select pg_temp.expect_denied($q$update project_variation_stages set bps = 5000 where variation_id = '00000000-0000-0000-0000-0000000005f1' and sort_order = 1$q$, 'edit a frozen stage');
 select pg_temp.expect_denied($q$delete from project_variation_stages where variation_id = '00000000-0000-0000-0000-0000000005f1'$q$, 'delete a frozen stage');

@@ -9,7 +9,7 @@ type Db = ReturnType<typeof createServiceRoleClient>;
 
 export interface PhysicalPort {
   /** One GET of the Sale, projected to what the physical view needs. */
-  readSale(saleId: string): Promise<{ ordered: OrderedLine[]; invoices: InvoiceView[]; fulfilments: FulfilmentView[] }>;
+  readSale(saleId: string): Promise<{ ordered: OrderedLine[]; invoices: InvoiceView[]; fulfilments: FulfilmentView[]; /** Cost of goods Cin7 has recognised on the Sale so far, cents; null when unreadable. */ cogsCents: number | null }>;
   /** One bounded read per SKU. */
   readStock(sku: string): Promise<StockView | null>;
   /** The account's assembly (finished goods) records; read-only. */
@@ -26,5 +26,5 @@ export async function loadPhysicalStatus(db: Db, port: PhysicalPort, input: { or
   }
   let assemblies: AssemblyView[] = [];
   try { assemblies = await port.readAssemblies(); } catch { /* assembly visibility is best effort; rows show "no assembly records" rather than guessing */ }
-  return { linked: true as const, saleNumber: link.cin7_sale_number, ...buildPhysicalStatus({ ordered: sale.ordered, invoices: sale.invoices, fulfilments: sale.fulfilments, stock, assemblies }) };
+  return { linked: true as const, saleNumber: link.cin7_sale_number, cogsCents: sale.cogsCents, ...buildPhysicalStatus({ ordered: sale.ordered, invoices: sale.invoices, fulfilments: sale.fulfilments, stock, assemblies }) };
 }

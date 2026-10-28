@@ -59,7 +59,7 @@ describe("Projects POC has no Cin7 / external write path", () => {
   });
 });
 
-describe.each(["src/app/projects/actions.ts", "src/app/projects/cin7-actions.ts", "src/app/projects/variation-billing-actions.ts", "src/app/projects/physical-actions.ts"])('%s honours the "use server" rule', (rel) => {
+describe.each(["src/app/projects/actions.ts", "src/app/projects/cin7-actions.ts", "src/app/projects/variation-billing-actions.ts", "src/app/projects/physical-actions.ts", "src/app/projects/profitability-actions.ts"])('%s honours the "use server" rule', (rel) => {
   it("exports only async functions and erased interfaces", () => {
     const file = join(ROOT, rel);
     const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
@@ -77,7 +77,7 @@ describe.each(["src/app/projects/actions.ts", "src/app/projects/cin7-actions.ts"
 });
 
 describe("the physical-visibility path can only read", () => {
-  it.each(["src/lib/projects/physical-adapter.ts", "src/lib/projects/physical-store.ts", "src/lib/projects/physical-status.ts", "src/app/projects/physical-actions.ts", "src/cin7/sale-inspect.ts"])("%s contains no write verb or create endpoint", (rel) => {
+  it.each(["src/lib/projects/physical-adapter.ts", "src/lib/projects/physical-store.ts", "src/lib/projects/physical-status.ts", "src/app/projects/physical-actions.ts", "src/app/projects/profitability-actions.ts", "src/lib/projects/profitability.ts", "src/lib/projects/profitability-store.ts", "src/cin7/sale-inspect.ts"])("%s contains no write verb or create endpoint", (rel) => {
     const src = readFileSync(join(ROOT, rel), "utf8");
     expect(src).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/i);
     expect(src).not.toMatch(/nonIdempotentCreate|sale\/invoice|sale\/order|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/);

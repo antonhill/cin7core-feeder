@@ -25,6 +25,7 @@ import {
   submitClaimForApproval,
 } from "@/lib/projects/project-store";
 import { approveVariation, raiseVariation, rejectVariation, repriceVariation } from "@/lib/projects/variation-store";
+import { redactVariationCosts } from "@/lib/projects/variations";
 import { randsToCents } from "@/lib/projects/claim-engine";
 import type { ProjectView } from "@/lib/projects/project-view";
 import type { ProgressClaimCalc } from "@/lib/projects/claim-engine";
@@ -41,6 +42,11 @@ export interface ClaimPreviewResult {
   taxRateBps: number;
 }
 
+/** Whether the caller is an org owner/admin (may see internal costs). Fails closed. */
+async function isAdmin(): Promise<boolean> {
+  try { await requireOrgAdmin("view internal costs"); return true; } catch { return false; }
+}
+
 function message(e: unknown): string {
   return e instanceof Error ? e.message : "Unexpected error";
 }
@@ -49,7 +55,8 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectView[]>>
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
     // Variation billing projects are reached from their BASE project (Variations tab), not listed as separate projects.
-    return { ok: true, data: (await listProjectViews(createServiceRoleClient(), orgId)).filter((v) => v.project.billing_scope !== "VARIATION") };
+    const canSeeCost = await isAdmin();
+    return { ok: true, data: (await listProjectViews(createServiceRoleClient(), orgId)).filter((v) => v.project.billing_scope !== "VARIATION").map((v) => redactVariationCosts(v, canSeeCost)) };
   } catch (e) {
     return { ok: false, error: message(e) };
   }
@@ -60,7 +67,7 @@ export async function getProjectAction(projectId: string): Promise<ActionResult<
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
     const view = await loadProjectView(createServiceRoleClient(), orgId, projectId);
     if (!view) return { ok: false, error: "Project not found." };
-    return { ok: true, data: view };
+    return { ok: true, data: redactVariationCosts(view, await isAdmin()) };
   } catch (e) {
     return { ok: false, error: message(e) };
   }
@@ -201,11 +208,13 @@ export async function recalculateStaleDraftAction(projectId: string, claimId: st
 // Raise / price: any module member (rep + estimator tiers; the manager tier includes them). Approve / reject: org owner/admin
 // (manager) only. original_contract_cents never changes; revised = original + APPROVED variations. Nothing reaches Cin7.
 
-export async function raiseVariationAction(projectId: string, title: string, description: string, amountRands: string): Promise<ActionResult<{ variationId: string; code: string }>> {
+export async function raiseVariationAction(projectId: string, title: string, description: string, amountRands: string, estimatedCostRands = ""): Promise<ActionResult<{ variationId: string; code: string }>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     const db = createServiceRoleClient();
-    const r = await raiseVariation(db, orgId, email ?? "unknown", { projectId, title, description, amountCents: randsToCents(amountRands) });
+    // An estimated cost is internal: only a manager may record one (a non-manager's value is ignored, not trusted).
+    const estimatedCostCents = estimatedCostRands.trim() && (await isAdmin()) ? randsToCents(estimatedCostRands) : null;
+    const r = await raiseVariation(db, orgId, email ?? "unknown", { projectId, title, description, amountCents: randsToCents(amountRands), estimatedCostCents });
     await logActivity(db, { orgId, actor: { userId, email }, action: "projects.variation_raised", summary: `Raised project variation ${r.code} (draft; contract value unchanged; no Cin7 write)`, detail: { projectId, variationId: r.variationId } });
     return { ok: true, data: r };
   } catch (e) {

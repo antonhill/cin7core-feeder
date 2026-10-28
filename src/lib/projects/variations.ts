@@ -16,6 +16,8 @@ export interface VariationRow {
   title: string;
   description: string | null;
   amount_cents: number;
+  /** INTERNAL estimated cost, ex VAT; null = unknown. Withheld from viewers who may not see cost (redactVariationCosts). */
+  estimated_cost_cents?: number | null;
   status: string;
   raised_by_email: string;
   priced_by_email: string | null;
@@ -95,4 +97,10 @@ export function allocateClaim(claimCents: Cents, parts: readonly ClaimAllocation
   const over = parts.find((p) => p.amountCents < 0 || p.amountCents > p.remainingCents);
   if (over) return { ok: false, error: `${over.label}: allocation exceeds its remaining commitment.` };
   return { ok: true, parts };
+}
+
+/** Removes the internal estimated cost from variations for a viewer who may not see cost. */
+export function redactVariationCosts<T extends { variations: VariationRow[] }>(view: T, canSeeCost: boolean): T {
+  if (canSeeCost) return view;
+  return { ...view, variations: view.variations.map((v) => ({ ...v, estimated_cost_cents: null })) };
 }

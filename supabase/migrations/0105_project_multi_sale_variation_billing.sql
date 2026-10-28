@@ -59,6 +59,11 @@ $$;
 create trigger projects_billing_scope_guard_trg before insert or update on projects
   for each row execute function projects_billing_scope_guard();
 
+-- ── project_variations: estimated cost (for the variation's estimated margin) ─
+-- Nullable = unknown (never 0). Editable only while DRAFT: the 0102 guard already makes an APPROVED/REJECTED variation final, so this
+-- freezes with the decision. Internal figure: the application withholds it from viewers who may not see cost.
+alter table project_variations add column if not exists estimated_cost_cents bigint check (estimated_cost_cents is null or estimated_cost_cents >= 0);
+
 -- ── project_variation_stages: the variation's own percentage schedule ───────
 create table if not exists project_variation_stages (
   id           uuid primary key default gen_random_uuid(),

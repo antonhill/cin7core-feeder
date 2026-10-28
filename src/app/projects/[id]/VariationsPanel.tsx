@@ -23,6 +23,7 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
+  const [estCost, setEstCost] = useState("");
   const [reason, setReason] = useState<Record<string, string>>({});
   const [price, setPrice] = useState<Record<string, string>>({});
 
@@ -83,11 +84,12 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
       {view.project.status === "ACTIVE" && (
         <Panel>
           <PanelTitle>Raise a variation</PanelTitle>
-          <div className="mt-4 grid gap-4 md:grid-cols-[1fr_2fr_1fr_auto] md:items-end">
+          <div className="mt-4 grid gap-4 md:grid-cols-[1fr_2fr_1fr_1fr_auto] md:items-end">
             <Input label="Title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="V001 – Additional Ventilation" />
             <Input label="Scope / description" value={description} onChange={(e) => setDescription(e.target.value)} />
             <Input label="Price (R, ex VAT)" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="480000" />
-            <Button disabled={working || !title.trim() || !amount.trim()} onClick={async () => { if (await run(() => raiseVariationAction(projectId, title, description, amount), "Variation raised as a DRAFT — the contract value is unchanged until a manager approves it.")) { setTitle(""); setDescription(""); setAmount(""); } }}>Raise draft</Button>
+            {isAdmin ? <Input label="Est. cost (R, internal)" value={estCost} onChange={(e) => setEstCost(e.target.value)} placeholder="optional" /> : <span />}
+            <Button disabled={working || !title.trim() || !amount.trim()} onClick={async () => { if (await run(() => raiseVariationAction(projectId, title, description, amount, estCost), "Variation raised as a DRAFT — the contract value is unchanged until a manager approves it.")) { setTitle(""); setDescription(""); setAmount(""); setEstCost(""); } }}>Raise draft</Button>
           </div>
         </Panel>
       )}
