@@ -10,6 +10,8 @@ import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { logActivity } from "@/lib/activity-log";
 import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
+import { isNewquipPocOrg } from "@/newquip/access";
+import { assertNewquipOrg } from "@/lib/projects/newquip-gate";
 import { goldenFixtureBaseline } from "@/lib/projects/baseline";
 import {
   approveClaim,
@@ -85,14 +87,16 @@ export async function getProjectAction(projectId: string): Promise<ActionResult<
  * create the fixture). Every mutating action above still enforces the role server-side; hiding a button is a
  * convenience, never the control.
  */
-export async function getViewerPermissionsAction(): Promise<ActionResult<{ canApprove: boolean }>> {
+export async function getViewerPermissionsAction(): Promise<ActionResult<{ canApprove: boolean; newquip: boolean }>> {
   try {
-    await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    // `newquip` shows the NewQuip-only tabs (Variations, Products & Fulfilment); every such server action re-checks it.
+    const newquip = isNewquipPocOrg(orgId);
     try {
       await requireOrgAdmin("approve in Projects");
-      return { ok: true, data: { canApprove: true } };
+      return { ok: true, data: { canApprove: true, newquip } };
     } catch {
-      return { ok: true, data: { canApprove: false } };
+      return { ok: true, data: { canApprove: false, newquip } };
     }
   } catch (e) {
     return { ok: false, error: message(e) };
@@ -225,6 +229,7 @@ export async function recalculateStaleDraftAction(projectId: string, claimId: st
 export async function raiseVariationAction(projectId: string, title: string, description: string, amountRands: string, estimatedCostRands = ""): Promise<ActionResult<{ variationId: string; code: string }>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    assertNewquipOrg(orgId);
     const db = createServiceRoleClient();
     if (isNegativeAmountInput(amountRands)) throw new Error(NEGATIVE_VARIATION_UNSUPPORTED);
     // An estimated cost is internal: only a manager may record one (a non-manager's value is ignored, not trusted).
@@ -240,6 +245,7 @@ export async function raiseVariationAction(projectId: string, title: string, des
 export async function repriceVariationAction(projectId: string, variationId: string, amountRands: string): Promise<ActionResult<null>> {
   try {
     const { orgId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    assertNewquipOrg(orgId);
     if (isNegativeAmountInput(amountRands)) throw new Error(NEGATIVE_VARIATION_UNSUPPORTED);
     await repriceVariation(createServiceRoleClient(), orgId, email ?? "unknown", projectId, variationId, randsToCents(amountRands));
     return { ok: true, data: null };
@@ -251,6 +257,7 @@ export async function repriceVariationAction(projectId: string, variationId: str
 export async function approveVariationAction(projectId: string, variationId: string): Promise<ActionResult<null>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    assertNewquipOrg(orgId);
     await requireOrgAdmin("approve a variation");
     const db = createServiceRoleClient();
     await approveVariation(db, orgId, email ?? "unknown", projectId, variationId);
@@ -264,6 +271,7 @@ export async function approveVariationAction(projectId: string, variationId: str
 export async function rejectVariationAction(projectId: string, variationId: string, reason: string): Promise<ActionResult<null>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    assertNewquipOrg(orgId);
     await requireOrgAdmin("reject a variation");
     const db = createServiceRoleClient();
     await rejectVariation(db, orgId, email ?? "unknown", projectId, variationId, reason);

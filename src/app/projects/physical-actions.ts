@@ -8,6 +8,7 @@
 import { requireModuleAccess } from "@/lib/authorization";
 import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
+import { assertNewquipOrg } from "@/lib/projects/newquip-gate";
 import { callerIsOrgAdmin, guardBillingScope } from "@/lib/projects/scope-access";
 import { buildPhysicalPort } from "@/lib/projects/physical-adapter";
 import { loadPhysicalStatus, type PhysicalPort } from "@/lib/projects/physical-store";
@@ -40,6 +41,7 @@ const NO_CIN7: PhysicalPort = {
 export async function getPhysicalStatusAction(projectId: string): Promise<PhysicalActionResult> {
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    assertNewquipOrg(orgId);
     const db = createServiceRoleClient();
     await guardBillingScope(db, orgId, projectId, await callerIsOrgAdmin());
     const section = async (id: string, label: string, scope: "BASE" | "VARIATION"): Promise<ProductsSection> => {

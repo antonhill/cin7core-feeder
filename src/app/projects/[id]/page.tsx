@@ -33,6 +33,7 @@ import {
 
 type ViewerPermission = "loading" | "member" | "admin";
 type Tab = "overview" | "stages" | "components" | "claims" | "variations" | "physical" | "profitability";
+const NEWQUIP_ONLY_TABS: Tab[] = ["variations", "physical"];
 const TABS: { value: Tab; label: string }[] = [
   { value: "overview", label: "Overview" },
   { value: "stages", label: "Stages" },
@@ -135,8 +136,9 @@ export default function ProjectDetailPage() {
   // Display only: every mutating action re-checks the owner/admin role on the server.
   // LOADING until known, so privileged controls (and the non-admin explanation) never flash; any failure => MEMBER (fail closed).
   const [perm, setPerm] = useState<ViewerPermission>("loading");
+  const [newquip, setNewquip] = useState(false); // NewQuip-only tabs (Variations, Products & Fulfilment); hidden until the server confirms
   useEffect(() => {
-    getViewerPermissionsAction().then((r) => setPerm(r.ok && r.data?.canApprove ? "admin" : "member"));
+    getViewerPermissionsAction().then((r) => { setPerm(r.ok && r.data?.canApprove ? "admin" : "member"); setNewquip(Boolean(r.ok && r.data?.newquip)); });
   }, []);
 
   /** Resolves true only when the action succeeded (forms use this to reset themselves; a failure keeps their input). */
@@ -202,7 +204,7 @@ export default function ProjectDetailPage() {
       )}
 
       <nav className="mt-6 inline-flex max-w-full gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1 shadow-sm" aria-label="Project sections">
-        {TABS.filter((t) => t.value !== "profitability" || perm === "admin").map((t) => {
+        {TABS.filter((t) => (t.value !== "profitability" || perm === "admin") && (!NEWQUIP_ONLY_TABS.includes(t.value) || newquip)).map((t) => {
           const count = t.value === "stages" ? view.stages.length : t.value === "claims" ? view.claims.length : t.value === "variations" ? view.variations.length : null;
           return (
             <button
@@ -423,10 +425,10 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
-      {tab === "physical" && <PhysicalPanel view={view} />}
+      {tab === "physical" && newquip && <PhysicalPanel view={view} />}
       {tab === "profitability" && perm === "admin" && <ProfitabilityPanel view={view} />}
 
-      {tab === "variations" && <VariationsPanel view={view} isAdmin={perm === "admin"} run={run} working={isWorking} />}
+      {tab === "variations" && newquip && <VariationsPanel view={view} isAdmin={perm === "admin"} run={run} working={isWorking} />}
 
       {tab === "claims" && (
         <div className="mt-6 space-y-6">

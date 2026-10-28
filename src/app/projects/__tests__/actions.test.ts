@@ -20,7 +20,10 @@ vi.mock("@/lib/projects/variation-store", () => ({
   raiseVariation: vi.fn(() => Promise.resolve({ variationId: "v1", code: "V001" })), repriceVariation: vi.fn(), approveVariation: vi.fn(), rejectVariation: vi.fn(),
 }));
 
+import { NEWQUIP_POC_ORG_IDS } from "@/newquip/access";
+
 const SESSION = { orgId: "org-session", userId: "u1", email: "u@x" };
+const NQ_SESSION = { ...SESSION, orgId: NEWQUIP_POC_ORG_IDS[0] }; // variations are a NewQuip-only capability
 const MODULE_DENIED = "You don't have access to this feature.";
 const NOT_ADMIN = "Only an org owner or admin can do that.";
 
@@ -83,16 +86,18 @@ describe("unauthorised approval is rejected", () => {
     expect(store.setOpeningCommitments).not.toHaveBeenCalled();
   });
   it("approving or rejecting a VARIATION needs the org-admin (manager) role", async () => {
+    vi.mocked(requireModuleAccess).mockResolvedValue(NQ_SESSION as never);
     expect(await actions.approveVariationAction("p1", "v1")).toEqual({ ok: false, error: NOT_ADMIN });
     expect((await actions.rejectVariationAction("p1", "v1", "no")).ok).toBe(false);
     expect(variationStore.approveVariation).not.toHaveBeenCalled();
     expect(variationStore.rejectVariation).not.toHaveBeenCalled();
   });
   it("raising and pricing a variation (estimator) does not need the admin role", async () => {
+    vi.mocked(requireModuleAccess).mockResolvedValue(NQ_SESSION as never);
     expect((await actions.raiseVariationAction("p1", "Additional Ventilation", "", "480000")).ok).toBe(true);
     expect((await actions.repriceVariationAction("p1", "v1", "500000")).ok).toBe(true);
     expect(requireOrgAdmin).not.toHaveBeenCalled();
-    expect(variationStore.raiseVariation).toHaveBeenCalledWith(expect.anything(), "org-session", "u@x", expect.objectContaining({ amountCents: 48_000_000 }));
+    expect(variationStore.raiseVariation).toHaveBeenCalledWith(expect.anything(), NEWQUIP_POC_ORG_IDS[0], "u@x", expect.objectContaining({ amountCents: 48_000_000 }));
   });
   it("recording only PHYSICAL progress does not need the admin role", async () => {
     const r = await actions.recordProgressAction("p1", "s1", "50", null, "");
@@ -105,9 +110,9 @@ describe("unauthorised approval is rejected", () => {
 
 describe("viewer permissions are display-only", () => {
   it("reports canApprove=true for an owner/admin and false (not an error) for a plain module user", async () => {
-    expect(await actions.getViewerPermissionsAction()).toEqual({ ok: true, data: { canApprove: true } });
+    expect(await actions.getViewerPermissionsAction()).toEqual({ ok: true, data: { canApprove: true, newquip: false } });
     vi.mocked(requireOrgAdmin).mockRejectedValue(new Error(NOT_ADMIN));
-    expect(await actions.getViewerPermissionsAction()).toEqual({ ok: true, data: { canApprove: false } });
+    expect(await actions.getViewerPermissionsAction()).toEqual({ ok: true, data: { canApprove: false, newquip: false } });
   });
   it("hiding the controls does not relax the server: a non-admin still cannot approve", async () => {
     vi.mocked(requireOrgAdmin).mockRejectedValue(new Error(NOT_ADMIN));

@@ -10,6 +10,7 @@ import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { logActivity } from "@/lib/activity-log";
 import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
+import { assertNewquipOrg } from "@/lib/projects/newquip-gate";
 import { amendVariationSchedule, createVariationBillingProject, listVariationStages, loadConsolidatedProject, saveDraftSchedule, type ConsolidatedProject } from "@/lib/projects/variation-billing-store";
 import { callerIsOrgAdmin } from "@/lib/projects/scope-access";
 import { scheduleFromPercents } from "@/lib/projects/variation-schedule";
@@ -31,6 +32,7 @@ const message = (e: unknown): string => (e instanceof Error ? e.message : "Unexp
 export async function getVariationBillingAction(projectId: string): Promise<VariationBillingResult<VariationBillingState>> {
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    assertNewquipOrg(orgId);
     const db = createServiceRoleClient();
     const admin = await callerIsOrgAdmin();
     const consolidated = await loadConsolidatedProject(db, orgId, projectId);
@@ -52,6 +54,7 @@ export async function getVariationBillingAction(projectId: string): Promise<Vari
 export async function saveVariationScheduleAction(projectId: string, variationId: string, rows: SchedulePercentRow[]): Promise<VariationBillingResult<null>> {
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    assertNewquipOrg(orgId);
     await saveDraftSchedule(createServiceRoleClient(), orgId, projectId, variationId, scheduleFromPercents(rows));
     return { ok: true, data: null };
   } catch (e) {
@@ -63,6 +66,7 @@ export async function saveVariationScheduleAction(projectId: string, variationId
 export async function startVariationBillingAction(projectId: string, variationId: string, products: Array<{ sku: string; description: string; quantity: number }> = []): Promise<VariationBillingResult<{ billingProjectId: string; created: boolean }>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    assertNewquipOrg(orgId);
     await requireOrgAdmin("start variation billing");
     const db = createServiceRoleClient();
     const r = await createVariationBillingProject(db, { isManager: true }, email ?? "unknown", { orgId, projectId, variationId, products });
@@ -77,6 +81,7 @@ export async function startVariationBillingAction(projectId: string, variationId
 export async function amendVariationScheduleAction(projectId: string, variationId: string, rows: SchedulePercentRow[], reason: string): Promise<VariationBillingResult<null>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    assertNewquipOrg(orgId);
     await requireOrgAdmin("amend a variation billing schedule");
     const db = createServiceRoleClient();
     await amendVariationSchedule(db, { isManager: true }, email ?? "unknown", { orgId, projectId, variationId, stages: scheduleFromPercents(rows), reason });
