@@ -150,7 +150,7 @@ export async function getCin7SaleCreationStatusAction(projectId: string): Promis
 /** Manager only, flag-gated, confirmation-gated. Creates ONE Cin7 Advanced Sale for the project (at most once; see the store). */
 export async function createCin7SaleAction(
   projectId: string,
-  input: { confirmation: string; customerName: string; location: string; revenueAccount: string; physicalLines: CreationProductInput[] },
+  input: { confirmation: string; customerName: string; location: string; revenueAccount: string; cin7TaxRule: string; physicalLines: CreationProductInput[] },
 ): Promise<Cin7ActionResult<{ state: string; message: string; saleNumber: string | null; linked: boolean }>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);

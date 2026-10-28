@@ -99,6 +99,8 @@ async function verifyAndLink(db: Db, port: SaleCreationPort, orgId: string, row:
 
 export interface CreateInput {
   orgId: string; projectId: string; instanceId: string; confirmation: string; customerName: string; location: string; revenueAccount: string;
+  /** The tax rule's NAME as Cin7 knows it (e.g. "Standard Rate Sales"). The project's own tax_rule is a Toolbox label and is never sent to Cin7. The VAT RATE still comes from the project. */
+  cin7TaxRule: string;
   /** Physical products for the Sale (SKU + quantity; always created at R0). May be empty only for a commercial-only Sale. */
   physicalLines: CreationProductInput[]; now?: Date;
 }
@@ -131,10 +133,10 @@ export async function createSaleForProject(db: Db, port: SaleCreationPort, gates
   const st = await db.from("project_stages").select("name, value_cents, sort_order").eq("org_id", input.orgId).eq("project_id", input.projectId);
   if (st.error) fail(st.error.message);
   const stages = ((st.data ?? []) as Array<{ name: string; value_cents: number; sort_order: number }>).sort((a, b) => a.sort_order - b.sort_order).map((s) => ({ name: s.name, valueCents: s.value_cents }));
-  if (!project.tax_rule) fail("The project has no tax rule; a Sale cannot be planned.");
+  if (!input.cin7TaxRule.trim()) fail("Enter the Cin7 tax rule name (it must match a tax rule in Cin7 exactly).");
 
   const built = buildCreationPlan({
-    projectRef: project.project_reference, role, customerName: input.customerName, location: input.location, taxRule: project.tax_rule, taxRateBps: project.tax_rate_bps,
+    projectRef: project.project_reference, role, customerName: input.customerName, location: input.location, taxRule: input.cin7TaxRule, taxRateBps: project.tax_rate_bps,
     revenueAccount: input.revenueAccount, contractCents: project.original_contract_cents, stages, physicalLines: input.physicalLines, saleOrderDate: todayStr(now),
   });
   if (!built.ok) fail(built.error);

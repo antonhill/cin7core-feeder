@@ -122,7 +122,7 @@ class FakePort implements SaleCreationPort {
 }
 
 let db: FakeDb; let projectId: string; let port: FakePort;
-const baseInput = () => ({ orgId: ORG, projectId, instanceId: "inst-1", confirmation: CREATE_CONFIRMATION_TEXT, customerName: "Test Customer", location: "MSTR", revenueAccount: "200", physicalLines: [{ sku: "NQ2886", name: "Bracket", quantity: 2 }], now: new Date("2026-10-28T10:00:00Z") });
+const baseInput = () => ({ orgId: ORG, projectId, instanceId: "inst-1", confirmation: CREATE_CONFIRMATION_TEXT, customerName: "Test Customer", location: "MSTR", revenueAccount: "200", cin7TaxRule: "Standard Rate Sales", physicalLines: [{ sku: "NQ2886", name: "Bracket", quantity: 2 }], now: new Date("2026-10-28T10:00:00Z") });
 const create = (over: Partial<WriteGates> = {}, o: Partial<ReturnType<typeof baseInput>> = {}) => createSaleForProject(db as never, port, { ...ON, ...over }, "mgr@x", { ...baseInput(), ...o });
 const row = () => db.rows("project_cin7_sale_creations")[0] as Record<string, unknown> | undefined;
 
@@ -278,6 +278,23 @@ describe("reconciliation (read-only)", () => {
     await db.from("project_cin7_sale_creations").insert({ org_id: ORG, project_id: projectId, instance_id: "i", sale_role: "BASE", external_id: plan.plan.externalId, request_fingerprint: plan.fingerprint, creation_state: "PENDING", attempt_count: 1, plan: plan.plan, contract_ex_vat_cents: plan.plan.contractCents, progress: "NONE", requested_by_email: "m", requested_at: "2026-10-28T08:00:00Z" });
     expect(await rec()).toMatchObject({ state: "FAILED_CONFIRMED_NO_WRITE" });
     expect((await loadCreation(db as never, ORG, projectId))?.last_error_code).toBe("RECONCILED_NO_SALE");
+  });
+});
+
+describe("Cin7 tax rule name", () => {
+  it("the Sale carries the Cin7 tax rule name entered by the manager, never the project's Toolbox label", async () => {
+    db.rows("projects")[0].tax_rule = "VAT 15% (NewQuip POC)"; // the label NewQuip projects actually carry
+    const r = await create({}, { cin7TaxRule: "Standard Rate Sales" });
+    expect(r.state).toBe("RECONCILED");
+    expect(port.creates[0].header.taxRule).toBe("Standard Rate Sales");
+    expect(port.creates[0].lines.every((l) => l.taxRule === "Standard Rate Sales")).toBe(true);
+    expect(port.creates[0].charges.every((c) => c.taxRule === "Standard Rate Sales")).toBe(true);
+    expect(JSON.stringify(port.creates)).not.toMatch(/NewQuip POC/);
+    expect(db.rows("project_cin7_sale_links")[0].tax_rule).toBe("Standard Rate Sales");
+  });
+  it("a blank Cin7 tax rule is refused before anything is stored or sent", async () => {
+    expect(await err(create({}, { cin7TaxRule: "  " }))).toMatch(/Cin7 tax rule name/);
+    expect(port.creates).toHaveLength(0); expect(row()).toBeUndefined();
   });
 });
 
