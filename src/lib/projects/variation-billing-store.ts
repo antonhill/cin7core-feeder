@@ -11,7 +11,9 @@ import type { ProjectView } from "./project-view";
 import { scheduleToStages, validateVariationSchedule, type ScheduleStageInput } from "./variation-schedule";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
-const fail = (m: string): never => { throw new Error(m); };
+function fail(message: string): never {
+  throw new Error(message);
+}
 
 export interface VariationStageRow { id: string; variation_id: string; sort_order: number; name: string; bps: number }
 

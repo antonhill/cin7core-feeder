@@ -151,6 +151,19 @@ export interface Cin7SaleOrderLine {
   Name?: string;
   Quantity?: number;
   BackorderQuantity?: number;
+  /** Unit price ex tax - the Advanced Sale creation read-back requires physical lines to be R0. */
+  Price?: number;
+  Total?: number;
+}
+
+/** An Additional Charge on the Sale ORDER (how the contract value is carried). */
+export interface Cin7SaleOrderCharge {
+  Description?: string;
+  Quantity?: number;
+  Price?: number;
+  Tax?: number;
+  Total?: number;
+  TaxRule?: string;
 }
 
 export interface Cin7SaleOrder {
@@ -158,6 +171,11 @@ export interface Cin7SaleOrder {
   /** Observed on the P5 precheck: the Order's own status, e.g. AUTHORISED. */
   Status?: string;
   Lines?: Cin7SaleOrderLine[];
+  AdditionalCharges?: Cin7SaleOrderCharge[];
+  /** Order totals as Cin7 holds them. */
+  TotalBeforeTax?: number;
+  Tax?: number;
+  Total?: number;
 }
 
 /** A Pick or Pack line — the ACTUAL quantity picked/packed so far, distinct from Order.Lines[]'s planned quantity (same "planned vs actual" split already used for Assembly Builds' OrderLines vs PickLines). Location/Bin/BatchSN confirmed present live 2026-07-09 — where a completed pick actually came from, an audit trail (not forward guidance — see report_order_fulfillment_lines' cross-reference against product_availability for "where to pick a still-outstanding line from" instead). `Box` (Pack lines only, per Cin7's own Apiary spec) is the box label a packed line was assigned to — the same label the Ship Line's `Box`/`Boxes` field must reference when marking the order shipped. */
@@ -270,6 +288,9 @@ export interface Cin7SaleDetail {
   /** Observed on the P5 read-only precheck: "Advanced Sale" / "Simple Sale"; the sale-level tax rule name. */
   Type?: string;
   TaxRule?: string;
+  /** Customer NAME and our reconciliation key, both present on /sale?ID= (ExternalID confirmed in sale-quote-write.ts). */
+  Customer?: string;
+  ExternalID?: string | null;
   Order?: Cin7SaleOrder;
   Fulfilments?: Cin7SaleFulfilment[];
   Attachments?: Cin7SaleAttachment[];

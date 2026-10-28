@@ -72,6 +72,12 @@
       "file": "src/cin7/sale-invoice-write.ts",
       "function": "createSaleProgressInvoice",
       "classification": "NON_IDEMPOTENT_CREATE"
+    },
+    {
+      "file": "src/cin7/sale-order-write.ts",
+      "function": "createAdvancedSale",
+      "classification": "NON_IDEMPOTENT_CREATE",
+      "note": "Two POSTs (header, order), each sent once via nonIdempotentCreate. Reconciled by the stable ExternalID (src/lib/projects/cin7-sale-creation-store.ts reconcileSaleCreation); an orphan header is never auto-resumed."
     }
   ],
   "exemptFunctions": [

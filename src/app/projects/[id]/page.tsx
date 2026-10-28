@@ -15,6 +15,7 @@ import { formatBps, formatCents, type ProjectView, type StageView } from "@/lib/
 import { VariationsPanel } from "./VariationsPanel";
 import { OpeningCommitmentsPanel } from "./OpeningCommitmentsPanel";
 import { Cin7PostingPanel } from "./Cin7PostingPanel";
+import { Cin7SaleCreationPanel } from "./Cin7SaleCreationPanel";
 import {
   approveClaimAction,
   cancelDraftClaimAction,
@@ -416,6 +417,7 @@ export default function ProjectDetailPage() {
       {tab === "claims" && (
         <div className="mt-6 space-y-6">
           <OpeningCommitmentsPanel key={`${view.openingCommitments.length}-${view.claims.length}`} view={view} isAdmin={perm === "admin"} run={run} working={isWorking} />
+          <Cin7SaleCreationPanel view={view} run={run} working={isWorking} />
           <Cin7PostingPanel view={view} run={run} working={isWorking} />
           <Panel>
             <div className="flex flex-wrap items-start justify-between gap-3">

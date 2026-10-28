@@ -26,6 +26,9 @@ const sources = DIRS.flatMap((d) => files(join(ROOT, d)));
  * only reachable through cin7-posting-store.ts's flag/manager/state gates.
  */
 const CIN7_ADAPTER = "src/lib/projects/cin7-adapter.ts";
+/** DELIBERATE EDIT (Advanced Sale creation slice): the second, and only other, adapter - it implements the Sale-creation store's injected port. */
+const CIN7_SALE_CREATION_ADAPTER = "src/lib/projects/cin7-sale-creation-adapter.ts";
+const ADAPTERS = [CIN7_ADAPTER, CIN7_SALE_CREATION_ADAPTER];
 
 describe("Projects POC has no Cin7 / external write path", () => {
   it("found source files to check", () => expect(sources.length).toBeGreaterThan(5));
@@ -35,7 +38,7 @@ describe("Projects POC has no Cin7 / external write path", () => {
     const visit = (n: ts.Node) => {
       if (ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) {
         const spec = (n.moduleSpecifier as ts.StringLiteral | undefined)?.text ?? "";
-        const isAdapter = file.replace(ROOT + "/", "") === CIN7_ADAPTER;
+        const isAdapter = ADAPTERS.includes(file.replace(ROOT + "/", ""));
         const re = isAdapter ? /xero|lemonsqueezy|resend|@\/sync|@\/import/ : /(^|\/)cin7(\/|$)|xero|lemonsqueezy|resend|@\/sync|@\/import/;
         if (re.test(spec)) bad.push(`import ${spec}`);
       }
@@ -47,16 +50,16 @@ describe("Projects POC has no Cin7 / external write path", () => {
   });
   it("only the adapter imports Cin7, and the store/rules/actions reach Cin7 solely through it", () => {
     const importers = sources.filter((f) => /from "@\/cin7\//.test(readFileSync(f, "utf8"))).map((f) => f.replace(ROOT + "/", ""));
-    expect(importers).toEqual([CIN7_ADAPTER]);
+    expect(importers.sort()).toEqual([...ADAPTERS].sort());
   });
   it("no source mentions the invoice-create endpoint", () => {
     for (const f of sources) expect(readFileSync(f, "utf8")).not.toMatch(/sale\/invoice|\/saleInvoice|nonIdempotentCreate/i);
   });
 });
 
-describe('src/app/projects/actions.ts honours the "use server" rule', () => {
+describe.each(["src/app/projects/actions.ts", "src/app/projects/cin7-actions.ts", "src/app/projects/variation-billing-actions.ts"])('%s honours the "use server" rule', (rel) => {
   it("exports only async functions and erased interfaces", () => {
-    const file = join(ROOT, "src/app/projects/actions.ts");
+    const file = join(ROOT, rel);
     const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
     const offenders: string[] = [];
     sf.forEachChild((n) => {

@@ -8,6 +8,7 @@ const UNIQUE: Record<string, string[][]> = {
   project_variations: [["project_id", "code"]],
   project_opening_commitments: [["project_id", "stage_id"]],
   project_cin7_sale_links: [["project_id"], ["org_id", "cin7_sale_id"]],
+  project_cin7_sale_creations: [["project_id"], ["org_id", "external_id"]],
   project_variation_stages: [["variation_id", "sort_order"], ["variation_id", "name"]],
   project_claim_cin7_postings: [["claim_id"], ["org_id", "idempotency_key"], ["org_id", "memo"]],
 };
