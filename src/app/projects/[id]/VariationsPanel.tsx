@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
+import { NEGATIVE_VARIATION_UNSUPPORTED, isNegativeAmountInput } from "@/lib/projects/variations";
 import { VariationBillingPanel } from "./VariationBillingPanel";
 import { approveVariationAction, raiseVariationAction, rejectVariationAction, repriceVariationAction } from "../actions";
 
@@ -91,6 +92,7 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
             {isAdmin ? <Input label="Est. cost (R, internal)" value={estCost} onChange={(e) => setEstCost(e.target.value)} placeholder="optional" /> : <span />}
             <Button disabled={working || !title.trim() || !amount.trim()} onClick={async () => { if (await run(() => raiseVariationAction(projectId, title, description, amount, estCost), "Variation raised as a DRAFT — the contract value is unchanged until a manager approves it.")) { setTitle(""); setDescription(""); setAmount(""); setEstCost(""); } }}>Raise draft</Button>
           </div>
+          {isNegativeAmountInput(amount) && <div className="mt-3"><Alert tone="warning">{NEGATIVE_VARIATION_UNSUPPORTED}</Alert></div>}
         </Panel>
       )}
 

@@ -6,7 +6,10 @@ import "server-only";
 // reporting is a read over the parent and its billing projects. Nothing here creates or changes a Cin7 document.
 import type { createServiceRoleClient } from "@/supabase/server";
 import { checkSchedule } from "./claim-engine";
+import { NEGATIVE_VARIATION_UNSUPPORTED } from "./variations";
 import { loadProjectView } from "./project-store";
+import { listPostings } from "./cin7-posting-store";
+import { loadCreation } from "./cin7-sale-creation-store";
 import type { ProjectView } from "./project-view";
 import { scheduleToStages, validateVariationSchedule, type ScheduleStageInput } from "./variation-schedule";
 
@@ -78,6 +81,8 @@ export async function createVariationBillingProject(
   if (!gates.isManager) fail("Only a manager (org owner/admin) can start variation billing.");
   const v = await loadVariation(db, input.orgId, input.projectId, input.variationId);
   if (v.status !== "APPROVED") fail(`Only an APPROVED variation can be billed (this one is ${v.status}).`);
+  if (v.amount_cents < 0) fail(NEGATIVE_VARIATION_UNSUPPORTED);
+  if (!(v.amount_cents > 0)) fail("A variation must have a positive value to be billed.");
   const existing = await db.from("projects").select("id").eq("org_id", input.orgId).eq("variation_id", input.variationId).maybeSingle();
   if (existing.error) fail(existing.error.message);
   if (existing.data) return { billingProjectId: (existing.data as { id: string }).id, created: false };
@@ -127,6 +132,8 @@ export interface ScopeSummary {
   remainingCents: number;
 }
 export interface ConsolidatedProject {
+  /** Why the project cannot be closed yet (see closureBlockers). */
+  closureBlockers: string[];
   base: ProjectView;
   scopes: ScopeSummary[];
   /** Approved variations that have no billing project yet (not yet billable). */
@@ -166,7 +173,51 @@ export async function loadConsolidatedProject(db: Db, orgId: string, projectId: 
   const unbilledApprovedVariations = base.variations.filter((v) => v.status === "APPROVED" && !billed.has(v.id)).map((v) => ({ id: v.id, code: v.code, amountCents: v.amount_cents }));
   const sum = (f: (s: ScopeSummary) => number) => scopes.reduce((n, s) => n + f(s), 0);
   return {
-    base, scopes, unbilledApprovedVariations,
+    base, scopes, unbilledApprovedVariations, closureBlockers: await closureBlockers(db, orgId, projectId),
     totals: { contractCents: sum((s) => s.contractCents), earnedCents: sum((s) => s.earnedCents), committedCents: sum((s) => s.committedCents), claimableCents: sum((s) => s.claimableCents), remainingCents: sum((s) => s.remainingCents) },
   };
+}
+
+// ── closure blockers (READ-ONLY mirror of the database rule in migration 0106) ───────────────
+
+const TERMINAL = new Set(["COMPLETED", "CLOSED", "CANCELLED"]);
+
+/** What is still unresolved on ONE project: unfinished claims, approved claims without a Cin7 invoice, unreconciled/uncertain/mismatched postings, an unfinished Sale creation. */
+export async function unresolvedItems(db: Db, orgId: string, projectId: string): Promise<string[]> {
+  const out: string[] = [];
+  const view = await loadProjectView(db, orgId, projectId);
+  const postings = await listPostings(db, orgId, projectId);
+  const invoiced = new Set(postings.filter((p) => p.posting_state === "CREATED" || p.posting_state === "RECONCILED").map((p) => p.claim_id));
+  for (const c of view?.claims ?? []) {
+    if (["DRAFT", "READY_FOR_APPROVAL", "CIN7_PENDING", "FAILED_UNCERTAIN"].includes(c.status)) out.push(`claim ${c.claim_number} is ${c.status}`);
+    if (c.status === "APPROVED" && !invoiced.has(c.id)) out.push(`approved claim ${c.claim_number} has no Cin7 invoice`);
+  }
+  for (const p of postings) {
+    if (["PENDING", "FAILED_UNCERTAIN", "CREATED"].includes(p.posting_state) || p.last_error_code === "AMOUNT_MISMATCH") {
+      out.push(`Cin7 posting ${p.cin7_invoice_number ?? p.memo} is ${p.posting_state}${p.last_error_code === "AMOUNT_MISMATCH" ? " with an amount mismatch" : ""}`);
+    }
+  }
+  const cr = await loadCreation(db, orgId, projectId);
+  if (cr && ["PENDING", "CREATED", "FAILED_UNCERTAIN"].includes(cr.creation_state)) out.push(`Cin7 Sale creation is ${cr.creation_state}`);
+  return out.sort();
+}
+
+/**
+ * Why a project cannot be completed/closed/cancelled yet, because of its variation billing scopes (a parent) or its own unresolved items
+ * (a variation scope). Empty = nothing blocks. The database enforces the same rule on the status change itself.
+ */
+export async function closureBlockers(db: Db, orgId: string, projectId: string): Promise<string[]> {
+  const me = await db.from("projects").select("*").eq("org_id", orgId).eq("id", projectId).maybeSingle();
+  if (me.error) fail(me.error.message);
+  const self = me.data as { billing_scope?: string; project_reference: string } | null;
+  if (!self) fail("Project not found.");
+  const out: string[] = [];
+  const kids = await db.from("projects").select("*").eq("org_id", orgId).eq("parent_project_id", projectId);
+  if (kids.error && !/does not exist|schema cache|column/i.test(kids.error.message)) fail(kids.error.message);
+  for (const k of (kids.data ?? []) as Array<{ id: string; project_reference: string; status: string }>) {
+    if (!TERMINAL.has(k.status)) out.push(`variation scope ${k.project_reference} is still ${k.status}`);
+    for (const u of await unresolvedItems(db, orgId, k.id)) out.push(`${k.project_reference}: ${u}`);
+  }
+  if (self.billing_scope === "VARIATION") out.push(...(await unresolvedItems(db, orgId, projectId)));
+  return out;
 }

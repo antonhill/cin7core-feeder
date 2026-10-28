@@ -65,7 +65,7 @@ export function buildCreationPlan(i: CreationInputs): { ok: true; plan: Creation
   if (!i.revenueAccount.trim()) return { ok: false, error: "The Cin7 revenue account code is required." };
   if (!Number.isInteger(i.taxRateBps) || i.taxRateBps < 0 || i.taxRateBps > 10_000) return { ok: false, error: "The project's tax rate is not valid." };
   if (!isDate(i.saleOrderDate)) return { ok: false, error: "The Sale date is not a valid YYYY-MM-DD date." };
-  if (!Number.isSafeInteger(i.contractCents) || i.contractCents <= 0) return { ok: false, error: "The contract value must be a positive whole number of cents." };
+  if (!Number.isSafeInteger(i.contractCents) || i.contractCents <= 0) return { ok: false, error: i.contractCents < 0 ? "A negative contract value is not supported: Toolbox never creates a negative Sale or a credit note." : "The contract value must be a positive whole number of cents." };
 
   const stages = i.stages.filter((s) => s.valueCents !== 0); // a zero-value stage carries nothing to bill
   if (stages.length === 0) return { ok: false, error: "The project has no billable stage value." };

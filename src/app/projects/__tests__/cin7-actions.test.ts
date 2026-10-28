@@ -10,6 +10,7 @@ import { POST_CONFIRMATION_TEXT } from "@/lib/projects/cin7-posting";
 
 vi.mock("@/lib/authorization", () => ({ requireModuleAccess: vi.fn() }));
 vi.mock("@/lib/require-org-admin", () => ({ requireOrgAdmin: vi.fn() }));
+vi.mock("@/lib/projects/scope-access", async (orig) => ({ ...(await orig<typeof import("@/lib/projects/scope-access")>()), guardBillingScope: vi.fn(() => Promise.resolve()) }));
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: vi.fn(() => ({ __db: true })) }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: vi.fn(() => Promise.resolve()) }));
 vi.mock("@/lib/projects/cin7-adapter", () => ({ buildCin7Port: vi.fn(() => ({ __port: true })), singleActiveInstanceId: vi.fn(() => Promise.resolve("inst")) }));

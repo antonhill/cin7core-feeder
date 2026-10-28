@@ -5,6 +5,7 @@
 // This file may export ONLY async functions and erased interfaces ("use server" rule in CLAUDE.md).
 
 import { requireModuleAccess } from "@/lib/authorization";
+import { callerIsOrgAdmin, guardBillingScope } from "@/lib/projects/scope-access";
 import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { buildPhysicalPort } from "@/lib/projects/physical-adapter";
@@ -22,6 +23,7 @@ export async function getPhysicalStatusAction(projectId: string): Promise<Physic
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
     const db = createServiceRoleClient();
+    await guardBillingScope(db, orgId, projectId, await callerIsOrgAdmin());
     const link = await loadSaleLink(db, orgId, projectId).catch(() => null);
     if (!link) return { ok: true, data: { linked: false } };
     const r = await loadPhysicalStatus(db, buildPhysicalPort(db, orgId, link.instance_id), { orgId, projectId });

@@ -54,7 +54,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working }: { view: P
             <TBody>
               {c.scopes.map((s) => (
                 <TR key={s.projectId}>
-                  <TD>{s.scope === "BASE" ? "Original contract" : <Link className="underline" href={`/projects/${s.projectId}`}>{s.variationCode} billing</Link>}</TD>
+                  <TD>{s.scope === "BASE" ? "Original contract" : isAdmin ? <Link className="underline" href={`/projects/${s.projectId}`}>{s.variationCode} billing</Link> : `${s.variationCode} variation`}</TD>
                   <TD align="right" className="whitespace-nowrap tabular-nums">{formatCents(s.contractCents)}</TD>
                   <TD align="right" className="whitespace-nowrap tabular-nums">{formatCents(s.earnedCents)}</TD>
                   <TD align="right" className="whitespace-nowrap tabular-nums">{formatCents(s.committedCents)}</TD>
@@ -73,6 +73,11 @@ export function VariationBillingPanel({ view, isAdmin, run, working }: { view: P
           <Alert tone="warning">Approved but not yet billable (no billing started): {c.unbilledApprovedVariations.map((v) => `${v.code} ${formatCents(v.amountCents)}`).join(", ")}. They are in the revised contract value but not in the billable totals above.</Alert>
         )}
       </Panel>
+
+      {isAdmin && c.closureBlockers.length > 0 && (
+        <Alert tone="info">This project cannot be completed or closed yet: {c.closureBlockers.join("; ")}.</Alert>
+      )}
+      <Alert tone="info">Negative variations (credits, omissions, cancellations) are not supported: Toolbox never creates a credit note or a negative Sale. Handle a reduction in scope manually in Cin7.</Alert>
 
       {variations.length === 0 ? <p className="text-sm text-slate-600">No variations to bill.</p> : variations.map((v) => {
         const sched = state.schedules[v.id];
@@ -112,7 +117,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working }: { view: P
             {v.status === "APPROVED" && (
               <div className="mt-4">
                 {billingId ? (
-                  <Link className="text-sm underline" href={`/projects/${billingId}`}>Open the {v.code} billing project (claims, progress, Cin7 Sale link)</Link>
+                  isAdmin ? <Link className="text-sm underline" href={`/projects/${billingId}`}>Open the {v.code} billing scope (claims, progress, Cin7 Sale link)</Link> : <span className="text-sm text-slate-600">Billing for {v.code} is active; a manager operates it.</span>
                 ) : isAdmin ? (
                   <Button disabled={working || legacy} onClick={() => act(() => startVariationBillingAction(projectId, v.id), `Started billing for ${v.code}. Link its Cin7 Sale from the billing project.`)}>Start variation billing</Button>
                 ) : <span className="text-xs text-slate-500">A manager starts variation billing.</span>}

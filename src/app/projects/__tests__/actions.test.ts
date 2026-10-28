@@ -7,6 +7,7 @@ import * as variationStore from "@/lib/projects/variation-store";
 
 vi.mock("@/lib/authorization", () => ({ requireModuleAccess: vi.fn() }));
 vi.mock("@/lib/require-org-admin", () => ({ requireOrgAdmin: vi.fn() }));
+vi.mock("@/lib/projects/scope-access", async (orig) => ({ ...(await orig<typeof import("@/lib/projects/scope-access")>()), guardBillingScope: vi.fn(() => Promise.resolve()) }));
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: vi.fn(() => ({ __db: true })) }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: vi.fn(() => Promise.resolve()) }));
 vi.mock("@/lib/projects/project-store", () => ({
@@ -96,7 +97,8 @@ describe("unauthorised approval is rejected", () => {
   it("recording only PHYSICAL progress does not need the admin role", async () => {
     const r = await actions.recordProgressAction("p1", "s1", "50", null, "");
     expect(r.ok).toBe(true);
-    expect(requireOrgAdmin).not.toHaveBeenCalled();
+    // the role is consulted only to decide who may operate an internal billing scope; physical progress itself never requires it
+    expect(requireOrgAdmin).not.toHaveBeenCalledWith("approve commercial completion");
     expect(store.recordProgress).toHaveBeenCalled();
   });
 });

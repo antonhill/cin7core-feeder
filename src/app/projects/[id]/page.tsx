@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { PROJECTS_MODULE } from "@/app/module-nav";
@@ -110,6 +110,7 @@ function LegendDot({ className, label, value }: { className: string; label: stri
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [view, setView] = useState<ProjectView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -122,6 +123,8 @@ export default function ProjectDetailPage() {
   function load() {
     startLoading(async () => {
       const res = await getProjectAction(id);
+      // An internal variation billing scope is not for ordinary users: send them to the project it belongs to.
+      if (!res.ok && res.redirectTo) return router.replace(`/projects/${res.redirectTo}`);
       if (!res.ok) return setError(res.error ?? "Unknown error");
       setError(null);
       setView(res.data ?? null);

@@ -9,6 +9,7 @@ import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { logActivity } from "@/lib/activity-log";
 import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
+import { guardBillingScope } from "@/lib/projects/scope-access";
 import { cin7WritesEnabled } from "@/lib/projects/write-flag";
 import { isNewquipPocOrg } from "@/newquip/access";
 import { buildCin7Port, singleActiveInstanceId } from "@/lib/projects/cin7-adapter";
@@ -52,6 +53,7 @@ export interface Cin7PostingStatus {
 export async function getCin7PostingStatusAction(projectId: string): Promise<Cin7ActionResult<Cin7PostingStatus>> {
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const db = createServiceRoleClient();
     const link = await loadSaleLink(db, orgId, projectId).catch(() => null); // deploy-order safety until migration 0104 exists
     return { ok: true, data: { gates: await gatesFor(orgId), link, postings: await listPostings(db, orgId, projectId) } };
@@ -64,6 +66,7 @@ export async function getCin7PostingStatusAction(projectId: string): Promise<Cin
 export async function linkCin7SaleAction(projectId: string, cin7SaleId: string, revenueAccount: string): Promise<Cin7ActionResult<SaleLinkRow>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const gates = await gatesFor(orgId);
     const db = createServiceRoleClient();
     const instanceId = await singleActiveInstanceId(db, orgId);
@@ -79,6 +82,7 @@ export async function linkCin7SaleAction(projectId: string, cin7SaleId: string, 
 export async function postClaimToCin7Action(projectId: string, claimId: string, confirmation: string): Promise<Cin7ActionResult<{ state: string; message: string; invoiceNumber: string | null }>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const gates = await gatesFor(orgId);
     const db = createServiceRoleClient();
     const link = await loadSaleLink(db, orgId, projectId);
@@ -95,6 +99,7 @@ export async function postClaimToCin7Action(projectId: string, claimId: string, 
 export async function reconcileClaimPostingAction(projectId: string, claimId: string): Promise<Cin7ActionResult<{ state: string; message: string }>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const gates = await gatesFor(orgId);
     const db = createServiceRoleClient();
     const link = await loadSaleLink(db, orgId, projectId);
@@ -127,6 +132,7 @@ const CHARGE_KEYS = new Set(["delivery", "installation", "concrete_slat_delivery
 export async function getCin7SaleCreationStatusAction(projectId: string): Promise<Cin7ActionResult<Cin7SaleCreationStatus>> {
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const db = createServiceRoleClient();
     const p = await db.from("projects").select("baseline_snapshot").eq("org_id", orgId).eq("id", projectId).maybeSingle();
     if (p.error) throw new Error(p.error.message);
@@ -146,6 +152,7 @@ export async function createCin7SaleAction(
 ): Promise<Cin7ActionResult<{ state: string; message: string; saleNumber: string | null; linked: boolean }>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const gates = await gatesFor(orgId);
     const db = createServiceRoleClient();
     const instanceId = await singleActiveInstanceId(db, orgId);
@@ -161,6 +168,7 @@ export async function createCin7SaleAction(
 export async function reconcileCin7SaleCreationAction(projectId: string): Promise<Cin7ActionResult<{ state: string; message: string; linked: boolean }>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const gates = await gatesFor(orgId);
     const db = createServiceRoleClient();
     const existing = await loadCreation(db, orgId, projectId);
