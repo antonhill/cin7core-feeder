@@ -9,6 +9,7 @@ import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { NEGATIVE_VARIATION_UNSUPPORTED, isNegativeAmountInput } from "@/lib/projects/variations";
+import { ConsolidatedReportPanel } from "./ConsolidatedReportPanel";
 import { VariationBillingPanel } from "./VariationBillingPanel";
 import { approveVariationAction, raiseVariationAction, rejectVariationAction, repriceVariationAction } from "../actions";
 
@@ -39,6 +40,8 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
           </div>
         ))}
       </div>
+
+      <ConsolidatedReportPanel view={view} />
 
       <Panel>
         <PanelTitle>Variations</PanelTitle>
