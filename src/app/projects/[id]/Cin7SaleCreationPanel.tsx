@@ -25,6 +25,7 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
   const [customer, setCustomer] = useState("");
   const [location, setLocation] = useState("");
   const [account, setAccount] = useState("");
+  const [taxRule, setTaxRule] = useState("Standard Rate Sales");
   const [lines, setLines] = useState<Line[] | null>(null);
   const [typed, setTyped] = useState("");
   const [p0, setP0] = useState<P0Report | null>(null);
@@ -41,7 +42,7 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
     run(async () => { const r = await fn(); if (r.ok) setNote((r.data as { message?: string } | undefined)?.message ?? null); load(); return r; });
   const rows = lines ?? [];
   const parsed = rows.map((l) => ({ sku: l.sku.trim(), name: l.name.trim(), quantity: Number(l.quantity) }));
-  const canCreate = gates.isManager && gates.writesEnabled && !working && !creation && customer.trim() && location.trim() && account.trim() && typed === CREATE_CONFIRMATION_TEXT
+  const canCreate = gates.isManager && gates.writesEnabled && !working && !creation && customer.trim() && location.trim() && account.trim() && taxRule.trim() && typed === CREATE_CONFIRMATION_TEXT
     && parsed.every((l) => l.sku && Number.isFinite(l.quantity) && l.quantity > 0);
 
   return (
@@ -66,10 +67,11 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
         </div>
       ) : (
         <div className="mt-4 space-y-3">
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-4">
             <Input label="Cin7 customer name (must already exist)" value={customer} onChange={(e) => setCustomer(e.target.value)} />
             <Input label="Cin7 location" value={location} onChange={(e) => setLocation(e.target.value)} />
             <Input label="Revenue account code" value={account} onChange={(e) => setAccount(e.target.value)} />
+            <Input label="Cin7 tax rule name" value={taxRule} onChange={(e) => setTaxRule(e.target.value)} />
           </div>
           <p className="text-sm font-medium text-slate-800">Physical products (quantity only; always created at R0)</p>
           {rows.map((l, i) => (
@@ -89,12 +91,12 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
               <Button size="sm" variant="secondary" disabled={p0Busy || working || !gates.isManager} onClick={async () => {
                 setP0Busy(true); setP0Error(null);
                 const r = await runP0ChecklistAction(projectId, {
-                  customerName: customer, location, taxRule: view.project.tax_rule ?? "", revenueAccount: account,
+                  customerName: customer, location, taxRule, revenueAccount: account,
                   skus: rows.map((l) => ({ sku: l.sku.trim(), quantity: Number(l.quantity), ...(l.assembly === "any" ? {} : { expectAssembly: l.assembly === "assembly" }) })),
                 });
                 setP0(r.ok && r.data ? r.data : null); setP0Error(r.ok ? null : r.error ?? "P0 failed to run"); setP0Busy(false);
               }}>{p0Busy ? "Reading Cin7…" : "Run P0 checklist (read-only)"}</Button>
-              <span className="text-xs text-slate-500">Reads only. Fails explicitly; never picks a customer, instance or database for you. Tax rule used: {view.project.tax_rule ?? "none on the project"}.</span>
+              <span className="text-xs text-slate-500">Reads only. Fails explicitly; never picks a customer, instance or database for you. The VAT rate comes from the project ({(view.project.tax_rate_bps / 100).toFixed(2)}%); the tax rule name is the Cin7 one entered above.</span>
             </div>
             {p0Error && <div className="mt-3"><Alert tone="danger">{p0Error}</Alert></div>}
             {p0 && (
@@ -110,7 +112,7 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
           </div>
           <Input label={`Type exactly: ${CREATE_CONFIRMATION_TEXT}`} value={typed} onChange={(e) => setTyped(e.target.value)} />
           {!gates.writesEnabled && <p className="text-xs text-slate-500">Cin7 writes are switched off on this deployment; the button stays disabled.</p>}
-          <Button disabled={!canCreate} onClick={() => after(() => createCin7SaleAction(projectId, { confirmation: typed, customerName: customer, location, revenueAccount: account, physicalLines: parsed }))}>Create Advanced Sale in Cin7</Button>
+          <Button disabled={!canCreate} onClick={() => after(() => createCin7SaleAction(projectId, { confirmation: typed, customerName: customer, location, revenueAccount: account, cin7TaxRule: taxRule, physicalLines: parsed }))}>Create Advanced Sale in Cin7</Button>
         </div>
       )}
     </Panel>
