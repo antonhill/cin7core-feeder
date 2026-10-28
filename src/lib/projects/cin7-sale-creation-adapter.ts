@@ -5,6 +5,8 @@ import type { createServiceRoleClient } from "@/supabase/server";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchSaleDetail } from "@/cin7/sales";
 import { findBomSkus } from "@/cin7/products";
+import { fetchCustomerDefaults } from "@/cin7/customers";
+import { fetchAvailabilityForSku } from "@/cin7/sale-inspect";
 import { createAdvancedSale, customerExists, findSaleByExternalIdForCustomer, resolveProductIds } from "@/cin7/sale-order-write";
 import type { SaleCreationPort } from "./cin7-sale-creation-store";
 
@@ -28,6 +30,15 @@ export function buildSaleCreationPort(db: Db, orgId: string, instanceId: string)
       );
     },
     async assemblySkus(skus) { return findBomSkus(await creds(), skus); },
+    async customerDefaults(name) {
+      const d = await fetchCustomerDefaults(await creds(), name);
+      // exact (case-sensitive) name only: a case-insensitive match from Cin7 is treated as 'not the customer asked for'
+      return d && d.name === name ? { taxRule: d.taxRule, revenueAccount: d.revenueAccount, location: d.location } : null;
+    },
+    async stockAt(sku) {
+      const rows = await fetchAvailabilityForSku(await creds(), sku);
+      return rows.map((r) => ({ location: r.Location ?? null, available: Number.isFinite(Number(r.Available)) && r.Available !== undefined ? Number(r.Available) : null }));
+    },
     async readSale(saleId) {
       const s = await fetchSaleDetail(await creds(), saleId);
       return {

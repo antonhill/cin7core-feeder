@@ -6,16 +6,17 @@ import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
+import type { P0Report } from "@/lib/projects/p0-checklist";
 import { CREATE_CONFIRMATION_TEXT } from "@/lib/projects/cin7-sale-creation";
 import type { ProjectView } from "@/lib/projects/project-view";
-import { createCin7SaleAction, getCin7SaleCreationStatusAction, reconcileCin7SaleCreationAction, checkCin7PrerequisitesAction, type Cin7SaleCreationStatus } from "../cin7-actions";
+import { createCin7SaleAction, getCin7SaleCreationStatusAction, reconcileCin7SaleCreationAction, runP0ChecklistAction, type Cin7SaleCreationStatus } from "../cin7-actions";
 
 // Create the project's Cin7 ADVANCED SALE (physical products at R0 + the approved contract value as Additional Charges). Display + intent only:
 // the server re-checks the rollout flag, the org, the manager role, the state and the confirmation, validates the customer and SKUs read-only
 // before storing any intent, and links the Sale only after reading it back and verifying it matches the plan exactly.
 const TONE: Record<string, BadgeTone> = { PENDING: "warning", CREATED: "warning", RECONCILED: "success", FAILED_CONFIRMED_NO_WRITE: "warning", FAILED_UNCERTAIN: "danger" };
 type Run = (fn: () => Promise<{ ok: boolean; error?: string }>, done?: string) => Promise<boolean>;
-type Line = { sku: string; name: string; quantity: string };
+type Line = { sku: string; name: string; quantity: string; assembly: "any" | "assembly" | "plain" };
 
 export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectView; run: Run; working: boolean }) {
   const projectId = view.project.id;
@@ -26,9 +27,11 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
   const [account, setAccount] = useState("");
   const [lines, setLines] = useState<Line[] | null>(null);
   const [typed, setTyped] = useState("");
-  const [prereq, setPrereq] = useState<string | null>(null);
+  const [p0, setP0] = useState<P0Report | null>(null);
+  const [p0Error, setP0Error] = useState<string | null>(null);
+  const [p0Busy, setP0Busy] = useState(false);
 
-  const load = useCallback(() => { getCin7SaleCreationStatusAction(projectId).then((r) => { if (r.ok && r.data) { setSt(r.data); setLines((cur) => cur ?? r.data!.proposedLines.map((l) => ({ sku: l.sku, name: l.name, quantity: String(l.quantity) }))); } }); }, [projectId]);
+  const load = useCallback(() => { getCin7SaleCreationStatusAction(projectId).then((r) => { if (r.ok && r.data) { setSt(r.data); setLines((cur) => cur ?? r.data!.proposedLines.map((l) => ({ sku: l.sku, name: l.name, quantity: String(l.quantity), assembly: "any" as const }))); } }); }, [projectId]);
   useEffect(load, [load]);
 
   if (!st || !st.gates.orgEnabled) return null;
@@ -70,20 +73,40 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
           </div>
           <p className="text-sm font-medium text-slate-800">Physical products (quantity only; always created at R0)</p>
           {rows.map((l, i) => (
-            <div key={i} className="grid gap-2 md:grid-cols-[10rem_1fr_8rem_auto] md:items-end">
+            <div key={i} className="grid gap-2 md:grid-cols-[10rem_1fr_8rem_9rem_auto] md:items-end">
               <Input label="SKU" value={l.sku} onChange={(e) => setLines(rows.map((x, j) => (j === i ? { ...x, sku: e.target.value } : x)))} />
               <Input label="Name" value={l.name} onChange={(e) => setLines(rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
               <Input label="Quantity" value={l.quantity} onChange={(e) => setLines(rows.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)))} />
+              <label className="flex flex-col gap-1 text-sm"><span className="font-medium text-slate-700">Expected type</span>
+                <select className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm" value={l.assembly} onChange={(e) => setLines(rows.map((x, j) => (j === i ? { ...x, assembly: e.target.value as Line["assembly"] } : x)))}>
+                  <option value="any">any</option><option value="assembly">assembly</option><option value="plain">plain product</option></select></label>
               <Button size="sm" variant="secondary" disabled={working} onClick={() => setLines(rows.filter((_, j) => j !== i))}>Remove</Button>
             </div>
           ))}
-          <Button size="sm" variant="secondary" disabled={working} onClick={() => setLines([...rows, { sku: "", name: "", quantity: "1" }])}>Add product</Button>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button size="sm" variant="secondary" disabled={working || !gates.isManager || !customer.trim()} onClick={async () => {
-              const r = await checkCin7PrerequisitesAction(customer, parsed.map((l) => l.sku));
-              setPrereq(!r.ok || !r.data ? r.error ?? "Check failed" : r.data.ready ? `Ready: customer exists; ${r.data.skus.length} SKU(s) exist (${r.data.skus.filter((s) => s.isAssembly).length} assembly). Tax rule, revenue account and location are checked by hand.` : r.data.problems.join(" "));
-            }}>Check Cin7 prerequisites (read-only)</Button>
-            {prereq && <span className="text-sm text-slate-700">{prereq}</span>}
+          <Button size="sm" variant="secondary" disabled={working} onClick={() => setLines([...rows, { sku: "", name: "", quantity: "1", assembly: "any" }])}>Add product</Button>
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <Button size="sm" variant="secondary" disabled={p0Busy || working || !gates.isManager} onClick={async () => {
+                setP0Busy(true); setP0Error(null);
+                const r = await runP0ChecklistAction(projectId, {
+                  customerName: customer, location, taxRule: view.project.tax_rule ?? "", revenueAccount: account,
+                  skus: rows.map((l) => ({ sku: l.sku.trim(), quantity: Number(l.quantity), ...(l.assembly === "any" ? {} : { expectAssembly: l.assembly === "assembly" }) })),
+                });
+                setP0(r.ok && r.data ? r.data : null); setP0Error(r.ok ? null : r.error ?? "P0 failed to run"); setP0Busy(false);
+              }}>{p0Busy ? "Reading Cin7…" : "Run P0 checklist (read-only)"}</Button>
+              <span className="text-xs text-slate-500">Reads only. Fails explicitly; never picks a customer, instance or database for you. Tax rule used: {view.project.tax_rule ?? "none on the project"}.</span>
+            </div>
+            {p0Error && <div className="mt-3"><Alert tone="danger">{p0Error}</Alert></div>}
+            {p0 && (
+              <div className="mt-3">
+                <Alert tone={p0.verdict === "READY_PENDING_MANUAL" ? "info" : "danger"}>{p0.verdict === "READY_PENDING_MANUAL" ? `Automated checks passed (${p0.counts.PASS}); confirm the ${p0.counts.MANUAL} manual items below before P1.` : `NOT READY: ${p0.counts.FAIL} failed, ${p0.counts.NOT_RUN} not run.`}</Alert>
+                <ul className="mt-2 space-y-1 text-sm">
+                  {p0.checks.map((k) => (
+                    <li key={k.id} className="flex gap-2"><Badge tone={k.status === "PASS" ? "success" : k.status === "FAIL" ? "danger" : k.status === "MANUAL" ? "warning" : "neutral"}>{k.status.replace("_", " ")}</Badge><span><span className="font-medium">{k.label}.</span> <span className="text-slate-600">{k.detail}</span></span></li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
           <Input label={`Type exactly: ${CREATE_CONFIRMATION_TEXT}`} value={typed} onChange={(e) => setTyped(e.target.value)} />
           {!gates.writesEnabled && <p className="text-xs text-slate-500">Cin7 writes are switched off on this deployment; the button stays disabled.</p>}

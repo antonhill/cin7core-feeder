@@ -9,12 +9,14 @@ import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { logActivity } from "@/lib/activity-log";
 import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
+import { runP0, type P0Input, type P0Report } from "@/lib/projects/p0-checklist";
+import { externalIdFor } from "@/lib/projects/cin7-sale-creation";
 import { guardBillingScope } from "@/lib/projects/scope-access";
 import { cin7WritesEnabled } from "@/lib/projects/write-flag";
-import { isNewquipPocOrg } from "@/newquip/access";
+import { NEWQUIP_POC_CIN7_INSTANCE_ID, OPERATIONAL_CUSTOMER_DENYLIST, isNewquipPocOrg } from "@/newquip/access";
 import { buildCin7Port, singleActiveInstanceId } from "@/lib/projects/cin7-adapter";
 import { buildSaleCreationPort } from "@/lib/projects/cin7-sale-creation-adapter";
-import { checkSalePrerequisites, createSaleForProject, loadCreation, type PrerequisiteReport, reconcileSaleCreation, type CreationRow } from "@/lib/projects/cin7-sale-creation-store";
+import { createSaleForProject, loadCreation, reconcileSaleCreation, type CreationRow } from "@/lib/projects/cin7-sale-creation-store";
 import type { CreationProductInput } from "@/lib/projects/cin7-sale-creation";
 import { linkCin7Sale, listPostings, loadSaleLink, postClaimToCin7, reconcileClaimPosting, type PostingRow, type SaleLinkRow, type WriteGates } from "@/lib/projects/cin7-posting-store";
 
@@ -181,15 +183,30 @@ export async function reconcileCin7SaleCreationAction(projectId: string): Promis
   }
 }
 
-/** Manager only. READ-ONLY (GETs): P0 prerequisite check for a disposable customer and the SKUs. Stores and writes nothing. */
-export async function checkCin7PrerequisitesAction(customerName: string, skus: string[]): Promise<Cin7ActionResult<PrerequisiteReport>> {
+/**
+ * Manager only. READ-ONLY (GETs): the P0 acceptance checklist. It never picks a customer, instance or database: anything not exactly as
+ * asked is reported as a FAIL, and checks that depend on it are NOT_RUN. Stores and writes nothing.
+ */
+export async function runP0ChecklistAction(projectId: string, input: Omit<P0Input, "externalId">): Promise<Cin7ActionResult<P0Report>> {
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const gates = await gatesFor(orgId);
+    if (!gates.isManager) throw new Error("Only a manager (org owner/admin) can run the P0 checklist.");
     if (!gates.orgEnabled) throw new Error("Cin7 Sale creation is not enabled for this organization.");
     const db = createServiceRoleClient();
-    const instanceId = await singleActiveInstanceId(db, orgId);
-    return { ok: true, data: await checkSalePrerequisites(buildSaleCreationPort(db, orgId, instanceId), gates, { customerName, skus }) };
+    const proj = await db.from("projects").select("project_reference").eq("org_id", orgId).eq("id", projectId).maybeSingle();
+    if (proj.error || !proj.data) throw new Error("Project not found.");
+    const inst = await db.from("cin7_instances").select("id, name").eq("org_id", orgId).eq("active", true);
+    if (inst.error) throw new Error(inst.error.message);
+    const report = await runP0(
+      {
+        env: process.env, instances: (inst.data ?? []) as Array<{ id: string; name: string }>, expectedInstanceId: NEWQUIP_POC_CIN7_INSTANCE_ID, denylist: OPERATIONAL_CUSTOMER_DENYLIST,
+        portFor: (instanceId) => buildSaleCreationPort(db, orgId, instanceId),
+      },
+      { ...input, externalId: externalIdFor((proj.data as { project_reference: string }).project_reference) },
+    );
+    return { ok: true, data: report };
   } catch (e) {
     return { ok: false, error: message(e) };
   }
