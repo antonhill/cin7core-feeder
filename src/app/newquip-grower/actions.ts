@@ -11,6 +11,7 @@ import type { QuoteDraft } from "@/newquip/grower/draft";
 import { rolesFor, type OrgTier, type QuoteRole } from "@/newquip/quote/roles";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
 import { redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
+import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
 import {
   createProjectFromAcceptedQuote, createQuote, estimatorSignOff, listQuotes, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator,
   type QuoteRecord,
@@ -173,13 +174,15 @@ export async function approveGrowerQuoteAction(quoteId: string) {
   });
 }
 
-export async function createProjectFromGrowerQuoteAction(quoteId: string): Promise<GrowerActionResult<{ projectId: string; created: boolean }>> {
+export async function createProjectFromGrowerQuoteAction(quoteId: string, scheduleChoice?: ScheduleChoice): Promise<GrowerActionResult<{ projectId: string; created: boolean }>> {
   try {
     const a = await authorise();
     if (!a.roles.has("manager") && !a.roles.has("estimator")) throw new Error("You do not have permission to create a Project.");
     const db = createServiceRoleClient();
-    const r = await createProjectFromAcceptedQuote(db, a.orgId, a.email, quoteId);
-    if (r.created) await logActivity(db, { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action: "newquip.project_created", summary: "Created a Project from an accepted NewQuip quote (local only; no Cin7 write)", detail: { quoteId, projectId: r.projectId } });
+    const resolved = resolveScheduleChoice(scheduleChoice);
+    if (!resolved.ok) throw new Error(`Billing schedule: ${resolved.errors.join(" ")}`);
+    const r = await createProjectFromAcceptedQuote(db, a.orgId, a.email, quoteId, resolved.schedule);
+    if (r.created) await logActivity(db, { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action: "newquip.project_created", summary: "Created a Project from an accepted NewQuip quote (local only; no Cin7 write)", detail: { quoteId, projectId: r.projectId, billingSchedule: resolved.label, stages: resolved.schedule.map((x) => `${x.name} ${(x.bps / 100).toFixed(2)}%`) } });
     return { ok: true, data: r };
   } catch (e) {
     return { ok: false, error: errMsg(e) };

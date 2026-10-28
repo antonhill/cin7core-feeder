@@ -65,3 +65,30 @@ export function splitContractBySchedule(contractCents: number, schedule: readonl
     return { name: s.name, description: s.description, valueCents };
   });
 }
+
+export type SchedulePreset = "STANDARD" | "SIX_STAGE" | "CUSTOM";
+export interface ScheduleChoice { preset: SchedulePreset; /** CUSTOM only: stage names with a percentage as typed (up to 2 decimals), e.g. "40" or "27.5". */ stages?: Array<{ name: string; percent: string }> }
+
+/** "27.5" -> 2750 basis points. Null for anything that is not a plain number with at most 2 decimals. */
+export function percentToBps(text: string): number | null {
+  const t = text.trim().replace(/%$/, "").trim();
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(t)) return null;
+  return Math.round(Number(t) * 100);
+}
+
+/** Turns the manager's choice into a VALIDATED schedule, or the reasons it cannot be used. The default (no choice) is the NewQuip standard. */
+export function resolveScheduleChoice(choice?: ScheduleChoice | null): { ok: true; schedule: readonly ScheduleStageTemplate[]; label: string } | { ok: false; errors: string[] } {
+  if (!choice || choice.preset === "STANDARD") return { ok: true, schedule: NEWQUIP_STANDARD_SCHEDULE, label: "NewQuip standard 40/55/5" };
+  if (choice.preset === "SIX_STAGE") return { ok: true, schedule: POC_SIX_STAGE_SCHEDULE, label: "Six-stage (10/30/20/20/15/5)" };
+  if (choice.preset !== "CUSTOM") return { ok: false, errors: ["Unknown schedule option."] };
+  const errors: string[] = [];
+  const stages: ScheduleStageTemplate[] = [];
+  for (const s of choice.stages ?? []) {
+    const bps = percentToBps(s.percent);
+    if (bps === null) { errors.push(`"${s.name || "(unnamed)"}": "${s.percent}" is not a valid percentage.`); continue; }
+    stages.push({ name: s.name.trim(), bps, description: s.name.trim(), trigger: "Manager-confirmed milestone" });
+  }
+  if (errors.length) return { ok: false, errors };
+  const v = validateSchedule(stages);
+  return v.ok ? { ok: true, schedule: stages, label: "Custom schedule" } : { ok: false, errors: v.errors };
+}

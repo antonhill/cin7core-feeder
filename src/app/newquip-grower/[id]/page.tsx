@@ -29,6 +29,8 @@ import {
 } from "../actions";
 import { fmtCents, fmtZar, NumField, TextField } from "../fields";
 import { MarginPanel } from "./MarginPanel";
+import { ScheduleChooser } from "./ScheduleChooser";
+import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
 
 // NewQuip Grower quote editor: Configuration (rep) → Estimator review → Customer quote → Approval. The browser holds only the
 // editable DRAFT; every number shown comes from the server's evaluateDraft(), and approval re-evaluates on the server again.
@@ -82,6 +84,7 @@ export default function QuoteEditorPage() {
   const [draft, setDraft] = useState<QuoteDraft | null>(null);
   const [ev, setEv] = useState<QuoteEvaluation | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [scheduleChoice, setScheduleChoice] = useState<ScheduleChoice | undefined>(undefined);
   const [tab, setTab] = useState<Tab>("config");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -586,14 +589,17 @@ export default function QuoteEditorPage() {
                 {q.project_id ? (
                   <Link href={`/projects/${q.project_id}`} className="inline-flex h-9 items-center rounded-md bg-indigo-600 px-4 text-sm font-medium text-white hover:bg-indigo-700">Open the Project</Link>
                 ) : (
-                  <Button loading={isWorking} onClick={() => start(async () => {
-                    const r = await createProjectFromGrowerQuoteAction(id);
+                  <>
+                  <ScheduleChooser contractCents={q.accepted_baseline.contractCents} onChange={setScheduleChoice} />
+                  <Button loading={isWorking} disabled={!resolveScheduleChoice(scheduleChoice).ok} onClick={() => start(async () => {
+                    const r = await createProjectFromGrowerQuoteAction(id, scheduleChoice);
                     if (!r.ok) return setError(r.error ?? "Unknown error");
                     setError(null);
                     setNotice("Project created from the accepted baseline (no engineering recalculation).");
                     const v = await getGrowerQuoteAction(id);
                     if (v.ok && v.data) adopt(v.data);
                   })}>Create Project from accepted quote</Button>
+                  </>
                 )}
               </div>
             </Panel>
