@@ -12,7 +12,7 @@ import { PROJECTS_MODULE } from "@/app/module-nav";
 import { prepareInvoiceProposal, type PreparedInvoice } from "@/lib/projects/invoice-proposal-store";
 import { loadProjectScope, resolveScopeItem } from "@/lib/projects/scope-store";
 import type { ScopeItem } from "@/lib/projects/product-scope";
-import { createP0Project, searchStockedProducts, type CreateP0Input, type StockedProduct } from "@/lib/projects/p0-project-store";
+import { createP0Project, searchProductStock, type CreateP0Input, type ProductSearchResult } from "@/lib/projects/p0-project-store";
 import { runP0, type P0Input, type P0Report } from "@/lib/projects/p0-checklist";
 import { externalIdFor } from "@/lib/projects/cin7-sale-creation";
 import { guardBillingScope } from "@/lib/projects/scope-access";
@@ -278,13 +278,13 @@ export async function getP0PrepStatusAction(): Promise<Cin7ActionResult<P0PrepSt
 }
 
 /** Manager only. Existing Cin7 products with free stock at a location, from the synced local cache. Reads Supabase only; no Cin7 call. */
-export async function searchP0ProductsAction(location: string, query: string): Promise<Cin7ActionResult<StockedProduct[]>> {
+export async function searchP0ProductsAction(location: string, query: string): Promise<Cin7ActionResult<ProductSearchResult>> {
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
     const g = await gatesFor(orgId);
     if (!g.orgEnabled) throw new Error("Not enabled for this organization.");
     if (!g.isManager) throw new Error("Only a manager (org owner/admin) can prepare a P0 project.");
-    return { ok: true, data: await searchStockedProducts(createServiceRoleClient(), orgId, location, query) };
+    return { ok: true, data: await searchProductStock(createServiceRoleClient(), orgId, location, query) };
   } catch (e) {
     return { ok: false, error: message(e) };
   }

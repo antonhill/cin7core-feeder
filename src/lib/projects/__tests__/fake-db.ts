@@ -36,7 +36,11 @@ export class FakeDb {
     return Promise.resolve({ data: null, error: h ? h(args).error : { message: `no handler for ${fn}` } });
   }
 
+  /** Emulates PostgREST's max-rows: a select with no .range() silently returns only this many rows (null = unlimited). */
+  maxRows: number | null = null;
+
   from(table: string) {
+    const cap = () => this.maxRows;
     const rowsOf = (t: string) => this.rows(t);
     const nextTs = () => this.ts();
     const nextId = () => ++this.seq;
@@ -44,8 +48,9 @@ export class FakeDb {
     let op: "select" | "insert" | "update" | "delete" = "select";
     let payload: Row | Row[] = [];
     const filters: Array<(r: Row) => boolean> = [];
-    let order: { col: string; asc: boolean } | null = null;
+    const orders: Array<{ col: string; asc: boolean }> = [];
     let lim: number | null = null;
+    let bounds: { from: number; to: number } | null = null;
     let returning = false;
 
     const setRows = (t: string, rows: Row[]) => { this.tables[t] = rows; };
@@ -76,11 +81,13 @@ export class FakeDb {
         writes.push({ table, op: "update" });
         return { data: returning ? matched : null, error: null };
       }
-      if (order) {
-        const { col, asc } = order;
-        matched = [...matched].sort((a, b) => ((a[col] as string) < (b[col] as string) ? -1 : (a[col] as string) > (b[col] as string) ? 1 : 0) * (asc ? 1 : -1));
+      if (orders.length) {
+        const cmp = (x: unknown, y: unknown) => ((x as string) < (y as string) ? -1 : (x as string) > (y as string) ? 1 : 0);
+        matched = [...matched].sort((a, b) => { for (const { col, asc } of orders) { const c = cmp(a[col], b[col]); if (c) return c * (asc ? 1 : -1); } return 0; });
       }
       if (lim !== null) matched = matched.slice(0, lim);
+      if (bounds) matched = matched.slice(bounds.from, bounds.to + 1);
+      else if (cap() !== null) matched = matched.slice(0, cap() as number);
       return { data: matched, error: null };
     }
 
@@ -91,7 +98,14 @@ export class FakeDb {
       delete: () => { op = "delete"; return q; },
       eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
       in: (c: string, v: unknown[]) => { filters.push((r) => v.includes(r[c])); return q; },
-      order: (col: string, o?: { ascending?: boolean }) => { order = { col, asc: o?.ascending !== false }; return q; },
+      order: (col: string, o?: { ascending?: boolean }) => { orders.push({ col, asc: o?.ascending !== false }); return q; },
+      // Supports the `col.ilike.*text*` terms PostgREST's or() takes (a row matches if ANY term matches); `\\` escapes a literal % _ or backslash.
+      or: (expr: string) => {
+        const terms = expr.split(",").map((t) => { const m = /^(\w+)\.ilike\.\*(.*)\*$/.exec(t); if (!m) throw new Error(`fake-db: unsupported or() term ${t}`); return { col: m[1], needle: m[2].replace(/\\(.)/g, "$1").toLowerCase() }; });
+        filters.push((r) => terms.some((t) => String(r[t.col] ?? "").toLowerCase().includes(t.needle)));
+        return q;
+      },
+      range: (from: number, to: number) => { bounds = { from, to }; return q; },
       limit: (n: number) => { lim = n; return q; },
       maybeSingle: () => { const r = exec(); const d = r.data as Row[] | null; return Promise.resolve({ data: d?.[0] ?? null, error: r.error }); },
       single: () => { const r = exec(); const d = r.data as Row[] | null; return Promise.resolve({ data: d?.[0] ?? null, error: r.error ?? (d?.[0] ? null : { message: "no row" }) }); },

@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { P0_DEFAULT_CONTRACT_RANDS, P0_DEFAULT_SCHEDULE, P0_MAX_PRODUCTS } from "@/lib/projects/p0-project";
-import type { StockedProduct } from "@/lib/projects/p0-project-store";
+import type { ProductSearchResult } from "@/lib/projects/p0-project-store";
 import { createP0ProjectAction, getP0PrepStatusAction, searchP0ProductsAction } from "./cin7-actions";
 
 // PREPARE A DISPOSABLE P0 PROJECT: a SEPARATE project built from existing Cin7 SKUs you pick (with free stock at the location), a small test
@@ -23,7 +23,7 @@ export function P0ProjectPanel() {
   const [customer, setCustomer] = useState("");
   const [location, setLocation] = useState("MSTR");
   const [query, setQuery] = useState("");
-  const [found, setFound] = useState<StockedProduct[] | null>(null);
+  const [found, setFound] = useState<ProductSearchResult | null>(null);
   const [chosen, setChosen] = useState<Chosen[]>([]);
   const [contract, setContract] = useState(P0_DEFAULT_CONTRACT_RANDS);
   const [schedule, setSchedule] = useState(P0_DEFAULT_SCHEDULE.map((s) => ({ ...s })));
@@ -41,7 +41,7 @@ export function P0ProjectPanel() {
     const r = await searchP0ProductsAction(location, query);
     setBusy(false);
     if (!r.ok) { setFound(null); return setMsg({ tone: "danger", text: r.error ?? "Search failed" }); }
-    setFound(r.data ?? []);
+    setFound(r.data ?? null);
   }
   async function create() {
     setBusy(true); setMsg(null);
@@ -85,12 +85,12 @@ export function P0ProjectPanel() {
               <Button size="sm" variant="secondary" disabled={busy} onClick={search}>Search</Button>
             </div>
             {found && (
-              found.length === 0 ? <p className="mt-2 text-sm text-slate-600">No products with free stock at &quot;{location}&quot; match.</p> : (
+              found.products.length === 0 ? <p className="mt-2 text-sm text-slate-600">{found.detail}</p> : (
                 <div className="mt-2 overflow-x-auto">
                   <Table>
                     <THead><TR><TH>SKU</TH><TH>Name</TH><TH align="right">Free stock</TH><TH>Cache</TH><TH>{" "}</TH></TR></THead>
                     <TBody>
-                      {found.map((p) => (
+                      {found.products.map((p) => (
                         <TR key={p.sku}>
                           <TD className="font-mono">{p.sku}</TD><TD>{p.name}</TD><TD align="right" className="tabular-nums">{p.available}</TD>
                           <TD className="text-xs text-slate-500">synced {new Date(p.syncedAt).toLocaleDateString()}</TD>
