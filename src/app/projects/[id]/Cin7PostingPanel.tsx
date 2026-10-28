@@ -145,7 +145,7 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
                             <label className="mt-2 flex flex-col gap-1"><span className="text-xs font-medium text-amber-900">A quantity above what has been dispatched needs a reason (contractual early invoicing)</span>
                               <input className="h-8 rounded border border-slate-300 px-2" value={early[c.id] ?? ""} onChange={(e) => setEarly((m) => ({ ...m, [c.id]: e.target.value }))} /></label>
                           )}
-                          
+
                         </div>
                       </div>
                     );
