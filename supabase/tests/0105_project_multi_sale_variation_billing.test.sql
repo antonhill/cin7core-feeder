@@ -58,7 +58,6 @@ insert into project_variations (id, org_id, project_id, code, title, amount_cent
 values ('00000000-0000-0000-0000-0000000005f1', '00000000-0000-0000-0000-0000000005b1', '00000000-0000-0000-0000-0000000005c1', 'V001', 'Ventilation', 1000001, 'a@x'),
        ('00000000-0000-0000-0000-0000000005f2', '00000000-0000-0000-0000-0000000005b1', '00000000-0000-0000-0000-0000000005c1', 'V002', 'Other', 500000, 'a@x');
 
-select pg_temp.expect_denied($q$update project_variations set status = 'APPROVED', decided_by_email = 'm@x', decided_at = now() where id = '00000000-0000-0000-0000-0000000005f1'$q$, 'approve with no schedule');
 select pg_temp.expect_denied($q$insert into project_variation_stages (org_id, variation_id, sort_order, name, bps) values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005f1',1,'Zero',0)$q$, '0 bps stage');
 select pg_temp.expect_denied($q$insert into project_variation_stages (org_id, variation_id, sort_order, name, bps) values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005f1',1,'  ',100)$q$, 'blank stage name');
 insert into project_variation_stages (org_id, variation_id, sort_order, name, bps) values
@@ -150,6 +149,26 @@ insert into project_claims (id, org_id, project_id, claim_seq, claim_number, cla
 values ('00000000-0000-0000-0000-0000000005a7', '00000000-0000-0000-0000-0000000005b1', '00000000-0000-0000-0000-0000000005c3', 1, 'V-C-1', current_date, 1500, 1000001, 150000, 1150001, 'h', 'b', 'kv1', 'a@x');
 select pg_temp.expect_denied($q$select amend_variation_schedule('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005f1','[{"name":"A","bps":5000},{"name":"B","bps":5000}]'::jsonb,'late','m@x')$q$, 'amend after a claim exists');
 
+
+-- ── a legacy variation (approved with NO schedule, the V001 shape) is allowed, stays unbillable until a manager amends it, and the amendment is audited ──
+insert into project_variations (id, org_id, project_id, code, title, amount_cents, raised_by_email)
+values ('00000000-0000-0000-0000-0000000005f3', '00000000-0000-0000-0000-0000000005b1', '00000000-0000-0000-0000-0000000005c1', 'V003', 'Legacy', 48000000, 'a@x');
+update project_variations set status = 'APPROVED', decided_by_email = 'm@x', decided_at = now() where id = '00000000-0000-0000-0000-0000000005f3';
+do $$ begin
+  if (select count(*) from project_variation_stages where variation_id = '00000000-0000-0000-0000-0000000005f3') <> 0 then raise exception 'a legacy variation must have no schedule until a manager sets one'; end if;
+end $$;
+select pg_temp.expect_denied($q$insert into project_variation_stages (org_id, variation_id, sort_order, name, bps) values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005f3',1,'Direct',10000)$q$, 'a direct schedule insert on an approved variation');
+select amend_variation_schedule('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005f3','[{"name":"Variation","bps":10000}]'::jsonb,'First schedule for a variation approved before schedules existed','m@x');
+do $$ begin
+  if (select count(*) from project_variation_stages where variation_id = '00000000-0000-0000-0000-0000000005f3') <> 1 then raise exception 'legacy schedule not set'; end if;
+  if (select jsonb_array_length(before_stages) from project_variation_schedule_amendments where variation_id = '00000000-0000-0000-0000-0000000005f3') <> 0 then raise exception 'audit must show the empty before-schedule'; end if;
+end $$;
+-- a partial schedule can still not be approved
+insert into project_variations (id, org_id, project_id, code, title, amount_cents, raised_by_email)
+values ('00000000-0000-0000-0000-0000000005f4', '00000000-0000-0000-0000-0000000005b1', '00000000-0000-0000-0000-0000000005c1', 'V004', 'Partial', 100, 'a@x');
+insert into project_variation_stages (org_id, variation_id, sort_order, name, bps) values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005f4',1,'Half',5000);
+select pg_temp.expect_denied($q$update project_variations set status = 'APPROVED', decided_by_email = 'm@x', decided_at = now() where id = '00000000-0000-0000-0000-0000000005f4'$q$, 'approve a schedule totalling 50%');
+
 -- ── postings: invoiced product lines are valid and immutable ─────────────────
 insert into project_claims (id, org_id, project_id, claim_seq, claim_number, claim_date, tax_rate_bps, subtotal_cents, tax_cents, total_cents, snapshot_hash, baseline_hash, idempotency_key, author_email)
 values ('00000000-0000-0000-0000-0000000005a8', '00000000-0000-0000-0000-0000000005b1', '00000000-0000-0000-0000-0000000005c1', 1, 'C-1', current_date, 1500, 10000000, 1500000, 11500000, 'h', 'b', 'k1', 'a@x');
@@ -210,8 +229,8 @@ values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-00000000
 -- ── RLS ──────────────────────────────────────────────────────────────────────
 select pg_temp.act_as('00000000-0000-0000-0000-0000000005a1');
 do $$ begin
-  if (select count(*) from project_variation_stages) <> 1 then raise exception 'member A should see its schedule'; end if;
-  if (select count(*) from project_variation_schedule_amendments) <> 1 then raise exception 'member A should see its amendment audit'; end if;
+  if (select count(*) from project_variation_stages) <> 3 then raise exception 'member A should see its schedules'; end if;
+  if (select count(*) from project_variation_schedule_amendments) <> 2 then raise exception 'member A should see its amendment audit'; end if;
   if (select count(*) from project_cin7_sale_creations) <> 1 then raise exception 'member A should see its creation intent'; end if;
 end $$;
 select pg_temp.expect_no_rows_changed($q$update project_cin7_sale_creations set last_error_message = 'x'$q$, 'member update creation intent');

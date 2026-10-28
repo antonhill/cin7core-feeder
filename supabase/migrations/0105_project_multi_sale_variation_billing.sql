@@ -124,14 +124,16 @@ $$;
 create trigger project_variation_amendments_append_only_trg before update or delete on project_variation_schedule_amendments
   for each row execute function project_variation_amendments_append_only();
 
--- A variation cannot be approved without a valid schedule: at least one stage, totalling exactly 100%. (Separate trigger: the 0102 guard is not rebuilt.)
+-- A variation that HAS a schedule cannot be approved unless it totals exactly 100%. A variation with NO schedule rows may still be approved (this is
+-- how every pre-0105 variation, e.g. V001, and any older code path behaves) but cannot be BILLED: the application refuses to start billing until a
+-- manager sets its schedule through amend_variation_schedule() (audited). Separate trigger: the 0102 guard is not rebuilt.
 create or replace function project_variations_schedule_guard() returns trigger language plpgsql set search_path = public as $$
 declare v_sum bigint; v_n integer;
 begin
   if old.status = 'DRAFT' and new.status = 'APPROVED' then
     select coalesce(sum(bps), 0), count(*) into v_sum, v_n from project_variation_stages where variation_id = new.id;
-    if v_n = 0 or v_sum <> 10000 then
-      raise exception 'project_variations %: the billing schedule must have at least one stage and total exactly 100%% (it totals % bps)', new.id, v_sum;
+    if v_n > 0 and v_sum <> 10000 then
+      raise exception 'project_variations %: the billing schedule must total exactly 100%% (it totals % bps)', new.id, v_sum;
     end if;
   end if;
   return new;
