@@ -11,7 +11,8 @@ import type { P0Report } from "@/lib/projects/p0-checklist";
 import { CREATE_CONFIRMATION_TEXT } from "@/lib/projects/cin7-sale-creation";
 import type { ProjectView } from "@/lib/projects/project-view";
 import { VariationProductPicker, type PickedProduct } from "./VariationProductPicker";
-import { createCin7SaleAction, getCin7SaleCreationStatusAction, reconcileCin7SaleCreationAction, resolveScopeItemAction, runP0ChecklistAction, type Cin7SaleCreationStatus } from "../cin7-actions";
+import type { PackageMapping } from "@/lib/projects/package-mapping-store";
+import { createCin7SaleAction, getPackageMappingAction, getCin7SaleCreationStatusAction, reconcileCin7SaleCreationAction, resolveScopeItemAction, runP0ChecklistAction, type Cin7SaleCreationStatus } from "../cin7-actions";
 
 // Create the project's Cin7 ADVANCED SALE. The physical products come from the project's APPROVED PRODUCT SCOPE (inherited from the quotation,
 // or from the variation): nobody types or picks SKUs here. Anything the scope cannot identify as a real Cin7 SKU is listed as a blocker and
@@ -34,6 +35,8 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
   const [p0, setP0] = useState<P0Report | null>(null);
   const [p0Error, setP0Error] = useState<string | null>(null);
   const [p0Busy, setP0Busy] = useState(false);
+  const [saved, setSaved] = useState<Record<string, { packageKey: string; unavailable: boolean; active: PackageMapping | null }>>({});
+  const [saveReuse, setSaveReuse] = useState<Record<string, boolean>>({});
   const [multi, setMulti] = useState<Record<string, PickedProduct[]>>({});
   const [res, setRes] = useState<Record<string, { sku: string; quantity: string; reason: string }>>({});
 
@@ -88,11 +91,20 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
                   <details className="mt-3 rounded border border-slate-200 p-3">
                     <summary className="cursor-pointer text-sm font-medium text-slate-800">Map this package to several Cin7 SKUs (with quantity conversion)</summary>
                     <p className="mt-1 text-xs text-slate-500">Search and add each real Cin7 SKU. Enter how many units of that SKU make up ONE quoted unit ({i.unit}); the converted quantity is shown. Mark internal manufacturing inputs as BOM components so they are not put on the Sales Order.</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                      <Button size="sm" variant="secondary" disabled={working} onClick={async () => { const g = await getPackageMappingAction(projectId, i.id); if (g.ok && g.data) setSaved({ ...saved, [i.id]: g.data }); }}>Look for a saved mapping</Button>
+                      {saved[i.id]?.unavailable && <span className="text-slate-500">Reusable mappings are not available yet (database migration pending).</span>}
+                      {saved[i.id] && !saved[i.id].unavailable && !saved[i.id].active && <span className="text-slate-500">No saved mapping for {saved[i.id].packageKey} yet.</span>}
+                      {saved[i.id]?.active && (
+                        <span className="text-slate-700">Saved v{saved[i.id].active!.version} ({saved[i.id].active!.lines.map((l) => `${l.sku} x${l.factor}${l.role === "BOM_COMPONENT" ? " ref" : ""}`).join(", ")}) <Button size="sm" disabled={working || !r.reason.trim()} onClick={() => after(() => resolveScopeItemAction(projectId, { itemId: i.id, kind: "MAP_LINES", useSavedVersion: saved[i.id].active!.version, reason: r.reason }))}>Apply v{saved[i.id].active!.version} to this project</Button></span>
+                      )}
+                    </div>
                     <div className="mt-2"><VariationProductPicker picked={multi[i.id] ?? []} onChange={(next) => setMulti({ ...multi, [i.id]: next })} disabled={working} quantityLabel={`SKU units per 1 ${i.unit}`} withRole
                       extra={(p) => (i.quantity ? `= ${Math.round(i.quantity * (Number(p.quantity) || 0) * 1e6) / 1e6} on the order` : "no quoted quantity")} /></div>
                     <div className="mt-2 flex flex-wrap items-end gap-2">
                       <Input label="Reason (required)" value={r.reason} onChange={(e) => set({ reason: e.target.value })} />
-                      <Button size="sm" disabled={working || !r.reason.trim() || (multi[i.id] ?? []).length === 0} onClick={() => after(() => resolveScopeItemAction(projectId, { itemId: i.id, kind: "MAP_LINES", reason: r.reason, lines: (multi[i.id] ?? []).map((p) => ({ sku: p.sku, factor: Number(p.quantity), unit: i.unit, role: p.role })) }))}>Save multi-SKU mapping</Button>
+                      <label className="flex items-center gap-1 pb-2 text-xs text-slate-600"><input type="checkbox" checked={saveReuse[i.id] ?? false} onChange={(e) => setSaveReuse({ ...saveReuse, [i.id]: e.target.checked })} /> also save as a reusable mapping (new version)</label>
+                      <Button size="sm" disabled={working || !r.reason.trim() || (multi[i.id] ?? []).length === 0} onClick={() => after(() => resolveScopeItemAction(projectId, { itemId: i.id, kind: "MAP_LINES", saveAsReusable: saveReuse[i.id] ?? false, reason: r.reason, lines: (multi[i.id] ?? []).map((p) => ({ sku: p.sku, factor: Number(p.quantity), unit: i.unit, role: p.role })) }))}>Save multi-SKU mapping</Button>
                     </div>
                   </details>
                 ) : <p className="mt-1 text-xs text-slate-500">A manager resolves this.</p>}

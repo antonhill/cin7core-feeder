@@ -17,7 +17,7 @@ export async function loadProjectScope(db: Db, orgId: string, projectId: string)
   return { items, effective: effectiveScope(items) };
 }
 
-export interface ResolveScopeInput { orgId: string; projectId: string; itemId: string; kind: "MAP" | "MAP_LINES" | "EXCLUDE"; sku?: string; quantity?: number; lines?: ResolveLineInput[]; reason: string; now?: Date }
+export interface ResolveScopeInput { orgId: string; projectId: string; itemId: string; kind: "MAP" | "MAP_LINES" | "EXCLUDE"; sku?: string; quantity?: number; lines?: ResolveLineInput[]; mappingRef?: { packageKey: string; version: number }; reason: string; now?: Date }
 
 /** Manager only. Maps an unmapped item to a real Cin7 SKU (verified live, read-only) or excludes it from the Sales Order, each with a reason. */
 export async function resolveScopeItem(db: Db, port: Pick<P0Port, "resolveProducts">, gates: { isManager: boolean }, email: string, input: ResolveScopeInput): Promise<ScopeItem[]> {
@@ -53,7 +53,7 @@ export async function resolveScopeItem(db: Db, port: Pick<P0Port, "resolveProduc
       if (res.missing.length) fail(`SKU ${res.missing.join(", ")} does not exist in Cin7 (exact match). Nothing was changed.`);
     }
   }
-  const r = applyResolution(items, { itemId: input.itemId, kind: input.kind, sku: input.sku, quantity: input.quantity, lines: input.lines, reason: input.reason, by: email, at: (input.now ?? new Date()).toISOString() });
+  const r = applyResolution(items, { itemId: input.itemId, kind: input.kind, sku: input.sku, quantity: input.quantity, lines: input.lines, mappingRef: input.mappingRef, reason: input.reason, by: email, at: (input.now ?? new Date()).toISOString() });
   if (!r.ok) fail(r.error);
   const up = await db.from("projects").update({ baseline_snapshot: { ...snap, physicalScope: r.items } }).eq("org_id", input.orgId).eq("id", input.projectId).select("id");
   if (up.error) fail(`save scope resolution: ${up.error.message}`);

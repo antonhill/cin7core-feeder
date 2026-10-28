@@ -11,7 +11,8 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { prepareInvoiceProposal, type PreparedInvoice } from "@/lib/projects/invoice-proposal-store";
 import { loadProjectScope, resolveScopeItem } from "@/lib/projects/scope-store";
-import type { ScopeItem } from "@/lib/projects/product-scope";
+import { packageKeyOf, type ScopeItem } from "@/lib/projects/product-scope";
+import { activeMapping, listMappingVersions, saveMappingVersion, type PackageMapping } from "@/lib/projects/package-mapping-store";
 import { createP0Project, searchProductStock, type CreateP0Input, type ProductSearchResult } from "@/lib/projects/p0-project-store";
 import { runP0, type P0Input, type P0Report } from "@/lib/projects/p0-checklist";
 import { externalIdFor } from "@/lib/projects/cin7-sale-creation";
@@ -177,7 +178,7 @@ export async function getCin7SaleCreationStatusAction(projectId: string): Promis
  * Manager only. Resolves an UNMAPPED scope item: map it to a real Cin7 SKU (verified live, read-only) or exclude it from the Sales Order, with a
  * reason. Audited. Allowed only before any claim or Cin7 Sale exists. This is the only way the inherited scope can change.
  */
-export async function resolveScopeItemAction(projectId: string, input: { itemId: string; kind: "MAP" | "MAP_LINES" | "EXCLUDE"; sku?: string; quantity?: number; lines?: Array<{ sku: string; factor: number; unit?: string; role?: "FINISHED_GOOD" | "BOM_COMPONENT" }>; reason: string }): Promise<Cin7ActionResult<ScopeItem[]>> {
+export async function resolveScopeItemAction(projectId: string, input: { itemId: string; kind: "MAP" | "MAP_LINES" | "EXCLUDE"; sku?: string; quantity?: number; lines?: Array<{ sku: string; factor: number; unit?: string; role?: "FINISHED_GOOD" | "BOM_COMPONENT" }>; /** Apply this saved reusable mapping version to the item. */ useSavedVersion?: number; /** After resolving, also save these lines as the next reusable version. */ saveAsReusable?: boolean; reason: string }): Promise<Cin7ActionResult<ScopeItem[]>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     const gates = await gatesFor(orgId);
@@ -187,10 +188,28 @@ export async function resolveScopeItemAction(projectId: string, input: { itemId:
     const inst = await db.from("cin7_instances").select("id, name").eq("org_id", orgId).eq("active", true);
     if (inst.error) throw new Error(inst.error.message);
     const list = (inst.data ?? []) as Array<{ id: string; name: string }>;
-    if (input.kind !== "EXCLUDE" && (list.length !== 1 || list[0].id !== NEWQUIP_POC_CIN7_INSTANCE_ID)) throw new Error("The SKU can only be verified against the single expected NewQuip POC Cin7 instance; it is not.");
-    const port = input.kind !== "EXCLUDE" ? buildSaleCreationPort(db, orgId, list[0].id) : { resolveProducts: async () => ({ ids: new Map<string, string>(), missing: [] as string[] }) };
-    const items = await resolveScopeItem(db, port, { isManager: gates.isManager }, email ?? "unknown", { orgId, projectId, ...input });
-    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.scope_item_resolved", summary: `Resolved an unmapped product scope item (${input.kind}; no Cin7 write)`, detail: { projectId, itemId: input.itemId, kind: input.kind, sku: input.sku ?? null, quantity: input.quantity ?? null, lines: input.lines ?? null, reason: input.reason } });
+    if ((input.kind !== "EXCLUDE" || input.useSavedVersion !== undefined || input.saveAsReusable) && (list.length !== 1 || list[0].id !== NEWQUIP_POC_CIN7_INSTANCE_ID)) throw new Error("The SKU can only be verified against the single expected NewQuip POC Cin7 instance; it is not.");
+    const port = input.kind !== "EXCLUDE" || input.useSavedVersion !== undefined ? buildSaleCreationPort(db, orgId, list[0].id) : { resolveProducts: async () => ({ ids: new Map<string, string>(), missing: [] as string[] }) };
+    // A saved mapping is applied as an ordinary audited resolution: the project keeps its own copy and the version it came from.
+    let lines = input.lines; let mappingRef: { packageKey: string; version: number } | undefined;
+    const current = (await loadProjectScope(db, orgId, projectId)).items.find((x) => x.id === input.itemId);
+    if (input.useSavedVersion !== undefined) {
+      if (!current) throw new Error("That product is not in the project's scope.");
+      const key = packageKeyOf(current);
+      const versions = await listMappingVersions(db, orgId, key);
+      if (versions === null) throw new Error("Reusable mappings are not available yet (database migration pending).");
+      const m = versions.find((v) => v.version === input.useSavedVersion);
+      if (!m) throw new Error(`No saved mapping version ${input.useSavedVersion} exists for ${key}.`);
+      lines = m.lines.map((l) => ({ sku: l.sku, factor: l.factor, unit: l.unit, role: l.role }));
+      mappingRef = { packageKey: key, version: m.version };
+    }
+    const kind = input.useSavedVersion !== undefined ? "MAP_LINES" as const : input.kind;
+    const items = await resolveScopeItem(db, port, { isManager: gates.isManager }, email ?? "unknown", { orgId, projectId, itemId: input.itemId, kind, sku: input.sku, quantity: input.quantity, lines, mappingRef, reason: input.reason });
+    if (input.saveAsReusable && input.useSavedVersion === undefined && kind === "MAP_LINES" && current && lines) {
+      const saved = await saveMappingVersion(db, port, { isManager: gates.isManager }, email ?? "unknown", { orgId, packageKey: packageKeyOf(current), lines, reason: input.reason });
+      await logActivity(db, { orgId, actor: { userId, email }, action: "projects.package_mapping_saved", summary: `Saved reusable mapping ${saved.package_key} v${saved.version}`, detail: { projectId, packageKey: saved.package_key, version: saved.version, lines: saved.lines } });
+    }
+    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.scope_item_resolved", summary: `Resolved an unmapped product scope item (${input.kind}; no Cin7 write)`, detail: { projectId, itemId: input.itemId, kind: input.kind, sku: input.sku ?? null, quantity: input.quantity ?? null, lines: lines ?? input.lines ?? null, mappingRef: mappingRef ?? null, reason: input.reason } });
     return { ok: true, data: items };
   } catch (e) {
     return { ok: false, error: message(e) };
@@ -311,6 +330,24 @@ export async function createP0ProjectAction(input: CreateP0Input): Promise<Cin7A
     const r = await createP0Project(db, buildSaleCreationPort(db, orgId, list[0].id), { isManager: g.isManager }, email ?? "unknown", OPERATIONAL_CUSTOMER_DENYLIST, { ...input, orgId });
     await logActivity(db, { orgId, actor: { userId, email }, action: "projects.p0_project_created", summary: "Created a disposable P0 acceptance project (Toolbox rows only; no Cin7 write)", detail: { projectId: r.projectId, reference: r.reference, skus: input.products.map((p) => p.sku) } });
     return { ok: true, data: r };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/** Read-only: the reusable mapping offered for an item's package (null = none saved yet; "UNAVAILABLE" until the migration is applied). */
+export async function getPackageMappingAction(projectId: string, itemId: string): Promise<Cin7ActionResult<{ packageKey: string; active: PackageMapping | null; unavailable: boolean }>> {
+  try {
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const gates = await gatesFor(orgId);
+    await guardBillingScope(createServiceRoleClient(), orgId, projectId, gates.isManager);
+    if (!gates.orgEnabled) throw new Error("Not enabled for this organization.");
+    const db = createServiceRoleClient();
+    const item = (await loadProjectScope(db, orgId, projectId)).items.find((x) => x.id === itemId);
+    if (!item) throw new Error("That product is not in the project's scope.");
+    const key = packageKeyOf(item);
+    const m = await activeMapping(db, orgId, key);
+    return { ok: true, data: { packageKey: key, active: m === "UNAVAILABLE" ? null : m, unavailable: m === "UNAVAILABLE" } };
   } catch (e) {
     return { ok: false, error: message(e) };
   }

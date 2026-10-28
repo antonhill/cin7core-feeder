@@ -26,7 +26,7 @@ export interface MappedLine {
 }
 export type ScopeResolution =
   | { kind: "MAP"; sku: string; quantity: number; reason: string; by: string; at: string }
-  | { kind: "MAP_LINES"; lines: MappedLine[]; itemQuantity: number; reason: string; by: string; at: string }
+  | { kind: "MAP_LINES"; lines: MappedLine[]; itemQuantity: number; /** Set when the lines came from a saved reusable mapping: the project keeps its OWN copy, this only records where it came from. */ mappingRef?: { packageKey: string; version: number }; reason: string; by: string; at: string }
   | { kind: "EXCLUDE"; reason: string; by: string; at: string };
 
 export interface ScopeItem {
@@ -110,7 +110,7 @@ export function scopeFromSnapshot(snapshot: unknown): ScopeItem[] {
 }
 
 export interface ResolveLineInput { sku: string; factor: number; unit?: string; role?: MappedLineRole }
-export interface ResolveInput { itemId: string; kind: "MAP" | "MAP_LINES" | "EXCLUDE"; sku?: string; quantity?: number; lines?: ResolveLineInput[]; reason: string; by: string; at: string }
+export interface ResolveInput { itemId: string; kind: "MAP" | "MAP_LINES" | "EXCLUDE"; sku?: string; quantity?: number; lines?: ResolveLineInput[]; mappingRef?: { packageKey: string; version: number }; reason: string; by: string; at: string }
 
 const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
 
@@ -145,7 +145,7 @@ export function applyResolution(items: readonly ScopeItem[], r: ResolveInput): {
   if (r.kind === "MAP_LINES") {
     const built = buildMappedLines(it.quantity, r.lines);
     if (!built.ok) return { ok: false, error: built.error };
-    resolution = { kind: "MAP_LINES", lines: built.lines, itemQuantity: it.quantity as number, reason: r.reason.trim(), by: r.by, at: r.at };
+    resolution = { kind: "MAP_LINES", lines: built.lines, itemQuantity: it.quantity as number, ...(r.mappingRef ? { mappingRef: r.mappingRef } : {}), reason: r.reason.trim(), by: r.by, at: r.at };
   } else if (r.kind === "EXCLUDE") resolution = { kind: "EXCLUDE", reason: r.reason.trim(), by: r.by, at: r.at };
   else {
     if (!r.sku || !r.sku.trim()) return { ok: false, error: "Enter the Cin7 SKU to map this item to." };
@@ -168,4 +168,9 @@ export function variationScope(variationCode: string, products: ReadonlyArray<{ 
       origin: { lineRef: `${variationCode}:${sku}`, label: `Variation ${variationCode}`, packageKey: null, section: null, source: "VARIATION" }, scope: "VARIATION", sellingUnitCents: null, mapping: { status: "MAPPED" } });
   }
   return { ok: true, items };
+}
+
+/** The key a reusable mapping is stored under: the quote package the item came from, else the quote line itself. */
+export function packageKeyOf(item: Pick<ScopeItem, "id" | "origin">): string {
+  return item.origin.packageKey ?? item.id.replace(/:UNMAPPED$/, "");
 }
