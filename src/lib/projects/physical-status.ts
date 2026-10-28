@@ -92,12 +92,14 @@ export function buildPhysicalStatus(i: PhysicalInputs): { rows: PhysicalRow[]; e
     const inProg = sumKnown(asm.filter((a) => ASSEMBLY_ACTIVE.has(a.status.toUpperCase())).map((a) => num(a.quantity)));
     const done = sumKnown(asm.filter((a) => a.status.toUpperCase() === "COMPLETED").map((a) => num(a.quantity)));
 
-    if (ordered === null) exceptions.push({ code: "UNREADABLE_QUANTITY", sku: o.sku, message: `The ordered quantity of ${o.sku} is unreadable.` });
+    // (Before a Sale exists "ordered" is simply not applicable - not an unreadable value - so no warning.)
+    if (ordered === null && linked) exceptions.push({ code: "UNREADABLE_QUANTITY", sku: o.sku, message: `The ordered quantity of ${o.sku} is unreadable.` });
     if (ordered !== null && invoiced !== null && invoiced > ordered + 1e-9) exceptions.push({ code: "OVER_INVOICED", sku: o.sku, message: `${o.sku}: ${invoiced} invoiced against ${ordered} ordered.` });
     if (ordered !== null && shipped !== null && shipped > ordered + 1e-9) exceptions.push({ code: "OVER_SHIPPED", sku: o.sku, message: `${o.sku}: ${shipped} shipped against ${ordered} ordered.` });
     if (linked && scopeBySku.has(o.sku) && !i.ordered.some((x) => x.sku === o.sku)) exceptions.push({ code: "NOT_ON_ORDER", sku: o.sku, message: `${o.sku} is in the approved scope but not on the Cin7 Sale order.` });
     if (linked && quoted !== null && ordered !== null && i.ordered.some((x) => x.sku === o.sku) && Math.abs(quoted - ordered) > 1e-9) exceptions.push({ code: "QUANTITY_DIFFERS_FROM_SCOPE", sku: o.sku, message: `${o.sku}: ${ordered} on the Sale vs ${quoted} in the approved scope.` });
-    if (!st) exceptions.push({ code: "STOCK_NOT_READ", sku: o.sku, message: `Stock for ${o.sku} was not read from Cin7.` });
+    // Before a Sale exists nothing is read from Cin7 at all, so "stock was not read" would be a misleading warning: it is only raised once a Sale is linked.
+    if (!st && linked) exceptions.push({ code: "STOCK_NOT_READ", sku: o.sku, message: `Stock for ${o.sku} was not read from Cin7.` });
     return {
       sku: o.sku, name: o.name, quoted, ordered, invoiced, shipped, remaining, remainingToDeliver: remaining,
       remainingToInvoice: ordered !== null && invoiced !== null ? ordered - invoiced : null,

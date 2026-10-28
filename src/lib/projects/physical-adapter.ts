@@ -3,7 +3,7 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchSaleDetail } from "@/cin7/sales";
-import { fetchAvailabilityForSku } from "@/cin7/sale-inspect";
+import { fetchAllProductAvailability, type Cin7ProductAvailabilityEntry } from "@/cin7/product-availability";
 import { fetchAllFinishedGoodsList } from "@/cin7/finished-goods";
 import type { PhysicalPort } from "./physical-store";
 
@@ -12,6 +12,7 @@ const n = (v: unknown): number | null => (v === null || v === undefined || v ===
 
 export function buildPhysicalPort(db: Db, orgId: string, instanceId: string): PhysicalPort {
   const creds = () => loadCin7Credentials(db, orgId, instanceId);
+  let stockIndex: Promise<Map<string, Cin7ProductAvailabilityEntry[]>> | undefined;
   return {
     async readSale(saleId) {
       const s = await fetchSaleDetail(await creds(), saleId);
@@ -31,7 +32,14 @@ export function buildPhysicalPort(db: Db, orgId: string, instanceId: string): Ph
       };
     },
     async readStock(sku) {
-      const rows = await fetchAvailabilityForSku(await creds(), sku);
+      // ONE paged scan of the availability list, shared by every SKU of this view. (Reading per SKU fell back to scanning up to 30 pages each when the
+      // Sku filter is ignored - dozens of requests for a project with many products, which hit the rate limit and showed false "stock not read".)
+      stockIndex ??= fetchAllProductAvailability(await creds()).then((all) => {
+        const m = new Map<string, Cin7ProductAvailabilityEntry[]>();
+        for (const r of all) m.set(r.SKU, [...(m.get(r.SKU) ?? []), r]);
+        return m;
+      });
+      const rows = (await stockIndex).get(sku) ?? [];
       if (rows.length === 0) return null;
       const sum = (f: (r: (typeof rows)[number]) => unknown) => rows.reduce<number | null>((acc, r) => { const v = n(f(r)); return acc === null || v === null ? null : acc + v; }, 0);
       return { onHand: sum((r) => r.OnHand), allocated: sum((r) => r.Allocated), available: sum((r) => r.Available) };

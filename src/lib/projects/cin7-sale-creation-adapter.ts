@@ -6,7 +6,7 @@ import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchSaleDetail } from "@/cin7/sales";
 import { findBomSkus } from "@/cin7/products";
 import { fetchCustomerDefaults } from "@/cin7/customers";
-import { fetchAvailabilityForSku } from "@/cin7/sale-inspect";
+import { fetchAllProductAvailability, type Cin7ProductAvailabilityEntry } from "@/cin7/product-availability";
 import { createAdvancedSale, customerExists, findSaleByExternalIdForCustomer, resolveProductIds } from "@/cin7/sale-order-write";
 import type { SaleCreationPort } from "./cin7-sale-creation-store";
 
@@ -19,6 +19,8 @@ const cents = (n: unknown): number | null => {
 
 export function buildSaleCreationPort(db: Db, orgId: string, instanceId: string): SaleCreationPort {
   const creds = () => loadCin7Credentials(db, orgId, instanceId);
+  // One shared paged availability scan for every SKU asked about (per-SKU reads could cost dozens of requests each when the Sku filter is ignored).
+  let stockIndex: Promise<Map<string, Cin7ProductAvailabilityEntry[]>> | undefined;
   return {
     async customerExists(name) { return customerExists(await creds(), name); },
     async resolveProducts(skus) { return resolveProductIds(await creds(), skus); },
@@ -36,7 +38,12 @@ export function buildSaleCreationPort(db: Db, orgId: string, instanceId: string)
       return d && d.name === name ? { taxRule: d.taxRule, revenueAccount: d.revenueAccount, location: d.location } : null;
     },
     async stockAt(sku) {
-      const rows = await fetchAvailabilityForSku(await creds(), sku);
+      stockIndex ??= fetchAllProductAvailability(await creds()).then((all) => {
+        const m = new Map<string, Cin7ProductAvailabilityEntry[]>();
+        for (const r of all) m.set(r.SKU, [...(m.get(r.SKU) ?? []), r]);
+        return m;
+      });
+      const rows = (await stockIndex).get(sku) ?? [];
       return rows.map((r) => ({ location: r.Location ?? null, available: Number.isFinite(Number(r.Available)) && r.Available !== undefined ? Number(r.Available) : null }));
     },
     async readSale(saleId) {
