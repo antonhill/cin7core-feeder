@@ -271,7 +271,7 @@ describe("GATE 2 — progress, the R950,000 golden claim, Variation V001, revise
     const { variationId } = await raiseVariation(db as never, ORG, "est@nq", { projectId, title: "Additional Ventilation", description: "", amountCents: R(480_000) });
     await approveVariation(db as never, ORG, "manager@nq", projectId, variationId);
     const tables = new Set(db.writes.map((w) => w.table));
-    expect([...tables].sort()).toEqual(["newquip_quotes", "project_claim_lines", "project_claims", "project_progress_events", "project_stage_allocations", "project_stages", "project_variations", "projects"]);
+    expect([...tables].sort()).toEqual(["newquip_quotes", "project_claim_lines", "project_claims", "project_progress_events", "project_stage_allocations", "project_stages", "project_variation_stages", "project_variations", "projects"]);
     expect(db.rows("project_cin7_links")).toHaveLength(0);
   });
 });

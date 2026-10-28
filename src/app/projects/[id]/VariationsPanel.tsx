@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
-import { allocateClaim } from "@/lib/projects/variations";
+import { VariationBillingPanel } from "./VariationBillingPanel";
 import { approveVariationAction, raiseVariationAction, rejectVariationAction, repriceVariationAction } from "../actions";
 
 // Project VARIATIONS — the only way scope/value changes after acceptance. Generic: nothing here knows about NewQuip.
@@ -25,15 +25,6 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState<Record<string, string>>({});
   const [price, setPrice] = useState<Record<string, string>>({});
-
-  // Illustrative allocation of one claim across the original contract and an approved variation (representation only).
-  const approved = view.variations.filter((v) => v.status === "APPROVED");
-  const demo = approved[0]
-    ? allocateClaim(55_000_000, [
-        { label: "Original commitment", amountCents: 45_000_000, remainingCents: c.originalContractCents - c.committedCents },
-        { label: `${approved[0].code} commitment`, amountCents: 10_000_000, remainingCents: approved[0].amount_cents },
-      ])
-    : null;
 
   return (
     <div className="mt-6 space-y-6">
@@ -101,6 +92,8 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
         </Panel>
       )}
 
+      <VariationBillingPanel view={view} isAdmin={isAdmin} run={run} working={working} />
+
       <Panel>
         <PanelTitle>Cin7 representation — NOT SENT TO CIN7</PanelTitle>
         <Alert tone="info">POC only. The intended Cin7 documents are shown for understanding; nothing is created, updated or sent. Production may raise separate Cin7 invoices per commitment under the same Project.</Alert>
@@ -114,15 +107,6 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
             </TBody>
           </Table>
         </div>
-        {demo && demo.ok && (
-          <div className="mt-4 rounded-lg border border-slate-200 p-4 text-sm">
-            <p className="font-medium text-slate-900">One Project claim may span original + variation value (illustration)</p>
-            <ul className="mt-2 space-y-1 text-slate-700">
-              {demo.parts.map((p) => <li key={p.label} className="flex justify-between gap-6"><span>{p.label}</span><span className="tabular-nums">{formatCents(p.amountCents)}</span></li>)}
-              <li className="flex justify-between gap-6 border-t border-slate-200 pt-1 font-semibold"><span>Project claim</span><span className="tabular-nums">{formatCents(demo.parts.reduce((n, p) => n + p.amountCents, 0))}</span></li>
-            </ul>
-          </div>
-        )}
       </Panel>
     </div>
   );

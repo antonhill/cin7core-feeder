@@ -94,10 +94,12 @@ export async function linkCin7Sale(
   const saleId = input.saleId.trim();
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(saleId)) fail("Enter the Cin7 SaleID (a GUID, from the sale's URL in Cin7).");
   if (!input.revenueAccount.trim()) fail("The Cin7 revenue account code is required.");
-  const p = await db.from("projects").select("id, status").eq("org_id", input.orgId).eq("id", input.projectId).maybeSingle();
+  const p = await db.from("projects").select("id, status, billing_scope").eq("org_id", input.orgId).eq("id", input.projectId).maybeSingle();
   if (p.error) fail(p.error.message);
   if (!p.data) fail("Project not found.");
   if ((p.data as { status: string }).status !== "ACTIVE") fail("Only an ACTIVE project can be linked to a Cin7 Sale.");
+  // A variation billing project links its OWN Sale (role VARIATION); the BASE project links the BASE Sale. Rows written before migration 0105 are BASE.
+  const saleRole = (p.data as { billing_scope?: string }).billing_scope === "VARIATION" ? "VARIATION" : "BASE";
   if (await loadSaleLink(db, input.orgId, input.projectId)) fail("This project is already linked to a Cin7 Sale. A link is permanent.");
 
   const sale = await port.fetchSale(saleId);
@@ -110,6 +112,7 @@ export async function linkCin7Sale(
     org_id: input.orgId, project_id: input.projectId, instance_id: input.instanceId, cin7_sale_id: saleId, cin7_sale_number: sale.saleNumber,
     link_status: "LINKED", tax_rule: sale.taxRule, revenue_account: input.revenueAccount.trim(),
     sale_snapshot: { type: sale.type, orderStatus: sale.orderStatus, invoiceCount: sale.invoices.length }, linked_by_email: email,
+    ...(saleRole === "VARIATION" ? { sale_role: saleRole } : {}),
   }).select("*").single();
   if (ins.error || !ins.data) fail(`link sale: ${ins.error?.message ?? "no row"}`); // incl. unique(project) / unique(org, sale)
   return ins.data as SaleLinkRow;

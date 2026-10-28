@@ -28,6 +28,7 @@
     "src/app/pricing/actions.ts",
     "src/app/projects/actions.ts",
     "src/app/projects/cin7-actions.ts",
+    "src/app/projects/variation-billing-actions.ts",
     "src/app/quotes/actions.ts",
     "src/app/replenish/actions.ts",
     "src/app/replenish/reorder-points/actions.ts",
