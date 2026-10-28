@@ -6,11 +6,14 @@ import type { QuoteEvaluation } from "../grower/evaluate";
 import type { PricedBy } from "../grower/quote-bridge";
 import type { PriceSourceDescriptor, QuoteType } from "../grower/pricing-source";
 import type { GrowerConfigurationInput } from "../grower/types";
+import { buildMarginSheet, type MarginSheet } from "./margin";
 
 // THE ACCEPTED BASELINE — the immutable commercial snapshot a manager's final approval creates, and the only thing a Project is
 // built from. It records everything needed to explain the contract later WITHOUT re-running any rule or re-reading any price:
 // later rule or price changes can never alter it (it is deep-frozen and hash-sealed; the database also refuses to change it).
-// Cost, ROE, freight and margin are deliberately NOT in it.
+// Cost, ROE and freight are deliberately NOT in it. The one exception is `internalMargin`: the INTERNAL margin sheet frozen at approval
+// (selling, estimated cost, gross profit, margin and markup per product/assembly/section/project). It is never copied to a Project
+// baseline and never shown to customers (quoteToProjectBaseline ignores it; the customer summary is built separately).
 
 export interface BaselineCommercialLine {
   itemKey: string;
@@ -63,6 +66,8 @@ export interface AcceptedBaseline {
     managerApprovedBy: string;
     managerApprovedAt: string;
   };
+  /** INTERNAL ONLY. Frozen with the baseline so later price or cost changes cannot rewrite the agreed margin. Absent on baselines sealed before margins existed. */
+  internalMargin?: MarginSheet;
   /** Total contract value, ex VAT, integer cents. */
   contractCents: number;
 }
@@ -93,6 +98,8 @@ export interface BaselineInput {
   draft: QuoteDraft;
   evaluation: QuoteEvaluation;
   approvals: AcceptedBaseline["approvals"];
+  /** The same draft evaluated with cost VISIBLE, used only for the internal margin sheet. Defaults to `evaluation`. Its selling figures must equal the evaluation's. */
+  marginEvaluation?: QuoteEvaluation;
 }
 
 /** Builds the sealed baseline. Throws unless the evaluated quote is READY — an incomplete quote can never be frozen. */
@@ -100,6 +107,8 @@ export function buildAcceptedBaseline(i: BaselineInput): { baseline: AcceptedBas
   const { evaluation: ev, draft } = i;
   if (ev.readiness.state !== "READY" || !ev.budget || ev.budget.incomplete) throw new Error("Cannot freeze a quote that is not READY.");
   const b = ev.budget;
+  const marginBudget = (i.marginEvaluation ?? ev).budget;
+  if (!marginBudget || Math.round(marginBudget.totals.subtotalExTax * 100) !== Math.round(b.totals.subtotalExTax * 100)) throw new Error("The margin evaluation does not match the quote being frozen.");
   const subtotalCents = cents(b.totals.subtotalExTax);
 
   const lines: BaselineCommercialLine[] = b.lines
@@ -140,6 +149,7 @@ export function buildAcceptedBaseline(i: BaselineInput): { baseline: AcceptedBas
     },
     assumptions: draft.estimator.assumptions,
     approvals: i.approvals,
+    internalMargin: buildMarginSheet(marginBudget, draft.estimator.costOverrides ?? {}),
     contractCents: subtotalCents,
   };
   return { baseline: deepFreeze(baseline), hash: hashOf(baseline) };

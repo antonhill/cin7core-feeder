@@ -10,6 +10,7 @@ import { evaluateDraft, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { rolesFor, type OrgTier, type QuoteRole } from "@/newquip/quote/roles";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
+import { redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
 import {
   createProjectFromAcceptedQuote, createQuote, estimatorSignOff, listQuotes, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator,
   type QuoteRecord,
@@ -57,7 +58,7 @@ export interface QuoteView {
 function view(quote: QuoteRecord, a: Actor): QuoteView {
   const canViewCommercials = a.tier === "admin";
   return {
-    quote,
+    quote: redactInternalFinancials(quote, canViewCommercials),
     evaluation: evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)),
     viewer: { roles: [...a.roles], canViewCommercials },
   };
@@ -120,7 +121,8 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
   try {
     const a = await authorise();
     const db = createServiceRoleClient();
-    await saveDraft(db, a.orgId, a.roles, quoteId, draft);
+    const prior = await loadQuote(db, a.orgId, quoteId);
+    await saveDraft(db, a.orgId, a.roles, quoteId, stampCostOverrides(draft, prior?.draft.estimator.costOverrides, a.tier === "admin", a.email, new Date().toISOString()));
     const q = await loadQuote(db, a.orgId, quoteId);
     return q ? { ok: true, data: view(q, a) } : { ok: false, error: "Quote not found." };
   } catch (e) {
@@ -166,7 +168,8 @@ export async function signOffGrowerQuoteAction(quoteId: string) {
 /** Manager final approval — freezes the accepted baseline. */
 export async function approveGrowerQuoteAction(quoteId: string) {
   return step(quoteId, "Manager approved a NewQuip quote and froze the accepted baseline", "newquip.quote_manager_approved", async (a, db) => {
-    await managerApprove(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true));
+    // Approval evaluates with cost withheld; the INTERNAL margin sheet is frozen from a second, cost-visible evaluation of the same draft.
+    await managerApprove(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), evaluationContext(false));
   });
 }
 

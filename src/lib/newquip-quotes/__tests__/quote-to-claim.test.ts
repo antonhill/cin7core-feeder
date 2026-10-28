@@ -116,7 +116,8 @@ describe("GATE 1 — quote workflow to a frozen baseline and a Project", () => {
     expect(b.commercial.totalCents).toBe(b.commercial.subtotalCents + b.commercial.taxCents);
     expect(b.contractCents).toBe(R(10_000_000));
     expect(b.approvals.managerApprovedBy).toBe("manager@nq");
-    expect(JSON.stringify(b)).not.toMatch(/"(averageCost|landedCost|estimatedCost|estimatedGP|marginPct)/i); // cost never enters the baseline
+    // Cost/margin figures live ONLY in the sealed `internalMargin` section (never in the commercial baseline a Project is built from).
+    expect(JSON.stringify({ ...b, internalMargin: undefined })).not.toMatch(/"(averageCost|landedCost|estimatedCost|estimatedGP|marginPct)/i); // cost never enters the baseline
     expect(Object.isFrozen(b)).toBe(true); // deep-frozen when built …
     expect(baselineMatchesHash(q.accepted_baseline, q.baseline_hash!)).toBe(true); // … and its seal verifies
     // editing / re-approving / reopening an accepted quote is refused

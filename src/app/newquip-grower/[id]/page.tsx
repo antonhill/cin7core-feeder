@@ -27,6 +27,7 @@ import {
   saveGrowerDraftAction, sendGrowerQuoteToEstimatorAction, signOffGrowerQuoteAction, type QuoteView,
 } from "../actions";
 import { fmtCents, fmtZar, NumField, TextField } from "../fields";
+import { MarginPanel } from "./MarginPanel";
 
 // NewQuip Grower quote editor: Configuration (rep) → Estimator review → Customer quote → Approval. The browser holds only the
 // editable DRAFT; every number shown comes from the server's evaluateDraft(), and approval re-evaluates on the server again.
@@ -460,6 +461,10 @@ export default function QuoteEditorPage() {
               </dl>
               <p className="mt-2 text-xs text-slate-500">{budget.pricingBasis}. {budget.state === "complete" ? "Every required line is priced." : "Incomplete: the total is partial until every blocker is resolved."}</p>
             </Panel>
+          )}
+
+          {budget && view.viewer.canViewCommercials && (
+            <MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={editable} edit={edit} />
           )}
         </fieldset>
       )}
