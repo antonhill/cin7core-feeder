@@ -63,5 +63,8 @@ create trigger newquip_package_mappings_guard_trg before insert or update or del
 alter table newquip_package_mappings enable row level security;
 create policy "org members read newquip_package_mappings" on newquip_package_mappings for select using (is_org_member(org_id));
 -- All writes go through the service role (server actions); no insert/update/delete policies are granted.
+-- Belt and braces on top of RLS: the client roles get SELECT only (Supabase's default also grants INSERT/UPDATE/DELETE/TRUNCATE, and TRUNCATE is not subject to RLS).
+revoke all on newquip_package_mappings from anon, authenticated;
+grant select on newquip_package_mappings to authenticated;
 
 revoke all on function newquip_package_mappings_guard() from public, anon;

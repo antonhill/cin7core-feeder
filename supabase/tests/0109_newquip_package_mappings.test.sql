@@ -53,6 +53,15 @@ select pg_temp.expect_denied($q$update newquip_package_mappings set status = 'AC
 select pg_temp.expect_denied($q$delete from newquip_package_mappings where package_key = 'penning_package'$q$, 'delete history');
 select pg_temp.expect_denied($q$update newquip_package_mappings set version = 7 where package_key = 'led_light'$q$, 'renumber a version');
 
+-- client roles hold SELECT only on these tables (RLS aside): no INSERT/UPDATE/DELETE/TRUNCATE grant for anon or authenticated
+do $$ begin
+  if exists (select 1 from information_schema.role_table_grants where table_schema = 'public' and table_name in ('newquip_package_mappings') and grantee in ('anon', 'authenticated') and privilege_type <> 'SELECT') then
+    raise exception '0109: anon/authenticated must hold SELECT only';
+  end if;
+  if exists (select 1 from information_schema.role_table_grants where table_schema = 'public' and table_name in ('newquip_package_mappings') and grantee = 'anon') then
+    raise exception '0109: anon must hold no privilege at all';
+  end if;
+end $$;
 -- RLS and organisation isolation
 select pg_temp.act_as('00000000-0000-0000-0000-0000000009a1');
 do $$ begin if (select count(*) from newquip_package_mappings) <> 3 then raise exception 'member A should see its 3 versions'; end if; end $$;

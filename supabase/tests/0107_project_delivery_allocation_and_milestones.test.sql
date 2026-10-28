@@ -92,6 +92,15 @@ do $$ begin
   if (select count(*) from project_claims where project_id = '00000000-0000-0000-0000-0000000007c1') <> 0 then raise exception 'confirmation must not create claims'; end if;
 end $$;
 
+-- client roles hold SELECT only on these tables (RLS aside): no INSERT/UPDATE/DELETE/TRUNCATE grant for anon or authenticated
+do $$ begin
+  if exists (select 1 from information_schema.role_table_grants where table_schema = 'public' and table_name in ('project_milestone_confirmations','project_deliveries','project_delivery_allocations','project_delivery_events') and grantee in ('anon', 'authenticated') and privilege_type <> 'SELECT') then
+    raise exception '0107: anon/authenticated must hold SELECT only';
+  end if;
+  if exists (select 1 from information_schema.role_table_grants where table_schema = 'public' and table_name in ('project_milestone_confirmations','project_deliveries','project_delivery_allocations','project_delivery_events') and grantee = 'anon') then
+    raise exception '0107: anon must hold no privilege at all';
+  end if;
+end $$;
 -- ── RLS ──
 select pg_temp.act_as('00000000-0000-0000-0000-0000000007a1');
 do $$ begin

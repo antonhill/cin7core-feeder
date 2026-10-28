@@ -103,6 +103,9 @@ create policy "org members read project_deliveries"              on project_deli
 create policy "org members read project_delivery_allocations"    on project_delivery_allocations    for select using (is_org_member(org_id));
 create policy "org members read project_delivery_events"         on project_delivery_events         for select using (is_org_member(org_id));
 -- All writes go through the service role (server actions); no insert/update/delete policies are granted.
+-- Belt and braces on top of RLS: the client roles get SELECT only (Supabase's default also grants INSERT/UPDATE/DELETE/TRUNCATE, and TRUNCATE is not subject to RLS).
+revoke all on project_milestone_confirmations, project_deliveries, project_delivery_allocations, project_delivery_events from anon, authenticated;
+grant select on project_milestone_confirmations, project_deliveries, project_delivery_allocations, project_delivery_events to authenticated;
 
 revoke all on function project_append_only_guard() from public, anon;
 revoke all on function project_delivery_allocations_guard() from public, anon;

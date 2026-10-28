@@ -61,6 +61,15 @@ update project_cost_entries set voided_at = now(), voided_by_email = 'm@x', void
 select pg_temp.expect_denied($q$update project_cost_entries set void_reason = 'again' where id = '00000000-0000-0000-0000-0000000008e2'$q$, 'edit a voided entry');
 select pg_temp.expect_denied($q$delete from project_cost_entries where id = '00000000-0000-0000-0000-0000000008e1'$q$, 'delete an entry');
 
+-- client roles hold SELECT only on these tables (RLS aside): no INSERT/UPDATE/DELETE/TRUNCATE grant for anon or authenticated
+do $$ begin
+  if exists (select 1 from information_schema.role_table_grants where table_schema = 'public' and table_name in ('project_cost_entries') and grantee in ('anon', 'authenticated') and privilege_type <> 'SELECT') then
+    raise exception '0108: anon/authenticated must hold SELECT only';
+  end if;
+  if exists (select 1 from information_schema.role_table_grants where table_schema = 'public' and table_name in ('project_cost_entries') and grantee = 'anon') then
+    raise exception '0108: anon must hold no privilege at all';
+  end if;
+end $$;
 -- RLS: org ADMIN reads; a plain member and another org's admin see nothing; nobody writes through the client
 select pg_temp.act_as('00000000-0000-0000-0000-0000000008a1');
 do $$ begin if (select count(*) from project_cost_entries) <> 2 then raise exception 'org admin should see both entries'; end if; end $$;

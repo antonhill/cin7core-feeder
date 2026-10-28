@@ -64,5 +64,8 @@ create trigger project_cost_entries_guard_trg before insert or update or delete 
 alter table project_cost_entries enable row level security;
 create policy "org admins read project_cost_entries" on project_cost_entries for select using (is_org_admin(org_id));
 -- All writes go through the service role (server actions); no insert/update/delete policies are granted.
+-- Belt and braces on top of RLS: the client roles get SELECT only (Supabase's default also grants INSERT/UPDATE/DELETE/TRUNCATE, and TRUNCATE is not subject to RLS).
+revoke all on project_cost_entries from anon, authenticated;
+grant select on project_cost_entries to authenticated;
 
 revoke all on function project_cost_entries_guard() from public, anon;
