@@ -2,7 +2,7 @@ import "server-only";
 // Projects — Variation persistence. LOCAL ONLY: no Cin7, no fetch (pinned by no-cin7-write.test.ts). Every query is org-scoped.
 import type { createServiceRoleClient } from "@/supabase/server";
 import { defaultVariationSchedule } from "./variation-schedule";
-import { assertVariationTransition, nextVariationCode, type VariationRow, type VariationStatus } from "./variations";
+import { NEGATIVE_VARIATION_UNSUPPORTED, assertVariationTransition, nextVariationCode, type VariationRow, type VariationStatus } from "./variations";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 
@@ -24,6 +24,7 @@ async function projectIsActive(db: Db, orgId: string, projectId: string): Promis
 }
 
 export function validateAmount(amountCents: number): void {
+  if (Number.isFinite(amountCents) && amountCents < 0) fail(NEGATIVE_VARIATION_UNSUPPORTED);
   if (!Number.isInteger(amountCents) || amountCents <= 0) fail("A variation amount must be a positive whole number of cents (ex VAT).");
 }
 

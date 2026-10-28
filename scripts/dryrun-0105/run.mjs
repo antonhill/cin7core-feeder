@@ -169,4 +169,18 @@ await denied(`insert into project_cin7_sale_creations (org_id, project_id, insta
 await denied(`insert into project_cin7_sale_links (org_id, project_id, instance_id, cin7_sale_id, tax_rule, revenue_account, linked_by_email, sale_role) values ('${A}', '${V2}', '${INST}', 'SALE-X', 'r', '200', 'm', 'BASE')`, "a BASE Sale on a variation billing project");
 ok((await q(`select count(*)::int n from project_cin7_sale_links`))[0].n === 1, "still exactly one Sale link (INV-00021's)");
 
+console.log("\nMigration 0106 (variation safeguards) on top of the migrated data");
+const rowsBefore106 = {};
+for (const t of TABLES) rowsBefore106[t] = (await q(`select to_jsonb(x)::text j from ${t} x order by j`)).map((r) => r.j);
+await db.exec(mig("0106_project_variation_safeguards.sql"));
+for (const t of TABLES) ok(JSON.stringify((await q(`select to_jsonb(x)::text j from ${t} x order by j`)).map((r) => r.j)) === JSON.stringify(rowsBefore106[t]), `0106 left ${t} untouched`);
+await denied(`update projects set status = 'CLOSED' where id = '${P.golden}'`, "close the parent while its variation scope is open");
+await denied(`update projects set status = 'CLOSED' where id = '${V2}'`, "close the variation scope while it has a DRAFT claim");
+const v2stage = (await q(`select id from project_stages where project_id = $1 and sort_order = 1`, [V2]))[0].id;
+await denied(`insert into project_opening_commitments (org_id, project_id, stage_id, amount_cents, reason, recorded_by_email) values ('${A}', '${V2}', '${v2stage}', 100, 'x', 'm')`, "an opening commitment on a variation billing project (also frozen by its claim)");
+ok((await q(`select project_unresolved_obligations('${V2}') o`))[0].o.join("|") === "claim PRJ-NQ-Q-0001-V002-C01 is DRAFT", "the unresolved-items helper names the blocker");
+await db.exec(`update projects set status = 'CLOSED' where id = '${P.c1}'`);
+ok(true, "a BASE project with no variation scopes still closes exactly as before");
+ok((await q(`select count(*)::int n from project_variations where code = 'V001' and amount_cents = 48000000 and status = 'APPROVED'`))[0].n === 1, "V001 unchanged by 0106");
+
 console.log(`\nALL ${passed} DRY-RUN ASSERTIONS PASSED`);

@@ -11,6 +11,7 @@ import { logActivity } from "@/lib/activity-log";
 import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { amendVariationSchedule, createVariationBillingProject, listVariationStages, loadConsolidatedProject, saveDraftSchedule, type ConsolidatedProject } from "@/lib/projects/variation-billing-store";
+import { callerIsOrgAdmin } from "@/lib/projects/scope-access";
 import { scheduleFromPercents } from "@/lib/projects/variation-schedule";
 
 export interface VariationBillingResult<T> {
@@ -31,6 +32,7 @@ export async function getVariationBillingAction(projectId: string): Promise<Vari
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
     const db = createServiceRoleClient();
+    const admin = await callerIsOrgAdmin();
     const consolidated = await loadConsolidatedProject(db, orgId, projectId);
     if (!consolidated) return { ok: false, error: "Project not found." };
     const schedules: VariationBillingState["schedules"] = {};
@@ -40,7 +42,7 @@ export async function getVariationBillingAction(projectId: string): Promise<Vari
       const vid = consolidated.base.variations.find((v) => v.code === s.variationCode)?.id;
       if (s.scope === "VARIATION" && vid) billingProjectByVariation[vid] = s.projectId;
     }
-    return { ok: true, data: { consolidated, schedules, billingProjectByVariation } };
+    return { ok: true, data: { consolidated: { ...consolidated, closureBlockers: admin ? consolidated.closureBlockers : [] }, schedules, billingProjectByVariation } };
   } catch (e) {
     return { ok: false, error: message(e) };
   }

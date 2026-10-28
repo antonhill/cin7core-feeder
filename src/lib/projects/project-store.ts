@@ -224,6 +224,7 @@ export async function setOpeningCommitments(
   if (!input.reason.trim()) fail("A reason is required.");
   const view = await loadProjectView(db, orgId, input.projectId);
   if (!view) fail("Project not found.");
+  if ((view.project as { billing_scope?: string }).billing_scope === "VARIATION") fail("A variation billing project cannot carry opening commitments: its value starts uncommitted.");
   if (view.claims.length > 0) fail("This project already has a claim — opening commitments are frozen.");
   const byId = new Map(view.stages.map((s) => [s.id, s]));
   for (const it of input.items) {

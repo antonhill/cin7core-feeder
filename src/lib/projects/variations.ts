@@ -104,3 +104,14 @@ export function redactVariationCosts<T extends { variations: VariationRow[] }>(v
   if (canSeeCost) return view;
   return { ...view, variations: view.variations.map((v) => ({ ...v, estimated_cost_cents: null })) };
 }
+
+/**
+ * NEGATIVE VARIATIONS (credits, omissions, cancellations) ARE UNSUPPORTED for automated handling. The database already refuses them
+ * (project_variations.amount_cents > 0); the application says so explicitly. Toolbox never generates a credit note, a negative Sale or a
+ * negative invoice line - a reduction in scope is handled by a manager in Cin7 and is not represented here.
+ */
+export const NEGATIVE_VARIATION_UNSUPPORTED =
+  "Negative variations (credits, omissions, cancellations) are not supported. Toolbox will not create a credit note or a negative Sale; handle a reduction in scope manually in Cin7.";
+
+/** True when user-entered money text is negative (a leading minus, or brackets as accountants write it). */
+export const isNegativeAmountInput = (input: string): boolean => /^\s*(-|\()/.test(input);
