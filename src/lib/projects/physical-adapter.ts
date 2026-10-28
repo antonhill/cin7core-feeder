@@ -10,6 +10,27 @@ import type { PhysicalPort } from "./physical-store";
 type Db = ReturnType<typeof createServiceRoleClient>;
 const n = (v: unknown): number | null => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
 
+/**
+ * Cost carried on the Sale's NON-VOIDED invoice lines: sum of Quantity x AverageCost (Cin7's own per-line COGS basis). This is NOT the same as the
+ * header's recognised COGS: it is present as soon as an invoice line exists (even a DRAFT invoice), whereas recognised COGS appears only when Cin7
+ * books it. Unknown (null) if any line has an unreadable quantity or a missing / zero AverageCost (Cin7 uses a literal 0 for "not configured").
+ */
+export function invoiceLineCost(invoices: Array<{ Status?: string; Lines?: Array<{ SKU?: string; Quantity?: number; AverageCost?: number }> }>): number | null {
+  let total = 0;
+  for (const inv of invoices) {
+    if ((inv.Status ?? "").toUpperCase() === "VOIDED") continue;
+    if (!inv.Lines) return null;
+    for (const l of inv.Lines) {
+      const q = n(l.Quantity); const c = n(l.AverageCost);
+      if (q === null) return null;
+      if (q === 0) continue;
+      if (c === null || c <= 0) return null;
+      total += q * c;
+    }
+  }
+  return Math.round(total * 100);
+}
+
 export function buildPhysicalPort(db: Db, orgId: string, instanceId: string): PhysicalPort {
   const creds = () => loadCin7Credentials(db, orgId, instanceId);
   let stockIndex: Promise<Map<string, Cin7ProductAvailabilityEntry[]>> | undefined;
@@ -17,6 +38,7 @@ export function buildPhysicalPort(db: Db, orgId: string, instanceId: string): Ph
     async readSale(saleId) {
       const s = await fetchSaleDetail(await creds(), saleId);
       return {
+        invoiceLineCostCents: invoiceLineCost(s.Invoices ?? []),
         cogsCents: n(s.COGSAmount) === null ? null : Math.round((n(s.COGSAmount) as number) * 100),
         ordered: (s.Order?.Lines ?? []).filter((l) => l.SKU).map((l) => ({ sku: l.SKU as string, name: l.Name ?? "", quantity: n(l.Quantity) })),
         invoices: (s.Invoices ?? []).map((i) => ({

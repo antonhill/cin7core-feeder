@@ -10,7 +10,7 @@ type Db = ReturnType<typeof createServiceRoleClient>;
 
 export interface PhysicalPort {
   /** One GET of the Sale, projected to what the physical view needs. */
-  readSale(saleId: string): Promise<{ ordered: OrderedLine[]; invoices: InvoiceView[]; fulfilments: FulfilmentView[]; /** Cost of goods Cin7 has recognised on the Sale so far, cents; null when unreadable. */ cogsCents: number | null }>;
+  readSale(saleId: string): Promise<{ ordered: OrderedLine[]; invoices: InvoiceView[]; fulfilments: FulfilmentView[]; /** Cost of goods Cin7 has recognised on the Sale so far, cents; null when unreadable. */ cogsCents: number | null; /** Quantity x AverageCost over the non-voided invoice lines, cents; null when unreadable/unknown. Absent on test doubles. */ invoiceLineCostCents?: number | null }>;
   /** One bounded read per SKU. */
   readStock(sku: string): Promise<StockView | null>;
   /** The account's assembly (finished goods) records; read-only. */

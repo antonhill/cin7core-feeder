@@ -99,6 +99,7 @@ export class FakeDb {
       update: (p: Row) => { op = "update"; payload = p; return q; },
       delete: () => { op = "delete"; return q; },
       eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
+      is: (c: string, v: null) => { filters.push((r) => (r[c] ?? null) === v); return q; },
       in: (c: string, v: unknown[]) => { filters.push((r) => v.includes(r[c])); return q; },
       order: (col: string, o?: { ascending?: boolean }) => { orders.push({ col, asc: o?.ascending !== false }); return q; },
       // Supports the `col.ilike.*text*` terms PostgREST's or() takes (a row matches if ANY term matches); `\\` escapes a literal % _ or backslash.
