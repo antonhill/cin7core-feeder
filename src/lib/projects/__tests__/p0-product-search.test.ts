@@ -27,7 +27,7 @@ function bigCache(db: FakeDb) {
 describe("NQCP137 is found in a large stock cache", () => {
   it("REPRODUCTION: the old unpaged, unfiltered read of MSTR returns exactly 1,000 rows and NQCP137 is not among them", async () => {
     const db = new FakeDb(); bigCache(db);
-    const old = (await db.from("product_availability").select("product_sku").eq("org_id", ORG).eq("location", "MSTR")) as unknown as { data: Array<{ product_sku: string }> };
+    const old = (await db.from("product_availability").select().eq("org_id", ORG).eq("location", "MSTR")) as unknown as { data: Array<{ product_sku: string }> };
     expect(old.data).toHaveLength(1000);
     expect(old.data.some((r) => r.product_sku === "NQCP137")).toBe(false);
   });
