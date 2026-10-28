@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import type { P0Report } from "@/lib/projects/p0-checklist";
+import { isP0Disposable } from "@/lib/projects/p0-project";
 import { CREATE_CONFIRMATION_TEXT } from "@/lib/projects/cin7-sale-creation";
 import type { ProjectView } from "@/lib/projects/project-view";
 import { createCin7SaleAction, getCin7SaleCreationStatusAction, reconcileCin7SaleCreationAction, runP0ChecklistAction, type Cin7SaleCreationStatus } from "../cin7-actions";
@@ -22,8 +23,10 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
   const projectId = view.project.id;
   const [st, setSt] = useState<Cin7SaleCreationStatus | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [customer, setCustomer] = useState("");
-  const [location, setLocation] = useState("");
+  // A disposable P0 project already knows its customer and location (they were entered when it was prepared); everything else stays explicit.
+  const isP0Project = isP0Disposable(view.project.originating_quote_ref);
+  const [customer, setCustomer] = useState(isP0Project ? view.project.customer_name : "");
+  const [location, setLocation] = useState(isP0Project ? "MSTR" : "");
   const [account, setAccount] = useState("");
   const [taxRule, setTaxRule] = useState("Standard Rate Sales");
   const [lines, setLines] = useState<Line[] | null>(null);
