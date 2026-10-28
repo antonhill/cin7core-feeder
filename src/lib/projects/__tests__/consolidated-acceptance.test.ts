@@ -9,6 +9,7 @@ import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
 import { buildAcceptedBaseline, baselineMatchesHash, type AcceptedBaseline } from "@/newquip/quote/baseline";
 import { buildMarginSheet, redactInternalFinancials } from "@/newquip/quote/margin";
+import { POC_SIX_STAGE_SCHEDULE } from "@/newquip/quote/billing-schedule";
 import { quoteToProjectBaseline } from "@/newquip/quote/to-project";
 import { FakeDb } from "./fake-db";
 import { approveClaim, createClaimDraft, createProjectFromBaseline, loadProjectView, recordProgress, setOpeningCommitments, submitClaimForApproval } from "../project-store";
@@ -59,7 +60,7 @@ describe("release-candidate chain", () => {
 
   it("quote -> project -> Cin7 Sale (R0) -> invoice proposal -> post, with no SKU typed anywhere; variation stays isolated; P0 passes; writes are off", async () => {
     const db = new FakeDb();
-    const projectId = await createProjectFromBaseline(db as never, ORG, "m@x", quoteToProjectBaseline(approved.baseline, approved.hash, "q1"), { reference: "PRJ-NQ-Q-0001", name: "Demo" });
+    const projectId = await createProjectFromBaseline(db as never, ORG, "m@x", quoteToProjectBaseline(approved.baseline, approved.hash, "q1", POC_SIX_STAGE_SCHEDULE), { reference: "PRJ-NQ-Q-0001", name: "Demo" });
     // the project inherited the approved scope (and only that)
     const scope = effectiveScope(scopeFromSnapshot(db.rows("projects").find((p) => p.id === projectId)!.baseline_snapshot));
     expect(scope.blockers.length).toBe(3); // M75, penning, FORTIS LED: unmapped until a manager decides

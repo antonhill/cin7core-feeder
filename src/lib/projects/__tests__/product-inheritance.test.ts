@@ -6,6 +6,7 @@ import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { buildAcceptedBaseline, baselineMatchesHash, hashOf, type AcceptedBaseline } from "@/newquip/quote/baseline";
 import { redactInternalFinancials } from "@/newquip/quote/margin";
+import { POC_SIX_STAGE_SCHEDULE } from "@/newquip/quote/billing-schedule";
 import { quoteToProjectBaseline } from "@/newquip/quote/to-project";
 import { buildPhysicalScope } from "@/newquip/quote/physical-scope";
 import { buildCustomerSummary } from "@/newquip/grower/customer-summary";
@@ -49,7 +50,7 @@ describe("1-3. the approved quotation's products carry into the project unchange
     const db = new FakeDb();
     const id = await createProjectFromBaseline(db as never, ORG, "m@x", generic, { reference: "PRJ-NQ-Q-0001", name: "n" });
     expect(scopeFromSnapshot(db.rows("projects").find((p) => p.id === id)!.baseline_snapshot)).toEqual(baseline.physicalScope);
-    expect(db.rows("project_stages")).toHaveLength(6); // the project itself is unchanged by inheriting the scope
+    expect(db.rows("project_stages")).toHaveLength(3); // the project itself is unchanged by inheriting the scope
   });
   it("preserves SKU, description, quantity, unit, product type, package/section origin, selling price and BASE scope", () => {
     const byId = new Map(baseline.physicalScope!.map((i) => [i.id, i]));
@@ -130,7 +131,7 @@ describe("4, 12. the Cin7 Advanced Sale is populated from the inherited scope, f
   beforeEach(async () => {
     db = new FakeDb(); port = new SalePort();
     const { baseline, hash } = approvedDemo();
-    projectId = await createProjectFromBaseline(db as never, ORG, "m@x", quoteToProjectBaseline(baseline, hash, "q1"), { reference: "PRJ-NQ-Q-0001", name: "n" });
+    projectId = await createProjectFromBaseline(db as never, ORG, "m@x", quoteToProjectBaseline(baseline, hash, "q1", POC_SIX_STAGE_SCHEDULE), { reference: "PRJ-NQ-Q-0001", name: "n" });
     for (const i of baseline.physicalScope!) if (i.sku) port.skus.add(i.sku);
   });
   it("refuses while any scope item is unmapped, names every one, stores no intent and sends nothing", async () => {
