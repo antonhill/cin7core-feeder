@@ -33,6 +33,20 @@ export function buildCin7Port(db: Db, orgId: string, instanceId: string): Cin7Po
           subtotalCents: cents(i.TotalBeforeTax), taxCents: cents(i.Tax), totalCents: cents(i.Total),
           lines: (i.Lines ?? []).map((l) => ({ sku: l.SKU ?? null, quantity: Number.isFinite(Number(l.Quantity)) && l.Quantity !== undefined ? Number(l.Quantity) : null, priceCents: cents(l.Price) })),
         })),
+        // Shipped = packed on a fulfilment whose Ship step is AUTHORISED or has a line marked shipped (semantics UNVERIFIED: contract C9). null = a quantity was unreadable.
+        shipped: (() => {
+          const out: Record<string, number | null> = {};
+          for (const f of s.Fulfilments ?? []) {
+            const shipped = (f.Ship?.Status ?? "").toUpperCase() === "AUTHORISED" || (f.Ship?.Lines ?? []).some((l) => l.IsShipped === true);
+            if (!shipped) continue;
+            for (const l of f.Pack?.Lines ?? []) {
+              if (!l.SKU) continue;
+              const q = l.Quantity === undefined || !Number.isFinite(Number(l.Quantity)) ? null : Number(l.Quantity);
+              out[l.SKU] = q === null || out[l.SKU] === null ? null : (out[l.SKU] ?? 0) + q;
+            }
+          }
+          return out;
+        })(),
         orderLines: (s.Order?.Lines ?? []).map((l) => ({ productId: l.ProductID ?? "", sku: l.SKU ?? "", name: l.Name ?? "", quantity: Number(l.Quantity) })),
       };
     },

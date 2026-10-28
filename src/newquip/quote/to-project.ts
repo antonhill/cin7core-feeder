@@ -1,6 +1,7 @@
 import type { ApprovedCommercialBaseline, BaselineLine, SuggestedStage } from "@/lib/projects/baseline";
 import { POC_STAGE_SPLIT_BPS } from "../grower/final-feedback";
 import type { AcceptedBaseline } from "./baseline";
+import { buildPhysicalScope } from "./physical-scope";
 
 // NewQuip Quote-to-Project ADAPTER. The NewQuip domain may know about its scope and stages; the generic Projects engine must
 // not. This is the only place the two meet: it turns an ACCEPTED baseline into the engine's generic ApprovedCommercialBaseline.
@@ -43,6 +44,8 @@ export function quoteToProjectBaseline(b: AcceptedBaseline, baselineHash: string
     salesperson: b.approvals.handoffBy,
     lines,
     suggestedStages: splitContractIntoStages(b.contractCents),
+    // Inherited, never re-entered: the sealed scope, or - for a baseline sealed before it existed - the identical rebuild from its sealed lines.
+    physicalScope: structuredClone(b.physicalScope ?? buildPhysicalScope(b.commercial.lines)),
     provenance: {
       kind: "newquip_grower_quote",
       newquipQuoteId: quoteId,

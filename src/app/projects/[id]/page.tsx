@@ -39,7 +39,7 @@ const TABS: { value: Tab; label: string }[] = [
   { value: "components", label: "Components / scope" },
   { value: "claims", label: "Claims" },
   { value: "variations", label: "Variations" },
-  { value: "physical", label: "Physical" },
+  { value: "physical", label: "Products & Fulfilment" },
   { value: "profitability", label: "Profitability" },
 ];
 

@@ -7,6 +7,7 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { checkSchedule } from "./claim-engine";
 import { NEGATIVE_VARIATION_UNSUPPORTED } from "./variations";
+import { variationScope } from "./product-scope";
 import { loadProjectView } from "./project-store";
 import { listPostings } from "./cin7-posting-store";
 import { loadCreation } from "./cin7-sale-creation-store";
@@ -76,7 +77,7 @@ export async function amendVariationSchedule(
  */
 export async function createVariationBillingProject(
   db: Db, gates: { isManager: boolean }, email: string,
-  input: { orgId: string; projectId: string; variationId: string },
+  input: { orgId: string; projectId: string; variationId: string; /** The variation's physical products, entered ONCE here (controlled scope addition); every later step inherits them. */ products?: Array<{ sku: string; description: string; quantity: number }> },
 ): Promise<{ billingProjectId: string; created: boolean }> {
   if (!gates.isManager) fail("Only a manager (org owner/admin) can start variation billing.");
   const v = await loadVariation(db, input.orgId, input.projectId, input.variationId);
@@ -95,6 +96,8 @@ export async function createVariationBillingProject(
   if (p.status !== "ACTIVE") fail("The project must be ACTIVE to bill a variation.");
   if (p.billing_scope && p.billing_scope !== "BASE") fail("A variation billing project cannot itself carry variations.");
 
+  const scope = variationScope(v.code, input.products ?? []);
+  if (!scope.ok) fail(scope.error);
   const schedule = await listVariationStages(db, input.orgId, input.variationId);
   if (schedule.length === 0) fail("This variation has no billing schedule yet. A manager must set one (controlled amendment) before billing can start.");
   const stages = scheduleToStages(v.amount_cents, schedule.map((s) => ({ name: s.name, bps: s.bps })));
@@ -106,7 +109,7 @@ export async function createVariationBillingProject(
     original_contract_cents: v.amount_cents, currency: p.currency, tax_rule: p.tax_rule, tax_rate_bps: p.tax_rate_bps, tax_inclusive: p.tax_inclusive,
     salesperson: p.salesperson, project_manager: p.project_manager, status: "DRAFT",
     billing_scope: "VARIATION", parent_project_id: input.projectId, variation_id: input.variationId,
-    baseline_snapshot: { kind: "VARIATION_BILLING", variationId: v.id, variationCode: v.code, parentProjectId: input.projectId, schedule: stages },
+    baseline_snapshot: { kind: "VARIATION_BILLING", variationId: v.id, variationCode: v.code, parentProjectId: input.projectId, schedule: stages, physicalScope: scope.items },
     created_by_email: email,
   }).select("id").single();
   if (ins.error || !ins.data) fail(`create variation billing project: ${ins.error?.message ?? "no row"}`);

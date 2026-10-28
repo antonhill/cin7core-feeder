@@ -73,11 +73,14 @@ export function validateCostOverride(o: CostOverride): string | null {
 export interface MarginLine extends MarginFigures {
   itemKey: string;
   label: string;
+  /** The Cin7 SKU sold on this line (null for packages / estimator-priced lines) and its quantity - ties a margin line to the physical scope. */
+  sku?: string | null;
+  quantity?: number | null;
   kind: "PRODUCT" | "ASSEMBLY_PACKAGE";
   section: string;
   costBasis: CostBasis | null;
   overrideReason?: string;
-  components?: Array<MarginFigures & { sku: string | null; description: string; costBasis: CostBasis | null }>;
+  components?: Array<MarginFigures & { sku: string | null; description: string; quantity?: number | null; costBasis: CostBasis | null }>;
 }
 export interface MarginSection extends MarginFigures { section: string; lineCount: number; incomplete: boolean }
 export interface MarginSheet {
@@ -95,7 +98,7 @@ const SECTION_BY_ITEM: Record<string, string> = {
   cup_drinker: "Drinking", concrete_slat: "Flooring", led_light: "Lighting",
   delivery: "Delivery & installation", installation: "Delivery & installation", concrete_slat_delivery: "Delivery & installation",
 };
-const sectionOf = (itemKey: string): string => SECTION_BY_ITEM[itemKey] ?? "Other equipment";
+export const sectionOf = (itemKey: string): string => SECTION_BY_ITEM[itemKey] ?? "Other equipment";
 
 /**
  * Builds the sheet from an evaluated budget (which must have been evaluated with cost VISIBLE). Only priced lines are included; a line
@@ -110,13 +113,13 @@ export function buildMarginSheet(b: BudgetQuote, overrides: Partial<Record<Growe
     if (ovErr) throw new Error(`${l.label}: ${ovErr}`);
     const planned = ov ? ov.lineCostCents : toCents(l.estimatedCost);
     lines.push({
-      itemKey: l.itemKey, label: l.label, kind: l.components ? "ASSEMBLY_PACKAGE" : "PRODUCT", section: sectionOf(l.itemKey),
+      itemKey: l.itemKey, label: l.label, sku: l.sku, quantity: l.quantity, kind: l.components ? "ASSEMBLY_PACKAGE" : "PRODUCT", section: sectionOf(l.itemKey),
       ...marginFigures(selling, planned),
       costBasis: planned === null ? null : ov ? "OVERRIDE" : "PROVISIONAL",
       ...(ov ? { overrideReason: ov.reason.trim() } : {}),
       ...(l.components ? {
         components: l.components.filter((c) => c.status === "priced").map((c) => ({
-          sku: c.sku, description: c.description, ...marginFigures(toCents(c.revenueExTax) ?? 0, toCents(c.estimatedCost)),
+          sku: c.sku, description: c.description, quantity: c.quantity, ...marginFigures(toCents(c.revenueExTax) ?? 0, toCents(c.estimatedCost)),
           costBasis: toCents(c.estimatedCost) === null ? null : ("PROVISIONAL" as const),
         })),
       } : {}),

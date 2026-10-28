@@ -40,7 +40,7 @@ export interface PostingLink { id: string; cin7_sale_id: string; tax_rule: strin
 export interface PhysicalSelection { sku: string; quantity: number }
 /** A line of the Sale's ORDER as Cin7 holds it: the ceiling for what may be invoiced. */
 export interface OrderLineView { productId: string; sku: string; name: string; quantity: number }
-export interface ResolvedPhysicalLine { productId: string; sku: string; name: string; quantity: number }
+export interface ResolvedPhysicalLine { productId: string; sku: string; name: string; quantity: number; /** Present only when the quantity exceeds the dispatch-eligible amount: why the manager selected it. */ earlyReason?: string }
 
 export interface PostingCharge { description: string; amountCents: number; taxCents: number }
 export interface PostingPlan {

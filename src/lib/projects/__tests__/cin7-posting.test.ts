@@ -384,7 +384,7 @@ describe("physical product lines at R0 (Slice E)", () => {
     { productId: "p-1", sku: "NQ2886", name: "Feeder", quantity: 10 },
     { productId: "p-2", sku: "NQ1000", name: "Door", quantity: 4 },
   ];
-  beforeEach(async () => { await link(); port.sale.orderLines = order; });
+  beforeEach(async () => { await link(); port.sale.orderLines = order; port.sale.shipped = { NQ2886: 10, NQ1000: 4 }; /* everything dispatched: the default first-dispatch rule makes it all eligible */ });
 
   it("sends the selected SKUs at the Sale's own ProductID, with the VAT only on the commercial charges", async () => {
     const r = await postWith([{ sku: "NQ2886", quantity: 3 }]);

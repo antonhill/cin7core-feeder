@@ -62,7 +62,8 @@ describe("physical store (read-only)", () => {
       async readStock() { return { onHand: 5, allocated: 0, available: 5 }; },
       async readAssemblies() { throw new Error("assembly list unavailable"); },
     };
-    expect(await loadPhysicalStatus(db as never, port, { orgId: "o", projectId: "p" })).toEqual({ linked: false });
+    db.rows("projects").push({ id: "p", org_id: "o", baseline_snapshot: {} });
+    expect(await loadPhysicalStatus(db as never, port, { orgId: "o", projectId: "p" })).toMatchObject({ linked: false, rows: [], saleNumber: null });
     expect(reads).toBe(0);
     db.rows("project_cin7_sale_links").push({ id: "l", org_id: "o", project_id: "p", cin7_sale_id: "S", cin7_sale_number: "SO-1", instance_id: "i" });
     const r = await loadPhysicalStatus(db as never, port, { orgId: "o", projectId: "p" });

@@ -9,6 +9,9 @@ import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { logActivity } from "@/lib/activity-log";
 import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
+import { prepareInvoiceProposal, type PreparedInvoice } from "@/lib/projects/invoice-proposal-store";
+import { loadProjectScope, resolveScopeItem } from "@/lib/projects/scope-store";
+import type { ScopeItem } from "@/lib/projects/product-scope";
 import { createP0Project, searchStockedProducts, type CreateP0Input, type StockedProduct } from "@/lib/projects/p0-project-store";
 import { runP0, type P0Input, type P0Report } from "@/lib/projects/p0-checklist";
 import { externalIdFor } from "@/lib/projects/cin7-sale-creation";
@@ -18,7 +21,6 @@ import { NEWQUIP_POC_CIN7_INSTANCE_ID, OPERATIONAL_CUSTOMER_DENYLIST, isNewquipP
 import { buildCin7Port, singleActiveInstanceId } from "@/lib/projects/cin7-adapter";
 import { buildSaleCreationPort } from "@/lib/projects/cin7-sale-creation-adapter";
 import { createSaleForProject, loadCreation, reconcileSaleCreation, type CreationRow } from "@/lib/projects/cin7-sale-creation-store";
-import type { CreationProductInput } from "@/lib/projects/cin7-sale-creation";
 import { linkCin7Sale, listPostings, loadSaleLink, postClaimToCin7, reconcileClaimPosting, type PostingRow, type SaleLinkRow, type WriteGates } from "@/lib/projects/cin7-posting-store";
 
 export interface Cin7ActionResult<T> {
@@ -82,7 +84,10 @@ export async function linkCin7SaleAction(projectId: string, cin7SaleId: string, 
 }
 
 /** Manager only, flag-gated, confirmation-gated. Creates ONE Cin7 invoice for ONE approved claim. */
-export async function postClaimToCin7Action(projectId: string, claimId: string, confirmation: string): Promise<Cin7ActionResult<{ state: string; message: string; invoiceNumber: string | null }>> {
+export async function postClaimToCin7Action(
+  projectId: string, claimId: string, confirmation: string,
+  physical?: { lines: Array<{ sku: string; quantity: number }>; earlyReason?: string },
+): Promise<Cin7ActionResult<{ state: string; message: string; invoiceNumber: string | null }>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
@@ -90,9 +95,31 @@ export async function postClaimToCin7Action(projectId: string, claimId: string, 
     const db = createServiceRoleClient();
     const link = await loadSaleLink(db, orgId, projectId);
     if (!link) throw new Error("This project has no linked Cin7 Sale. Link one first.");
-    const r = await postClaimToCin7(db, buildCin7Port(db, orgId, link.instance_id), gates, email ?? "unknown", { orgId, projectId, claimId, confirmation });
-    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.claim_cin7_post", summary: `Claim posting to Cin7: ${r.state}`, detail: { projectId, claimId, postingId: r.posting.id, state: r.state, idempotencyKey: r.posting.idempotency_key, invoiceNumber: r.posting.cin7_invoice_number } });
+    const r = await postClaimToCin7(db, buildCin7Port(db, orgId, link.instance_id), gates, email ?? "unknown", {
+      orgId, projectId, claimId, confirmation, ...(physical && physical.lines.length ? { physicalLines: physical.lines, earlyReason: physical.earlyReason } : {}),
+    });
+    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.claim_cin7_post", summary: `Claim posting to Cin7: ${r.state}`, detail: { projectId, claimId, postingId: r.posting.id, state: r.state, idempotencyKey: r.posting.idempotency_key, invoiceNumber: r.posting.cin7_invoice_number, physicalLines: r.posting.physical_lines ?? null } });
     return { ok: true, data: { state: r.state, message: r.message, invoiceNumber: r.posting.cin7_invoice_number } };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/**
+ * Manager only. READ-ONLY (one Cin7 GET): the proposed invoice for an approved claim - the commercial charges, and the physical product lines at R0
+ * that the project's approved scope and Cin7's verified shipments make eligible. A proposal for review; it posts nothing.
+ */
+export async function getInvoiceProposalAction(projectId: string, claimId: string): Promise<Cin7ActionResult<PreparedInvoice>> {
+  try {
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const gates = await gatesFor(orgId);
+    await guardBillingScope(createServiceRoleClient(), orgId, projectId, gates.isManager);
+    if (!gates.orgEnabled) throw new Error("Not enabled for this organization.");
+    if (!gates.isManager) throw new Error("Only a manager (org owner/admin) can prepare an invoice.");
+    const db = createServiceRoleClient();
+    const link = await loadSaleLink(db, orgId, projectId);
+    if (!link) throw new Error("This project has no linked Cin7 Sale. Link or create one first.");
+    return { ok: true, data: await prepareInvoiceProposal(db, buildCin7Port(db, orgId, link.instance_id), { orgId, projectId, claimId }) };
   } catch (e) {
     return { ok: false, error: message(e) };
   }
@@ -117,32 +144,54 @@ export async function reconcileClaimPostingAction(projectId: string, claimId: st
 
 // ── Advanced Sale creation ──────────────────────────────────────────────────
 
-export interface ProposedSaleLine { sku: string; name: string; quantity: number }
 export interface Cin7SaleCreationStatus {
   gates: WriteGates;
   creation: CreationRow | null;
   /** True when a Sale is already linked to this project (by creation or manually). */
   linked: boolean;
-  /** Physical products read from the project's frozen baseline (lines that carry a SKU). A starting point the manager reviews, never sent unseen. */
-  proposedLines: ProposedSaleLine[];
-  /** Baseline lines that have NO Cin7 SKU: they cannot be on the Sale until mapped (UNMAPPED_SKU). */
-  unmappedLines: string[];
+  /** The project's approved product scope as inherited from its quotation (or variation), customer-safe: no cost or margin. */
+  scopeItems: ScopeItem[];
+  /** What the Sales Order will contain (derived, one line per SKU, at R0), what is blocking it, and what was deliberately excluded. */
+  saleLines: Array<{ sku: string; quantity: number; description: string }>;
+  blockers: string[];
+  excluded: Array<{ id: string; description: string; reason: string }>;
 }
 
-const CHARGE_KEYS = new Set(["delivery", "installation", "concrete_slat_delivery"]);
-
-/** Read-only: the creation state and the proposal derived from the project's frozen baseline. */
+/** Read-only: the creation state and the Sale lines derived from the project's approved product scope. */
 export async function getCin7SaleCreationStatusAction(projectId: string): Promise<Cin7ActionResult<Cin7SaleCreationStatus>> {
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const db = createServiceRoleClient();
-    const p = await db.from("projects").select("baseline_snapshot").eq("org_id", orgId).eq("id", projectId).maybeSingle();
-    if (p.error) throw new Error(p.error.message);
-    const lines = ((p.data as { baseline_snapshot?: { lines?: Array<{ sku: string | null; description: string; quantity: number; lineRef: string }> } } | null)?.baseline_snapshot?.lines) ?? [];
-    const proposedLines = lines.filter((l) => l.sku && l.quantity > 0).map((l) => ({ sku: l.sku as string, name: l.description, quantity: l.quantity }));
-    const unmappedLines = lines.filter((l) => !l.sku && !CHARGE_KEYS.has(l.lineRef)).map((l) => l.description);
-    return { ok: true, data: { gates: await gatesFor(orgId), creation: await loadCreation(db, orgId, projectId), linked: (await loadSaleLink(db, orgId, projectId).catch(() => null)) !== null, proposedLines, unmappedLines } };
+    const { items, effective } = await loadProjectScope(db, orgId, projectId);
+    return { ok: true, data: {
+      gates: await gatesFor(orgId), creation: await loadCreation(db, orgId, projectId), linked: (await loadSaleLink(db, orgId, projectId).catch(() => null)) !== null,
+      scopeItems: items, saleLines: effective.lines.map((l) => ({ sku: l.sku, quantity: l.quantity, description: l.description })), blockers: effective.blockers, excluded: effective.excluded,
+    } };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/**
+ * Manager only. Resolves an UNMAPPED scope item: map it to a real Cin7 SKU (verified live, read-only) or exclude it from the Sales Order, with a
+ * reason. Audited. Allowed only before any claim or Cin7 Sale exists. This is the only way the inherited scope can change.
+ */
+export async function resolveScopeItemAction(projectId: string, input: { itemId: string; kind: "MAP" | "EXCLUDE"; sku?: string; quantity?: number; reason: string }): Promise<Cin7ActionResult<ScopeItem[]>> {
+  try {
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const gates = await gatesFor(orgId);
+    await guardBillingScope(createServiceRoleClient(), orgId, projectId, gates.isManager);
+    if (!gates.orgEnabled) throw new Error("Not enabled for this organization.");
+    const db = createServiceRoleClient();
+    const inst = await db.from("cin7_instances").select("id, name").eq("org_id", orgId).eq("active", true);
+    if (inst.error) throw new Error(inst.error.message);
+    const list = (inst.data ?? []) as Array<{ id: string; name: string }>;
+    if (input.kind === "MAP" && (list.length !== 1 || list[0].id !== NEWQUIP_POC_CIN7_INSTANCE_ID)) throw new Error("The SKU can only be verified against the single expected NewQuip POC Cin7 instance; it is not.");
+    const port = input.kind === "MAP" ? buildSaleCreationPort(db, orgId, list[0].id) : { resolveProducts: async () => ({ ids: new Map<string, string>(), missing: [] as string[] }) };
+    const items = await resolveScopeItem(db, port, { isManager: gates.isManager }, email ?? "unknown", { orgId, projectId, ...input });
+    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.scope_item_resolved", summary: `Resolved an unmapped product scope item (${input.kind}; no Cin7 write)`, detail: { projectId, itemId: input.itemId, kind: input.kind, sku: input.sku ?? null, quantity: input.quantity ?? null, reason: input.reason } });
+    return { ok: true, data: items };
   } catch (e) {
     return { ok: false, error: message(e) };
   }
@@ -151,7 +200,7 @@ export async function getCin7SaleCreationStatusAction(projectId: string): Promis
 /** Manager only, flag-gated, confirmation-gated. Creates ONE Cin7 Advanced Sale for the project (at most once; see the store). */
 export async function createCin7SaleAction(
   projectId: string,
-  input: { confirmation: string; customerName: string; location: string; revenueAccount: string; cin7TaxRule: string; physicalLines: CreationProductInput[] },
+  input: { confirmation: string; customerName: string; location: string; revenueAccount: string; cin7TaxRule: string },
 ): Promise<Cin7ActionResult<{ state: string; message: string; saleNumber: string | null; linked: boolean }>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
