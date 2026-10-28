@@ -13,10 +13,12 @@ Supersedes the T0/T1/T2 runbook (`t0-proof-runbook.md`, written for priced lines
 - **Cleanup.** Cin7 documents are not deleted by Toolbox. Disposable documents are voided/left by the owner in the Cin7 UI after the proof, recorded in the evidence.
 
 ## P0 - read-only prerequisites (no write; can run now with owner sign-in)
-**Checks (all GET):** the dedicated customer exists (exact name) and is not an operational customer; each test SKU exists; which are assemblies (BOM) and their components; tax rule "Standard Rate Sales" (or the chosen rule) exists with the expected rate; the revenue account code exists; the location holds the expected stock; the "Default Load Advanced Sales Order" setting (D15); costing method (FIFO) and the SKUs' current cost; current availability for the SKUs; no existing Sale carries the proof's ExternalID.
-**How:** `Check Cin7 prerequisites (read-only)` in the project's Cin7 panel (customer, SKUs, assembly flags) plus owner screenshots for tax rule, account, location, setting and movement history.
-**Pass:** every item present and as expected; baseline recorded (stock on hand/allocated, last Sale/invoice numbers).
-**Stop:** anything missing or ambiguous.
+**Interface:** on the disposable project's Claims tab, "Create the Cin7 Advanced Sale" panel: enter the customer name, location, revenue account and the SKU rows (quantity, expected type), then **Run P0 checklist (read-only)**. It performs GETs only and returns a table of PASS / FAIL / MANUAL / NOT RUN.
+**Automated checks:** not Production; write flag OFF; Supabase project is `pnzwjqjovxxdikxtfngq` (both URLs); the organisation has **exactly one** active Cin7 instance and it is the NewQuip POC instance (`30eac8f2-...`); customer is not AGRICO / AFGRI / AMANZIMNENGI; customer exists by **exact** name; the customer's default tax rule, revenue account and location equal what was entered (and the project's tax rule); every SKU exists by exact match; assembly flag is as expected per SKU; free stock at the named location >= the quantity; no Sale already carries the proof's ExternalID.
+**Explicit failures, never substitution:** a wrong/missing database, instance, customer or SKU is a FAIL with the facts; later checks that depend on it are NOT RUN; P0 never creates or selects an alternative. `READY_PENDING_MANUAL` is the best possible automated verdict.
+**Manual checks (owner confirms with screenshots):** customer is dedicated and disposable; movement history of the stock reviewed; tax rule and rate; revenue account exists; BOM components and FIFO costing; "Default Load Advanced Sales Order" setting.
+**Pass:** zero FAIL, zero NOT RUN, manual items confirmed; baseline recorded (stock on hand/allocated, last Sale/invoice numbers).
+**Stop:** anything missing or ambiguous. P0 is not authorisation for P1.
 
 ## P1 - create the Advanced Sale (first external write)
 **Operation:** Toolbox "Create the Cin7 Advanced Sale" for a new disposable project. Exactly: header `POST /sale` (Customer, Location, `SaleType: Advanced`, ExternalID `NEWQUIP-PROJECTS-SALE:<ref>`, tax rule) then `POST /sale/order` (R0 lines for the chosen SKUs; one Additional Charge per billing stage for the full contract; VAT as per-charge amounts; AUTHORISED). Two POSTs, once each.
