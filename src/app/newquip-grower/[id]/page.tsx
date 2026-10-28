@@ -29,6 +29,7 @@ import {
 } from "../actions";
 import { fmtCents, fmtZar, NumField, TextField } from "../fields";
 import { MarginPanel } from "./MarginPanel";
+import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
 
@@ -591,11 +592,13 @@ export default function QuoteEditorPage() {
                 ) : (
                   <>
                   <ScheduleChooser contractCents={q.accepted_baseline.contractCents} onChange={setScheduleChoice} />
+                  <p className="mb-2"><BuildStamp /></p>
                   <Button loading={isWorking} disabled={!resolveScheduleChoice(scheduleChoice).ok} onClick={() => start(async () => {
                     const r = await createProjectFromGrowerQuoteAction(id, scheduleChoice);
                     if (!r.ok) return setError(r.error ?? "Unknown error");
                     setError(null);
-                    setNotice("Project created from the accepted baseline (no engineering recalculation).");
+                    const made = r.data;
+                    setNotice(`Project ${made?.created === false ? "already existed (its stages were not changed)" : "created from the accepted baseline (no engineering recalculation)"}. Billing stages: ${(made?.stages ?? []).map((x) => `${x.name} ${fmtCents(x.valueCents)}`).join(" · ") || "none"}.`);
                     const v = await getGrowerQuoteAction(id);
                     if (v.ok && v.data) adopt(v.data);
                   })}>Create Project from accepted quote</Button>

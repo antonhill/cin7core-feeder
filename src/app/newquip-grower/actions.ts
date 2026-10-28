@@ -174,7 +174,10 @@ export async function approveGrowerQuoteAction(quoteId: string) {
   });
 }
 
-export async function createProjectFromGrowerQuoteAction(quoteId: string, scheduleChoice?: ScheduleChoice): Promise<GrowerActionResult<{ projectId: string; created: boolean }>> {
+/** What the project was actually created with (read back from the database, never echoed from the request). */
+export interface CreatedProjectResult { projectId: string; created: boolean; billingSchedule: string | null; stages: Array<{ name: string; valueCents: number }> }
+
+export async function createProjectFromGrowerQuoteAction(quoteId: string, scheduleChoice?: ScheduleChoice): Promise<GrowerActionResult<CreatedProjectResult>> {
   try {
     const a = await authorise();
     if (!a.roles.has("manager") && !a.roles.has("estimator")) throw new Error("You do not have permission to create a Project.");
@@ -183,7 +186,10 @@ export async function createProjectFromGrowerQuoteAction(quoteId: string, schedu
     if (!resolved.ok) throw new Error(`Billing schedule: ${resolved.errors.join(" ")}`);
     const r = await createProjectFromAcceptedQuote(db, a.orgId, a.email, quoteId, resolved.schedule);
     if (r.created) await logActivity(db, { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action: "newquip.project_created", summary: "Created a Project from an accepted NewQuip quote (local only; no Cin7 write)", detail: { quoteId, projectId: r.projectId, billingSchedule: resolved.label, stages: resolved.schedule.map((x) => `${x.name} ${(x.bps / 100).toFixed(2)}%`) } });
-    return { ok: true, data: r };
+    const persisted = await db.from("project_stages").select("name, value_cents, sort_order").eq("org_id", a.orgId).eq("project_id", r.projectId).order("sort_order", { ascending: true });
+    if (persisted.error) throw new Error(persisted.error.message);
+    const stages = ((persisted.data ?? []) as Array<{ name: string; value_cents: number }>).map((x) => ({ name: x.name, valueCents: x.value_cents }));
+    return { ok: true, data: { ...r, billingSchedule: r.created ? resolved.label : null, stages } };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
