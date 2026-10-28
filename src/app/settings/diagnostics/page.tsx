@@ -25,6 +25,7 @@ import {
   debugFindProductSupplierOptionsExample,
   debugCheckProductSupplierOptionsForUnparsedFields,
   debugSurveySaleFulfillmentFields,
+  debugInspectSaleShipContract,
   debugSurveyBackorderEtaFields,
   debugTestSaleShipByWriteBack,
   debugTestProductSupplierLink,
@@ -59,6 +60,7 @@ export default function DiagnosticsPage() {
   const [productionBomSkus, setProductionBomSkus] = useState<Record<string, string>>({});
   const [availabilitySkus, setAvailabilitySkus] = useState<Record<string, string>>({});
   const [productionOrderNumbers, setProductionOrderNumbers] = useState<Record<string, string>>({});
+  const [shipContractOrderNumbers, setShipContractOrderNumbers] = useState<Record<string, string>>({});
   const [shipByTestOrderNumbers, setShipByTestOrderNumbers] = useState<Record<string, string>>({});
   const [supplierLinkTests, setSupplierLinkTests] = useState<Record<string, string>>({});
   const [supplierOptionsSkus, setSupplierOptionsSkus] = useState<Record<string, string>>({});
@@ -303,6 +305,16 @@ export default function DiagnosticsPage() {
     setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Surveying sale fulfillment fields (multiple calls)…" } }));
     startTransition(async () => {
       const result = await debugSurveySaleFulfillmentFields(instanceId);
+      setTestResults((prev) => ({ ...prev, [instanceId]: result }));
+    });
+  }
+
+  function handleInspectSaleShipContract(instanceId: string) {
+    const input = (shipContractOrderNumbers[instanceId] ?? "").trim();
+    if (!input) return;
+    setTestResults((prev) => ({ ...prev, [instanceId]: { ok: true, message: "Fetching live sale detail (read-only)…" } }));
+    startTransition(async () => {
+      const result = await debugInspectSaleShipContract(instanceId, input);
       setTestResults((prev) => ({ ...prev, [instanceId]: result }));
     });
   }
@@ -568,6 +580,25 @@ export default function DiagnosticsPage() {
               </Button>
               <Button variant="secondary" size="sm" onClick={() => handleSurveyBackorderEtaFields(inst.id)} disabled={isPending}>
                 Survey backorder ETA fields (Order Fulfillment Dashboard)
+              </Button>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <Input
+                label="Order numbers to inspect"
+                hideLabel
+                placeholder="Order numbers (max 10), e.g. SO-19948, SO-19402"
+                value={shipContractOrderNumbers[inst.id] ?? ""}
+                onChange={(e) => setShipContractOrderNumbers((prev) => ({ ...prev, [inst.id]: e.target.value }))}
+                className="w-96"
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => handleInspectSaleShipContract(inst.id)}
+                disabled={isPending || !(shipContractOrderNumbers[inst.id] ?? "").trim()}
+                title="Read-only: fetches the live Cin7 sale detail for the named orders and shows every fulfilment's Pick/Pack/Ship payload verbatim."
+              >
+                Inspect sale Ship contract (read-only)
               </Button>
             </div>
             <div className="mt-2 flex items-center gap-2">

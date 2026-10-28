@@ -27,6 +27,7 @@ import { logActivity, type ActivityActor } from "@/lib/activity-log";
 import { decrypt } from "@/cin7/crypto";
 import { CIN7_API_ORIGIN } from "@/cin7/api-origin";
 import { Cin7ApiError } from "@/cin7/http";
+import { inspectSaleShipContract, parseOrderNumbers } from "@/cin7/ship-contract-diagnostic";
 import { pushCustomer, type CanonicalCustomerAddressRow, type CanonicalCustomerContactRow } from "@/cin7/customers";
 import { pushSupplier, type CanonicalSupplierAddressRow, type CanonicalSupplierContactRow } from "@/cin7/suppliers";
 import {
@@ -542,6 +543,23 @@ export async function debugSurveySaleFulfillmentFields(instanceId: string): Prom
     await requirePrivilegedSuperAdmin("run Cin7 diagnostics (survey sale fulfillment fields)");
     const creds = await loadInstanceCreds(instanceId);
     const result = await surveySaleFulfillmentFields(creds);
+    return { ok: true, message: JSON.stringify(result, null, 2) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * Strictly read-only: fetches the live sale detail for a few NAMED orders and returns each fulfilment's Pick/Pack/Ship payload verbatim
+ * (secrets redacted) so the Ship contract can be verified before the warehouse bottleneck queues are changed. Writes nothing — no Cin7
+ * write, no Supabase write, no activity-log row — and issues only GET /saleList + GET /sale. See src/cin7/ship-contract-diagnostic.ts.
+ */
+export async function debugInspectSaleShipContract(instanceId: string, orderNumbersInput: string): Promise<TestConnectionResult> {
+  try {
+    await requirePrivilegedSuperAdmin("run Cin7 diagnostics (inspect sale Ship contract)");
+    const orderNumbers = parseOrderNumbers(orderNumbersInput);
+    const creds = await loadInstanceCreds(instanceId);
+    const result = await inspectSaleShipContract(creds, orderNumbers);
     return { ok: true, message: JSON.stringify(result, null, 2) };
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : "Unknown error" };
