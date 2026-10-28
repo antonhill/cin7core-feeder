@@ -13,12 +13,12 @@
     "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^2.110.0",
     "exceljs": "^4.4.0",
-    "next": "16.3.0",
+    "next": "16.4.3",
     "papaparse": "^5.5.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "resend": "^6.20.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -27,10 +27,10 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.3.0",
+    "eslint-config-next": "16.4.3",
     "tailwindcss": "^4",
     "tsx": "^4.22.5",
     "typescript": "^5",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.12"
   }
 }
