@@ -86,7 +86,7 @@ export async function linkCin7SaleAction(projectId: string, cin7SaleId: string, 
 /** Manager only, flag-gated, confirmation-gated. Creates ONE Cin7 invoice for ONE approved claim. */
 export async function postClaimToCin7Action(
   projectId: string, claimId: string, confirmation: string,
-  physical?: { lines: Array<{ sku: string; quantity: number }>; earlyReason?: string },
+  physical?: { lines: Array<{ sku: string; quantity: number }>; earlyReason?: string; deliveryId?: string },
 ): Promise<Cin7ActionResult<{ state: string; message: string; invoiceNumber: string | null }>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
@@ -96,7 +96,7 @@ export async function postClaimToCin7Action(
     const link = await loadSaleLink(db, orgId, projectId);
     if (!link) throw new Error("This project has no linked Cin7 Sale. Link one first.");
     const r = await postClaimToCin7(db, buildCin7Port(db, orgId, link.instance_id), gates, email ?? "unknown", {
-      orgId, projectId, claimId, confirmation, ...(physical && physical.lines.length ? { physicalLines: physical.lines, earlyReason: physical.earlyReason } : {}),
+      orgId, projectId, claimId, confirmation, ...(physical && physical.lines.length ? { physicalLines: physical.lines, earlyReason: physical.earlyReason, deliveryId: physical.deliveryId } : {}),
     });
     await logActivity(db, { orgId, actor: { userId, email }, action: "projects.claim_cin7_post", summary: `Claim posting to Cin7: ${r.state}`, detail: { projectId, claimId, postingId: r.posting.id, state: r.state, idempotencyKey: r.posting.idempotency_key, invoiceNumber: r.posting.cin7_invoice_number, physicalLines: r.posting.physical_lines ?? null } });
     return { ok: true, data: { state: r.state, message: r.message, invoiceNumber: r.posting.cin7_invoice_number } };
@@ -109,7 +109,7 @@ export async function postClaimToCin7Action(
  * Manager only. READ-ONLY (one Cin7 GET): the proposed invoice for an approved claim - the commercial charges, and the physical product lines at R0
  * that the project's approved scope and Cin7's verified shipments make eligible. A proposal for review; it posts nothing.
  */
-export async function getInvoiceProposalAction(projectId: string, claimId: string): Promise<Cin7ActionResult<PreparedInvoice>> {
+export async function getInvoiceProposalAction(projectId: string, claimId: string, deliveryId?: string): Promise<Cin7ActionResult<PreparedInvoice>> {
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
     const gates = await gatesFor(orgId);
@@ -119,7 +119,7 @@ export async function getInvoiceProposalAction(projectId: string, claimId: strin
     const db = createServiceRoleClient();
     const link = await loadSaleLink(db, orgId, projectId);
     if (!link) throw new Error("This project has no linked Cin7 Sale. Link or create one first.");
-    return { ok: true, data: await prepareInvoiceProposal(db, buildCin7Port(db, orgId, link.instance_id), { orgId, projectId, claimId }) };
+    return { ok: true, data: await prepareInvoiceProposal(db, buildCin7Port(db, orgId, link.instance_id), { orgId, projectId, claimId, deliveryId }) };
   } catch (e) {
     return { ok: false, error: message(e) };
   }

@@ -3,6 +3,7 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { loadSaleLink, reservedByOthers, type Cin7Port } from "./cin7-posting-store";
 import { proposeInvoice, type InvoiceProposal } from "./invoice-proposal";
+import { loadDeliveryEligibility } from "./delivery-allocation-store";
 import { effectiveScope, scopeFromSnapshot } from "./product-scope";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
@@ -10,7 +11,7 @@ function fail(message: string): never { throw new Error(message); }
 
 export interface PreparedInvoice { claimNumber: string; saleNumber: string | null; proposal: InvoiceProposal; scopeBlockers: string[]; preparedAt: string }
 
-export async function prepareInvoiceProposal(db: Db, port: Pick<Cin7Port, "fetchSale">, input: { orgId: string; projectId: string; claimId: string; now?: Date }): Promise<PreparedInvoice> {
+export async function prepareInvoiceProposal(db: Db, port: Pick<Cin7Port, "fetchSale">, input: { orgId: string; projectId: string; claimId: string; deliveryId?: string; now?: Date }): Promise<PreparedInvoice> {
   const link = await loadSaleLink(db, input.orgId, input.projectId);
   if (!link) fail("This project has no linked Cin7 Sale. Link or create one first.");
   const c = await db.from("project_claims").select("id, claim_number, status").eq("org_id", input.orgId).eq("project_id", input.projectId).eq("id", input.claimId).maybeSingle();
@@ -34,6 +35,7 @@ export async function prepareInvoiceProposal(db: Db, port: Pick<Cin7Port, "fetch
     shipped: Object.fromEntries(orderLines.map((o) => [o.sku, view.shipped ? view.shipped[o.sku] : null])),
     reserved: await reservedByOthers(db, input.orgId, link.id, input.claimId),
     scopeSkus: scope.lines.map((l) => l.sku),
+    allocated: input.deliveryId ? (await loadDeliveryEligibility(db, input.orgId, input.projectId, input.deliveryId)).allocated : undefined,
   });
   return { claimNumber: claim.claim_number, saleNumber: link.cin7_sale_number, proposal, scopeBlockers: scope.blockers, preparedAt: (input.now ?? new Date()).toISOString() };
 }

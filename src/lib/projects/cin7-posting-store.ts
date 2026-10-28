@@ -11,6 +11,7 @@ import {
   resolvePhysicalLines, type OrderLineView, type PhysicalSelection, type ResolvedPhysicalLine, type PostingClaim, type PostingClaimLine, type PostingDisplayState, type PostingState, type ReadInvoice,
 } from "./cin7-posting";
 import { proposeInvoice, validateSelection } from "./invoice-proposal";
+import { loadDeliveryEligibility } from "./delivery-allocation-store";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 
@@ -41,7 +42,7 @@ export interface PostingRow {
   requested_by_email: string; requested_at: string; completed_at: string | null; reconciled_at: string | null;
   last_error_code: string | null; last_error_message: string | null;
   /** Physical products on the invoice (R0). Column added by migration 0105; absent on rows written before it. */
-  physical_lines?: Array<{ sku: string; quantity: number; earlyReason?: string }> | null;
+  physical_lines?: Array<{ sku: string; quantity: number; earlyReason?: string; deliveryId?: string }> | null;
 }
 export interface SaleLinkRow {
   id: string; project_id: string; instance_id: string; cin7_sale_id: string; cin7_sale_number: string | null; link_status: string;
@@ -145,7 +146,7 @@ const trunc = (s: string) => s.replace(/\s+/g, " ").slice(0, 500);
  */
 export async function postClaimToCin7(
   db: Db, port: Cin7Port, gates: WriteGates, email: string,
-  input: { orgId: string; projectId: string; claimId: string; confirmation: string; now?: Date; physicalLines?: PhysicalSelection[]; earlyReason?: string },
+  input: { orgId: string; projectId: string; claimId: string; confirmation: string; now?: Date; physicalLines?: PhysicalSelection[]; earlyReason?: string; /** Invoice the products allocated to this planned delivery (allocation rule). */ deliveryId?: string },
 ): Promise<PostResult> {
   const now = input.now ?? new Date();
   // 1–3: flag, org, manager, explicit confirmation — all enforced HERE, whatever the UI showed.
@@ -193,12 +194,13 @@ export async function postClaimToCin7(
     // The eligibility rule is RECOMPUTED here from live Cin7 facts, never taken from what the screen showed: a stale or concurrent selection cannot slip through.
     const reserved = await reservedByOthers(db, input.orgId, link.id, input.claimId);
     const orderLines = view.orderLines ?? [];
+    const allocated = input.deliveryId ? (await loadDeliveryEligibility(db, input.orgId, input.projectId, input.deliveryId)).allocated : undefined;
     const proposal = proposeInvoice({
       claimLines: lines.map((l) => ({ stageName: l.stage_name, amountCents: l.current_claim_cents, taxCents: l.tax_cents })),
       orderLines: orderLines.map((o) => ({ sku: o.sku, description: o.name, ordered: Number.isFinite(o.quantity) ? o.quantity : null })),
       invoices: view.invoices.map((i) => ({ status: i.status, lines: i.lines ? i.lines.map((l) => ({ sku: l.sku, quantity: l.quantity })) : null })),
       shipped: Object.fromEntries(orderLines.map((o) => [o.sku, view.shipped ? view.shipped[o.sku] : null])),
-      reserved, scopeSkus: [],
+      reserved, scopeSkus: [], allocated,
     });
     const bad = validateSelection(proposal, selection, input.earlyReason ?? null);
     if (bad) fail(bad);
@@ -221,7 +223,7 @@ export async function postClaimToCin7(
       request_fingerprint: plan.fingerprint, memo: plan.memo, posting_state: "PENDING", attempt_count: 1,
       amount_ex_vat_cents: plan.subtotalCents, tax_cents: plan.taxCents, total_cents: plan.totalCents, cin7_sale_id: link.cin7_sale_id,
       requested_by_email: email, requested_at: now.toISOString(),
-      ...(plan.physicalLines.length ? { physical_lines: plan.physicalLines.map((l) => ({ sku: l.sku, quantity: l.quantity, ...(l.earlyReason ? { earlyReason: l.earlyReason } : {}) })) } : {}),
+      ...(plan.physicalLines.length ? { physical_lines: plan.physicalLines.map((l) => ({ sku: l.sku, quantity: l.quantity, ...(l.earlyReason ? { earlyReason: l.earlyReason } : {}), ...(input.deliveryId ? { deliveryId: input.deliveryId } : {}) })) } : {}),
     }).select("*").single();
     if (ins.error || !ins.data) {
       if (/duplicate key|unique/i.test(ins.error?.message ?? "")) fail(MESSAGES.inFlight);
