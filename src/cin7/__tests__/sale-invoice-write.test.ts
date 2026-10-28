@@ -93,3 +93,20 @@ describe("outcome classification", () => {
     expect(JSON.stringify(await createSaleProgressInvoice(creds, input))).not.toContain("SECRET-KEY");
   });
 });
+
+describe("R0 physical lines", () => {
+  const base = { saleId: "s", memo: "m", invoiceDate: "2026-10-27", invoiceDueDate: "2026-11-26", taxRule: "Standard Rate Sales", account: "200", charges: [{ description: "d", priceExVat: 100, taxAmount: 15 }] };
+  it("emits zero-priced, zero-tax lines and keeps the VAT on the charges", () => {
+    const b = buildProgressInvoiceBody({ ...base, lines: [{ productId: "p", sku: "A", name: "n", quantity: 2 }] }) as { Lines: Array<Record<string, unknown>>; AdditionalCharges: Array<Record<string, unknown>> };
+    expect(b.Lines).toEqual([{ ProductID: "p", SKU: "A", Name: "n", Quantity: 2, Price: 0, Discount: 0, Tax: 0, TaxRule: "Standard Rate Sales", Total: 0 }]);
+    expect(b.AdditionalCharges[0]).toMatchObject({ Price: 100, Tax: 15, Total: 100 });
+  });
+  it("rejects bad quantities, duplicate SKUs, missing ids and a charge-less invoice", () => {
+    const ln = { productId: "p", sku: "A", name: "n", quantity: 1 };
+    expect(() => buildProgressInvoiceBody({ ...base, lines: [{ ...ln, quantity: 0 }] })).toThrow();
+    expect(() => buildProgressInvoiceBody({ ...base, lines: [{ ...ln, quantity: Number.NaN }] })).toThrow();
+    expect(() => buildProgressInvoiceBody({ ...base, lines: [ln, ln] })).toThrow(/twice/);
+    expect(() => buildProgressInvoiceBody({ ...base, lines: [{ ...ln, productId: "" }] })).toThrow();
+    expect(() => buildProgressInvoiceBody({ ...base, charges: [], lines: [ln] })).toThrow(/at least one/);
+  });
+});

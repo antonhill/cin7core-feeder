@@ -3,8 +3,12 @@ import { Cin7ApiError, cin7Request } from "@/cin7/http";
 import type { Cin7Credentials } from "@/cin7/types";
 
 // CREATES A COMMERCIAL PROGRESS INVOICE on an EXISTING Cin7 Advanced Sale (POST /sale/invoice) — the representation proven by hand
-// on a disposable sale (docs/projects-poc/P5-design-multi-invoice-write.md): no stock Lines, the commercial amount carried in
-// AdditionalCharges, a stable Memo, DRAFT status. It generates no inventory fulfilment, stock movement or COGS.
+// on a disposable sale (docs/projects-poc/P5-design-multi-invoice-write.md): the commercial amount carried in AdditionalCharges, a
+// stable Memo, DRAFT status. Three patterns (docs/projects-poc/integration-decisions.md §5): deposit-only and commercial-only invoices
+// send NO product Lines; a progress invoice WITH physical products also sends the selected SKUs at R0 (price, tax and total zero), so
+// the physical quantity is invoiced without adding revenue. It generates no inventory fulfilment, stock movement or COGS.
+// The R0 line shape follows the quote writer's line fields; its acceptance by POST /sale/invoice is UNVERIFIED until a disposable
+// API proof (needs an owner GO).
 //
 // This module only BUILDS the request and CLASSIFIES the outcome. It decides nothing about WHETHER to post: eligibility, the feature
 // flag, idempotency and the state machine all live in the caller (src/lib/projects/cin7-posting-store.ts).
@@ -24,6 +28,15 @@ export interface ProgressInvoiceCharge {
   comment?: string;
 }
 
+/** A physical product line invoiced at R0. Identity comes from the Sale's own order line; nothing here prices it. */
+export interface ProgressInvoiceLine {
+  productId: string;
+  sku: string;
+  name: string;
+  /** Units invoiced on THIS invoice (already validated against the Sale's remaining invoiceable quantity by the caller). */
+  quantity: number;
+}
+
 export interface ProgressInvoiceInput {
   saleId: string;
   /** Stable, searchable reconciliation reference. */
@@ -35,10 +48,21 @@ export interface ProgressInvoiceInput {
   taxRule: string;
   account: string;
   charges: ProgressInvoiceCharge[];
+  /** Optional physical products, always sent at R0. Omit for deposit-only and commercial-only invoices. */
+  lines?: ProgressInvoiceLine[];
 }
 
-/** The exact request body. Pure. `Lines` is ALWAYS empty: a progress invoice never touches stock. */
+/** The exact request body. Pure. `Lines` is empty unless physical products were selected, and then every line is R0. */
 export function buildProgressInvoiceBody(i: ProgressInvoiceInput): Record<string, unknown> {
+  if (i.charges.length === 0) throw new Error("A progress invoice needs at least one commercial charge.");
+  const lines = i.lines ?? [];
+  const seen = new Set<string>();
+  for (const l of lines) {
+    if (!Number.isFinite(l.quantity) || l.quantity <= 0) throw new Error(`Invoice quantity for ${l.sku} must be a positive, finite number.`);
+    if (!l.productId || !l.sku) throw new Error("An invoice product line needs the Cin7 ProductID and SKU.");
+    if (seen.has(l.sku)) throw new Error(`SKU ${l.sku} appears twice on the invoice; combine the quantities.`);
+    seen.add(l.sku);
+  }
   // Never send a non-finite or negative money value. These would be silently accepted or turned into NaN further down.
   for (const c of i.charges) {
     if (!Number.isFinite(c.priceExVat) || c.priceExVat <= 0) throw new Error("Invoice charge amount must be a positive, finite number.");
@@ -52,7 +76,10 @@ export function buildProgressInvoiceBody(i: ProgressInvoiceInput): Record<string
     Status: "DRAFT",
     InvoiceDate: i.invoiceDate,
     InvoiceDueDate: i.invoiceDueDate,
-    Lines: [],
+    Lines: lines.map((l) => ({
+      ProductID: l.productId, SKU: l.sku, Name: l.name, Quantity: l.quantity,
+      Price: 0, Discount: 0, Tax: 0, TaxRule: i.taxRule, Total: 0,
+    })),
     AdditionalCharges: i.charges.map((c) => ({
       Description: c.description,
       Quantity: 1,

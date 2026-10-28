@@ -146,6 +146,7 @@ export interface Cin7SaleInvoice {
 
 /** One Order line — confirmed live 2026-07-09. BackorderQuantity is what's NOT currently available to pick; Order.Lines[] itself is sometimes empty on older/legacy sales even when Fulfilments[] has real data, so its absence means "no backorder data available," not "zero backordered." */
 export interface Cin7SaleOrderLine {
+  ProductID?: string;
   SKU?: string;
   Name?: string;
   Quantity?: number;
