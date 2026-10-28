@@ -5,7 +5,7 @@ Status: **authored, NOT applied to hosted Supabase** (separate owner GO required
 ## What it does (additive only)
 - `projects`: `billing_scope` (default `BASE`), `parent_project_id`, `variation_id`; shape check; unique billing project per variation; trigger enforcing that a VARIATION billing project belongs to an ACTIVE BASE parent, bills an APPROVED variation at exactly its approved amount, and shares the parent's customer, tax, currency and Cin7 instance. Scope/parent/variation are immutable.
 - `project_variation_stages` (basis points, DRAFT-editable, frozen on approval) and append-only `project_variation_schedule_amendments`.
-- Trigger on `project_variations`: approval requires a schedule totalling exactly 100%.
+- Trigger on `project_variations`: a variation that HAS a schedule can be approved only if it totals exactly 100%. A variation with no schedule (every pre-0105 variation, and any older code path) can still be approved but cannot be billed until a manager sets a schedule through the audited amendment function. (The first CI run showed the stricter rule broke the existing 0102 test, so the rule was relaxed deliberately.)
 - `variation_stage_cents()` (deterministic cents split) and `amend_variation_schedule()` (service-role only, audited, refused once the billing project has claims or progress).
 - `project_cin7_sale_links.sale_role` (default `BASE`) with a trigger tying the role to the billing project's scope. 0104's `unique(project_id)` and `unique(org_id, cin7_sale_id)` are **unchanged**: each billing project still has exactly one Sale.
 - `project_claim_cin7_postings.physical_lines` (nullable, immutable) for R0 product lines on an invoice.
