@@ -7,6 +7,8 @@ import type { PricedBy } from "../grower/quote-bridge";
 import type { PriceSourceDescriptor, QuoteType } from "../grower/pricing-source";
 import type { GrowerConfigurationInput } from "../grower/types";
 import { buildMarginSheet, type MarginSheet } from "./margin";
+import { buildPhysicalScope } from "./physical-scope";
+import type { ScopeItem } from "@/lib/projects/product-scope";
 
 // THE ACCEPTED BASELINE — the immutable commercial snapshot a manager's final approval creates, and the only thing a Project is
 // built from. It records everything needed to explain the contract later WITHOUT re-running any rule or re-reading any price:
@@ -66,6 +68,11 @@ export interface AcceptedBaseline {
     managerApprovedBy: string;
     managerApprovedAt: string;
   };
+  /**
+   * The approved PHYSICAL product scope (SKU, quantity, unit, type, package/section origin, selling price), frozen and sealed with the baseline.
+   * Customer-safe: no cost, no margin. Absent on baselines sealed before it existed; it is then rebuilt identically from `commercial.lines`.
+   */
+  physicalScope?: ScopeItem[];
   /** INTERNAL ONLY. Frozen with the baseline so later price or cost changes cannot rewrite the agreed margin. Absent on baselines sealed before margins existed. */
   internalMargin?: MarginSheet;
   /** Total contract value, ex VAT, integer cents. */
@@ -149,6 +156,7 @@ export function buildAcceptedBaseline(i: BaselineInput): { baseline: AcceptedBas
     },
     assumptions: draft.estimator.assumptions,
     approvals: i.approvals,
+    physicalScope: buildPhysicalScope(lines),
     internalMargin: buildMarginSheet(marginBudget, draft.estimator.costOverrides ?? {}),
     contractCents: subtotalCents,
   };

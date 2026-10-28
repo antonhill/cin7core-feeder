@@ -60,13 +60,13 @@ export async function saveVariationScheduleAction(projectId: string, variationId
 }
 
 /** Manager only. Creates the variation's billing project (its own stages, from the frozen schedule). Idempotent. No Cin7 call. */
-export async function startVariationBillingAction(projectId: string, variationId: string): Promise<VariationBillingResult<{ billingProjectId: string; created: boolean }>> {
+export async function startVariationBillingAction(projectId: string, variationId: string, products: Array<{ sku: string; description: string; quantity: number }> = []): Promise<VariationBillingResult<{ billingProjectId: string; created: boolean }>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     await requireOrgAdmin("start variation billing");
     const db = createServiceRoleClient();
-    const r = await createVariationBillingProject(db, { isManager: true }, email ?? "unknown", { orgId, projectId, variationId });
-    if (r.created) await logActivity(db, { orgId, actor: { userId, email }, action: "projects.variation_billing_started", summary: "Started billing for an approved variation (separate billing project; no Cin7 write)", detail: { projectId, variationId, billingProjectId: r.billingProjectId } });
+    const r = await createVariationBillingProject(db, { isManager: true }, email ?? "unknown", { orgId, projectId, variationId, products });
+    if (r.created) await logActivity(db, { orgId, actor: { userId, email }, action: "projects.variation_billing_started", summary: "Started billing for an approved variation (separate billing project; no Cin7 write)", detail: { projectId, variationId, billingProjectId: r.billingProjectId, skus: products.map((p) => p.sku) } });
     return { ok: true, data: r };
   } catch (e) {
     return { ok: false, error: message(e) };

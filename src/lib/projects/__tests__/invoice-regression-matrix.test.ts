@@ -25,7 +25,7 @@ const ON: WriteGates = { writesEnabled: true, orgEnabled: true, isManager: true 
 const err = async (p: Promise<unknown>) => { try { await p; } catch (e) { return (e as Error).message; } return undefined; };
 
 class Port implements Cin7Port {
-  sale: Cin7SaleView = { id: SALE_ID, saleNumber: "SO-1", type: "Advanced Sale", orderStatus: "AUTHORISED", taxRule: "Standard Rate Sales", invoices: [], orderLines: [{ productId: "p1", sku: "A", name: "A", quantity: 10 }] };
+  sale: Cin7SaleView = { id: SALE_ID, saleNumber: "SO-1", type: "Advanced Sale", orderStatus: "AUTHORISED", taxRule: "Standard Rate Sales", invoices: [], orderLines: [{ productId: "p1", sku: "A", name: "A", quantity: 10 }], shipped: { A: 10 } };
   created: InvoiceRequest[] = [];
   /** What Cin7 stores after a create (the test decides how wrong it is) and what the POST echoes. */
   stored: ((req: InvoiceRequest) => ReadInvoice) | null = null;

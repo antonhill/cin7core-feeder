@@ -11,6 +11,7 @@ import {
   type CreationPlan, type CreationProductInput, type SaleReadBack,
 } from "./cin7-sale-creation";
 import type { WriteGates } from "./cin7-posting-store";
+import { effectiveScope, scopeFromSnapshot } from "./product-scope";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 function fail(message: string): never {
@@ -101,8 +102,7 @@ export interface CreateInput {
   orgId: string; projectId: string; instanceId: string; confirmation: string; customerName: string; location: string; revenueAccount: string;
   /** The tax rule's NAME as Cin7 knows it (e.g. "Standard Rate Sales"). The project's own tax_rule is a Toolbox label and is never sent to Cin7. The VAT RATE still comes from the project. */
   cin7TaxRule: string;
-  /** Physical products for the Sale (SKU + quantity; always created at R0). May be empty only for a commercial-only Sale. */
-  physicalLines: CreationProductInput[]; now?: Date;
+  now?: Date;
 }
 
 export async function createSaleForProject(db: Db, port: SaleCreationPort, gates: WriteGates, email: string, input: CreateInput): Promise<CreateResult> {
@@ -112,10 +112,10 @@ export async function createSaleForProject(db: Db, port: SaleCreationPort, gates
   if (!gates.isManager) fail("Only a manager (org owner/admin) can create a Cin7 Sale.");
   if (input.confirmation !== CREATE_CONFIRMATION_TEXT) fail("The confirmation was not given.");
 
-  const p = await db.from("projects").select("id, status, project_reference, tax_rule, tax_rate_bps, original_contract_cents, billing_scope").eq("org_id", input.orgId).eq("id", input.projectId).maybeSingle();
+  const p = await db.from("projects").select("id, status, project_reference, tax_rule, tax_rate_bps, original_contract_cents, billing_scope, baseline_snapshot").eq("org_id", input.orgId).eq("id", input.projectId).maybeSingle();
   if (p.error) fail(p.error.message);
   if (!p.data) fail("Project not found.");
-  const project = p.data as { status: string; project_reference: string; tax_rule: string | null; tax_rate_bps: number; original_contract_cents: number; billing_scope?: string };
+  const project = p.data as { status: string; project_reference: string; tax_rule: string | null; tax_rate_bps: number; original_contract_cents: number; billing_scope?: string; baseline_snapshot?: unknown };
   if (project.status !== "ACTIVE") fail("Only an ACTIVE project can have a Cin7 Sale created.");
   const role = project.billing_scope === "VARIATION" ? "VARIATION" : "BASE";
 
@@ -135,9 +135,13 @@ export async function createSaleForProject(db: Db, port: SaleCreationPort, gates
   const stages = ((st.data ?? []) as Array<{ name: string; value_cents: number; sort_order: number }>).sort((a, b) => a.sort_order - b.sort_order).map((s) => ({ name: s.name, valueCents: s.value_cents }));
   if (!input.cin7TaxRule.trim()) fail("Enter the Cin7 tax rule name (it must match a tax rule in Cin7 exactly).");
 
+  // The physical lines come from the project's APPROVED PRODUCT SCOPE, never from typing. Anything unmapped and unresolved stops the creation.
+  const scope = effectiveScope(scopeFromSnapshot(project.baseline_snapshot));
+  if (scope.blockers.length) fail(`The project's product scope is not ready for a Cin7 Sale. Resolve these first (map to a real SKU, or exclude with a reason): ${scope.blockers.join(" | ")}`);
+  const physicalLines: CreationProductInput[] = scope.lines.map((l) => ({ sku: l.sku, name: l.description, quantity: l.quantity }));
   const built = buildCreationPlan({
     projectRef: project.project_reference, role, customerName: input.customerName, location: input.location, taxRule: input.cin7TaxRule, taxRateBps: project.tax_rate_bps,
-    revenueAccount: input.revenueAccount, contractCents: project.original_contract_cents, stages, physicalLines: input.physicalLines, saleOrderDate: todayStr(now),
+    revenueAccount: input.revenueAccount, contractCents: project.original_contract_cents, stages, physicalLines, saleOrderDate: todayStr(now),
   });
   if (!built.ok) fail(built.error);
   const plan = built.plan;

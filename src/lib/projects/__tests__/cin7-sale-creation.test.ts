@@ -122,13 +122,13 @@ class FakePort implements SaleCreationPort {
 }
 
 let db: FakeDb; let projectId: string; let port: FakePort;
-const baseInput = () => ({ orgId: ORG, projectId, instanceId: "inst-1", confirmation: CREATE_CONFIRMATION_TEXT, customerName: "Test Customer", location: "MSTR", revenueAccount: "200", cin7TaxRule: "Standard Rate Sales", physicalLines: [{ sku: "NQ2886", name: "Bracket", quantity: 2 }], now: new Date("2026-10-28T10:00:00Z") });
+const baseInput = () => ({ orgId: ORG, projectId, instanceId: "inst-1", confirmation: CREATE_CONFIRMATION_TEXT, customerName: "Test Customer", location: "MSTR", revenueAccount: "200", cin7TaxRule: "Standard Rate Sales", now: new Date("2026-10-28T10:00:00Z") });
 const create = (over: Partial<WriteGates> = {}, o: Partial<ReturnType<typeof baseInput>> = {}) => createSaleForProject(db as never, port, { ...ON, ...over }, "mgr@x", { ...baseInput(), ...o });
 const row = () => db.rows("project_cin7_sale_creations")[0] as Record<string, unknown> | undefined;
 
 beforeEach(async () => {
   db = new FakeDb(); port = new FakePort();
-  projectId = await createProjectFromBaseline(db as never, ORG, "m@x", { ...goldenFixtureBaseline(), taxRule: "Standard Rate Sales" }, { reference: "PRJ-NQ-Q-0001", name: "n" });
+  projectId = await createProjectFromBaseline(db as never, ORG, "m@x", { ...goldenFixtureBaseline(), taxRule: "Standard Rate Sales", lines: [{ lineRef: "L1", sku: "NQ2886", description: "Bracket", quantity: 2, salesValueCents: 0, estimatedCostCents: null, suggestedStageName: null }] }, { reference: "PRJ-NQ-Q-0001", name: "n" });
 });
 
 describe("Advanced Sale creation", () => {
@@ -150,7 +150,8 @@ describe("Advanced Sale creation", () => {
   });
   it("validates against Cin7 read-only BEFORE any intent: unknown customer or SKU stores nothing and sends nothing", async () => {
     expect(await err(create({}, { customerName: "Nobody" }))).toMatch(/does not exist in Cin7/);
-    expect(await err(create({}, { physicalLines: [{ sku: "NOPE", name: "x", quantity: 1 }] }))).toMatch(/NOPE/);
+    (db.rows("projects")[0].baseline_snapshot as { lines: Array<{ sku: string }> }).lines[0].sku = "NOPE";
+    expect(await err(create())).toMatch(/NOPE/);
     expect(port.creates).toHaveLength(0); expect(row()).toBeUndefined();
   });
   it("a replay or double click cannot create a second Sale", async () => {
@@ -304,7 +305,7 @@ describe("variation billing project", () => {
     const pid = "id-variation";
     db.rows("projects").push({ id: pid, org_id: ORG, project_reference: "PRJ-NQ-Q-0001-V001", status: "ACTIVE", tax_rule: "Standard Rate Sales", tax_rate_bps: 1500, original_contract_cents: 48_000_000, billing_scope: "VARIATION" });
     db.rows("project_stages").push({ id: "st-v", org_id: ORG, project_id: pid, sort_order: 1, name: "Variation", value_cents: 48_000_000 });
-    const r = await createSaleForProject(db as never, port, ON, "mgr@x", { ...baseInput(), projectId: pid, physicalLines: [] });
+    const r = await createSaleForProject(db as never, port, ON, "mgr@x", { ...baseInput(), projectId: pid });
     expect(r).toMatchObject({ state: "RECONCILED", linked: true });
     expect(db.rows("project_cin7_sale_creations").find((c) => c.project_id === pid)).toMatchObject({ sale_role: "VARIATION", external_id: "NEWQUIP-PROJECTS-SALE:PRJ-NQ-Q-0001-V001" });
     expect(db.rows("project_cin7_sale_links").find((l) => l.project_id === pid)).toMatchObject({ sale_role: "VARIATION" });

@@ -8,8 +8,9 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import {
   MESSAGES, POST_CONFIRMATION_TEXT, amountDifferences, buildPostingPlan, canSend, isStalePending, matchInvoices, rands,
-  resolvePhysicalLines, type OrderLineView, type PhysicalSelection, type PostingClaim, type PostingClaimLine, type PostingDisplayState, type PostingState, type ReadInvoice,
+  resolvePhysicalLines, type OrderLineView, type PhysicalSelection, type ResolvedPhysicalLine, type PostingClaim, type PostingClaimLine, type PostingDisplayState, type PostingState, type ReadInvoice,
 } from "./cin7-posting";
+import { proposeInvoice, validateSelection } from "./invoice-proposal";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 
@@ -25,7 +26,9 @@ export type InvoiceOutcome =
   | { kind: "created"; invoiceNumber: string; taskId: string; status: string; totalBeforeTax: number | null; tax: number | null; total: number | null }
   | { kind: "rejected"; httpStatus: number; message: string }
   | { kind: "uncertain"; reason: string };
-export interface Cin7SaleView { id: string; saleNumber: string | null; type: string | null; orderStatus: string | null; taxRule: string | null; invoices: ReadInvoice[]; orderLines?: OrderLineView[] }
+export interface Cin7SaleView { id: string; saleNumber: string | null; type: string | null; orderStatus: string | null; taxRule: string | null; invoices: ReadInvoice[]; orderLines?: OrderLineView[];
+  /** Verified shipped quantity per SKU from fulfilments whose Ship step is authorised / shipped (null = unreadable). Undefined = not read. */
+  shipped?: Record<string, number | null> }
 export interface Cin7Port {
   fetchSale(saleId: string): Promise<Cin7SaleView>;
   createInvoice(req: InvoiceRequest): Promise<InvoiceOutcome>;
@@ -38,7 +41,7 @@ export interface PostingRow {
   requested_by_email: string; requested_at: string; completed_at: string | null; reconciled_at: string | null;
   last_error_code: string | null; last_error_message: string | null;
   /** Physical products on the invoice (R0). Column added by migration 0105; absent on rows written before it. */
-  physical_lines?: Array<{ sku: string; quantity: number }> | null;
+  physical_lines?: Array<{ sku: string; quantity: number; earlyReason?: string }> | null;
 }
 export interface SaleLinkRow {
   id: string; project_id: string; instance_id: string; cin7_sale_id: string; cin7_sale_number: string | null; link_status: string;
@@ -120,6 +123,18 @@ export async function linkCin7Sale(
 
 // ── posting ─────────────────────────────────────────────────────────────────
 
+/** Physical units held by OTHER postings on the same Sale link that Cin7 may not show yet (PENDING, or uncertain). Excludes the given claim's own posting. */
+export async function reservedByOthers(db: Db, orgId: string, saleLinkId: string, claimId: string): Promise<Record<string, number>> {
+  const r = await db.from("project_claim_cin7_postings").select("*").eq("org_id", orgId).eq("sale_link_id", saleLinkId);
+  if (r.error) fail(`load postings: ${r.error.message}`);
+  const out: Record<string, number> = {};
+  for (const p of (r.data ?? []) as PostingRow[]) {
+    if (p.claim_id === claimId || !["PENDING", "FAILED_UNCERTAIN"].includes(p.posting_state)) continue;
+    for (const l of p.physical_lines ?? []) out[l.sku] = (out[l.sku] ?? 0) + l.quantity;
+  }
+  return out;
+}
+
 const today = (now: Date) => now.toISOString().slice(0, 10);
 const addDays = (now: Date, d: number) => new Date(now.getTime() + d * 86_400_000).toISOString().slice(0, 10);
 const trunc = (s: string) => s.replace(/\s+/g, " ").slice(0, 500);
@@ -130,7 +145,7 @@ const trunc = (s: string) => s.replace(/\s+/g, " ").slice(0, 500);
  */
 export async function postClaimToCin7(
   db: Db, port: Cin7Port, gates: WriteGates, email: string,
-  input: { orgId: string; projectId: string; claimId: string; confirmation: string; now?: Date; physicalLines?: PhysicalSelection[] },
+  input: { orgId: string; projectId: string; claimId: string; confirmation: string; now?: Date; physicalLines?: PhysicalSelection[]; earlyReason?: string },
 ): Promise<PostResult> {
   const now = input.now ?? new Date();
   // 1–3: flag, org, manager, explicit confirmation — all enforced HERE, whatever the UI showed.
@@ -169,12 +184,29 @@ export async function postClaimToCin7(
   // Physical products (optional): validated against the Sale's ORDER and what is already invoiced, by a READ-ONLY fetch BEFORE any intent
   // is persisted. A retry of an existing posting must repeat the identical selection (the fingerprint covers it).
   const selection = input.physicalLines ?? [];
-  let resolved: Array<{ productId: string; sku: string; name: string; quantity: number }> = [];
+  let resolved: ResolvedPhysicalLine[] = [];
+  const baseRemaining: Record<string, number> = {};
   if (selection.length > 0) {
     const view = await port.fetchSale(link.cin7_sale_id);
     const r = resolvePhysicalLines(selection, view.orderLines, view.invoices);
     if (!r.ok) fail(r.error);
-    resolved = r.lines;
+    // The eligibility rule is RECOMPUTED here from live Cin7 facts, never taken from what the screen showed: a stale or concurrent selection cannot slip through.
+    const reserved = await reservedByOthers(db, input.orgId, link.id, input.claimId);
+    const orderLines = view.orderLines ?? [];
+    const proposal = proposeInvoice({
+      claimLines: lines.map((l) => ({ stageName: l.stage_name, amountCents: l.current_claim_cents, taxCents: l.tax_cents })),
+      orderLines: orderLines.map((o) => ({ sku: o.sku, description: o.name, ordered: Number.isFinite(o.quantity) ? o.quantity : null })),
+      invoices: view.invoices.map((i) => ({ status: i.status, lines: i.lines ? i.lines.map((l) => ({ sku: l.sku, quantity: l.quantity })) : null })),
+      shipped: Object.fromEntries(orderLines.map((o) => [o.sku, view.shipped ? view.shipped[o.sku] : null])),
+      reserved, scopeSkus: [],
+    });
+    const bad = validateSelection(proposal, selection, input.earlyReason ?? null);
+    if (bad) fail(bad);
+    for (const l of proposal.lines) if (l.ordered !== null && l.invoiced !== null) baseRemaining[l.sku] = Math.max(0, l.ordered - l.invoiced);
+    resolved = r.lines.map((l) => {
+      const eligible = proposal.lines.find((x) => x.sku === l.sku)?.eligible ?? 0;
+      return l.quantity > eligible + 1e-9 ? { ...l, earlyReason: (input.earlyReason ?? "").trim() } : l;
+    });
   }
   const built = buildPostingPlan({ projectRef: project.project_reference, claim, lines, link, physicalLines: resolved });
   if (!built.ok) fail(built.error);
@@ -189,7 +221,7 @@ export async function postClaimToCin7(
       request_fingerprint: plan.fingerprint, memo: plan.memo, posting_state: "PENDING", attempt_count: 1,
       amount_ex_vat_cents: plan.subtotalCents, tax_cents: plan.taxCents, total_cents: plan.totalCents, cin7_sale_id: link.cin7_sale_id,
       requested_by_email: email, requested_at: now.toISOString(),
-      ...(plan.physicalLines.length ? { physical_lines: plan.physicalLines.map((l) => ({ sku: l.sku, quantity: l.quantity })) } : {}),
+      ...(plan.physicalLines.length ? { physical_lines: plan.physicalLines.map((l) => ({ sku: l.sku, quantity: l.quantity, ...(l.earlyReason ? { earlyReason: l.earlyReason } : {}) })) } : {}),
     }).select("*").single();
     if (ins.error || !ins.data) {
       if (/duplicate key|unique/i.test(ins.error?.message ?? "")) fail(MESSAGES.inFlight);
@@ -205,6 +237,19 @@ export async function postClaimToCin7(
     if (up.error) fail(up.error.message);
     if (!up.data || up.data.length === 0) fail(MESSAGES.inFlight);
     posting = (up.data as PostingRow[])[0];
+  }
+
+  // CONCURRENCY: now that this posting's intent is stored, make sure no OTHER in-flight posting on the same Sale holds the same units. If the
+  // combined demand exceeds what is still invoiceable, this one stands down BEFORE anything is sent (both may stand down: fail closed).
+  if (plan.physicalLines.length) {
+    const others = await reservedByOthers(db, input.orgId, link.id, input.claimId);
+    const clash = plan.physicalLines.find((l) => (others[l.sku] ?? 0) + l.quantity > (baseRemaining[l.sku] ?? 0) + 1e-9);
+    if (clash) {
+      const msg = `${clash.sku}: another posting on this Sale is already holding some of the remaining quantity; nothing was sent. Reconcile or finish that posting first.`;
+      await db.from("project_claim_cin7_postings").update({ posting_state: "FAILED_CONFIRMED_NO_WRITE", last_error_code: "CONCURRENT_QUANTITY", last_error_message: msg, completed_at: new Date().toISOString() })
+        .eq("org_id", input.orgId).eq("id", posting.id).eq("posting_state", "PENDING");
+      fail(msg);
+    }
   }
 
   // THE ONE EXTERNAL CALL.
