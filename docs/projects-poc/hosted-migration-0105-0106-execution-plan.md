@@ -22,8 +22,8 @@ Status: **PREPARED, NOT EXECUTED.** Target: Supabase project `pnzwjqjovxxdikxtfn
 | Pre-migration data digests (md5 of all rows as text, new columns removed from the comparison) | recorded below | **recorded** |
 
 Pre-migration digests (re-run the same query after each migration; they must be identical):
-`newquip_quotes 1 246db282…` · `project_cin7_sale_links 1 80178a96…` · `project_claim_cin7_postings 1 4523c870…` · `project_claim_lines 8 89a6a089…` · `project_claims 4 5401e501…` · `project_opening_commitments 2 d2d516f8…` · `project_progress_events 14 1ea06850…` · `project_stage_allocations 26 6c35540d…` · `project_stages 18 5e2df76b…` · `project_variations 1 edd4a471…` · `projects 3 439241a7…`.
-(The full 32-character digests are produced by the query in section 5; the prefixes above were recorded in the preparation session.)
+`newquip_quotes 1 246db2821b6a7ea05af2c3fcaf993aa0` · `project_cin7_sale_links 1 80178a96f4c552458ad1411d3f84d5ca` · `project_claim_cin7_postings 1 4523c870792740927b6c5739edc96463` · `project_claim_lines 8 89a6a0894a13ebaa80b15ecd580ab34a` · `project_claims 4 5401e501c55fa08be3158dcef9704130` · `project_opening_commitments 2 d2d516f827307b442cb144642843906b` · `project_progress_events 14 1ea0685053ed6ad09cc6cf28ee2ddfc2` · `project_stage_allocations 26 6c35540d3637f19fc90f9c53d563244e` · `project_stages 18 5e2df76bdb212944a83912c1fc65682f` · `project_variations 1 edd4a4716396abfb76f9834525895657` · `projects 3 439241a73288a03a115e760dfcdb67d3`.
+(Recorded 2026-10-28 with the query in section 5, section C. If any hosted row changes before execution - for example a new POC project - re-record and re-compare against the same query's output taken immediately before applying.)
 
 **Do not proceed if**: any preflight row differs; a newer hosted migration exists; row counts changed in a way nobody explains; Preview/Production is mid-deploy; a Cin7 posting is `PENDING`; or the owner has not given the GO sentence.
 
