@@ -25,13 +25,16 @@ vi.mock("@/lib/projects/cin7-posting-store", () => ({
 const NQ = NEWQUIP_POC_ORG_IDS[0];
 const gatesOf = () => vi.mocked(store.postClaimToCin7).mock.calls[0][2];
 const env = process.env.NEWQUIP_CIN7_WRITES_ENABLED;
+const savedUrls = { s: process.env.SUPABASE_URL, p: process.env.NEXT_PUBLIC_SUPABASE_URL };
+const WIRED = "https://pnzwjqjovxxdikxtfngq.supabase.co";
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(requireModuleAccess).mockResolvedValue({ orgId: NQ, userId: "u", email: "m@x" } as never);
   vi.mocked(requireOrgAdmin).mockResolvedValue({} as never);
   delete process.env.NEWQUIP_CIN7_WRITES_ENABLED;
+  process.env.SUPABASE_URL = WIRED; process.env.NEXT_PUBLIC_SUPABASE_URL = WIRED;
 });
-afterEach(() => { if (env === undefined) delete process.env.NEWQUIP_CIN7_WRITES_ENABLED; else process.env.NEWQUIP_CIN7_WRITES_ENABLED = env; });
+afterEach(() => { if (savedUrls.s === undefined) delete process.env.SUPABASE_URL; else process.env.SUPABASE_URL = savedUrls.s; if (savedUrls.p === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL; else process.env.NEXT_PUBLIC_SUPABASE_URL = savedUrls.p; if (env === undefined) delete process.env.NEWQUIP_CIN7_WRITES_ENABLED; else process.env.NEWQUIP_CIN7_WRITES_ENABLED = env; });
 
 describe("the write gates are derived on the server", () => {
   it("OFF by default: with the flag unset the store receives writesEnabled=false", async () => {
@@ -47,6 +50,12 @@ describe("the write gates are derived on the server", () => {
     process.env.NEWQUIP_CIN7_WRITES_ENABLED = "true";
     await actions.postClaimToCin7Action("p", "c", POST_CONFIRMATION_TEXT);
     expect(gatesOf().writesEnabled).toBe(true);
+  });
+  it("'true' still does NOT enable writes when the deployment points at a different Supabase project (fail closed)", async () => {
+    process.env.NEWQUIP_CIN7_WRITES_ENABLED = "true";
+    process.env.SUPABASE_URL = "https://witulfbpotimvbfiqbwq.supabase.co";
+    await actions.postClaimToCin7Action("p", "c", POST_CONFIRMATION_TEXT);
+    expect(gatesOf().writesEnabled).toBe(false);
   });
   it("a non-NewQuip org gets orgEnabled=false", async () => {
     vi.mocked(requireModuleAccess).mockResolvedValue({ orgId: "other-org", userId: "u", email: "m@x" } as never);

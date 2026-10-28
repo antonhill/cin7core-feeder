@@ -13,3 +13,12 @@ export const NEWQUIP_POC_ORG_IDS: readonly string[] = ["e1aea782-d095-47ad-90fb-
 export function isNewquipPocOrg(orgId: string): boolean {
   return NEWQUIP_POC_ORG_IDS.includes(orgId);
 }
+
+/**
+ * The ONE Cin7 instance ("NewQuip POC") the acceptance proofs may use. P0 refuses to run against any other instance, and never picks one for
+ * you: if the org has zero, several, or a different active instance, P0 fails with the facts.
+ */
+export const NEWQUIP_POC_CIN7_INSTANCE_ID = "30eac8f2-d55c-486c-be70-a5f2d778a761";
+
+/** Customers that must never be used by a proof (operational customers). Matched case-insensitively as a substring of the name. */
+export const OPERATIONAL_CUSTOMER_DENYLIST: readonly string[] = ["AGRICO", "AFGRI", "AMANZIMNENGI"];
