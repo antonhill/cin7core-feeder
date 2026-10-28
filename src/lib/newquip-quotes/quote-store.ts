@@ -157,7 +157,7 @@ export async function estimatorSignOff(db: Db, orgId: string, roles: ReadonlySet
  * Manager final approval. Re-evaluates the saved draft SERVER-SIDE (no client number is ever trusted), verifies every
  * precondition, builds the sealed baseline and freezes it. Creates nothing in Cin7.
  */
-export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, email: string, quoteId: string, ctx: EvaluationContext): Promise<{ baselineHash: string; contractCents: number }> {
+export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, email: string, quoteId: string, ctx: EvaluationContext, marginCtx?: EvaluationContext): Promise<{ baselineHash: string; contractCents: number }> {
   const q = await mustLoad(db, orgId, quoteId);
   const auth = authoriseTransition(roles, q.state, "MANAGER_APPROVE");
   if (!auth.ok) fail(auth.error);
@@ -167,6 +167,8 @@ export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<Q
   const now = new Date().toISOString();
   const { baseline, hash } = buildAcceptedBaseline({
     quoteRef: q.quote_ref, revision: q.revision, draft: q.draft, evaluation: ev,
+    // Cost-visible evaluation of the SAME draft, used only for the internal margin sheet frozen with the baseline.
+    marginEvaluation: marginCtx ? evaluateDraft(q.draft, marginCtx) : undefined,
     approvals: {
       customerConfirmedAt: q.customer_confirmed_at ?? now, customerConfirmedCents: q.customer_confirmed_cents!, customerConfirmedBy: q.customer_confirmed_by ?? "",
       handoffBy: q.handoff_by_email ?? "", estimatorSignoffBy: q.estimator_signoff_by_email ?? "", estimatorSignoffAt: q.estimator_signoff_at ?? now,
