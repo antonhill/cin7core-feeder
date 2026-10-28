@@ -3,7 +3,7 @@ import "server-only";
 // inherited with the project, travels with it, and is frozen by the database's baseline guard once a claim is approved. The only change ever
 // made to it is a controlled, audited RESOLUTION of an unmapped item, and only before any claim or Cin7 Sale exists.
 import type { createServiceRoleClient } from "@/supabase/server";
-import { applyResolution, effectiveScope, scopeFromSnapshot, type EffectiveScope, type ScopeItem } from "./product-scope";
+import { applyResolution, effectiveScope, scopeFromSnapshot, type EffectiveScope, type ResolveLineInput, type ScopeItem } from "./product-scope";
 import type { P0Port } from "./p0-checklist";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
@@ -17,7 +17,7 @@ export async function loadProjectScope(db: Db, orgId: string, projectId: string)
   return { items, effective: effectiveScope(items) };
 }
 
-export interface ResolveScopeInput { orgId: string; projectId: string; itemId: string; kind: "MAP" | "EXCLUDE"; sku?: string; quantity?: number; reason: string; now?: Date }
+export interface ResolveScopeInput { orgId: string; projectId: string; itemId: string; kind: "MAP" | "MAP_LINES" | "EXCLUDE"; sku?: string; quantity?: number; lines?: ResolveLineInput[]; reason: string; now?: Date }
 
 /** Manager only. Maps an unmapped item to a real Cin7 SKU (verified live, read-only) or excludes it from the Sales Order, each with a reason. */
 export async function resolveScopeItem(db: Db, port: Pick<P0Port, "resolveProducts">, gates: { isManager: boolean }, email: string, input: ResolveScopeInput): Promise<ScopeItem[]> {
@@ -45,7 +45,15 @@ export async function resolveScopeItem(db: Db, port: Pick<P0Port, "resolveProduc
     const res = await port.resolveProducts([sku]);
     if (res.missing.length) fail(`SKU ${sku} does not exist in Cin7 (exact match). Nothing was changed.`);
   }
-  const r = applyResolution(items, { itemId: input.itemId, kind: input.kind, sku: input.sku, quantity: input.quantity, reason: input.reason, by: email, at: (input.now ?? new Date()).toISOString() });
+  if (input.kind === "MAP_LINES") {
+    // every SKU must exist in Cin7 (exact match, read-only) before anything is recorded
+    const skus = (input.lines ?? []).map((l) => (l.sku ?? "").trim()).filter(Boolean);
+    if (skus.length) {
+      const res = await port.resolveProducts(skus);
+      if (res.missing.length) fail(`SKU ${res.missing.join(", ")} does not exist in Cin7 (exact match). Nothing was changed.`);
+    }
+  }
+  const r = applyResolution(items, { itemId: input.itemId, kind: input.kind, sku: input.sku, quantity: input.quantity, lines: input.lines, reason: input.reason, by: email, at: (input.now ?? new Date()).toISOString() });
   if (!r.ok) fail(r.error);
   const up = await db.from("projects").update({ baseline_snapshot: { ...snap, physicalScope: r.items } }).eq("org_id", input.orgId).eq("id", input.projectId).select("id");
   if (up.error) fail(`save scope resolution: ${up.error.message}`);

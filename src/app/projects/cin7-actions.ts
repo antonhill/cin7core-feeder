@@ -177,7 +177,7 @@ export async function getCin7SaleCreationStatusAction(projectId: string): Promis
  * Manager only. Resolves an UNMAPPED scope item: map it to a real Cin7 SKU (verified live, read-only) or exclude it from the Sales Order, with a
  * reason. Audited. Allowed only before any claim or Cin7 Sale exists. This is the only way the inherited scope can change.
  */
-export async function resolveScopeItemAction(projectId: string, input: { itemId: string; kind: "MAP" | "EXCLUDE"; sku?: string; quantity?: number; reason: string }): Promise<Cin7ActionResult<ScopeItem[]>> {
+export async function resolveScopeItemAction(projectId: string, input: { itemId: string; kind: "MAP" | "MAP_LINES" | "EXCLUDE"; sku?: string; quantity?: number; lines?: Array<{ sku: string; factor: number; unit?: string; role?: "FINISHED_GOOD" | "BOM_COMPONENT" }>; reason: string }): Promise<Cin7ActionResult<ScopeItem[]>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     const gates = await gatesFor(orgId);
@@ -187,10 +187,10 @@ export async function resolveScopeItemAction(projectId: string, input: { itemId:
     const inst = await db.from("cin7_instances").select("id, name").eq("org_id", orgId).eq("active", true);
     if (inst.error) throw new Error(inst.error.message);
     const list = (inst.data ?? []) as Array<{ id: string; name: string }>;
-    if (input.kind === "MAP" && (list.length !== 1 || list[0].id !== NEWQUIP_POC_CIN7_INSTANCE_ID)) throw new Error("The SKU can only be verified against the single expected NewQuip POC Cin7 instance; it is not.");
-    const port = input.kind === "MAP" ? buildSaleCreationPort(db, orgId, list[0].id) : { resolveProducts: async () => ({ ids: new Map<string, string>(), missing: [] as string[] }) };
+    if (input.kind !== "EXCLUDE" && (list.length !== 1 || list[0].id !== NEWQUIP_POC_CIN7_INSTANCE_ID)) throw new Error("The SKU can only be verified against the single expected NewQuip POC Cin7 instance; it is not.");
+    const port = input.kind !== "EXCLUDE" ? buildSaleCreationPort(db, orgId, list[0].id) : { resolveProducts: async () => ({ ids: new Map<string, string>(), missing: [] as string[] }) };
     const items = await resolveScopeItem(db, port, { isManager: gates.isManager }, email ?? "unknown", { orgId, projectId, ...input });
-    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.scope_item_resolved", summary: `Resolved an unmapped product scope item (${input.kind}; no Cin7 write)`, detail: { projectId, itemId: input.itemId, kind: input.kind, sku: input.sku ?? null, quantity: input.quantity ?? null, reason: input.reason } });
+    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.scope_item_resolved", summary: `Resolved an unmapped product scope item (${input.kind}; no Cin7 write)`, detail: { projectId, itemId: input.itemId, kind: input.kind, sku: input.sku ?? null, quantity: input.quantity ?? null, lines: input.lines ?? null, reason: input.reason } });
     return { ok: true, data: items };
   } catch (e) {
     return { ok: false, error: message(e) };

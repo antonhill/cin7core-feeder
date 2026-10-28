@@ -10,6 +10,7 @@ import { isP0Disposable } from "@/lib/projects/p0-project";
 import type { P0Report } from "@/lib/projects/p0-checklist";
 import { CREATE_CONFIRMATION_TEXT } from "@/lib/projects/cin7-sale-creation";
 import type { ProjectView } from "@/lib/projects/project-view";
+import { VariationProductPicker, type PickedProduct } from "./VariationProductPicker";
 import { createCin7SaleAction, getCin7SaleCreationStatusAction, reconcileCin7SaleCreationAction, resolveScopeItemAction, runP0ChecklistAction, type Cin7SaleCreationStatus } from "../cin7-actions";
 
 // Create the project's Cin7 ADVANCED SALE. The physical products come from the project's APPROVED PRODUCT SCOPE (inherited from the quotation,
@@ -33,6 +34,7 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
   const [p0, setP0] = useState<P0Report | null>(null);
   const [p0Error, setP0Error] = useState<string | null>(null);
   const [p0Busy, setP0Busy] = useState(false);
+  const [multi, setMulti] = useState<Record<string, PickedProduct[]>>({});
   const [res, setRes] = useState<Record<string, { sku: string; quantity: string; reason: string }>>({});
 
   const load = useCallback(() => { getCin7SaleCreationStatusAction(projectId).then((r) => { if (r.ok && r.data) setSt(r.data); }); }, [projectId]);
@@ -81,6 +83,18 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
                     <Button size="sm" disabled={working || !r.sku.trim() || !r.reason.trim()} onClick={() => after(() => resolveScopeItemAction(projectId, { itemId: i.id, kind: "MAP", sku: r.sku, quantity: Number(r.quantity), reason: r.reason }))}>Map to this SKU</Button>
                     <Button size="sm" variant="secondary" disabled={working || !r.reason.trim()} onClick={() => after(() => resolveScopeItemAction(projectId, { itemId: i.id, kind: "EXCLUDE", reason: r.reason }))}>Exclude from the Sale</Button>
                   </div>
+                ) : <p className="mt-1 text-xs text-slate-500">A manager resolves this.</p>}
+                {gates.isManager ? (
+                  <details className="mt-3 rounded border border-slate-200 p-3">
+                    <summary className="cursor-pointer text-sm font-medium text-slate-800">Map this package to several Cin7 SKUs (with quantity conversion)</summary>
+                    <p className="mt-1 text-xs text-slate-500">Search and add each real Cin7 SKU. Enter how many units of that SKU make up ONE quoted unit ({i.unit}); the converted quantity is shown. Mark internal manufacturing inputs as BOM components so they are not put on the Sales Order.</p>
+                    <div className="mt-2"><VariationProductPicker picked={multi[i.id] ?? []} onChange={(next) => setMulti({ ...multi, [i.id]: next })} disabled={working} quantityLabel={`SKU units per 1 ${i.unit}`} withRole
+                      extra={(p) => (i.quantity ? `= ${Math.round(i.quantity * (Number(p.quantity) || 0) * 1e6) / 1e6} on the order` : "no quoted quantity")} /></div>
+                    <div className="mt-2 flex flex-wrap items-end gap-2">
+                      <Input label="Reason (required)" value={r.reason} onChange={(e) => set({ reason: e.target.value })} />
+                      <Button size="sm" disabled={working || !r.reason.trim() || (multi[i.id] ?? []).length === 0} onClick={() => after(() => resolveScopeItemAction(projectId, { itemId: i.id, kind: "MAP_LINES", reason: r.reason, lines: (multi[i.id] ?? []).map((p) => ({ sku: p.sku, factor: Number(p.quantity), unit: i.unit, role: p.role })) }))}>Save multi-SKU mapping</Button>
+                    </div>
+                  </details>
                 ) : <p className="mt-1 text-xs text-slate-500">A manager resolves this.</p>}
               </div>
             );
