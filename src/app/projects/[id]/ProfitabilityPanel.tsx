@@ -9,7 +9,8 @@ import type { MarginFigures } from "@/lib/projects/margin-figures";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { COST_CATEGORIES, COST_CATEGORY_LABEL } from "@/lib/projects/project-costs";
-import { addCostEntryAction, getCostLedgerAction, getProfitabilityAction, markCostIncurredAction, voidCostEntryAction, type CostLedgerResult, type ProfitabilityActionResult } from "../profitability-actions";
+import type { CostingReport } from "@/lib/projects/costing-report";
+import { addCostEntryAction, getCostingReportAction, getCostLedgerAction, getProfitabilityAction, markCostIncurredAction, voidCostEntryAction, type CostLedgerResult, type ProfitabilityActionResult } from "../profitability-actions";
 
 // INTERNAL (managers only). Consolidated base + variation position: contract, billing, estimated margins (frozen at approval) and - only when
 // delivery and billing are complete - the actual margin. The reporting basis and date are always shown; a partial cost is never a margin.
@@ -74,6 +75,7 @@ export function ProfitabilityPanel({ view }: { view: ProjectView }) {
           </div>
         )}
       </Panel>
+      <CostingBreakdown projectId={view.project.id} />
       <CostLedger projectId={view.project.id} />
     </div>
   );
@@ -121,6 +123,57 @@ function CostLedger({ projectId }: { projectId: string }) {
           </div>
           <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={f.inCin7Valuation} onChange={(e) => setF({ ...f, inCin7Valuation: e.target.checked })} /> Already carried in a Cin7 inventory / assembly valuation (record for visibility only)</label>
           <Button disabled={busy || !f.description.trim() || !f.amountRand.trim()} onClick={() => act(async () => { const r = await addCostEntryAction(projectId, f); if (r.ok) setF({ ...f, description: "", supplier: "", reference: "", amountRand: "" }); return r; }, "Cost recorded.")}>Record cost</Button>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+const money = (n: number | null) => (n === null ? "unknown" : formatCents(n));
+
+function CostingBreakdown({ projectId }: { projectId: string }) {
+  const [res, setRes] = useState<{ ok: boolean; error?: string; data?: CostingReport } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = async () => { setBusy(true); setRes(await getCostingReportAction(projectId)); setBusy(false); };
+  const r = res?.ok ? res.data : undefined;
+  const th = "py-2 pr-3 text-right";
+  return (
+    <Panel>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <PanelTitle>Cost &amp; margin breakdown (internal)</PanelTitle>
+        <Button size="sm" variant="secondary" disabled={busy} onClick={load}>{busy ? "Reading Cin7…" : r ? "Refresh" : "Calculate (reads Cin7)"}</Button>
+      </div>
+      {res && !res.ok && <Alert tone="danger">{res.error}</Alert>}
+      {r && (
+        <div className="mt-3 space-y-6 overflow-x-auto text-sm">
+          <ul className="list-disc pl-5 text-xs text-slate-500">{r.basisNotes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+          <section>
+            <p className="font-medium text-slate-800">Budget vs actual and expected final margin</p>
+            <dl className="mt-1 grid max-w-2xl grid-cols-2 gap-y-1 tabular-nums">
+              <dt className="text-slate-600">Estimated stock cost (budget)</dt><dd className="text-right">{money(r.budget.estimatedStockCostCents)}</dd>
+              <dt className="text-slate-600">Incurred stock cost (Cin7 invoice lines)</dt><dd className="text-right">{money(r.budget.incurredStockCostCents)}</dd>
+              <dt className="text-slate-600">Stock variance (incurred - estimate; + = over)</dt><dd className="text-right">{money(r.budget.stockVarianceCents)}</dd>
+              <dt className="text-slate-600">Non-stock incurred / committed</dt><dd className="text-right">{money(r.budget.nonStockIncurredCents)} / {money(r.budget.nonStockCommittedCents)}</dd>
+              <dt className="font-medium">Expected final cost</dt><dd className="text-right font-medium">{money(r.budget.expectedFinalCostCents)}</dd>
+              <dt className="font-medium">Expected final margin ({r.budget.marginBasis === "FULL_CONTRACT" ? "whole contract" : "costed scope only"})</dt>
+              <dd className="text-right font-medium">{r.budget.expectedFinalMargin?.marginPct != null ? `${pct(r.budget.expectedFinalMargin.marginPct)} (${money(r.budget.expectedFinalMargin.gpCents)})` : "unknown"}</dd>
+            </dl>
+          </section>
+          <section><p className="font-medium text-slate-800">By scope</p>
+            <table className="min-w-full"><thead><tr className="border-b text-left text-xs uppercase text-slate-500"><th className="py-2 pr-3" /><th className={th}>Contract</th><th className={th}>Est. cost</th><th className={th}>Gross profit</th><th className={th}>Margin</th></tr></thead>
+              <tbody>{r.byScope.map((s) => <tr key={s.scope} className="border-b border-slate-100"><td className="py-2 pr-3">{s.scope}</td><td className={`${th} tabular-nums`}>{money(s.contractCents)}</td><td className={`${th} tabular-nums`}>{money(s.estimatedCostCents)}</td><td className={`${th} tabular-nums`}>{money(s.estimated.gpCents)}</td><td className={`${th} tabular-nums`}>{pct(s.estimated.marginPct)}</td></tr>)}</tbody></table></section>
+          <section><p className="font-medium text-slate-800">By package / section</p>
+            <table className="min-w-full"><thead><tr className="border-b text-left text-xs uppercase text-slate-500"><th className="py-2 pr-3" /><th className={th}>Selling</th><th className={th}>Est. cost</th><th className={th}>Margin</th></tr></thead>
+              <tbody>{r.bySection.map((s) => <tr key={s.section} className="border-b border-slate-100"><td className="py-2 pr-3">{s.section}</td><td className={`${th} tabular-nums`}>{money(s.sellingCents)}</td><td className={`${th} tabular-nums`}>{money(s.costCents)}</td><td className={`${th} tabular-nums`}>{pct(s.marginPct)}</td></tr>)}</tbody></table></section>
+          <section><p className="font-medium text-slate-800">By project stage (estimated cost pro rata to stage value)</p>
+            <table className="min-w-full"><thead><tr className="border-b text-left text-xs uppercase text-slate-500"><th className="py-2 pr-3" /><th className={th}>Stage value</th><th className={th}>Est. cost</th><th className={th}>Margin</th></tr></thead>
+              <tbody>{r.byStage.map((s) => <tr key={s.stage} className="border-b border-slate-100"><td className="py-2 pr-3">{s.stage}</td><td className={`${th} tabular-nums`}>{money(s.valueCents)}</td><td className={`${th} tabular-nums`}>{money(s.estimatedCostCents)}</td><td className={`${th} tabular-nums`}>{pct(s.marginPct)}</td></tr>)}</tbody></table></section>
+          <section><p className="font-medium text-slate-800">By SKU - estimated vs incurred</p>
+            <table className="min-w-full"><thead><tr className="border-b text-left text-xs uppercase text-slate-500"><th className="py-2 pr-3">SKU</th><th className={th}>Est. cost</th><th className={th}>Incurred (invoice lines)</th><th className={th}>Variance</th></tr></thead>
+              <tbody>{r.bySku.map((s) => <tr key={s.sku} className="border-b border-slate-100"><td className="py-2 pr-3"><span className="font-mono">{s.sku}</span> <span className="text-xs text-slate-500">{s.description}</span></td><td className={`${th} tabular-nums`}>{money(s.estimatedCents)}</td><td className={`${th} tabular-nums`}>{money(s.actualCents)}</td><td className={`${th} tabular-nums`}>{money(s.varianceCents)}</td></tr>)}</tbody></table></section>
+          <section><p className="font-medium text-slate-800">By supplier (last supplier recorded in Cin7 - indicative)</p>
+            <table className="min-w-full"><thead><tr className="border-b text-left text-xs uppercase text-slate-500"><th className="py-2 pr-3">Supplier</th><th className={th}>SKUs</th><th className={th}>Est. cost</th><th className={th}>Incurred</th></tr></thead>
+              <tbody>{r.bySupplier.map((s) => <tr key={s.supplier} className="border-b border-slate-100"><td className="py-2 pr-3">{s.supplier}</td><td className={`${th} tabular-nums`}>{s.skus}</td><td className={`${th} tabular-nums`}>{money(s.estimatedCents)}</td><td className={`${th} tabular-nums`}>{money(s.actualCents)}</td></tr>)}</tbody></table></section>
         </div>
       )}
     </Panel>

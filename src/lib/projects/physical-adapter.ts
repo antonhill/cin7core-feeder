@@ -31,6 +31,24 @@ export function invoiceLineCost(invoices: Array<{ Status?: string; Lines?: Array
   return Math.round(total * 100);
 }
 
+/** Cost carried on non-voided invoice lines, per SKU (quantity and cents). Null if any line is unreadable or has no usable average cost (unknown, never zero). */
+export function invoiceLineCostsBySku(invoices: Array<{ Status?: string; Lines?: Array<{ SKU?: string; Quantity?: number; AverageCost?: number }> }>): Record<string, { quantity: number; costCents: number }> | null {
+  const out: Record<string, { quantity: number; costCents: number }> = {};
+  for (const inv of invoices) {
+    if ((inv.Status ?? "").toUpperCase() === "VOIDED") continue;
+    if (!inv.Lines) return null;
+    for (const l of inv.Lines) {
+      const q = n(l.Quantity); const c = n(l.AverageCost);
+      if (q === null) return null;
+      if (q === 0) continue;
+      if (!l.SKU || c === null || c <= 0) return null;
+      const cur = out[l.SKU] ?? { quantity: 0, costCents: 0 };
+      out[l.SKU] = { quantity: cur.quantity + q, costCents: cur.costCents + Math.round(q * c * 100) };
+    }
+  }
+  return out;
+}
+
 export function buildPhysicalPort(db: Db, orgId: string, instanceId: string): PhysicalPort {
   const creds = () => loadCin7Credentials(db, orgId, instanceId);
   let stockIndex: Promise<Map<string, Cin7ProductAvailabilityEntry[]>> | undefined;
@@ -39,6 +57,7 @@ export function buildPhysicalPort(db: Db, orgId: string, instanceId: string): Ph
       const s = await fetchSaleDetail(await creds(), saleId);
       return {
         invoiceLineCostCents: invoiceLineCost(s.Invoices ?? []),
+        invoiceLineCostsBySku: invoiceLineCostsBySku(s.Invoices ?? []),
         cogsCents: n(s.COGSAmount) === null ? null : Math.round((n(s.COGSAmount) as number) * 100),
         ordered: (s.Order?.Lines ?? []).filter((l) => l.SKU).map((l) => ({ sku: l.SKU as string, name: l.Name ?? "", quantity: n(l.Quantity) })),
         invoices: (s.Invoices ?? []).map((i) => ({

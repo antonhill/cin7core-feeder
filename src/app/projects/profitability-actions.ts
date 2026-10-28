@@ -15,6 +15,8 @@ import { logActivity } from "@/lib/activity-log";
 import { assertNewquipOrg } from "@/lib/projects/newquip-gate";
 import { guardBillingScope } from "@/lib/projects/scope-access";
 import { addCostEntry, loadCostLedger, markCostIncurred, voidCostEntry } from "@/lib/projects/project-costs-store";
+import { loadCostingReport } from "@/lib/newquip-quotes/costing-report-store";
+import type { CostingReport } from "@/lib/projects/costing-report";
 import type { CostEntry, CostTotals, NewCostInput } from "@/lib/projects/project-costs";
 import type { ProfitabilityReport } from "@/lib/projects/profitability";
 
@@ -83,5 +85,14 @@ export async function voidCostEntryAction(projectId: string, entryId: string, re
     await voidCostEntry(db, { orgId, projectId, entryId, actor: email, reason });
     await logActivity(db, { orgId, actor: { userId, email }, action: "projects.cost_voided", summary: "Voided a project cost entry", detail: { projectId, entryId, reason } });
     return { ok: true };
+  } catch (e) { return { ok: false, error: msg(e) }; }
+}
+
+/** INTERNAL (owner/admin): estimated vs actual cost by SKU, section, stage, supplier and scope, budget variance and expected final margin. Reads Cin7 (GET only). */
+export async function getCostingReportAction(projectId: string): Promise<{ ok: boolean; error?: string; data?: CostingReport }> {
+  try {
+    const { orgId, db } = await costContext(projectId);
+    const r = await loadCostingReport(db, (instanceId) => buildPhysicalPort(db, orgId, instanceId), { orgId, projectId });
+    return r ? { ok: true, data: r } : { ok: false, error: "Project not found." };
   } catch (e) { return { ok: false, error: msg(e) }; }
 }
