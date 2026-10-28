@@ -9,6 +9,7 @@ import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { logActivity } from "@/lib/activity-log";
 import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
+import { createP0Project, searchStockedProducts, type CreateP0Input, type StockedProduct } from "@/lib/projects/p0-project-store";
 import { runP0, type P0Input, type P0Report } from "@/lib/projects/p0-checklist";
 import { externalIdFor } from "@/lib/projects/cin7-sale-creation";
 import { guardBillingScope } from "@/lib/projects/scope-access";
@@ -207,6 +208,60 @@ export async function runP0ChecklistAction(projectId: string, input: Omit<P0Inpu
       { ...input, externalId: externalIdFor((proj.data as { project_reference: string }).project_reference) },
     );
     return { ok: true, data: report };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+// ── Disposable P0 project ───────────────────────────────────────────────────
+
+export interface P0PrepStatus { enabled: boolean; isManager: boolean }
+
+/** Whether this user should see the P0 preparation panel. Display only; every action below re-checks. */
+export async function getP0PrepStatusAction(): Promise<Cin7ActionResult<P0PrepStatus>> {
+  try {
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const g = await gatesFor(orgId);
+    return { ok: true, data: { enabled: g.orgEnabled, isManager: g.isManager } };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/** Manager only. Existing Cin7 products with free stock at a location, from the synced local cache. Reads Supabase only; no Cin7 call. */
+export async function searchP0ProductsAction(location: string, query: string): Promise<Cin7ActionResult<StockedProduct[]>> {
+  try {
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const g = await gatesFor(orgId);
+    if (!g.orgEnabled) throw new Error("Not enabled for this organization.");
+    if (!g.isManager) throw new Error("Only a manager (org owner/admin) can prepare a P0 project.");
+    return { ok: true, data: await searchStockedProducts(createServiceRoleClient(), orgId, location, query) };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/**
+ * Manager only. Creates a SEPARATE disposable Toolbox project from existing Cin7 SKUs chosen by the owner, a test contract and a milestone
+ * schedule. Verifies the SKUs and free stock live (GET only) against the one expected Cin7 instance - never another. Writes nothing to Cin7;
+ * creates no Sale, customer or document; touches no existing quotation or project.
+ */
+export async function createP0ProjectAction(input: CreateP0Input): Promise<Cin7ActionResult<{ projectId: string; reference: string }>> {
+  try {
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const g = await gatesFor(orgId);
+    if (!g.orgEnabled) throw new Error("Not enabled for this organization.");
+    if (!g.isManager) throw new Error("Only a manager (org owner/admin) can prepare a P0 project.");
+    const db = createServiceRoleClient();
+    const inst = await db.from("cin7_instances").select("id, name").eq("org_id", orgId).eq("active", true);
+    if (inst.error) throw new Error(inst.error.message);
+    const list = (inst.data ?? []) as Array<{ id: string; name: string }>;
+    if (list.length !== 1 || list[0].id !== NEWQUIP_POC_CIN7_INSTANCE_ID) {
+      throw new Error(list.length === 0 ? "No active Cin7 instance." : list.length > 1 ? `${list.length} active Cin7 instances; P0 will not choose one.` : `The active Cin7 instance is "${list[0].name}", not the NewQuip POC instance.`);
+    }
+    const r = await createP0Project(db, buildSaleCreationPort(db, orgId, list[0].id), { isManager: g.isManager }, email ?? "unknown", OPERATIONAL_CUSTOMER_DENYLIST, { ...input, orgId });
+    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.p0_project_created", summary: "Created a disposable P0 acceptance project (Toolbox rows only; no Cin7 write)", detail: { projectId: r.projectId, reference: r.reference, skus: input.products.map((p) => p.sku) } });
+    return { ok: true, data: r };
   } catch (e) {
     return { ok: false, error: message(e) };
   }

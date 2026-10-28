@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Panel } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatBps, formatCents, type ProjectView } from "@/lib/projects/project-view";
+import { P0ProjectPanel } from "./P0ProjectPanel";
 import { getViewerPermissionsAction, listProjectsAction, seedGoldenProjectAction } from "./actions";
 
 export default function ProjectsPage() {
@@ -55,6 +56,8 @@ export default function ProjectsPage() {
           <Alert tone="danger">{error}</Alert>
         </div>
       )}
+
+      <P0ProjectPanel />
 
       <div className="mt-6 flex items-center justify-between">
         <p className="text-sm text-slate-500">{projects ? `${projects.length} project${projects.length === 1 ? "" : "s"}` : isLoading ? "Loading…" : ""}</p>
