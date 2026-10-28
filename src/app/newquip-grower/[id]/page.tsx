@@ -18,6 +18,7 @@ import { ROOMS_HELP, VENTILATION_SCOPE_STATUS } from "@/newquip/grower/open-item
 import { valueKindOf, VALUE_KIND_LABEL, type ValueKind } from "@/newquip/grower/bom-view";
 import { QUOTE_TYPE_LABEL, type QuoteType } from "@/newquip/grower/pricing-source";
 import { TOPIGS_GROWER_INPUT } from "@/newquip/grower/fixture";
+import { DEMO_DEFAULTS_SOURCE, applyDemoDefaults, hasEntries } from "@/newquip/grower/demo-defaults";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import type { QuoteEvaluation } from "@/newquip/grower/evaluate";
 import type { GrowerItemKey, OptionalItemKey, PenningPigSize } from "@/newquip/grower/types";
@@ -84,6 +85,8 @@ export default function QuoteEditorPage() {
   const [tab, setTab] = useState<Tab>("config");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [confirmDemo, setConfirmDemo] = useState(false);
+  const [demoLoaded, setDemoLoaded] = useState<string[] | null>(null);
   const [isWorking, start] = useTransition();
   const [confirmedBy, setConfirmedBy] = useState("");
   const [returnReason, setReturnReason] = useState("");
@@ -127,6 +130,11 @@ export default function QuoteEditorPage() {
   const rd = ev.readiness;
   const totalCents = budget && !budget.incomplete ? Math.round(budget.totals.subtotalExTax * 100) : null;
 
+  // One-click demonstration quotation: replaces the inputs of THIS editable draft only (not saved, nothing created, approved or sent).
+  function loadDemo() {
+    const r = applyDemoDefaults(draft!);
+    setDraft(r.draft); setDirty(true); setConfirmDemo(false); setDemoLoaded(r.replaced); setNotice(null); setError(null);
+  }
   const edit = (fn: (d: QuoteDraft) => void) => { setDraft((p) => { const n = structuredClone(p!); fn(n); return n; }); setDirty(true); };
   const num = (v: number | null) => v ?? 0;
 
@@ -201,6 +209,24 @@ export default function QuoteEditorPage() {
           <Button onClick={save} loading={isWorking} disabled={!editable || !dirty}>Save draft</Button>
           {dirty && <span className="text-xs text-amber-700">Unsaved changes — figures below are a live preview.</span>}
           {!editable && <span className="text-xs text-slate-500">{final ? "Read-only: accepted quote." : "You do not have permission to edit."}</span>}
+          {editable && !confirmDemo && <Button variant="secondary" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load Demo Defaults</Button>}
+          {editable && confirmDemo && (
+            <span className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm text-amber-900">
+              This replaces the values in this draft with the demonstration quotation (nothing is saved until you press Save draft).
+              <Button size="sm" onClick={loadDemo}>Replace with demo</Button>
+              <Button size="sm" variant="secondary" onClick={() => setConfirmDemo(false)}>Cancel</Button>
+            </span>
+          )}
+        </div>
+      )}
+      {demoLoaded && tab !== "approval" && tab !== "customer" && (
+        <div className="mt-3">
+          <Alert tone={rd.state === "READY" ? "success" : "warning"}>
+            Demo defaults loaded into this draft ({DEMO_DEFAULTS_SOURCE}) {demoLoaded.length ? `Replaced: ${demoLoaded.join(", ")}.` : "The draft already matched the demonstration; nothing changed."}{" "}
+            Status: {READINESS_LABEL[rd.state]}.{rd.reasons.length ? ` Open: ${rd.reasons.join("; ")}.` : ""}
+            {rd.counts.supplierQuoteRequired + rd.counts.missingMappings + rd.counts.pricingExceptions > 0 ? ` Unresolved: ${rd.counts.supplierQuoteRequired} supplier-quote-required, ${rd.counts.missingMappings} unmapped, ${rd.counts.pricingExceptions} pricing exceptions (listed below).` : " No supplier-quote-required, unmapped or pricing-exception items remain."}
+            {" "}Prices marked POC MANUAL PRICE OVERRIDE are the demonstration quote&apos;s own estimator values. Not saved, approved, frozen or sent anywhere.
+          </Alert>
         </div>
       )}
 
