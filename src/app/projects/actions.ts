@@ -27,7 +27,7 @@ import {
 import { approveVariation, raiseVariation, rejectVariation, repriceVariation } from "@/lib/projects/variation-store";
 import { redactVariationCosts } from "@/lib/projects/variations";
 import { randsToCents } from "@/lib/projects/claim-engine";
-import type { ProjectView } from "@/lib/projects/project-view";
+import { isCustomerFacingProject, type ProjectView } from "@/lib/projects/project-view";
 import type { ProgressClaimCalc } from "@/lib/projects/claim-engine";
 
 export interface ActionResult<T> {
@@ -56,7 +56,7 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectView[]>>
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
     // Variation billing projects are reached from their BASE project (Variations tab), not listed as separate projects.
     const canSeeCost = await isAdmin();
-    return { ok: true, data: (await listProjectViews(createServiceRoleClient(), orgId)).filter((v) => v.project.billing_scope !== "VARIATION").map((v) => redactVariationCosts(v, canSeeCost)) };
+    return { ok: true, data: (await listProjectViews(createServiceRoleClient(), orgId)).filter(isCustomerFacingProject).map((v) => redactVariationCosts(v, canSeeCost)) };
   } catch (e) {
     return { ok: false, error: message(e) };
   }

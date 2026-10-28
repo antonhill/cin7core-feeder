@@ -184,6 +184,9 @@ export default function ProjectDetailPage() {
       </ModuleHeader>
 
       {error && <div className="mt-6"><Alert tone="danger">{error}</Alert></div>}
+      {view.project.billing_scope === "VARIATION" && view.project.parent_project_id && (
+        <div className="mt-6"><Alert tone="info">This is the internal billing scope of a variation, not a separate project: its contract is part of the original project&apos;s revised contract. <Link className="underline" href={`/projects/${view.project.parent_project_id}`}>Open the project</Link>.</Alert></div>
+      )}
       {notice && <div className="mt-6"><Alert tone="success">{notice}</Alert></div>}
       {c.uncertainClaimBlocking && (
         <div className="mt-6">

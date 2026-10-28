@@ -183,6 +183,19 @@ describe("GATE 1 → 2 — Quote → Project, with no engineering recalculation"
     expect(c.projectId).toBe(a.projectId);
     expect(db.rows("projects")).toHaveLength(1);
   });
+
+  it("crash recovery links the BASE project, never a variation billing project that carries the same originating quote reference", async () => {
+    const db = new FakeDb();
+    const { id } = await acceptedQuote(db);
+    const a = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id);
+    const base = db.rows("projects")[0];
+    // a variation billing project (migration 0105) copies the parent's originating_quote_ref
+    db.rows("projects").unshift({ ...base, id: "child-first", project_reference: `${base.project_reference as string}-V001`, billing_scope: "VARIATION", parent_project_id: a.projectId, variation_id: "v1" });
+    db.rows("newquip_quotes")[0].project_id = null;
+    const c = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id);
+    expect(c.projectId).toBe(a.projectId);
+    expect(c.created).toBe(false);
+  });
 });
 
 describe("GATE 2 — progress, the R950,000 golden claim, Variation V001, revised contract", () => {

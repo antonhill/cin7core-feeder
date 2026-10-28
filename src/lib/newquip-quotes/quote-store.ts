@@ -196,9 +196,13 @@ export async function createProjectFromAcceptedQuote(db: Db, orgId: string, emai
   if (q.project_id) return { projectId: q.project_id, created: false };
   if (!baselineMatchesHash(q.accepted_baseline, q.baseline_hash)) fail("The accepted baseline no longer matches its seal; refusing to create a Project.");
 
-  const found = await db.from("projects").select("id").eq("org_id", orgId).eq("originating_quote_ref", q.quote_ref).maybeSingle();
+  // Variation billing projects (migration 0105) copy originating_quote_ref from their parent, so this lookup must pick the BASE project only:
+  // matching a child would link the quote to an internal billing project. Filtered in code so it also works before 0105 exists.
+  const found = await db.from("projects").select("*").eq("org_id", orgId).eq("originating_quote_ref", q.quote_ref);
   if (found.error) fail(found.error.message);
-  let projectId = (found.data as { id: string } | null)?.id ?? null;
+  const bases = ((found.data ?? []) as Array<{ id: string; parent_project_id?: string | null; billing_scope?: string | null }>).filter((p) => !p.parent_project_id && p.billing_scope !== "VARIATION");
+  if (bases.length > 1) fail("More than one project exists for this quote; refusing to guess which one to link.");
+  let projectId = bases[0]?.id ?? null;
   const created = projectId == null;
   if (!projectId) {
     const generic = quoteToProjectBaseline(q.accepted_baseline, q.baseline_hash, q.id);
