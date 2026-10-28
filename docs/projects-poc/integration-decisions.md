@@ -18,3 +18,16 @@ Sean's decision on zero-priced-line SKU margin distortion; S1-S17 of the review 
 
 ## Superseded
 `t0-proof-runbook.md` was written for priced lines (NQ2886, qty 2, R500). The first proof under this model uses R0 lines plus a contract charge; the runbook must be re-specified before any T0 GO. The temporary `/cin7-proof/t0` page is not part of the integration (removed from this lineage).
+
+## Implementation status (integration branch `feature/newquip-poc-integration`)
+| Slice | Content | Where |
+|---|---|---|
+| A | Integration base (corrected #122 lineage + investigation docs + read-only Sale inspector; T0 page excluded), this decision record | merge `b3f91be` |
+| E | Invoice writer: R0 physical lines, order-bounded quantities, line-aware reconciliation (VAT-as-amount and NaN fixes already in the base) | `sale-invoice-write.ts`, `cin7-posting*.ts` |
+| C | Variation billing projects, percentage schedules (default one 100% stage), audited amendment, per-scope Sale routing; migration 0105 (not applied to hosted) | `variation-*.ts`, `0105_*.sql`, `migration-0105-recovery.md` |
+| B | Internal margin sheet (product / assembly / section / project), audited cost overrides, frozen at approval, redacted for non-managers | `src/newquip/quote/margin.ts` |
+| D | Advanced Sale creation with durable intent, read-back verification, reconciliation, manual link fallback | `sale-order-write.ts`, `cin7-sale-creation*.ts` |
+| F | Read-only physical visibility (ordered / invoiced / shipped / stock / assembly) | `physical-*.ts` |
+| G | Consolidated profitability and reconciliation (actual margin only when delivery + billing complete) | `profitability*.ts` |
+
+Not done / gated: hosted migration 0105; every Cin7 contract in `cin7-api-contracts-to-verify.md`; the production accounting gates (Sean S1-S17, trusted costs, dependency audit). No Cin7 write has been made from any of this code.
