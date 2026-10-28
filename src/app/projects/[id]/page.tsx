@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { PROJECTS_MODULE } from "@/app/module-nav";
@@ -12,6 +12,12 @@ import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatBps, formatCents, type ProjectView, type StageView } from "@/lib/projects/project-view";
+import { VariationsPanel } from "./VariationsPanel";
+import { OpeningCommitmentsPanel } from "./OpeningCommitmentsPanel";
+import { Cin7PostingPanel } from "./Cin7PostingPanel";
+import { Cin7SaleCreationPanel } from "./Cin7SaleCreationPanel";
+import { PhysicalPanel } from "./PhysicalPanel";
+import { ProfitabilityPanel } from "./ProfitabilityPanel";
 import {
   approveClaimAction,
   cancelDraftClaimAction,
@@ -26,12 +32,16 @@ import {
 } from "../actions";
 
 type ViewerPermission = "loading" | "member" | "admin";
-type Tab = "overview" | "stages" | "components" | "claims";
+type Tab = "overview" | "stages" | "components" | "claims" | "variations" | "physical" | "profitability";
+const NEWQUIP_ONLY_TABS: Tab[] = ["variations", "physical"];
 const TABS: { value: Tab; label: string }[] = [
   { value: "overview", label: "Overview" },
   { value: "stages", label: "Stages" },
   { value: "components", label: "Components / scope" },
   { value: "claims", label: "Claims" },
+  { value: "variations", label: "Variations" },
+  { value: "physical", label: "Products & Fulfilment" },
+  { value: "profitability", label: "Profitability" },
 ];
 
 const CLAIM_TONE: Record<string, BadgeTone> = {
@@ -101,6 +111,7 @@ function LegendDot({ className, label, value }: { className: string; label: stri
 
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [view, setView] = useState<ProjectView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -113,17 +124,21 @@ export default function ProjectDetailPage() {
   function load() {
     startLoading(async () => {
       const res = await getProjectAction(id);
+      // An internal variation billing scope is not for ordinary users: send them to the project it belongs to.
+      if (!res.ok && res.redirectTo) return router.replace(`/projects/${res.redirectTo}`);
       if (!res.ok) return setError(res.error ?? "Unknown error");
       setError(null);
       setView(res.data ?? null);
     });
   }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- load is re-created every render; it only needs to re-run when the project id changes
   useEffect(load, [id]);
   // Display only: every mutating action re-checks the owner/admin role on the server.
   // LOADING until known, so privileged controls (and the non-admin explanation) never flash; any failure => MEMBER (fail closed).
   const [perm, setPerm] = useState<ViewerPermission>("loading");
+  const [newquip, setNewquip] = useState(false); // NewQuip-only tabs (Variations, Products & Fulfilment); hidden until the server confirms
   useEffect(() => {
-    getViewerPermissionsAction().then((r) => setPerm(r.ok && r.data?.canApprove ? "admin" : "member"));
+    getViewerPermissionsAction().then((r) => { setPerm(r.ok && r.data?.canApprove ? "admin" : "member"); setNewquip(Boolean(r.ok && r.data?.newquip)); });
   }, []);
 
   /** Resolves true only when the action succeeded (forms use this to reset themselves; a failure keeps their input). */
@@ -175,6 +190,9 @@ export default function ProjectDetailPage() {
       </ModuleHeader>
 
       {error && <div className="mt-6"><Alert tone="danger">{error}</Alert></div>}
+      {view.project.billing_scope === "VARIATION" && view.project.parent_project_id && (
+        <div className="mt-6"><Alert tone="info">This is the internal billing scope of a variation, not a separate project: its contract is part of the original project&apos;s revised contract. <Link className="underline" href={`/projects/${view.project.parent_project_id}`}>Open the project</Link>.</Alert></div>
+      )}
       {notice && <div className="mt-6"><Alert tone="success">{notice}</Alert></div>}
       {c.uncertainClaimBlocking && (
         <div className="mt-6">
@@ -186,8 +204,8 @@ export default function ProjectDetailPage() {
       )}
 
       <nav className="mt-6 inline-flex max-w-full gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1 shadow-sm" aria-label="Project sections">
-        {TABS.map((t) => {
-          const count = t.value === "stages" ? view.stages.length : t.value === "claims" ? view.claims.length : null;
+        {TABS.filter((t) => (t.value !== "profitability" || perm === "admin") && (!NEWQUIP_ONLY_TABS.includes(t.value) || newquip)).map((t) => {
+          const count = t.value === "stages" ? view.stages.length : t.value === "claims" ? view.claims.length : t.value === "variations" ? view.variations.length : null;
           return (
             <button
               key={t.value}
@@ -237,7 +255,7 @@ export default function ProjectDetailPage() {
             <h2 className="mb-3 text-sm font-semibold text-slate-700">Commercial position (ex VAT)</h2>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
               <Kpi label="Original contract value" value={formatCents(c.originalContractCents)} />
-              <Kpi label="Approved variations" value={formatCents(c.approvedVariationsCents)} hint="Variations are out of POC scope" />
+              <Kpi label="Approved variations" value={formatCents(c.approvedVariationsCents)} hint="Approved variations only" />
               <Kpi label="Revised contract value" value={formatCents(c.revisedContractCents)} />
               <Kpi label="Approved completion" value={formatBps(c.approvedCompletionBps)} hint="Earned ÷ contract" />
               <Kpi label="Earned / certified to date" value={formatCents(c.earnedCents)} hint="Stage value × APPROVED completion" />
@@ -407,8 +425,16 @@ export default function ProjectDetailPage() {
         </div>
       )}
 
+      {tab === "physical" && newquip && <PhysicalPanel view={view} />}
+      {tab === "profitability" && perm === "admin" && <ProfitabilityPanel view={view} />}
+
+      {tab === "variations" && newquip && <VariationsPanel view={view} isAdmin={perm === "admin"} run={run} working={isWorking} />}
+
       {tab === "claims" && (
         <div className="mt-6 space-y-6">
+          <OpeningCommitmentsPanel key={`${view.openingCommitments.length}-${view.claims.length}`} view={view} isAdmin={perm === "admin"} run={run} working={isWorking} />
+          <Cin7SaleCreationPanel view={view} run={run} working={isWorking} />
+          <Cin7PostingPanel view={view} run={run} working={isWorking} />
           <Panel>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>

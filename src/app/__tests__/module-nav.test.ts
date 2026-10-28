@@ -64,3 +64,47 @@ describe("computeEffectiveDisabledModules", () => {
     expect(result.filter((href) => href === "/reports")).toHaveLength(1);
   });
 });
+
+import { buildNavLinks, isNavLinkActive, SOLUTION_BUILDER_MODULE, ADMIN_MODULE } from "@/app/module-nav";
+import { NEWQUIP_POC_ORG_IDS } from "@/newquip/access";
+
+describe("Solution Builder navigation (NewQuip Grower)", () => {
+  const NEWQUIP = NEWQUIP_POC_ORG_IDS[0];
+  const OTHER = "0242e481-0f2b-4bd9-a8ef-2d4a9554bc09";
+  const labels = (orgId: string | null, disabled: string[] = [], admin = false) => buildNavLinks(orgId, disabled, admin).map((l) => l.label);
+
+  it("the NewQuip org sees Solution Builder, pointing at /newquip-grower", () => {
+    const link = buildNavLinks(NEWQUIP, [], false).find((l) => l.label === "Solution Builder");
+    expect(link?.href).toBe("/newquip-grower");
+    expect(link).toBe(SOLUTION_BUILDER_MODULE);
+  });
+  it("an unrelated org, a missing org, and a super-admin on another org do not", () => {
+    expect(labels(OTHER)).not.toContain("Solution Builder");
+    expect(labels(null)).not.toContain("Solution Builder");
+    expect(labels(OTHER, [], true)).not.toContain("Solution Builder");
+  });
+  it("sits straight after Quotes, and is not a MODULES entry (so it can never leak to other orgs by default)", () => {
+    const l = labels(NEWQUIP);
+    expect(l[l.indexOf("Quotes") + 1]).toBe("Solution Builder");
+    expect(MODULES.map((m) => m.href)).not.toContain("/newquip-grower");
+  });
+  it("leaves every other link and its order untouched", () => {
+    expect(labels(NEWQUIP).filter((x) => x !== "Solution Builder")).toEqual(labels(OTHER));
+  });
+  it("follows the same access rule as its routes: hidden when the Quotes module is disabled", () => {
+    expect(labels(NEWQUIP, ["/quotes"])).not.toContain("Solution Builder");
+  });
+  it("other disabled modules do not hide it; Projects can still follow", () => {
+    expect(labels(NEWQUIP, ["/reports"])).toContain("Solution Builder");
+    expect(labels(NEWQUIP)).toContain("Projects");
+  });
+  it("super-admin still gets Admin appended", () => {
+    expect(buildNavLinks(NEWQUIP, [], true).at(-1)).toBe(ADMIN_MODULE);
+  });
+  it("is active for /newquip-grower and every nested route (template detail, quote editor) — and nothing else", () => {
+    const h = SOLUTION_BUILDER_MODULE.href;
+    for (const p of ["/newquip-grower", "/newquip-grower/template", "/newquip-grower/9d1f-quote-id"]) expect(isNavLinkActive(p, h)).toBe(true);
+    for (const p of ["/quotes", "/projects", "/newquip-growers", "/"]) expect(isNavLinkActive(p, h)).toBe(false);
+    expect(isNavLinkActive("/projects/abc", "/projects")).toBe(true);
+  });
+});

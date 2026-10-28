@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { signOutAction } from "@/actions/auth";
 import { uploadCurrentOrgLogo } from "@/actions/org-logo";
 import { triggerSalesSyncAction } from "@/app/reports/actions";
-import { MODULES, ADMIN_MODULE, BillingIcon, ShieldIcon, DiagnosticsIcon, TeamIcon, NotificationsIcon, SyncIcon, SignOutIcon } from "@/app/module-nav";
+import { buildNavLinks, isNavLinkActive, BillingIcon, ShieldIcon, DiagnosticsIcon, TeamIcon, NotificationsIcon, SyncIcon, SignOutIcon } from "@/app/module-nav";
 import { OrgSwitcher } from "@/app/OrgSwitcher";
 import { ActiveOrgSwitcher } from "@/app/ActiveOrgSwitcher";
 import { Spinner } from "@/app/Spinner";
@@ -213,8 +213,7 @@ export function AppNav({
   if (isNavHiddenPath(pathname)) return null;
 
   // Admin isn't an org-toggleable module — it's a cross-org super-admin tool, not something a client org's own visibility settings apply to.
-  const visibleModules = MODULES.filter((m) => !disabledModules.includes(m.href));
-  const links = isSuperAdmin ? [...visibleModules, ADMIN_MODULE] : visibleModules;
+  const links = buildNavLinks(orgId, disabledModules, isSuperAdmin);
 
   /** Below `md`, the drawer is a full-page overlay — following a link should close it, same as an explicit close-button press. Static (md+) sidebar navigation is unaffected since `onRequestClose` is only wired below `md`. */
   function handleNavClick(e: React.MouseEvent<HTMLElement>) {
@@ -278,7 +277,7 @@ export function AppNav({
 
       <div className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-4">
         {links.map((link) => {
-          const active = pathname.startsWith(link.href);
+          const active = isNavLinkActive(pathname, link.href);
           const Icon = link.Icon;
           return (
             <Link

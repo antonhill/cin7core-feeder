@@ -19,6 +19,18 @@ function files(dir: string): string[] {
   });
 }
 const sources = DIRS.flatMap((d) => files(join(ROOT, d)));
+/**
+ * DELIBERATE EDIT (Cin7 claim posting slice): the Cin7 write path is allowed to exist in exactly ONE Projects file — the adapter that
+ * implements the store's injected port. Every other Projects file still may not import Cin7, and nothing in the module may call fetch
+ * or mention Xero. The write itself lives in src/cin7/sale-invoice-write.ts (classified in docs/cin7-post-classification.json) and is
+ * only reachable through cin7-posting-store.ts's flag/manager/state gates.
+ */
+const CIN7_ADAPTER = "src/lib/projects/cin7-adapter.ts";
+/** DELIBERATE EDIT (Advanced Sale creation slice): the second, and only other, adapter - it implements the Sale-creation store's injected port. */
+const CIN7_SALE_CREATION_ADAPTER = "src/lib/projects/cin7-sale-creation-adapter.ts";
+/** DELIBERATE EDIT (physical visibility slice): a third adapter that only READS (GET) - pinned below to contain no write verb. */
+const CIN7_PHYSICAL_ADAPTER = "src/lib/projects/physical-adapter.ts";
+const ADAPTERS = [CIN7_ADAPTER, CIN7_SALE_CREATION_ADAPTER, CIN7_PHYSICAL_ADAPTER];
 
 describe("Projects POC has no Cin7 / external write path", () => {
   it("found source files to check", () => expect(sources.length).toBeGreaterThan(5));
@@ -28,7 +40,9 @@ describe("Projects POC has no Cin7 / external write path", () => {
     const visit = (n: ts.Node) => {
       if (ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) {
         const spec = (n.moduleSpecifier as ts.StringLiteral | undefined)?.text ?? "";
-        if (/(^|\/)cin7(\/|$)|xero|lemonsqueezy|resend|@\/sync|@\/import/.test(spec)) bad.push(`import ${spec}`);
+        const isAdapter = ADAPTERS.includes(file.replace(ROOT + "/", ""));
+        const re = isAdapter ? /xero|lemonsqueezy|resend|@\/sync|@\/import/ : /(^|\/)cin7(\/|$)|xero|lemonsqueezy|resend|@\/sync|@\/import/;
+        if (re.test(spec)) bad.push(`import ${spec}`);
       }
       if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "fetch") bad.push("fetch()");
       ts.forEachChild(n, visit);
@@ -36,14 +50,18 @@ describe("Projects POC has no Cin7 / external write path", () => {
     visit(sf);
     expect(bad).toEqual([]);
   });
+  it("only the adapter imports Cin7, and the store/rules/actions reach Cin7 solely through it", () => {
+    const importers = sources.filter((f) => /from "@\/cin7\//.test(readFileSync(f, "utf8"))).map((f) => f.replace(ROOT + "/", ""));
+    expect(importers.sort()).toEqual([...ADAPTERS].sort());
+  });
   it("no source mentions the invoice-create endpoint", () => {
     for (const f of sources) expect(readFileSync(f, "utf8")).not.toMatch(/sale\/invoice|\/saleInvoice|nonIdempotentCreate/i);
   });
 });
 
-describe('src/app/projects/actions.ts honours the "use server" rule', () => {
+describe.each(["src/app/projects/actions.ts", "src/app/projects/cin7-actions.ts", "src/app/projects/variation-billing-actions.ts", "src/app/projects/physical-actions.ts", "src/app/projects/profitability-actions.ts"])('%s honours the "use server" rule', (rel) => {
   it("exports only async functions and erased interfaces", () => {
-    const file = join(ROOT, "src/app/projects/actions.ts");
+    const file = join(ROOT, rel);
     const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
     const offenders: string[] = [];
     sf.forEachChild((n) => {
@@ -55,6 +73,14 @@ describe('src/app/projects/actions.ts honours the "use server" rule', () => {
       if (!isAsyncFn) offenders.push(ts.isVariableStatement(n) ? "exported const" : ts.SyntaxKind[n.kind]);
     });
     expect(offenders).toEqual([]);
+  });
+});
+
+describe("the physical-visibility path can only read", () => {
+  it.each(["src/lib/projects/physical-adapter.ts", "src/lib/projects/physical-store.ts", "src/lib/projects/physical-status.ts", "src/app/projects/physical-actions.ts", "src/app/projects/profitability-actions.ts", "src/lib/projects/profitability.ts", "src/lib/projects/profitability-store.ts", "src/cin7/sale-inspect.ts"])("%s contains no write verb or create endpoint", (rel) => {
+    const src = readFileSync(join(ROOT, rel), "utf8");
+    expect(src).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/i);
+    expect(src).not.toMatch(/nonIdempotentCreate|sale\/invoice|sale\/order|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/);
   });
 });
 

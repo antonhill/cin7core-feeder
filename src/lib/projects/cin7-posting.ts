@@ -1,0 +1,196 @@
+// Projects -> Cin7 claim posting: the PURE rules. Generic (nothing here knows about NewQuip) and Cin7-free (no import from src/cin7):
+// the server-side store injects the Cin7 port. Everything a posting is built from comes from the FROZEN APPROVED claim — progress is
+// never re-read or recalculated.
+import { createHash } from "node:crypto";
+
+export const POSTING_STATES = ["PENDING", "CREATED", "RECONCILED", "FAILED_CONFIRMED_NO_WRITE", "FAILED_UNCERTAIN"] as const;
+export type PostingState = (typeof POSTING_STATES)[number];
+/** NOT_SENT is the ABSENCE of a posting row (no write attempt has occurred); it is never stored. */
+export type PostingDisplayState = PostingState | "NOT_SENT";
+
+/** The exact words a manager must confirm (checked server-side, not just shown). */
+export const POST_CONFIRMATION_TEXT = "Create a Cin7 invoice for this approved claim";
+/** A PENDING row older than this is presumed orphaned (the process died mid-call) and must be reconciled before anything else. */
+export const STALE_PENDING_MS = 5 * 60 * 1000;
+
+export const MESSAGES = {
+  safeFailure: "Cin7 rejected the request. No invoice was created.",
+  uncertain: "The request outcome is uncertain. Do not retry until Cin7 has been reconciled.",
+  mismatch: "A Cin7 invoice was found but its value does not match the approved claim.",
+  inFlight: "A posting for this claim is already in progress.",
+} as const;
+
+export const idempotencyKeyFor = (projectRef: string, claimNumber: string, claimId: string): string => `NEWQUIP:${projectRef}:${claimNumber}:${claimId}`;
+/** Stable, searchable reconciliation reference carried in the Cin7 invoice Memo. */
+export const memoFor = (projectRef: string, claimNumber: string): string => `NEWQUIP-PROJECTS:${projectRef}:${claimNumber}`;
+
+export interface PostingClaim {
+  id: string;
+  claim_number: string;
+  status: string;
+  tax_rate_bps: number;
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+}
+export interface PostingClaimLine { stage_name: string; current_claim_cents: number; tax_cents: number }
+export interface PostingLink { id: string; cin7_sale_id: string; tax_rule: string; revenue_account: string }
+
+/** A physical product the manager selected for THIS invoice (always invoiced at R0). */
+export interface PhysicalSelection { sku: string; quantity: number }
+/** A line of the Sale's ORDER as Cin7 holds it: the ceiling for what may be invoiced. */
+export interface OrderLineView { productId: string; sku: string; name: string; quantity: number }
+export interface ResolvedPhysicalLine { productId: string; sku: string; name: string; quantity: number; /** Present only when the quantity exceeds the dispatch-eligible amount: why the manager selected it. */ earlyReason?: string }
+
+export interface PostingCharge { description: string; amountCents: number; taxCents: number }
+export interface PostingPlan {
+  idempotencyKey: string;
+  memo: string;
+  fingerprint: string;
+  charges: PostingCharge[];
+  /** Physical products on this invoice at R0 (empty for deposit-only / commercial-only). Part of the fingerprint. */
+  physicalLines: ResolvedPhysicalLine[];
+  subtotalCents: number;
+  taxCents: number;
+  totalCents: number;
+  taxRatePct: number;
+}
+
+const claimSuffix = (claimNumber: string): string => claimNumber.split("-").at(-1) ?? claimNumber;
+export const rands = (cents: number): number => cents / 100;
+
+/**
+ * Builds the posting plan from the APPROVED claim record, or explains why it cannot. Fails closed on any arithmetic doubt. Each charge
+ * carries the claim's own FROZEN per-line VAT amount (that exact figure is what is sent as `Tax`); the lines must reconcile with the
+ * claim's rate and totals first, otherwise nothing is sent.
+ */
+export function buildPostingPlan(i: { projectRef: string; claim: PostingClaim; lines: PostingClaimLine[]; link: PostingLink; physicalLines?: ResolvedPhysicalLine[] }): { ok: true; plan: PostingPlan } | { ok: false; error: string } {
+  const { claim, lines, projectRef, link } = i;
+  const physicalLines = i.physicalLines ?? [];
+  if (claim.status !== "APPROVED") return { ok: false, error: `Only an APPROVED claim can be posted (this one is ${claim.status}).` };
+  if (lines.length === 0) return { ok: false, error: "The approved claim has no lines." };
+  const ratePct = claim.tax_rate_bps / 100;
+  const sum = lines.reduce((n, l) => n + l.current_claim_cents, 0);
+  if (sum !== claim.subtotal_cents) return { ok: false, error: "The claim lines do not add up to the claim subtotal." };
+  let tax = 0;
+  const charges: PostingCharge[] = [];
+  for (const l of lines) {
+    const expectedTax = Math.round((l.current_claim_cents * claim.tax_rate_bps) / 10_000);
+    if (!Number.isSafeInteger(l.current_claim_cents) || !Number.isSafeInteger(l.tax_cents) || l.current_claim_cents <= 0 || l.tax_cents < 0) return { ok: false, error: `The amounts on "${l.stage_name}" are not valid; nothing was sent.` };
+    if (expectedTax !== l.tax_cents) return { ok: false, error: `VAT on "${l.stage_name}" does not match the claim's rate (${expectedTax} vs ${l.tax_cents} cents). Nothing was sent.` };
+    tax += l.tax_cents;
+    charges.push({ description: `${projectRef} - ${l.stage_name} progress claim ${claimSuffix(claim.claim_number)}`, amountCents: l.current_claim_cents, taxCents: l.tax_cents });
+  }
+  if (tax !== claim.tax_cents || claim.subtotal_cents + claim.tax_cents !== claim.total_cents) return { ok: false, error: "The claim's VAT/total do not reconcile; nothing was sent." };
+  const memo = memoFor(projectRef, claim.claim_number);
+  const body = { saleId: link.cin7_sale_id, memo, taxRule: link.tax_rule, account: link.revenue_account, ratePct, charges, physicalLines, subtotal: claim.subtotal_cents, tax: claim.tax_cents, total: claim.total_cents };
+  return {
+    ok: true,
+    plan: {
+      idempotencyKey: idempotencyKeyFor(projectRef, claim.claim_number, claim.id),
+      memo,
+      fingerprint: createHash("sha256").update(JSON.stringify(body)).digest("hex"),
+      charges, physicalLines, subtotalCents: claim.subtotal_cents, taxCents: claim.tax_cents, totalCents: claim.total_cents, taxRatePct: ratePct,
+    },
+  };
+}
+
+/** Amounts are integer cents, or null when Cin7 did not return a readable number. Null is NEVER read as zero and NEVER matches. */
+export interface ReadInvoiceLine { sku: string | null; quantity: number | null; /** Unit price in cents; anything other than 0 on a physical line would duplicate revenue. */ priceCents: number | null }
+export interface ReadInvoice { invoiceNumber: string | null; taskId: string | null; memo: string | null; status: string | null; subtotalCents: number | null; taxCents: number | null; totalCents: number | null; lines?: ReadInvoiceLine[] }
+
+export type MatchResult =
+  | { kind: "not_found" }
+  | { kind: "multiple"; count: number }
+  | { kind: "matched"; invoice: ReadInvoice }
+  | { kind: "mismatch"; invoice: ReadInvoice; differences: string[] };
+
+const isCents = (n: number | null): n is number => typeof n === "number" && Number.isSafeInteger(n);
+const rand = (cents: number) => (cents / 100).toFixed(2);
+
+/** Differences between what Cin7 holds and what was frozen, in rands. A missing / non-finite Cin7 amount is itself a difference. */
+export function amountDifferences(
+  cin7: { subtotalCents: number | null; taxCents: number | null; totalCents: number | null },
+  frozen: { amount_ex_vat_cents: number; tax_cents: number; total_cents: number },
+): string[] {
+  const out: string[] = [];
+  const check = (label: string, got: number | null, want: number) => {
+    if (!isCents(got)) out.push(`${label} not returned by Cin7 (expected R${rand(want)})`);
+    else if (got !== want) out.push(`${label} R${rand(got)} vs approved R${rand(want)}`);
+  };
+  check("ex VAT", cin7.subtotalCents, frozen.amount_ex_vat_cents);
+  check("VAT", cin7.taxCents, frozen.tax_cents);
+  check("total", cin7.totalCents, frozen.total_cents);
+  return out;
+}
+
+const notVoided = (inv: { status: string | null }) => (inv.status ?? "").toUpperCase() !== "VOIDED";
+
+/**
+ * Validates the physical products the manager selected for an invoice against the Sale's ORDER and the quantities already invoiced.
+ * Never changes the order to make an invoice fit; over-invoicing, unknown SKUs, duplicates and unreadable quantities are refused.
+ */
+export function resolvePhysicalLines(selection: PhysicalSelection[], orderLines: OrderLineView[] | undefined, invoices: ReadInvoice[]): { ok: true; lines: ResolvedPhysicalLine[] } | { ok: false; error: string } {
+  if (selection.length === 0) return { ok: true, lines: [] };
+  if (!orderLines || orderLines.length === 0) return { ok: false, error: "The Cin7 Sale has no readable order lines, so physical quantities cannot be validated. Nothing was sent." };
+  const seen = new Set<string>();
+  const out: ResolvedPhysicalLine[] = [];
+  for (const sel of selection) {
+    if (!sel.sku || seen.has(sel.sku)) return { ok: false, error: `SKU ${sel.sku || "(blank)"} is missing or listed twice.` };
+    seen.add(sel.sku);
+    if (!Number.isFinite(sel.quantity) || sel.quantity <= 0) return { ok: false, error: `Quantity for ${sel.sku} must be a positive number.` };
+    const ordered = orderLines.filter((l) => l.sku === sel.sku);
+    if (ordered.length !== 1) return { ok: false, error: `SKU ${sel.sku} ${ordered.length === 0 ? "is not on" : "appears more than once on"} the Cin7 Sale order.` };
+    const o = ordered[0];
+    if (!Number.isFinite(o.quantity) || !o.productId) return { ok: false, error: `The order line for ${sel.sku} is unreadable; nothing was sent.` };
+    let invoiced = 0;
+    for (const inv of invoices.filter(notVoided)) {
+      if (!inv.lines) return { ok: false, error: `Invoice ${inv.invoiceNumber ?? "?"} has no readable lines, so remaining quantity cannot be proven. Nothing was sent.` };
+      for (const l of inv.lines.filter((x) => x.sku === sel.sku)) {
+        if (l.quantity === null || !Number.isFinite(l.quantity)) return { ok: false, error: `An invoiced quantity for ${sel.sku} is unreadable; nothing was sent.` };
+        invoiced += l.quantity;
+      }
+    }
+    const remaining = o.quantity - invoiced;
+    if (sel.quantity > remaining + 1e-9) return { ok: false, error: `${sel.sku}: ${sel.quantity} requested but only ${Math.max(remaining, 0)} remain invoiceable (ordered ${o.quantity}, invoiced ${invoiced}).` };
+    out.push({ productId: o.productId, sku: sel.sku, name: o.name, quantity: sel.quantity });
+  }
+  return { ok: true, lines: out };
+}
+
+/** Matches Cin7's invoices (read back from the linked Sale) to a posting by its EXACT memo, then checks the amounts. A voided invoice is not a match. */
+export function matchInvoices(invoices: ReadInvoice[], posting: { memo: string; amount_ex_vat_cents: number; tax_cents: number; total_cents: number; physical_lines?: Array<{ sku: string; quantity: number }> | null }): MatchResult {
+  const mine = invoices.filter((inv) => inv.memo === posting.memo && notVoided(inv));
+  if (mine.length === 0) return { kind: "not_found" };
+  if (mine.length > 1) return { kind: "multiple", count: mine.length };
+  const inv = mine[0];
+  const differences = amountDifferences({ subtotalCents: inv.subtotalCents, taxCents: inv.taxCents, totalCents: inv.totalCents }, posting);
+  differences.push(...lineDifferences(inv, posting.physical_lines ?? []));
+  return differences.length ? { kind: "mismatch", invoice: inv, differences } : { kind: "matched", invoice: inv };
+}
+
+/** Product quantities must match what was requested, and every physical line must be R0. A deposit/commercial-only invoice must carry none. */
+export function lineDifferences(inv: ReadInvoice, expected: Array<{ sku: string; quantity: number }>): string[] {
+  const out: string[] = [];
+  if (!inv.lines) return expected.length ? ["invoice lines not returned by Cin7"] : [];
+  for (const l of inv.lines) {
+    if (l.priceCents === null || l.priceCents !== 0) out.push(`product line ${l.sku ?? "?"} carries a price (${l.priceCents === null ? "unreadable" : `R${rand(l.priceCents)}`}); physical lines must be R0`);
+  }
+  const got = new Map<string, number>();
+  for (const l of inv.lines) got.set(l.sku ?? "?", (got.get(l.sku ?? "?") ?? 0) + (l.quantity ?? NaN));
+  for (const e of expected) {
+    const g = got.get(e.sku);
+    if (g === undefined || !Number.isFinite(g) || Math.abs(g - e.quantity) > 1e-9) out.push(`${e.sku} quantity ${g === undefined ? "missing" : g} vs requested ${e.quantity}`);
+  }
+  for (const k of got.keys()) if (!expected.some((e) => e.sku === k)) out.push(`unrequested product line ${k}`);
+  return out;
+}
+
+export const isStalePending = (requestedAt: string, now: number = Date.now()): boolean => now - Date.parse(requestedAt) > STALE_PENDING_MS;
+
+/** Whether a manager may retry (re-send) a posting in this state. Only a CONFIRMED no-write failure — never CREATED/RECONCILED/PENDING/UNCERTAIN. */
+export const canRetry = (state: PostingDisplayState): boolean => state === "FAILED_CONFIRMED_NO_WRITE";
+/** Whether the first send is possible. */
+export const canSend = (state: PostingDisplayState): boolean => state === "NOT_SENT" || state === "FAILED_CONFIRMED_NO_WRITE";
+/** Whether a read-only reconciliation is meaningful. */
+export const canReconcile = (state: PostingDisplayState): boolean => state === "PENDING" || state === "CREATED" || state === "FAILED_UNCERTAIN";

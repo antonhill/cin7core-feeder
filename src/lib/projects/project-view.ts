@@ -2,6 +2,8 @@
 // stored rows. Three notions stay separate in the output: reported PHYSICAL %, APPROVED commercial %
 // and BILLED/COMMITTED. Nothing here writes, and nothing here reads Cin7.
 import { BPS_FULL, applyBps, reservesValue, isClaimStatus, type Bps, type Cents } from "./claim-engine";
+import type { OpeningCommitmentRow } from "./opening-commitments";
+import { cin7PocRepresentation, contractPosition, type CommitmentRepresentation, type VariationRow } from "./variations";
 
 export interface ProjectRow {
   id: string;
@@ -19,6 +21,10 @@ export interface ProjectRow {
   start_date: string | null;
   target_completion_date: string | null;
   status: string;
+  /** BASE, or VARIATION for a variation billing project (migration 0105). Absent on rows read before the migration: treat as BASE. */
+  billing_scope?: "BASE" | "VARIATION";
+  parent_project_id?: string | null;
+  variation_id?: string | null;
 }
 export interface StageRow { id: string; sort_order: number; name: string; description: string | null; value_cents: number }
 export interface ProgressEventRow {
@@ -64,7 +70,8 @@ export interface ProjectView {
   project: ProjectRow;
   commercial: {
     originalContractCents: Cents;
-    approvedVariationsCents: Cents; // POC: always 0 (variations out of scope)
+    /** SUM of APPROVED variations only — draft and rejected variations never count. */
+    approvedVariationsCents: Cents;
     revisedContractCents: Cents;
     earnedCents: Cents;
     committedCents: Cents;
@@ -77,6 +84,13 @@ export interface ProjectView {
   stages: StageView[];
   claims: Array<ClaimRow & { reserves: boolean; cin7: Cin7LinkRow | null }>;
   allocations: AllocationRow[];
+  variations: VariationRow[];
+  /** Value committed before the Toolbox claim workflow (already included in each stage's committed amount). */
+  openingCommitments: OpeningCommitmentRow[];
+  /** Opening commitments may be set/edited only while the project has no claims. */
+  openingCommitmentsLocked: boolean;
+  /** Display-only representation of the intended Cin7 documents (nothing is sent). */
+  cin7Representation: CommitmentRepresentation[];
 }
 
 const half = (num: number, den: number): number => (den === 0 ? 0 : Math.floor((num * 2 + den) / (den * 2)));
@@ -89,6 +103,8 @@ export function buildProjectView(input: {
   claimLines: ClaimLineRow[];
   allocations: AllocationRow[];
   links: Cin7LinkRow[];
+  variations?: VariationRow[];
+  openingCommitments?: OpeningCommitmentRow[];
 }): ProjectView {
   const { project } = input;
   const stages = [...input.stages].sort((a, b) => a.sort_order - b.sort_order);
@@ -100,6 +116,8 @@ export function buildProjectView(input: {
     if (!reservingClaimIds.has(l.claim_id)) continue;
     committedByStage.set(l.stage_id, (committedByStage.get(l.stage_id) ?? 0) + l.current_claim_cents);
   }
+  const openingRows = input.openingCommitments ?? [];
+  for (const o of openingRows) committedByStage.set(o.stage_id, (committedByStage.get(o.stage_id) ?? 0) + o.amount_cents);
 
   const stageViews: StageView[] = stages.map((s) => {
     const history = input.events
@@ -132,14 +150,16 @@ export function buildProjectView(input: {
   const committed = stageViews.reduce((n, s) => n + s.committedCents, 0);
   const claimable = stageViews.reduce((n, s) => n + s.claimableCents, 0);
   const linkByClaim = new Map(input.links.map((l) => [l.claim_id, l]));
-  const variations = 0;
+  const variationRows = input.variations ?? [];
+  const position = contractPosition(project.original_contract_cents, variationRows);
+  const variations = position.approvedVariationsCents;
 
   return {
     project,
     commercial: {
       originalContractCents: project.original_contract_cents,
       approvedVariationsCents: variations,
-      revisedContractCents: project.original_contract_cents + variations,
+      revisedContractCents: position.revisedContractCents,
       earnedCents: earned,
       committedCents: committed,
       claimableCents: claimable,
@@ -153,6 +173,10 @@ export function buildProjectView(input: {
       .sort((a, b) => b.claim_seq - a.claim_seq)
       .map((c) => ({ ...c, reserves: isClaimStatus(c.status) && reservesValue(c.status), cin7: linkByClaim.get(c.id) ?? null })),
     allocations: input.allocations,
+    openingCommitments: openingRows,
+    openingCommitmentsLocked: input.claims.length > 0,
+    variations: [...variationRows].sort((a, b) => (a.code < b.code ? -1 : 1)),
+    cin7Representation: cin7PocRepresentation(project.original_contract_cents, variationRows),
   };
 }
 
@@ -172,3 +196,6 @@ export function formatBps(bps: Bps): string {
   const frac = (bps % 100).toString().padStart(2, "0").replace(/0+$/, "");
   return `${whole}${frac ? "." + frac : ""}%`;
 }
+
+/** A variation billing project (migration 0105) is an internal implementation detail: only BASE projects are customer-facing. */
+export const isCustomerFacingProject = (v: Pick<ProjectView, "project">): boolean => v.project.billing_scope !== "VARIATION" && !v.project.parent_project_id;

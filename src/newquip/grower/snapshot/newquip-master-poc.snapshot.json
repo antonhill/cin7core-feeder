@@ -1,0 +1,199 @@
+{
+  "id": "newquip-master-poc",
+  "label": "NewQuip Master workbook – POC controlled snapshot",
+  "sourceFile": "Master 05 Oct 2026 NEW.xlsx",
+  "sourceSheet": "P L",
+  "sourceDate": "2026-10-05",
+  "sha256": "f15e077cab641e524c88d454401b7416eeb10f536d2d5df2c7bf2fc5eef4276b",
+  "entries": {
+    "HNQ7088": {
+      "sku": "HNQ7088",
+      "description": "FERAX CABLE 0.6M",
+      "cost": 0.84,
+      "roe": 20.7,
+      "freight": 1.2,
+      "mu": 1.3,
+      "retailExVat": 26
+    },
+    "HNQ7093": {
+      "sku": "HNQ7093",
+      "description": "FERAX CLIP 29MM RVS",
+      "cost": 0.497,
+      "roe": 20.7,
+      "freight": 1.2,
+      "mu": 1.3,
+      "retailExVat": 16
+    },
+    "KNQ160": {
+      "sku": "KNQ160",
+      "description": "WALL PLATE (SST) KIT FOR M55 & M75 AUGER",
+      "cost": 5.63,
+      "roe": 17,
+      "freight": 1.75,
+      "mu": 1.75,
+      "retailExVat": 294
+    },
+    "NQ.TUBE.75": {
+      "sku": "NQ.TUBE.75",
+      "description": "M75 CLEAR DROP TUBE (LENGTH = 2M)",
+      "cost": 95.67,
+      "roe": 1,
+      "freight": 1,
+      "mu": 1.43,
+      "retailExVat": 137
+    },
+    "NQ1017": {
+      "sku": "NQ1017",
+      "description": "WASHER (M8x25x2MM) SST",
+      "cost": 1.92,
+      "roe": 1,
+      "freight": 1,
+      "mu": 1.43,
+      "retailExVat": 3
+    },
+    "NQ1161": {
+      "sku": "NQ1161",
+      "description": "CONCRETE SLAT (1.2x0.45M)",
+      "cost": 0,
+      "roe": 0,
+      "freight": 1,
+      "mu": 0,
+      "retailExVat": 0
+    },
+    "NQ1163": {
+      "sku": "NQ1163",
+      "description": "AUGER M-75 (NEW)",
+      "cost": 57.37,
+      "roe": 1,
+      "freight": 1,
+      "mu": 1.43,
+      "retailExVat": 83
+    },
+    "NQ1223": {
+      "sku": "NQ1223",
+      "description": "TUBE M75 (WHITE) / AUGER PIPE (NEW TYPE)",
+      "cost": 322,
+      "roe": 1,
+      "freight": 1,
+      "mu": 1.43,
+      "retailExVat": 461
+    },
+    "NQ1227": {
+      "sku": "NQ1227",
+      "description": "M75 PVC ELBOW (NEW TYPE)",
+      "cost": 269,
+      "roe": 1,
+      "freight": 1,
+      "mu": 1.43,
+      "retailExVat": 385
+    },
+    "NQ1380": {
+      "sku": "NQ1380",
+      "description": "WATER PIPE 1/2 INCH SST 800MM (FARROW PEN)",
+      "cost": 169.3,
+      "roe": 1,
+      "freight": 1,
+      "mu": 1.43,
+      "retailExVat": 243
+    },
+    "NQ1386": {
+      "sku": "NQ1386",
+      "description": "BOLT (M8x65MM0 SST",
+      "cost": 0,
+      "roe": 1,
+      "freight": 1,
+      "mu": 1.43,
+      "retailExVat": 0
+    },
+    "NQ1764": {
+      "sku": "NQ1764",
+      "description": "M75 TUBE CLAMP",
+      "cost": 87.1,
+      "roe": 1,
+      "freight": 1,
+      "mu": 1.43,
+      "retailExVat": 125
+    },
+    "NQ1942": {
+      "sku": "NQ1942",
+      "description": "M75 COMPLETE DROP KIT(SHEEP/PIG INCL KNOBS & ROPE)",
+      "cost": 30,
+      "roe": 1,
+      "freight": 1,
+      "mu": 1.43,
+      "retailExVat": 43
+    },
+    "NQ3132": {
+      "sku": "NQ3132",
+      "description": "1.5HP DRIVE UNIT (1.1KW) 380V",
+      "cost": 0,
+      "roe": 1,
+      "freight": 1,
+      "mu": 1.43,
+      "retailExVat": 0
+    },
+    "NYNUT": {
+      "sku": "NYNUT",
+      "description": "NYLOCK NUT M8 SST",
+      "cost": 1.29,
+      "roe": 1,
+      "freight": 1,
+      "mu": 1.43,
+      "retailExVat": 2
+    },
+    "PNQ082": {
+      "sku": "PNQ082",
+      "description": "CCM FEEDER WITH MONOFLO NIPPLE FOR GROWERS",
+      "cost": 310,
+      "roe": 19.5,
+      "freight": 1.25,
+      "mu": 1.25,
+      "retailExVat": 9446
+    },
+    "QCA00003": {
+      "sku": "QCA00003",
+      "description": "ROUND DRINKING CUP - LARGE (11CM SS PIPE) - GROWER",
+      "cost": 4.99,
+      "roe": 17,
+      "freight": 1.5,
+      "mu": 1.43,
+      "retailExVat": 182
+    },
+    "SYSH-2750-3": {
+      "sku": "SYSH-2750-3",
+      "description": "13.39 TONS SILO (NEWQUIP BRANDED)",
+      "cost": 938,
+      "roe": 17.5,
+      "freight": 1.3,
+      "mu": 1.7,
+      "retailExVat": 36234
+    },
+    "T3000365": {
+      "sku": "T3000365",
+      "description": "FEED LEVEL SWITCH DIA 75MM",
+      "cost": 30.8475,
+      "roe": 19.5,
+      "freight": 1.25,
+      "mu": 1.43,
+      "retailExVat": 1076
+    },
+    "T3750001": {
+      "sku": "T3750001",
+      "description": "M75 CONTROL UNIT WITH SAFE. SWITCH (INCL.DES.PIPE) (USE T3750111)",
+      "cost": 86.64,
+      "roe": 19.5,
+      "freight": 1.25,
+      "mu": 1.43,
+      "retailExVat": 3020
+    },
+    "TSA3750505": {
+      "sku": "TSA3750505",
+      "description": "M75 UNLOADER DOUBLE RIGHT/LEFT (NEW TYPE)",
+      "cost": 245.28,
+      "roe": 19.5,
+      "freight": 1.25,
+      "mu": 1.43,
+      "retailExVat": 8550
+    }
+  }
+}

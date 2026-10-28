@@ -5,6 +5,7 @@
 // each implement it later. The POC ships a deterministic fixture so nothing depends on that branch.
 // The baseline is SNAPSHOTTED onto the project; later product price changes never alter it.
 import type { Cents, Bps } from "./claim-engine";
+import type { ScopeItem } from "./product-scope";
 
 export interface BaselineLine {
   /** Stable key within this baseline (used by stage allocations). */
@@ -39,6 +40,13 @@ export interface ApprovedCommercialBaseline {
   salesperson: string | null;
   lines: BaselineLine[];
   suggestedStages: SuggestedStage[];
+  /** The approved physical product scope inherited from the quotation (see product-scope.ts). Customer-safe: no cost or margin. */
+  physicalScope?: ScopeItem[];
+  /**
+   * Opaque origin metadata (e.g. which template/rule set/quote revision produced this baseline). The Projects engine never
+   * reads it — it is stored with the snapshot so a project can always explain where its contract came from.
+   */
+  provenance?: Record<string, unknown> | null;
 }
 
 const R = (rands: number): Cents => rands * 100;
