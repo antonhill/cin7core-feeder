@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { CREATE_CONFIRMATION_TEXT } from "@/lib/projects/cin7-sale-creation";
 import type { ProjectView } from "@/lib/projects/project-view";
-import { createCin7SaleAction, getCin7SaleCreationStatusAction, reconcileCin7SaleCreationAction, type Cin7SaleCreationStatus } from "../cin7-actions";
+import { createCin7SaleAction, getCin7SaleCreationStatusAction, reconcileCin7SaleCreationAction, checkCin7PrerequisitesAction, type Cin7SaleCreationStatus } from "../cin7-actions";
 
 // Create the project's Cin7 ADVANCED SALE (physical products at R0 + the approved contract value as Additional Charges). Display + intent only:
 // the server re-checks the rollout flag, the org, the manager role, the state and the confirmation, validates the customer and SKUs read-only
@@ -26,6 +26,7 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
   const [account, setAccount] = useState("");
   const [lines, setLines] = useState<Line[] | null>(null);
   const [typed, setTyped] = useState("");
+  const [prereq, setPrereq] = useState<string | null>(null);
 
   const load = useCallback(() => { getCin7SaleCreationStatusAction(projectId).then((r) => { if (r.ok && r.data) { setSt(r.data); setLines((cur) => cur ?? r.data!.proposedLines.map((l) => ({ sku: l.sku, name: l.name, quantity: String(l.quantity) }))); } }); }, [projectId]);
   useEffect(load, [load]);
@@ -77,6 +78,13 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
             </div>
           ))}
           <Button size="sm" variant="secondary" disabled={working} onClick={() => setLines([...rows, { sku: "", name: "", quantity: "1" }])}>Add product</Button>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button size="sm" variant="secondary" disabled={working || !gates.isManager || !customer.trim()} onClick={async () => {
+              const r = await checkCin7PrerequisitesAction(customer, parsed.map((l) => l.sku));
+              setPrereq(!r.ok || !r.data ? r.error ?? "Check failed" : r.data.ready ? `Ready: customer exists; ${r.data.skus.length} SKU(s) exist (${r.data.skus.filter((s) => s.isAssembly).length} assembly). Tax rule, revenue account and location are checked by hand.` : r.data.problems.join(" "));
+            }}>Check Cin7 prerequisites (read-only)</Button>
+            {prereq && <span className="text-sm text-slate-700">{prereq}</span>}
+          </div>
           <Input label={`Type exactly: ${CREATE_CONFIRMATION_TEXT}`} value={typed} onChange={(e) => setTyped(e.target.value)} />
           {!gates.writesEnabled && <p className="text-xs text-slate-500">Cin7 writes are switched off on this deployment; the button stays disabled.</p>}
           <Button disabled={!canCreate} onClick={() => after(() => createCin7SaleAction(projectId, { confirmation: typed, customerName: customer, location, revenueAccount: account, physicalLines: parsed }))}>Create Advanced Sale in Cin7</Button>

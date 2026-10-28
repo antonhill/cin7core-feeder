@@ -9,10 +9,11 @@ import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { logActivity } from "@/lib/activity-log";
 import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
+import { cin7WritesEnabled } from "@/lib/projects/write-flag";
 import { isNewquipPocOrg } from "@/newquip/access";
 import { buildCin7Port, singleActiveInstanceId } from "@/lib/projects/cin7-adapter";
 import { buildSaleCreationPort } from "@/lib/projects/cin7-sale-creation-adapter";
-import { createSaleForProject, loadCreation, reconcileSaleCreation, type CreationRow } from "@/lib/projects/cin7-sale-creation-store";
+import { checkSalePrerequisites, createSaleForProject, loadCreation, type PrerequisiteReport, reconcileSaleCreation, type CreationRow } from "@/lib/projects/cin7-sale-creation-store";
 import type { CreationProductInput } from "@/lib/projects/cin7-sale-creation";
 import { linkCin7Sale, listPostings, loadSaleLink, postClaimToCin7, reconcileClaimPosting, type PostingRow, type SaleLinkRow, type WriteGates } from "@/lib/projects/cin7-posting-store";
 
@@ -36,7 +37,7 @@ async function gatesFor(orgId: string): Promise<WriteGates> {
   }
   return {
     // OFF by default: only the exact string "true" turns the writer on.
-    writesEnabled: process.env.NEWQUIP_CIN7_WRITES_ENABLED === "true",
+    writesEnabled: cin7WritesEnabled(process.env),
     orgEnabled: isNewquipPocOrg(orgId),
     isManager,
   };
@@ -167,6 +168,20 @@ export async function reconcileCin7SaleCreationAction(projectId: string): Promis
     const r = await reconcileSaleCreation(db, buildSaleCreationPort(db, orgId, existing.instance_id), gates, email ?? "unknown", { orgId, projectId });
     await logActivity(db, { orgId, actor: { userId, email }, action: "projects.cin7_sale_create_reconcile", summary: `Reconciled a Cin7 Sale creation: ${r.state} (read-only against Cin7)`, detail: { projectId, creationId: r.creation.id, state: r.state } });
     return { ok: true, data: { state: r.state, message: r.message, linked: r.linked } };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/** Manager only. READ-ONLY (GETs): P0 prerequisite check for a disposable customer and the SKUs. Stores and writes nothing. */
+export async function checkCin7PrerequisitesAction(customerName: string, skus: string[]): Promise<Cin7ActionResult<PrerequisiteReport>> {
+  try {
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const gates = await gatesFor(orgId);
+    if (!gates.orgEnabled) throw new Error("Cin7 Sale creation is not enabled for this organization.");
+    const db = createServiceRoleClient();
+    const instanceId = await singleActiveInstanceId(db, orgId);
+    return { ok: true, data: await checkSalePrerequisites(buildSaleCreationPort(db, orgId, instanceId), gates, { customerName, skus }) };
   } catch (e) {
     return { ok: false, error: message(e) };
   }

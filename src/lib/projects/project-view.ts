@@ -196,3 +196,6 @@ export function formatBps(bps: Bps): string {
   const frac = (bps % 100).toString().padStart(2, "0").replace(/0+$/, "");
   return `${whole}${frac ? "." + frac : ""}%`;
 }
+
+/** A variation billing project (migration 0105) is an internal implementation detail: only BASE projects are customer-facing. */
+export const isCustomerFacingProject = (v: Pick<ProjectView, "project">): boolean => v.project.billing_scope !== "VARIATION" && !v.project.parent_project_id;

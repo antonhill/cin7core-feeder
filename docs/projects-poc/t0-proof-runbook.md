@@ -1,3 +1,5 @@
+> **SUPERSEDED (2026-10-28).** Written for priced product lines (NQ2886 x2 at R500). The model is now R0 physical lines plus a contract charge; use `cin7-acceptance-proof-plan.md` (P0-P7). Kept as evidence only.
+
 # T0 proof runbook: physical Advanced Sale, authorised, allocation only
 
 Status: **PREPARED. NOT AUTHORISED TO RUN.** The owner separately authorises execution after reviewing the GO/NO-GO checklist (section 4). T1 and T2 are **not approved**. No Cin7 write, no Supabase mutation, no invoice, fulfilment, stock adjustment or production operation is part of preparation.

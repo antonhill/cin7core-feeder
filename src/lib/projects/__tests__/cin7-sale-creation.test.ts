@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { FakeDb } from "./fake-db";
 import { goldenFixtureBaseline } from "../baseline";
 import { createProjectFromBaseline } from "../project-store";
-import { createSaleForProject, loadCreation, reconcileSaleCreation, type SaleCreateOutcome, type SaleCreationPort } from "../cin7-sale-creation-store";
+import { checkSalePrerequisites, createSaleForProject, loadCreation, reconcileSaleCreation, type SaleCreateOutcome, type SaleCreationPort } from "../cin7-sale-creation-store";
 import { CREATE_CONFIRMATION_TEXT, buildCreationPlan, externalIdFor, verifyCreatedSale, type CreationPlan, type SaleReadBack } from "../cin7-sale-creation";
 import type { WriteGates } from "../cin7-posting-store";
 
@@ -113,6 +113,8 @@ class FakePort implements SaleCreationPort {
     this.sales.set(id, this.tamper ? this.tamper(rb) : rb);
     return { kind: "created", saleId: id, saleNumber: "SO-00100" };
   }
+  assemblies = new Set<string>();
+  async assemblySkus(skus: string[]) { return skus.filter((s) => this.assemblies.has(s)); }
   async readSale(id: string) { if (this.failRead) throw new Error("read failed"); const s = this.sales.get(id); if (!s) throw new Error("no such sale"); return structuredClone(s); }
   async findByExternalId() { return this.found; }
 }
@@ -288,5 +290,20 @@ describe("variation billing project", () => {
     expect(db.rows("project_cin7_sale_creations").find((c) => c.project_id === pid)).toMatchObject({ sale_role: "VARIATION", external_id: "NEWQUIP-PROJECTS-SALE:PRJ-NQ-Q-0001-V001" });
     expect(db.rows("project_cin7_sale_links").find((l) => l.project_id === pid)).toMatchObject({ sale_role: "VARIATION" });
     expect(port.creates[0].charges.reduce((n, c) => n + c.taxAmount, 0)).toBe(72_000);
+  });
+});
+
+describe("P0 prerequisite check (read-only)", () => {
+  it("reports customer and SKU existence and assemblies, writes nothing, needs a manager", async () => {
+    port.assemblies.add("NQ2886");
+    const writesBefore = db.writes.length;
+    const r = await checkSalePrerequisites(port, { isManager: true }, { customerName: "Test Customer", skus: ["NQ2886", "NOPE", "NQ2886"] });
+    expect(r).toMatchObject({ ready: false, customer: { exists: true }, skus: [{ sku: "NQ2886", exists: true, isAssembly: true }, { sku: "NOPE", exists: false, isAssembly: false }] });
+    expect(r.problems).toEqual(["SKU NOPE does not exist in Cin7."]);
+    expect((await checkSalePrerequisites(port, { isManager: true }, { customerName: "Test Customer", skus: ["NQ2886"] })).ready).toBe(true);
+    expect((await checkSalePrerequisites(port, { isManager: true }, { customerName: "Nobody", skus: [] })).problems[0]).toMatch(/does not exist/);
+    expect(await err(checkSalePrerequisites(port, { isManager: false }, { customerName: "x", skus: [] }))).toMatch(/manager/);
+    expect(port.creates).toHaveLength(0);
+    expect(db.writes.length).toBe(writesBefore);
   });
 });

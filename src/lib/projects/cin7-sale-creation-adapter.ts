@@ -4,6 +4,7 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
 import { fetchSaleDetail } from "@/cin7/sales";
+import { findBomSkus } from "@/cin7/products";
 import { createAdvancedSale, customerExists, findSaleByExternalIdForCustomer, resolveProductIds } from "@/cin7/sale-order-write";
 import type { SaleCreationPort } from "./cin7-sale-creation-store";
 
@@ -26,6 +27,7 @@ export function buildSaleCreationPort(db: Db, orgId: string, instanceId: string)
         req.lines, req.charges,
       );
     },
+    async assemblySkus(skus) { return findBomSkus(await creds(), skus); },
     async readSale(saleId) {
       const s = await fetchSaleDetail(await creds(), saleId);
       return {

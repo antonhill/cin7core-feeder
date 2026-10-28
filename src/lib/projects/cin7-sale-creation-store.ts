@@ -34,6 +34,8 @@ export interface SaleCreationPort {
     lines: Array<{ productId: string; sku: string; name: string; quantity: number; taxRule: string }>;
     charges: Array<{ description: string; priceExVat: number; taxAmount: number; taxRule: string; account: string }>;
   }): Promise<SaleCreateOutcome>;
+  /** SKUs (of those given) that are Bill-of-Material / assembly products. Read-only. */
+  assemblySkus(skus: string[]): Promise<string[]>;
   readSale(saleId: string): Promise<SaleReadBack>;
   findByExternalId(customer: string, externalId: string, sinceIso: string): Promise<Array<{ saleId: string; saleNumber: string | null }>>;
 }
@@ -243,4 +245,29 @@ export async function reconcileSaleCreation(
   }
   row = await set({ creation_state: "CREATED", progress: "DONE", cin7_sale_id: saleId, cin7_sale_number: number, completed_at: now.toISOString(), last_error_code: null, last_error_message: null }, "FAILED_UNCERTAIN");
   return verifyAndLink(db, port, input.orgId, row, saleId, number, email, now);
+}
+
+// ── P0: read-only prerequisite check ────────────────────────────────────────
+
+export interface PrerequisiteReport {
+  customer: { name: string; exists: boolean };
+  skus: Array<{ sku: string; exists: boolean; isAssembly: boolean }>;
+  /** True only when the customer and every SKU exist. Tax rule, revenue account and location are NOT checked here (manual P0 checklist). */
+  ready: boolean;
+  problems: string[];
+}
+
+/** READ-ONLY (a few GETs): does the disposable customer exist and do the SKUs exist, and which are assemblies? Writes nothing anywhere. */
+export async function checkSalePrerequisites(port: SaleCreationPort, gates: Pick<WriteGates, "isManager">, input: { customerName: string; skus: string[] }): Promise<PrerequisiteReport> {
+  if (!gates.isManager) fail("Only a manager (org owner/admin) can run the prerequisite check.");
+  const name = input.customerName.trim();
+  const skus = [...new Set(input.skus.map((s) => s.trim()).filter(Boolean))];
+  if (!name) fail("Enter the Cin7 customer name to check.");
+  const exists = await port.customerExists(name);
+  const resolved = skus.length ? await port.resolveProducts(skus) : { ids: new Map<string, string>(), missing: [] as string[] };
+  const present = skus.filter((s) => resolved.ids.has(s));
+  const asm = new Set(present.length ? await port.assemblySkus(present) : []);
+  const rows = skus.map((sku) => ({ sku, exists: resolved.ids.has(sku), isAssembly: asm.has(sku) }));
+  const problems = [...(exists ? [] : [`Customer "${name}" does not exist in Cin7.`]), ...rows.filter((r) => !r.exists).map((r) => `SKU ${r.sku} does not exist in Cin7.`)];
+  return { customer: { name, exists }, skus: rows, ready: problems.length === 0, problems };
 }
