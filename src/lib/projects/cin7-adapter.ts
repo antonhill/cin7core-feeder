@@ -31,7 +31,9 @@ export function buildCin7Port(db: Db, orgId: string, instanceId: string): Cin7Po
         invoices: (s.Invoices ?? []).map((i) => ({
           invoiceNumber: i.InvoiceNumber ?? null, taskId: i.TaskID ?? null, memo: i.Memo ?? null, status: i.Status ?? null,
           subtotalCents: cents(i.TotalBeforeTax), taxCents: cents(i.Tax), totalCents: cents(i.Total),
+          lines: (i.Lines ?? []).map((l) => ({ sku: l.SKU ?? null, quantity: Number.isFinite(Number(l.Quantity)) && l.Quantity !== undefined ? Number(l.Quantity) : null, priceCents: cents(l.Price) })),
         })),
+        orderLines: (s.Order?.Lines ?? []).map((l) => ({ productId: l.ProductID ?? "", sku: l.SKU ?? "", name: l.Name ?? "", quantity: Number(l.Quantity) })),
       };
     },
     async createInvoice(req) {

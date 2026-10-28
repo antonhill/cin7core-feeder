@@ -8,7 +8,7 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import {
   MESSAGES, POST_CONFIRMATION_TEXT, amountDifferences, buildPostingPlan, canSend, isStalePending, matchInvoices, rands,
-  type PostingClaim, type PostingClaimLine, type PostingDisplayState, type PostingState, type ReadInvoice,
+  resolvePhysicalLines, type OrderLineView, type PhysicalSelection, type PostingClaim, type PostingClaimLine, type PostingDisplayState, type PostingState, type ReadInvoice,
 } from "./cin7-posting";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
@@ -18,12 +18,14 @@ export interface InvoiceRequest {
   saleId: string; memo: string; invoiceDate: string; invoiceDueDate: string; taxRule: string; account: string;
   /** `taxAmount` is the VAT in rands (a monetary amount, NOT a percentage). */
   charges: Array<{ description: string; priceExVat: number; taxAmount: number; comment?: string }>;
+  /** Physical products at R0 (empty for deposit-only / commercial-only). */
+  lines?: Array<{ productId: string; sku: string; name: string; quantity: number }>;
 }
 export type InvoiceOutcome =
   | { kind: "created"; invoiceNumber: string; taskId: string; status: string; totalBeforeTax: number | null; tax: number | null; total: number | null }
   | { kind: "rejected"; httpStatus: number; message: string }
   | { kind: "uncertain"; reason: string };
-export interface Cin7SaleView { id: string; saleNumber: string | null; type: string | null; orderStatus: string | null; taxRule: string | null; invoices: ReadInvoice[] }
+export interface Cin7SaleView { id: string; saleNumber: string | null; type: string | null; orderStatus: string | null; taxRule: string | null; invoices: ReadInvoice[]; orderLines?: OrderLineView[] }
 export interface Cin7Port {
   fetchSale(saleId: string): Promise<Cin7SaleView>;
   createInvoice(req: InvoiceRequest): Promise<InvoiceOutcome>;
@@ -35,6 +37,8 @@ export interface PostingRow {
   cin7_sale_id: string; cin7_invoice_number: string | null; cin7_task_id: string | null; cin7_status: string | null;
   requested_by_email: string; requested_at: string; completed_at: string | null; reconciled_at: string | null;
   last_error_code: string | null; last_error_message: string | null;
+  /** Physical products on the invoice (R0). Column added by migration 0105; absent on rows written before it. */
+  physical_lines?: Array<{ sku: string; quantity: number }> | null;
 }
 export interface SaleLinkRow {
   id: string; project_id: string; instance_id: string; cin7_sale_id: string; cin7_sale_number: string | null; link_status: string;
@@ -123,7 +127,7 @@ const trunc = (s: string) => s.replace(/\s+/g, " ").slice(0, 500);
  */
 export async function postClaimToCin7(
   db: Db, port: Cin7Port, gates: WriteGates, email: string,
-  input: { orgId: string; projectId: string; claimId: string; confirmation: string; now?: Date },
+  input: { orgId: string; projectId: string; claimId: string; confirmation: string; now?: Date; physicalLines?: PhysicalSelection[] },
 ): Promise<PostResult> {
   const now = input.now ?? new Date();
   // 1–3: flag, org, manager, explicit confirmation — all enforced HERE, whatever the UI showed.
@@ -159,7 +163,17 @@ export async function postClaimToCin7(
   if (existing?.posting_state === "FAILED_UNCERTAIN") fail(MESSAGES.uncertain);
   if (!canSend(existing?.posting_state ?? "NOT_SENT")) fail("This claim cannot be posted in its current state.");
 
-  const built = buildPostingPlan({ projectRef: project.project_reference, claim, lines, link });
+  // Physical products (optional): validated against the Sale's ORDER and what is already invoiced, by a READ-ONLY fetch BEFORE any intent
+  // is persisted. A retry of an existing posting must repeat the identical selection (the fingerprint covers it).
+  const selection = input.physicalLines ?? [];
+  let resolved: Array<{ productId: string; sku: string; name: string; quantity: number }> = [];
+  if (selection.length > 0) {
+    const view = await port.fetchSale(link.cin7_sale_id);
+    const r = resolvePhysicalLines(selection, view.orderLines, view.invoices);
+    if (!r.ok) fail(r.error);
+    resolved = r.lines;
+  }
+  const built = buildPostingPlan({ projectRef: project.project_reference, claim, lines, link, physicalLines: resolved });
   if (!built.ok) fail(built.error);
   const plan = built.plan;
 
@@ -172,6 +186,7 @@ export async function postClaimToCin7(
       request_fingerprint: plan.fingerprint, memo: plan.memo, posting_state: "PENDING", attempt_count: 1,
       amount_ex_vat_cents: plan.subtotalCents, tax_cents: plan.taxCents, total_cents: plan.totalCents, cin7_sale_id: link.cin7_sale_id,
       requested_by_email: email, requested_at: now.toISOString(),
+      ...(plan.physicalLines.length ? { physical_lines: plan.physicalLines.map((l) => ({ sku: l.sku, quantity: l.quantity })) } : {}),
     }).select("*").single();
     if (ins.error || !ins.data) {
       if (/duplicate key|unique/i.test(ins.error?.message ?? "")) fail(MESSAGES.inFlight);
@@ -194,6 +209,7 @@ export async function postClaimToCin7(
   try {
     outcome = await port.createInvoice({
       saleId: link.cin7_sale_id, memo: plan.memo, invoiceDate: today(now), invoiceDueDate: addDays(now, 30), taxRule: link.tax_rule, account: link.revenue_account,
+      ...(plan.physicalLines.length ? { lines: plan.physicalLines } : {}),
       charges: plan.charges.map((ch) => ({ description: ch.description, priceExVat: rands(ch.amountCents), taxAmount: rands(ch.taxCents), comment: `Toolbox claim ${claim.claim_number}` })),
     });
   } catch {
@@ -209,14 +225,16 @@ export async function postClaimToCin7(
     // The invoice EXISTS (it carries our memo), so nothing below may un-create it or allow a re-send. Verify the AMOUNTS from what Cin7
     // holds: the POST echo when it carries finite numbers, otherwise a READ-ONLY read-back. Missing/unreadable is never a match.
     const cents = (n: number | null) => (typeof n === "number" && Number.isFinite(n) ? Math.round(n * 100) : null);
+    let lineDiffs: string[] = [];
     let seen = { subtotalCents: cents(outcome.totalBeforeTax), taxCents: cents(outcome.tax), totalCents: cents(outcome.total) };
     if (seen.subtotalCents === null || seen.taxCents === null || seen.totalCents === null) {
       try {
-        const back = matchInvoices((await port.fetchSale(link.cin7_sale_id)).invoices, { memo: plan.memo, amount_ex_vat_cents: plan.subtotalCents, tax_cents: plan.taxCents, total_cents: plan.totalCents });
+        const back = matchInvoices((await port.fetchSale(link.cin7_sale_id)).invoices, { memo: plan.memo, amount_ex_vat_cents: plan.subtotalCents, tax_cents: plan.taxCents, total_cents: plan.totalCents, physical_lines: plan.physicalLines });
         if (back.kind === "matched" || back.kind === "mismatch") seen = { subtotalCents: back.invoice.subtotalCents, taxCents: back.invoice.taxCents, totalCents: back.invoice.totalCents };
+        if (back.kind === "mismatch") lineDiffs = back.differences.filter((d) => !/^(ex VAT|VAT|total) /.test(d));
       } catch { /* the read-back is best effort; the invoice is already recorded below */ }
     }
-    const differences = amountDifferences(seen, { amount_ex_vat_cents: plan.subtotalCents, tax_cents: plan.taxCents, total_cents: plan.totalCents });
+    const differences = [...amountDifferences(seen, { amount_ex_vat_cents: plan.subtotalCents, tax_cents: plan.taxCents, total_cents: plan.totalCents }), ...lineDiffs];
     const same = differences.length === 0;
     state = "CREATED";
     patch = {

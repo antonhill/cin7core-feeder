@@ -33,10 +33,10 @@ class FakePort implements Cin7Port {
   /** Lets a test place the invoice Cin7 holds at the moment the POST lands (what a read-back would then see). */
   landedOnCreate: ((req: InvoiceRequest) => void) | null = null;
   /** What Cin7 would hold after the request landed. */
-  landed(req: InvoiceRequest, over: Partial<{ subtotalCents: number | null; taxCents: number | null; totalCents: number | null; status: string }> = {}) {
+  landed(req: InvoiceRequest, over: Partial<{ subtotalCents: number | null; taxCents: number | null; totalCents: number | null; status: string }> = {}, lines?: Array<{ sku: string; quantity: number; priceCents: number }>) {
     const sub = Math.round(req.charges.reduce((n, c) => n + c.priceExVat, 0) * 100);
     const tax = Math.round(req.charges.reduce((n, c) => n + c.taxAmount, 0) * 100);
-    this.sale.invoices.push({ invoiceNumber: "INV-00100", taskId: "task-1", memo: req.memo, status: over.status ?? "DRAFT", subtotalCents: "subtotalCents" in over ? over.subtotalCents! : sub, taxCents: "taxCents" in over ? over.taxCents! : tax, totalCents: "totalCents" in over ? over.totalCents! : sub + tax });
+    this.sale.invoices.push({ invoiceNumber: "INV-00100", taskId: "task-1", memo: req.memo, status: over.status ?? "DRAFT", subtotalCents: "subtotalCents" in over ? over.subtotalCents! : sub, taxCents: "taxCents" in over ? over.taxCents! : tax, totalCents: "totalCents" in over ? over.totalCents! : sub + tax, lines: lines ?? [] });
   }
 }
 
@@ -58,6 +58,7 @@ let ctx: Awaited<ReturnType<typeof approvedClaim>>;
 let port: FakePort;
 const link = () => linkCin7Sale(ctx.db as never, port, ON, "mgr@x", { orgId: ORG, projectId: ctx.projectId, instanceId: "inst-1", saleId: SALE_ID, revenueAccount: "200" });
 const post = (over: Partial<WriteGates> = {}, confirmation = POST_CONFIRMATION_TEXT) => postClaimToCin7(ctx.db as never, port, { ...ON, ...over }, "mgr@x", { orgId: ORG, projectId: ctx.projectId, claimId: ctx.claimId, confirmation });
+const postWith = (physicalLines: Array<{ sku: string; quantity: number }>) => postClaimToCin7(ctx.db as never, port, ON, "mgr@x", { orgId: ORG, projectId: ctx.projectId, claimId: ctx.claimId, confirmation: POST_CONFIRMATION_TEXT, physicalLines });
 const rec = (over: Partial<WriteGates> = {}) => reconcileClaimPosting(ctx.db as never, port, { isManager: true, ...over }, { orgId: ORG, projectId: ctx.projectId, claimId: ctx.claimId });
 const row = () => ctx.db.rows("project_claim_cin7_postings")[0] as Record<string, unknown>;
 
@@ -375,5 +376,64 @@ describe("posting never touches stock or other tables", () => {
     expect([...tables].sort()).toEqual(["project_claim_cin7_postings"]);
     expect(ctx.db.rows("project_cin7_links")).toHaveLength(0);
     expect((await listPostings(ctx.db as never, ORG, ctx.projectId))).toHaveLength(1);
+  });
+});
+
+describe("physical product lines at R0 (Slice E)", () => {
+  const order = [
+    { productId: "p-1", sku: "NQ2886", name: "Feeder", quantity: 10 },
+    { productId: "p-2", sku: "NQ1000", name: "Door", quantity: 4 },
+  ];
+  beforeEach(async () => { await link(); port.sale.orderLines = order; });
+
+  it("sends the selected SKUs at the Sale's own ProductID, with the VAT only on the commercial charges", async () => {
+    const r = await postWith([{ sku: "NQ2886", quantity: 3 }]);
+    expect(r.state).toBe("CREATED");
+    expect(port.created[0].lines).toEqual([{ productId: "p-1", sku: "NQ2886", name: "Feeder", quantity: 3 }]);
+    expect(port.created[0].charges.reduce((n, c) => n + c.taxAmount, 0)).toBe(142500);
+    expect(row().physical_lines).toEqual([{ sku: "NQ2886", quantity: 3 }]);
+  });
+  it("a deposit-only / commercial-only post sends no lines and stores none", async () => {
+    await post();
+    expect(port.created[0].lines).toBeUndefined();
+    expect(row().physical_lines).toBeUndefined();
+  });
+  it("refuses over-invoicing against the order, counting earlier non-voided invoices, before any intent is stored", async () => {
+    port.sale.invoices.push({ invoiceNumber: "INV-1", taskId: "t", memo: "other", status: "DRAFT", subtotalCents: 0, taxCents: 0, totalCents: 0, lines: [{ sku: "NQ2886", quantity: 8, priceCents: 0 }] });
+    expect(await err(postWith([{ sku: "NQ2886", quantity: 3 }]))).toMatch(/only 2 remain invoiceable/);
+    expect(port.created).toEqual([]);
+    expect(ctx.db.rows("project_claim_cin7_postings")).toHaveLength(0);
+    port.sale.invoices[0].status = "VOIDED"; // a voided invoice frees its quantity
+    expect((await postWith([{ sku: "NQ2886", quantity: 3 }])).state).toBe("CREATED");
+  });
+  it("refuses unknown SKUs, duplicates, non-positive or non-finite quantities, and unreadable prior invoices", async () => {
+    for (const sel of [[{ sku: "ZZZ", quantity: 1 }], [{ sku: "NQ2886", quantity: 1 }, { sku: "NQ2886", quantity: 1 }], [{ sku: "NQ2886", quantity: 0 }], [{ sku: "NQ2886", quantity: Number.NaN }]]) {
+      expect(await err(postWith(sel))).toBeDefined();
+    }
+    port.sale.invoices.push({ invoiceNumber: "INV-1", taskId: "t", memo: "o", status: "DRAFT", subtotalCents: 0, taxCents: 0, totalCents: 0 });
+    expect(await err(postWith([{ sku: "NQ2886", quantity: 1 }]))).toMatch(/no readable lines/);
+    expect(port.created).toEqual([]);
+  });
+  it("flags a read-back whose physical line carries a price or the wrong quantity (revenue duplication / wrong stock)", async () => {
+    port.echoTotals = false;
+    port.landedOnCreate = (req) => port.landed(req, {}, [{ sku: "NQ2886", quantity: 3, priceCents: 50000 }]);
+    const r = await postWith([{ sku: "NQ2886", quantity: 3 }]);
+    expect(r.state).toBe("CREATED");
+    expect(r.message).toMatch(/carries a price/);
+    expect(row().last_error_code).toBe("AMOUNT_MISMATCH");
+  });
+  it("reconciles a lines-bearing invoice only when SKU quantities match and every line is R0", async () => {
+    port.echoTotals = false; port.next = "throw";
+    port.landedOnCreate = (req) => port.landed(req, {}, [{ sku: "NQ2886", quantity: 3, priceCents: 0 }]);
+    await postWith([{ sku: "NQ2886", quantity: 3 }]);
+    expect(row().posting_state).toBe("FAILED_UNCERTAIN");
+    expect((await rec()).state).toBe("RECONCILED");
+  });
+  it("a retry must repeat the identical selection (the fingerprint covers the lines)", async () => {
+    port.next = { kind: "rejected", httpStatus: 400, message: "no" };
+    await postWith([{ sku: "NQ2886", quantity: 3 }]);
+    port.next = null;
+    expect(await err(postWith([{ sku: "NQ2886", quantity: 4 }]))).toMatch(/no longer matches/);
+    expect((await postWith([{ sku: "NQ2886", quantity: 3 }])).state).toBe("CREATED");
   });
 });
