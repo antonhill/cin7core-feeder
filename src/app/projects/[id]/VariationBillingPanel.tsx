@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
+import { ProjectWorkspace } from "./ProjectWorkspace";
+import { VariationProductPicker } from "./VariationProductPicker";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { amendVariationScheduleAction, getVariationBillingAction, saveVariationScheduleAction, startVariationBillingAction, type VariationBillingState } from "../variation-billing-actions";
 
@@ -118,21 +120,18 @@ export function VariationBillingPanel({ view, isAdmin, run, working }: { view: P
             {v.status === "APPROVED" && (
               <div className="mt-4">
                 {billingId ? (
-                  isAdmin ? <Link className="text-sm underline" href={`/projects/${billingId}`}>Open the {v.code} billing scope (claims, progress, Cin7 Sale link)</Link> : <span className="text-sm text-slate-600">Billing for {v.code} is active; a manager operates it.</span>
+                  isAdmin ? (
+                    <details className="rounded border border-slate-200 p-3" open>
+                      <summary className="cursor-pointer text-sm font-medium text-slate-800">{v.code} billing workspace - progress, claims, Cin7 Sale and invoices (works here, inside the original project)</summary>
+                      <ProjectWorkspace id={billingId} embedded />
+                    </details>
+                  ) : <span className="text-sm text-slate-600">Billing for {v.code} is active; a manager operates it.</span>
                 ) : isAdmin ? (
                   <div className="space-y-2">
-                    <p className="text-sm font-medium text-slate-800">Products in this variation (entered once; the Sale and invoices inherit them)</p>
-                    {(prods[v.id] ?? []).map((p, i) => (
-                      <div key={i} className="flex flex-wrap items-end gap-2">
-                        <Input label="Cin7 SKU" value={p.sku} onChange={(e) => setProds({ ...prods, [v.id]: (prods[v.id] ?? []).map((x, j) => (j === i ? { ...x, sku: e.target.value } : x)) })} />
-                        <Input label="Description" value={p.description} onChange={(e) => setProds({ ...prods, [v.id]: (prods[v.id] ?? []).map((x, j) => (j === i ? { ...x, description: e.target.value } : x)) })} />
-                        <Input label="Quantity" value={p.quantity} onChange={(e) => setProds({ ...prods, [v.id]: (prods[v.id] ?? []).map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)) })} />
-                        <Button size="sm" variant="secondary" onClick={() => setProds({ ...prods, [v.id]: (prods[v.id] ?? []).filter((_, j) => j !== i) })}>Remove</Button>
-                      </div>
-                    ))}
+                    <p className="text-sm font-medium text-slate-800">Products in this variation (picked once from Cin7; the Sale and invoices inherit them)</p>
+                    <VariationProductPicker picked={prods[v.id] ?? []} onChange={(next) => setProds({ ...prods, [v.id]: next })} disabled={working} />
                     <div className="flex flex-wrap gap-2">
-                      <Button size="sm" variant="secondary" disabled={working} onClick={() => setProds({ ...prods, [v.id]: [...(prods[v.id] ?? []), { sku: "", description: "", quantity: "1" }] })}>Add product</Button>
-                      <Button disabled={working || legacy} onClick={() => act(() => startVariationBillingAction(projectId, v.id, (prods[v.id] ?? []).map((p) => ({ sku: p.sku, description: p.description, quantity: Number(p.quantity) }))), `Started billing for ${v.code}. Create or link its Cin7 Sale from the billing scope.`)}>Start variation billing</Button>
+                      <Button disabled={working || legacy} onClick={() => act(() => startVariationBillingAction(projectId, v.id, (prods[v.id] ?? []).map((p) => ({ sku: p.sku, description: p.description, quantity: Number(p.quantity) }))), `Started billing for ${v.code}. Create its Cin7 Sale below.`)}>Start variation billing</Button>
                     </div>
                   </div>
                 ) : <span className="text-xs text-slate-500">A manager starts variation billing.</span>}
