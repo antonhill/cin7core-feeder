@@ -43,6 +43,22 @@ await db.exec(`
 for (const f of ["0101_newquip_projects.sql", "0102_newquip_quotes_and_variations.sql", "0103_project_opening_commitments.sql", "0104_project_cin7_claim_posting.sql"]) await db.exec(mig(f));
 console.log("applied 0101-0104");
 
+// DRIFT CHECK: the functions the dry run is built on must match the HOSTED ones. Compared after removing SQL comments and collapsing whitespace
+// (the hosted copies were applied without the migration files' inline comments), as md5 of pg_get_functiondef, read with a SELECT on
+// 2026-10-28. If hosted ever differs in LOGIC from what 0101-0104 define, the dry run does not represent it and this fails loudly.
+const HOSTED_FN_MD5 = {
+  newquip_quotes_guard: "1c3d886e429f64a6b5dffc9324c815e4", project_cin7_sale_links_guard: "b4342a64bab4530fa818a759b0a5b010",
+  project_claim_cin7_postings_guard: "d95cf2707248272f2b6e3a5a873156da", project_claim_lines_guard: "ef5d21f7e1420ca2d634c8227d001979",
+  project_claims_guard: "64151bbadb8d2b44e14699a5c7db4229", project_has_committed_claim: "01d2d172d0067c98f0f8ad1b46616449",
+  project_opening_commitments_guard: "b84d66cab4871c9bd33dacd3787defb2", project_progress_events_append_only: "c1f2bb0f1187df98ee8ea1478144a662",
+  project_schedule_balanced: "d1186bba024bd217b18d40d6c25f73b4", project_stages_guard: "df5d1097c8a23537cc6574f5afceebee",
+  project_variations_guard: "7d04bf0c023d0c5b64c86282e4e568f2", projects_guard: "f8229ac55c1574005163c8359f80f491", projects_original_contract_guard: "99953bac6b0367c0fc3d0446bd4e6277",
+};
+for (const r of await q(String.raw`select p.proname n, md5(trim(regexp_replace(regexp_replace(pg_get_functiondef(p.oid), '--[^\n]*', '', 'g'), '\s+', ' ', 'g'))) h from pg_proc p join pg_namespace s on s.oid = p.pronamespace where s.nspname = 'public' and p.proname = any($1) order by 1`, [Object.keys(HOSTED_FN_MD5)])) {
+  console.log(`  ${r.h === HOSTED_FN_MD5[r.n] ? "ok  " : "DRIFT"} hosted function ${r.n}`);
+  if (r.h !== HOSTED_FN_MD5[r.n]) throw new Error(`hosted function ${r.n} differs from migrations 0101-0104`);
+}
+
 // ── fixture mirroring the hosted data shape (seeded with triggers off: these rows represent pre-existing history) ──
 const STAGES = [["Deposit", 100000000], ["Manufacturing", 300000000], ["Equipment Ready", 200000000], ["Delivery", 200000000], ["Installation", 150000000], ["Commissioning", 50000000]];
 const P = { golden: "00000000-0000-0000-0000-0000000d0001", c1: "00000000-0000-0000-0000-0000000d0002", c2: "00000000-0000-0000-0000-0000000d0003" };
@@ -183,4 +199,8 @@ await db.exec(`update projects set status = 'CLOSED' where id = '${P.c1}'`);
 ok(true, "a BASE project with no variation scopes still closes exactly as before");
 ok((await q(`select count(*)::int n from project_variations where code = 'V001' and amount_cents = 48000000 and status = 'APPROVED'`))[0].n === 1, "V001 unchanged by 0106");
 
+if (process.env.PRINT_FINGERPRINTS) {
+  console.log("\nFINGERPRINTS of the objects 0105/0106 create (normalised md5; compare with the hosted post-migration query):");
+  for (const r of await q(String.raw`select p.proname n, md5(trim(regexp_replace(regexp_replace(pg_get_functiondef(p.oid), '--[^\n]*', '', 'g'), '\s+', ' ', 'g'))) h from pg_proc p join pg_namespace s on s.oid = p.pronamespace where s.nspname = 'public' and p.proname in ('variation_stage_cents','amend_variation_schedule','project_unresolved_obligations','projects_billing_scope_guard','project_variation_stages_guard','project_variation_amendments_append_only','project_variations_schedule_guard','project_cin7_sale_links_role_guard','project_claim_cin7_postings_lines_guard','project_cin7_sale_creations_guard','project_cin7_sale_links_creation_guard','projects_closure_guard','project_opening_commitments_scope_guard') order by 1`)) console.log(`  ${r.n} ${r.h}`);
+}
 console.log(`\nALL ${passed} DRY-RUN ASSERTIONS PASSED`);
