@@ -16,6 +16,7 @@ import { VariationsPanel } from "./VariationsPanel";
 import { OpeningCommitmentsPanel } from "./OpeningCommitmentsPanel";
 import { Cin7PostingPanel } from "./Cin7PostingPanel";
 import { Cin7SaleCreationPanel } from "./Cin7SaleCreationPanel";
+import { PhysicalPanel } from "./PhysicalPanel";
 import {
   approveClaimAction,
   cancelDraftClaimAction,
@@ -30,13 +31,14 @@ import {
 } from "../actions";
 
 type ViewerPermission = "loading" | "member" | "admin";
-type Tab = "overview" | "stages" | "components" | "claims" | "variations";
+type Tab = "overview" | "stages" | "components" | "claims" | "variations" | "physical";
 const TABS: { value: Tab; label: string }[] = [
   { value: "overview", label: "Overview" },
   { value: "stages", label: "Stages" },
   { value: "components", label: "Components / scope" },
   { value: "claims", label: "Claims" },
   { value: "variations", label: "Variations" },
+  { value: "physical", label: "Physical" },
 ];
 
 const CLAIM_TONE: Record<string, BadgeTone> = {
@@ -411,6 +413,8 @@ export default function ProjectDetailPage() {
           </Table>
         </div>
       )}
+
+      {tab === "physical" && <PhysicalPanel view={view} />}
 
       {tab === "variations" && <VariationsPanel view={view} isAdmin={perm === "admin"} run={run} working={isWorking} />}
 
