@@ -28,6 +28,7 @@
     "src/app/pricing/actions.ts",
     "src/app/projects/actions.ts",
     "src/app/projects/cin7-actions.ts",
+    "src/app/projects/delivery-actions.ts",
     "src/app/projects/physical-actions.ts",
     "src/app/projects/profitability-actions.ts",
     "src/app/projects/variation-billing-actions.ts",

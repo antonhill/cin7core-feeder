@@ -59,7 +59,7 @@ describe("Projects POC has no Cin7 / external write path", () => {
   });
 });
 
-describe.each(["src/app/projects/actions.ts", "src/app/projects/cin7-actions.ts", "src/app/projects/variation-billing-actions.ts", "src/app/projects/physical-actions.ts", "src/app/projects/profitability-actions.ts"])('%s honours the "use server" rule', (rel) => {
+describe.each(["src/app/projects/actions.ts", "src/app/projects/cin7-actions.ts", "src/app/projects/variation-billing-actions.ts", "src/app/projects/physical-actions.ts", "src/app/projects/profitability-actions.ts", "src/app/projects/delivery-actions.ts"])('%s honours the "use server" rule', (rel) => {
   it("exports only async functions and erased interfaces", () => {
     const file = join(ROOT, rel);
     const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
@@ -73,6 +73,14 @@ describe.each(["src/app/projects/actions.ts", "src/app/projects/cin7-actions.ts"
       if (!isAsyncFn) offenders.push(ts.isVariableStatement(n) ? "exported const" : ts.SyntaxKind[n.kind]);
     });
     expect(offenders).toEqual([]);
+  });
+});
+
+describe("delivery allocation writes only local tables", () => {
+  it.each(["src/lib/projects/delivery-allocation.ts", "src/lib/projects/delivery-allocation-store.ts", "src/app/projects/delivery-actions.ts"])("%s makes no Cin7 call", (rel) => {
+    const src = readFileSync(join(ROOT, rel), "utf8");
+    expect(src).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/i);
+    expect(src).not.toMatch(/nonIdempotentCreate|sale\/invoice|sale\/order|@\/cin7\//);
   });
 });
 
