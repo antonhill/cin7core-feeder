@@ -5,7 +5,7 @@
 -- Expect it to print "ALL 0105 ... PASSED". No Cin7 call is made by anything here.
 begin;
 
-grant select, insert, update, delete on project_variation_stages, project_variation_schedule_amendments, projects, project_cin7_sale_links, project_claim_cin7_postings to authenticated, anon;
+grant select, insert, update, delete on project_cin7_sale_creations, project_variation_stages, project_variation_schedule_amendments, projects, project_cin7_sale_links, project_claim_cin7_postings to authenticated, anon;
 
 create or replace function pg_temp.act_as(uid uuid) returns void language plpgsql as $$
 begin
@@ -163,12 +163,56 @@ values ('00000000-0000-0000-0000-0000000005a9', '00000000-0000-0000-0000-0000000
 select pg_temp.expect_denied($q$update project_claim_cin7_postings set physical_lines = '[{"sku":"A","quantity":3}]'::jsonb where id = '00000000-0000-0000-0000-0000000005a9'$q$, 'change the invoiced product lines');
 select pg_temp.expect_denied($q$update project_claim_cin7_postings set physical_lines = null where id = '00000000-0000-0000-0000-0000000005a9'$q$, 'remove the invoiced product lines');
 
+
+-- ── Sale creation intents ────────────────────────────────────────────────────
+-- c2 is DRAFT (not ACTIVE); c1 already has a linked Sale; c3 (variation billing project) is linked too. Use fresh ACTIVE projects.
+insert into projects (id, org_id, project_reference, name, customer_name, original_contract_cents, tax_rate_bps, status)
+values ('00000000-0000-0000-0000-0000000005c4', '00000000-0000-0000-0000-0000000005b1', 'P-4', 'Create me', 'Cust', 100000, 1500, 'DRAFT');
+insert into project_stages (org_id, project_id, sort_order, name, value_cents) values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005c4',1,'All',100000);
+update projects set status = 'ACTIVE' where id = '00000000-0000-0000-0000-0000000005c4';
+
+select pg_temp.expect_denied($q$insert into project_cin7_sale_creations (org_id, project_id, instance_id, sale_role, external_id, request_fingerprint, plan, contract_ex_vat_cents, requested_by_email)
+  values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005c2','00000000-0000-0000-0000-0000000005e1','BASE','X-2','fp','{}',100,'m@x')$q$, 'intent for a project that is not ACTIVE');
+select pg_temp.expect_denied($q$insert into project_cin7_sale_creations (org_id, project_id, instance_id, sale_role, external_id, request_fingerprint, plan, contract_ex_vat_cents, requested_by_email)
+  values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005c1','00000000-0000-0000-0000-0000000005e1','BASE','X-1','fp','{}',100,'m@x')$q$, 'intent for a project that already has a linked Sale');
+select pg_temp.expect_denied($q$insert into project_cin7_sale_creations (org_id, project_id, instance_id, sale_role, external_id, request_fingerprint, plan, contract_ex_vat_cents, requested_by_email)
+  values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005c4','00000000-0000-0000-0000-0000000005e1','VARIATION','X-4','fp','{}',100,'m@x')$q$, 'VARIATION intent on a BASE project');
+select pg_temp.expect_denied($q$insert into project_cin7_sale_creations (org_id, project_id, instance_id, sale_role, external_id, request_fingerprint, plan, contract_ex_vat_cents, requested_by_email, creation_state)
+  values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005c4','00000000-0000-0000-0000-0000000005e1','BASE','X-4','fp','{}',100,'m@x','CREATED')$q$, 'an intent created already CREATED');
+insert into project_cin7_sale_creations (id, org_id, project_id, instance_id, sale_role, external_id, request_fingerprint, plan, contract_ex_vat_cents, requested_by_email)
+values ('00000000-0000-0000-0000-0000000005b9', '00000000-0000-0000-0000-0000000005b1', '00000000-0000-0000-0000-0000000005c4', '00000000-0000-0000-0000-0000000005e1', 'BASE', 'NEWQUIP-PROJECTS-SALE:P-4', 'fp', '{"customer":"X"}', 100000, 'm@x');
+select pg_temp.expect_denied($q$insert into project_cin7_sale_creations (org_id, project_id, instance_id, sale_role, external_id, request_fingerprint, plan, contract_ex_vat_cents, requested_by_email)
+  values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005c4','00000000-0000-0000-0000-0000000005e1','BASE','X-again','fp','{}',100,'m@x')$q$, 'a second intent for the same project (replay/double click)');
+select pg_temp.expect_denied($q$update project_cin7_sale_creations set plan = '{"customer":"Y"}' where id = '00000000-0000-0000-0000-0000000005b9'$q$, 'change the plan');
+select pg_temp.expect_denied($q$update project_cin7_sale_creations set external_id = 'other' where id = '00000000-0000-0000-0000-0000000005b9'$q$, 'change the external id');
+select pg_temp.expect_denied($q$update project_cin7_sale_creations set creation_state = 'CREATED' where id = '00000000-0000-0000-0000-0000000005b9'$q$, 'CREATED without a Sale id');
+select pg_temp.expect_denied($q$delete from project_cin7_sale_creations where id = '00000000-0000-0000-0000-0000000005b9'$q$, 'delete an intent');
+-- a Sale link cannot race an in-flight creation
+select pg_temp.expect_denied($q$insert into project_cin7_sale_links (org_id, project_id, instance_id, cin7_sale_id, tax_rule, revenue_account, linked_by_email)
+  values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005c4','00000000-0000-0000-0000-0000000005e1','SALE-RACE','Standard Rate Sales','200','m@x')$q$, 'link while the creation is PENDING');
+-- orphan header: the Sale exists, so it can never be a confirmed no-write failure
+update project_cin7_sale_creations set creation_state = 'FAILED_UNCERTAIN', progress = 'HEADER', cin7_sale_id = 'SALE-ORPHAN', last_error_code = 'ORPHAN_HEADER' where id = '00000000-0000-0000-0000-0000000005b9';
+select pg_temp.expect_denied($q$update project_cin7_sale_creations set creation_state = 'FAILED_CONFIRMED_NO_WRITE' where id = '00000000-0000-0000-0000-0000000005b9'$q$, 'no-write failure for a Sale that exists');
+select pg_temp.expect_denied($q$update project_cin7_sale_creations set creation_state = 'PENDING', attempt_count = 2 where id = '00000000-0000-0000-0000-0000000005b9'$q$, 'retry straight from FAILED_UNCERTAIN');
+select pg_temp.expect_denied($q$update project_cin7_sale_creations set progress = 'NONE' where id = '00000000-0000-0000-0000-0000000005b9'$q$, 'progress moving backwards');
+select pg_temp.expect_denied($q$update project_cin7_sale_creations set cin7_sale_id = 'ANOTHER' where id = '00000000-0000-0000-0000-0000000005b9'$q$, 'change the created Sale reference');
+update project_cin7_sale_creations set creation_state = 'CREATED', progress = 'DONE', completed_at = now() where id = '00000000-0000-0000-0000-0000000005b9';
+select pg_temp.expect_denied($q$update project_cin7_sale_creations set creation_state = 'RECONCILED' where id = '00000000-0000-0000-0000-0000000005b9'$q$, 'RECONCILED without verification time');
+update project_cin7_sale_creations set creation_state = 'RECONCILED', verified_at = now() where id = '00000000-0000-0000-0000-0000000005b9';
+select pg_temp.expect_denied($q$update project_cin7_sale_creations set creation_state = 'CREATED' where id = '00000000-0000-0000-0000-0000000005b9'$q$, 'leave RECONCILED');
+-- once reconciled the Sale can be linked
+insert into project_cin7_sale_links (org_id, project_id, instance_id, cin7_sale_id, tax_rule, revenue_account, linked_by_email)
+values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005c4','00000000-0000-0000-0000-0000000005e1','SALE-ORPHAN','Standard Rate Sales','200','m@x');
+
 -- ── RLS ──────────────────────────────────────────────────────────────────────
 select pg_temp.act_as('00000000-0000-0000-0000-0000000005a1');
 do $$ begin
   if (select count(*) from project_variation_stages) <> 1 then raise exception 'member A should see its schedule'; end if;
   if (select count(*) from project_variation_schedule_amendments) <> 1 then raise exception 'member A should see its amendment audit'; end if;
+  if (select count(*) from project_cin7_sale_creations) <> 1 then raise exception 'member A should see its creation intent'; end if;
 end $$;
+select pg_temp.expect_no_rows_changed($q$update project_cin7_sale_creations set last_error_message = 'x'$q$, 'member update creation intent');
+select pg_temp.expect_denied($q$insert into project_cin7_sale_creations (org_id, project_id, instance_id, sale_role, external_id, request_fingerprint, plan, contract_ex_vat_cents, requested_by_email) values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005c3','00000000-0000-0000-0000-0000000005e1','VARIATION','Z','f','{}',1,'m@x')$q$, 'member insert creation intent');
 select pg_temp.expect_no_rows_changed($q$update project_variation_stages set name = 'x'$q$, 'member update schedule');
 select pg_temp.expect_denied($q$insert into project_variation_stages (org_id, variation_id, sort_order, name, bps) values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005f2',1,'x',10000)$q$, 'member insert schedule');
 select pg_temp.expect_denied($q$insert into project_variation_schedule_amendments (org_id, variation_id, reason, amended_by_email, before_stages, after_stages) values ('00000000-0000-0000-0000-0000000005b1','00000000-0000-0000-0000-0000000005f1','r','m@x','[]','[]')$q$, 'member insert amendment');
@@ -178,6 +222,7 @@ do $$ begin
   if (select count(*) from project_variation_stages) <> 0 then raise exception 'org B must not see org A schedules'; end if;
   if (select count(*) from project_variation_schedule_amendments) <> 0 then raise exception 'org B must not see org A amendments'; end if;
   if (select count(*) from projects) <> 0 then raise exception 'org B must not see org A projects'; end if;
+  if (select count(*) from project_cin7_sale_creations) <> 0 then raise exception 'org B must not see org A creation intents'; end if;
 end $$;
 select pg_temp.reset_role();
 

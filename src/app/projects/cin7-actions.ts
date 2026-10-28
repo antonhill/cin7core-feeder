@@ -11,6 +11,9 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { isNewquipPocOrg } from "@/newquip/access";
 import { buildCin7Port, singleActiveInstanceId } from "@/lib/projects/cin7-adapter";
+import { buildSaleCreationPort } from "@/lib/projects/cin7-sale-creation-adapter";
+import { createSaleForProject, loadCreation, reconcileSaleCreation, type CreationRow } from "@/lib/projects/cin7-sale-creation-store";
+import type { CreationProductInput } from "@/lib/projects/cin7-sale-creation";
 import { linkCin7Sale, listPostings, loadSaleLink, postClaimToCin7, reconcileClaimPosting, type PostingRow, type SaleLinkRow, type WriteGates } from "@/lib/projects/cin7-posting-store";
 
 export interface Cin7ActionResult<T> {
@@ -98,6 +101,72 @@ export async function reconcileClaimPostingAction(projectId: string, claimId: st
     const r = await reconcileClaimPosting(db, buildCin7Port(db, orgId, link.instance_id), gates, { orgId, projectId, claimId });
     await logActivity(db, { orgId, actor: { userId, email }, action: "projects.claim_cin7_reconcile", summary: `Reconciled a claim posting: ${r.state} (read-only against Cin7)`, detail: { projectId, claimId, postingId: r.posting.id, state: r.state } });
     return { ok: true, data: { state: r.state, message: r.message } };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+// ── Advanced Sale creation ──────────────────────────────────────────────────
+
+export interface ProposedSaleLine { sku: string; name: string; quantity: number }
+export interface Cin7SaleCreationStatus {
+  gates: WriteGates;
+  creation: CreationRow | null;
+  /** True when a Sale is already linked to this project (by creation or manually). */
+  linked: boolean;
+  /** Physical products read from the project's frozen baseline (lines that carry a SKU). A starting point the manager reviews, never sent unseen. */
+  proposedLines: ProposedSaleLine[];
+  /** Baseline lines that have NO Cin7 SKU: they cannot be on the Sale until mapped (UNMAPPED_SKU). */
+  unmappedLines: string[];
+}
+
+const CHARGE_KEYS = new Set(["delivery", "installation", "concrete_slat_delivery"]);
+
+/** Read-only: the creation state and the proposal derived from the project's frozen baseline. */
+export async function getCin7SaleCreationStatusAction(projectId: string): Promise<Cin7ActionResult<Cin7SaleCreationStatus>> {
+  try {
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const db = createServiceRoleClient();
+    const p = await db.from("projects").select("baseline_snapshot").eq("org_id", orgId).eq("id", projectId).maybeSingle();
+    if (p.error) throw new Error(p.error.message);
+    const lines = ((p.data as { baseline_snapshot?: { lines?: Array<{ sku: string | null; description: string; quantity: number; lineRef: string }> } } | null)?.baseline_snapshot?.lines) ?? [];
+    const proposedLines = lines.filter((l) => l.sku && l.quantity > 0).map((l) => ({ sku: l.sku as string, name: l.description, quantity: l.quantity }));
+    const unmappedLines = lines.filter((l) => !l.sku && !CHARGE_KEYS.has(l.lineRef)).map((l) => l.description);
+    return { ok: true, data: { gates: await gatesFor(orgId), creation: await loadCreation(db, orgId, projectId), linked: (await loadSaleLink(db, orgId, projectId).catch(() => null)) !== null, proposedLines, unmappedLines } };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/** Manager only, flag-gated, confirmation-gated. Creates ONE Cin7 Advanced Sale for the project (at most once; see the store). */
+export async function createCin7SaleAction(
+  projectId: string,
+  input: { confirmation: string; customerName: string; location: string; revenueAccount: string; physicalLines: CreationProductInput[] },
+): Promise<Cin7ActionResult<{ state: string; message: string; saleNumber: string | null; linked: boolean }>> {
+  try {
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const gates = await gatesFor(orgId);
+    const db = createServiceRoleClient();
+    const instanceId = await singleActiveInstanceId(db, orgId);
+    const r = await createSaleForProject(db, buildSaleCreationPort(db, orgId, instanceId), gates, email ?? "unknown", { orgId, projectId, instanceId, ...input });
+    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.cin7_sale_create", summary: `Cin7 Advanced Sale creation: ${r.state}`, detail: { projectId, creationId: r.creation.id, state: r.state, externalId: r.creation.external_id, saleNumber: r.creation.cin7_sale_number } });
+    return { ok: true, data: { state: r.state, message: r.message, saleNumber: r.creation.cin7_sale_number, linked: r.linked } };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/** Manager only. READ-ONLY against Cin7; links a Sale only when it reads back exactly as planned. */
+export async function reconcileCin7SaleCreationAction(projectId: string): Promise<Cin7ActionResult<{ state: string; message: string; linked: boolean }>> {
+  try {
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const gates = await gatesFor(orgId);
+    const db = createServiceRoleClient();
+    const existing = await loadCreation(db, orgId, projectId);
+    if (!existing) throw new Error("No Sale creation has been attempted for this project.");
+    const r = await reconcileSaleCreation(db, buildSaleCreationPort(db, orgId, existing.instance_id), gates, email ?? "unknown", { orgId, projectId });
+    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.cin7_sale_create_reconcile", summary: `Reconciled a Cin7 Sale creation: ${r.state} (read-only against Cin7)`, detail: { projectId, creationId: r.creation.id, state: r.state } });
+    return { ok: true, data: { state: r.state, message: r.message, linked: r.linked } };
   } catch (e) {
     return { ok: false, error: message(e) };
   }

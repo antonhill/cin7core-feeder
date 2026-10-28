@@ -241,3 +241,112 @@ end;
 $$;
 create trigger project_claim_cin7_postings_lines_guard_trg before update on project_claim_cin7_postings
   for each row execute function project_claim_cin7_postings_lines_guard();
+
+-- ── Advanced Sale creation intents (Slice D) ────────────────────────────────
+-- ONE durable intent per billing project, persisted BEFORE any Cin7 call. unique(project_id) is the concurrency lock and the replay
+-- guard: a second attempt finds this row instead of creating a second Sale. The stable external_id is what Cin7 carries (ExternalID) and
+-- what reconciliation searches for. The row records only what Toolbox sent and saw; it never links the Sale itself (that happens
+-- through project_cin7_sale_links after the read-back verifies the Sale).
+create table if not exists project_cin7_sale_creations (
+  id          uuid primary key default gen_random_uuid(),
+  org_id      uuid not null references organizations (id) on delete cascade,
+  project_id  uuid not null,
+  instance_id uuid not null references cin7_instances (id) on delete restrict,
+  sale_role   text not null check (sale_role in ('BASE', 'VARIATION')),
+  external_id         text not null check (length(btrim(external_id)) > 0),
+  request_fingerprint text not null check (length(btrim(request_fingerprint)) > 0),
+  creation_state text not null default 'PENDING' check (creation_state in
+    ('PENDING', 'CREATED', 'RECONCILED', 'FAILED_CONFIRMED_NO_WRITE', 'FAILED_UNCERTAIN')),
+  attempt_count integer not null default 1 check (attempt_count > 0),
+  -- What was requested (customer, location, contract value, physical lines): the audit of the plan, not a source of truth.
+  plan jsonb not null,
+  contract_ex_vat_cents bigint not null check (contract_ex_vat_cents > 0),
+  cin7_sale_id     text,
+  cin7_sale_number text,
+  -- How far the two-step create got: NONE (nothing created), HEADER (Sale exists but is incomplete - needs manual completion), DONE.
+  progress text not null default 'NONE' check (progress in ('NONE', 'HEADER', 'DONE')),
+  requested_by_email text not null,
+  requested_at timestamptz not null default clock_timestamp(),
+  completed_at timestamptz,
+  verified_at  timestamptz,
+  last_error_code    text,
+  last_error_message text,
+  evidence jsonb,
+  updated_at timestamptz not null default clock_timestamp(),
+  foreign key (project_id, org_id) references projects (id, org_id) on delete cascade,
+  unique (project_id),
+  unique (org_id, external_id),
+  check (creation_state not in ('CREATED', 'RECONCILED') or (cin7_sale_id is not null and completed_at is not null)),
+  check (creation_state <> 'RECONCILED' or verified_at is not null),
+  check (progress <> 'DONE' or cin7_sale_id is not null)
+);
+alter table project_cin7_sale_creations enable row level security;
+create policy "org members read project_cin7_sale_creations" on project_cin7_sale_creations for select using (is_org_member(org_id));
+comment on table project_cin7_sale_creations is 'Projects: the durable intent to create a Cin7 Advanced Sale for a billing project - one row per project, state machine enforced here. Service-role writes only.';
+
+create or replace function project_cin7_sale_creations_guard() returns trigger language plpgsql set search_path = public as $$
+declare v_ok boolean; v_scope text;
+begin
+  if tg_op = 'DELETE' then
+    if exists (select 1 from projects where id = old.project_id) and exists (select 1 from organizations where id = old.org_id) then
+      raise exception 'project_cin7_sale_creations %: creation intents are an audit record and are never deleted', old.id;
+    end if;
+    return old;
+  end if;
+  if tg_op = 'INSERT' then
+    if new.creation_state <> 'PENDING' then raise exception 'project_cin7_sale_creations: an intent starts as PENDING'; end if;
+    select billing_scope into v_scope from projects where id = new.project_id and org_id = new.org_id and status = 'ACTIVE';
+    if v_scope is null then raise exception 'project_cin7_sale_creations: project % is not ACTIVE', new.project_id; end if;
+    if v_scope <> new.sale_role then raise exception 'project_cin7_sale_creations: a % Sale cannot be created for a % billing project', new.sale_role, v_scope; end if;
+    if exists (select 1 from project_cin7_sale_links where project_id = new.project_id) then
+      raise exception 'project_cin7_sale_creations: project % already has a linked Cin7 Sale', new.project_id;
+    end if;
+    return new;
+  end if;
+  new.updated_at := clock_timestamp();
+  if new.project_id is distinct from old.project_id or new.org_id is distinct from old.org_id or new.instance_id is distinct from old.instance_id
+     or new.sale_role is distinct from old.sale_role or new.external_id is distinct from old.external_id
+     or new.request_fingerprint is distinct from old.request_fingerprint or new.plan is distinct from old.plan
+     or new.contract_ex_vat_cents is distinct from old.contract_ex_vat_cents then
+    raise exception 'project_cin7_sale_creations %: the request identity and plan are immutable', old.id;
+  end if;
+  if old.cin7_sale_id is not null and new.cin7_sale_id is distinct from old.cin7_sale_id then
+    raise exception 'project_cin7_sale_creations %: the created Sale reference is immutable', old.id;
+  end if;
+  if new.progress is distinct from old.progress and not (
+       (old.progress = 'NONE' and new.progress in ('HEADER', 'DONE')) or (old.progress = 'HEADER' and new.progress = 'DONE')) then
+    raise exception 'project_cin7_sale_creations %: progress can only move forward', old.id;
+  end if;
+  if new.creation_state is distinct from old.creation_state then
+    v_ok := case old.creation_state
+      when 'PENDING'                   then new.creation_state in ('CREATED', 'FAILED_CONFIRMED_NO_WRITE', 'FAILED_UNCERTAIN')
+      when 'FAILED_CONFIRMED_NO_WRITE' then new.creation_state = 'PENDING'
+      when 'FAILED_UNCERTAIN'          then new.creation_state in ('CREATED', 'FAILED_CONFIRMED_NO_WRITE')
+      when 'CREATED'                   then new.creation_state = 'RECONCILED'
+      else false
+    end;
+    if not v_ok then raise exception 'project_cin7_sale_creations %: illegal creation transition % -> %', old.id, old.creation_state, new.creation_state; end if;
+    if new.creation_state = 'PENDING' and new.attempt_count <= old.attempt_count then
+      raise exception 'project_cin7_sale_creations %: a retry must increment attempt_count', old.id;
+    end if;
+    if new.creation_state = 'FAILED_CONFIRMED_NO_WRITE' and new.progress <> 'NONE' then
+      raise exception 'project_cin7_sale_creations %: a Sale that exists in Cin7 is never a confirmed no-write failure', old.id;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+create trigger project_cin7_sale_creations_guard_trg before insert or update or delete on project_cin7_sale_creations
+  for each row execute function project_cin7_sale_creations_guard();
+
+-- A Sale link may not appear for a project whose creation intent is in flight or uncertain (it would race the creation).
+create or replace function project_cin7_sale_links_creation_guard() returns trigger language plpgsql set search_path = public as $$
+begin
+  if exists (select 1 from project_cin7_sale_creations where project_id = new.project_id and creation_state in ('PENDING', 'FAILED_UNCERTAIN')) then
+    raise exception 'project_cin7_sale_links: a Sale creation for project % is in flight or uncertain; reconcile it first', new.project_id;
+  end if;
+  return new;
+end;
+$$;
+create trigger project_cin7_sale_links_creation_guard_trg before insert on project_cin7_sale_links
+  for each row execute function project_cin7_sale_links_creation_guard();
