@@ -1,6 +1,7 @@
 import "server-only";
 // Projects — Variation persistence. LOCAL ONLY: no Cin7, no fetch (pinned by no-cin7-write.test.ts). Every query is org-scoped.
 import type { createServiceRoleClient } from "@/supabase/server";
+import { defaultVariationSchedule } from "./variation-schedule";
 import { assertVariationTransition, nextVariationCode, type VariationRow, type VariationStatus } from "./variations";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
@@ -41,7 +42,11 @@ export async function raiseVariation(
     amount_cents: input.amountCents, status: "DRAFT", raised_by_email: email, priced_by_email: email,
   }).select("id").single();
   if (ins.error || !ins.data) fail(`raise variation: ${ins.error?.message ?? "no row"}`);
-  return { variationId: (ins.data as { id: string }).id, code };
+  const variationId = (ins.data as { id: string }).id;
+  // Every new variation starts with the default billing schedule: one 100% milestone (editable while DRAFT; frozen on approval).
+  const sch = await db.from("project_variation_stages").insert(defaultVariationSchedule().map((s, i) => ({ org_id: orgId, variation_id: variationId, sort_order: i + 1, name: s.name, bps: s.bps }))).select("id");
+  if (sch.error && !/does not exist|schema cache/i.test(sch.error.message)) fail(`default variation schedule: ${sch.error.message}`); // deploy-order safety (0105 not applied)
+  return { variationId, code };
 }
 
 /** Re-prices a DRAFT only. Approved/rejected variations are frozen (the database refuses too). */

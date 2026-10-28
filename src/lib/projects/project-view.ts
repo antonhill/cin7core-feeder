@@ -21,6 +21,10 @@ export interface ProjectRow {
   start_date: string | null;
   target_completion_date: string | null;
   status: string;
+  /** BASE, or VARIATION for a variation billing project (migration 0105). Absent on rows read before the migration: treat as BASE. */
+  billing_scope?: "BASE" | "VARIATION";
+  parent_project_id?: string | null;
+  variation_id?: string | null;
 }
 export interface StageRow { id: string; sort_order: number; name: string; description: string | null; value_cents: number }
 export interface ProgressEventRow {

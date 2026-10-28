@@ -48,7 +48,8 @@ function message(e: unknown): string {
 export async function listProjectsAction(): Promise<ActionResult<ProjectView[]>> {
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
-    return { ok: true, data: await listProjectViews(createServiceRoleClient(), orgId) };
+    // Variation billing projects are reached from their BASE project (Variations tab), not listed as separate projects.
+    return { ok: true, data: (await listProjectViews(createServiceRoleClient(), orgId)).filter((v) => v.project.billing_scope !== "VARIATION") };
   } catch (e) {
     return { ok: false, error: message(e) };
   }
