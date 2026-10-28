@@ -58,7 +58,7 @@ describe("physical store (read-only)", () => {
     const db = new FakeDb();
     let reads = 0;
     const port: PhysicalPort = {
-      async readSale() { reads++; return { ordered: [{ sku: "A", name: "n", quantity: 2 }], invoices: [], fulfilments: [] }; },
+      async readSale() { reads++; return { cogsCents: 1234, ordered: [{ sku: "A", name: "n", quantity: 2 }], invoices: [], fulfilments: [] }; },
       async readStock() { return { onHand: 5, allocated: 0, available: 5 }; },
       async readAssemblies() { throw new Error("assembly list unavailable"); },
     };

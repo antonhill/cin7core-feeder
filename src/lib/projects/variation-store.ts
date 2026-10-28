@@ -27,19 +27,33 @@ export function validateAmount(amountCents: number): void {
   if (!Number.isInteger(amountCents) || amountCents <= 0) fail("A variation amount must be a positive whole number of cents (ex VAT).");
 }
 
+export function validateEstimatedCost(c: number | null | undefined): void {
+  if (c === null || c === undefined) return;
+  if (!Number.isInteger(c) || c < 0) fail("An estimated cost must be a whole, non-negative number of cents (or left blank when unknown).");
+}
+
+/** Sets or clears a DRAFT variation's INTERNAL estimated cost. Approved/rejected variations are frozen (the database refuses too). */
+export async function setVariationEstimatedCost(db: Db, orgId: string, projectId: string, variationId: string, cents: number | null): Promise<void> {
+  validateEstimatedCost(cents);
+  const r = await db.from("project_variations").update({ estimated_cost_cents: cents }).eq("org_id", orgId).eq("project_id", projectId).eq("id", variationId).eq("status", "DRAFT").select("id");
+  if (r.error) fail(r.error.message);
+  if (!r.data || r.data.length === 0) fail("Only a DRAFT variation's estimated cost can be changed.");
+}
+
 /** Raises a DRAFT variation with its estimator price. Never touches the contract value. */
 export async function raiseVariation(
   db: Db, orgId: string, email: string,
-  input: { projectId: string; title: string; description: string; amountCents: number },
+  input: { projectId: string; title: string; description: string; amountCents: number; estimatedCostCents?: number | null },
 ): Promise<{ variationId: string; code: string }> {
   if (!input.title.trim()) fail("A variation needs a title.");
   validateAmount(input.amountCents);
+  validateEstimatedCost(input.estimatedCostCents);
   await projectIsActive(db, orgId, input.projectId);
   const existing = await listVariations(db, orgId, input.projectId);
   const code = nextVariationCode(existing.map((v) => v.code));
   const ins = await db.from("project_variations").insert({
     org_id: orgId, project_id: input.projectId, code, title: input.title.trim(), description: input.description.trim() || null,
-    amount_cents: input.amountCents, status: "DRAFT", raised_by_email: email, priced_by_email: email,
+    amount_cents: input.amountCents, ...(input.estimatedCostCents != null ? { estimated_cost_cents: input.estimatedCostCents } : {}), status: "DRAFT", raised_by_email: email, priced_by_email: email,
   }).select("id").single();
   if (ins.error || !ins.data) fail(`raise variation: ${ins.error?.message ?? "no row"}`);
   const variationId = (ins.data as { id: string }).id;

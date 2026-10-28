@@ -272,6 +272,8 @@ export interface Cin7SaleDetail {
    * made for line detail, no extra Cin7 request.
    */
   CustomerReference?: string | null;
+  /** Cost of goods recognised on this Sale so far (detail-only; 0 until fulfilment is authorised). */
+  COGSAmount?: number | null;
   /**
    * Confirmed live 2026-08-16 (probeSalesRepField, real LBL sale detail
    * responses): reliably present on every sale checked, but the VALUE is
