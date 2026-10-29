@@ -6,14 +6,15 @@ import { buildCostEstimate, type CostEntry } from "@/lib/projects/latest-cost";
 
 // The REAL procurement action over the in-memory database: only the session and the (read-only) Cin7 cost read are replaced.
 let db: FakeDb;
-const today: Record<string, CostEntry> = {};
+const today: Record<string, { supplierId: string; supplierName: string; cost: number | null; currency: string; lastSupplied: string }> = {};
+const px = (cents: number) => ({ supplierId: "s1", supplierName: "Acme", cost: cents / 100, currency: "ZAR", lastSupplied: "2026-10-28T00:00:00" });
 let costFails = false;
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/authorization", () => ({ requireModuleAccess: vi.fn() }));
 vi.mock("@/lib/require-org-admin", () => ({ requireOrgAdmin: vi.fn() }));
 vi.mock("@/lib/projects/newquip-gate", () => ({ assertNewquipOrg: vi.fn() }));
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: () => db }));
-vi.mock("@/lib/projects/latest-cost-adapter", () => ({ readLatestCostEntries: async (_d: unknown, _o: string, _i: string, skus: string[]) => { if (costFails) throw new Error("cin7 down"); return Object.fromEntries(skus.map((s) => [s, today[s] ?? { unitCostCents: null, source: "CIN7_LATEST", retrievedAt: "t" }])); } }));
+vi.mock("@/lib/projects/latest-cost-adapter", () => ({ readSupplierPrices: async (_d: unknown, _o: string, _i: string, skus: string[]) => { if (costFails) throw new Error("cin7 down"); return Object.fromEntries(skus.map((s) => [s, { sku: s, found: true, stockUom: "Item", raws: today[s] ? [today[s]] : [] }])); } })); // today's raw Cin7 supplier prices
 vi.mock("@/lib/projects/physical-adapter", () => ({ buildPhysicalPort: () => ({}) }));
 vi.mock("../profitability-actions", () => ({ getCostingReportAction: async () => ({ ok: true, data: { bySku: [{ sku: "A", actualCents: 105_000, actualQuantity: 10 }] } }) }));
 import { getProcurementTargetsAction } from "../procurement-actions";
@@ -33,7 +34,7 @@ beforeEach(() => {
   for (const k of Object.keys(today)) delete today[k];
   db.rows("projects").push({ id: "p1", org_id: ORG, project_reference: "PRJ-NQ-Q-0009", billing_scope: "BASE", parent_project_id: null,
     baseline_snapshot: { lines: scope.map((s, i) => ({ lineRef: `l${i}`, ...s })), provenance: { newquipQuoteId: "q1" } } });
-  db.rows("newquip_quotes").push({ id: "q1", org_id: ORG, project_id: "p1", accepted_baseline: { physicalCostEstimate: frozen } });
+  db.rows("newquip_quotes").push({ id: "q1", org_id: ORG, project_id: "p1", accepted_baseline: { physicalCostEstimate: { ...frozen, costBasis: { unitBasis: { basis: "STOCK_UNIT", confirmedBy: "x", confirmedAt: at, reason: "per stock unit confirmed" } } } } });
 });
 
 describe("procurement cost targets action", () => {
@@ -51,11 +52,11 @@ describe("procurement cost targets action", () => {
   });
   it("shows the frozen allowed cost beside today's Cin7 cost; changing today's cost leaves the allowed cost untouched", async () => {
     as("buyer", false, ["PROCUREMENT"]);
-    today["A"] = { unitCostCents: 11_000, source: "CIN7_LATEST", retrievedAt: at }; today["B"] = { unitCostCents: 200, source: "CIN7_LATEST", retrievedAt: at };
+    today["A"] = px(11_000); today["B"] = px(200);
     const first = (await getProcurementTargetsAction("p1")).data!;
     expect(first.rows.find((r) => r.sku === "A")).toMatchObject({ approvedUnitCostCents: 10_000, currentUnitCostCents: 11_000, unitVarianceCents: 1000, approvedBasis: "CIN7_LATEST" });
     expect(first.rows.find((r) => r.sku === "B")).toMatchObject({ approvedBasis: "MANUAL_ESTIMATE", approvedReason: "Quote 14 Oct" });
-    today["A"] = { unitCostCents: 99_999, source: "CIN7_LATEST", retrievedAt: at };
+    today["A"] = px(99_999);
     const later = (await getProcurementTargetsAction("p1")).data!;
     expect(later.rows.map((r) => r.approvedUnitCostCents)).toEqual(first.rows.map((r) => r.approvedUnitCostCents));
     expect(later.totals.approvedTotalCents).toBe(first.totals.approvedTotalCents);

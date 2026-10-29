@@ -77,7 +77,7 @@ export interface AcceptedBaseline {
   /** INTERNAL ONLY. Frozen with the baseline so later price or cost changes cannot rewrite the agreed margin. Absent on baselines sealed before margins existed. */
   internalMargin?: MarginSheet;
   /** INTERNAL. The physical-SKU cost estimate (Cin7 latest cost / audited manual estimates) frozen at approval. Absent when no costs were captured. Never changes afterwards. */
-  physicalCostEstimate?: CostEstimate;
+  physicalCostEstimate?: CostEstimate & { costBasis?: { unitBasis?: unknown; incompleteAccepted?: { reason: string; by: string; at: string } } };
   /** Total contract value, ex VAT, integer cents. */
   contractCents: number;
 }
@@ -140,7 +140,14 @@ export function buildAcceptedBaseline(i: BaselineInput): { baseline: AcceptedBas
   const physicalScope = i.mappingLibrary && i.mappingLibrary.size ? applyMappingLibrary(buildPhysicalScope(lines), i.mappingLibrary, i.approvals.managerApprovedAt) : buildPhysicalScope(lines);
   const captured = draft.estimator.physicalCosts;
   const eff = captured && Object.keys(captured).length ? effectiveScope(physicalScope) : null;
-  const physicalCostEstimate = eff ? buildCostEstimate(eff.lines.map((l) => ({ sku: l.sku, description: l.description, quantity: l.quantity })), captured!, eff.blockers.length ? eff.blockers : []) : undefined;
+  const builtEstimate = eff ? buildCostEstimate(eff.lines.map((l) => ({ sku: l.sku, description: l.description, quantity: l.quantity })), captured!, eff.blockers.length ? eff.blockers : []) : undefined;
+  // Once costing has been started an INCOMPLETE snapshot cannot be frozen, unless an authorised user recorded an explicit, reasoned exception (frozen with it).
+  const accepted = draft.estimator.costBasis?.incompleteAccepted;
+  if (builtEstimate?.incomplete && !accepted) {
+    const parts = [builtEstimate.missingSkus.length ? `${builtEstimate.missingSkus.length} SKU(s) have no supplier cost selected (${builtEstimate.missingSkus.slice(0, 5).join(", ")}${builtEstimate.missingSkus.length > 5 ? ", ..." : ""})` : "", builtEstimate.unresolvedPackages.length ? `${builtEstimate.unresolvedPackages.length} package(s) are not mapped to Cin7 SKUs` : ""].filter(Boolean);
+    throw new Error(`The cost estimate is incomplete: ${parts.join(" and ")}. Resolve each (select a supplier, enter an audited manual estimate, map the package) or record an authorised exception before approving.`);
+  }
+  const physicalCostEstimate = builtEstimate ? { ...builtEstimate, ...(draft.estimator.costBasis ? { costBasis: structuredClone(draft.estimator.costBasis) } : {}) } : undefined;
   const baseline: AcceptedBaseline = {
     schemaVersion: 1,
     quote: { ref: i.quoteRef, revision: i.revision, customerName: draft.customerName.trim(), siteName: draft.siteName.trim(), quoteType: draft.quoteType },

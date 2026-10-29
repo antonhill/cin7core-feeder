@@ -14,7 +14,9 @@ import { buildPhysicalPort } from "@/lib/projects/physical-adapter";
 import { loadPhysicalStatus, type PhysicalPort } from "@/lib/projects/physical-store";
 import { loadSaleLink } from "@/lib/projects/cin7-posting-store";
 import { effectiveScope, scopeFromSnapshot } from "@/lib/projects/product-scope";
-import { readLatestCostEntries } from "@/lib/projects/latest-cost-adapter";
+import { readSupplierPrices } from "@/lib/projects/latest-cost-adapter";
+import { currentRates } from "@/lib/projects/fx-store";
+import { DEFAULT_MAX_RATE_AGE_HOURS, normaliseOption, type SupplierOption } from "@/lib/projects/supplier-price";
 import { buildProcurementTargets, type TargetActual, type TargetRow, type TargetTotals } from "@/lib/projects/procurement-targets";
 import type { CostEstimate } from "@/lib/projects/latest-cost";
 import { resolveRoles } from "@/lib/approvals/role-store";
@@ -51,11 +53,11 @@ export async function getProcurementTargetsAction(projectId: string): Promise<Pr
     const notes: string[] = [];
 
     // The estimate frozen with the approved quotation (never recomputed, never altered by a later Cin7 cost).
-    let estimate: CostEstimate | null = null;
+    let estimate: (CostEstimate & { costBasis?: { unitBasis?: unknown } }) | null = null;
     const quoteId = proj.baseline_snapshot?.provenance?.newquipQuoteId;
     if (quoteId) {
       const q = await db.from("newquip_quotes").select("accepted_baseline, project_id").eq("org_id", orgId).eq("id", quoteId).maybeSingle();
-      const row = q.data as { accepted_baseline?: { physicalCostEstimate?: CostEstimate } | null; project_id?: string | null } | null;
+      const row = q.data as { accepted_baseline?: { physicalCostEstimate?: CostEstimate & { costBasis?: { unitBasis?: unknown } } } | null; project_id?: string | null } | null;
       if (row && row.project_id === projectId) estimate = row.accepted_baseline?.physicalCostEstimate ?? null;
     }
     if (!estimate) notes.push("No cost estimate was captured before this quotation was approved, so there is no approved cost to compare against.");
@@ -64,11 +66,16 @@ export async function getProcurementTargetsAction(projectId: string): Promise<Pr
     const link = await loadSaleLink(db, orgId, projectId).catch(() => null);
     const physical = await loadPhysicalStatus(db, link ? buildPhysicalPort(db, orgId, link.instance_id) : NO_CIN7, { orgId, projectId });
 
-    // Today's Cin7 latest cost for the same SKUs (a fresh GET; never stored).
-    let current: Awaited<ReturnType<typeof readLatestCostEntries>> | null = null;
+    // Today's Cin7 supplier prices for the same SKUs (a fresh GET; never stored), each supplier evaluated independently under TODAY'S exchange rates.
+    let current: Record<string, { options: SupplierOption[]; readAt: string }> | null = null;
     let costRead: "OK" | "UNAVAILABLE" = "OK";
-    try { current = await readLatestCostEntries(db, orgId, link?.instance_id ?? NEWQUIP_POC_CIN7_INSTANCE_ID, scope.map((l) => l.sku), new Date().toISOString()); }
-    catch { costRead = "UNAVAILABLE"; notes.push("Today's Cin7 costs could not be read just now."); }
+    try {
+      const nowIso = new Date().toISOString();
+      const rates = (await currentRates(db, orgId)) ?? {};
+      const unitBasis = (estimate?.costBasis?.unitBasis as import("@/lib/projects/supplier-price").UnitBasis | undefined) ?? null;
+      const prices = await readSupplierPrices(db, orgId, link?.instance_id ?? NEWQUIP_POC_CIN7_INSTANCE_ID, scope.map((l) => l.sku));
+      current = Object.fromEntries(Object.entries(prices).map(([sku, p]) => [sku, { options: p.raws.map((r) => normaliseOption(r, { fx: rates, nowIso, maxRateAgeHours: DEFAULT_MAX_RATE_AGE_HOURS, unitBasis })), readAt: nowIso }]));
+    } catch { costRead = "UNAVAILABLE"; notes.push("Today's Cin7 supplier prices could not be read just now."); }
 
     // Recognised actual cost: only for those who may see the project costing (owner/admin); everyone else sees none rather than a guess.
     let actual: Record<string, TargetActual> | null = null;

@@ -45,6 +45,8 @@ export class FakeDb {
   approvalsApplied = false;
   /** Migration 0112 (roles, policies, staged approvals) is not applied unless a test says so. */
   rolesApplied = false;
+  /** Migration 0113 (exchange-rate snapshots) is not applied unless a test says so. */
+  fxApplied = false;
 
   from(table: string) {
     const cap = () => this.maxRows;
@@ -63,7 +65,9 @@ export class FakeDb {
     const setRows = (t: string, rows: Row[]) => { this.tables[t] = rows; };
     const approvals = () => this.approvalsApplied;
     const rolesOn = () => this.rolesApplied;
+    const fxOn = () => this.fxApplied;
     function exec(): { data: unknown; error: { message: string } | null } {
+      if (table === "newquip_fx_rates" && !fxOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (/^(org_functional_role|approval_polic)/.test(table) && !rolesOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (table.startsWith("approval_") && !approvals()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (op === "insert") {

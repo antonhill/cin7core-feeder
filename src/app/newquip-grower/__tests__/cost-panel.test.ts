@@ -13,7 +13,7 @@ const at = "2026-10-29T08:00:00Z";
 const line = (sku: string, unit: number | null) => ({ sku, description: `${sku} desc`, quantity: 2, status: unit === null ? "MISSING" as const : "LATEST" as const, unitCostCents: unit, totalCostCents: unit === null ? null : unit * 2, source: unit === null ? null : "CIN7_LATEST" as const, retrievedAt: unit === null ? null : at, supplier: unit === null ? null : "Acme", reason: null });
 const draftView = (over: Partial<QuoteCostView> = {}): QuoteCostView => ({
   estimate: { lines: [line("A-1", 1500), line("B-2", null)], totalCostCents: 3000, missingSkus: ["B-2"], unresolvedPackages: [], incomplete: true },
-  frozen: false, contractCents: 100_000, marginPct: null, gpCents: null, complete: false, note: "Draft estimate.", canCapture: true, retrievedAt: at, ...over,
+  frozen: false, contractCents: 100_000, marginPct: null, gpCents: null, complete: false, note: "Draft estimate.", canCapture: true, retrievedAt: at, skuOptions: {}, fx: {}, fxAvailable: true, fxHistory: [], maxRateAgeHours: 72, unitBasis: null, incompleteAccepted: null, ...over,
 });
 const noop = () => undefined;
 /** The opening tag of the Capture button (class names contain "disabled:" utilities, so only the real attribute counts). */

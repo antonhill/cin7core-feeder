@@ -3,6 +3,7 @@ import type { GrowerConfigurationInput, GrowerItemKey } from "./types";
 import type { QuoteType } from "./pricing-source";
 import type { CostOverride } from "../quote/margin";
 import type { CostEntry } from "@/lib/projects/latest-cost";
+import type { UnitBasis } from "@/lib/projects/supplier-price";
 
 // The editable state of one NewQuip Grower quote. Everything in it is an INPUT (engineering inputs from the rep, decisions
 // from the estimator); every number the quote shows is recomputed from it by evaluate.ts. Persisted as JSON.
@@ -25,6 +26,8 @@ export interface EstimatorState {
    * add or change these (see keepServerOwnedCosts); they are written only by the capture / manual-estimate actions, and frozen with the approved quotation.
    */
   physicalCosts?: Record<string, CostEntry>;
+  /** SERVER-OWNED, like physicalCosts. The estimator's audited declarations behind the cost estimate: that supplier prices are per stock unit, and an authorised exception that lets an incomplete cost estimate be approved. */
+  costBasis?: { unitBasis?: UnitBasis; incompleteAccepted?: { reason: string; by: string; at: string } };
   /** Free-text assumptions that travel with the quote and are frozen in the baseline. */
   assumptions: string;
 }
