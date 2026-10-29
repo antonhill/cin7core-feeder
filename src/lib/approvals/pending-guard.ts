@@ -3,10 +3,12 @@ import "server-only";
 // they can import it without a cycle. Safe before migration 0110 exists (no table = nothing is pending).
 import type { createServiceRoleClient } from "@/supabase/server";
 import type { ApprovalDocType } from "./types";
+import { APPROVALS_DISABLED } from "./kill-switch";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 
 export async function hasPendingApproval(db: Db, orgId: string, docType: ApprovalDocType, docId: string): Promise<boolean> {
+  if (APPROVALS_DISABLED) return false;
   const r = await db.from("approval_requests").select("id").eq("org_id", orgId).eq("doc_type", docType).eq("doc_id", docId).eq("status", "PENDING").limit(1);
   if (r.error) return false; // table not there yet
   return (r.data ?? []).length > 0;

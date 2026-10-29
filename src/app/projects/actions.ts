@@ -266,7 +266,7 @@ export async function submitVariationForApprovalAction(projectId: string, variat
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     assertNewquipOrg(orgId);
     const db = createServiceRoleClient();
-    if (!(await approvalsAvailable(db))) throw new Error("Approvals are not available yet (database migration pending).");
+    if (!(await approvalsAvailable(db))) throw new Error("Approvals are not available (switched off, or the database migration is pending).");
     const v = await db.from("project_variations").select("id").eq("org_id", orgId).eq("project_id", projectId).eq("id", variationId).maybeSingle();
     if (!v.data) throw new Error("Variation not found in this project.");
     await submitForApproval(db, legacyCtx(orgId, userId, email, await isAdmin()), "VARIATION", variationId);

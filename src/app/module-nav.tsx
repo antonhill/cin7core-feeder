@@ -7,6 +7,7 @@
 
 import Image from "next/image";
 import { isNewquipPocOrg } from "@/newquip/access";
+import { APPROVALS_DISABLED } from "@/lib/approvals/kill-switch";
 import { useId } from "react";
 
 type IconProps = { className?: string };
@@ -628,7 +629,7 @@ export function buildNavLinks(orgId: string | null, disabledModules: string[], i
     if (at < 0) at = visible.length;
     links = [...visible.slice(0, at), SOLUTION_BUILDER_MODULE, ...visible.slice(at)];
   }
-  if (orgId != null && isNewquipPocOrg(orgId) && !disabledModules.includes(PROJECTS_MODULE.href)) {
+  if (!APPROVALS_DISABLED && orgId != null && isNewquipPocOrg(orgId) && !disabledModules.includes(PROJECTS_MODULE.href)) {
     const i = links.findIndex((m) => m.href === PROJECTS_MODULE.href);
     links = [...links.slice(0, i + 1), APPROVALS_MODULE, ...links.slice(i + 1)];
   }

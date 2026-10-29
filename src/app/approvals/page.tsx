@@ -47,7 +47,7 @@ export default function ApprovalsPage() {
   return (
     <main className="mx-auto w-full max-w-[1480px] px-6 py-8">
       <ModuleHeader module={APPROVALS_MODULE}>Approvals</ModuleHeader>
-      {!d.available && <div className="mt-4"><Alert tone="warning">Approvals activate once the approvals database migration (0110) has been applied. Until then quotations, claims and variations keep their existing approve buttons.</Alert></div>}
+      {!d.available && <div className="mt-4"><Alert tone="warning">Approvals are not active (the database migration is pending). Until then quotations, claims and variations keep their existing approve buttons.</Alert></div>}
       {error && <div className="mt-4"><Alert tone="danger">{error}</Alert></div>}
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

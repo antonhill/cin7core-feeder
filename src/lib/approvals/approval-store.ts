@@ -16,6 +16,7 @@ import { approveClaim, cancelDraftClaim, returnClaimToDraft } from "@/lib/projec
 import { approveVariation, rejectVariation } from "@/lib/projects/variation-store";
 import { listVariationStages } from "@/lib/projects/variation-billing-store";
 import { authoriseDecision } from "./policy";
+import { APPROVALS_DISABLED } from "./kill-switch";
 export { assertNotPendingApproval } from "./pending-guard";
 import { claimDigest, quoteDigest, variationDigest } from "./digest";
 import { buildNotification, type NotificationSpec } from "./messages";
@@ -31,6 +32,7 @@ export interface ApprovalCtx { orgId: string; userId: string; email: string; nam
 
 /** False until migration 0110 is applied: every caller then keeps the documents' previous behaviour. Never reports an error as "no approvals". */
 export async function approvalsAvailable(db: Db): Promise<boolean> {
+  if (APPROVALS_DISABLED) return false; // operational kill switch (see kill-switch.ts)
   const r = await db.from("approval_requests").select("id").limit(1);
   if (!r.error) return true;
   if (missing(r.error.message)) return false;
