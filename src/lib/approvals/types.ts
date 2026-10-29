@@ -13,14 +13,17 @@ export interface ApprovalRequestRow {
   revision: number; digest: string; amount_cents: number; status: ApprovalStatus; prepared_by_email: string; submitted_at: string; assigned_to_email: string | null; assigned_at: string | null;
   due_at: string | null; first_viewed_at: string | null; decided_by_email: string | null; decided_by_name: string | null; decided_at: string | null; decision_reason: string | null;
   admin_override: boolean; closed_at: string | null; version: number; reminders_sent: number; last_reminder_at: string | null; created_at: string;
+  /** Migration 0112. Absent on a database that only has 0110: every request is then a single MANAGER-stage request. */
+  stage?: "ESTIMATOR" | "MANAGER"; stage_role?: string | null; originator_email?: string | null; return_destination?: "ESTIMATOR" | "PREPARER" | null;
 }
 export interface ApprovalEventRow {
   id: string; request_id: string; doc_type: ApprovalDocType; doc_id: string; doc_ref: string; revision: number; project_id: string | null;
   action: string; from_status: string | null; to_status: string | null; actor_email: string; actor_name: string | null; reason: string | null; digest: string; created_at: string;
+  stage?: string | null; destination?: string | null;
 }
 export interface ApprovalNotificationRow {
   id: string; request_id: string; kind: string; recipient_email: string; channel: "IN_APP" | "EMAIL"; subject: string; body: string; dedupe_key: string;
   status: "PENDING" | "SENT" | "FAILED" | "ABANDONED"; attempts: number; last_error: string | null; provider_message_id: string | null; sent_at: string | null; read_at: string | null; created_at: string;
 }
-export interface ApprovalSettings { targetBusinessDays: number; reminderEveryHours: number; maxReminders: number; escalationEmail: string | null }
-export const DEFAULT_APPROVAL_SETTINGS: ApprovalSettings = { targetBusinessDays: 2, reminderEveryHours: 24, maxReminders: 3, escalationEmail: null };
+export interface ApprovalSettings { targetBusinessDays: number; reminderEveryHours: number; maxReminders: number; escalationEmail: string | null; /** Migration 0112: only explicit functional roles count (no tier fallback). */ rolesEnforced?: boolean }
+export const DEFAULT_APPROVAL_SETTINGS: ApprovalSettings = { targetBusinessDays: 2, reminderEveryHours: 24, maxReminders: 3, escalationEmail: null, rolesEnforced: false };

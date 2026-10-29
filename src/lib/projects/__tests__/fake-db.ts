@@ -43,6 +43,8 @@ export class FakeDb {
 
   /** Migration 0110 (approvals) is not applied unless a test says so: its tables then read as "does not exist", exactly like a database that has not received it. */
   approvalsApplied = false;
+  /** Migration 0112 (roles, policies, staged approvals) is not applied unless a test says so. */
+  rolesApplied = false;
 
   from(table: string) {
     const cap = () => this.maxRows;
@@ -60,7 +62,9 @@ export class FakeDb {
 
     const setRows = (t: string, rows: Row[]) => { this.tables[t] = rows; };
     const approvals = () => this.approvalsApplied;
+    const rolesOn = () => this.rolesApplied;
     function exec(): { data: unknown; error: { message: string } | null } {
+      if (/^(org_functional_role|approval_polic)/.test(table) && !rolesOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (table.startsWith("approval_") && !approvals()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (op === "insert") {
         const incoming = (Array.isArray(payload) ? payload : [payload]).map((p) => ({ ...p }));

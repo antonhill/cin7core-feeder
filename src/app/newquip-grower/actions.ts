@@ -8,10 +8,12 @@ import { QUOTES_MODULE } from "@/app/module-nav";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
 import { evaluateDraft, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import type { QuoteDraft } from "@/newquip/grower/draft";
-import { rolesFor, type OrgTier, type QuoteRole } from "@/newquip/quote/roles";
+import { type OrgTier, type QuoteRole } from "@/newquip/quote/roles";
+import { toQuoteRoles } from "@/lib/approvals/roles";
+import { resolveRoles } from "@/lib/approvals/role-store";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
 import { redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
-import { approvalsAvailable, decideDocument, legacyCtx, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
+import { approvalsAvailable, decideDocument, legacyCtx, resyncQuoteApprovals, stagedAvailable, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
 import { resolveScheduleChoice, type ScheduleChoice, type ScheduleStageTemplate } from "@/newquip/quote/billing-schedule";
 import { sameSchedule, type ScheduleSource } from "@/newquip/quote/project-template";
 import { loadActiveTemplateVersion } from "@/lib/projects/project-template-store";
@@ -45,7 +47,9 @@ async function authorise(): Promise<Actor> {
   } catch {
     tier = "member"; // fail closed: anything that is not provably admin is a plain member
   }
-  return { orgId, userId: access.userId, email: access.email ?? "unknown", tier, roles: rolesFor(tier) };
+  // Functional roles (migration 0112) when assigned; otherwise exactly the tier-based roles of Phase H.
+  const functional = await resolveRoles(createServiceRoleClient(), orgId, access.userId, tier === "admin");
+  return { orgId, userId: access.userId, email: access.email ?? "unknown", tier, roles: toQuoteRoles(functional) };
 }
 
 function errMsg(e: unknown): string {
@@ -126,7 +130,9 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
     const a = await authorise();
     const db = createServiceRoleClient();
     const prior = await loadQuote(db, a.orgId, quoteId);
-    await saveDraft(db, a.orgId, a.roles, quoteId, stampCostOverrides(draft, prior?.draft.estimator.costOverrides, a.tier === "admin", a.email, new Date().toISOString()));
+    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, stampCostOverrides(draft, prior?.draft.estimator.costOverrides, a.tier === "admin", a.email, new Date().toISOString()));
+    // Changed content invalidates the estimator's sign-off (saveDraft clears it) and any open approval of the older content: the quote goes back to estimator review.
+    if (saved.draftHash !== prior?.draft_hash && (await stagedAvailable(db))) await resyncQuoteApprovals(db, legacyCtx(a.orgId, a.userId, a.email, a.tier === "admin"), quoteId, { quiet: true }).catch(() => undefined);
     const q = await loadQuote(db, a.orgId, quoteId);
     return q ? { ok: true, data: view(q, a) } : { ok: false, error: "Quote not found." };
   } catch (e) {
@@ -157,11 +163,19 @@ async function step(
 /** Rep → Estimator. Records that the customer confirmed this commercial amount (ex VAT, in cents). */
 export async function sendGrowerQuoteToEstimatorAction(quoteId: string, confirmedAmountCents: number, confirmedBy: string) {
   return step(quoteId, "Sent a NewQuip quote to the estimator (customer confirmed the amount)", "newquip.quote_sent_to_estimator", (a, db) =>
-    sendToEstimator(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), { confirmedAmountCents, confirmedBy }));
+    sendToEstimator(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), { confirmedAmountCents, confirmedBy }).then(async () => {
+      // The estimator stage opens now: the policy's named estimator (or every estimator) is notified in the app and by email.
+      if (await stagedAvailable(db)) await resyncQuoteApprovals(db, legacyCtx(a.orgId, a.userId, a.email, a.tier === "admin"), quoteId);
+    }));
 }
 
 export async function returnGrowerQuoteToRepAction(quoteId: string, reason: string) {
   return step(quoteId, "Returned a NewQuip quote to the rep", "newquip.quote_returned_to_rep", async (a, db) => {
+    if (await stagedAvailable(db)) {
+      // Staged: the reason and destination are recorded on the request that is open (estimator review or manager approval); the actor must hold that stage's role.
+      await decideDocument(db, legacyCtx(a.orgId, a.userId, a.email, a.tier === "admin"), "QUOTE", quoteId, "RETURN", { reason, destination: "PREPARER" });
+      return;
+    }
     if (await approvalsAvailable(db)) {
       // A manager returning a submitted quote is a recorded RETURN decision (reason required); an estimator pulling it back withdraws the submission.
       if (a.roles.has("manager")) { await decideDocument(db, legacyCtx(a.orgId, a.userId, a.email, true), "QUOTE", quoteId, "RETURN", { reason }); return; }
@@ -175,16 +189,31 @@ export async function returnGrowerQuoteToRepAction(quoteId: string, reason: stri
 
 export async function signOffGrowerQuoteAction(quoteId: string) {
   return step(quoteId, "Estimator signed off a NewQuip quote", "newquip.quote_estimator_signed_off", (a, db) =>
-    estimatorSignOff(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true)).then(async () => {
+    (async () => {
+      // Staged: the sign-off IS the estimator-stage decision (named assignment, role, history), and it opens the manager stage.
+      if (await stagedAvailable(db)) { await decideDocument(db, legacyCtx(a.orgId, a.userId, a.email, a.tier === "admin"), "QUOTE", quoteId, "APPROVE", { stage: "ESTIMATOR" }); return "STAGED" as const; }
+      await estimatorSignOff(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true));
+      return "LEGACY" as const;
+    })().then(async (mode) => {
+      if (mode === "STAGED") return;
       // The sign-off is the submission to the approving manager: record the exact revision + digest on the Approvals dashboard.
       if (await approvalsAvailable(db)) await submitForApproval(db, legacyCtx(a.orgId, a.userId, a.email, a.tier === "admin"), "QUOTE", quoteId).catch(() => undefined);
     }));
+}
+
+/** Manager -> Estimator. The quotation and its history are kept; only the estimator's sign-off is withdrawn and must be given again on the current content. */
+export async function returnGrowerQuoteToEstimatorAction(quoteId: string, reason: string) {
+  return step(quoteId, "Manager returned a NewQuip quote to the estimator", "newquip.quote_returned_to_estimator", async (a, db) => {
+    if (!(await stagedAvailable(db))) throw new Error("Returning a quotation to the estimator needs the roles and staged approvals migration (pending).");
+    await decideDocument(db, legacyCtx(a.orgId, a.userId, a.email, a.tier === "admin"), "QUOTE", quoteId, "RETURN", { reason, destination: "ESTIMATOR", stage: "MANAGER" });
+  });
 }
 
 /** Manager final approval — freezes the accepted baseline. */
 export async function approveGrowerQuoteAction(quoteId: string) {
   return step(quoteId, "Manager approved a NewQuip quote and froze the accepted baseline", "newquip.quote_manager_approved", async (a, db) => {
     // One approval path: when the Approvals framework is available the decision is recorded there (separation of duties, exact revision, history).
+    if (await stagedAvailable(db)) { await decideDocument(db, legacyCtx(a.orgId, a.userId, a.email, a.tier === "admin"), "QUOTE", quoteId, "APPROVE", { stage: "MANAGER" }); return; }
     if (await approvalsAvailable(db)) { await decideDocument(db, legacyCtx(a.orgId, a.userId, a.email, a.roles.has("manager")), "QUOTE", quoteId, "APPROVE"); return; }
     // Approval evaluates with cost withheld; the INTERNAL margin sheet is frozen from a second, cost-visible evaluation of the same draft.
     await managerApprove(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), evaluationContext(false));

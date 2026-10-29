@@ -10,12 +10,14 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { sendEmail } from "@/lib/email/resend";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
-import { managerApprove, returnToRep, loadQuote } from "@/lib/newquip-quotes/quote-store";
+import { managerApprove, returnToRep, returnToEstimator, estimatorSignOff, loadQuote } from "@/lib/newquip-quotes/quote-store";
 import { rolesFor } from "@/newquip/quote/roles";
 import { approveClaim, cancelDraftClaim, returnClaimToDraft } from "@/lib/projects/project-store";
 import { approveVariation, rejectVariation } from "@/lib/projects/variation-store";
 import { listVariationStages } from "@/lib/projects/variation-billing-store";
-import { authoriseDecision } from "./policy";
+import { authoriseDecision, authoriseStageDecision } from "./policy";
+import { canAdminister, stageOf, STAGE_LABEL, ROLE_LABEL, type ApprovalStage, type FunctionalRole } from "./roles";
+import { emailsWithRole, loadPolicies, resolveRoles, rolesAvailable } from "./role-store";
 import { APPROVALS_DISABLED } from "./kill-switch";
 export { assertNotPendingApproval } from "./pending-guard";
 import { claimDigest, quoteDigest, variationDigest } from "./digest";
@@ -59,10 +61,10 @@ export async function managerEmails(db: Db, orgId: string): Promise<string[]> {
 
 // ── document snapshots ──────────────────────────────────────────────────────
 
-export type DocState = "SUBMITTABLE" | "APPROVED" | "RETURNED" | "REJECTED" | "OTHER";
+export type DocState = "SUBMITTABLE" | "APPROVED" | "RETURNED" | "REJECTED" | "UNSIGNED" | "OTHER";
 export interface DocSnapshot {
   docType: ApprovalDocType; docId: string; docRef: string; projectId: string | null; projectRef: string | null; customer: string | null; amountCents: number;
-  preparedBy: string; digest: string; state: DocState; stateLabel: string;
+  preparedBy: string; /** The person who started the document (the salesperson for a quotation). */ originator?: string | null; digest: string; state: DocState; stateLabel: string;
   /** For a claim in a variation billing project: the customer-facing parent project and the variation reference. */
   scopeLabel: string | null;
 }
@@ -81,16 +83,21 @@ async function projectInfo(db: Db, orgId: string, projectId: string): Promise<{ 
   return { ref: row.project_reference, customer: row.customer_name, parentId: null, scope: row.billing_scope, variationCode: null };
 }
 
-export async function loadSnapshot(db: Db, orgId: string, docType: ApprovalDocType, docId: string): Promise<DocSnapshot> {
+export async function loadSnapshot(db: Db, orgId: string, docType: ApprovalDocType, docId: string, stage: ApprovalStage = "MANAGER"): Promise<DocSnapshot> {
   if (docType === "QUOTE") {
     const q = await loadQuote(db, orgId, docId);
     if (!q) fail("Quote not found.");
     const proj = q.project_id ? await projectInfo(db, orgId, q.project_id) : null;
     const signed = q.state === "ESTIMATOR_REVIEW" && !!q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash && q.customer_confirmed_cents != null;
-    const state: DocState = signed ? "SUBMITTABLE" : q.state === "MANAGER_APPROVED_FINAL" ? "APPROVED" : q.state === "REP_DRAFT" ? "RETURNED" : "OTHER";
+    const confirmed = q.state === "ESTIMATOR_REVIEW" && q.customer_confirmed_cents != null;
+    const rep = (q.handoff_by_email ?? q.created_by_email ?? "unknown").toLowerCase();
+    // ESTIMATOR stage: the quote waits for the estimator's sign-off. MANAGER stage: it waits for the manager, and only after a sign-off of THIS content.
+    const state: DocState = stage === "ESTIMATOR"
+      ? (confirmed ? (signed ? "APPROVED" : "SUBMITTABLE") : q.state === "REP_DRAFT" ? "RETURNED" : "OTHER")
+      : (signed ? "SUBMITTABLE" : q.state === "MANAGER_APPROVED_FINAL" ? "APPROVED" : q.state === "REP_DRAFT" ? "RETURNED" : q.state === "ESTIMATOR_REVIEW" ? "UNSIGNED" : "OTHER");
     return {
       docType, docId, docRef: q.quote_ref, projectId: q.project_id, projectRef: proj?.ref ?? null, customer: q.customer_name, amountCents: q.customer_confirmed_cents ?? q.contract_cents ?? 0,
-      preparedBy: (q.estimator_signoff_by_email ?? q.handoff_by_email ?? q.created_by_email ?? "unknown").toLowerCase(),
+      preparedBy: stage === "ESTIMATOR" ? rep : (q.estimator_signoff_by_email ?? q.handoff_by_email ?? q.created_by_email ?? "unknown").toLowerCase(), originator: rep,
       digest: quoteDigest({ quoteRef: q.quote_ref, revision: q.revision, draftHash: q.draft_hash, confirmedCents: q.customer_confirmed_cents ?? 0 }), state, stateLabel: q.state, scopeLabel: null,
     };
   }
@@ -157,7 +164,8 @@ const asRequest = (r: unknown): ApprovalRequestRow => r as ApprovalRequestRow;
 const newId = () => crypto.randomUUID();
 
 /** Submits the CURRENT revision of a document. Records the exact digest and amount; identical content already pending is a no-op; changed content supersedes the pending submission. */
-export async function submitForApproval(db: Db, ctx: ApprovalCtx, docType: ApprovalDocType, docId: string, opts: { assignTo?: string | null; now?: Date; actor?: { email: string; name: string } } = {}): Promise<ApprovalRequestRow> {
+export async function submitForApproval(db: Db, ctx: ApprovalCtx, docType: ApprovalDocType, docId: string, opts: { assignTo?: string | null; now?: Date; actor?: { email: string; name: string }; stage?: ApprovalStage; quiet?: boolean } = {}): Promise<ApprovalRequestRow> {
+  if (await stagedAvailable(db)) return submitStaged(db, ctx, docType, docId, opts);
   const now = opts.now ?? new Date();
   const snap = await loadSnapshot(db, ctx.orgId, docType, docId);
   if (snap.state !== "SUBMITTABLE") fail(`This ${docType.toLowerCase()} is not in a state that can be submitted for approval (${snap.stateLabel}).`);
@@ -195,9 +203,10 @@ function matchesTarget(action: ApprovalAction, snap: DocSnapshot): boolean {
   return true;
 }
 
-export async function decide(db: Db, ctx: ApprovalCtx, requestId: string, action: ApprovalAction, input: { reason?: string; override?: boolean; expectedVersion: number; expectedDigest: string }): Promise<ApprovalRequestRow> {
+export async function decide(db: Db, ctx: ApprovalCtx, requestId: string, action: ApprovalAction, input: { reason?: string; override?: boolean; destination?: "ESTIMATOR" | "PREPARER" | null; expectedVersion: number; expectedDigest: string }): Promise<ApprovalRequestRow> {
   const req = await loadRequest(db, ctx.orgId, requestId);
   if (!req) fail("Approval request not found.");
+  if (req.stage !== undefined) return decideStaged(db, ctx, req, action, input); // a database with migration 0112 returns the stage on every request
   const verdict = authoriseDecision({ email: ctx.email, isManager: ctx.isManager }, action, req, input);
   if (!verdict.ok) fail(verdict.error);
   if (req.version !== input.expectedVersion || req.digest !== input.expectedDigest) fail("This submission changed while you were reviewing it. Reload and review the current revision before deciding.");
@@ -243,12 +252,20 @@ async function applyDocumentAction(db: Db, ctx: ApprovalCtx, req: ApprovalReques
 }
 
 export async function reassign(db: Db, ctx: ApprovalCtx, requestId: string, newApprover: string, expectedVersion: number): Promise<ApprovalRequestRow> {
-  if (!ctx.isManager) fail("Only a manager can reassign an approval.");
   const req = await loadRequest(db, ctx.orgId, requestId);
   if (!req) fail("Approval request not found.");
   if (req.status !== "PENDING") fail(`This submission is already ${req.status.toLowerCase()}.`);
   const to = newApprover.trim().toLowerCase();
-  if (!(await managerEmails(db, ctx.orgId)).includes(to)) fail("The new approver must be a manager (organisation owner or admin).");
+  if (req.stage !== undefined) {
+    // Staged: an administrator, a manager, or the current assignee may hand the stage to someone who holds that stage's role.
+    const roles = await resolveRoles(db, ctx.orgId, ctx.userId, ctx.isManager);
+    if (!(canAdminister(roles, ctx.isManager) || roles.has("MANAGER") || (req.assigned_to_email ?? "") === ctx.email)) fail("Only an administrator, a manager or the current approver can reassign an approval.");
+    const need = (req.stage_role as FunctionalRole | null) ?? "MANAGER";
+    if (!(await emailsWithRole(db, ctx.orgId, need)).includes(to)) fail(`The new approver must hold the ${ROLE_LABEL[need]} role.`);
+  } else {
+    if (!ctx.isManager) fail("Only a manager can reassign an approval.");
+    if (!(await managerEmails(db, ctx.orgId)).includes(to)) fail("The new approver must be a manager (organisation owner or admin).");
+  }
   const specs: NotificationSpec[] = [buildNotification("REASSIGNED", req, to, { baseUrl: ctx.baseUrl, by: ctx.name, newApprover: to })];
   if (req.assigned_to_email && req.assigned_to_email !== to) specs.push(buildNotification("REASSIGNED_AWAY", req, req.assigned_to_email, { baseUrl: ctx.baseUrl, by: ctx.name, newApprover: to }));
   const r = await db.rpc("approval_reassign", { p_org: ctx.orgId, p_request: requestId, p_new: to, p_actor: ctx.email, p_actor_name: ctx.name, p_expected_version: expectedVersion, p_notifications: specs });
@@ -358,13 +375,25 @@ export function legacyCtx(orgId: string, userId: string, email: string | null, i
  * A decision made from a document's own screen. The current revision is submitted first when nobody submitted it (recorded as submitted by its
  * preparer), then decided through the same checks as the Approvals dashboard: separation of duties, exact digest, history, notifications.
  */
-export async function decideDocument(db: Db, ctx: ApprovalCtx, docType: ApprovalDocType, docId: string, action: Exclude<ApprovalAction, "WITHDRAW">, input: { reason?: string; override?: boolean } = {}): Promise<ApprovalRequestRow> {
+export async function decideDocument(db: Db, ctx: ApprovalCtx, docType: ApprovalDocType, docId: string, action: Exclude<ApprovalAction, "WITHDRAW">, input: { reason?: string; override?: boolean; destination?: "ESTIMATOR" | "PREPARER" | null; stage?: ApprovalStage } = {}): Promise<ApprovalRequestRow> {
   let req = await pendingRequestFor(db, ctx.orgId, docType, docId);
+  const staged = await stagedAvailable(db);
   if (!req) {
-    const snap = await loadSnapshot(db, ctx.orgId, docType, docId);
-    req = await submitForApproval(db, ctx, docType, docId, { actor: { email: snap.preparedBy, name: snap.preparedBy } });
+    if (staged && docType === "QUOTE") req = await resyncQuoteApprovals(db, ctx, docId, { quiet: true, actor: undefined });
+    else {
+      const snap = await loadSnapshot(db, ctx.orgId, docType, docId);
+      req = await submitForApproval(db, ctx, docType, docId, { actor: { email: snap.preparedBy, name: snap.preparedBy } });
+    }
+    if (!req) fail(`This ${docType.toLowerCase()} is not waiting for a decision.`);
   }
-  return decide(db, ctx, req.id, action, { ...input, expectedVersion: req.version, expectedDigest: req.digest });
+  if (staged && input.stage && (req.stage ?? "MANAGER") !== input.stage) fail(`This quotation is waiting for ${STAGE_LABEL[req.stage ?? "MANAGER"].toLowerCase()}, not ${STAGE_LABEL[input.stage].toLowerCase()}.`);
+  if (staged && req.stage === "ESTIMATOR") {
+    // The estimator signs off the content they are looking at: if it changed since the request was opened, the request is re-opened on the current content first.
+    const cur = await loadSnapshot(db, ctx.orgId, docType, docId, "ESTIMATOR");
+    if (cur.state === "SUBMITTABLE" && cur.digest !== req.digest) req = await submitStaged(db, ctx, docType, docId, { stage: "ESTIMATOR", quiet: true, assignTo: req.assigned_to_email });
+  }
+  const { stage: _stage, ...rest } = input; void _stage;
+  return decide(db, ctx, req.id, action, { ...rest, expectedVersion: req.version, expectedDigest: req.digest });
 }
 
 /** The preparer (or a manager) takes a document out of review by editing/cancelling it elsewhere: the pending submission is withdrawn, never left dangling. */
@@ -373,4 +402,139 @@ export async function withdrawPendingFor(db: Db, ctx: ApprovalCtx, docType: Appr
   if (!req) return;
   const r = await db.rpc("approval_decide", { p_org: ctx.orgId, p_request: req.id, p_action: "WITHDRAW", p_actor: ctx.email, p_actor_name: ctx.name, p_reason: reason, p_expected_version: req.version, p_expected_digest: req.digest, p_override: false, p_notifications: [] });
   if (r.error) fail(r.error.message);
+}
+
+// ── staged approvals (migration 0112): quote = ESTIMATOR stage then MANAGER stage; claim and variation = MANAGER stage ──────────────────────────────────
+
+/** True once migration 0112 is applied. Until then every function above behaves exactly as in Phase H. */
+export async function stagedAvailable(db: Db): Promise<boolean> {
+  if (APPROVALS_DISABLED) return false;
+  return rolesAvailable(db);
+}
+
+const uniq = (xs: Array<string | null | undefined>) => [...new Set(xs.filter((x): x is string => !!x).map((x) => x.toLowerCase()))];
+
+/**
+ * Submits one STAGE of the current revision. The assignee is the named approver of the stage's policy (or the one passed in), and must hold the stage's role;
+ * with nobody named, every holder of the role is notified. Changed content supersedes a pending submission; identical content at the same stage is a no-op.
+ */
+async function submitStaged(db: Db, ctx: ApprovalCtx, docType: ApprovalDocType, docId: string, opts: { assignTo?: string | null; now?: Date; actor?: { email: string; name: string }; stage?: ApprovalStage; quiet?: boolean }): Promise<ApprovalRequestRow> {
+  const now = opts.now ?? new Date();
+  const stage = opts.stage ?? "MANAGER";
+  if (stage === "ESTIMATOR" && docType !== "QUOTE") fail("Only a quotation has an estimator stage.");
+  const snap = await loadSnapshot(db, ctx.orgId, docType, docId, stage);
+  if (snap.state !== "SUBMITTABLE") fail(`This ${docType.toLowerCase()} is not in a state that can be submitted for ${stage === "ESTIMATOR" ? "estimator review" : "approval"} (${snap.stateLabel}).`);
+  const settings = await loadSettings(db, ctx.orgId);
+  const sp = stageOf(await loadPolicies(db, ctx.orgId), docType, stage);
+  const holders = await emailsWithRole(db, ctx.orgId, sp.role);
+  const assignee = (opts.assignTo ?? sp.approverEmail ?? "").trim().toLowerCase() || null;
+  if (assignee && !holders.includes(assignee)) fail(`The assigned approver must hold the ${ROLE_LABEL[sp.role]} role.`);
+  const id = newId();
+  const dueAt = addBusinessDays(now.toISOString(), settings.targetBusinessDays);
+  const prior = await latestRequestFor(db, ctx.orgId, docType, docId);
+  const draftReq = { id, org_id: ctx.orgId, doc_type: docType, doc_id: docId, doc_ref: snap.docRef, project_id: snap.projectId, project_ref: snap.projectRef, customer_name: snap.customer, revision: (prior?.revision ?? 0) + 1, digest: snap.digest, amount_cents: snap.amountCents, status: "PENDING", prepared_by_email: snap.preparedBy, submitted_at: now.toISOString(), assigned_to_email: assignee, assigned_at: null, due_at: dueAt, first_viewed_at: null, decided_by_email: null, decided_by_name: null, decided_at: null, decision_reason: null, admin_override: false, closed_at: null, version: 1, reminders_sent: 0, last_reminder_at: null, created_at: now.toISOString(), stage, stage_role: sp.role, originator_email: snap.originator ?? null, return_destination: null } as ApprovalRequestRow;
+  const others = holders.filter((h) => h !== snap.preparedBy && h !== (snap.originator ?? ""));
+  const recipients = assignee ? [assignee] : others.length ? others : holders;
+  const kind = stage === "ESTIMATOR" ? "ESTIMATOR_ASSIGNED" : docType === "QUOTE" ? "MANAGER_SUBMITTED" : prior ? "RESUBMITTED" : "SUBMITTED";
+  const specs = opts.quiet ? [] : recipients.map((to) => buildNotification(kind, draftReq, to, { baseUrl: ctx.baseUrl, by: ctx.name, anyOf: `any ${ROLE_LABEL[sp.role]}` }));
+  const r = await db.rpc("approval_submit_staged", {
+    p_org: ctx.orgId, p_id: id, p_doc_type: docType, p_doc_id: docId, p_doc_ref: snap.docRef, p_project_id: snap.projectId, p_project_ref: snap.projectRef, p_customer: snap.customer,
+    p_digest: snap.digest, p_amount: snap.amountCents, p_prepared_by: snap.preparedBy, p_originator: snap.originator ?? snap.preparedBy, p_stage: stage, p_stage_role: sp.role, p_assigned_to: assignee,
+    p_due_at: dueAt, p_actor: opts.actor?.email ?? ctx.email, p_actor_name: opts.actor?.name ?? ctx.name, p_notifications: specs,
+  });
+  if (r.error) fail(`submit for ${STAGE_LABEL[stage].toLowerCase()}: ${r.error.message}`);
+  const row = asRequest(r.data);
+  await deliverForRequest(db, row.id).catch(() => undefined); // best effort: a decision never depends on delivery
+  return row;
+}
+
+function stagedDecisionNotifications(action: ApprovalAction, req: ApprovalRequestRow, ctx: ApprovalCtx, reason: string, destination: "ESTIMATOR" | "PREPARER" | null): NotificationSpec[] {
+  if (action === "WITHDRAW") return [];
+  const stage = req.stage ?? "MANAGER";
+  const b = { baseUrl: ctx.baseUrl, reason: reason || null, by: ctx.name };
+  if (stage === "ESTIMATOR") {
+    if (action === "APPROVE") return []; // the manager-stage submission that follows notifies the approver
+    return [buildNotification("RETURNED_TO_REP", req, req.prepared_by_email, b)];
+  }
+  if (req.doc_type !== "QUOTE") return [buildNotification(action === "APPROVE" ? "APPROVED" : action === "RETURN" ? "RETURNED" : "REJECTED", req, req.prepared_by_email, b)];
+  const rep = req.originator_email ?? null;
+  if (action === "APPROVE") return uniq([req.prepared_by_email, rep]).map((to) => buildNotification("APPROVED", req, to, b));
+  if (action === "REJECT") return uniq([req.prepared_by_email, rep]).map((to) => buildNotification("REJECTED", req, to, b));
+  if (destination === "ESTIMATOR") return [buildNotification("RETURNED_TO_ESTIMATOR", req, req.prepared_by_email, b)];
+  return uniq([rep, req.prepared_by_email]).map((to) => buildNotification("RETURNED_TO_REP", req, to, b));
+}
+
+function matchesStagedTarget(action: ApprovalAction, destination: "ESTIMATOR" | "PREPARER" | null, snap: DocSnapshot): boolean {
+  if (action === "RETURN" && destination === "ESTIMATOR") return snap.state === "UNSIGNED";
+  return matchesTarget(action, snap);
+}
+
+/** The document's own existing action for a staged decision (each is a compare-and-set, so a concurrent second decision fails here). */
+async function applyStagedDocumentAction(db: Db, ctx: ApprovalCtx, req: ApprovalRequestRow, action: ApprovalAction, reason: string, destination: "ESTIMATOR" | "PREPARER" | null): Promise<void> {
+  if (req.doc_type !== "QUOTE") return applyDocumentAction(db, ctx, req, action, reason);
+  const all = rolesFor("admin"); // the engine has already authorised this actor for this stage; the store re-checks state and content
+  if ((req.stage ?? "MANAGER") === "ESTIMATOR") {
+    if (action === "APPROVE") await estimatorSignOff(db, ctx.orgId, all, ctx.email, req.doc_id, evaluationContext(true));
+    else if (action === "RETURN") await returnToRep(db, ctx.orgId, all, req.doc_id, reason);
+    else if (action === "REJECT") await returnToRep(db, ctx.orgId, all, req.doc_id, `Rejected: ${reason}`);
+    return;
+  }
+  if (action === "APPROVE") await managerApprove(db, ctx.orgId, all, ctx.email, req.doc_id, evaluationContext(true), evaluationContext(false));
+  else if (action === "RETURN") { if (destination === "ESTIMATOR") await returnToEstimator(db, ctx.orgId, all, req.doc_id, reason); else await returnToRep(db, ctx.orgId, all, req.doc_id, reason); }
+  else if (action === "REJECT") await returnToRep(db, ctx.orgId, all, req.doc_id, `Rejected: ${reason}`);
+}
+
+async function decideStaged(db: Db, ctx: ApprovalCtx, req: ApprovalRequestRow, action: ApprovalAction, input: { reason?: string; override?: boolean; destination?: "ESTIMATOR" | "PREPARER" | null; expectedVersion: number; expectedDigest: string }): Promise<ApprovalRequestRow> {
+  const stage = req.stage ?? "MANAGER";
+  const roles = await resolveRoles(db, ctx.orgId, ctx.userId, ctx.isManager);
+  const sp = stageOf(await loadPolicies(db, ctx.orgId), req.doc_type, stage);
+  const verdict = authoriseStageDecision({ email: ctx.email, roles, isAdmin: canAdminister(roles, ctx.isManager) }, action, req, (req.stage_role as typeof sp.role | null) ?? sp.role, input);
+  if (!verdict.ok) fail(verdict.error);
+  if (req.version !== input.expectedVersion || req.digest !== input.expectedDigest) fail("This submission changed while you were reviewing it. Reload and review the current revision before deciding.");
+  const reason = (input.reason ?? "").trim();
+  const destination = verdict.destination;
+  if (action !== "WITHDRAW") {
+    const snap = await loadSnapshot(db, ctx.orgId, req.doc_type, req.doc_id, stage);
+    if (snap.digest !== req.digest) fail("The document has changed since it was submitted, so this submission can no longer be decided. Ask the preparer to resubmit the current revision.");
+    if (snap.state === "SUBMITTABLE") await applyStagedDocumentAction(db, ctx, req, action, reason, destination);
+    else if (!matchesStagedTarget(action, destination, snap)) fail(`The ${req.doc_type.toLowerCase()} is no longer waiting for ${stage === "ESTIMATOR" ? "estimator review" : "approval"} (${snap.stateLabel}).`);
+    // else: already in the target state (a previous attempt changed it but could not record the decision): reconcile below
+  }
+  const r = await db.rpc("approval_decide_staged", {
+    p_org: ctx.orgId, p_request: req.id, p_action: action, p_actor: ctx.email, p_actor_name: ctx.name, p_reason: reason || null, p_expected_version: input.expectedVersion,
+    p_expected_digest: input.expectedDigest, p_override: verdict.override, p_destination: destination, p_notifications: stagedDecisionNotifications(action, req, ctx, reason, destination),
+  });
+  if (r.error) fail(r.error.message.replace(/^.*?(approval_[a-z_]+: )/, "").replace(/^approval: /, ""));
+  const row = asRequest(r.data);
+  await deliverForRequest(db, row.id).catch(() => undefined);
+  // The next stage opens as a consequence of this decision. It is derived from the document, so decideDocument can also repair it if this step fails.
+  if (req.doc_type === "QUOTE" && action !== "WITHDRAW") {
+    try {
+      if (stage === "ESTIMATOR" && action === "APPROVE") await submitStaged(db, ctx, "QUOTE", req.doc_id, { stage: "MANAGER", actor: { email: ctx.email, name: ctx.name } });
+      else if (stage === "MANAGER" && action === "RETURN" && destination === "ESTIMATOR") {
+        const holders = await emailsWithRole(db, ctx.orgId, "ESTIMATOR");
+        await submitStaged(db, ctx, "QUOTE", req.doc_id, { stage: "ESTIMATOR", assignTo: holders.includes(req.prepared_by_email) ? req.prepared_by_email : null, quiet: true });
+      }
+    } catch (e) {
+      throw new Error(`Your decision was recorded, but the next approval stage could not be opened (${(e as Error).message}). Open the quotation to continue.`);
+    }
+  }
+  return row;
+}
+
+/**
+ * Makes the open approval request match the quotation's current state: unsigned -> an ESTIMATOR-stage request on the current content; signed -> a MANAGER-stage
+ * request. Idempotent; a request for older content is superseded. Called after the rep sends a quote to the estimator, after the content changes while in
+ * review, and by decideDocument to repair a missing next stage.
+ */
+export async function resyncQuoteApprovals(db: Db, ctx: ApprovalCtx, quoteId: string, opts: { quiet?: boolean; actor?: { email: string; name: string } } = {}): Promise<ApprovalRequestRow | null> {
+  if (!(await stagedAvailable(db))) return null;
+  const signed = await loadSnapshot(db, ctx.orgId, "QUOTE", quoteId, "MANAGER");
+  const wanted: ApprovalStage | null = signed.state === "SUBMITTABLE" ? "MANAGER" : signed.state === "UNSIGNED" ? "ESTIMATOR" : null;
+  const pending = await pendingRequestFor(db, ctx.orgId, "QUOTE", quoteId);
+  if (!wanted) { if (pending) await withdrawPendingFor(db, ctx, "QUOTE", quoteId, "The quotation is no longer in review."); return null; }
+  const snap = wanted === "MANAGER" ? signed : await loadSnapshot(db, ctx.orgId, "QUOTE", quoteId, "ESTIMATOR");
+  if (pending && pending.stage === wanted && pending.digest === snap.digest) return pending;
+  if (wanted === "ESTIMATOR" && snap.state !== "SUBMITTABLE") return null;
+  return submitStaged(db, ctx, "QUOTE", quoteId, { stage: wanted, quiet: opts.quiet, actor: opts.actor });
 }

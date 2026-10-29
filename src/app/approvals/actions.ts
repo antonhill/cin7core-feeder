@@ -14,6 +14,9 @@ import {
   type ApprovalCtx,
 } from "@/lib/approvals/approval-store";
 import { buildReviewDetail, type ReviewDetail } from "@/lib/approvals/review-detail";
+import { authoriseStageDecision } from "@/lib/approvals/policy";
+import { canAdminister, STAGE_LABEL, type FunctionalRole } from "@/lib/approvals/roles";
+import { emailsWithRole, resolveRoles } from "@/lib/approvals/role-store";
 import { filterQueue, sortQueue, summarise, currentReturned, type QueueFilters, type QueueSort, type QueueSummary } from "@/lib/approvals/queue";
 import type { ApprovalAction, ApprovalDocType, ApprovalEventRow, ApprovalNotificationRow, ApprovalRequestRow, ApprovalSettings } from "@/lib/approvals/types";
 
@@ -42,9 +45,10 @@ export async function getApprovalsDashboardAction(filters: QueueFilters = {}, so
     const nowIso = new Date().toISOString();
     if (!(await approvalsAvailable(db))) return { ok: true, data: { available: false, me: ctx.email, isManager: ctx.isManager, nowIso, summary: summarise([], ctx.email, nowIso), rows: [], needsPreparerAction: [], managers: [], failedEmails: [], unread: 0, settings: await loadSettings(db, ctx.orgId) } };
     const all = await listRequests(db, ctx.orgId);
+    const myRoles = await resolveRoles(db, ctx.orgId, ctx.userId, ctx.isManager);
     const notes = await myNotifications(db, ctx.orgId, ctx.email, 200);
     return { ok: true, data: {
-      available: true, me: ctx.email, isManager: ctx.isManager, nowIso, summary: summarise(all, ctx.email, nowIso), rows: sortQueue(filterQueue(all, filters, ctx.email, nowIso), sort),
+      available: true, me: ctx.email, isManager: ctx.isManager, nowIso, summary: summarise(all, ctx.email, nowIso, myRoles), rows: sortQueue(filterQueue(all, filters, ctx.email, nowIso, myRoles), sort),
       needsPreparerAction: currentReturned(all).filter((r) => r.prepared_by_email === ctx.email), managers: ctx.isManager ? await managerEmails(db, ctx.orgId) : [],
       failedEmails: ctx.isManager ? await failedEmails(db, ctx.orgId) : [], unread: notes.filter((n) => !n.read_at).length, settings: await loadSettings(db, ctx.orgId),
     } };
@@ -56,8 +60,10 @@ export async function getApprovalsDashboardAction(filters: QueueFilters = {}, so
 export interface ApprovalDetail {
   request: ApprovalRequestRow; history: ApprovalEventRow[]; review: ReviewDetail; isManager: boolean; me: string;
   /** What this viewer may do right now (the server re-checks every action). */
-  can: { decide: boolean; withdraw: boolean; reassign: boolean; needsOverride: boolean };
+  can: { decide: boolean; withdraw: boolean; reassign: boolean; needsOverride: boolean; returnToEstimator?: boolean };
+  /** Who can be chosen as approver for this stage (holders of the stage's role; managers on a database without staged approvals). */
   managers: string[]; docHistoryAll: ApprovalEventRow[];
+  stage?: { stage: "ESTIMATOR" | "MANAGER"; label: string; role: string };
 }
 
 export async function getApprovalDetailAction(requestId: string): Promise<ApprovalResult<ApprovalDetail>> {
@@ -69,6 +75,25 @@ export async function getApprovalDetailAction(requestId: string): Promise<Approv
     if (req.status === "PENDING") await markViewed(db, ctx, requestId).catch(() => undefined);
     const pending = req.status === "PENDING";
     const self = req.prepared_by_email === ctx.email;
+    if (req.stage !== undefined) {
+      // Staged: what this viewer may do is derived from the SAME rules the decision itself enforces (the server re-checks on every action).
+      const roles = await resolveRoles(db, ctx.orgId, ctx.userId, ctx.isManager);
+      const actor = { email: ctx.email, roles, isAdmin: canAdminister(roles, ctx.isManager) };
+      const role = (req.stage_role as FunctionalRole | null) ?? "MANAGER";
+      const ok = (a: ApprovalAction, extra: { override?: boolean; destination?: "ESTIMATOR" | "PREPARER" | null } = {}) => authoriseStageDecision(actor, a, req, role, { reason: "probe reason", ...extra });
+      const normalApprove = ok("APPROVE"); const overrideApprove = ok("APPROVE", { override: true });
+      const canReturn = ok("RETURN").ok;
+      return { ok: true, data: {
+        request: (await loadRequest(db, ctx.orgId, requestId)) ?? req, history: await requestHistory(db, ctx.orgId, requestId), docHistoryAll: await docHistory(db, ctx.orgId, req.doc_type, req.doc_id),
+        review: await buildReviewDetail(db, ctx.orgId, req, actor.isAdmin || roles.has("MANAGER")), isManager: actor.isAdmin || roles.has("MANAGER"), me: ctx.email,
+        can: {
+          decide: pending && (normalApprove.ok || overrideApprove.ok || canReturn), withdraw: pending && ok("WITHDRAW").ok,
+          reassign: pending && (actor.isAdmin || roles.has("MANAGER") || (req.assigned_to_email ?? "") === ctx.email), needsOverride: pending && !normalApprove.ok && overrideApprove.ok,
+          returnToEstimator: pending && canReturn && req.doc_type === "QUOTE" && req.stage === "MANAGER",
+        },
+        managers: pending ? await emailsWithRole(db, ctx.orgId, role) : [], stage: { stage: req.stage, label: STAGE_LABEL[req.stage], role },
+      } };
+    }
     return { ok: true, data: {
       request: (await loadRequest(db, ctx.orgId, requestId)) ?? req, history: await requestHistory(db, ctx.orgId, requestId), docHistoryAll: await docHistory(db, ctx.orgId, req.doc_type, req.doc_id),
       review: await buildReviewDetail(db, ctx.orgId, req, ctx.isManager), isManager: ctx.isManager, me: ctx.email,
@@ -107,7 +132,7 @@ export async function submitDocumentForApprovalAction(docType: ApprovalDocType, 
   }
 }
 
-export async function decideApprovalAction(requestId: string, action: ApprovalAction, input: { reason?: string; override?: boolean; expectedVersion: number; expectedDigest: string }): Promise<ApprovalResult<ApprovalRequestRow>> {
+export async function decideApprovalAction(requestId: string, action: ApprovalAction, input: { reason?: string; override?: boolean; destination?: "ESTIMATOR" | "PREPARER" | null; expectedVersion: number; expectedDigest: string }): Promise<ApprovalResult<ApprovalRequestRow>> {
   try {
     const ctx = await context();
     const db = createServiceRoleClient();

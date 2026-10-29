@@ -143,6 +143,22 @@ export async function returnToRep(db: Db, orgId: string, roles: ReadonlySet<Quot
   if (!r.data || r.data.length === 0) fail("The quote is no longer in estimator review.");
 }
 
+/**
+ * Manager -> Estimator. The quotation, its revision, the customer's confirmation and its whole history are kept; ONLY the estimator's sign-off is
+ * withdrawn, so it cannot be approved again until an estimator signs off the (possibly corrected) current content.
+ */
+export async function returnToEstimator(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, quoteId: string, reason: string): Promise<void> {
+  if (!reason.trim()) fail("A reason is required to return a quote to the estimator.");
+  const q = await mustLoad(db, orgId, quoteId);
+  const auth = authoriseTransition(roles, q.state, "RETURN_TO_ESTIMATOR");
+  if (!auth.ok) fail(auth.error);
+  if (!q.estimator_signoff_hash) fail("The estimator has not signed this quote off, so there is nothing to return to the estimator.");
+  const r = await db.from("newquip_quotes").update({ estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null })
+    .eq("org_id", orgId).eq("id", quoteId).eq("state", "ESTIMATOR_REVIEW").eq("draft_hash", q.draft_hash).select("id");
+  if (r.error) fail(r.error.message);
+  if (!r.data || r.data.length === 0) fail("The quote changed while returning it; refresh and try again.");
+}
+
 /** The estimator double-checked THIS exact content (its hash is what is recorded). */
 export async function estimatorSignOff(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, email: string, quoteId: string, ctx: EvaluationContext): Promise<void> {
   const q = await mustLoad(db, orgId, quoteId);

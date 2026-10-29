@@ -87,7 +87,7 @@ export default function ApprovalsPage() {
           <div className="mt-4">
             {d.rows.length === 0 ? <p className="text-sm text-slate-600">{d.available ? "Nothing matches these filters." : "No approvals yet."}</p> : (
               <Table>
-                <THead><TR>{["Reference", "Project", "Customer", "Type", "Rev", "Amount (ex VAT)", "Submitted by", "Submitted at", "Assigned approver", "Status", "Waiting", "Due"].map((h) => <TH key={h} align={h.startsWith("Amount") ? "right" : "left"}>{h}</TH>)}</TR></THead>
+                <THead><TR>{["Reference", "Project", "Customer", "Type", "Rev", "Amount (ex VAT)", "Submitted by", "Submitted at", "Stage", "Assigned approver", "Status", "Waiting", "Due"].map((h) => <TH key={h} align={h.startsWith("Amount") ? "right" : "left"}>{h}</TH>)}</TR></THead>
                 <TBody>
                   {d.rows.map((r) => {
                     const late = r.status === "PENDING" && isOverdue(r.due_at, d.nowIso);
@@ -97,7 +97,8 @@ export default function ApprovalsPage() {
                         <TD>{r.project_ref ?? "-"}</TD><TD>{r.customer_name ?? "-"}</TD><TD>{DOC_TYPE_LABEL[r.doc_type]}</TD><TD>{r.revision}</TD>
                         <TD align="right" className="whitespace-nowrap tabular-nums">{rand(r.amount_cents)}</TD>
                         <TD className="text-xs">{r.prepared_by_email}</TD><TD className="whitespace-nowrap text-xs">{formatSast(r.submitted_at)}</TD>
-                        <TD className="text-xs">{r.assigned_to_email ?? "any manager"}</TD>
+                        <TD className="text-xs">{r.stage === "ESTIMATOR" ? "Estimator review" : r.doc_type === "QUOTE" ? "Manager approval" : "Approval"}</TD>
+                        <TD className="text-xs">{r.assigned_to_email ?? (r.stage_role ? `any ${r.stage_role.toLowerCase().replace("_", " ")}` : "any manager")}</TD>
                         <TD><Badge tone={TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>{r.admin_override && <Badge tone="warning">override</Badge>}</TD>
                         <TD className="whitespace-nowrap text-xs">{r.status === "PENDING" ? waitingLabel(r.submitted_at, d.nowIso) : "-"}</TD>
                         <TD className={`whitespace-nowrap text-xs ${late ? "font-medium text-red-700" : ""}`}>{r.due_at ? formatSast(r.due_at) : "-"}{late ? " (overdue)" : ""}</TD>

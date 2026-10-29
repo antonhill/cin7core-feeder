@@ -9,9 +9,9 @@ export interface QueueFilters {
 export type QueueSort = "submitted_desc" | "submitted_asc" | "waiting_desc" | "amount_desc" | "amount_asc";
 const lc = (s: string | null | undefined) => (s ?? "").toLowerCase();
 
-export function filterQueue(rows: readonly ApprovalRequestRow[], f: QueueFilters, me: string, nowIso: string): ApprovalRequestRow[] {
+export function filterQueue(rows: readonly ApprovalRequestRow[], f: QueueFilters, me: string, nowIso: string, myRoles?: ReadonlySet<string>): ApprovalRequestRow[] {
   return rows.filter((r) => {
-    if (f.mine && lc(r.assigned_to_email) !== lc(me)) return false;
+    if (f.mine && !(r.status === "PENDING" ? awaitsMe(r, me, myRoles) : lc(r.assigned_to_email) === lc(me))) return false;
     if (f.docType && r.doc_type !== f.docType) return false;
     if (f.customer && !lc(r.customer_name).includes(lc(f.customer))) return false;
     if (f.project && !(lc(r.project_ref).includes(lc(f.project)) || lc(r.doc_ref).includes(lc(f.project)))) return false;
@@ -43,7 +43,11 @@ export interface QueueSummary {
 }
 const sastDayStart = (nowIso: string) => { const d = new Date(new Date(nowIso).getTime() + 2 * 3_600_000); d.setUTCHours(0, 0, 0, 0); return d.getTime() - 2 * 3_600_000; };
 
-export function summarise(rows: readonly ApprovalRequestRow[], me: string, nowIso: string): QueueSummary {
+/** Waiting for ME: assigned to me by name, or unassigned and I hold the role of its stage. */
+export const awaitsMe = (r: ApprovalRequestRow, me: string, myRoles?: ReadonlySet<string>): boolean =>
+  lc(r.assigned_to_email) === lc(me) || (!r.assigned_to_email && !!r.stage_role && !!myRoles?.has(r.stage_role) && lc(r.prepared_by_email) !== lc(me));
+
+export function summarise(rows: readonly ApprovalRequestRow[], me: string, nowIso: string, myRoles?: ReadonlySet<string>): QueueSummary {
   const dayStart = sastDayStart(nowIso);
   const d = new Date(dayStart + 2 * 3_600_000);
   const weekStart = dayStart - ((d.getUTCDay() + 6) % 7) * 86_400_000; // Monday, SAST
@@ -51,11 +55,11 @@ export function summarise(rows: readonly ApprovalRequestRow[], me: string, nowIs
   for (const r of rows) {
     if (r.status === "PENDING") {
       s.pending += 1; s.pendingValueCents += r.amount_cents;
-      if (lc(r.assigned_to_email) === lc(me)) s.awaitingMe += 1;
+      if (awaitsMe(r, me, myRoles)) s.awaitingMe += 1;
       if (isOverdue(r.due_at, nowIso)) s.overdue += 1;
     } else if (r.status === "RETURNED") s.returned += 1;
     else if (r.status === "REJECTED") s.rejected += 1;
-    else if (r.status === "APPROVED" && r.decided_at) {
+    else if (r.status === "APPROVED" && r.decided_at && r.stage !== "ESTIMATOR") { // an estimator sign-off is a stage, not a final approval
       const at = new Date(r.decided_at).getTime();
       if (at >= dayStart) s.approvedToday += 1;
       if (at >= weekStart) s.approvedThisWeek += 1;

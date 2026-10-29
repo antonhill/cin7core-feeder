@@ -28,6 +28,7 @@ export default function ApprovalDetailPage() {
   const [mode, setMode] = useState<null | ApprovalAction>(null);
   const [reason, setReason] = useState("");
   const [override, setOverride] = useState(false);
+  const [returnTo, setReturnTo] = useState<"ESTIMATOR" | "PREPARER">("ESTIMATOR");
   const [busy, setBusy] = useState(false);
   const [newApprover, setNewApprover] = useState("");
 
@@ -41,7 +42,7 @@ export default function ApprovalDetailPage() {
   const docHref = r.doc_type === "QUOTE" ? `/newquip-grower/${r.doc_id}` : r.project_id ? `/projects/${r.project_id}` : "/projects";
   const decide = async (action: ApprovalAction) => {
     setBusy(true); setNotice(null);
-    const res = await decideApprovalAction(r.id, action, { reason, override, expectedVersion: r.version, expectedDigest: r.digest });
+    const res = await decideApprovalAction(r.id, action, { reason, override, destination: action === "RETURN" && d.can.returnToEstimator ? returnTo : undefined, expectedVersion: r.version, expectedDigest: r.digest });
     setBusy(false);
     if (res.ok) { setNotice(action === "APPROVE" ? "Approved. This authorises the document only; nothing was sent to Cin7." : action === "RETURN" ? "Returned to the preparer for changes." : action === "REJECT" ? "Rejected." : "Withdrawn."); setMode(null); setReason(""); setOverride(false); }
     else setNotice(res.error ?? "The decision was not recorded.");
@@ -61,7 +62,7 @@ export default function ApprovalDetailPage() {
           {([
             ["Customer", r.customer_name ?? "-"], ["Project", r.project_ref ?? "-"], ["Amount (ex VAT)", rand(r.amount_cents)],
             ["Submitted by", r.prepared_by_email], ["Submitted at", formatSast(r.submitted_at)], ["Waiting", r.status === "PENDING" ? waitingLabel(r.submitted_at, now) : "-"],
-            ["Assigned approver", r.assigned_to_email ?? "any manager"], ["Assigned at", formatSast(r.assigned_at)], ["Due", r.due_at ? formatSast(r.due_at) : "-"],
+            ...(d.stage ? [["Stage", d.stage.label]] : []), ["Assigned approver", r.assigned_to_email ?? (d.stage ? `any ${d.stage.role.toLowerCase().replace("_", " ")}` : "any manager")], ...(r.return_destination ? [["Returned to", r.return_destination === "ESTIMATOR" ? "The estimator" : "The preparer"]] : []), ["Assigned at", formatSast(r.assigned_at)], ["Due", r.due_at ? formatSast(r.due_at) : "-"],
             ["First viewed", formatSast(r.first_viewed_at)], ["Decided", r.decided_at ? `${formatSast(r.decided_at)} by ${r.decided_by_name ?? r.decided_by_email}` : "-"], ["Content seal", `${r.digest.slice(0, 12)}…`],
           ] as Array<[string, string]>).map(([k, v]) => <div key={k}><dt className="text-xs text-slate-500">{k}</dt><dd className="font-medium text-slate-900 tabular-nums">{v}</dd></div>)}
         </dl>
@@ -91,6 +92,12 @@ export default function ApprovalDetailPage() {
             <div className="mt-3 space-y-2 rounded-lg border border-slate-200 p-3 text-sm">
               <p>{mode === "APPROVE" ? "Approve" : mode === "RETURN" ? "Return" : mode === "REJECT" ? "Reject" : "Withdraw"} {DOC_TYPE_LABEL[r.doc_type].toLowerCase()} <strong>{r.doc_ref}</strong>, revision {r.revision}, <strong>{rand(r.amount_cents)}</strong> ex VAT, submitted {formatSast(r.submitted_at)}?</p>
               <Input label={mode === "RETURN" ? "What must change? (required)" : mode === "REJECT" ? "Reason for rejection (required)" : mode === "APPROVE" && d.can.needsOverride ? "Override reason (required)" : "Comment (optional)"} value={reason} onChange={(e) => setReason(e.target.value)} />
+              {mode === "RETURN" && d.can.returnToEstimator && (
+                <Select label="Return to" value={returnTo} onChange={(e) => setReturnTo(e.target.value as "ESTIMATOR" | "PREPARER")}>
+                  <option value="ESTIMATOR">The estimator (their sign-off is withdrawn and must be given again)</option>
+                  <option value="PREPARER">The salesperson (a new revision)</option>
+                </Select>
+              )}
               {mode === "APPROVE" && d.can.needsOverride && <label className="flex items-center gap-2"><input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} /> I confirm this is an administrator override of separation of duties</label>}
               <div className="flex gap-2">
                 <Button loading={busy} disabled={busy || (mode === "APPROVE" && d.can.needsOverride && !override) || ((mode === "RETURN" || mode === "REJECT") && reason.trim().length < 3)} onClick={() => decide(mode)}>Confirm</Button>
@@ -101,7 +108,7 @@ export default function ApprovalDetailPage() {
           )}
           {d.can.reassign && (
             <div className="mt-4 flex flex-wrap items-end gap-2">
-              <Select label="Reassign to" value={newApprover} onChange={(e) => setNewApprover(e.target.value)}><option value="">Choose a manager…</option>{d.managers.filter((m) => m !== r.assigned_to_email).map((m) => <option key={m} value={m}>{m}</option>)}</Select>
+              <Select label="Reassign to" value={newApprover} onChange={(e) => setNewApprover(e.target.value)}><option value="">Choose an approver…</option>{d.managers.filter((m) => m !== r.assigned_to_email).map((m) => <option key={m} value={m}>{m}</option>)}</Select>
               <Button size="sm" variant="secondary" disabled={!newApprover || busy} onClick={async () => { setBusy(true); const res = await reassignApprovalAction(r.id, newApprover, r.version); setBusy(false); setNotice(res.ok ? "Reassigned." : res.error ?? "Could not reassign."); load(); }}>Reassign</Button>
             </div>
           )}
