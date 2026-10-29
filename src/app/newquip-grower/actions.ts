@@ -12,7 +12,7 @@ import { type OrgTier, type QuoteRole } from "@/newquip/quote/roles";
 import { toQuoteRoles } from "@/lib/approvals/roles";
 import { resolveRoles } from "@/lib/approvals/role-store";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
-import { redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
+import { keepServerOwnedCosts, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
 import { approvalsAvailable, decideDocument, legacyCtx, resyncQuoteApprovals, stagedAvailable, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
 import { resolveScheduleChoice, type ScheduleChoice, type ScheduleStageTemplate } from "@/newquip/quote/billing-schedule";
 import { sameSchedule, type ScheduleSource } from "@/newquip/quote/project-template";
@@ -130,7 +130,7 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
     const a = await authorise();
     const db = createServiceRoleClient();
     const prior = await loadQuote(db, a.orgId, quoteId);
-    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, stampCostOverrides(draft, prior?.draft.estimator.costOverrides, a.tier === "admin", a.email, new Date().toISOString()));
+    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, keepServerOwnedCosts(stampCostOverrides(draft, prior?.draft.estimator.costOverrides, a.tier === "admin", a.email, new Date().toISOString()), prior?.draft.estimator.physicalCosts));
     // Changed content invalidates the estimator's sign-off (saveDraft clears it) and any open approval of the older content: the quote goes back to estimator review.
     if (saved.draftHash !== prior?.draft_hash && (await stagedAvailable(db))) await resyncQuoteApprovals(db, legacyCtx(a.orgId, a.userId, a.email, a.tier === "admin"), quoteId, { quiet: true }).catch(() => undefined);
     const q = await loadQuote(db, a.orgId, quoteId);

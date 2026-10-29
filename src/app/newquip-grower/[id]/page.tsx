@@ -31,6 +31,7 @@ import { fmtCents, fmtZar, NumField, TextField } from "../fields";
 import { MarginPanel } from "./MarginPanel";
 import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
+import { CostPanel } from "./CostPanel";
 import { ScopePanel } from "./ScopePanel";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
@@ -582,6 +583,7 @@ export default function QuoteEditorPage() {
           </Panel>
 
           {final && <ScopePanel quoteId={id} draft={draft} />}
+          {view.viewer.canViewCommercials && <CostPanel quoteId={id} />}
 
           {final && q.accepted_baseline && (
             <Panel>

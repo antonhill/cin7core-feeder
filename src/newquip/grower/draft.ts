@@ -2,6 +2,7 @@ import type { ChargeKey, EstimatorResolution } from "./quote-bridge";
 import type { GrowerConfigurationInput, GrowerItemKey } from "./types";
 import type { QuoteType } from "./pricing-source";
 import type { CostOverride } from "../quote/margin";
+import type { CostEntry } from "@/lib/projects/latest-cost";
 
 // The editable state of one NewQuip Grower quote. Everything in it is an INPUT (engineering inputs from the rep, decisions
 // from the estimator); every number the quote shows is recomputed from it by evaluate.ts. Persisted as JSON.
@@ -19,6 +20,11 @@ export interface EstimatorState {
   priceResolutions: Partial<Record<GrowerItemKey, EstimatorResolution>>;
   /** Audited estimator overrides of a line's ESTIMATED COST (reason, who, when). Internal only; never changes a selling price. */
   costOverrides?: Partial<Record<GrowerItemKey | ChargeKey, CostOverride>>;
+  /**
+   * Physical-SKU costs captured for this estimate (Cin7 latest cost, or an audited manual estimate), keyed by SKU. SERVER-OWNED: a saved draft can never
+   * add or change these (see keepServerOwnedCosts); they are written only by the capture / manual-estimate actions, and frozen with the approved quotation.
+   */
+  physicalCosts?: Record<string, CostEntry>;
   /** Free-text assumptions that travel with the quote and are frozen in the baseline. */
   assumptions: string;
 }

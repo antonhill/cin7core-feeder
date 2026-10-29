@@ -186,11 +186,19 @@ export function stampCostOverrides<D extends { estimator: { costOverrides?: Over
   return next;
 }
 
+/** The captured physical costs are written only by the server's capture actions: whatever a saved draft carries is replaced with the stored ones. */
+export function keepServerOwnedCosts<D extends { estimator: { physicalCosts?: unknown } }>(draft: D, prior: unknown): D {
+  const next = structuredClone(draft);
+  if (prior && typeof prior === "object" && Object.keys(prior as object).length) next.estimator.physicalCosts = structuredClone(prior); else delete next.estimator.physicalCosts;
+  return next;
+}
+
 /** Removes every internal financial from a quote record for a viewer who may not see cost: the frozen margin sheet and the cost overrides. */
-export function redactInternalFinancials<Q extends { draft: { estimator: { costOverrides?: unknown } }; accepted_baseline: { internalMargin?: unknown } | null }>(quote: Q, canViewCommercials: boolean): Q {
+export function redactInternalFinancials<Q extends { draft: { estimator: { costOverrides?: unknown; physicalCosts?: unknown } }; accepted_baseline: { internalMargin?: unknown; physicalCostEstimate?: unknown; estimator?: { physicalCosts?: unknown; costOverrides?: unknown } } | null }>(quote: Q, canViewCommercials: boolean): Q {
   if (canViewCommercials) return quote;
   const q = structuredClone(quote);
   delete q.draft.estimator.costOverrides;
-  if (q.accepted_baseline) delete q.accepted_baseline.internalMargin;
+  delete q.draft.estimator.physicalCosts;
+  if (q.accepted_baseline) { delete q.accepted_baseline.internalMargin; delete q.accepted_baseline.physicalCostEstimate; if (q.accepted_baseline.estimator) { delete q.accepted_baseline.estimator.physicalCosts; delete q.accepted_baseline.estimator.costOverrides; } }
   return q;
 }
