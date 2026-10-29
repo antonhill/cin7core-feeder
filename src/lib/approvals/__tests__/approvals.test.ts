@@ -1,7 +1,7 @@
 // Phase H: commercial approvals. Pure rules + the real orchestration (quote / claim / variation stores, the approval store) over an in-memory database
 // whose approval_* functions mirror migration 0110 line for line. The REAL SQL (state machine, append-only history, grants, RLS) is verified by
 // supabase/tests/0110_newquip_commercial_approvals.test.sql against Postgres; these tests prove the application drives it correctly.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
 import { goldenFixtureBaseline } from "@/lib/projects/baseline";
 import { seedGoldenFixture, createClaimDraft, submitClaimForApproval, loadProjectView } from "@/lib/projects/project-store";
@@ -19,7 +19,7 @@ import type { ApprovalRequestRow } from "../types";
 
 vi.mock("server-only", () => ({}));
 import {
-  approvalsAvailable, decide, decideDocument, deliverPendingEmails, docHistory, legacyCtx, loadRequest, MAX_EMAIL_ATTEMPTS, myNotifications, reassign, retryEmail, sendOverdueReminders, submitForApproval,
+  approvalsAvailable, decide, decideDocument, deliverPendingEmails, docHistory, legacyCtx, loadRequest, MAX_EMAIL_ATTEMPTS, myNotifications, reassign, retryAndDispatchEmail, sendOverdueReminders, submitForApproval,
   withdrawPendingFor, type ApprovalCtx,
 } from "../approval-store";
 
@@ -413,6 +413,8 @@ describe("integrity: stale revisions, separation of duties, isolation, concurren
 });
 
 describe("notifications: durable, deduplicated, honest about delivery", () => {
+  beforeEach(() => { vi.stubEnv("VERCEL_ENV", "production"); }); // provider behaviour is tested unrestricted; the Preview policy has its own suite below
+  afterEach(() => { vi.unstubAllEnvs(); });
   async function pending() {
     const { db, projectId } = await world();
     const sub = await submitForApproval(db as never, PM, "CLAIM", await draftClaim(db, projectId), { assignTo: "mgr@a", now: T0 });
@@ -433,11 +435,12 @@ describe("notifications: durable, deduplicated, honest about delivery", () => {
     const mail = db.rows("approval_notifications").filter((n) => n.channel === "EMAIL");
     expect(mail.every((n) => n.status === "ABANDONED" && n.attempts === MAX_EMAIL_ATTEMPTS && n.sent_at === null)).toBe(true);
     expect(failing).toHaveBeenCalledTimes(mail.length * (MAX_EMAIL_ATTEMPTS - 1)); // bounded: never more (the first attempt already happened at submission, with no provider configured)
-    await retryEmail(db as never, MGR, mail[0].id as string);
     const ok = vi.fn(async () => ({ ok: true, messageId: "msg-1" }));
-    await deliverPendingEmails(db as never, ok as never);
+    await expect(retryAndDispatchEmail(db as never, PM, mail[0].id as string, ok as never)).rejects.toThrow(/Only a manager/);
+    expect(ok).not.toHaveBeenCalled();
+    await retryAndDispatchEmail(db as never, MGR, mail[0].id as string, ok as never); // re-queues AND dispatches that one row
+    expect(ok).toHaveBeenCalledTimes(1);
     expect(db.rows("approval_notifications").find((n) => n.id === mail[0].id)).toMatchObject({ status: "SENT", provider_message_id: "msg-1", attempts: 1 });
-    await expect(retryEmail(db as never, PM, mail[0].id as string)).rejects.toThrow(/Only a manager/);
   });
   it("19: a decision never depends on delivery: with the email provider throwing, the approval still completes", async () => {
     const { db, sub } = await pending();
@@ -479,5 +482,165 @@ describe("existing controls remain intact", () => {
     expect(db.rows("project_claim_cin7_postings")).toHaveLength(0);
     expect(db.rows("project_cin7_sale_creations")).toHaveLength(0);
     expect(legacyCtx(ORG, "u", "A@B.com", true).email).toBe("a@b.com");
+  });
+});
+
+// ── Preview email delivery safety ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+import { deliverForRequest, sendPendingNow, recentEmails } from "../approval-store";
+import { applyEmailPolicy, approvalBaseUrl, displayEmailStatus, isRestricted, PREVIEW_EMAIL_ALLOWLIST, SUPPRESSED_MARK, WITHHELD_REASON } from "../email-policy";
+
+describe("email policy: Preview sends only to the exact test mailboxes, marks them, and never redirects", () => {
+  const PREVIEW = { VERCEL_ENV: "preview" };
+  const PROD = { VERCEL_ENV: "production" };
+  let n = 0;
+  const mail = (db: FakeDb, to: string, over: Record<string, unknown> = {}) => {
+    const row = { id: `em-${++n}`, org_id: ORG, request_id: "rq-1", event_id: null, kind: "SUBMITTED", recipient_email: to.toLowerCase(), channel: "EMAIL", subject: "NewQuip Quotation NQ-Q-1: submitted for approval", body: "Open: https://x/approvals/rq-1", dedupe_key: `k-${n}`, status: "PENDING", attempts: 0, last_error: null, provider_message_id: null, sent_at: null, read_at: null, created_at: `2026-10-29T08:00:${String(n % 60).padStart(2, "0")}Z`, ...over };
+    (db.rows("approval_notifications") as unknown[]).push(row); return row as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  };
+  const row = (db: FakeDb, id: string) => (db.rows("approval_notifications") as Array<Record<string, any>>).find((r) => r.id === id)!; // eslint-disable-line @typescript-eslint/no-explicit-any
+  const ok = () => vi.fn(async (_i: unknown) => ({ ok: true, messageId: "msg-1" }));
+  const bad = () => vi.fn(async (_i: unknown) => ({ ok: false, error: "provider said no" }));
+
+  it("an allowlisted mailbox is emailed with a [PREVIEW] subject and a Preview banner; the stored notification is unchanged", async () => {
+    const db = new FakeDb(); db.approvalsApplied = true;
+    for (const to of PREVIEW_EMAIL_ALLOWLIST) mail(db, to);
+    const send = ok();
+    const r = await deliverPendingEmails(db as never, send as never, 50, { env: PREVIEW });
+    expect(r).toEqual({ sent: 4, failed: 0, suppressed: 0 });
+    for (const call of send.mock.calls) {
+      const i = call[0] as { to: string[]; subject: string; text: string };
+      expect(i.subject.startsWith("[PREVIEW] NewQuip Quotation")).toBe(true);
+      expect(i.text).toContain("NewQuip PREVIEW notification");
+      expect(PREVIEW_EMAIL_ALLOWLIST).toContain(i.to[0]);
+    }
+    expect((db.rows("approval_notifications") as Array<Record<string, any>>).every((x) => x.subject === "NewQuip Quotation NQ-Q-1: submitted for approval" && x.status === "SENT")).toBe(true); // eslint-disable-line @typescript-eslint/no-explicit-any
+  });
+  it("anyone else is SUPPRESSED: no provider call, no redirect, no attempt consumed, in-app notification untouched; look-alike addresses are not allowlisted", async () => {
+    const db = new FakeDb(); db.approvalsApplied = true; db.notificationStatuses.push("SUPPRESSED");
+    const outsiders = ["mgr@a", "someone@newquip.co.za", "rep@sparkconsulting.co.za.evil.example", "xrep@sparkconsulting.co.za", "rep+tag@sparkconsulting.co.za", "rep@mail.sparkconsulting.co.za", "anton@sparkconsulting.co.za"];
+    const rows = outsiders.map((to) => mail(db, to));
+    const inApp = mail(db, "mgr@a", { channel: "IN_APP", status: "SENT", sent_at: "t", dedupe_key: "inapp-1" });
+    const send = ok();
+    const r = await deliverPendingEmails(db as never, send as never, 50, { env: PREVIEW });
+    expect(send).not.toHaveBeenCalled();
+    expect(r).toEqual({ sent: 0, failed: 0, suppressed: outsiders.length });
+    for (const x of rows) expect(row(db, x.id)).toMatchObject({ status: "SUPPRESSED", attempts: 0, sent_at: null, provider_message_id: null });
+    expect(row(db, inApp.id)).toMatchObject({ channel: "IN_APP", status: "SENT" });
+    expect(displayEmailStatus(row(db, rows[0].id) as never)).toBe("SUPPRESSED");
+  });
+  it("before migration 0114 a suppressed row is recorded as ABANDONED with an unmistakable marker, and still shows as Suppressed (never as Failed)", async () => {
+    const db = new FakeDb(); db.approvalsApplied = true; // the 0110 status list: no SUPPRESSED
+    const x = mail(db, "outsider@elsewhere.example");
+    await deliverPendingEmails(db as never, ok() as never, 50, { env: PREVIEW });
+    expect(row(db, x.id).status).toBe("ABANDONED");
+    expect(row(db, x.id).last_error.startsWith(SUPPRESSED_MARK)).toBe(true);
+    expect(displayEmailStatus(row(db, x.id) as never)).toBe("SUPPRESSED");
+    expect(displayEmailStatus({ status: "ABANDONED", last_error: "provider said no" })).toBe("ABANDONED");
+    expect(displayEmailStatus({ status: "SENT", last_error: null })).toBe("ACCEPTED");
+  });
+  it("Production is unrestricted and unmarked; every other environment is restricted (fail closed)", async () => {
+    expect(isRestricted({ VERCEL_ENV: "production" })).toBe(false);
+    for (const e of [undefined, "", "preview", "development", "Production", "prod", " production"]) expect(isRestricted({ VERCEL_ENV: e })).toBe(true);
+    expect(applyEmailPolicy(PROD, { to: "anyone@customer.example", subject: "S", text: "T" })).toEqual({ action: "SEND", subject: "S", text: "T" });
+    const db = new FakeDb(); db.approvalsApplied = true;
+    mail(db, "anyone@customer.example"); const send = ok();
+    await deliverPendingEmails(db as never, send as never, 50, { env: PROD });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+  it("the subject is marked once (a re-applied policy does not double the prefix)", () => {
+    const first = applyEmailPolicy(PREVIEW, { to: "rep@sparkconsulting.co.za", subject: "S", text: "T" });
+    expect(first.action === "SEND" && first.subject).toBe("[PREVIEW] S");
+    const again = applyEmailPolicy(PREVIEW, { to: "REP@SparkConsulting.co.za", subject: "[PREVIEW] S", text: "T" });
+    expect(again.action === "SEND" && again.subject).toBe("[PREVIEW] S");
+  });
+  it("the test send follows the same policy (suppressed for a non-listed manager)", () => {
+    expect(applyEmailPolicy(PREVIEW, { to: "boss@newquip.co.za", subject: "t", text: "t" }).action).toBe("SUPPRESS");
+    expect(applyEmailPolicy(PREVIEW, { to: "manager@sparkconsulting.co.za", subject: "t", text: "t" }).action).toBe("SEND");
+  });
+
+  it("an inline send after a decision, and Send pending now, send QUEUED rows only: an existing FAILED row is never retried implicitly", async () => {
+    const db = new FakeDb(); db.approvalsApplied = true;
+    const old = mail(db, "manager@sparkconsulting.co.za", { status: "FAILED", attempts: 2, last_error: "RESEND_API_KEY / RESEND_FROM_EMAIL not configured" });
+    const fresh = mail(db, "manager@sparkconsulting.co.za");
+    const send = ok();
+    await deliverForRequest(db as never, "rq-1", send as never, PREVIEW);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(row(db, fresh.id).status).toBe("SENT");
+    expect(row(db, old.id)).toMatchObject({ status: "FAILED", attempts: 2 });
+    await sendPendingNow(db as never, MGR, send as never, PREVIEW);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(row(db, old.id)).toMatchObject({ status: "FAILED", attempts: 2 });
+  });
+  it("Retry re-queues and dispatches exactly that row, exactly once, even when clicked twice or from two sessions at once", async () => {
+    const db = new FakeDb(); db.approvalsApplied = true;
+    const a = mail(db, "manager@sparkconsulting.co.za", { status: "FAILED", attempts: 2, last_error: "x" });
+    const other = mail(db, "manager@sparkconsulting.co.za", { status: "FAILED", attempts: 1, last_error: "x" });
+    const send = ok();
+    const results = await Promise.allSettled([retryAndDispatchEmail(db as never, MGR, a.id, send as never, PREVIEW), retryAndDispatchEmail(db as never, MGR, a.id, send as never, PREVIEW)]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(row(db, a.id)).toMatchObject({ status: "SENT", attempts: 1 });
+    expect(row(db, other.id)).toMatchObject({ status: "FAILED", attempts: 1 }); // another failed row is not touched
+    await expect(retryAndDispatchEmail(db as never, MGR, a.id, send as never, PREVIEW)).rejects.toThrow(/not a failed email/);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+  it("Retry of a suppressed row stays suppressed (no send); a retry from another organisation, or by a non-manager, does nothing", async () => {
+    const db = new FakeDb(); db.approvalsApplied = true; db.notificationStatuses.push("SUPPRESSED");
+    const x = mail(db, "outsider@elsewhere.example", { status: "SUPPRESSED", last_error: "not allowlisted" });
+    const f = mail(db, "manager@sparkconsulting.co.za", { status: "FAILED", attempts: 1, last_error: "x" });
+    const send = ok();
+    expect(await retryAndDispatchEmail(db as never, MGR, x.id, send as never, PREVIEW)).toEqual({ sent: 0, failed: 0, suppressed: 1 });
+    expect(send).not.toHaveBeenCalled();
+    await expect(retryAndDispatchEmail(db as never, { ...MGR, orgId: OTHER_ORG }, f.id, send as never, PREVIEW)).rejects.toThrow(/not a failed email/);
+    await expect(retryAndDispatchEmail(db as never, PM, f.id, send as never, PREVIEW)).rejects.toThrow(/Only a manager/);
+    expect(send).not.toHaveBeenCalled();
+    expect(row(db, f.id)).toMatchObject({ status: "FAILED", attempts: 1 });
+  });
+  it("Send pending now is manager-only and organisation-scoped; two workers never send the same row twice", async () => {
+    const db = new FakeDb(); db.approvalsApplied = true;
+    const mine = mail(db, "rep@sparkconsulting.co.za"); const theirs = mail(db, "rep@sparkconsulting.co.za", { org_id: OTHER_ORG });
+    const send = ok();
+    await expect(sendPendingNow(db as never, PM, send as never, PREVIEW)).rejects.toThrow(/Only a manager/);
+    await Promise.all([sendPendingNow(db as never, MGR, send as never, PREVIEW), sendPendingNow(db as never, MGR, send as never, PREVIEW)]);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(row(db, mine.id).status).toBe("SENT");
+    expect(row(db, theirs.id).status).toBe("PENDING");
+  });
+  it("the automatic attempt cap holds: a failing provider is called at most MAX_EMAIL_ATTEMPTS times per email, then it is ABANDONED", async () => {
+    const db = new FakeDb(); db.approvalsApplied = true;
+    const x = mail(db, "rep@sparkconsulting.co.za"); const send = bad();
+    for (let i = 0; i < MAX_EMAIL_ATTEMPTS + 3; i++) await deliverPendingEmails(db as never, send as never, 50, { env: PREVIEW });
+    expect(send).toHaveBeenCalledTimes(MAX_EMAIL_ATTEMPTS);
+    expect(row(db, x.id)).toMatchObject({ status: "ABANDONED", attempts: MAX_EMAIL_ATTEMPTS });
+  });
+  it("the outbox lists every status so accepted, failed, suppressed and abandoned are all visible", async () => {
+    const db = new FakeDb(); db.approvalsApplied = true;
+    mail(db, "a@x", { status: "SENT", sent_at: "t" }); mail(db, "b@x", { status: "FAILED" }); mail(db, "c@x", { status: "ABANDONED" }); mail(db, "d@x", { status: "PENDING" });
+    expect((await recentEmails(db as never, ORG)).map((r) => displayEmailStatus(r)).sort()).toEqual(["ABANDONED", "ACCEPTED", "FAILED", "QUEUED"]);
+  });
+});
+
+describe("approval links are stable and reasons cannot leak costs or margins", () => {
+  it("the link base is the configured site URL, else the stable branch alias, and never the per-deployment host when an alias exists", () => {
+    expect(approvalBaseUrl({ NEXT_PUBLIC_SITE_URL: "https://alias.example/", VERCEL_BRANCH_URL: "branch.vercel.app", VERCEL_URL: "dpl-123.vercel.app" })).toBe("https://alias.example");
+    expect(approvalBaseUrl({ VERCEL_BRANCH_URL: "branch.vercel.app", VERCEL_URL: "dpl-123.vercel.app" })).toBe("https://branch.vercel.app");
+    expect(approvalBaseUrl({ VERCEL_URL: "dpl-123.vercel.app" })).toBe("https://dpl-123.vercel.app");
+    expect(approvalBaseUrl({})).toBe("");
+  });
+  it("a notification links to the stable alias and the page still needs login (the link carries only the request id)", () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", ""); vi.stubEnv("VERCEL_BRANCH_URL", "branch.vercel.app"); vi.stubEnv("VERCEL_URL", "dpl-123.vercel.app");
+    const ctx = legacyCtx(ORG, "u", "m@a", true);
+    expect(ctx.baseUrl).toBe("https://branch.vercel.app");
+    vi.unstubAllEnvs();
+  });
+  it("a free-text reason that mentions costs or margins is withheld from the message; an ordinary reason is kept", () => {
+    const req = { id: "rq", doc_type: "QUOTE", doc_ref: "NQ-Q-1", revision: 1, customer_name: "C", project_ref: null, amount_cents: 100, prepared_by_email: "p@a", assigned_to_email: null, submitted_at: "2026-10-29T08:00:00Z", due_at: null } as unknown as ApprovalRequestRow;
+    for (const r of ["margin is only 12%", "our cost on the silo is R40k", "Gross profit too low", "mark-up needs to rise", "GP below target", "supplier price changed", "Costing is wrong"]) {
+      const body = buildNotification("RETURNED", req, "p@a", { reason: r }).body;
+      expect(body).toContain(WITHHELD_REASON); expect(body).not.toContain(r);
+    }
+    expect(buildNotification("RETURNED", req, "p@a", { reason: "Please change the delivery date to 14 November" }).body).toContain("Reason: Please change the delivery date to 14 November");
+    expect(buildNotification("RETURNED", req, "p@a", {}).body).not.toContain("Reason:");
   });
 });

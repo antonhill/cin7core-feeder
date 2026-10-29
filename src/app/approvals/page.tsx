@@ -14,7 +14,8 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatSast, isOverdue, waitingLabel } from "@/lib/approvals/time";
 import { DOC_TYPE_LABEL, STATUS_LABEL, type ApprovalDocType, type ApprovalNotificationRow, type ApprovalStatus } from "@/lib/approvals/types";
 import type { QueueFilters, QueueSort } from "@/lib/approvals/queue";
-import { getApprovalsDashboardAction, getEmailStatusAction, getMyNotificationsAction, retryEmailAction, saveApprovalSettingsAction, sendTestEmailAction, type ApprovalsDashboard } from "./actions";
+import { displayEmailStatus, EMAIL_STATUS_NOTE, type EmailDisplayStatus } from "@/lib/approvals/email-policy";
+import { getApprovalsDashboardAction, getEmailStatusAction, getMyNotificationsAction, retryEmailAction, saveApprovalSettingsAction, sendPendingNowAction, sendTestEmailAction, type ApprovalsDashboard } from "./actions";
 
 // The single place a manager sees every outstanding quotation, claim and variation approval. All figures come from the canonical approval records
 // (never counters). Times are exact SAST; "waiting" is elapsed calendar time shown beside the exact submission time.
@@ -30,7 +31,7 @@ export default function ApprovalsPage() {
   const [tab, setTab] = useState<"queue" | "notifications" | "admin">("queue");
   const [settings, setSettings] = useState({ targetBusinessDays: "2", reminderEveryHours: "24", maxReminders: "3", escalationEmail: "" });
   const [note, setNote] = useState<string | null>(null);
-  const [mail, setMail] = useState<{ configured: boolean; missing: string[]; senderDomain: string | null; failed: number; abandoned: number } | null>(null);
+  const [mail, setMail] = useState<{ configured: boolean; missing: string[]; senderDomain: string | null; failed: number; abandoned: number; suppressed: number; restricted: boolean; allowlist: string[]; linkBase: string } | null>(null);
 
   const load = useCallback(() => {
     getApprovalsDashboardAction(f, sort).then((r) => { if (r.ok && r.data) { setD(r.data); setError(null); const t = r.data.settings; setSettings({ targetBusinessDays: String(t.targetBusinessDays), reminderEveryHours: String(t.reminderEveryHours), maxReminders: String(t.maxReminders), escalationEmail: t.escalationEmail ?? "" }); } else setError(r.error ?? "Could not load approvals."); });
@@ -135,20 +136,29 @@ export default function ApprovalsPage() {
         <div className="mt-3 space-y-4">
           <Panel>
             <PanelTitle>Email delivery</PanelTitle>
-            <p className="mt-1 text-xs text-slate-500">Approval decisions never depend on email. An email is shown as sent only after the mail provider accepted it; failed ones are retried a few times, then wait here for a manual retry.</p>
+            <p className="mt-1 text-xs text-slate-500">Approval decisions never depend on email. &ldquo;Accepted&rdquo; means the mail provider (Resend) took the message; it is not confirmation that it reached an inbox. A Preview emails only the listed test mailboxes (anyone else gets the in-app notification only, shown here as Suppressed). A Preview has no scheduled sender: use Send pending now, or Retry on a failed one.</p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
               <Button size="sm" variant="secondary" onClick={async () => { const r = await getEmailStatusAction(); if (r.ok && r.data) setMail(r.data); else setNote(r.error ?? "Could not read the email status."); }}>Check email configuration</Button>
               {mail && (mail.configured
                 ? <Badge tone="success">Provider configured{mail.senderDomain ? ` (sender @${mail.senderDomain})` : ""}</Badge>
                 : <Badge tone="danger">Not configured: {mail.missing.join(", ")} missing. Approval emails cannot be sent; in-app notifications still work.</Badge>)}
-              {mail?.configured && <Button size="sm" variant="secondary" onClick={async () => { const r = await sendTestEmailAction(); setNote(r.ok && r.data ? (r.data.accepted ? `The provider accepted a test email to ${r.data.to}${r.data.messageId ? ` (id ${r.data.messageId})` : ""}. Check that it arrived.` : `The test email was NOT accepted: ${r.data.error ?? "unknown error"}.`) : r.error ?? "Could not send a test email."); }}>Send a test email to me</Button>}
+              {mail?.configured && <Button size="sm" variant="secondary" onClick={async () => { const r = await sendTestEmailAction(); setNote(r.ok && r.data ? (r.data.suppressed ? `Not sent: ${r.data.error}` : r.data.accepted ? `The provider accepted a test email to ${r.data.to}${r.data.messageId ? ` (id ${r.data.messageId})` : ""}. Acceptance is not delivery: check that it arrived.` : `The test email was NOT accepted: ${r.data.error ?? "unknown error"}.`) : r.error ?? "Could not send a test email."); }}>Send a test email to me</Button>}
+              {mail?.configured && <Button size="sm" variant="secondary" onClick={async () => { const r = await sendPendingNowAction(); setNote(r.ok && r.data ? `Dispatched queued emails: ${r.data.sent} accepted by the provider, ${r.data.failed} failed, ${r.data.suppressed} suppressed.` : r.error ?? "Could not send the pending emails."); load(); }}>Send pending now</Button>}
             </div>
-            {d.failedEmails.length === 0 ? <p className="mt-2 text-sm text-slate-600">No failed emails.</p> : (
+            {mail && <p className="mt-2 text-xs text-slate-600">{mail.restricted ? <>Preview email policy: subjects are marked [PREVIEW] and only these mailboxes are emailed: {mail.allowlist.join(", ")}. </> : "Production email: no recipient restriction. "}{mail.linkBase ? <>Approval links point to {mail.linkBase}. </> : <>No link base is set, so email links would be relative. </>}{mail.suppressed ? `${mail.suppressed} suppressed.` : ""}</p>}
+            {d.recentEmails.length === 0 ? <p className="mt-2 text-sm text-slate-600">No approval emails yet.</p> : (
               <ul className="mt-2 space-y-1 text-sm">
-                {d.failedEmails.map((n) => (
-                  <li key={n.id} className="flex flex-wrap items-center gap-2"><Badge tone="danger">{n.status}</Badge><span>{n.subject} to {n.recipient_email}</span><span className="text-xs text-slate-500">{n.last_error} · {n.attempts} attempt(s)</span>
-                    <Button size="sm" variant="secondary" onClick={async () => { const r = await retryEmailAction(n.id); setNote(r.ok ? "Queued for retry." : r.error ?? "Could not retry."); load(); }}>Retry</Button></li>
-                ))}
+                {d.recentEmails.map((n) => {
+                  const st: EmailDisplayStatus = displayEmailStatus(n);
+                  return (
+                    <li key={n.id} className="flex flex-wrap items-center gap-2" title={EMAIL_STATUS_NOTE[st]}>
+                      <Badge tone={st === "ACCEPTED" ? "success" : st === "QUEUED" || st === "SUPPRESSED" ? "neutral" : "danger"}>{st === "ACCEPTED" ? "Accepted by provider" : st[0] + st.slice(1).toLowerCase()}</Badge>
+                      <span>{n.subject} to {n.recipient_email}</span>
+                      <span className="text-xs text-slate-500">{formatSast(n.sent_at ?? n.created_at)}{n.last_error ? ` · ${n.last_error}` : ""}{n.attempts ? ` · ${n.attempts} attempt(s)` : ""}</span>
+                      {(st === "FAILED" || st === "ABANDONED" || st === "SUPPRESSED") && <Button size="sm" variant="secondary" onClick={async () => { const r = await retryEmailAction(n.id); setNote(r.ok && r.data ? (r.data.sent ? "Retried: the provider accepted it (acceptance is not inbox delivery)." : r.data.suppressed ? "Retried: still suppressed by the Preview policy." : "Retried: the provider did not accept it; see the reason in the list.") : r.error ?? "Could not retry."); load(); }}>Retry</Button>}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </Panel>

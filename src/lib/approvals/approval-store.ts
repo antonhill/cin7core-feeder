@@ -9,6 +9,7 @@ import "server-only";
 // document changed, retrying the same decision reconciles (the document is already in the target state and the digest still matches).
 import type { createServiceRoleClient } from "@/supabase/server";
 import { sendEmail } from "@/lib/email/resend";
+import { applyEmailPolicy, approvalBaseUrl, SUPPRESSED_MARK, type EmailEnv } from "./email-policy";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
 import { managerApprove, returnToRep, returnToEstimator, estimatorSignOff, loadQuote } from "@/lib/newquip-quotes/quote-store";
 import { rolesFor } from "@/newquip/quote/roles";
@@ -316,17 +317,37 @@ export async function markNotificationsRead(db: Db, orgId: string, email: string
   if (r.error) fail(r.error.message);
 }
 
-const emailTargets = (db: Db) => db.from("approval_notifications").select("*").eq("channel", "EMAIL").in("status", ["PENDING", "FAILED"]);
+/**
+ * Email outbox. EVERY approval email passes through `deliverRows`, the single place that applies the outbound policy (Preview allowlist, [PREVIEW] marking) and
+ * the attempt cap. Statuses: SENT = the provider API accepted it (not proof of inbox delivery), FAILED / ABANDONED = the provider refused it, SUPPRESSED = the
+ * policy withheld it (never counted as a failure, never redirected, never consumes an attempt).
+ */
+export type EmailPolicyEnv = EmailEnv;
+type DeliverStatuses = ReadonlyArray<"PENDING" | "FAILED">;
+const QUEUE_ONLY: DeliverStatuses = ["PENDING"];           // inline sends and "Send pending now": never touches a FAILED row
+const QUEUE_AND_RETRY: DeliverStatuses = ["PENDING", "FAILED"]; // the scheduled worker (Production only), which retries within the attempt cap
+export interface DeliverResult { sent: number; failed: number; suppressed: number }
 
-async function deliverRows(db: Db, rows: ApprovalNotificationRow[], send: typeof sendEmail): Promise<{ sent: number; failed: number }> {
-  let sent = 0; let failed = 0;
+async function markSuppressed(db: Db, id: string, reason: string, statuses: DeliverStatuses): Promise<boolean> {
+  // Prefer the dedicated status (migration 0114); until the database accepts it, record ABANDONED with an unmistakable marker so it is still distinct from FAILED.
+  const first = await db.from("approval_notifications").update({ status: "SUPPRESSED", last_error: reason }).eq("id", id).in("status", [...statuses]).select("id");
+  if (!first.error) return !!first.data?.length;
+  const fallback = await db.from("approval_notifications").update({ status: "ABANDONED", last_error: `${SUPPRESSED_MARK} ${reason}`.slice(0, 500) }).eq("id", id).in("status", [...statuses]).select("id");
+  return !fallback.error && !!fallback.data?.length;
+}
+
+async function deliverRows(db: Db, rows: ApprovalNotificationRow[], send: typeof sendEmail, env: EmailPolicyEnv, statuses: DeliverStatuses): Promise<DeliverResult> {
+  let sent = 0; let failed = 0; let suppressed = 0;
   for (const row of rows) {
     const n = { ...row }; // work on a copy: the attempt counter we compare-and-set against must not move under us
     if (n.attempts >= MAX_EMAIL_ATTEMPTS) continue;
+    // the outbound policy is decided BEFORE an attempt is claimed: a suppressed email costs no attempt and reaches no provider
+    const decision = applyEmailPolicy(env, { to: n.recipient_email, subject: n.subject, text: n.body });
+    if (decision.action === "SUPPRESS") { if (await markSuppressed(db, n.id, decision.reason, statuses)) suppressed += 1; continue; }
     // claim the attempt (compare-and-set on the attempt counter): two workers never send the same notification twice
-    const claim = await db.from("approval_notifications").update({ attempts: n.attempts + 1 }).eq("id", n.id).eq("attempts", n.attempts).in("status", ["PENDING", "FAILED"]).select("id");
+    const claim = await db.from("approval_notifications").update({ attempts: n.attempts + 1 }).eq("id", n.id).eq("attempts", n.attempts).in("status", [...statuses]).select("id");
     if (claim.error || !claim.data?.length) continue;
-    const res = await send({ to: [n.recipient_email], subject: n.subject, text: n.body });
+    const res = await send({ to: [n.recipient_email], subject: decision.subject, text: decision.text });
     if (res.ok) {
       await db.from("approval_notifications").update({ status: "SENT", sent_at: new Date().toISOString(), provider_message_id: res.messageId ?? null, last_error: null }).eq("id", n.id);
       sent += 1;
@@ -336,28 +357,60 @@ async function deliverRows(db: Db, rows: ApprovalNotificationRow[], send: typeof
       failed += 1;
     }
   }
-  return { sent, failed };
+  return { sent, failed, suppressed };
 }
-export async function deliverForRequest(db: Db, requestId: string, send: typeof sendEmail = sendEmail) {
-  const r = await emailTargets(db).eq("request_id", requestId);
-  if (r.error) return { sent: 0, failed: 0 };
-  return deliverRows(db, (r.data ?? []) as ApprovalNotificationRow[], send);
+
+/** Best-effort inline send right after a decision: only the request's QUEUED rows (a FAILED row is never retried implicitly). */
+export async function deliverForRequest(db: Db, requestId: string, send: typeof sendEmail = sendEmail, env: EmailPolicyEnv = process.env): Promise<DeliverResult> {
+  const r = await db.from("approval_notifications").select("*").eq("request_id", requestId).eq("channel", "EMAIL").eq("status", "PENDING");
+  if (r.error) return { sent: 0, failed: 0, suppressed: 0 };
+  return deliverRows(db, (r.data ?? []) as ApprovalNotificationRow[], send, env, QUEUE_ONLY);
 }
-/** The cron entry: bounded batch across organisations. SENT is recorded only when the provider accepted the message. */
-export async function deliverPendingEmails(db: Db, send: typeof sendEmail = sendEmail, limit = 50) {
-  const r = await emailTargets(db);
-  if (r.error) { if (missing(r.error.message)) return { sent: 0, failed: 0 }; fail(r.error.message); }
-  return deliverRows(db, ((r.data ?? []) as ApprovalNotificationRow[]).sort((a, b) => a.created_at.localeCompare(b.created_at)).slice(0, limit), send);
+
+/**
+ * Drains the outbox, oldest first. The scheduled worker (Production only) retries FAILED rows within the attempt cap; a manager's "Send pending now" passes
+ * { orgId, retryFailed: false } so it sends QUEUED rows of their own organisation only.
+ */
+export async function deliverPendingEmails(db: Db, send: typeof sendEmail = sendEmail, limit = 50, opts: { env?: EmailPolicyEnv; orgId?: string; retryFailed?: boolean } = {}): Promise<DeliverResult> {
+  const statuses = opts.retryFailed === false ? QUEUE_ONLY : QUEUE_AND_RETRY;
+  let q = db.from("approval_notifications").select("*").eq("channel", "EMAIL").in("status", [...statuses]);
+  if (opts.orgId) q = q.eq("org_id", opts.orgId);
+  const r = await q;
+  if (r.error) return { sent: 0, failed: 0, suppressed: 0 };
+  return deliverRows(db, ((r.data ?? []) as ApprovalNotificationRow[]).sort((a, b) => a.created_at.localeCompare(b.created_at)).slice(0, limit), send, opts.env ?? process.env, statuses);
 }
-/** Administrative retry of an email that failed or was abandoned. */
-export async function retryEmail(db: Db, ctx: ApprovalCtx, notificationId: string): Promise<void> {
+
+/**
+ * Manager only. Re-queues ONE failed / abandoned / suppressed email and dispatches exactly that row, through the same policy, attempt claim and audit as every
+ * other send. The re-queue is a compare-and-set on the current status, so a double click or two managers cannot send it twice.
+ */
+export async function retryAndDispatchEmail(db: Db, ctx: ApprovalCtx, notificationId: string, send: typeof sendEmail = sendEmail, env: EmailPolicyEnv = process.env): Promise<DeliverResult> {
   if (!ctx.isManager) fail("Only a manager can retry a notification.");
-  const r = await db.from("approval_notifications").update({ status: "PENDING", attempts: 0, last_error: null }).eq("org_id", ctx.orgId).eq("id", notificationId).eq("channel", "EMAIL").in("status", ["FAILED", "ABANDONED"]).select("id");
+  const r = await db.from("approval_notifications").update({ status: "PENDING", attempts: 0, last_error: null }).eq("org_id", ctx.orgId).eq("id", notificationId).eq("channel", "EMAIL").in("status", ["FAILED", "ABANDONED", "SUPPRESSED"]).select("*");
   if (r.error) fail(r.error.message);
   if (!r.data?.length) fail("That notification is not a failed email.");
+  const result = await deliverRows(db, r.data as ApprovalNotificationRow[], send, env, QUEUE_ONLY);
+  await logActivity(db, { orgId: ctx.orgId, actor: { userId: ctx.userId, email: ctx.email }, action: "approvals.email_retry", summary: `Retried one approval email (${result.sent ? "accepted by the provider" : result.suppressed ? "suppressed by the Preview policy" : "not accepted"})`, detail: { notificationId, ...result } }).catch(() => undefined);
+  return result;
 }
+
+/** Manager only: sends the organisation's QUEUED emails now (never a FAILED row; those need an explicit Retry). */
+export async function sendPendingNow(db: Db, ctx: ApprovalCtx, send: typeof sendEmail = sendEmail, env: EmailPolicyEnv = process.env): Promise<DeliverResult> {
+  if (!ctx.isManager) fail("Only a manager can send pending emails.");
+  const result = await deliverPendingEmails(db, send, 50, { env, orgId: ctx.orgId, retryFailed: false });
+  await logActivity(db, { orgId: ctx.orgId, actor: { userId: ctx.userId, email: ctx.email }, action: "approvals.email_dispatch", summary: `Sent pending approval emails now (${result.sent} accepted, ${result.failed} failed, ${result.suppressed} suppressed)`, detail: { ...result } }).catch(() => undefined);
+  return result;
+}
+
+/** The organisation's recent email outbox, newest first, in every status (so accepted, failed, suppressed and abandoned are all visible). */
+export async function recentEmails(db: Db, orgId: string, limit = 50): Promise<ApprovalNotificationRow[]> {
+  const r = await db.from("approval_notifications").select("*").eq("org_id", orgId).eq("channel", "EMAIL");
+  if (r.error) { if (missing(r.error.message)) return []; fail(r.error.message); }
+  return ((r.data ?? []) as ApprovalNotificationRow[]).sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, limit);
+}
+/** Emails needing an administrator's attention (failed, abandoned or suppressed). */
 export async function failedEmails(db: Db, orgId: string): Promise<ApprovalNotificationRow[]> {
-  const r = await db.from("approval_notifications").select("*").eq("org_id", orgId).eq("channel", "EMAIL").in("status", ["FAILED", "ABANDONED"]);
+  const r = await db.from("approval_notifications").select("*").eq("org_id", orgId).eq("channel", "EMAIL").in("status", ["FAILED", "ABANDONED", "SUPPRESSED"]);
   if (r.error) { if (missing(r.error.message)) return []; fail(r.error.message); }
   return (r.data ?? []) as ApprovalNotificationRow[];
 }
@@ -392,7 +445,7 @@ export async function sendOverdueReminders(db: Db, nowIso: string, baseUrl?: str
 // ── the existing approve / return / reject / cancel entry points route through here, so there is ONE approval path ──
 
 export function legacyCtx(orgId: string, userId: string, email: string | null, isManager: boolean, opts: { name?: string; demo?: DemoInfo } = {}): ApprovalCtx {
-  const base = process.env.NEXT_PUBLIC_SITE_URL ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "");
+  const base = approvalBaseUrl(process.env);
   return { orgId, userId, email: (email ?? "unknown").toLowerCase(), name: opts.name ?? email ?? "unknown", isManager, baseUrl: base, ...(opts.demo ? { demo: opts.demo } : {}) };
 }
 

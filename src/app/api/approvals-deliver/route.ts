@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/supabase/server";
 import { assertInternalAuth, UnauthorizedError } from "@/lib/internal-auth";
+import { approvalBaseUrl } from "@/lib/approvals/email-policy";
 import { deliverPendingEmails, sendOverdueReminders } from "@/lib/approvals/approval-store";
 
 /**
@@ -12,7 +13,7 @@ export async function GET(req: Request) {
   try {
     assertInternalAuth(req);
     const db = createServiceRoleClient();
-    const reminders = await sendOverdueReminders(db, new Date().toISOString(), process.env.NEXT_PUBLIC_SITE_URL);
+    const reminders = await sendOverdueReminders(db, new Date().toISOString(), approvalBaseUrl(process.env));
     const emails = await deliverPendingEmails(db);
     return NextResponse.json({ ...reminders, ...emails });
   } catch (e) {

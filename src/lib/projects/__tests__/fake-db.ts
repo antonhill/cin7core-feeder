@@ -47,6 +47,8 @@ export class FakeDb {
   rolesApplied = false;
   /** Migration 0113 (exchange-rate snapshots) is not applied unless a test says so. */
   fxApplied = false;
+  /** Statuses the approval_notifications CHECK accepts. Defaults to the 0110 list (no SUPPRESSED, i.e. migration 0114 not applied); a test sets it to include SUPPRESSED. */
+  notificationStatuses: string[] = ["PENDING", "SENT", "FAILED", "ABANDONED"];
 
   from(table: string) {
     const cap = () => this.maxRows;
@@ -66,6 +68,7 @@ export class FakeDb {
     const approvals = () => this.approvalsApplied;
     const rolesOn = () => this.rolesApplied;
     const fxOn = () => this.fxApplied;
+    const notificationStatuses = () => this.notificationStatuses;
     function exec(): { data: unknown; error: { message: string } | null } {
       if (table === "newquip_fx_rates" && !fxOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (/^(org_functional_role|approval_polic)/.test(table) && !rolesOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
@@ -92,6 +95,8 @@ export class FakeDb {
         return { data: returning ? gone : null, error: null };
       }
       if (op === "update") {
+        const st = (payload as Record<string, unknown> | null)?.status;
+        if (table === "approval_notifications" && typeof st === "string" && !notificationStatuses().includes(st)) return { data: null, error: { message: 'new row for relation "approval_notifications" violates check constraint "approval_notifications_status_check"' } };
         for (const r of matched) Object.assign(r, payload);
         writes.push({ table, op: "update" });
         return { data: returning ? matched : null, error: null };

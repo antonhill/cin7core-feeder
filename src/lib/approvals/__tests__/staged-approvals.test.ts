@@ -43,6 +43,8 @@ function world(opts: { strict?: boolean } = {}) {
 const quote = (db: FakeDb) => db.rows("newquip_quotes")[0] as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const reqs = (db: FakeDb) => db.rows("approval_requests") as Array<Record<string, any>>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const notesTo = (db: FakeDb, email: string, kind?: string) => (db.rows("approval_notifications") as Array<Record<string, any>>).filter((n) => n.channel === "IN_APP" && n.recipient_email === email && (!kind || n.kind === kind)); // eslint-disable-line @typescript-eslint/no-explicit-any
+/** The queued EMAIL rows for a recipient: they must mirror the in-app notifications exactly (same stage, same people). */
+const emailsTo = (db: FakeDb, email: string, kind?: string) => (db.rows("approval_notifications") as Array<Record<string, any>>).filter((n) => n.channel === "EMAIL" && n.recipient_email === email && (!kind || n.kind === kind)); // eslint-disable-line @typescript-eslint/no-explicit-any
 const dArgs = (r: { version: number; digest: string }) => ({ expectedVersion: r.version, expectedDigest: r.digest });
 const openEstimatorStage = (db: FakeDb) => resyncQuoteApprovals(db as never, REP, "q1");
 
@@ -63,6 +65,8 @@ describe("rep -> estimator -> manager", () => {
     const est1 = await openEstimatorStage(db);
     expect(est1).toMatchObject({ stage: "ESTIMATOR", stage_role: "ESTIMATOR", prepared_by_email: "rep@a", originator_email: "rep@a", status: "PENDING", assigned_to_email: null });
     expect(notesTo(db, "est@a", "ESTIMATOR_ASSIGNED")).toHaveLength(1);
+    expect(emailsTo(db, "est@a", "ESTIMATOR_ASSIGNED")).toHaveLength(1); expect(emailsTo(db, "est2@a", "ESTIMATOR_ASSIGNED")).toHaveLength(1);
+    expect(emailsTo(db, "mgr@a")).toHaveLength(0); expect(emailsTo(db, "rep@a")).toHaveLength(0); // the email goes to the stage's estimators only
     expect(notesTo(db, "est2@a", "ESTIMATOR_ASSIGNED")).toHaveLength(1);
     expect(notesTo(db, "mgr@a")).toHaveLength(0); // not broadcast to managers
     expect(notesTo(db, "rep@a")).toHaveLength(0);
@@ -73,6 +77,7 @@ describe("rep -> estimator -> manager", () => {
     const mgrReq = (await pendingRequestFor(db as never, ORG, "QUOTE", "q1"))!;
     expect(mgrReq).toMatchObject({ stage: "MANAGER", stage_role: "MANAGER", prepared_by_email: "est@a", originator_email: "rep@a" });
     expect(notesTo(db, "mgr@a", "MANAGER_SUBMITTED")).toHaveLength(1);
+    expect(emailsTo(db, "mgr@a", "MANAGER_SUBMITTED")).toHaveLength(1); expect(emailsTo(db, "mgr2@a", "MANAGER_SUBMITTED")).toHaveLength(1); expect(emailsTo(db, "est@a", "MANAGER_SUBMITTED")).toHaveLength(0);
     expect(notesTo(db, "mgr2@a", "MANAGER_SUBMITTED")).toHaveLength(1);
     expect(notesTo(db, "est@a", "MANAGER_SUBMITTED")).toHaveLength(0);
 
@@ -112,6 +117,7 @@ describe("return routing", () => {
     const next = (await pendingRequestFor(db as never, ORG, "QUOTE", "q1"))!;
     expect(next).toMatchObject({ stage: "ESTIMATOR", assigned_to_email: "est@a" }); // back to the estimator who signed it off
     expect(notesTo(db, "est@a", "RETURNED_TO_ESTIMATOR")).toHaveLength(1);
+    expect(emailsTo(db, "est@a", "RETURNED_TO_ESTIMATOR")).toHaveLength(1);
     expect(notesTo(db, "rep@a", "RETURNED_TO_ESTIMATOR")).toHaveLength(0);
     // the returned manager request can never be approved afterwards (duplicate/stale protection)
     await expect(decide(db as never, MGR, m.id, "APPROVE", dArgs(m))).rejects.toThrow(/already|changed/);

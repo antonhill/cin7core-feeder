@@ -2,6 +2,7 @@
 // requires login and server-side authorisation. Times are always SAST.
 import { DOC_TYPE_LABEL, type ApprovalRequestRow } from "./types";
 import { formatSast } from "./time";
+import { safeReason } from "./email-policy";
 
 export type NotificationKind = "ESTIMATOR_ASSIGNED" | "MANAGER_SUBMITTED" | "RETURNED_TO_ESTIMATOR" | "RETURNED_TO_REP" | "SUBMITTED" | "REASSIGNED" | "REASSIGNED_AWAY" | "APPROVED" | "RETURNED" | "REJECTED" | "RESUBMITTED" | "OVERDUE" | "ESCALATED";
 export interface NotificationSpec { kind: string; recipient: string; subject: string; body: string }
@@ -38,7 +39,7 @@ export function buildNotification(kind: NotificationKind, req: ApprovalRequestRo
     `Submitted: ${formatSast(req.submitted_at)}`,
     req.due_at ? `Approval due: ${formatSast(req.due_at)}` : "",
     opts.by ? `By: ${opts.by}` : "",
-    opts.reason ? `Reason: ${opts.reason}` : "",
+    safeReason(opts.reason) ? `Reason: ${safeReason(opts.reason)}` : "",
     "",
     `Required action: ${ACTION[kind]}`,
     `Open: ${link}`,

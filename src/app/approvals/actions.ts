@@ -10,10 +10,11 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { assertNewquipOrg } from "@/lib/projects/newquip-gate";
 import {
-  approvalsAvailable, decide, docHistory, failedEmails, listRequests, loadRequest, loadSettings, managerEmails, markNotificationsRead, markViewed, myNotifications, reassign, requestHistory, retryEmail, submitForApproval,
+  approvalsAvailable, decide, docHistory, failedEmails, recentEmails, retryAndDispatchEmail, sendPendingNow, listRequests, loadRequest, loadSettings, managerEmails, markNotificationsRead, markViewed, myNotifications, reassign, requestHistory, submitForApproval,
   type ApprovalCtx,
 } from "@/lib/approvals/approval-store";
 import { emailConfigStatus, sendEmail } from "@/lib/email/resend";
+import { applyEmailPolicy, approvalBaseUrl, displayEmailStatus, isRestricted, PREVIEW_EMAIL_ALLOWLIST } from "@/lib/approvals/email-policy";
 import { resolveActing } from "@/lib/demo-mode/context";
 import { buildReviewDetail, type ReviewDetail } from "@/lib/approvals/review-detail";
 import { authoriseStageDecision } from "@/lib/approvals/policy";
@@ -33,7 +34,7 @@ async function context(): Promise<ApprovalCtx> {
   let isManager = false;
   if (acting.demo) isManager = acting.tier === "admin"; // the effective user's OWN tier
   else { try { await requireOrgAdmin("manage approvals"); isManager = true; } catch { isManager = false; } } // fail closed
-  const base = process.env.NEXT_PUBLIC_SITE_URL ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "");
+  const base = approvalBaseUrl(process.env);
   return { orgId: acting.orgId, userId: acting.userId, email: acting.email.toLowerCase(), name: acting.demo?.actorName ?? acting.email, isManager, baseUrl: base, ...(acting.demo ? { demo: acting.demo } : {}) };
 }
 
@@ -45,7 +46,7 @@ function notInDemo(ctx: ApprovalCtx, what: string) {
 export interface ApprovalsDashboard {
   available: boolean; me: string; isManager: boolean; nowIso: string;
   summary: QueueSummary; rows: ApprovalRequestRow[]; needsPreparerAction: ApprovalRequestRow[];
-  managers: string[]; failedEmails: ApprovalNotificationRow[]; unread: number; settings: ApprovalSettings;
+  managers: string[]; failedEmails: ApprovalNotificationRow[]; /** the organisation's recent emails in every status (managers only) */ recentEmails: ApprovalNotificationRow[]; unread: number; settings: ApprovalSettings;
 }
 
 export async function getApprovalsDashboardAction(filters: QueueFilters = {}, sort: QueueSort = "submitted_desc"): Promise<ApprovalResult<ApprovalsDashboard>> {
@@ -53,14 +54,14 @@ export async function getApprovalsDashboardAction(filters: QueueFilters = {}, so
     const ctx = await context();
     const db = createServiceRoleClient();
     const nowIso = new Date().toISOString();
-    if (!(await approvalsAvailable(db))) return { ok: true, data: { available: false, me: ctx.email, isManager: ctx.isManager, nowIso, summary: summarise([], ctx.email, nowIso), rows: [], needsPreparerAction: [], managers: [], failedEmails: [], unread: 0, settings: await loadSettings(db, ctx.orgId) } };
+    if (!(await approvalsAvailable(db))) return { ok: true, data: { available: false, me: ctx.email, isManager: ctx.isManager, nowIso, summary: summarise([], ctx.email, nowIso), rows: [], needsPreparerAction: [], managers: [], failedEmails: [], recentEmails: [], unread: 0, settings: await loadSettings(db, ctx.orgId) } };
     const all = await listRequests(db, ctx.orgId);
     const myRoles = await resolveRoles(db, ctx.orgId, ctx.userId, ctx.isManager);
     const notes = await myNotifications(db, ctx.orgId, ctx.email, 200);
     return { ok: true, data: {
       available: true, me: ctx.email, isManager: ctx.isManager, nowIso, summary: summarise(all, ctx.email, nowIso, myRoles), rows: sortQueue(filterQueue(all, filters, ctx.email, nowIso, myRoles), sort),
       needsPreparerAction: currentReturned(all).filter((r) => r.prepared_by_email === ctx.email), managers: ctx.isManager ? await managerEmails(db, ctx.orgId) : [],
-      failedEmails: ctx.isManager ? await failedEmails(db, ctx.orgId) : [], unread: notes.filter((n) => !n.read_at).length, settings: await loadSettings(db, ctx.orgId),
+      failedEmails: ctx.isManager ? await failedEmails(db, ctx.orgId) : [], recentEmails: ctx.isManager ? await recentEmails(db, ctx.orgId) : [], unread: notes.filter((n) => !n.read_at).length, settings: await loadSettings(db, ctx.orgId),
     } };
   } catch (e) {
     return { ok: false, error: msg(e) };
@@ -183,12 +184,24 @@ export async function markNotificationReadAction(id: string): Promise<ApprovalRe
     return { ok: false, error: msg(e) };
   }
 }
-export async function retryEmailAction(notificationId: string): Promise<ApprovalResult<null>> {
+export type DispatchSummary = { sent: number; failed: number; suppressed: number };
+/** Manager only. Re-queues ONE failed email and dispatches exactly that row now (same policy, attempt cap and audit as every send). */
+export async function retryEmailAction(notificationId: string): Promise<ApprovalResult<DispatchSummary>> {
   try {
     const ctx = await context();
     notInDemo(ctx, "Retrying an email");
-    await retryEmail(createServiceRoleClient(), ctx, notificationId);
-    return { ok: true, data: null };
+    return { ok: true, data: await retryAndDispatchEmail(createServiceRoleClient(), ctx, notificationId) };
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+}
+
+/** Manager only. Sends this organisation's QUEUED approval emails now. It never retries a FAILED row (that needs an explicit Retry). Cron does not run on a Preview. */
+export async function sendPendingNowAction(): Promise<ApprovalResult<DispatchSummary>> {
+  try {
+    const ctx = await context();
+    notInDemo(ctx, "Sending pending emails");
+    return { ok: true, data: await sendPendingNow(createServiceRoleClient(), ctx) };
   } catch (e) {
     return { ok: false, error: msg(e) };
   }
@@ -215,13 +228,13 @@ export async function saveApprovalSettingsAction(s: ApprovalSettings): Promise<A
 }
 
 /** Manager only. Reports whether email can be sent (presence of the provider settings only; never the key). */
-export async function getEmailStatusAction(): Promise<ApprovalResult<{ configured: boolean; missing: string[]; senderDomain: string | null; failed: number; abandoned: number }>> {
+export async function getEmailStatusAction(): Promise<ApprovalResult<{ configured: boolean; missing: string[]; senderDomain: string | null; failed: number; abandoned: number; suppressed: number; restricted: boolean; allowlist: string[]; linkBase: string }>> {
   try {
     const ctx = await context();
     notInDemo(ctx, "The email delivery status");
     if (!ctx.isManager) throw new Error("Only a manager can see the email delivery status.");
     const failed = await failedEmails(createServiceRoleClient(), ctx.orgId);
-    return { ok: true, data: { ...emailConfigStatus(), failed: failed.filter((n) => n.status === "FAILED").length, abandoned: failed.filter((n) => n.status === "ABANDONED").length } };
+    return { ok: true, data: { ...emailConfigStatus(), failed: failed.filter((n) => displayEmailStatus(n) === "FAILED").length, abandoned: failed.filter((n) => displayEmailStatus(n) === "ABANDONED").length, suppressed: failed.filter((n) => displayEmailStatus(n) === "SUPPRESSED").length, restricted: isRestricted(process.env), allowlist: isRestricted(process.env) ? [...PREVIEW_EMAIL_ALLOWLIST] : [], linkBase: approvalBaseUrl(process.env) } };
   } catch (e) {
     return { ok: false, error: msg(e) };
   }
@@ -231,12 +244,14 @@ export async function getEmailStatusAction(): Promise<ApprovalResult<{ configure
  * Manager only. Sends ONE test message to the caller's own address through the same provider path as approval emails, so provider acceptance can be
  * confirmed. The result states plainly whether the provider accepted it; a failure is never reported as sent. Creates no approval and writes nothing to Cin7.
  */
-export async function sendTestEmailAction(): Promise<ApprovalResult<{ accepted: boolean; messageId?: string; error?: string; to: string }>> {
+export async function sendTestEmailAction(): Promise<ApprovalResult<{ accepted: boolean; messageId?: string; error?: string; to: string; suppressed?: boolean }>> {
   try {
     const ctx = await context();
     notInDemo(ctx, "Sending a test email");
     if (!ctx.isManager) throw new Error("Only a manager can send a test email.");
-    const res = await sendEmail({ to: [ctx.email], subject: "NewQuip approvals: test email", text: `This is a test of the NewQuip approval email delivery, requested by ${ctx.email}. No action is needed.` });
+    const decision = applyEmailPolicy(process.env, { to: ctx.email, subject: "NewQuip approvals: test email", text: `This is a test of the NewQuip approval email delivery, requested by ${ctx.email}. No action is needed.` });
+    if (decision.action === "SUPPRESS") { await logActivity(createServiceRoleClient(), { orgId: ctx.orgId, actor: { userId: ctx.userId, email: ctx.email }, action: "approvals.test_email", summary: "A test approval email was suppressed by the Preview policy", detail: { accepted: false, suppressed: true } }).catch(() => undefined); return { ok: true, data: { accepted: false, error: decision.reason, to: ctx.email, suppressed: true } }; }
+    const res = await sendEmail({ to: [ctx.email], subject: decision.subject, text: decision.text });
     await logActivity(createServiceRoleClient(), { orgId: ctx.orgId, actor: { userId: ctx.userId, email: ctx.email }, action: "approvals.test_email", summary: res.ok ? "Sent a test approval email (provider accepted)" : "A test approval email failed", detail: { accepted: res.ok } }).catch(() => undefined);
     return { ok: true, data: { accepted: res.ok, messageId: res.messageId, error: res.error, to: ctx.email } };
   } catch (e) {
