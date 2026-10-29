@@ -170,8 +170,8 @@ describe("issuing an immutable customer document", () => {
   });
   it("an issued document row can never be updated or deleted (database guard emulated)", async () => {
     const w = world(); w.addSnapshot(); await saveProfile(w.db as never, "org-a", PROFILE, "m@x"); const a = await issue(w);
-    expect((await w.db.from("newquip_quote_documents").update({ content_hash: "x" }).eq("id", a.document.id)).error?.message).toMatch(/append-only/);
-    expect((await w.db.from("newquip_quote_documents").delete().eq("id", a.document.id)).error?.message).toMatch(/append-only/);
+    expect(((await w.db.from("newquip_quote_documents").update({ content_hash: "x" }).eq("id", a.document.id)) as unknown as { error: { message: string } }).error.message).toMatch(/append-only/);
+    expect(((await w.db.from("newquip_quote_documents").delete().eq("id", a.document.id)) as unknown as { error: { message: string } }).error.message).toMatch(/append-only/);
   });
   it("retrieval re-verifies the hash: a swapped or corrupted file is refused; another organisation cannot read it", async () => {
     const w = world(); w.addSnapshot(); await saveProfile(w.db as never, "org-a", PROFILE, "m@x"); const a = await issue(w);

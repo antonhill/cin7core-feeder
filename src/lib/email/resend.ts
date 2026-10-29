@@ -6,6 +6,8 @@ export interface SendEmailInput {
   cc?: string[];
   subject: string;
   text: string;
+  /** Optional file attachments (e.g. a quotation PDF). */
+  attachments?: { filename: string; content: Buffer }[];
 }
 
 export interface SendEmailResult {
@@ -38,6 +40,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       cc: input.cc?.length ? input.cc : undefined,
       subject: input.subject,
       text: input.text,
+      attachments: input.attachments?.length ? input.attachments : undefined,
     });
     if (result.error) return { ok: false, error: result.error.message };
     return { ok: true, messageId: result.data?.id };
