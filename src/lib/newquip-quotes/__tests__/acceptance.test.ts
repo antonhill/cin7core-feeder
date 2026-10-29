@@ -149,6 +149,12 @@ describe("ACCEPTANCE GATE for new quotations", () => {
     expect(await err(recordCustomerResponse(w.db as never, "org-b", w.id, { email: "x" }, { documentId: doc.id, response: "ACCEPTED", contactName: "Piet", respondedOn: TODAY, evidenceRef: "email" }, TODAY))).toMatch(/Quote not found/);
     expect(w.db.rows("newquip_quote_responses")).toHaveLength(0);
   });
+  it("the customer snapshot of an approved quotation cannot be added to, even straight through the store", async () => {
+    const w = await world({ gated: true });
+    const snap = withChosenContact(buildCustomerSnapshot({ ID: "other", Name: "Other", Addresses: [], Contacts: [{ Name: "X", Email: "x@y.co" }] }, "t"), { source: "CIN7_CONTACT", contactIndex: 0 });
+    expect(await err(appendSnapshot(w.db as never, ORG, w.id, snap, { email: "x" }, "late"))).toMatch(/immutable/);
+    expect(w.db.rows("newquip_quote_customers")).toHaveLength(1);
+  });
   it("the status is derived: approval alone is APPROVED_INTERNALLY, never accepted", async () => {
     const w = await world({ gated: true });
     const q = (await loadQuote(w.db as never, ORG, w.id))!;

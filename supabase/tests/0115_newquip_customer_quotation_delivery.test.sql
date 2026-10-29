@@ -108,6 +108,7 @@ do $$ begin
   if (select count(*) from newquip_quote_documents) <> 1 then raise exception 'org A member must see its document'; end if;
   if (select count(*) from newquip_quote_sends) <> 1 then raise exception 'org A member must see its send'; end if;
   if (select count(*) from newquip_quote_customers) <> 1 then raise exception 'org A member must see its snapshot'; end if;
+  if (select count(*) from newquip_quote_responses) <> 1 then raise exception 'org A member must see its customer response'; end if;
 end $$;
 select pg_temp.expect_denied($q$insert into newquip_quote_responses (org_id, quote_id, document_id, response, contact_name, responded_on, evidence_ref, recorded_by_email) values ('00000000-0000-0000-0000-0000000015b1', '00000000-0000-0000-0000-0000000015c2', '00000000-0000-0000-0000-0000000015d1', 'ACCEPTED', 'J', current_date, 'client write', 'x@x')$q$, 'client write to responses');
 select pg_temp.expect_denied($q$insert into newquip_company_profiles (org_id, profile, entered_by_email) values ('00000000-0000-0000-0000-0000000015b1', '{}', 'x@x')$q$, 'client write to profiles');
@@ -118,6 +119,7 @@ do $$ begin
   if (select count(*) from newquip_quote_sends) <> 0 then raise exception 'org B must not see org A sends'; end if;
   if (select count(*) from newquip_quote_customers) <> 0 then raise exception 'org B must not see org A customer snapshots'; end if;
   if (select count(*) from newquip_company_profiles) <> 0 then raise exception 'org B must not see org A profiles'; end if;
+  if (select count(*) from newquip_quote_responses) <> 0 then raise exception 'org B must not see org A customer responses'; end if;
 end $$;
 select pg_temp.reset_role();
 

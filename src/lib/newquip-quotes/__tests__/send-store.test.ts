@@ -118,6 +118,11 @@ describe("duplicate prevention, resend and retry", () => {
     expect(a.send.id).toBe(b.send.id);
     expect(w.db.rows("newquip_quote_sends")).toHaveLength(1);
   });
+  it("repeating the same dialog AFTER it was accepted returns the original send (reused), not an error and not a second email", async () => {
+    const w = await world(); const send = ok();
+    const a = await go(w, send); const b = await go(w, send);
+    expect(b.reused).toBe(true); expect(b.send.id).toBe(a.send.id); expect(send).toHaveBeenCalledTimes(1);
+  });
   it("a second send of an already-accepted quotation needs an audited re-send with a reason; then it goes out and is linked to the first", async () => {
     const w = await world(); const send = ok();
     const first = await go(w, send);
