@@ -20,6 +20,8 @@ vi.mock("@/lib/require-org-admin", () => ({ requireOrgAdmin: vi.fn() }));
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: vi.fn(() => ({ __db: true })) }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: vi.fn(() => Promise.resolve()) }));
 vi.mock("@/lib/projects/scope-access", async (orig) => ({ ...(await orig<typeof import("@/lib/projects/scope-access")>()), guardBillingScope: vi.fn(() => Promise.resolve()), callerIsOrgAdmin: vi.fn(() => Promise.resolve(false)) }));
+// The approvals framework (migration 0110) is not applied in this scenario: the documents keep their previous approve / reject behaviour.
+vi.mock("@/lib/approvals/approval-store", () => ({ approvalsAvailable: vi.fn(() => Promise.resolve(false)), decideDocument: vi.fn(), legacyCtx: vi.fn(), submitForApproval: vi.fn(), withdrawPendingFor: vi.fn() }));
 vi.mock("@/lib/projects/project-store", () => ({ loadProjectView: vi.fn(() => Promise.resolve(null)), listProjectViews: vi.fn(() => Promise.resolve([])) }));
 vi.mock("@/lib/projects/variation-store", () => ({
   raiseVariation: vi.fn(() => Promise.resolve({ variationId: "v1", code: "V001" })), repriceVariation: vi.fn(), approveVariation: vi.fn(), rejectVariation: vi.fn(),

@@ -32,6 +32,7 @@ import { MarginPanel } from "./MarginPanel";
 import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
 import { ScopePanel } from "./ScopePanel";
+import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
 
 // NewQuip Grower quote editor: Configuration (rep) → Estimator review → Customer quote → Approval. The browser holds only the
@@ -536,6 +537,11 @@ export default function QuoteEditorPage() {
       {/* ───────────── 4 · APPROVAL & PROJECT ───────────── */}
       {tab === "approval" && (
         <div className="mt-4 space-y-6">
+          <Panel>
+            <PanelTitle>Approval history</PanelTitle>
+            <div className="mt-2"><ApprovalHistory docType="QUOTE" docId={id} label="Show the timestamped approval history (also on the Approvals page)" /></div>
+          </Panel>
+
           <Panel>
             <PanelTitle>Workflow</PanelTitle>
             <dl className="mt-3 grid gap-x-8 gap-y-2 text-sm md:grid-cols-2 xl:grid-cols-4">

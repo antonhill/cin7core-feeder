@@ -102,6 +102,10 @@ export function TemplateIcon({ className }: IconProps) {
   return <ModuleImageIcon src="/icons/templates.png" className={className} />;
 }
 
+export function ApprovalsIcon({ className }: IconProps) {
+  return <ModuleImageIcon src="/icons/audit.png" className={className} />;
+}
+
 export function MigrateIcon({ className }: IconProps) {
   return <ModuleImageIcon src="/icons/migrate.png" className={className} />;
 }
@@ -599,6 +603,16 @@ export const SOLUTION_BUILDER_MODULE: ModuleConfig = {
   blurb: "Build a NewQuip Grower house solution: configure, review, quote, approve and hand over to a Project.",
 };
 
+// NewQuip commercial approvals (quotes, claims, variations): one dashboard for managers and a status view for preparers. Like Solution Builder it is
+// deliberately NOT in MODULES; the route layout and every server action re-check the NewQuip organisation independently.
+export const APPROVALS_MODULE: ModuleConfig = {
+  href: "/approvals",
+  label: "Approvals",
+  gradient: SELF_COLORED_ICON_BADGE,
+  Icon: ApprovalsIcon,
+  blurb: "Review, approve, return or reject NewQuip quotations, progress claims and variations, with a permanent timestamped history.",
+};
+
 /**
  * The left-navigation links for an org: its enabled modules, plus Solution Builder where NewQuip's capability applies, placed
  * straight after Quotes (or, if Quotes is hidden, before Projects). Pure so it is directly unit-testable.
@@ -613,6 +627,10 @@ export function buildNavLinks(orgId: string | null, disabledModules: string[], i
     else at = visible.findIndex((m) => m.href === PROJECTS_MODULE.href);
     if (at < 0) at = visible.length;
     links = [...visible.slice(0, at), SOLUTION_BUILDER_MODULE, ...visible.slice(at)];
+  }
+  if (orgId != null && isNewquipPocOrg(orgId) && !disabledModules.includes(PROJECTS_MODULE.href)) {
+    const i = links.findIndex((m) => m.href === PROJECTS_MODULE.href);
+    links = [...links.slice(0, i + 1), APPROVALS_MODULE, ...links.slice(i + 1)];
   }
   return isSuperAdmin ? [...links, ADMIN_MODULE] : links;
 }

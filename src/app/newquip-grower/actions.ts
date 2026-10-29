@@ -11,6 +11,7 @@ import type { QuoteDraft } from "@/newquip/grower/draft";
 import { rolesFor, type OrgTier, type QuoteRole } from "@/newquip/quote/roles";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
 import { redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
+import { approvalsAvailable, decideDocument, legacyCtx, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
 import {
   createProjectFromAcceptedQuote, createQuote, estimatorSignOff, listQuotes, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator,
@@ -158,17 +159,31 @@ export async function sendGrowerQuoteToEstimatorAction(quoteId: string, confirme
 }
 
 export async function returnGrowerQuoteToRepAction(quoteId: string, reason: string) {
-  return step(quoteId, "Returned a NewQuip quote to the rep", "newquip.quote_returned_to_rep", (a, db) => returnToRep(db, a.orgId, a.roles, quoteId, reason));
+  return step(quoteId, "Returned a NewQuip quote to the rep", "newquip.quote_returned_to_rep", async (a, db) => {
+    if (await approvalsAvailable(db)) {
+      // A manager returning a submitted quote is a recorded RETURN decision (reason required); an estimator pulling it back withdraws the submission.
+      if (a.roles.has("manager")) { await decideDocument(db, legacyCtx(a.orgId, a.userId, a.email, true), "QUOTE", quoteId, "RETURN", { reason }); return; }
+      await returnToRep(db, a.orgId, a.roles, quoteId, reason);
+      await withdrawPendingFor(db, legacyCtx(a.orgId, a.userId, a.email, false), "QUOTE", quoteId, reason).catch(() => undefined);
+      return;
+    }
+    await returnToRep(db, a.orgId, a.roles, quoteId, reason);
+  });
 }
 
 export async function signOffGrowerQuoteAction(quoteId: string) {
   return step(quoteId, "Estimator signed off a NewQuip quote", "newquip.quote_estimator_signed_off", (a, db) =>
-    estimatorSignOff(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true)));
+    estimatorSignOff(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true)).then(async () => {
+      // The sign-off is the submission to the approving manager: record the exact revision + digest on the Approvals dashboard.
+      if (await approvalsAvailable(db)) await submitForApproval(db, legacyCtx(a.orgId, a.userId, a.email, a.tier === "admin"), "QUOTE", quoteId).catch(() => undefined);
+    }));
 }
 
 /** Manager final approval — freezes the accepted baseline. */
 export async function approveGrowerQuoteAction(quoteId: string) {
   return step(quoteId, "Manager approved a NewQuip quote and froze the accepted baseline", "newquip.quote_manager_approved", async (a, db) => {
+    // One approval path: when the Approvals framework is available the decision is recorded there (separation of duties, exact revision, history).
+    if (await approvalsAvailable(db)) { await decideDocument(db, legacyCtx(a.orgId, a.userId, a.email, a.roles.has("manager")), "QUOTE", quoteId, "APPROVE"); return; }
     // Approval evaluates with cost withheld; the INTERNAL margin sheet is frozen from a second, cost-visible evaluation of the same draft.
     await managerApprove(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), evaluationContext(false));
   });

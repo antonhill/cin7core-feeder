@@ -27,6 +27,7 @@ import {
   submitClaimForApproval,
 } from "@/lib/projects/project-store";
 import { approveVariation, raiseVariation, rejectVariation, repriceVariation } from "@/lib/projects/variation-store";
+import { approvalsAvailable, decideDocument, legacyCtx, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
 import { redactVariationCosts } from "@/lib/projects/variations";
 import { randsToCents } from "@/lib/projects/claim-engine";
 import { BillingScopeAccessError, guardBillingScope } from "@/lib/projects/scope-access";
@@ -173,9 +174,12 @@ export async function createClaimDraftAction(projectId: string, selectedStageIds
 
 export async function submitClaimForApprovalAction(projectId: string, claimId: string): Promise<ActionResult<null>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
-    await submitClaimForApproval(createServiceRoleClient(), orgId, projectId, claimId);
+    const db = createServiceRoleClient();
+    await submitClaimForApproval(db, orgId, projectId, claimId);
+    // Record the submission (exact revision + digest) on the Approvals dashboard. A recording problem never loses the claim: approving it later re-submits.
+    if (await approvalsAvailable(db).catch(() => false)) await submitForApproval(db, legacyCtx(orgId, userId, email, await isAdmin()), "CLAIM", claimId).catch(() => undefined);
     return { ok: true, data: null };
   } catch (e) {
     return { ok: false, error: message(e) };
@@ -189,7 +193,8 @@ export async function approveClaimAction(projectId: string, claimId: string): Pr
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
     await requireOrgAdmin("approve a progress claim");
     const db = createServiceRoleClient();
-    await approveClaim(db, orgId, email ?? "unknown", projectId, claimId);
+    if (await approvalsAvailable(db)) await decideDocument(db, legacyCtx(orgId, userId, email, true), "CLAIM", claimId, "APPROVE"); // one approval path: separation of duties, digest, history
+    else await approveClaim(db, orgId, email ?? "unknown", projectId, claimId);
     await logActivity(db, { orgId, actor: { userId, email }, action: "projects.claim_approved", summary: "Approved a project progress claim (value reserved; no Cin7 write)", detail: { projectId, claimId } });
     return { ok: true, data: null };
   } catch (e) {
@@ -199,9 +204,10 @@ export async function approveClaimAction(projectId: string, claimId: string): Pr
 
 export async function cancelDraftClaimAction(projectId: string, claimId: string): Promise<ActionResult<null>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
     await cancelDraftClaim(createServiceRoleClient(), orgId, projectId, claimId);
+    if (await approvalsAvailable(createServiceRoleClient()).catch(() => false)) await withdrawPendingFor(createServiceRoleClient(), legacyCtx(orgId, userId, email, await isAdmin()), "CLAIM", claimId, "The claim was cancelled by its preparer.").catch(() => undefined);
     return { ok: true, data: null };
   } catch (e) {
     return { ok: false, error: message(e) };
@@ -254,13 +260,30 @@ export async function repriceVariationAction(projectId: string, variationId: str
   }
 }
 
+/** Submits the variation's CURRENT content for manager approval (it cannot be edited while pending). */
+export async function submitVariationForApprovalAction(projectId: string, variationId: string): Promise<ActionResult<null>> {
+  try {
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    assertNewquipOrg(orgId);
+    const db = createServiceRoleClient();
+    if (!(await approvalsAvailable(db))) throw new Error("Approvals are not available yet (database migration pending).");
+    const v = await db.from("project_variations").select("id").eq("org_id", orgId).eq("project_id", projectId).eq("id", variationId).maybeSingle();
+    if (!v.data) throw new Error("Variation not found in this project.");
+    await submitForApproval(db, legacyCtx(orgId, userId, email, await isAdmin()), "VARIATION", variationId);
+    return { ok: true, data: null };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
 export async function approveVariationAction(projectId: string, variationId: string): Promise<ActionResult<null>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     assertNewquipOrg(orgId);
     await requireOrgAdmin("approve a variation");
     const db = createServiceRoleClient();
-    await approveVariation(db, orgId, email ?? "unknown", projectId, variationId);
+    if (await approvalsAvailable(db)) await decideDocument(db, legacyCtx(orgId, userId, email, true), "VARIATION", variationId, "APPROVE");
+    else await approveVariation(db, orgId, email ?? "unknown", projectId, variationId);
     await logActivity(db, { orgId, actor: { userId, email }, action: "projects.variation_approved", summary: "Approved a project variation (revised contract value increased; original unchanged; no Cin7 write)", detail: { projectId, variationId } });
     return { ok: true, data: null };
   } catch (e) {
@@ -274,7 +297,8 @@ export async function rejectVariationAction(projectId: string, variationId: stri
     assertNewquipOrg(orgId);
     await requireOrgAdmin("reject a variation");
     const db = createServiceRoleClient();
-    await rejectVariation(db, orgId, email ?? "unknown", projectId, variationId, reason);
+    if (await approvalsAvailable(db)) await decideDocument(db, legacyCtx(orgId, userId, email, true), "VARIATION", variationId, "REJECT", { reason });
+    else await rejectVariation(db, orgId, email ?? "unknown", projectId, variationId, reason);
     await logActivity(db, { orgId, actor: { userId, email }, action: "projects.variation_rejected", summary: "Rejected a project variation (no contract value change; no Cin7 write)", detail: { projectId, variationId } });
     return { ok: true, data: null };
   } catch (e) {

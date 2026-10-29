@@ -14,6 +14,7 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatBps, formatCents, type ProjectView, type StageView } from "@/lib/projects/project-view";
 import { VariationsPanel } from "./VariationsPanel";
 import { OpeningCommitmentsPanel } from "./OpeningCommitmentsPanel";
+import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { Cin7PostingPanel } from "./Cin7PostingPanel";
 import { Cin7SaleCreationPanel } from "./Cin7SaleCreationPanel";
 import { PhysicalPanel } from "./PhysicalPanel";
@@ -529,6 +530,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                         {(cl.status === "DRAFT" || cl.status === "READY_FOR_APPROVAL") && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.")} disabled={isWorking}>Recalculate</Button>}
                         {(cl.status === "DRAFT" || cl.status === "READY_FOR_APPROVAL") && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), "Claim cancelled.")} disabled={isWorking}>Cancel</Button>}
                       </div>
+                      <div className="mt-1"><ApprovalHistory docType="CLAIM" docId={cl.id} label="Approval history" /></div>
                     </TD>
                   </TR>
                 ))}

@@ -12,6 +12,7 @@ import { loadProjectView } from "./project-store";
 import { listPostings } from "./cin7-posting-store";
 import { loadCreation } from "./cin7-sale-creation-store";
 import type { ProjectView } from "./project-view";
+import { assertNotPendingApproval } from "@/lib/approvals/pending-guard";
 import { buildConsolidatedCommercial, type ConsolidatedCommercial, type ReportScopeInput } from "./consolidated-report";
 import { scheduleToStages, validateVariationSchedule, type ScheduleStageInput } from "./variation-schedule";
 
@@ -44,6 +45,7 @@ export async function saveDraftSchedule(db: Db, orgId: string, projectId: string
   if (!check.ok) fail(check.error);
   const v = await loadVariation(db, orgId, projectId, variationId);
   if (v.status !== "DRAFT") fail(`A ${v.status} variation's schedule is frozen. Use a controlled amendment.`);
+  await assertNotPendingApproval(db, orgId, "VARIATION", variationId);
   const del = await db.from("project_variation_stages").delete().eq("org_id", orgId).eq("variation_id", variationId);
   if (del.error) fail(`replace schedule: ${del.error.message}`);
   const ins = await db.from("project_variation_stages").insert(stages.map((s, i) => ({ org_id: orgId, variation_id: variationId, sort_order: i + 1, name: s.name.trim(), bps: s.bps }))).select("id");

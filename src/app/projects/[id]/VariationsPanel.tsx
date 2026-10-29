@@ -11,7 +11,8 @@ import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { NEGATIVE_VARIATION_UNSUPPORTED, isNegativeAmountInput } from "@/lib/projects/variations";
 import { ConsolidatedReportPanel } from "./ConsolidatedReportPanel";
 import { VariationBillingPanel } from "./VariationBillingPanel";
-import { approveVariationAction, raiseVariationAction, rejectVariationAction, repriceVariationAction } from "../actions";
+import { ApprovalHistory } from "@/components/ApprovalHistory";
+import { approveVariationAction, raiseVariationAction, rejectVariationAction, repriceVariationAction, submitVariationForApprovalAction } from "../actions";
 
 // Project VARIATIONS — the only way scope/value changes after acceptance. Generic: nothing here knows about NewQuip.
 // original_contract is never edited; only APPROVED variations move the REVISED contract value. Cin7 is represented, never written.
@@ -65,6 +66,7 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
                         <div className="flex flex-wrap items-end gap-2">
                           <Input label="Re-price (R)" value={price[v.id] ?? ""} onChange={(e) => setPrice({ ...price, [v.id]: e.target.value })} placeholder={(v.amount_cents / 100).toString()} />
                           <Button size="sm" variant="secondary" disabled={working || !(price[v.id] ?? "").trim()} onClick={() => run(() => repriceVariationAction(projectId, v.id, price[v.id]), `Re-priced ${v.code}.`)}>Re-price</Button>
+                          <Button size="sm" variant="secondary" disabled={working} onClick={() => run(() => submitVariationForApprovalAction(projectId, v.id), `Submitted ${v.code} for manager approval. It cannot be edited while it is pending.`)}>Submit for approval</Button>
                           {isAdmin ? (
                             <>
                               <Button size="sm" disabled={working} onClick={() => run(() => approveVariationAction(projectId, v.id), `Approved ${v.code}. The revised contract value now includes it; the original is unchanged.`)}>Approve</Button>
@@ -76,6 +78,7 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
                       ) : (
                         <span className="text-xs text-slate-600">{v.decided_by_email} · {v.decision_reason ?? "approved"}</span>
                       )}
+                      <div className="mt-1"><ApprovalHistory docType="VARIATION" docId={v.id} label="Approval history" /></div>
                     </TD>
                   </TR>
                 ))}

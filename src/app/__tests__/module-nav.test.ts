@@ -89,7 +89,7 @@ describe("Solution Builder navigation (NewQuip Grower)", () => {
     expect(MODULES.map((m) => m.href)).not.toContain("/newquip-grower");
   });
   it("leaves every other link and its order untouched", () => {
-    expect(labels(NEWQUIP).filter((x) => x !== "Solution Builder")).toEqual(labels(OTHER));
+    expect(labels(NEWQUIP).filter((x) => x !== "Solution Builder" && x !== "Approvals")).toEqual(labels(OTHER));
   });
   it("follows the same access rule as its routes: hidden when the Quotes module is disabled", () => {
     expect(labels(NEWQUIP, ["/quotes"])).not.toContain("Solution Builder");
@@ -97,6 +97,14 @@ describe("Solution Builder navigation (NewQuip Grower)", () => {
   it("other disabled modules do not hide it; Projects can still follow", () => {
     expect(labels(NEWQUIP, ["/reports"])).toContain("Solution Builder");
     expect(labels(NEWQUIP)).toContain("Projects");
+  });
+  it("NewQuip also gets Approvals (straight after Projects, hidden with Projects, never for other orgs, not a MODULES entry)", () => {
+    const l = labels(NEWQUIP);
+    expect(l[l.indexOf("Projects") + 1]).toBe("Approvals");
+    expect(buildNavLinks(NEWQUIP, [], false).find((x) => x.label === "Approvals")?.href).toBe("/approvals");
+    expect(labels(OTHER)).not.toContain("Approvals");
+    expect(labels(NEWQUIP, ["/projects"])).not.toContain("Approvals");
+    expect(MODULES.map((m) => m.href)).not.toContain("/approvals");
   });
   it("super-admin still gets Admin appended", () => {
     expect(buildNavLinks(NEWQUIP, [], true).at(-1)).toBe(ADMIN_MODULE);

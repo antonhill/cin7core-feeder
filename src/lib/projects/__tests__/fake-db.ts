@@ -41,6 +41,9 @@ export class FakeDb {
   /** Emulates PostgREST's max-rows: a select with no .range() silently returns only this many rows (null = unlimited). */
   maxRows: number | null = null;
 
+  /** Migration 0110 (approvals) is not applied unless a test says so: its tables then read as "does not exist", exactly like a database that has not received it. */
+  approvalsApplied = false;
+
   from(table: string) {
     const cap = () => this.maxRows;
     const rowsOf = (t: string) => this.rows(t);
@@ -56,7 +59,9 @@ export class FakeDb {
     let returning = false;
 
     const setRows = (t: string, rows: Row[]) => { this.tables[t] = rows; };
+    const approvals = () => this.approvalsApplied;
     function exec(): { data: unknown; error: { message: string } | null } {
+      if (table.startsWith("approval_") && !approvals()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (op === "insert") {
         const incoming = (Array.isArray(payload) ? payload : [payload]).map((p) => ({ ...p }));
         const out: Row[] = [];
