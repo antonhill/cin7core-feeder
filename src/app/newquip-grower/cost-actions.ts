@@ -17,9 +17,8 @@ import { loadQuote, saveDraft } from "@/lib/newquip-quotes/quote-store";
 import { commercialLinesOf } from "@/newquip/quote/baseline";
 import { effectiveScope } from "@/lib/projects/product-scope";
 import { libraryOf, listActiveMappings } from "@/lib/projects/package-mapping-store";
-import { buildCostEstimate, physicalMargin, resolveLatestCost, validateManualEstimate, type CostEntry, type CostEstimate } from "@/lib/projects/latest-cost";
-import { loadCin7Credentials } from "@/cin7/load-credentials";
-import { fetchProductCostRead } from "@/cin7/latest-cost";
+import { buildCostEstimate, physicalMargin, validateManualEstimate, type CostEntry, type CostEstimate } from "@/lib/projects/latest-cost";
+import { readLatestCostEntries } from "@/lib/projects/latest-cost-adapter";
 import { rolesFor } from "@/newquip/quote/roles";
 import { keepServerOwnedCosts } from "@/newquip/quote/margin";
 import { buildPhysicalScope } from "@/newquip/quote/physical-scope";
@@ -97,18 +96,12 @@ export async function captureLatestCostsAction(quoteId: string): Promise<CostAct
     const db = createServiceRoleClient();
     const { q, eff } = await currentScope(db, a.orgId, quoteId);
     if (eff.lines.length > MAX_SKUS) throw new Error(`This quotation expands to ${eff.lines.length} SKUs; capture is limited to ${MAX_SKUS} per run.`);
-    const creds = await loadCin7Credentials(db, a.orgId, NEWQUIP_POC_CIN7_INSTANCE_ID);
     const now = new Date().toISOString();
     const next: Record<string, CostEntry> = {};
     for (const [sku, e] of Object.entries(q.draft.estimator.physicalCosts ?? {})) if (e.source === "MANUAL_ESTIMATE" && eff.lines.some((l) => l.sku === sku)) next[sku] = e; // a manual estimate is never overwritten by a refresh
-    const missing: string[] = [];
-    for (const line of eff.lines) {
-      if (next[line.sku]) continue;
-      const read = await fetchProductCostRead(creds, line.sku);
-      const latest = read ? resolveLatestCost(read.suppliers) : null;
-      if (latest && latest.status === "LATEST") next[line.sku] = { unitCostCents: latest.unitCostCents, source: "CIN7_LATEST", retrievedAt: now, supplier: latest.supplier, lastSupplied: latest.lastSupplied };
-      else { next[line.sku] = { unitCostCents: null, source: "CIN7_LATEST", retrievedAt: now }; missing.push(line.sku); }
-    }
+    const read = await readLatestCostEntries(db, a.orgId, NEWQUIP_POC_CIN7_INSTANCE_ID, eff.lines.map((l) => l.sku).filter((sku) => !next[sku]), now);
+    Object.assign(next, read);
+    const missing = Object.entries(read).filter(([, e]) => e.unitCostCents === null).map(([sku]) => sku);
     await writeCosts(db, a, quoteId, next, "Captured the latest Cin7 costs for a NewQuip quotation", "newquip.latest_costs_captured", { skus: eff.lines.length, missing: missing.length });
     return { ok: true, data: { captured: eff.lines.length - missing.length, missing } };
   } catch (e) { return { ok: false, error: msg(e) }; }

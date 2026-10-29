@@ -21,7 +21,7 @@ vi.mock("@/newquip/require-newquip-poc-org", () => ({ requireNewquipPocOrg: vi.f
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: () => db }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: vi.fn(() => Promise.resolve()) }));
 vi.mock("@/cin7/load-credentials", () => ({ loadCin7Credentials: async () => ({}) }));
-vi.mock("@/cin7/latest-cost", () => ({ fetchProductCostRead: async (_c: unknown, sku: string) => { readLog.push(sku); return reads.get(sku) ?? null; } }));
+vi.mock("@/cin7/latest-cost", () => ({ fetchProductCostRead: async (_c: unknown, sku: string) => { readLog.push(sku); return reads.get(sku) ?? null; } })); // the real adapter and resolver run over this fake READ
 vi.mock("@/lib/newquip-quotes/context", async () => {
   const { createWorkbookPriceSource: src } = await import("@/newquip/grower/workbook-price-source");
   const { NEWQUIP_MASTER_POC_SNAPSHOT: snap } = await import("@/newquip/grower/snapshot");
