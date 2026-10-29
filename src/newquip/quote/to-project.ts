@@ -2,6 +2,7 @@ import type { ApprovedCommercialBaseline, BaselineLine, SuggestedStage } from "@
 import type { AcceptedBaseline } from "./baseline";
 import { buildPhysicalScope } from "./physical-scope";
 import { splitContractBySchedule, type ScheduleStageTemplate } from "./billing-schedule";
+import type { ScheduleSource } from "./project-template";
 
 // NewQuip Quote-to-Project ADAPTER. The NewQuip domain may know about its scope and stages; the generic Projects engine must
 // not. This is the only place the two meet: it turns an ACCEPTED baseline into the engine's generic ApprovedCommercialBaseline.
@@ -15,7 +16,7 @@ export function splitContractIntoStages(contractCents: number, schedule?: readon
   return splitContractBySchedule(contractCents, schedule);
 }
 
-export function quoteToProjectBaseline(b: AcceptedBaseline, baselineHash: string, quoteId: string, schedule?: readonly ScheduleStageTemplate[]): ApprovedCommercialBaseline {
+export function quoteToProjectBaseline(b: AcceptedBaseline, baselineHash: string, quoteId: string, schedule?: readonly ScheduleStageTemplate[], scheduleSource?: ScheduleSource): ApprovedCommercialBaseline {
   const lines: BaselineLine[] = [
     ...b.commercial.lines.map((l) => ({
       lineRef: l.itemKey, sku: l.sku, description: l.label, quantity: l.quantity, salesValueCents: l.revenueCents,
@@ -51,6 +52,8 @@ export function quoteToProjectBaseline(b: AcceptedBaseline, baselineHash: string
       priceSource: b.pricing.source.label,
       approvedBy: b.approvals.managerApprovedBy,
       approvedAt: b.approvals.managerApprovedAt,
+      // Where the stages came from (a template version is recorded by id + version; the stages themselves are the project's own frozen copy).
+      ...(scheduleSource ? { billingSchedule: scheduleSource } : {}),
     },
   };
 }

@@ -12,7 +12,9 @@ import { rolesFor, type OrgTier, type QuoteRole } from "@/newquip/quote/roles";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
 import { redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
 import { approvalsAvailable, decideDocument, legacyCtx, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
-import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
+import { resolveScheduleChoice, type ScheduleChoice, type ScheduleStageTemplate } from "@/newquip/quote/billing-schedule";
+import { sameSchedule, type ScheduleSource } from "@/newquip/quote/project-template";
+import { loadActiveTemplateVersion } from "@/lib/projects/project-template-store";
 import {
   createProjectFromAcceptedQuote, createQuote, estimatorSignOff, listQuotes, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator,
   type QuoteRecord,
@@ -192,14 +194,39 @@ export async function approveGrowerQuoteAction(quoteId: string) {
 /** What the project was actually created with (read back from the database, never echoed from the request). */
 export interface CreatedProjectResult { projectId: string; created: boolean; billingSchedule: string | null; stages: Array<{ name: string; valueCents: number }> }
 
+/**
+ * The schedule a new project is created with. A TEMPLATE choice is re-read from the database (org-scoped, ACTIVE only) - the client's copy of the stages is
+ * only honoured as a per-project customisation, which is re-validated to 100% - and the version used is recorded in the project's provenance.
+ */
+async function resolveProjectSchedule(db: ReturnType<typeof createServiceRoleClient>, orgId: string, choice?: ScheduleChoice): Promise<{ schedule: readonly ScheduleStageTemplate[]; label: string; source: ScheduleSource }> {
+  if (choice?.preset === "TEMPLATE") {
+    if (!choice.templateId) throw new Error("Choose a project template.");
+    const t = await loadActiveTemplateVersion(db, orgId, choice.templateId);
+    if (!t) throw new Error("Project template not found.");
+    let schedule: readonly ScheduleStageTemplate[] = t.version.stages;
+    if (choice.stages) {
+      const custom = resolveScheduleChoice(choice);
+      if (!custom.ok) throw new Error(`Billing schedule: ${custom.errors.join(" ")}`);
+      const byName = new Map(t.version.stages.map((s) => [s.name.trim().toLowerCase(), s]));
+      schedule = custom.schedule.map((s) => { const o = byName.get(s.name.trim().toLowerCase()); return o ? { ...s, description: o.description, trigger: o.trigger } : s; });
+    }
+    const customised = !sameSchedule(schedule, t.version.stages);
+    return { schedule, label: `${t.template.name} v${t.version.version}${customised ? " (customised for this project)" : ""}`,
+      source: { kind: "TEMPLATE", templateId: t.template.id, templateName: t.template.name, templateVersion: t.version.version, customised } };
+  }
+  const resolved = resolveScheduleChoice(choice);
+  if (!resolved.ok) throw new Error(`Billing schedule: ${resolved.errors.join(" ")}`);
+  return { schedule: resolved.schedule, label: resolved.label, source: { kind: !choice || choice.preset === "STANDARD" ? "STANDARD" : choice.preset === "SIX_STAGE" ? "SIX_STAGE" : "CUSTOM" } };
+}
+
 export async function createProjectFromGrowerQuoteAction(quoteId: string, scheduleChoice?: ScheduleChoice): Promise<GrowerActionResult<CreatedProjectResult>> {
   try {
     const a = await authorise();
     if (!a.roles.has("manager") && !a.roles.has("estimator")) throw new Error("You do not have permission to create a Project.");
     const db = createServiceRoleClient();
-    const resolved = resolveScheduleChoice(scheduleChoice);
-    if (!resolved.ok) throw new Error(`Billing schedule: ${resolved.errors.join(" ")}`);
-    const r = await createProjectFromAcceptedQuote(db, a.orgId, a.email, quoteId, resolved.schedule);
+    const applied = await resolveProjectSchedule(db, a.orgId, scheduleChoice);
+    const resolved = { schedule: applied.schedule, label: applied.label };
+    const r = await createProjectFromAcceptedQuote(db, a.orgId, a.email, quoteId, resolved.schedule, applied.source);
     if (r.created) await logActivity(db, { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action: "newquip.project_created", summary: "Created a Project from an accepted NewQuip quote (local only; no Cin7 write)", detail: { quoteId, projectId: r.projectId, billingSchedule: resolved.label, stages: resolved.schedule.map((x) => `${x.name} ${(x.bps / 100).toFixed(2)}%`) } });
     const persisted = await db.from("project_stages").select("name, value_cents, sort_order").eq("org_id", a.orgId).eq("project_id", r.projectId).order("sort_order", { ascending: true });
     if (persisted.error) throw new Error(persisted.error.message);

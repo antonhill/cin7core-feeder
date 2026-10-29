@@ -9,6 +9,7 @@ import { emptyDraft, type QuoteDraft } from "@/newquip/grower/draft";
 import { buildAcceptedBaseline, baselineMatchesHash, hashOf, type AcceptedBaseline } from "@/newquip/quote/baseline";
 import { quoteToProjectBaseline } from "@/newquip/quote/to-project";
 import type { ScheduleStageTemplate } from "@/newquip/quote/billing-schedule";
+import type { ScheduleSource } from "@/newquip/quote/project-template";
 import { authoriseTransition, canEditDraft, checkApproval, checkHandoff, type QuoteState } from "@/newquip/quote/workflow";
 import type { QuoteRole } from "@/newquip/quote/roles";
 import { createProjectFromBaseline } from "@/lib/projects/project-store";
@@ -195,7 +196,7 @@ export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<Q
  * engineering recalculation, and is idempotent: a quote that already has a project returns it (and a project created but not
  * yet linked — e.g. after a crash — is found by its quote reference and linked rather than duplicated).
  */
-export async function createProjectFromAcceptedQuote(db: Db, orgId: string, email: string, quoteId: string, schedule?: readonly ScheduleStageTemplate[]): Promise<{ projectId: string; created: boolean }> {
+export async function createProjectFromAcceptedQuote(db: Db, orgId: string, email: string, quoteId: string, schedule?: readonly ScheduleStageTemplate[], scheduleSource?: ScheduleSource): Promise<{ projectId: string; created: boolean }> {
   const q = await mustLoad(db, orgId, quoteId);
   if (q.state !== "MANAGER_APPROVED_FINAL" || !q.accepted_baseline || !q.baseline_hash) fail("Only a manager-approved final quote can become a Project.");
   if (q.project_id) return { projectId: q.project_id, created: false };
@@ -210,7 +211,7 @@ export async function createProjectFromAcceptedQuote(db: Db, orgId: string, emai
   let projectId = bases[0]?.id ?? null;
   const created = projectId == null;
   if (!projectId) {
-    const generic = quoteToProjectBaseline(q.accepted_baseline, q.baseline_hash, q.id, schedule);
+    const generic = quoteToProjectBaseline(q.accepted_baseline, q.baseline_hash, q.id, schedule, scheduleSource);
     projectId = await createProjectFromBaseline(db, orgId, email, generic, { reference: `PRJ-${q.quote_ref}`, name: `${q.accepted_baseline.quote.customerName} — ${q.accepted_baseline.quote.siteName}` });
   }
   const link = await db.from("newquip_quotes").update({ project_id: projectId }).eq("org_id", orgId).eq("id", quoteId).eq("state", "MANAGER_APPROVED_FINAL").select("id");

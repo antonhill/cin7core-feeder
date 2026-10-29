@@ -66,8 +66,8 @@ export function splitContractBySchedule(contractCents: number, schedule: readonl
   });
 }
 
-export type SchedulePreset = "STANDARD" | "SIX_STAGE" | "CUSTOM";
-export interface ScheduleChoice { preset: SchedulePreset; /** CUSTOM only: stage names with a percentage as typed (up to 2 decimals), e.g. "40" or "27.5". */ stages?: Array<{ name: string; percent: string }> }
+export type SchedulePreset = "STANDARD" | "SIX_STAGE" | "CUSTOM" | "TEMPLATE";
+export interface ScheduleChoice { preset: SchedulePreset; /** TEMPLATE only: the project template to apply (stages may be customised for this project through `stages`; the server re-reads the template). */ templateId?: string; /** CUSTOM only: stage names with a percentage as typed (up to 2 decimals), e.g. "40" or "27.5". */ stages?: Array<{ name: string; percent: string }> }
 
 /** "27.5" -> 2750 basis points. Null for anything that is not a plain number with at most 2 decimals. */
 export function percentToBps(text: string): number | null {
@@ -80,7 +80,7 @@ export function percentToBps(text: string): number | null {
 export function resolveScheduleChoice(choice?: ScheduleChoice | null): { ok: true; schedule: readonly ScheduleStageTemplate[]; label: string } | { ok: false; errors: string[] } {
   if (!choice || choice.preset === "STANDARD") return { ok: true, schedule: NEWQUIP_STANDARD_SCHEDULE, label: "NewQuip standard 40/55/5" };
   if (choice.preset === "SIX_STAGE") return { ok: true, schedule: POC_SIX_STAGE_SCHEDULE, label: "Six-stage (10/30/20/20/15/5)" };
-  if (choice.preset !== "CUSTOM") return { ok: false, errors: ["Unknown schedule option."] };
+  if (choice.preset !== "CUSTOM" && choice.preset !== "TEMPLATE") return { ok: false, errors: ["Unknown schedule option."] };
   const errors: string[] = [];
   const stages: ScheduleStageTemplate[] = [];
   for (const s of choice.stages ?? []) {
@@ -90,5 +90,5 @@ export function resolveScheduleChoice(choice?: ScheduleChoice | null): { ok: tru
   }
   if (errors.length) return { ok: false, errors };
   const v = validateSchedule(stages);
-  return v.ok ? { ok: true, schedule: stages, label: "Custom schedule" } : { ok: false, errors: v.errors };
+  return v.ok ? { ok: true, schedule: stages, label: choice.preset === "TEMPLATE" ? "Project template (customised)" : "Custom schedule" } : { ok: false, errors: v.errors };
 }

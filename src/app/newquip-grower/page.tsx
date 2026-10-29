@@ -46,6 +46,7 @@ export default function NewquipGrowerPage() {
           Quotes are kept in the Toolbox only — <strong>nothing is sent to Cin7 or Xero</strong>.
         </p>
         <div className="flex gap-2">
+          <Link href="/newquip-grower/project-templates" className="inline-flex h-9 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Project templates</Link>
           <Link href="/newquip-grower/template" className="inline-flex h-9 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Template detail</Link>
           <Button onClick={create} loading={isWorking}>New Grower quote</Button>
         </div>
