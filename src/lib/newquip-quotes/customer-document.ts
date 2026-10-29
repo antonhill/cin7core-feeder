@@ -5,6 +5,7 @@ import { buildCustomerSummaryFromCommercial } from "@/newquip/grower/customer-su
 import type { AcceptedBaseline } from "@/newquip/quote/baseline";
 import { splitContractIntoStages } from "@/newquip/quote/to-project";
 import type { ScheduleStageTemplate } from "@/newquip/quote/billing-schedule";
+import type { ScheduleSource } from "@/newquip/quote/project-template";
 import { fieldValue, type CustomerSnapshot } from "./customer-snapshot";
 import type { CompanyProfile } from "./company-profile";
 
@@ -16,7 +17,9 @@ export interface CustomerDocumentModel {
   currency: "ZAR";
   sections: { title: string; scope: string; amountExVat: number }[];
   totals: { subtotalExVat: number; vatRatePercent: number; vat: number; totalIncVat: number };
-  paymentSchedule: { name: string; description: string; percent: number; amountExVat: number }[];
+  paymentSchedule: { name: string; description: string; trigger: string; percent: number; amountExVat: number }[];
+  /** Where the schedule came from (standard / template version / custom), kept so project creation can record the same provenance. Not printed. */
+  scheduleSource: ScheduleSource | null;
   paymentTerms: string;
   deliveryInstallationConditions: string;
   termsAndConditions: string;
@@ -27,7 +30,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 const addDays = (isoDate: string, days: number): string => { const d = new Date(`${isoDate}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
 
 export interface ModelInput {
-  baseline: AcceptedBaseline; quoteRef: string; revision: number; snapshot: CustomerSnapshot; profile: CompanyProfile; schedule: readonly ScheduleStageTemplate[]; issuedOn: string; /** YYYY-MM-DD */
+  baseline: AcceptedBaseline; quoteRef: string; revision: number; snapshot: CustomerSnapshot; profile: CompanyProfile; schedule: readonly ScheduleStageTemplate[]; scheduleSource?: ScheduleSource; issuedOn: string; /** YYYY-MM-DD */
 }
 
 export function buildCustomerDocumentModel(i: ModelInput): CustomerDocumentModel {
@@ -47,7 +50,8 @@ export function buildCustomerDocumentModel(i: ModelInput): CustomerDocumentModel
     currency: "ZAR",
     sections: summary.sections,
     totals: { subtotalExVat: summary.subtotalExVat, vatRatePercent: b.commercial.taxRateBps / 100, vat: summary.vat, totalIncVat: summary.totalIncVat },
-    paymentSchedule: stages.map((st, n) => ({ name: st.name, description: i.schedule[n]?.description ?? "", percent: (i.schedule[n]?.bps ?? 0) / 100, amountExVat: round2(st.valueCents / 100) })),
+    paymentSchedule: stages.map((st, n) => ({ name: st.name, description: i.schedule[n]?.description ?? "", trigger: i.schedule[n]?.trigger ?? "", percent: (i.schedule[n]?.bps ?? 0) / 100, amountExVat: round2(st.valueCents / 100) })),
+    scheduleSource: i.scheduleSource ?? null,
     paymentTerms: p.paymentTerms, deliveryInstallationConditions: p.deliveryInstallationConditions, termsAndConditions: p.termsAndConditions, acceptanceInstructions: p.acceptanceInstructions,
   };
 }

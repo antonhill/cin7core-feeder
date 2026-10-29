@@ -33,6 +33,7 @@ import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
 import { CostPanel } from "./CostPanel";
 import { CustomerPanel } from "./CustomerPanel";
+import { DeliveryPanel } from "./DeliveryPanel";
 import { ScopePanel } from "./ScopePanel";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
@@ -90,6 +91,7 @@ export default function QuoteEditorPage() {
   const [ev, setEv] = useState<QuoteEvaluation | null>(null);
   const [dirty, setDirty] = useState(false);
   const [scheduleChoice, setScheduleChoice] = useState<ScheduleChoice | undefined>(undefined);
+  const [gate, setGate] = useState<{ requires: boolean; accepted: boolean }>({ requires: false, accepted: false });
   const [tab, setTab] = useState<Tab>("config");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -589,6 +591,8 @@ export default function QuoteEditorPage() {
           {final && <ScopePanel quoteId={id} draft={draft} />}
           {final && view.viewer.canViewCommercials && <CostPanel quoteId={id} />}
 
+          {final && q.accepted_baseline && <DeliveryPanel quoteId={id} contractCents={q.accepted_baseline.contractCents} onGate={setGate} />}
+
           {final && q.accepted_baseline && (
             <Panel>
               <PanelTitle>Accepted baseline (frozen)</PanelTitle>
@@ -609,11 +613,13 @@ export default function QuoteEditorPage() {
               <div className="mt-5 border-t border-slate-100 pt-5">
                 {q.project_id ? (
                   <Link href={`/projects/${q.project_id}`} className="inline-flex h-9 items-center rounded-md bg-indigo-600 px-4 text-sm font-medium text-white hover:bg-indigo-700">Open the Project</Link>
+                ) : gate.requires && !gate.accepted ? (
+                  <Alert tone="info">A Project for this quotation is created after the customer accepts the issued quotation. Issue it, send it, and record the customer&apos;s acceptance in the Customer quotation panel above.</Alert>
                 ) : (
                   <>
-                  <ScheduleChooser contractCents={q.accepted_baseline.contractCents} onChange={setScheduleChoice} />
+                  {gate.requires ? <p className="mb-2 text-sm text-slate-600">The Project will use the billing schedule printed on the quotation the customer accepted.</p> : <ScheduleChooser contractCents={q.accepted_baseline.contractCents} onChange={setScheduleChoice} />}
                   <p className="mb-2"><BuildStamp /></p>
-                  <Button loading={isWorking} disabled={!resolveScheduleChoice(scheduleChoice).ok} onClick={() => start(async () => {
+                  <Button loading={isWorking} disabled={!gate.requires && !resolveScheduleChoice(scheduleChoice).ok} onClick={() => start(async () => {
                     const r = await createProjectFromGrowerQuoteAction(id, scheduleChoice);
                     if (!r.ok) return setError(r.error ?? "Unknown error");
                     setError(null);

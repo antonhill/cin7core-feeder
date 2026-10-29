@@ -14,6 +14,8 @@ import { authoriseTransition, canEditDraft, checkApproval, checkHandoff, type Qu
 import type { QuoteRole } from "@/newquip/quote/roles";
 import { createProjectFromBaseline } from "@/lib/projects/project-store";
 import { libraryOf, listActiveMappings } from "@/lib/projects/package-mapping-store";
+import { requireAcceptance } from "./acceptance";
+import { latestSnapshot } from "./customer-store";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 
@@ -45,6 +47,8 @@ export interface QuoteRecord {
   baseline_hash: string | null;
   contract_cents: number | null;
   project_id: string | null;
+  /** Migration 0115. TRUE: a Project needs the customer's acceptance of the issued quotation. FALSE / absent: grandfathered (existed before 0115). */
+  requires_customer_acceptance?: boolean | null;
   created_by_email: string | null;
   created_at: string;
   updated_at: string;
@@ -227,7 +231,12 @@ export async function createProjectFromAcceptedQuote(db: Db, orgId: string, emai
   let projectId = bases[0]?.id ?? null;
   const created = projectId == null;
   if (!projectId) {
-    const generic = quoteToProjectBaseline(q.accepted_baseline, q.baseline_hash, q.id, schedule, scheduleSource);
+    // Quotations created after migration 0115 need the customer's acceptance of the CURRENT issued document, and the Project takes the billing schedule the customer
+    // accepted. Quotations that existed at the cutover are grandfathered (null) and behave exactly as before.
+    const accepted = await requireAcceptance(db, orgId, q);
+    const snap = await latestSnapshot(db, orgId, q.id);
+    let generic = quoteToProjectBaseline(q.accepted_baseline, q.baseline_hash, q.id, accepted ? accepted.schedule : schedule, accepted ? (accepted.scheduleSource ?? scheduleSource) : scheduleSource);
+    if (snap) generic = { ...generic, customer: { ...generic.customer, cin7CustomerId: snap.cin7_customer_id } }; // the selected Cin7 customer, by its authoritative ID
     projectId = await createProjectFromBaseline(db, orgId, email, generic, { reference: `PRJ-${q.quote_ref}`, name: `${q.accepted_baseline.quote.customerName} — ${q.accepted_baseline.quote.siteName}` });
   }
   const link = await db.from("newquip_quotes").update({ project_id: projectId }).eq("org_id", orgId).eq("id", quoteId).eq("state", "MANAGER_APPROVED_FINAL").select("id");

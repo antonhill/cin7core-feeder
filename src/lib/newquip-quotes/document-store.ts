@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { baselineMatchesHash, hashOf } from "@/newquip/quote/baseline";
 import type { ScheduleStageTemplate } from "@/newquip/quote/billing-schedule";
+import type { ScheduleSource } from "@/newquip/quote/project-template";
 import { loadQuote } from "./quote-store";
 import { latestSnapshot } from "./customer-store";
 import { fieldValue, snapshotIssues } from "./customer-snapshot";
@@ -76,7 +77,7 @@ const stableOf = (m: CustomerDocumentModel) => hashOf({ ...m, quote: { ...m.quot
 const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
 
 export async function issueQuotationDocument(
-  db: Db, orgId: string, quoteId: string, who: { email: string; ownerEmail?: string | null }, schedule: readonly ScheduleStageTemplate[], deps: DocumentDeps,
+  db: Db, orgId: string, quoteId: string, who: { email: string; ownerEmail?: string | null }, schedule: readonly ScheduleStageTemplate[], deps: DocumentDeps, scheduleSource?: ScheduleSource,
 ): Promise<{ document: StoredDocument; created: boolean }> {
   const q = await loadQuote(db, orgId, quoteId);
   if (!q) throw new Error("Quote not found.");
@@ -91,8 +92,11 @@ export async function issueQuotationDocument(
   const lacking = missingProfileFields(prof?.profile);
   if (!prof || lacking.length) throw new Error(`NewQuip's company details are incomplete, so the quotation cannot be issued. Missing: ${lacking.join(", ") || "all company details"}.`);
 
+  const accepted = await db.from("newquip_quote_responses").select("id").eq("org_id", orgId).eq("quote_id", quoteId).eq("response", "ACCEPTED").limit(1);
+  if (accepted.error && !missing(accepted.error.message)) throw new Error(accepted.error.message);
+  if ((accepted.data ?? []).length > 0) throw new Error("The customer has accepted this quotation; the accepted document is final and cannot be replaced.");
   const existing = await listDocuments(db, orgId, quoteId);
-  const model = buildCustomerDocumentModel({ baseline: q.accepted_baseline, quoteRef: q.quote_ref, revision: q.revision, snapshot: snap.snapshot, profile: prof.profile, schedule, issuedOn: deps.today() });
+  const model = buildCustomerDocumentModel({ baseline: q.accepted_baseline, quoteRef: q.quote_ref, revision: q.revision, snapshot: snap.snapshot, profile: prof.profile, schedule, scheduleSource, issuedOn: deps.today() });
   assertNoInternalLeak(model, q.accepted_baseline);
   const last = existing[0];
   if (last && last.baseline_hash === q.baseline_hash && stableOf(last.content) === stableOf(model) && last.customer_snapshot_id === snap.id && last.company_profile_id === prof.id) return { document: last, created: false };

@@ -32,6 +32,7 @@
     "src/app/newquip-grower/actor.ts",
     "src/app/newquip-grower/cost-actions.ts",
     "src/app/newquip-grower/customer-actions.ts",
+    "src/app/newquip-grower/delivery-actions.ts",
     "src/app/newquip-grower/document-actions.ts",
     "src/app/newquip-grower/mapping-actions.ts",
     "src/app/newquip-grower/template-actions.ts",

@@ -92,7 +92,7 @@ export function CustomerQuotationDocument({ m }: { m: CustomerDocumentModel }) {
         <View style={st.th}><Text style={st.colMain}>Milestone</Text><Text style={{ width: 50, textAlign: "right" }}>%</Text><Text style={st.colAmt}>Amount (excl. VAT)</Text></View>
         {m.paymentSchedule.map((p, i) => (
           <View key={i} style={st.tr} wrap={false}>
-            <View style={st.colMain}><Text>{pdfSafe(p.name)}</Text>{p.description ? <Text style={st.small}>{pdfSafe(p.description)}</Text> : null}</View>
+            <View style={st.colMain}><Text>{pdfSafe(p.name)}</Text>{p.description ? <Text style={st.small}>{pdfSafe(p.description)}</Text> : null}{p.trigger ? <Text style={st.small}>Due: {pdfSafe(p.trigger)}</Text> : null}</View>
             <Text style={{ width: 50, textAlign: "right" }}>{p.percent}%</Text><Text style={st.colAmt}>{formatRand(p.amountExVat)}</Text>
           </View>
         ))}

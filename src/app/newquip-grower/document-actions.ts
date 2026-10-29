@@ -70,7 +70,7 @@ export async function issueQuoteDocumentAction(quoteId: string, scheduleChoice?:
     if (!a.roles.has("rep") && !a.roles.has("manager")) throw new Error("You do not have permission to issue a customer quotation.");
     const db = createServiceRoleClient();
     const applied = await resolveProjectSchedule(db, a.orgId, scheduleChoice);
-    const r = await issueQuotationDocument(db, a.orgId, quoteId, { email: a.email, ownerEmail: ownerEmailOf(a) }, applied.schedule, defaultDeps(db));
+    const r = await issueQuotationDocument(db, a.orgId, quoteId, { email: a.email, ownerEmail: ownerEmailOf(a) }, applied.schedule, defaultDeps(db), applied.source);
     if (r.created) await auditActor(db, a, { action: "newquip.quote_document_issued", summary: "Issued the customer quotation PDF (local only; no Cin7 write, nothing sent)", detail: { quoteId, documentId: r.document.id, version: r.document.version, revision: r.document.revision, contentHash: r.document.content_hash } });
     return { ok: true, data: { documentId: r.document.id, version: r.document.version, created: r.created } };
   } catch (e) { return { ok: false, error: errText(e) }; }
