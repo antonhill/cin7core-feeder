@@ -353,7 +353,9 @@ export async function sendOverdueReminders(db: Db, nowIso: string, baseUrl?: str
     const s = settingsCache.get(req.org_id) ?? (await loadSettings(db, req.org_id)); settingsCache.set(req.org_id, s);
     if (req.reminders_sent >= s.maxReminders) continue;
     if (req.last_reminder_at && new Date(nowIso).getTime() - new Date(req.last_reminder_at).getTime() < s.reminderEveryHours * 3_600_000) continue;
-    const mgrs = managersCache.get(req.org_id) ?? (await managerEmails(db, req.org_id)); managersCache.set(req.org_id, mgrs);
+    // Who is reminded: the named approver, else the holders of THIS stage's role (an estimator-stage request reminds estimators, not managers).
+    const cacheKey = `${req.org_id}:${req.stage_role ?? "MANAGER"}`;
+    const mgrs = managersCache.get(cacheKey) ?? (req.stage_role ? await emailsWithRole(db, req.org_id, req.stage_role as FunctionalRole) : await managerEmails(db, req.org_id)); managersCache.set(cacheKey, mgrs);
     const to = req.assigned_to_email ? [req.assigned_to_email] : mgrs;
     const n = req.reminders_sent + 1;
     const specs = to.map((t) => buildNotification("OVERDUE", req, t, { baseUrl, kindKey: `OVERDUE-${n}` }));

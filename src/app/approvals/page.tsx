@@ -14,7 +14,7 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatSast, isOverdue, waitingLabel } from "@/lib/approvals/time";
 import { DOC_TYPE_LABEL, STATUS_LABEL, type ApprovalDocType, type ApprovalNotificationRow, type ApprovalStatus } from "@/lib/approvals/types";
 import type { QueueFilters, QueueSort } from "@/lib/approvals/queue";
-import { getApprovalsDashboardAction, getMyNotificationsAction, retryEmailAction, saveApprovalSettingsAction, type ApprovalsDashboard } from "./actions";
+import { getApprovalsDashboardAction, getEmailStatusAction, getMyNotificationsAction, retryEmailAction, saveApprovalSettingsAction, sendTestEmailAction, type ApprovalsDashboard } from "./actions";
 
 // The single place a manager sees every outstanding quotation, claim and variation approval. All figures come from the canonical approval records
 // (never counters). Times are exact SAST; "waiting" is elapsed calendar time shown beside the exact submission time.
@@ -30,6 +30,7 @@ export default function ApprovalsPage() {
   const [tab, setTab] = useState<"queue" | "notifications" | "admin">("queue");
   const [settings, setSettings] = useState({ targetBusinessDays: "2", reminderEveryHours: "24", maxReminders: "3", escalationEmail: "" });
   const [note, setNote] = useState<string | null>(null);
+  const [mail, setMail] = useState<{ configured: boolean; missing: string[]; senderDomain: string | null; failed: number; abandoned: number } | null>(null);
 
   const load = useCallback(() => {
     getApprovalsDashboardAction(f, sort).then((r) => { if (r.ok && r.data) { setD(r.data); setError(null); const t = r.data.settings; setSettings({ targetBusinessDays: String(t.targetBusinessDays), reminderEveryHours: String(t.reminderEveryHours), maxReminders: String(t.maxReminders), escalationEmail: t.escalationEmail ?? "" }); } else setError(r.error ?? "Could not load approvals."); });
@@ -135,6 +136,13 @@ export default function ApprovalsPage() {
           <Panel>
             <PanelTitle>Email delivery</PanelTitle>
             <p className="mt-1 text-xs text-slate-500">Approval decisions never depend on email. An email is shown as sent only after the mail provider accepted it; failed ones are retried a few times, then wait here for a manual retry.</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+              <Button size="sm" variant="secondary" onClick={async () => { const r = await getEmailStatusAction(); if (r.ok && r.data) setMail(r.data); else setNote(r.error ?? "Could not read the email status."); }}>Check email configuration</Button>
+              {mail && (mail.configured
+                ? <Badge tone="success">Provider configured{mail.senderDomain ? ` (sender @${mail.senderDomain})` : ""}</Badge>
+                : <Badge tone="danger">Not configured: {mail.missing.join(", ")} missing. Approval emails cannot be sent; in-app notifications still work.</Badge>)}
+              {mail?.configured && <Button size="sm" variant="secondary" onClick={async () => { const r = await sendTestEmailAction(); setNote(r.ok && r.data ? (r.data.accepted ? `The provider accepted a test email to ${r.data.to}${r.data.messageId ? ` (id ${r.data.messageId})` : ""}. Check that it arrived.` : `The test email was NOT accepted: ${r.data.error ?? "unknown error"}.`) : r.error ?? "Could not send a test email."); }}>Send a test email to me</Button>}
+            </div>
             {d.failedEmails.length === 0 ? <p className="mt-2 text-sm text-slate-600">No failed emails.</p> : (
               <ul className="mt-2 space-y-1 text-sm">
                 {d.failedEmails.map((n) => (

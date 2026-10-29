@@ -12,7 +12,7 @@ import { saveDraft } from "@/lib/newquip-quotes/quote-store";
 import { installStaged } from "./staged-emulator";
 
 vi.mock("server-only", () => ({}));
-import { decide, decideDocument, docHistory, loadRequest, listRequests, pendingRequestFor, reassign, resyncQuoteApprovals, stagedAvailable, type ApprovalCtx } from "../approval-store";
+import { decide, decideDocument, docHistory, loadRequest, listRequests, pendingRequestFor, reassign, resyncQuoteApprovals, sendOverdueReminders, stagedAvailable, type ApprovalCtx } from "../approval-store";
 import { assignRole, removeRole, savePolicy, listAssignments, resolveRoles } from "../role-store";
 
 const ORG = "org-nq";
@@ -280,6 +280,22 @@ describe("duplicate decisions and organisation isolation", () => {
     await expect(decide(db as never, foreign, e.id, "APPROVE", dArgs(e))).rejects.toThrow(/not found/);
     expect(await listRequests(db as never, "org-other")).toEqual([]);
     expect(await assignRole(db as never, { canAdminister: true }, "adm@a", { orgId: ORG, userId: "u-rep", role: "MANAGER" })).toBe(true);
+  });
+});
+
+describe("overdue reminders follow the stage", () => {
+  it("an overdue estimator-stage request reminds the estimators, not the managers; a named approver is reminded alone; nothing is ever decided by lateness", async () => {
+    const db = world();
+    const e = (await openEstimatorStage(db))!;
+    const late = new Date(new Date(e.due_at!).getTime() + 3_600_000).toISOString();
+    expect((await sendOverdueReminders(db as never, late, "https://toolbox.example")).reminded).toBe(1);
+    expect(notesTo(db, "est@a", "OVERDUE-1")).toHaveLength(1);
+    expect(notesTo(db, "est2@a", "OVERDUE-1")).toHaveLength(1);
+    expect(notesTo(db, "mgr@a", "OVERDUE-1")).toHaveLength(0);
+    expect((await loadRequest(db as never, ORG, e.id))!.status).toBe("PENDING");
+    // a second sweep inside the cadence sends nothing more
+    const sentAt = (await loadRequest(db as never, ORG, e.id))!.last_reminder_at!;
+    expect((await sendOverdueReminders(db as never, new Date(new Date(sentAt).getTime() + 3_600_000).toISOString())).reminded).toBe(0);
   });
 });
 

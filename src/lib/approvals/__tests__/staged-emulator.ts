@@ -71,6 +71,13 @@ export function installStaged(db: FakeDb, clockStart = Date.UTC(2026, 9, 29, 8, 
       return ok(v);
     }
     if (fn === "approval_mark_viewed") return ok(null);
+    if (fn === "approval_record_reminder") {
+      const v = find(a.p_org, a.p_request);
+      if (v.status !== "PENDING" || v.reminders_sent !== a.p_expected_reminders) return ok(false);
+      v.reminders_sent += 1; v.last_reminder_at = at();
+      enqueue(a.p_org, v.id, event(v, "REMINDER_SENT", "PENDING", "PENDING", "system", "System", `Reminder ${v.reminders_sent}`).id, a.p_notifications);
+      return ok(true);
+    }
     if (fn === "approval_policy_save") {
       const names = (a.p_stages as Array<{ stage: string }>).map((s) => s.stage).join(",");
       if (a.p_doc_type === "QUOTE" && names !== "ESTIMATOR,MANAGER") throw new Error("approval_policy: a quotation always needs an estimator stage followed by a manager stage");

@@ -13,6 +13,7 @@ import {
   approvalsAvailable, decide, docHistory, failedEmails, listRequests, loadRequest, loadSettings, managerEmails, markNotificationsRead, markViewed, myNotifications, reassign, requestHistory, retryEmail, submitForApproval,
   type ApprovalCtx,
 } from "@/lib/approvals/approval-store";
+import { emailConfigStatus, sendEmail } from "@/lib/email/resend";
 import { buildReviewDetail, type ReviewDetail } from "@/lib/approvals/review-detail";
 import { authoriseStageDecision } from "@/lib/approvals/policy";
 import { canAdminister, STAGE_LABEL, type FunctionalRole } from "@/lib/approvals/roles";
@@ -197,6 +198,34 @@ export async function saveApprovalSettingsAction(s: ApprovalSettings): Promise<A
     if (r.error) throw new Error(r.error.message);
     await logActivity(db, { orgId: ctx.orgId, actor: { userId: ctx.userId, email: ctx.email }, action: "approvals.settings_changed", summary: "Changed the approval target / reminder settings", detail: { ...s } });
     return { ok: true, data: null };
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+}
+
+/** Manager only. Reports whether email can be sent (presence of the provider settings only; never the key). */
+export async function getEmailStatusAction(): Promise<ApprovalResult<{ configured: boolean; missing: string[]; senderDomain: string | null; failed: number; abandoned: number }>> {
+  try {
+    const ctx = await context();
+    if (!ctx.isManager) throw new Error("Only a manager can see the email delivery status.");
+    const failed = await failedEmails(createServiceRoleClient(), ctx.orgId);
+    return { ok: true, data: { ...emailConfigStatus(), failed: failed.filter((n) => n.status === "FAILED").length, abandoned: failed.filter((n) => n.status === "ABANDONED").length } };
+  } catch (e) {
+    return { ok: false, error: msg(e) };
+  }
+}
+
+/**
+ * Manager only. Sends ONE test message to the caller's own address through the same provider path as approval emails, so provider acceptance can be
+ * confirmed. The result states plainly whether the provider accepted it; a failure is never reported as sent. Creates no approval and writes nothing to Cin7.
+ */
+export async function sendTestEmailAction(): Promise<ApprovalResult<{ accepted: boolean; messageId?: string; error?: string; to: string }>> {
+  try {
+    const ctx = await context();
+    if (!ctx.isManager) throw new Error("Only a manager can send a test email.");
+    const res = await sendEmail({ to: [ctx.email], subject: "NewQuip approvals: test email", text: `This is a test of the NewQuip approval email delivery, requested by ${ctx.email}. No action is needed.` });
+    await logActivity(createServiceRoleClient(), { orgId: ctx.orgId, actor: { userId: ctx.userId, email: ctx.email }, action: "approvals.test_email", summary: res.ok ? "Sent a test approval email (provider accepted)" : "A test approval email failed", detail: { accepted: res.ok } }).catch(() => undefined);
+    return { ok: true, data: { accepted: res.ok, messageId: res.messageId, error: res.error, to: ctx.email } };
   } catch (e) {
     return { ok: false, error: msg(e) };
   }
