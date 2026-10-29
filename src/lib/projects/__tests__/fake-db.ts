@@ -17,6 +17,14 @@ const UNIQUE: Record<string, string[][]> = {
   newquip_quote_documents: [["quote_id", "version"], ["storage_path"]],
   newquip_quote_sends: [["document_id", "idempotency_key"]],
 };
+/**
+ * The REAL columns of the synced-customer tables (migrations 0013 + 0015; contacts live in customer_contacts and `customers` has no contact / email columns). A select,
+ * filter or ordering that names any other column fails like PostgREST would (`column customers.contact_name does not exist`), so a test cannot pass on a phantom column.
+ */
+const REAL_COLUMNS: Record<string, string[]> = {
+  customers: ["org_id", "name", "status", "currency", "payment_term", "tax_rule", "account_receivable", "sale_account", "price_tier", "discount", "credit_limit", "carrier", "sales_representative", "location", "tax_number", "tags", "display_name", "is_legal_entity", "parent_customer", "is_bill_parent", "attribute_set", "comments", "updated_at", "content_hash"],
+  customer_contacts: ["id", "org_id", "name", "contact_name", "job_title", "phone", "mobile_phone", "fax", "email", "website", "contact_comment", "contact_default", "contact_include_in_email", "marketing_consent"],
+};
 /** Migration 0115 tables that are append-only (UPDATE and DELETE are refused by their database guards). */
 const APPEND_ONLY_0115 = /^(newquip_quote_customers|newquip_quote_documents|newquip_quote_responses|newquip_company_profiles)$/;
 const IS_0115 = /^(newquip_quote_customers|newquip_quote_documents|newquip_quote_sends|newquip_quote_responses|newquip_company_profiles)$/;
@@ -66,6 +74,7 @@ export class FakeDb {
     const writes = this.writes;
     let op: "select" | "insert" | "update" | "delete" = "select";
     let payload: Row | Row[] = [];
+    const used: string[] = []; // every column the caller named (select list, filters, ordering)
     const filters: Array<(r: Row) => boolean> = [];
     const orders: Array<{ col: string; asc: boolean }> = [];
     let lim: number | null = null;
@@ -79,6 +88,8 @@ export class FakeDb {
     const deliveryOn = () => this.deliveryApplied;
     const notificationStatuses = () => this.notificationStatuses;
     function exec(): { data: unknown; error: { message: string } | null } {
+      const real = REAL_COLUMNS[table];
+      if (real) for (const c of used) if (!real.includes(c)) return { data: null, error: { message: `column ${table}.${c} does not exist` } };
       if (table === "newquip_fx_rates" && !fxOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (IS_0115.test(table) && !deliveryOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (/^(org_functional_role|approval_polic)/.test(table) && !rolesOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
@@ -129,7 +140,7 @@ export class FakeDb {
     }
 
     const q = {
-      select: () => { if (op !== "select") returning = true; return q; },
+      select: (cols?: string) => { if (op !== "select") returning = true; if (cols && cols !== "*") used.push(...cols.split(",").map((c) => c.trim()).filter((c) => /^\w+$/.test(c))); return q; },
       insert: (p: Row | Row[]) => { op = "insert"; payload = p; return q; },
       update: (p: Row) => { op = "update"; payload = p; return q; },
       delete: () => { op = "delete"; return q; },
@@ -140,13 +151,14 @@ export class FakeDb {
         if (existing) { op = "update"; payload = p; filters.push((r) => r[key] === p[key]); } else { op = "insert"; payload = p; }
         return q;
       },
-      eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
+      eq: (c: string, v: unknown) => { used.push(c); filters.push((r) => r[c] === v); return q; },
       is: (c: string, v: null) => { filters.push((r) => (r[c] ?? null) === v); return q; },
-      in: (c: string, v: unknown[]) => { filters.push((r) => v.includes(r[c])); return q; },
-      order: (col: string, o?: { ascending?: boolean }) => { orders.push({ col, asc: o?.ascending !== false }); return q; },
+      in: (c: string, v: unknown[]) => { used.push(c); filters.push((r) => v.includes(r[c])); return q; },
+      order: (col: string, o?: { ascending?: boolean }) => { used.push(col); orders.push({ col, asc: o?.ascending !== false }); return q; },
       // Supports the `col.ilike.*text*` terms PostgREST's or() takes (a row matches if ANY term matches); `\\` escapes a literal % _ or backslash.
       or: (expr: string) => {
         const terms = expr.split(",").map((t) => { const m = /^(\w+)\.ilike\.\*(.*)\*$/.exec(t); if (!m) throw new Error(`fake-db: unsupported or() term ${t}`); return { col: m[1], needle: m[2].replace(/\\(.)/g, "$1").toLowerCase() }; });
+        for (const t of terms) used.push(t.col);
         filters.push((r) => terms.some((t) => String(r[t.col] ?? "").toLowerCase().includes(t.needle)));
         return q;
       },

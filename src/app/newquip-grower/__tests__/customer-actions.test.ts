@@ -52,12 +52,53 @@ describe("customer selection and snapshot", () => {
     expect(db.rows("newquip_quote_customers")).toHaveLength(0);
     expect(vi.mocked(readCin7Customer)).not.toHaveBeenCalled();
   });
-  it("the search is scoped to the caller's organisation", async () => {
-    db.rows("customers").push({ org_id: "org-a", name: "Boerdery A", email: "a@a.co" }, { org_id: "org-b", name: "Boerdery B", email: "b@b.co" });
-    const r = await actions.searchQuoteCustomersForQuoteAction("boerdery");
-    expect(r.data!.map((h) => h.name)).toEqual(["Boerdery A"]);
-    expect((await actions.searchQuoteCustomersForQuoteAction("a@a")).data!.map((h) => h.name)).toEqual(["Boerdery A"]);
+  it("the search follows the REAL schema: customer name / trading name from `customers`, contact name / email from `customer_contacts`, scoped to the caller's organisation", async () => {
+    db.rows("customers").push(
+      { org_id: "org-a", name: "Boerdery A", display_name: "Boerdery", currency: "ZAR" },
+      { org_id: "org-a", name: "Karoo Farm", display_name: null, currency: null },
+      { org_id: "org-a", name: "No Contact Farm", display_name: null, currency: "ZAR" },
+      { org_id: "org-b", name: "Boerdery B", display_name: null, currency: "ZAR" },
+    );
+    db.rows("customer_contacts").push(
+      { id: "k1", org_id: "org-a", name: "Boerdery A", contact_name: "Anna", email: "anna@a.example", phone: null, mobile_phone: "082 1", contact_default: false },
+      { id: "k2", org_id: "org-a", name: "Boerdery A", contact_name: "Piet", email: "piet@a.example", phone: "021 5", mobile_phone: null, contact_default: true },
+      { id: "k3", org_id: "org-a", name: "Karoo Farm", contact_name: "Sarie Marais", email: "sarie@karoo.example", phone: null, mobile_phone: null, contact_default: true },
+      { id: "k4", org_id: "org-b", name: "Boerdery B", contact_name: "Piet", email: "piet@b.example", phone: null, mobile_phone: null, contact_default: true },
+    );
+    const byName = (await actions.searchQuoteCustomersForQuoteAction("boerdery")).data!;
+    expect(byName.map((h) => h.name)).toEqual(["Boerdery A"]);                                  // org B's customer never appears
+    expect(byName[0]).toMatchObject({ tradingName: "Boerdery", contactName: "Piet", email: "piet@a.example", phone: "021 5", currency: "ZAR" }); // the default contact
+    const byContact = (await actions.searchQuoteCustomersForQuoteAction("sarie")).data!;
+    expect(byContact).toEqual([{ name: "Karoo Farm", tradingName: null, contactName: "Sarie Marais", email: "sarie@karoo.example", phone: null, currency: null }]);
+    const byEmail = (await actions.searchQuoteCustomersForQuoteAction("anna@a")).data!;
+    expect(byEmail.map((h) => h.name)).toEqual(["Boerdery A"]);
+    expect(byEmail[0]).toMatchObject({ contactName: "Anna", email: "anna@a.example", phone: "082 1" }); // the contact that matched is the one shown; mobile used when no phone
+    expect((await actions.searchQuoteCustomersForQuoteAction("piet@b")).data).toEqual([]);     // another organisation's contact is invisible
     expect((await actions.searchQuoteCustomersForQuoteAction("x")).data).toEqual([]);
+  });
+  it("customer names are only unique PER organisation: another organisation's contact for a customer with the SAME name never leaks into the results", async () => {
+    db.rows("customers").push({ org_id: "org-a", name: "Karoo Farm", display_name: null, currency: "ZAR" }, { org_id: "org-b", name: "Karoo Farm", display_name: null, currency: "ZAR" });
+    db.rows("customer_contacts").push(
+      { id: "x1", org_id: "org-b", name: "Karoo Farm", contact_name: "Leak Person", email: "leak@b.example", phone: "000", mobile_phone: null, contact_default: true },
+      { id: "x2", org_id: "org-a", name: "Karoo Farm", contact_name: "Sarie", email: "sarie@a.example", phone: null, mobile_phone: null, contact_default: false },
+    );
+    expect((await actions.searchQuoteCustomersForQuoteAction("karoo")).data).toEqual([{ name: "Karoo Farm", tradingName: null, contactName: "Sarie", email: "sarie@a.example", phone: null, currency: "ZAR" }]);
+    expect((await actions.searchQuoteCustomersForQuoteAction("leak")).data).toEqual([]);
+  });
+  it("a customer with no contact rows is still found, with null (not blank) contact fields", async () => {
+    db.rows("customers").push({ org_id: "org-a", name: "No Contact Farm", display_name: "  ", currency: "ZAR" });
+    expect((await actions.searchQuoteCustomersForQuoteAction("no contact")).data).toEqual([{ name: "No Contact Farm", tradingName: null, contactName: null, email: null, phone: null, currency: "ZAR" }]);
+  });
+  it("filter-breaking characters in the search text cannot alter the query", async () => {
+    db.rows("customers").push({ org_id: "org-a", name: "Safe Farm", display_name: null, currency: null });
+    for (const evil of ["a),org_id.neq.x", "%", "name.ilike.*", "x,name.eq.Safe Farm", "(Safe)"]) expect((await actions.searchQuoteCustomersForQuoteAction(evil)).ok).toBe(true);
+    expect((await actions.searchQuoteCustomersForQuoteAction("a),org_id.neq.x")).data).toEqual([]);
+  });
+  it("REGRESSION: the in-memory database now rejects phantom columns exactly like PostgREST (the original `customers.contact_name` failure)", async () => {
+    const r = await db.from("customers").select("name, contact_name").eq("org_id", "org-a") as unknown as { error: { message: string } };
+    expect(r.error.message).toBe("column customers.contact_name does not exist");
+    const r2 = await db.from("customers").select("name").eq("org_id", "org-a").or("email.ilike.*x*") as unknown as { error: { message: string } };
+    expect(r2.error.message).toBe("column customers.email does not exist");
   });
   it("an approved quotation's customer snapshot is immutable (select, contact and refresh are refused)", async () => {
     quote({ state: "MANAGER_APPROVED_FINAL" });
