@@ -9,6 +9,7 @@ export const PREVIEW_EMAIL_ALLOWLIST: readonly string[] = [
   "rep@sparkconsulting.co.za",
   "estimator@sparkconsulting.co.za",
   "manager@sparkconsulting.co.za",
+  "anton@sparkconsulting.co.za",
 ];
 export const PREVIEW_SUBJECT_PREFIX = "[PREVIEW] ";
 export const PREVIEW_BODY_BANNER = "NewQuip PREVIEW notification (test environment, not a production message).";

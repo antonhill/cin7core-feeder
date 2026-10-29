@@ -506,7 +506,7 @@ describe("email policy: Preview sends only to the exact test mailboxes, marks th
     for (const to of PREVIEW_EMAIL_ALLOWLIST) mail(db, to);
     const send = ok();
     const r = await deliverPendingEmails(db as never, send as never, 50, { env: PREVIEW });
-    expect(r).toEqual({ sent: 4, failed: 0, suppressed: 0 });
+    expect(r).toEqual({ sent: 5, failed: 0, suppressed: 0 });
     for (const call of send.mock.calls) {
       const i = call[0] as { to: string[]; subject: string; text: string };
       expect(i.subject.startsWith("[PREVIEW] NewQuip Quotation")).toBe(true);
@@ -515,9 +515,15 @@ describe("email policy: Preview sends only to the exact test mailboxes, marks th
     }
     expect((db.rows("approval_notifications") as Array<Record<string, any>>).every((x) => x.subject === "NewQuip Quotation NQ-Q-1: submitted for approval" && x.status === "SENT")).toBe(true); // eslint-disable-line @typescript-eslint/no-explicit-any
   });
+  it("the owner mailbox is allowlisted (exact, case-insensitive) and is the fifth address; the other four are retained", () => {
+    expect(PREVIEW_EMAIL_ALLOWLIST).toEqual(["testing@sparkconsulting.co.za", "rep@sparkconsulting.co.za", "estimator@sparkconsulting.co.za", "manager@sparkconsulting.co.za", "anton@sparkconsulting.co.za"]);
+    const r = applyEmailPolicy(PREVIEW, { to: " Anton@SparkConsulting.co.za ", subject: "S", text: "T" });
+    expect(r).toMatchObject({ action: "SEND", subject: "[PREVIEW] S" });
+    expect(applyEmailPolicy({ VERCEL_ENV: "production" }, { to: "anton@sparkconsulting.co.za", subject: "S", text: "T" })).toMatchObject({ action: "SEND", subject: "S" });
+  });
   it("anyone else is SUPPRESSED: no provider call, no redirect, no attempt consumed, in-app notification untouched; look-alike addresses are not allowlisted", async () => {
     const db = new FakeDb(); db.approvalsApplied = true; db.notificationStatuses.push("SUPPRESSED");
-    const outsiders = ["mgr@a", "someone@newquip.co.za", "rep@sparkconsulting.co.za.evil.example", "xrep@sparkconsulting.co.za", "rep+tag@sparkconsulting.co.za", "rep@mail.sparkconsulting.co.za", "anton@sparkconsulting.co.za"];
+    const outsiders = ["mgr@a", "someone@newquip.co.za", "rep@sparkconsulting.co.za.evil.example", "xrep@sparkconsulting.co.za", "rep+tag@sparkconsulting.co.za", "rep@mail.sparkconsulting.co.za", "anton@sparkconsulting.co.za.evil.example", "xanton@sparkconsulting.co.za", "anton+tag@sparkconsulting.co.za", "anton@gmail.com", "antonhill@sparkconsulting.co.za"];
     const rows = outsiders.map((to) => mail(db, to));
     const inApp = mail(db, "mgr@a", { channel: "IN_APP", status: "SENT", sent_at: "t", dedupe_key: "inapp-1" });
     const send = ok();

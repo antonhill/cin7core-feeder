@@ -70,7 +70,7 @@ describe("Delivery actions (real session, no Demo Mode)", () => {
     vi.stubEnv("VERCEL_BRANCH_URL", "branch.vercel.app"); vi.stubEnv("NEXT_PUBLIC_SITE_URL", "");
     const s = await approvals.getEmailStatusAction();
     expect(s.data).toMatchObject({ configured: true, restricted: true, linkBase: "https://branch.vercel.app" });
-    expect(s.data!.allowlist).toEqual(["testing@sparkconsulting.co.za", "rep@sparkconsulting.co.za", "estimator@sparkconsulting.co.za", "manager@sparkconsulting.co.za"]);
+    expect(s.data!.allowlist).toEqual(["testing@sparkconsulting.co.za", "rep@sparkconsulting.co.za", "estimator@sparkconsulting.co.za", "manager@sparkconsulting.co.za", "anton@sparkconsulting.co.za"]);
     expect(JSON.stringify(s)).not.toMatch(/re_[A-Za-z0-9]{8,}/);
   });
 });
