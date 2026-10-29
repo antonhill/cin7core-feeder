@@ -13,7 +13,13 @@ const UNIQUE: Record<string, string[][]> = {
   project_deliveries: [["project_id", "label"]],
   project_delivery_allocations: [["delivery_id", "sku"]],
   project_claim_cin7_postings: [["claim_id"], ["org_id", "idempotency_key"], ["org_id", "memo"]],
+  newquip_quote_customers: [["quote_id", "seq"]],
+  newquip_quote_documents: [["quote_id", "version"], ["storage_path"]],
+  newquip_quote_sends: [["document_id", "idempotency_key"]],
 };
+/** Migration 0115 tables that are append-only (UPDATE and DELETE are refused by their database guards). */
+const APPEND_ONLY_0115 = /^(newquip_quote_customers|newquip_quote_documents|newquip_quote_responses|newquip_company_profiles)$/;
+const IS_0115 = /^(newquip_quote_customers|newquip_quote_documents|newquip_quote_sends|newquip_quote_responses|newquip_company_profiles)$/;
 
 export class FakeDb {
   tables: Record<string, Row[]> = {};
@@ -47,6 +53,8 @@ export class FakeDb {
   rolesApplied = false;
   /** Migration 0113 (exchange-rate snapshots) is not applied unless a test says so. */
   fxApplied = false;
+  /** Migration 0115 (customer snapshots, company profile, issued documents, sends, responses) is not applied unless a test says so. */
+  deliveryApplied = false;
   /** Statuses the approval_notifications CHECK accepts. Defaults to the 0110 list (no SUPPRESSED, i.e. migration 0114 not applied); a test sets it to include SUPPRESSED. */
   notificationStatuses: string[] = ["PENDING", "SENT", "FAILED", "ABANDONED"];
 
@@ -68,9 +76,11 @@ export class FakeDb {
     const approvals = () => this.approvalsApplied;
     const rolesOn = () => this.rolesApplied;
     const fxOn = () => this.fxApplied;
+    const deliveryOn = () => this.deliveryApplied;
     const notificationStatuses = () => this.notificationStatuses;
     function exec(): { data: unknown; error: { message: string } | null } {
       if (table === "newquip_fx_rates" && !fxOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
+      if (IS_0115.test(table) && !deliveryOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (/^(org_functional_role|approval_polic)/.test(table) && !rolesOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (table.startsWith("approval_") && !approvals()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (op === "insert") {
@@ -80,6 +90,7 @@ export class FakeDb {
           for (const cols of UNIQUE[table] ?? []) {
             if (rowsOf(table).some((e) => cols.every((c) => e[c] === r[c]))) return { data: null, error: { message: `duplicate key value violates unique constraint (${cols.join(",")})` } };
           }
+          if (table === "newquip_company_profiles") r.version = Math.max(0, ...rowsOf(table).filter((e) => e.org_id === r.org_id).map((e) => Number(e.version))) + 1;
           const row: Row = { id: `id-${nextId()}`, created_at: nextTs(), ...r };
           rowsOf(table).push(row);
           writes.push({ table, op: "insert" });
@@ -88,6 +99,12 @@ export class FakeDb {
         return { data: returning ? out : null, error: null };
       }
       let matched = rowsOf(table).filter((r) => filters.every((f) => f(r)));
+      if ((op === "update" || op === "delete") && APPEND_ONLY_0115.test(table)) return { data: null, error: { message: `${table}: append-only audit record is never updated or deleted` } };
+      if (op === "update" && table === "newquip_quote_sends") {
+        const allowed = new Set(["status", "provider_message_id", "last_error", "attempted_at", "suppressed_emails"]);
+        if (Object.keys(payload ?? {}).some((k) => !allowed.has(k))) return { data: null, error: { message: "newquip_quote_sends: only the delivery outcome of a send may change" } };
+        if (matched.some((r) => (r.status === "ACCEPTED" || r.status === "SUPPRESSED") && (payload as Row).status !== undefined && (payload as Row).status !== r.status)) return { data: null, error: { message: "newquip_quote_sends: a settled send never changes status" } };
+      }
       if (op === "delete") {
         const gone = rowsOf(table).filter((r) => filters.every((f) => f(r)));
         setRows(table, rowsOf(table).filter((r) => !gone.includes(r)));

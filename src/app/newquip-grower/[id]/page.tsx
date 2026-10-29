@@ -32,6 +32,7 @@ import { MarginPanel } from "./MarginPanel";
 import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
 import { CostPanel } from "./CostPanel";
+import { CustomerPanel } from "./CustomerPanel";
 import { ScopePanel } from "./ScopePanel";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
@@ -253,6 +254,7 @@ export default function QuoteEditorPage() {
                 </select>
               </label>
             </div>
+            <CustomerPanel quoteId={id} editable={editable} onPicked={(name) => edit((d) => { d.customerName = name; })} />
           </Panel>
 
           <Panel>
