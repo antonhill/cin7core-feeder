@@ -8,7 +8,7 @@ import type { PriceSourceDescriptor, QuoteType } from "../grower/pricing-source"
 import type { GrowerConfigurationInput } from "../grower/types";
 import { buildMarginSheet, type MarginSheet } from "./margin";
 import { buildPhysicalScope } from "./physical-scope";
-import type { ScopeItem } from "@/lib/projects/product-scope";
+import { applyMappingLibrary, type LibraryMapping, type ScopeItem } from "@/lib/projects/product-scope";
 
 // THE ACCEPTED BASELINE — the immutable commercial snapshot a manager's final approval creates, and the only thing a Project is
 // built from. It records everything needed to explain the contract later WITHOUT re-running any rule or re-reading any price:
@@ -107,6 +107,20 @@ export interface BaselineInput {
   approvals: AcceptedBaseline["approvals"];
   /** The same draft evaluated with cost VISIBLE, used only for the internal margin sheet. Defaults to `evaluation`. Its selling figures must equal the evaluation's. */
   marginEvaluation?: QuoteEvaluation;
+  /** ACTIVE reusable package mappings at approval time. Applied to unmapped scope items and frozen (with their versions) into the sealed baseline. */
+  mappingLibrary?: ReadonlyMap<string, LibraryMapping>;
+}
+
+type Budget = NonNullable<QuoteEvaluation["budget"]>;
+/** The priced commercial lines of an evaluated budget, exactly as they are sealed (also used for the pre-approval scope view, so both always agree). */
+export function commercialLinesOf(b: Budget): BaselineCommercialLine[] {
+  return b.lines
+    .filter((l) => l.status === "priced")
+    .map((l) => ({
+      itemKey: l.itemKey, label: l.label, sku: l.sku, quantity: l.quantity ?? 0, unitPriceExVat: l.unitPrice, revenueCents: cents(l.revenueExTax ?? 0),
+      pricedBy: l.pricedBy, note: l.reason,
+      ...(l.components ? { components: l.components.map((c) => ({ sku: c.sku, description: c.description, quantity: c.quantity, unitPriceExVat: c.unitPrice, revenueCents: c.revenueExTax == null ? null : cents(c.revenueExTax), status: c.status })) } : {}),
+    }));
 }
 
 /** Builds the sealed baseline. Throws unless the evaluated quote is READY — an incomplete quote can never be frozen. */
@@ -118,13 +132,7 @@ export function buildAcceptedBaseline(i: BaselineInput): { baseline: AcceptedBas
   if (!marginBudget || Math.round(marginBudget.totals.subtotalExTax * 100) !== Math.round(b.totals.subtotalExTax * 100)) throw new Error("The margin evaluation does not match the quote being frozen.");
   const subtotalCents = cents(b.totals.subtotalExTax);
 
-  const lines: BaselineCommercialLine[] = b.lines
-    .filter((l) => l.status === "priced")
-    .map((l) => ({
-      itemKey: l.itemKey, label: l.label, sku: l.sku, quantity: l.quantity ?? 0, unitPriceExVat: l.unitPrice, revenueCents: cents(l.revenueExTax ?? 0),
-      pricedBy: l.pricedBy, note: l.reason,
-      ...(l.components ? { components: l.components.map((c) => ({ sku: c.sku, description: c.description, quantity: c.quantity, unitPriceExVat: c.unitPrice, revenueCents: c.revenueExTax == null ? null : cents(c.revenueExTax), status: c.status })) } : {}),
-    }));
+  const lines = commercialLinesOf(b);
 
   const baseline: AcceptedBaseline = {
     schemaVersion: 1,
@@ -156,7 +164,7 @@ export function buildAcceptedBaseline(i: BaselineInput): { baseline: AcceptedBas
     },
     assumptions: draft.estimator.assumptions,
     approvals: i.approvals,
-    physicalScope: buildPhysicalScope(lines),
+    physicalScope: i.mappingLibrary && i.mappingLibrary.size ? applyMappingLibrary(buildPhysicalScope(lines), i.mappingLibrary, i.approvals.managerApprovedAt) : buildPhysicalScope(lines),
     internalMargin: buildMarginSheet(marginBudget, draft.estimator.costOverrides ?? {}),
     contractCents: subtotalCents,
   };

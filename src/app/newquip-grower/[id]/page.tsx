@@ -31,6 +31,7 @@ import { fmtCents, fmtZar, NumField, TextField } from "../fields";
 import { MarginPanel } from "./MarginPanel";
 import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
+import { ScopePanel } from "./ScopePanel";
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
 
 // NewQuip Grower quote editor: Configuration (rep) → Estimator review → Customer quote → Approval. The browser holds only the
@@ -443,6 +444,8 @@ export default function QuoteEditorPage() {
             </Panel>
           </div>
 
+          <ScopePanel quoteId={id} draft={draft} />
+
           {(budget?.lines ?? []).some((b) => ["unmapped", "not_in_price_source", "supplier_quote_required", "package_unconfirmed", "package_incomplete"].includes(b.status) || b.pricedBy === "estimator_resolution") && (
             <Panel>
               <PanelTitle>POC MANUAL PRICE OVERRIDE — pricing exceptions</PanelTitle>
@@ -568,6 +571,8 @@ export default function QuoteEditorPage() {
               {final && <Badge tone="success" dot>Manager approved — final</Badge>}
             </div>
           </Panel>
+
+          {final && <ScopePanel quoteId={id} draft={draft} />}
 
           {final && q.accepted_baseline && (
             <Panel>

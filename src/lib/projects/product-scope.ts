@@ -174,3 +174,28 @@ export function variationScope(variationCode: string, products: ReadonlyArray<{ 
 export function packageKeyOf(item: Pick<ScopeItem, "id" | "origin">): string {
   return item.origin.packageKey ?? item.id.replace(/:UNMAPPED$/, "");
 }
+
+/** A reusable mapping as the scope needs it (the version is frozen into every resolution that uses it). */
+export interface LibraryMapping { packageKey: string; version: number; lines: ReadonlyArray<{ sku: string; factor: number; unit: string; role: MappedLineRole }> }
+export const MAPPING_LIBRARY_ACTOR = "mapping-library";
+
+/**
+ * Applies the ACTIVE reusable mappings to a register's still-UNMAPPED items (pure). Each hit becomes an ordinary MAP_LINES resolution carrying the
+ * mapping version it came from, so the register that is sealed into an approved quotation keeps its OWN copy: a later mapping version never changes it.
+ * Items that are already mapped, already resolved, or have no usable quantity / no mapping are returned untouched (still reported as unresolved).
+ */
+export function applyMappingLibrary(items: readonly ScopeItem[], library: ReadonlyMap<string, LibraryMapping>, at: string): ScopeItem[] {
+  return items.map((it) => {
+    if (it.mapping.status !== "UNMAPPED" || it.resolution) return it;
+    const m = library.get(packageKeyOf(it));
+    if (!m) return it;
+    const built = buildMappedLines(it.quantity, m.lines.map((l) => ({ sku: l.sku, factor: l.factor, unit: l.unit, role: l.role })));
+    if (!built.ok) return it;
+    return { ...it, resolution: { kind: "MAP_LINES", lines: built.lines, itemQuantity: it.quantity as number, mappingRef: { packageKey: m.packageKey, version: m.version }, reason: `Reusable mapping ${m.packageKey} v${m.version} applied automatically.`, by: MAPPING_LIBRARY_ACTOR, at } };
+  });
+}
+
+/** Items that still stop a Sale, for display before approval: unmapped and unresolved (an exclusion or mapping counts as resolved). */
+export function unresolvedItems(items: readonly ScopeItem[]): ScopeItem[] {
+  return items.filter((i) => i.mapping.status === "UNMAPPED" && !i.resolution);
+}

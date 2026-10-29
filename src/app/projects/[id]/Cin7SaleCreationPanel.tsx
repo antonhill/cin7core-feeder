@@ -9,7 +9,7 @@ import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { isP0Disposable } from "@/lib/projects/p0-project";
 import type { P0Report } from "@/lib/projects/p0-checklist";
 import { CREATE_CONFIRMATION_TEXT } from "@/lib/projects/cin7-sale-creation";
-import type { ProjectView } from "@/lib/projects/project-view";
+import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { VariationProductPicker, type PickedProduct } from "./VariationProductPicker";
 import type { PackageMapping } from "@/lib/projects/package-mapping-store";
 import { createCin7SaleAction, getPackageMappingAction, getCin7SaleCreationStatusAction, reconcileCin7SaleCreationAction, resolveScopeItemAction, runP0ChecklistAction, type Cin7SaleCreationStatus } from "../cin7-actions";
@@ -27,7 +27,7 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
   const [note, setNote] = useState<string | null>(null);
   // A disposable P0 project already knows its customer and location (entered when it was prepared); everything else stays explicit.
   const isP0Project = isP0Disposable(view.project.originating_quote_ref);
-  const [customer, setCustomer] = useState(isP0Project ? view.project.customer_name : "");
+  const [customer, setCustomer] = useState(view.project.customer_name ?? "");
   const [location, setLocation] = useState(isP0Project ? "MSTR" : "");
   const [account, setAccount] = useState("");
   const [taxRule, setTaxRule] = useState("Standard Rate Sales");
@@ -68,6 +68,11 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
         {st.excluded.length > 0 && <p className="mt-1 text-xs text-slate-500">Excluded from the Sale by a manager: {st.excluded.map((e) => `${e.description} (${e.reason})`).join("; ")}.</p>}
       </div>
 
+      <div className="mt-4">
+        <p className="text-sm font-medium text-slate-800">Contract charges on the Sales Order (the approved billing stages)</p>
+        <ul className="mt-1 space-y-0.5 text-sm">{view.stages.filter((x) => x.valueCents !== 0).map((x) => <li key={x.id}>{x.name} <span className="tabular-nums text-slate-600">- {formatCents(x.valueCents)} ex VAT</span></li>)}</ul>
+      </div>
+
       {unresolved.length > 0 && !creation && (
         <div className="mt-4 space-y-3">
           <Alert tone="warning">The Sale cannot be created yet: {unresolved.length} scope item(s) have no authoritative Cin7 SKU. Nothing is guessed or substituted. A manager resolves each one below, with a reason.</Alert>
@@ -80,16 +85,13 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
                 <p className="text-xs text-slate-600">{i.mapping.status === "UNMAPPED" ? i.mapping.reason : ""}</p>
                 {gates.isManager ? (
                   <div className="mt-2 flex flex-wrap items-end gap-2">
-                    <Input label="Cin7 SKU" value={r.sku} onChange={(e) => set({ sku: e.target.value })} />
-                    <Input label="Quantity" value={r.quantity} onChange={(e) => set({ quantity: e.target.value })} />
                     <Input label="Reason (required)" value={r.reason} onChange={(e) => set({ reason: e.target.value })} />
-                    <Button size="sm" disabled={working || !r.sku.trim() || !r.reason.trim()} onClick={() => after(() => resolveScopeItemAction(projectId, { itemId: i.id, kind: "MAP", sku: r.sku, quantity: Number(r.quantity), reason: r.reason }))}>Map to this SKU</Button>
                     <Button size="sm" variant="secondary" disabled={working || !r.reason.trim()} onClick={() => after(() => resolveScopeItemAction(projectId, { itemId: i.id, kind: "EXCLUDE", reason: r.reason }))}>Exclude from the Sale</Button>
                   </div>
                 ) : <p className="mt-1 text-xs text-slate-500">A manager resolves this.</p>}
                 {gates.isManager ? (
-                  <details className="mt-3 rounded border border-slate-200 p-3">
-                    <summary className="cursor-pointer text-sm font-medium text-slate-800">Map this package to several Cin7 SKUs (with quantity conversion)</summary>
+                  <details open className="mt-3 rounded border border-slate-200 p-3">
+                    <summary className="cursor-pointer text-sm font-medium text-slate-800">Map this package to Cin7 products (search the catalogue; quantities are converted)</summary>
                     <p className="mt-1 text-xs text-slate-500">Search and add each real Cin7 SKU. Enter how many units of that SKU make up ONE quoted unit ({i.unit}); the converted quantity is shown. Mark internal manufacturing inputs as BOM components so they are not put on the Sales Order.</p>
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                       <Button size="sm" variant="secondary" disabled={working} onClick={async () => { const g = await getPackageMappingAction(projectId, i.id); if (g.ok && g.data) setSaved({ ...saved, [i.id]: g.data }); }}>Look for a saved mapping</Button>
@@ -104,7 +106,7 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
                     <div className="mt-2 flex flex-wrap items-end gap-2">
                       <Input label="Reason (required)" value={r.reason} onChange={(e) => set({ reason: e.target.value })} />
                       <label className="flex items-center gap-1 pb-2 text-xs text-slate-600"><input type="checkbox" checked={saveReuse[i.id] ?? false} onChange={(e) => setSaveReuse({ ...saveReuse, [i.id]: e.target.checked })} /> also save as a reusable mapping (new version)</label>
-                      <Button size="sm" disabled={working || !r.reason.trim() || (multi[i.id] ?? []).length === 0} onClick={() => after(() => resolveScopeItemAction(projectId, { itemId: i.id, kind: "MAP_LINES", saveAsReusable: saveReuse[i.id] ?? false, reason: r.reason, lines: (multi[i.id] ?? []).map((p) => ({ sku: p.sku, factor: Number(p.quantity), unit: i.unit, role: p.role })) }))}>Save multi-SKU mapping</Button>
+                      <Button size="sm" disabled={working || !r.reason.trim() || (multi[i.id] ?? []).length === 0} onClick={() => after(() => resolveScopeItemAction(projectId, { itemId: i.id, kind: "MAP_LINES", saveAsReusable: saveReuse[i.id] ?? false, reason: r.reason, lines: (multi[i.id] ?? []).map((p) => ({ sku: p.sku, factor: Number(p.quantity), unit: i.unit, role: p.role })) }))}>Save mapping</Button>
                     </div>
                   </details>
                 ) : <p className="mt-1 text-xs text-slate-500">A manager resolves this.</p>}
@@ -117,12 +119,12 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
       {creation ? (
         <div className="mt-4 space-y-2 rounded-lg border border-slate-200 p-4 text-sm">
           <div className="flex flex-wrap items-center gap-2"><Badge tone={TONE[creation.creation_state] ?? "neutral"}>{creation.creation_state.replace(/_/g, " ")}</Badge>
-            <span className="font-mono text-xs text-slate-500">{creation.external_id}</span>{creation.cin7_sale_number && <span>Cin7 {creation.cin7_sale_number}</span>}</div>
+            {creation.cin7_sale_number && <span>Cin7 {creation.cin7_sale_number}</span>}</div>
           {creation.last_error_message && <Alert tone={creation.creation_state === "FAILED_UNCERTAIN" ? "danger" : "warning"}>{creation.last_error_message}</Alert>}
           {creation.creation_state !== "RECONCILED" && creation.creation_state !== "FAILED_CONFIRMED_NO_WRITE" && (
             <Button size="sm" variant="secondary" disabled={working || !gates.isManager} onClick={() => after(() => reconcileCin7SaleCreationAction(projectId))}>Reconcile with Cin7 (read-only)</Button>
           )}
-          {creation.creation_state === "FAILED_UNCERTAIN" && <p className="text-xs text-slate-500">Do not retry. Reconcile first; if a Sale exists but is incomplete, complete or void it in Cin7, or link it with &quot;Link existing Sale&quot;.</p>}
+          {creation.creation_state === "FAILED_UNCERTAIN" && <p className="text-xs text-slate-500">Do not retry. Reconcile first; if a Sale exists but is incomplete, complete or void it in Cin7. An administrator can use the recovery option on the Cin7 Core panel only if the existing Sale is verifiably this project&apos;s.</p>}
         </div>
       ) : (
         <div className="mt-4 space-y-3">
@@ -132,8 +134,9 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
             <Input label="Revenue account code" value={account} onChange={(e) => setAccount(e.target.value)} />
             <Input label="Cin7 tax rule name" value={taxRule} onChange={(e) => setTaxRule(e.target.value)} />
           </div>
-          <div className="rounded-lg border border-slate-200 p-3">
-            <div className="flex flex-wrap items-center gap-3">
+          <details className="rounded-lg border border-slate-200 p-3">
+            <summary className="cursor-pointer text-sm text-slate-700">Optional: run the read-only pre-flight check</summary>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
               <Button size="sm" variant="secondary" disabled={p0Busy || working || !gates.isManager} onClick={async () => {
                 setP0Busy(true); setP0Error(null);
                 const r = await runP0ChecklistAction(projectId, { customerName: customer, location, taxRule, revenueAccount: account, skus: st.saleLines.map((l) => ({ sku: l.sku, quantity: l.quantity })) });
@@ -152,7 +155,7 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
                 </ul>
               </div>
             )}
-          </div>
+          </details>
           <Input label={`Type exactly: ${CREATE_CONFIRMATION_TEXT}`} value={typed} onChange={(e) => setTyped(e.target.value)} />
           {!gates.writesEnabled && <p className="text-xs text-slate-500">Cin7 writes are switched off on this deployment; the button stays disabled.</p>}
           <Button disabled={!canCreate} onClick={() => after(() => createCin7SaleAction(projectId, { confirmation: typed, customerName: customer, location, revenueAccount: account, cin7TaxRule: taxRule }))}>Create Advanced Sale in Cin7</Button>

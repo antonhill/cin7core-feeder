@@ -3,7 +3,7 @@ import "server-only";
 // normal audited resolution (the project stores its own copy plus the version it came from), so a later version never alters an existing project or
 // a frozen quotation. Until the migration is applied every read reports "unavailable" (never "no mappings").
 import type { createServiceRoleClient } from "@/supabase/server";
-import { buildMappedLines, type ResolveLineInput } from "./product-scope";
+import { buildMappedLines, type LibraryMapping, type ResolveLineInput } from "./product-scope";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 function fail(message: string): never { throw new Error(message); }
@@ -20,6 +20,16 @@ export async function listMappingVersions(db: Db, orgId: string, packageKey: str
   const r = await db.from("newquip_package_mappings").select("*").eq("org_id", orgId).eq("package_key", packageKey).order("version", { ascending: false });
   if (r.error) { if (missingTable(r.error.message)) return null; fail(r.error.message); }
   return (r.data ?? []) as PackageMapping[];
+}
+
+export const libraryOf = (m: ReadonlyMap<string, PackageMapping>): Map<string, LibraryMapping> =>
+  new Map([...m].map(([k, v]) => [k, { packageKey: v.package_key, version: v.version, lines: v.lines }]));
+
+/** Every ACTIVE mapping of the organisation keyed by package, or null when the table does not exist yet (approval then simply applies none). */
+export async function listActiveMappings(db: Db, orgId: string): Promise<Map<string, PackageMapping> | null> {
+  const r = await db.from("newquip_package_mappings").select("*").eq("org_id", orgId).eq("status", "ACTIVE");
+  if (r.error) { if (missingTable(r.error.message)) return null; fail(r.error.message); }
+  return new Map(((r.data ?? []) as PackageMapping[]).map((m) => [m.package_key, m]));
 }
 
 export async function activeMapping(db: Db, orgId: string, packageKey: string): Promise<PackageMapping | null | "UNAVAILABLE"> {

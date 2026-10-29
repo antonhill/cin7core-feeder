@@ -12,6 +12,7 @@ import type { ScheduleStageTemplate } from "@/newquip/quote/billing-schedule";
 import { authoriseTransition, canEditDraft, checkApproval, checkHandoff, type QuoteState } from "@/newquip/quote/workflow";
 import type { QuoteRole } from "@/newquip/quote/roles";
 import { createProjectFromBaseline } from "@/lib/projects/project-store";
+import { libraryOf, listActiveMappings } from "@/lib/projects/package-mapping-store";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 
@@ -166,7 +167,10 @@ export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<Q
   const chk = checkApproval({ readiness: ev.readiness, totalExVatCents: totalCents(ev), customerConfirmedCents: q.customer_confirmed_cents, signoffHash: q.estimator_signoff_hash, currentDraftHash: q.draft_hash });
   if (!chk.ok) fail(chk.error);
   const now = new Date().toISOString();
+  // Reusable mappings active RIGHT NOW are applied to unmapped packages and sealed with their versions. Unresolved items never block approval.
+  const library = await listActiveMappings(db, orgId);
   const { baseline, hash } = buildAcceptedBaseline({
+    mappingLibrary: library ? libraryOf(library) : undefined,
     quoteRef: q.quote_ref, revision: q.revision, draft: q.draft, evaluation: ev,
     // Cost-visible evaluation of the SAME draft, used only for the internal margin sheet frozen with the baseline.
     marginEvaluation: marginCtx ? evaluateDraft(q.draft, marginCtx) : undefined,

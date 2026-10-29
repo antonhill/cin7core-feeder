@@ -22,7 +22,8 @@ import { NEWQUIP_POC_CIN7_INSTANCE_ID, OPERATIONAL_CUSTOMER_DENYLIST, isNewquipP
 import { buildCin7Port, singleActiveInstanceId } from "@/lib/projects/cin7-adapter";
 import { buildSaleCreationPort } from "@/lib/projects/cin7-sale-creation-adapter";
 import { createSaleForProject, loadCreation, reconcileSaleCreation, type CreationRow } from "@/lib/projects/cin7-sale-creation-store";
-import { linkCin7Sale, listPostings, loadSaleLink, postClaimToCin7, reconcileClaimPosting, type PostingRow, type SaleLinkRow, type WriteGates } from "@/lib/projects/cin7-posting-store";
+import { recoverLinkExistingSale } from "@/lib/projects/cin7-sale-recovery-store";
+import { listPostings, loadSaleLink, postClaimToCin7, reconcileClaimPosting, type PostingRow, type SaleLinkRow, type WriteGates } from "@/lib/projects/cin7-posting-store";
 
 export interface Cin7ActionResult<T> {
   ok: boolean;
@@ -53,6 +54,8 @@ async function gatesFor(orgId: string): Promise<WriteGates> {
 export interface Cin7PostingStatus {
   gates: WriteGates;
   link: SaleLinkRow | null;
+  /** How the linked Sale got linked: created and verified by the Toolbox, or attached by an administrator's recovery. */
+  linkOrigin: "AUTOMATIC" | "ADMIN_RECOVERY" | null;
   postings: PostingRow[];
 }
 
@@ -62,23 +65,37 @@ export async function getCin7PostingStatusAction(projectId: string): Promise<Cin
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const db = createServiceRoleClient();
     const link = await loadSaleLink(db, orgId, projectId).catch(() => null); // deploy-order safety until migration 0104 exists
-    return { ok: true, data: { gates: await gatesFor(orgId), link, postings: await listPostings(db, orgId, projectId) } };
+    const snap = ((link as { sale_snapshot?: { recovery?: unknown } } | null)?.sale_snapshot) ?? {};
+    return { ok: true, data: { gates: await gatesFor(orgId), link, linkOrigin: link ? (snap.recovery ? "ADMIN_RECOVERY" : "AUTOMATIC") : null, postings: await listPostings(db, orgId, projectId) } };
   } catch (e) {
     return { ok: false, error: message(e) };
   }
 }
 
-/** Manager only. One READ of the Cin7 sale, then a permanent local link. Writes nothing to Cin7. */
-export async function linkCin7SaleAction(projectId: string, cin7SaleId: string, revenueAccount: string): Promise<Cin7ActionResult<SaleLinkRow>> {
+/**
+ * ADMINISTRATOR RECOVERY ONLY (not part of the normal workflow, which creates, verifies and links the Sale automatically). Reads an existing Cin7
+ * Sale live (read-only) and links it only when it is provably this project's Sale: ExternalID, customer, products and totals must all match the
+ * project's approved plan, and it must not belong to another project. A reason is mandatory and the attempt is audited. Writes nothing to Cin7.
+ */
+export async function recoverLinkCin7SaleAction(projectId: string, input: { saleId: string; customerName: string; location: string; revenueAccount: string; cin7TaxRule: string; reason: string }): Promise<Cin7ActionResult<SaleLinkRow>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
-    await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const gates = await gatesFor(orgId);
+    await guardBillingScope(createServiceRoleClient(), orgId, projectId, gates.isManager);
+    if (!gates.orgEnabled) throw new Error("Cin7 Sale recovery is not enabled for this organization.");
+    if (!gates.isManager) throw new Error("Only an organisation administrator can run Sale recovery.");
     const db = createServiceRoleClient();
     const instanceId = await singleActiveInstanceId(db, orgId);
-    const link = await linkCin7Sale(db, buildCin7Port(db, orgId, instanceId), gates, email ?? "unknown", { orgId, projectId, instanceId, saleId: cin7SaleId, revenueAccount });
-    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.cin7_sale_linked", summary: "Linked a project to a Cin7 Advanced Sale (read-only check; nothing written to Cin7)", detail: { projectId, saleNumber: link.cin7_sale_number } });
-    return { ok: true, data: link };
+    if (instanceId !== NEWQUIP_POC_CIN7_INSTANCE_ID) throw new Error("Recovery can only verify a Sale on the expected NewQuip POC Cin7 instance; it is not.");
+    try {
+      const link = await recoverLinkExistingSale(db, buildSaleCreationPort(db, orgId, instanceId), gates, email ?? "unknown", { orgId, projectId, instanceId, ...input });
+      await logActivity(db, { orgId, actor: { userId, email }, action: "projects.cin7_sale_recovery_linked", summary: "ADMIN RECOVERY: linked an existing Cin7 Advanced Sale to a project after verifying it against the project's plan (read-only; nothing written to Cin7)", detail: { projectId, saleId: input.saleId.trim(), reason: input.reason.trim() } });
+      return { ok: true, data: link };
+    } catch (e) {
+      // a refused recovery is part of the audit trail too
+      await logActivity(db, { orgId, actor: { userId, email }, action: "projects.cin7_sale_recovery_refused", summary: "ADMIN RECOVERY refused: the Sale was not linked", detail: { projectId, saleId: input.saleId.trim(), reason: input.reason.trim(), refusal: message(e).slice(0, 500) } }).catch(() => undefined);
+      throw e;
+    }
   } catch (e) {
     return { ok: false, error: message(e) };
   }

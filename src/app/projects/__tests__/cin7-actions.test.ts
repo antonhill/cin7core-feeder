@@ -7,6 +7,7 @@ import { requireOrgAdmin } from "@/lib/require-org-admin";
 import * as store from "@/lib/projects/cin7-posting-store";
 import { NEWQUIP_POC_ORG_IDS } from "@/newquip/access";
 import { POST_CONFIRMATION_TEXT } from "@/lib/projects/cin7-posting";
+const REC = { saleId: "x", customerName: "c", location: "l", revenueAccount: "200", cin7TaxRule: "t", reason: "a reason that is long enough" };
 
 vi.mock("@/lib/authorization", () => ({ requireModuleAccess: vi.fn() }));
 vi.mock("@/lib/require-org-admin", () => ({ requireOrgAdmin: vi.fn() }));
@@ -72,7 +73,7 @@ describe("the write gates are derived on the server", () => {
 describe("authorisation is re-established in every action", () => {
   const all: Array<[string, () => Promise<{ ok: boolean; error?: string }>]> = [
     ["status", () => actions.getCin7PostingStatusAction("p")],
-    ["link", () => actions.linkCin7SaleAction("p", "s", "200")],
+    ["link", () => actions.recoverLinkCin7SaleAction("p", REC)],
     ["post", () => actions.postClaimToCin7Action("p", "c", POST_CONFIRMATION_TEXT)],
     ["reconcile", () => actions.reconcileClaimPostingAction("p", "c")],
   ];
