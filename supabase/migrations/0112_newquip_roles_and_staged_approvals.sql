@@ -167,7 +167,7 @@ begin
       p_stage, p_stage_role, lower(p_assigned_to), case when p_assigned_to is null then null else clock_timestamp() end, p_due_at)
     returning * into v_new;
   insert into approval_events (org_id, request_id, doc_type, doc_id, doc_ref, revision, project_id, action, from_status, to_status, actor_email, actor_name, reason, digest, stage)
-    values (v_new.org_id, v_new.id, v_new.doc_type, v_new.doc_id, v_new.doc_ref, v_new.revision, v_new.project_id, case when v_rev > 1 then 'RESUBMITTED' else 'SUBMITTED' end, null, 'PENDING', lower(p_actor), p_actor_name, null, v_new.digest, p_stage)
+    values (v_new.org_id, v_new.id, v_new.doc_type, v_new.doc_id, v_new.doc_ref, v_new.revision, v_new.project_id, case when exists (select 1 from approval_requests where org_id = p_org and doc_type = p_doc_type and doc_id = p_doc_id and stage = p_stage and id <> p_id) then 'RESUBMITTED' else 'SUBMITTED' end, null, 'PENDING', lower(p_actor), p_actor_name, null, v_new.digest, p_stage)
     returning id into v_ev;
   if p_assigned_to is not null then
     insert into approval_events (org_id, request_id, doc_type, doc_id, doc_ref, revision, project_id, action, from_status, to_status, actor_email, actor_name, reason, digest, stage)

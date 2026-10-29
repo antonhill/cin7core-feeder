@@ -96,6 +96,10 @@ do $$ begin
   if (select count(*) from approval_requests where doc_id = '00000000-0000-0000-0000-0000000012d1' and status = 'PENDING') <> 1 then raise exception 'one PENDING request per document'; end if;
   if (select revision from approval_requests where id = '00000000-0000-0000-0000-00000000e002') <> 2 then raise exception 'second request is revision 2'; end if;
 end $$;
+do $$ begin
+  -- the first request at a NEW stage is a SUBMITTED event (not a re-submission); a second request at the same stage is RESUBMITTED
+  if (select action from approval_events where request_id = '00000000-0000-0000-0000-00000000e002' and action in ('SUBMITTED', 'RESUBMITTED')) <> 'SUBMITTED' then raise exception 'first manager-stage request is SUBMITTED'; end if;
+end $$;
 -- the estimator who signed off cannot approve as manager, and neither can the originating rep; both are separate from an explicit, reasoned override
 select pg_temp.expect_error($q$select pg_temp.dec('00000000-0000-0000-0000-00000000e002', 'APPROVE', 'est@x', null, false, null)$q$, 'approval_separation', 'estimator cannot also be the approving manager');
 select pg_temp.expect_error($q$select pg_temp.dec('00000000-0000-0000-0000-00000000e002', 'APPROVE', 'rep@x', null, false, null)$q$, 'approval_separation', 'originating rep cannot approve');
