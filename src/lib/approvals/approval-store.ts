@@ -16,6 +16,8 @@ import { approveClaim, cancelDraftClaim, returnClaimToDraft } from "@/lib/projec
 import { approveVariation, rejectVariation } from "@/lib/projects/variation-store";
 import { listVariationStages } from "@/lib/projects/variation-billing-store";
 import { authoriseDecision, authoriseStageDecision } from "./policy";
+import { demoAuditDetail, type DemoInfo } from "@/lib/demo-mode/context";
+import { logActivity } from "@/lib/activity-log";
 import { canAdminister, stageOf, STAGE_LABEL, ROLE_LABEL, type ApprovalStage, type FunctionalRole } from "./roles";
 import { emailsWithRole, loadPolicies, resolveRoles, rolesAvailable } from "./role-store";
 import { APPROVALS_DISABLED } from "./kill-switch";
@@ -30,7 +32,11 @@ function fail(message: string): never { throw new Error(message); }
 const missing = (m: string) => /does not exist|schema cache|relation|function .* does not exist|Could not find the function/i.test(m);
 export const MAX_EMAIL_ATTEMPTS = 3;
 
-export interface ApprovalCtx { orgId: string; userId: string; email: string; name: string; isManager: boolean; baseUrl?: string }
+export interface ApprovalCtx {
+  orgId: string; userId: string; email: string; name: string; isManager: boolean; baseUrl?: string;
+  /** Present only under the owner's Demo Mode: `email`/`userId` are the EFFECTIVE test user (every check evaluates them); `name` carries the DEMO marker. */
+  demo?: DemoInfo;
+}
 
 /** False until migration 0110 is applied: every caller then keeps the documents' previous behaviour. Never reports an error as "no approvals". */
 export async function approvalsAvailable(db: Db): Promise<boolean> {
@@ -161,6 +167,20 @@ export async function requestHistory(db: Db, orgId: string, requestId: string): 
 }
 
 const asRequest = (r: unknown): ApprovalRequestRow => r as ApprovalRequestRow;
+
+/**
+ * Under the owner's Demo Mode every approval step also leaves a structured audit record: the REAL owner as the actor, with the effective test user, the role
+ * they were demonstrating, the document revision, the action, the reason and the exact UTC time. (The immutable approval history itself already carries the
+ * effective user as the actor and the DEMO marker in the actor name.) Never throws: a decision does not depend on this record.
+ */
+async function auditDemo(db: Db, ctx: ApprovalCtx, action: string, summary: string, req: ApprovalRequestRow, extra: Record<string, unknown> = {}): Promise<void> {
+  if (!ctx.demo) return;
+  await logActivity(db, {
+    orgId: ctx.orgId, actor: { userId: ctx.demo.ownerUserId, email: ctx.demo.ownerEmail }, action, summary: `[DEMO] ${summary}`,
+    detail: demoAuditDetail(ctx.demo, { requestId: req.id, docType: req.doc_type, docId: req.doc_id, docRef: req.doc_ref, documentRevision: req.revision, stage: req.stage ?? "MANAGER", decisionAction: extra.decisionAction ?? null, atUtc: new Date().toISOString(), ...extra }),
+  }).catch(() => undefined);
+}
+
 const newId = () => crypto.randomUUID();
 
 /** Submits the CURRENT revision of a document. Records the exact digest and amount; identical content already pending is a no-op; changed content supersedes the pending submission. */
@@ -185,6 +205,7 @@ export async function submitForApproval(db: Db, ctx: ApprovalCtx, docType: Appro
   });
   if (r.error) fail(`submit for approval: ${r.error.message}`);
   const row = asRequest(r.data);
+  await auditDemo(db, ctx, "approvals.submitted", `Submitted ${docType.toLowerCase()} ${row.doc_ref} for approval`, row, { decisionAction: "SUBMIT" });
   await deliverForRequest(db, row.id).catch(() => undefined); // best effort: a decision never depends on delivery
   return row;
 }
@@ -226,6 +247,7 @@ export async function decide(db: Db, ctx: ApprovalCtx, requestId: string, action
   });
   if (r.error) fail(r.error.message.replace(/^.*?(approval_[a-z_]+: )/, "").replace(/^approval: /, ""));
   const row = asRequest(r.data);
+  await auditDemo(db, ctx, `approvals.${action.toLowerCase()}`, `${action} ${row.doc_type.toLowerCase()} ${row.doc_ref}`, row, { decisionAction: action, reason: reason || null, override: verdict.override, decidedAtUtc: row.decided_at });
   await deliverForRequest(db, row.id).catch(() => undefined);
   return row;
 }
@@ -270,6 +292,7 @@ export async function reassign(db: Db, ctx: ApprovalCtx, requestId: string, newA
   if (req.assigned_to_email && req.assigned_to_email !== to) specs.push(buildNotification("REASSIGNED_AWAY", req, req.assigned_to_email, { baseUrl: ctx.baseUrl, by: ctx.name, newApprover: to }));
   const r = await db.rpc("approval_reassign", { p_org: ctx.orgId, p_request: requestId, p_new: to, p_actor: ctx.email, p_actor_name: ctx.name, p_expected_version: expectedVersion, p_notifications: specs });
   if (r.error) fail(r.error.message);
+  await auditDemo(db, ctx, "approvals.reassigned", `Reassigned ${req.doc_type.toLowerCase()} ${req.doc_ref} to ${to}`, asRequest(r.data), { decisionAction: "REASSIGN", newApprover: to });
   await deliverForRequest(db, requestId).catch(() => undefined);
   return asRequest(r.data);
 }
@@ -368,9 +391,9 @@ export async function sendOverdueReminders(db: Db, nowIso: string, baseUrl?: str
 
 // ── the existing approve / return / reject / cancel entry points route through here, so there is ONE approval path ──
 
-export function legacyCtx(orgId: string, userId: string, email: string | null, isManager: boolean): ApprovalCtx {
+export function legacyCtx(orgId: string, userId: string, email: string | null, isManager: boolean, opts: { name?: string; demo?: DemoInfo } = {}): ApprovalCtx {
   const base = process.env.NEXT_PUBLIC_SITE_URL ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "");
-  return { orgId, userId, email: (email ?? "unknown").toLowerCase(), name: email ?? "unknown", isManager, baseUrl: base };
+  return { orgId, userId, email: (email ?? "unknown").toLowerCase(), name: opts.name ?? email ?? "unknown", isManager, baseUrl: base, ...(opts.demo ? { demo: opts.demo } : {}) };
 }
 
 /**
@@ -446,6 +469,7 @@ async function submitStaged(db: Db, ctx: ApprovalCtx, docType: ApprovalDocType, 
   });
   if (r.error) fail(`submit for ${STAGE_LABEL[stage].toLowerCase()}: ${r.error.message}`);
   const row = asRequest(r.data);
+  await auditDemo(db, ctx, "approvals.submitted", `Submitted ${docType.toLowerCase()} ${row.doc_ref} for ${STAGE_LABEL[stage].toLowerCase()}`, row, { decisionAction: "SUBMIT", assignedTo: row.assigned_to_email });
   await deliverForRequest(db, row.id).catch(() => undefined); // best effort: a decision never depends on delivery
   return row;
 }
@@ -508,6 +532,7 @@ async function decideStaged(db: Db, ctx: ApprovalCtx, req: ApprovalRequestRow, a
   });
   if (r.error) fail(r.error.message.replace(/^.*?(approval_[a-z_]+: )/, "").replace(/^approval: /, ""));
   const row = asRequest(r.data);
+  await auditDemo(db, ctx, `approvals.${action.toLowerCase()}`, `${action} ${row.doc_type.toLowerCase()} ${row.doc_ref} at ${STAGE_LABEL[stage].toLowerCase()}`, row, { decisionAction: action, reason: reason || null, override: verdict.override, returnDestination: destination, decidedAtUtc: row.decided_at });
   await deliverForRequest(db, row.id).catch(() => undefined);
   // The next stage opens as a consequence of this decision. It is derived from the document, so decideDocument can also repair it if this step fails.
   if (req.doc_type === "QUOTE" && action !== "WITHDRAW") {

@@ -4,6 +4,7 @@ import { requireCurrentOrg, type CurrentOrg } from "@/lib/current-org";
 import { requireWriteAllowed } from "@/lib/billing";
 import { createServiceRoleClient } from "@/supabase/server";
 import { computeEffectiveDisabledModules, findBlockedModule } from "@/app/module-nav";
+import { assertNoDemoImpersonation } from "@/lib/demo-mode/context";
 
 /**
  * Centralized module-level authorization for Server Actions.
@@ -59,7 +60,10 @@ import { computeEffectiveDisabledModules, findBlockedModule } from "@/app/module
  *     `/settings/billing`, `/reports/natas`) is always allowed here — those are
  *     gated by role/plan/single-org checks instead, not the module toggle.
  */
-export async function requireModuleAccess(moduleHref: string): Promise<CurrentOrg> {
+export async function requireModuleAccess(moduleHref: string, opts: { allowDemo?: boolean } = {}): Promise<CurrentOrg> {
+  // While the owner's NewQuip Demo Mode is impersonating another user, every action DENIES unless it is one of the scoped quotation / approval actions that
+  // resolve the effective identity themselves (they pass allowDemo). Otherwise an action could run with the owner's powers under another user's name.
+  if (!opts.allowDemo) await assertNoDemoImpersonation();
   const current = await requireCurrentOrg();
   const db = createServiceRoleClient();
 
@@ -113,7 +117,7 @@ export async function requireModuleAccess(moduleHref: string): Promise<CurrentOr
  * module the caller may use AND an org on a writing plan.
  */
 export async function requireModuleWrite(moduleHref: string): Promise<CurrentOrg> {
-  const current = await requireModuleAccess(moduleHref);
+  const current = await requireModuleAccess(moduleHref); // never allowDemo: Cin7 writes are never performed as an impersonated user
   await requireWriteAllowed(current.orgId);
   return current;
 }

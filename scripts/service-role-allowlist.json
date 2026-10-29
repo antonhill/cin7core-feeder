@@ -28,6 +28,8 @@
     "src/app/newquip-grower/actions.ts",
     "src/app/newquip-grower/mapping-actions.ts",
     "src/app/newquip-grower/template-actions.ts",
+    "src/app/demo-mode/actions.ts",
+    "src/lib/demo-mode/context.ts",
     "src/app/newquip-grower/cost-actions.ts",
     "src/app/projects/procurement-actions.ts",
     "src/app/approvals/role-actions.ts",

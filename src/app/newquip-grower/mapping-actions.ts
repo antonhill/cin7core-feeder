@@ -3,6 +3,7 @@
 // NewQuip: the reusable product mappings and the internal physical-scope view of a quotation. Nothing here writes to Cin7: the SKU check is a
 // read-only catalogue lookup. Authorisation is re-established inside EVERY action. Only async functions and erased types are exported.
 import { requireModuleAccess } from "@/lib/authorization";
+import { resolveActing } from "@/lib/demo-mode/context";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { logActivity } from "@/lib/activity-log";
 import { createServiceRoleClient } from "@/supabase/server";
@@ -32,9 +33,18 @@ async function actor() {
  * The internal physical scope of a quote: what each package expands to, with the active reusable mappings applied, and every item that still has
  * no mapping. Pass the editor's current draft to see it live; an approved quote always shows its sealed register. Writes nothing.
  */
+/** Read-only scope view under the effective user's own access; Demo Mode never gives mapping WRITES (those use actor() and refuse while a demo identity is active). */
+async function readActor() {
+  const { orgId } = await requireNewquipPocOrg();
+  const access = await requireModuleAccess(QUOTES_MODULE.href, { allowDemo: true });
+  const acting = await resolveActing(access, QUOTES_MODULE.href);
+  if (acting.demo) return { orgId, userId: acting.userId, email: acting.email, manager: false };
+  return actor();
+}
+
 export async function getQuoteScopeAction(quoteId: string, draft?: QuoteDraft): Promise<MappingActionResult<QuoteScopeView & { canManageMappings: boolean }>> {
   try {
-    const a = await actor();
+    const a = await readActor();
     const db = createServiceRoleClient();
     const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) throw new Error("Quote not found.");

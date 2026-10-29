@@ -14,6 +14,7 @@ import {
   type ApprovalCtx,
 } from "@/lib/approvals/approval-store";
 import { emailConfigStatus, sendEmail } from "@/lib/email/resend";
+import { resolveActing } from "@/lib/demo-mode/context";
 import { buildReviewDetail, type ReviewDetail } from "@/lib/approvals/review-detail";
 import { authoriseStageDecision } from "@/lib/approvals/policy";
 import { canAdminister, STAGE_LABEL, type FunctionalRole } from "@/lib/approvals/roles";
@@ -25,12 +26,20 @@ export interface ApprovalResult<T> { ok: boolean; error?: string; data?: T }
 const msg = (e: unknown) => (e instanceof Error ? e.message : "Unexpected error");
 
 async function context(): Promise<ApprovalCtx> {
-  const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
-  assertNewquipOrg(orgId);
+  // allowDemo: the approvals dashboard is one of the scoped quotation / approval surfaces; it acts as the EFFECTIVE user under the owner's Demo Mode.
+  const real = await requireModuleAccess(PROJECTS_MODULE.href, { allowDemo: true });
+  assertNewquipOrg(real.orgId);
+  const acting = await resolveActing(real, PROJECTS_MODULE.href);
   let isManager = false;
-  try { await requireOrgAdmin("manage approvals"); isManager = true; } catch { isManager = false; } // fail closed
+  if (acting.demo) isManager = acting.tier === "admin"; // the effective user's OWN tier
+  else { try { await requireOrgAdmin("manage approvals"); isManager = true; } catch { isManager = false; } } // fail closed
   const base = process.env.NEXT_PUBLIC_SITE_URL ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "");
-  return { orgId, userId, email: (email ?? "unknown").toLowerCase(), name: email ?? "unknown", isManager, baseUrl: base };
+  return { orgId: acting.orgId, userId: acting.userId, email: acting.email.toLowerCase(), name: acting.demo?.actorName ?? acting.email, isManager, baseUrl: base, ...(acting.demo ? { demo: acting.demo } : {}) };
+}
+
+/** Administrative approval operations (settings, email delivery) are never performed while a demo identity is active. */
+function notInDemo(ctx: ApprovalCtx, what: string) {
+  if (ctx.demo) throw new Error(`${what} is not available in Demo Mode. Exit Demo Mode first.`);
 }
 
 export interface ApprovalsDashboard {
@@ -126,7 +135,7 @@ export async function submitDocumentForApprovalAction(docType: ApprovalDocType, 
     const db = createServiceRoleClient();
     if (!(await approvalsAvailable(db))) throw new Error("Approvals are not available yet (database migration pending).");
     const row = await submitForApproval(db, ctx, docType, docId, { assignTo });
-    await logActivity(db, { orgId: ctx.orgId, actor: { userId: ctx.userId, email: ctx.email }, action: "approvals.submitted", summary: `Submitted ${docType.toLowerCase()} ${row.doc_ref} (revision ${row.revision}) for approval (no Cin7 write)`, detail: { requestId: row.id, docType, docId, revision: row.revision } });
+    if (!ctx.demo) await logActivity(db, { orgId: ctx.orgId, actor: { userId: ctx.userId, email: ctx.email }, action: "approvals.submitted", summary: `Submitted ${docType.toLowerCase()} ${row.doc_ref} (revision ${row.revision}) for approval (no Cin7 write)`, detail: { requestId: row.id, docType, docId, revision: row.revision } });
     return { ok: true, data: row };
   } catch (e) {
     return { ok: false, error: msg(e) };
@@ -138,7 +147,7 @@ export async function decideApprovalAction(requestId: string, action: ApprovalAc
     const ctx = await context();
     const db = createServiceRoleClient();
     const row = await decide(db, ctx, requestId, action, input);
-    await logActivity(db, { orgId: ctx.orgId, actor: { userId: ctx.userId, email: ctx.email }, action: `approvals.${action.toLowerCase()}`, summary: `${action} ${row.doc_type.toLowerCase()} ${row.doc_ref} revision ${row.revision}${row.admin_override ? " (ADMIN OVERRIDE)" : ""} (approval only; no Cin7 write)`, detail: { requestId, docType: row.doc_type, docId: row.doc_id, revision: row.revision, reason: input.reason ?? null, override: row.admin_override } });
+    if (!ctx.demo) await logActivity(db, { orgId: ctx.orgId, actor: { userId: ctx.userId, email: ctx.email }, action: `approvals.${action.toLowerCase()}`, summary: `${action} ${row.doc_type.toLowerCase()} ${row.doc_ref} revision ${row.revision}${row.admin_override ? " (ADMIN OVERRIDE)" : ""} (approval only; no Cin7 write)`, detail: { requestId, docType: row.doc_type, docId: row.doc_id, revision: row.revision, reason: input.reason ?? null, override: row.admin_override } });
     return { ok: true, data: row };
   } catch (e) {
     return { ok: false, error: msg(e) };
@@ -177,6 +186,7 @@ export async function markNotificationReadAction(id: string): Promise<ApprovalRe
 export async function retryEmailAction(notificationId: string): Promise<ApprovalResult<null>> {
   try {
     const ctx = await context();
+    notInDemo(ctx, "Retrying an email");
     await retryEmail(createServiceRoleClient(), ctx, notificationId);
     return { ok: true, data: null };
   } catch (e) {
@@ -188,6 +198,7 @@ export async function retryEmailAction(notificationId: string): Promise<Approval
 export async function saveApprovalSettingsAction(s: ApprovalSettings): Promise<ApprovalResult<null>> {
   try {
     const ctx = await context();
+    notInDemo(ctx, "Changing approval settings");
     if (!ctx.isManager) throw new Error("Only a manager can change approval settings.");
     if (!Number.isInteger(s.targetBusinessDays) || s.targetBusinessDays < 1 || s.targetBusinessDays > 30) throw new Error("The approval target must be 1 to 30 business days.");
     if (!Number.isInteger(s.reminderEveryHours) || s.reminderEveryHours < 1 || s.reminderEveryHours > 720) throw new Error("Reminders must be 1 to 720 hours apart.");
@@ -207,6 +218,7 @@ export async function saveApprovalSettingsAction(s: ApprovalSettings): Promise<A
 export async function getEmailStatusAction(): Promise<ApprovalResult<{ configured: boolean; missing: string[]; senderDomain: string | null; failed: number; abandoned: number }>> {
   try {
     const ctx = await context();
+    notInDemo(ctx, "The email delivery status");
     if (!ctx.isManager) throw new Error("Only a manager can see the email delivery status.");
     const failed = await failedEmails(createServiceRoleClient(), ctx.orgId);
     return { ok: true, data: { ...emailConfigStatus(), failed: failed.filter((n) => n.status === "FAILED").length, abandoned: failed.filter((n) => n.status === "ABANDONED").length } };
@@ -222,6 +234,7 @@ export async function getEmailStatusAction(): Promise<ApprovalResult<{ configure
 export async function sendTestEmailAction(): Promise<ApprovalResult<{ accepted: boolean; messageId?: string; error?: string; to: string }>> {
   try {
     const ctx = await context();
+    notInDemo(ctx, "Sending a test email");
     if (!ctx.isManager) throw new Error("Only a manager can send a test email.");
     const res = await sendEmail({ to: [ctx.email], subject: "NewQuip approvals: test email", text: `This is a test of the NewQuip approval email delivery, requested by ${ctx.email}. No action is needed.` });
     await logActivity(createServiceRoleClient(), { orgId: ctx.orgId, actor: { userId: ctx.userId, email: ctx.email }, action: "approvals.test_email", summary: res.ok ? "Sent a test approval email (provider accepted)" : "A test approval email failed", detail: { accepted: res.ok } }).catch(() => undefined);
