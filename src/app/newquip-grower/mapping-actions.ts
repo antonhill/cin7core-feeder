@@ -59,10 +59,10 @@ export async function getMappingHistoryAction(packageKey: string): Promise<Mappi
 }
 
 /**
- * Manager only. Saves a NEW version of a package's reusable mapping (earlier versions are kept, never edited). Every SKU is verified to exist in
+ * Manager only. Saves a NEW version of a package's reusable mapping: the sellable Cin7 products (stock or assembly) NewQuip supplies for one quoted unit (earlier versions are kept, never edited). Every SKU is verified to exist in
  * Cin7 by an exact, read-only lookup first. It affects FUTURE quotations only: approved quotations and existing projects keep their own sealed copy.
  */
-export async function saveReusableMappingAction(packageKey: string, lines: Array<{ sku: string; factor: number; unit?: string; role?: "FINISHED_GOOD" | "BOM_COMPONENT" }>, reason: string): Promise<MappingActionResult<PackageMapping>> {
+export async function saveReusableMappingAction(packageKey: string, lines: Array<{ sku: string; factor: number; unit?: string; confirmQuantity?: boolean }>, reason: string): Promise<MappingActionResult<PackageMapping>> {
   try {
     const a = await actor();
     if (!a.manager) throw new Error("Only a manager (org owner/admin) can save a reusable mapping.");
@@ -71,7 +71,7 @@ export async function saveReusableMappingAction(packageKey: string, lines: Array
     if (inst.error) throw new Error(inst.error.message);
     const ids = ((inst.data ?? []) as Array<{ id: string }>).map((i) => i.id);
     if (ids.length !== 1 || ids[0] !== NEWQUIP_POC_CIN7_INSTANCE_ID) throw new Error("SKUs can only be verified against the single expected NewQuip POC Cin7 instance; it is not.");
-    const saved = await saveMappingVersion(db, buildSaleCreationPort(db, a.orgId, ids[0]), { isManager: a.manager }, a.email, { orgId: a.orgId, packageKey, lines, reason });
+    const saved = await saveMappingVersion(db, buildSaleCreationPort(db, a.orgId, ids[0]), { isManager: a.manager }, a.email, { orgId: a.orgId, packageKey, lines: lines.map((l) => ({ sku: l.sku, factor: l.factor, unit: l.unit, confirmQuantity: l.confirmQuantity })), reason }); // roles are never accepted: only sellable products
     await logActivity(db, { orgId: a.orgId, actor: { userId: a.userId, email: a.email }, action: "newquip.package_mapping_saved", summary: `Saved reusable mapping ${saved.package_key} v${saved.version} (no Cin7 write)`, detail: { packageKey: saved.package_key, version: saved.version, lines: saved.lines, reason } });
     return { ok: true, data: saved };
   } catch (e) {

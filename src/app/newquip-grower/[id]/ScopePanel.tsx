@@ -44,7 +44,7 @@ export function ScopePanel({ quoteId, draft }: { quoteId: string; draft: QuoteDr
   };
   const save = async (key: string, unit: string) => {
     setBusy(true);
-    const r = await saveReusableMappingAction(key, picked.map((p) => ({ sku: p.sku, factor: Number(p.quantity), unit, role: p.role })), reason);
+    const r = await saveReusableMappingAction(key, picked.map((p) => ({ sku: p.sku, factor: Number(p.quantity), unit, confirmQuantity: p.confirm })), reason);
     setBusy(false);
     if (r.ok && r.data) { setNote(`Saved ${key} v${r.data.version}. It applies to quotations from now on; approved quotations keep what they were sealed with.`); setOpen(null); load(); } else setError(r.error ?? "Could not save the mapping.");
   };
@@ -65,19 +65,19 @@ export function ScopePanel({ quoteId, draft }: { quoteId: string; draft: QuoteDr
               <span className="font-medium text-slate-900">{i.description}{i.quantity != null && <span className="font-normal text-slate-500"> × {i.quantity} {i.unit}</span>}</span>
               <Badge tone={TONE[i.state]}>{LABEL[i.state]}{i.mappingRef ? ` v${i.mappingRef.version}` : ""}</Badge>
             </div>
-            {i.lines.length > 0 && <ul className="mt-1 text-xs text-slate-600">{i.lines.map((l) => <li key={l.sku}><span className="font-mono">{l.sku}</span> × {l.quantity} {l.role === "BOM_COMPONENT" ? <span className="text-slate-400">(internal component, not on the Sales Order)</span> : null}</li>)}</ul>}
+            {i.lines.length > 0 && <ul className="mt-1 text-xs text-slate-600">{i.lines.map((l) => <li key={l.sku}><span className="font-mono">{l.sku}</span> × {l.quantity} {l.legacyReference ? <span className="text-slate-400">(legacy reference component, not on the Sales Order)</span> : l.assembly ? <span className="text-slate-400">(Cin7 assembly: its components are managed in Cin7)</span> : null}</li>)}</ul>}
             {i.state === "UNRESOLVED" && <p className="mt-1 text-xs text-amber-700">{i.reason}</p>}
             {i.state === "EXCLUDED" && <p className="mt-1 text-xs text-slate-500">Excluded: {i.reason}</p>}
             {i.state === "UNRESOLVED" && !view.frozen && (view.canManageMappings ? (
               open === i.packageKey ? (
                 <div className="mt-3 space-y-2 rounded border border-slate-200 p-3">
-                  <p className="text-xs text-slate-500">Search and add each real Cin7 SKU. Enter how many units of that SKU make up ONE {i.unit} of this package; the converted quantity is shown. Mark internal manufacturing inputs as components so they are not sold twice.</p>
-                  <VariationProductPicker picked={picked} onChange={setPicked} disabled={busy} quantityLabel={`SKU units per 1 ${i.unit}`} withRole
-                    extra={(p) => (i.quantity ? `= ${Math.round(i.quantity * (Number(p.quantity) || 0) * 1e6) / 1e6} on this quotation` : "no quoted quantity")} />
+                  <p className="text-xs text-slate-500">Search and add each product NewQuip supplies for this package (standard stock or a Cin7 assembly: its internal components are managed in Cin7, not here). Enter how many units of each make up ONE {i.unit}; the converted quantity is shown. If a quantity depends on the layout (gates, corners, pig size), tick it and a manager confirms it per quotation.</p>
+                  <VariationProductPicker picked={picked} onChange={setPicked} disabled={busy} quantityLabel={`SKU units per 1 ${i.unit}`} withConfirm
+                    extra={(p) => p.confirm ? "quantity confirmed by a manager" : (i.quantity ? `= ${Math.round(i.quantity * (Number(p.quantity) || 0) * 1e6) / 1e6} on this quotation` : "no quoted quantity")} />
                   <Input label="Reason (required, kept in the audit history)" value={reason} onChange={(e) => setReason(e.target.value)} />
                   {history && history.length > 0 && <p className="text-xs text-slate-500">Earlier versions: {history.map((h) => `v${h.version} (${h.created_by_email})`).join(", ")}.</p>}
                   <div className="flex gap-2">
-                    <Button size="sm" loading={busy} disabled={busy || picked.length === 0 || !reason.trim() || picked.some((p) => !(Number(p.quantity) > 0))} onClick={() => save(i.packageKey, i.unit)}>Save reusable mapping</Button>
+                    <Button size="sm" loading={busy} disabled={busy || picked.length === 0 || !reason.trim() || picked.some((p) => !p.confirm && !(Number(p.quantity) > 0))} onClick={() => save(i.packageKey, i.unit)}>Save reusable mapping</Button>
                     <Button size="sm" variant="secondary" disabled={busy} onClick={() => setOpen(null)}>Cancel</Button>
                   </div>
                 </div>

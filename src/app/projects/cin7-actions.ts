@@ -195,7 +195,7 @@ export async function getCin7SaleCreationStatusAction(projectId: string): Promis
  * Manager only. Resolves an UNMAPPED scope item: map it to a real Cin7 SKU (verified live, read-only) or exclude it from the Sales Order, with a
  * reason. Audited. Allowed only before any claim or Cin7 Sale exists. This is the only way the inherited scope can change.
  */
-export async function resolveScopeItemAction(projectId: string, input: { itemId: string; kind: "MAP" | "MAP_LINES" | "EXCLUDE"; sku?: string; quantity?: number; lines?: Array<{ sku: string; factor: number; unit?: string; role?: "FINISHED_GOOD" | "BOM_COMPONENT" }>; /** Apply this saved reusable mapping version to the item. */ useSavedVersion?: number; /** After resolving, also save these lines as the next reusable version. */ saveAsReusable?: boolean; reason: string }): Promise<Cin7ActionResult<ScopeItem[]>> {
+export async function resolveScopeItemAction(projectId: string, input: { itemId: string; kind: "MAP" | "MAP_LINES" | "EXCLUDE"; sku?: string; quantity?: number; lines?: Array<{ sku: string; factor: number; unit?: string }>; /** Apply this saved reusable mapping version to the item. */ useSavedVersion?: number; /** After resolving, also save these lines as the next reusable version. */ saveAsReusable?: boolean; reason: string }): Promise<Cin7ActionResult<ScopeItem[]>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     const gates = await gatesFor(orgId);
@@ -208,7 +208,8 @@ export async function resolveScopeItemAction(projectId: string, input: { itemId:
     if ((input.kind !== "EXCLUDE" || input.useSavedVersion !== undefined || input.saveAsReusable) && (list.length !== 1 || list[0].id !== NEWQUIP_POC_CIN7_INSTANCE_ID)) throw new Error("The SKU can only be verified against the single expected NewQuip POC Cin7 instance; it is not.");
     const port = input.kind !== "EXCLUDE" || input.useSavedVersion !== undefined ? buildSaleCreationPort(db, orgId, list[0].id) : { resolveProducts: async () => ({ ids: new Map<string, string>(), missing: [] as string[] }) };
     // A saved mapping is applied as an ordinary audited resolution: the project keeps its own copy and the version it came from.
-    let lines = input.lines; let mappingRef: { packageKey: string; version: number } | undefined;
+    let lines = input.lines?.map((l) => ({ sku: l.sku, factor: l.factor, unit: l.unit })); // only sellable products: no role is ever accepted
+    let mappingRef: { packageKey: string; version: number } | undefined;
     const current = (await loadProjectScope(db, orgId, projectId)).items.find((x) => x.id === input.itemId);
     if (input.useSavedVersion !== undefined) {
       if (!current) throw new Error("That product is not in the project's scope.");
@@ -217,7 +218,9 @@ export async function resolveScopeItemAction(projectId: string, input: { itemId:
       if (versions === null) throw new Error("Reusable mappings are not available yet (database migration pending).");
       const m = versions.find((v) => v.version === input.useSavedVersion);
       if (!m) throw new Error(`No saved mapping version ${input.useSavedVersion} exists for ${key}.`);
-      lines = m.lines.map((l) => ({ sku: l.sku, factor: l.factor, unit: l.unit, role: l.role }));
+      if (m.lines.some((l) => l.role === "BOM_COMPONENT")) throw new Error(`Saved mapping v${m.version} predates the sellable-products model (it marks internal BOM components). Choose the products NewQuip supplies below instead; nothing was changed.`);
+      if (m.lines.some((l) => l.quantityBasis === "MANAGER_CONFIRM")) throw new Error(`Saved mapping v${m.version} leaves the quantity of ${m.lines.filter((l) => l.quantityBasis === "MANAGER_CONFIRM").map((l) => l.sku).join(", ")} for you to confirm: enter the quantities below instead; nothing was changed.`);
+      lines = m.lines.map((l) => ({ sku: l.sku, factor: l.factor, unit: l.unit, assembly: l.assembly }));
       mappingRef = { packageKey: key, version: m.version };
     }
     const kind = input.useSavedVersion !== undefined ? "MAP_LINES" as const : input.kind;

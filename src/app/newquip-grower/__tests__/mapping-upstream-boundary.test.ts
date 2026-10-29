@@ -47,7 +47,7 @@ describe("approval -> project -> Sale scope, through the real actions", () => {
   it("5+6: active mappings are sealed at approval, then inherited by the new project with no one re-selecting products", async () => {
     const db = h.db as FakeDb; seedQuote(db, "q1", "NQ-Q-0001");
     db.rows("newquip_package_mappings").push(
-      map(ORG, "flex_auger", 1, [{ sku: "TEST-M75-SYSTEM", factor: 1 }, { sku: "TEST-M75-MOTOR", factor: 2, role: "BOM_COMPONENT" }]),
+      map(ORG, "flex_auger", 1, [{ sku: "TEST-M75-SYSTEM", factor: 1 }, { sku: "TEST-M75-MOTOR", factor: 2 }]),
       map(ORG, "penning_package", 1, [{ sku: "TEST-PEN-ROLL", factor: 0.05 }, { sku: "TEST-PEN-POST", factor: 0.5 }]),
       map(ORG, "led_light", 1, [{ sku: "TEST-FORTIS-LED", factor: 1 }]),
     );
@@ -60,8 +60,8 @@ describe("approval -> project -> Sale scope, through the real actions", () => {
     const eff = effectiveScope(scopeFromSnapshot(proj.baseline_snapshot));
     expect(eff.blockers).toEqual([]); // nothing left to resolve at Sale creation
     const q = Object.fromEntries(eff.lines.filter((l) => l.sku.startsWith("TEST-")).map((l) => [l.sku, l.quantity]));
-    expect(q).toEqual({ "TEST-M75-SYSTEM": 12, "TEST-PEN-ROLL": 12, "TEST-PEN-POST": 120, "TEST-FORTIS-LED": 456 });
-    expect(eff.referenceOnly.map((x) => x.sku)).toEqual(["TEST-M75-MOTOR"]);
+    expect(q).toEqual({ "TEST-M75-SYSTEM": 12, "TEST-M75-MOTOR": 24, "TEST-PEN-ROLL": 12, "TEST-PEN-POST": 120, "TEST-FORTIS-LED": 456 });
+    expect(eff.referenceOnly).toEqual([]); // no BOM classification exists any more
     expect(((proj.baseline_snapshot as { physicalScope: Array<{ id: string; resolution?: { mappingRef?: unknown } }> }).physicalScope).find((i) => i.id === "penning_package:UNMAPPED")!.resolution!.mappingRef).toEqual({ packageKey: "penning_package", version: 1 });
   });
   it("14: another organisation's mappings are never applied", async () => {

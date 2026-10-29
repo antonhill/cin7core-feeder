@@ -22,7 +22,10 @@ export interface MappedLine {
   quantity: number;
   /** Unit of measure of the SKU, as the manager entered it (display only). */
   unit: string;
+  /** Legacy only: new mappings contain sellable products only. Kept so baselines sealed earlier still read exactly as approved. */
   role: MappedLineRole;
+  /** Cin7 says this SKU is an assembly (BOM) product. Informational: it is sold as one SKU and is NEVER expanded into its components. null/undefined = not known. */
+  assembly?: boolean | null;
 }
 export type ScopeResolution =
   | { kind: "MAP"; sku: string; quantity: number; reason: string; by: string; at: string }
@@ -109,7 +112,7 @@ export function scopeFromSnapshot(snapshot: unknown): ScopeItem[] {
   }));
 }
 
-export interface ResolveLineInput { sku: string; factor: number; unit?: string; role?: MappedLineRole }
+export interface ResolveLineInput { sku: string; factor: number; unit?: string; role?: MappedLineRole; assembly?: boolean | null }
 export interface ResolveInput { itemId: string; kind: "MAP" | "MAP_LINES" | "EXCLUDE"; sku?: string; quantity?: number; lines?: ResolveLineInput[]; mappingRef?: { packageKey: string; version: number }; reason: string; by: string; at: string }
 
 const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
@@ -128,7 +131,7 @@ export function buildMappedLines(itemQuantity: number | null, lines: readonly Re
     if (!validQty(l.factor)) return { ok: false, error: `${sku}: the quantity per quoted unit must be a positive number.` };
     const quantity = r6(itemQuantity * l.factor);
     if (!(quantity > 0)) return { ok: false, error: `${sku}: the converted quantity rounds to zero.` };
-    out.push({ sku, factor: l.factor, quantity, unit: (l.unit ?? "").trim() || "each", role: l.role === "BOM_COMPONENT" ? "BOM_COMPONENT" : "FINISHED_GOOD" });
+    out.push({ sku, factor: l.factor, quantity, unit: (l.unit ?? "").trim() || "each", role: l.role === "BOM_COMPONENT" ? "BOM_COMPONENT" : "FINISHED_GOOD", ...(l.assembly === undefined ? {} : { assembly: l.assembly }) });
   }
   if (!out.some((l) => l.role === "FINISHED_GOOD")) return { ok: false, error: "At least one line must be a finished good for the Sales Order. If this item has no physical product, exclude it instead." };
   return { ok: true, lines: out };
@@ -176,7 +179,20 @@ export function packageKeyOf(item: Pick<ScopeItem, "id" | "origin">): string {
 }
 
 /** A reusable mapping as the scope needs it (the version is frozen into every resolution that uses it). */
-export interface LibraryMapping { packageKey: string; version: number; lines: ReadonlyArray<{ sku: string; factor: number; unit: string; role: MappedLineRole }> }
+export interface LibraryMapping {
+  packageKey: string; version: number;
+  lines: ReadonlyArray<{ sku: string; factor: number; unit: string; role: MappedLineRole; assembly?: boolean | null;
+    /** MANAGER_CONFIRM: the quantity depends on the layout and was deliberately NOT given a formula. Such a mapping is never applied automatically. */
+    quantityBasis?: "PER_QUOTED_UNIT" | "MANAGER_CONFIRM" }>;
+}
+
+/** Why a saved mapping must NOT be applied automatically (null = it can be). Nothing is converted or guessed; a manager reviews and resolves. */
+export function mappingNeedsReview(m: LibraryMapping): string | null {
+  if (m.lines.some((l) => l.role === "BOM_COMPONENT")) return `saved mapping v${m.version} predates the sellable-products model (it marks internal BOM components); a manager must review it and save a new version listing only the products NewQuip supplies`;
+  const confirm = m.lines.filter((l) => l.quantityBasis === "MANAGER_CONFIRM").map((l) => l.sku);
+  if (confirm.length) return `the quantity of ${confirm.join(", ")} depends on the layout, so a manager must confirm it for this quotation`;
+  return null;
+}
 export const MAPPING_LIBRARY_ACTOR = "mapping-library";
 
 /**
@@ -189,7 +205,9 @@ export function applyMappingLibrary(items: readonly ScopeItem[], library: Readon
     if (it.mapping.status !== "UNMAPPED" || it.resolution) return it;
     const m = library.get(packageKeyOf(it));
     if (!m) return it;
-    const built = buildMappedLines(it.quantity, m.lines.map((l) => ({ sku: l.sku, factor: l.factor, unit: l.unit, role: l.role })));
+    const review = mappingNeedsReview(m);
+    if (review) return { ...it, mapping: { status: "UNMAPPED", reason: `${it.mapping.reason} A reusable mapping exists but is not applied: ${review}.` } };
+    const built = buildMappedLines(it.quantity, m.lines.map((l) => ({ sku: l.sku, factor: l.factor, unit: l.unit, role: l.role, assembly: l.assembly })));
     if (!built.ok) return it;
     return { ...it, resolution: { kind: "MAP_LINES", lines: built.lines, itemQuantity: it.quantity as number, mappingRef: { packageKey: m.packageKey, version: m.version }, reason: `Reusable mapping ${m.packageKey} v${m.version} applied automatically.`, by: MAPPING_LIBRARY_ACTOR, at } };
   });

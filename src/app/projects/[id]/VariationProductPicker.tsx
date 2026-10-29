@@ -11,14 +11,14 @@ import { searchVariationProductsAction } from "../variation-billing-actions";
 // Searchable Cin7 product selector for a variation's physical scope. Search by SKU or description over the synced catalogue; picking a result fills
 // the identifying details (the server re-reads them from the catalogue and refuses anything not in it). Stock is informational only: "?" = unknown,
 // never zero, and an out-of-stock product can still be chosen. A variation with no products is a service-only variation.
-export interface PickedProduct { sku: string; description: string; quantity: string; role?: "FINISHED_GOOD" | "BOM_COMPONENT" }
+export interface PickedProduct { sku: string; description: string; quantity: string; /** Cin7 product type from the catalogue (informational). */ type?: string; /** The quantity depends on the layout: no formula, a manager confirms it per quotation. */ confirm?: boolean }
 
-export function VariationProductPicker({ picked, onChange, disabled, quantityLabel = "Quantity", withRole = false, extra }: {
+export function VariationProductPicker({ picked, onChange, disabled, quantityLabel = "Quantity", withConfirm = false, extra }: {
   picked: PickedProduct[]; onChange: (p: PickedProduct[]) => void; disabled?: boolean;
   /** Label of the quantity box (package mapping uses "SKU units per 1 quoted unit"). */
   quantityLabel?: string;
-  /** Package mapping: lets each line be a finished good (on the Sales Order) or a BOM component (reference only). */
-  withRole?: boolean;
+  /** Package mapping: the quantity is a rate per quoted unit and may be left for a manager to confirm (layout-dependent). Every selected product is a sellable SKU: stock or Cin7 assembly. */
+  withConfirm?: boolean;
   /** Optional per-line note, e.g. the converted quantity. */
   extra?: (p: PickedProduct) => string | null;
 }) {
@@ -34,7 +34,7 @@ export function VariationProductPicker({ picked, onChange, disabled, quantityLab
     if (r.ok && r.data) { setResults(r.data.products); setNote(r.data.detail); } else { setResults(null); setError(r.error ?? "Search failed."); }
     setBusy(false);
   };
-  const add = (p: CatalogueProduct) => { if (!picked.some((x) => x.sku === p.sku)) onChange([...picked, { sku: p.sku, description: p.name, quantity: "1" }]); };
+  const add = (p: CatalogueProduct) => { if (!picked.some((x) => x.sku === p.sku)) onChange([...picked, { sku: p.sku, description: p.name, quantity: "1", type: p.type }]); };
 
   return (
     <div className="space-y-3">
@@ -58,20 +58,15 @@ export function VariationProductPicker({ picked, onChange, disabled, quantityLab
         </ul>
       )}
       {picked.length === 0 ? (
-        <p className="text-xs text-slate-500">{withRole ? "No SKUs selected yet." : "No products selected: this will be a service-only variation (no stock SKU is invented)."}</p>
+        <p className="text-xs text-slate-500">{withConfirm ? "No products selected yet." : "No products selected: this will be a service-only variation (no stock SKU is invented)."}</p>
       ) : (
         <ul className="space-y-2">
           {picked.map((p, i) => (
             <li key={p.sku} className="flex flex-wrap items-end gap-2">
-              <div className="min-w-48"><div className="font-mono text-sm">{p.sku}</div><div className="text-xs text-slate-500">{p.description}</div></div>
-              <Input label={quantityLabel} value={p.quantity} inputMode="decimal" onChange={(e) => onChange(picked.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)))} />
-              {withRole && (
-                <label className="text-xs text-slate-600">Role
-                  <select className="mt-1 block rounded border border-slate-300 px-2 py-1.5 text-sm" value={p.role ?? "FINISHED_GOOD"} onChange={(e) => onChange(picked.map((x, j) => (j === i ? { ...x, role: e.target.value as "FINISHED_GOOD" | "BOM_COMPONENT" } : x)))}>
-                    <option value="FINISHED_GOOD">Finished good (on the Sales Order)</option>
-                    <option value="BOM_COMPONENT">BOM component (reference only)</option>
-                  </select>
-                </label>
+              <div className="min-w-48"><div className="font-mono text-sm">{p.sku}{p.type && <span className="ml-2 font-sans text-xs text-slate-400">{p.type}</span>}</div><div className="text-xs text-slate-500">{p.description}</div></div>
+              <Input label={quantityLabel} value={p.quantity} inputMode="decimal" disabled={p.confirm} onChange={(e) => onChange(picked.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)))} />
+              {withConfirm && (
+                <label className="flex items-center gap-1 pb-2 text-xs text-slate-600"><input type="checkbox" checked={p.confirm ?? false} onChange={(e) => onChange(picked.map((x, j) => (j === i ? { ...x, confirm: e.target.checked } : x)))} /> Quantity depends on the layout: a manager confirms it per quotation</label>
               )}
               {extra && <span className="pb-2 text-xs text-slate-600">{extra(p)}</span>}
               <Button size="sm" variant="secondary" disabled={disabled} onClick={() => onChange(picked.filter((_, j) => j !== i))}>Remove</Button>

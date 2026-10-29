@@ -60,7 +60,7 @@ describe("saving a reusable mapping version", () => {
     expect(await err(saveMappingVersion(db as never, okPort, { isManager: true }, "m@x", { ...input, reason: " " }))).toMatch(/reason/);
     expect(await err(saveMappingVersion(db as never, okPort, { isManager: true }, "m@x", { ...input, packageKey: " " }))).toMatch(/package key/);
     expect(await err(saveMappingVersion(db as never, okPort, { isManager: true }, "m@x", { ...input, lines: [] }))).toMatch(/at least one/);
-    expect(await err(saveMappingVersion(db as never, okPort, { isManager: true }, "m@x", { ...input, lines: [{ sku: "A", factor: 1, role: "BOM_COMPONENT" }] }))).toMatch(/finished good/);
+    expect(await err(saveMappingVersion(db as never, okPort, { isManager: true }, "m@x", { ...input, lines: [{ sku: "A", factor: 1, role: "BOM_COMPONENT" } as never] }))).toMatch(/components of a Cin7 assembly/);
     expect(await err(saveMappingVersion(db as never, { resolveProducts: async () => ({ missing: ["TEST-PEN-ROLL"] }) }, { isManager: true }, "m@x", input))).toMatch(/does not exist in Cin7/);
     expect(db.rows("newquip_package_mappings")).toHaveLength(0);
   });

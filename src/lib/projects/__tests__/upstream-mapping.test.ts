@@ -12,8 +12,8 @@ import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
 import { buildAcceptedBaseline, baselineMatchesHash, commercialLinesOf } from "@/newquip/quote/baseline";
 import { buildPhysicalScope } from "@/newquip/quote/physical-scope";
-import { applyMappingLibrary, effectiveScope, scopeFromSnapshot, type LibraryMapping } from "../product-scope";
-import { libraryOf, listActiveMappings } from "../package-mapping-store";
+import { applyMappingLibrary, effectiveScope, scopeFromSnapshot, type LibraryMapping, type ScopeItem } from "../product-scope";
+import { libraryOf, listActiveMappings, saveMappingVersion } from "../package-mapping-store";
 import { describeScope, quoteScopeView } from "@/lib/newquip-quotes/scope-preview";
 import { recoverLinkExistingSale } from "../cin7-sale-recovery-store";
 import { buildCreationPlan, externalIdFor, type SaleReadBack } from "../cin7-sale-creation";
@@ -28,10 +28,13 @@ const AT = "2026-10-29T08:00:00Z";
 const APPROVALS = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: AT };
 const seal = (mappingLibrary?: ReadonlyMap<string, LibraryMapping>) => buildAcceptedBaseline({ quoteRef: "NQ-Q-0007", revision: 1, draft, evaluation: ev, marginEvaluation: evaluateDraft(draft, ctx(false)), approvals: APPROVALS, mappingLibrary });
 
+/** A register as an OLD baseline would hold it: one M75 item resolved by a legacy mapping that marks a BOM component. */
+const describeScopeSource = (m: LibraryMapping): ScopeItem[] => [{ id: "flex_auger:UNMAPPED", sku: null, description: "M75", quantity: 1, unit: "each", productType: "FINISHED_GOOD", origin: { lineRef: "flex_auger:UNMAPPED", label: "M75", packageKey: null, section: null, source: "QUOTE" }, scope: "BASE", sellingUnitCents: null, mapping: { status: "UNMAPPED", reason: "x" },
+  resolution: { kind: "MAP_LINES", itemQuantity: 1, reason: "legacy", by: "m", at: AT, lines: m.lines.map((l) => ({ sku: l.sku, factor: l.factor, quantity: l.factor, unit: l.unit, role: l.role })) } }];
 const lib = (packageKey: string, version: number, lines: LibraryMapping["lines"]): LibraryMapping => ({ packageKey, version, lines });
-const M75 = lib("flex_auger", 2, [{ sku: "TEST-M75-SYSTEM", factor: 1, unit: "each", role: "FINISHED_GOOD" }, { sku: "TEST-M75-AUGER", factor: 3, unit: "each", role: "FINISHED_GOOD" }, { sku: "TEST-M75-MOTOR", factor: 2, unit: "each", role: "BOM_COMPONENT" }]);
+const M75 = lib("flex_auger", 2, [{ sku: "TEST-M75-SYSTEM", factor: 1, unit: "each", role: "FINISHED_GOOD", assembly: true }, { sku: "TEST-M75-AUGER", factor: 3, unit: "each", role: "FINISHED_GOOD", assembly: true }, { sku: "TEST-M75-MOTOR", factor: 2, unit: "each", role: "FINISHED_GOOD", assembly: false }]);
 const PEN = lib("penning_package", 1, [{ sku: "TEST-PEN-ROLL", factor: 0.05, unit: "20 m roll", role: "FINISHED_GOOD" }, { sku: "TEST-PEN-POST", factor: 0.5, unit: "each", role: "FINISHED_GOOD" }]);
-const LED = lib("led_light", 1, [{ sku: "TEST-FORTIS-LED", factor: 1, unit: "each", role: "FINISHED_GOOD" }, { sku: "TEST-FORTIS-DRIVER", factor: 0.25, unit: "each", role: "FINISHED_GOOD" }]);
+const LED = lib("led_light", 1, [{ sku: "TEST-FORTIS-LED", factor: 1, unit: "each", role: "FINISHED_GOOD" }, { sku: "TEST-FORTIS-MOUNT", factor: 1, unit: "each", role: "FINISHED_GOOD" }, { sku: "TEST-FORTIS-CABLE", factor: 2, unit: "m", role: "FINISHED_GOOD" }]);
 const FULL = new Map([M75, PEN, LED].map((m) => [m.packageKey, m]));
 
 describe("reusable mappings are applied while the solution is configured (Solution Builder scope view)", () => {
@@ -39,16 +42,44 @@ describe("reusable mappings are applied while the solution is configured (Soluti
     const v = quoteScopeView({ finalBaseline: null, evaluation: ev, library: FULL, now: AT });
     expect(v.unresolvedCount).toBe(0);
     const qty = Object.fromEntries(v.saleLines.filter((l) => l.sku.startsWith("TEST-")).map((l) => [l.sku, l.quantity]));
-    expect(qty).toEqual({ "TEST-M75-SYSTEM": 12, "TEST-M75-AUGER": 36, "TEST-PEN-ROLL": 12, "TEST-PEN-POST": 120, "TEST-FORTIS-LED": 456, "TEST-FORTIS-DRIVER": 114 });
+    expect(qty).toEqual({ "TEST-M75-SYSTEM": 12, "TEST-M75-AUGER": 36, "TEST-M75-MOTOR": 24, "TEST-PEN-ROLL": 12, "TEST-PEN-POST": 120, "TEST-FORTIS-LED": 456, "TEST-FORTIS-MOUNT": 456, "TEST-FORTIS-CABLE": 912 });
     expect(v.items.find((i) => i.id === "penning_package:UNMAPPED")).toMatchObject({ state: "FROM_LIBRARY", mappingRef: { packageKey: "penning_package", version: 1 } });
   });
-  it("4: an internal BOM component is reference-only, never a Sale line, and selling it as well is flagged (no double counting)", () => {
+  it("4+5: a Cin7 assembly is ONE Sales Order line (never expanded); a separately supplied accessory is its own valid line; both quantities are exact", () => {
     const v = quoteScopeView({ finalBaseline: null, evaluation: ev, library: FULL, now: AT });
-    expect(v.saleLines.some((l) => l.sku === "TEST-M75-MOTOR")).toBe(false);
-    expect(v.referenceOnly).toEqual([{ sku: "TEST-M75-MOTOR", quantity: 24, description: expect.any(String) }]);
-    const clash = new Map(FULL).set("led_light", lib("led_light", 2, [{ sku: "TEST-M75-MOTOR", factor: 1, unit: "each", role: "FINISHED_GOOD" }]));
-    const bad = effectiveScope(applyMappingLibrary(buildPhysicalScope(commercialLinesOf(ev.budget!)), clash, AT));
-    expect(bad.blockers.join(" ")).toMatch(/double count/);
+    expect(v.referenceOnly).toEqual([]);
+    const sys = v.items.find((i) => i.id === "flex_auger:UNMAPPED")!.lines;
+    expect(sys.find((l) => l.sku === "TEST-M75-AUGER")).toMatchObject({ assembly: true, quantity: 36 }); // sold as the assembly it is
+    expect(sys.find((l) => l.sku === "TEST-M75-MOTOR")).toMatchObject({ assembly: false, quantity: 24 }); // a separate product the customer receives
+    expect(v.saleLines.filter((l) => l.sku.startsWith("TEST-M75")).map((l) => l.sku)).toEqual(["TEST-M75-SYSTEM", "TEST-M75-AUGER", "TEST-M75-MOTOR"]);
+  });
+  it("10: a legacy saved mapping that marks BOM components is NOT silently converted: the package stays unresolved with an explicit review reason", () => {
+    const legacy = lib("flex_auger", 1, [{ sku: "TEST-M75-SYSTEM", factor: 1, unit: "each", role: "FINISHED_GOOD" }, { sku: "TEST-M75-MOTOR", factor: 2, unit: "each", role: "BOM_COMPONENT" }]);
+    const v = quoteScopeView({ finalBaseline: null, evaluation: ev, library: new Map([[legacy.packageKey, legacy]]), now: AT });
+    const item = v.items.find((i) => i.id === "flex_auger:UNMAPPED")!;
+    expect(item.state).toBe("UNRESOLVED");
+    expect(item.reason).toMatch(/not applied.*predates the sellable-products model.*manager must review/);
+    expect(v.saleLines.some((l) => l.sku.startsWith("TEST-M75"))).toBe(false);
+    // an already-sealed legacy baseline still reads exactly as approved (BOM line stays reference-only)
+    const sealed = effectiveScope(describeScopeSource(legacy));
+    expect(sealed.referenceOnly.map((r) => r.sku)).toEqual(["TEST-M75-MOTOR"]);
+    expect(sealed.lines.map((l) => l.sku)).toEqual(["TEST-M75-SYSTEM"]);
+  });
+  it("7: where the quantity depends on the layout (PP penning: gates, corners, pig size) the mapping is flagged for manager confirmation, never guessed", () => {
+    const pen = lib("penning_package", 2, [{ sku: "TEST-PEN-PANEL", factor: 1, unit: "each", role: "FINISHED_GOOD", quantityBasis: "MANAGER_CONFIRM" }, { sku: "TEST-PEN-GATE", factor: 1, unit: "each", role: "FINISHED_GOOD", quantityBasis: "MANAGER_CONFIRM" }]);
+    const v = quoteScopeView({ finalBaseline: null, evaluation: ev, library: new Map([[pen.packageKey, pen]]), now: AT });
+    const item = v.items.find((i) => i.id === "penning_package:UNMAPPED")!;
+    expect(item.state).toBe("UNRESOLVED");
+    expect(item.reason).toMatch(/TEST-PEN-PANEL, TEST-PEN-GATE depends on the layout.*manager must confirm/);
+    expect(v.saleLines.some((l) => l.sku.startsWith("TEST-PEN"))).toBe(false); // no invented panels-per-metre
+    // and a quoted item with no usable quantity cannot be quantified either
+    const noQty = applyMappingLibrary(buildPhysicalScope(commercialLinesOf(ev.budget!)).map((i) => (i.id === "penning_package:UNMAPPED" ? { ...i, quantity: null } : i)), new Map([[PEN.packageKey, PEN]]), AT);
+    expect(noQty.find((i) => i.id === "penning_package:UNMAPPED")!.resolution).toBeUndefined();
+  });
+  it("11: the same SKU reached through two packages is consolidated into one Sales Order line (summed, never duplicated)", () => {
+    const shared = new Map([lib("flex_auger", 3, [{ sku: "TEST-SHARED", factor: 1, unit: "each", role: "FINISHED_GOOD" }]), lib("led_light", 2, [{ sku: "TEST-SHARED", factor: 2, unit: "each", role: "FINISHED_GOOD" }])].map((m) => [m.packageKey, m]));
+    const lines = quoteScopeView({ finalBaseline: null, evaluation: ev, library: shared, now: AT }).saleLines.filter((l) => l.sku === "TEST-SHARED");
+    expect(lines).toEqual([{ sku: "TEST-SHARED", quantity: 12 + 456 * 2, description: expect.any(String) }]);
   });
   it("7: missing mappings are visible warnings, never silent omissions; nothing is invented", () => {
     const v = quoteScopeView({ finalBaseline: null, evaluation: ev, library: new Map([PEN].map((m) => [m.packageKey, m])), now: AT });
@@ -112,7 +143,7 @@ describe("6+9: the project inherits the physical products; the Cin7 Sale fails c
     expect(r.state).toBe("FAILED_CONFIRMED_NO_WRITE"); // the fake port rejects; the point is that the plan was accepted without anyone typing a SKU
     const plan = (db.rows("project_cin7_sale_creations")[0].plan as { lines: Array<{ sku: string; quantity: number }> });
     expect(plan.lines.find((l) => l.sku === "TEST-PEN-ROLL")).toMatchObject({ quantity: 12 });
-    expect(plan.lines.some((l) => l.sku === "TEST-M75-MOTOR")).toBe(false);
+    expect(plan.lines.find((l) => l.sku === "TEST-M75-MOTOR")).toMatchObject({ quantity: 24 }); // a separately supplied product is a normal R0 line
   });
   it("an audited exclusion is the only other way to proceed (never an automatic exclusion)", () => {
     expect(effectiveScope(seal().baseline.physicalScope!).blockers).toHaveLength(3);
@@ -213,5 +244,38 @@ describe("10: the normal project interface no longer offers manual Sale linking"
     const act = src("../../../app/projects/cin7-actions.ts");
     expect(act).toMatch(/Only an organisation administrator can run Sale recovery/);
     expect(act).not.toMatch(/export async function linkCin7SaleAction/);
+  });
+});
+
+describe("sellable-products mapping model (no BOM classification)", () => {
+  const input = { orgId: "o", packageKey: "led_light", reason: "per supplier sheet" };
+  const err = (p: Promise<unknown>) => p.then(() => "OK", (e: Error) => e.message);
+  it("1+3: a package maps to one SKU or several; standard and assembly products both save, and Cin7's assembly flag is recorded (unknown stays unknown)", async () => {
+    const db = new FakeDb();
+    const port = { resolveProducts: async () => ({ missing: [] as string[] }), assemblySkus: async () => ["TEST-CTRL-PANEL"] };
+    await saveMappingVersion(db as never, port, { isManager: true }, "m@x", { ...input, packageKey: "control_panel", lines: [{ sku: "TEST-CTRL-PANEL", factor: 1 }] });
+    await saveMappingVersion(db as never, port, { isManager: true }, "m@x", { ...input, lines: [{ sku: "TEST-FORTIS-LED", factor: 1 }, { sku: "TEST-FORTIS-CABLE", factor: 2, unit: "m" }] });
+    const [ctrl, led] = db.rows("newquip_package_mappings");
+    expect(ctrl.lines).toEqual([expect.objectContaining({ sku: "TEST-CTRL-PANEL", role: "FINISHED_GOOD", assembly: true })]);
+    expect(led.lines).toEqual([expect.objectContaining({ sku: "TEST-FORTIS-LED", assembly: false }), expect.objectContaining({ sku: "TEST-FORTIS-CABLE", factor: 2, unit: "m", assembly: false })]);
+    await saveMappingVersion(db as never, { resolveProducts: async () => ({ missing: [] }), assemblySkus: async () => { throw new Error("down"); } }, { isManager: true }, "m@x", { ...input, packageKey: "x", lines: [{ sku: "TEST-X", factor: 1 }] });
+    expect(db.rows("newquip_package_mappings")[2].lines).toEqual([expect.objectContaining({ assembly: null })]);
+  });
+  it("manual BOM classification cannot be saved; a layout-dependent line needs no formula but is marked for confirmation", async () => {
+    const db = new FakeDb(); const port = { resolveProducts: async () => ({ missing: [] as string[] }) };
+    expect(await err(saveMappingVersion(db as never, port, { isManager: true }, "m@x", { ...input, lines: [{ sku: "TEST-A", factor: 1, role: "BOM_COMPONENT" } as never] }))).toMatch(/managed in Cin7/);
+    expect(await err(saveMappingVersion(db as never, port, { isManager: true }, "m@x", { ...input, lines: [{ sku: "TEST-A", factor: 0 }] }))).toMatch(/positive number/);
+    expect(await err(saveMappingVersion(db as never, port, { isManager: true }, "m@x", { ...input, packageKey: "penning_package", lines: [{ sku: "TEST-PEN-PANEL", factor: 0, confirmQuantity: true }] }))).toBe("OK");
+    expect(db.rows("newquip_package_mappings")[0].lines).toEqual([expect.objectContaining({ quantityBasis: "MANAGER_CONFIRM" })]);
+  });
+  it("8: costs and margins are sealed independently of the physical SKUs: mapping never changes the internal margin sheet or the contract", () => {
+    expect(JSON.stringify(seal(FULL).baseline.internalMargin)).toBe(JSON.stringify(seal().baseline.internalMargin));
+    expect(seal(FULL).baseline.commercial).toEqual(seal().baseline.commercial);
+  });
+  it("the mapping screens no longer offer BOM-component / finished-good classification", () => {
+    const f = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
+    for (const file of ["../../../app/projects/[id]/VariationProductPicker.tsx", "../../../app/newquip-grower/[id]/ScopePanel.tsx", "../../../app/projects/[id]/Cin7SaleCreationPanel.tsx"]) {
+      expect(f(file)).not.toMatch(/BOM component \(reference only\)|Finished good \(on the Sales Order\)|withRole/);
+    }
   });
 });

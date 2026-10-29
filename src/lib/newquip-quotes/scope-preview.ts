@@ -12,7 +12,7 @@ export interface ScopeViewItem {
   id: string; description: string; packageKey: string; quantity: number | null; unit: string; state: ScopeLineState; reason?: string;
   mappingRef?: { packageKey: string; version: number };
   /** The physical SKUs this item expands to (quantity already converted). BOM components are reference only: never on the Sales Order. */
-  lines: Array<{ sku: string; quantity: number; unit: string; role: "FINISHED_GOOD" | "BOM_COMPONENT" }>;
+  lines: Array<{ sku: string; quantity: number; unit: string; assembly?: boolean | null; /** Legacy mapping lines that were marked as internal components: shown for history, never on the Sales Order. */ legacyReference?: boolean }>;
 }
 export interface QuoteScopeView {
   /** True once the quote is approved: the register is the sealed one and cannot change. */
@@ -31,10 +31,10 @@ export function describeScope(items: readonly ScopeItem[], frozen: boolean): Quo
     const base = { id: it.id, description: it.description, packageKey: packageKeyOf(it), quantity: it.quantity, unit: it.unit };
     const r = it.resolution;
     if (r?.kind === "EXCLUDE") return { ...base, state: "EXCLUDED", reason: r.reason, lines: [] };
-    if (r?.kind === "MAP_LINES") return { ...base, state: r.by === "mapping-library" ? "FROM_LIBRARY" : "RESOLVED_ON_PROJECT", mappingRef: r.mappingRef, lines: r.lines.map((l) => ({ sku: l.sku, quantity: l.quantity, unit: l.unit, role: l.role })) };
-    if (r?.kind === "MAP") return { ...base, state: "RESOLVED_ON_PROJECT", lines: [{ sku: r.sku, quantity: r.quantity, unit: it.unit, role: "FINISHED_GOOD" }] };
+    if (r?.kind === "MAP_LINES") return { ...base, state: r.by === "mapping-library" ? "FROM_LIBRARY" : "RESOLVED_ON_PROJECT", mappingRef: r.mappingRef, lines: r.lines.map((l) => ({ sku: l.sku, quantity: l.quantity, unit: l.unit, assembly: l.assembly, ...(l.role === "BOM_COMPONENT" ? { legacyReference: true } : {}) })) };
+    if (r?.kind === "MAP") return { ...base, state: "RESOLVED_ON_PROJECT", lines: [{ sku: r.sku, quantity: r.quantity, unit: it.unit }] };
     if (it.mapping.status === "UNMAPPED") return { ...base, state: "UNRESOLVED", reason: it.mapping.reason, lines: [] };
-    return { ...base, state: "MAPPED", lines: it.sku && it.quantity ? [{ sku: it.sku, quantity: it.quantity, unit: it.unit, role: "FINISHED_GOOD" }] : [] };
+    return { ...base, state: "MAPPED", lines: it.sku && it.quantity ? [{ sku: it.sku, quantity: it.quantity, unit: it.unit }] : [] };
   });
   return {
     frozen, items: out, unresolvedCount: out.filter((i) => i.state === "UNRESOLVED").length,
