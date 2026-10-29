@@ -107,6 +107,13 @@ export class FakeDb {
       insert: (p: Row | Row[]) => { op = "insert"; payload = p; return q; },
       update: (p: Row) => { op = "update"; payload = p; return q; },
       delete: () => { op = "delete"; return q; },
+      /** PostgREST upsert on a single conflict column: updates the matching row's given fields, otherwise inserts. */
+      upsert: (p: Row, o?: { onConflict?: string }) => {
+        const key = o?.onConflict ?? "id";
+        const existing = rowsOf(table).find((r) => r[key] === p[key]);
+        if (existing) { op = "update"; payload = p; filters.push((r) => r[key] === p[key]); } else { op = "insert"; payload = p; }
+        return q;
+      },
       eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return q; },
       is: (c: string, v: null) => { filters.push((r) => (r[c] ?? null) === v); return q; },
       in: (c: string, v: unknown[]) => { filters.push((r) => v.includes(r[c])); return q; },

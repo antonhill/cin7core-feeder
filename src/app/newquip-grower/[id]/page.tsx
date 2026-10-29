@@ -24,7 +24,7 @@ import type { QuoteEvaluation } from "@/newquip/grower/evaluate";
 import type { GrowerItemKey, OptionalItemKey, PenningPigSize } from "@/newquip/grower/types";
 import { QUOTE_STATE_LABEL, QUOTE_STATES, type QuoteState } from "@/newquip/quote/workflow";
 import {
-  approveGrowerQuoteAction, createProjectFromGrowerQuoteAction, getGrowerQuoteAction, previewGrowerDraftAction, returnGrowerQuoteToRepAction,
+  approveGrowerQuoteAction, createProjectFromGrowerQuoteAction, getGrowerQuoteAction, previewGrowerDraftAction, returnGrowerQuoteToEstimatorAction, returnGrowerQuoteToRepAction,
   saveGrowerDraftAction, sendGrowerQuoteToEstimatorAction, signOffGrowerQuoteAction, type QuoteView,
 } from "../actions";
 import { fmtCents, fmtZar, NumField, TextField } from "../fields";
@@ -572,6 +572,9 @@ export default function QuoteEditorPage() {
                   {!roles.has("manager") && <span className="text-xs text-slate-500">Final approval needs the manager role (org owner/admin).</span>}
                   <TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} />
                   <Button variant="secondary" loading={isWorking} disabled={!returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.")}>Return to rep</Button>
+                  {q.estimator_signoff_hash && (
+                    <Button variant="secondary" loading={isWorking} disabled={!roles.has("manager") || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToEstimatorAction(id, returnReason), "Returned to the estimator. Their sign-off is withdrawn and must be given again; the quote and its history are kept.")}>Manager: return to estimator</Button>
+                  )}
                 </>
               )}
               {final && <Badge tone="success" dot>Manager approved — final</Badge>}

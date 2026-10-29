@@ -8,7 +8,7 @@ import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { createWorkbookPriceSource } from "@/newquip/grower/workbook-price-source";
 import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
 import { rolesFor } from "@/newquip/quote/roles";
-import { saveDraft, loadQuote } from "@/lib/newquip-quotes/quote-store";
+import { saveDraft } from "@/lib/newquip-quotes/quote-store";
 import { installStaged } from "./staged-emulator";
 
 vi.mock("server-only", () => ({}));
@@ -17,7 +17,7 @@ import { assignRole, removeRole, savePolicy, listAssignments, resolveRoles } fro
 
 const ORG = "org-nq";
 const ctxOf = (userId: string, email: string, adminTier = false): ApprovalCtx => ({ orgId: ORG, userId, email, name: email, isManager: adminTier, baseUrl: "https://toolbox.example" });
-const REP = ctxOf("u-rep", "rep@a"), EST = ctxOf("u-est", "est@a"), EST2 = ctxOf("u-est2", "est2@a"), MGR = ctxOf("u-mgr", "mgr@a", true), MGR2 = ctxOf("u-mgr2", "mgr2@a", true), ADM = ctxOf("u-adm", "adm@a", true);
+const REP = ctxOf("u-rep", "rep@a"), EST = ctxOf("u-est", "est@a"), MGR = ctxOf("u-mgr", "mgr@a", true), MGR2 = ctxOf("u-mgr2", "mgr2@a", true), ADM = ctxOf("u-adm", "adm@a", true);
 const EMAILS: Record<string, string> = { "u-rep": "rep@a", "u-est": "est@a", "u-est2": "est2@a", "u-mgr": "mgr@a", "u-mgr2": "mgr2@a", "u-adm": "adm@a" };
 const priceCtx = { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true };
 const draft = applyDemoDefaults(emptyDraft()).draft;
