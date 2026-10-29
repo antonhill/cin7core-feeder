@@ -29,6 +29,7 @@
     "src/app/newquip-grower/mapping-actions.ts",
     "src/app/newquip-grower/template-actions.ts",
     "src/app/newquip-grower/cost-actions.ts",
+    "src/app/projects/procurement-actions.ts",
     "src/app/approvals/role-actions.ts",
     "src/app/page.tsx",
     "src/app/pricing/actions.ts",

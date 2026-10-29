@@ -18,6 +18,7 @@ import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { Cin7PostingPanel } from "./Cin7PostingPanel";
 import { Cin7SaleCreationPanel } from "./Cin7SaleCreationPanel";
 import { PhysicalPanel } from "./PhysicalPanel";
+import { ProcurementPanel } from "./ProcurementPanel";
 import { ProfitabilityPanel } from "./ProfitabilityPanel";
 import {
   approveClaimAction,
@@ -33,8 +34,8 @@ import {
 } from "../actions";
 
 type ViewerPermission = "loading" | "member" | "admin";
-type Tab = "overview" | "stages" | "components" | "claims" | "variations" | "physical" | "profitability";
-const NEWQUIP_ONLY_TABS: Tab[] = ["variations", "physical"];
+type Tab = "overview" | "stages" | "components" | "claims" | "variations" | "physical" | "procurement" | "profitability";
+const NEWQUIP_ONLY_TABS: Tab[] = ["variations", "physical", "procurement"];
 const TABS: { value: Tab; label: string }[] = [
   { value: "overview", label: "Overview" },
   { value: "stages", label: "Stages" },
@@ -42,6 +43,7 @@ const TABS: { value: Tab; label: string }[] = [
   { value: "claims", label: "Claims" },
   { value: "variations", label: "Variations" },
   { value: "physical", label: "Products & Fulfilment" },
+  { value: "procurement", label: "Procurement / Cost Targets" },
   { value: "profitability", label: "Profitability" },
 ];
 
@@ -214,7 +216,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
       )}
 
       <nav className="mt-6 inline-flex max-w-full gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1 shadow-sm" aria-label="Project sections">
-        {TABS.filter((t) => !(embedded && (t.value === "variations" || t.value === "physical" || t.value === "profitability" || t.value === "components")) && (t.value !== "profitability" || perm === "admin") && (!NEWQUIP_ONLY_TABS.includes(t.value) || newquip)).map((t) => {
+        {TABS.filter((t) => !(embedded && (t.value === "variations" || t.value === "physical" || t.value === "procurement" || t.value === "profitability" || t.value === "components")) && (t.value !== "profitability" || perm === "admin") && (!NEWQUIP_ONLY_TABS.includes(t.value) || newquip)).map((t) => {
           const count = t.value === "stages" ? view.stages.length : t.value === "claims" ? view.claims.length : t.value === "variations" ? view.variations.length : null;
           return (
             <button
@@ -436,6 +438,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
       )}
 
       {tab === "physical" && newquip && <PhysicalPanel view={view} />}
+      {tab === "procurement" && newquip && <ProcurementPanel view={view} />}
       {tab === "profitability" && perm === "admin" && <ProfitabilityPanel view={view} />}
 
       {tab === "variations" && newquip && <VariationsPanel view={view} isAdmin={perm === "admin"} run={run} working={isWorking} />}
