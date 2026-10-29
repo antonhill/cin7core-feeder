@@ -27,6 +27,10 @@ do $$ begin
   if (select requires_customer_acceptance from newquip_quotes where quote_ref = 'CD-1') <> false then raise exception 'explicit grandfathered flag lost'; end if;
   if (select requires_customer_acceptance from newquip_quotes where quote_ref = 'CD-2') <> true then raise exception 'new quotes must default to requiring customer acceptance'; end if;
 end $$;
+-- a quotation that is not yet approved must NOT be exempt (only the migration's backfill sets non-approved rows TRUE; here the default does)
+do $$ begin
+  if exists (select 1 from newquip_quotes where state <> 'MANAGER_APPROVED_FINAL' and requires_customer_acceptance = false and quote_ref <> 'CD-1') then raise exception 'unapproved quotations must require acceptance'; end if;
+end $$;
 -- the flag is fixed at creation (never altered retroactively)
 select pg_temp.expect_denied($q$update newquip_quotes set requires_customer_acceptance = true where quote_ref = 'CD-1'$q$, 'changing the grandfathering flag');
 select pg_temp.expect_denied($q$update newquip_quotes set requires_customer_acceptance = false where quote_ref = 'CD-2'$q$, 'waiving the acceptance requirement');
@@ -83,6 +87,7 @@ select pg_temp.expect_denied($q$update newquip_quote_sends set status = 'ACCEPTE
 select pg_temp.expect_denied($q$update newquip_quote_sends set to_emails = array['evil@x.co'] where id = '00000000-0000-0000-0000-0000000015e1'$q$, 'rewriting recipients');
 update newquip_quote_sends set status = 'ACCEPTED', provider_message_id = 'msg-1', attempted_at = now() where id = '00000000-0000-0000-0000-0000000015e1';
 select pg_temp.expect_denied($q$update newquip_quote_sends set status = 'FAILED' where id = '00000000-0000-0000-0000-0000000015e1'$q$, 'ACCEPTED regressing');
+select pg_temp.expect_denied($q$insert into newquip_quote_sends (org_id, quote_id, document_id, idempotency_key, to_emails, subject, sent_by_email, alternative_recipients) values ('00000000-0000-0000-0000-0000000015b1', '00000000-0000-0000-0000-0000000015c2', '00000000-0000-0000-0000-0000000015d1', 'k9', array['a@b.co'], 's', 'rep@x', array['a@b.co'])$q$, 'alternative recipient without an audited reason');
 select pg_temp.expect_denied($q$delete from newquip_quote_sends$q$, 'send delete');
 
 -- responses: append-only, evidence required, bound to a document of the same quotation

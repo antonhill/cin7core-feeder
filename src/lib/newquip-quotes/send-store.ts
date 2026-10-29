@@ -2,16 +2,17 @@ import "server-only";
 // Sending an ISSUED customer quotation. LOCAL + the existing Resend wrapper only (no Cin7). The rules, in order of enforcement:
 //  - only a Manager-approved quotation, only its LATEST issued document, and only while that document still matches the approved revision and baseline hash;
 //  - the attachment is the stored PDF, re-verified against its recorded SHA-256;
-//  - recipients are validated and bounded; in Preview (anything but VERCEL_ENV=production) the SAME server-side allowlist as approval emails applies - anyone else is
+//  - recipients are validated and bounded; in PRODUCTION each must be a Cin7 contact of the customer (or the quotation contact), otherwise it needs an explicit, audited reason; in Preview (anything but VERCEL_ENV=production) the SAME server-side allowlist as approval emails applies - anyone else is
 //    SUPPRESSED, never redirected - and the subject is marked [PREVIEW];
 //  - one logical send per (document, idempotency key); a repeat click returns the same send. A second send of a document that was already accepted needs an audited re-send;
 //  - the provider result is recorded as ACCEPTED (provider accepted it - NOT proof of inbox delivery or customer receipt) or FAILED; only FAILED can be retried, once at a time.
 import type { createServiceRoleClient } from "@/supabase/server";
 import { sendEmail as resendSend, type SendEmailInput, type SendEmailResult } from "@/lib/email/resend";
-import { applyEmailPolicy, type EmailEnv } from "@/lib/approvals/email-policy";
+import { applyEmailPolicy, isRestricted, type EmailEnv } from "@/lib/approvals/email-policy";
 import { loadQuote } from "./quote-store";
 import { internalTokens } from "./customer-document";
 import { isValidEmail } from "./customer-snapshot";
+import { latestSnapshot } from "./customer-store";
 import { listDocuments, readDocumentBytes, type DocumentDeps, type StoredDocument } from "./document-store";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
@@ -20,10 +21,10 @@ export const defaultSend: SendFn = resendSend;
 
 export interface StoredSend {
   id: string; org_id: string; quote_id: string; document_id: string; idempotency_key: string; resend_of: string | null; resend_reason: string | null; to_emails: string[]; cc_emails: string[];
-  suppressed_emails: string[]; subject: string; message: string; status: "QUEUED" | "ACCEPTED" | "FAILED" | "SUPPRESSED"; provider_message_id: string | null; last_error: string | null;
+  suppressed_emails: string[]; alternative_recipients: string[]; alternative_reason: string | null; subject: string; message: string; status: "QUEUED" | "ACCEPTED" | "FAILED" | "SUPPRESSED"; provider_message_id: string | null; last_error: string | null;
   sent_by_email: string; sent_by_owner_email: string | null; created_at: string; attempted_at: string | null;
 }
-export interface SendRequest { documentId: string; to: string[]; cc?: string[]; message: string; idempotencyKey: string; resendOfId?: string; resendReason?: string }
+export interface SendRequest { documentId: string; to: string[]; cc?: string[]; message: string; idempotencyKey: string; resendOfId?: string; resendReason?: string; /** Production: required for any address that is not a Cin7 contact of the customer. */ alternativeReason?: string }
 export const MAX_TO = 3; export const MAX_CC = 5; export const MAX_MESSAGE = 2000;
 
 const missing = (m: string | undefined) => /does not exist|schema cache|could not find the table/i.test(m ?? "");
@@ -88,6 +89,15 @@ export async function sendQuotationToCustomer(
   const lc = message.toLowerCase();
   if (message && (/\b(margins?|mark-?ups?|gross profit|cost price|landed cost|supplier price)\b/i.test(message) || internalTokens(q.accepted_baseline).some((t) => lc.includes(t.toLowerCase())))) throw new Error("Your message appears to contain internal information (costs, margins, SKUs or internal notes). Remove it before sending.");
 
+  // Production recipients: a Cin7 contact of the selected customer, or an explicitly approved alternative with an audited reason. (Outside Production the allowlist below is stricter.)
+  let alternatives: string[] = [];
+  if (!isRestricted(env)) {
+    const snap = (await latestSnapshot(db, orgId, quoteId))?.snapshot;
+    const known = new Set([...(snap?.contacts ?? []).map((c) => (c.email.state === "present" ? c.email.value.toLowerCase() : "")), snap?.chosenContact?.email.toLowerCase() ?? ""].filter(Boolean));
+    alternatives = [...to, ...cc].filter((a) => !known.has(a));
+    if (alternatives.length && (req.alternativeReason ?? "").trim().length < 5) throw new Error(`${alternatives.join(", ")} ${alternatives.length === 1 ? "is" : "are"} not a Cin7 contact of this customer. Use a customer contact, or give a reason (at least 5 characters) to approve ${alternatives.length === 1 ? "that address" : "those addresses"} for this send.`);
+  }
+
   const prior = await listSends(db, orgId, quoteId);
   const mine = prior.find((s) => s.document_id === doc.id && s.idempotency_key === req.idempotencyKey);
   if (mine) return { send: mine, reused: true }; // the same click / the same dialog: the same send, nothing new is emitted
@@ -111,7 +121,7 @@ export async function sendQuotationToCustomer(
 
   const ins = await db.from("newquip_quote_sends").insert({
     org_id: orgId, quote_id: quoteId, document_id: doc.id, idempotency_key: req.idempotencyKey, resend_of: req.resendOfId ?? null, resend_reason: req.resendOfId ? (req.resendReason ?? "").trim() : null,
-    to_emails: to, cc_emails: cc, suppressed_emails: suppressed, subject, message, status: sendTo.length === 0 ? "SUPPRESSED" : "QUEUED", sent_by_email: who.email, sent_by_owner_email: who.ownerEmail ?? null,
+    to_emails: to, cc_emails: cc, suppressed_emails: suppressed, alternative_recipients: alternatives, alternative_reason: alternatives.length ? (req.alternativeReason ?? "").trim() : null, subject, message, status: sendTo.length === 0 ? "SUPPRESSED" : "QUEUED", sent_by_email: who.email, sent_by_owner_email: who.ownerEmail ?? null,
   }).select("*").single();
   if (ins.error || !ins.data) {
     if (/duplicate key|unique/i.test(ins.error?.message ?? "")) { const again = (await listSends(db, orgId, quoteId)).find((s) => s.document_id === doc.id && s.idempotency_key === req.idempotencyKey); if (again) return { send: again, reused: true }; }

@@ -8,6 +8,7 @@ import { authoriseActor, auditActor, errText, ownerEmailOf, type Actor } from ".
 import { createServiceRoleClient } from "@/supabase/server";
 import { loadQuote } from "@/lib/newquip-quotes/quote-store";
 import { defaultDeps, documentsAvailable, listDocuments } from "@/lib/newquip-quotes/document-store";
+import { latestSnapshot } from "@/lib/newquip-quotes/customer-store";
 import { listSends, retryFailedSend, sendQuotationToCustomer, type SendRequest } from "@/lib/newquip-quotes/send-store";
 import { COMMERCIAL_STATUS_LABEL, commercialStatus, listResponses, recordCustomerResponse, requiresAcceptance, type CommercialStatus, type ResponseInput } from "@/lib/newquip-quotes/acceptance";
 import { PREVIEW_EMAIL_ALLOWLIST, isRestricted } from "@/lib/approvals/email-policy";
@@ -15,7 +16,7 @@ import { emailConfigStatus } from "@/lib/email/resend";
 
 export interface DeliveryActionResult<T> { ok: boolean; error?: string; data?: T }
 
-export interface SendRow { id: string; documentId: string; status: "QUEUED" | "ACCEPTED" | "FAILED" | "SUPPRESSED"; to: string[]; cc: string[]; suppressed: string[]; subject: string; sentBy: string; at: string; providerMessageId: string | null; error: string | null; resendOf: string | null; resendReason: string | null }
+export interface SendRow { id: string; documentId: string; status: "QUEUED" | "ACCEPTED" | "FAILED" | "SUPPRESSED"; to: string[]; cc: string[]; suppressed: string[]; alternatives: string[]; alternativeReason: string | null; subject: string; sentBy: string; at: string; providerMessageId: string | null; error: string | null; resendOf: string | null; resendReason: string | null }
 export interface ResponseRow { id: string; documentId: string; response: "ACCEPTED" | "DECLINED" | "CHANGES_REQUESTED"; contact: string; respondedOn: string; evidence: string; note: string; recordedBy: string; at: string }
 export interface DeliveryView {
   available: boolean;
@@ -24,8 +25,10 @@ export interface DeliveryView {
   latestDocumentId: string | null; defaultTo: string | null;
   sends: SendRow[]; responses: ResponseRow[];
   canSend: boolean; canRecord: boolean;
+  /** Cin7 contact emails of the selected customer. In Production any other recipient needs an audited reason. */
+  contactEmails: string[];
   /** Preview / non-production: only these mailboxes are emailed. */
-  policy: { restricted: boolean; allowlist: string[]; emailConfigured: boolean };
+  policy: { restricted: boolean; production: boolean; allowlist: string[]; emailConfigured: boolean };
 }
 
 const canRecordRole = (a: Actor) => a.roles.has("rep") || a.roles.has("manager");
@@ -35,18 +38,20 @@ async function viewOf(a: Actor, quoteId: string): Promise<DeliveryView> {
   const q = await loadQuote(db, a.orgId, quoteId);
   if (!q) throw new Error("Quote not found.");
   const restricted = isRestricted(process.env);
-  const policy = { restricted, allowlist: restricted ? [...PREVIEW_EMAIL_ALLOWLIST] : [], emailConfigured: emailConfigStatus().configured };
-  if (!(await documentsAvailable(db))) return { available: false, status: "NOT_APPROVED", statusLabel: "", requiresAcceptance: false, accepted: false, latestDocumentId: null, defaultTo: null, sends: [], responses: [], canSend: false, canRecord: false, policy };
+  const policy = { restricted, production: !restricted, allowlist: restricted ? [...PREVIEW_EMAIL_ALLOWLIST] : [], emailConfigured: emailConfigStatus().configured };
+  if (!(await documentsAvailable(db))) return { available: false, status: "NOT_APPROVED", statusLabel: "", requiresAcceptance: false, accepted: false, latestDocumentId: null, defaultTo: null, sends: [], responses: [], canSend: false, canRecord: false, contactEmails: [], policy };
   const [docs, sends, responses] = await Promise.all([listDocuments(db, a.orgId, quoteId), listSends(db, a.orgId, quoteId), listResponses(db, a.orgId, quoteId)]);
   const latest = docs[0] ?? null;
+  const snap = await latestSnapshot(db, a.orgId, quoteId);
   const status = commercialStatus(q, latest, sends, responses);
   const current = !!latest && latest.revision === q.revision && latest.baseline_hash === q.baseline_hash && q.state === "MANAGER_APPROVED_FINAL";
   return {
     available: true, status, statusLabel: COMMERCIAL_STATUS_LABEL[status], requiresAcceptance: requiresAcceptance(q), accepted: status === "CUSTOMER_ACCEPTED",
     latestDocumentId: latest?.id ?? null, defaultTo: latest?.content.customer.contactEmail ?? null,
-    sends: sends.map((s) => ({ id: s.id, documentId: s.document_id, status: s.status, to: s.to_emails, cc: s.cc_emails, suppressed: s.suppressed_emails, subject: s.subject, sentBy: s.sent_by_email, at: s.attempted_at ?? s.created_at, providerMessageId: s.provider_message_id, error: s.last_error, resendOf: s.resend_of, resendReason: s.resend_reason })),
+    sends: sends.map((s) => ({ id: s.id, documentId: s.document_id, status: s.status, to: s.to_emails, cc: s.cc_emails, suppressed: s.suppressed_emails, alternatives: s.alternative_recipients ?? [], alternativeReason: s.alternative_reason, subject: s.subject, sentBy: s.sent_by_email, at: s.attempted_at ?? s.created_at, providerMessageId: s.provider_message_id, error: s.last_error, resendOf: s.resend_of, resendReason: s.resend_reason })),
     responses: responses.map((r) => ({ id: r.id, documentId: r.document_id, response: r.response, contact: r.contact_name, respondedOn: r.responded_on, evidence: r.evidence_ref, note: r.note, recordedBy: r.recorded_by_email, at: r.created_at })),
     canSend: current && a.roles.has("rep") && status !== "CUSTOMER_ACCEPTED", canRecord: current && canRecordRole(a),
+    contactEmails: [...new Set([...(snap?.snapshot.contacts ?? []).map((c) => (c.email.state === "present" ? c.email.value : "")), snap?.snapshot.chosenContact?.email ?? ""].filter(Boolean))],
     policy,
   };
 }

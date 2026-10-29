@@ -6,17 +6,20 @@
 --   newquip_quote_documents      append-only registry of issued customer PDFs (exact revision + content hash; file lives in a PRIVATE bucket)
 --   newquip_quote_sends          audit of every customer email attempt (recipients, document, provider acceptance - not inbox delivery)
 --   newquip_quote_responses      append-only customer responses (accepted / declined / changes requested) against the exact issued document
---   newquip_quotes.requires_customer_acceptance   GRANDFATHERING: every quotation that exists when this migration runs keeps FALSE; new ones default TRUE
+--   newquip_quotes.requires_customer_acceptance   GRANDFATHERING: only quotations ALREADY MANAGER-APPROVED when this migration runs keep FALSE; drafts and quotes still in review (and every new quote) require TRUE
 -- All writes are service-role Server Actions that authorise first; clients get SELECT only (members of the owning org).
 -- Rollback / recovery: every object is new and unreferenced by older code, so `drop table ... cascade; alter table newquip_quotes drop column ...;
 -- delete from storage.buckets where id = 'newquip-quote-documents'` returns the schema to 0114. Older application code ignores all of it.
 
 -- ── GRANDFATHERING flag ─────────────────────────────────────────────────────
--- Added with default FALSE so every existing quotation (approved or not) is exempt from the acceptance gate, then the default flips to TRUE for new rows.
+-- Added with default FALSE, so every row that is ALREADY APPROVED (frozen; its existing project relationship, if any, is untouched) is exempt. Quotations that are not yet
+-- approved (drafts, in estimator review) are then set to TRUE: they follow the customer-acceptance workflow when they are approved later. Approved rows are frozen by the
+-- 0102 guard and are deliberately NOT updated. The default then flips to TRUE for every new quotation. (The flag guard below is created after this backfill.)
 alter table newquip_quotes add column if not exists requires_customer_acceptance boolean not null default false;
+update newquip_quotes set requires_customer_acceptance = true where state <> 'MANAGER_APPROVED_FINAL' and requires_customer_acceptance = false;
 alter table newquip_quotes alter column requires_customer_acceptance set default true;
 comment on column newquip_quotes.requires_customer_acceptance is
-  'TRUE: project creation needs the customer to have accepted the exact issued document. FALSE: grandfathered (existing at the 0115 cutover). Set at insert; cannot change afterwards (the approved-quote freeze covers it).';
+  'TRUE: project creation needs the customer to have accepted the exact issued document. FALSE: grandfathered (already Manager-approved at the 0115 cutover). Set at insert; cannot change afterwards (the approved-quote freeze covers it).';
 
 create or replace function newquip_quotes_acceptance_flag_guard() returns trigger language plpgsql set search_path = public as $$
 begin
@@ -112,6 +115,9 @@ create table if not exists newquip_quote_sends (
   to_emails   text[] not null check (cardinality(to_emails) > 0),
   cc_emails   text[] not null default '{}',
   suppressed_emails text[] not null default '{}',
+  -- Production only: addresses that are NOT a Cin7 contact of the customer, with the audited reason they were approved for this send.
+  alternative_recipients text[] not null default '{}',
+  alternative_reason text,
   subject     text not null,
   message     text not null default '',
   status      text not null default 'QUEUED' check (status in ('QUEUED', 'ACCEPTED', 'FAILED', 'SUPPRESSED')),
@@ -125,7 +131,8 @@ create table if not exists newquip_quote_sends (
   foreign key (quote_id, org_id) references newquip_quotes (id, org_id) on delete cascade,
   unique (document_id, idempotency_key),
   check (resend_of is null or (resend_reason is not null and length(btrim(resend_reason)) >= 3)),
-  check (status <> 'ACCEPTED' or provider_message_id is not null)
+  check (status <> 'ACCEPTED' or provider_message_id is not null),
+  check (cardinality(alternative_recipients) = 0 or length(btrim(coalesce(alternative_reason, ''))) >= 5)
 );
 create index if not exists newquip_quote_sends_quote_idx on newquip_quote_sends (org_id, quote_id, created_at desc);
 

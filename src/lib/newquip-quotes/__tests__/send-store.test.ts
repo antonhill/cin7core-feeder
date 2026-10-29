@@ -68,6 +68,21 @@ describe("sending the issued quotation", () => {
     const i = vi.mocked(send).mock.calls[0][0];
     expect(i.to).toEqual(["piet@boerdery.example"]); expect(i.subject.startsWith("[PREVIEW]")).toBe(false); expect(i.text).not.toContain("PREVIEW");
   });
+  it("PRODUCTION RECIPIENTS: only a Cin7 contact of the customer, or an alternative approved with an audited reason (To and CC alike)", async () => {
+    const w = await world(); const send = ok();
+    await expect(go(w, send, { to: ["stranger@elsewhere.example"] }, PROD)).rejects.toThrow(/not a Cin7 contact/);
+    await expect(go(w, send, { to: ["piet@boerdery.example"], cc: ["cc@elsewhere.example"] }, PROD)).rejects.toThrow(/not a Cin7 contact/);
+    await expect(go(w, send, { to: ["stranger@elsewhere.example"], alternativeReason: "ok" }, PROD)).rejects.toThrow(/not a Cin7 contact/);
+    expect(send).not.toHaveBeenCalled(); expect(w.db.rows("newquip_quote_sends")).toHaveLength(0);
+    const r = await go(w, send, { to: ["PIET@boerdery.example"], cc: ["accounts@elsewhere.example"], alternativeReason: "Customer asked that accounts is copied (phone call 29 Oct)" }, PROD);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(r.send).toMatchObject({ status: "ACCEPTED", alternative_recipients: ["accounts@elsewhere.example"], alternative_reason: "Customer asked that accounts is copied (phone call 29 Oct)" });
+  });
+  it("a Cin7 contact needs no reason, and nothing is recorded as an alternative", async () => {
+    const w = await world(); const send = ok();
+    const r = await go(w, send, { to: ["piet@boerdery.example"] }, PROD);
+    expect(r.send.alternative_recipients).toEqual([]); expect(r.send.alternative_reason ?? null).toBeNull();
+  });
   it("fails closed: an unset or unrecognised environment is restricted", async () => {
     for (const env of [{}, { VERCEL_ENV: "Production" }, { VERCEL_ENV: "prod" }]) {
       const w = await world(); const send = ok();

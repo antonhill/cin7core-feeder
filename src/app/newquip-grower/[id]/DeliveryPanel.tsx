@@ -27,7 +27,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate }: { quoteId: str
   const [busy, setBusy] = useState(false);
   const [choice, setChoice] = useState<ScheduleChoice | undefined>(undefined);
   const [to, setTo] = useState(""); const [cc, setCc] = useState(""); const [message, setMessage] = useState(""); const [reviewed, setReviewed] = useState(false);
-  const [key, setKey] = useState(newKey); const [resendOf, setResendOf] = useState<string | null>(null); const [resendReason, setResendReason] = useState("");
+  const [key, setKey] = useState(newKey); const [altReason, setAltReason] = useState(""); const [resendOf, setResendOf] = useState<string | null>(null); const [resendReason, setResendReason] = useState("");
   const [resp, setResp] = useState({ response: "ACCEPTED" as "ACCEPTED" | "DECLINED" | "CHANGES_REQUESTED", contactName: "", respondedOn: new Date().toISOString().slice(0, 10), evidenceRef: "", note: "" });
 
   const reload = useCallback(async () => {
@@ -47,6 +47,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate }: { quoteId: str
   if (!docs.available || !d.available) return <Panel><PanelTitle>Customer quotation</PanelTitle><Alert tone="info">Sending a quotation to the customer becomes available once the database update for customer quotations (migration 0115) has been applied.</Alert></Panel>;
   const latest = docs.documents[0];
   const split = (s: string) => s.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
+  const altNeeded = d.policy.production ? [...split(to), ...split(cc)].filter((a) => !d.contactEmails.includes(a.toLowerCase())) : [];
   const statusTone = d.status === "CUSTOMER_ACCEPTED" ? "success" : d.status === "CUSTOMER_DECLINED" || d.status === "CHANGES_REQUESTED" ? "warning" : "neutral";
   return (
     <Panel>
@@ -88,9 +89,10 @@ export function DeliveryPanel({ quoteId, contractCents, onGate }: { quoteId: str
           </div>
           <label className="flex flex-col gap-1 text-sm"><span className="font-medium text-slate-700">Message</span><textarea className="min-h-20 rounded-md border border-slate-300 p-2 text-sm" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Optional. Do not mention costs or margins." /></label>
           {resendOf && <label className="flex flex-col gap-1 text-sm"><span className="font-medium text-slate-700">Reason for sending again</span><input className={`${inputCls} w-full`} value={resendReason} onChange={(e) => setResendReason(e.target.value)} /></label>}
+          {altNeeded.length > 0 && <label className="flex flex-col gap-1 text-sm"><span className="font-medium text-amber-800">{altNeeded.join(", ")} {altNeeded.length === 1 ? "is" : "are"} not a Cin7 contact of this customer. Reason for approving {altNeeded.length === 1 ? "this address" : "these addresses"} (audited)</span><input className={`${inputCls} w-full`} value={altReason} onChange={(e) => setAltReason(e.target.value)} /></label>}
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} /> I have opened and reviewed the PDF, and these are the right recipients.</label>
-          <Button type="button" loading={busy} disabled={!reviewed || split(to).length === 0 || (!!resendOf && resendReason.trim().length < 3)} onClick={() => void run(async () => {
-            const r = await sendQuoteToCustomerAction(quoteId, { documentId: latest.id, to: split(to), cc: split(cc), message, idempotencyKey: key, resendOfId: resendOf ?? undefined, resendReason: resendOf ? resendReason : undefined });
+          <Button type="button" loading={busy} disabled={!reviewed || split(to).length === 0 || (altNeeded.length > 0 && altReason.trim().length < 5) || (!!resendOf && resendReason.trim().length < 3)} onClick={() => void run(async () => {
+            const r = await sendQuoteToCustomerAction(quoteId, { documentId: latest.id, to: split(to), cc: split(cc), message, idempotencyKey: key, alternativeReason: altNeeded.length ? altReason : undefined, resendOfId: resendOf ?? undefined, resendReason: resendOf ? resendReason : undefined });
             if (r.ok && r.data) { setKey(newKey()); setResendOf(null); setResendReason(""); setReviewed(false); }
             return r.ok && r.data ? { ok: true } : r;
           }, "Send recorded. See the history below for the outcome.")}>{resendOf ? "Send again" : "Send quotation to customer"}</Button>
@@ -107,7 +109,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate }: { quoteId: str
                   {s.status === "ACCEPTED" && d.canSend && <Button type="button" variant="secondary" onClick={() => { setResendOf(s.id); setKey(newKey()); setReviewed(false); }}>Send again…</Button>}
                 </span>
               </div>
-              <div className="text-xs text-slate-600">To {s.to.join(", ")}{s.cc.length ? ` · CC ${s.cc.join(", ")}` : ""}{s.suppressed.length ? ` · not sent to: ${s.suppressed.join(", ")}` : ""}{s.error ? ` · ${s.error}` : ""}{s.resendReason ? ` · re-send reason: ${s.resendReason}` : ""}</div>
+              <div className="text-xs text-slate-600">To {s.to.join(", ")}{s.cc.length ? ` · CC ${s.cc.join(", ")}` : ""}{s.suppressed.length ? ` · not sent to: ${s.suppressed.join(", ")}` : ""}{s.alternatives.length ? ` · approved non-contact recipients: ${s.alternatives.join(", ")} (reason: ${s.alternativeReason})` : ""}{s.error ? ` · ${s.error}` : ""}{s.resendReason ? ` · re-send reason: ${s.resendReason}` : ""}</div>
             </li>
           ))}
         </ul>
