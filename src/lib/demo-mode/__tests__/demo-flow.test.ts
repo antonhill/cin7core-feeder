@@ -192,6 +192,15 @@ describe("a live demo identity can use ONLY the scoped quotation / approval acti
   });
 });
 
+describe("the cost panel under Demo Mode explains itself", () => {
+  it("while a test identity is active the cost read refuses with a message naming Demo Mode (shown in the panel), and works again as Owner", async () => {
+    await as("manager");
+    expect((await costActions.getQuoteCostEstimateAction("q1")).error).toMatch(/Demo Mode/);
+    await as("owner");
+    expect((await costActions.getQuoteCostEstimateAction("q1")).error).toBeUndefined();
+  });
+});
+
 describe("switching, exiting, expiry, tampering and Production", () => {
   it("switching identities changes the effective user immediately and nothing persists between them", async () => {
     const roles: string[][] = []; const sees: boolean[] = [];

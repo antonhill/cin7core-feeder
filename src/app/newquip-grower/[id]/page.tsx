@@ -447,6 +447,8 @@ export default function QuoteEditorPage() {
           </div>
 
           <ScopePanel quoteId={id} draft={draft} />
+          {/* Right under the physical scope, where the estimator resolves the SKUs: capture the latest Cin7 costs for a draft quotation. */}
+          {!final && view.viewer.canViewCommercials && <CostPanel quoteId={id} />}
 
           {(budget?.lines ?? []).some((b) => ["unmapped", "not_in_price_source", "supplier_quote_required", "package_unconfirmed", "package_incomplete"].includes(b.status) || b.pricedBy === "estimator_resolution") && (
             <Panel>
@@ -583,7 +585,7 @@ export default function QuoteEditorPage() {
           </Panel>
 
           {final && <ScopePanel quoteId={id} draft={draft} />}
-          {view.viewer.canViewCommercials && <CostPanel quoteId={id} />}
+          {final && view.viewer.canViewCommercials && <CostPanel quoteId={id} />}
 
           {final && q.accepted_baseline && (
             <Panel>

@@ -62,6 +62,28 @@ describe("cost actions are internal and server-enforced", () => {
   });
 });
 
+describe("Owner visibility on an editable draft quotation (regression: the Capture button was not visible)", () => {
+  it("the Owner is a cost viewer, the cost read succeeds and offers capture, for a rep draft and for a quotation in estimator review", async () => {
+    for (const state of ["REP_DRAFT", "ESTIMATOR_REVIEW"]) {
+      quote().state = state;
+      as(true);
+      const v = await grower.getGrowerViewerAction();
+      expect(v.data?.canViewCommercials).toBe(true); // the page mounts the panel only for this
+      const r = await cost.getQuoteCostEstimateAction("q1");
+      expect(r.error).toBeUndefined();
+      expect(r.data).toMatchObject({ canCapture: true, frozen: false });
+      expect(r.data!.estimate!.lines.length).toBeGreaterThan(0); // SKUs to capture exist, so the button is enabled
+    }
+  });
+  it("a draft that is not READY (unpriced / unmapped lines) still returns a readable view rather than an error", async () => {
+    const d = quote().draft; d.config.lengthM = 0; d.config.widthM = 0; // an incomplete draft
+    as(true);
+    const r = await cost.getQuoteCostEstimateAction("q1");
+    expect(r.error).toBeUndefined();
+    expect(r.data!.canCapture).toBe(true);
+  });
+});
+
 describe("capture, missing costs, manual estimates and the freeze", () => {
   async function firstSku() {
     as(true);
