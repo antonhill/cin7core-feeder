@@ -44,3 +44,18 @@ export function buildCustomerSummary(budget: BudgetQuote): CustomerSummary | nul
   }
   return { sections, subtotalExVat: round2(budget.totals.subtotalExTax), vat: round2(budget.totals.taxTotal), totalIncVat: round2(budget.totals.totalIncTax) };
 }
+
+/** The same customer-safe grouping, built from a SEALED baseline's commercial lines and charges (cents -> rand). Shares GROUPS with buildCustomerSummary so the two cannot drift. */
+export function buildCustomerSummaryFromCommercial(c: {
+  lines: { itemKey: string; revenueCents: number }[]; charges: { key: string; amountCents: number }[]; subtotalCents: number; taxCents: number; totalCents: number;
+}): CustomerSummary {
+  const sections: SummarySection[] = [];
+  for (const g of GROUPS) {
+    const cents = c.lines.filter((l) => g.items.includes(l.itemKey as GrowerItemKey)).reduce((a, l) => a + l.revenueCents, 0) + c.charges.filter((x) => g.charges?.includes(x.key)).reduce((a, x) => a + x.amountCents, 0);
+    if (cents > 0) sections.push({ title: g.title, scope: g.scope, amountExVat: cents / 100 });
+  }
+  // Anything the groups do not cover is shown rather than silently dropped, so the sections always add up to the sub-total.
+  const covered = Math.round(sections.reduce((a, x) => a + x.amountExVat * 100, 0));
+  if (c.subtotalCents - covered !== 0) sections.push({ title: "Additional items", scope: "Further items as agreed with your representative.", amountExVat: (c.subtotalCents - covered) / 100 });
+  return { sections, subtotalExVat: c.subtotalCents / 100, vat: c.taxCents / 100, totalIncVat: c.totalCents / 100 };
+}
