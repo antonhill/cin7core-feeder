@@ -636,6 +636,32 @@ export function buildNavLinks(orgId: string | null, disabledModules: string[], i
   return isSuperAdmin ? [...links, ADMIN_MODULE] : links;
 }
 
+export type NavItem = { kind: "link"; link: ModuleConfig } | { kind: "group"; label: string; Icon: ModuleConfig["Icon"]; children: ModuleConfig[] };
+
+/** The NewQuip modules, in the order they appear inside the NewQuip group. */
+const NEWQUIP_GROUP_HREFS = [SOLUTION_BUILDER_MODULE.href, PROJECTS_MODULE.href, APPROVALS_MODULE.href];
+
+/**
+ * The left navigation as items: ordinary links, except that for the NewQuip organisation Solution Builder, Projects and Approvals are nested under one
+ * "NewQuip" group (placed where Solution Builder / Projects were). Pure; built from buildNavLinks so visibility rules cannot drift.
+ */
+export function buildNavItems(orgId: string | null, disabledModules: string[], isSuperAdmin: boolean): NavItem[] {
+  const links = buildNavLinks(orgId, disabledModules, isSuperAdmin);
+  if (orgId == null || !isNewquipPocOrg(orgId)) return links.map((link) => ({ kind: "link", link }));
+  const children = NEWQUIP_GROUP_HREFS.flatMap((h) => links.filter((l) => l.href === h));
+  if (children.length === 0) return links.map((link) => ({ kind: "link", link }));
+  const items: NavItem[] = [];
+  let placed = false;
+  for (const link of links) {
+    if (NEWQUIP_GROUP_HREFS.includes(link.href)) {
+      if (!placed) { items.push({ kind: "group", label: "NewQuip", Icon: children[0].Icon, children }); placed = true; }
+      continue;
+    }
+    items.push({ kind: "link", link });
+  }
+  return items;
+}
+
 /** Active for the link's own route and everything nested under it (a segment boundary, so /projects never matches /projects-x). */
 export function isNavLinkActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);

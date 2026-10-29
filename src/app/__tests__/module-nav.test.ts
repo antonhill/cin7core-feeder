@@ -116,3 +116,37 @@ describe("Solution Builder navigation (NewQuip Grower)", () => {
     expect(isNavLinkActive("/projects/abc", "/projects")).toBe(true);
   });
 });
+
+import { buildNavItems } from "@/app/module-nav";
+
+describe("NewQuip group in the left navigation", () => {
+  const NEWQUIP = NEWQUIP_POC_ORG_IDS[0];
+  const OTHER = "0242e481-0f2b-4bd9-a8ef-2d4a9554bc09";
+  const shape = (orgId: string | null, disabled: string[] = [], admin = false) =>
+    buildNavItems(orgId, disabled, admin).map((i) => (i.kind === "group" ? `${i.label}[${i.children.map((c) => c.label).join(",")}]` : i.link.label));
+
+  it("nests Solution Builder, Projects and Approvals under one NewQuip heading, in that order, and removes them from the top level", () => {
+    const s = shape(NEWQUIP);
+    expect(s.filter((x) => x.startsWith("NewQuip["))).toEqual(["NewQuip[Solution Builder,Projects,Approvals]"]);
+    for (const top of ["Solution Builder", "Projects", "Approvals"]) expect(s).not.toContain(top);
+  });
+  it("keeps every other module as an ordinary link, in its place", () => {
+    const flat = buildNavLinks(NEWQUIP, [], false).map((l) => l.label).filter((l) => !["Solution Builder", "Projects", "Approvals"].includes(l));
+    expect(shape(NEWQUIP).filter((x) => !x.startsWith("NewQuip["))).toEqual(flat);
+  });
+  it("other organisations and a signed-out view get no group", () => {
+    expect(shape(OTHER).some((x) => x.startsWith("NewQuip["))).toBe(false);
+    expect(shape(null).some((x) => x.startsWith("NewQuip["))).toBe(false);
+    expect(buildNavItems(OTHER, [], false).every((i) => i.kind === "link")).toBe(true);
+  });
+  it("respects module visibility: disabling Projects removes it (and Approvals, which follows Projects) from the group; with everything hidden there is no group", () => {
+    expect(shape(NEWQUIP, ["/projects"]).find((x) => x.startsWith("NewQuip["))).toBe("NewQuip[Solution Builder]");
+    const none = shape(NEWQUIP, ["/quotes", "/projects"]);
+    expect(none.some((x) => x.startsWith("NewQuip["))).toBe(false);
+  });
+  it("the super-admin Admin link stays last and outside the group", () => {
+    const items = buildNavItems(NEWQUIP, [], true);
+    const last = items.at(-1)!;
+    expect(last.kind === "link" && last.link === ADMIN_MODULE).toBe(true);
+  });
+});
