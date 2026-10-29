@@ -11,6 +11,8 @@
 //   node scripts/probe-product-costs-readonly.mjs --org-name "NewQuip" --dry-run
 //   node scripts/probe-product-costs-readonly.mjs --org-name "NewQuip" --max 40
 //   node scripts/probe-product-costs-readonly.mjs --org-name "NewQuip" --sku "<exact SKU>" --sku "<another>"   (check specific scope SKUs)
+//   add --per-sku to ALSO print one block per product (product id, name, UoM, average cost, and each supplier record: id, name, currency, Cost, FixedCost, LastSupplied)
+//   for the SKUs you named. Those are the owner's own business data (still no credentials), meant for the cost-loading workbook; do not use --per-sku on a broad sample.
 
 import { createRequire } from "node:module";
 import { decryptInstanceKey } from "./lib/probe-support.mjs";
@@ -135,8 +137,16 @@ const productKeys = new Map();
 const outcomes = new Map();
 let products = 0, withSuppliers = 0, filterExact = 0, filterWrong = 0, avgPresent = 0;
 const bump = (m, k) => m.set(k, (m.get(k) ?? 0) + 1);
+const PER_SKU = process.argv.includes("--per-sku") && SKUS.length > 0;
+const show = (v) => (v === undefined ? "(absent)" : v === null ? "null" : String(v));
 const seeProduct = (p) => {
   products++;
+  if (PER_SKU) {
+    const sup = Array.isArray(p.Suppliers) ? p.Suppliers : [];
+    console.log(`SKU ${show(p.SKU)} | id ${show(p.ID)} | name ${show(p.Name)} | uom ${show(p.UOM)} | type ${show(p.Type)} | bom ${show(p.BillOfMaterial)} | averageCost ${show(p.AverageCost)} | suppliers ${sup.length}`);
+    for (const s of sup) console.log(`    supplier id ${show(s.SupplierID ?? s.ID)} | name ${show(s.SupplierName ?? s.Supplier)} | currency ${show(s.Currency)} | Cost ${show(s.Cost)} | FixedCost ${show(s.FixedCost)} | LastSupplied ${show(s.LastSupplied)} | outcome-if-alone ${latest([s])}`);
+    console.log(`    -> Toolbox latest-cost rule: ${latest(sup)}`);
+  }
   if (typeof p.AverageCost === "number") avgPresent++;
   for (const k of ["AverageCost", "Suppliers", "SKU", "CostingMethod"]) bump(productKeys.get(k) ?? productKeys.set(k, new Map()).get(k), typeOf(p[k]));
   const sup = Array.isArray(p.Suppliers) ? p.Suppliers : [];
