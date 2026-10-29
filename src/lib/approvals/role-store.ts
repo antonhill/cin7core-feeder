@@ -40,6 +40,16 @@ export async function resolveRoles(db: Db, orgId: string, userId: string, adminT
   return effectiveRoles(all.filter((a) => a.user_id === userId).map((a) => a.role), adminTier, await strictRoles(db, orgId));
 }
 
+/**
+ * May this person see estimated costs and margins and make audited cost overrides? An organisation owner/admin, or someone EXPLICITLY given the Estimator or
+ * Manager role. The tier fallback never grants it (otherwise every member would see cost), and Procurement / Rep / Project Manager / Administrator alone do not.
+ */
+export async function canSeeCosts(db: Db, orgId: string, userId: string, adminTier: boolean): Promise<boolean> {
+  if (adminTier) return true;
+  const all = await listAssignments(db, orgId);
+  return !!all && all.some((a) => a.user_id === userId && (a.role === "ESTIMATOR" || a.role === "MANAGER"));
+}
+
 export interface OrgUser { userId: string; email: string; tier: "owner" | "admin" | "member"; roles: FunctionalRole[] }
 
 export async function listOrgUsers(db: Db, orgId: string): Promise<OrgUser[]> {

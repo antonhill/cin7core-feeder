@@ -53,8 +53,8 @@ export function MarginPanel({ budget, draft, final, frozen, editable, edit }: {
 
   return (
     <Panel>
-      <PanelTitle>Internal margins {final ? "(frozen at approval)" : "(live estimate)"}</PanelTitle>
-      {sheet && <p className="mt-1 text-xs text-slate-500">{sheet.reportingBasis}</p>}
+      <PanelTitle>Internal margins - workbook basis {final ? "(frozen at approval)" : "(live estimate)"}</PanelTitle>
+      {sheet && <p className="mt-1 text-xs text-slate-500">Costs here come from the NewQuip Master workbook (landed cost), by quote line. A separate margin on Cin7 latest cost per physical SKU is shown in the next panel; the two are never combined. {sheet.reportingBasis}</p>}
       {error && <Alert tone="danger">{error}</Alert>}
       {sheet && (
         <>

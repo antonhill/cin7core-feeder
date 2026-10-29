@@ -10,7 +10,7 @@ import { evaluateDraft, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { type OrgTier, type QuoteRole } from "@/newquip/quote/roles";
 import { toQuoteRoles } from "@/lib/approvals/roles";
-import { resolveRoles } from "@/lib/approvals/role-store";
+import { canSeeCosts, resolveRoles } from "@/lib/approvals/role-store";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
 import { keepServerOwnedCosts, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
 import { approvalsAvailable, decideDocument, legacyCtx, resyncQuoteApprovals, stagedAvailable, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
@@ -35,7 +35,8 @@ export interface GrowerActionResult<T> {
   data?: T;
 }
 
-interface Actor { orgId: string; userId: string; email: string; tier: OrgTier; roles: ReadonlySet<QuoteRole> }
+/** `canSeeCost`: owner/admin, or explicitly given the Estimator / Manager role. Cost, ROE, freight, margins and cost overrides are withheld from everyone else, server-side. */
+interface Actor { orgId: string; userId: string; email: string; tier: OrgTier; roles: ReadonlySet<QuoteRole>; canSeeCost: boolean }
 
 async function authorise(): Promise<Actor> {
   const { orgId } = await requireNewquipPocOrg();
@@ -49,7 +50,7 @@ async function authorise(): Promise<Actor> {
   }
   // Functional roles (migration 0112) when assigned; otherwise exactly the tier-based roles of Phase H.
   const functional = await resolveRoles(createServiceRoleClient(), orgId, access.userId, tier === "admin");
-  return { orgId, userId: access.userId, email: access.email ?? "unknown", tier, roles: toQuoteRoles(functional) };
+  return { orgId, userId: access.userId, email: access.email ?? "unknown", tier, roles: toQuoteRoles(functional), canSeeCost: await canSeeCosts(createServiceRoleClient(), orgId, access.userId, tier === "admin") };
 }
 
 function errMsg(e: unknown): string {
@@ -64,7 +65,7 @@ export interface QuoteView {
 }
 
 function view(quote: QuoteRecord, a: Actor): QuoteView {
-  const canViewCommercials = a.tier === "admin";
+  const canViewCommercials = a.canSeeCost;
   return {
     quote: redactInternalFinancials(quote, canViewCommercials),
     evaluation: evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)),
@@ -75,7 +76,7 @@ function view(quote: QuoteRecord, a: Actor): QuoteView {
 export async function getGrowerViewerAction(): Promise<GrowerActionResult<{ roles: QuoteRole[]; canViewCommercials: boolean }>> {
   try {
     const a = await authorise();
-    return { ok: true, data: { roles: [...a.roles], canViewCommercials: a.tier === "admin" } };
+    return { ok: true, data: { roles: [...a.roles], canViewCommercials: a.canSeeCost } };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
@@ -119,7 +120,7 @@ export async function getGrowerQuoteAction(quoteId: string): Promise<GrowerActio
 export async function previewGrowerDraftAction(draft: QuoteDraft): Promise<GrowerActionResult<QuoteEvaluation>> {
   try {
     const a = await authorise();
-    return { ok: true, data: evaluateDraft(draft, evaluationContext(a.tier !== "admin")) };
+    return { ok: true, data: evaluateDraft(draft, evaluationContext(!a.canSeeCost)) };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
@@ -130,7 +131,7 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
     const a = await authorise();
     const db = createServiceRoleClient();
     const prior = await loadQuote(db, a.orgId, quoteId);
-    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, keepServerOwnedCosts(stampCostOverrides(draft, prior?.draft.estimator.costOverrides, a.tier === "admin", a.email, new Date().toISOString()), prior?.draft.estimator.physicalCosts));
+    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, keepServerOwnedCosts(stampCostOverrides(draft, prior?.draft.estimator.costOverrides, a.canSeeCost, a.email, new Date().toISOString()), prior?.draft.estimator.physicalCosts));
     // Changed content invalidates the estimator's sign-off (saveDraft clears it) and any open approval of the older content: the quote goes back to estimator review.
     if (saved.draftHash !== prior?.draft_hash && (await stagedAvailable(db))) await resyncQuoteApprovals(db, legacyCtx(a.orgId, a.userId, a.email, a.tier === "admin"), quoteId, { quiet: true }).catch(() => undefined);
     const q = await loadQuote(db, a.orgId, quoteId);

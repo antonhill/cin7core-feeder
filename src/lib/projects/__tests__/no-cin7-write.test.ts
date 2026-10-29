@@ -94,8 +94,8 @@ describe("the physical-visibility path can only read", () => {
   });
 });
 
-describe("the read-only Cin7 probe script can only read (see also probe-support.test.ts)", () => {
-  const script = readFileSync(join(ROOT, "scripts/probe-sale-invoices-readonly.mjs"), "utf8");
+describe.each(["probe-sale-invoices-readonly.mjs", "probe-product-costs-readonly.mjs"])("%s: the read-only Cin7 probe script can only read (see also probe-support.test.ts)", (file) => {
+  const script = readFileSync(join(ROOT, "scripts", file), "utf8");
   it("contains no write verbs and a single network function", () => {
     expect(script).not.toMatch(/\b(POST|PUT|PATCH|DELETE)\b/);
     expect(script).not.toMatch(/method:\s*["'](?!GET)/);

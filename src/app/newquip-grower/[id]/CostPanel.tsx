@@ -33,8 +33,8 @@ export function CostPanel({ quoteId, reload }: { quoteId: string; reload?: () =>
 
   return (
     <Panel>
-      <div className="flex flex-wrap items-center gap-2"><PanelTitle>Physical cost estimate (Cin7 latest cost)</PanelTitle>{v.frozen ? <Badge tone="info">Frozen with the approval</Badge> : <Badge tone="neutral">Draft</Badge>}</div>
-      <p className="mt-1 text-xs text-slate-500">Internal. {v.note} A missing cost is never treated as zero, and a manual estimate is always labelled as one.</p>
+      <div className="flex flex-wrap items-center gap-2"><PanelTitle>Margin - Cin7 latest cost basis (physical SKUs)</PanelTitle>{v.frozen ? <Badge tone="info">Frozen with the approval</Badge> : <Badge tone="neutral">Draft</Badge>}</div>
+      <p className="mt-1 text-xs text-slate-500">Internal. This is separate from the workbook-basis margin above; the two are not combined. {v.note} A missing cost is never treated as zero, and a manual estimate is always labelled as one.</p>
       {error && <div className="mt-2"><Alert tone="danger">{error}</Alert></div>}
       {note && <div className="mt-2"><Alert tone="success">{note}</Alert></div>}
       {v.canCapture && <div className="mt-2"><Button size="sm" disabled={busy} loading={busy} onClick={() => run(() => captureLatestCostsAction(quoteId), "Latest costs read from Cin7 (read-only). The estimator's sign-off, if any, must be given again on the new costs.")}>Capture latest costs from Cin7</Button></div>}

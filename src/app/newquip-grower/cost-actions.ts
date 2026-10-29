@@ -6,6 +6,7 @@
 // Only async functions and erased types are exported.
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
+import { canSeeCosts } from "@/lib/approvals/role-store";
 import { logActivity } from "@/lib/activity-log";
 import { createServiceRoleClient } from "@/supabase/server";
 import { QUOTES_MODULE } from "@/app/module-nav";
@@ -34,7 +35,7 @@ async function actor() {
   const access = await requireModuleAccess(QUOTES_MODULE.href);
   let admin = false;
   try { await requireOrgAdmin("see and capture NewQuip costs"); admin = true; } catch { admin = false; } // fail closed
-  if (!admin) throw new Error("Costs are internal: only an organisation owner or admin can see or capture them.");
+  if (!(await canSeeCosts(createServiceRoleClient(), orgId, access.userId, admin))) throw new Error("Costs are internal: only an organisation owner/admin, or someone given the Estimator or Manager role, can see or capture them.");
   return { orgId, userId: access.userId, email: access.email ?? "unknown" };
 }
 

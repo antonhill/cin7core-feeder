@@ -29,7 +29,7 @@ import * as roleActions from "../role-actions";
 import * as growerActions from "@/app/newquip-grower/actions";
 
 const ORG = "org-nq";
-const EMAILS: Record<string, string> = { "u-rep": "rep@a", "u-est": "est@a", "u-mgr": "mgr@a", "u-adm": "adm@a" };
+const EMAILS: Record<string, string> = { "u-rep": "rep@a", "u-est": "est@a", "u-mgr": "mgr@a", "u-adm": "adm@a", "u-buyer": "buyer@a", "u-plain": "plain@a" };
 const draft = applyDemoDefaults(emptyDraft()).draft;
 const total = Math.round(evaluateDraft(draft, { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true }).budget!.totals.subtotalExTax * 100);
 
@@ -77,6 +77,35 @@ describe("roles administration actions", () => {
     expect(v.canAdminister).toBe(false);
     expect(v.history).toEqual([]);
     expect(v.users.map((u) => u.email)).toEqual(["adm@a", "est@a", "mgr@a", "rep@a"]);
+  });
+});
+
+describe("who may see estimated costs and margins", () => {
+  it("an explicit Estimator or Manager (even a plain org member) can; a salesperson, a buyer, a bare Administrator and a member with no explicit role cannot", async () => {
+    db.rows("org_members").push({ org_id: ORG, user_id: "u-buyer", role: "member" }, { org_id: ORG, user_id: "u-plain", role: "member" });
+    db.rows("org_functional_roles").push({ id: "r-buyer", org_id: ORG, user_id: "u-buyer", user_email: "buyer@a", role: "PROCUREMENT", assigned_by_email: "x", assigned_at: "t" });
+    const sees = async (u: string, admin = false) => { as(u, admin); return (await growerActions.getGrowerViewerAction()).data!.canViewCommercials; };
+    expect(await sees("u-est")).toBe(true);          // explicit Estimator, org member
+    expect(await sees("u-mgr")).toBe(true);          // explicit Manager
+    expect(await sees("u-adm", true)).toBe(true);    // organisation owner/admin
+    expect(await sees("u-rep")).toBe(false);         // salesperson
+    expect(await sees("u-buyer")).toBe(false);       // Procurement sees purchasing targets, never the margins
+    expect(await sees("u-adm")).toBe(false);         // an explicit Administrator role alone is not cost access
+    expect(await sees("u-plain")).toBe(false);       // the Phase H tier fallback (member = estimator) must NOT leak cost
+  });
+  it("before migration 0112 nothing changes: only owner/admin see cost, exactly as in Phase H", async () => {
+    db.rolesApplied = false;
+    const sees = async (u: string, admin = false) => { as(u, admin); return (await growerActions.getGrowerViewerAction()).data!.canViewCommercials; };
+    expect(await sees("u-est")).toBe(false);
+    expect(await sees("u-adm", true)).toBe(true);
+  });
+  it("the cost view is redacted for those who cannot see it, and an explicit estimator receives the cost-visible evaluation", async () => {
+    as("u-rep", false);
+    const hidden = (await growerActions.getGrowerQuoteAction("q1")).data!;
+    expect(hidden.viewer.canViewCommercials).toBe(false);
+    expect(JSON.stringify(hidden.quote)).not.toMatch(/physicalCosts|costOverrides|internalMargin/);
+    as("u-est", false);
+    expect((await growerActions.getGrowerQuoteAction("q1")).data!.viewer.canViewCommercials).toBe(true);
   });
 });
 
