@@ -170,6 +170,22 @@ describe("content changes invalidate the right sign-off", () => {
   });
 });
 
+describe("stale submissions are refused by the application as well as the database", () => {
+  it("content re-signed outside the engine leaves the manager's request stale: it cannot be approved, and a wrong version/digest is named as such", async () => {
+    const db = world();
+    await openEstimatorStage(db);
+    await decideDocument(db as never, EST, "QUOTE", "q1", "APPROVE", { stage: "ESTIMATOR" });
+    const m = (await pendingRequestFor(db as never, ORG, "QUOTE", "q1"))!;
+    // the reviewing manager's screen is older than the request
+    await expect(decide(db as never, MGR, m.id, "APPROVE", { expectedVersion: m.version - 1, expectedDigest: m.digest })).rejects.toThrow(/changed while you were reviewing/);
+    await expect(decide(db as never, MGR, m.id, "APPROVE", { expectedVersion: m.version, expectedDigest: "0".repeat(64) })).rejects.toThrow(/changed while you were reviewing/);
+    // the content changes and is re-signed WITHOUT going through the engine (the quote is signed again, so it would look approvable): the old request is stale
+    quote(db).draft_hash = "h2"; quote(db).estimator_signoff_hash = "h2";
+    await expect(decide(db as never, MGR, m.id, "APPROVE", dArgs(m))).rejects.toThrow(/changed since it was submitted/);
+    expect(quote(db).state).toBe("ESTIMATOR_REVIEW");
+  });
+});
+
 describe("named approvers, roles and separation of duties", () => {
   it("a policy can name the approver of a stage: only that person may decide, and others must be reassigned first", async () => {
     const db = world();
