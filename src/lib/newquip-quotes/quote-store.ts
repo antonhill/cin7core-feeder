@@ -111,6 +111,32 @@ export async function saveDraft(db: Db, orgId: string, roles: ReadonlySet<QuoteR
   return { draftHash, signoffCleared: clearSignoff };
 }
 
+/**
+ * The customer on an EDITABLE quotation changed (or was cleared). Only the customer name is rewritten: scope, packages and pricing are untouched. Anything that was
+ * given for the PREVIOUS customer no longer applies: the estimator's sign-off is withdrawn and, in estimator review, the customer's confirmed amount is cleared and the
+ * quotation goes back to the Rep as a new revision (so the new customer must confirm before it is handed off again). A REP_DRAFT has no confirmation yet.
+ */
+export async function applyCustomerChange(
+  db: Db, orgId: string, quoteId: string, customerName: string, previousCustomer: boolean,
+): Promise<{ returnedToRep: boolean; signoffCleared: boolean; confirmationCleared: boolean }> {
+  const q = await mustLoad(db, orgId, quoteId);
+  if (q.state === "MANAGER_APPROVED_FINAL") fail("The customer details of an approved quotation are immutable. Start a new quotation for a different customer.");
+  // First Cin7 selection that merely confirms the customer already named on the quotation: nothing given for a different customer, so nothing to withdraw.
+  if (!previousCustomer && (q.customer_name ?? "").trim() === customerName.trim()) return { returnedToRep: false, signoffCleared: false, confirmationCleared: false };
+  const draft = { ...q.draft, customerName } as QuoteDraft;
+  const inReview = q.state === "ESTIMATOR_REVIEW";
+  const signoffCleared = q.estimator_signoff_hash != null;
+  const confirmationCleared = q.customer_confirmed_cents != null || q.customer_confirmed_by != null;
+  const r = await db.from("newquip_quotes").update({
+    draft, draft_hash: hashOf(draft), customer_name: customerName,
+    estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null,
+    ...(inReview ? { state: "REP_DRAFT", revision: q.revision + 1, customer_confirmed_cents: null, customer_confirmed_by: null, customer_confirmed_at: null, handoff_by_email: null } : {}),
+  }).eq("org_id", orgId).eq("id", quoteId).eq("state", q.state).select("id");
+  if (r.error) fail(r.error.message);
+  if (!r.data || r.data.length === 0) fail("The quotation changed while updating the customer; refresh and try again.");
+  return { returnedToRep: inReview, signoffCleared, confirmationCleared };
+}
+
 // ── workflow ────────────────────────────────────────────────────────────────
 
 /** Rep → Estimator. Records the customer's confirmation of the commercial amount. */

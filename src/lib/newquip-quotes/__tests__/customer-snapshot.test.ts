@@ -45,8 +45,11 @@ describe("customer snapshot", () => {
     const a = withChosenContact(s, { source: "CIN7_CONTACT", contactIndex: 0 });
     expect(a.chosenContact).toEqual({ source: "CIN7_CONTACT", name: "Piet", email: "piet@boerdery.co.za", phone: "021 555" });
     expect(() => withChosenContact(s, { source: "CIN7_CONTACT", contactIndex: 1 })).toThrow(/no email address/);
-    const b = withChosenContact(s, { source: "CIN7_CONTACT", contactIndex: 1, email: "sarie@boerdery.co.za" });
-    expect(b.chosenContact).toMatchObject({ name: "Sarie", email: "sarie@boerdery.co.za", phone: "082 555" });
+    // an email Cin7 does not hold (missing or invalid) needs an audited reason; it is used on the quotation only
+    expect(() => withChosenContact(s, { source: "CIN7_CONTACT", contactIndex: 1, email: "sarie@boerdery.co.za" })).toThrow(/reason/);
+    const b = withChosenContact(s, { source: "CIN7_CONTACT", contactIndex: 1, email: "sarie@boerdery.co.za", correctionReason: "no email in Cin7" });
+    expect(b.chosenContact).toMatchObject({ name: "Sarie", email: "sarie@boerdery.co.za", phone: "082 555", emailCorrection: { cin7Email: null, reason: "no email in Cin7" } });
+    expect(s.contacts[1].email.state).not.toBe("present"); // the snapshot's Cin7 data is not altered
     expect(() => withChosenContact(s, { source: "CIN7_CONTACT", contactIndex: 5 })).toThrow(/not on the Cin7/);
     expect(() => withChosenContact(s, { source: "ENTERED", name: "A", email: "a@b.co" })).toThrow(/name/);
     for (const bad of ["a@b", "a b@c.co", "a@b.co, c@d.co", "@b.co", "a@b.c", "<a@b.co>"]) expect(isValidEmail(bad), bad).toBe(false);

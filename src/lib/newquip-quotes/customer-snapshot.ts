@@ -21,6 +21,8 @@ export interface ChosenContact {
   name: string;
   email: string;
   phone: string | null;
+  /** Set when the Rep corrected an invalid/missing Cin7 contact email FOR THIS QUOTATION ONLY: what Cin7 holds, and why it was corrected. Never written to Cin7. */
+  emailCorrection?: { cin7Email: string | null; reason: string };
 }
 export interface CustomerSnapshot {
   schemaVersion: 1;
@@ -71,7 +73,7 @@ export function buildCustomerSnapshot(raw: Record<string, unknown>, readAt: stri
   };
 }
 
-export type ContactChoice = { source: "CIN7_CONTACT"; contactIndex: number; email?: string } | { source: "ENTERED"; name: string; email: string; phone?: string };
+export type ContactChoice = { source: "CIN7_CONTACT"; contactIndex: number; email?: string; correctionReason?: string } | { source: "ENTERED"; name: string; email: string; phone?: string };
 
 /** Applies and validates the Rep's quotation contact choice. Returns a NEW snapshot (the input is not mutated). */
 export function withChosenContact(s: CustomerSnapshot, choice: ContactChoice): CustomerSnapshot {
@@ -85,9 +87,14 @@ export function withChosenContact(s: CustomerSnapshot, choice: ContactChoice): C
   if (!c) throw new Error("That contact is not on the Cin7 customer record.");
   const name = fieldValue(c.name);
   if (!name) throw new Error("That Cin7 contact has no name; enter the contact instead.");
-  const email = (choice.email ?? fieldValue(c.email) ?? "").trim();
-  if (!isValidEmail(email)) throw new Error(fieldValue(c.email) ? "The contact's email address is not valid." : "That Cin7 contact has no email address; enter one for this quotation.");
-  return { ...s, chosenContact: { source: "CIN7_CONTACT", name, email, phone: fieldValue(c.phone) ?? fieldValue(c.mobile) } };
+  const cin7Email = fieldValue(c.email);
+  const email = (choice.email ?? cin7Email ?? "").trim();
+  if (!isValidEmail(email)) throw new Error(cin7Email ? "The contact's email address is not valid. Correct it for this quotation (Cin7 is not changed)." : "That Cin7 contact has no email address; enter one for this quotation.");
+  const phone = fieldValue(c.phone) ?? fieldValue(c.mobile);
+  if (cin7Email && email.toLowerCase() === cin7Email.toLowerCase()) return { ...s, chosenContact: { source: "CIN7_CONTACT", name, email, phone } };
+  const reason = (choice.correctionReason ?? "").trim();
+  if (reason.length < 5) throw new Error("Give a reason (at least 5 characters) for using a different email address than Cin7 holds. Cin7 is not changed.");
+  return { ...s, chosenContact: { source: "CIN7_CONTACT", name, email, phone, emailCorrection: { cin7Email, reason } } };
 }
 
 export type CurrencyStatus = { status: "ZAR" } | { status: "MISSING"; message: string } | { status: "INCOMPATIBLE"; currency: string; message: string };

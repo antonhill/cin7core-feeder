@@ -145,6 +145,13 @@ export default function QuoteEditorPage() {
     const r = applyDemoDefaults(draft!);
     setDraft(r.draft); setDirty(true); setConfirmDemo(false); setDemoLoaded(r.replaced); setNotice(null); setError(null);
   }
+  // The server already rewrote the customer name (and, from estimator review, returned the quotation to the Rep). Reload the quotation; unsaved local edits are kept.
+  const onCustomerChanged = (name: string) => {
+    void getGrowerQuoteAction(id).then((r) => {
+      if (!r.ok || !r.data) return;
+      if (dirty) { setView(r.data); edit((d) => { d.customerName = name; }); } else adopt(r.data);
+    });
+  };
   const edit = (fn: (d: QuoteDraft) => void) => { setDraft((p) => { const n = structuredClone(p!); fn(n); return n; }); setDirty(true); };
   const num = (v: number | null) => v ?? 0;
 
@@ -256,7 +263,7 @@ export default function QuoteEditorPage() {
                 </select>
               </label>
             </div>
-            <CustomerPanel quoteId={id} editable={editable} onPicked={(name) => edit((d) => { d.customerName = name; })} />
+            <CustomerPanel quoteId={id} editable={editable} onPicked={onCustomerChanged} />
           </Panel>
 
           <Panel>

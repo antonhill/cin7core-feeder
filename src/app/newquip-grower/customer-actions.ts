@@ -6,9 +6,9 @@
 import { authoriseActor, auditActor, errText, ownerEmailOf, type Actor, type Db } from "./actor";
 import { createServiceRoleClient } from "@/supabase/server";
 import { canEditDraft } from "@/newquip/quote/workflow";
-import { loadQuote } from "@/lib/newquip-quotes/quote-store";
+import { applyCustomerChange, loadQuote } from "@/lib/newquip-quotes/quote-store";
 import { readCin7Customer, searchSyncedCustomers, type CustomerHit } from "@/lib/newquip-customers/cin7-customer-read";
-import { appendSnapshot, customerFeaturesAvailable, latestSnapshot, snapshotHistory } from "@/lib/newquip-quotes/customer-store";
+import { appendClearMarker, appendSnapshot, customerFeaturesAvailable, latestSnapshot, isClearedRow, snapshotHistory } from "@/lib/newquip-quotes/customer-store";
 import { buildCustomerSnapshot, currencyStatus, diffSnapshots, snapshotIssues, withChosenContact, type ContactChoice, type CurrencyStatus, type CustomerSnapshot } from "@/lib/newquip-quotes/customer-snapshot";
 
 export interface CustomerActionResult<T> { ok: boolean; error?: string; data?: T }
@@ -21,7 +21,11 @@ export interface QuoteCustomerView {
   issues: string[];
   currency: CurrencyStatus | null;
   editable: boolean;
-  history: Array<{ seq: number; by: string; at: string; reason: string }>;
+  /** Why the customer cannot be changed (approved/issued quotation, or the viewer is not a Rep); null while it can. */
+  lockedReason: string | null;
+  /** Changing or clearing the customer now would send the quotation back from estimator review to the Rep (the customer's confirmed amount no longer applies). */
+  changeReturnsToRep: boolean;
+  history: Array<{ seq: number; by: string; at: string; reason: string; cleared: boolean }>;
 }
 
 async function editableQuote(a: Actor, db: Db, quoteId: string) {
@@ -35,12 +39,14 @@ async function editableQuote(a: Actor, db: Db, quoteId: string) {
 async function viewOf(db: Db, a: Actor, quoteId: string): Promise<QuoteCustomerView> {
   const q = await loadQuote(db, a.orgId, quoteId);
   if (!q) throw new Error("Quote not found.");
-  if (!(await customerFeaturesAvailable(db))) return { available: false, snapshot: null, snapshotId: null, seq: null, issues: [], currency: null, editable: false, history: [] };
+  if (!(await customerFeaturesAvailable(db))) return { available: false, snapshot: null, snapshotId: null, seq: null, issues: [], currency: null, editable: false, lockedReason: null, changeReturnsToRep: false, history: [] };
   const [s, hist] = await Promise.all([latestSnapshot(db, a.orgId, quoteId), snapshotHistory(db, a.orgId, quoteId)]);
   return {
     available: true, snapshot: s?.snapshot ?? null, snapshotId: s?.id ?? null, seq: s?.seq ?? null, issues: s ? snapshotIssues(s.snapshot) : ["Select the customer from Cin7."],
     currency: s ? currencyStatus(s.snapshot) : null, editable: a.roles.has("rep") && canEditDraft(a.roles, q.state),
-    history: hist.map((h) => ({ seq: h.seq, by: h.captured_by_email, at: h.created_at, reason: h.reason })),
+    lockedReason: q.state === "MANAGER_APPROVED_FINAL" ? "This quotation is approved, so its customer cannot be changed. Start a new quotation (or a variation) for a different customer." : !a.roles.has("rep") ? "Only a Rep can change the customer." : null,
+    changeReturnsToRep: q.state === "ESTIMATOR_REVIEW",
+    history: hist.map((h) => ({ seq: h.seq, by: h.captured_by_email, at: h.created_at, reason: h.reason, cleared: isClearedRow(h) })),
   };
 }
 
@@ -60,8 +66,12 @@ export async function searchQuoteCustomersForQuoteAction(query: string): Promise
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
 
-/** Selects the Cin7 customer (by exact name) for the quotation: reads Cin7 (GET only) and appends an immutable snapshot. The Rep then chooses the contact. */
-export async function selectQuoteCustomerAction(quoteId: string, customerName: string): Promise<CustomerActionResult<QuoteCustomerView>> {
+/**
+ * Selects the Cin7 customer (by exact name) for the quotation: reads Cin7 (GET only) and appends an immutable snapshot. The Rep then chooses the contact.
+ * REPLACING an already selected, different customer needs `confirmReplace` (enforced here, not just in the dialog): the new snapshot carries no contact from the old
+ * customer, earlier snapshots are kept, and anything given for the previous customer (estimator sign-off, the customer's confirmed amount) is withdrawn.
+ */
+export async function selectQuoteCustomerAction(quoteId: string, customerName: string, confirmReplace = false): Promise<CustomerActionResult<QuoteCustomerView>> {
   try {
     const a = await authoriseActor();
     const db = createServiceRoleClient();
@@ -70,8 +80,34 @@ export async function selectQuoteCustomerAction(quoteId: string, customerName: s
     const raw = await readCin7Customer(db, a.orgId, customerName);
     if (!raw) throw new Error("That customer was not found in Cin7. Pick a customer from the search results.");
     const snap = buildCustomerSnapshot(raw, new Date().toISOString());
-    const stored = await appendSnapshot(db, a.orgId, quoteId, snap, { email: a.email, ownerEmail: ownerEmailOf(a) }, "Customer selected from Cin7");
-    await auditActor(db, a, { action: "newquip.quote_customer_selected", summary: "Selected the Cin7 customer for a NewQuip quotation (read-only; no Cin7 write)", detail: { quoteId, cin7CustomerId: stored.cin7_customer_id, seq: stored.seq } });
+    const cur = await latestSnapshot(db, a.orgId, quoteId);
+    if (cur && cur.snapshot.cin7CustomerId === snap.cin7CustomerId) return { ok: true, data: await viewOf(db, a, quoteId) }; // same customer: nothing to replace
+    if (cur && !confirmReplace) throw new Error("Confirm that you want to replace the current customer on this quotation.");
+    const from = cur ? (cur.snapshot.name.state === "present" ? cur.snapshot.name.value : cur.cin7_customer_id) : null;
+    const to = snap.name.state === "present" ? snap.name.value : customerName;
+    const who = { email: a.email, ownerEmail: ownerEmailOf(a) };
+    const stored = await appendSnapshot(db, a.orgId, quoteId, snap, who, from ? `Customer changed from ${from} to ${to}` : "Customer selected from Cin7");
+    const effect = await applyCustomerChange(db, a.orgId, quoteId, to, cur != null);
+    await auditActor(db, a, cur
+      ? { action: "newquip.quote_customer_changed", summary: "Replaced the Cin7 customer on a NewQuip quotation (read-only; no Cin7 write)", detail: { quoteId, fromCin7CustomerId: cur.cin7_customer_id, toCin7CustomerId: stored.cin7_customer_id, seq: stored.seq, ...effect } }
+      : { action: "newquip.quote_customer_selected", summary: "Selected the Cin7 customer for a NewQuip quotation (read-only; no Cin7 write)", detail: { quoteId, cin7CustomerId: stored.cin7_customer_id, seq: stored.seq, ...effect } });
+    return { ok: true, data: await viewOf(db, a, quoteId) };
+  } catch (e) { return { ok: false, error: errText(e) }; }
+}
+
+/** Clears the customer selection of an EDITABLE quotation: appends a "cleared" marker (history kept), blanks the customer name, withdraws sign-off / confirmation. Needs `confirm`. */
+export async function clearQuoteCustomerAction(quoteId: string, confirm: boolean): Promise<CustomerActionResult<QuoteCustomerView>> {
+  try {
+    const a = await authoriseActor();
+    const db = createServiceRoleClient();
+    await editableQuote(a, db, quoteId);
+    const cur = await latestSnapshot(db, a.orgId, quoteId);
+    if (!cur) throw new Error("No customer is selected on this quotation.");
+    if (!confirm) throw new Error("Confirm that you want to clear the customer on this quotation.");
+    const from = cur.snapshot.name.state === "present" ? cur.snapshot.name.value : cur.cin7_customer_id;
+    const marker = await appendClearMarker(db, a.orgId, quoteId, { email: a.email, ownerEmail: ownerEmailOf(a) }, `Customer cleared (was ${from})`);
+    const effect = await applyCustomerChange(db, a.orgId, quoteId, "", true);
+    await auditActor(db, a, { action: "newquip.quote_customer_cleared", summary: "Cleared the customer on a NewQuip quotation (local only; Cin7 unchanged)", detail: { quoteId, fromCin7CustomerId: cur.cin7_customer_id, seq: marker.seq, ...effect } });
     return { ok: true, data: await viewOf(db, a, quoteId) };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
@@ -85,8 +121,8 @@ export async function chooseQuoteContactAction(quoteId: string, choice: ContactC
     const cur = await latestSnapshot(db, a.orgId, quoteId);
     if (!cur) throw new Error("Select the customer first.");
     const next = withChosenContact(cur.snapshot, choice);
-    await appendSnapshot(db, a.orgId, quoteId, next, { email: a.email, ownerEmail: ownerEmailOf(a) }, `Quotation contact set (${next.chosenContact?.source === "ENTERED" ? "entered by the Rep" : "Cin7 contact"})`);
-    await auditActor(db, a, { action: "newquip.quote_contact_chosen", summary: "Set the quotation contact and delivery email (local only; Cin7 unchanged)", detail: { quoteId, source: next.chosenContact?.source, email: next.chosenContact?.email } });
+    await appendSnapshot(db, a.orgId, quoteId, next, { email: a.email, ownerEmail: ownerEmailOf(a) }, `Quotation contact set (${next.chosenContact?.source === "ENTERED" ? "entered by the Rep" : next.chosenContact?.emailCorrection ? `Cin7 contact, email corrected for this quotation: ${next.chosenContact.emailCorrection.reason}` : "Cin7 contact"})`);
+    await auditActor(db, a, { action: "newquip.quote_contact_chosen", summary: "Set the quotation contact and delivery email (local only; Cin7 unchanged)", detail: { quoteId, source: next.chosenContact?.source, email: next.chosenContact?.email, ...(next.chosenContact?.emailCorrection ? { cin7Email: next.chosenContact.emailCorrection.cin7Email, correctionReason: next.chosenContact.emailCorrection.reason } : {}) } });
     return { ok: true, data: await viewOf(db, a, quoteId) };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
@@ -109,7 +145,7 @@ export async function refreshQuoteCustomerAction(quoteId: string, apply: boolean
     let applied = false;
     if (apply && changes.length > 0) {
       const keep = cur.snapshot.chosenContact;
-      const stillThere = keep && (keep.source === "ENTERED" || fresh.contacts.some((c) => c.email.state === "present" && c.email.value.toLowerCase() === keep.email.toLowerCase()));
+      const stillThere = keep && (keep.source === "ENTERED" || keep.emailCorrection != null || fresh.contacts.some((c) => c.email.state === "present" && c.email.value.toLowerCase() === keep.email.toLowerCase()));
       await appendSnapshot(db, a.orgId, quoteId, { ...fresh, chosenContact: stillThere ? keep : null }, { email: a.email, ownerEmail: ownerEmailOf(a) }, "Refreshed from Cin7");
       await auditActor(db, a, { action: "newquip.quote_customer_refreshed", summary: "Refreshed the customer snapshot from Cin7 (read-only; no Cin7 write)", detail: { quoteId, changes: changes.map((c) => c.field) } });
       applied = true;
