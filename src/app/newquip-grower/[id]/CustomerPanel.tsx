@@ -23,6 +23,7 @@ export function CustomerPanel({ quoteId, editable, onPicked }: { quoteId: string
   const [label, setLabel] = useState<string | null>(null);
   const busy = label !== null;
   const [searched, setSearched] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [picking, setPicking] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<CustomerHit[]>([]);
@@ -39,7 +40,7 @@ export function CustomerPanel({ quoteId, editable, onPicked }: { quoteId: string
   }, [quoteId]);
 
   const run = async (fn: () => Promise<{ ok: boolean; error?: string; data?: QuoteCustomerView }>, what = "Saving…") => {
-    setLabel(what); setErr(null);
+    setLabel(what); setErr(null); setNotice(null);
     try { const r = await fn(); if (r.ok && r.data) { setV(r.data); setDiff(null); } else setErr(r.error ?? "Failed."); } catch { setErr("Something went wrong. Please try again."); } finally { setLabel(null); setPicking(null); }
   };
   const search = async () => {
@@ -135,21 +136,30 @@ export function CustomerPanel({ quoteId, editable, onPicked }: { quoteId: string
       {s && v.editable && editable && (
         <div className="space-y-2">
           <p className="text-sm font-medium text-slate-700">Quotation contact and delivery email</p>
-          <div className="flex flex-wrap gap-2">
+          <div className={`rounded-md border p-2 text-sm ${s.chosenContact ? "border-emerald-300 bg-emerald-50" : "border-amber-300 bg-amber-50"}`} data-testid="selected-contact" aria-live="polite">
+            {s.chosenContact
+              ? <><b>Selected: {s.chosenContact.name}</b> &lt;{s.chosenContact.email}&gt; — the quotation is addressed, and the send dialog defaults, to this contact.</>
+              : "No contact selected yet. Pick one of the Cin7 contacts below."}
+            {notice && <span className="ml-2 text-emerald-700">{notice}</span>}
+          </div>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Cin7 contacts">
             {s.contacts.map((c, i) => {
               const em = fieldValue(c.email);
               const bad = !em || !isValidEmail(em);
+              const on = v.selectedContactIndex === i;
+              const cls = on ? "ring-2 ring-emerald-500 border-emerald-500 bg-emerald-50" : "";
               return bad ? (
-                <Button key={i} type="button" variant="secondary" disabled={busy} onClick={() => setFix({ index: i, email: em ?? "", reason: "" })}>
-                  {show(c.name)} · {show(c.email)} — correct email for this quotation
+                <Button key={i} type="button" variant="secondary" className={cls} aria-pressed={on} disabled={busy} onClick={() => setFix({ index: i, email: em ?? "", reason: "" })}>
+                  {on && "✓ Selected · "}{show(c.name)} · {show(c.email)} — correct email for this quotation
                 </Button>
               ) : (
-                <Button key={i} type="button" variant="secondary" disabled={busy} onClick={() => void run(() => chooseQuoteContactAction(quoteId, { source: "CIN7_CONTACT", contactIndex: i }))}>
-                  {show(c.name)} · {show(c.email)}
+                <Button key={i} type="button" variant="secondary" className={cls} aria-pressed={on} disabled={busy} loading={picking === `contact-${i}`}
+                  onClick={() => { setPicking(`contact-${i}`); setNotice(null); void run(async () => { const r = await chooseQuoteContactAction(quoteId, { source: "CIN7_CONTACT", contactIndex: i }); if (r.ok) setNotice(`Contact set to ${show(c.name)}.`); return r; }, "Saving the quotation contact…"); }}>
+                  {on && "✓ Selected · "}{show(c.name)} · {show(c.email)}
                 </Button>
               );
             })}
-            {s.contacts.length === 0 && <span className="text-sm text-slate-500">Cin7 holds no contacts for this customer; enter one below.</span>}
+            {s.contacts.length === 0 && <span className="text-sm text-slate-500">Cin7 holds no contacts for this customer; add one below.</span>}
           </div>
           {fix && (
             <div className="flex flex-wrap items-end gap-2 rounded-md border border-amber-300 bg-amber-50 p-2" data-testid="email-fix">
@@ -160,13 +170,16 @@ export function CustomerPanel({ quoteId, editable, onPicked }: { quoteId: string
               <p className="w-full text-xs text-slate-600">Used on this quotation only and recorded with your reason. The Cin7 contact is not changed.</p>
             </div>
           )}
-          <div className="flex flex-wrap items-end gap-2">
+          <fieldset className="space-y-2 rounded-md border border-slate-200 p-2">
+            <legend className="px-1 text-sm font-medium text-slate-700">Add or correct contact</legend>
+            <div className="flex flex-wrap items-end gap-2">
             <input className={inputCls} placeholder="Contact name" value={entered.name} onChange={(e) => setEntered({ ...entered, name: e.target.value })} />
             <input className={inputCls} placeholder="Delivery email" value={entered.email} onChange={(e) => setEntered({ ...entered, email: e.target.value })} />
             <input className={inputCls} placeholder="Phone (optional)" value={entered.phone} onChange={(e) => setEntered({ ...entered, phone: e.target.value })} />
             <Button type="button" variant="secondary" disabled={busy} onClick={() => void run(() => chooseQuoteContactAction(quoteId, { source: "ENTERED", ...entered }))}>Use this contact</Button>
-          </div>
-          <p className="text-xs text-slate-500">Entered contacts are validated and audited. They are used on this quotation only and are never written to Cin7.</p>
+            </div>
+            <p className="text-xs text-slate-500">Separate from the Cin7 contacts above. Entered contacts are validated and audited, used on this quotation only, and never written to Cin7.</p>
+          </fieldset>
           <div className="flex items-center gap-2">
             <Button type="button" variant="secondary" disabled={busy} loading={label === "Checking Cin7 for changes…"} onClick={() => void preview(false)}>Check Cin7 for changes</Button>
             {diff && diff.changes.length > 0 && !diff.applied && <Button type="button" disabled={busy} onClick={() => void preview(true)}>Apply {diff.changes.length} change{diff.changes.length === 1 ? "" : "s"}</Button>}

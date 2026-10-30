@@ -28,6 +28,7 @@ vi.mock("@/lib/newquip-quotes/document-store", async (orig) => {
 });
 import * as documents from "../document-actions";
 import * as delivery from "../delivery-actions";
+import * as customer from "../customer-actions";
 import { GET as download } from "@/app/api/newquip-quote-documents/[id]/route";
 
 const PROFILE = { brandName: "TestBrand", legalName: "Test Company (Pty) Ltd", registrationNumber: "0000/000000/00", vatNumber: "0000000000", addressLines: ["1 Test Street", "Testville 0001"], phone: "000", email: "sales@testbrand.example", website: "", validityDays: 30, paymentTerms: "p", deliveryInstallationConditions: "d", termsAndConditions: "t", acceptanceInstructions: "a" };
@@ -132,5 +133,34 @@ describe("authenticated download route", () => {
     expect((await call("../../etc/passwd")).status).toBe(404);
     db.rows("newquip_quote_documents")[0].org_id = "org-b";
     expect((await call(issued.data!.documentId)).status).toBe(404);
+  });
+});
+
+describe("the selected Cin7 contact is the recipient", () => {
+  it("select first contact, switch to the second, reopen, approve, issue: the PDF is addressed to the second contact and the send dialog defaults to it; the email goes there; changes after approval are refused", async () => {
+    // a Spark customer with two Cin7 contacts, still a draft with no contact chosen
+    db.rows("newquip_quote_customers").length = 0;
+    db.rows("newquip_quote_customers").push({ id: "s0", org_id: "org-a", quote_id: "q1", seq: 1, cin7_customer_id: "cs", snapshot_hash: "h", captured_by_email: "rep@x.co", reason: "Customer selected from Cin7",
+      snapshot: buildCustomerSnapshot({ ID: "cs", Name: "Boerdery (Pty) Ltd", Currency: "ZAR", Addresses: [{ Type: "Billing", Line1: "PO Box 1", DefaultForType: true }], Contacts: [{ Name: "AJ Mbulo", Email: "testing@sparkconsulting.co.za" }, { Name: "Anton Hill", Email: "anton@sparkconsulting.co.za" }] }, "t") });
+    const quote = db.rows("newquip_quotes")[0]; const approved = { ...quote }; quote.state = "REP_DRAFT";
+    as(["REP"]);
+    expect((await customer.chooseQuoteContactAction("q1", { source: "CIN7_CONTACT", contactIndex: 0 })).data!.snapshot!.chosenContact!.email).toBe("testing@sparkconsulting.co.za");
+    expect((await customer.chooseQuoteContactAction("q1", { source: "CIN7_CONTACT", contactIndex: 1 })).data!.snapshot!.chosenContact!.email).toBe("anton@sparkconsulting.co.za");
+    expect((await customer.getQuoteCustomerAction("q1")).data!.snapshot!.chosenContact!.name).toBe("Anton Hill"); // reopened
+    Object.assign(quote, approved); // Manager approval (frozen baseline)
+    as(["REP", "MANAGER"], { admin: true }); await documents.saveCompanyProfileAction(PROFILE);
+    const issued = await documents.issueQuoteDocumentAction("q1");
+    expect(issued.error).toBeUndefined();
+    as(["REP"]);
+    const view = (await delivery.getQuoteDeliveryAction("q1")).data!;
+    expect(view.defaultTo).toBe("anton@sparkconsulting.co.za");
+    expect(view.contactEmails).toEqual(expect.arrayContaining(["testing@sparkconsulting.co.za", "anton@sparkconsulting.co.za"]));
+    const sent = await delivery.sendQuoteToCustomerAction("q1", { documentId: issued.data!.documentId, to: [view.defaultTo!], message: "", idempotencyKey: "key-contact-0001" });
+    expect(sent.ok).toBe(true);
+    expect(vi.mocked(sendEmail).mock.calls.at(-1)![0]).toMatchObject({ to: ["anton@sparkconsulting.co.za"] });
+    expect(db.rows("newquip_quote_sends")[0].to_emails).toEqual(["anton@sparkconsulting.co.za"]);
+    // no contact change once approved
+    expect((await customer.chooseQuoteContactAction("q1", { source: "CIN7_CONTACT", contactIndex: 0 })).error).toMatch(/immutable/);
+    expect((await delivery.getQuoteDeliveryAction("q1")).data!.defaultTo).toBe("anton@sparkconsulting.co.za");
   });
 });

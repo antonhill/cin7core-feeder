@@ -292,3 +292,65 @@ describe("changing and clearing the customer on an editable quotation", () => {
     expect(none.data!.snapshot!.chosenContact).toMatchObject({ name: "Anna", email: "anna@boerdery.co.za", emailCorrection: { cin7Email: null } });
   });
 });
+
+describe("choosing between the Cin7 contacts", () => {
+  const TWO = { ...RAW, Name: "Spark", ID: "cin7-s", Contacts: [{ Name: "AJ Mbulo", Email: "testing@sparkconsulting.co.za", Phone: "083" }, { Name: "Anton Hill", Email: "anton@sparkconsulting.co.za", Phone: "082" }] };
+  beforeEach(() => { vi.mocked(readCin7Customer).mockResolvedValue(TWO as never); });
+  const chosen = (v: { snapshot: { chosenContact: { name: string; email: string } | null } | null }) => v.snapshot?.chosenContact ? [v.snapshot.chosenContact.name, v.snapshot.chosenContact.email] : null;
+
+  it("first contact -> second contact -> page refresh: each click persists, the view names and highlights the active contact, the other stays available, history keeps the prior choice", async () => {
+    quote({ customer_name: "Spark" });
+    await actions.selectQuoteCustomerAction("q1", "Spark");
+    const a = await actions.chooseQuoteContactAction("q1", { source: "CIN7_CONTACT", contactIndex: 0 });
+    expect(chosen(a.data!)).toEqual(["AJ Mbulo", "testing@sparkconsulting.co.za"]);
+    expect(a.data!.selectedContactIndex).toBe(0);
+    const b = await actions.chooseQuoteContactAction("q1", { source: "CIN7_CONTACT", contactIndex: 1 });
+    expect(chosen(b.data!)).toEqual(["Anton Hill", "anton@sparkconsulting.co.za"]);
+    expect(b.data!.selectedContactIndex).toBe(1);
+    expect(b.data!.snapshot!.contacts.map((c) => (c.name as { value: string }).value)).toEqual(["AJ Mbulo", "Anton Hill"]); // both stay choosable
+    // "refresh / reopen": a brand-new read of the saved state
+    const again = await actions.getQuoteCustomerAction("q1");
+    expect(chosen(again.data!)).toEqual(["Anton Hill", "anton@sparkconsulting.co.za"]);
+    expect(again.data!.selectedContactIndex).toBe(1);
+    // switching back works too, and the prior selection is in the append-only history
+    const c = await actions.chooseQuoteContactAction("q1", { source: "CIN7_CONTACT", contactIndex: 0 });
+    expect(c.data!.selectedContactIndex).toBe(0);
+    expect(rows().map((r) => (r.snapshot as { chosenContact?: { name: string } }).chosenContact?.name ?? null)).toEqual([null, "AJ Mbulo", "Anton Hill", "AJ Mbulo"]);
+    expect(rows()[2].reason).toBe("Quotation contact changed: AJ Mbulo <testing@sparkconsulting.co.za> → Anton Hill <anton@sparkconsulting.co.za> (Cin7 contact)");
+    expect(rows()[1].reason).toMatch(/^Quotation contact set: AJ Mbulo/);
+    const audit = vi.mocked(logActivity).mock.calls.map((x) => x[1] as { action: string; detail?: Record<string, unknown> }).filter((x) => x.action === "newquip.quote_contact_chosen");
+    expect(audit.at(-2)!.detail).toMatchObject({ email: "anton@sparkconsulting.co.za", previousContact: { name: "AJ Mbulo", email: "testing@sparkconsulting.co.za" } });
+  });
+
+  it("clicking the contact that is already selected changes nothing (no duplicate history row)", async () => {
+    quote(); await actions.selectQuoteCustomerAction("q1", "Spark");
+    await actions.chooseQuoteContactAction("q1", { source: "CIN7_CONTACT", contactIndex: 1 });
+    const n = rows().length;
+    const r = await actions.chooseQuoteContactAction("q1", { source: "CIN7_CONTACT", contactIndex: 1 });
+    expect(r.ok).toBe(true); expect(rows()).toHaveLength(n); expect(r.data!.selectedContactIndex).toBe(1);
+  });
+
+  it("an entered contact is separate: nothing is highlighted among the Cin7 contacts, and Cin7 is never written", async () => {
+    quote(); await actions.selectQuoteCustomerAction("q1", "Spark");
+    await actions.chooseQuoteContactAction("q1", { source: "CIN7_CONTACT", contactIndex: 0 });
+    const r = await actions.chooseQuoteContactAction("q1", { source: "ENTERED", name: "Sarie Venter", email: "sarie@x.co.za" });
+    expect(r.data!.selectedContactIndex).toBeNull();
+    expect(chosen(r.data!)).toEqual(["Sarie Venter", "sarie@x.co.za"]);
+    expect(vi.mocked(readCin7Customer)).toHaveBeenCalledTimes(1); // only the one live GET at selection; contact choices never call Cin7
+  });
+
+  it("after approval a contact cannot be changed (a new revision is required); roles and organisation are enforced", async () => {
+    quote(); await actions.selectQuoteCustomerAction("q1", "Spark");
+    await actions.chooseQuoteContactAction("q1", { source: "CIN7_CONTACT", contactIndex: 0 });
+    const { resolveRoles } = await import("@/lib/approvals/role-store");
+    vi.mocked(resolveRoles).mockResolvedValueOnce(new Set(["ESTIMATOR"]) as never);
+    expect((await actions.chooseQuoteContactAction("q1", { source: "CIN7_CONTACT", contactIndex: 1 })).error).toMatch(/Only a Rep/);
+    db.rows("newquip_quotes")[0].org_id = "org-b";
+    expect((await actions.chooseQuoteContactAction("q1", { source: "CIN7_CONTACT", contactIndex: 1 })).error).toMatch(/not found/i);
+    db.rows("newquip_quotes")[0].org_id = "org-a"; db.rows("newquip_quotes")[0].state = "MANAGER_APPROVED_FINAL";
+    const n = rows().length;
+    expect((await actions.chooseQuoteContactAction("q1", { source: "CIN7_CONTACT", contactIndex: 1 })).error).toMatch(/immutable/);
+    expect(rows()).toHaveLength(n);
+    expect((await actions.getQuoteCustomerAction("q1")).data!.snapshot!.chosenContact!.name).toBe("AJ Mbulo");
+  });
+});

@@ -97,6 +97,21 @@ export function withChosenContact(s: CustomerSnapshot, choice: ContactChoice): C
   return { ...s, chosenContact: { source: "CIN7_CONTACT", name, email, phone, emailCorrection: { cin7Email, reason } } };
 }
 
+/** Which of the snapshot's Cin7 contacts is the chosen quotation contact (by name + the email Cin7 holds, or the corrected one); null for an entered contact or none. */
+export function selectedContactIndex(s: CustomerSnapshot): number | null {
+  const c = s.chosenContact;
+  if (!c || c.source !== "CIN7_CONTACT") return null;
+  const cin7 = (c.emailCorrection ? c.emailCorrection.cin7Email : c.email)?.toLowerCase() ?? null;
+  const i = s.contacts.findIndex((x) => fieldValue(x.name) === c.name && (fieldValue(x.email)?.toLowerCase() ?? null) === cin7);
+  return i >= 0 ? i : null;
+}
+/** Short human label of the chosen contact, for history and audit ("Anton Hill <anton@x>"). */
+export const describeContact = (c: ChosenContact | null): string => (c ? `${c.name} <${c.email}>` : "none");
+/** True when two choices are the same contact and email (so re-clicking it is a no-op, not a new history row). */
+export const sameContact = (a: ChosenContact | null, b: ChosenContact | null): boolean =>
+  !!a && !!b && a.source === b.source && a.name === b.name && a.email.toLowerCase() === b.email.toLowerCase() && (a.phone ?? null) === (b.phone ?? null)
+  && (a.emailCorrection?.reason ?? null) === (b.emailCorrection?.reason ?? null);
+
 export type CurrencyStatus = { status: "ZAR" } | { status: "MISSING"; message: string } | { status: "INCOMPATIBLE"; currency: string; message: string };
 /** POC rule: customer-facing NewQuip quotations are ZAR only. A different currency is rejected, never converted; an absent one is flagged. */
 export function currencyStatus(s: CustomerSnapshot): CurrencyStatus {

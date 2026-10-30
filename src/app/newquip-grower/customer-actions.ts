@@ -9,7 +9,7 @@ import { canEditDraft } from "@/newquip/quote/workflow";
 import { applyCustomerChange, loadQuote } from "@/lib/newquip-quotes/quote-store";
 import { readCin7Customer, searchSyncedCustomers, type CustomerHit } from "@/lib/newquip-customers/cin7-customer-read";
 import { appendClearMarker, appendSnapshot, customerFeaturesAvailable, latestSnapshot, isClearedRow, snapshotHistory } from "@/lib/newquip-quotes/customer-store";
-import { buildCustomerSnapshot, currencyStatus, diffSnapshots, snapshotIssues, withChosenContact, type ContactChoice, type CurrencyStatus, type CustomerSnapshot } from "@/lib/newquip-quotes/customer-snapshot";
+import { buildCustomerSnapshot, currencyStatus, describeContact, diffSnapshots, sameContact, selectedContactIndex, snapshotIssues, withChosenContact, type ContactChoice, type CurrencyStatus, type CustomerSnapshot } from "@/lib/newquip-quotes/customer-snapshot";
 
 export interface CustomerActionResult<T> { ok: boolean; error?: string; data?: T }
 
@@ -20,6 +20,8 @@ export interface QuoteCustomerView {
   seq: number | null;
   issues: string[];
   currency: CurrencyStatus | null;
+  /** Index (in snapshot.contacts) of the chosen Cin7 contact, so the UI can highlight it; null for an entered contact or none. */
+  selectedContactIndex: number | null;
   editable: boolean;
   /** Why the customer cannot be changed (approved/issued quotation, or the viewer is not a Rep); null while it can. */
   lockedReason: string | null;
@@ -39,11 +41,11 @@ async function editableQuote(a: Actor, db: Db, quoteId: string) {
 async function viewOf(db: Db, a: Actor, quoteId: string): Promise<QuoteCustomerView> {
   const q = await loadQuote(db, a.orgId, quoteId);
   if (!q) throw new Error("Quote not found.");
-  if (!(await customerFeaturesAvailable(db))) return { available: false, snapshot: null, snapshotId: null, seq: null, issues: [], currency: null, editable: false, lockedReason: null, changeReturnsToRep: false, history: [] };
+  if (!(await customerFeaturesAvailable(db))) return { available: false, snapshot: null, snapshotId: null, seq: null, issues: [], currency: null, editable: false, lockedReason: null, changeReturnsToRep: false, selectedContactIndex: null, history: [] };
   const [s, hist] = await Promise.all([latestSnapshot(db, a.orgId, quoteId), snapshotHistory(db, a.orgId, quoteId)]);
   return {
     available: true, snapshot: s?.snapshot ?? null, snapshotId: s?.id ?? null, seq: s?.seq ?? null, issues: s ? snapshotIssues(s.snapshot) : ["Select the customer from Cin7."],
-    currency: s ? currencyStatus(s.snapshot) : null, editable: a.roles.has("rep") && canEditDraft(a.roles, q.state),
+    currency: s ? currencyStatus(s.snapshot) : null, selectedContactIndex: s ? selectedContactIndex(s.snapshot) : null, editable: a.roles.has("rep") && canEditDraft(a.roles, q.state),
     lockedReason: q.state === "MANAGER_APPROVED_FINAL" ? "This quotation is approved, so its customer cannot be changed. Start a new quotation (or a variation) for a different customer." : !a.roles.has("rep") ? "Only a Rep can change the customer." : null,
     changeReturnsToRep: q.state === "ESTIMATOR_REVIEW",
     history: hist.map((h) => ({ seq: h.seq, by: h.captured_by_email, at: h.created_at, reason: h.reason, cleared: isClearedRow(h) })),
@@ -121,8 +123,11 @@ export async function chooseQuoteContactAction(quoteId: string, choice: ContactC
     const cur = await latestSnapshot(db, a.orgId, quoteId);
     if (!cur) throw new Error("Select the customer first.");
     const next = withChosenContact(cur.snapshot, choice);
-    await appendSnapshot(db, a.orgId, quoteId, next, { email: a.email, ownerEmail: ownerEmailOf(a) }, `Quotation contact set (${next.chosenContact?.source === "ENTERED" ? "entered by the Rep" : next.chosenContact?.emailCorrection ? `Cin7 contact, email corrected for this quotation: ${next.chosenContact.emailCorrection.reason}` : "Cin7 contact"})`);
-    await auditActor(db, a, { action: "newquip.quote_contact_chosen", summary: "Set the quotation contact and delivery email (local only; Cin7 unchanged)", detail: { quoteId, source: next.chosenContact?.source, email: next.chosenContact?.email, ...(next.chosenContact?.emailCorrection ? { cin7Email: next.chosenContact.emailCorrection.cin7Email, correctionReason: next.chosenContact.emailCorrection.reason } : {}) } });
+    if (sameContact(cur.snapshot.chosenContact, next.chosenContact)) return { ok: true, data: await viewOf(db, a, quoteId) }; // already the quotation contact: no duplicate history row
+    const prev = cur.snapshot.chosenContact;
+    const how = next.chosenContact?.source === "ENTERED" ? "entered by the Rep" : next.chosenContact?.emailCorrection ? `Cin7 contact, email corrected for this quotation: ${next.chosenContact.emailCorrection.reason}` : "Cin7 contact";
+    await appendSnapshot(db, a.orgId, quoteId, next, { email: a.email, ownerEmail: ownerEmailOf(a) }, `Quotation contact ${prev ? "changed" : "set"}: ${prev ? `${describeContact(prev)} → ` : ""}${describeContact(next.chosenContact)} (${how})`);
+    await auditActor(db, a, { action: "newquip.quote_contact_chosen", summary: "Set the quotation contact and delivery email (local only; Cin7 unchanged)", detail: { quoteId, source: next.chosenContact?.source, email: next.chosenContact?.email, previousContact: prev ? { name: prev.name, email: prev.email } : null, ...(next.chosenContact?.emailCorrection ? { cin7Email: next.chosenContact.emailCorrection.cin7Email, correctionReason: next.chosenContact.emailCorrection.reason } : {}) } });
     return { ok: true, data: await viewOf(db, a, quoteId) };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
