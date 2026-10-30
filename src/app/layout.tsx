@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { Geist, Geist_Mono } from "next/font/google";
+import { CUSTOMER_SURFACE_HEADER, CUSTOMER_SURFACE_VALUE } from "@/lib/customer-surface";
 import { AppShell } from "./AppShell";
 import { DemoModeBar } from "./DemoModeBar";
 import TourGuide from "./tour-guide";
@@ -47,6 +49,16 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // The customer-facing response surface (/quote-response, set by middleware): a bare document. No session lookup, no shell, no sidebar, no tour, no Demo bar - the internal
+  // components are never rendered, so nothing of them can reach the HTML or the hydration payload.
+  if ((await headers()).get(CUSTOMER_SURFACE_HEADER) === CUSTOMER_SURFACE_VALUE) {
+    return (
+      <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+        <body className="min-h-screen bg-slate-50">{children}</body>
+      </html>
+    );
+  }
+
   const {
     email,
     isSuperAdmin,

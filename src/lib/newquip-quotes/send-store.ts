@@ -8,7 +8,7 @@ import "server-only";
 //  - the provider result is recorded as ACCEPTED (provider accepted it - NOT proof of inbox delivery or customer receipt) or FAILED; only FAILED can be retried, once at a time.
 import type { createServiceRoleClient } from "@/supabase/server";
 import { sendEmail as resendSend, type SendEmailInput, type SendEmailResult } from "@/lib/email/resend";
-import { applyEmailPolicy, isRestricted, type EmailEnv } from "@/lib/approvals/email-policy";
+import { applyEmailPolicy, isRestricted, PREVIEW_BODY_BANNER, type EmailEnv } from "@/lib/approvals/email-policy";
 import { loadQuote } from "./quote-store";
 import { messageLeaksInternal } from "./customer-document";
 import { isValidEmail } from "./customer-snapshot";
@@ -75,6 +75,28 @@ function bodyOf(doc: StoredDocument, message: string, companyName: string, links
   ].join("\n");
 }
 
+const esc = (x: string) => x.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+/** Branded HTML alternative of the quotation email (the plain text from bodyOf stays the fallback). Only customer-facing facts: no internal data. Everything is escaped. */
+export function htmlOf(doc: StoredDocument, message: string, links: ResponseLinks | null, previewBanner: boolean): string {
+  const brand = esc(doc.content.company.brandName); const legal = esc(doc.content.company.legalName);
+  const btn = (href: string, label: string, bg: string) => `<tr><td style="padding:6px 0"><a href="${esc(href)}" style="display:block;background:${bg};color:#ffffff;text-decoration:none;font-weight:700;font-size:16px;text-align:center;padding:14px 20px;border-radius:6px">${label}</a></td></tr>`;
+  return `<!doctype html><html><body style="margin:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif;color:#0f172a">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 12px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:8px;overflow:hidden">
+${previewBanner ? `<tr><td style="background:#fef3c7;color:#92400e;font-size:12px;padding:8px 20px">${esc(PREVIEW_BODY_BANNER)}</td></tr>` : ""}
+<tr><td style="background:#1e3a5f;color:#ffffff;padding:18px 20px;font-size:20px;font-weight:700">${brand}</td></tr>
+<tr><td style="padding:22px 20px;font-size:15px;line-height:1.5">
+<p style="margin:0 0 14px">${esc(message || `Please find attached our quotation ${doc.quote_ref}.`).replace(/\n/g, "<br>")}</p>
+<p style="margin:0 0 4px"><strong>Quotation ${esc(doc.quote_ref)}</strong> (revision ${doc.revision})</p>
+<p style="margin:0 0 16px;color:#475569">Valid until ${esc(doc.content.quote.validUntil)}. The quotation is attached as a PDF.</p>
+${links ? `<p style="margin:0 0 8px;font-weight:700">Respond online</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${btn(links.accept, "Accept quotation", "#047857")}${btn(links.decline, "Decline quotation", "#b91c1c")}${btn(links.changes, "Request changes", "#1e3a5f")}</table>
+<p style="margin:14px 0 0;font-size:12px;color:#64748b">These secure links are personal to you and valid until ${esc(links.expiresOn)}. Opening a link records nothing; your response is recorded only when you confirm it on the page. Please do not forward this email.</p>` : ""}
+</td></tr>
+<tr><td style="padding:14px 20px;background:#f8fafc;font-size:12px;color:#64748b">${legal}</td></tr>
+</table></td></tr></table></body></html>`;
+}
+
 /** Issues the emailed response links for this send, when migration 0117 is applied and a site address is known. Fails closed: otherwise the email carries no links. */
 async function responseLinksFor(db: Db, orgId: string, doc: StoredDocument, send: StoredSend, recipients: string[], by: string, env: EmailEnv): Promise<ResponseLinks | null> {
   if (!(await portalAvailable(db))) return null;
@@ -86,9 +108,9 @@ async function responseLinksFor(db: Db, orgId: string, doc: StoredDocument, send
   return { accept: at("accept"), decline: at("decline"), changes: at("changes"), expiresOn: link.expires_at.slice(0, 10) };
 }
 
-async function deliver(db: Db, row: StoredSend, doc: StoredDocument, bytes: Uint8Array, to: string[], cc: string[], suppressed: string[], subject: string, text: string, send: SendFn): Promise<StoredSend> {
+async function deliver(db: Db, row: StoredSend, doc: StoredDocument, bytes: Uint8Array, to: string[], cc: string[], suppressed: string[], subject: string, text: string, send: SendFn, html?: string): Promise<StoredSend> {
   let res: SendEmailResult;
-  try { res = await send({ to, cc, subject, text, attachments: [{ filename: `${doc.quote_ref}-r${doc.revision}.pdf`, content: Buffer.from(bytes) }] }); }
+  try { res = await send({ to, cc, subject, text, ...(html ? { html } : {}), attachments: [{ filename: `${doc.quote_ref}-r${doc.revision}.pdf`, content: Buffer.from(bytes) }] }); }
   catch (e) { res = { ok: false, error: e instanceof Error ? e.message : "Unknown error" }; }
   const patch = res.ok && res.messageId ? { status: "ACCEPTED", provider_message_id: res.messageId, last_error: null, attempted_at: new Date().toISOString(), suppressed_emails: suppressed }
     : { status: "FAILED", last_error: (res.error ?? "The provider did not accept the message").slice(0, 500), attempted_at: new Date().toISOString(), suppressed_emails: suppressed };
@@ -155,7 +177,7 @@ export async function sendQuotationToCustomer(
   const links = await responseLinksFor(db, orgId, doc, row, [...sendTo, ...sendCc], who.email, env);
   const withLinks = links ? applyEmailPolicy(env, { to: sendTo[0], subject: subjectBase, text: bodyOf(doc, message, doc.content.company.legalName, links) }) : null;
   const finalText = withLinks && withLinks.action === "SEND" ? withLinks.text : text;
-  return { send: await deliver(db, row, doc, bytes, sendTo, sendCc, suppressed, subject, finalText, send), reused: false };
+  return { send: await deliver(db, row, doc, bytes, sendTo, sendCc, suppressed, subject, finalText, send, links ? htmlOf(doc, message, links, finalText.startsWith(PREVIEW_BODY_BANNER)) : undefined), reused: false };
 }
 
 /** Controlled retry of a FAILED send: the row is claimed FAILED -> QUEUED by compare-and-set, so concurrent retries emit at most one email. */
@@ -184,5 +206,5 @@ export async function retryFailedSend(db: Db, orgId: string, sendId: string, dep
   const links = await responseLinksFor(db, orgId, doc, claimed, [...sendTo, ...sendCc], claimed.sent_by_email, env);
   const withLinks = links ? applyEmailPolicy(env, { to: sendTo[0], subject: subjectBase, text: bodyOf(doc, row.message, doc.content.company.legalName, links) }) : null;
   const text = withLinks && withLinks.action === "SEND" ? withLinks.text : first.action === "SEND" ? first.text : body;
-  return deliver(db, claimed, doc, bytes, sendTo, sendCc, [...row.to_emails, ...row.cc_emails].filter((a) => !sendTo.includes(a) && !sendCc.includes(a)), first.action === "SEND" ? first.subject : subjectBase, text, send);
+  return deliver(db, claimed, doc, bytes, sendTo, sendCc, [...row.to_emails, ...row.cc_emails].filter((a) => !sendTo.includes(a) && !sendCc.includes(a)), first.action === "SEND" ? first.subject : subjectBase, text, send, links ? htmlOf(doc, row.message, links, text.startsWith(PREVIEW_BODY_BANNER)) : undefined);
 }

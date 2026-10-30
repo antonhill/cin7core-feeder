@@ -4,6 +4,7 @@ import { findBlockedModule, computeEffectiveDisabledModules } from "@/app/module
 import { createServiceRoleClient } from "@/supabase/server";
 import { writeAllowedFor } from "@/lib/billing-status";
 import type { SubscriptionStatus } from "@/lib/billing";
+import { CUSTOMER_SURFACE_HEADER, CUSTOMER_SURFACE_VALUE, isCustomerSurface } from "@/lib/customer-surface";
 import { ACTIVE_ORG_COOKIE, resolveActiveOrgId } from "@/lib/active-org-resolution";
 
 // Must match src/lib/org-switch.ts's IMPERSONATED_ORG_COOKIE — duplicated
@@ -22,6 +23,17 @@ const PUBLIC_PATHS = ["/login", "/auth/callback", "/privacy", "/signup", "/quote
  * users to /login for anything else.
  */
 export async function middleware(request: NextRequest) {
+  request.headers.delete(CUSTOMER_SURFACE_HEADER);
+  if (isCustomerSurface(request.nextUrl.pathname)) {
+    const headers = new Headers(request.headers);
+    // A signed-in member opening a customer link gets exactly the customer's page: the session is neither read nor refreshed here, and the layout renders no staff identity.
+    headers.set(CUSTOMER_SURFACE_HEADER, CUSTOMER_SURFACE_VALUE);
+    const res = NextResponse.next({ request: { headers } });
+    res.headers.set("Cache-Control", "no-store, max-age=0");
+    res.headers.set("Referrer-Policy", "no-referrer");
+    res.headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
+    return res;
+  }
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(

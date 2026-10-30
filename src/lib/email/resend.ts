@@ -6,6 +6,8 @@ export interface SendEmailInput {
   cc?: string[];
   subject: string;
   text: string;
+  /** Optional HTML alternative (the plain-text `text` is always sent as the fallback). */
+  html?: string;
   /** Optional file attachments (e.g. a quotation PDF). */
   attachments?: { filename: string; content: Buffer }[];
 }
@@ -40,6 +42,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       cc: input.cc?.length ? input.cc : undefined,
       subject: input.subject,
       text: input.text,
+      html: input.html,
       attachments: input.attachments?.length ? input.attachments : undefined,
     });
     if (result.error) return { ok: false, error: result.error.message };

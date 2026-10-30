@@ -253,7 +253,7 @@ describe("staff review actions and the project gate", () => {
 describe("the public surface is exactly what was designed", () => {
   const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)).map((p) => `${e.name}/${p}`) : [e.name]));
   it("only the response page, its actions and the token-authenticated PDF route sit under the unauthenticated prefixes", () => {
-    expect(walk(join(process.cwd(), "src/app/quote-response")).sort()).toEqual(["actions.ts", "layout.tsx", "page.tsx"]);
+    expect(walk(join(process.cwd(), "src/app/quote-response")).sort()).toEqual(["__tests__/customer-surface.test.tsx", "actions.ts", "layout.tsx", "page.tsx"]);
     expect(walk(join(process.cwd(), "src/app/api/quote-response")).sort()).toEqual(["document/route.ts"]);
     const mw = readFileSync(join(process.cwd(), "src/middleware.ts"), "utf8");
     expect(mw).toMatch(/const PUBLIC_PATHS = \["\/login", "\/auth\/callback", "\/privacy", "\/signup", "\/quote-response", "\/api\/quote-response"\]/);

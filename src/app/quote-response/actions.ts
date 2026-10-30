@@ -23,7 +23,7 @@ export async function loadQuoteResponsePageAction(token: string): Promise<Public
   catch { return { ok: false, reason: "UNAVAILABLE", error: "Online responses are not available right now. Please reply to the sender by email." }; }
 }
 
-export async function submitQuoteResponseAction(input: PublicSubmit): Promise<PublicResult<{ action: PublicSubmit["action"]; quoteRef: string }>> {
+export async function submitQuoteResponseAction(input: PublicSubmit): Promise<PublicResult<{ action: PublicSubmit["action"]; quoteRef: string; revision: number; submittedAt: string }>> {
   const ip = await clientKey();
   if (!allow(`submit:${ip}`, 12, 10 * 60_000)) return LIMITED;
   try {

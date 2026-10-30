@@ -441,6 +441,12 @@ describe("Rep notifications for customer responses", () => {
     await notifyResponseEvent(w.db as never, { orgId: ORG, quoteId: w.id, quoteRef: "NQ-Q-0001", customerName: "Boerdery", event: "ACCEPTED_PENDING", response: r0, recipients: ["rep@sparkconsulting.co.za"] }, PREVIEW);
     expect(notes(w, "IN_APP").length).toBe(before);
   });
+  it("the submission confirmation names the quotation, revision and time and says nothing about a project or Sale", async () => {
+    const { w, doc } = await ready(); const s = await sendWithLinks(w, doc.id);
+    const r = await submit(w, accept(s.token), new Date("2026-10-30T10:15:00Z"));
+    expect(r.ok && r.data).toMatchObject({ action: "ACCEPTED", quoteRef: doc.quote_ref, revision: doc.revision, submittedAt: "2026-10-30T10:15:00.000Z" });
+    expect(JSON.stringify(r)).not.toMatch(/project|sale/i);
+  });
   it("online acceptance preserves the explicit statement, document id + hash and audit metadata, and needs no uploaded evidence file", async () => {
     const { w, doc } = await ready();
     const s = await sendWithLinks(w, doc.id);
@@ -451,5 +457,34 @@ describe("Rep notifications for customer responses", () => {
     expect(w.db.rows("newquip_response_evidence")).toHaveLength(0);
     const log = (w.db.rows("activity_log") as Array<Record<string, any>>).find((a) => a.action === "newquip.customer_link_accepted")!; // eslint-disable-line @typescript-eslint/no-explicit-any
     expect(log.detail).toMatchObject({ tokenValidation: "VALID", documentHash: doc.content_hash, revision: doc.revision });
+  });
+});
+
+describe("customer email presentation", () => {
+  async function sendCapturing(message = "") {
+    const w = await world({ gated: true }); const { document: doc } = await issue(w);
+    const calls: Array<{ text: string; html?: string; subject: string; attachments?: unknown[] }> = [];
+    const fn = vi.fn(async (i: never) => { calls.push(i); return { ok: true, messageId: "m1" }; });
+    await sendQuotationToCustomer(w.db as never, ORG, w.id, { email: "rep@sparkconsulting.co.za" }, { documentId: doc.id, to: ["anton@sparkconsulting.co.za"], message, idempotencyKey: "key-html-1" }, w.deps, PREVIEW, fn as never);
+    return { calls, doc };
+  }
+  it("sends a branded HTML email with three prominent action links AND the readable plain-text fallback, with the PDF still attached", async () => {
+    const { calls, doc } = await sendCapturing();
+    const c = calls[0];
+    expect(c.html).toBeTruthy();
+    for (const label of ["Accept quotation", "Decline quotation", "Request changes"]) expect(c.html).toContain(`>${label}</a>`);
+    expect([...c.html!.matchAll(/href="([^"]+)"/g)]).toHaveLength(3);
+    expect(c.html).toMatch(/#t=[A-Za-z0-9_.-]+&amp;a=accept/);
+    expect(c.text).toMatch(/Accept the quotation:\s+https:\/\/\S+#t=/);
+    expect(c.subject.startsWith("[PREVIEW]")).toBe(true);
+    expect(c.html).toContain("PREVIEW notification"); expect(c.text).toContain("PREVIEW notification");
+    expect(c.attachments).toHaveLength(1);
+    expect(c.html).toContain(`revision ${doc.revision}`);
+  });
+  it("the HTML carries no internal data and escapes the sender's message", async () => {
+    const { calls } = await sendCapturing("Hello <script>alert(1)</script> & welcome");
+    const html = calls[0].html!; const visible = html.replace(/ style="[^"]*"/g, "");
+    expect(html).not.toContain("<script>"); expect(html).toContain("&lt;script&gt;");
+    for (const bad of [/\bmargin/i, /\bsupplier/i, /\bcost/i, /approval/i, /Toolbox/i, /\bR\s?\d[\d ,.]*\d/]) expect(bad.test(visible), String(bad)).toBe(false);
   });
 });

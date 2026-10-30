@@ -38,7 +38,7 @@ export interface PublicSubmit {
 const clean = (s: unknown, max: number) => String(s ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
 
 /** Records the customer's response. Re-validates the token, the document and the quotation state AT SUBMISSION. */
-export async function submitPublicResponse(db: Db, input: PublicSubmit, ctx: { ip: string; env: LinkEnv; now?: Date; baseEnv?: Record<string, string | undefined> }): Promise<PublicResult<{ action: CustomerResponse; quoteRef: string }>> {
+export async function submitPublicResponse(db: Db, input: PublicSubmit, ctx: { ip: string; env: LinkEnv; now?: Date; baseEnv?: Record<string, string | undefined> }): Promise<PublicResult<{ action: CustomerResponse; quoteRef: string; revision: number; submittedAt: string }>> {
   const now = ctx.now ?? new Date();
   const r = await resolveLink(db, input.token, ctx.env, now);
   if (!r.ok) return { ok: false, reason: r.reason, error: FAILURE_MESSAGE[r.reason] };
@@ -81,6 +81,6 @@ export async function submitPublicResponse(db: Db, input: PublicSubmit, ctx: { i
     orgId: link.org_id, quoteId: link.quote_id, quoteRef: doc.quote_ref, customerName: doc.content.customer.name, event, response,
     recipients: [link.created_by_email, quote.handoff_by_email, quote.created_by_email], reason: input.action === "ACCEPTED" ? null : reason,
   }, (ctx.baseEnv ?? process.env) as never).catch(() => undefined);
-  return { ok: true, data: { action: input.action, quoteRef: doc.quote_ref } };
+  return { ok: true, data: { action: input.action, quoteRef: doc.quote_ref, revision: doc.revision, submittedAt: now.toISOString() } };
 }
 export { MAX_LINK_ATTEMPTS };
