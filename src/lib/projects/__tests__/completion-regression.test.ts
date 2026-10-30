@@ -24,7 +24,7 @@ const ORG = "org-nq";
 const R = (n: number) => n * 100;
 const APPROVALS = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: "t" };
 const ctx = (withholdCost: boolean) => ({ priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost });
-const draft = applyDemoDefaults(emptyDraft()).draft;
+const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
 const approved = buildAcceptedBaseline({ quoteRef: "NQ-Q-0001", revision: 1, draft, evaluation: evaluateDraft(draft, ctx(true)), marginEvaluation: evaluateDraft(draft, ctx(false)), approvals: APPROVALS });
 const mkProject = async (db: FakeDb, schedule?: Parameters<typeof quoteToProjectBaseline>[3], ref = "PRJ-NQ-Q-0001") =>
   createProjectFromBaseline(db as never, ORG, "m@x", quoteToProjectBaseline(approved.baseline, approved.hash, "q1", schedule), { reference: ref, name: "Demo" });

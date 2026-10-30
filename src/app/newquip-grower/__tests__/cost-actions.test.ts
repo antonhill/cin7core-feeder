@@ -34,7 +34,7 @@ import { rolesFor } from "@/newquip/quote/roles";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
 
 const ORG = "org-nq";
-const draft = applyDemoDefaults(emptyDraft()).draft;
+const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
 const priceCtx = { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true };
 const total = Math.round(evaluateDraft(draft, priceCtx).budget!.totals.subtotalExTax * 100);
 const as = (admin: boolean) => {

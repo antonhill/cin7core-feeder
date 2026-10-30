@@ -22,7 +22,7 @@ import { createSaleForProject } from "../cin7-sale-creation-store";
 vi.mock("server-only", () => ({}));
 
 const ctx = (withholdCost: boolean) => ({ priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost });
-const draft = applyDemoDefaults(emptyDraft()).draft;
+const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
 const ev = evaluateDraft(draft, ctx(true));
 const AT = "2026-10-29T08:00:00Z";
 const APPROVALS = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: AT };

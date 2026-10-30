@@ -20,7 +20,7 @@ const ctxOf = (userId: string, email: string, adminTier = false): ApprovalCtx =>
 const REP = ctxOf("u-rep", "rep@a"), EST = ctxOf("u-est", "est@a"), MGR = ctxOf("u-mgr", "mgr@a", true), MGR2 = ctxOf("u-mgr2", "mgr2@a", true), ADM = ctxOf("u-adm", "adm@a", true);
 const EMAILS: Record<string, string> = { "u-rep": "rep@a", "u-est": "est@a", "u-est2": "est2@a", "u-mgr": "mgr@a", "u-mgr2": "mgr2@a", "u-adm": "adm@a" };
 const priceCtx = { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true };
-const draft = applyDemoDefaults(emptyDraft()).draft;
+const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
 const total = Math.round(evaluateDraft(draft, priceCtx).budget!.totals.subtotalExTax * 100);
 
 function world(opts: { strict?: boolean } = {}) {

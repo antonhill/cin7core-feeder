@@ -296,7 +296,7 @@ describe("variations: submit, edit-lock, approve, reject", () => {
 
 describe("quotations: sign-off is the submission, manager approval seals the baseline", () => {
   const ctxE = { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true };
-  const draft = applyDemoDefaults(emptyDraft()).draft;
+  const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
   const total = Math.round(evaluateDraft(draft, ctxE).budget!.totals.subtotalExTax * 100);
   const seedQuote = (db: FakeDb) => db.rows("newquip_quotes").push({ id: "q1", org_id: ORG, quote_ref: "NQ-Q-0009", revision: 1, customer_name: "Test Customer", site_name: "Farm", quote_type: "project", state: "ESTIMATOR_REVIEW", draft, draft_hash: "h1", customer_confirmed_cents: total, customer_confirmed_by: "r", customer_confirmed_at: "t", handoff_by_email: "rep@a", estimator_signoff_hash: "h1", estimator_signoff_by_email: "est@a", estimator_signoff_at: "t", approved_by_email: null, approved_at: null, accepted_baseline: null, baseline_hash: null, contract_cents: null, project_id: null, created_at: "t", updated_at: "t" });
   it("1+22: a signed-off quote is submitted; approval freezes the baseline; unresolved Cin7 mappings do NOT block it", async () => {

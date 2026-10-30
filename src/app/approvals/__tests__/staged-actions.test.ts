@@ -30,7 +30,7 @@ import * as growerActions from "@/app/newquip-grower/actions";
 
 const ORG = "org-nq";
 const EMAILS: Record<string, string> = { "u-rep": "rep@a", "u-est": "est@a", "u-mgr": "mgr@a", "u-adm": "adm@a", "u-buyer": "buyer@a", "u-plain": "plain@a" };
-const draft = applyDemoDefaults(emptyDraft()).draft;
+const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
 const total = Math.round(evaluateDraft(draft, { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true }).budget!.totals.subtotalExTax * 100);
 
 function as(userId: string, admin: boolean) {

@@ -33,7 +33,7 @@ const APPROVALS = { customerConfirmedAt: "t", customerConfirmedCents: 1, custome
 const R = (n: number) => n * 100;
 
 describe("release-candidate chain", () => {
-  const draft = applyDemoDefaults(emptyDraft()).draft;
+  const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
   const manager = evaluateDraft(draft, ctx(false));
   const rep = evaluateDraft(draft, ctx(true));
   const approved = buildAcceptedBaseline({ quoteRef: "NQ-Q-0001", revision: 1, draft, evaluation: rep, marginEvaluation: manager, approvals: APPROVALS });

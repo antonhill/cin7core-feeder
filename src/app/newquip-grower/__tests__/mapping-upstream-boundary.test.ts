@@ -22,7 +22,7 @@ import { approveGrowerQuoteAction, createProjectFromGrowerQuoteAction } from "..
 import { getQuoteScopeAction, saveReusableMappingAction } from "../mapping-actions";
 
 const ORG = "org-nq";
-const draft = applyDemoDefaults(emptyDraft()).draft;
+const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
 const ctx = { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true };
 const total = Math.round(evaluateDraft(draft, ctx).budget!.totals.subtotalExTax * 100);
 const map = (org: string, key: string, version: number, lines: Array<{ sku: string; factor: number; role?: string }>, status = "ACTIVE") =>

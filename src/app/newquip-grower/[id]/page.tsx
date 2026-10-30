@@ -229,7 +229,7 @@ export default function QuoteEditorPage() {
           {editable && !confirmDemo && <Button variant="secondary" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load Demo Defaults</Button>}
           {editable && confirmDemo && (
             <span className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm text-amber-900">
-              This replaces the values in this draft with the demonstration quotation (nothing is saved until you press Save draft).
+              This replaces the values in this draft with the demonstration quotation (nothing is saved until you press Save draft). The customer you selected is kept.
               <Button size="sm" onClick={loadDemo}>Replace with demo</Button>
               <Button size="sm" variant="secondary" onClick={() => setConfirmDemo(false)}>Cancel</Button>
             </span>
