@@ -8,7 +8,7 @@ import type { QuoteState } from "./workflow";
 
 export type StageId = 1 | 2 | 3 | 4 | 5 | 6;
 export type StageStatus = "COMPLETE" | "IN_PROGRESS" | "AWAITING_ACTION" | "RETURNED" | "NOT_STARTED" | "NOT_AVAILABLE" | "NOT_REQUIRED";
-export type CommercialState = "NOT_APPROVED" | "APPROVED_INTERNALLY" | "SENT_TO_CUSTOMER" | "CUSTOMER_ACCEPTED" | "CUSTOMER_DECLINED" | "CHANGES_REQUESTED";
+export type CommercialState = "NOT_APPROVED" | "APPROVED_INTERNALLY" | "SENT_TO_CUSTOMER" | "ACCEPTANCE_PENDING_VERIFICATION" | "ACCEPTANCE_REJECTED" | "CUSTOMER_ACCEPTED" | "CUSTOMER_DECLINED" | "CHANGES_REQUESTED";
 
 export interface StageInput {
   state: QuoteState;
@@ -23,6 +23,8 @@ export interface StageInput {
   /** Derived from the append-only document / send / response records; null while they are still loading (or before migration 0115). */
   commercial: CommercialState | null;
   hasDocument: boolean;
+  /** The state of the customer's emailed response link for the current document (migration 0117); optional. */
+  linkState?: "NONE" | "ACTIVE" | "EXPIRED" | "REVOKED";
   requiresAcceptance: boolean;
   projectLinked: boolean;
 }
@@ -62,7 +64,7 @@ export function computeStages(i: StageInput): StageView[] {
     : v(3, "NOT_STARTED", inReview ? "Waiting for the Estimator's sign-off." : "Starts after Estimator sign-off.");
 
   // 4 Customer Quotation
-  const sent = c === "SENT_TO_CUSTOMER" || c === "CUSTOMER_ACCEPTED" || c === "CUSTOMER_DECLINED" || c === "CHANGES_REQUESTED";
+  const sent = c === "SENT_TO_CUSTOMER" || c === "ACCEPTANCE_PENDING_VERIFICATION" || c === "ACCEPTANCE_REJECTED" || c === "CUSTOMER_ACCEPTED" || c === "CUSTOMER_DECLINED" || c === "CHANGES_REQUESTED";
   const s4 = !final ? v(4, "NOT_AVAILABLE", "Available once the Manager has approved.")
     : sent ? v(4, "COMPLETE", "Issued and sent to the customer.")
     : grandfathered ? v(4, "NOT_REQUIRED", "Approved before customer acceptance was introduced: issuing is optional.", i.hasDocument ? "Rep: send it to the customer if you want to." : null)
@@ -72,16 +74,20 @@ export function computeStages(i: StageInput): StageView[] {
   // 5 Customer Acceptance
   const s5 = !final ? v(5, "NOT_AVAILABLE", "Available once the quotation has been issued.")
     : grandfathered ? v(5, "NOT_REQUIRED", "Approved before customer acceptance was introduced.")
-    : c === "CUSTOMER_ACCEPTED" ? v(5, "COMPLETE", "The customer accepted the issued quotation.")
+    : c === "CUSTOMER_ACCEPTED" ? v(5, "COMPLETE", "The customer's acceptance of the issued quotation is verified.")
+    : c === "ACCEPTANCE_PENDING_VERIFICATION" ? v(5, "AWAITING_ACTION", "The customer accepted: verification pending.", "Rep or Manager: check who responded and verify or reject the acceptance.")
+    : c === "ACCEPTANCE_REJECTED" ? v(5, "RETURNED", "The customer's emailed acceptance was rejected during verification.", "Contact the customer; record their response manually with evidence, or send the quotation again for a fresh link.")
     : c === "CUSTOMER_DECLINED" ? v(5, "RETURNED", "The customer declined the issued quotation.", "Prepare a revised quotation (it goes through Estimator and Manager again).")
     : c === "CHANGES_REQUESTED" ? v(5, "RETURNED", "The customer asked for changes.", "Prepare a revised quotation (it goes through Estimator and Manager again).")
-    : c === "SENT_TO_CUSTOMER" ? v(5, "AWAITING_ACTION", "Waiting for the customer's response.", "Record the customer's response with its evidence.")
+    : c === "SENT_TO_CUSTOMER" && (i.linkState === "EXPIRED" || i.linkState === "REVOKED") ? v(5, "AWAITING_ACTION", `Waiting for the customer's response; the emailed link ${i.linkState === "EXPIRED" ? "has expired" : "was withdrawn"}.`, "Record the response with its evidence, or send the quotation again for a fresh link.")
+    : c === "SENT_TO_CUSTOMER" ? v(5, "AWAITING_ACTION", "Waiting for the customer's response.", "Record the customer's response with its evidence, or wait for them to use the emailed link.")
     : v(5, "NOT_STARTED", i.hasDocument ? "Awaiting the quotation to be sent." : "Awaiting quotation issue.");
 
   // 6 Project Handover
   const s6 = !final ? v(6, "NOT_AVAILABLE", "Available once the quotation is accepted.")
     : i.projectLinked ? v(6, "COMPLETE", "Project created from the accepted quotation.")
-    : i.requiresAcceptance && c !== "CUSTOMER_ACCEPTED" ? v(6, "NOT_AVAILABLE", "Needs the customer's recorded acceptance of the issued quotation.")
+    : i.requiresAcceptance && c === "ACCEPTANCE_PENDING_VERIFICATION" ? v(6, "NOT_AVAILABLE", "Waiting for the customer's emailed acceptance to be verified (Stage 5).")
+    : i.requiresAcceptance && c !== "CUSTOMER_ACCEPTED" ? v(6, "NOT_AVAILABLE", "Needs the customer's verified acceptance of the issued quotation (Stage 5).")
     : v(6, "AWAITING_ACTION", "Eligible: create the Project from the accepted baseline.", "Create the Project.");
 
   return [s1, s2, s3, s4, s5, s6];

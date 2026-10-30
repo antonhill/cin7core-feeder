@@ -11,7 +11,9 @@ import { ACTIVE_ORG_COOKIE, resolveActiveOrgId } from "@/lib/active-org-resoluti
 // middleware uses NextRequest's own cookie API instead.
 const IMPERSONATED_ORG_COOKIE = "impersonated_org_id";
 
-const PUBLIC_PATHS = ["/login", "/auth/callback", "/privacy", "/signup"];
+// "/quote-response" and "/api/quote-response": the customer's emailed response page and its token-authenticated PDF route. They have no session by design; every request is authorised by the
+// opaque response token alone (see src/lib/newquip-quotes/response-links.ts), and nothing else is reachable under these prefixes.
+const PUBLIC_PATHS = ["/login", "/auth/callback", "/privacy", "/signup", "/quote-response", "/api/quote-response"];
 
 /**
  * Refreshes the Supabase session cookie on every request (required — the

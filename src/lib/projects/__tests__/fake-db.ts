@@ -16,6 +16,10 @@ const UNIQUE: Record<string, string[][]> = {
   newquip_quote_customers: [["quote_id", "seq"]],
   newquip_quote_documents: [["quote_id", "version"], ["storage_path"]],
   newquip_quote_sends: [["document_id", "idempotency_key"]],
+  newquip_response_links: [["token_hash"]],
+  newquip_quote_responses: [["link_id"]],
+  newquip_response_reviews: [["response_id"]],
+  newquip_response_evidence: [["storage_path"]],
 };
 /**
  * The REAL columns of the synced-customer tables (migrations 0013 + 0015; contacts live in customer_contacts and `customers` has no contact / email columns). A select,
@@ -27,6 +31,10 @@ const REAL_COLUMNS: Record<string, string[]> = {
 };
 /** Migration 0115 tables that are append-only (UPDATE and DELETE are refused by their database guards). */
 const APPEND_ONLY_0115 = /^(newquip_quote_customers|newquip_quote_documents|newquip_quote_responses|newquip_company_profiles)$/;
+/** Migration 0117 tables (response links / reviews / evidence) and the columns it adds to newquip_quote_responses. */
+const IS_0117 = /^(newquip_response_links|newquip_response_reviews|newquip_response_evidence)$/;
+const COLS_0117 = ["origin", "contact_email", "contact_source", "contact_company", "exception_reason", "authority_confirmed", "document_hash", "link_id", "origin_hint"];
+const APPEND_ONLY_0117 = /^(newquip_response_reviews|newquip_response_evidence)$/;
 const IS_0115 = /^(newquip_quote_customers|newquip_quote_documents|newquip_quote_sends|newquip_quote_responses|newquip_company_profiles)$/;
 
 export class FakeDb {
@@ -63,6 +71,8 @@ export class FakeDb {
   fxApplied = false;
   /** Migration 0115 (customer snapshots, company profile, issued documents, sends, responses) is not applied unless a test says so. */
   deliveryApplied = false;
+  /** Migration 0117 (customer response links, reviews, evidence and the responding-contact columns) is not applied unless a test says so. */
+  portalApplied = false;
   /** Statuses the approval_notifications CHECK accepts. Defaults to the 0110 list (no SUPPRESSED, i.e. migration 0114 not applied); a test sets it to include SUPPRESSED. */
   notificationStatuses: string[] = ["PENDING", "SENT", "FAILED", "ABANDONED"];
 
@@ -86,11 +96,17 @@ export class FakeDb {
     const rolesOn = () => this.rolesApplied;
     const fxOn = () => this.fxApplied;
     const deliveryOn = () => this.deliveryApplied;
+    const portalOn = () => this.portalApplied;
     const notificationStatuses = () => this.notificationStatuses;
     function exec(): { data: unknown; error: { message: string } | null } {
       const real = REAL_COLUMNS[table];
       if (real) for (const c of used) if (!real.includes(c)) return { data: null, error: { message: `column ${table}.${c} does not exist` } };
       if (table === "newquip_fx_rates" && !fxOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
+      if (IS_0117.test(table) && !portalOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
+      if (table === "newquip_quote_responses" && !portalOn() && op === "insert") {
+        const bad = (Array.isArray(payload) ? payload : [payload]).flatMap((p) => Object.keys(p)).find((k) => COLS_0117.includes(k));
+        if (bad) return { data: null, error: { message: `column "${bad}" of relation "newquip_quote_responses" does not exist` } };
+      }
       if (IS_0115.test(table) && !deliveryOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (/^(org_functional_role|approval_polic)/.test(table) && !rolesOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (table.startsWith("approval_") && !approvals()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
@@ -99,7 +115,7 @@ export class FakeDb {
         const out: Row[] = [];
         for (const r of incoming) {
           for (const cols of UNIQUE[table] ?? []) {
-            if (rowsOf(table).some((e) => cols.every((c) => e[c] === r[c]))) return { data: null, error: { message: `duplicate key value violates unique constraint (${cols.join(",")})` } };
+            if (cols.every((c) => r[c] != null) && rowsOf(table).some((e) => cols.every((c) => e[c] === r[c]))) return { data: null, error: { message: `duplicate key value violates unique constraint (${cols.join(",")})` } };
           }
           if (table === "newquip_company_profiles") r.version = Math.max(0, ...rowsOf(table).filter((e) => e.org_id === r.org_id).map((e) => Number(e.version))) + 1;
           const row: Row = { id: `id-${nextId()}`, created_at: nextTs(), ...r };
@@ -110,6 +126,14 @@ export class FakeDb {
         return { data: returning ? out : null, error: null };
       }
       let matched = rowsOf(table).filter((r) => filters.every((f) => f(r)));
+      if ((op === "update" || op === "delete") && APPEND_ONLY_0117.test(table)) return { data: null, error: { message: `${table}: append-only audit record is never updated or deleted` } };
+      if (op === "update" && table === "newquip_response_links") {
+        const allowed = new Set(["revoked_at", "revoked_reason", "attempts"]);
+        if (Object.keys(payload ?? {}).some((k) => !allowed.has(k))) return { data: null, error: { message: "newquip_response_links: only revocation and the attempt counter may change" } };
+        if (matched.some((r) => r.revoked_at && ((payload as Row).revoked_at !== undefined && (payload as Row).revoked_at !== r.revoked_at))) return { data: null, error: { message: "newquip_response_links: a revoked link stays revoked" } };
+        if (matched.some((r) => (payload as Row).attempts !== undefined && Number((payload as Row).attempts) < Number(r.attempts ?? 0))) return { data: null, error: { message: "newquip_response_links: the attempt counter never decreases" } };
+      }
+      if (op === "delete" && table === "newquip_response_links") return { data: null, error: { message: "newquip_response_links: links are never deleted" } };
       if ((op === "update" || op === "delete") && APPEND_ONLY_0115.test(table)) return { data: null, error: { message: `${table}: append-only audit record is never updated or deleted` } };
       if (op === "update" && table === "newquip_quote_sends") {
         const allowed = new Set(["status", "provider_message_id", "last_error", "attempted_at", "suppressed_emails"]);

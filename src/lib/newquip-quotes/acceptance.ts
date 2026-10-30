@@ -19,10 +19,14 @@ export type CustomerResponse = "ACCEPTED" | "DECLINED" | "CHANGES_REQUESTED";
 export interface StoredResponse {
   id: string; org_id: string; quote_id: string; document_id: string; response: CustomerResponse; contact_name: string; responded_on: string; evidence_ref: string; note: string;
   recorded_by_email: string; recorded_by_owner_email: string | null; created_at: string;
+  /** Migration 0117 (absent before it): where the response came from and who the responding contact is. Rows without `origin` are staff-recorded and behave as before. */
+  origin?: "STAFF" | "CUSTOMER_LINK"; contact_email?: string | null; contact_source?: string | null; contact_company?: string | null; exception_reason?: string | null;
+  authority_confirmed?: boolean; document_hash?: string | null; link_id?: string | null; origin_hint?: string | null;
 }
-export type CommercialStatus = "NOT_APPROVED" | "APPROVED_INTERNALLY" | "SENT_TO_CUSTOMER" | "CUSTOMER_ACCEPTED" | "CUSTOMER_DECLINED" | "CHANGES_REQUESTED";
+export interface StoredReview { id: string; org_id: string; quote_id: string; response_id: string; decision: "VERIFIED" | "REJECTED"; note: string; reviewed_by_email: string; reviewed_by_owner_email: string | null; created_at: string }
+export type CommercialStatus = "NOT_APPROVED" | "APPROVED_INTERNALLY" | "SENT_TO_CUSTOMER" | "ACCEPTANCE_PENDING_VERIFICATION" | "ACCEPTANCE_REJECTED" | "CUSTOMER_ACCEPTED" | "CUSTOMER_DECLINED" | "CHANGES_REQUESTED";
 export const COMMERCIAL_STATUS_LABEL: Record<CommercialStatus, string> = {
-  NOT_APPROVED: "Not yet approved", APPROVED_INTERNALLY: "Approved internally", SENT_TO_CUSTOMER: "Sent to customer", CUSTOMER_ACCEPTED: "Customer accepted", CUSTOMER_DECLINED: "Customer declined", CHANGES_REQUESTED: "Changes requested",
+  NOT_APPROVED: "Not yet approved", APPROVED_INTERNALLY: "Approved internally", SENT_TO_CUSTOMER: "Sent to customer", ACCEPTANCE_PENDING_VERIFICATION: "Customer accepted: verification pending", ACCEPTANCE_REJECTED: "Customer acceptance rejected on verification", CUSTOMER_ACCEPTED: "Customer acceptance verified", CUSTOMER_DECLINED: "Customer declined", CHANGES_REQUESTED: "Changes requested",
 };
 
 const missing = (m: string | undefined) => /does not exist|schema cache|could not find the table/i.test(m ?? "");
@@ -36,21 +40,69 @@ export async function listResponses(db: Db, orgId: string, quoteId: string): Pro
   return (r.data ?? []) as StoredResponse[];
 }
 
+/** True once migration 0117 is applied (the link / review / evidence tables and the response columns exist). Until then none of the portal features operate. */
+export async function portalAvailable(db: Db): Promise<boolean> {
+  const t = await db.from("newquip_response_links").select("id").limit(1);
+  if (t.error) { if (missing(t.error.message)) return false; throw new Error(t.error.message); }
+  return true;
+}
+
+export async function listReviews(db: Db, orgId: string, quoteId: string): Promise<StoredReview[]> {
+  const r = await db.from("newquip_response_reviews").select("*").eq("org_id", orgId).eq("quote_id", quoteId).order("created_at", { ascending: true });
+  if (r.error) { if (missing(r.error.message)) return []; throw new Error(r.error.message); }
+  return (r.data ?? []) as StoredReview[];
+}
+
+/**
+ * Where a response stands. Only a RECORDED (staff, with its evidence) or a VERIFIED (customer-link) acceptance can be a formal acceptance.
+ *   STAFF         -> RECORDED. A staff acceptance recorded after migration 0117 (it carries a contact_source) also needs its evidence file(s) to count; one recorded before is unchanged.
+ *   CUSTOMER_LINK -> an ACCEPTANCE is PENDING_VERIFICATION until an internal review VERIFIED it (or REJECTED); a decline / change request is informational (RECORDED).
+ */
+export type Standing = "RECORDED" | "EVIDENCE_MISSING" | "PENDING_VERIFICATION" | "VERIFIED" | "REJECTED";
+export function standingOf(r: StoredResponse, reviews: readonly StoredReview[], evidenceByResponse: ReadonlyMap<string, number> = new Map()): Standing {
+  if (r.origin === "CUSTOMER_LINK") {
+    if (r.response !== "ACCEPTED") return "RECORDED";
+    const rv = reviews.find((x) => x.response_id === r.id);
+    return !rv ? "PENDING_VERIFICATION" : rv.decision === "VERIFIED" ? "VERIFIED" : "REJECTED";
+  }
+  if (r.response === "ACCEPTED" && r.contact_source && (evidenceByResponse.get(r.id) ?? 0) === 0) return "EVIDENCE_MISSING";
+  return "RECORDED";
+}
+/** A formal acceptance: an ACCEPTED response that is RECORDED (staff, with evidence) or VERIFIED. */
+export const countsAsAcceptance = (r: StoredResponse, reviews: readonly StoredReview[], ev?: ReadonlyMap<string, number>): boolean => {
+  if (r.response !== "ACCEPTED") return false;
+  const st = standingOf(r, reviews, ev);
+  return st === "RECORDED" || st === "VERIFIED";
+};
+
 /** The quotation's commercial status, derived from the append-only records (never from the internal approval alone). */
-export function commercialStatus(q: Pick<QuoteRecord, "state">, latestDoc: StoredDocument | null, sends: StoredSend[], responses: StoredResponse[]): CommercialStatus {
+export function commercialStatus(q: Pick<QuoteRecord, "state">, latestDoc: StoredDocument | null, sends: StoredSend[], responses: StoredResponse[], reviews: readonly StoredReview[] = [], evidence: ReadonlyMap<string, number> = new Map()): CommercialStatus {
   if (q.state !== "MANAGER_APPROVED_FINAL") return "NOT_APPROVED";
   if (latestDoc) {
     const mine = responses.filter((r) => r.document_id === latestDoc.id);
-    if (mine.some((r) => r.response === "ACCEPTED")) return "CUSTOMER_ACCEPTED";
+    if (mine.some((r) => countsAsAcceptance(r, reviews, evidence))) return "CUSTOMER_ACCEPTED";
     const latest = mine[0];
-    if (latest?.response === "DECLINED") return "CUSTOMER_DECLINED";
-    if (latest?.response === "CHANGES_REQUESTED") return "CHANGES_REQUESTED";
+    if (latest) {
+      const st = standingOf(latest, reviews, evidence);
+      if (latest.response === "ACCEPTED" && (st === "PENDING_VERIFICATION" || st === "EVIDENCE_MISSING")) return "ACCEPTANCE_PENDING_VERIFICATION";
+      if (latest.response === "ACCEPTED" && st === "REJECTED") return "ACCEPTANCE_REJECTED";
+      if (latest.response === "DECLINED") return "CUSTOMER_DECLINED";
+      if (latest.response === "CHANGES_REQUESTED") return "CHANGES_REQUESTED";
+    }
     if (sends.some((s) => s.document_id === latestDoc.id && s.status === "ACCEPTED")) return "SENT_TO_CUSTOMER";
   }
   return "APPROVED_INTERNALLY";
 }
 
-export interface ResponseInput { documentId: string; response: CustomerResponse; contactName: string; respondedOn: string; evidenceRef: string; note?: string }
+export interface ResponseInput {
+  documentId: string; response: CustomerResponse; contactName: string; respondedOn: string; evidenceRef: string; note?: string;
+  /** Migration 0117: the resolved responding contact (see response-contact.ts), recorded alongside the name. */
+  contact?: { source: "DELIVERY_CONTACT" | "CIN7_CONTACT" | "ALTERNATIVE"; email: string | null; exceptionReason: string | null; company: string | null };
+  /** A pre-generated id so evidence objects can be stored under the response before it exists. */
+  responseId?: string;
+  /** How many evidence files accompany this response. A NEW acceptance needs at least one once migration 0117 is applied. */
+  evidenceCount?: number;
+}
 
 export async function recordCustomerResponse(
   db: Db, orgId: string, quoteId: string, who: { email: string; ownerEmail?: string | null }, input: ResponseInput, today: string,
@@ -71,7 +123,11 @@ export async function recordCustomerResponse(
   if (docs[0].id !== doc.id || doc.revision !== q.revision || doc.baseline_hash !== q.baseline_hash) throw new Error("That is not the current issued revision of this quotation; record the response against the current document.");
   if (input.respondedOn < doc.created_at.slice(0, 10)) throw new Error("The response cannot pre-date the issue of the quotation.");
   const prior = await listResponses(db, orgId, quoteId);
-  if (prior.some((r) => r.response === "ACCEPTED")) {
+  const reviews = await listReviews(db, orgId, quoteId);
+  const portal = await portalAvailable(db);
+  if (input.response === "ACCEPTED" && portal && (input.evidenceCount ?? 0) < 1) throw new Error("Attach the supporting evidence for the acceptance (for example the signed quotation or the customer's confirming email).");
+  if (portal && prior.some((r) => r.document_id === doc.id && r.response === "ACCEPTED" && standingOf(r, reviews) === "PENDING_VERIFICATION")) throw new Error("The customer's emailed acceptance is waiting for internal verification. Verify or reject it first.");
+  if (prior.some((r) => countsAsAcceptance(r, reviews))) {
     const same = prior.find((r) => r.response === input.response && r.document_id === doc.id && r.evidence_ref === evidenceRef);
     if (same) return { response: same, created: false };
     throw new Error("The customer has already accepted this quotation; the acceptance is final.");
@@ -79,8 +135,11 @@ export async function recordCustomerResponse(
   const dup = prior.find((r) => r.document_id === doc.id && r.response === input.response && r.evidence_ref === evidenceRef);
   if (dup) return { response: dup, created: false };
   const ins = await db.from("newquip_quote_responses").insert({
+    ...(input.responseId ? { id: input.responseId } : {}),
     org_id: orgId, quote_id: quoteId, document_id: doc.id, response: input.response, contact_name: contactName, responded_on: input.respondedOn, evidence_ref: evidenceRef, note,
     recorded_by_email: who.email, recorded_by_owner_email: who.ownerEmail ?? null,
+    // Migration 0117 columns, only once it is applied (older databases have no such columns).
+    ...(portal && input.contact ? { origin: "STAFF", contact_email: input.contact.email, contact_source: input.contact.source, contact_company: input.contact.company, exception_reason: input.contact.exceptionReason, document_hash: doc.content_hash } : {}),
   }).select("*").single();
   if (ins.error || !ins.data) throw new Error(`Could not record the response: ${ins.error?.message ?? "no row"}`);
   return { response: ins.data as StoredResponse, created: true };
@@ -96,10 +155,65 @@ export async function requireAcceptance(db: Db, orgId: string, q: QuoteRecord & 
   if (!requiresAcceptance(q)) return null;
   const docs = await listDocuments(db, orgId, q.id);
   const doc = docs[0];
-  if (!doc || doc.revision !== q.revision || doc.baseline_hash !== q.baseline_hash) throw new Error("The customer must accept the issued quotation before a Project can be created. Issue the quotation, send it, and record the customer's acceptance.");
-  const res = (await listResponses(db, orgId, q.id)).find((r) => r.document_id === doc.id && r.response === "ACCEPTED");
-  if (!res) throw new Error("The customer has not accepted this quotation yet. A Project can only be created after you record the customer's acceptance of the issued quotation.");
+  if (!doc || doc.revision !== q.revision || doc.baseline_hash !== q.baseline_hash) throw new Error("The customer must accept the issued quotation before a Project can be created. Issue the quotation, send it, and record the customer's acceptance of that exact version.");
+  const [responses, reviews, evidence] = await Promise.all([listResponses(db, orgId, q.id), listReviews(db, orgId, q.id), evidenceCounts(db, orgId, q.id)]);
+  const mine = responses.filter((r) => r.document_id === doc.id && r.response === "ACCEPTED");
+  const res = mine.find((r) => countsAsAcceptance(r, reviews, evidence));
+  if (!res) {
+    const st = mine[0] ? standingOf(mine[0], reviews, evidence) : null;
+    if (st === "PENDING_VERIFICATION") throw new Error("The customer's emailed acceptance has been received but is awaiting internal verification. Verify it in Customer Acceptance before a Project can be created.");
+    if (st === "EVIDENCE_MISSING") throw new Error("The recorded acceptance has no supporting evidence file yet. Attach the evidence in Customer Acceptance before a Project can be created.");
+    if (st === "REJECTED") throw new Error("The customer's emailed acceptance was rejected on verification, so it does not authorise a Project.");
+    throw new Error("The customer has not accepted this quotation yet. A Project can only be created after the customer's acceptance of the issued quotation is recorded and, if it came by email, verified.");
+  }
   const schedule: ScheduleStageTemplate[] = doc.content.paymentSchedule.map((s) => ({ name: s.name, bps: Math.round(s.percent * 100), description: s.description, trigger: s.trigger }));
   return { document: doc, response: res, schedule, scheduleSource: doc.content.scheduleSource ?? null };
 }
 
+
+/** Evidence files per response (empty before migration 0117). */
+export async function evidenceCounts(db: Db, orgId: string, quoteId: string): Promise<Map<string, number>> {
+  const r = await db.from("newquip_response_evidence").select("response_id").eq("org_id", orgId).eq("quote_id", quoteId);
+  const m = new Map<string, number>();
+  if (r.error) { if (missing(r.error.message)) return m; throw new Error(r.error.message); }
+  for (const x of (r.data ?? []) as Array<{ response_id: string }>) m.set(x.response_id, (m.get(x.response_id) ?? 0) + 1);
+  return m;
+}
+
+/**
+ * Internal verification of an ACCEPTANCE received through the customer's emailed link. A Rep or Manager (checked by the caller) reviews the respondent's identity and
+ * authority; VERIFIED makes it the formal acceptance of that exact issued document, REJECTED (with a reason) does not. One review per response, append-only.
+ * Nothing here creates a project or a Cin7 Sale.
+ */
+export async function reviewResponse(
+  db: Db, orgId: string, quoteId: string, who: { email: string; ownerEmail?: string | null }, input: { responseId: string; decision: "VERIFIED" | "REJECTED"; note: string },
+): Promise<{ review: StoredReview; response: StoredResponse; created: boolean }> {
+  const q = await loadQuote(db, orgId, quoteId);
+  if (!q) throw new Error("Quote not found.");
+  if (q.state !== "MANAGER_APPROVED_FINAL") throw new Error("Only an approved, issued quotation has customer responses to review.");
+  if (input.decision !== "VERIFIED" && input.decision !== "REJECTED") throw new Error("Choose to verify or reject the acceptance.");
+  const note = (input.note ?? "").trim();
+  if (input.decision === "REJECTED" && note.length < 3) throw new Error("Give the reason the acceptance is being rejected.");
+  const responses = await listResponses(db, orgId, quoteId);
+  const resp = responses.find((r) => r.id === input.responseId);
+  if (!resp) throw new Error("That response does not belong to this quotation.");
+  if (resp.origin !== "CUSTOMER_LINK" || resp.response !== "ACCEPTED") throw new Error("Only an acceptance received through the customer's emailed link needs verification.");
+  const reviews = await listReviews(db, orgId, quoteId);
+  const prior = reviews.find((x) => x.response_id === resp.id);
+  if (prior) { if (prior.decision === input.decision) return { review: prior, response: resp, created: false }; throw new Error(`This acceptance was already ${prior.decision === "VERIFIED" ? "verified" : "rejected"}; a review is final.`); }
+  // The acceptance must still be of the CURRENT issued document: a response to a superseded revision cannot be verified into force.
+  const docs = await listDocuments(db, orgId, quoteId);
+  const doc = docs[0];
+  if (!doc || doc.id !== resp.document_id || doc.revision !== q.revision || doc.baseline_hash !== q.baseline_hash || (resp.document_hash && resp.document_hash !== doc.content_hash)) {
+    if (input.decision === "VERIFIED") throw new Error("That acceptance was given for an earlier version of the quotation, so it cannot be verified. Reject it, or have the customer respond to the current version.");
+  }
+  if (input.decision === "VERIFIED" && responses.some((r) => r.id !== resp.id && countsAsAcceptance(r, reviews))) throw new Error("This quotation already has a formal acceptance.");
+  const ins = await db.from("newquip_response_reviews").insert({
+    org_id: orgId, quote_id: quoteId, response_id: resp.id, decision: input.decision, note, reviewed_by_email: who.email, reviewed_by_owner_email: who.ownerEmail ?? null,
+  }).select("*").single();
+  if (ins.error || !ins.data) {
+    if (/duplicate key|unique/i.test(ins.error?.message ?? "")) throw new Error("This acceptance was just reviewed by someone else.");
+    throw new Error(`Could not record the review: ${ins.error?.message ?? "no row"}`);
+  }
+  return { review: ins.data as StoredReview, response: resp, created: true };
+}

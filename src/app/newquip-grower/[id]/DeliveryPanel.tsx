@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { formatSast } from "@/lib/approvals/time";
 import { getQuoteDocumentsAction, issueQuoteDocumentAction, type QuoteDocumentsView } from "../document-actions";
-import { getQuoteDeliveryAction, recordCustomerResponseAction, retryQuoteSendAction, sendQuoteToCustomerAction, type DeliveryView } from "../delivery-actions";
+import { getQuoteDeliveryAction, retryQuoteSendAction, sendQuoteToCustomerAction, type DeliveryView } from "../delivery-actions";
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
 import { ScheduleChooser } from "./ScheduleChooser";
 
@@ -19,10 +19,10 @@ const inputCls = "h-9 rounded-md border border-slate-300 bg-white px-2 text-sm";
 const SEND_LABEL: Record<string, string> = { ACCEPTED: "Accepted by the email provider (not proof of inbox delivery)", FAILED: "Failed", SUPPRESSED: "Not sent: recipient not permitted from this environment", QUEUED: "Queued / outcome unconfirmed" };
 const newKey = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `k-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
-export interface DeliveryGate { requires: boolean; accepted: boolean; status: string | null; hasDocument: boolean }
+export interface DeliveryGate { requires: boolean; accepted: boolean; status: string | null; hasDocument: boolean; linkState?: "NONE" | "ACTIVE" | "EXPIRED" | "REVOKED" }
 
 /** `section`: Stage 4 (Customer Quotation) shows the PDF and the send; Stage 5 (Customer Acceptance) shows the customer's response. The same data and server actions serve both. */
-export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quoteId: string; contractCents: number; onGate: (g: DeliveryGate) => void; section: "quotation" | "acceptance" }) {
+export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quoteId: string; contractCents: number; onGate: (g: DeliveryGate) => void; section: "quotation" }) {
   const [docs, setDocs] = useState<QuoteDocumentsView | null>(null);
   const [d, setD] = useState<DeliveryView | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -31,12 +31,11 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
   const [choice, setChoice] = useState<ScheduleChoice | undefined>(undefined);
   const [to, setTo] = useState(""); const [cc, setCc] = useState(""); const [message, setMessage] = useState(""); const [reviewed, setReviewed] = useState(false);
   const [key, setKey] = useState(newKey); const [altReason, setAltReason] = useState(""); const [resendOf, setResendOf] = useState<string | null>(null); const [resendReason, setResendReason] = useState("");
-  const [resp, setResp] = useState({ response: "ACCEPTED" as "ACCEPTED" | "DECLINED" | "CHANGES_REQUESTED", contactName: "", respondedOn: new Date().toISOString().slice(0, 10), evidenceRef: "", note: "" });
 
   const reload = useCallback(async () => {
     const [a, b] = await Promise.all([getQuoteDocumentsAction(quoteId), getQuoteDeliveryAction(quoteId)]);
     if (a.ok && a.data) setDocs(a.data); else setErr(a.error ?? "Could not load documents.");
-    if (b.ok && b.data) { setD(b.data); onGate({ requires: b.data.requiresAcceptance, accepted: b.data.accepted, status: b.data.status, hasDocument: b.data.latestDocumentId != null }); if (!to && b.data.defaultTo) setTo(b.data.defaultTo); }
+    if (b.ok && b.data) { setD(b.data); onGate({ requires: b.data.requiresAcceptance, accepted: b.data.accepted, status: b.data.status, hasDocument: b.data.latestDocumentId != null, linkState: b.data.links.state }); if (!to && b.data.defaultTo) setTo(b.data.defaultTo); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quoteId, onGate]);
   useEffect(() => { let live = true; void (async () => { if (live) await reload(); })(); return () => { live = false; }; }, [reload]);
@@ -121,27 +120,6 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
 
       </>)}
 
-      {section === "acceptance" && (<>
-      <h3 className="mt-5 text-sm font-semibold text-slate-800">Customer response on the issued quotation</h3>
-      {d.responses.length > 0 && (
-        <ul className="mt-2 divide-y rounded-md border border-slate-200 text-sm">
-          {d.responses.map((r) => <li key={r.id} className="p-2"><b>{r.response.replace("_", " ")}</b> by {r.contact} on {r.respondedOn} · evidence: {r.evidence}{r.note ? ` · ${r.note}` : ""} · recorded by {r.recordedBy}</li>)}
-        </ul>
-      )}
-      {d.canRecord && !d.accepted ? (
-        <div className="mt-2 flex flex-wrap items-end gap-2">
-          <select className={inputCls} value={resp.response} onChange={(e) => setResp({ ...resp, response: e.target.value as typeof resp.response })}>
-            <option value="ACCEPTED">Customer accepted</option><option value="DECLINED">Customer declined</option><option value="CHANGES_REQUESTED">Changes requested</option>
-          </select>
-          <input className={inputCls} placeholder="Customer contact who responded" value={resp.contactName} onChange={(e) => setResp({ ...resp, contactName: e.target.value })} />
-          <input className={inputCls} type="date" value={resp.respondedOn} onChange={(e) => setResp({ ...resp, respondedOn: e.target.value })} />
-          <input className={`${inputCls} w-72`} placeholder="Evidence reference (email date / subject, signed copy no.)" value={resp.evidenceRef} onChange={(e) => setResp({ ...resp, evidenceRef: e.target.value })} />
-          <input className={`${inputCls} w-72`} placeholder={resp.response === "CHANGES_REQUESTED" ? "What changes were requested" : "Note (optional)"} value={resp.note} onChange={(e) => setResp({ ...resp, note: e.target.value })} />
-          <Button type="button" loading={busy} onClick={() => void run(() => recordCustomerResponseAction(quoteId, { documentId: d.latestDocumentId ?? "", ...resp }), "Customer response recorded.")}>Record response</Button>
-        </div>
-      ) : <p className="mt-2 text-sm text-slate-500">{d.accepted ? "Accepted: this acceptance is final." : "A response can be recorded once the quotation has been issued."}</p>}
-      {(d.status === "CHANGES_REQUESTED" || d.status === "CUSTOMER_DECLINED") && <Alert tone="warning">Changes after approval follow the normal revision rules: an approved quotation is frozen, so prepare a revised quotation and take it through Estimator and Manager approval again.</Alert>}
-      </>)}
     </Panel>
   );
 }

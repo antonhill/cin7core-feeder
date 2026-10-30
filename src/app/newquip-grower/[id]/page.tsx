@@ -35,6 +35,7 @@ import { CustomerPanel } from "./CustomerPanel";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { DeliveryPanel, type DeliveryGate } from "./DeliveryPanel";
 import { StageNav } from "./StageNav";
+import { AcceptancePanel } from "./AcceptancePanel";
 import { computeStages, currentStage, parseStage, type CommercialState, type StageId } from "@/newquip/quote/stages";
 import { getQuoteDeliveryAction } from "../delivery-actions";
 import { ScopePanel } from "./ScopePanel";
@@ -101,7 +102,7 @@ export default function QuoteEditorPage() {
   useEffect(() => {
     if (!finalNow) return;
     let live = true;
-    void getQuoteDeliveryAction(id).then((r) => { if (live && r.ok && r.data?.available) setGate({ requires: r.data.requiresAcceptance, accepted: r.data.accepted, status: r.data.status, hasDocument: r.data.latestDocumentId != null }); });
+    void getQuoteDeliveryAction(id).then((r) => { if (live && r.ok && r.data?.available) setGate({ requires: r.data.requiresAcceptance, accepted: r.data.accepted, status: r.data.status, hasDocument: r.data.latestDocumentId != null, linkState: r.data.links.state }); });
     return () => { live = false; };
   }, [id, finalNow, gateKey]);
 
@@ -178,7 +179,7 @@ export default function QuoteEditorPage() {
   const stages = computeStages({
     state: q.state, revision: q.revision, ready: rd.state === "READY", customerSelected: !!draft.customerName.trim(), confirmed: q.customer_confirmed_cents != null,
     signedOff: !!q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash, commercial: final ? ((gate.status as CommercialState | null) ?? null) : "NOT_APPROVED",
-    hasDocument: gate.hasDocument, requiresAcceptance: q.requires_customer_acceptance === true, projectLinked: !!q.project_id,
+    hasDocument: gate.hasDocument, linkState: gate.linkState, requiresAcceptance: q.requires_customer_acceptance === true, projectLinked: !!q.project_id,
   });
   const here = currentStage(stages);
   const stage: StageId = picked ?? here;
@@ -647,7 +648,7 @@ export default function QuoteEditorPage() {
         <div className="mt-6 space-y-6">
           {!final && <Alert tone="info">Customer acceptance is recorded against the issued, Manager-approved quotation. It becomes available once the quotation has been issued.</Alert>}
           {final && !gate.requires && <Alert tone="info">This quotation was approved before customer acceptance was introduced, so it is grandfathered: a Project does not depend on a recorded acceptance. A response can still be recorded if the customer gives one.</Alert>}
-          {final && q.accepted_baseline && <DeliveryPanel quoteId={id} contractCents={q.accepted_baseline.contractCents} onGate={setGate} section="acceptance" />}
+          {final && q.accepted_baseline && <AcceptancePanel quoteId={id} onGate={setGate} />}
         </div>
       )}
 

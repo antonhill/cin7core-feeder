@@ -14,6 +14,9 @@ import { messageLeaksInternal } from "./customer-document";
 import { isValidEmail } from "./customer-snapshot";
 import { latestSnapshot } from "./customer-store";
 import { listDocuments, readDocumentBytes, type DocumentDeps, type StoredDocument } from "./document-store";
+import { portalAvailable } from "./acceptance";
+import { issueResponseLink, type LinkEnv } from "./response-links";
+import { approvalBaseUrl } from "@/lib/approvals/email-policy";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 export type SendFn = (i: SendEmailInput) => Promise<SendEmailResult>;
@@ -49,7 +52,9 @@ export function validateRequest(req: SendRequest): { to: string[]; cc: string[];
   return { to, cc, message };
 }
 
-function bodyOf(doc: StoredDocument, message: string, companyName: string): string {
+export interface ResponseLinks { accept: string; decline: string; changes: string; expiresOn: string }
+
+function bodyOf(doc: StoredDocument, message: string, companyName: string, links?: ResponseLinks | null): string {
   return [
     message || `Please find attached our quotation ${doc.quote_ref}.`,
     "",
@@ -57,9 +62,28 @@ function bodyOf(doc: StoredDocument, message: string, companyName: string): stri
     `Valid until: ${doc.content.quote.validUntil}`,
     "",
     "This email carries your quotation as a PDF attachment. Please follow the acceptance instructions inside it.",
+    ...(links ? [
+      "",
+      `You can also respond online (secure personal links, valid until ${links.expiresOn}). Each link opens a page where you review the quotation and confirm your details; nothing is recorded until you submit:`,
+      `  Accept the quotation:  ${links.accept}`,
+      `  Decline the quotation: ${links.decline}`,
+      `  Request changes:       ${links.changes}`,
+      "Please do not forward this email: the links are personal to the recipients above.",
+    ] : []),
     "",
     companyName,
   ].join("\n");
+}
+
+/** Issues the emailed response links for this send, when migration 0117 is applied and a site address is known. Fails closed: otherwise the email carries no links. */
+async function responseLinksFor(db: Db, orgId: string, doc: StoredDocument, send: StoredSend, recipients: string[], by: string, env: EmailEnv): Promise<ResponseLinks | null> {
+  if (!(await portalAvailable(db))) return null;
+  const base = approvalBaseUrl(env);
+  if (!base.startsWith("https://") && !/^http:\/\/localhost(:\d+)?$/.test(base)) return null;
+  const { token, link } = await issueResponseLink(db, { orgId, doc, send, recipients, customerName: doc.content.customer.name, by }, env as LinkEnv);
+  // The token travels in the URL FRAGMENT: browsers never send it to the server or in a Referer header, so it appears in no request log, analytics or referrer.
+  const at = (a: string) => `${base}/quote-response#t=${token}&a=${a}`;
+  return { accept: at("accept"), decline: at("decline"), changes: at("changes"), expiresOn: link.expires_at.slice(0, 10) };
 }
 
 async function deliver(db: Db, row: StoredSend, doc: StoredDocument, bytes: Uint8Array, to: string[], cc: string[], suppressed: string[], subject: string, text: string, send: SendFn): Promise<StoredSend> {
@@ -128,7 +152,10 @@ export async function sendQuotationToCustomer(
   }
   const row = ins.data as StoredSend;
   if (row.status === "SUPPRESSED") return { send: row, reused: false }; // nobody on the list may receive it from this environment: nothing leaves
-  return { send: await deliver(db, row, doc, bytes, sendTo, sendCc, suppressed, subject, text, send), reused: false };
+  const links = await responseLinksFor(db, orgId, doc, row, [...sendTo, ...sendCc], who.email, env);
+  const withLinks = links ? applyEmailPolicy(env, { to: sendTo[0], subject: subjectBase, text: bodyOf(doc, message, doc.content.company.legalName, links) }) : null;
+  const finalText = withLinks && withLinks.action === "SEND" ? withLinks.text : text;
+  return { send: await deliver(db, row, doc, bytes, sendTo, sendCc, suppressed, subject, finalText, send), reused: false };
 }
 
 /** Controlled retry of a FAILED send: the row is claimed FAILED -> QUEUED by compare-and-set, so concurrent retries emit at most one email. */
@@ -153,5 +180,9 @@ export async function retryFailedSend(db: Db, orgId: string, sendId: string, dep
   const sendTo = row.to_emails.filter((a) => decide(a).action === "SEND"); const sendCc = row.cc_emails.filter((a) => decide(a).action === "SEND");
   if (sendTo.length === 0) { const sup = await db.from("newquip_quote_sends").update({ status: "SUPPRESSED", last_error: null }).eq("org_id", orgId).eq("id", sendId).select("*").single(); return sup.data as StoredSend; }
   const first = decide(sendTo[0]);
-  return deliver(db, claimed, doc, bytes, sendTo, sendCc, [...row.to_emails, ...row.cc_emails].filter((a) => !sendTo.includes(a) && !sendCc.includes(a)), first.action === "SEND" ? first.subject : subjectBase, first.action === "SEND" ? first.text : body, send);
+  // A retry gets a NEW link (the earlier, never-delivered one is revoked by issuing it).
+  const links = await responseLinksFor(db, orgId, doc, claimed, [...sendTo, ...sendCc], claimed.sent_by_email, env);
+  const withLinks = links ? applyEmailPolicy(env, { to: sendTo[0], subject: subjectBase, text: bodyOf(doc, row.message, doc.content.company.legalName, links) }) : null;
+  const text = withLinks && withLinks.action === "SEND" ? withLinks.text : first.action === "SEND" ? first.text : body;
+  return deliver(db, claimed, doc, bytes, sendTo, sendCc, [...row.to_emails, ...row.cc_emails].filter((a) => !sendTo.includes(a) && !sendCc.includes(a)), first.action === "SEND" ? first.subject : subjectBase, text, send);
 }
