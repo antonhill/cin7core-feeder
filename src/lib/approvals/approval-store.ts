@@ -530,16 +530,18 @@ async function submitStaged(db: Db, ctx: ApprovalCtx, docType: ApprovalDocType, 
 function stagedDecisionNotifications(action: ApprovalAction, req: ApprovalRequestRow, ctx: ApprovalCtx, reason: string, destination: "ESTIMATOR" | "PREPARER" | null): NotificationSpec[] {
   if (action === "WITHDRAW") return [];
   const stage = req.stage ?? "MANAGER";
-  const b = { baseUrl: ctx.baseUrl, reason: reason || null, by: ctx.name };
+  const b = { baseUrl: ctx.baseUrl, reason: reason || null, by: ctx.name, at: new Date().toISOString() };
+  const rep = req.originator_email ?? null;
   if (stage === "ESTIMATOR") {
-    if (action === "APPROVE") return []; // the manager-stage submission that follows notifies the approver
-    return [buildNotification("RETURNED_TO_REP", req, req.prepared_by_email, b)];
+    // Estimator signs off: the Manager is told by the manager-stage submission that follows; the Rep is told here (they are waiting on the outcome).
+    if (action === "APPROVE") return uniq([rep ?? req.prepared_by_email]).map((to) => buildNotification("SIGNED_OFF_FOR_REP", req, to, b));
+    return uniq([req.prepared_by_email, rep]).map((to) => buildNotification("RETURNED_TO_REP", req, to, b));
   }
   if (req.doc_type !== "QUOTE") return [buildNotification(action === "APPROVE" ? "APPROVED" : action === "RETURN" ? "RETURNED" : "REJECTED", req, req.prepared_by_email, b)];
-  const rep = req.originator_email ?? null;
-  if (action === "APPROVE") return uniq([req.prepared_by_email, rep]).map((to) => buildNotification("APPROVED", req, to, b));
+  // Manager decisions. prepared_by is the Estimator who signed off; originator is the Rep. Each is told exactly once (a person who is both gets the Rep's message).
+  if (action === "APPROVE") return uniq([req.prepared_by_email, rep]).map((to) => buildNotification(to === rep?.toLowerCase() ? "APPROVED_FOR_REP" : "APPROVED", req, to, b));
   if (action === "REJECT") return uniq([req.prepared_by_email, rep]).map((to) => buildNotification("REJECTED", req, to, b));
-  if (destination === "ESTIMATOR") return [buildNotification("RETURNED_TO_ESTIMATOR", req, req.prepared_by_email, b)];
+  if (destination === "ESTIMATOR") return uniq([req.prepared_by_email, rep]).map((to) => buildNotification(to === req.prepared_by_email.toLowerCase() ? "RETURNED_TO_ESTIMATOR" : "RETURNED_TO_ESTIMATOR_FOR_REP", req, to, b));
   return uniq([rep, req.prepared_by_email]).map((to) => buildNotification("RETURNED_TO_REP", req, to, b));
 }
 

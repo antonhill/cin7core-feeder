@@ -19,7 +19,10 @@ const inputCls = "h-9 rounded-md border border-slate-300 bg-white px-2 text-sm";
 const SEND_LABEL: Record<string, string> = { ACCEPTED: "Accepted by the email provider (not proof of inbox delivery)", FAILED: "Failed", SUPPRESSED: "Not sent: recipient not permitted from this environment", QUEUED: "Queued / outcome unconfirmed" };
 const newKey = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `k-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
-export function DeliveryPanel({ quoteId, contractCents, onGate }: { quoteId: string; contractCents: number; onGate: (g: { requires: boolean; accepted: boolean }) => void }) {
+export interface DeliveryGate { requires: boolean; accepted: boolean; status: string | null; hasDocument: boolean }
+
+/** `section`: Stage 4 (Customer Quotation) shows the PDF and the send; Stage 5 (Customer Acceptance) shows the customer's response. The same data and server actions serve both. */
+export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quoteId: string; contractCents: number; onGate: (g: DeliveryGate) => void; section: "quotation" | "acceptance" }) {
   const [docs, setDocs] = useState<QuoteDocumentsView | null>(null);
   const [d, setD] = useState<DeliveryView | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -33,7 +36,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate }: { quoteId: str
   const reload = useCallback(async () => {
     const [a, b] = await Promise.all([getQuoteDocumentsAction(quoteId), getQuoteDeliveryAction(quoteId)]);
     if (a.ok && a.data) setDocs(a.data); else setErr(a.error ?? "Could not load documents.");
-    if (b.ok && b.data) { setD(b.data); onGate({ requires: b.data.requiresAcceptance, accepted: b.data.accepted }); if (!to && b.data.defaultTo) setTo(b.data.defaultTo); }
+    if (b.ok && b.data) { setD(b.data); onGate({ requires: b.data.requiresAcceptance, accepted: b.data.accepted, status: b.data.status, hasDocument: b.data.latestDocumentId != null }); if (!to && b.data.defaultTo) setTo(b.data.defaultTo); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quoteId, onGate]);
   useEffect(() => { let live = true; void (async () => { if (live) await reload(); })(); return () => { live = false; }; }, [reload]);
@@ -43,7 +46,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate }: { quoteId: str
     try { const r = await fn(); if (r.ok) { setNote(done); await reload(); } else setErr(r.error ?? "Failed."); } finally { setBusy(false); }
   };
 
-  if (!docs || !d) return <Panel><PanelTitle>Customer quotation</PanelTitle><p className="mt-2 text-sm text-slate-500">{err ?? "Loading…"}</p></Panel>;
+  if (!docs || !d) return <Panel><PanelTitle>{section === "quotation" ? "Issue and send the quotation" : "Customer response"}</PanelTitle><p className="mt-2 text-sm text-slate-500">{err ?? "Loading…"}</p></Panel>;
   if (!docs.available || !d.available) return <Panel><PanelTitle>Customer quotation</PanelTitle><Alert tone="info">Sending a quotation to the customer becomes available once the database update for customer quotations (migration 0115) has been applied.</Alert></Panel>;
   const latest = docs.documents[0];
   const split = (s: string) => s.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
@@ -51,12 +54,13 @@ export function DeliveryPanel({ quoteId, contractCents, onGate }: { quoteId: str
   const statusTone = d.status === "CUSTOMER_ACCEPTED" ? "success" : d.status === "CUSTOMER_DECLINED" || d.status === "CHANGES_REQUESTED" ? "warning" : "neutral";
   return (
     <Panel>
-      <div className="flex items-center gap-2"><PanelTitle>Customer quotation</PanelTitle><Badge tone={statusTone}>{d.statusLabel}</Badge></div>
+      <div className="flex items-center gap-2"><PanelTitle>{section === "quotation" ? "Issue and send the quotation" : "Customer response"}</PanelTitle><Badge tone={statusTone}>{d.statusLabel}</Badge></div>
       <p className="mt-1 text-xs text-slate-500">Manager approval lets the quotation be issued. It is not the customer&apos;s acceptance: a Project for a new quotation needs the customer&apos;s recorded acceptance.</p>
       {err && <Alert tone="danger">{err}</Alert>}
       {note && <Alert tone="success">{note}</Alert>}
 
-      <h3 className="mt-4 text-sm font-semibold text-slate-800">1 · Quotation PDF</h3>
+      {section === "quotation" && (<>
+      <h3 className="mt-4 text-sm font-semibold text-slate-800">Quotation PDF</h3>
       {docs.blockers.length > 0 && <Alert tone="warning"><ul className="list-disc pl-4">{docs.blockers.map((b) => <li key={b}>{b}</li>)}</ul><Link className="underline" href="/newquip-grower/company-profile">Company details</Link></Alert>}
       {docs.documents.length > 0 && (
         <ul className="mt-2 divide-y rounded-md border border-slate-200 text-sm">
@@ -78,7 +82,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate }: { quoteId: str
         </div>
       )}
 
-      <h3 className="mt-5 text-sm font-semibold text-slate-800">2 · Send to the customer</h3>
+      <h3 className="mt-5 text-sm font-semibold text-slate-800">Send to the customer</h3>
       {d.policy.restricted && <Alert tone="info">Preview environment: only {d.policy.allowlist.join(", ")} will be emailed. Any other address is recorded as not sent, never redirected. Subjects are marked [PREVIEW].</Alert>}
       {!d.policy.emailConfigured && <Alert tone="warning">Email is not configured in this environment.</Alert>}
       {d.canSend && latest ? (
@@ -115,7 +119,10 @@ export function DeliveryPanel({ quoteId, contractCents, onGate }: { quoteId: str
         </ul>
       )}
 
-      <h3 className="mt-5 text-sm font-semibold text-slate-800">3 · Customer response</h3>
+      </>)}
+
+      {section === "acceptance" && (<>
+      <h3 className="mt-5 text-sm font-semibold text-slate-800">Customer response on the issued quotation</h3>
       {d.responses.length > 0 && (
         <ul className="mt-2 divide-y rounded-md border border-slate-200 text-sm">
           {d.responses.map((r) => <li key={r.id} className="p-2"><b>{r.response.replace("_", " ")}</b> by {r.contact} on {r.respondedOn} · evidence: {r.evidence}{r.note ? ` · ${r.note}` : ""} · recorded by {r.recordedBy}</li>)}
@@ -134,6 +141,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate }: { quoteId: str
         </div>
       ) : <p className="mt-2 text-sm text-slate-500">{d.accepted ? "Accepted: this acceptance is final." : "A response can be recorded once the quotation has been issued."}</p>}
       {(d.status === "CHANGES_REQUESTED" || d.status === "CUSTOMER_DECLINED") && <Alert tone="warning">Changes after approval follow the normal revision rules: an approved quotation is frozen, so prepare a revised quotation and take it through Estimator and Manager approval again.</Alert>}
+      </>)}
     </Panel>
   );
 }
