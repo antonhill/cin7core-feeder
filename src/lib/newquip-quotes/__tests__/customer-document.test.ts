@@ -76,6 +76,14 @@ describe("customer document model", () => {
     expect(text).not.toMatch(/margin|mark-?up|supplier|landed|exchange rate|estimator|internal-assumption/);
     expect(() => assertNoInternalLeak(model, baseline)).not.toThrow();
   });
+  it("the customer contact who confirmed the amount is the customer's own person, not internal data: the document may be addressed to them, while internal staff are still guarded", () => {
+    const { baseline: b2 } = buildAcceptedBaseline({ quoteRef: "NQ-Q-0009", revision: 1, draft: readyDraft(), evaluation: evaluateDraft(readyDraft(), { priceSource: testPriceSource(), withholdCost: false }), approvals: { ...approvals, customerConfirmedBy: "Piet <piet@boerdery.example>" } });
+    expect(internalTokens(b2)).not.toContain("Piet <piet@boerdery.example>");
+    const m = structuredClone(model); m.customer.contactName = "Piet"; m.customer.contactEmail = "piet@boerdery.example";
+    expect(() => assertNoInternalLeak(m, b2)).not.toThrow();
+    const leaky = structuredClone(m); leaky.customer.contactEmail = "rep.person@nq.example"; // an internal person's email is still refused
+    expect(() => assertNoInternalLeak(leaky, b2)).toThrow(/internal data/);
+  });
   it("the leak guard fires when internal data is smuggled in (SKU in a description, a person's email, assumption text, a margin word)", () => {
     const sku = baseline.commercial.lines.find((l) => l.sku)!.sku!;
     const dirty = (mut: (m: CustomerDocumentModel) => void) => { const m = structuredClone(model); mut(m); return () => assertNoInternalLeak(m, baseline); };

@@ -22,6 +22,8 @@ export interface QuoteCustomerView {
   currency: CurrencyStatus | null;
   /** Index (in snapshot.contacts) of the chosen Cin7 contact, so the UI can highlight it; null for an entered contact or none. */
   selectedContactIndex: number | null;
+  /** The recorded pre-approval confirmation contact (null until the Rep sends to the Estimator). */
+  confirmationContact: import("@/lib/newquip-quotes/confirmation-contact").ConfirmationContact | null;
   editable: boolean;
   /** Why the customer cannot be changed (approved/issued quotation, or the viewer is not a Rep); null while it can. */
   lockedReason: string | null;
@@ -41,11 +43,12 @@ async function editableQuote(a: Actor, db: Db, quoteId: string) {
 async function viewOf(db: Db, a: Actor, quoteId: string): Promise<QuoteCustomerView> {
   const q = await loadQuote(db, a.orgId, quoteId);
   if (!q) throw new Error("Quote not found.");
-  if (!(await customerFeaturesAvailable(db))) return { available: false, snapshot: null, snapshotId: null, seq: null, issues: [], currency: null, editable: false, lockedReason: null, changeReturnsToRep: false, selectedContactIndex: null, history: [] };
+  if (!(await customerFeaturesAvailable(db))) return { available: false, snapshot: null, snapshotId: null, seq: null, issues: [], currency: null, editable: false, lockedReason: null, changeReturnsToRep: false, selectedContactIndex: null, confirmationContact: null, history: [] };
   const [s, hist] = await Promise.all([latestSnapshot(db, a.orgId, quoteId), snapshotHistory(db, a.orgId, quoteId)]);
+  // confirmationContact is exposed only while a pre-approval confirmation is actually on the quotation
   return {
     available: true, snapshot: s?.snapshot ?? null, snapshotId: s?.id ?? null, seq: s?.seq ?? null, issues: s ? snapshotIssues(s.snapshot) : ["Select the customer from Cin7."],
-    currency: s ? currencyStatus(s.snapshot) : null, selectedContactIndex: s ? selectedContactIndex(s.snapshot) : null, editable: a.roles.has("rep") && canEditDraft(a.roles, q.state),
+    currency: s ? currencyStatus(s.snapshot) : null, selectedContactIndex: s ? selectedContactIndex(s.snapshot) : null, confirmationContact: q.customer_confirmed_cents != null ? s?.snapshot.confirmationContact ?? null : null, editable: a.roles.has("rep") && canEditDraft(a.roles, q.state),
     lockedReason: q.state === "MANAGER_APPROVED_FINAL" ? "This quotation is approved, so its customer cannot be changed. Start a new quotation (or a variation) for a different customer." : !a.roles.has("rep") ? "Only a Rep can change the customer." : null,
     changeReturnsToRep: q.state === "ESTIMATOR_REVIEW",
     history: hist.map((h) => ({ seq: h.seq, by: h.captured_by_email, at: h.created_at, reason: h.reason, cleared: isClearedRow(h) })),
@@ -151,7 +154,7 @@ export async function refreshQuoteCustomerAction(quoteId: string, apply: boolean
     if (apply && changes.length > 0) {
       const keep = cur.snapshot.chosenContact;
       const stillThere = keep && (keep.source === "ENTERED" || keep.emailCorrection != null || fresh.contacts.some((c) => c.email.state === "present" && c.email.value.toLowerCase() === keep.email.toLowerCase()));
-      await appendSnapshot(db, a.orgId, quoteId, { ...fresh, chosenContact: stillThere ? keep : null }, { email: a.email, ownerEmail: ownerEmailOf(a) }, "Refreshed from Cin7");
+      await appendSnapshot(db, a.orgId, quoteId, { ...fresh, chosenContact: stillThere ? keep : null, confirmationContact: cur.snapshot.confirmationContact ?? null }, { email: a.email, ownerEmail: ownerEmailOf(a) }, "Refreshed from Cin7");
       await auditActor(db, a, { action: "newquip.quote_customer_refreshed", summary: "Refreshed the customer snapshot from Cin7 (read-only; no Cin7 write)", detail: { quoteId, changes: changes.map((c) => c.field) } });
       applied = true;
     }

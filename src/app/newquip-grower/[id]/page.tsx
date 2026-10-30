@@ -33,6 +33,7 @@ import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
 import { CostPanel } from "./CostPanel";
 import { CustomerPanel } from "./CustomerPanel";
+import { ConfirmationPanel } from "./ConfirmationPanel";
 import { DeliveryPanel } from "./DeliveryPanel";
 import { ScopePanel } from "./ScopePanel";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
@@ -98,7 +99,6 @@ export default function QuoteEditorPage() {
   const [confirmDemo, setConfirmDemo] = useState(false);
   const [demoLoaded, setDemoLoaded] = useState<string[] | null>(null);
   const [isWorking, start] = useTransition();
-  const [confirmedBy, setConfirmedBy] = useState("");
   const [returnReason, setReturnReason] = useState("");
   const seq = useRef(0);
 
@@ -560,22 +560,26 @@ export default function QuoteEditorPage() {
             <PanelTitle>Workflow</PanelTitle>
             <dl className="mt-3 grid gap-x-8 gap-y-2 text-sm md:grid-cols-2 xl:grid-cols-4">
               {[
-                ["Customer confirmed amount", q.customer_confirmed_cents ? `${fmtCents(q.customer_confirmed_cents)} · ${q.customer_confirmed_by ?? ""}` : "—"],
+                ["Pre-approval amount confirmed", q.customer_confirmed_cents ? `${fmtCents(q.customer_confirmed_cents)} · ${q.customer_confirmed_by ?? ""}` : "—"],
                 ["Sent to estimator by", q.handoff_by_email ?? "—"],
                 ["Estimator sign-off", q.estimator_signoff_hash ? (q.estimator_signoff_hash === q.draft_hash ? `${q.estimator_signoff_by_email} · current` : "stale") : "—"],
                 ["Manager approval", q.approved_by_email ? `${q.approved_by_email}` : "—"],
               ].map(([k, v]) => <div key={k}><dt className="text-xs text-slate-500">{k}</dt><dd className="mt-0.5 font-medium text-slate-900">{v}</dd></div>)}
             </dl>
+            {q.state !== "REP_DRAFT" && q.customer_confirmed_cents != null && (
+              <div className="mt-3 space-y-2">
+                <ConfirmationPanel quoteId={id} amountLabel={fmtCents(q.customer_confirmed_cents)} canAct={false} ready loading={false} refreshKey={`${q.revision}:${q.state}:${q.updated_at}`} recorded onConfirm={() => undefined} />
+                {!final && totalCents != null && totalCents !== q.customer_confirmed_cents && <Alert tone="warning">The quote total ({fmtCents(totalCents)}) no longer equals the confirmed amount ({fmtCents(q.customer_confirmed_cents)}). Return it to the Rep to reconfirm with the customer before it can be approved.</Alert>}
+              </div>
+            )}
 
             <div className="mt-5 flex flex-wrap items-end gap-3 border-t border-slate-100 pt-5">
               {q.state === "REP_DRAFT" && (
                 <>
-                  <TextField label="Customer contact who confirmed the amount" value={confirmedBy} onChange={setConfirmedBy} />
-                  <Button loading={isWorking} disabled={!roles.has("rep") || rd.state !== "READY" || totalCents == null || !confirmedBy.trim()}
-                    onClick={() => act(() => sendGrowerQuoteToEstimatorAction(id, totalCents!, confirmedBy), "Sent to the estimator. The customer's confirmation of the amount is recorded.")}>
-                    Customer confirmed {totalCents == null ? "amount" : fmtCents(totalCents)} — send to estimator
-                  </Button>
-                  {rd.state !== "READY" && <span className="text-xs text-amber-700">The quote must be READY before a customer can confirm an amount.</span>}
+                  <div className="w-full">
+                    <ConfirmationPanel quoteId={id} amountLabel={totalCents == null ? null : fmtCents(totalCents)} canAct={roles.has("rep")} ready={rd.state === "READY"} loading={isWorking} refreshKey={`${q.revision}:${q.state}:${q.updated_at}`} recorded={false}
+                      onConfirm={(c) => act(() => sendGrowerQuoteToEstimatorAction(id, totalCents!, c), "Pre-approval price confirmation recorded and sent to the estimator.")} />
+                  </div>
                 </>
               )}
               {q.state === "ESTIMATOR_REVIEW" && (

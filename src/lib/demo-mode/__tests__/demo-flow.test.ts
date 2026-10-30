@@ -64,7 +64,7 @@ const as = async (slot: string) => { const r = await demo.selectDemoIdentityActi
 describe("the definition of done: the owner signs in once and demonstrates Rep -> Estimator -> Manager", () => {
   it("rep submits, estimator signs off, manager approves; the history shows the effective users and the real owner", async () => {
     await as("rep");
-    expect((await grower.sendGrowerQuoteToEstimatorAction("q1", total, "Customer contact")).error).toBeUndefined();
+    expect((await grower.sendGrowerQuoteToEstimatorAction("q1", total, { source: "ALTERNATIVE", name: "Customer contact", reason: "Demo confirmation" })).error).toBeUndefined();
     expect(quote()).toMatchObject({ state: "ESTIMATOR_REVIEW", handoff_by_email: EMAIL[U.rep] }); // the REP, not the owner
     await as("estimator");
     expect((await grower.signOffGrowerQuoteAction("q1")).error).toBeUndefined();
@@ -93,7 +93,7 @@ describe("the definition of done: the owner signs in once and demonstrates Rep -
 
   it("the approvals dashboard shows each identity its own queue, notifications and permissions (no cross-identity leakage)", async () => {
     await as("rep");
-    await grower.sendGrowerQuoteToEstimatorAction("q1", total, "Customer contact");
+    await grower.sendGrowerQuoteToEstimatorAction("q1", total, { source: "ALTERNATIVE", name: "Customer contact", reason: "Demo confirmation" });
     await as("estimator");
     const est = (await approvals.getApprovalsDashboardAction()).data!;
     expect(est.me).toBe(EMAIL[U.est]);
@@ -112,7 +112,7 @@ describe("the definition of done: the owner signs in once and demonstrates Rep -
 describe("separation of duties and role checks use the EFFECTIVE identity", () => {
   it("the effective Rep cannot sign off or approve their own quotation even though the owner controls the session; the owner's own powers do not leak", async () => {
     await as("rep");
-    await grower.sendGrowerQuoteToEstimatorAction("q1", total, "Customer contact");
+    await grower.sendGrowerQuoteToEstimatorAction("q1", total, { source: "ALTERNATIVE", name: "Customer contact", reason: "Demo confirmation" });
     expect((await grower.signOffGrowerQuoteAction("q1")).error).toMatch(/estimator role|Requires/i);
     expect((await grower.approveGrowerQuoteAction("q1")).error).toMatch(/waiting for estimator review|manager/i);
     expect(quote().estimator_signoff_hash).toBeNull();
@@ -122,7 +122,7 @@ describe("separation of duties and role checks use the EFFECTIVE identity", () =
     expect(quote().estimator_signoff_hash).toBeNull();
   });
   it("the effective Estimator cannot give final approval, and the effective Manager cannot sign off in the estimator's place", async () => {
-    await as("rep"); await grower.sendGrowerQuoteToEstimatorAction("q1", total, "Customer contact");
+    await as("rep"); await grower.sendGrowerQuoteToEstimatorAction("q1", total, { source: "ALTERNATIVE", name: "Customer contact", reason: "Demo confirmation" });
     await as("manager");
     expect((await grower.signOffGrowerQuoteAction("q1")).error).toMatch(/estimator role|Requires/i);
     await as("estimator"); await grower.signOffGrowerQuoteAction("q1");
@@ -130,7 +130,7 @@ describe("separation of duties and role checks use the EFFECTIVE identity", () =
     expect(quote().state).toBe("ESTIMATOR_REVIEW");
   });
   it("a manager returns to the estimator through the effective identities, and the estimator then re-signs", async () => {
-    await as("rep"); await grower.sendGrowerQuoteToEstimatorAction("q1", total, "Customer contact");
+    await as("rep"); await grower.sendGrowerQuoteToEstimatorAction("q1", total, { source: "ALTERNATIVE", name: "Customer contact", reason: "Demo confirmation" });
     await as("estimator"); await grower.signOffGrowerQuoteAction("q1");
     await as("manager");
     expect((await grower.returnGrowerQuoteToEstimatorAction("q1", "Margin looks thin on the feeders")).error).toBeUndefined();

@@ -6,6 +6,7 @@
 //
 // Cin7 Core has NO customer "code": a customer is identified by its Name and its ID (GUID) - see docs/cin7-api-findings.md section 10.
 import { hashOf } from "@/newquip/quote/baseline";
+import type { ConfirmationContact } from "./confirmation-contact";
 
 export type Field = { state: "present"; value: string } | { state: "empty" } | { state: "missing" };
 
@@ -35,6 +36,8 @@ export interface CustomerSnapshot {
   billingAddress: SnapshotAddress | null;
   contacts: SnapshotContact[];
   chosenContact: ChosenContact | null;
+  /** The contact who gave the PRE-APPROVAL price confirmation (recorded when the Rep sends to the Estimator). Independent of chosenContact (the delivery contact). Absent until recorded. */
+  confirmationContact?: ConfirmationContact | null;
   /** When this copy was read from Cin7 (ISO). */
   readAt: string;
 }

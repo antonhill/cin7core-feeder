@@ -67,7 +67,8 @@ export function internalTokens(b: AcceptedBaseline): string[] {
   for (const x of b.physicalScope ?? []) if (x.sku) t.add(x.sku);
   const est = b.physicalCostEstimate as unknown as { entries?: Record<string, { supplierName?: string | null; supplierId?: string | null }> } | undefined;
   for (const e of Object.values(est?.entries ?? {})) { if (e?.supplierName) t.add(e.supplierName); if (e?.supplierId) t.add(e.supplierId); }
-  for (const e of [b.approvals.handoffBy, b.approvals.estimatorSignoffBy, b.approvals.managerApprovedBy, b.approvals.customerConfirmedBy]) if (e) t.add(e);
+  // customerConfirmedBy is the CUSTOMER's own contact (it may legitimately be the addressee), not internal data, so it is not a leak token.
+  for (const e of [b.approvals.handoffBy, b.approvals.estimatorSignoffBy, b.approvals.managerApprovedBy]) if (e) t.add(e);
   if (b.assumptions && b.assumptions.trim().length >= 4) t.add(b.assumptions.trim());
   for (const x of b.exclusions) if (x.reason && x.reason.trim().length >= 4) t.add(x.reason.trim());
   for (const x of b.overrides) if (x.reason && x.reason.trim().length >= 4) t.add(x.reason.trim());

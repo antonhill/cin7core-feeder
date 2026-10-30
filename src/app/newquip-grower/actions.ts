@@ -13,6 +13,8 @@ import { toQuoteRoles } from "@/lib/approvals/roles";
 import { canSeeCosts, resolveRoles } from "@/lib/approvals/role-store";
 import { demoAuditDetail, resolveActing, type DemoInfo } from "@/lib/demo-mode/context";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
+import { confirmationLabel, resolveConfirmationContact, type ConfirmationInput } from "@/lib/newquip-quotes/confirmation-contact";
+import { appendSnapshot, customerFeaturesAvailable, latestSnapshot } from "@/lib/newquip-quotes/customer-store";
 import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
 import { approvalsAvailable, decideDocument, legacyCtx, resyncQuoteApprovals, stagedAvailable, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
 import type { ScheduleChoice } from "@/newquip/quote/billing-schedule";
@@ -169,13 +171,13 @@ async function step(
   quoteId: string,
   summary: string,
   action: string,
-  run: (a: Actor, db: ReturnType<typeof createServiceRoleClient>) => Promise<void>,
+  run: (a: Actor, db: ReturnType<typeof createServiceRoleClient>) => Promise<void | Record<string, unknown>>,
 ): Promise<GrowerActionResult<QuoteView>> {
   try {
     const a = await authorise();
     const db = createServiceRoleClient();
-    await run(a, db);
-    await audit(db, a, { action, summary: `${summary} (local only; no Cin7 write)`, detail: { quoteId } });
+    const extra = await run(a, db);
+    await audit(db, a, { action, summary: `${summary} (local only; no Cin7 write)`, detail: { quoteId, ...(extra ?? {}) } });
     const q = await loadQuote(db, a.orgId, quoteId);
     return q ? { ok: true, data: view(q, a) } : { ok: false, error: "Quote not found." };
   } catch (e) {
@@ -185,13 +187,29 @@ async function step(
 
 // Workflow steps always evaluate with cost WITHHELD: nothing in a handoff, sign-off or approval needs cost.
 
-/** Rep → Estimator. Records that the customer confirmed this commercial amount (ex VAT, in cents). */
-export async function sendGrowerQuoteToEstimatorAction(quoteId: string, confirmedAmountCents: number, confirmedBy: string) {
-  return step(quoteId, "Sent a NewQuip quote to the estimator (customer confirmed the amount)", "newquip.quote_sent_to_estimator", (a, db) =>
-    sendToEstimator(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), { confirmedAmountCents, confirmedBy }).then(async () => {
-      // The estimator stage opens now: the policy's named estimator (or every estimator) is notified in the app and by email.
-      if (await stagedAvailable(db)) await resyncQuoteApprovals(db, ctxOf(a), quoteId);
-    }));
+/**
+ * Rep → Estimator. Records the PRE-APPROVAL price confirmation: the customer contact who confirmed this commercial amount (ex VAT, in cents). The contact is resolved here
+ * from the quotation's own Cin7 customer snapshot (the default is the quotation contact), never trusted from the browser. This is NOT the customer's acceptance of the issued
+ * quotation, which is recorded separately after Manager approval and is what gates project creation.
+ */
+export async function sendGrowerQuoteToEstimatorAction(quoteId: string, confirmedAmountCents: number, contact: ConfirmationInput) {
+  return step(quoteId, "Recorded the pre-approval price confirmation and sent a NewQuip quote to the estimator", "newquip.quote_sent_to_estimator", async (a, db) => {
+    if (!a.roles.has("rep")) throw new Error("Only a Rep can record the pre-approval price confirmation.");
+    const available = await customerFeaturesAvailable(db);
+    const snap = available ? await latestSnapshot(db, a.orgId, quoteId) : null;
+    if (available && !snap) throw new Error("Select the Cin7 customer and quotation contact in Step 1 (Customer & site) before the amount can be confirmed.");
+    if (!available && contact.source !== "ALTERNATIVE") throw new Error("Customer contacts are not available yet; record the contact as an alternative contact with a reason.");
+    const resolved = resolveConfirmationContact(snap?.snapshot ?? null, contact, { by: a.email, at: new Date().toISOString(), amountCents: confirmedAmountCents });
+    // The state change is a compare-and-set, so a double submit records one handoff; the contact record is appended only after it succeeded (no duplicate rows).
+    await sendToEstimator(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), { confirmedAmountCents, confirmedBy: confirmationLabel(resolved) });
+    if (snap) {
+      await appendSnapshot(db, a.orgId, quoteId, { ...snap.snapshot, confirmationContact: resolved }, { email: a.email, ownerEmail: a.demo?.ownerEmail ?? null },
+        `Pre-approval price confirmation contact: ${confirmationLabel(resolved)}`).catch((e) => { throw new Error(`The confirmation was recorded, but its contact record could not be saved: ${errMsg(e)}`); });
+    }
+    // The estimator stage opens now: the policy's named estimator (or every estimator) is notified in the app and by email.
+    if (await stagedAvailable(db)) await resyncQuoteApprovals(db, ctxOf(a), quoteId);
+    return { confirmationContact: { source: resolved.source, name: resolved.name, email: resolved.email, reason: resolved.reason, origin: resolved.origin }, amountCents: confirmedAmountCents, confirmedBy: a.email, deliveryContactUnchanged: snap?.snapshot.chosenContact?.email ?? null };
+  });
 }
 
 export async function returnGrowerQuoteToRepAction(quoteId: string, reason: string) {
