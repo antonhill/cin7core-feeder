@@ -424,11 +424,32 @@ describe("Rep notifications for customer responses", () => {
     const keys = notes(w, "IN_APP").concat(notes(w, "EMAIL")).map((n) => n.dedupe_key);
     expect(new Set(keys).size).toBe(keys.length);
   });
-  it("without an approval request or without approvals installed there is simply no notification (the response is still recorded)", async () => {
+  it("a quotation with NO approval request (grandfathered) still notifies the Rep in-app and by email, anchored on the quotation - no approval request is invented, dedupe holds", async () => {
     const { w, doc } = await ready();
     w.db.rows("approval_requests").length = 0;
     const s = await sendWithLinks(w, doc.id);
     expect((await submit(w, accept(s.token))).ok).toBe(true);
-    expect(notes(w, "IN_APP")).toHaveLength(0);
+    const inApp = notes(w, "IN_APP"); const mail = notes(w, "EMAIL");
+    expect(inApp.length).toBeGreaterThan(0);
+    expect(inApp.every((n) => n.request_id === null && n.quote_id === w.id && n.org_id === ORG)).toBe(true);
+    expect(w.db.rows("approval_requests")).toHaveLength(0);
+    expect(mail.some((n) => n.recipient_email === "rep@sparkconsulting.co.za" && n.status === "SENT")).toBe(true);
+    expect(vi.mocked(sendEmail).mock.calls.some((c) => String((c[0] as { subject: string }).subject).startsWith("[PREVIEW]"))).toBe(true);
+    const r0 = (await listResponses(w.db as never, ORG, w.id))[0];
+    const { notifyResponseEvent } = await import("../response-notify");
+    const before = notes(w, "IN_APP").length;
+    await notifyResponseEvent(w.db as never, { orgId: ORG, quoteId: w.id, quoteRef: "NQ-Q-0001", customerName: "Boerdery", event: "ACCEPTED_PENDING", response: r0, recipients: ["rep@sparkconsulting.co.za"] }, PREVIEW);
+    expect(notes(w, "IN_APP").length).toBe(before);
+  });
+  it("online acceptance preserves the explicit statement, document id + hash and audit metadata, and needs no uploaded evidence file", async () => {
+    const { w, doc } = await ready();
+    const s = await sendWithLinks(w, doc.id);
+    expect((await submit(w, accept(s.token))).ok).toBe(true);
+    const r = (await listResponses(w.db as never, ORG, w.id))[0];
+    expect(r.note).toContain(`revision ${doc.revision}`); expect(r.note).toContain(doc.content_hash); expect(r.note).toContain("authorised to accept");
+    expect(r.document_hash).toBe(doc.content_hash); expect(r.authority_confirmed).toBe(true);
+    expect(w.db.rows("newquip_response_evidence")).toHaveLength(0);
+    const log = (w.db.rows("activity_log") as Array<Record<string, any>>).find((a) => a.action === "newquip.customer_link_accepted")!; // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(log.detail).toMatchObject({ tokenValidation: "VALID", documentHash: doc.content_hash, revision: doc.revision });
   });
 });

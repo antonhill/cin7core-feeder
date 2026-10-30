@@ -4,6 +4,7 @@
 --   newquip_quote_responses          + origin / responding-contact / authority columns (existing rows become origin = 'STAFF', unchanged)
 --   newquip_response_links           one-shot, expiring, hashed-token links emailed with a send (no token is stored, only its SHA-256)
 --   newquip_response_reviews         append-only internal VERIFIED / REJECTED decision on a customer-link ACCEPTANCE
+--   approval_notifications           + quote_id, request_id now nullable: a customer-response notification no longer needs a (possibly non-existent) approval request
 --   newquip_response_evidence        append-only registry of evidence files (the files live in the existing PRIVATE bucket 'newquip-quote-documents' under <org>/evidence/...)
 --
 -- ACCEPTANCE GATE (enforced in application code, mirrored by the data model): a response with origin = 'CUSTOMER_LINK' is only a formal acceptance once an internal
@@ -215,6 +216,20 @@ begin
 end;
 $$;
 
+-- ── notifications: a customer response must notify the Rep even when the quotation never had an approval request (grandfathered) ──
+-- Additive: existing rows keep their request_id; the new nullable quote_id lets a notification hang off the quotation itself. No fake approval request is created.
+alter table approval_notifications alter column request_id drop not null;
+alter table approval_notifications add column if not exists quote_id uuid;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'approval_notifications_quote_fk') then
+    alter table approval_notifications add constraint approval_notifications_quote_fk foreign key (quote_id, org_id) references newquip_quotes (id, org_id) on delete cascade;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'approval_notifications_anchor_chk') then
+    alter table approval_notifications add constraint approval_notifications_anchor_chk check (request_id is not null or quote_id is not null);
+  end if;
+end $$;
+create index if not exists approval_notifications_quote_idx on approval_notifications (org_id, quote_id) where quote_id is not null;
+
 -- ── RLS: members read their own organisation; no client writes ──────────────
 alter table newquip_response_links    enable row level security;
 alter table newquip_response_reviews  enable row level security;
@@ -227,10 +242,12 @@ create policy "org members read newquip_response_reviews"  on newquip_response_r
 create policy "org members read newquip_response_evidence" on newquip_response_evidence for select using (is_org_member(org_id));
 
 -- ── privileges (the 0112 / 0113 / 0116 pattern): nothing for anon / PUBLIC, SELECT only for authenticated, writes via the service role ──
-revoke all on newquip_response_links, newquip_response_reviews, newquip_response_evidence from public, anon, authenticated;
+-- service_role is also reset (Supabase default privileges give it TRUNCATE / REFERENCES / TRIGGER) and then granted only what the Server Actions use.
+revoke all on newquip_response_links, newquip_response_reviews, newquip_response_evidence from public, anon, authenticated, service_role;
 -- members may read link METADATA, never the token hash
 grant select (id, org_id, quote_id, document_id, send_id, document_hash, baseline_hash, revision, customer_name, recipients, allowed_actions, environment, expires_at, created_by_email, created_at, revoked_at, revoked_reason, attempts)
   on newquip_response_links to authenticated;
 grant select on newquip_response_reviews, newquip_response_evidence to authenticated;
-grant select, insert, update, delete on newquip_response_links, newquip_response_reviews, newquip_response_evidence to service_role;
+grant select, insert, update on newquip_response_links to service_role;            -- revocation + attempt counter; a link is never deleted
+grant select, insert on newquip_response_reviews, newquip_response_evidence to service_role;   -- append-only
 revoke all on function newquip_response_links_guard(), newquip_response_reviews_guard(), newquip_response_evidence_guard(), newquip_quote_responses_guard() from public, anon, authenticated;

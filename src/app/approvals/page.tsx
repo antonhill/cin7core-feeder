@@ -123,7 +123,7 @@ export default function ApprovalsPage() {
             <ul className="mt-2 divide-y divide-slate-100">
               {notes.map((n) => (
                 <li key={n.id} className={`py-2 text-sm ${n.read_at ? "text-slate-600" : "font-medium text-slate-900"}`}>
-                  <Link href={`/approvals/${n.request_id}`} className="underline">{n.subject}</Link>
+                  <Link href={n.request_id ? `/approvals/${n.request_id}` : `/newquip-grower/${n.quote_id}?stage=5`} className="underline">{n.subject}</Link>
                   <span className="ml-2 text-xs text-slate-500">{formatSast(n.created_at)}{n.read_at ? "" : " · unread"}</span>
                 </li>
               ))}

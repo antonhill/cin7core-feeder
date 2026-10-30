@@ -1,13 +1,13 @@
 import "server-only";
 // Tells the responsible Rep when a customer responds and when an emailed acceptance is verified or rejected. Reuses the approvals outbox (in-app + email rows, one per recipient and
 // event, deduplicated by key) and its delivery path, so the Preview recipient allowlist and the [PREVIEW] subject marking apply unchanged. No financial figures are included.
-// The notification rows hang off the quotation's latest approval request; a quotation that never had one (grandfathered, or approvals not installed) simply has no in-app / email
-// notification - the response itself is still recorded and shown in Stage 5.
+// Once migration 0117 is applied the rows hang off the QUOTATION (quote_id), with the latest approval request attached when there is one, so a quotation that never had an approval
+// request (grandfathered) still notifies the Rep. No approval request is invented. Before 0117 the rows need a request (as before) and a quotation without one has no notification.
 import type { createServiceRoleClient } from "@/supabase/server";
 import { approvalBaseUrl, type EmailEnv } from "@/lib/approvals/email-policy";
-import { approvalsAvailable, deliverForRequest, latestRequestFor } from "@/lib/approvals/approval-store";
+import { approvalsAvailable, deliverForQuote, deliverForRequest, latestRequestFor } from "@/lib/approvals/approval-store";
 import { formatSast } from "@/lib/approvals/time";
-import type { StoredResponse } from "./acceptance";
+import { portalAvailable, type StoredResponse } from "./acceptance";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 export type ResponseEvent = "ACCEPTED_PENDING" | "DECLINED" | "CHANGES_REQUESTED" | "VERIFIED" | "REJECTED_ON_VERIFICATION";
@@ -28,7 +28,8 @@ export async function notifyResponseEvent(
   const to = uniq(p.recipients);
   if (!to.length || !(await approvalsAvailable(db))) return { notified: 0 };
   const req = await latestRequestFor(db, p.orgId, "QUOTE", p.quoteId);
-  if (!req) return { notified: 0 };
+  const anchored = await portalAvailable(db).catch(() => false); // 0117: notification rows may hang off the quotation itself
+  if (!req && !anchored) return { notified: 0 };
   const copy = COPY[p.event];
   const link = `${approvalBaseUrl(env)}/newquip-grower/${p.quoteId}?stage=5`;
   const r = p.response;
@@ -45,14 +46,14 @@ export async function notifyResponseEvent(
   let notified = 0;
   for (const recipient of to) {
     for (const channel of ["IN_APP", "EMAIL"] as const) {
-      const dedupe = `${kind}:${req.id}:${recipient}:${channel}:${r.id}`;
+      const dedupe = `${kind}:${req?.id ?? p.quoteId}:${recipient}:${channel}:${r.id}`;
       const ins = await db.from("approval_notifications").insert({
-        org_id: p.orgId, request_id: req.id, kind, recipient_email: recipient, channel, subject, body, dedupe_key: dedupe,
+        org_id: p.orgId, request_id: req?.id ?? null, ...(anchored ? { quote_id: p.quoteId } : {}), kind, recipient_email: recipient, channel, subject, body, dedupe_key: dedupe,
         ...(channel === "IN_APP" ? { status: "SENT", sent_at: new Date().toISOString() } : { status: "PENDING" }),
       });
       if (!ins.error && channel === "IN_APP") notified++; // a duplicate-key error means this exact notification already exists
     }
   }
-  await deliverForRequest(db, req.id).catch(() => undefined); // best effort, under the Preview allowlist; the response never depends on delivery
+  await (anchored ? deliverForQuote(db, p.orgId, p.quoteId) : deliverForRequest(db, req!.id)).catch(() => undefined); // best effort, under the Preview allowlist; the response never depends on delivery
   return { notified };
 }

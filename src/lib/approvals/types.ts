@@ -22,7 +22,7 @@ export interface ApprovalEventRow {
   stage?: string | null; destination?: string | null;
 }
 export interface ApprovalNotificationRow {
-  id: string; request_id: string; kind: string; recipient_email: string; channel: "IN_APP" | "EMAIL"; subject: string; body: string; dedupe_key: string;
+  id: string; /** null for a customer-response notification on a quotation with no approval request (migration 0117) */ request_id: string | null; quote_id?: string | null; kind: string; recipient_email: string; channel: "IN_APP" | "EMAIL"; subject: string; body: string; dedupe_key: string;
   status: "PENDING" | "SENT" | "FAILED" | "ABANDONED" | "SUPPRESSED"; attempts: number; last_error: string | null; provider_message_id: string | null; sent_at: string | null; read_at: string | null; created_at: string;
 }
 export interface ApprovalSettings { targetBusinessDays: number; reminderEveryHours: number; maxReminders: number; escalationEmail: string | null; /** Migration 0112: only explicit functional roles count (no tier fallback). */ rolesEnforced?: boolean }

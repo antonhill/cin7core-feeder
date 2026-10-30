@@ -55,10 +55,14 @@ export async function submitPublicResponse(db: Db, input: PublicSubmit, ctx: { i
     if (!input.authorityConfirmed) return bad("Please confirm that you are authorised to accept this quotation on behalf of the customer.");
   } else if (reason.length < 3) return bad(input.action === "DECLINED" ? "Please tell us why you are declining." : "Please describe the changes you would like.");
 
+  // The explicit statement the customer agreed to is preserved verbatim with the acceptance (the online acceptance is itself the evidence; no separate upload is required).
+  const statement = input.action === "ACCEPTED"
+    ? `${fullName} (${company}, ${email}) accepted quotation ${doc.quote_ref}, revision ${doc.revision} (document ${doc.id}, SHA-256 ${doc.content_hash}) and confirmed being authorised to accept it on behalf of the customer.${reason ? ` Comment: ${reason}` : ""}`
+    : reason;
   const originHint = createHash("sha256").update(`${ctx.ip}|${link.id}`).digest("hex").slice(0, 12); // pseudonymous: no raw IP address is stored
   const ins = await db.from("newquip_quote_responses").insert({
     org_id: link.org_id, quote_id: link.quote_id, document_id: doc.id, response: input.action, contact_name: fullName, responded_on: now.toISOString().slice(0, 10),
-    evidence_ref: "Customer response link", note: reason, recorded_by_email: email, recorded_by_owner_email: null,
+    evidence_ref: "Customer response link", note: statement, recorded_by_email: email, recorded_by_owner_email: null,
     origin: "CUSTOMER_LINK", link_id: link.id, contact_email: email, contact_source: "CUSTOMER_PROVIDED", contact_company: company, authority_confirmed: input.action === "ACCEPTED" ? true : false,
     document_hash: doc.content_hash, origin_hint: originHint,
   }).select("*").single();
@@ -70,7 +74,7 @@ export async function submitPublicResponse(db: Db, input: PublicSubmit, ctx: { i
   await db.from("activity_log").insert({
     org_id: link.org_id, instance_id: null, actor_user_id: null, actor_email: `Customer response link (${email})`, action: `newquip.customer_link_${input.action.toLowerCase()}`,
     summary: `A customer responded through the emailed link: ${input.action} (recorded for internal verification; no project or Cin7 Sale is created)`,
-    detail: { quoteId: link.quote_id, responseId: response.id, linkId: link.id, documentId: doc.id, revision: doc.revision, origin: "CUSTOMER_LINK", originHint },
+    detail: { quoteId: link.quote_id, responseId: response.id, linkId: link.id, documentId: doc.id, documentHash: doc.content_hash, revision: doc.revision, origin: "CUSTOMER_LINK", originHint, tokenValidation: "VALID", environment: ctx.env, linkExpiresAt: link.expires_at, submittedAt: now.toISOString() },
   });
   const event = input.action === "ACCEPTED" ? "ACCEPTED_PENDING" : input.action === "DECLINED" ? "DECLINED" : "CHANGES_REQUESTED";
   await notifyResponseEvent(db, {

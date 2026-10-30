@@ -167,5 +167,27 @@ do $$ begin
 end $$;
 select pg_temp.reset_role();
 
+-- ── notifications anchored on the quotation (no approval request needed) ──
+insert into approval_notifications (org_id, quote_id, kind, recipient_email, channel, subject, body, dedupe_key)
+values ('00000000-0000-0000-0000-0000000017b1', '00000000-0000-0000-0000-0000000017c1', 'CUSTOMER_ACCEPTED_PENDING', 'rep@sparkconsulting.co.za', 'IN_APP', 's', 'b', 'rp-test-1');
+select pg_temp.expect_denied($q$insert into approval_notifications (org_id, kind, recipient_email, channel, subject, body, dedupe_key) values ('00000000-0000-0000-0000-0000000017b1', 'X', 'a@b.co', 'IN_APP', 's', 'b', 'rp-test-2')$q$, 'a notification with neither request nor quotation');
+select pg_temp.expect_denied($q$insert into approval_notifications (org_id, quote_id, kind, recipient_email, channel, subject, body, dedupe_key) values ('00000000-0000-0000-0000-0000000017b2', '00000000-0000-0000-0000-0000000017c1', 'X', 'a@b.co', 'IN_APP', 's', 'b', 'rp-test-3')$q$, 'a notification pointing at another organisation''s quotation');
+select pg_temp.expect_denied($q$insert into approval_notifications (org_id, quote_id, kind, recipient_email, channel, subject, body, dedupe_key) values ('00000000-0000-0000-0000-0000000017b1', '00000000-0000-0000-0000-0000000017c1', 'X', 'a@b.co', 'IN_APP', 's', 'b', 'rp-test-1')$q$, 'duplicate dedupe key');
+select pg_temp.act_as('00000000-0000-0000-0000-0000000017a1');
+select pg_temp.expect_denied($q$insert into approval_notifications (org_id, quote_id, kind, recipient_email, channel, subject, body, dedupe_key) values ('00000000-0000-0000-0000-0000000017b1', '00000000-0000-0000-0000-0000000017c1', 'X', 'a@b.co', 'IN_APP', 's', 'b', 'rp-test-4')$q$, 'client insert of a notification');
+select pg_temp.reset_role();
+
+-- ── least privilege: not even the service role may TRUNCATE / DELETE / UPDATE the append-only tables ──
+do $$ declare t text; begin
+  foreach t in array array['newquip_response_links', 'newquip_response_reviews', 'newquip_response_evidence'] loop
+    if has_table_privilege('service_role', t, 'TRUNCATE') then raise exception '% must not be truncatable by service_role', t; end if;
+    if has_table_privilege('service_role', t, 'DELETE') then raise exception '% must not be deletable by service_role', t; end if;
+    if has_table_privilege('service_role', t, 'REFERENCES') or has_table_privilege('service_role', t, 'TRIGGER') then raise exception '% has excess service_role privileges', t; end if;
+    if has_table_privilege('anon', t, 'SELECT') or has_table_privilege('authenticated', t, 'TRUNCATE') or has_table_privilege('authenticated', t, 'INSERT') then raise exception '% client privileges too broad', t; end if;
+  end loop;
+  if has_table_privilege('service_role', 'newquip_response_reviews', 'UPDATE') or has_table_privilege('service_role', 'newquip_response_evidence', 'UPDATE') then raise exception 'append-only tables must not be updatable'; end if;
+  if has_column_privilege('authenticated', 'newquip_response_links', 'token_hash', 'SELECT') then raise exception 'token_hash must be unreadable to clients'; end if;
+end $$;
+
 select 'OK: 0117 customer response portal' as result;
 rollback;

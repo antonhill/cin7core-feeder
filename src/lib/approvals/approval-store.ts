@@ -367,6 +367,13 @@ export async function deliverForRequest(db: Db, requestId: string, send: typeof 
   return deliverRows(db, (r.data ?? []) as ApprovalNotificationRow[], send, env, QUEUE_ONLY);
 }
 
+/** Best-effort inline send of a quotation's QUEUED customer-response emails (rows anchored on the quotation, not on an approval request). */
+export async function deliverForQuote(db: Db, orgId: string, quoteId: string, send: typeof sendEmail = sendEmail, env: EmailPolicyEnv = process.env): Promise<DeliverResult> {
+  const r = await db.from("approval_notifications").select("*").eq("org_id", orgId).eq("quote_id", quoteId).eq("channel", "EMAIL").eq("status", "PENDING");
+  if (r.error) return { sent: 0, failed: 0, suppressed: 0 };
+  return deliverRows(db, (r.data ?? []) as ApprovalNotificationRow[], send, env, QUEUE_ONLY);
+}
+
 /**
  * Drains the outbox, oldest first. The scheduled worker (Production only) retries FAILED rows within the attempt cap; a manager's "Send pending now" passes
  * { orgId, retryFailed: false } so it sends QUEUED rows of their own organisation only.
