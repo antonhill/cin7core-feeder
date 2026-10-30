@@ -47,4 +47,3 @@ export async function revokeActiveLinks(db: Db, orgId: string, quoteId: string, 
   }
   return n;
 }
-
