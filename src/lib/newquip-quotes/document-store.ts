@@ -18,13 +18,13 @@ import { renderCustomerPdf } from "./customer-pdf";
 type Db = ReturnType<typeof createServiceRoleClient>;
 export const DOCUMENT_BUCKET = "newquip-quote-documents";
 
-export interface DocumentStorage { upload(path: string, bytes: Uint8Array): Promise<void>; download(path: string): Promise<Uint8Array>; remove(path: string): Promise<void> }
+export interface DocumentStorage { upload(path: string, bytes: Uint8Array, contentType?: string): Promise<void>; download(path: string): Promise<Uint8Array>; remove(path: string): Promise<void> }
 export interface DocumentDeps { render: (m: CustomerDocumentModel) => Promise<Uint8Array>; storage: DocumentStorage; today: () => string }
 
 export function supabaseStorage(db: Db): DocumentStorage {
   const bucket = () => db.storage.from(DOCUMENT_BUCKET);
   return {
-    async upload(path, bytes) { const r = await bucket().upload(path, bytes, { contentType: "application/pdf", upsert: false }); if (r.error) throw new Error(`Could not store the quotation PDF: ${r.error.message}`); },
+    async upload(path, bytes, contentType = "application/pdf") { const r = await bucket().upload(path, bytes, { contentType, upsert: false }); if (r.error) throw new Error(`Could not store the quotation PDF: ${r.error.message}`); },
     async download(path) { const r = await bucket().download(path); if (r.error || !r.data) throw new Error("The quotation PDF could not be read."); return new Uint8Array(await r.data.arrayBuffer()); },
     async remove(path) { await bucket().remove([path]); },
   };
