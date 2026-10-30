@@ -16,7 +16,6 @@ import { latestSnapshot } from "./customer-store";
 import { listDocuments, readDocumentBytes, type DocumentDeps, type StoredDocument } from "./document-store";
 import { portalAvailable } from "./acceptance";
 import { issueResponseLink, type LinkEnv } from "./response-links";
-import { approvalBaseUrl } from "@/lib/approvals/email-policy";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 export type SendFn = (i: SendEmailInput) => Promise<SendEmailResult>;
@@ -97,11 +96,21 @@ ${links ? `<p style="margin:0 0 8px;font-weight:700">Respond online</p>
 </table></td></tr></table></body></html>`;
 }
 
+/**
+ * The public customer portal's address (NEWQUIP_PUBLIC_PORTAL_URL), set by the owner only once the separate portal project and hostname are approved and verified.
+ * Must be https (http only for localhost development); anything else - including an unset value - yields null and the email carries no response links.
+ */
+export function portalBaseUrl(env: EmailEnv): string | null {
+  const raw = (env as Record<string, string | undefined>).NEWQUIP_PUBLIC_PORTAL_URL?.trim().replace(/\/+$/, "") ?? "";
+  if (/^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(raw) || /^http:\/\/localhost(:\d+)?$/.test(raw)) return raw;
+  return null;
+}
+
 /** Issues the emailed response links for this send, when migration 0117 is applied and a site address is known. Fails closed: otherwise the email carries no links. */
 async function responseLinksFor(db: Db, orgId: string, doc: StoredDocument, send: StoredSend, recipients: string[], by: string, env: EmailEnv): Promise<ResponseLinks | null> {
   if (!(await portalAvailable(db))) return null;
-  const base = approvalBaseUrl(env);
-  if (!base.startsWith("https://") && !/^http:\/\/localhost(:\d+)?$/.test(base)) return null;
+  const base = portalBaseUrl(env);
+  if (!base) return null; // no verified public portal address configured: fail closed (the internal host is behind Deployment Protection and must never be emailed to a customer)
   const { token, link } = await issueResponseLink(db, { orgId, doc, send, recipients, customerName: doc.content.customer.name, by }, env as LinkEnv);
   // The token travels in the URL FRAGMENT: browsers never send it to the server or in a Referer header, so it appears in no request log, analytics or referrer.
   const at = (a: string) => `${base}/quote-response#t=${token}&a=${a}`;

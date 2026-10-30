@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { loadQuoteResponsePageAction, submitQuoteResponseAction } from "./actions";
-import type { PublicQuotation } from "@/lib/newquip-quotes/customer-response";
+import type { PublicQuotation } from "@/lib/newquip-portal/store";
 
 // The customer's response page. The response token lives in the URL FRAGMENT (#t=...&a=accept|decline|changes): the fragment is never sent to the server or in a Referer, so it is in no
 // request log. Merely opening this page (or an email scanner fetching it) shows nothing and records nothing: the quotation details are loaded by the page itself, and a response is

@@ -4,7 +4,6 @@ import { findBlockedModule, computeEffectiveDisabledModules } from "@/app/module
 import { createServiceRoleClient } from "@/supabase/server";
 import { writeAllowedFor } from "@/lib/billing-status";
 import type { SubscriptionStatus } from "@/lib/billing";
-import { CUSTOMER_SURFACE_HEADER, CUSTOMER_SURFACE_VALUE, isCustomerSurface } from "@/lib/customer-surface";
 import { ACTIVE_ORG_COOKIE, resolveActiveOrgId } from "@/lib/active-org-resolution";
 
 // Must match src/lib/org-switch.ts's IMPERSONATED_ORG_COOKIE — duplicated
@@ -12,9 +11,8 @@ import { ACTIVE_ORG_COOKIE, resolveActiveOrgId } from "@/lib/active-org-resoluti
 // middleware uses NextRequest's own cookie API instead.
 const IMPERSONATED_ORG_COOKIE = "impersonated_org_id";
 
-// "/quote-response" and "/api/quote-response": the customer's emailed response page and its token-authenticated PDF route. They have no session by design; every request is authorised by the
-// opaque response token alone (see src/lib/newquip-quotes/response-links.ts), and nothing else is reachable under these prefixes.
-const PUBLIC_PATHS = ["/login", "/auth/callback", "/privacy", "/signup", "/quote-response", "/api/quote-response"];
+// The customer's emailed response page lives in the SEPARATE public portal project (portal/), never in this internal application: no customer route is served here.
+const PUBLIC_PATHS = ["/login", "/auth/callback", "/privacy", "/signup"];
 
 /**
  * Refreshes the Supabase session cookie on every request (required — the
@@ -23,17 +21,6 @@ const PUBLIC_PATHS = ["/login", "/auth/callback", "/privacy", "/signup", "/quote
  * users to /login for anything else.
  */
 export async function middleware(request: NextRequest) {
-  request.headers.delete(CUSTOMER_SURFACE_HEADER);
-  if (isCustomerSurface(request.nextUrl.pathname)) {
-    const headers = new Headers(request.headers);
-    // A signed-in member opening a customer link gets exactly the customer's page: the session is neither read nor refreshed here, and the layout renders no staff identity.
-    headers.set(CUSTOMER_SURFACE_HEADER, CUSTOMER_SURFACE_VALUE);
-    const res = NextResponse.next({ request: { headers } });
-    res.headers.set("Cache-Control", "no-store, max-age=0");
-    res.headers.set("Referrer-Policy", "no-referrer");
-    res.headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
-    return res;
-  }
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(

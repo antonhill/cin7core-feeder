@@ -32,9 +32,9 @@ import * as documents from "../document-actions";
 import * as delivery from "../delivery-actions";
 import { POST as uploadPost } from "@/app/api/newquip-quote-responses/route";
 import { GET as evidenceGet } from "@/app/api/newquip-response-evidence/[id]/route";
-import { GET as publicDocGet, POST as publicDocPost } from "@/app/api/quote-response/document/route";
-import * as publicActions from "@/app/quote-response/actions";
-import { resetRateLimits } from "@/lib/newquip-quotes/rate-limit";
+import { GET as publicDocGet, POST as publicDocPost } from "@portal/app/api/quote-response/document/route";
+import * as publicActions from "@portal/app/quote-response/actions";
+import { resetRateLimits } from "@/lib/newquip-portal/rate-limit";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -47,7 +47,7 @@ const as = (roles: string[], opts: { email?: string; demo?: boolean; admin?: boo
   vi.mocked(resolveRoles).mockResolvedValue(new Set(roles) as never);
 };
 beforeEach(async () => {
-  db = new FakeDb(); db.deliveryApplied = true; db.portalApplied = true; db.approvalsApplied = true; resetRateLimits(); fwd = "198.51.100.9"; vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://preview.newquip.example"); files.clear(); vi.mocked(sendEmail).mockClear(); vi.stubEnv("VERCEL_ENV", "preview");
+  db = new FakeDb(); db.deliveryApplied = true; db.portalApplied = true; db.approvalsApplied = true; resetRateLimits(); fwd = "198.51.100.9"; vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://preview.newquip.example"); vi.stubEnv("NEWQUIP_PUBLIC_PORTAL_URL", "https://portal.newquip.example"); vi.stubEnv("NEWQUIP_INTERNAL_APP_URL", "https://preview.newquip.example"); files.clear(); (db as unknown as { storage: unknown }).storage = { from: () => ({ download: async (p: string) => (files.has(p) ? { data: { arrayBuffer: async () => { const b = files.get(p)!; return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); } } } : { error: { message: "not found" } }) }) }; vi.mocked(sendEmail).mockClear(); vi.stubEnv("VERCEL_ENV", "preview");
   const draft = readyDraft(); draft.customerName = "Boerdery (Pty) Ltd";
   const { baseline, hash } = buildAcceptedBaseline({ quoteRef: "NQ-Q-0009", revision: 1, draft, evaluation: evaluateDraft(draft, { priceSource: testPriceSource(), withholdCost: false }), approvals: { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: "t" } });
   db.rows("newquip_quotes").push({ id: "11111111-2222-3333-4444-555555555555", org_id: "org-a", quote_ref: "NQ-Q-0009", revision: 1, state: "MANAGER_APPROVED_FINAL", accepted_baseline: baseline, baseline_hash: hash, draft: {}, requires_customer_acceptance: true });
@@ -152,7 +152,7 @@ describe("the public response routes and actions", () => {
     const texts: string[] = [];
     const { sendQuotationToCustomer } = await import("@/lib/newquip-quotes/send-store");
     const { defaultDeps } = await import("@/lib/newquip-quotes/document-store");
-    await sendQuotationToCustomer(db as never, "org-a", "11111111-2222-3333-4444-555555555555", { email: "rep@sparkconsulting.co.za" }, { documentId: docId, to: ["anton@sparkconsulting.co.za"], message: "", idempotencyKey: "key-public-0001" }, defaultDeps(db as never), { VERCEL_ENV: "preview", NEXT_PUBLIC_SITE_URL: "https://preview.newquip.example" }, (async (i: { text: string }) => { texts.push(i.text); return { ok: true, messageId: "m" }; }) as never);
+    await sendQuotationToCustomer(db as never, "org-a", "11111111-2222-3333-4444-555555555555", { email: "rep@sparkconsulting.co.za" }, { documentId: docId, to: ["anton@sparkconsulting.co.za"], message: "", idempotencyKey: "key-public-0001" }, defaultDeps(db as never), { VERCEL_ENV: "preview", NEXT_PUBLIC_SITE_URL: "https://preview.newquip.example", NEWQUIP_PUBLIC_PORTAL_URL: "https://portal.newquip.example" }, (async (i: { text: string }) => { texts.push(i.text); return { ok: true, messageId: "m" }; }) as never);
     return { docId, token: /#t=([A-Za-z0-9_.-]+)&a=accept/.exec(texts.join("\n"))![1] };
   }
   const post = (token: string) => { const f = new FormData(); f.set("token", token); return new Request("http://x/api/quote-response/document", { method: "POST", body: f }); };
@@ -211,7 +211,7 @@ describe("staff review actions and the project gate", () => {
     const { sendQuotationToCustomer } = await import("@/lib/newquip-quotes/send-store");
     const { defaultDeps } = await import("@/lib/newquip-quotes/document-store");
     const texts: string[] = [];
-    await sendQuotationToCustomer(db as never, "org-a", "11111111-2222-3333-4444-555555555555", { email: "rep@sparkconsulting.co.za" }, { documentId: docId, to: ["anton@sparkconsulting.co.za"], message: "", idempotencyKey: "key-review-0001" }, defaultDeps(db as never), { VERCEL_ENV: "preview", NEXT_PUBLIC_SITE_URL: "https://preview.newquip.example" }, (async (i: { text: string }) => { texts.push(i.text); return { ok: true, messageId: "m" }; }) as never);
+    await sendQuotationToCustomer(db as never, "org-a", "11111111-2222-3333-4444-555555555555", { email: "rep@sparkconsulting.co.za" }, { documentId: docId, to: ["anton@sparkconsulting.co.za"], message: "", idempotencyKey: "key-review-0001" }, defaultDeps(db as never), { VERCEL_ENV: "preview", NEXT_PUBLIC_SITE_URL: "https://preview.newquip.example", NEWQUIP_PUBLIC_PORTAL_URL: "https://portal.newquip.example" }, (async (i: { text: string }) => { texts.push(i.text); return { ok: true, messageId: "m" }; }) as never);
     const token = /#t=([A-Za-z0-9_.-]+)&a=accept/.exec(texts.join("\n"))![1];
     await publicActions.submitQuoteResponseAction({ token, action: "ACCEPTED", fullName: "Piet Pompies", company: "Boerdery", email: "piet@boerdery.example", authorityConfirmed: true, revisionConfirmed: true, revision: 1, reason: "" });
     return { docId, rid: (db.rows("newquip_quote_responses")[0] as Record<string, string>).id };
@@ -253,15 +253,15 @@ describe("staff review actions and the project gate", () => {
 describe("the public surface is exactly what was designed", () => {
   const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)).map((p) => `${e.name}/${p}`) : [e.name]));
   it("only the response page, its actions and the token-authenticated PDF route sit under the unauthenticated prefixes", () => {
-    expect(walk(join(process.cwd(), "src/app/quote-response")).sort()).toEqual(["__tests__/customer-surface.test.tsx", "actions.ts", "layout.tsx", "page.tsx"]);
-    expect(walk(join(process.cwd(), "src/app/api/quote-response")).sort()).toEqual(["document/route.ts"]);
+    expect(walk(join(process.cwd(), "portal/app/quote-response")).sort()).toEqual(["__tests__/portal-isolation.test.tsx", "actions.ts", "page.tsx"]);
+    expect(walk(join(process.cwd(), "portal/app/api/quote-response")).sort()).toEqual(["document/route.ts"]);
     const mw = readFileSync(join(process.cwd(), "src/middleware.ts"), "utf8");
-    expect(mw).toMatch(/const PUBLIC_PATHS = \["\/login", "\/auth\/callback", "\/privacy", "\/signup", "\/quote-response", "\/api\/quote-response"\]/);
+    expect(mw).toMatch(/const PUBLIC_PATHS = \["\/login", "\/auth\/callback", "\/privacy", "\/signup"\];/); // the INTERNAL app serves no customer route
   });
   it("the public page never reads the token from the URL path or query, and no public module touches Cin7, projects or the costing code", () => {
-    const page = readFileSync(join(process.cwd(), "src/app/quote-response/page.tsx"), "utf8");
+    const page = readFileSync(join(process.cwd(), "portal/app/quote-response/page.tsx"), "utf8");
     expect(page).toContain("window.location.hash"); expect(page).not.toMatch(/useSearchParams|searchParams|useParams|location\.search/);
-    for (const f of ["src/app/quote-response/actions.ts", "src/app/api/quote-response/document/route.ts", "src/lib/newquip-quotes/customer-response.ts"]) {
+    for (const f of ["portal/app/quote-response/actions.ts", "portal/app/api/quote-response/document/route.ts", "src/lib/newquip-portal/store.ts"]) {
       const text = readFileSync(join(process.cwd(), f), "utf8");
       expect(text, f).not.toMatch(/from "@\/cin7|cin7Request|createProject|project_cin7|quotes\/margin|costOverrides|buildMarginSheet|latest-cost/);
     }

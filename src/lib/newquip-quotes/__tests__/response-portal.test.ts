@@ -11,12 +11,12 @@ import { appendSnapshot } from "../customer-store";
 import { issueQuotationDocument, saveProfile, type DocumentDeps } from "../document-store";
 import { renderCustomerPdf } from "../customer-pdf";
 import { sendQuotationToCustomer } from "../send-store";
-import { listLinks, newToken, parseToken, resolveLink, revokeActiveLinks, MAX_LINK_ATTEMPTS } from "../response-links";
-import { loadPublicQuotation, submitPublicResponse, type PublicSubmit } from "../customer-response";
+import { listLinks, newToken, parseToken, revokeActiveLinks, MAX_LINK_ATTEMPTS } from "../response-links";
+import { resolveLink, loadPublicQuotation, submitPublicResponse, readTokenDocument, type PublicSubmit } from "@/lib/newquip-portal/store";
 import { recordStaffResponse } from "../response-record";
 import { countsAsAcceptance, listReviews, reviewResponse } from "../acceptance";
 import { internalTokenSet } from "../customer-document";
-import { allow, resetRateLimits } from "../rate-limit";
+import { allow, resetRateLimits } from "@/lib/newquip-portal/rate-limit";
 import { sendEmail } from "@/lib/email/resend";
 import { commercialStatus, listResponses, recordCustomerResponse, requireAcceptance, type ResponseInput } from "../acceptance";
 import { listDocuments } from "../document-store";
@@ -28,7 +28,7 @@ vi.mock("@/lib/email/resend", () => ({ sendEmail: vi.fn(async () => ({ ok: true,
 const ORG = "org-newquip"; const rep = rolesFor("member"); const mgr = rolesFor("admin"); const ctx = { priceSource: testPriceSource(), withholdCost: true };
 const PROFILE = { brandName: "TestBrand", legalName: "Test Company (Pty) Ltd", registrationNumber: "0000/000000/00", vatNumber: "0000000000", addressLines: ["1 Test Street", "Testville 0001"], phone: "000", email: "sales@testbrand.example", website: "", validityDays: 30, paymentTerms: "p", deliveryInstallationConditions: "d", termsAndConditions: "t", acceptanceInstructions: "a" };
 const TODAY = "2026-10-29";
-const PREVIEW = { VERCEL_ENV: "preview", NEXT_PUBLIC_SITE_URL: "https://preview.newquip.example" };
+const PREVIEW = { VERCEL_ENV: "preview", NEXT_PUBLIC_SITE_URL: "https://internal.newquip.example", NEWQUIP_PUBLIC_PORTAL_URL: "https://preview.newquip.example", NEWQUIP_INTERNAL_APP_URL: "https://internal.newquip.example" };
 
 async function world(opts: { gated: boolean; portal?: boolean }) {
   const db = new FakeDb(); db.deliveryApplied = true; db.portalApplied = opts.portal ?? true; db.approvalsApplied = true; db.notificationStatuses = ["PENDING", "SENT", "FAILED", "ABANDONED", "SUPPRESSED"];
@@ -373,7 +373,12 @@ describe("Rep notifications for customer responses", () => {
   const resp = async (action: "ACCEPTED" | "DECLINED" | "CHANGES_REQUESTED", repEmail = "rep@sparkconsulting.co.za") => {
     const { w, doc } = await ready();
     const s = await sendWithLinks(w, doc.id, { repEmail });
+    vi.mocked(sendEmail).mockClear();
     await submit(w, action === "ACCEPTED" ? accept(s.token) : accept(s.token, { action, reason: "price too high", authorityConfirmed: false, revisionConfirmed: false }));
+    expect(sendEmail).not.toHaveBeenCalled(); // the public portal holds no email credentials: it only QUEUES the Rep's email
+    expect(notes(w, "EMAIL").every((n) => n.status === "PENDING")).toBe(true);
+    const { deliverPendingEmails } = await import("@/lib/approvals/approval-store");
+    await deliverPendingEmails(w.db as never, undefined, 50, { env: PREVIEW }); // the internal outbox then delivers under the Preview allowlist
     return { w, doc, s };
   };
   it("the Rep gets an in-app notification AND an email with the quotation, customer, response, time, next action and a Stage 5 link - and no money figures", async () => {
@@ -429,6 +434,8 @@ describe("Rep notifications for customer responses", () => {
     w.db.rows("approval_requests").length = 0;
     const s = await sendWithLinks(w, doc.id);
     expect((await submit(w, accept(s.token))).ok).toBe(true);
+    const { deliverPendingEmails } = await import("@/lib/approvals/approval-store");
+    await deliverPendingEmails(w.db as never, undefined, 50, { env: PREVIEW });
     const inApp = notes(w, "IN_APP"); const mail = notes(w, "EMAIL");
     expect(inApp.length).toBeGreaterThan(0);
     expect(inApp.every((n) => n.request_id === null && n.quote_id === w.id && n.org_id === ORG)).toBe(true);
@@ -480,6 +487,22 @@ describe("customer email presentation", () => {
     expect(c.html).toContain("PREVIEW notification"); expect(c.text).toContain("PREVIEW notification");
     expect(c.attachments).toHaveLength(1);
     expect(c.html).toContain(`revision ${doc.revision}`);
+  });
+  it("links are built ONLY from the public portal address: never the internal host, and no links (fail closed) when it is unset or not https", async () => {
+    const run = async (env: Record<string, string>) => { const w = await world({ gated: true }); const { document: doc } = await issue(w); const captured: string[] = [];
+      await sendQuotationToCustomer(w.db as never, ORG, w.id, { email: "rep@sparkconsulting.co.za" }, { documentId: doc.id, to: ["anton@sparkconsulting.co.za"], message: "", idempotencyKey: "k-portal-url" }, w.deps, env as never, (async (i: { text: string }) => { captured.push(i.text); return { ok: true, messageId: "m" }; }) as never);
+      return captured.join("\n"); };
+    const ok = await run({ ...PREVIEW });
+    expect(ok).toContain("https://preview.newquip.example/quote-response#t="); expect(ok).not.toContain("internal.newquip.example");
+    for (const bad of [{ NEWQUIP_PUBLIC_PORTAL_URL: "" }, { NEWQUIP_PUBLIC_PORTAL_URL: "http://portal.example" }, { NEWQUIP_PUBLIC_PORTAL_URL: "javascript:alert(1)" }, { NEWQUIP_PUBLIC_PORTAL_URL: "https://x.example/path?q=1" }]) {
+      const t = await run({ VERCEL_ENV: "preview", NEXT_PUBLIC_SITE_URL: "https://internal.newquip.example", ...bad }); expect(t, JSON.stringify(bad)).not.toContain("quote-response"); expect(t).not.toContain("internal.newquip.example/quote");
+    }
+  });
+  it("the portal can pin the link environment; an unknown value is ignored; Preview and Production links stay separate", async () => {
+    const { environmentOf } = await import("../response-links");
+    expect(environmentOf({ VERCEL_ENV: "production", NEWQUIP_LINK_ENVIRONMENT: "preview" })).toBe("preview");
+    expect(environmentOf({ VERCEL_ENV: "production", NEWQUIP_LINK_ENVIRONMENT: "prod" })).toBe("production");
+    expect(environmentOf({ VERCEL_ENV: "preview" })).toBe("preview"); expect(environmentOf({})).toBe("development");
   });
   it("the HTML carries no internal data and escapes the sender's message", async () => {
     const { calls } = await sendCapturing("Hello <script>alert(1)</script> & welcome");

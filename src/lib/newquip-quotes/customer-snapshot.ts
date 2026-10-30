@@ -60,8 +60,8 @@ function pickBilling(addresses: unknown): SnapshotAddress | null {
   return { type: str(a.Type), line1: str(a.Line1), line2: str(a.Line2), city: str(a.City), state: str(a.State), postcode: str(a.Postcode), country: str(a.Country), defaultForType: a.DefaultForType === true };
 }
 
-const EMAIL = /^[^\s@,;<>()"']+@[^\s@,;<>()"']+\.[^\s@,;<>()"']{2,}$/;
-export const isValidEmail = (e: string): boolean => e.length <= 254 && EMAIL.test(e.trim());
+export { isValidEmail } from "@/lib/newquip-portal/core";
+import { isValidEmail } from "@/lib/newquip-portal/core";
 
 /** Builds the snapshot from ONE raw Cin7 customer record (GET /customer). Throws if the record has no ID: the ID is the authoritative reference. */
 export function buildCustomerSnapshot(raw: Record<string, unknown>, readAt: string): CustomerSnapshot {

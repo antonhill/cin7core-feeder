@@ -15,15 +15,10 @@ import { listDocuments, type StoredDocument } from "./document-store";
 import type { StoredSend } from "./send-store";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
-export type CustomerResponse = "ACCEPTED" | "DECLINED" | "CHANGES_REQUESTED";
-export interface StoredResponse {
-  id: string; org_id: string; quote_id: string; document_id: string; response: CustomerResponse; contact_name: string; responded_on: string; evidence_ref: string; note: string;
-  recorded_by_email: string; recorded_by_owner_email: string | null; created_at: string;
-  /** Migration 0117 (absent before it): where the response came from and who the responding contact is. Rows without `origin` are staff-recorded and behave as before. */
-  origin?: "STAFF" | "CUSTOMER_LINK"; contact_email?: string | null; contact_source?: string | null; contact_company?: string | null; exception_reason?: string | null;
-  authority_confirmed?: boolean; document_hash?: string | null; link_id?: string | null; origin_hint?: string | null;
-}
-export interface StoredReview { id: string; org_id: string; quote_id: string; response_id: string; decision: "VERIFIED" | "REJECTED"; note: string; reviewed_by_email: string; reviewed_by_owner_email: string | null; created_at: string }
+import type { CustomerResponse, StoredResponse, StoredReview } from "@/lib/newquip-portal/core";
+export { standingOf, countsAsAcceptance } from "@/lib/newquip-portal/core";
+export type { CustomerResponse, StoredResponse, StoredReview, Standing } from "@/lib/newquip-portal/core";
+import { standingOf, countsAsAcceptance } from "@/lib/newquip-portal/core";
 export type CommercialStatus = "NOT_APPROVED" | "APPROVED_INTERNALLY" | "SENT_TO_CUSTOMER" | "ACCEPTANCE_PENDING_VERIFICATION" | "ACCEPTANCE_REJECTED" | "CUSTOMER_ACCEPTED" | "CUSTOMER_DECLINED" | "CHANGES_REQUESTED";
 export const COMMERCIAL_STATUS_LABEL: Record<CommercialStatus, string> = {
   NOT_APPROVED: "Not yet approved", APPROVED_INTERNALLY: "Approved internally", SENT_TO_CUSTOMER: "Sent to customer", ACCEPTANCE_PENDING_VERIFICATION: "Customer accepted: verification pending", ACCEPTANCE_REJECTED: "Customer acceptance rejected on verification", CUSTOMER_ACCEPTED: "Customer acceptance verified", CUSTOMER_DECLINED: "Customer declined", CHANGES_REQUESTED: "Changes requested",
@@ -52,28 +47,6 @@ export async function listReviews(db: Db, orgId: string, quoteId: string): Promi
   if (r.error) { if (missing(r.error.message)) return []; throw new Error(r.error.message); }
   return (r.data ?? []) as StoredReview[];
 }
-
-/**
- * Where a response stands. Only a RECORDED (staff, with its evidence) or a VERIFIED (customer-link) acceptance can be a formal acceptance.
- *   STAFF         -> RECORDED. A staff acceptance recorded after migration 0117 (it carries a contact_source) also needs its evidence file(s) to count; one recorded before is unchanged.
- *   CUSTOMER_LINK -> an ACCEPTANCE is PENDING_VERIFICATION until an internal review VERIFIED it (or REJECTED); a decline / change request is informational (RECORDED).
- */
-export type Standing = "RECORDED" | "EVIDENCE_MISSING" | "PENDING_VERIFICATION" | "VERIFIED" | "REJECTED";
-export function standingOf(r: StoredResponse, reviews: readonly StoredReview[], evidenceByResponse: ReadonlyMap<string, number> = new Map()): Standing {
-  if (r.origin === "CUSTOMER_LINK") {
-    if (r.response !== "ACCEPTED") return "RECORDED";
-    const rv = reviews.find((x) => x.response_id === r.id);
-    return !rv ? "PENDING_VERIFICATION" : rv.decision === "VERIFIED" ? "VERIFIED" : "REJECTED";
-  }
-  if (r.response === "ACCEPTED" && r.contact_source && (evidenceByResponse.get(r.id) ?? 0) === 0) return "EVIDENCE_MISSING";
-  return "RECORDED";
-}
-/** A formal acceptance: an ACCEPTED response that is RECORDED (staff, with evidence) or VERIFIED. */
-export const countsAsAcceptance = (r: StoredResponse, reviews: readonly StoredReview[], ev?: ReadonlyMap<string, number>): boolean => {
-  if (r.response !== "ACCEPTED") return false;
-  const st = standingOf(r, reviews, ev);
-  return st === "RECORDED" || st === "VERIFIED";
-};
 
 /** The quotation's commercial status, derived from the append-only records (never from the internal approval alone). */
 export function commercialStatus(q: Pick<QuoteRecord, "state">, latestDoc: StoredDocument | null, sends: StoredSend[], responses: StoredResponse[], reviews: readonly StoredReview[] = [], evidence: ReadonlyMap<string, number> = new Map()): CommercialStatus {

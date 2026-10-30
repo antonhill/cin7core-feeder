@@ -6,8 +6,8 @@
 // rate limiting plus the per-link attempt counter limit abuse. Only async functions and erased types are exported.
 import { headers } from "next/headers";
 import { createServiceRoleClient } from "@/supabase/server";
-import { allow } from "@/lib/newquip-quotes/rate-limit";
-import { loadPublicQuotation, submitPublicResponse, type PublicQuotation, type PublicResult, type PublicSubmit } from "@/lib/newquip-quotes/customer-response";
+import { allow } from "@/lib/newquip-portal/rate-limit";
+import { loadPublicQuotation, submitPublicResponse, type PublicQuotation, type PublicResult, type PublicSubmit } from "@/lib/newquip-portal/store";
 
 async function clientKey(): Promise<string> {
   const h = await headers();

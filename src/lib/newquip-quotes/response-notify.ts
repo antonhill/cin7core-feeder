@@ -1,59 +1,21 @@
 import "server-only";
 // Tells the responsible Rep when a customer responds and when an emailed acceptance is verified or rejected. Reuses the approvals outbox (in-app + email rows, one per recipient and
 // event, deduplicated by key) and its delivery path, so the Preview recipient allowlist and the [PREVIEW] subject marking apply unchanged. No financial figures are included.
-// Once migration 0117 is applied the rows hang off the QUOTATION (quote_id), with the latest approval request attached when there is one, so a quotation that never had an approval
-// request (grandfathered) still notifies the Rep. No approval request is invented. Before 0117 the rows need a request (as before) and a quotation without one has no notification.
+// The rows are queued by the shared lean module (src/lib/newquip-portal/notify.ts, also used by the public portal). They hang off the QUOTATION, so a quotation that never had an
+// approval request (grandfathered) still notifies the Rep; no approval request is invented. This wrapper adds inline delivery where an email provider is configured.
 import type { createServiceRoleClient } from "@/supabase/server";
+import { emailConfigStatus } from "@/lib/email/resend";
 import { approvalBaseUrl, type EmailEnv } from "@/lib/approvals/email-policy";
-import { approvalsAvailable, deliverForQuote, deliverForRequest, latestRequestFor } from "@/lib/approvals/approval-store";
-import { formatSast } from "@/lib/approvals/time";
-import { portalAvailable, type StoredResponse } from "./acceptance";
+import { approvalsAvailable, deliverForQuote } from "@/lib/approvals/approval-store";
+import { queueResponseNotifications, type NotifyParams, type ResponseEvent } from "@/lib/newquip-portal/notify";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
-export type ResponseEvent = "ACCEPTED_PENDING" | "DECLINED" | "CHANGES_REQUESTED" | "VERIFIED" | "REJECTED_ON_VERIFICATION";
+export type { ResponseEvent };
 
-const COPY: Record<ResponseEvent, { headline: string; action: string }> = {
-  ACCEPTED_PENDING: { headline: "customer accepted - verification required", action: "Open Customer Acceptance, check who responded and that they could accept for the customer, then verify or reject the acceptance. No Project is created until it is verified." },
-  DECLINED: { headline: "customer declined", action: "Review the reason in Customer Acceptance and contact the customer. A revised quotation goes through Estimator and Manager approval again." },
-  CHANGES_REQUESTED: { headline: "customer requested changes", action: "Review the requested changes in Customer Acceptance. A revised quotation goes through Estimator and Manager approval again." },
-  VERIFIED: { headline: "customer acceptance verified", action: "The acceptance is now formal. Open Project Handover to create the Project (nothing is created automatically)." },
-  REJECTED_ON_VERIFICATION: { headline: "customer acceptance rejected during verification", action: "The acceptance does not authorise a Project. See the reason in Customer Acceptance and contact the customer." },
-};
-const uniq = (xs: Array<string | null | undefined>) => [...new Set(xs.filter((x): x is string => !!x && x.includes("@")).map((x) => x.trim().toLowerCase()))];
-
-export async function notifyResponseEvent(
-  db: Db, p: { orgId: string; quoteId: string; quoteRef: string; customerName: string; event: ResponseEvent; response: StoredResponse; recipients: Array<string | null | undefined>; by?: string | null; reason?: string | null; at?: string },
-  env: EmailEnv = process.env,
-): Promise<{ notified: number }> {
-  const to = uniq(p.recipients);
-  if (!to.length || !(await approvalsAvailable(db))) return { notified: 0 };
-  const req = await latestRequestFor(db, p.orgId, "QUOTE", p.quoteId);
-  const anchored = await portalAvailable(db).catch(() => false); // 0117: notification rows may hang off the quotation itself
-  if (!req && !anchored) return { notified: 0 };
-  const copy = COPY[p.event];
-  const link = `${approvalBaseUrl(env)}/newquip-grower/${p.quoteId}?stage=5`;
-  const r = p.response;
-  const who = r.origin === "CUSTOMER_LINK" ? `${r.contact_name}${r.contact_company ? `, ${r.contact_company}` : ""}` : r.contact_name;
-  const reasonLine = p.reason && !/\b(costs?|margins?|mark-?ups?|gross\s+profit|supplier)\b/i.test(p.reason) ? `Reason: ${p.reason.trim().slice(0, 400)}` : "";
-  const body = [
-    `Quotation ${p.quoteRef} - ${copy.headline}`, "",
-    `Customer: ${p.customerName}`, `Response: ${r.response === "ACCEPTED" ? "Accepted" : r.response === "DECLINED" ? "Declined" : "Changes requested"}`,
-    `From: ${who}`, `Time: ${formatSast(p.at ?? r.created_at)}`, p.by ? `Recorded by: ${p.by}` : "", reasonLine, "",
-    `Required action: ${copy.action}`, `Open: ${link}`,
-  ].filter((l, i, a) => l !== "" || a[i - 1] !== "").join("\n");
-  const subject = `NewQuip Quotation ${p.quoteRef}: ${copy.headline}`;
-  const kind = `CUSTOMER_${p.event}`;
-  let notified = 0;
-  for (const recipient of to) {
-    for (const channel of ["IN_APP", "EMAIL"] as const) {
-      const dedupe = `${kind}:${req?.id ?? p.quoteId}:${recipient}:${channel}:${r.id}`;
-      const ins = await db.from("approval_notifications").insert({
-        org_id: p.orgId, request_id: req?.id ?? null, ...(anchored ? { quote_id: p.quoteId } : {}), kind, recipient_email: recipient, channel, subject, body, dedupe_key: dedupe,
-        ...(channel === "IN_APP" ? { status: "SENT", sent_at: new Date().toISOString() } : { status: "PENDING" }),
-      });
-      if (!ins.error && channel === "IN_APP") notified++; // a duplicate-key error means this exact notification already exists
-    }
-  }
-  await (anchored ? deliverForQuote(db, p.orgId, p.quoteId) : deliverForRequest(db, req!.id)).catch(() => undefined); // best effort, under the Preview allowlist; the response never depends on delivery
-  return { notified };
+export async function notifyResponseEvent(db: Db, p: Omit<NotifyParams, "internalBaseUrl">, env: EmailEnv = process.env): Promise<{ notified: number }> {
+  if (!(await approvalsAvailable(db))) return { notified: 0 };
+  const res = await queueResponseNotifications(db, { ...p, internalBaseUrl: approvalBaseUrl(env) });
+  // Inline delivery only where an email provider is configured (the separate public portal holds no provider credentials: its rows stay QUEUED for the internal outbox).
+  if (emailConfigStatus().configured) await deliverForQuote(db, p.orgId, p.quoteId).catch(() => undefined); // best effort, under the Preview allowlist
+  return res;
 }
