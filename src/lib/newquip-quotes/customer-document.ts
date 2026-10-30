@@ -59,29 +59,80 @@ export function buildCustomerDocumentModel(i: ModelInput): CustomerDocumentModel
 /** Words that mean internal commercial data; the system-generated parts of a customer document must never contain them. (Manager-authored terms are checked for identifiers, not wording.) */
 const INTERNAL_WORDS = /\b(margins?|mark-?ups?|gross profit|gp%?|landed cost|cost price|supplier|suppliers|procurement|exchange rate|rate of exchange|estimator|latest cost|purchase price|sku)\b/i;
 
-/** Everything that identifies INTERNAL data in the baseline: SKUs, supplier names, internal people, free-text notes and reasons. */
-export function internalTokens(b: AcceptedBaseline): string[] {
-  const t = new Set<string>();
-  for (const l of b.commercial.lines) { if (l.sku) t.add(l.sku); for (const c of l.components ?? []) if (c.sku) t.add(c.sku); }
-  for (const x of b.selectedProducts) if (x.sku) t.add(x.sku);
-  for (const x of b.physicalScope ?? []) if (x.sku) t.add(x.sku);
-  const est = b.physicalCostEstimate as unknown as { entries?: Record<string, { supplierName?: string | null; supplierId?: string | null }> } | undefined;
-  for (const e of Object.values(est?.entries ?? {})) { if (e?.supplierName) t.add(e.supplierName); if (e?.supplierId) t.add(e.supplierId); }
-  // customerConfirmedBy is the CUSTOMER's own contact (it may legitimately be the addressee), not internal data, so it is not a leak token.
-  for (const e of [b.approvals.handoffBy, b.approvals.estimatorSignoffBy, b.approvals.managerApprovedBy]) if (e) t.add(e);
-  if (b.assumptions && b.assumptions.trim().length >= 4) t.add(b.assumptions.trim());
-  for (const x of b.exclusions) if (x.reason && x.reason.trim().length >= 4) t.add(x.reason.trim());
-  for (const x of b.overrides) if (x.reason && x.reason.trim().length >= 4) t.add(x.reason.trim());
-  for (const x of b.priceResolutions) if (x.reason && x.reason.trim().length >= 4) t.add(x.reason.trim());
-  const m = b.internalMargin as unknown as { totals?: Record<string, unknown> } | undefined;
-  for (const v of Object.values(m?.totals ?? {})) if (typeof v === "number" && Math.abs(v) >= 1000) t.add(String(v));
-  return [...t].filter((x) => x.length >= 3);
+/**
+ * What identifies INTERNAL data in the sealed baseline, by kind:
+ *   ids     - SKUs, supplier names and ids (they must not appear in anything the customer reads);
+ *   figures - internal COST and gross-profit amounts, as rand numbers (selling prices are customer-facing and are NOT here);
+ *   people  - internal staff identities (handoff / estimator / manager);
+ *   notes   - free-text internal notes and reasons (assumptions, exclusion / override / price-resolution reasons).
+ * The customer's OWN contact (who confirmed the amount) is not internal and is not here.
+ */
+export interface InternalTokenSet { ids: string[]; figures: string[]; people: string[]; notes: string[] }
+
+const randOf = (cents: unknown): string | null => (typeof cents === "number" && Number.isFinite(cents) && Math.abs(cents) >= 1000 ? String(Math.round(cents) / 100) : null);
+
+export function internalTokenSet(b: AcceptedBaseline): InternalTokenSet {
+  const ids = new Set<string>(); const figures = new Set<string>(); const people = new Set<string>(); const notes = new Set<string>();
+  for (const l of b.commercial.lines) { if (l.sku) ids.add(l.sku); for (const c of l.components ?? []) if (c.sku) ids.add(c.sku); }
+  for (const x of b.selectedProducts) if (x.sku) ids.add(x.sku);
+  for (const x of b.physicalScope ?? []) if (x.sku) ids.add(x.sku);
+  const est = b.physicalCostEstimate as unknown as { totalCostCents?: number; lines?: Array<{ unitCostCents?: number | null; totalCostCents?: number | null }>; entries?: Record<string, { supplierName?: string | null; supplierId?: string | null }> } | undefined;
+  for (const e of Object.values(est?.entries ?? {})) { if (e?.supplierName) ids.add(e.supplierName); if (e?.supplierId) ids.add(e.supplierId); }
+  for (const c of [est?.totalCostCents, ...(est?.lines ?? []).flatMap((l) => [l.unitCostCents, l.totalCostCents])]) { const r = randOf(c); if (r) figures.add(r); }
+  for (const e of [b.approvals.handoffBy, b.approvals.estimatorSignoffBy, b.approvals.managerApprovedBy]) if (e) people.add(e); // not customerConfirmedBy: that is the CUSTOMER's own contact
+  if (b.assumptions && b.assumptions.trim().length >= 4) notes.add(b.assumptions.trim());
+  for (const x of [...b.exclusions, ...b.overrides, ...b.priceResolutions]) if (x.reason && x.reason.trim().length >= 4) notes.add(x.reason.trim());
+  // The frozen internal margin sheet: COST and GROSS PROFIT amounts only (project, section, line and component level). Selling values are the customer's own prices.
+  const m = b.internalMargin as unknown as { project?: Record<string, unknown>; sections?: Array<Record<string, unknown>>; lines?: Array<Record<string, unknown> & { components?: Array<Record<string, unknown>> }> } | undefined;
+  const fig = (o: Record<string, unknown> | undefined) => { for (const k of ["costCents", "gpCents"]) { const r = randOf(o?.[k]); if (r) figures.add(r); } };
+  fig(m?.project); for (const x of m?.sections ?? []) fig(x); for (const l of m?.lines ?? []) { fig(l); for (const c of l.components ?? []) fig(c); }
+  return { ids: [...ids].filter((x) => x.length >= 3), figures: [...figures], people: [...people].filter((x) => x.length >= 3), notes: [...notes] };
 }
 
-/** Throws if the model carries anything internal. Called at issue time AND by the test suite. */
+/** Flat list (all kinds). Kept for callers that only need "is there anything internal to look for". */
+export const internalTokens = (b: AcceptedBaseline): string[] => { const t = internalTokenSet(b); return [...t.ids, ...t.figures, ...t.people, ...t.notes].filter((x) => x.length >= 3); };
+
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Whole-word / whole-number match, case-insensitive: "test" is not found in "latest" or "testing", and 4000000 is not found in 40000000 or 4000000.5. */
+export function tokenAppears(text: string, token: string): boolean {
+  const t = token.trim(); if (!t) return false;
+  const re = /^-?\d+(\.\d+)?$/.test(t) ? new RegExp(`(?<![\\d.,])${esc(t)}(?![\\d]|\\.\\d)`) : new RegExp(`(?<![\\p{L}\\p{N}_])${esc(t)}(?![\\p{L}\\p{N}_])`, "iu");
+  return re.test(text);
+}
+
+/** A free-text note this long is distinctive enough to be looked for in organisation-configured text as well (shorter ones only in the text built from the baseline). */
+const DISTINCTIVE_NOTE = 12;
+
+/** Which kinds of internal data appear in `text`, for the regions that matter. Returns the KINDS only, never the values. */
+function leakKinds(text: string, set: InternalTokenSet, region: "baseline" | "org" | "message"): string[] {
+  const hit = (list: string[]) => list.some((t) => tokenAppears(text, t));
+  const kinds: string[] = [];
+  if (hit(set.ids)) kinds.push("a SKU or supplier");
+  if (hit(set.figures)) kinds.push("an internal cost or margin figure");
+  if (region !== "org" && hit(set.people)) kinds.push("an internal person");
+  if (hit(set.notes.filter((n) => region === "baseline" || n.length >= (region === "message" ? 8 : DISTINCTIVE_NOTE)))) kinds.push("an internal note");
+  return kinds;
+}
+
+/**
+ * Throws if the model carries anything internal. Called at issue time AND by the test suite. The customer's OWN details (name, address, contact, site name) come from the
+ * customer snapshot / the Rep and are never scanned: a customer or contact that happens to share a name or address with internal data is not a leak. Everything derived from
+ * the baseline (scope, section titles, totals, schedule) is scanned for every kind; organisation-configured text (company details, terms, schedule wording) is scanned for
+ * SKUs / suppliers / cost figures and for distinctive notes. The error names the KIND of data and the area - never the value.
+ */
 export function assertNoInternalLeak(model: CustomerDocumentModel, b: AcceptedBaseline): void {
-  const text = JSON.stringify(model);
-  for (const tok of internalTokens(b)) if (text.toLowerCase().includes(tok.toLowerCase())) throw new Error("The customer document would expose internal data and was not issued.");
-  const generated = JSON.stringify({ sections: model.sections, paymentSchedule: model.paymentSchedule.map((x) => x.name), customer: model.customer.name });
-  if (INTERNAL_WORDS.test(generated)) throw new Error("The customer document would expose internal data and was not issued.");
+  const set = internalTokenSet(b);
+  const baselineText = JSON.stringify({ reference: model.quote.reference, sections: model.sections, totals: model.totals, schedule: model.paymentSchedule.map((x) => ({ percent: x.percent, amountExVat: x.amountExVat })) });
+  const orgText = JSON.stringify({ company: model.company, paymentTerms: model.paymentTerms, delivery: model.deliveryInstallationConditions, terms: model.termsAndConditions, acceptance: model.acceptanceInstructions, schedule: model.paymentSchedule.map((x) => [x.name, x.description, x.trigger]) });
+  const found: string[] = [];
+  for (const k of leakKinds(baselineText, set, "baseline")) found.push(`${k} in the scope or totals`);
+  for (const k of leakKinds(orgText, set, "org")) found.push(`${k} in the company details or terms`);
+  const generated = JSON.stringify({ sections: model.sections, paymentSchedule: model.paymentSchedule.map((x) => x.name) });
+  if (INTERNAL_WORDS.test(generated)) found.push("an internal term (margin, cost, supplier, SKU...) in the scope or schedule wording");
+  if (found.length) throw new Error(`The customer document would expose internal data and was not issued. (${found.join("; ")})`);
+}
+
+/** The same test for free text a Rep writes in the cover email: internal tokens (whole words only) and internal terms. */
+export function messageLeaksInternal(message: string, b: AcceptedBaseline): boolean {
+  return /\b(margins?|mark-?ups?|gross profit|cost price|landed cost|supplier price)\b/i.test(message) || leakKinds(message, internalTokenSet(b), "message").length > 0;
 }

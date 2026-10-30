@@ -10,7 +10,7 @@ import type { createServiceRoleClient } from "@/supabase/server";
 import { sendEmail as resendSend, type SendEmailInput, type SendEmailResult } from "@/lib/email/resend";
 import { applyEmailPolicy, isRestricted, type EmailEnv } from "@/lib/approvals/email-policy";
 import { loadQuote } from "./quote-store";
-import { internalTokens } from "./customer-document";
+import { messageLeaksInternal } from "./customer-document";
 import { isValidEmail } from "./customer-snapshot";
 import { latestSnapshot } from "./customer-store";
 import { listDocuments, readDocumentBytes, type DocumentDeps, type StoredDocument } from "./document-store";
@@ -86,8 +86,7 @@ export async function sendQuotationToCustomer(
   if (!doc) throw new Error("That document does not belong to this quotation.");
   if (docs[0].id !== doc.id) throw new Error("A newer version of this quotation has been issued; send the latest one.");
   if (doc.revision !== q.revision || doc.baseline_hash !== q.baseline_hash) throw new Error("The quotation changed after this document was issued; issue it again before sending.");
-  const lc = message.toLowerCase();
-  if (message && (/\b(margins?|mark-?ups?|gross profit|cost price|landed cost|supplier price)\b/i.test(message) || internalTokens(q.accepted_baseline).some((t) => lc.includes(t.toLowerCase())))) throw new Error("Your message appears to contain internal information (costs, margins, SKUs or internal notes). Remove it before sending.");
+  if (message && messageLeaksInternal(message, q.accepted_baseline)) throw new Error("Your message appears to contain internal information (costs, margins, SKUs or internal notes). Remove it before sending.");
 
   // Production recipients: a Cin7 contact of the selected customer, or an explicitly approved alternative with an audited reason. (Outside Production the allowlist below is stricter.)
   let alternatives: string[] = [];

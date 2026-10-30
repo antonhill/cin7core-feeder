@@ -3,11 +3,15 @@ import zlib from "node:zlib";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { readyDraft } from "@/newquip/grower/__tests__/golden";
+import { emptyDraft } from "@/newquip/grower/draft";
+import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
+import { createWorkbookPriceSource } from "@/newquip/grower/workbook-price-source";
+import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
 import { testPriceSource } from "@/newquip/grower/__tests__/test-snapshot";
 import { buildAcceptedBaseline, type AcceptedBaseline } from "@/newquip/quote/baseline";
 import { NEWQUIP_STANDARD_SCHEDULE } from "@/newquip/quote/billing-schedule";
 import { buildCustomerSnapshot, withChosenContact } from "../customer-snapshot";
-import { assertNoInternalLeak, buildCustomerDocumentModel, internalTokens, type CustomerDocumentModel } from "../customer-document";
+import { assertNoInternalLeak, buildCustomerDocumentModel, internalTokens, internalTokenSet, messageLeaksInternal, tokenAppears, type CustomerDocumentModel } from "../customer-document";
 import { cleanProfile, missingProfileFields, type CompanyProfile } from "../company-profile";
 import { formatRand, pdfSafe, renderCustomerPdf } from "../customer-pdf";
 import { issueQuotationDocument, readDocumentBytes, saveProfile, sha256, type DocumentDeps } from "../document-store";
@@ -72,7 +76,10 @@ describe("customer document model", () => {
     const text = JSON.stringify(model).toLowerCase();
     const tokens = internalTokens(baseline);
     expect(tokens.length).toBeGreaterThan(5); // the baseline really holds internal data to leak
-    for (const t of tokens) expect(text.includes(t.toLowerCase()), `leaked: ${t}`).toBe(false);
+    const set = internalTokenSet(baseline);
+    expect(set.figures.length).toBeGreaterThan(0); // internal cost / gross-profit amounts ARE extracted from the frozen margin sheet
+    for (const t of [...set.ids, ...set.people, ...set.notes]) expect(text.includes(t.toLowerCase()), `leaked: ${t}`).toBe(false);
+    for (const t of set.figures) expect(tokenAppears(text, t), `leaked figure: ${t}`).toBe(false);
     expect(text).not.toMatch(/margin|mark-?up|supplier|landed|exchange rate|estimator|internal-assumption/);
     expect(() => assertNoInternalLeak(model, baseline)).not.toThrow();
   });
@@ -81,7 +88,7 @@ describe("customer document model", () => {
     expect(internalTokens(b2)).not.toContain("Piet <piet@boerdery.example>");
     const m = structuredClone(model); m.customer.contactName = "Piet"; m.customer.contactEmail = "piet@boerdery.example";
     expect(() => assertNoInternalLeak(m, b2)).not.toThrow();
-    const leaky = structuredClone(m); leaky.customer.contactEmail = "rep.person@nq.example"; // an internal person's email is still refused
+    const leaky = structuredClone(m); leaky.sections[0].scope += " rep.person@nq.example"; // an internal person's email in the offer text is still refused
     expect(() => assertNoInternalLeak(leaky, b2)).toThrow(/internal data/);
   });
   it("the leak guard fires when internal data is smuggled in (SKU in a description, a person's email, assumption text, a margin word)", () => {
@@ -206,5 +213,109 @@ describe("issuing an immutable customer document", () => {
   it("when migration 0115 is absent the document feature reads as unavailable instead of crashing", async () => {
     const db = new FakeDb(); const { listDocuments } = await import("../document-store");
     expect(await listDocuments(db as never, "org-a", "q1")).toEqual([]);
+  });
+});
+
+// ── REGRESSION: the actual Preview failure (NQ-Q-0015) ──────────────────────
+// The demonstration quotation (R10,000,000 ex VAT, 40/55/5 schedule) carries the internal assumption "Test" and override reasons "Test"; its site is "Test Farm 1" and the
+// customer contact tests/approves from the same mailbox domain. The old guard looked for the 4-letter note as a SUBSTRING of the whole model, so the customer's own site name
+// ("Test Farm 1") made it refuse a perfectly safe document: "The customer document would expose internal data and was not issued."
+describe("REGRESSION: NQ-Q-0015 on Preview (demonstration quotation, 40/55/5)", () => {
+  const demo = () => {
+    const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Spark" }).draft;
+    const ap = { ...approvals, customerConfirmedBy: "Anton Hill <anton@sparkconsulting.co.za>", handoffBy: "rep@sparkconsulting.co.za", estimatorSignoffBy: "estimator@sparkconsulting.co.za", managerApprovedBy: "anton@sparkconsulting.co.za" };
+    const { baseline, hash } = buildAcceptedBaseline({ quoteRef: "NQ-Q-0015", revision: 1, draft, evaluation: evaluateDraft(draft, { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: false }), approvals: ap });
+    // the customer's contact is the SAME person as the internal approver, and the customer is called "Spark"
+    const snap = withChosenContact(buildCustomerSnapshot({ ID: "c-spark", Name: "Spark", Currency: "ZAR", Addresses: [{ Type: "Billing", Line1: "1 Spark Road", DefaultForType: true }], Contacts: [{ Name: "Anton Hill", Email: "anton@sparkconsulting.co.za" }] }, "t"), { source: "CIN7_CONTACT", contactIndex: 0 });
+    return { baseline, hash, snap, model: buildCustomerDocumentModel({ baseline, quoteRef: "NQ-Q-0015", revision: 1, snapshot: snap, profile: PROFILE, schedule: NEWQUIP_STANDARD_SCHEDULE, issuedOn: "2026-10-30" }) };
+  };
+  it("the guard accepts it, and the figures reconcile exactly: R10,000,000 + R1,500,000 VAT = R11,500,000; 40/55/5 = R4,000,000 + R5,500,000 + R500,000", () => {
+    const { baseline, model } = demo();
+    expect(baseline.assumptions).toBe("Test"); // the trigger: a short internal note that also occurs as a word in the customer's site name
+    expect(model.quote.siteName).toBe("Test Farm 1");
+    expect(() => assertNoInternalLeak(model, baseline)).not.toThrow();
+    expect(model.totals).toMatchObject({ subtotalExVat: 10_000_000, vat: 1_500_000, totalIncVat: 11_500_000, vatRatePercent: 15 });
+    expect(model.paymentSchedule.map((x) => [x.percent, x.amountExVat])).toEqual([[40, 4_000_000], [55, 5_500_000], [5, 500_000]]);
+    expect(model.paymentSchedule.reduce((a, x) => a + x.amountExVat, 0)).toBe(model.totals.subtotalExVat);
+    expect(model.customer).toMatchObject({ name: "Spark", contactName: "Anton Hill", contactEmail: "anton@sparkconsulting.co.za" });
+  });
+  it("it really issues through the full pipeline: stored privately with its hash, revision-bound; issuing again with identical inputs reuses it (no duplicate)", async () => {
+    const { baseline, hash, snap } = demo();
+    const db = new FakeDb(); db.deliveryApplied = true;
+    db.rows("newquip_quotes").push({ id: "q15", org_id: "org-a", quote_ref: "NQ-Q-0015", revision: 1, state: "MANAGER_APPROVED_FINAL", accepted_baseline: baseline, baseline_hash: hash, draft: {}, requires_customer_acceptance: true });
+    db.rows("newquip_quote_customers").push({ id: "s1", org_id: "org-a", quote_id: "q15", seq: 1, cin7_customer_id: "c-spark", snapshot: snap, snapshot_hash: "h", captured_by_email: "rep@x" });
+    const files = new Map<string, Uint8Array>();
+    const deps: DocumentDeps = { today: () => "2026-10-30", render: renderCustomerPdf, storage: { upload: async (p, b) => { files.set(p, b); }, download: async (p) => files.get(p)!, remove: async (p) => { files.delete(p); } } };
+    await saveProfile(db as never, "org-a", PROFILE, "m@x");
+    const first = await issueQuotationDocument(db as never, "org-a", "q15", { email: "mgr@x" }, NEWQUIP_STANDARD_SCHEDULE, deps);
+    expect(first.document).toMatchObject({ revision: 1, baseline_hash: hash });
+    expect(Buffer.from(files.get(first.document.storage_path)!).subarray(0, 5).toString()).toBe("%PDF-");
+    expect(sha256(files.get(first.document.storage_path)!)).toBe(first.document.content_hash);
+    const again = await issueQuotationDocument(db as never, "org-a", "q15", { email: "mgr@x" }, NEWQUIP_STANDARD_SCHEDULE, deps);
+    expect(db.rows("newquip_quote_documents")).toHaveLength(1); expect(again.document.id).toBe(first.document.id);
+  });
+  it("a refused issue leaves NO registry row and NO stored file (the failed Preview attempt created nothing)", async () => {
+    const { baseline, hash, snap } = demo();
+    const db = new FakeDb(); db.deliveryApplied = true;
+    db.rows("newquip_quotes").push({ id: "q15", org_id: "org-a", quote_ref: "NQ-Q-0015", revision: 1, state: "MANAGER_APPROVED_FINAL", accepted_baseline: baseline, baseline_hash: hash, draft: {}, requires_customer_acceptance: true });
+    db.rows("newquip_quote_customers").push({ id: "s1", org_id: "org-a", quote_id: "q15", seq: 1, cin7_customer_id: "c-spark", snapshot: snap, snapshot_hash: "h", captured_by_email: "rep@x" });
+    const files = new Map<string, Uint8Array>();
+    const deps: DocumentDeps = { today: () => "2026-10-30", render: renderCustomerPdf, storage: { upload: async (p, b) => { files.set(p, b); }, download: async (p) => files.get(p)!, remove: async (p) => { files.delete(p); } } };
+    const sku = internalTokenSet(baseline).ids[0];
+    await saveProfile(db as never, "org-a", { ...PROFILE, termsAndConditions: `General terms. See product ${sku}.` }, "m@x"); // a genuine leak: an internal SKU in the company terms
+    await expect(issueQuotationDocument(db as never, "org-a", "q15", { email: "mgr@x" }, NEWQUIP_STANDARD_SCHEDULE, deps)).rejects.toThrow(/internal data.*SKU or supplier/);
+    expect(db.rows("newquip_quote_documents")).toHaveLength(0); expect(files.size).toBe(0);
+  });
+});
+
+describe("the guard still blocks genuine confidential data (and names only the KIND, never the value)", () => {
+  const { baseline } = freeze();
+  const model = buildCustomerDocumentModel({ baseline, quoteRef: "NQ-Q-0009", revision: 1, snapshot: snapshot(), profile: PROFILE, schedule: NEWQUIP_STANDARD_SCHEDULE, issuedOn: "2026-10-29" });
+  const dirty = (mut: (m: CustomerDocumentModel) => void) => { const m = structuredClone(model); mut(m); return () => assertNoInternalLeak(m, baseline); };
+  const set = () => internalTokenSet(baseline);
+  it("a SKU, a supplier, an internal cost figure, a staff email and a distinctive note in the offer text are refused", () => {
+    const sku = set().ids[0]; const fig = set().figures[0]; const person = set().people[0];
+    expect(dirty((m) => { m.sections[0].scope += ` ${sku}`; })).toThrow(/a SKU or supplier/);
+    expect(dirty((m) => { m.sections[1].title += ` R${fig}`; })).toThrow(/internal cost or margin figure/);
+    expect(dirty((m) => { m.sections[0].scope += ` ${person}`; })).toThrow(/an internal person/);
+    expect(dirty((m) => { m.sections[0].scope += " INTERNAL-ASSUMPTION-DO-NOT-PRINT margin is tight"; })).toThrow(/an internal note/);
+    let msg = ""; try { dirty((m) => { m.sections[0].scope += ` ${sku} ${person}`; })(); } catch (e) { msg = (e as Error).message; }
+    expect(msg).not.toContain(sku); expect(msg).not.toContain(person);
+  });
+  it("organisation text (terms, company details) may not carry a SKU, a cost figure or a distinctive internal note either", () => {
+    const sku = set().ids[0]; const fig = set().figures[0];
+    expect(dirty((m) => { m.termsAndConditions += ` ${sku}`; })).toThrow(/company details or terms/);
+    expect(dirty((m) => { m.paymentTerms += ` ${fig}`; })).toThrow(/company details or terms/);
+    expect(dirty((m) => { m.deliveryInstallationConditions += " INTERNAL-ASSUMPTION-DO-NOT-PRINT margin is tight"; })).toThrow(/internal note/);
+  });
+  it("a short internal note is still caught as a WORD in the offer text (the scope), but not as a fragment of another word or in the customer's own details", () => {
+    const { baseline: b } = (() => { const d = readyDraft(); d.estimator.assumptions = "Test"; return buildAcceptedBaseline({ quoteRef: "Q", revision: 1, draft: d, evaluation: evaluateDraft(d, { priceSource: testPriceSource(), withholdCost: false }), approvals }); })();
+    const m1 = structuredClone(model); m1.sections[0].scope += " this is a Test line";
+    expect(() => assertNoInternalLeak(m1, b)).toThrow(/an internal note/);
+    const m2 = structuredClone(model); m2.sections[0].scope += " the latest testing contest"; m2.quote.siteName = "Test Farm 1"; m2.customer.name = "Test Customer";
+    expect(() => assertNoInternalLeak(m2, b)).not.toThrow();
+  });
+  it("the customer's own name, address and contact may equal an internal SKU, supplier or staff email without being refused; a cost figure inside a LONGER number is not a match", () => {
+    const sku = set().ids[0]; const person = set().people[0];
+    expect(dirty((m) => { m.customer.name = `${sku} Supplies`; m.customer.contactEmail = person; m.customer.billingAddress = [sku]; })).not.toThrow();
+    expect(tokenAppears("total 40000000 and 4000000.5", "4000000")).toBe(false);
+    expect(tokenAppears("deposit 4000000 due", "4000000")).toBe(true); expect(tokenAppears("[4000000,5500000]", "4000000")).toBe(true);
+    expect(tokenAppears("the latest", "test")).toBe(false);
+    expect(tokenAppears("a Test.", "test")).toBe(true);
+  });
+  it("a staff mailbox may legitimately be the company's own contact address (organisation text), though not appear in the offer text", () => {
+    const person = set().people[0];
+    expect(dirty((m) => { m.company.email = person; })).not.toThrow();
+    expect(dirty((m) => { m.sections[0].scope += ` ${person}`; })).toThrow(/an internal person/);
+  });
+  it("an internal word in the scope or schedule wording is refused, but a customer called 'Suppliers Ltd' is fine", () => {
+    expect(dirty((m) => { m.paymentSchedule[0].name = "Supplier deposit"; })).toThrow(/internal term/);
+    expect(dirty((m) => { m.customer.name = "ABC Suppliers (Pty) Ltd"; })).not.toThrow();
+  });
+  it("the cover-email check uses whole words: 'please find the latest quote' passes, a SKU or margin talk does not", () => {
+    const sku = set().ids[0];
+    expect(messageLeaksInternal("Please find the latest quote and the testing schedule", baseline)).toBe(false);
+    expect(messageLeaksInternal(`Includes ${sku} at a good margin`, baseline)).toBe(true);
+    expect(messageLeaksInternal("Our gross profit is fine", baseline)).toBe(true);
   });
 });
