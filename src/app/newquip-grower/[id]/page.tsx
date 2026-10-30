@@ -677,7 +677,7 @@ export default function QuoteEditorPage() {
                 {q.project_id ? (
                   <Link href={`/projects/${q.project_id}`} className="inline-flex h-9 items-center rounded-md bg-indigo-600 px-4 text-sm font-medium text-white hover:bg-indigo-700">Open the Project</Link>
                 ) : gate.requires && !gate.accepted ? (
-                  <Alert tone="info">A Project for this quotation is created after the customer accepts the issued quotation. Issue it, send it, and record the customer&apos;s acceptance in the Customer quotation panel above.</Alert>
+                  <Alert tone="info"><b>Project handover is not available yet.</b> {stages[5].summary} A Project for a new quotation is created only after the customer&apos;s acceptance of the issued quotation is recorded (with its evidence) or, if it came by email, verified in <button type="button" className="underline" onClick={() => goStage(5)}>Customer Acceptance</button>. Nothing is created automatically.</Alert>
                 ) : (
                   <>
                   {gate.requires ? <p className="mb-2 text-sm text-slate-600">The Project will use the billing schedule printed on the quotation the customer accepted.</p> : <ScheduleChooser contractCents={q.accepted_baseline.contractCents} onChange={setScheduleChoice} />}

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { formatSast } from "@/lib/approvals/time";
 import { getQuoteDeliveryAction, recordCustomerResponseAction, reviewCustomerResponseAction, revokeResponseLinksAction, type DeliveryView, type ResponseRow } from "../delivery-actions";
-import { EVIDENCE_ACCEPT, EVIDENCE_MAX_BYTES, EVIDENCE_MAX_FILES } from "@/lib/newquip-quotes/response-evidence";
+import { EVIDENCE_ACCEPT, EVIDENCE_MAX_BYTES, EVIDENCE_MAX_FILES, EVIDENCE_MAX_TOTAL } from "@/lib/newquip-quotes/response-evidence-limits";
 import type { DeliveryGate } from "./DeliveryPanel";
 import { postFormToOwnRoute } from "@/lib/browser/same-origin-upload";
 
@@ -60,6 +60,7 @@ export function AcceptancePanel({ quoteId, onGate }: { quoteId: string; onGate: 
     const tooBig = picked.find((x) => x.size > EVIDENCE_MAX_BYTES);
     if (picked.length > EVIDENCE_MAX_FILES) { setErr(`Attach at most ${EVIDENCE_MAX_FILES} files at a time.`); return; }
     if (tooBig) { setErr(`"${tooBig.name}" is larger than ${EVIDENCE_MAX_BYTES / 1024 / 1024} MB.`); return; }
+    if (picked.reduce((a, x) => a + x.size, 0) > EVIDENCE_MAX_TOTAL) { setErr(`The files together are larger than ${EVIDENCE_MAX_TOTAL / 1024 / 1024} MB. Attach fewer now and add the rest afterwards.`); return; }
     setErr(null); setFiles(picked);
   };
   const contactJson = () => JSON.stringify(choice === "delivery" ? { source: "DELIVERY_CONTACT" } : choice === "alt" ? { source: "ALTERNATIVE", name: alt.name, email: alt.email, reason: alt.reason } : { source: "CIN7_CONTACT", contactIndex: choice });
@@ -159,7 +160,7 @@ export function AcceptancePanel({ quoteId, onGate }: { quoteId: string; onGate: 
           {d.portal && (
             <label className="flex flex-col gap-1 text-sm"><span className="font-medium text-slate-700">Supporting evidence{response === "ACCEPTED" ? " (required for an acceptance)" : " (optional)"}</span>
               <input ref={fileRef} type="file" multiple accept={EVIDENCE_ACCEPT} onChange={(e) => pick(e.target.files)} className="text-sm" />
-              <span className="text-xs text-slate-500">PDF, JPG, PNG or EML (saved email). Up to {EVIDENCE_MAX_FILES} files, {EVIDENCE_MAX_BYTES / 1024 / 1024} MB each. Stored privately and never overwritten.</span>
+              <span className="text-xs text-slate-500">PDF, JPG, PNG or EML (saved email). Up to {EVIDENCE_MAX_FILES} files, {EVIDENCE_MAX_TOTAL / 1024 / 1024} MB in total per upload (add more later with Add evidence). Stored privately and never overwritten.</span>
               {files.length > 0 && <span className="text-xs text-slate-700">{files.map((x) => `${x.name} (${kb(x.size)})`).join(", ")}</span>}
             </label>
           )}

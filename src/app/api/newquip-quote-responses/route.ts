@@ -6,20 +6,20 @@ import { authoriseActor, auditActor, ownerEmailOf } from "@/app/newquip-grower/a
 import { createServiceRoleClient } from "@/supabase/server";
 import { defaultDeps } from "@/lib/newquip-quotes/document-store";
 import { attachEvidence, recordStaffResponse } from "@/lib/newquip-quotes/response-record";
-import { EVIDENCE_MAX_BYTES, EVIDENCE_MAX_FILES } from "@/lib/newquip-quotes/response-evidence";
+import { EVIDENCE_MAX_BYTES, EVIDENCE_MAX_FILES, EVIDENCE_MAX_TOTAL } from "@/lib/newquip-quotes/response-evidence";
 import type { ResponseContactInput } from "@/lib/newquip-quotes/response-contact";
 
 export const dynamic = "force-dynamic";
 const NO_STORE = { "Cache-Control": "private, no-store", "Content-Type": "application/json" };
 const reply = (status: number, body: Record<string, unknown>) => new Response(JSON.stringify(body), { status, headers: NO_STORE });
-const MAX_BODY = EVIDENCE_MAX_BYTES * EVIDENCE_MAX_FILES + 256 * 1024;
+const MAX_BODY = EVIDENCE_MAX_TOTAL + 400 * 1024; // the files plus the form fields; the platform itself stops anything above 4.5 MB
 
 export async function POST(req: Request): Promise<Response> {
   let a;
   try { a = await authoriseActor(); } catch { return reply(401, { ok: false, error: "Not authorised." }); }
   if (!a.roles.has("rep") && !a.roles.has("manager")) return reply(403, { ok: false, error: "You do not have permission to record a customer response." });
   const declared = Number(req.headers.get("content-length") ?? "0");
-  if (declared > MAX_BODY) return reply(413, { ok: false, error: `The upload is too large. Attach at most ${EVIDENCE_MAX_FILES} files of up to ${EVIDENCE_MAX_BYTES / 1024 / 1024} MB each.` });
+  if (declared > MAX_BODY) return reply(413, { ok: false, error: `The upload is too large. Attach at most ${EVIDENCE_MAX_FILES} files, ${EVIDENCE_MAX_TOTAL / 1024 / 1024} MB in total.` });
   let form: FormData;
   try { form = await req.formData(); } catch { return reply(400, { ok: false, error: "The upload could not be read." }); }
   const str = (k: string) => (typeof form.get(k) === "string" ? (form.get(k) as string) : "");

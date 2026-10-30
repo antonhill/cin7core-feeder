@@ -148,7 +148,7 @@ export async function reviewCustomerResponseAction(quoteId: string, input: { res
     if (r.created) {
       await auditActor(db, a, { action: `newquip.customer_acceptance_${input.decision.toLowerCase()}`, summary: `${input.decision === "VERIFIED" ? "Verified" : "Rejected"} a customer's emailed acceptance (no project or Cin7 Sale is created by this step)`, detail: { quoteId, responseId: r.response.id, decision: input.decision, linkId: r.response.link_id ?? null } });
       const q = await loadQuote(db, a.orgId, quoteId);
-      if (q) await notifyResponseEvent(db, { orgId: a.orgId, quoteId, quoteRef: q.quote_ref, customerName: q.customer_name, event: input.decision === "VERIFIED" ? "VERIFIED" : "REJECTED_ON_VERIFICATION", response: r.response, recipients: [q.handoff_by_email, q.created_by_email], by: a.email, reason: input.decision === "REJECTED" ? input.note : null }).catch(() => undefined);
+      if (q) await notifyResponseEvent(db, { orgId: a.orgId, quoteId, quoteRef: q.quote_ref, customerName: q.customer_name, event: input.decision === "VERIFIED" ? "VERIFIED" : "REJECTED_ON_VERIFICATION", response: r.response, recipients: [q.handoff_by_email, q.created_by_email, ...(await listSends(db, a.orgId, quoteId)).filter((x) => x.document_id === r.response.document_id).map((x) => x.sent_by_email)], by: a.email, reason: input.decision === "REJECTED" ? input.note : null }).catch(() => undefined);
     }
     return { ok: true, data: await viewOf(a, quoteId) };
   } catch (e) { return { ok: false, error: errText(e) }; }

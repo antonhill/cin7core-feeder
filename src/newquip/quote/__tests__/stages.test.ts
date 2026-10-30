@@ -68,4 +68,22 @@ describe("six stages derived from existing state and evidence", () => {
     expect(st({}).map((s) => s.label)).toEqual(["Configuration", "Costing & Estimator Review", "Manager Approval", "Customer Quotation", "Customer Acceptance", "Project Handover"]);
     expect(parseStage("4")).toBe(4); for (const bad of ["0", "7", "x", "", null, undefined, "2.5"]) expect(parseStage(bad as never)).toBeNull();
   });
+  it("a customer acceptance that arrived by email waits for verification: stage 5 awaits action, stage 6 stays closed with the reason; a rejected one is RETURNED; only a verified one opens stage 6", () => {
+    const f = { state: "MANAGER_APPROVED_FINAL" as const, ready: true, customerSelected: true, confirmed: true, signedOff: true, hasDocument: true };
+    const pend = st({ ...f, commercial: "ACCEPTANCE_PENDING_VERIFICATION" });
+    expect([pend[3].status, pend[4].status, pend[5].status]).toEqual(["COMPLETE", "AWAITING_ACTION", "NOT_AVAILABLE"]);
+    expect(pend[4].next).toMatch(/verify or reject/); expect(pend[5].summary).toMatch(/emailed acceptance to be verified/);
+    expect(currentStage(pend)).toBe(5);
+    const rej = st({ ...f, commercial: "ACCEPTANCE_REJECTED" });
+    expect([rej[4].status, rej[5].status]).toEqual(["RETURNED", "NOT_AVAILABLE"]); expect(rej[4].summary).toMatch(/rejected during verification/);
+    const ok = st({ ...f, commercial: "CUSTOMER_ACCEPTED" });
+    expect([ok[4].status, ok[5].status]).toEqual(["COMPLETE", "AWAITING_ACTION"]); expect(ok[4].summary).toMatch(/verified/);
+  });
+  it("an expired or withdrawn emailed link is stated at stage 5 with the way forward", () => {
+    const f = { state: "MANAGER_APPROVED_FINAL" as const, ready: true, customerSelected: true, confirmed: true, signedOff: true, hasDocument: true, commercial: "SENT_TO_CUSTOMER" as const };
+    expect(st({ ...f, linkState: "EXPIRED" })[4].summary).toMatch(/link has expired/);
+    expect(st({ ...f, linkState: "REVOKED" })[4].summary).toMatch(/link was withdrawn/);
+    expect(st({ ...f, linkState: "ACTIVE" })[4].summary).toBe("Waiting for the customer's response.");
+    expect(st({ ...f, linkState: "EXPIRED" })[4].next).toMatch(/send the quotation again/);
+  });
 });

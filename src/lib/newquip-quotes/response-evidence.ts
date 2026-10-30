@@ -9,11 +9,10 @@ import type { DocumentStorage } from "./document-store";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 
-export const EVIDENCE_MAX_BYTES = 4 * 1024 * 1024; // below the 4.5 MB request-body ceiling of the hosting platform's route handlers
-export const EVIDENCE_MAX_FILES = 3;
+import { EVIDENCE_MAX_BYTES, EVIDENCE_MAX_FILES, EVIDENCE_MAX_TOTAL } from "./response-evidence-limits";
+export { EVIDENCE_ACCEPT, EVIDENCE_MAX_BYTES, EVIDENCE_MAX_FILES, EVIDENCE_MAX_TOTAL } from "./response-evidence-limits";
 export type EvidenceType = "application/pdf" | "image/jpeg" | "image/png" | "message/rfc822";
 const EXT: Record<EvidenceType, string[]> = { "application/pdf": ["pdf"], "image/jpeg": ["jpg", "jpeg"], "image/png": ["png"], "message/rfc822": ["eml"] };
-export const EVIDENCE_ACCEPT = ".pdf,.jpg,.jpeg,.png,.eml";
 
 export interface CheckedEvidence { fileName: string; contentType: EvidenceType; ext: string; bytes: Uint8Array; sha256: string; size: number }
 export interface StoredEvidence {
@@ -60,6 +59,7 @@ export function checkEvidenceFile(f: { name: string; bytes: Uint8Array }): Check
 export function checkEvidenceFiles(files: Array<{ name: string; bytes: Uint8Array }>): CheckedEvidence[] {
   if (files.length > EVIDENCE_MAX_FILES) throw new Error(`Attach at most ${EVIDENCE_MAX_FILES} files at a time.`);
   const checked = files.map(checkEvidenceFile);
+  if (checked.reduce((a, c) => a + c.size, 0) > EVIDENCE_MAX_TOTAL) throw new Error(`The files together are larger than ${EVIDENCE_MAX_TOTAL / 1024 / 1024} MB. Attach fewer files now and add the rest afterwards with Add evidence.`);
   const seen = new Set<string>();
   for (const c of checked) { if (seen.has(c.sha256)) throw new Error(`"${c.fileName}" was attached twice.`); seen.add(c.sha256); }
   return checked;

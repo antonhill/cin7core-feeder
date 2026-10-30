@@ -17,6 +17,7 @@ const UNIQUE: Record<string, string[][]> = {
   newquip_quote_documents: [["quote_id", "version"], ["storage_path"]],
   newquip_quote_sends: [["document_id", "idempotency_key"]],
   newquip_response_links: [["token_hash"]],
+  approval_notifications: [["dedupe_key"]],
   newquip_quote_responses: [["link_id"]],
   newquip_response_reviews: [["response_id"]],
   newquip_response_evidence: [["storage_path"]],

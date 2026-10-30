@@ -50,7 +50,7 @@ export async function issueResponseLink(
   const expires = new Date(now.getTime() + linkTtlDays(env) * 86_400_000).toISOString();
   const ins = await db.from("newquip_response_links").insert({
     id, org_id: p.orgId, quote_id: p.doc.quote_id, document_id: p.doc.id, send_id: p.send.id, document_hash: p.doc.content_hash, baseline_hash: p.doc.baseline_hash, revision: p.doc.revision,
-    customer_name: p.customerName, recipients: p.recipients, allowed_actions: [...LINK_ACTIONS], token_hash: sha(secret), environment: environmentOf(env), expires_at: expires, created_by_email: p.by,
+    customer_name: p.customerName, recipients: p.recipients, allowed_actions: [...LINK_ACTIONS], token_hash: sha(secret), environment: environmentOf(env), expires_at: expires, created_by_email: p.by, attempts: 0,
   }).select("*").single();
   if (ins.error || !ins.data) throw new Error(`Could not create the response link: ${ins.error?.message ?? "no row"}`);
   await revokeActiveLinks(db, p.orgId, p.doc.quote_id, "Superseded by a newer send of the quotation", id, now);
