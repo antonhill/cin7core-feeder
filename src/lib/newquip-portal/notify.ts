@@ -20,18 +20,21 @@ const COPY: Record<ResponseEvent, { headline: string; action: string }> = {
  * Customer-supplied text (a reason, a name, a company) is UNTRUSTED and ends up in an internal staff email and notification. It must not be able to carry a clickable link, a
  * look-alike address, hidden or direction-changing characters, or unbounded length. Links, web addresses and email addresses are replaced by a visible marker; control, zero-width
  * and bidirectional-override characters become spaces; whitespace is collapsed; length is capped. The readable remainder is kept. (A bare "word.word" that looks like a web
- * address is also replaced - a deliberate, slightly over-eager trade for plain-text mail clients that auto-link.)
+ * address - including a one-letter host such as t.co, an internationalised domain or a dotted IP - is also replaced: a deliberate, slightly over-eager trade for plain-text mail
+ * clients that auto-link. Known cost: a missing space after a full stop, "expensive.Please", reads as a host and is replaced.)
  */
 export const LINK_MARKER = "[link removed]";
 export const EMAIL_MARKER = "[email removed]";
 export function safeCustomerText(raw: string | null | undefined, max = 300): string {
   let t = String(raw ?? "")
     .normalize("NFKC")
-    // control characters, zero-width / joiner / BOM, line & paragraph separators and bidirectional overrides/isolates
-    .replace(/[\u0000-\u001F\u007F-\u009F\u00AD\u061C\u180E\u200B-\u200F\u2028-\u202E\u2060-\u2069\uFEFF]/g, " ")
-    .replace(/[^\s@]+@[^\s@]+/g, EMAIL_MARKER)                                                                  // email addresses (mailto auto-links)
-    .replace(/\b(?:(?:https?|ftp|sftp|file|mailto|tel|sms|javascript|vbscript|data|blob):\S*|[a-z][a-z0-9+.-]{1,15}:\/\/\S*|www\.\S*)/gi, LINK_MARKER)   // known schemes, any scheme://, www.
-    .replace(/\b(?:[a-z0-9-]{2,}\.)+[a-z]{2,}(?::\d+)?(?:[\/?#]\S*)?/gi, LINK_MARKER);                           // bare domains / host/paths
+    // invisible / control / formatting characters: C0+C1 controls, ALL format characters (zero-width, joiners, bidi marks and overrides, soft hyphen, BOM, Unicode TAG characters used to hide text),
+    // private-use, line/paragraph separators, plus code points that render as blank (combining grapheme joiner, Hangul fillers, braille blank, variation selectors)
+    .replace(/[\p{Cc}\p{Cf}\p{Co}\p{Cs}\p{Zl}\p{Zp}͏ᅟᅠㅤﾠ⠀᠋-᠍︀-️\u{E0100}-\u{E01EF}]/gu, " ")
+    .replace(/[^\s@]+@[^\s@]+/g, EMAIL_MARKER)                                                                                    // email addresses (mailto auto-links)
+    .replace(/(?<![\p{L}\p{N}])(?:(?:https?|ftp|sftp|file|mailto|tel|sms|javascript|vbscript|data|blob):\S*|\p{L}[\p{L}\p{N}+.-]{1,15}:\/\/\S*|www\.\S*)/giu, LINK_MARKER) // known schemes, any scheme://, www.
+    .replace(/(?<![\p{L}\p{N}.])\d{1,3}(?:\.\d{1,3}){3}(?![\p{L}\p{N}])(?::\d+)?(?:[\/?#]\S*)?/gu, LINK_MARKER)                    // dotted IPv4 (with optional port/path)
+    .replace(/(?<![\p{L}\p{N}])(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}(?::\d+)?(?:[\/?#]\S*)?/gu, LINK_MARKER);                           // bare domains incl. 1-character labels (t.co, x.com) and non-ASCII (IDN) labels
   t = t.replace(/(?:\[link removed\]\s*){2,}/g, `${LINK_MARKER} `).replace(/\s+/g, " ").trim();
   return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
 }
