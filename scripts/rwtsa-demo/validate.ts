@@ -47,10 +47,16 @@ async function main(): Promise<number> {
   if (certificate.findings.length > 0) {
     console.log("Findings (value-free):");
     for (const f of certificate.findings) {
-      const where = [f.tab, f.field, f.reason].filter(Boolean).join(" / ");
+      const where = [f.tab, f.field, f.reason, f.fields?.join("+")].filter(Boolean).join(" / ");
       const rows = f.rows?.length ? `  rows ${f.rows.join(",")}` : "";
       console.log(`  [${f.severity}] ${f.code}${where ? ` (${where})` : ""} x${f.count}${rows}`);
     }
+  }
+
+  console.log("Scenario readiness (separate from PASS/FAIL):");
+  for (const r of certificate.readiness) {
+    const gaps = [...r.missingTabs.map((t) => `empty/missing tab ${t}`), ...r.missingFields.map((f) => `absent column ${f}`)];
+    console.log(`  ${r.scenario}: ${r.ready ? "READY" : "NOT READY"}${gaps.length ? `  (${gaps.join("; ")})` : ""}`);
   }
 
   writeFileSync(path.join(outDir, "validation-certificate.json"), JSON.stringify(certificate, null, 2));

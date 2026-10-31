@@ -38,7 +38,16 @@ export type FindingCode =
   | "lost_without_reason"
   | "po_missing_sku_and_style"
   | "formula_without_cached_result"
-  | "error_cell";
+  | "error_cell"
+  | "empty_tab"
+  | "sku_coverage_missing"
+  | "sales_series_all_missing"
+  | "missing_observation"
+  | "negative_value"
+  | "style_mismatch"
+  | "po_sku_style_mismatch"
+  | "duplicate_sheet"
+  | "optional_header_absent";
 
 export interface Finding {
   readonly severity: Severity;
@@ -49,6 +58,8 @@ export interface Finding {
   readonly field?: string;
   /** For invalid_cell: the reason class (e.g. "number_format"), never the value. */
   readonly reason?: string;
+  /** Several of OUR canonical field keys (e.g. absent optional columns). Never file-supplied text. */
+  readonly fields?: readonly string[];
   readonly count: number;
   /** 1-based sheet row numbers, capped at MAX_ROWS_LISTED. */
   readonly rows?: readonly number[];

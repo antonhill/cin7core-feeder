@@ -42,11 +42,11 @@ describe("AT-10: synthetic fixture generator", () => {
     const r = await buildSynth();
     const d = r.dataset!;
     const flagged = new Set<string>();
-    const bySku = new Map<string, { month: string; qty: number }[]>();
+    const bySku = new Map<string, { month: string; qty: number | null }[]>();
     for (const p of d.tables.salesHistory) bySku.set(p.sku, [...(bySku.get(p.sku) ?? []), p]);
     for (const [sku, series] of bySku) {
-      const med = median(series.map((p) => p.qty));
-      for (const p of series) if (p.qty > 5 * med && p.qty > 40) flagged.add(`${sku}|${p.month}`);
+      const med = median(series.map((p) => p.qty as number));
+      for (const p of series) if (p.qty! > 5 * med && p.qty! > 40) flagged.add(`${sku}|${p.month}`);
     }
     const styleOf = new Map(d.tables.items.map((i) => [i.sku, i.styleCode]));
     const flaggedStyles = new Set([...flagged].map((k) => styleOf.get(k.split("|")[0])));

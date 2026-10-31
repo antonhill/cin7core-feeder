@@ -1,4 +1,4 @@
-import { defineFields, type FieldSpec, type RowOf } from "@/rwtsa-demo/contracts/fields";
+import { defineFields, type FieldSpec, type RowOf, type ScenarioId } from "@/rwtsa-demo/contracts/fields";
 
 /**
  * Structural contracts for the 11 named tabs of the RWTSA demonstration workbook (NDA-safe brief §4).
@@ -26,13 +26,13 @@ export const ITEMS_FIELDS = defineFields([
   { key: "size", headers: ["Size"], kind: "str", required: true },
   { key: "source", headers: ["Source", "Sourcing"], kind: "enum", required: true, values: ["Import", "Local", "Both"] },
   { key: "unit", headers: ["Unit", "UoM"], kind: "str", required: false },
-  { key: "minLevel", headers: ["Min level", "Minimum level", "Min stock", "Minimum stock"], kind: "num", required: false },
+  { key: "minLevel", headers: ["Min level", "Minimum level", "Min stock", "Minimum stock"], kind: "num", required: false, critical: "A" },
   { key: "reorderPoint", headers: ["Reorder point", "Reorder level"], kind: "num", required: false },
   { key: "standardCost", headers: ["Standard cost", "Std cost"], kind: "num", required: true },
   { key: "standardSellPrice", headers: ["Standard sell price", "Std sell price", "Sell price"], kind: "num", required: false },
   // Not listed in the brief's Items shape, but DP-16 needs a tender / customer-order-only marker. Optional until
   // the real workbook is inspected locally.
-  { key: "isTender", headers: ["Tender", "Tender flag", "Customer order only", "Tender / customer order only"], kind: "bool", required: false },
+  { key: "isTender", headers: ["Tender", "Tender flag", "Customer order only", "Tender / customer order only"], kind: "bool", required: false, critical: "A" },
 ] as const);
 export type ItemRow = RowOf<typeof ITEMS_FIELDS>;
 
@@ -48,13 +48,13 @@ export const STOCK_FIELDS = defineFields([
   { key: "styleCode", headers: ["Style code", "Style"], kind: "str", required: false },
   { key: "colour", headers: ["Colour", "Color"], kind: "str", required: false },
   { key: "size", headers: ["Size"], kind: "str", required: false },
-  { key: "jhb", headers: ["JHB", "Johannesburg"], kind: "num", required: true },
-  { key: "durban", headers: ["Durban", "DBN"], kind: "num", required: true },
-  { key: "capeTown", headers: ["Cape Town", "CPT"], kind: "num", required: true },
-  { key: "bond", headers: ["Bond", "Bond (not available)"], kind: "num", required: true },
-  { key: "factoryStore", headers: ["Factory store", "Factory"], kind: "num", required: true },
-  { key: "inTransit", headers: ["In transit", "Transit"], kind: "num", required: true },
-  { key: "committed", headers: ["Committed"], kind: "num", required: true },
+  { key: "jhb", headers: ["JHB", "Johannesburg"], kind: "num", required: true, negativeIsError: true },
+  { key: "durban", headers: ["Durban", "DBN"], kind: "num", required: true, negativeIsError: true },
+  { key: "capeTown", headers: ["Cape Town", "CPT"], kind: "num", required: true, negativeIsError: true },
+  { key: "bond", headers: ["Bond", "Bond (not available)"], kind: "num", required: true, negativeIsError: true },
+  { key: "factoryStore", headers: ["Factory store", "Factory"], kind: "num", required: true, negativeIsError: true },
+  { key: "inTransit", headers: ["In transit", "Transit"], kind: "num", required: true, negativeIsError: true },
+  { key: "committed", headers: ["Committed"], kind: "num", required: true, negativeIsError: true },
   { key: "available", headers: ["Available", "Available (excl. Bond)"], kind: "num", required: false },
 ] as const);
 export type StockFileRow = RowOf<typeof STOCK_FIELDS>;
@@ -98,9 +98,9 @@ export const ROUTING_SMV_FIELDS = defineFields([
   { key: "operation", headers: ["Operation", "Operation name"], kind: "str", required: true },
   { key: "smv", headers: ["SMV", "Standard minute value", "Minutes"], kind: "num", required: true },
   { key: "costPerMinute", headers: ["Cost per minute", "Cost/min", "Rate per minute"], kind: "num", required: true },
-  { key: "overhead", headers: ["Overhead", "Overhead %"], kind: "num", required: false },
-  { key: "efficiency", headers: ["Efficiency", "Efficiency %", "Efficiency allowance"], kind: "num", required: false },
-  { key: "margin", headers: ["Margin", "Margin %"], kind: "num", required: false },
+  { key: "overhead", headers: ["Overhead", "Overhead %"], kind: "num", required: false, critical: "B" },
+  { key: "efficiency", headers: ["Efficiency", "Efficiency %", "Efficiency allowance"], kind: "num", required: false, critical: "B" },
+  { key: "margin", headers: ["Margin", "Margin %"], kind: "num", required: false, critical: "B" },
 ] as const);
 export type RoutingRow = RowOf<typeof ROUTING_SMV_FIELDS>;
 
@@ -113,8 +113,8 @@ export const PRODUCTION_ORDERS_FIELDS = defineFields([
   { key: "actualMinutes", headers: ["Actual minutes"], kind: "num", required: true },
   { key: "plannedFabricM", headers: ["Planned fabric (m)", "Planned fabric m", "Planned fabric"], kind: "num", required: true },
   { key: "actualFabricM", headers: ["Actual fabric (m)", "Actual fabric m", "Actual fabric"], kind: "num", required: true },
-  { key: "standardPrice", headers: ["Planned price", "Standard price", "Std price", "Planned fabric price"], kind: "num", required: false },
-  { key: "actualPrice", headers: ["Actual price", "Actual fabric price"], kind: "num", required: false },
+  { key: "standardPrice", headers: ["Planned price", "Standard price", "Std price", "Planned fabric price"], kind: "num", required: false, critical: "B" },
+  { key: "actualPrice", headers: ["Actual price", "Actual fabric price"], kind: "num", required: false, critical: "B" },
   { key: "labourRecoveryPct", headers: ["Labour recovery %", "Labour recovery"], kind: "num", required: false },
   { key: "usageVariance", headers: ["Usage variance"], kind: "num", required: false },
   { key: "priceVariance", headers: ["Price variance"], kind: "num", required: false },
@@ -127,12 +127,12 @@ export const LANDED_COST_FIELDS = defineFields([
   { key: "shipmentRef", headers: ["Shipment", "Shipment ref", "Shipment reference"], kind: "str", required: true },
   { key: "sku", headers: ["SKU"], kind: "str", required: true },
   { key: "qty", headers: ["Qty", "Quantity"], kind: "num", required: true },
-  { key: "fobUsd", headers: ["FOB USD", "FOB (USD)", "FOB"], kind: "num", required: false },
-  { key: "planningFx", headers: ["Planning FX", "Planning rate"], kind: "num", required: false },
-  { key: "customsFx", headers: ["Customs FX", "Customs rate"], kind: "num", required: false },
-  { key: "dutyZar", headers: ["Duty", "Duty ZAR", "Duty (ZAR)"], kind: "num", required: false },
+  { key: "fobUsd", headers: ["FOB USD", "FOB (USD)", "FOB"], kind: "num", required: false, critical: "C" },
+  { key: "planningFx", headers: ["Planning FX", "Planning rate"], kind: "num", required: false, critical: "C" },
+  { key: "customsFx", headers: ["Customs FX", "Customs rate"], kind: "num", required: false, critical: "C" },
+  { key: "dutyZar", headers: ["Duty", "Duty ZAR", "Duty (ZAR)"], kind: "num", required: false, critical: "C" },
   { key: "cbm", headers: ["CBM", "Volume (CBM)"], kind: "num", required: true },
-  { key: "freightTotalZar", headers: ["Freight", "Freight ZAR", "Shipment freight"], kind: "num", required: false },
+  { key: "freightTotalZar", headers: ["Freight", "Freight ZAR", "Shipment freight"], kind: "num", required: false, critical: "C" },
   { key: "freightAllocatedZar", headers: ["Freight allocated", "Allocated freight"], kind: "num", required: false },
 ] as const);
 export type LandedCostRow = RowOf<typeof LANDED_COST_FIELDS>;
@@ -144,8 +144,8 @@ export const PAYMENTS_FEC_FIELDS = defineFields([
   { key: "termsDays", headers: ["Terms (days)", "Terms days", "Terms"], kind: "num", required: false },
   { key: "dueDate", headers: ["Due date"], kind: "date", required: true },
   { key: "usdAmount", headers: ["USD amount", "Amount USD", "USD"], kind: "num", required: true },
-  { key: "fecRef", headers: ["FEC reference", "FEC ref", "FEC"], kind: "str", required: false },
-  { key: "lockedRate", headers: ["Locked rate", "FEC rate"], kind: "num", required: false },
+  { key: "fecRef", headers: ["FEC reference", "FEC ref", "FEC"], kind: "str", required: false, critical: "C" },
+  { key: "lockedRate", headers: ["Locked rate", "FEC rate"], kind: "num", required: false, critical: "C" },
   { key: "zarValue", headers: ["ZAR value", "Amount ZAR", "ZAR"], kind: "num", required: false },
   { key: "isDeposit", headers: ["Deposit", "Is deposit"], kind: "bool", required: false },
 ] as const);
@@ -166,8 +166,8 @@ export const QUOTES_FIELDS = defineFields([
   { key: "rep", headers: ["Rep", "Sales rep", "Sales representative"], kind: "str", required: false },
   { key: "status", headers: ["Status"], kind: "enum", required: true, values: QUOTE_STATUSES },
   { key: "value", headers: ["Value", "Quote value", "Amount"], kind: "num", required: true },
-  { key: "lostReason", headers: ["Lost reason", "Reason lost"], kind: "str", required: false },
-  { key: "convertedOrder", headers: ["Converted order", "Sales order", "Original SO", "Order no"], kind: "str", required: false },
+  { key: "lostReason", headers: ["Lost reason", "Reason lost"], kind: "str", required: false, critical: "D" },
+  { key: "convertedOrder", headers: ["Converted order", "Sales order", "Original SO", "Order no"], kind: "str", required: false, critical: "D" },
   { key: "quoteDate", headers: ["Quote date", "Date"], kind: "date", required: false },
   { key: "product", headers: ["Product", "Style", "Style code"], kind: "str", required: false },
 ] as const);
@@ -209,4 +209,15 @@ export const TAB_CONTRACTS: Readonly<Record<TabName, TabContract>> = {
   Payments_FEC: { tab: "Payments_FEC", fields: PAYMENTS_FEC_FIELDS, naturalKey: ["poNo", "dueDate", "usdAmount"] },
   Customers: { tab: "Customers", fields: CUSTOMERS_FIELDS, naturalKey: ["customer", "contact"] },
   Quotes: { tab: "Quotes", fields: QUOTES_FIELDS, naturalKey: ["quoteNo"] },
+};
+
+/** Tabs without which the workbook is not a usable demonstration dataset at all: empty => ERROR (not just "scenario not ready"). */
+export const CORE_TABS: readonly TabName[] = ["Items", "SalesHistory", "Stock"];
+
+/** Records each scenario needs; an empty/missing tab makes that scenario not ready (a warning for non-core tabs). */
+export const SCENARIO_TABS: Readonly<Record<ScenarioId, readonly TabName[]>> = {
+  A: ["Items", "SalesHistory", "Stock", "ImportPOs"],
+  B: ["Items", "BOM", "Routing_SMV", "ProductionOrders"],
+  C: ["ImportPOs", "LandedCost", "Payments_FEC"],
+  D: ["Customers", "Quotes"],
 };

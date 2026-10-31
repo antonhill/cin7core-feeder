@@ -35,7 +35,7 @@ function canonicalRows(rows: readonly object[]): string[] {
 const round = (n: number): number => Math.round(n * 1e6) / 1e6;
 
 function emptyTotals(): { -readonly [K in keyof StyleControlTotals]: StyleControlTotals[K] } {
-  return { skuCount: 0, availableUnits: 0, committedUnits: 0, inTransitUnits: 0, bondUnits: 0, salesLast6Months: 0, salesLast12Months: 0, salesAllMonths: 0, importPoQty: 0 };
+  return { skuCount: 0, availableUnits: 0, committedUnits: 0, inTransitUnits: 0, bondUnits: 0, salesLast6Months: 0, salesLast12Months: 0, salesAllMonths: 0, salesMissingObservations: 0, importPoQty: 0 };
 }
 
 export function reconcile(tables: Tables, months: readonly string[]): Reconciliation {
@@ -64,6 +64,10 @@ export function reconcile(tables: Tables, months: readonly string[]): Reconcilia
     const style = styleBySku.get(p.sku);
     if (!style) continue;
     const b = bucket(style);
+    if (p.qty === null) {
+      b.salesMissingObservations++; // a missing observation contributes nothing to any sum and is never treated as 0
+      continue;
+    }
     b.salesAllMonths += p.qty;
     if (last6.has(p.month)) b.salesLast6Months += p.qty;
     if (last12.has(p.month)) b.salesLast12Months += p.qty;

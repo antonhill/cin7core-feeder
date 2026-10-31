@@ -1,4 +1,5 @@
-import { TAB_CONTRACTS, TAB_NAMES, type TabName } from "@/rwtsa-demo/contracts/tabs";
+import type { ScenarioId } from "@/rwtsa-demo/contracts/fields";
+import { CORE_TABS, SCENARIO_TABS, TAB_CONTRACTS, TAB_NAMES, type TabName } from "@/rwtsa-demo/contracts/tabs";
 import type {
   BomRow,
   CustomerRow,
@@ -11,7 +12,7 @@ import type {
   RoutingRow,
   StockFileRow,
 } from "@/rwtsa-demo/contracts/tabs";
-import type { DatasetSource, Provenance, RwtsaDataset, SalesFileAverages, SalesPoint, StockRow } from "@/rwtsa-demo/dataset";
+import type { DatasetSource, Provenance, RwtsaDataset, SalesFileAverages, SalesPoint, ScenarioReadiness, StockRow } from "@/rwtsa-demo/dataset";
 import { finding, hasErrors, MAX_ROWS_LISTED, type Finding } from "@/rwtsa-demo/findings";
 import { computeAvailable, reconcile } from "@/rwtsa-demo/reconcile";
 import { parseTab, type FieldHeaderOverrides, type ParsedTab } from "@/rwtsa-demo/workbook/parse-tab";
@@ -33,6 +34,8 @@ export interface BuildResult {
   readonly findings: readonly Finding[];
   /** Per-tab parsed row counts, for the structure-only validation report. */
   readonly parsedRowCounts: Readonly<Partial<Record<TabName, number>>>;
+  /** Per-scenario readiness, separate from overall validity. Present even when the workbook is invalid (then never ready). */
+  readonly readiness: readonly ScenarioReadiness[];
 }
 
 const EPS = 1e-9;
@@ -50,6 +53,13 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
   for (const tab of TAB_NAMES) {
     const raw = read.tables[tab];
     if (!raw) continue; // missing_tab already reported by the reader
+
+    // Completeness: a tab with a header but no data rows is EMPTY. Core tabs make the workbook invalid; any other
+    // empty tab is a warning (and makes the scenarios that need it "not ready").
+    if (raw.rows.length === 0) {
+      findings.push(finding({ severity: (CORE_TABS as readonly TabName[]).includes(tab) ? "error" : "warning", code: "empty_tab", tab, count: 1 }));
+    }
+
     const p = parseTab(TAB_CONTRACTS[tab], raw, opts.headerOverrides?.[tab] ?? {});
     parsed[tab] = p;
     parsedRowCounts[tab] = p.rows.length;
@@ -67,21 +77,42 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
   const customers = rowsOf<CustomerRow>(parsed.Customers);
   const quotes = rowsOf<QuoteRow>(parsed.Quotes);
 
-  // SalesHistory: unpivot the YYYY-MM columns into (sku, month, qty) points.
+  // SalesHistory: unpivot the YYYY-MM columns into (sku, month, qty) points. An empty cell stays null (a missing
+  // observation); an explicit 0 stays 0.
   const sales = parsed.SalesHistory;
   const salesHistory: SalesPoint[] = [];
   const salesFileAverages: SalesFileAverages[] = [];
   if (sales) {
+    let missingCells = 0;
+    const rowsWithMissing: number[] = [];
+    const allMissingRows: number[] = [];
     sales.rows.forEach((r, i) => {
       const sku = r.sku as string;
-      sales.months.forEach((month, m) => salesHistory.push({ sku, month, qty: sales.monthQty[i][m] }));
+      const series = sales.monthQty[i];
+      sales.months.forEach((month, m) => salesHistory.push({ sku, month, qty: series[m] }));
       salesFileAverages.push({ sku, avg6: (r.avg6 as number | null) ?? null, avg12: (r.avg12 as number | null) ?? null });
+
+      const blanks = series.filter((q) => q === null).length;
+      if (blanks > 0) {
+        missingCells += blanks;
+        if (rowsWithMissing.length < MAX_ROWS_LISTED) rowsWithMissing.push(sales.rowNumbers[i]);
+      }
+      if (series.length > 0 && blanks === series.length && allMissingRows.length < MAX_ROWS_LISTED) allMissingRows.push(sales.rowNumbers[i]);
     });
+    if (missingCells > 0) {
+      findings.push(finding({ severity: "warning", code: "missing_observation", tab: "SalesHistory", field: "month", count: missingCells, rows: rowsWithMissing }));
+    }
+    const allMissingCount = sales.rows.filter((_, i) => sales.monthQty[i].length > 0 && sales.monthQty[i].every((q) => q === null)).length;
+    if (allMissingCount > 0) {
+      // A SKU whose entire series is empty has no demand history at all: it is not "accounted for".
+      findings.push(finding({ severity: "error", code: "sales_series_all_missing", tab: "SalesHistory", field: "month", count: allMissingCount, rows: allMissingRows }));
+    }
   }
 
   // Cross-tab checks (only meaningful once Items parsed).
   const itemSkus = new Set(items.map((i) => i.sku));
   const itemStyles = new Set(items.map((i) => i.styleCode));
+  const styleBySku = new Map(items.map((i) => [i.sku, i.styleCode]));
   const orphan = (tab: TabName, field: string, code: "orphan_sku" | "orphan_style", values: (string | null)[], rowNumbers: number[], known: Set<string>) => {
     let count = 0;
     const rows: number[] = [];
@@ -111,6 +142,38 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
       orphan("ProductionOrders", "styleCode", "orphan_style", parsed.ProductionOrders.rows.map((r) => r.styleCode as string), parsed.ProductionOrders.rowNumbers, itemStyles);
     }
 
+    // Reverse coverage: EVERY Items SKU must be accounted for in SalesHistory and Stock. Checked only when the Items
+    // tab and the tab in question both have data (an empty tab already raised empty_tab).
+    const coverage = (tab: "SalesHistory" | "Stock") => {
+      const p = parsed[tab];
+      if (!p || p.rows.length === 0 || items.length === 0) return;
+      const present = new Set(p.rows.map((r) => r.sku as string));
+      const missing = items.filter((i) => !present.has(i.sku)).length;
+      if (missing > 0) findings.push(finding({ severity: "error", code: "sku_coverage_missing", tab, field: "sku", count: missing }));
+    };
+    coverage("SalesHistory");
+    coverage("Stock");
+
+    // A Stock row's style must agree with its Items SKU's style; so must a PO line that names both a SKU and a style.
+    const mismatch = (tab: "Stock" | "ImportPOs", code: "style_mismatch" | "po_sku_style_mismatch") => {
+      const p = parsed[tab];
+      if (!p) return;
+      const rows: number[] = [];
+      let count = 0;
+      p.rows.forEach((r, i) => {
+        const sku = r.sku as string | null;
+        const style = r.styleCode as string | null;
+        const itemStyle = sku ? styleBySku.get(sku) : undefined;
+        if (itemStyle !== undefined && style !== null && style !== itemStyle) {
+          count++;
+          if (rows.length < MAX_ROWS_LISTED) rows.push(p.rowNumbers[i]);
+        }
+      });
+      if (count > 0) findings.push(finding({ severity: "error", code, tab, field: "styleCode", count, rows }));
+    };
+    mismatch("Stock", "style_mismatch");
+    mismatch("ImportPOs", "po_sku_style_mismatch");
+
     // DP-16: a tender / customer-order-only SKU must carry no standing reorder level.
     const tenderWithLevel = parsed.Items.rows.flatMap((r, i) => (r.isTender === true && typeof r.minLevel === "number" && r.minLevel > 0 ? [parsed.Items!.rowNumbers[i]] : []));
     if (tenderWithLevel.length > 0) findings.push(finding({ severity: "warning", code: "tender_with_min_level", tab: "Items", field: "minLevel", count: tenderWithLevel.length, rows: tenderWithLevel }));
@@ -130,7 +193,24 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
   }
 
   const ok = !hasErrors(findings);
-  if (!ok) return { ok: false, dataset: null, findings, parsedRowCounts };
+
+  // Scenario readiness is separate from overall validity: ready = valid workbook + every needed tab has data + every
+  // needed (critical) optional column present.
+  const emptyTabs = new Set<TabName>(TAB_NAMES.filter((t) => !read.tables[t] || read.tables[t]!.rows.length === 0));
+  const absentCritical = new Map<ScenarioId, string[]>();
+  for (const f of findings) {
+    if (f.code === "optional_header_absent" && f.severity === "warning" && f.tab && f.field) {
+      const scenario = TAB_CONTRACTS[f.tab as TabName].fields.find((x) => x.key === f.field)?.critical;
+      if (scenario) absentCritical.set(scenario, [...(absentCritical.get(scenario) ?? []), `${f.tab}.${f.field}`]);
+    }
+  }
+  const readiness: ScenarioReadiness[] = (Object.keys(SCENARIO_TABS) as ScenarioId[]).map((scenario) => {
+    const missingTabs = SCENARIO_TABS[scenario].filter((t) => emptyTabs.has(t));
+    const missingFields = absentCritical.get(scenario) ?? [];
+    return { scenario, ready: ok && missingTabs.length === 0 && missingFields.length === 0, missingTabs, missingFields };
+  });
+
+  if (!ok) return { ok: false, dataset: null, findings, parsedRowCounts, readiness };
 
   const months = sales?.months ?? [];
   const tables: RwtsaDataset["tables"] = { items, salesHistory, salesFileAverages, stock, importPos, bom, routing, productionOrders, landedCost, paymentsFec, customers, quotes };
@@ -141,7 +221,8 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
     months,
     tables,
     reconciliation: reconcile(tables, months),
+    readiness,
     findings,
   };
-  return { ok: true, dataset, findings, parsedRowCounts };
+  return { ok: true, dataset, findings, parsedRowCounts, readiness };
 }

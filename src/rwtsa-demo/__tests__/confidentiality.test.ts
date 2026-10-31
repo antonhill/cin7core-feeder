@@ -52,6 +52,25 @@ function poison(wb: ExcelJS.Workbook): void {
   sales.getRow(1).getCell(colOf(sales, "2026-08")).value = `${S}_month`;
 }
 
+/** Sentinels in every place the NEW remediation findings look at: style/SKU consistency, coverage, duplicate sheets, negatives. */
+function poisonIntegrity(wb: ExcelJS.Workbook): void {
+  const stock = sheet(wb, "Stock");
+  stock.getRow(4).getCell(colOf(stock, "Style code")).value = `${S}_style`; // SKU still in Items => style_mismatch (and orphan_style)
+  stock.getRow(3).getCell(colOf(stock, "JHB")).value = -42;
+  const items = sheet(wb, "Items");
+  items.getRow(2).getCell(colOf(items, "SKU")).value = `${S}_itemsku`; // no longer covered by Stock / SalesHistory
+  const pos = sheet(wb, "ImportPOs");
+  pos.getRow(2).getCell(colOf(pos, "SKU")).value = `${S}_posku`;
+  pos.getRow(2).getCell(colOf(pos, "Style code")).value = `${S}_postyle`;
+  const dup = wb.addWorksheet("items ");
+  dup.addRow([`${S}_dupheader`]);
+  dup.addRow([`${S}_dupcell`]);
+  const sales = sheet(wb, "SalesHistory");
+  for (let c = 2; c <= 37; c++) sales.getRow(5).getCell(c).value = null;
+  sales.getRow(6).getCell(4).value = null;
+  sales.getRow(7).getCell(4).value = `${S}_salescell`;
+}
+
 describe("AT-3: confidentiality canary", () => {
   it("no finding contains any workbook-supplied text", async () => {
     const r = await buildFrom(await synthBuffer({}, poison));
@@ -59,6 +78,17 @@ describe("AT-3: confidentiality canary", () => {
     expect(r.findings.length).toBeGreaterThan(3);
     expect(JSON.stringify(r.findings)).not.toContain(S);
     expect(JSON.stringify(r.parsedRowCounts)).not.toContain(S);
+  });
+
+  it("the remediation findings (coverage, style/SKU consistency, duplicate sheet, negative, missing observation) are value-free too", async () => {
+    const r = await buildFrom(await synthBuffer({}, poisonIntegrity));
+    expect(r.ok).toBe(false);
+    const seen = new Set(r.findings.map((f) => f.code));
+    for (const code of ["sku_coverage_missing", "style_mismatch", "duplicate_sheet", "negative_value", "sales_series_all_missing", "missing_observation", "invalid_cell", "orphan_sku", "orphan_style"]) {
+      expect(seen.has(code as never), code).toBe(true);
+    }
+    expect(JSON.stringify(r.findings)).not.toContain(S);
+    expect(JSON.stringify(r.readiness)).not.toContain(S);
   });
 
   it("thrown errors are value-free, including unexpected ones", async () => {
@@ -89,6 +119,8 @@ describe("AT-3: confidentiality canary", () => {
     expect(dataset?.provenance).toBe("local-workbook");
     expect(dataset?.source.label).toMatch(/^local-workbook:[0-9a-f]{12}$/);
     expect(certificate.controlHash).toBe(dataset?.reconciliation.controlHash);
+    expect(certificate.readiness.map((x) => x.scenario)).toEqual(["A", "B", "C", "D"]);
+    expect(certificate.readiness.every((x) => x.ready)).toBe(true);
     expect(JSON.stringify(certificate)).not.toContain(S);
   });
 });
@@ -128,6 +160,30 @@ describe("AT-3 end to end: the real validate script's stdout, stderr and artefac
     const rec = JSON.parse(readFileSync(join(outDir, "reconciliation.json"), "utf8"));
     expect(r.out).not.toContain(rec.controlHash);
     expect(r.out).not.toContain("availableUnits");
+    expect(r.out).toContain("Scenario readiness");
+    for (const sc of ["A", "B", "C", "D"]) expect(r.out).toContain(`${sc}: READY`);
+  });
+
+  it("a headers-only workbook FAILS (exit 1) and every scenario is NOT READY; the certificate never says pass", async () => {
+    const file = join(tmp, "hollow-cli.xlsx");
+    const outDir = join(tmp, "out-hollow");
+    writeFileSync(
+      file,
+      await synthBuffer({}, (wb) =>
+        wb.eachSheet((ws) => {
+          for (let i = ws.rowCount; i > 1; i--) ws.spliceRows(i, 1);
+        })
+      )
+    );
+    const r = run(["--file", file, "--out-dir", outDir, "--reconcile"]);
+    expect(r.status).toBe(1);
+    expect(r.out).toContain("FAIL");
+    expect(r.out).not.toContain("structure validation: PASS");
+    for (const sc of ["A", "B", "C", "D"]) expect(r.out).toContain(`${sc}: NOT READY`);
+    const cert = JSON.parse(readFileSync(join(outDir, "validation-certificate.json"), "utf8"));
+    expect(cert.status).toBe("fail");
+    expect(cert.readiness.every((x: { ready: boolean }) => !x.ready)).toBe(true);
+    expect(existsSync(join(outDir, "reconciliation.json"))).toBe(false);
   });
 
   it("refuses a workbook inside the repository (exit 2) without echoing the path", () => {

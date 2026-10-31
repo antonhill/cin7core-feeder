@@ -16,9 +16,12 @@ export type ParsedRow = Record<string, ParsedValue>;
 export interface ParsedTab {
   readonly rows: ParsedRow[];
   readonly rowNumbers: number[];
-  /** SalesHistory only: ascending `YYYY-MM`, and per-row quantities aligned to `months` (blank cell = 0). */
+  /**
+   * SalesHistory only: ascending `YYYY-MM`, and per-row quantities aligned to `months`.
+   * An explicit numeric 0 stays 0 (valid observation); an EMPTY cell is `null` (missing observation), never 0.
+   */
   readonly months: string[];
-  readonly monthQty: number[][];
+  readonly monthQty: (number | null)[][];
   readonly findings: Finding[];
 }
 
@@ -124,12 +127,25 @@ export function parseTab(contract: TabContract, raw: RawTable, overrides: FieldH
   }
   if (headerError) return fail();
 
+  // Absent OPTIONAL columns are reported, not treated as mandatory: a warning (names the field) when a scenario's
+  // calculations need it (`critical`), otherwise one info finding per tab listing our canonical keys.
+  const absentOptional = contract.fields.filter((f) => !f.required && !fieldColumn.has(f.key));
+  for (const f of absentOptional.filter((x) => x.critical)) {
+    findings.push(finding({ severity: "warning", code: "optional_header_absent", tab, field: f.key, count: 1 }));
+  }
+  const absentOther = absentOptional.filter((x) => !x.critical);
+  if (absentOther.length > 0) {
+    findings.push(finding({ severity: "info", code: "optional_header_absent", tab, fields: absentOther.map((x) => x.key), count: absentOther.length }));
+  }
+
   // 3. Rows.
   const monthCol = new Map(monthColumns.map((m) => [m.month, m.col]));
   const rows: ParsedRow[] = [];
   const rowNumbers: number[] = [];
-  const monthQty: number[][] = [];
+  const monthQty: (number | null)[][] = [];
   const blanks = new Counter();
+  const negatives = new Counter();
+  const negativeErrors = new Set<string>();
   const invalid = new Counter();
   const missingSkuAndStyle: number[] = [];
 
@@ -152,10 +168,14 @@ export function parseTab(contract: TabContract, raw: RawTable, overrides: FieldH
         bad = true;
       } else {
         out[f.key] = r.value;
+        if (typeof r.value === "number" && r.value < 0 && !f.allowNegative) {
+          negatives.add(f.key, sheetRow);
+          if (f.negativeIsError) negativeErrors.add(f.key);
+        }
       }
     }
 
-    const qty: number[] = [];
+    const qty: (number | null)[] = [];
     if (contract.monthColumns) {
       for (const m of months) {
         const r = coerceCell({ key: "month", headers: [], kind: "num", required: false }, cells[monthCol.get(m)!]);
@@ -163,7 +183,10 @@ export function parseTab(contract: TabContract, raw: RawTable, overrides: FieldH
           invalid.add(`month\u0000${r.reason}`, sheetRow);
           bad = true;
         } else {
-          qty.push(typeof r.value === "number" ? r.value : 0);
+          // Empty cell => null (missing observation). An explicit 0 stays 0. Never coerce one into the other.
+          const v = typeof r.value === "number" ? r.value : null;
+          qty.push(v);
+          if (v !== null && v < 0) negatives.add("month", sheetRow);
         }
       }
     }
@@ -178,6 +201,9 @@ export function parseTab(contract: TabContract, raw: RawTable, overrides: FieldH
     monthQty.push(qty);
   });
 
+  for (const [field, e] of negatives.entries()) {
+    findings.push(finding({ severity: negativeErrors.has(field) ? "error" : "warning", code: "negative_value", tab, field, count: e.count, rows: e.rows }));
+  }
   for (const [field, e] of blanks.entries()) findings.push(finding({ severity: "error", code: "required_blank", tab, field, count: e.count, rows: e.rows }));
   for (const [k, e] of invalid.entries()) {
     const [field, reason] = k.split("\u0000");
@@ -193,7 +219,7 @@ export function parseTab(contract: TabContract, raw: RawTable, overrides: FieldH
   let dupCount = 0;
   const keptRows: ParsedRow[] = [];
   const keptNumbers: number[] = [];
-  const keptQty: number[][] = [];
+  const keptQty: (number | null)[][] = [];
   rows.forEach((r, i) => {
     const key = contract.naturalKey.map((k) => String(r[k] ?? "")).join("\u0001");
     if (seenKeys.has(key)) {

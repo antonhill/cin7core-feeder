@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { TAB_CONTRACTS, TAB_NAMES, type TabName } from "@/rwtsa-demo/contracts/tabs";
-import type { RwtsaDataset } from "@/rwtsa-demo/dataset";
+import type { RwtsaDataset, ScenarioReadiness } from "@/rwtsa-demo/dataset";
 import { RwtsaSafeError, type Finding } from "@/rwtsa-demo/findings";
 import { buildDataset, type HeaderOverrides } from "@/rwtsa-demo/workbook/build-dataset";
 import { assertWorkbookPathAllowed } from "@/rwtsa-demo/workbook/path-guard";
@@ -29,6 +29,12 @@ export interface ValidationCertificate {
   readonly sizeBytes: number;
   readonly tabs: Readonly<Record<TabName, TabValidation>>;
   readonly findings: readonly Finding[];
+  /**
+   * Per-scenario readiness, SEPARATE from `status`: `status: "pass"` means the workbook is structurally valid and
+   * complete in its core tabs; a scenario is `ready` only if, in addition, its own record tabs have data and the
+   * optional columns its calculations need are present.
+   */
+  readonly readiness: readonly ScenarioReadiness[];
   /** Content hash of the validated data (null on fail). Irreversible; for matching a later run to this one. */
   readonly controlHash: string | null;
 }
@@ -95,6 +101,7 @@ export async function validateWorkbookFile(
     sizeBytes: read.sizeBytes,
     tabs,
     findings: built.findings,
+    readiness: built.readiness,
     controlHash: built.dataset?.reconciliation.controlHash ?? null,
   };
   return { certificate, dataset: built.dataset };

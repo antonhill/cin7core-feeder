@@ -13,6 +13,9 @@
 
 export type FieldKind = "str" | "num" | "date" | "bool" | "enum";
 
+/** The four RWTSA demonstration scenarios (brief §3): A Red Flag, B production/BOM/variance, C imports/FX, D CRM. */
+export type ScenarioId = "A" | "B" | "C" | "D";
+
 export interface FieldSpec {
   /** camelCase key on the parsed row. */
   readonly key: string;
@@ -22,6 +25,19 @@ export interface FieldSpec {
   readonly required: boolean;
   /** enum only: the allowed canonical values (matched case-insensitively). */
   readonly values?: readonly string[];
+  /**
+   * num only. A negative value is normally reported (warning `negative_value`, or error when `negativeIsError`).
+   * `allowNegative: true` is the ONLY way a contract may declare negative values legitimate (e.g. an explicit
+   * adjustment column). No current contract sets it: the brief names no such field.
+   */
+  readonly allowNegative?: boolean;
+  /** num only: a negative value is an ERROR, not a warning (stock quantities cannot be negative). */
+  readonly negativeIsError?: boolean;
+  /**
+   * Optional in the file format but needed by this scenario's calculations: its ABSENCE is a warning and makes the
+   * scenario "not ready" (the workbook can still be valid overall). Optional fields without this are only noted (info).
+   */
+  readonly critical?: ScenarioId;
 }
 
 type KindToTs = { str: string; num: number; date: string; bool: boolean; enum: string };

@@ -10,6 +10,8 @@ import type {
   RoutingRow,
   StockFileRow,
 } from "@/rwtsa-demo/contracts/tabs";
+import type { ScenarioId } from "@/rwtsa-demo/contracts/fields";
+import type { TabName } from "@/rwtsa-demo/contracts/tabs";
 import type { Finding } from "@/rwtsa-demo/findings";
 
 /**
@@ -33,7 +35,25 @@ export interface SalesPoint {
   readonly sku: string;
   /** `YYYY-MM` */
   readonly month: string;
-  readonly qty: number;
+  /**
+   * An explicit numeric 0 is a VALID observation (a genuine zero-sales month). `null` is a MISSING observation
+   * (the cell was empty): it is never converted to 0, and later engines must decide how to treat it
+   * (e.g. drop it from both numerator and observation count, as for an excluded anomaly month).
+   */
+  readonly qty: number | null;
+}
+
+/**
+ * Overall workbook validity (no error findings) is separate from per-scenario readiness: a scenario is ready only
+ * when the workbook is valid, every record tab it needs has data, and the optional columns its calculations need
+ * are present. Absence of a scenario's records is a warning for the workbook, never silently "validated".
+ */
+export interface ScenarioReadiness {
+  readonly scenario: ScenarioId;
+  readonly ready: boolean;
+  readonly missingTabs: readonly TabName[];
+  /** Our canonical `Tab.field` keys of absent critical optional columns. */
+  readonly missingFields: readonly string[];
 }
 
 export interface SalesFileAverages {
@@ -68,6 +88,7 @@ export interface RwtsaDataset {
     readonly quotes: readonly QuoteRow[];
   };
   readonly reconciliation: Reconciliation;
+  readonly readiness: readonly ScenarioReadiness[];
   /** Warnings and info only: a dataset with any error finding is never produced. */
   readonly findings: readonly Finding[];
 }
@@ -82,6 +103,8 @@ export interface StyleControlTotals {
   readonly salesLast6Months: number;
   readonly salesLast12Months: number;
   readonly salesAllMonths: number;
+  /** Count of EMPTY sales cells (missing observations). Explicit zeros are not counted here. */
+  readonly salesMissingObservations: number;
   readonly importPoQty: number;
 }
 

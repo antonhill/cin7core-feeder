@@ -81,6 +81,7 @@ export function readWorkbook(wb: ExcelJS.Workbook): ReadResult {
   const findings: Finding[] = [];
   const tables: Partial<Record<TabName, RawTable>> = {};
   let unknownTabs = 0;
+  const duplicateSheets: Partial<Record<TabName, number>> = {};
 
   for (const ws of wb.worksheets) {
     const tab = TAB_BY_NORMALISED.get(normaliseHeader(ws.name));
@@ -88,7 +89,12 @@ export function readWorkbook(wb: ExcelJS.Workbook): ReadResult {
       unknownTabs++;
       continue;
     }
-    if (tables[tab]) continue; // a second sheet normalising to the same tab name is ignored; the first wins
+    if (tables[tab]) {
+      // Two sheets normalising to the same expected tab name is ambiguous: report it (error) rather than silently
+      // using the first. The first still wins for parsing so the rest of the report stays useful.
+      duplicateSheets[tab] = (duplicateSheets[tab] ?? 0) + 1;
+      continue;
+    }
 
     const counters: FlatCounters = { formulaNoResult: 0, errorCells: 0, tooLong: 0 };
     let headers: string[] | null = null;
@@ -132,6 +138,8 @@ export function readWorkbook(wb: ExcelJS.Workbook): ReadResult {
 
   for (const tab of TAB_NAMES) {
     if (!tables[tab]) findings.push(finding({ severity: "error", code: "missing_tab", tab, count: 1 }));
+    const dup = duplicateSheets[tab];
+    if (dup) findings.push(finding({ severity: "error", code: "duplicate_sheet", tab, count: dup }));
   }
   if (unknownTabs > 0) findings.push(finding({ severity: "warning", code: "unknown_tab", tab: null, count: unknownTabs }));
 
