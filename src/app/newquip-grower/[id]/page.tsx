@@ -77,6 +77,10 @@ export default function QuoteEditorPage() {
   const [scheduleChoice, setScheduleChoice] = useState<ScheduleChoice | undefined>(undefined);
   const [gate, setGate] = useState<DeliveryGate>({ requires: false, accepted: false, status: null, hasDocument: false });
   const search = useSearchParams();
+  // The commercial status is read in a second request. Until it has been read once the stages that depend on it show "Loading" (never a guess from the empty defaults above).
+  const [gateReady, setGateReady] = useState(false);
+  const [gateError, setGateError] = useState<string | null>(null);
+  const [gateTry, setGateTry] = useState(0);
   const [picked, setPicked] = useState<StageId | null>(() => parseStage(search.get("stage")));
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -102,9 +106,15 @@ export default function QuoteEditorPage() {
   useEffect(() => {
     if (!finalNow) return;
     let live = true;
-    void getQuoteDeliveryAction(id).then((r) => { if (live && r.ok && r.data?.available) setGate({ requires: r.data.requiresAcceptance, accepted: r.data.accepted, status: r.data.status, hasDocument: r.data.latestDocumentId != null, linkState: r.data.links.state }); });
+    void getQuoteDeliveryAction(id).then((r) => {
+      if (!live) return;
+      if (!r.ok) { setGateError(r.error ?? "The quotation's delivery status could not be loaded."); return; }
+      setGateError(null);
+      if (r.data?.available) setGate({ requires: r.data.requiresAcceptance, accepted: r.data.accepted, status: r.data.status, hasDocument: r.data.latestDocumentId != null, linkState: r.data.links.state });
+      setGateReady(true); // read (an unavailable feature before migration 0115 is a legitimate, settled answer)
+    }).catch(() => { if (live) setGateError("The quotation's delivery status could not be loaded."); });
     return () => { live = false; };
-  }, [id, finalNow, gateKey]);
+  }, [id, finalNow, gateKey, gateTry]);
 
   // Live recalculation (writes nothing).
   useEffect(() => {
@@ -179,8 +189,11 @@ export default function QuoteEditorPage() {
   const stages = computeStages({
     state: q.state, revision: q.revision, ready: rd.state === "READY", customerSelected: !!draft.customerName.trim(), confirmed: q.customer_confirmed_cents != null,
     signedOff: !!q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash, commercial: final ? ((gate.status as CommercialState | null) ?? null) : "NOT_APPROVED",
-    hasDocument: gate.hasDocument, linkState: gate.linkState, requiresAcceptance: q.requires_customer_acceptance === true, projectLinked: !!q.project_id,
+    hasDocument: gate.hasDocument, linkState: gate.linkState, requiresAcceptance: q.requires_customer_acceptance === true, projectLinked: !!q.project_id, loading: final && !gateReady,
   });
+  const loadingStages = final && !gateReady;
+  // While the commercial status is unread, stages 4-5 (and 6 without a Project link) show a loading placeholder instead of their panels.
+  const hold = (n: StageId) => loadingStages && (n === 4 || n === 5 || (n === 6 && !q.project_id));
   const here = currentStage(stages);
   const stage: StageId = picked ?? here;
   const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); u.searchParams.set("stage", String(n)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
@@ -609,7 +622,14 @@ export default function QuoteEditorPage() {
       )}
 
       {/* ───────────── 4 · CUSTOMER QUOTATION ───────────── */}
-      {stage === 4 && (
+      {hold(stage) && (
+        <div className="mt-6" data-testid="stage-loading">
+          {gateError
+            ? <Alert tone="danger">{gateError} <button type="button" className="ml-2 underline" onClick={() => { setGateError(null); setGateTry((n) => n + 1); }}>Try again</button></Alert>
+            : <p className="text-sm text-slate-500" role="status">Loading the current status of this quotation…</p>}
+        </div>
+      )}
+      {stage === 4 && !hold(4) && (
         <div className="mt-6 space-y-6">
           {!final && <Alert tone="info">The customer quotation can be issued only after the Manager has approved. Below is the customer-facing summary as it stands.</Alert>}
           {final && q.accepted_baseline && <DeliveryPanel quoteId={id} contractCents={q.accepted_baseline.contractCents} onGate={setGate} section="quotation" />}
@@ -644,7 +664,7 @@ export default function QuoteEditorPage() {
       )}
 
       {/* ───────────── 5 · CUSTOMER ACCEPTANCE ───────────── */}
-      {stage === 5 && (
+      {stage === 5 && !hold(5) && (
         <div className="mt-6 space-y-6">
           {!final && <Alert tone="info">Customer acceptance is recorded against the issued, Manager-approved quotation. It becomes available once the quotation has been issued.</Alert>}
           {final && !gate.requires && <Alert tone="info">This quotation was approved before customer acceptance was introduced, so it is grandfathered: a Project does not depend on a recorded acceptance. A response can still be recorded if the customer gives one.</Alert>}
@@ -653,7 +673,7 @@ export default function QuoteEditorPage() {
       )}
 
       {/* ───────────── 6 · PROJECT HANDOVER ───────────── */}
-      {stage === 6 && (
+      {stage === 6 && !hold(6) && (
         <div className="mt-6 space-y-6">
           {!final || !q.accepted_baseline ? <Alert tone="info">Project handover opens once the quotation is approved{gate.requires ? " and the customer has accepted the issued quotation" : ""}. The full Projects module is not duplicated here.</Alert> : (
                       <Panel>

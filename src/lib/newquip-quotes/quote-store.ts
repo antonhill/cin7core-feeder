@@ -250,11 +250,20 @@ export async function createProjectFromAcceptedQuote(db: Db, orgId: string, emai
 
   // Variation billing projects (migration 0105) copy originating_quote_ref from their parent, so this lookup must pick the BASE project only:
   // matching a child would link the quote to an internal billing project. Filtered in code so it also works before 0105 exists.
-  const found = await db.from("projects").select("*").eq("org_id", orgId).eq("originating_quote_ref", q.quote_ref);
-  if (found.error) fail(found.error.message);
-  const bases = ((found.data ?? []) as Array<{ id: string; parent_project_id?: string | null; billing_scope?: string | null }>).filter((p) => !p.parent_project_id && p.billing_scope !== "VARIATION");
-  if (bases.length > 1) fail("More than one project exists for this quote; refusing to guess which one to link.");
-  let projectId = bases[0]?.id ?? null;
+  const findBases = async () => {
+    const found = await db.from("projects").select("*").eq("org_id", orgId).eq("originating_quote_ref", q.quote_ref);
+    if (found.error) fail(found.error.message);
+    const bases = ((found.data ?? []) as Array<{ id: string; parent_project_id?: string | null; billing_scope?: string | null }>).filter((p) => !p.parent_project_id && p.billing_scope !== "VARIATION");
+    if (bases.length > 1) fail("More than one project exists for this quote; refusing to guess which one to link.");
+    return bases;
+  };
+  const linkProject = async (id: string, wasCreated: boolean): Promise<{ projectId: string; created: boolean }> => {
+    const link = await db.from("newquip_quotes").update({ project_id: id }).eq("org_id", orgId).eq("id", quoteId).eq("state", "MANAGER_APPROVED_FINAL").select("id");
+    if (link.error) fail(link.error.message);
+    if (!link.data || link.data.length === 0) fail("The project was created but could not be linked to the quote.");
+    return { projectId: id, created: wasCreated };
+  };
+  let projectId = (await findBases())[0]?.id ?? null;
   const created = projectId == null;
   if (!projectId) {
     // Quotations created after migration 0115 need the customer's acceptance of the CURRENT issued document, and the Project takes the billing schedule the customer
@@ -263,10 +272,15 @@ export async function createProjectFromAcceptedQuote(db: Db, orgId: string, emai
     const snap = await latestSnapshot(db, orgId, q.id);
     let generic = quoteToProjectBaseline(q.accepted_baseline, q.baseline_hash, q.id, accepted ? accepted.schedule : schedule, accepted ? (accepted.scheduleSource ?? scheduleSource) : scheduleSource);
     if (snap) generic = { ...generic, customer: { ...generic.customer, cin7CustomerId: snap.cin7_customer_id } }; // the selected Cin7 customer, by its authoritative ID
-    projectId = await createProjectFromBaseline(db, orgId, email, generic, { reference: `PRJ-${q.quote_ref}`, name: `${q.accepted_baseline.quote.customerName} — ${q.accepted_baseline.quote.siteName}` });
+    try {
+      projectId = await createProjectFromBaseline(db, orgId, email, generic, { reference: `PRJ-${q.quote_ref}`, name: `${q.accepted_baseline.quote.customerName} — ${q.accepted_baseline.quote.siteName}` });
+    } catch (e) {
+      // A concurrent request (double click, two tabs, a reload mid-request) may have created it first: the project reference is unique per organisation, so the loser is refused by the database. Link the existing one; never create a second.
+      const winner = /duplicate key|unique constraint|23505/i.test(e instanceof Error ? e.message : String(e)) ? ((await findBases())[0]?.id ?? null) : null;
+      if (!winner) throw e;
+      projectId = winner;
+      return await linkProject(winner, false);
+    }
   }
-  const link = await db.from("newquip_quotes").update({ project_id: projectId }).eq("org_id", orgId).eq("id", quoteId).eq("state", "MANAGER_APPROVED_FINAL").select("id");
-  if (link.error) fail(link.error.message);
-  if (!link.data || link.data.length === 0) fail("The project was created but could not be linked to the quote.");
-  return { projectId, created };
+  return await linkProject(projectId, created);
 }

@@ -7,7 +7,7 @@ import type { QuoteState } from "./workflow";
 //   1 Configuration -> 2 Costing & Estimator Review -> 3 Manager Approval -> 4 Customer Quotation -> 5 Customer Acceptance -> 6 Project Handover
 
 export type StageId = 1 | 2 | 3 | 4 | 5 | 6;
-export type StageStatus = "COMPLETE" | "IN_PROGRESS" | "AWAITING_ACTION" | "RETURNED" | "NOT_STARTED" | "NOT_AVAILABLE" | "NOT_REQUIRED";
+export type StageStatus = "LOADING" | "COMPLETE" | "IN_PROGRESS" | "AWAITING_ACTION" | "RETURNED" | "NOT_STARTED" | "NOT_AVAILABLE" | "NOT_REQUIRED";
 export type CommercialState = "NOT_APPROVED" | "APPROVED_INTERNALLY" | "SENT_TO_CUSTOMER" | "ACCEPTANCE_PENDING_VERIFICATION" | "ACCEPTANCE_REJECTED" | "CUSTOMER_ACCEPTED" | "CUSTOMER_DECLINED" | "CHANGES_REQUESTED";
 
 export interface StageInput {
@@ -27,13 +27,15 @@ export interface StageInput {
   linkState?: "NONE" | "ACTIVE" | "EXPIRED" | "REVOKED";
   requiresAcceptance: boolean;
   projectLinked: boolean;
+  /** The commercial status (documents / sends / responses) has NOT been read yet. Stages 4-5 (and 6 until a Project link proves it) then show "Loading" instead of a guess derived from empty defaults. */
+  loading?: boolean;
 }
 
 export interface StageView { id: StageId; label: string; status: StageStatus; statusLabel: string; summary: string; next: string | null }
 
 export const STAGE_LABEL: Record<StageId, string> = { 1: "Configuration", 2: "Costing & Estimator Review", 3: "Manager Approval", 4: "Customer Quotation", 5: "Customer Acceptance", 6: "Project Handover" };
 export const STATUS_LABEL: Record<StageStatus, string> = {
-  COMPLETE: "Complete", IN_PROGRESS: "In progress", AWAITING_ACTION: "Awaiting action", RETURNED: "Returned", NOT_STARTED: "Not started", NOT_AVAILABLE: "Not yet available", NOT_REQUIRED: "Not required",
+  LOADING: "Loading…", COMPLETE: "Complete", IN_PROGRESS: "In progress", AWAITING_ACTION: "Awaiting action", RETURNED: "Returned", NOT_STARTED: "Not started", NOT_AVAILABLE: "Not yet available", NOT_REQUIRED: "Not required",
 };
 
 const v = (id: StageId, status: StageStatus, summary: string, next: string | null = null): StageView => ({ id, label: STAGE_LABEL[id], status, statusLabel: STATUS_LABEL[status], summary, next });
@@ -90,11 +92,18 @@ export function computeStages(i: StageInput): StageView[] {
     : i.requiresAcceptance && c !== "CUSTOMER_ACCEPTED" ? v(6, "NOT_AVAILABLE", "Needs the customer's verified acceptance of the issued quotation (Stage 5).")
     : v(6, "AWAITING_ACTION", "Eligible: create the Project from the accepted baseline.", "Create the Project.");
 
+  // The persisted commercial records are read in a second step. Until they arrive, never present an earlier-looking stage (a guess from empty defaults): say it is loading.
+  if (final && i.loading) {
+    const wait = (id: StageId) => v(id, "LOADING", "Loading the current status of this quotation…");
+    return [s1, s2, s3, wait(4), wait(5), i.projectLinked ? s6 : wait(6)];
+  }
   return [s1, s2, s3, s4, s5, s6];
 }
 
 /** The stage the user should land on: the first stage that needs attention, else the last completed one. */
 export function currentStage(stages: readonly StageView[]): StageId {
+  const wait = stages.find((s) => s.status === "LOADING");
+  if (wait && stages.find((x) => x.id === 6)?.status !== "COMPLETE") return wait.id; // a Project link already proves the end of the journey: land there, as the loaded state will
   const act = stages.find((s) => s.status === "AWAITING_ACTION" || s.status === "RETURNED" || s.status === "IN_PROGRESS");
   if (act) return act.id;
   const done = [...stages].reverse().find((s) => s.status === "COMPLETE" || s.status === "NOT_REQUIRED");

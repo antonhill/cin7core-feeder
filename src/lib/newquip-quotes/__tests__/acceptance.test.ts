@@ -162,3 +162,41 @@ describe("ACCEPTANCE GATE for new quotations", () => {
     expect(commercialStatus({ state: "ESTIMATOR_REVIEW" }, null, [], [])).toBe("NOT_APPROVED");
   });
 });
+
+describe("REGRESSION: Project creation is idempotent (reload, reopen, double click, two tabs)", () => {
+  it("repeating the creation after a reload returns the SAME Project and creates nothing", async () => {
+    const w = await world({ gated: false });
+    const first = await project(w);
+    for (let i = 0; i < 3; i++) expect(await project(w)).toEqual({ projectId: first.projectId, created: false });
+    expect(w.db.rows("projects")).toHaveLength(1);
+    expect((await loadQuote(w.db as never, ORG, w.id))!.project_id).toBe(first.projectId);
+  });
+  it("concurrent requests (double click / two tabs) end with exactly one Project, and every caller gets that Project", async () => {
+    const w = await world({ gated: false });
+    const results = await Promise.all([project(w), project(w), project(w)]);
+    expect(w.db.rows("projects")).toHaveLength(1);
+    expect(new Set(results.map((r) => r.projectId)).size).toBe(1);
+    expect(results.filter((r) => r.created).length).toBeLessThanOrEqual(1);
+    expect((await loadQuote(w.db as never, ORG, w.id))!.project_id).toBe(results[0].projectId);
+  });
+  it("a request that loses the race (the database refuses the duplicate reference) links the winner instead of failing or duplicating", async () => {
+    const w = await world({ gated: false });
+    const winner = await project(w);
+    // the quote row has not yet been linked in the loser's view, and its first lookup missed the winner: simulate by unlinking and hiding the project from the first lookup only
+    (w.db.rows("newquip_quotes")[0] as Record<string, unknown>).project_id = null;
+    const projects = w.db.rows("projects") as Array<Record<string, unknown>>;
+    const hidden = projects[0].originating_quote_ref; projects[0].originating_quote_ref = "HIDDEN";
+    const orig = w.db.from.bind(w.db); let lookups = 0;
+    (w.db as { from: unknown }).from = (t: string) => { const q = orig(t); if (t === "projects" && lookups++ === 1) projects[0].originating_quote_ref = hidden; return q; };
+    const r = await project(w);
+    expect(r).toEqual({ projectId: winner.projectId, created: false });
+    expect(w.db.rows("projects")).toHaveLength(1);
+  });
+  it("a genuine creation failure (not a duplicate) is NOT swallowed", async () => {
+    const w = await world({ gated: false });
+    const orig = w.db.from.bind(w.db);
+    (w.db as { from: unknown }).from = (t: string) => { const q = orig(t) as Record<string, unknown>; if (t === "projects") return { ...q, insert: () => ({ select: () => ({ single: async () => ({ data: null, error: { message: "connection reset" } }) }) }) }; return q; };
+    expect(await err(project(w))).toMatch(/connection reset/);
+    expect(w.db.rows("projects")).toHaveLength(0);
+  });
+});

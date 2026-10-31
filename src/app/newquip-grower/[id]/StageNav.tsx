@@ -5,7 +5,7 @@ import type { StageId, StageStatus, StageView } from "@/newquip/quote/stages";
 
 // The six-stage navigation of the Solution Builder. Pure presentation of computeStages(): the status of every stage is derived from the quotation's existing state and
 // immutable records, and selecting a stage only changes what is shown - every action is still authorised on the server.
-const TONE: Record<StageStatus, BadgeTone> = { COMPLETE: "success", IN_PROGRESS: "info", AWAITING_ACTION: "warning", RETURNED: "danger", NOT_STARTED: "neutral", NOT_AVAILABLE: "neutral", NOT_REQUIRED: "neutral" };
+const TONE: Record<StageStatus, BadgeTone> = { LOADING: "neutral", COMPLETE: "success", IN_PROGRESS: "info", AWAITING_ACTION: "warning", RETURNED: "danger", NOT_STARTED: "neutral", NOT_AVAILABLE: "neutral", NOT_REQUIRED: "neutral" };
 
 export function StageNav({ stages, current, viewing, onSelect }: { stages: StageView[]; current: StageId; viewing: StageId; onSelect: (id: StageId) => void }) {
   const cur = stages.find((s) => s.id === current);
