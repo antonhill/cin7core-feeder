@@ -33,7 +33,7 @@ const message = (e: unknown): string => (e instanceof Error ? e.message : "Unexp
 
 export async function getVariationBillingAction(projectId: string): Promise<VariationBillingResult<VariationBillingState>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     assertNewquipOrg(orgId);
     const db = createServiceRoleClient();
     const admin = await callerIsOrgAdmin();
@@ -55,7 +55,7 @@ export async function getVariationBillingAction(projectId: string): Promise<Vari
 /** Any module member may edit a DRAFT variation's schedule (the estimator prices it); it is validated to total exactly 100%. */
 export async function saveVariationScheduleAction(projectId: string, variationId: string, rows: SchedulePercentRow[]): Promise<VariationBillingResult<null>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     assertNewquipOrg(orgId);
     await saveDraftSchedule(createServiceRoleClient(), orgId, projectId, variationId, scheduleFromPercents(rows));
     return { ok: true, data: null };
@@ -67,7 +67,7 @@ export async function saveVariationScheduleAction(projectId: string, variationId
 /** Manager only. Creates the variation's billing project (its own stages, from the frozen schedule). Idempotent. No Cin7 call. */
 export async function startVariationBillingAction(projectId: string, variationId: string, products: Array<{ sku: string; description: string; quantity: number }> = []): Promise<VariationBillingResult<{ billingProjectId: string; created: boolean }>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     assertNewquipOrg(orgId);
     await requireOrgAdmin("start variation billing");
     const db = createServiceRoleClient();
@@ -84,7 +84,7 @@ export async function startVariationBillingAction(projectId: string, variationId
 /** Read-only (no Cin7 call): contract, claims and Cin7 invoices of the original project and every variation, each counted once. */
 export async function getConsolidatedCommercialAction(projectId: string): Promise<VariationBillingResult<ConsolidatedCommercial>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     assertNewquipOrg(orgId);
     const db = createServiceRoleClient();
     const r = await loadConsolidatedCommercial(db, orgId, projectId);
@@ -97,7 +97,7 @@ export async function getConsolidatedCommercialAction(projectId: string): Promis
 /** Search the synced Cin7 catalogue by SKU or description (read-only, org-scoped, NewQuip only). Stock is shown, never required. */
 export async function searchVariationProductsAction(query: string): Promise<VariationBillingResult<CatalogueResult>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     assertNewquipOrg(orgId);
     await requireOrgAdmin("search products for a variation");
     return { ok: true, data: await searchCatalogue(createServiceRoleClient(), orgId, query) };
@@ -109,7 +109,7 @@ export async function searchVariationProductsAction(query: string): Promise<Vari
 /** Manager only. The audited, controlled post-approval change (also how a variation approved before schedules existed first gets one). */
 export async function amendVariationScheduleAction(projectId: string, variationId: string, rows: SchedulePercentRow[], reason: string): Promise<VariationBillingResult<null>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     assertNewquipOrg(orgId);
     await requireOrgAdmin("amend a variation billing schedule");
     const db = createServiceRoleClient();

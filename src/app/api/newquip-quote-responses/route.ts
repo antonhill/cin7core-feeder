@@ -7,6 +7,7 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { defaultDeps } from "@/lib/newquip-quotes/document-store";
 import { attachEvidence, recordStaffResponse } from "@/lib/newquip-quotes/response-record";
 import { EVIDENCE_MAX_BYTES, EVIDENCE_MAX_FILES, EVIDENCE_MAX_TOTAL } from "@/lib/newquip-quotes/response-evidence";
+import { guardQuote } from "@/lib/newquip-assignments/access";
 import type { ResponseContactInput } from "@/lib/newquip-quotes/response-contact";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +27,7 @@ export async function POST(req: Request): Promise<Response> {
   const quoteId = str("quoteId");
   if (!/^[0-9a-f-]{36}$/i.test(quoteId)) return reply(400, { ok: false, error: "Missing quotation." });
   try {
+    await guardQuote(createServiceRoleClient(), a, quoteId);   // Rep isolation (Slice 1B): before any file is read or anything recorded
     const files: Array<{ name: string; bytes: Uint8Array }> = [];
     for (const v of form.getAll("files")) if (typeof v !== "string" && v.size > 0) {
       if (v.size > EVIDENCE_MAX_BYTES) throw new Error(`"${v.name}" is larger than ${EVIDENCE_MAX_BYTES / 1024 / 1024} MB.`);

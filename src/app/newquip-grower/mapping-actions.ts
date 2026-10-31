@@ -2,6 +2,7 @@
 
 // NewQuip: the reusable product mappings and the internal physical-scope view of a quotation. Nothing here writes to Cin7: the SKU check is a
 // read-only catalogue lookup. Authorisation is re-established inside EVERY action. Only async functions and erased types are exported.
+import { guardQuote } from "@/lib/newquip-assignments/access";
 import { requireModuleAccess } from "@/lib/authorization";
 import { resolveActing } from "@/lib/demo-mode/context";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
@@ -46,6 +47,7 @@ export async function getQuoteScopeAction(quoteId: string, draft?: QuoteDraft): 
   try {
     const a = await readActor();
     const db = createServiceRoleClient();
+    await guardQuote(db, { orgId: a.orgId, userId: a.userId, email: a.email, tier: a.manager ? "admin" : "member" }, quoteId);   // Rep isolation (Slice 1B)
     const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) throw new Error("Quote not found.");
     const final = q.state === "MANAGER_APPROVED_FINAL" ? q.accepted_baseline : null;

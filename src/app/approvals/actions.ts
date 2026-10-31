@@ -20,6 +20,7 @@ import { buildReviewDetail, type ReviewDetail } from "@/lib/approvals/review-det
 import { authoriseStageDecision } from "@/lib/approvals/policy";
 import { canAdminister, STAGE_LABEL, type FunctionalRole } from "@/lib/approvals/roles";
 import { emailsWithRole, resolveRoles } from "@/lib/approvals/role-store";
+import { canSeeApprovalRequest, filterApprovalRequests, filterNotifications, guardQuote, quoteScope, type QuoteScope } from "@/lib/newquip-assignments/access";
 import { filterQueue, sortQueue, summarise, currentReturned, type QueueFilters, type QueueSort, type QueueSummary } from "@/lib/approvals/queue";
 import type { ApprovalAction, ApprovalDocType, ApprovalEventRow, ApprovalNotificationRow, ApprovalRequestRow, ApprovalSettings } from "@/lib/approvals/types";
 
@@ -36,6 +37,23 @@ async function context(): Promise<ApprovalCtx> {
   else { try { await requireOrgAdmin("manage approvals"); isManager = true; } catch { isManager = false; } } // fail closed
   const base = approvalBaseUrl(process.env);
   return { orgId: acting.orgId, userId: acting.userId, email: acting.email.toLowerCase(), name: acting.demo?.actorName ?? acting.email, isManager, baseUrl: base, ...(acting.demo ? { demo: acting.demo } : {}) };
+}
+
+type Db = ReturnType<typeof createServiceRoleClient>;
+/** Rep isolation (Slice 1B): the actor's quotation scope (org-wide unless isolation is ON and they hold no org-wide role). */
+const scopeFor = (db: Db, ctx: ApprovalCtx): Promise<QuoteScope> => quoteScope(db, { orgId: ctx.orgId, userId: ctx.userId, email: ctx.email, tier: ctx.isManager ? "admin" : "member" });
+/** Loads one approval request ONLY if the actor may see it; otherwise the same "not found" as a missing id. */
+async function visibleRequest(db: Db, ctx: ApprovalCtx, requestId: string): Promise<ApprovalRequestRow> {
+  const req = await loadRequest(db, ctx.orgId, requestId);
+  if (!req || !(await canSeeApprovalRequest(db, await scopeFor(db, ctx), req))) throw new Error("Approval request not found.");
+  return req;
+}
+/** A document (quotation / claim / variation) the actor may act on or read approvals for: quotations through the customer rule; claims and variations are Project matters. */
+async function visibleDocument(db: Db, ctx: ApprovalCtx, docType: ApprovalDocType, docId: string): Promise<void> {
+  const scope = await scopeFor(db, ctx);
+  if (scope.kind === "ORG_WIDE") return;
+  if (docType !== "QUOTE") throw new Error("Not found.");
+  await guardQuote(db, { orgId: ctx.orgId, userId: ctx.userId, email: ctx.email, tier: "member" }, docId);
 }
 
 /** Administrative approval operations (settings, email delivery) are never performed while a demo identity is active. */
@@ -55,9 +73,11 @@ export async function getApprovalsDashboardAction(filters: QueueFilters = {}, so
     const db = createServiceRoleClient();
     const nowIso = new Date().toISOString();
     if (!(await approvalsAvailable(db))) return { ok: true, data: { available: false, me: ctx.email, isManager: ctx.isManager, nowIso, summary: summarise([], ctx.email, nowIso), rows: [], needsPreparerAction: [], managers: [], failedEmails: [], recentEmails: [], unread: 0, settings: await loadSettings(db, ctx.orgId) } };
-    const all = await listRequests(db, ctx.orgId);
+    const everything = await listRequests(db, ctx.orgId);
+    const scope = await scopeFor(db, ctx);
+    const all = await filterApprovalRequests(db, scope, everything);   // Rep isolation: only requests for quotations the actor may see
     const myRoles = await resolveRoles(db, ctx.orgId, ctx.userId, ctx.isManager);
-    const notes = await myNotifications(db, ctx.orgId, ctx.email, 200);
+    const notes = await filterNotifications(db, scope, await myNotifications(db, ctx.orgId, ctx.email, 200), everything);
     return { ok: true, data: {
       available: true, me: ctx.email, isManager: ctx.isManager, nowIso, summary: summarise(all, ctx.email, nowIso, myRoles), rows: sortQueue(filterQueue(all, filters, ctx.email, nowIso, myRoles), sort),
       needsPreparerAction: currentReturned(all).filter((r) => r.prepared_by_email === ctx.email), managers: ctx.isManager ? await managerEmails(db, ctx.orgId) : [],
@@ -81,8 +101,7 @@ export async function getApprovalDetailAction(requestId: string): Promise<Approv
   try {
     const ctx = await context();
     const db = createServiceRoleClient();
-    const req = await loadRequest(db, ctx.orgId, requestId);
-    if (!req) return { ok: false, error: "Approval request not found." };
+    const req = await visibleRequest(db, ctx, requestId);   // Rep isolation: generic "not found" for a request the actor may not see
     if (req.status === "PENDING") await markViewed(db, ctx, requestId).catch(() => undefined);
     const pending = req.status === "PENDING";
     const self = req.prepared_by_email === ctx.email;
@@ -122,6 +141,7 @@ export async function getDocumentApprovalAction(docType: ApprovalDocType, docId:
     const ctx = await context();
     const db = createServiceRoleClient();
     if (!(await approvalsAvailable(db))) return { ok: true, data: { available: false, latest: null, history: [] } };
+    await visibleDocument(db, ctx, docType, docId);
     const history = await docHistory(db, ctx.orgId, docType, docId);
     const all = (await listRequests(db, ctx.orgId)).filter((r) => r.doc_type === docType && r.doc_id === docId).sort((a, b) => b.revision - a.revision);
     return { ok: true, data: { available: true, latest: all[0] ?? null, history } };
@@ -135,6 +155,7 @@ export async function submitDocumentForApprovalAction(docType: ApprovalDocType, 
     const ctx = await context();
     const db = createServiceRoleClient();
     if (!(await approvalsAvailable(db))) throw new Error("Approvals are not available yet (database migration pending).");
+    await visibleDocument(db, ctx, docType, docId);
     const row = await submitForApproval(db, ctx, docType, docId, { assignTo });
     if (!ctx.demo) await logActivity(db, { orgId: ctx.orgId, actor: { userId: ctx.userId, email: ctx.email }, action: "approvals.submitted", summary: `Submitted ${docType.toLowerCase()} ${row.doc_ref} (revision ${row.revision}) for approval (no Cin7 write)`, detail: { requestId: row.id, docType, docId, revision: row.revision } });
     return { ok: true, data: row };
@@ -147,6 +168,7 @@ export async function decideApprovalAction(requestId: string, action: ApprovalAc
   try {
     const ctx = await context();
     const db = createServiceRoleClient();
+    await visibleRequest(db, ctx, requestId);
     const row = await decide(db, ctx, requestId, action, input);
     if (!ctx.demo) await logActivity(db, { orgId: ctx.orgId, actor: { userId: ctx.userId, email: ctx.email }, action: `approvals.${action.toLowerCase()}`, summary: `${action} ${row.doc_type.toLowerCase()} ${row.doc_ref} revision ${row.revision}${row.admin_override ? " (ADMIN OVERRIDE)" : ""} (approval only; no Cin7 write)`, detail: { requestId, docType: row.doc_type, docId: row.doc_id, revision: row.revision, reason: input.reason ?? null, override: row.admin_override } });
     return { ok: true, data: row };
@@ -158,7 +180,9 @@ export async function decideApprovalAction(requestId: string, action: ApprovalAc
 export async function reassignApprovalAction(requestId: string, newApprover: string, expectedVersion: number): Promise<ApprovalResult<ApprovalRequestRow>> {
   try {
     const ctx = await context();
-    return { ok: true, data: await reassign(createServiceRoleClient(), ctx, requestId, newApprover, expectedVersion) };
+    const db = createServiceRoleClient();
+    await visibleRequest(db, ctx, requestId);
+    return { ok: true, data: await reassign(db, ctx, requestId, newApprover, expectedVersion) };
   } catch (e) {
     return { ok: false, error: msg(e) };
   }
@@ -168,8 +192,13 @@ export async function getMyNotificationsAction(markAllRead = false): Promise<App
   try {
     const ctx = await context();
     const db = createServiceRoleClient();
-    if (markAllRead) await markNotificationsRead(db, ctx.orgId, ctx.email, "ALL");
-    const notifications = await myNotifications(db, ctx.orgId, ctx.email, 100);
+    // Rep isolation: filter FIRST, then mark only what the actor can see as read (never a row they cannot see).
+    let notifications = await filterNotifications(db, await scopeFor(db, ctx), await myNotifications(db, ctx.orgId, ctx.email, 100), await listRequests(db, ctx.orgId));
+    if (markAllRead) {
+      const unread = notifications.filter((n) => !n.read_at).map((n) => n.id);
+      if (unread.length) await markNotificationsRead(db, ctx.orgId, ctx.email, unread);
+      notifications = notifications.map((n) => (n.read_at ? n : { ...n, read_at: new Date().toISOString() }));
+    }
     return { ok: true, data: { notifications, unread: notifications.filter((n) => !n.read_at).length } };
   } catch (e) {
     return { ok: false, error: msg(e) };

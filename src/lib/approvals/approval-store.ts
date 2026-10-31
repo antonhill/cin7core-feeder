@@ -19,6 +19,7 @@ import { listVariationStages } from "@/lib/projects/variation-billing-store";
 import { authoriseDecision, authoriseStageDecision } from "./policy";
 import { demoAuditDetail, type DemoInfo } from "@/lib/demo-mode/context";
 import { logActivity } from "@/lib/activity-log";
+import { createRecipientGate, type MailSubject } from "@/lib/newquip-assignments/access";
 import { canAdminister, stageOf, STAGE_LABEL, ROLE_LABEL, type ApprovalStage, type FunctionalRole } from "./roles";
 import { emailsWithRole, loadPolicies, resolveRoles, rolesAvailable } from "./role-store";
 import { APPROVALS_DISABLED } from "./kill-switch";
@@ -338,9 +339,26 @@ async function markSuppressed(db: Db, id: string, reason: string, statuses: Deli
 
 async function deliverRows(db: Db, rows: ApprovalNotificationRow[], send: typeof sendEmail, env: EmailPolicyEnv, statuses: DeliverStatuses): Promise<DeliverResult> {
   let sent = 0; let failed = 0; let suppressed = 0;
+  const mayReceive = createRecipientGate(db);   // one gate per run: caches the switch and each organisation's users
   for (const row of rows) {
     const n = { ...row }; // work on a copy: the attempt counter we compare-and-set against must not move under us
     if (n.attempts >= MAX_EMAIL_ATTEMPTS) continue;
+    // Rep customer isolation (Slice 1B): a person who may no longer see this quotation's customer is not e-mailed about it. Decided when the mail is about to leave; a failure of the check
+    // itself never stops the rest of the batch (the row is left as it is and the run moves on).
+    const orgOfRow = (n as unknown as { org_id: string }).org_id;
+    const subjectOf = async (): Promise<MailSubject> => {
+      if (n.quote_id) return { docType: "QUOTE", docId: n.quote_id };
+      if (!n.request_id) return null;
+      const rq = await db.from("approval_requests").select("doc_type, doc_id").eq("org_id", orgOfRow).eq("id", n.request_id).maybeSingle();
+      const d = rq.data as { doc_type: string; doc_id: string } | null;
+      return !d ? null : d.doc_type === "QUOTE" ? { docType: "QUOTE", docId: d.doc_id } : { docType: "PROJECT" };
+    };
+    let allowed: boolean;
+    try { allowed = await mayReceive(orgOfRow, n.recipient_email, subjectOf); } catch (e) { console.error("recipient isolation check failed:", e instanceof Error ? e.message : "unknown error"); continue; }
+    if (!allowed) {
+      if (await markSuppressed(db, n.id, "The recipient no longer has access to this customer's quotations (customer isolation); no email was sent.", statuses)) suppressed += 1;
+      continue;
+    }
     // the outbound policy is decided BEFORE an attempt is claimed: a suppressed email costs no attempt and reaches no provider
     const decision = applyEmailPolicy(env, { to: n.recipient_email, subject: n.subject, text: n.body });
     if (decision.action === "SUPPRESS") { if (await markSuppressed(db, n.id, decision.reason, statuses)) suppressed += 1; continue; }

@@ -3,6 +3,7 @@
 import { authoriseActor, auditActor } from "@/app/newquip-grower/actor";
 import { createServiceRoleClient } from "@/supabase/server";
 import { defaultDeps, readDocumentBytes } from "@/lib/newquip-quotes/document-store";
+import { guardQuote } from "@/lib/newquip-assignments/access";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +14,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   if (!/^[0-9a-f-]{36}$/i.test(id)) return new Response("Not found", { status: 404, headers: { "Cache-Control": "private, no-store" } });
   try {
     const db = createServiceRoleClient();
+    // Rep isolation (Slice 1B): resolve the document's quotation (metadata only) and authorise BEFORE the file is read. Every refusal is the same generic 404 below.
+    const meta = await db.from("newquip_quote_documents").select("quote_id").eq("org_id", actor.orgId).eq("id", id).maybeSingle();
+    if (meta.error || !meta.data) throw new Error("Document not found.");
+    await guardQuote(db, actor, (meta.data as { quote_id: string }).quote_id);
     const { doc, bytes } = await readDocumentBytes(db, actor.orgId, id, defaultDeps(db));
     await auditActor(db, actor, { action: "newquip.quote_document_downloaded", summary: "Opened an issued customer quotation PDF", detail: { documentId: doc.id, quoteId: doc.quote_id, version: doc.version } }).catch(() => undefined);
     return new Response(Buffer.from(bytes), { status: 200, headers: {

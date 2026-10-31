@@ -35,7 +35,7 @@ const NO_CIN7: PhysicalPort = {
 
 export async function getProcurementTargetsAction(projectId: string): Promise<ProcurementResult> {
   try {
-    const { orgId, userId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     assertNewquipOrg(orgId);
     const db = createServiceRoleClient();
     let adminTier = false;

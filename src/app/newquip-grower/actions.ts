@@ -13,6 +13,7 @@ import { toQuoteRoles } from "@/lib/approvals/roles";
 import { canSeeCosts, resolveRoles } from "@/lib/approvals/role-store";
 import { demoAuditDetail, resolveActing, type DemoInfo } from "@/lib/demo-mode/context";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
+import { guardQuote, quoteScope, visibleQuoteIds } from "@/lib/newquip-assignments/access";
 import { confirmationLabel, resolveConfirmationContact, type ConfirmationInput } from "@/lib/newquip-quotes/confirmation-contact";
 import { appendSnapshot, customerFeaturesAvailable, latestSnapshot } from "@/lib/newquip-quotes/customer-store";
 import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
@@ -111,7 +112,10 @@ export async function getGrowerViewerAction(): Promise<GrowerActionResult<{ role
 export async function listGrowerQuotesAction(): Promise<GrowerActionResult<Array<Pick<QuoteRecord, "id" | "quote_ref" | "revision" | "customer_name" | "site_name" | "state" | "contract_cents" | "project_id" | "created_at">>>> {
   try {
     const a = await authorise();
-    const rows = await listQuotes(createServiceRoleClient(), a.orgId);
+    const db = createServiceRoleClient();
+    const all = await listQuotes(db, a.orgId);
+    const visible = await visibleQuoteIds(db, await quoteScope(db, a), all);   // Rep isolation (Slice 1B): null = everything (switch OFF or an org-wide role)
+    const rows = visible ? all.filter((q) => visible.has(q.id)) : all;
     return { ok: true, data: rows.map((q) => ({ id: q.id, quote_ref: q.quote_ref, revision: q.revision, customer_name: q.customer_name, site_name: q.site_name, state: q.state, contract_cents: q.contract_cents, project_id: q.project_id, created_at: q.created_at })) };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
@@ -134,7 +138,9 @@ export async function createGrowerQuoteAction(draft?: QuoteDraft): Promise<Growe
 export async function getGrowerQuoteAction(quoteId: string): Promise<GrowerActionResult<QuoteView>> {
   try {
     const a = await authorise();
-    const q = await loadQuote(createServiceRoleClient(), a.orgId, quoteId);
+    const db = createServiceRoleClient();
+    await guardQuote(db, a, quoteId);   // Rep isolation: before any quotation data is read
+    const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) return { ok: false, error: "Quote not found." };
     return { ok: true, data: view(q, a) };
   } catch (e) {
@@ -156,6 +162,7 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
   try {
     const a = await authorise();
     const db = createServiceRoleClient();
+    await guardQuote(db, a, quoteId);
     const prior = await loadQuote(db, a.orgId, quoteId);
     const saved = await saveDraft(db, a.orgId, a.roles, quoteId, keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(draft, prior?.draft.estimator.costOverrides, a.canSeeCost, a.email, new Date().toISOString()), prior?.draft.estimator.physicalCosts), prior?.draft.estimator.costBasis));
     // Changed content invalidates the estimator's sign-off (saveDraft clears it) and any open approval of the older content: the quote goes back to estimator review.
@@ -176,6 +183,7 @@ async function step(
   try {
     const a = await authorise();
     const db = createServiceRoleClient();
+    await guardQuote(db, a, quoteId);   // every workflow step (send, return, sign-off, approve)
     const extra = await run(a, db);
     await audit(db, a, { action, summary: `${summary} (local only; no Cin7 write)`, detail: { quoteId, ...(extra ?? {}) } });
     const q = await loadQuote(db, a.orgId, quoteId);
@@ -271,6 +279,7 @@ export async function createProjectFromGrowerQuoteAction(quoteId: string, schedu
     const a = await authorise();
     if (!a.roles.has("manager") && !a.roles.has("estimator")) throw new Error("You do not have permission to create a Project.");
     const db = createServiceRoleClient();
+    await guardQuote(db, a, quoteId);
     const applied = await resolveProjectSchedule(db, a.orgId, scheduleChoice);
     const resolved = { schedule: applied.schedule, label: applied.label };
     const r = await createProjectFromAcceptedQuote(db, a.orgId, a.email, quoteId, resolved.schedule, applied.source);

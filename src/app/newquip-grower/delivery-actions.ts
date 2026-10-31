@@ -4,6 +4,7 @@
 // wrapper (src/lib/email/resend.ts); nothing reaches Cin7. Re-authorised inside EVERY action: the NewQuip org check, then the effective user's role (Demo Mode aware).
 // Sending is an explicit Rep action; recording a response needs the Rep or Manager role. Preview sends obey the server-side recipient allowlist. Only async functions
 // and erased types are exported.
+import { guardQuote } from "@/lib/newquip-assignments/access";
 import { authoriseActor, auditActor, errText, ownerEmailOf, type Actor } from "./actor";
 import { createServiceRoleClient } from "@/supabase/server";
 import { loadQuote } from "@/lib/newquip-quotes/quote-store";
@@ -53,6 +54,7 @@ const canRecordRole = (a: Actor) => a.roles.has("rep") || a.roles.has("manager")
 
 async function viewOf(a: Actor, quoteId: string): Promise<DeliveryView> {
   const db = createServiceRoleClient();
+  await guardQuote(db, a, quoteId);
   const q = await loadQuote(db, a.orgId, quoteId);
   if (!q) throw new Error("Quote not found.");
   const restricted = isRestricted(process.env);
@@ -99,6 +101,7 @@ export async function getQuoteDeliveryAction(quoteId: string): Promise<DeliveryA
 export async function sendQuoteToCustomerAction(quoteId: string, req: SendRequest): Promise<DeliveryActionResult<{ view: DeliveryView; status: string; reused: boolean }>> {
   try {
     const a = await authoriseActor();
+    await guardQuote(createServiceRoleClient(), a, quoteId);   // Rep isolation (Slice 1B)
     if (!a.roles.has("rep")) throw new Error("Only a Rep can send a quotation to a customer.");
     const db = createServiceRoleClient();
     const r = await sendQuotationToCustomer(db, a.orgId, quoteId, { email: a.email, ownerEmail: ownerEmailOf(a) }, req, defaultDeps(db), process.env);
@@ -111,6 +114,7 @@ export async function sendQuoteToCustomerAction(quoteId: string, req: SendReques
 export async function retryQuoteSendAction(quoteId: string, sendId: string): Promise<DeliveryActionResult<{ view: DeliveryView; status: string }>> {
   try {
     const a = await authoriseActor();
+    await guardQuote(createServiceRoleClient(), a, quoteId);   // Rep isolation (Slice 1B)
     if (!a.roles.has("rep")) throw new Error("Only a Rep can send a quotation to a customer.");
     const db = createServiceRoleClient();
     const row = (await listSends(db, a.orgId, quoteId)).find((s) => s.id === sendId);
@@ -125,6 +129,7 @@ export async function retryQuoteSendAction(quoteId: string, sendId: string): Pro
 export async function recordCustomerResponseAction(quoteId: string, input: Omit<ResponseInput, "contact" | "responseId" | "evidenceCount"> & { contact?: StaffResponseInput["contact"] }): Promise<DeliveryActionResult<DeliveryView>> {
   try {
     const a = await authoriseActor();
+    await guardQuote(createServiceRoleClient(), a, quoteId);   // Rep isolation (Slice 1B)
     if (!canRecordRole(a)) throw new Error("You do not have permission to record a customer response.");
     const db = createServiceRoleClient();
     const who = { email: a.email, ownerEmail: ownerEmailOf(a) };
@@ -142,6 +147,7 @@ export async function recordCustomerResponseAction(quoteId: string, input: Omit<
 export async function reviewCustomerResponseAction(quoteId: string, input: { responseId: string; decision: "VERIFIED" | "REJECTED"; note: string }): Promise<DeliveryActionResult<DeliveryView>> {
   try {
     const a = await authoriseActor();
+    await guardQuote(createServiceRoleClient(), a, quoteId);   // Rep isolation (Slice 1B)
     if (!canRecordRole(a)) throw new Error("Only a Rep or Manager can verify a customer's acceptance.");
     const db = createServiceRoleClient();
     const r = await reviewResponse(db, a.orgId, quoteId, { email: a.email, ownerEmail: ownerEmailOf(a) }, input);
@@ -158,6 +164,7 @@ export async function reviewCustomerResponseAction(quoteId: string, input: { res
 export async function revokeResponseLinksAction(quoteId: string, reason: string): Promise<DeliveryActionResult<DeliveryView>> {
   try {
     const a = await authoriseActor();
+    await guardQuote(createServiceRoleClient(), a, quoteId);   // Rep isolation (Slice 1B)
     if (!canRecordRole(a)) throw new Error("You do not have permission to withdraw response links.");
     if ((reason ?? "").trim().length < 3) throw new Error("Give a reason for withdrawing the links.");
     const db = createServiceRoleClient();

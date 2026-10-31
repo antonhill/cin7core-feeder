@@ -3,7 +3,9 @@
 import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
 import { ACTIVITY_MODULE } from "@/app/module-nav";
+import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { fetchActivityLog, type ActivityLogEntry } from "@/lib/activity-log";
+import { activityVisible, quoteScope } from "@/lib/newquip-assignments/access";
 
 export interface ActivityActionResult<T> {
   ok: boolean;
@@ -18,9 +20,13 @@ export interface ActivityLogRow extends ActivityLogEntry {
 /** The current org's activity log, newest first, with each entry's instance ID resolved to its name for display. */
 export async function listActivityAction(): Promise<ActivityActionResult<ActivityLogRow[]>> {
   try {
-    const { orgId } = await requireModuleAccess(ACTIVITY_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(ACTIVITY_MODULE.href);
     const db = createServiceRoleClient();
-    const entries = await fetchActivityLog(db, orgId);
+    let tier = "member";
+    try { await requireOrgAdmin("view the activity log"); tier = "admin"; } catch { tier = "member"; } // fail closed
+    // Rep isolation (Slice 1B): NewQuip / approvals / projects entries follow the quotation scope; Toolbox entries (sync, instance, audit...) are unchanged.
+    const scope = await quoteScope(db, { orgId, userId, email: email ?? "", tier });
+    const entries = (await fetchActivityLog(db, orgId)).filter((e) => activityVisible(scope, e.action));
 
     const instanceIds = [...new Set(entries.map((e) => e.instanceId).filter((id): id is string => Boolean(id)))];
     const nameById = new Map<string, string>();
