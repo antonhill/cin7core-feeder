@@ -11,12 +11,14 @@ describe("Cin7 write flag", () => {
     expect(cin7WritesEnabled({ ...WIRED })).toBe(false);
     for (const v of ["", "TRUE", "True", "1", "yes", "on", " true", "true ", "false"]) expect(cin7WritesEnabled({ ...WIRED, NEWQUIP_CIN7_WRITES_ENABLED: v })).toBe(false);
   });
-  it("is ON only for the exact string 'true' on a Preview/development deployment wired to the required Supabase project", () => {
+  it("is ON only for the exact string 'true' on a PREVIEW deployment wired to the required Supabase project", () => {
     expect(cin7WritesEnabled({ ...WIRED, NEWQUIP_CIN7_WRITES_ENABLED: "true", VERCEL_ENV: "preview" })).toBe(true);
-    expect(cin7WritesEnabled({ ...WIRED, NEWQUIP_CIN7_WRITES_ENABLED: "true" })).toBe(true);
   });
-  it("is ALWAYS OFF on Production, even if the variable is 'true' (A20)", () => {
-    expect(cin7WritesEnabled({ ...WIRED, NEWQUIP_CIN7_WRITES_ENABLED: "true", VERCEL_ENV: "production" })).toBe(false);
+  it("is ALWAYS OFF on Production, a local run, a test runner or an unknown environment, even if the variable is 'true' and the project is the required one (A20)", () => {
+    const on = { ...WIRED, NEWQUIP_CIN7_WRITES_ENABLED: "true" };
+    for (const env of [{ VERCEL_ENV: "production" }, {}, { VERCEL_ENV: "development" }, { VERCEL_ENV: "Preview" }, { VERCEL_ENV: "preview " }, { VERCEL_ENV: "" }, { VERCEL_ENV: "staging" }, { NODE_ENV: "development" }, { NODE_ENV: "test" }]) {
+      expect(cin7WritesEnabled({ ...on, ...env }), JSON.stringify(env)).toBe(false);
+    }
   });
   it("is OFF when the deployment points at a different, missing or unreadable Supabase project, even with the flag on", () => {
     const on = { NEWQUIP_CIN7_WRITES_ENABLED: "true", VERCEL_ENV: "preview" };

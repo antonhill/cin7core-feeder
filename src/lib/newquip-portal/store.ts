@@ -30,17 +30,17 @@ export async function noteFailedAttempt(db: Db, link: StoredLink): Promise<void>
   await db.from("newquip_response_links").update({ attempts: link.attempts + 1 }).eq("org_id", link.org_id).eq("id", link.id).eq("attempts", link.attempts);
 }
 
-/** Validates a presented token against everything it is bound to. Never records anything (apart from counting a wrong secret against a real link). */
+/** Validates a presented token against everything it is bound to. Never records anything. */
 export async function resolveLink(db: Db, rawToken: string, env: LinkEnv, now = new Date()): Promise<Resolved> {
   const t = parseToken(rawToken);
   if (!t) return { ok: false, reason: "INVALID" };
   const r = await db.from("newquip_response_links").select("*").eq("id", t.id).maybeSingle();
   if (r.error) { noteStoreFailure("link lookup", r.error as { message?: string; code?: string; status?: number }); return { ok: false, reason: "UNAVAILABLE" }; } // fail closed, but never mislabel as an invalid link
   const link = r.data as StoredLink | null;
-  if (!link || !sameHash(link.token_hash, sha(t.secret))) {
-    if (link) await noteFailedAttempt(db, link); // a wrong secret against a real link id counts toward its lock-out
-    return { ok: false, reason: "INVALID" };
-  }
+  // A wrong secret is indistinguishable from an unknown link (same answer, same work) and NEVER changes the link: otherwise anyone who knows only the link id could burn its attempt
+  // allowance and lock the real customer out. The attempt counter below counts only the holder of the valid token (their own invalid form input).
+  const presented = sha(t.secret);
+  if (!link || !sameHash(link.token_hash, presented)) return { ok: false, reason: "INVALID" };
   if (link.environment !== environmentOf(env)) return { ok: false, reason: "INVALID", link }; // a Preview link means nothing in Production, and vice versa
   if (link.attempts >= MAX_LINK_ATTEMPTS) return { ok: false, reason: "LOCKED", link };
   if (link.revoked_at) return { ok: false, reason: "REVOKED", link };

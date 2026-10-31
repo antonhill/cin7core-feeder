@@ -96,7 +96,7 @@ export async function getApprovalDetailAction(requestId: string): Promise<Approv
       const canReturn = ok("RETURN").ok;
       return { ok: true, data: {
         request: (await loadRequest(db, ctx.orgId, requestId)) ?? req, history: await requestHistory(db, ctx.orgId, requestId), docHistoryAll: await docHistory(db, ctx.orgId, req.doc_type, req.doc_id),
-        review: await buildReviewDetail(db, ctx.orgId, req, actor.isAdmin || roles.has("MANAGER")), isManager: actor.isAdmin || roles.has("MANAGER"), me: ctx.email,
+        review: await buildReviewDetail(db, ctx.orgId, req, ctx.isManager || roles.has("MANAGER")), isManager: actor.isAdmin || roles.has("MANAGER"), me: ctx.email,   // cost and margin: org owner/admin or an explicit/effective Manager ONLY - the Administrator role alone never sees cost (canSeeCosts)
         can: {
           decide: pending && (normalApprove.ok || overrideApprove.ok || canReturn), withdraw: pending && ok("WITHDRAW").ok,
           reassign: pending && (actor.isAdmin || roles.has("MANAGER") || (req.assigned_to_email ?? "") === ctx.email), needsOverride: pending && !normalApprove.ok && overrideApprove.ok,

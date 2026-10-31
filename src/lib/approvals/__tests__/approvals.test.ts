@@ -413,7 +413,7 @@ describe("integrity: stale revisions, separation of duties, isolation, concurren
 });
 
 describe("notifications: durable, deduplicated, honest about delivery", () => {
-  beforeEach(() => { vi.stubEnv("VERCEL_ENV", "production"); }); // provider behaviour is tested unrestricted; the Preview policy has its own suite below
+  beforeEach(() => { vi.stubEnv("VERCEL_ENV", "production"); vi.stubEnv("NEWQUIP_PRODUCTION_EMAIL_ENABLED", "true"); }); // provider behaviour is tested with Production explicitly opted in (the gate has its own suite: production-email-gate.test.ts); the Preview policy has its own suite below
   afterEach(() => { vi.unstubAllEnvs(); });
   async function pending() {
     const { db, projectId } = await world();
@@ -491,7 +491,7 @@ import { applyEmailPolicy, approvalBaseUrl, displayEmailStatus, isRestricted, PR
 
 describe("email policy: Preview sends only to the exact test mailboxes, marks them, and never redirects", () => {
   const PREVIEW = { VERCEL_ENV: "preview" };
-  const PROD = { VERCEL_ENV: "production" };
+  const PROD = { VERCEL_ENV: "production", NEWQUIP_PRODUCTION_EMAIL_ENABLED: "true" };   // Production only sends after the explicit opt-in
   let n = 0;
   const mail = (db: FakeDb, to: string, over: Record<string, unknown> = {}) => {
     const row = { id: `em-${++n}`, org_id: ORG, request_id: "rq-1", event_id: null, kind: "SUBMITTED", recipient_email: to.toLowerCase(), channel: "EMAIL", subject: "NewQuip Quotation NQ-Q-1: submitted for approval", body: "Open: https://x/approvals/rq-1", dedupe_key: `k-${n}`, status: "PENDING", attempts: 0, last_error: null, provider_message_id: null, sent_at: null, read_at: null, created_at: `2026-10-29T08:00:${String(n % 60).padStart(2, "0")}Z`, ...over };
@@ -519,7 +519,7 @@ describe("email policy: Preview sends only to the exact test mailboxes, marks th
     expect(PREVIEW_EMAIL_ALLOWLIST).toEqual(["testing@sparkconsulting.co.za", "rep@sparkconsulting.co.za", "estimator@sparkconsulting.co.za", "manager@sparkconsulting.co.za", "anton@sparkconsulting.co.za"]);
     const r = applyEmailPolicy(PREVIEW, { to: " Anton@SparkConsulting.co.za ", subject: "S", text: "T" });
     expect(r).toMatchObject({ action: "SEND", subject: "[PREVIEW] S" });
-    expect(applyEmailPolicy({ VERCEL_ENV: "production" }, { to: "anton@sparkconsulting.co.za", subject: "S", text: "T" })).toMatchObject({ action: "SEND", subject: "S" });
+    expect(applyEmailPolicy({ VERCEL_ENV: "production", NEWQUIP_PRODUCTION_EMAIL_ENABLED: "true" }, { to: "anton@sparkconsulting.co.za", subject: "S", text: "T" })).toMatchObject({ action: "SEND", subject: "S" });
   });
   it("anyone else is SUPPRESSED: no provider call, no redirect, no attempt consumed, in-app notification untouched; look-alike addresses are not allowlisted", async () => {
     const db = new FakeDb(); db.approvalsApplied = true; db.notificationStatuses.push("SUPPRESSED");

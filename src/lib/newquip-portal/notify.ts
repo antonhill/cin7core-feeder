@@ -16,6 +16,26 @@ const COPY: Record<ResponseEvent, { headline: string; action: string }> = {
   VERIFIED: { headline: "customer acceptance verified", action: "The acceptance is now formal. Open Project Handover to create the Project (nothing is created automatically)." },
   REJECTED_ON_VERIFICATION: { headline: "customer acceptance rejected during verification", action: "The acceptance does not authorise a Project. See the reason in Customer Acceptance and contact the customer." },
 };
+/**
+ * Customer-supplied text (a reason, a name, a company) is UNTRUSTED and ends up in an internal staff email and notification. It must not be able to carry a clickable link, a
+ * look-alike address, hidden or direction-changing characters, or unbounded length. Links, web addresses and email addresses are replaced by a visible marker; control, zero-width
+ * and bidirectional-override characters become spaces; whitespace is collapsed; length is capped. The readable remainder is kept. (A bare "word.word" that looks like a web
+ * address is also replaced - a deliberate, slightly over-eager trade for plain-text mail clients that auto-link.)
+ */
+export const LINK_MARKER = "[link removed]";
+export const EMAIL_MARKER = "[email removed]";
+export function safeCustomerText(raw: string | null | undefined, max = 300): string {
+  let t = String(raw ?? "")
+    .normalize("NFKC")
+    // control characters, zero-width / joiner / BOM, line & paragraph separators and bidirectional overrides/isolates
+    .replace(/[\u0000-\u001F\u007F-\u009F\u00AD\u061C\u180E\u200B-\u200F\u2028-\u202E\u2060-\u2069\uFEFF]/g, " ")
+    .replace(/[^\s@]+@[^\s@]+/g, EMAIL_MARKER)                                                                  // email addresses (mailto auto-links)
+    .replace(/\b(?:(?:https?|ftp|sftp|file|mailto|tel|sms|javascript|vbscript|data|blob):\S*|[a-z][a-z0-9+.-]{1,15}:\/\/\S*|www\.\S*)/gi, LINK_MARKER)   // known schemes, any scheme://, www.
+    .replace(/\b(?:[a-z0-9-]{2,}\.)+[a-z]{2,}(?::\d+)?(?:[\/?#]\S*)?/gi, LINK_MARKER);                           // bare domains / host/paths
+  t = t.replace(/(?:\[link removed\]\s*){2,}/g, `${LINK_MARKER} `).replace(/\s+/g, " ").trim();
+  return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
+}
+
 const uniq = (xs: Array<string | null | undefined>) => [...new Set(xs.filter((x): x is string => !!x && x.includes("@")).map((x) => x.trim().toLowerCase()))];
 
 export interface NotifyParams {
@@ -33,8 +53,9 @@ export async function queueResponseNotifications(db: Db, p: NotifyParams): Promi
   if (!rq.error) requestId = ((rq.data ?? []) as Array<{ id: string; revision: number }>).sort((a, b) => b.revision - a.revision)[0]?.id ?? null;
   const copy = COPY[p.event];
   const r = p.response;
-  const who = r.origin === "CUSTOMER_LINK" ? `${r.contact_name}${r.contact_company ? `, ${r.contact_company}` : ""}` : r.contact_name;
-  const reasonLine = p.reason && !/\b(costs?|margins?|mark-?ups?|gross\s+profit|supplier)\b/i.test(p.reason) ? `Reason: ${p.reason.trim().slice(0, 400)}` : "";
+  const who = safeCustomerText(r.origin === "CUSTOMER_LINK" ? `${r.contact_name}${r.contact_company ? `, ${r.contact_company}` : ""}` : r.contact_name, 160);
+  const safeReason = safeCustomerText(p.reason, 400);
+  const reasonLine = safeReason && !/\b(costs?|margins?|mark-?ups?|gross\s+profit|supplier)\b/i.test(safeReason) ? `Reason: ${safeReason}` : "";
   const base = (p.internalBaseUrl ?? "").replace(/\/+$/, "");
   const body = [
     `Quotation ${p.quoteRef} - ${copy.headline}`, "",

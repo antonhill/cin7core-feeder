@@ -178,13 +178,37 @@ describe("what a token allows: validation at view time and at submission", () =>
     expect(await submit(w, accept(s.token))).toMatchObject({ ok: false, reason: "SUPERSEDED" });
     expect(w.db.rows("newquip_quote_responses")).toHaveLength(0);
   });
-  it("a wrong secret against a real link counts toward its lock-out; at the limit the link is LOCKED even for the right token", async () => {
-    const { w, doc } = await ready();
-    const s = await sendWithLinks(w, doc.id);
-    const id = s.token.split(".")[0];
-    for (let i = 0; i < MAX_LINK_ATTEMPTS; i++) await resolveLink(w.db as never, `${id}.${"A".repeat(43)}`, PREVIEW);
-    expect((w.db.rows("newquip_response_links")[0] as Record<string, unknown>).attempts).toBe(MAX_LINK_ATTEMPTS);
-    expect(await resolveLink(w.db as never, s.token, PREVIEW)).toMatchObject({ ok: false, reason: "LOCKED" });
+  describe("lock-out cannot be used against the legitimate customer (knowing only a link id is not enough)", () => {
+    it("any number of wrong secrets against a real link id never changes the link and never locks the holder of the valid token, who can still respond", async () => {
+      const { w, doc } = await ready();
+      const s = await sendWithLinks(w, doc.id);
+      const id = s.token.split(".")[0];
+      for (let i = 0; i < MAX_LINK_ATTEMPTS + 10; i++) {
+        expect(await resolveLink(w.db as never, `${id}.${"A".repeat(43)}`, PREVIEW)).toEqual({ ok: false, reason: "INVALID" });
+        expect(await submit(w, accept(`${id}.${"B".repeat(43)}`))).toMatchObject({ ok: false, reason: "INVALID" });
+      }
+      const link = w.db.rows("newquip_response_links")[0] as Record<string, unknown>;
+      expect(link.attempts).toBe(0);                                                       // untouched: not counted, not locked
+      expect(await resolveLink(w.db as never, s.token, PREVIEW)).toMatchObject({ ok: true });
+      expect(await submit(w, accept(s.token))).toMatchObject({ ok: true });                // the real customer's response is recorded
+      expect(w.db.rows("newquip_quote_responses")).toHaveLength(1);
+    });
+    it("a wrong secret is indistinguishable from an unknown link: same reason, same message, no write", async () => {
+      const { w, doc } = await ready();
+      const s = await sendWithLinks(w, doc.id); const id = s.token.split(".")[0];
+      const before = JSON.stringify(w.db.rows("newquip_response_links"));
+      const wrong = await submit(w, accept(`${id}.${"C".repeat(43)}`));
+      const unknown = await submit(w, accept(`00000000-0000-4000-8000-000000000000.${"C".repeat(43)}`));
+      expect(wrong).toEqual(unknown); expect(wrong).toMatchObject({ ok: false, reason: "INVALID" });
+      expect(JSON.stringify(w.db.rows("newquip_response_links"))).toBe(before);
+    });
+    it("the holder's OWN repeated invalid input is still bounded: at the limit the link locks (expiry, revocation, one-response-per-link and rate limiting are unchanged)", async () => {
+      const { w, doc } = await ready();
+      const s = await sendWithLinks(w, doc.id);
+      for (let i = 0; i < MAX_LINK_ATTEMPTS; i++) await submit(w, accept(s.token, { fullName: "P" }));
+      expect((w.db.rows("newquip_response_links")[0] as Record<string, unknown>).attempts).toBe(MAX_LINK_ATTEMPTS);
+      expect(await resolveLink(w.db as never, s.token, PREVIEW)).toMatchObject({ ok: false, reason: "LOCKED" });
+    });
   });
   it("the in-memory limiter is bounded per key and window", () => {
     resetRateLimits();
@@ -340,6 +364,34 @@ describe("staff-recorded responses: responding contact and evidence", () => {
     const q = (await loadQuote(w.db as never, ORG, w.id))!;
     expect(await err(requireAcceptance(w.db as never, ORG, q))).toMatch(/no supporting evidence/);
     expect(countsAsAcceptance(r.response, [], new Map())).toBe(false);
+  });
+  describe("a staff acceptance WITH evidence is final (both call sites recognise it)", () => {
+    it("no contradictory acceptance or decline can be recorded after it; repeating the identical record is a harmless no-op", async () => {
+      const { w, doc } = await ready();
+      const first = await rec(w, doc.id);
+      expect(await err(rec(w, doc.id, { response: "DECLINED", evidenceRef: "phone call" }, []))).toMatch(/already accepted this quotation; the acceptance is final/);
+      expect(await err(rec(w, doc.id, { response: "CHANGES_REQUESTED", evidenceRef: "email 2", note: "change the colour" }, []))).toMatch(/already accepted/);
+      expect(await err(rec(w, doc.id, { evidenceRef: "a different signed copy" }))).toMatch(/already accepted/);
+      expect((await rec(w, doc.id, {}, [{ name: "signed.pdf", bytes: PDF }])).response.id).toBe(first.response.id);          // same evidence reference: returned, nothing added
+      expect(w.db.rows("newquip_quote_responses")).toHaveLength(1);
+    });
+    it("a link acceptance cannot be VERIFIED into force alongside an already-final staff acceptance (no second formal acceptance)", async () => {
+      const { w, doc } = await ready();
+      await rec(w, doc.id);
+      // a link acceptance that slipped in (a race with the staff record): written directly, because the portal itself would now refuse it
+      w.db.rows("newquip_quote_responses").push({ id: "resp-link-1", org_id: ORG, quote_id: w.id, document_id: doc.id, response: "ACCEPTED", origin: "CUSTOMER_LINK", link_id: "link-race", contact_name: "Piet", contact_email: "piet@boerdery.example",
+        contact_source: "CUSTOMER_PROVIDED", contact_company: "Boerdery", authority_confirmed: true, document_hash: doc.content_hash, evidence_ref: "Customer response link", note: "x", responded_on: TODAY, created_at: new Date().toISOString(), recorded_by_email: "piet@boerdery.example" });
+      expect(await err(reviewResponse(w.db as never, ORG, w.id, { email: "mgr@nq" }, { responseId: "resp-link-1", decision: "VERIFIED", note: "ok" }))).toMatch(/already has a formal acceptance/);
+      expect(w.db.rows("newquip_response_reviews")).toHaveLength(0);
+      expect((await reviewResponse(w.db as never, ORG, w.id, { email: "mgr@nq" }, { responseId: "resp-link-1", decision: "REJECTED", note: "duplicate of the staff acceptance" })).created).toBe(true);   // rejecting is still possible
+    });
+    it("sealed quotation and Project creation are unchanged: the staff acceptance still opens the gate exactly once", async () => {
+      const { w, doc } = await ready();
+      await rec(w, doc.id);
+      const p = await project(w); expect(p.created).toBe(true);
+      expect(w.db.rows("projects")).toHaveLength(1);
+      expect((await project(w)).created).toBe(false); expect(w.db.rows("projects")).toHaveLength(1);
+    });
   });
   it("another Cin7 contact can respond; an alternative contact needs a reason; a bad file type is refused and nothing is recorded", async () => {
     const { w, doc } = await ready();

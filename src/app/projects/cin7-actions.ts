@@ -247,6 +247,7 @@ export async function createCin7SaleAction(
     const gates = await gatesFor(orgId);
     const db = createServiceRoleClient();
     const instanceId = await singleActiveInstanceId(db, orgId);
+    if (instanceId !== NEWQUIP_POC_CIN7_INSTANCE_ID) throw new Error("A Sale can only be created on the expected NewQuip POC Cin7 instance; this organisation's active instance is not it.");
     const r = await createSaleForProject(db, buildSaleCreationPort(db, orgId, instanceId), gates, email ?? "unknown", { orgId, projectId, instanceId, ...input });
     await logActivity(db, { orgId, actor: { userId, email }, action: "projects.cin7_sale_create", summary: `Cin7 Advanced Sale creation: ${r.state}`, detail: { projectId, creationId: r.creation.id, state: r.state, externalId: r.creation.external_id, saleNumber: r.creation.cin7_sale_number } });
     return { ok: true, data: { state: r.state, message: r.message, saleNumber: r.creation.cin7_sale_number, linked: r.linked } };

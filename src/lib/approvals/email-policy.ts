@@ -2,7 +2,9 @@
 //
 // Fail closed: anything that is not exactly Vercel's "production" environment (a Preview, a local run, an unset variable) is RESTRICTED: the subject is marked
 // [PREVIEW] and the message goes only to the exact allowlisted test mailboxes. A recipient outside the list is SUPPRESSED, never redirected; the in-app
-// notification they have is unaffected. Production behaviour is unchanged (no prefix, no allowlist).
+// notification they have is unaffected. Production sends only after an EXPLICIT opt-in (NEWQUIP_PRODUCTION_EMAIL_ENABLED=true, default OFF): a configured RESEND_API_KEY alone
+// never enables NewQuip Production email, because Preview and Production share one database and one notification queue. When enabled, Production behaviour is unchanged
+// (no prefix, no allowlist).
 
 export const PREVIEW_EMAIL_ALLOWLIST: readonly string[] = [
   "testing@sparkconsulting.co.za",
@@ -21,10 +23,18 @@ export type EmailDecision = { action: "SEND"; subject: string; text: string } | 
 
 export const isRestricted = (env: EmailEnv): boolean => env.VERCEL_ENV !== "production";
 
+/** The Production-only enablement control. Exactly the string "true" (anything else, including "TRUE", "1" or unset, is OFF). Irrelevant outside Production. */
+export const PRODUCTION_EMAIL_FLAG = "NEWQUIP_PRODUCTION_EMAIL_ENABLED";
+export const productionEmailEnabled = (env: EmailEnv): boolean => env[PRODUCTION_EMAIL_FLAG] === "true";
+/** True when this deployment is Production and the opt-in is OFF: NewQuip email must not leave. */
+export const productionEmailBlocked = (env: EmailEnv): boolean => !isRestricted(env) && !productionEmailEnabled(env);
+export const PRODUCTION_EMAIL_OFF = `Production email is not enabled (${PRODUCTION_EMAIL_FLAG}); no email was sent (the in-app notification is unaffected).`;
+
 /** Exact, case-insensitive match against the list: no domain wildcards, no sub-addressing. */
 export const isAllowlisted = (email: string): boolean => PREVIEW_EMAIL_ALLOWLIST.includes(email.trim().toLowerCase());
 
 export function applyEmailPolicy(env: EmailEnv, mail: { to: string; subject: string; text: string }): EmailDecision {
+  if (productionEmailBlocked(env)) return { action: "SUPPRESS", reason: PRODUCTION_EMAIL_OFF };
   if (!isRestricted(env)) return { action: "SEND", subject: mail.subject, text: mail.text };
   if (!isAllowlisted(mail.to)) return { action: "SUPPRESS", reason: `${mail.to.trim().toLowerCase()} is not on the Preview email allowlist; no email was sent (the in-app notification is unaffected).` };
   const subject = mail.subject.startsWith(PREVIEW_SUBJECT_PREFIX) ? mail.subject : `${PREVIEW_SUBJECT_PREFIX}${mail.subject}`;
