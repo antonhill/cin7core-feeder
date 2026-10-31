@@ -21,20 +21,33 @@ const COPY: Record<ResponseEvent, { headline: string; action: string }> = {
  * look-alike address, hidden or direction-changing characters, or unbounded length. Links, web addresses and email addresses are replaced by a visible marker; control, zero-width
  * and bidirectional-override characters become spaces; whitespace is collapsed; length is capped. The readable remainder is kept. (A bare "word.word" that looks like a web
  * address - including a one-letter host such as t.co, an internationalised domain or a dotted IP - is also replaced: a deliberate, slightly over-eager trade for plain-text mail
- * clients that auto-link. Known cost: a missing space after a full stop, "expensive.Please", reads as a host and is replaced.)
+ * clients that auto-link. Initials written without a space ("J.Smith", "P.O.Box 123") are kept unless they carry a path/port or end in a known top-level domain. Known cost: a missing
+ * space after a full stop, "expensive.Please", reads as a host and is replaced.)
  */
 export const LINK_MARKER = "[link removed]";
 export const EMAIL_MARKER = "[email removed]";
+/** Top-level domains for which a short "x.com"-style token is treated as a web address even without a path (initials such as "J.Smith" are not). */
+const KNOWN_TLDS = new Set(["com", "net", "org", "edu", "gov", "info", "biz", "io", "co", "me", "ly", "gl", "gd", "cc", "ws", "tv", "to", "fm", "am", "ai", "app", "dev", "xyz", "top", "club", "site", "online", "shop", "link", "click", "live", "page", "store", "tech", "cloud", "ru", "cn", "in", "au", "ca", "nz", "uk", "us", "eu", "de", "fr", "nl", "za", "br", "jp", "kr", "es", "it", "se", "ch", "be", "pl", "tr", "ir", "ua"]);
+/** Initial-like host: every label before the last is a single character ("J.Smith", "P.O.Box", "e.g.change", "t.co", "x.com"). Such a token is a web address only with a path/port or a known TLD. */
+function keepInitialLike(m: string): boolean {
+  const labels = m.split(/[\/?#:]/)[0].split(".");
+  const initialLike = labels.slice(0, -1).every((l) => [...l].length === 1);
+  const hasPathOrPort = /[\/?#]|:\d/.test(m);
+  return initialLike && !hasPathOrPort && !KNOWN_TLDS.has(labels[labels.length - 1].toLowerCase());
+}
+
 export function safeCustomerText(raw: string | null | undefined, max = 300): string {
-  let t = String(raw ?? "")
+  // Bound the work BEFORE any pattern runs (callers also trim, but the cost of the patterns must not depend on every caller doing so).
+  let t = String(raw ?? "").slice(0, Math.max(max * 4, 1000))
     .normalize("NFKC")
+    .replace(/[\u3002\uFF61]/g, ".")                                                                                              // ideographic full stops read as dots by browsers/IDNA
     // invisible / control / formatting characters: C0+C1 controls, ALL format characters (zero-width, joiners, bidi marks and overrides, soft hyphen, BOM, Unicode TAG characters used to hide text),
     // private-use, line/paragraph separators, plus code points that render as blank (combining grapheme joiner, Hangul fillers, braille blank, variation selectors)
     .replace(/[\p{Cc}\p{Cf}\p{Co}\p{Cs}\p{Zl}\p{Zp}͏ᅟᅠㅤﾠ⠀᠋-᠍︀-️\u{E0100}-\u{E01EF}]/gu, " ")
     .replace(/[^\s@]+@[^\s@]+/g, EMAIL_MARKER)                                                                                    // email addresses (mailto auto-links)
     .replace(/(?<![\p{L}\p{N}])(?:(?:https?|ftp|sftp|file|mailto|tel|sms|javascript|vbscript|data|blob):\S*|\p{L}[\p{L}\p{N}+.-]{1,15}:\/\/\S*|www\.\S*)/giu, LINK_MARKER) // known schemes, any scheme://, www.
     .replace(/(?<![\p{L}\p{N}.])\d{1,3}(?:\.\d{1,3}){3}(?![\p{L}\p{N}])(?::\d+)?(?:[\/?#]\S*)?/gu, LINK_MARKER)                    // dotted IPv4 (with optional port/path)
-    .replace(/(?<![\p{L}\p{N}])(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}(?::\d+)?(?:[\/?#]\S*)?/gu, LINK_MARKER);                           // bare domains incl. 1-character labels (t.co, x.com) and non-ASCII (IDN) labels
+    .replace(/(?<![\p{L}\p{N}])(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}(?::\d+)?(?:[\/?#]\S*)?/gu, (m) => (keepInitialLike(m) ? m : LINK_MARKER)); // bare domains incl. t.co / x.com and non-ASCII (IDN) labels
   t = t.replace(/(?:\[link removed\]\s*){2,}/g, `${LINK_MARKER} `).replace(/\s+/g, " ").trim();
   return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
 }

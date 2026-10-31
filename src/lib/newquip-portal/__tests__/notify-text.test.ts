@@ -7,7 +7,7 @@ describe("safeCustomerText: untrusted customer text in internal email", () => {
   it.each([
     ["https://evil.example/login?x=1", "https"], ["HTTP://EVIL.EXAMPLE", "uppercase scheme"], ["www.evil.example/pay", "www"], ["evil.example/pay", "bare host/path"], ["evil.co.za", "bare domain"],
     ["javascript:alert(1)", "javascript:"], ["mailto:boss@evil.example", "mailto"], ["tel:+27111111111", "tel"], ["data:text/html;base64,AAAA", "data:"], ["ftp://x.example/f", "ftp"], ["sftp://x.example/f", "sftp"],
-    ["t.co/abc123", "one-letter host (t.co shortener)"], ["x.com/evil", "one-letter label"], ["g.co/x", "g.co"], ["T.CO/ABC", "uppercase short host"], ["a.b.example", "multi-label"],
+    ["t.co/abc123", "one-letter host (t.co shortener)"], ["x.com/evil", "one-letter label"], ["g.co/x", "g.co"], ["T.CO/ABC", "uppercase short host"], ["a.b.example/x", "multi-label with path"], ["evil\u3002com/x", "ideographic full stop"], ["evil\uFF61com", "halfwidth ideographic full stop"], ["a.b.com", "initial-like with known TLD"],
     ["\u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444/login", "IDN (Cyrillic) host"], ["m\u00fcnchen.de/pay", "IDN (umlaut) host"], ["192.168.0.1", "IPv4"], ["1.2.3.4/pay", "IPv4 + path"], ["10.0.0.1:8080/x", "IPv4 + port"],
     ["hxxps://evil.example", "defanged scheme://"], ["evil.example:8080/x", "host:port"], ["ｗｗｗ.evil.example", "full-width www (NFKC)"],
   ])("removes %s (%s)", (input) => {
@@ -29,6 +29,15 @@ describe("safeCustomerText: untrusted customer text in internal email", () => {
   });
   it("still keeps legitimate non-ASCII business text and ordinary dotted abbreviations", () => {
     for (const ok of ["Prys is te hoog \u2013 asseblief verlaag", "Gr\u00f6\u00dfe 4.5m, R 1 250.50, e.g. 3.5 tonne, i.e. no VAT, 10 a.m. or 5 p.m.", "Version 2.0 of the plan"]) expect(safeCustomerText(ok, 400)).toBe(ok);
+  });
+  it("keeps people's initials, abbreviations and names written without a space after the dot", () => {
+    for (const ok of ["J.Smith", "A.Mokoena signed", "J.van Wyk", "P.O.Box 123", "Unit A.Block 3", "e.g.change the size", "Mr J.Botha of Plot 12"]) expect(safeCustomerText(ok, 400), ok).toBe(ok);
+  });
+  it("bounds its own work: hostile 200,000-character input finishes quickly and is truncated", () => {
+    for (const unit of ["a.", "a-", "a", "a@", ".a"]) {
+      const t0 = Date.now(); const out = safeCustomerText(unit.repeat(100_000), 400);
+      expect(Date.now() - t0, unit).toBeLessThan(500); expect(out.length).toBeLessThanOrEqual(400);
+    }
   });
   it("caps the length (with an ellipsis) and collapses whitespace", () => {
     const out = safeCustomerText(`${"word ".repeat(200)}`, 100); expect(out.length).toBeLessThanOrEqual(100); expect(out.endsWith("…")).toBe(true);

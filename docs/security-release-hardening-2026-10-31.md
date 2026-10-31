@@ -22,4 +22,4 @@ Deferred (P2, none exploitable in the internal demo; record for commercial launc
 * **Invoice posting** (`postClaimToCin7Action`) does not re-check the Cin7 instance of the linked Sale (sale creation and recovery do). Production stays hard-off and the organisation has one active instance.
 * **Local runs:** the write gate trusts the `VERCEL_ENV` string, so a local run with `VERCEL_ENV=preview` pulled from Vercel would pass it. Convention, not a guarantee.
 * **Estimator in approval detail** still does not receive cost (unchanged behaviour); the quotation screens do.
-* **Sanitiser false positives:** a missing space after a full stop (`expensive.Please`) is read as a host and replaced.
+* **Sanitiser false positives:** a missing space after a full stop (`expensive.Please`, `St.John`) is read as a host and replaced. Initials without a space (`J.Smith`, `P.O.Box`) are kept unless they carry a path/port or a known TLD. The sanitiser bounds its own input (about 4x the output cap, minimum 1,000 characters) so pattern cost never depends on a caller trimming first.
