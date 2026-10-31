@@ -9,6 +9,9 @@ import { NEWQUIP_ONLY_MESSAGE } from "@/lib/projects/newquip-gate";
 import * as actions from "../actions";
 import * as billing from "../variation-billing-actions";
 import * as physical from "../physical-actions";
+import * as delivery from "../delivery-actions";
+import * as profit from "../profitability-actions";
+import * as cin7 from "../cin7-actions";
 import * as variationStore from "@/lib/projects/variation-store";
 import * as billingStore from "@/lib/projects/variation-billing-store";
 
@@ -17,6 +20,8 @@ vi.mock("@/lib/require-org-admin", () => ({ requireOrgAdmin: vi.fn() }));
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: vi.fn(() => ({ __db: true })) }));
 vi.mock("@/lib/activity-log", () => ({ logActivity: vi.fn(() => Promise.resolve()) }));
 vi.mock("@/lib/projects/scope-access", async (orig) => ({ ...(await orig<typeof import("@/lib/projects/scope-access")>()), guardBillingScope: vi.fn(() => Promise.resolve()), callerIsOrgAdmin: vi.fn(() => Promise.resolve(false)) }));
+// The approvals framework (migration 0110) is not applied in this scenario: the documents keep their previous approve / reject behaviour.
+vi.mock("@/lib/approvals/approval-store", () => ({ approvalsAvailable: vi.fn(() => Promise.resolve(false)), decideDocument: vi.fn(), legacyCtx: vi.fn(), submitForApproval: vi.fn(), withdrawPendingFor: vi.fn() }));
 vi.mock("@/lib/projects/project-store", () => ({ loadProjectView: vi.fn(() => Promise.resolve(null)), listProjectViews: vi.fn(() => Promise.resolve([])) }));
 vi.mock("@/lib/projects/variation-store", () => ({
   raiseVariation: vi.fn(() => Promise.resolve({ variationId: "v1", code: "V001" })), repriceVariation: vi.fn(), approveVariation: vi.fn(), rejectVariation: vi.fn(),
@@ -42,6 +47,18 @@ const CALLS: Array<[string, () => Promise<{ ok: boolean; error?: string }>]> = [
   ["startVariationBillingAction", () => billing.startVariationBillingAction("p1", "v1", [])],
   ["amendVariationScheduleAction", () => billing.amendVariationScheduleAction("p1", "v1", ROWS, "reason")],
   ["getPhysicalStatusAction", () => physical.getPhysicalStatusAction("p1")],
+  ["searchVariationProductsAction", () => billing.searchVariationProductsAction("vent")],
+  ["getConsolidatedCommercialAction", () => billing.getConsolidatedCommercialAction("p1")],
+  ["getDeliveryRegisterAction", () => delivery.getDeliveryRegisterAction("p1")],
+  ["createDeliveryAction", () => delivery.createDeliveryAction("p1", "Truck 1")],
+  ["setAllocationAction", () => delivery.setAllocationAction("p1", "d1", "SKU", 1, "why")],
+  ["setDeliveryStatusAction", () => delivery.setDeliveryStatusAction("p1", "d1", "LOADING", "why")],
+  ["confirmMilestoneAction", () => delivery.confirmMilestoneAction("p1", "s1", "note")],
+  ["getCostLedgerAction", () => profit.getCostLedgerAction("p1")],
+  ["addCostEntryAction", () => profit.addCostEntryAction("p1", { category: "OTHER_DIRECT", description: "x", amountRand: "1", state: "COMMITTED" })],
+  ["markCostIncurredAction", () => profit.markCostIncurredAction("p1", "e1")],
+  ["voidCostEntryAction", () => profit.voidCostEntryAction("p1", "e1", "why")],
+  ["getCostingReportAction", () => profit.getCostingReportAction("p1")],
 ];
 const dataFns = () => [...Object.values(variationStore), ...Object.values(billingStore)].filter((f) => typeof f === "function") as unknown as Array<ReturnType<typeof vi.fn>>;
 
@@ -107,6 +124,27 @@ describe("stock shortage stays advisory", () => {
     for (const f of ["src/lib/projects/cin7-sale-creation-store.ts", "src/lib/projects/cin7-sale-creation.ts", "src/lib/projects/scope-store.ts", "src/newquip/quote/baseline.ts", "src/lib/newquip-quotes/quote-store.ts"]) {
       let src = ""; try { src = readFileSync(f, "utf8"); } catch { continue; }
       expect(src.replace(/^\s*(\/\/|\*).*$/gm, ""), f).not.toMatch(/\.stockAt\(|\.readStock\(|available\s*[<>]|STOCK_/);
+    }
+  });
+});
+
+describe("package mapping actions (cin7-actions) are refused for another organisation too", () => {
+  it.each([
+    ["resolveScopeItemAction MAP_LINES", () => cin7.resolveScopeItemAction("p1", { itemId: "i", kind: "MAP_LINES", lines: [{ sku: "A", factor: 1 }], reason: "r" })],
+    ["resolveScopeItemAction saved version", () => cin7.resolveScopeItemAction("p1", { itemId: "i", kind: "MAP_LINES", useSavedVersion: 1, reason: "r" })],
+    ["getPackageMappingAction", () => cin7.getPackageMappingAction("p1", "i")],
+  ])("%s", async (_n, run) => {
+    vi.mocked(requireModuleAccess).mockResolvedValue(OTHER as never);
+    expect(await run()).toMatchObject({ ok: false, error: expect.stringMatching(/Not enabled/) });
+  });
+});
+
+describe("other write paths stay manager-only inside NewQuip", () => {
+  beforeEach(() => vi.mocked(requireModuleAccess).mockResolvedValue(NQ as never));
+  it("delivery changes, cost entries and the catalogue search need an owner/admin", async () => {
+    vi.mocked(requireOrgAdmin).mockRejectedValue(new Error("Only an org owner or admin can do that."));
+    for (const run of [() => delivery.createDeliveryAction("p1", "T"), () => delivery.setAllocationAction("p1", "d", "S", 1, "r"), () => delivery.confirmMilestoneAction("p1", "s", "n"), () => profit.addCostEntryAction("p1", { category: "OTHER_DIRECT", description: "x", amountRand: "1", state: "COMMITTED" }), () => profit.getCostingReportAction("p1"), () => billing.searchVariationProductsAction("vent")]) {
+      expect(await run()).toEqual({ ok: false, error: "Only an org owner or admin can do that." });
     }
   });
 });

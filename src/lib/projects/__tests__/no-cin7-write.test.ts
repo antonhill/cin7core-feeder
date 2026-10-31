@@ -30,7 +30,9 @@ const CIN7_ADAPTER = "src/lib/projects/cin7-adapter.ts";
 const CIN7_SALE_CREATION_ADAPTER = "src/lib/projects/cin7-sale-creation-adapter.ts";
 /** DELIBERATE EDIT (physical visibility slice): a third adapter that only READS (GET) - pinned below to contain no write verb. */
 const CIN7_PHYSICAL_ADAPTER = "src/lib/projects/physical-adapter.ts";
-const ADAPTERS = [CIN7_ADAPTER, CIN7_SALE_CREATION_ADAPTER, CIN7_PHYSICAL_ADAPTER];
+/** DELIBERATE EDIT (cost estimate slice): a fourth adapter that only READS (GET /Product) the supplier costs for the NewQuip cost estimate - pinned below to contain no write verb. */
+const CIN7_COST_ADAPTER = "src/lib/projects/latest-cost-adapter.ts";
+const ADAPTERS = [CIN7_ADAPTER, CIN7_SALE_CREATION_ADAPTER, CIN7_PHYSICAL_ADAPTER, CIN7_COST_ADAPTER];
 
 describe("Projects POC has no Cin7 / external write path", () => {
   it("found source files to check", () => expect(sources.length).toBeGreaterThan(5));
@@ -59,7 +61,7 @@ describe("Projects POC has no Cin7 / external write path", () => {
   });
 });
 
-describe.each(["src/app/projects/actions.ts", "src/app/projects/cin7-actions.ts", "src/app/projects/variation-billing-actions.ts", "src/app/projects/physical-actions.ts", "src/app/projects/profitability-actions.ts"])('%s honours the "use server" rule', (rel) => {
+describe.each(["src/app/projects/actions.ts", "src/app/projects/cin7-actions.ts", "src/app/projects/variation-billing-actions.ts", "src/app/projects/physical-actions.ts", "src/app/projects/profitability-actions.ts", "src/app/projects/delivery-actions.ts"])('%s honours the "use server" rule', (rel) => {
   it("exports only async functions and erased interfaces", () => {
     const file = join(ROOT, rel);
     const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true);
@@ -76,16 +78,24 @@ describe.each(["src/app/projects/actions.ts", "src/app/projects/cin7-actions.ts"
   });
 });
 
+describe("delivery allocation writes only local tables", () => {
+  it.each(["src/lib/projects/delivery-allocation.ts", "src/lib/projects/delivery-allocation-store.ts", "src/app/projects/delivery-actions.ts"])("%s makes no Cin7 call", (rel) => {
+    const src = readFileSync(join(ROOT, rel), "utf8");
+    expect(src).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/i);
+    expect(src).not.toMatch(/nonIdempotentCreate|sale\/invoice|sale\/order|@\/cin7\//);
+  });
+});
+
 describe("the physical-visibility path can only read", () => {
-  it.each(["src/lib/projects/physical-adapter.ts", "src/lib/projects/physical-store.ts", "src/lib/projects/physical-status.ts", "src/app/projects/physical-actions.ts", "src/app/projects/profitability-actions.ts", "src/lib/projects/profitability.ts", "src/lib/projects/profitability-store.ts", "src/cin7/sale-inspect.ts"])("%s contains no write verb or create endpoint", (rel) => {
+  it.each(["src/lib/projects/physical-adapter.ts", "src/lib/projects/physical-store.ts", "src/lib/projects/physical-status.ts", "src/app/projects/physical-actions.ts", "src/app/projects/profitability-actions.ts", "src/lib/projects/profitability.ts", "src/lib/projects/profitability-store.ts", "src/cin7/sale-inspect.ts", "src/lib/projects/latest-cost-adapter.ts", "src/cin7/latest-cost.ts"])("%s contains no write verb or create endpoint", (rel) => {
     const src = readFileSync(join(ROOT, rel), "utf8");
     expect(src).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/i);
     expect(src).not.toMatch(/nonIdempotentCreate|sale\/invoice|sale\/order|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/);
   });
 });
 
-describe("the read-only Cin7 probe script can only read (see also probe-support.test.ts)", () => {
-  const script = readFileSync(join(ROOT, "scripts/probe-sale-invoices-readonly.mjs"), "utf8");
+describe.each(["probe-sale-invoices-readonly.mjs", "probe-product-costs-readonly.mjs"])("%s: the read-only Cin7 probe script can only read (see also probe-support.test.ts)", (file) => {
+  const script = readFileSync(join(ROOT, "scripts", file), "utf8");
   it("contains no write verbs and a single network function", () => {
     expect(script).not.toMatch(/\b(POST|PUT|PATCH|DELETE)\b/);
     expect(script).not.toMatch(/method:\s*["'](?!GET)/);

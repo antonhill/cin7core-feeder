@@ -1,5 +1,6 @@
 import { createSessionClient } from "@/supabase/server-session";
 import { createServiceRoleClient } from "@/supabase/server";
+import { assertNoDemoImpersonation } from "@/lib/demo-mode/context";
 
 /**
  * Throws unless the current session belongs to a super admin (Spark staff
@@ -7,6 +8,7 @@ import { createServiceRoleClient } from "@/supabase/server";
  * super_admins has no RLS policies exposing it to session-scoped clients.
  */
 export async function requireSuperAdmin(): Promise<{ userId: string }> {
+  await assertNoDemoImpersonation("Super-admin actions");
   const sessionClient = await createSessionClient();
   const {
     data: { user },

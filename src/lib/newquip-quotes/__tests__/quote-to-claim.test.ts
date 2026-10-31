@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
+import { POC_SIX_STAGE_SCHEDULE } from "@/newquip/quote/billing-schedule";
 import { createQuote, createProjectFromAcceptedQuote, estimatorSignOff, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator } from "../quote-store";
 import { approveClaim, createClaimDraft, loadProjectView, previewClaim, recordProgress, submitClaimForApproval } from "@/lib/projects/project-store";
 import { approveVariation, raiseVariation, rejectVariation, repriceVariation } from "@/lib/projects/variation-store";
@@ -134,14 +135,14 @@ describe("GATE 1 — quote workflow to a frozen baseline and a Project", () => {
     const db = new FakeDb();
     const { id } = await acceptedQuote(db);
     db.rows("newquip_quotes")[0].accepted_baseline = { ...structuredClone(db.rows("newquip_quotes")[0].accepted_baseline as object), contractCents: 1 };
-    expect(await err(createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id))).toMatch(/no longer matches its seal/);
+    expect(await err(createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id, POC_SIX_STAGE_SCHEDULE))).toMatch(/no longer matches its seal/);
     expect(db.rows("projects")).toHaveLength(0);
   });
 
   it("only an approved quote can become a Project", async () => {
     const db = new FakeDb();
     const { id } = await createQuote(db as never, ORG, "rep@nq");
-    expect(await err(createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id))).toMatch(/manager-approved final quote/);
+    expect(await err(createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id, POC_SIX_STAGE_SCHEDULE))).toMatch(/manager-approved final quote/);
   });
 
   it("a quote of another organisation is invisible", async () => {
@@ -157,7 +158,7 @@ describe("GATE 1 → 2 — Quote → Project, with no engineering recalculation"
     const db = new FakeDb();
     const { id } = await acceptedQuote(db);
     const q = (await loadQuote(db as never, ORG, id))!;
-    const { projectId, created } = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id);
+    const { projectId, created } = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id, POC_SIX_STAGE_SCHEDULE);
     expect(created).toBe(true);
     const v = (await loadProjectView(db as never, ORG, projectId))!;
     expect(v.project).toMatchObject({ status: "ACTIVE", customer_name: "Topigs Warden", originating_quote_ref: q.quote_ref, original_contract_cents: R(10_000_000), tax_rate_bps: 1500, tax_rule: "VAT 15% (NewQuip POC)" });
@@ -174,12 +175,12 @@ describe("GATE 1 → 2 — Quote → Project, with no engineering recalculation"
   it("is idempotent, and recovers a project that was created but not linked", async () => {
     const db = new FakeDb();
     const { id } = await acceptedQuote(db);
-    const a = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id);
-    const b = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id);
+    const a = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id, POC_SIX_STAGE_SCHEDULE);
+    const b = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id, POC_SIX_STAGE_SCHEDULE);
     expect(b).toEqual({ projectId: a.projectId, created: false });
     expect(db.rows("projects")).toHaveLength(1);
     db.rows("newquip_quotes")[0].project_id = null; // simulate a crash between create and link
-    const c = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id);
+    const c = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id, POC_SIX_STAGE_SCHEDULE);
     expect(c.projectId).toBe(a.projectId);
     expect(db.rows("projects")).toHaveLength(1);
   });
@@ -187,12 +188,12 @@ describe("GATE 1 → 2 — Quote → Project, with no engineering recalculation"
   it("crash recovery links the BASE project, never a variation billing project that carries the same originating quote reference", async () => {
     const db = new FakeDb();
     const { id } = await acceptedQuote(db);
-    const a = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id);
+    const a = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id, POC_SIX_STAGE_SCHEDULE);
     const base = db.rows("projects")[0];
     // a variation billing project (migration 0105) copies the parent's originating_quote_ref
     db.rows("projects").unshift({ ...base, id: "child-first", project_reference: `${base.project_reference as string}-V001`, billing_scope: "VARIATION", parent_project_id: a.projectId, variation_id: "v1" });
     db.rows("newquip_quotes")[0].project_id = null;
-    const c = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id);
+    const c = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id, POC_SIX_STAGE_SCHEDULE);
     expect(c.projectId).toBe(a.projectId);
     expect(c.created).toBe(false);
   });
@@ -202,7 +203,7 @@ describe("GATE 2 — progress, the R950,000 golden claim, Variation V001, revise
   async function projectAtGoldenPosition() {
     const db = new FakeDb();
     const { id } = await acceptedQuote(db);
-    const { projectId } = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id);
+    const { projectId } = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id, POC_SIX_STAGE_SCHEDULE);
     const view = (await loadProjectView(db as never, ORG, projectId))!;
     const stage = (n: string) => view.stages.find((s) => s.name === n)!.id;
     const rec = (n: string, reported: string, approved: string | null, c: string) => recordProgress(db as never, ORG, "x@nq", { projectId, stageId: stage(n), reportedPct: reported, approvedPct: approved, comment: c });

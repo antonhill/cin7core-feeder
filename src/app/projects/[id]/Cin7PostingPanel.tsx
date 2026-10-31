@@ -8,7 +8,7 @@ import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { POST_CONFIRMATION_TEXT, canReconcile, canSend, memoFor, type PostingDisplayState } from "@/lib/projects/cin7-posting";
 import type { PreparedInvoice } from "@/lib/projects/invoice-proposal-store";
-import { getCin7PostingStatusAction, linkCin7SaleAction, getInvoiceProposalAction, postClaimToCin7Action, reconcileClaimPostingAction, type Cin7PostingStatus } from "../cin7-actions";
+import { getCin7PostingStatusAction, recoverLinkCin7SaleAction, getInvoiceProposalAction, postClaimToCin7Action, reconcileClaimPostingAction, type Cin7PostingStatus } from "../cin7-actions";
 
 // Cin7 Core: link the Project to ONE Advanced Sale, then post each APPROVED claim as ONE invoice. Everything here is display + intent:
 // the server re-checks the rollout flag, the org, the manager role, the claim state and the confirmation on every call.
@@ -23,8 +23,8 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
   const projectId = view.project.id;
   const [st, setSt] = useState<Cin7PostingStatus | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [saleId, setSaleId] = useState("");
-  const [account, setAccount] = useState("");
+  // Administrative recovery only (collapsed, admin-only): never part of the normal flow.
+  const [rec, setRec] = useState({ saleId: "", customerName: view.project.customer_name ?? "", location: "", revenueAccount: "", cin7TaxRule: "Standard Rate Sales", reason: "" });
   const [confirming, setConfirming] = useState<string | null>(null);
   // Proposed invoice per claim (prepared automatically when the manager opens the claim for posting; "Populate Products from Project" refreshes it).
   const [prep, setPrep] = useState<Record<string, { busy: boolean; error?: string; data?: PreparedInvoice }>>({});
@@ -53,25 +53,34 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
         <PanelTitle>Cin7 Core</PanelTitle>
         <Badge tone={gates.writesEnabled ? "warning" : "neutral"} dot>{gates.writesEnabled ? "Cin7 writes ENABLED" : "Cin7 writes OFF"}</Badge>
       </div>
-      <p className="mt-1 text-sm text-slate-500">One Project → one linked Cin7 Advanced Sale → one invoice per approved claim. Posting creates a DRAFT commercial invoice with no stock lines (no fulfilment, stock or COGS).</p>
+      <p className="mt-1 text-sm text-slate-500">One Project → one Cin7 Advanced Sale (created automatically) → one invoice per approved claim. Posting creates a DRAFT commercial invoice with no stock lines (no fulfilment, stock or COGS).</p>
       {note && <div className="mt-3"><Alert tone="info">{note}</Alert></div>}
 
       <div className="mt-4 rounded-lg border border-slate-200 p-4 text-sm">
-        <p className="font-medium text-slate-900">Linked Sale</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="font-medium text-slate-900">Cin7 Advanced Sale</p>
+          {link && <Badge tone="success" dot>{st.linkOrigin === "ADMIN_RECOVERY" ? "Linked by administrator recovery" : "Created and verified by the Toolbox"}</Badge>}
+        </div>
         {link ? (
           <dl className="mt-2 grid gap-x-8 gap-y-1 sm:grid-cols-4">
-            {[["Sale", link.cin7_sale_number ?? "—"], ["SaleID", link.cin7_sale_id], ["Linked", new Date(link.created_at).toLocaleDateString("en-ZA")], ["Last reconciled", link.last_reconciled_at ? new Date(link.last_reconciled_at).toLocaleString("en-ZA") : "—"]].map(([k, v]) => (
-              <div key={k}><dt className="text-xs text-slate-500">{k}</dt><dd className="break-all font-medium text-slate-900">{v}</dd></div>
+            {[["Sale", link.cin7_sale_number ?? "—"], ["Status", link.link_status === "LINKED" ? "Linked" : link.link_status], ["Linked", new Date(link.created_at).toLocaleDateString("en-ZA")], ["Last reconciled", link.last_reconciled_at ? new Date(link.last_reconciled_at).toLocaleString("en-ZA") : "—"]].map(([k, v]) => (
+              <div key={k}><dt className="text-xs text-slate-500">{k}</dt><dd className="font-medium text-slate-900">{v}</dd></div>
             ))}
           </dl>
-        ) : gates.isManager ? (
-          <div className="mt-2 flex flex-wrap items-end gap-3">
-            <label className="flex min-w-[300px] flex-1 flex-col gap-1"><span className="text-xs text-slate-600">Cin7 SaleID (from the sale&apos;s URL)</span><input value={saleId} onChange={(e) => setSaleId(e.target.value)} className="h-9 rounded-md border border-slate-300 px-3 font-mono text-xs" /></label>
-            <label className="flex w-40 flex-col gap-1"><span className="text-xs text-slate-600">Revenue account code</span><input value={account} onChange={(e) => setAccount(e.target.value)} placeholder="e.g. 200" className="h-9 rounded-md border border-slate-300 px-3" /></label>
-            <Button size="sm" loading={working} disabled={!saleId.trim() || !account.trim()} onClick={() => after(() => linkCin7SaleAction(projectId, saleId, account))}>Link Cin7 Sale (read-only check)</Button>
-            <p className="w-full text-xs text-slate-500">Reads the sale once to verify it is an AUTHORISED Advanced Sale. The link is permanent. Nothing is written to Cin7.</p>
-          </div>
-        ) : <p className="mt-1 text-slate-600">Not linked. A manager must link the Cin7 Sale first.</p>}
+        ) : <p className="mt-1 text-slate-600">No Cin7 Sale yet. Use <strong>Create the Cin7 Advanced Sale</strong> above: the products and charges come from the approved quotation, and the Sale is read back, verified and linked automatically.</p>}
+        {!link && gates.isManager && (
+          <details className="mt-3 rounded border border-amber-200 bg-amber-50/40 p-3">
+            <summary className="cursor-pointer text-xs font-medium text-amber-800">Administrative recovery: attach a Sale that already exists in Cin7</summary>
+            <p className="mt-2 text-xs text-slate-600">Only for a Sale the automatic creation could not finish linking. It reads the Sale live and links it ONLY if it is this project&apos;s own Sale (ExternalID, customer, products and totals all match the project). Another project&apos;s Sale, or any mismatch, is refused. A reason is required and the attempt is audited. Nothing is written to Cin7.</p>
+            <div className="mt-2 grid gap-2 md:grid-cols-3">
+              {([["saleId", "Cin7 SaleID"], ["customerName", "Cin7 customer name"], ["location", "Cin7 location"], ["revenueAccount", "Revenue account code"], ["cin7TaxRule", "Cin7 tax rule name"]] as const).map(([k, label]) => (
+                <label key={k} className="flex flex-col gap-1"><span className="text-xs text-slate-600">{label}</span><input value={rec[k]} onChange={(e) => setRec({ ...rec, [k]: e.target.value })} className="h-9 rounded-md border border-slate-300 px-3 text-sm" /></label>
+              ))}
+              <label className="flex flex-col gap-1 md:col-span-3"><span className="text-xs text-slate-600">Reason for recovery (required, audited)</span><input value={rec.reason} onChange={(e) => setRec({ ...rec, reason: e.target.value })} className="h-9 rounded-md border border-slate-300 px-3 text-sm" /></label>
+            </div>
+            <div className="mt-2"><Button size="sm" variant="secondary" loading={working} disabled={Object.values(rec).some((v) => !v.trim())} onClick={() => after(() => recoverLinkCin7SaleAction(projectId, rec))}>Verify and link this Sale</Button></div>
+          </details>
+        )}
       </div>
 
       <div className="mt-4 space-y-3">

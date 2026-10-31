@@ -7,6 +7,7 @@
 
 import Image from "next/image";
 import { isNewquipPocOrg } from "@/newquip/access";
+import { APPROVALS_DISABLED } from "@/lib/approvals/kill-switch";
 import { useId } from "react";
 
 type IconProps = { className?: string };
@@ -100,6 +101,10 @@ export function ImportIcon({ className }: IconProps) {
 
 export function TemplateIcon({ className }: IconProps) {
   return <ModuleImageIcon src="/icons/templates.png" className={className} />;
+}
+
+export function ApprovalsIcon({ className }: IconProps) {
+  return <ModuleImageIcon src="/icons/audit.png" className={className} />;
 }
 
 export function MigrateIcon({ className }: IconProps) {
@@ -599,6 +604,16 @@ export const SOLUTION_BUILDER_MODULE: ModuleConfig = {
   blurb: "Build a NewQuip Grower house solution: configure, review, quote, approve and hand over to a Project.",
 };
 
+// NewQuip commercial approvals (quotes, claims, variations): one dashboard for managers and a status view for preparers. Like Solution Builder it is
+// deliberately NOT in MODULES; the route layout and every server action re-check the NewQuip organisation independently.
+export const APPROVALS_MODULE: ModuleConfig = {
+  href: "/approvals",
+  label: "Approvals",
+  gradient: SELF_COLORED_ICON_BADGE,
+  Icon: ApprovalsIcon,
+  blurb: "Review, approve, return or reject NewQuip quotations, progress claims and variations, with a permanent timestamped history.",
+};
+
 /**
  * The left-navigation links for an org: its enabled modules, plus Solution Builder where NewQuip's capability applies, placed
  * straight after Quotes (or, if Quotes is hidden, before Projects). Pure so it is directly unit-testable.
@@ -614,7 +629,37 @@ export function buildNavLinks(orgId: string | null, disabledModules: string[], i
     if (at < 0) at = visible.length;
     links = [...visible.slice(0, at), SOLUTION_BUILDER_MODULE, ...visible.slice(at)];
   }
+  if (!APPROVALS_DISABLED && orgId != null && isNewquipPocOrg(orgId) && !disabledModules.includes(PROJECTS_MODULE.href)) {
+    const i = links.findIndex((m) => m.href === PROJECTS_MODULE.href);
+    links = [...links.slice(0, i + 1), APPROVALS_MODULE, ...links.slice(i + 1)];
+  }
   return isSuperAdmin ? [...links, ADMIN_MODULE] : links;
+}
+
+export type NavItem = { kind: "link"; link: ModuleConfig } | { kind: "group"; label: string; Icon: ModuleConfig["Icon"]; children: ModuleConfig[] };
+
+/** The NewQuip modules, in the order they appear inside the NewQuip group. */
+const NEWQUIP_GROUP_HREFS = [SOLUTION_BUILDER_MODULE.href, PROJECTS_MODULE.href, APPROVALS_MODULE.href];
+
+/**
+ * The left navigation as items: ordinary links, except that for the NewQuip organisation Solution Builder, Projects and Approvals are nested under one
+ * "NewQuip" group (placed where Solution Builder / Projects were). Pure; built from buildNavLinks so visibility rules cannot drift.
+ */
+export function buildNavItems(orgId: string | null, disabledModules: string[], isSuperAdmin: boolean): NavItem[] {
+  const links = buildNavLinks(orgId, disabledModules, isSuperAdmin);
+  if (orgId == null || !isNewquipPocOrg(orgId)) return links.map((link) => ({ kind: "link", link }));
+  const children = NEWQUIP_GROUP_HREFS.flatMap((h) => links.filter((l) => l.href === h));
+  if (children.length === 0) return links.map((link) => ({ kind: "link", link }));
+  const items: NavItem[] = [];
+  let placed = false;
+  for (const link of links) {
+    if (NEWQUIP_GROUP_HREFS.includes(link.href)) {
+      if (!placed) { items.push({ kind: "group", label: "NewQuip", Icon: children[0].Icon, children }); placed = true; }
+      continue;
+    }
+    items.push({ kind: "link", link });
+  }
+  return items;
 }
 
 /** Active for the link's own route and everything nested under it (a segment boundary, so /projects never matches /projects-x). */

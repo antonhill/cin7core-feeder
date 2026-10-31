@@ -12,6 +12,8 @@ import { loadProjectView } from "./project-store";
 import { listPostings } from "./cin7-posting-store";
 import { loadCreation } from "./cin7-sale-creation-store";
 import type { ProjectView } from "./project-view";
+import { assertNotPendingApproval } from "@/lib/approvals/pending-guard";
+import { buildConsolidatedCommercial, type ConsolidatedCommercial, type ReportScopeInput } from "./consolidated-report";
 import { scheduleToStages, validateVariationSchedule, type ScheduleStageInput } from "./variation-schedule";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
@@ -43,6 +45,7 @@ export async function saveDraftSchedule(db: Db, orgId: string, projectId: string
   if (!check.ok) fail(check.error);
   const v = await loadVariation(db, orgId, projectId, variationId);
   if (v.status !== "DRAFT") fail(`A ${v.status} variation's schedule is frozen. Use a controlled amendment.`);
+  await assertNotPendingApproval(db, orgId, "VARIATION", variationId);
   const del = await db.from("project_variation_stages").delete().eq("org_id", orgId).eq("variation_id", variationId);
   if (del.error) fail(`replace schedule: ${del.error.message}`);
   const ins = await db.from("project_variation_stages").insert(stages.map((s, i) => ({ org_id: orgId, variation_id: variationId, sort_order: i + 1, name: s.name.trim(), bps: s.bps }))).select("id");
@@ -223,4 +226,32 @@ export async function closureBlockers(db: Db, orgId: string, projectId: string):
   }
   if (self.billing_scope === "VARIATION") out.push(...(await unresolvedItems(db, orgId, projectId)));
   return out;
+}
+
+// ── consolidated COMMERCIAL report (READ-ONLY; no Cin7 call) ─────────────────
+
+
+/** Contract, claims and Cin7 invoices of the BASE scope and every variation, each counted once. Reads only Supabase. */
+export async function loadConsolidatedCommercial(db: Db, orgId: string, projectId: string): Promise<ConsolidatedCommercial | null> {
+  const c = await loadConsolidatedProject(db, orgId, projectId);
+  if (!c) return null;
+  const byVar = new Map(c.base.variations.map((v) => [v.code, v]));
+  const inputs: ReportScopeInput[] = [];
+  for (const s of c.scopes) {
+    const view = s.scope === "BASE" ? c.base : await loadProjectView(db, orgId, s.projectId);
+    const postings = await listPostings(db, orgId, s.projectId);
+    const live = postings.filter((p) => p.posting_state === "CREATED" || p.posting_state === "RECONCILED");
+    const numberByClaim = new Map(live.map((p) => [p.claim_id, p.cin7_invoice_number]));
+    inputs.push({
+      scope: s.scope, label: s.scope === "BASE" ? "Original contract" : `${s.variationCode} variation`, projectId: s.projectId,
+      contractCents: s.contractCents, claimableCents: s.claimableCents, billingStarted: true,
+      claims: (view?.claims ?? []).map((cl) => ({ claimNumber: cl.claim_number, status: cl.status, subtotalCents: cl.subtotal_cents, totalCents: cl.total_cents, invoiceNumber: numberByClaim.get(cl.id) ?? null })),
+      invoices: live.map((p) => ({ invoiceNumber: p.cin7_invoice_number, amountExVatCents: p.amount_ex_vat_cents, totalCents: p.total_cents, state: p.posting_state })),
+    });
+  }
+  // Approved variations whose billing has not started are part of the revised contract but have no billing project to report from.
+  for (const u of c.unbilledApprovedVariations) {
+    inputs.push({ scope: "VARIATION", label: `${u.code} variation`, projectId: `unbilled:${u.id}`, contractCents: byVar.get(u.code)?.amount_cents ?? u.amountCents, claimableCents: 0, claims: [], invoices: [], billingStarted: false });
+  }
+  return buildConsolidatedCommercial(inputs);
 }

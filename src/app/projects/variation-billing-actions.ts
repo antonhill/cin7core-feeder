@@ -11,7 +11,9 @@ import { logActivity } from "@/lib/activity-log";
 import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { assertNewquipOrg } from "@/lib/projects/newquip-gate";
-import { amendVariationSchedule, createVariationBillingProject, listVariationStages, loadConsolidatedProject, saveDraftSchedule, type ConsolidatedProject } from "@/lib/projects/variation-billing-store";
+import type { ConsolidatedCommercial } from "@/lib/projects/consolidated-report";
+import { amendVariationSchedule, createVariationBillingProject, loadConsolidatedCommercial, listVariationStages, loadConsolidatedProject, saveDraftSchedule, type ConsolidatedProject } from "@/lib/projects/variation-billing-store";
+import { resolveVariationProducts, searchCatalogue, type CatalogueResult } from "@/lib/projects/catalogue-search";
 import { callerIsOrgAdmin } from "@/lib/projects/scope-access";
 import { scheduleFromPercents } from "@/lib/projects/variation-schedule";
 
@@ -69,9 +71,36 @@ export async function startVariationBillingAction(projectId: string, variationId
     assertNewquipOrg(orgId);
     await requireOrgAdmin("start variation billing");
     const db = createServiceRoleClient();
-    const r = await createVariationBillingProject(db, { isManager: true }, email ?? "unknown", { orgId, projectId, variationId, products });
-    if (r.created) await logActivity(db, { orgId, actor: { userId, email }, action: "projects.variation_billing_started", summary: "Started billing for an approved variation (separate billing project; no Cin7 write)", detail: { projectId, variationId, billingProjectId: r.billingProjectId, skus: products.map((p) => p.sku) } });
+    // Each pick is verified against the synced Cin7 catalogue and described from it (never from the browser); none = service-only.
+    const verified = await resolveVariationProducts(db, orgId, products.map((p) => ({ sku: p.sku, quantity: p.quantity })));
+    const r = await createVariationBillingProject(db, { isManager: true }, email ?? "unknown", { orgId, projectId, variationId, products: verified });
+    if (r.created) await logActivity(db, { orgId, actor: { userId, email }, action: "projects.variation_billing_started", summary: "Started billing for an approved variation (separate billing project; no Cin7 write)", detail: { projectId, variationId, billingProjectId: r.billingProjectId, skus: verified.map((p) => p.sku), serviceOnly: verified.length === 0 } });
     return { ok: true, data: r };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/** Read-only (no Cin7 call): contract, claims and Cin7 invoices of the original project and every variation, each counted once. */
+export async function getConsolidatedCommercialAction(projectId: string): Promise<VariationBillingResult<ConsolidatedCommercial>> {
+  try {
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    assertNewquipOrg(orgId);
+    const db = createServiceRoleClient();
+    const r = await loadConsolidatedCommercial(db, orgId, projectId);
+    return r ? { ok: true, data: r } : { ok: false, error: "Project not found." };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/** Search the synced Cin7 catalogue by SKU or description (read-only, org-scoped, NewQuip only). Stock is shown, never required. */
+export async function searchVariationProductsAction(query: string): Promise<VariationBillingResult<CatalogueResult>> {
+  try {
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    assertNewquipOrg(orgId);
+    await requireOrgAdmin("search products for a variation");
+    return { ok: true, data: await searchCatalogue(createServiceRoleClient(), orgId, query) };
   } catch (e) {
     return { ok: false, error: message(e) };
   }

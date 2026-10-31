@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AppShell } from "./AppShell";
+import { DemoModeBar } from "./DemoModeBar";
 import TourGuide from "./tour-guide";
 import { getCurrentUserInfo } from "@/actions/auth";
 import { clearImpersonatedOrgAction } from "@/actions/org-switch";
@@ -71,6 +72,7 @@ export default async function RootLayout({
         {(() => {
           const content = (
             <div className="flex flex-1 flex-col overflow-x-hidden overflow-y-auto">
+              <DemoModeBar orgId={orgId} email={email} />
               {isImpersonating && (
                 <div className="flex flex-wrap items-center justify-between gap-2 bg-warning px-4 py-2 text-sm font-semibold text-white print:hidden">
                   <span>Viewing as {orgName ?? "another organization"} (master user)</span>

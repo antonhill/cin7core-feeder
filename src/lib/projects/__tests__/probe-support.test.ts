@@ -55,8 +55,8 @@ describe("sanitising + prioritising helpers", () => {
   });
 });
 
-describe("the probe script itself stays read-only", () => {
-  const script = readFileSync(join(ROOT, "scripts/probe-sale-invoices-readonly.mjs"), "utf8");
+describe.each(["probe-sale-invoices-readonly.mjs", "probe-product-costs-readonly.mjs"])("%s: the probe script itself stays read-only", (file) => {
+  const script = readFileSync(join(ROOT, "scripts", file), "utf8");
   it("has no write verbs, a single HTTP call site (GET) and select-only database reads", () => {
     expect(script).not.toMatch(/\b(POST|PUT|PATCH|DELETE)\b/);
     expect(script).not.toMatch(/method:\s*["'](?!GET)/);

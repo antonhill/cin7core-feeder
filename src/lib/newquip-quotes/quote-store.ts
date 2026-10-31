@@ -8,9 +8,14 @@ import { evaluateDraft, type EvaluationContext, type QuoteEvaluation } from "@/n
 import { emptyDraft, type QuoteDraft } from "@/newquip/grower/draft";
 import { buildAcceptedBaseline, baselineMatchesHash, hashOf, type AcceptedBaseline } from "@/newquip/quote/baseline";
 import { quoteToProjectBaseline } from "@/newquip/quote/to-project";
+import type { ScheduleStageTemplate } from "@/newquip/quote/billing-schedule";
+import type { ScheduleSource } from "@/newquip/quote/project-template";
 import { authoriseTransition, canEditDraft, checkApproval, checkHandoff, type QuoteState } from "@/newquip/quote/workflow";
 import type { QuoteRole } from "@/newquip/quote/roles";
 import { createProjectFromBaseline } from "@/lib/projects/project-store";
+import { libraryOf, listActiveMappings } from "@/lib/projects/package-mapping-store";
+import { requireAcceptance } from "./acceptance";
+import { latestSnapshot } from "./customer-store";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 
@@ -42,6 +47,8 @@ export interface QuoteRecord {
   baseline_hash: string | null;
   contract_cents: number | null;
   project_id: string | null;
+  /** Migration 0115. TRUE: a Project needs the customer's acceptance of the issued quotation. FALSE / absent: grandfathered (existed before 0115). */
+  requires_customer_acceptance?: boolean | null;
   created_by_email: string | null;
   created_at: string;
   updated_at: string;
@@ -104,6 +111,32 @@ export async function saveDraft(db: Db, orgId: string, roles: ReadonlySet<QuoteR
   return { draftHash, signoffCleared: clearSignoff };
 }
 
+/**
+ * The customer on an EDITABLE quotation changed (or was cleared). Only the customer name is rewritten: scope, packages and pricing are untouched. Anything that was
+ * given for the PREVIOUS customer no longer applies: the estimator's sign-off is withdrawn and, in estimator review, the customer's confirmed amount is cleared and the
+ * quotation goes back to the Rep as a new revision (so the new customer must confirm before it is handed off again). A REP_DRAFT has no confirmation yet.
+ */
+export async function applyCustomerChange(
+  db: Db, orgId: string, quoteId: string, customerName: string, previousCustomer: boolean,
+): Promise<{ returnedToRep: boolean; signoffCleared: boolean; confirmationCleared: boolean }> {
+  const q = await mustLoad(db, orgId, quoteId);
+  if (q.state === "MANAGER_APPROVED_FINAL") fail("The customer details of an approved quotation are immutable. Start a new quotation for a different customer.");
+  // First Cin7 selection that merely confirms the customer already named on the quotation: nothing given for a different customer, so nothing to withdraw.
+  if (!previousCustomer && (q.customer_name ?? "").trim() === customerName.trim()) return { returnedToRep: false, signoffCleared: false, confirmationCleared: false };
+  const draft = { ...q.draft, customerName } as QuoteDraft;
+  const inReview = q.state === "ESTIMATOR_REVIEW";
+  const signoffCleared = q.estimator_signoff_hash != null;
+  const confirmationCleared = q.customer_confirmed_cents != null || q.customer_confirmed_by != null;
+  const r = await db.from("newquip_quotes").update({
+    draft, draft_hash: hashOf(draft), customer_name: customerName,
+    estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null,
+    ...(inReview ? { state: "REP_DRAFT", revision: q.revision + 1, customer_confirmed_cents: null, customer_confirmed_by: null, customer_confirmed_at: null, handoff_by_email: null } : {}),
+  }).eq("org_id", orgId).eq("id", quoteId).eq("state", q.state).select("id");
+  if (r.error) fail(r.error.message);
+  if (!r.data || r.data.length === 0) fail("The quotation changed while updating the customer; refresh and try again.");
+  return { returnedToRep: inReview, signoffCleared, confirmationCleared };
+}
+
 // ── workflow ────────────────────────────────────────────────────────────────
 
 /** Rep → Estimator. Records the customer's confirmation of the commercial amount. */
@@ -140,6 +173,22 @@ export async function returnToRep(db: Db, orgId: string, roles: ReadonlySet<Quot
   if (!r.data || r.data.length === 0) fail("The quote is no longer in estimator review.");
 }
 
+/**
+ * Manager -> Estimator. The quotation, its revision, the customer's confirmation and its whole history are kept; ONLY the estimator's sign-off is
+ * withdrawn, so it cannot be approved again until an estimator signs off the (possibly corrected) current content.
+ */
+export async function returnToEstimator(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, quoteId: string, reason: string): Promise<void> {
+  if (!reason.trim()) fail("A reason is required to return a quote to the estimator.");
+  const q = await mustLoad(db, orgId, quoteId);
+  const auth = authoriseTransition(roles, q.state, "RETURN_TO_ESTIMATOR");
+  if (!auth.ok) fail(auth.error);
+  if (!q.estimator_signoff_hash) fail("The estimator has not signed this quote off, so there is nothing to return to the estimator.");
+  const r = await db.from("newquip_quotes").update({ estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null })
+    .eq("org_id", orgId).eq("id", quoteId).eq("state", "ESTIMATOR_REVIEW").eq("draft_hash", q.draft_hash).select("id");
+  if (r.error) fail(r.error.message);
+  if (!r.data || r.data.length === 0) fail("The quote changed while returning it; refresh and try again.");
+}
+
 /** The estimator double-checked THIS exact content (its hash is what is recorded). */
 export async function estimatorSignOff(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, email: string, quoteId: string, ctx: EvaluationContext): Promise<void> {
   const q = await mustLoad(db, orgId, quoteId);
@@ -165,7 +214,10 @@ export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<Q
   const chk = checkApproval({ readiness: ev.readiness, totalExVatCents: totalCents(ev), customerConfirmedCents: q.customer_confirmed_cents, signoffHash: q.estimator_signoff_hash, currentDraftHash: q.draft_hash });
   if (!chk.ok) fail(chk.error);
   const now = new Date().toISOString();
+  // Reusable mappings active RIGHT NOW are applied to unmapped packages and sealed with their versions. Unresolved items never block approval.
+  const library = await listActiveMappings(db, orgId);
   const { baseline, hash } = buildAcceptedBaseline({
+    mappingLibrary: library ? libraryOf(library) : undefined,
     quoteRef: q.quote_ref, revision: q.revision, draft: q.draft, evaluation: ev,
     // Cost-visible evaluation of the SAME draft, used only for the internal margin sheet frozen with the baseline.
     marginEvaluation: marginCtx ? evaluateDraft(q.draft, marginCtx) : undefined,
@@ -190,7 +242,7 @@ export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<Q
  * engineering recalculation, and is idempotent: a quote that already has a project returns it (and a project created but not
  * yet linked — e.g. after a crash — is found by its quote reference and linked rather than duplicated).
  */
-export async function createProjectFromAcceptedQuote(db: Db, orgId: string, email: string, quoteId: string): Promise<{ projectId: string; created: boolean }> {
+export async function createProjectFromAcceptedQuote(db: Db, orgId: string, email: string, quoteId: string, schedule?: readonly ScheduleStageTemplate[], scheduleSource?: ScheduleSource): Promise<{ projectId: string; created: boolean }> {
   const q = await mustLoad(db, orgId, quoteId);
   if (q.state !== "MANAGER_APPROVED_FINAL" || !q.accepted_baseline || !q.baseline_hash) fail("Only a manager-approved final quote can become a Project.");
   if (q.project_id) return { projectId: q.project_id, created: false };
@@ -198,18 +250,37 @@ export async function createProjectFromAcceptedQuote(db: Db, orgId: string, emai
 
   // Variation billing projects (migration 0105) copy originating_quote_ref from their parent, so this lookup must pick the BASE project only:
   // matching a child would link the quote to an internal billing project. Filtered in code so it also works before 0105 exists.
-  const found = await db.from("projects").select("*").eq("org_id", orgId).eq("originating_quote_ref", q.quote_ref);
-  if (found.error) fail(found.error.message);
-  const bases = ((found.data ?? []) as Array<{ id: string; parent_project_id?: string | null; billing_scope?: string | null }>).filter((p) => !p.parent_project_id && p.billing_scope !== "VARIATION");
-  if (bases.length > 1) fail("More than one project exists for this quote; refusing to guess which one to link.");
-  let projectId = bases[0]?.id ?? null;
+  const findBases = async () => {
+    const found = await db.from("projects").select("*").eq("org_id", orgId).eq("originating_quote_ref", q.quote_ref);
+    if (found.error) fail(found.error.message);
+    const bases = ((found.data ?? []) as Array<{ id: string; parent_project_id?: string | null; billing_scope?: string | null }>).filter((p) => !p.parent_project_id && p.billing_scope !== "VARIATION");
+    if (bases.length > 1) fail("More than one project exists for this quote; refusing to guess which one to link.");
+    return bases;
+  };
+  const linkProject = async (id: string, wasCreated: boolean): Promise<{ projectId: string; created: boolean }> => {
+    const link = await db.from("newquip_quotes").update({ project_id: id }).eq("org_id", orgId).eq("id", quoteId).eq("state", "MANAGER_APPROVED_FINAL").select("id");
+    if (link.error) fail(link.error.message);
+    if (!link.data || link.data.length === 0) fail("The project was created but could not be linked to the quote.");
+    return { projectId: id, created: wasCreated };
+  };
+  let projectId = (await findBases())[0]?.id ?? null;
   const created = projectId == null;
   if (!projectId) {
-    const generic = quoteToProjectBaseline(q.accepted_baseline, q.baseline_hash, q.id);
-    projectId = await createProjectFromBaseline(db, orgId, email, generic, { reference: `PRJ-${q.quote_ref}`, name: `${q.accepted_baseline.quote.customerName} — ${q.accepted_baseline.quote.siteName}` });
+    // Quotations created after migration 0115 need the customer's acceptance of the CURRENT issued document, and the Project takes the billing schedule the customer
+    // accepted. Quotations that existed at the cutover are grandfathered (null) and behave exactly as before.
+    const accepted = await requireAcceptance(db, orgId, q);
+    const snap = await latestSnapshot(db, orgId, q.id);
+    let generic = quoteToProjectBaseline(q.accepted_baseline, q.baseline_hash, q.id, accepted ? accepted.schedule : schedule, accepted ? (accepted.scheduleSource ?? scheduleSource) : scheduleSource);
+    if (snap) generic = { ...generic, customer: { ...generic.customer, cin7CustomerId: snap.cin7_customer_id } }; // the selected Cin7 customer, by its authoritative ID
+    try {
+      projectId = await createProjectFromBaseline(db, orgId, email, generic, { reference: `PRJ-${q.quote_ref}`, name: `${q.accepted_baseline.quote.customerName} — ${q.accepted_baseline.quote.siteName}` });
+    } catch (e) {
+      // A concurrent request (double click, two tabs, a reload mid-request) may have created it first: the project reference is unique per organisation, so the loser is refused by the database. Link the existing one; never create a second.
+      const winner = /duplicate key|unique constraint|23505/i.test(e instanceof Error ? e.message : String(e)) ? ((await findBases())[0]?.id ?? null) : null;
+      if (!winner) throw e;
+      projectId = winner;
+      return await linkProject(winner, false);
+    }
   }
-  const link = await db.from("newquip_quotes").update({ project_id: projectId }).eq("org_id", orgId).eq("id", quoteId).eq("state", "MANAGER_APPROVED_FINAL").select("id");
-  if (link.error) fail(link.error.message);
-  if (!link.data || link.data.length === 0) fail("The project was created but could not be linked to the quote.");
-  return { projectId, created };
+  return await linkProject(projectId, created);
 }

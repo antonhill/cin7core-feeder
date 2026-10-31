@@ -362,6 +362,13 @@ export async function approveClaim(db: Db, orgId: string, approverEmail: string,
   if (!r.data || r.data.length === 0) fail("Claim could not be approved (state changed).");
 }
 
+/** A manager returns a READY_FOR_APPROVAL claim to DRAFT for correction (the database allows exactly this transition). Reserves nothing, writes nothing to Cin7. */
+export async function returnClaimToDraft(db: Db, orgId: string, projectId: string, claimId: string): Promise<void> {
+  const r = await db.from("project_claims").update({ status: "DRAFT" }).eq("org_id", orgId).eq("project_id", projectId).eq("id", claimId).eq("status", "READY_FOR_APPROVAL").select("id");
+  if (r.error) fail(r.error.message);
+  if (!r.data || r.data.length === 0) fail("The claim is no longer waiting for approval.");
+}
+
 export async function cancelDraftClaim(db: Db, orgId: string, projectId: string, claimId: string): Promise<void> {
   const r = await db.from("project_claims").update({ status: "CANCELLED_BEFORE_WRITE", no_write_evidence: { method: "NEVER_SENT", checkedAt: new Date().toISOString(), detail: "Cancelled before approval; no Cin7 call was ever made." } })
     .eq("org_id", orgId).eq("project_id", projectId).eq("id", claimId).in("status", ["DRAFT", "READY_FOR_APPROVAL"]).select("id");

@@ -186,11 +186,27 @@ export function stampCostOverrides<D extends { estimator: { costOverrides?: Over
   return next;
 }
 
+/** The captured physical costs are written only by the server's capture actions: whatever a saved draft carries is replaced with the stored ones. */
+export function keepServerOwnedCosts<D extends { estimator: { physicalCosts?: unknown } }>(draft: D, prior: unknown): D {
+  const next = structuredClone(draft);
+  if (prior && typeof prior === "object" && Object.keys(prior as object).length) next.estimator.physicalCosts = structuredClone(prior); else delete next.estimator.physicalCosts;
+  return next;
+}
+
+/** The cost-basis declarations (unit basis, accepted exception) are likewise written only by the server's cost actions. */
+export function keepServerOwnedCostBasis<D extends { estimator: { costBasis?: unknown } }>(draft: D, prior: unknown): D {
+  const next = structuredClone(draft);
+  if (prior && typeof prior === "object" && Object.keys(prior as object).length) next.estimator.costBasis = structuredClone(prior); else delete next.estimator.costBasis;
+  return next;
+}
+
 /** Removes every internal financial from a quote record for a viewer who may not see cost: the frozen margin sheet and the cost overrides. */
-export function redactInternalFinancials<Q extends { draft: { estimator: { costOverrides?: unknown } }; accepted_baseline: { internalMargin?: unknown } | null }>(quote: Q, canViewCommercials: boolean): Q {
+export function redactInternalFinancials<Q extends { draft: { estimator: { costOverrides?: unknown; physicalCosts?: unknown; costBasis?: unknown } }; accepted_baseline: { internalMargin?: unknown; physicalCostEstimate?: unknown; estimator?: { physicalCosts?: unknown; costOverrides?: unknown; costBasis?: unknown } } | null }>(quote: Q, canViewCommercials: boolean): Q {
   if (canViewCommercials) return quote;
   const q = structuredClone(quote);
   delete q.draft.estimator.costOverrides;
-  if (q.accepted_baseline) delete q.accepted_baseline.internalMargin;
+  delete q.draft.estimator.physicalCosts;
+  delete q.draft.estimator.costBasis;
+  if (q.accepted_baseline) { delete q.accepted_baseline.internalMargin; delete q.accepted_baseline.physicalCostEstimate; if (q.accepted_baseline.estimator) { delete q.accepted_baseline.estimator.physicalCosts; delete q.accepted_baseline.estimator.costOverrides; delete q.accepted_baseline.estimator.costBasis; } }
   return q;
 }
