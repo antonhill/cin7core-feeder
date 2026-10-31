@@ -30,8 +30,16 @@ No existing action, store, page, route, policy or migration was modified. (`fake
 * **Visibility is not authority.** An assignment grants *seeing* only. Editing, signing off, approving, issuing, sending and accepting stay role-gated by the existing code, untouched.
 * **Multiple Reps per customer** are allowed (one *active* row per customer + Rep, enforced by a partial unique index). Assigning is idempotent.
 * **Append-only history.** Ending needs a reason (>= 3 chars) and records who/when; the row is never deleted or reopened. Re-assigning the same Rep later is a new row.
-* **Reassignment fails closed:** the old access is ended *first*, then the new one created. If the second step fails, the customer is covered by neither Rep (never both) and the
-  call can simply be repeated.
+* **Reassignment is ATOMIC.** It is one database function, `customer_rep_reassign` (in the unapplied migration 0118), i.e. ONE transaction: it ends only the from-Rep's active assignment and
+  creates the replacement together, or does neither. If anything fails (validation, the replacement insert, a constraint) the whole call rolls back and the previous assignment is exactly as
+  it was: the customer is never left without its Rep, and other Reps on the same customer are never touched. Concurrent changes to one customer are serialised by a per-customer advisory lock
+  plus a row lock on the assignment being ended. If the new Rep is already assigned (several Reps per customer), the old access is ended and no duplicate is created. A replayed request is
+  refused (the old assignment is already ended) and changes nothing. The function is SECURITY INVOKER (runs with service_role's narrow grants, widening nothing), executable by service_role only,
+  and requires the new Rep to be a member of the same organisation (the application additionally checks the Rep role and the actor's permission, unchanged). There is **no fallback** to separate
+  end + create calls: without the function the application fails closed.
+* **Audit.** The authoritative record of who changed what, when and why is the append-only assignment history itself, written inside the same transaction as the change, so it can never disagree
+  with the state. The additional activity-log entry is written by the application after the commit and is best-effort by the platform's design (`logActivity` swallows its own errors); it is
+  written only for a reassignment that succeeded.
 * **Same denial for everything.** Unassigned, revoked, another organisation's, and non-existent quotations all return exactly `Quote not found.` (no probing), and the check runs *before*
   any quotation data is loaded.
 * **Rep responses are cost-free by construction.** They are built from named fields (no estimator state, baseline or margin sheet), the evaluation is produced with cost withheld, and a
@@ -47,16 +55,25 @@ See the final report on the PR for the exact-head test and CI results. Mutation 
 still granting access, org scoping removed, estimator state leaked, Rep role not required, reassignment order inverted, latest-customer filter dropped, manager gate dropped, cost
 stripping removed, unpaged reads) were all caught; 4 migration mutants (guard trigger removed, partial unique index broken, over-broad service_role grant, RLS disabled) were all caught.
 
+**Reassignment atomicity review (PR #127 follow-up).** The first version of reassignment performed separate end and create calls (not one transaction), so a failure after the end could leave a
+customer with no Rep; that was confirmed in the code and replaced by the single database function above. Evidence: the new tests fail against the old implementation (the table state after a failed
+reassignment differs from before it) and pass against the new one; 6 of 7 SQL-function mutants are caught (the seventh, removing the reason check, is equivalent because the table CHECK still
+refuses a trivial reason); and a real-Postgres, multi-connection run (`supabase/tests/manual/0118_reassign_concurrency.mjs`, Postgres 17.5 with all 119 migrations): a competing request
+waited for the first transaction then lost; 150 rounds of 10 parallel conflicting requests gave exactly one success per intended Rep with no duplicate active Rep, no uncovered customer and the
+unrelated Rep untouched; 120 randomised failure-injection rounds rolled back about 300 calls that failed after updating the old row, leaving no trace; 0 invariant violations. With the locks removed
+from the function the database guards still prevent corruption but competing requests fail with raw internal errors and a duplicate-key leak, so the locks are what make the behaviour clean. The CI
+SQL suite is single-session and cannot race; the concurrency script is a manual check (it needs `pg` and a throwaway database).
+
 ## 4. Migration compatibility and rollback assessment (0118)
 
-* **Additive and independent.** One new table, one guard function, one trigger. No existing table, column, policy, grant, function or row is touched; nothing existing references it.
+* **Additive and independent.** One new table, two functions (the history guard and the atomic reassignment), one trigger. No existing table, column, policy, grant, function or row is touched; nothing existing references it.
 * **Order-independent deployment.** The application can be deployed before or after the migration: until applied, the new boundary reports "not available" and every existing screen is
   unchanged. Applying it changes nothing for any user until assignments are created.
 * **Bootstrap.** Applies cleanly after 0001-0117 (119 files) in a clean database; the SQL test passes; 4 migration mutants fail the test as they should.
 * **Ledger.** 0114 is still outstanding on hosted and is independent; 0118 would be registered after 0117 (entry 132 expected) when the owner approves.
 * **Privileges.** RLS enabled with **no client policy**; `anon`/`authenticated` have no privilege; `service_role` has SELECT, INSERT and column-level UPDATE of the three "end" columns only (no
-  DELETE/TRUNCATE/REFERENCES/TRIGGER), matching the 0117 least-privilege pattern.
-* **Rollback.** `drop table customer_rep_assignments cascade; drop function customer_rep_assignments_guard();` returns the schema to 0117. No data elsewhere depends on it. Rolling back
+  DELETE/TRUNCATE/REFERENCES/TRIGGER), matching the 0117 least-privilege pattern. `customer_rep_reassign` is executable by `service_role` only (revoked from public, anon and authenticated).
+* **Rollback.** `drop function customer_rep_reassign(uuid, text, text, uuid, uuid, text, text, text, text); drop table customer_rep_assignments cascade; drop function customer_rep_assignments_guard();` returns the schema to 0117. No data elsewhere depends on it. Rolling back
   loses only assignment history (which would be exported first if it contained real assignments).
 * **Hosted impact if applied:** none visible; the table starts empty.
 

@@ -69,17 +69,24 @@ export async function endAssignment(db: Db, orgId: string, by: Actor, assignment
 }
 
 export interface ReassignInput { cin7CustomerId: string; customerName: string; fromRepUserId: string; toRepUserId: string; toRepEmail: string; reason: string }
+export interface ReassignResult { ended: AssignmentRow; assigned: AssignmentRow; created: boolean }
 
 /**
- * Moves a customer from one Rep to another. ORDER MATTERS and fails closed: the old access is ended FIRST, then the new one is created. If the second step fails the customer is
- * temporarily covered by neither Rep (never by both), and the same call can simply be repeated.
+ * Moves a customer from one Rep to another ATOMICALLY: the database function `customer_rep_reassign` (migration 0118) ends ONLY the from-Rep's active assignment and creates the
+ * replacement in ONE transaction, serialised per customer. Any failure rolls the whole call back, so the previous assignment is left exactly as it was; the customer is never left
+ * uncovered, and other Reps assigned to the same customer are never touched. If the target Rep is already assigned the old access is ended and no duplicate is created
+ * (`created: false`). There is deliberately NO fallback to separate end + create calls: if the function is missing, this fails closed.
  */
-export async function reassignCustomer(db: Db, orgId: string, by: Actor, input: ReassignInput): Promise<{ ended: AssignmentRow; assigned: AssignmentRow }> {
-  if (input.fromRepUserId === input.toRepUserId) fail("Choose a different Rep.");
-  const customer = input.cin7CustomerId.trim();
-  const from = (await activeAssignmentsForRep(db, orgId, input.fromRepUserId)).find((a) => a.cin7_customer_id === customer);
-  if (!from) return fail("That Rep is not currently assigned to this customer.");
-  const ended = await endAssignment(db, orgId, by, from.id, input.reason);
-  const { assignment } = await assignRep(db, orgId, by, { cin7CustomerId: customer, customerName: input.customerName, repUserId: input.toRepUserId, repEmail: input.toRepEmail, reason: input.reason });
-  return { ended, assigned: assignment };
+export async function reassignCustomer(db: Db, orgId: string, by: Actor, input: ReassignInput): Promise<ReassignResult> {
+  const r = await db.rpc("customer_rep_reassign", {
+    p_org: orgId, p_customer: input.cin7CustomerId.trim(), p_customer_name: input.customerName.trim(), p_from_user: input.fromRepUserId, p_to_user: input.toRepUserId,
+    p_to_email: input.toRepEmail.trim().toLowerCase(), p_actor_email: by.email, p_owner_email: by.ownerEmail ?? null, p_reason: input.reason,
+  });
+  if (r.error) {
+    if (/could not find the function|schema cache|does not exist/i.test(r.error.message)) return fail("Customer assignments are not available yet.");
+    return fail(r.error.message.replace(/^customer_rep_reassign: /, "").replace(/^./, (c) => c.toUpperCase()));
+  }
+  const d = r.data as { ended?: AssignmentRow; assigned?: AssignmentRow; created?: boolean } | null;
+  if (!d?.ended || !d.assigned) return fail("The reassignment returned no result.");
+  return { ended: d.ended, assigned: d.assigned, created: d.created === true };
 }

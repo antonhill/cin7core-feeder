@@ -90,10 +90,94 @@ do $$ begin
   if has_column_privilege('service_role', 'customer_rep_assignments', 'rep_user_id', 'UPDATE') or has_column_privilege('service_role', 'customer_rep_assignments', 'cin7_customer_id', 'UPDATE') then raise exception 'identity columns are not updatable'; end if;
 end $$;
 
+-- ══ ATOMIC REASSIGNMENT: customer_rep_reassign ═══════════════════════════════
+create or replace function pg_temp.as_service() returns void language plpgsql as $$
+begin perform set_config('role', 'service_role', true); end $$;
+
+insert into auth.users (id) values ('00000000-0000-0000-0000-0000000018a4'), ('00000000-0000-0000-0000-0000000018a5');
+insert into org_members (org_id, user_id, role) values
+  ('00000000-0000-0000-0000-0000000018b1', '00000000-0000-0000-0000-0000000018a4', 'member'),
+  ('00000000-0000-0000-0000-0000000018b1', '00000000-0000-0000-0000-0000000018a5', 'member');
+
+-- Fixture: customer r1 has TWO active Reps (a1, a2); customer r2 has one (a1); customer r3 has a1 and a4.
+insert into customer_rep_assignments (id, org_id, cin7_customer_id, rep_user_id, rep_email, assigned_by_email) values
+  ('00000000-0000-0000-0000-0000000018d1', '00000000-0000-0000-0000-0000000018b1', 'r1', '00000000-0000-0000-0000-0000000018a1', 'rep1@x.test', 'mgr@x.test'),
+  ('00000000-0000-0000-0000-0000000018d2', '00000000-0000-0000-0000-0000000018b1', 'r1', '00000000-0000-0000-0000-0000000018a2', 'rep2@x.test', 'mgr@x.test'),
+  ('00000000-0000-0000-0000-0000000018d3', '00000000-0000-0000-0000-0000000018b1', 'r2', '00000000-0000-0000-0000-0000000018a1', 'rep1@x.test', 'mgr@x.test'),
+  ('00000000-0000-0000-0000-0000000018d4', '00000000-0000-0000-0000-0000000018b1', 'r3', '00000000-0000-0000-0000-0000000018a1', 'rep1@x.test', 'mgr@x.test'),
+  ('00000000-0000-0000-0000-0000000018d5', '00000000-0000-0000-0000-0000000018b1', 'r3', '00000000-0000-0000-0000-0000000018a4', 'rep4@x.test', 'mgr@x.test');
+
+-- privileges: executable by service_role ONLY
+do $$ begin
+  if not has_function_privilege('service_role', 'customer_rep_reassign(uuid,text,text,uuid,uuid,text,text,text,text)', 'EXECUTE') then raise exception 'service_role runs the reassignment'; end if;
+  if has_function_privilege('authenticated', 'customer_rep_reassign(uuid,text,text,uuid,uuid,text,text,text,text)', 'EXECUTE')
+     or has_function_privilege('anon', 'customer_rep_reassign(uuid,text,text,uuid,uuid,text,text,text,text)', 'EXECUTE') then raise exception 'clients must not execute the reassignment'; end if;
+  if (select prosecdef from pg_proc where proname = 'customer_rep_reassign') then raise exception 'the function must be SECURITY INVOKER (widens nothing)'; end if;
+end $$;
+select pg_temp.act_as('00000000-0000-0000-0000-0000000018a1');
+select pg_temp.expect_denied($q$select customer_rep_reassign('00000000-0000-0000-0000-0000000018b1', 'r2', 'Farm', '00000000-0000-0000-0000-0000000018a1', '00000000-0000-0000-0000-0000000018a4', 'rep4@x.test', 'rep1@x.test', null, 'self service')$q$, 'a member calling the reassignment through the database API');
+select pg_temp.reset_role();
+
+-- SUCCESS (run AS service_role, with only its narrow grants): ends ONLY a1's assignment of r1, creates a4's; a2's assignment is untouched
+select pg_temp.as_service();
+select customer_rep_reassign('00000000-0000-0000-0000-0000000018b1', 'r1', 'Farm R1', '00000000-0000-0000-0000-0000000018a1', '00000000-0000-0000-0000-0000000018a4', 'Rep4@X.test', 'mgr@x.test', 'owner@x.test', 'territory change');
+select pg_temp.reset_role();
+do $$
+declare e record; n record; o record;
+begin
+  select * into e from customer_rep_assignments where id = '00000000-0000-0000-0000-0000000018d1';
+  if e.ended_at is null or e.ended_by_email <> 'mgr@x.test' or e.end_reason <> 'territory change' then raise exception 'the intended assignment is ended with actor and reason'; end if;
+  select * into n from customer_rep_assignments where org_id = '00000000-0000-0000-0000-0000000018b1' and cin7_customer_id = 'r1' and rep_user_id = '00000000-0000-0000-0000-0000000018a4' and ended_at is null;
+  if not found then raise exception 'the replacement assignment exists and is active'; end if;
+  if n.rep_email <> 'rep4@x.test' or n.assigned_by_email <> 'mgr@x.test' or n.assigned_by_owner_email <> 'owner@x.test' or n.assigned_reason <> 'territory change' or n.customer_name <> 'Farm R1' then raise exception 'the replacement carries the audit fields'; end if;
+  select * into o from customer_rep_assignments where id = '00000000-0000-0000-0000-0000000018d2';
+  if o.ended_at is not null or o.end_reason is not null then raise exception 'an unrelated active Rep assignment must be untouched'; end if;
+  if (select count(*) from customer_rep_assignments where cin7_customer_id = 'r1') <> 3 then raise exception 'history: old (ended) + other Rep + replacement'; end if;
+end $$;
+
+-- REPLAY: the identical request again is refused (the old assignment is already ended) and creates NO duplicate
+select pg_temp.expect_denied($q$select customer_rep_reassign('00000000-0000-0000-0000-0000000018b1', 'r1', 'Farm R1', '00000000-0000-0000-0000-0000000018a1', '00000000-0000-0000-0000-0000000018a4', 'rep4@x.test', 'mgr@x.test', null, 'territory change')$q$, 'replayed reassignment');
+do $$ begin
+  if (select count(*) from customer_rep_assignments where cin7_customer_id = 'r1' and ended_at is null) <> 2 then raise exception 'a replay must not change the active set (a2, a4)'; end if;
+  if (select count(*) from customer_rep_assignments where cin7_customer_id = 'r1') <> 3 then raise exception 'a replay must not add history rows'; end if;
+end $$;
+
+-- ALREADY-ASSIGNED TARGET (several Reps per customer): r3 has a1 and a4; moving a1 -> a4 ends a1 and creates NOTHING (no duplicate active row)
+do $$ declare r jsonb; begin
+  r := customer_rep_reassign('00000000-0000-0000-0000-0000000018b1', 'r3', 'Farm R3', '00000000-0000-0000-0000-0000000018a1', '00000000-0000-0000-0000-0000000018a4', 'rep4@x.test', 'mgr@x.test', null, 'consolidating Reps');
+  if (r->>'created')::boolean then raise exception 'must report created = false'; end if;
+  if (r->'assigned'->>'id') <> '00000000-0000-0000-0000-0000000018d5' then raise exception 'must return the existing active assignment'; end if;
+end $$;
+do $$ begin
+  if (select count(*) from customer_rep_assignments where cin7_customer_id = 'r3' and ended_at is null) <> 1 then raise exception 'exactly one active Rep remains on r3'; end if;
+  if (select count(*) from customer_rep_assignments where cin7_customer_id = 'r3') <> 2 then raise exception 'no extra row was created'; end if;
+end $$;
+
+-- ATOMICITY: the replacement INSERT fails (rep_email check) AFTER the old assignment was updated inside the function: the WHOLE call rolls back, the old assignment stays active
+select pg_temp.expect_denied($q$select customer_rep_reassign('00000000-0000-0000-0000-0000000018b1', 'r2', 'Farm R2', '00000000-0000-0000-0000-0000000018a1', '00000000-0000-0000-0000-0000000018a4', 'x', 'mgr@x.test', null, 'will fail at insert')$q$, 'replacement insert failure');
+do $$ begin
+  if (select ended_at from customer_rep_assignments where id = '00000000-0000-0000-0000-0000000018d3') is not null then raise exception 'ATOMICITY: the previous assignment must still be active after a failed reassignment'; end if;
+  if (select count(*) from customer_rep_assignments where cin7_customer_id = 'r2') <> 1 then raise exception 'ATOMICITY: no row may be added by a failed reassignment'; end if;
+  if (select end_reason from customer_rep_assignments where id = '00000000-0000-0000-0000-0000000018d3') is not null then raise exception 'ATOMICITY: no end reason may survive a failed reassignment'; end if;
+end $$;
+
+-- the new Rep must belong to THIS organisation; nothing changes
+select pg_temp.expect_denied($q$select customer_rep_reassign('00000000-0000-0000-0000-0000000018b1', 'r2', 'Farm R2', '00000000-0000-0000-0000-0000000018a1', '00000000-0000-0000-0000-0000000018a3', 'rep3@x.test', 'mgr@x.test', null, 'target is in another org')$q$, 'a Rep from another organisation');
+-- cross-organisation: org B cannot reassign org A's customer assignment, even naming its Rep
+select pg_temp.expect_denied($q$select customer_rep_reassign('00000000-0000-0000-0000-0000000018b2', 'r2', 'Farm R2', '00000000-0000-0000-0000-0000000018a1', '00000000-0000-0000-0000-0000000018a3', 'rep3@x.test', 'mgr@x.test', null, 'cross organisation')$q$, 'cross-organisation reassignment');
+-- input validation
+select pg_temp.expect_denied($q$select customer_rep_reassign('00000000-0000-0000-0000-0000000018b1', 'r2', 'Farm R2', '00000000-0000-0000-0000-0000000018a1', '00000000-0000-0000-0000-0000000018a1', 'rep1@x.test', 'mgr@x.test', null, 'same Rep')$q$, 'from = to');
+select pg_temp.expect_denied($q$select customer_rep_reassign('00000000-0000-0000-0000-0000000018b1', 'r2', 'Farm R2', '00000000-0000-0000-0000-0000000018a1', '00000000-0000-0000-0000-0000000018a4', 'rep4@x.test', 'mgr@x.test', null, 'x')$q$, 'trivial reason');
+select pg_temp.expect_denied($q$select customer_rep_reassign('00000000-0000-0000-0000-0000000018b1', 'r2', 'Farm R2', '00000000-0000-0000-0000-0000000018a2', '00000000-0000-0000-0000-0000000018a4', 'rep4@x.test', 'mgr@x.test', null, 'a2 is not assigned to r2')$q$, 'from-Rep not assigned to the customer');
+select pg_temp.expect_denied($q$select customer_rep_reassign('00000000-0000-0000-0000-0000000018b1', '  ', 'Farm', '00000000-0000-0000-0000-0000000018a1', '00000000-0000-0000-0000-0000000018a4', 'rep4@x.test', 'mgr@x.test', null, 'blank customer')$q$, 'blank customer');
+do $$ begin
+  if (select count(*) from customer_rep_assignments where cin7_customer_id = 'r2' and ended_at is null) <> 1 or (select count(*) from customer_rep_assignments where cin7_customer_id = 'r2') <> 1 then raise exception 'every refused reassignment leaves r2 exactly as it was'; end if;
+end $$;
+
 -- existing tables are untouched: this migration adds no policy anywhere else
 do $$ begin
   if (select count(*) from pg_policies where tablename = 'customer_rep_assignments') <> 0 then raise exception 'no policy on the new table'; end if;
 end $$;
 
-select 'OK: 0118 customer rep assignments' as result;
+select 'OK: 0118 customer rep assignments (incl. atomic reassignment)' as result;
 rollback;

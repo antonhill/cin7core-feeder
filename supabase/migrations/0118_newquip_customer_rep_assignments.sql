@@ -10,10 +10,15 @@
 --   * Rows are never deleted (except by the cascade of deleting the whole organisation).
 --   * Cin7 stays the customer master: `cin7_customer_id` is the Cin7 customer ID as captured on quotation snapshots (newquip_quote_customers). Nothing is written to Cin7.
 --
+-- REASSIGNMENT IS ATOMIC. `customer_rep_reassign(...)` ends ONE Rep's active assignment and creates the replacement in a SINGLE database transaction (one function call = one statement): if any
+-- step fails - validation, the replacement insert, a constraint - the whole call rolls back and the previous assignment is exactly as it was. Concurrent changes to the same customer are
+-- serialised by a per-customer advisory lock plus a row lock on the assignment being ended; only the intended Rep's row is ever touched, so other Reps assigned to the same customer are never
+-- affected. The function is SECURITY INVOKER (it runs with service_role's own narrow privileges, so it widens nothing) and is executable by service_role only.
+--
 -- This slice deliberately changes NO existing RLS policy and activates NO strict functional roles. The new table has RLS ENABLED and NO policy for clients: the assignment list is
 -- readable only through authorised server code (service role), never through the browser/database API. Visibility of quotations is derived in application code
 -- (src/lib/newquip-assignments); the existing org-wide read policies on other tables are unchanged and are addressed by the separate Slice 1B plan.
--- Rollback / recovery: `drop table customer_rep_assignments cascade; drop function customer_rep_assignments_guard();` returns the schema to 0117.
+-- Rollback / recovery: `drop function customer_rep_reassign(uuid, text, text, uuid, uuid, text, text, text, text); drop table customer_rep_assignments cascade; drop function customer_rep_assignments_guard();` returns the schema to 0117.
 
 create table if not exists customer_rep_assignments (
   id          uuid primary key default gen_random_uuid(),
@@ -67,6 +72,43 @@ $$;
 drop trigger if exists customer_rep_assignments_guard_trg on customer_rep_assignments;
 create trigger customer_rep_assignments_guard_trg before insert or update or delete on customer_rep_assignments for each row execute function customer_rep_assignments_guard();
 
+-- ── atomic reassignment ─────────────────────────────────────────────────────
+-- Ends p_from_user's ACTIVE assignment of the customer and gives p_to_user access, as ONE transaction. Returns {ended, assigned, created}. If p_to_user is ALREADY actively assigned
+-- (several Reps per customer are allowed) the old assignment is ended and the existing one is returned (created = false): never a duplicate. Every raise below aborts the whole call.
+create or replace function customer_rep_reassign(
+  p_org uuid, p_customer text, p_customer_name text, p_from_user uuid, p_to_user uuid, p_to_email text, p_actor_email text, p_owner_email text, p_reason text
+) returns jsonb language plpgsql set search_path = public as $$
+declare
+  v_customer text := btrim(coalesce(p_customer, ''));
+  v_reason text := btrim(coalesce(p_reason, ''));
+  v_from customer_rep_assignments%rowtype;
+  v_ended customer_rep_assignments%rowtype;
+  v_new customer_rep_assignments%rowtype;
+  v_created boolean := false;
+begin
+  if p_org is null or p_from_user is null or p_to_user is null then raise exception 'customer_rep_reassign: the organisation and both Reps are required'; end if;
+  if v_customer = '' then raise exception 'customer_rep_reassign: choose a customer'; end if;
+  if p_from_user = p_to_user then raise exception 'customer_rep_reassign: choose a different Rep'; end if;
+  if length(v_reason) < 3 then raise exception 'customer_rep_reassign: give a reason (at least 3 characters)'; end if;
+  -- the new Rep must belong to THIS organisation (the application also validates the Rep role)
+  if not exists (select 1 from org_members where org_id = p_org and user_id = p_to_user) then raise exception 'customer_rep_reassign: the new Rep is not a member of this organisation'; end if;
+  -- serialise every reassignment of this customer (released automatically at commit or rollback)
+  perform pg_advisory_xact_lock(hashtextextended('customer_rep_assignments:' || p_org::text || ':' || v_customer, 0));
+  -- lock and read ONLY the assignment being ended
+  select * into v_from from customer_rep_assignments where org_id = p_org and cin7_customer_id = v_customer and rep_user_id = p_from_user and ended_at is null for update;
+  if not found then raise exception 'customer_rep_reassign: that Rep is not currently assigned to this customer'; end if;
+  update customer_rep_assignments set ended_at = clock_timestamp(), ended_by_email = p_actor_email, end_reason = v_reason where id = v_from.id returning * into v_ended;
+  select * into v_new from customer_rep_assignments where org_id = p_org and cin7_customer_id = v_customer and rep_user_id = p_to_user and ended_at is null;
+  if not found then
+    insert into customer_rep_assignments (org_id, cin7_customer_id, customer_name, rep_user_id, rep_email, assigned_by_email, assigned_by_owner_email, assigned_reason)
+      values (p_org, v_customer, coalesce(p_customer_name, ''), p_to_user, lower(btrim(coalesce(p_to_email, ''))), p_actor_email, p_owner_email, v_reason)
+      returning * into v_new;
+    v_created := true;
+  end if;
+  return jsonb_build_object('ended', to_jsonb(v_ended), 'assigned', to_jsonb(v_new), 'created', v_created);
+end;
+$$;
+
 -- ── access ──────────────────────────────────────────────────────────────────
 -- RLS on, NO policy: the browser / database API (anon, authenticated) can read nothing here. Only authorised server code reads and writes.
 alter table customer_rep_assignments enable row level security;
@@ -76,3 +118,5 @@ revoke all on customer_rep_assignments from public, anon, authenticated, service
 grant select, insert on customer_rep_assignments to service_role;
 grant update (ended_at, ended_by_email, end_reason) on customer_rep_assignments to service_role;   -- ending an assignment; every other column is immutable
 revoke all on function customer_rep_assignments_guard() from public, anon, authenticated;
+revoke all on function customer_rep_reassign(uuid, text, text, uuid, uuid, text, text, text, text) from public, anon, authenticated;
+grant execute on function customer_rep_reassign(uuid, text, text, uuid, uuid, text, text, text, text) to service_role;

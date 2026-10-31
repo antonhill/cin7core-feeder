@@ -55,10 +55,41 @@ export class FakeDb {
   /** Records rpc() calls; a test may install a handler to emulate the database function. */
   rpcCalls: Array<{ fn: string; args: Row }> = [];
   rpcHandlers: Record<string, (args: Row) => { error: { message: string } | null }> = {};
-  rpc(fn: string, args: Row): Promise<{ data: null; error: { message: string } | null }> {
+  rpc(fn: string, args: Row): Promise<{ data: unknown; error: { message: string } | null }> {
     this.rpcCalls.push({ fn, args });
+    if (fn === "customer_rep_reassign") return Promise.resolve(this.reassignRpc(args));
     const h = this.rpcHandlers[fn];
     return Promise.resolve({ data: null, error: h ? h(args).error : { message: `no handler for ${fn}` } });
+  }
+
+  /**
+   * Emulates migration 0118's customer_rep_reassign: ONE all-or-nothing call (the table is restored from a snapshot on ANY error, like a rolled-back transaction), serialised by
+   * construction. Same validation, same only-the-intended-assignment scope, same no-duplicate rule, same CHECKs as the SQL function and table.
+   */
+  private reassignRpc(a: Row): { data: unknown; error: { message: string } | null } {
+    if (!this.assignmentsApplied) return { data: null, error: { message: "Could not find the function public.customer_rep_reassign in the schema cache" } };
+    const t = "customer_rep_assignments"; const snapshot = this.rows(t).map((r) => ({ ...r })); const clock = () => this.ts();
+    const fail = (m: string) => { this.tables[t] = snapshot; return { data: null, error: { message: `customer_rep_reassign: ${m}` } }; };
+    const org = a.p_org as string; const customer = String(a.p_customer ?? "").trim(); const reason = String(a.p_reason ?? "").trim();
+    if (!org || !a.p_from_user || !a.p_to_user) return fail("the organisation and both Reps are required");
+    if (!customer) return fail("choose a customer");
+    if (a.p_from_user === a.p_to_user) return fail("choose a different Rep");
+    if (reason.length < 3) return fail("give a reason (at least 3 characters)");
+    if (!this.rows("org_members").some((m) => m.org_id === org && m.user_id === a.p_to_user)) return fail("the new Rep is not a member of this organisation");
+    const rows = this.rows(t);
+    const from = rows.find((r) => r.org_id === org && r.cin7_customer_id === customer && r.rep_user_id === a.p_from_user && r.ended_at == null);
+    if (!from) return fail("that Rep is not currently assigned to this customer");
+    Object.assign(from, { ended_at: clock(), ended_by_email: a.p_actor_email, end_reason: reason });   // (rolled back below if the insert fails)
+    let created = false;
+    let next = rows.find((r) => r.org_id === org && r.cin7_customer_id === customer && r.rep_user_id === a.p_to_user && r.ended_at == null);
+    if (!next) {
+      const email = String(a.p_to_email ?? "").trim().toLowerCase();
+      if (email.trim().length <= 3) { this.tables[t] = snapshot; return { data: null, error: { message: 'new row for relation "customer_rep_assignments" violates check constraint "customer_rep_assignments_rep_email_check"' } }; }
+      next = { id: `id-${++this.seq}`, created_at: clock(), org_id: org, cin7_customer_id: customer, customer_name: String(a.p_customer_name ?? ""), rep_user_id: a.p_to_user, rep_email: email, assigned_by_email: a.p_actor_email, assigned_by_owner_email: a.p_owner_email ?? null, assigned_reason: reason, assigned_at: clock(), ended_at: null, ended_by_email: null, end_reason: null };
+      rows.push(next); created = true;
+    }
+    this.writes.push({ table: t, op: "rpc:customer_rep_reassign" });
+    return { data: { ended: { ...from }, assigned: { ...next }, created }, error: null };
   }
 
   /** Emulates PostgREST's max-rows: a select with no .range() silently returns only this many rows (null = unlimited). */
@@ -118,6 +149,7 @@ export class FakeDb {
         if (op === "insert") {
           for (const r of (Array.isArray(payload) ? payload : [payload])) {
             if (r.ended_at != null) return { data: null, error: { message: "customer_rep_assignments: an assignment is created active" } };
+            if (String(r.rep_email ?? "").trim().length <= 3) return { data: null, error: { message: 'new row for relation "customer_rep_assignments" violates check constraint "customer_rep_assignments_rep_email_check"' } };
             if (r.cin7_customer_id === "(cleared)" || !String(r.cin7_customer_id ?? "").trim()) return { data: null, error: { message: "new row violates check constraint customer_rep_assignments_cin7_customer_id_check" } };
             if (rowsOf(table).some((e) => e.ended_at == null && e.org_id === r.org_id && e.cin7_customer_id === r.cin7_customer_id && e.rep_user_id === r.rep_user_id)) return { data: null, error: { message: "duplicate key value violates unique constraint customer_rep_assignments_active_uq" } };
           }

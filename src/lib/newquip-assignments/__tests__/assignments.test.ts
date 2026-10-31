@@ -17,6 +17,7 @@ const REP_A = { id: "rep-a", email: "a@nq.test" }; const REP_B = { id: "rep-b", 
 
 const newDb = () => { const db = new FakeDb(); db.assignmentsApplied = true; db.deliveryApplied = true; return db; };
 const asDb = (db: FakeDb) => db as never;
+const member = (db: FakeDb, rep: { id: string }, org = ORG) => { db.rows("org_members").push({ org_id: org, user_id: rep.id, role: "member" }); };
 const quote = (db: FakeDb, id: string, o: { org?: string; customer?: string | null; createdBy?: string; state?: string; revision?: number; created?: string } = {}) => {
   const org = o.org ?? ORG;
   db.rows("newquip_quotes").push({ id, org_id: org, quote_ref: `NQ-${id}`, revision: o.revision ?? 1, customer_name: "Farm", site_name: "Site", quote_type: "project", state: o.state ?? "REP_DRAFT", draft: readyDraft(), contract_cents: null, project_id: null, created_by_email: o.createdBy ?? "creator@nq.test", created_at: o.created ?? "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z" });
@@ -135,23 +136,100 @@ describe("revocation and reassignment take effect on the very next read", () => 
     expect(await ids(db, REP_A)).toEqual([]); expect(await ids(db, REP_B)).toEqual(["q1"]);
   });
   it("reassigning moves access from one Rep to another, keeping both periods in the history", async () => {
-    const db = newDb(); quote(db, "q1", { customer: "c1" }); await assign(db, REP_A, "c1");
+    const db = newDb(); quote(db, "q1", { customer: "c1" }); member(db, REP_C); const a = await assign(db, REP_A, "c1");
     const r = await reassignCustomer(asDb(db), ORG, MGR, { cin7CustomerId: "c1", customerName: "Farm", fromRepUserId: REP_A.id, toRepUserId: REP_C.id, toRepEmail: REP_C.email, reason: "territory change" });
-    expect(r.ended.rep_user_id).toBe(REP_A.id); expect(r.assigned.rep_user_id).toBe(REP_C.id);
+    expect(r.created).toBe(true); expect(r.ended.id).toBe(a.assignment.id); expect(r.ended.rep_user_id).toBe(REP_A.id); expect(r.assigned.rep_user_id).toBe(REP_C.id);
     expect(await ids(db, REP_A)).toEqual([]); expect(await ids(db, REP_C)).toEqual(["q1"]);
     expect(await assignmentsForCustomer(asDb(db), ORG, "c1")).toHaveLength(2);
   });
-  it("reassignment fails CLOSED: if creating the new access fails, the old Rep has already lost it (never both)", async () => {
-    const db = newDb(); quote(db, "q1", { customer: "c1" }); await assign(db, REP_A, "c1");
-    const real = db.from.bind(db);
-    (db as { from: unknown }).from = (t: string) => { const q = real(t) as Record<string, unknown>; return t === "customer_rep_assignments" ? { ...q, insert: () => ({ select: () => ({ single: async () => ({ data: null, error: { message: "boom" } }) }) }) } : q; };
-    await expect(reassignCustomer(asDb(db), ORG, MGR, { cin7CustomerId: "c1", customerName: "Farm", fromRepUserId: REP_A.id, toRepUserId: REP_C.id, toRepEmail: REP_C.email, reason: "territory change" })).rejects.toThrow(/boom/);
-    expect(await ids(db, REP_A)).toEqual([]); expect(await ids(db, REP_C)).toEqual([]);
+});
+
+describe("reassignment is ATOMIC: all of it, or none of it", () => {
+  const move = (db: FakeDb, over: Partial<Parameters<typeof reassignCustomer>[3]> = {}, org = ORG) =>
+    reassignCustomer(asDb(db), org, MGR, { cin7CustomerId: "c1", customerName: "Farm", fromRepUserId: REP_A.id, toRepUserId: REP_C.id, toRepEmail: REP_C.email, reason: "territory change", ...over });
+  const world = async () => { const db = newDb(); quote(db, "q1", { customer: "c1" }); member(db, REP_A); member(db, REP_B); member(db, REP_C); const a = await assign(db, REP_A, "c1"); return { db, a }; };
+
+  it("a FAILURE while creating the replacement leaves the previous assignment ACTIVE and unchanged: the customer keeps its Rep", async () => {
+    const { db, a } = await world(); const before = JSON.stringify(db.rows("customer_rep_assignments"));
+    await expect(move(db, { toRepEmail: "x@" })).rejects.toThrow(/check constraint/);   // the replacement INSERT violates a CHECK, after the old row was updated
+    expect(JSON.stringify(db.rows("customer_rep_assignments"))).toBe(before);           // byte-for-byte: no end marker, no new row
+    expect(await ids(db, REP_A)).toEqual(["q1"]); expect(await ids(db, REP_C)).toEqual([]);
+    expect((await activeAssignmentsForRep(asDb(db), ORG, REP_A.id)).map((x) => x.id)).toEqual([a.assignment.id]);
   });
-  it("reassigning from a Rep who is not assigned is refused and changes nothing", async () => {
-    const db = newDb(); await assign(db, REP_A, "c1");
-    await expect(reassignCustomer(asDb(db), ORG, MGR, { cin7CustomerId: "c1", customerName: "Farm", fromRepUserId: REP_B.id, toRepUserId: REP_C.id, toRepEmail: REP_C.email, reason: "territory change" })).rejects.toThrow(/not currently assigned/);
-    expect(await activeAssignmentsForRep(asDb(db), ORG, REP_A.id)).toHaveLength(1);
+  it("every other refusal also changes NOTHING: not a member, not assigned, same Rep, trivial reason, another organisation", async () => {
+    const { db } = await world(); const before = JSON.stringify(db.rows("customer_rep_assignments"));
+    const outsider = { id: "outsider", email: "o@nq.test" };               // exists in no organisation
+    await expect(move(db, { toRepUserId: outsider.id, toRepEmail: outsider.email })).rejects.toThrow(/not a member of this organisation/);
+    await expect(move(db, { fromRepUserId: REP_B.id })).rejects.toThrow(/not currently assigned/);
+    await expect(move(db, { toRepUserId: REP_A.id })).rejects.toThrow(/different Rep/);
+    await expect(move(db, { reason: "x" })).rejects.toThrow(/reason/);
+    await expect(move(db, {}, OTHER)).rejects.toThrow(/not a member|not currently assigned/);
+    expect(JSON.stringify(db.rows("customer_rep_assignments"))).toBe(before);
+    expect(await ids(db, REP_A)).toEqual(["q1"]);
+  });
+  it("only the INTENDED assignment ends: other Reps on the same customer, and other customers, are untouched", async () => {
+    const { db } = await world(); quote(db, "q2", { customer: "c2" });
+    const b = await assign(db, REP_B, "c1"); const other = await assign(db, REP_A, "c2");
+    const snap = (id: string) => JSON.stringify(db.rows("customer_rep_assignments").find((r) => r.id === id));
+    const [bBefore, otherBefore] = [snap(b.assignment.id), snap(other.assignment.id)];
+    await move(db);
+    expect(snap(b.assignment.id)).toBe(bBefore); expect(snap(other.assignment.id)).toBe(otherBefore);   // identical rows, never even touched
+    expect(await ids(db, REP_B)).toEqual(["q1"]); expect(await ids(db, REP_A)).toEqual(["q2"]); expect(await ids(db, REP_C)).toEqual(["q1"]);
+  });
+  it("history and audit fields are consistent: who ended it and why, who created the replacement and why, with the owner under Demo Mode", async () => {
+    const { db } = await world(); const demo = { email: "testing@nq.test", ownerEmail: "owner@nq.test" };
+    const r = await reassignCustomer(asDb(db), ORG, demo, { cin7CustomerId: "c1", customerName: "Farm C1", fromRepUserId: REP_A.id, toRepUserId: REP_C.id, toRepEmail: "C@NQ.test", reason: "  territory change  " });
+    expect(r.ended).toMatchObject({ rep_user_id: REP_A.id, ended_by_email: demo.email, end_reason: "territory change" }); expect(r.ended.ended_at).toBeTruthy();
+    expect(r.assigned).toMatchObject({ rep_user_id: REP_C.id, rep_email: "c@nq.test", assigned_by_email: demo.email, assigned_by_owner_email: demo.ownerEmail, assigned_reason: "territory change", customer_name: "Farm C1", ended_at: null });
+    const hist = await assignmentsForCustomer(asDb(db), ORG, "c1");
+    expect(hist).toHaveLength(2); expect(hist.filter((h) => !h.ended_at)).toHaveLength(1);
+  });
+  it("a duplicate or replayed request is refused and creates NO duplicate active assignment or history row", async () => {
+    const { db } = await world(); await move(db);
+    const after = JSON.stringify(db.rows("customer_rep_assignments"));
+    await expect(move(db)).rejects.toThrow(/not currently assigned/);
+    await expect(move(db)).rejects.toThrow(/not currently assigned/);
+    expect(JSON.stringify(db.rows("customer_rep_assignments"))).toBe(after);
+    expect((await assignmentsForCustomer(asDb(db), ORG, "c1")).filter((h) => !h.ended_at && h.rep_user_id === REP_C.id)).toHaveLength(1);
+  });
+  it("moving to a Rep who is ALREADY assigned ends the old access and creates no duplicate (created = false)", async () => {
+    const { db } = await world(); const c = await assign(db, REP_C, "c1");
+    const r = await move(db);
+    expect(r.created).toBe(false); expect(r.assigned.id).toBe(c.assignment.id);
+    expect(db.rows("customer_rep_assignments")).toHaveLength(2);
+    expect((await assignmentsForCustomer(asDb(db), ORG, "c1")).filter((h) => !h.ended_at)).toHaveLength(1);
+  });
+  it("simultaneous requests (A to C and A to B) are serialised: exactly one wins, the loser changes nothing, the customer always has exactly one of the intended Reps", async () => {
+    const { db } = await world();
+    const results = await Promise.allSettled([move(db, { toRepUserId: REP_C.id, toRepEmail: REP_C.email }), move(db, { toRepUserId: REP_B.id, toRepEmail: REP_B.email }), move(db), move(db)]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((r) => r.status === "rejected").every((r) => /not currently assigned/.test(String((r as PromiseRejectedResult).reason)))).toBe(true);
+    const active = (await assignmentsForCustomer(asDb(db), ORG, "c1")).filter((h) => !h.ended_at);
+    expect(active).toHaveLength(1); expect([REP_B.id, REP_C.id]).toContain(active[0].rep_user_id);
+    expect(db.rows("customer_rep_assignments").filter((r) => r.ended_at && r.rep_user_id === REP_A.id)).toHaveLength(1);   // A ended exactly once
+  });
+  it("it changes NO quotation, Project or approval row, and writes only through the one function", async () => {
+    const { db } = await world(); db.rows("projects").push({ id: "p1", org_id: ORG }); db.rows("approval_requests").push({ id: "r1", org_id: ORG });
+    const frozen = JSON.stringify([db.rows("newquip_quotes"), db.rows("newquip_quote_customers"), db.rows("projects"), db.rows("approval_requests")]); db.writes.length = 0;
+    await move(db);
+    expect(JSON.stringify([db.rows("newquip_quotes"), db.rows("newquip_quote_customers"), db.rows("projects"), db.rows("approval_requests")])).toBe(frozen);
+    expect([...new Set(db.writes.map((w) => w.table))]).toEqual(["customer_rep_assignments"]);
+  });
+  it("there is NO fallback to separate end + create calls: without the database function the call fails closed and changes nothing", async () => {
+    const { db } = await world(); const before = JSON.stringify(db.rows("customer_rep_assignments"));
+    (db as unknown as { rpc: unknown }).rpc = async () => ({ data: null, error: { message: "Could not find the function public.customer_rep_reassign in the schema cache" } });
+    await expect(move(db)).rejects.toThrow(/not available/);
+    expect(JSON.stringify(db.rows("customer_rep_assignments"))).toBe(before);
+  });
+  it("historical quotation visibility follows the RESULTING active assignments (every state and revision moves with the customer)", async () => {
+    const { db } = await world();
+    quote(db, "draft", { customer: "c1", state: "REP_DRAFT" }); quote(db, "approved-r1", { customer: "c1", state: "MANAGER_APPROVED_FINAL", revision: 1 }); quote(db, "approved-r2", { customer: "c1", state: "MANAGER_APPROVED_FINAL", revision: 2 });
+    const all = ["approved-r1", "approved-r2", "draft", "q1"];
+    expect(await ids(db, REP_A)).toEqual(all);
+    await move(db);
+    expect(await ids(db, REP_A)).toEqual([]); expect(await ids(db, REP_C)).toEqual(all);
+    await expect(move(db, { toRepEmail: "x@" , fromRepUserId: REP_C.id, toRepUserId: REP_B.id })).rejects.toThrow();   // a failed move changes nothing
+    expect(await ids(db, REP_C)).toEqual(all); expect(await ids(db, REP_B)).toEqual([]);
   });
 });
 

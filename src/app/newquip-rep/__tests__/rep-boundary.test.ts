@@ -154,6 +154,24 @@ describe("managing assignments", () => {
     expect(db.rows("customer_rep_assignments").find((x) => x.id === a.id)!.ended_at ?? null).toBeNull();
     as("repA"); expect((await rep.getMyQuoteAction("q1")).ok).toBe(true);
   });
+  it("a reassignment that FAILS at the replacement leaves the previous Rep assigned and writes no audit entry; the same request succeeds once the cause is fixed", async () => {
+    await assignAs("mgr", C1, "repA"); vi.mocked(logActivity).mockClear(); as("mgr", { admin: true });
+    people.repB.email = "x@";                                                      // the replacement row will violate the table's CHECK
+    const failed = await manage.reassignCustomerAction({ cin7CustomerId: C1, customerName: "Farm", fromRepUserId: "repA", toRepUserId: "repB", reason: "territory change" });
+    expect(failed.ok).toBe(false); expect(logActivity).not.toHaveBeenCalled();
+    as("repA"); expect((await rep.getMyQuoteAction("q1")).ok).toBe(true);          // still hers
+    as("repB"); expect((await rep.getMyQuoteAction("q1")).ok).toBe(false);
+    people.repB.email = "b@nq.test"; as("mgr", { admin: true });
+    const ok = await manage.reassignCustomerAction({ cin7CustomerId: C1, customerName: "Farm", fromRepUserId: "repA", toRepUserId: "repB", reason: "territory change" });
+    expect(ok.ok, ok.error).toBe(true); expect(ok.data!.created).toBe(true);
+    expect(logActivity).toHaveBeenCalledTimes(1); expect(vi.mocked(logActivity).mock.calls[0][1]).toMatchObject({ action: "newquip.rep_reassigned", detail: { created: true } });
+    as("repA"); expect((await rep.getMyQuoteAction("q1")).ok).toBe(false); as("repB"); expect((await rep.getMyQuoteAction("q1")).ok).toBe(true);
+  });
+  it("an unauthorised actor cannot reassign: the assignment stays exactly as it was", async () => {
+    await assignAs("mgr", C1, "repA"); const before = JSON.stringify(db.rows("customer_rep_assignments"));
+    for (const id of ["repA", "repB", "est"]) { as(id); expect((await manage.reassignCustomerAction({ cin7CustomerId: C1, customerName: "Farm", fromRepUserId: "repA", toRepUserId: "repB", reason: "I want it" })).ok).toBe(false); }
+    expect(JSON.stringify(db.rows("customer_rep_assignments"))).toBe(before);
+  });
   it("ending and reassigning are audited with the reason, and history is preserved", async () => {
     const a = await assignAs("mgr", C1, "repA"); vi.mocked(logActivity).mockClear(); as("mgr", { admin: true });
     await manage.endRepAssignmentAction(a.id, "customer left the Rep");
