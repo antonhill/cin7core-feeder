@@ -47,3 +47,11 @@ next-env.d.ts
 # local-only tooling artefacts (generated in-repo, not project config)
 .github/hooks/impeccable.json
 supabase/.temp/
+
+# RWTSA demonstration: the protected advisor workbook and everything derived from it stay LOCAL (never tracked).
+# Deliberately narrow: no global *.xlsx / *.xls rule.
+/rwtsa-local/
+/rwtsa-demo/local/
+/rwtsa-demo/.next/
+RWTSA_*.xlsx
+RWTSA_*.xls
