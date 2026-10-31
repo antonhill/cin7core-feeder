@@ -20,6 +20,9 @@ import { CLEARED_CUSTOMER_ID } from "@/lib/newquip-quotes/customer-store";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 const missing = (m: string | undefined) => /does not exist|schema cache|could not find the table/i.test(m ?? "");
+/** ONLY "the settings TABLE is not installed" means OFF; any other failure (a renamed column, a missing function, a connection error) must not silently turn isolation off. */
+const settingsTableMissing = (e: { message?: string; code?: string }) =>
+  e.code === "42P01" || e.code === "PGRST205" || /(relation|table)\s+["']?(public\.)?newquip_access_settings["']?\s+does not exist|could not find the table ['"]?(public\.)?newquip_access_settings/i.test(e.message ?? "");
 
 /** Keep identical to newquip_quote_scope_ok / newquip_project_scope_ok in migration 0119. */
 export const ORG_WIDE_QUOTE_ROLES: readonly string[] = ["ESTIMATOR", "MANAGER"];
@@ -28,12 +31,13 @@ export const ORG_WIDE_PROJECT_ROLES: readonly string[] = ["ESTIMATOR", "MANAGER"
 /** The minimum an authorisation decision needs about the signed-in (effective) user. `tier` is "admin" for an organisation owner/admin. */
 export interface AccessActor { orgId: string; userId: string; email: string; tier: string }
 
-export type QuoteScope = { kind: "ORG_WIDE" } | { kind: "ASSIGNED"; orgId: string; userId: string; email: string };
+/** `projects`: an assigned-scoped actor who is still a Projects user (explicit Project Manager / Procurement), so claim and variation approvals and project activity stay visible to them. */
+export type QuoteScope = { kind: "ORG_WIDE" } | { kind: "ASSIGNED"; orgId: string; userId: string; email: string; projects: boolean };
 
 /** Is Rep customer isolation switched ON for this organisation? Absent table/row = OFF. Any other read failure throws (fail closed, never "off"). */
 export async function isolationEnabled(db: Db, orgId: string): Promise<boolean> {
   const r = await db.from("newquip_access_settings").select("rep_isolation_enabled").eq("org_id", orgId).maybeSingle();
-  if (r.error) { if (missing(r.error.message)) return false; throw new Error("Access settings are unavailable."); }
+  if (r.error) { if (settingsTableMissing(r.error as { message?: string; code?: string })) return false; throw new Error("Access settings are unavailable."); }
   return (r.data as { rep_isolation_enabled: boolean } | null)?.rep_isolation_enabled === true;
 }
 
@@ -50,7 +54,7 @@ export async function quoteScope(db: Db, a: AccessActor): Promise<QuoteScope> {
   const roles = await explicitRoles(db, a.orgId, a.userId);
   if (ORG_WIDE_QUOTE_ROLES.some((r) => roles.has(r))) return { kind: "ORG_WIDE" };
   if (!(await assignmentsAvailable(db))) throw new Error("Customer assignments are not available yet."); // isolation is ON but its data is not: fail closed
-  return { kind: "ASSIGNED", orgId: a.orgId, userId: a.userId, email: a.email.toLowerCase() };
+  return { kind: "ASSIGNED", orgId: a.orgId, userId: a.userId, email: a.email.toLowerCase(), projects: ORG_WIDE_PROJECT_ROLES.some((r) => roles.has(r)) };
 }
 
 /** Project data: org-wide actors plus explicit Project Manager / Procurement staff. A Rep-scoped actor is not a Projects user while isolation is ON. */
@@ -86,6 +90,23 @@ export async function currentCustomers(db: Db, orgId: string, quoteIds: string[]
   return out;
 }
 
+/** Per quotation: its CURRENT customer (null = none / cleared) and whether it EVER had one. Only a quotation that never had a customer is a creator's own enquiry; a cleared one is not. */
+export async function customerState(db: Db, orgId: string, quoteIds: string[]): Promise<Map<string, { current: string | null; ever: boolean }>> {
+  const out = new Map<string, { current: string | null; ever: boolean }>(quoteIds.map((id) => [id, { current: null, ever: false }]));
+  const latest = new Map<string, SnapRow>();
+  for (const part of chunks(quoteIds, 100)) {
+    for (let from = 0; ; from += 1000) {
+      const r = await db.from("newquip_quote_customers").select("quote_id, seq, cin7_customer_id").eq("org_id", orgId).in("quote_id", part).order("quote_id").order("seq").range(from, from + 999);
+      if (r.error) { if (missing(r.error.message)) return out; throw new Error(r.error.message); }
+      const rows = (r.data ?? []) as SnapRow[];
+      for (const x of rows) { const cur = latest.get(x.quote_id); if (!cur || x.seq > cur.seq) latest.set(x.quote_id, x); }
+      if (rows.length < 1000) break;
+    }
+  }
+  for (const [id, row] of latest) out.set(id, { current: row.cin7_customer_id === CLEARED_CUSTOMER_ID ? null : row.cin7_customer_id, ever: true });
+  return out;
+}
+
 /** The creator of a quotation (lower-cased), or null when it does not exist in this organisation. */
 async function creatorOf(db: Db, orgId: string, quoteId: string): Promise<string | null | undefined> {
   const r = await db.from("newquip_quotes").select("created_by_email").eq("org_id", orgId).eq("id", quoteId).maybeSingle();
@@ -97,9 +118,10 @@ async function creatorOf(db: Db, orgId: string, quoteId: string): Promise<string
 /** May this actor see this quotation (and therefore its documents, evidence, responses, approvals and notifications)? */
 export async function canSeeQuote(db: Db, scope: QuoteScope, quoteId: string): Promise<boolean> {
   if (scope.kind === "ORG_WIDE") return true; // existing org-scoped loads still reject a foreign or unknown id
-  const customer = await currentCustomerIdOfQuote(db, scope.orgId, quoteId);
-  if (customer) return (await assignedCustomerIds(db, scope.orgId, scope.userId)).has(customer);
-  const creator = await creatorOf(db, scope.orgId, quoteId);  // no customer yet: the creator's own enquiry/draft
+  const st = (await customerState(db, scope.orgId, [quoteId])).get(quoteId)!;
+  if (st.current) return (await assignedCustomerIds(db, scope.orgId, scope.userId)).has(st.current);
+  if (st.ever) return false;   // its customer was CLEARED: it no longer belongs to anyone's assignment, and is not the creator's enquiry either
+  const creator = await creatorOf(db, scope.orgId, quoteId);  // never had a customer: the creator's own enquiry/draft
   return creator !== undefined && creator !== "" && creator === scope.email;
 }
 
@@ -115,9 +137,9 @@ export async function visibleQuoteIds(db: Db, scope: QuoteScope, rows: Array<{ i
   if (scope.kind === "ORG_WIDE") return null;
   const assigned = new Set(await quoteIdsForCustomers(db, scope.orgId, await assignedCustomerIds(db, scope.orgId, scope.userId)));
   const own = rows.filter((r) => !assigned.has(r.id) && (r.created_by_email ?? "").toLowerCase() === scope.email).map((r) => r.id);
-  const customers = own.length ? await currentCustomers(db, scope.orgId, own) : new Map<string, string | null>();
+  const state = own.length ? await customerState(db, scope.orgId, own) : new Map<string, { current: string | null; ever: boolean }>();
   const out = new Set(assigned);
-  for (const id of own) if (!customers.get(id)) out.add(id);
+  for (const id of own) if (!state.get(id)?.ever) out.add(id);   // never had a customer
   return out;
 }
 
@@ -134,8 +156,8 @@ export async function visibleAmong(db: Db, scope: QuoteScope, quoteIds: string[]
     if (r.error) throw new Error(r.error.message);
     for (const q of (r.data ?? []) as Array<{ id: string; created_by_email: string | null }>) if ((q.created_by_email ?? "").toLowerCase() === scope.email) mine.push(q.id);
   }
-  const customers = mine.length ? await currentCustomers(db, scope.orgId, mine) : new Map<string, string | null>();
-  for (const id of mine) if (!customers.get(id)) out.add(id); // own quotation with no customer yet
+  const state = mine.length ? await customerState(db, scope.orgId, mine) : new Map<string, { current: string | null; ever: boolean }>();
+  for (const id of mine) if (!state.get(id)?.ever) out.add(id); // own quotation that never had a customer
   return out;
 }
 
@@ -155,14 +177,15 @@ export async function filterCustomerHits<T extends { id: string }>(db: Db, scope
 /** An approval request is visible to an assigned-scoped actor only when it is for a quotation they may see; claim / variation approvals are Project matters and are not. */
 export async function canSeeApprovalRequest(db: Db, scope: QuoteScope, req: { doc_type: string; doc_id: string }): Promise<boolean> {
   if (scope.kind === "ORG_WIDE") return true;
-  return req.doc_type === "QUOTE" && canSeeQuote(db, scope, req.doc_id);
+  if (req.doc_type !== "QUOTE") return scope.projects;   // claims and variations are Project matters: explicit Project Manager / Procurement keep them
+  return canSeeQuote(db, scope, req.doc_id);
 }
 
 /** Approval requests an assigned-scoped actor may see (quotation requests of visible quotations only). */
 export async function filterApprovalRequests<T extends { doc_type: string; doc_id: string }>(db: Db, scope: QuoteScope, rows: T[]): Promise<T[]> {
   if (scope.kind === "ORG_WIDE") return rows;
   const vis = await visibleAmong(db, scope, rows.filter((r) => r.doc_type === "QUOTE").map((r) => r.doc_id));
-  return rows.filter((r) => r.doc_type === "QUOTE" && vis.has(r.doc_id));
+  return rows.filter((r) => (r.doc_type === "QUOTE" ? vis.has(r.doc_id) : scope.projects));
 }
 
 /** Notifications an assigned-scoped actor may see: those that belong to a visible quotation (directly, or through their approval request). Anything unattributable is withheld (fail closed). */
@@ -178,9 +201,26 @@ export async function filterNotifications<T extends { request_id: string | null;
 
 /** Activity rows of the NewQuip / approvals / projects namespaces follow the quotation scope (the database policy applies the same rule to direct reads). */
 export const SCOPED_ACTIVITY_PREFIX = /^(newquip|approvals|projects)\./;
-export const activityVisible = (scope: QuoteScope, action: string): boolean => scope.kind === "ORG_WIDE" || !SCOPED_ACTIVITY_PREFIX.test(action);
+export const activityVisible = (scope: QuoteScope, action: string): boolean =>
+  scope.kind === "ORG_WIDE" || !SCOPED_ACTIVITY_PREFIX.test(action) || (scope.projects && action.startsWith("projects."));
 
 /** The generic denial for non-quotation areas (Projects). */
 export class NotAvailableError extends Error { constructor() { super("Not found."); this.name = "NotAvailableError"; } }
 
 export { NotVisibleError };
+
+/**
+ * May THIS recipient still receive a message about this quotation? Applied when an e-mail is about to leave (not only when it is queued), so a reassignment stops mail to the previous Rep
+ * at once. Isolation OFF, an organisation-wide user, or an address that is not an organisation user (an administrator-configured escalation address) -> yes. An assigned-scoped user ->
+ * only if they may see the quotation. Fails closed (no) when the quotation cannot be attributed.
+ */
+export async function recipientMayReceive(db: Db, orgId: string, email: string, quoteOf: () => Promise<string | null>): Promise<boolean> {
+  if (!(await isolationEnabled(db, orgId))) return true;   // the common case costs one settings read
+  const { listOrgUsers } = await import("@/lib/approvals/role-store");
+  const user = (await listOrgUsers(db, orgId)).find((u) => u.email === email.trim().toLowerCase());
+  if (!user) return true; // not an organisation user: nothing to evaluate here (documented limitation)
+  const scope = await quoteScope(db, { orgId, userId: user.userId, email: user.email, tier: user.tier === "member" ? "member" : "admin" });
+  if (scope.kind === "ORG_WIDE") return true;
+  const quoteId = await quoteOf();
+  return quoteId ? canSeeQuote(db, scope, quoteId) : false;
+}

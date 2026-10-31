@@ -192,8 +192,13 @@ export async function getMyNotificationsAction(markAllRead = false): Promise<App
   try {
     const ctx = await context();
     const db = createServiceRoleClient();
-    if (markAllRead) await markNotificationsRead(db, ctx.orgId, ctx.email, "ALL");
-    const notifications = await filterNotifications(db, await scopeFor(db, ctx), await myNotifications(db, ctx.orgId, ctx.email, 100), await listRequests(db, ctx.orgId));
+    // Rep isolation: filter FIRST, then mark only what the actor can see as read (never a row they cannot see).
+    let notifications = await filterNotifications(db, await scopeFor(db, ctx), await myNotifications(db, ctx.orgId, ctx.email, 100), await listRequests(db, ctx.orgId));
+    if (markAllRead) {
+      const unread = notifications.filter((n) => !n.read_at).map((n) => n.id);
+      if (unread.length) await markNotificationsRead(db, ctx.orgId, ctx.email, unread);
+      notifications = notifications.map((n) => (n.read_at ? n : { ...n, read_at: new Date().toISOString() }));
+    }
     return { ok: true, data: { notifications, unread: notifications.filter((n) => !n.read_at).length } };
   } catch (e) {
     return { ok: false, error: msg(e) };

@@ -5,6 +5,7 @@
 // identity is active. Reading Cin7 is a GET of /Product only: nothing here writes to Cin7. Costs, the selection among suppliers and the cost-basis declarations are
 // stored on the quote's draft by the SERVER (a saved draft can never carry them) and frozen with the approved quotation.
 // Only async functions and erased types are exported.
+import { guardQuote } from "@/lib/newquip-assignments/access";
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { canSeeCosts } from "@/lib/approvals/role-store";
@@ -41,7 +42,7 @@ async function actor() {
   let admin = false;
   try { await requireOrgAdmin("see and capture NewQuip costs"); admin = true; } catch { admin = false; } // fail closed
   if (!(await canSeeCosts(createServiceRoleClient(), orgId, access.userId, admin))) throw new Error("Costs are internal: only an organisation owner/admin, or someone given the Estimator or Manager role, can see or capture them.");
-  return { orgId, userId: access.userId, email: access.email ?? "unknown" };
+  return { orgId, userId: access.userId, email: access.email ?? "unknown", tier: admin ? "admin" : "member" };
 }
 type Actor = Awaited<ReturnType<typeof actor>>;
 
@@ -79,6 +80,7 @@ const sameCost = (a: CostEntry, b: CostEntry) => a.unitCostCents === b.unitCostC
 export async function getQuoteCostEstimateAction(quoteId: string): Promise<CostActionResult<QuoteCostView>> {
   try {
     const a = await actor();
+    await guardQuote(createServiceRoleClient(), a, quoteId);   // Rep isolation (Slice 1B): defence in depth - cost holders are organisation-wide today
     const db = createServiceRoleClient();
     const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) throw new Error("Quote not found.");
@@ -130,6 +132,7 @@ async function writeDraftCosts(db: Db, a: Actor, quoteId: string, next: { physic
 export async function captureLatestCostsAction(quoteId: string, opts: { replaceSelections?: boolean } = {}): Promise<CostActionResult<{ captured: number; missing: string[]; needsChoice: string[] }>> {
   try {
     const a = await actor();
+    await guardQuote(createServiceRoleClient(), a, quoteId);   // Rep isolation (Slice 1B): defence in depth - cost holders are organisation-wide today
     const db = createServiceRoleClient();
     const { q, eff } = await currentScope(db, a.orgId, quoteId);
     if (eff.lines.length > MAX_SKUS) throw new Error(`This quotation expands to ${eff.lines.length} SKUs; capture is limited to ${MAX_SKUS} per run.`);
@@ -151,6 +154,7 @@ export async function captureLatestCostsAction(quoteId: string, opts: { replaceS
 export async function selectSupplierAction(quoteId: string, sku: string, supplier: { supplierId: string | null; supplierName: string | null }, reason?: string): Promise<CostActionResult<null>> {
   try {
     const a = await actor();
+    await guardQuote(createServiceRoleClient(), a, quoteId);   // Rep isolation (Slice 1B): defence in depth - cost holders are organisation-wide today
     const db = createServiceRoleClient();
     const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) throw new Error("Quote not found.");
@@ -175,6 +179,7 @@ export async function selectSupplierAction(quoteId: string, sku: string, supplie
 export async function recalculateCostsAction(quoteId: string): Promise<CostActionResult<null>> {
   try {
     const a = await actor();
+    await guardQuote(createServiceRoleClient(), a, quoteId);   // Rep isolation (Slice 1B): defence in depth - cost holders are organisation-wide today
     const db = createServiceRoleClient();
     const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) throw new Error("Quote not found.");
@@ -202,6 +207,7 @@ export async function recordFxRateAction(currency: string, rate: string, source:
 export async function confirmUnitBasisAction(quoteId: string, reason: string): Promise<CostActionResult<null>> {
   try {
     const a = await actor();
+    await guardQuote(createServiceRoleClient(), a, quoteId);   // Rep isolation (Slice 1B): defence in depth - cost holders are organisation-wide today
     if (reason.trim().length < 10) throw new Error("Explain how you know the supplier prices are per stock unit (at least a short sentence).");
     const db = createServiceRoleClient();
     const q = await loadQuote(db, a.orgId, quoteId);
@@ -220,6 +226,7 @@ export async function confirmUnitBasisAction(quoteId: string, reason: string): P
 export async function acceptIncompleteCostsAction(quoteId: string, reason: string): Promise<CostActionResult<null>> {
   try {
     const a = await actor();
+    await guardQuote(createServiceRoleClient(), a, quoteId);   // Rep isolation (Slice 1B): defence in depth - cost holders are organisation-wide today
     if (reason.trim().length < 10) throw new Error("An exception needs a written reason (at least a short sentence).");
     const db = createServiceRoleClient();
     const q = await loadQuote(db, a.orgId, quoteId);
@@ -234,6 +241,7 @@ export async function acceptIncompleteCostsAction(quoteId: string, reason: strin
 export async function setManualCostEstimateAction(quoteId: string, sku: string, unitCostCents: number, reason: string): Promise<CostActionResult<null>> {
   try {
     const a = await actor();
+    await guardQuote(createServiceRoleClient(), a, quoteId);   // Rep isolation (Slice 1B): defence in depth - cost holders are organisation-wide today
     const bad = validateManualEstimate(unitCostCents, reason);
     if (bad) throw new Error(bad);
     const db = createServiceRoleClient();
@@ -250,6 +258,7 @@ export async function setManualCostEstimateAction(quoteId: string, sku: string, 
 export async function clearManualCostEstimateAction(quoteId: string, sku: string): Promise<CostActionResult<null>> {
   try {
     const a = await actor();
+    await guardQuote(createServiceRoleClient(), a, quoteId);   // Rep isolation (Slice 1B): defence in depth - cost holders are organisation-wide today
     const db = createServiceRoleClient();
     const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) throw new Error("Quote not found.");

@@ -21,11 +21,8 @@ const isExportedAsync = (src: string, name: string) => new RegExp(`^export\\s+as
 
 /** Per-file: exported actions with a `quoteId` parameter, minus the justified exemptions. A guard is `guardQuote(` directly, or a same-file helper whose own body calls guardQuote(. */
 const ACTION_FILES = [
-  "src/app/newquip-grower/actions.ts", "src/app/newquip-grower/customer-actions.ts", "src/app/newquip-grower/document-actions.ts", "src/app/newquip-grower/delivery-actions.ts", "src/app/newquip-grower/mapping-actions.ts",
+  "src/app/newquip-grower/actions.ts", "src/app/newquip-grower/customer-actions.ts", "src/app/newquip-grower/document-actions.ts", "src/app/newquip-grower/delivery-actions.ts", "src/app/newquip-grower/mapping-actions.ts", "src/app/newquip-grower/cost-actions.ts",
 ];
-/** Exempt with a recorded reason. cost-actions: every one of them first calls actor(), which requires canSeeCosts (owner/admin or an EXPLICIT Estimator/Manager) - exactly the org-wide set - so the customer boundary can never narrow them. */
-const EXEMPT_FILES: Record<string, string> = { "src/app/newquip-grower/cost-actions.ts": "cost holders are organisation-wide by construction (canSeeCosts == owner/admin or explicit Estimator/Manager)" };
-
 describe("every quotation-scoped server action calls the customer boundary", () => {
   for (const file of ACTION_FILES) {
     it(`${file}: each exported action with a quoteId parameter is guarded (directly or through a guarded helper)`, () => {
@@ -50,14 +47,6 @@ describe("every quotation-scoped server action calls the customer boundary", () 
     expect(search).toMatch(/quoteScope\(/); expect(search).toMatch(/assignedCustomers\(/);
     expect(read("src/app/newquip-grower/customer-actions.ts")).toMatch(/assertCustomerSelectable\(/);
   });
-  for (const [file, reason] of Object.entries(EXEMPT_FILES)) {
-    it(`${file} is exempt because: ${reason}`, () => {
-      const src = read(file);
-      const actor = functions(src).find((f) => f.name === "actor")!;
-      expect(actor.body).toMatch(/canSeeCosts\(/);
-      for (const f of functions(src).filter((x) => isExportedAsync(src, x.name) && /\bquoteId\b/.test(x.params))) expect(f.body, f.name).toMatch(/await actor\(\)/);
-    });
-  }
 });
 
 describe("every route handler that serves quotation data calls the boundary BEFORE reading the file", () => {

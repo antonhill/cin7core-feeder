@@ -12,7 +12,8 @@
 --   * Switch ON for an organisation: through the database API (authenticated role) only
 --         - an organisation owner/admin, or
 --         - a user holding an EXPLICIT org_functional_roles assignment of ESTIMATOR or MANAGER (quotation/approval tables), plus PROJECT_MANAGER or PROCUREMENT (Project tables)
---       can read those rows. Everyone else - including a Rep, a plain member and a member who only holds the implicit tier-default roles - reads NOTHING from them directly.
+--       can read those rows (approval requests/events by document type: QUOTE follows the quotation rule, CLAIM/VARIATION the Project rule; `projects.*` activity rows follow the Project rule).
+--       Everyone else - including a Rep, a plain member and a member who only holds the implicit tier-default roles - reads NOTHING from them directly.
 --       A Rep's sanctioned read path is the server boundary (src/lib/newquip-assignments/access.ts), which applies the customer assignment and strips cost; it uses the service role.
 --       The tier-default roles of a user with no explicit assignment (REP + ESTIMATOR while strict roles are off) deliberately do NOT confer organisation-wide visibility.
 --   * Nothing here enables strict functional roles, touches service_role access, or changes any write policy.
@@ -80,16 +81,18 @@ $$;
 
 -- Quotation, response and approval tables: isolation off, OR organisation owner/admin, OR an EXPLICIT Estimator/Manager assignment.
 create or replace function newquip_quote_scope_ok(p_org uuid) returns boolean language sql stable security definer set search_path = public as $$
-  select not newquip_isolation_on(p_org)
+  select is_org_member(p_org) and (
+    not newquip_isolation_on(p_org)
     or is_org_admin(p_org)
-    or exists (select 1 from org_functional_roles r where r.org_id = p_org and r.user_id = auth.uid() and r.role in ('ESTIMATOR', 'MANAGER'));
+    or exists (select 1 from org_functional_roles r where r.org_id = p_org and r.user_id = auth.uid() and r.role in ('ESTIMATOR', 'MANAGER')));
 $$;
 
 -- Project tables: as above, plus the explicit Project Manager and Procurement roles (operational staff, not Reps).
 create or replace function newquip_project_scope_ok(p_org uuid) returns boolean language sql stable security definer set search_path = public as $$
-  select not newquip_isolation_on(p_org)
+  select is_org_member(p_org) and (
+    not newquip_isolation_on(p_org)
     or is_org_admin(p_org)
-    or exists (select 1 from org_functional_roles r where r.org_id = p_org and r.user_id = auth.uid() and r.role in ('ESTIMATOR', 'MANAGER', 'PROJECT_MANAGER', 'PROCUREMENT'));
+    or exists (select 1 from org_functional_roles r where r.org_id = p_org and r.user_id = auth.uid() and r.role in ('ESTIMATOR', 'MANAGER', 'PROJECT_MANAGER', 'PROCUREMENT')));
 $$;
 
 -- ── read policies ───────────────────────────────────────────────────────────
@@ -111,14 +114,14 @@ create policy "org members read newquip_response_evidence" on newquip_response_e
 drop policy if exists "org members read newquip_response_links" on newquip_response_links;
 create policy "org members read newquip_response_links" on newquip_response_links for select using (is_org_member(org_id) and newquip_quote_scope_ok(org_id));
 drop policy if exists "org members read approval_requests" on approval_requests;
-create policy "org members read approval_requests" on approval_requests for select using (is_org_member(org_id) and newquip_quote_scope_ok(org_id));
+create policy "org members read approval_requests" on approval_requests for select using (is_org_member(org_id) and ((doc_type = 'QUOTE' and newquip_quote_scope_ok(org_id)) or (doc_type <> 'QUOTE' and newquip_project_scope_ok(org_id))));
 drop policy if exists "org members read approval_events" on approval_events;
-create policy "org members read approval_events" on approval_events for select using (is_org_member(org_id) and newquip_quote_scope_ok(org_id));
+create policy "org members read approval_events" on approval_events for select using (is_org_member(org_id) and ((doc_type = 'QUOTE' and newquip_quote_scope_ok(org_id)) or (doc_type <> 'QUOTE' and newquip_project_scope_ok(org_id))));
 
 -- the notification recipient policy keeps its recipient test and gains the scope test
 drop policy if exists "recipients read approval_notifications" on approval_notifications;
 create policy "recipients read approval_notifications" on approval_notifications for select
-  using (is_org_member(org_id) and recipient_email = lower(coalesce((auth.jwt() ->> 'email'), '')) and newquip_quote_scope_ok(org_id));
+  using (is_org_member(org_id) and recipient_email = lower(coalesce((auth.jwt() ->> 'email'), '')) and newquip_project_scope_ok(org_id));
 
 -- Projects and everything hanging off them
 drop policy if exists "org members read projects" on projects;
@@ -161,7 +164,7 @@ create policy "org members read project_variations" on project_variations for se
 -- activity_log: the Toolbox rows (sync, instance, audit, ...) are unchanged; NewQuip / approvals / projects rows follow the quotation scope
 drop policy if exists "org members read activity_log" on activity_log;
 create policy "org members read activity_log" on activity_log for select
-  using (is_org_member(org_id) and (action !~ '^(newquip|approvals|projects)\.' or newquip_quote_scope_ok(org_id)));
+  using (is_org_member(org_id) and (action !~ '^(newquip|approvals|projects)\.' or newquip_quote_scope_ok(org_id) or (action like 'projects.%' and newquip_project_scope_ok(org_id))));
 
 -- ── access ──────────────────────────────────────────────────────────────────
 alter table newquip_access_settings enable row level security;
@@ -173,5 +176,6 @@ grant select, insert on newquip_access_setting_events to service_role;
 revoke all on function newquip_access_setting_events_guard() from public, anon, authenticated;
 revoke all on function newquip_set_rep_isolation(uuid, boolean, text, text, jsonb) from public, anon, authenticated;
 grant execute on function newquip_set_rep_isolation(uuid, boolean, text, text, jsonb) to service_role;
-revoke all on function newquip_isolation_on(uuid), newquip_quote_scope_ok(uuid), newquip_project_scope_ok(uuid) from public, anon;
-grant execute on function newquip_isolation_on(uuid), newquip_quote_scope_ok(uuid), newquip_project_scope_ok(uuid) to authenticated, service_role;
+revoke all on function newquip_isolation_on(uuid), newquip_quote_scope_ok(uuid), newquip_project_scope_ok(uuid) from public, anon, authenticated;
+grant execute on function newquip_isolation_on(uuid) to service_role;                                    -- only the definer helpers call it; a client cannot probe any organisation's switch
+grant execute on function newquip_quote_scope_ok(uuid), newquip_project_scope_ok(uuid) to authenticated, service_role;   -- evaluated by the read policies; both answer false for a non-member

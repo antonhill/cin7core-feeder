@@ -19,6 +19,7 @@ import { listVariationStages } from "@/lib/projects/variation-billing-store";
 import { authoriseDecision, authoriseStageDecision } from "./policy";
 import { demoAuditDetail, type DemoInfo } from "@/lib/demo-mode/context";
 import { logActivity } from "@/lib/activity-log";
+import { recipientMayReceive } from "@/lib/newquip-assignments/access";
 import { canAdminister, stageOf, STAGE_LABEL, ROLE_LABEL, type ApprovalStage, type FunctionalRole } from "./roles";
 import { emailsWithRole, loadPolicies, resolveRoles, rolesAvailable } from "./role-store";
 import { APPROVALS_DISABLED } from "./kill-switch";
@@ -341,6 +342,19 @@ async function deliverRows(db: Db, rows: ApprovalNotificationRow[], send: typeof
   for (const row of rows) {
     const n = { ...row }; // work on a copy: the attempt counter we compare-and-set against must not move under us
     if (n.attempts >= MAX_EMAIL_ATTEMPTS) continue;
+    // Rep customer isolation (Slice 1B): a person who may no longer see this quotation's customer (reassigned away, or never assigned) is not e-mailed about it. Decided when the mail is about to leave.
+    const orgOfRow = (n as unknown as { org_id: string }).org_id;
+    const attributedQuote = async (): Promise<string | null> => {
+      if (n.quote_id) return n.quote_id;
+      if (!n.request_id) return null;
+      const rq = await db.from("approval_requests").select("doc_type, doc_id").eq("org_id", orgOfRow).eq("id", n.request_id).maybeSingle();
+      const d = rq.data as { doc_type: string; doc_id: string } | null;
+      return d && d.doc_type === "QUOTE" ? d.doc_id : null;
+    };
+    if (!(await recipientMayReceive(db, orgOfRow, n.recipient_email, attributedQuote))) {
+      if (await markSuppressed(db, n.id, "The recipient no longer has access to this customer's quotations (customer isolation); no email was sent.", statuses)) suppressed += 1;
+      continue;
+    }
     // the outbound policy is decided BEFORE an attempt is claimed: a suppressed email costs no attempt and reaches no provider
     const decision = applyEmailPolicy(env, { to: n.recipient_email, subject: n.subject, text: n.body });
     if (decision.action === "SUPPRESS") { if (await markSuppressed(db, n.id, decision.reason, statuses)) suppressed += 1; continue; }

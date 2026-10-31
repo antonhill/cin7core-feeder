@@ -5,6 +5,8 @@ import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { resolveActing } from "@/lib/demo-mode/context";
 import { readyDraft } from "@/newquip/grower/__tests__/golden";
 import { assignRep, endAssignment, reassignCustomer } from "@/lib/newquip-assignments/assignment-store";
+import { appendClearMarker } from "@/lib/newquip-quotes/customer-store";
+import { deliverPendingEmails } from "@/lib/approvals/approval-store";
 
 // Customer-level Rep isolation (Slice 1B) through the REAL server actions and route handlers over an in-memory database. Only the session, Demo Mode resolution, the audit log, the Cin7
 // customer read and the file storage are replaced; role resolution (explicit org_functional_roles vs organisation tier), the assignment store, the access boundary and every guarded
@@ -376,5 +378,92 @@ describe("owner-gated activation and the read-only preflight", () => {
     db.accessApplied = true; db.assignmentsApplied = false;
     expect((await isolation.setRepIsolationAction({ enabled: true, reason: "owner approved", confirmation: "ENABLE REP ISOLATION" })).error).toMatch(/not available/);
     expect(db.rows("newquip_access_settings")).toHaveLength(0);
+  });
+});
+
+describe("independent-review fixes", () => {
+  beforeEach(() => { isolate(true); });
+
+  it("CLEARING a customer does not hand the quotation back to its creator (only a quotation that NEVER had a customer is the creator's own enquiry)", async () => {
+    await assign("repA", C1);
+    quote("q10", C1, { creator: "a@nq.test" });                            // created by Rep A for customer 1
+    await reassignCustomer(db as never, ORG, { email: "adm@nq.test" }, { cin7CustomerId: C1, customerName: "Farm", fromRepUserId: "repA", toRepUserId: "repB", toRepEmail: people.repB.email, reason: "territory change" });
+    expect(await ids("repA")).toEqual(["q4"]);
+    await appendClearMarker(db as never, ORG, "q10", { email: "b@nq.test" }, "Customer cleared (was Farm)");   // Rep B clears the customer
+    expect(await ids("repA")).toEqual(["q4"]);                                                                  // Rep A does NOT regain q10 (nor its history)
+    expect(await ids("repB")).not.toContain("q10");
+    as("repA"); expect((await grower.getGrowerQuoteAction("q10")).error).toBe(GENERIC);
+    expect((await customers.getQuoteCustomerAction("q10")).error).toBe(GENERIC);                              // the old customer's name/contacts in the history stay hidden
+    expect(await ids("adm")).toContain("q10");                                                                   // organisation-wide roles still see it
+    expect(await ids("repA")).toContain("q4");                                                                   // a draft that never had a customer is still the creator's
+  });
+
+  it("e-mail is decided when it LEAVES: a previous Rep, or anyone unassigned, is not mailed about a customer they cannot see; the current Rep, org-wide users and non-users are", async () => {
+    await assign("repB", C1);                                               // customer 1 now belongs to Rep B (Rep A was reassigned away earlier)
+    const mail = (id: string, to: string) => db.rows("approval_notifications").push({ id, org_id: ORG, request_id: null, quote_id: "q1", kind: "RESPONSE", recipient_email: to, channel: "EMAIL", subject: "S", body: "Customer: Farm", dedupe_key: id, status: "PENDING", attempts: 0, last_error: null, provider_message_id: null, sent_at: null, read_at: null, created_at: "2026-10-01T00:00:00Z" });
+    mail("m-prev", "a@nq.test"); mail("m-cur", "b@nq.test"); mail("m-est", "est@nq.test"); mail("m-adm", "adm@nq.test"); mail("m-plain", "plain@nq.test"); mail("m-ext", "escalation@external.example");
+    db.notificationStatuses.push("SUPPRESSED");
+    const send = vi.fn(async (_i: unknown) => ({ ok: true, messageId: "m" }));
+    await deliverPendingEmails(db as never, send as never, 50, { env: { VERCEL_ENV: "production", NEWQUIP_PRODUCTION_EMAIL_ENABLED: "true" } });
+    const sentTo = send.mock.calls.map((c) => (c[0] as { to: string[] }).to[0]).sort();
+    expect(sentTo).toEqual(["adm@nq.test", "b@nq.test", "escalation@external.example", "est@nq.test"]);
+    const st = (id: string) => (db.rows("approval_notifications").find((r) => r.id === id) as Record<string, unknown>);
+    expect(st("m-prev").status).toBe("SUPPRESSED"); expect(st("m-plain").status).toBe("SUPPRESSED");
+    expect(String(st("m-prev").last_error)).toMatch(/customer isolation/);
+    // switch OFF: unchanged behaviour, everyone is mailed
+    db.rows("newquip_access_settings")[0].rep_isolation_enabled = false; send.mockClear(); mail("m-prev2", "a@nq.test");
+    await deliverPendingEmails(db as never, send as never, 50, { env: { VERCEL_ENV: "production", NEWQUIP_PRODUCTION_EMAIL_ENABLED: "true" } });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("only 'the settings TABLE is not installed' means OFF; a renamed column, a missing function or a connection error never silently turns isolation off", async () => {
+    const real = db.from.bind(db);
+    const failWith = (error: Record<string, string>) => { (db as unknown as { from: unknown }).from = (t: string) => t === "newquip_access_settings" ? { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error }) }) }) } : real(t); };
+    as("repA");
+    failWith({ message: 'column "rep_isolation_enabled" does not exist' }); expect((await grower.listGrowerQuotesAction()).error).toBe("Access settings are unavailable.");
+    failWith({ message: 'function public.is_org_admin(uuid) does not exist' }); expect((await grower.listGrowerQuotesAction()).error).toBe("Access settings are unavailable.");
+    failWith({ message: "connection reset" }); expect((await grower.listGrowerQuotesAction()).error).toBe("Access settings are unavailable.");
+    failWith({ code: "PGRST205", message: "Could not find the table 'public.newquip_access_settings' in the schema cache" }); expect((await grower.listGrowerQuotesAction()).ok).toBe(true);
+    failWith({ code: "42P01", message: 'relation "public.newquip_access_settings" does not exist' }); expect((await grower.listGrowerQuotesAction()).ok).toBe(true);
+  });
+
+  it("explicit Project Manager / Procurement keep claim and variation approvals and projects.* activity (but not quotation approvals or NewQuip activity); a Rep keeps neither", async () => {
+    who("pm", "pm@nq.test", "member", ["PROJECT_MANAGER"]);
+    const reqRow = (id: string, doc_type: string, doc_id: string) => ({ id, org_id: ORG, doc_type, doc_id, doc_ref: doc_id, revision: 1, status: "PENDING", stage: "MANAGER", stage_role: "MANAGER", digest: "d", version: 1, amount_cents: 1, prepared_by_email: "p@nq.test", submitted_at: "2026-10-01T00:00:00Z", created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z" });
+    db.rows("approval_requests").push(reqRow("r3", "QUOTE", "q3"), reqRow("rc", "CLAIM", "claim-1"), reqRow("rv", "VARIATION", "var-1"));
+    const row = (action: string) => ({ id: `a-${action}`, org_id: ORG, instance_id: null, actor_email: "x@nq.test", action, summary: action, detail: null, created_at: "2026-10-01T00:00:00Z" });
+    db.rows("activity_log").push(row("newquip.quote_created"), row("approvals.decided"), row("projects.claim_approved"), row("sync.completed"));
+    as("pm");
+    expect((await approvals.getApprovalsDashboardAction()).data!.rows.map((r) => r.id).sort()).toEqual(["rc", "rv"]);
+    expect((await approvals.getApprovalDetailAction("rc")).error).not.toBe("Approval request not found.");
+    expect((await approvals.getApprovalDetailAction("r3")).error).toBe("Approval request not found.");
+    expect((await activity.listActivityAction()).data!.map((r) => r.action).sort()).toEqual(["projects.claim_approved", "sync.completed"]);
+    as("repA"); expect((await approvals.getApprovalsDashboardAction()).data!.rows).toEqual([]);
+    expect((await activity.listActivityAction()).data!.map((r) => r.action)).toEqual(["sync.completed"]);
+  });
+
+  it("approval requests follow the same rule for a cleared quotation (hidden) and a never-customered own draft (visible); unattributable mail to an assigned-scoped user is withheld", async () => {
+    await assign("repA", C1); quote("q10", C1, { creator: "a@nq.test" });
+    await appendClearMarker(db as never, ORG, "q10", { email: "a@nq.test" }, "Customer cleared (was Farm)");
+    const reqRow = (id: string, doc_id: string) => ({ id, org_id: ORG, doc_type: "QUOTE", doc_id, doc_ref: doc_id, revision: 1, status: "PENDING", stage: "MANAGER", stage_role: "MANAGER", digest: "d", version: 1, amount_cents: 1, prepared_by_email: "p@nq.test", submitted_at: "t", created_at: "t", updated_at: "t" });
+    db.rows("approval_requests").push(reqRow("r4", "q4"), reqRow("r10", "q10"));
+    as("repA"); expect((await approvals.getApprovalsDashboardAction()).data!.rows.map((r) => r.id)).toEqual(["r4"]);
+    const mail = (id: string, to: string, request_id: string | null, quote_id: string | null) => db.rows("approval_notifications").push({ id, org_id: ORG, request_id, quote_id, kind: "X", recipient_email: to, channel: "EMAIL", subject: "S", body: "b", dedupe_key: id, status: "PENDING", attempts: 0, last_error: null, provider_message_id: null, sent_at: null, read_at: null, created_at: "t" });
+    mail("m-orphan", "plain@nq.test", null, null); mail("m-ok", "a@nq.test", "r4", null); mail("m-cleared", "a@nq.test", "r10", null);
+    db.notificationStatuses.push("SUPPRESSED"); const send = vi.fn(async (_i: unknown) => ({ ok: true, messageId: "m" }));
+    await deliverPendingEmails(db as never, send as never, 50, { env: { VERCEL_ENV: "production", NEWQUIP_PRODUCTION_EMAIL_ENABLED: "true" } });
+    expect(send.mock.calls.map((c) => (c[0] as { to: string[] }).to[0])).toEqual(["a@nq.test"]);   // only the one for the own never-customered draft
+  });
+
+  it("marking notifications read touches only the rows the actor can see", async () => {
+    await assign("repA", C1);
+    const reqRow = (id: string, doc_id: string) => ({ id, org_id: ORG, doc_type: "QUOTE", doc_id, doc_ref: doc_id, revision: 1, status: "PENDING", stage: "MANAGER", stage_role: "MANAGER", digest: "d", version: 1, amount_cents: 1, prepared_by_email: "p@nq.test", submitted_at: "t", created_at: "t", updated_at: "t" });
+    db.rows("approval_requests").push(reqRow("r1", "q1"), reqRow("r3", "q3"));
+    const note = (id: string, request_id: string) => ({ id, org_id: ORG, request_id, quote_id: null, kind: "SUBMITTED", recipient_email: "a@nq.test", channel: "IN_APP", subject: "s", body: "b", dedupe_key: id, status: "SENT", attempts: 0, last_error: null, provider_message_id: null, sent_at: "t", read_at: null, created_at: "2026-10-01T00:00:00Z" });
+    db.rows("approval_notifications").push(note("n1", "r1"), note("n3", "r3"));
+    as("repA"); const r = await approvals.getMyNotificationsAction(true); expect(r.ok, r.error).toBe(true);
+    const readAt = (id: string) => (db.rows("approval_notifications").find((x) => x.id === id) as Record<string, unknown>).read_at;
+    expect(readAt("n1")).toBeTruthy(); expect(readAt("n3")).toBeNull();
+    expect(r.data!.notifications.map((n) => n.id)).toEqual(["n1"]); expect(r.data!.unread).toBe(0);
   });
 });
