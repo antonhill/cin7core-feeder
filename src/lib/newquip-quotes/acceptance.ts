@@ -97,10 +97,11 @@ export async function recordCustomerResponse(
   if (input.respondedOn < doc.created_at.slice(0, 10)) throw new Error("The response cannot pre-date the issue of the quotation.");
   const prior = await listResponses(db, orgId, quoteId);
   const reviews = await listReviews(db, orgId, quoteId);
+  const evidence = await evidenceCounts(db, orgId, quoteId);   // a staff acceptance only counts WITH its evidence; omitting this made an evidenced acceptance look non-final
   const portal = await portalAvailable(db);
   if (input.response === "ACCEPTED" && portal && (input.evidenceCount ?? 0) < 1) throw new Error("Attach the supporting evidence for the acceptance (for example the signed quotation or the customer's confirming email).");
   if (portal && prior.some((r) => r.document_id === doc.id && r.response === "ACCEPTED" && standingOf(r, reviews) === "PENDING_VERIFICATION")) throw new Error("The customer's emailed acceptance is waiting for internal verification. Verify or reject it first.");
-  if (prior.some((r) => countsAsAcceptance(r, reviews))) {
+  if (prior.some((r) => countsAsAcceptance(r, reviews, evidence))) {
     const same = prior.find((r) => r.response === input.response && r.document_id === doc.id && r.evidence_ref === evidenceRef);
     if (same) return { response: same, created: false };
     throw new Error("The customer has already accepted this quotation; the acceptance is final.");
@@ -172,6 +173,7 @@ export async function reviewResponse(
   if (!resp) throw new Error("That response does not belong to this quotation.");
   if (resp.origin !== "CUSTOMER_LINK" || resp.response !== "ACCEPTED") throw new Error("Only an acceptance received through the customer's emailed link needs verification.");
   const reviews = await listReviews(db, orgId, quoteId);
+  const evidence = await evidenceCounts(db, orgId, quoteId);
   const prior = reviews.find((x) => x.response_id === resp.id);
   if (prior) { if (prior.decision === input.decision) return { review: prior, response: resp, created: false }; throw new Error(`This acceptance was already ${prior.decision === "VERIFIED" ? "verified" : "rejected"}; a review is final.`); }
   // The acceptance must still be of the CURRENT issued document: a response to a superseded revision cannot be verified into force.
@@ -180,7 +182,7 @@ export async function reviewResponse(
   if (!doc || doc.id !== resp.document_id || doc.revision !== q.revision || doc.baseline_hash !== q.baseline_hash || (resp.document_hash && resp.document_hash !== doc.content_hash)) {
     if (input.decision === "VERIFIED") throw new Error("That acceptance was given for an earlier version of the quotation, so it cannot be verified. Reject it, or have the customer respond to the current version.");
   }
-  if (input.decision === "VERIFIED" && responses.some((r) => r.id !== resp.id && countsAsAcceptance(r, reviews))) throw new Error("This quotation already has a formal acceptance.");
+  if (input.decision === "VERIFIED" && responses.some((r) => r.id !== resp.id && countsAsAcceptance(r, reviews, evidence))) throw new Error("This quotation already has a formal acceptance.");
   const ins = await db.from("newquip_response_reviews").insert({
     org_id: orgId, quote_id: quoteId, response_id: resp.id, decision: input.decision, note, reviewed_by_email: who.email, reviewed_by_owner_email: who.ownerEmail ?? null,
   }).select("*").single();

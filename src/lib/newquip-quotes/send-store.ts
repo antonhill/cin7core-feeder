@@ -8,7 +8,7 @@ import "server-only";
 //  - the provider result is recorded as ACCEPTED (provider accepted it - NOT proof of inbox delivery or customer receipt) or FAILED; only FAILED can be retried, once at a time.
 import type { createServiceRoleClient } from "@/supabase/server";
 import { sendEmail as resendSend, type SendEmailInput, type SendEmailResult } from "@/lib/email/resend";
-import { applyEmailPolicy, isRestricted, PREVIEW_BODY_BANNER, PREVIEW_SUBJECT_PREFIX, type EmailEnv } from "@/lib/approvals/email-policy";
+import { applyEmailPolicy, isRestricted, PREVIEW_BODY_BANNER, PREVIEW_SUBJECT_PREFIX, PRODUCTION_EMAIL_OFF, productionEmailBlocked, type EmailEnv } from "@/lib/approvals/email-policy";
 import { loadQuote } from "./quote-store";
 import { messageLeaksInternal } from "./customer-document";
 import { isValidEmail } from "./customer-snapshot";
@@ -143,6 +143,7 @@ export async function sendQuotationToCustomer(
   if (doc.revision !== q.revision || doc.baseline_hash !== q.baseline_hash) throw new Error("The quotation changed after this document was issued; issue it again before sending.");
   if (message && messageLeaksInternal(message, q.accepted_baseline)) throw new Error("Your message appears to contain internal information (costs, margins, SKUs or internal notes). Remove it before sending.");
 
+  if (productionEmailBlocked(env)) throw new Error(PRODUCTION_EMAIL_OFF);   // refused up front: nothing is recorded, issued or sent
   // Production recipients: a Cin7 contact of the selected customer, or an explicitly approved alternative with an audited reason. (Outside Production the allowlist below is stricter.)
   let alternatives: string[] = [];
   if (!isRestricted(env)) {
@@ -196,6 +197,7 @@ export async function sendQuotationToCustomer(
  * email a real customer. Every address must also be a Cin7 contact of the selected customer, or one the original send approved with its audited reason.
  */
 async function assertRetryAllowedHere(db: Db, orgId: string, row: StoredSend, env: EmailEnv): Promise<void> {
+  if (productionEmailBlocked(env)) throw new Error(PRODUCTION_EMAIL_OFF);
   if (isRestricted(env)) return;
   if (row.subject.startsWith(PREVIEW_SUBJECT_PREFIX) || (row.suppressed_emails ?? []).length > 0) throw new Error("This send was prepared in a test (Preview) environment, so it cannot be retried from Production. Send the quotation again from here.");
   const snap = (await latestSnapshot(db, orgId, row.quote_id))?.snapshot;

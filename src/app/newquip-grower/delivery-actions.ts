@@ -16,7 +16,7 @@ import { listLinks, revokeActiveLinks } from "@/lib/newquip-quotes/response-link
 import { notifyResponseEvent } from "@/lib/newquip-quotes/response-notify";
 import { recordStaffResponse, type StaffResponseInput } from "@/lib/newquip-quotes/response-record";
 import { fieldValue } from "@/lib/newquip-quotes/customer-snapshot";
-import { PREVIEW_EMAIL_ALLOWLIST, isRestricted } from "@/lib/approvals/email-policy";
+import { PREVIEW_EMAIL_ALLOWLIST, isRestricted, productionEmailBlocked } from "@/lib/approvals/email-policy";
 import { emailConfigStatus } from "@/lib/email/resend";
 
 export interface DeliveryActionResult<T> { ok: boolean; error?: string; data?: T }
@@ -46,7 +46,7 @@ export interface DeliveryView {
   /** Cin7 contact emails of the selected customer. In Production any other recipient needs an audited reason. */
   contactEmails: string[];
   /** Preview / non-production: only these mailboxes are emailed. */
-  policy: { restricted: boolean; production: boolean; allowlist: string[]; emailConfigured: boolean };
+  policy: { restricted: boolean; production: boolean; allowlist: string[]; emailConfigured: boolean; productionEmailOff: boolean };
 }
 
 const canRecordRole = (a: Actor) => a.roles.has("rep") || a.roles.has("manager");
@@ -56,7 +56,7 @@ async function viewOf(a: Actor, quoteId: string): Promise<DeliveryView> {
   const q = await loadQuote(db, a.orgId, quoteId);
   if (!q) throw new Error("Quote not found.");
   const restricted = isRestricted(process.env);
-  const policy = { restricted, production: !restricted, allowlist: restricted ? [...PREVIEW_EMAIL_ALLOWLIST] : [], emailConfigured: emailConfigStatus().configured };
+  const policy = { restricted, production: !restricted, allowlist: restricted ? [...PREVIEW_EMAIL_ALLOWLIST] : [], emailConfigured: emailConfigStatus().configured, productionEmailOff: productionEmailBlocked(process.env) };
   if (!(await documentsAvailable(db))) return { available: false, status: "NOT_APPROVED", statusLabel: "", requiresAcceptance: false, accepted: false, latestDocumentId: null, defaultTo: null, sends: [], responses: [], canSend: false, canRecord: false, portal: false, responseContacts: [], deliveryContact: null, canReview: false, links: { state: "NONE", expiresOn: null }, contactEmails: [], policy };
   const [docs, sends, responses] = await Promise.all([listDocuments(db, a.orgId, quoteId), listSends(db, a.orgId, quoteId), listResponses(db, a.orgId, quoteId)]);
   const latest = docs[0] ?? null;

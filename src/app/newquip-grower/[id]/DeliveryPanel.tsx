@@ -84,6 +84,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
       <h3 className="mt-5 text-sm font-semibold text-slate-800">Send to the customer</h3>
       {d.policy.restricted && <Alert tone="info">Preview environment: only {d.policy.allowlist.join(", ")} will be emailed. Any other address is recorded as not sent, never redirected. Subjects are marked [PREVIEW].</Alert>}
       {!d.policy.emailConfigured && <Alert tone="warning">Email is not configured in this environment.</Alert>}
+      {d.policy.productionEmailOff && <Alert tone="warning">Production email is switched off: nothing can be sent to customers from here yet.</Alert>}
       {d.canSend && latest ? (
         <div className="mt-2 space-y-2">
           <div className="flex flex-wrap gap-2">

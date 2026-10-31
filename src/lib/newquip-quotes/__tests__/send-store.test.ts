@@ -11,7 +11,8 @@ import { renderCustomerPdf } from "../customer-pdf";
 import { retryFailedSend, sendQuotationToCustomer, validateRequest, type SendFn } from "../send-store";
 
 const PROFILE = { brandName: "TestBrand", legalName: "Test Company (Pty) Ltd", registrationNumber: "0000/000000/00", vatNumber: "0000000000", addressLines: ["1 Test Street", "Testville 0001"], phone: "000", email: "sales@testbrand.example", website: "", validityDays: 30, paymentTerms: "p", deliveryInstallationConditions: "d", termsAndConditions: "t", acceptanceInstructions: "a" };
-const PREVIEW = { VERCEL_ENV: "preview" }; const PROD = { VERCEL_ENV: "production" };
+const PREVIEW: Record<string, string> = { VERCEL_ENV: "preview" }; const PROD: Record<string, string> = { VERCEL_ENV: "production", NEWQUIP_PRODUCTION_EMAIL_ENABLED: "true" };   // Production only sends after the explicit opt-in; PROD_OFF = no opt-in
+const PROD_OFF: Record<string, string> = { VERCEL_ENV: "production" };
 const approvals = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "rep.person@nq.example", handoffBy: "rep.person@nq.example", estimatorSignoffBy: "est.person@nq.example", estimatorSignoffAt: "t", managerApprovedBy: "mgr.person@nq.example", managerApprovedAt: "t" };
 
 async function world() {
@@ -198,6 +199,24 @@ describe("duplicate prevention, resend and retry", () => {
     it("a Preview retry is unchanged (the restricted policy already applies)", async () => {
       const w = await world(); const r = await go(w, bad(), { to: ["anton@sparkconsulting.co.za"] }); const good = ok();
       await retryFailedSend(w.db as never, "org-a", r.send.id, w.deps, PREVIEW, good); expect(good).toHaveBeenCalledTimes(1);
+    });
+  });
+  describe("Production without the explicit email opt-in sends nothing (a provider key alone is not enough)", () => {
+    it("a first send is refused up front: nothing is recorded, issued or sent", async () => {
+      const w = await world(); const send = ok();
+      await expect(go(w, send, { to: ["piet@boerdery.example"] }, PROD_OFF)).rejects.toThrow(/Production email is not enabled/);
+      expect(send).not.toHaveBeenCalled(); expect(w.db.rows("newquip_quote_sends")).toHaveLength(0);
+      expect((await go(w, send, { to: ["piet@boerdery.example"] }, PROD)).send.status).toBe("ACCEPTED");   // the same call with the opt-in works
+    });
+    it("a retry is refused and leaves the FAILED send exactly as it was", async () => {
+      const w = await world(); const r = await go(w, bad(), { to: ["piet@boerdery.example"] }, PROD); expect(r.send.status).toBe("FAILED");
+      const before = JSON.stringify(w.db.rows("newquip_quote_sends")); const good = ok();
+      await expect(retryFailedSend(w.db as never, "org-a", r.send.id, w.deps, PROD_OFF, good)).rejects.toThrow(/Production email is not enabled/);
+      expect(good).not.toHaveBeenCalled(); expect(JSON.stringify(w.db.rows("newquip_quote_sends"))).toBe(before);
+    });
+    it("Preview is unaffected, with or without the Production flag", async () => {
+      const w = await world(); const send = ok();
+      expect((await go(w, send, { to: ["anton@sparkconsulting.co.za"] }, { ...PREVIEW, NEWQUIP_PRODUCTION_EMAIL_ENABLED: "true" })).send.status).toBe("ACCEPTED");
     });
   });
   it("organisation isolation: another organisation can neither send nor retry", async () => {

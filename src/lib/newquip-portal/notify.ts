@@ -16,6 +16,42 @@ const COPY: Record<ResponseEvent, { headline: string; action: string }> = {
   VERIFIED: { headline: "customer acceptance verified", action: "The acceptance is now formal. Open Project Handover to create the Project (nothing is created automatically)." },
   REJECTED_ON_VERIFICATION: { headline: "customer acceptance rejected during verification", action: "The acceptance does not authorise a Project. See the reason in Customer Acceptance and contact the customer." },
 };
+/**
+ * Customer-supplied text (a reason, a name, a company) is UNTRUSTED and ends up in an internal staff email and notification. It must not be able to carry a clickable link, a
+ * look-alike address, hidden or direction-changing characters, or unbounded length. Links, web addresses and email addresses are replaced by a visible marker; control, zero-width
+ * and bidirectional-override characters become spaces; whitespace is collapsed; length is capped. The readable remainder is kept. (A bare "word.word" that looks like a web
+ * address - including a one-letter host such as t.co, an internationalised domain or a dotted IP - is also replaced: a deliberate, slightly over-eager trade for plain-text mail
+ * clients that auto-link. Initials written without a space ("J.Smith", "P.O.Box 123") are kept unless they carry a path/port or end in a known top-level domain. Known cost: a missing
+ * space after a full stop, "expensive.Please", reads as a host and is replaced.)
+ */
+export const LINK_MARKER = "[link removed]";
+export const EMAIL_MARKER = "[email removed]";
+/** Top-level domains for which a short "x.com"-style token is treated as a web address even without a path (initials such as "J.Smith" are not). */
+const KNOWN_TLDS = new Set(["com", "net", "org", "edu", "gov", "info", "biz", "io", "co", "me", "ly", "gl", "gd", "cc", "ws", "tv", "to", "fm", "am", "ai", "app", "dev", "xyz", "top", "club", "site", "online", "shop", "link", "click", "live", "page", "store", "tech", "cloud", "ru", "cn", "in", "au", "ca", "nz", "uk", "us", "eu", "de", "fr", "nl", "za", "br", "jp", "kr", "es", "it", "se", "ch", "be", "pl", "tr", "ir", "ua"]);
+/** Initial-like host: every label before the last is a single character ("J.Smith", "P.O.Box", "e.g.change", "t.co", "x.com"). Such a token is a web address only with a path/port or a known TLD. */
+function keepInitialLike(m: string): boolean {
+  const labels = m.split(/[\/?#:]/)[0].split(".");
+  const initialLike = labels.slice(0, -1).every((l) => [...l].length === 1);
+  const hasPathOrPort = /[\/?#]|:\d/.test(m);
+  return initialLike && !hasPathOrPort && !KNOWN_TLDS.has(labels[labels.length - 1].toLowerCase());
+}
+
+export function safeCustomerText(raw: string | null | undefined, max = 300): string {
+  // Bound the work BEFORE any pattern runs (callers also trim, but the cost of the patterns must not depend on every caller doing so).
+  let t = String(raw ?? "").slice(0, Math.max(max * 4, 1000))
+    .normalize("NFKC")
+    .replace(/[\u3002\uFF61]/g, ".")                                                                                              // ideographic full stops read as dots by browsers/IDNA
+    // invisible / control / formatting characters: C0+C1 controls, ALL format characters (zero-width, joiners, bidi marks and overrides, soft hyphen, BOM, Unicode TAG characters used to hide text),
+    // private-use, line/paragraph separators, plus code points that render as blank (combining grapheme joiner, Hangul fillers, braille blank, variation selectors)
+    .replace(/[\p{Cc}\p{Cf}\p{Co}\p{Cs}\p{Zl}\p{Zp}͏ᅟᅠㅤﾠ⠀᠋-᠍︀-️\u{E0100}-\u{E01EF}]/gu, " ")
+    .replace(/[^\s@]+@[^\s@]+/g, EMAIL_MARKER)                                                                                    // email addresses (mailto auto-links)
+    .replace(/(?<![\p{L}\p{N}])(?:(?:https?|ftp|sftp|file|mailto|tel|sms|javascript|vbscript|data|blob):\S*|\p{L}[\p{L}\p{N}+.-]{1,15}:\/\/\S*|www\.\S*)/giu, LINK_MARKER) // known schemes, any scheme://, www.
+    .replace(/(?<![\p{L}\p{N}.])\d{1,3}(?:\.\d{1,3}){3}(?![\p{L}\p{N}])(?::\d+)?(?:[\/?#]\S*)?/gu, LINK_MARKER)                    // dotted IPv4 (with optional port/path)
+    .replace(/(?<![\p{L}\p{N}])(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}(?::\d+)?(?:[\/?#]\S*)?/gu, (m) => (keepInitialLike(m) ? m : LINK_MARKER)); // bare domains incl. t.co / x.com and non-ASCII (IDN) labels
+  t = t.replace(/(?:\[link removed\]\s*){2,}/g, `${LINK_MARKER} `).replace(/\s+/g, " ").trim();
+  return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
+}
+
 const uniq = (xs: Array<string | null | undefined>) => [...new Set(xs.filter((x): x is string => !!x && x.includes("@")).map((x) => x.trim().toLowerCase()))];
 
 export interface NotifyParams {
@@ -33,8 +69,9 @@ export async function queueResponseNotifications(db: Db, p: NotifyParams): Promi
   if (!rq.error) requestId = ((rq.data ?? []) as Array<{ id: string; revision: number }>).sort((a, b) => b.revision - a.revision)[0]?.id ?? null;
   const copy = COPY[p.event];
   const r = p.response;
-  const who = r.origin === "CUSTOMER_LINK" ? `${r.contact_name}${r.contact_company ? `, ${r.contact_company}` : ""}` : r.contact_name;
-  const reasonLine = p.reason && !/\b(costs?|margins?|mark-?ups?|gross\s+profit|supplier)\b/i.test(p.reason) ? `Reason: ${p.reason.trim().slice(0, 400)}` : "";
+  const who = safeCustomerText(r.origin === "CUSTOMER_LINK" ? `${r.contact_name}${r.contact_company ? `, ${r.contact_company}` : ""}` : r.contact_name, 160);
+  const safeReason = safeCustomerText(p.reason, 400);
+  const reasonLine = safeReason && !/\b(costs?|margins?|mark-?ups?|gross\s+profit|supplier)\b/i.test(safeReason) ? `Reason: ${safeReason}` : "";
   const base = (p.internalBaseUrl ?? "").replace(/\/+$/, "");
   const body = [
     `Quotation ${p.quoteRef} - ${copy.headline}`, "",
