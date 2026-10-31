@@ -74,6 +74,8 @@ export class FakeDb {
   deliveryApplied = false;
   /** Migration 0117 (customer response links, reviews, evidence and the responding-contact columns) is not applied unless a test says so. */
   portalApplied = false;
+  /** Migration 0118 (customer -> Rep assignments) is not applied unless a test says so. */
+  assignmentsApplied = false;
   /** Statuses the approval_notifications CHECK accepts. Defaults to the 0110 list (no SUPPRESSED, i.e. migration 0114 not applied); a test sets it to include SUPPRESSED. */
   notificationStatuses: string[] = ["PENDING", "SENT", "FAILED", "ABANDONED"];
 
@@ -98,6 +100,7 @@ export class FakeDb {
     const fxOn = () => this.fxApplied;
     const deliveryOn = () => this.deliveryApplied;
     const portalOn = () => this.portalApplied;
+    const assignmentsOn = () => this.assignmentsApplied;
     const notificationStatuses = () => this.notificationStatuses;
     function exec(): { data: unknown; error: { message: string } | null } {
       const real = REAL_COLUMNS[table];
@@ -107,6 +110,24 @@ export class FakeDb {
       if (table === "newquip_quote_responses" && !portalOn() && op === "insert") {
         const bad = (Array.isArray(payload) ? payload : [payload]).flatMap((p) => Object.keys(p)).find((k) => COLS_0117.includes(k));
         if (bad) return { data: null, error: { message: `column "${bad}" of relation "newquip_quote_responses" does not exist` } };
+      }
+      if (table === "customer_rep_assignments") {
+        // Migration 0118: absent until applied; then the same rules its database guard and partial unique index enforce (append-only history, one ACTIVE row per customer + Rep).
+        if (!assignmentsOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
+        if (op === "delete") return { data: null, error: { message: "customer_rep_assignments: assignment history is never deleted; end the assignment instead" } };
+        if (op === "insert") {
+          for (const r of (Array.isArray(payload) ? payload : [payload])) {
+            if (r.ended_at != null) return { data: null, error: { message: "customer_rep_assignments: an assignment is created active" } };
+            if (r.cin7_customer_id === "(cleared)" || !String(r.cin7_customer_id ?? "").trim()) return { data: null, error: { message: "new row violates check constraint customer_rep_assignments_cin7_customer_id_check" } };
+            if (rowsOf(table).some((e) => e.ended_at == null && e.org_id === r.org_id && e.cin7_customer_id === r.cin7_customer_id && e.rep_user_id === r.rep_user_id)) return { data: null, error: { message: "duplicate key value violates unique constraint customer_rep_assignments_active_uq" } };
+          }
+        }
+        if (op === "update") {
+          const p = (payload ?? {}) as Row;
+          if (Object.keys(p).some((k) => !["ended_at", "ended_by_email", "end_reason"].includes(k))) return { data: null, error: { message: "customer_rep_assignments: only ending an assignment may change it" } };
+          if (String(p.end_reason ?? "").trim().length < 3 || !p.ended_by_email) return { data: null, error: { message: "new row violates check constraint customer_rep_assignments_check" } };
+          if (rowsOf(table).filter((r) => filters.every((f) => f(r))).some((r) => r.ended_at != null)) return { data: null, error: { message: "customer_rep_assignments: an ended assignment never changes" } };
+        }
       }
       if (IS_0115.test(table) && !deliveryOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (/^(org_functional_role|approval_polic)/.test(table) && !rolesOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
