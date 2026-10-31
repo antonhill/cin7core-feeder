@@ -43,17 +43,35 @@ export interface SalesPoint {
   readonly qty: number | null;
 }
 
+/** Default length of the recent-history window the Red Flag forecast needs (brief §5.2: 6-month average). Configurable. */
+export const DEFAULT_FORECAST_WINDOW_MONTHS = 6;
+
+export interface ReadinessConfig {
+  /** Number of most recent month columns that must hold a VALID observation for every SKU for scenario A to be ready. */
+  readonly forecastWindowMonths: number;
+}
+
 /**
- * Overall workbook validity (no error findings) is separate from per-scenario readiness: a scenario is ready only
- * when the workbook is valid, every record tab it needs has data, and the optional columns its calculations need
- * are present. Absence of a scenario's records is a warning for the workbook, never silently "validated".
+ * Overall STRUCTURE validity (no error findings) is separate from per-scenario readiness: a workbook can be
+ * structurally valid and have no scenario ready. A scenario is ready only when the workbook is valid AND every record
+ * tab it needs has data AND the optional columns its calculations need are present AND populated with meaningful
+ * observations (an explicit 0 or false counts; blank never does) AND, for scenario A, every SKU has a valid observation
+ * in each month of the forecast window. None of these is a structural failure; all are reported value-free.
  */
 export interface ScenarioReadiness {
   readonly scenario: ScenarioId;
   readonly ready: boolean;
   readonly missingTabs: readonly TabName[];
-  /** Our canonical `Tab.field` keys of absent critical optional columns. */
+  /** Our canonical `Tab.field` keys of critical optional columns that are ABSENT. */
   readonly missingFields: readonly string[];
+  /** Critical columns that exist but are not populated: `missing` = rows that needed a value and had none (counts only). */
+  readonly unpopulatedFields: readonly { readonly field: string; readonly missing: number }[];
+  /** Scenario A only: the recent-history completeness check. `null` for other scenarios. */
+  readonly salesWindow: {
+    readonly requiredMonths: number;
+    readonly availableMonths: number;
+    readonly skusIncomplete: number;
+  } | null;
 }
 
 export interface SalesFileAverages {

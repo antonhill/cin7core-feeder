@@ -1,7 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { TAB_CONTRACTS, TAB_NAMES, type TabName } from "@/rwtsa-demo/contracts/tabs";
-import type { RwtsaDataset, ScenarioReadiness } from "@/rwtsa-demo/dataset";
+import type { ReadinessConfig, RwtsaDataset, ScenarioReadiness } from "@/rwtsa-demo/dataset";
 import { RwtsaSafeError, type Finding } from "@/rwtsa-demo/findings";
 import { buildDataset, type HeaderOverrides } from "@/rwtsa-demo/workbook/build-dataset";
 import { assertWorkbookPathAllowed } from "@/rwtsa-demo/workbook/path-guard";
@@ -20,8 +21,23 @@ export interface TabValidation {
   readonly missingFields: readonly string[];
 }
 
+/**
+ * Written when a run fails BEFORE a verdict exists (unreadable path, bad header map, bad option, ...). It carries the
+ * same `runId` discipline as a real certificate so that no artefact from an earlier run can be mistaken for this one.
+ */
+export interface ErrorCertificate {
+  readonly schemaVersion: 1;
+  readonly runId: string;
+  readonly status: "error";
+  readonly validatedAt: string;
+  /** A value-free message (a static string from this code base or an error class name). */
+  readonly message: string;
+}
+
 export interface ValidationCertificate {
   readonly schemaVersion: 1;
+  /** Identifies this validation run. reconciliation.json from the same run carries the same id; none from another run can remain. */
+  readonly runId: string;
   readonly provenance: "local-workbook";
   readonly validatedAt: string;
   readonly status: "pass" | "fail";
@@ -35,6 +51,9 @@ export interface ValidationCertificate {
    * optional columns its calculations need are present.
    */
   readonly readiness: readonly ScenarioReadiness[];
+  /** How many of the 4 scenarios are READY. `status: "pass"` with 0 ready is legitimate and never means "demonstration ready". */
+  readonly scenariosReady: number;
+  readonly readinessConfig: ReadinessConfig;
   /** Content hash of the validated data (null on fail). Irreversible; for matching a later run to this one. */
   readonly controlHash: string | null;
 }
@@ -74,13 +93,14 @@ export function loadHeaderOverrides(file: string): HeaderOverrides {
 
 export async function validateWorkbookFile(
   file: string,
-  opts: { headerOverrides?: HeaderOverrides; now?: Date } = {}
+  opts: { headerOverrides?: HeaderOverrides; now?: Date; runId?: string; readiness?: Partial<ReadinessConfig> } = {}
 ): Promise<{ certificate: ValidationCertificate; dataset: RwtsaDataset | null }> {
   const read = await readWorkbookFile(file);
   const built = buildDataset(read, {
     provenance: "local-workbook",
     source: { label: `local-workbook:${read.sha256.slice(0, 12)}`, sha256: read.sha256, sizeBytes: read.sizeBytes },
     headerOverrides: opts.headerOverrides,
+    readiness: opts.readiness,
   });
 
   const tabs = {} as Record<TabName, TabValidation>;
@@ -94,6 +114,7 @@ export async function validateWorkbookFile(
 
   const certificate: ValidationCertificate = {
     schemaVersion: 1,
+    runId: opts.runId ?? randomUUID(),
     provenance: "local-workbook",
     validatedAt: (opts.now ?? new Date()).toISOString(),
     status: built.ok ? "pass" : "fail",
@@ -102,6 +123,8 @@ export async function validateWorkbookFile(
     tabs,
     findings: built.findings,
     readiness: built.readiness,
+    scenariosReady: built.readiness.filter((r) => r.ready).length,
+    readinessConfig: built.readinessConfig,
     controlHash: built.dataset?.reconciliation.controlHash ?? null,
   };
   return { certificate, dataset: built.dataset };

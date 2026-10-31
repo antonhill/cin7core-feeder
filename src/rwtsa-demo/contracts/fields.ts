@@ -27,8 +27,9 @@ export interface FieldSpec {
   readonly values?: readonly string[];
   /**
    * num only. A negative value is normally reported (warning `negative_value`, or error when `negativeIsError`).
-   * `allowNegative: true` is the ONLY way a contract may declare negative values legitimate (e.g. an explicit
-   * adjustment column). No current contract sets it: the brief names no such field.
+   * `allowNegative: true` is the ONLY way a contract may declare negative values legitimate: a field that is signed
+   * by nature (a variance column, or a derived balance that is negative when over-committed). Never for costs,
+   * quantities, prices, minutes or rates.
    */
   readonly allowNegative?: boolean;
   /** num only: a negative value is an ERROR, not a warning (stock quantities cannot be negative). */

@@ -1,5 +1,4 @@
-import type { ScenarioId } from "@/rwtsa-demo/contracts/fields";
-import { CORE_TABS, SCENARIO_TABS, TAB_CONTRACTS, TAB_NAMES, type TabName } from "@/rwtsa-demo/contracts/tabs";
+import { CORE_TABS, TAB_CONTRACTS, TAB_NAMES, type TabName } from "@/rwtsa-demo/contracts/tabs";
 import type {
   BomRow,
   CustomerRow,
@@ -12,10 +11,11 @@ import type {
   RoutingRow,
   StockFileRow,
 } from "@/rwtsa-demo/contracts/tabs";
-import type { DatasetSource, Provenance, RwtsaDataset, SalesFileAverages, SalesPoint, ScenarioReadiness, StockRow } from "@/rwtsa-demo/dataset";
+import type { DatasetSource, Provenance, ReadinessConfig, RwtsaDataset, SalesFileAverages, SalesPoint, ScenarioReadiness, StockRow } from "@/rwtsa-demo/dataset";
 import { finding, hasErrors, MAX_ROWS_LISTED, type Finding } from "@/rwtsa-demo/findings";
 import { computeAvailable, reconcile } from "@/rwtsa-demo/reconcile";
 import { parseTab, type FieldHeaderOverrides, type ParsedTab } from "@/rwtsa-demo/workbook/parse-tab";
+import { computeReadiness, normaliseReadinessConfig } from "@/rwtsa-demo/workbook/readiness";
 import type { ReadResult } from "@/rwtsa-demo/workbook/read";
 
 export type HeaderOverrides = Partial<Record<TabName, FieldHeaderOverrides>>;
@@ -25,6 +25,8 @@ export interface BuildOptions {
   readonly source: DatasetSource;
   /** Local-only mapping of our canonical field keys to the real workbook's header text. */
   readonly headerOverrides?: HeaderOverrides;
+  /** Readiness thresholds (e.g. the forecast window). Defaults to the brief's 6 months. */
+  readonly readiness?: Partial<ReadinessConfig>;
 }
 
 export interface BuildResult {
@@ -36,6 +38,7 @@ export interface BuildResult {
   readonly parsedRowCounts: Readonly<Partial<Record<TabName, number>>>;
   /** Per-scenario readiness, separate from overall validity. Present even when the workbook is invalid (then never ready). */
   readonly readiness: readonly ScenarioReadiness[];
+  readonly readinessConfig: ReadinessConfig;
 }
 
 const EPS = 1e-9;
@@ -46,6 +49,7 @@ function rowsOf<T>(parsed: ParsedTab | undefined): T[] {
 
 /** Validates every tab and, only if the whole workbook is clean of errors, builds the typed dataset. */
 export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult {
+  const readinessConfig = normaliseReadinessConfig(opts.readiness);
   const findings: Finding[] = [...read.findings];
   const parsed: Partial<Record<TabName, ParsedTab>> = {};
   const parsedRowCounts: Partial<Record<TabName, number>> = {};
@@ -194,23 +198,11 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
 
   const ok = !hasErrors(findings);
 
-  // Scenario readiness is separate from overall validity: ready = valid workbook + every needed tab has data + every
-  // needed (critical) optional column present.
-  const emptyTabs = new Set<TabName>(TAB_NAMES.filter((t) => !read.tables[t] || read.tables[t]!.rows.length === 0));
-  const absentCritical = new Map<ScenarioId, string[]>();
-  for (const f of findings) {
-    if (f.code === "optional_header_absent" && f.severity === "warning" && f.tab && f.field) {
-      const scenario = TAB_CONTRACTS[f.tab as TabName].fields.find((x) => x.key === f.field)?.critical;
-      if (scenario) absentCritical.set(scenario, [...(absentCritical.get(scenario) ?? []), `${f.tab}.${f.field}`]);
-    }
-  }
-  const readiness: ScenarioReadiness[] = (Object.keys(SCENARIO_TABS) as ScenarioId[]).map((scenario) => {
-    const missingTabs = SCENARIO_TABS[scenario].filter((t) => emptyTabs.has(t));
-    const missingFields = absentCritical.get(scenario) ?? [];
-    return { scenario, ready: ok && missingTabs.length === 0 && missingFields.length === 0, missingTabs, missingFields };
-  });
+  // Scenario readiness is SEPARATE from overall validity (see workbook/readiness.ts): ready = valid workbook + needed tabs
+  // have data + critical columns present AND populated + (scenario A) a complete recent sales window for every SKU.
+  const readiness = computeReadiness({ ok, read, parsed, findings, config: readinessConfig });
 
-  if (!ok) return { ok: false, dataset: null, findings, parsedRowCounts, readiness };
+  if (!ok) return { ok: false, dataset: null, findings, parsedRowCounts, readiness, readinessConfig };
 
   const months = sales?.months ?? [];
   const tables: RwtsaDataset["tables"] = { items, salesHistory, salesFileAverages, stock, importPos, bom, routing, productionOrders, landedCost, paymentsFec, customers, quotes };
@@ -224,5 +216,5 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
     readiness,
     findings,
   };
-  return { ok: true, dataset, findings, parsedRowCounts, readiness };
+  return { ok: true, dataset, findings, parsedRowCounts, readiness, readinessConfig };
 }

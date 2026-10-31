@@ -228,16 +228,58 @@ describe("negative quantities and costs", () => {
     expect(codes(r, "negative_value")).toMatchObject([{ severity: "error", tab: "Stock", field: "jhb", count: 1, rows: [2] }]);
   });
 
-  it("a negative cost, quantity or sales cell is a WARNING (the data stays usable and the owner decides)", async () => {
+  it("a negative sales cell (a credit note) is a WARNING; the data stays usable", async () => {
     const r = await buildSynth({}, (wb) => {
-      const it = sheet(wb, "Items");
-      it.getRow(2).getCell(colOf(it, "Standard cost")).value = -5;
-      const po = sheet(wb, "ImportPOs");
-      po.getRow(2).getCell(colOf(po, "Qty")).value = -10;
       sheet(wb, "SalesHistory").getRow(2).getCell(5).value = -3.5;
     });
     expect(r.ok).toBe(true);
-    expect(codes(r, "negative_value").map((f) => `${f.tab}.${f.field}:${f.severity}`).sort()).toEqual(["ImportPOs.qty:warning", "Items.standardCost:warning", "SalesHistory.month:warning"]);
+    expect(codes(r, "negative_value").map((f) => `${f.tab}.${f.field}:${f.severity}`)).toEqual(["SalesHistory.month:warning"]);
+  });
+
+  const negativeInputs: [string, string, string][] = [
+    ["Items", "Standard cost", "standardCost"],
+    ["Items", "Standard sell price", "standardSellPrice"],
+    ["BOM", "Qty per unit", "qtyPerUnit"],
+    ["BOM", "Unit cost", "unitCost"],
+    ["Routing_SMV", "SMV", "smv"],
+    ["Routing_SMV", "Cost per minute", "costPerMinute"],
+    ["ProductionOrders", "Planned minutes", "plannedMinutes"],
+    ["ProductionOrders", "Actual minutes", "actualMinutes"],
+    ["ProductionOrders", "Actual fabric (m)", "actualFabricM"],
+    ["ProductionOrders", "Planned price", "standardPrice"],
+    ["ImportPOs", "Qty", "qty"],
+    ["ImportPOs", "Unit price USD", "unitPriceUsd"],
+    ["LandedCost", "CBM", "cbm"],
+    ["LandedCost", "FOB USD", "fobUsd"],
+    ["Payments_FEC", "USD amount", "usdAmount"],
+    ["Quotes", "Value", "value"],
+  ];
+  for (const [tab, header, field] of negativeInputs) {
+    it(`a negative ${tab}.${field} (inherently non-negative) is an ERROR, while zero stays valid`, async () => {
+      const neg = await buildSynth({}, (wb) => {
+        const ws = sheet(wb, tab);
+        ws.getRow(2).getCell(colOf(ws, header)).value = -1;
+      });
+      expect(neg.ok).toBe(false);
+      expect(codes(neg, "negative_value")).toMatchObject([{ severity: "error", tab, field, count: 1 }]);
+      const zero = await buildSynth({}, (wb) => {
+        const ws = sheet(wb, tab);
+        ws.getRow(2).getCell(colOf(ws, header)).value = 0;
+      });
+      expect(codes(zero, "negative_value")).toEqual([]);
+    });
+  }
+
+  it("signed-by-nature fields explicitly permit negatives: variance columns and the file's own Available", async () => {
+    const r = await buildSynth({}, (wb) => {
+      const po = sheet(wb, "ProductionOrders");
+      po.getRow(2).getCell(colOf(po, "Usage variance")).value = -12.5;
+      po.getRow(2).getCell(colOf(po, "Price variance")).value = -3;
+      const st = sheet(wb, "Stock");
+      st.getRow(2).getCell(colOf(st, "Available")).value = -40; // over-committed
+    });
+    expect(codes(r, "negative_value")).toEqual([]);
+    expect(r.ok).toBe(true); // (the Available disagreement itself is the separate, already-tested warning)
   });
 
   it("a contract that explicitly sets allowNegative reports nothing (the only way a negative is legitimate)", () => {

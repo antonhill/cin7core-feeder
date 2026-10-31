@@ -156,9 +156,10 @@ describe("AT-3 end to end: the real validate script's stdout, stderr and artefac
     writeFileSync(file, await synthBuffer());
     const r = run(["--file", file, "--out-dir", outDir, "--reconcile"]);
     expect(r.status).toBe(0);
-    expect(r.out).toContain("PASS");
+    expect(r.out.split("\n")[0]).toBe("STRUCTURE PASS · 4 of 4 scenarios READY");
     const rec = JSON.parse(readFileSync(join(outDir, "reconciliation.json"), "utf8"));
-    expect(r.out).not.toContain(rec.controlHash);
+    expect(rec.reconciliation.controlHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(r.out).not.toContain(rec.reconciliation.controlHash);
     expect(r.out).not.toContain("availableUnits");
     expect(r.out).toContain("Scenario readiness");
     for (const sc of ["A", "B", "C", "D"]) expect(r.out).toContain(`${sc}: READY`);
@@ -177,8 +178,8 @@ describe("AT-3 end to end: the real validate script's stdout, stderr and artefac
     );
     const r = run(["--file", file, "--out-dir", outDir, "--reconcile"]);
     expect(r.status).toBe(1);
-    expect(r.out).toContain("FAIL");
-    expect(r.out).not.toContain("structure validation: PASS");
+    expect(r.out.split("\n")[0]).toBe("STRUCTURE FAIL · 0 of 4 scenarios READY");
+    expect(r.out).not.toContain("STRUCTURE PASS");
     for (const sc of ["A", "B", "C", "D"]) expect(r.out).toContain(`${sc}: NOT READY`);
     const cert = JSON.parse(readFileSync(join(outDir, "validation-certificate.json"), "utf8"));
     expect(cert.status).toBe("fail");

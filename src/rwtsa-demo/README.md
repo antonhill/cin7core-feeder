@@ -16,22 +16,43 @@ network code, no database migration, no credentials** in the audited code (see "
 
 Calculation engines (Red Flag, landed cost, variance, BOM/cost, quotes, Fast React) are **not** in this PR.
 
-## What PASS means, and what it does not
+## STRUCTURE PASS is not readiness
 
-`validate.ts` reports two separate things:
+`validate.ts` prints one headline, `STRUCTURE PASS|FAIL · N of 4 scenarios READY`, and reports two **separate** things.
+A workbook can be structurally valid and have **no** scenario ready (exit code 0, `0 of 4 scenarios READY`).
+**STRUCTURE PASS never means "ready to demonstrate".**
 
-1. **PASS / FAIL (workbook validity).** PASS requires: every contract tab present exactly once; required headers
-   present; every cell valid; no duplicate keys; **Items, SalesHistory and Stock all contain data**; **every Items SKU is
-   present in both SalesHistory and Stock**; Stock and PO styles agree with the Items SKU's style; no orphan SKUs/styles;
-   no negative stock; no SKU with an entirely empty sales series. A headers-only or partially populated workbook FAILS.
-2. **Scenario readiness (A, B, C, D).** A scenario is READY only if the workbook is valid, every record tab it needs has
-   data (empty non-core tabs are warnings, not errors) and the optional columns its calculations need are present
-   (e.g. scenario A needs `Items.minLevel` and `Items.isTender`). Absent optional columns are reported, never silently
-   treated as mandatory or ignored.
+1. **STRUCTURE PASS / FAIL (workbook validity)** concerns the *core tabs*. PASS requires: every contract tab present
+   exactly once; required headers present; every cell valid; no duplicate keys; **Items, SalesHistory and Stock all
+   contain data**; **every Items SKU is present in both SalesHistory and Stock**; Stock and PO styles agree with the
+   Items SKU's style; no orphan SKUs/styles; no negative stock or other negative cost/quantity/minutes input; no SKU
+   with an entirely empty sales series. Non-core tabs (ImportPOs, BOM, Routing_SMV, ProductionOrders, LandedCost,
+   Payments_FEC, Customers, Quotes) may be empty or sparse: that is a **warning** and makes the scenarios that need them
+   NOT READY. A workbook with empty *core* tabs FAILS; one with only the non-core tabs empty passes with warnings.
+2. **Scenario readiness (A, B, C, D)** is READY only if the workbook is structurally valid **and**: every record tab the
+   scenario needs has data; every critical optional column is **present and populated with meaningful observations**; and
+   (scenario A) every SKU has a valid observation in **each of the last N months** (default **6**, configurable with
+   `--forecast-window`, 1-36). A valid explicit `0` or `false` is an observation; a blank never is, and never becomes
+   `0`/`false`. Population rules for a present column: `Items.minLevel` every non-tender row; `Items.isTender` every row
+   (explicit true/false); `Quotes.lostReason` every lost quote; `Quotes.convertedOrder` every won quote; any other
+   critical column at least one value (finer per-row rules arrive with each calculation engine). Missing months in the
+   window, or an unpopulated column, make a scenario NOT READY; they are **not** structural failures. Reasons are
+   printed as counts only.
 
 Sales history distinguishes an explicit **0** (a valid observation), an **empty cell** (a missing observation: kept as
-`null`, counted, never converted to 0) and an **invalid value** (an error). Negative values are warnings, except negative
-stock quantities, which are errors; a contract can declare negatives legitimate only with `allowNegative`.
+`null`, counted, never converted to 0) and an **invalid value** (an error). Negative **quantities, costs, prices,
+minutes and rates are errors**; negative sales cells (credit notes) are warnings. Only fields signed by nature declare
+`allowNegative` in their contract: the variance columns and the file's own derived `Available` (negative when
+over-committed).
+
+### Artefacts and exit codes
+
+Every run first deletes the previous `validation-certificate.json` and `reconciliation.json` in the output directory,
+then writes this run's certificate (`pass`/`fail`, or an `error` certificate if the run failed before a verdict). With
+`--reconcile` and a clean pass it also writes `reconciliation.json`, carrying the **same `runId`**. A reconciliation from
+an earlier successful run therefore cannot remain beside a later failed or crashed one. Files are written atomically.
+Exit codes: `0` structure PASS (however many scenarios are ready), `1` structure FAIL or unexpected error, `2` usage
+error or safety refusal.
 
 ## What the boundary test proves (and does not)
 
@@ -63,7 +84,7 @@ third-party packages or Node itself, or against `node:fs` misuse (arbitrary file
 ## Validating the protected workbook locally
 
 ```bash
-npx tsx scripts/rwtsa-demo/validate.ts --file "/path/outside/repo/workbook.xlsx" [--header-map "/path/outside/repo/map.json"] [--reconcile]
+npx tsx scripts/rwtsa-demo/validate.ts --file "/path/outside/repo/workbook.xlsx" [--header-map "/path/outside/repo/map.json"] [--forecast-window 6] [--reconcile]
 ```
 
 Terminal output is structure only (tab presence, parsed row counts, missing canonical field names, value-free
@@ -78,7 +99,7 @@ If the real headers differ from the contract's aliases, supply a local header ma
 
 Keys are our tab names and canonical field keys (see `contracts/tabs.ts`).
 
-## Deferred review findings (P3, tracked for later; none blocks merge)
+## Deferred review findings (P3 and decisions; none blocks merge)
 
 - Path guard tests `.git` presence only (a bare/detached repo or dangling `.git` symlink would not be detected;
   `$HOME` being a dotfiles repo fails closed).
@@ -88,8 +109,11 @@ Keys are our tab names and canonical field keys (see `contracts/tabs.ts`).
 - Only the compressed size (25 MB) is capped; a decompression bomb is bounded only by memory.
 - Date strings with trailing text are accepted after the date; any Date used as a header collapses to `YYYY-MM`.
 - The boundary test uses the `typescript` JS API (`createSourceFile`); a TypeScript 7 upgrade (Dependabot #53) must be
-  checked against it.
+  checked against it. Known non-goals of the boundary scanner (computed `constructor` chains, `module.require`,
+  renamed destructured `fetch`, `Reflect`, arbitrary `node:fs` paths) are deliberate: it is a tripwire, not a sandbox.
 - No range check on huge values (e.g. 1e15); only negatives are reported.
+- Readiness population rules for scenarios B-D are coarse ("at least one value") until their engines define per-row needs.
+- Scenario A requires the recent window for every SKU, tender SKUs included.
 
 ## Known unknowns (not guessed here)
 
