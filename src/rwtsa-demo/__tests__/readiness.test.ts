@@ -4,6 +4,7 @@ import { buildFrom, codes, colOf, sheet, synthBuffer } from "@/rwtsa-demo/__test
 import type { ReadinessConfig } from "@/rwtsa-demo/dataset";
 import { RwtsaSafeError } from "@/rwtsa-demo/findings";
 import { buildDataset } from "@/rwtsa-demo/workbook/build-dataset";
+import { parseForecastWindowText } from "@/rwtsa-demo/workbook/readiness";
 import { readWorkbookBuffer } from "@/rwtsa-demo/workbook/read";
 
 /**
@@ -212,5 +213,25 @@ describe("buildFrom still works with default readiness (helper regression)", () 
   it("default config is the brief's 6-month window", async () => {
     const r = await buildFrom(await synthBuffer());
     expect(r.readinessConfig).toEqual({ forecastWindowMonths: 6 });
+  });
+});
+
+describe("--forecast-window text parsing (pure, strict)", () => {
+  it("accepts only canonical positive decimal digits within 1-36", () => {
+    for (const [text, n] of [["1", 1], ["6", 6], ["12", 12], ["36", 36]] as const) expect(parseForecastWindowText(text)).toBe(n);
+  });
+
+  it("rejects hexadecimal, fractional, signed, padded, exponent, leading-zero, empty, non-ASCII and out-of-range text without echoing it", () => {
+    const secret = "SENTINEL_WINDOW_55";
+    for (const bad of ["0x6", "6.0", "1.5", "+6", "-6", " 6", "6 ", "\t6", "06", "1e1", "", "abc", "6abc", "٦", "0", "37", "999", `${secret}`, `6${secret}`]) {
+      let err: unknown;
+      try {
+        parseForecastWindowText(bad);
+      } catch (e) {
+        err = e;
+      }
+      expect(err, JSON.stringify(bad)).toBeInstanceOf(RwtsaSafeError);
+      expect((err as Error).message).not.toContain(secret);
+    }
   });
 });

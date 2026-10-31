@@ -45,6 +45,28 @@ minutes and rates are errors**; negative sales cells (credit notes) are warnings
 `allowNegative` in their contract: the variance columns and the file's own derived `Available` (negative when
 over-committed).
 
+### Readiness limits (preliminary; do not over-read READY)
+
+- **The forecast window is not anchored to the stock date.** Scenario A's check evaluates the *latest N available
+  month columns of the SalesHistory sheet* (default N = 6). It does not compare them with the stock-as-at date, so a
+  history that ended long ago can still show READY, and a negative sales cell (a credit note) counts as a valid
+  observation (it is only a warning). **Anchoring the window to the stock date must be implemented in the Red Flag
+  engine before anyone claims complete forecasting readiness.** READY for scenario A means "the sheet's latest N months
+  are fully populated", not "the forecast is ready".
+- **Scenario B, C and D readiness is preliminary.** Beyond the tabs having data and the critical columns being present,
+  most of their critical columns need only *at least one value* (the explicit per-row rules are `Quotes.lostReason`,
+  `Quotes.convertedOrder`, `Items.minLevel`, `Items.isTender`). A column populated in a single row therefore still
+  passes. Each scenario's calculation engine must define and enforce its own per-row requirements; until then treat B, C
+  and D READY as "inputs plausibly present", not "calculable".
+- Scenario D is READY with zero lost quotes even if the `Lost reason` column is empty (nothing needed a reason).
+
+### Command-line arguments
+
+`--forecast-window` takes only canonical positive decimal digits within 1-36: hexadecimal (`0x6`), fractions (`6.0`),
+signs (`+6`, `-6`), exponents, leading zeros (`06`), padded or empty text are rejected (exit 2, error certificate). A
+flag supplied without its value (as the last argument, or followed by another `--flag`) is rejected; it never falls back
+to a default.
+
 ### Artefacts and exit codes
 
 Every run first deletes the previous `validation-certificate.json` and `reconciliation.json` in the output directory,
@@ -114,6 +136,8 @@ Keys are our tab names and canonical field keys (see `contracts/tabs.ts`).
 - No range check on huge values (e.g. 1e15); only negatives are reported.
 - Readiness population rules for scenarios B-D are coarse ("at least one value") until their engines define per-row needs.
 - Scenario A requires the recent window for every SKU, tender SKUs included.
+- Two concurrent `validate.ts` runs in the same output directory can interleave (each run's `runId` differs, so a
+  mismatched pair is detectable). No lock file yet.
 
 ## Known unknowns (not guessed here)
 

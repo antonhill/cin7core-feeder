@@ -125,7 +125,8 @@ describe("AT-3: confidentiality canary", () => {
   });
 });
 
-describe("AT-3 end to end: the real validate script's stdout, stderr and artefacts", () => {
+/** These tests spawn real `npx tsx` subprocesses (slow on a CI runner): a 60 s timeout for THIS group only. */
+describe("AT-3 end to end: the real validate script's stdout, stderr and artefacts", { timeout: 60_000 }, () => {
   function run(args: string[]): { status: number; out: string } {
     try {
       const out = execFileSync("npx", ["tsx", "scripts/rwtsa-demo/validate.ts", ...args], { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 90_000, env: { ...process.env, NO_COLOR: "1" } });

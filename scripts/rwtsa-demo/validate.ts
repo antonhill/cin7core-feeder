@@ -29,15 +29,22 @@ import { TAB_NAMES } from "../../src/rwtsa-demo/contracts/tabs";
 import { DEFAULT_FORECAST_WINDOW_MONTHS } from "../../src/rwtsa-demo/dataset";
 import { RwtsaSafeError, toSafeMessage } from "../../src/rwtsa-demo/findings";
 import { assertOutputDirAllowed } from "../../src/rwtsa-demo/workbook/path-guard";
-import { normaliseReadinessConfig } from "../../src/rwtsa-demo/workbook/readiness";
+import { normaliseReadinessConfig, parseForecastWindowText } from "../../src/rwtsa-demo/workbook/readiness";
 import { loadHeaderOverrides, validateWorkbookFile, type ErrorCertificate } from "../../src/rwtsa-demo/workbook/validate-file";
 
 const CERTIFICATE = "validation-certificate.json";
 const RECONCILIATION = "reconciliation.json";
 
+/**
+ * Value of `--name`, or undefined if the flag is absent. A flag that is present WITHOUT its value (last argument, or
+ * followed by another `--flag`) is an error, never a silent fall-back to a default. The message names only our own flag.
+ */
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
-  return i >= 0 ? process.argv[i + 1] : undefined;
+  if (i < 0) return undefined;
+  const value = process.argv[i + 1];
+  if (value === undefined || value.startsWith("--")) throw new RwtsaSafeError("invalid_cell", `--${name} requires a value.`);
+  return value;
 }
 
 function writeArtefact(dir: string, name: string, value: unknown): void {
@@ -67,7 +74,7 @@ async function main(runId: string): Promise<{ code: number; outDir: string | nul
       throw new RwtsaSafeError("not_a_workbook", "No workbook path was given (--file or RWTSA_WORKBOOK_PATH).");
     }
     const windowArg = arg("forecast-window");
-    const readiness = normaliseReadinessConfig(windowArg === undefined ? { forecastWindowMonths: DEFAULT_FORECAST_WINDOW_MONTHS } : { forecastWindowMonths: Number(windowArg) });
+    const readiness = normaliseReadinessConfig({ forecastWindowMonths: windowArg === undefined ? DEFAULT_FORECAST_WINDOW_MONTHS : parseForecastWindowText(windowArg) });
     const headerMapFile = arg("header-map") ?? process.env.RWTSA_HEADER_MAP;
     const headerOverrides = headerMapFile ? loadHeaderOverrides(headerMapFile) : undefined;
 

@@ -27,6 +27,18 @@ export function normaliseReadinessConfig(partial?: Partial<ReadinessConfig>): Re
   return { forecastWindowMonths: n };
 }
 
+/**
+ * Strict parser for the `--forecast-window` argument TEXT: canonical positive decimal integer digits only.
+ * Rejects (value-free): empty or whitespace-padded text, signs, hexadecimal, fractions, exponents, leading zeros,
+ * non-ASCII digits. The numeric range (1-36) is then enforced by `normaliseReadinessConfig`.
+ */
+export function parseForecastWindowText(text: string): number {
+  if (!/^[1-9][0-9]*$/.test(text)) {
+    throw new RwtsaSafeError("invalid_cell", "The forecast window must be written as a positive whole number of months (digits only, 1 to 36).");
+  }
+  return normaliseReadinessConfig({ forecastWindowMonths: Number(text) }).forecastWindowMonths;
+}
+
 const isBlank = (v: unknown): boolean => v === null || v === undefined;
 
 /** How many rows needed a value for `Tab.field` and had none. 0 means the column is meaningfully populated. */

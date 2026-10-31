@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ExcelJS from "exceljs";
@@ -11,6 +11,13 @@ import { colOf, sheet, synthBuffer } from "@/rwtsa-demo/__tests__/helpers";
  * certificate and a reconciliation report must always belong to the SAME run, and no earlier successful run's output
  * may survive beside a later failed or crashed one.
  */
+
+/**
+ * Every test group below spawns real `npx tsx` subprocesses (~1-2 s each on a CI runner), so each group carries its own
+ * 60 s timeout. The global 5 s default is deliberately NOT raised for any other test. Where a test only needs "a
+ * previous run's artefacts exist", they are seeded directly instead of by an extra subprocess.
+ */
+const SUBPROCESS_TIMEOUT = { timeout: 60_000 } as const;
 
 const ROOT = join(__dirname, "..", "..", "..");
 const S = "SENTINEL_CLI_77B2";
@@ -32,6 +39,13 @@ function run(args: string[], env: Record<string, string | undefined> = {}): { st
   }
 }
 
+/** Plants the artefacts a previous successful run would have left (a different runId), without spawning a process. */
+function seedStale(dir: string, runId = "stale-previous-run"): void {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "validation-certificate.json"), JSON.stringify({ schemaVersion: 1, runId, status: "pass", scenariosReady: 4 }));
+  writeFileSync(join(dir, "reconciliation.json"), JSON.stringify({ runId, fileSha256: "0".repeat(64), reconciliation: { controlHash: "stale" } }));
+}
+
 const first = (out: string) => out.split("\n")[0];
 const cert = (dir: string) => JSON.parse(readFileSync(join(dir, "validation-certificate.json"), "utf8"));
 const rec = (dir: string) => JSON.parse(readFileSync(join(dir, "reconciliation.json"), "utf8"));
@@ -47,7 +61,7 @@ async function workbook(name: string, mutate?: (wb: ExcelJS.Workbook) => void): 
   return f;
 }
 
-describe("summary line and exit codes", () => {
+describe("summary line and exit codes", SUBPROCESS_TIMEOUT, () => {
   it("full pass: `STRUCTURE PASS · 4 of 4 scenarios READY`, exit 0", async () => {
     const out = join(tmp, "o-pass");
     const r = run(["--file", await workbook("pass.xlsx"), "--out-dir", out, "--reconcile"]);
@@ -109,7 +123,7 @@ describe("summary line and exit codes", () => {
   });
 });
 
-describe("stale artefacts never survive a later run", () => {
+describe("stale artefacts never survive a later run", SUBPROCESS_TIMEOUT, () => {
   it("success then FAILED validation in the same directory: the earlier reconciliation is gone and the certificate is the new run's", async () => {
     const out = join(tmp, "o-stale-fail");
     expect(run(["--file", await workbook("s1.xlsx"), "--out-dir", out, "--reconcile"]).status).toBe(0);
@@ -125,16 +139,15 @@ describe("stale artefacts never survive a later run", () => {
     expect(after.runId).not.toBe(before.runId);
   });
 
-  it("success then an EARLY exception (workbook path does not exist): exit 2, an error certificate for the new run, no reconciliation", async () => {
+  it("previous artefacts then an EARLY exception (workbook path does not exist): exit 2, an error certificate for the new run, no reconciliation", async () => {
     const out = join(tmp, "o-stale-early");
-    expect(run(["--file", await workbook("s3.xlsx"), "--out-dir", out, "--reconcile"]).status).toBe(0);
-    const before = cert(out);
+    seedStale(out);
     const r = run(["--file", join(tmp, `${S}_missing.xlsx`), "--out-dir", out, "--reconcile"]);
     expect(r.status).toBe(2);
     expect(existsSync(join(out, "reconciliation.json"))).toBe(false);
     const after = cert(out);
     expect(after).toMatchObject({ status: "error", schemaVersion: 1 });
-    expect(after.runId).not.toBe(before.runId);
+    expect(after.runId).not.toBe("stale-previous-run");
     expect(JSON.stringify(after)).not.toContain(S);
     expect(JSON.stringify(after)).not.toContain(tmp);
     expect(r.out).not.toContain(S);
@@ -142,29 +155,24 @@ describe("stale artefacts never survive a later run", () => {
 
   it("a bad header-map file is an early exception: exit 2, error certificate, nothing stale", async () => {
     const out = join(tmp, "o-stale-map");
-    expect(run(["--file", await workbook("s4.xlsx"), "--out-dir", out, "--reconcile"]).status).toBe(0);
+    seedStale(out);
     const bad = join(tmp, "bad-map.json");
     writeFileSync(bad, `{ not json ${S}`);
     const r = run(["--file", await workbook("s5.xlsx"), "--header-map", bad, "--out-dir", out, "--reconcile"]);
     expect(r.status).toBe(2);
     expect(existsSync(join(out, "reconciliation.json"))).toBe(false);
     expect(cert(out).status).toBe("error");
+    expect(cert(out).runId).not.toBe("stale-previous-run");
     expect(r.out).not.toContain(S);
   });
 
-  it("an invalid --forecast-window is an early exception (exit 2), also for a missing --file", async () => {
-    const out = join(tmp, "o-stale-opt");
-    const f = await workbook("s6.xlsx");
-    expect(run(["--file", f, "--out-dir", out, "--reconcile"]).status).toBe(0);
-    for (const bad of ["abc", "0", "1.5", "99"]) {
-      const r = run(["--file", f, "--out-dir", out, "--forecast-window", bad]);
-      expect(r.status, bad).toBe(2);
-      expect(existsSync(join(out, "reconciliation.json")), bad).toBe(false);
-      expect(cert(out).status, bad).toBe("error");
-    }
-    const noFile = run(["--out-dir", out]);
-    expect(noFile.status).toBe(2);
-    expect(noFile.out).toContain("usage:");
+  it("a missing --file is a usage error (exit 2) that also clears the previous run's artefacts", async () => {
+    const out = join(tmp, "o-stale-usage");
+    seedStale(out);
+    const r = run(["--out-dir", out]);
+    expect(r.status).toBe(2);
+    expect(r.out).toContain("usage:");
+    expect(existsSync(join(out, "reconciliation.json"))).toBe(false);
     expect(cert(out).status).toBe("error");
   });
 
@@ -191,7 +199,63 @@ describe("stale artefacts never survive a later run", () => {
   });
 });
 
-describe("safety refusals keep their exit code and leave other directories alone", () => {
+describe("argument parsing is strict", SUBPROCESS_TIMEOUT, () => {
+  const malformedWindows: [string, string][] = [
+    ["alphabetic", "abc"], ["trailing text", "6abc"], ["zero", "0"], ["fractional", "1.5"], ["decimal-zero fraction", "6.0"],
+    ["hexadecimal", "0x6"], ["leading plus", "+6"], ["negative", "-6"], ["leading space", " 6"], ["trailing space", "6 "],
+    ["leading zero", "06"], ["exponent", "1e1"], ["out of range", "37"], ["empty", ""],
+  ];
+  for (const [label, value] of malformedWindows) {
+    it(`--forecast-window rejects ${label} (${JSON.stringify(value)}): exit 2, error certificate, previous artefacts cleared`, async () => {
+      const out = join(tmp, `o-arg-${label.replace(/\W+/g, "-")}`);
+      seedStale(out);
+      const r = run(["--file", await workbook(`arg-${label.replace(/\W+/g, "-")}.xlsx`), "--out-dir", out, "--reconcile", "--forecast-window", value]);
+      expect(r.status).toBe(2);
+      expect(cert(out).status).toBe("error");
+      expect(existsSync(join(out, "reconciliation.json"))).toBe(false);
+      expect(r.out).not.toContain("STRUCTURE PASS");
+    });
+  }
+
+  it("--forecast-window accepts canonical digits within 1-36 (6, 12, 36)", async () => {
+    const f = await workbook("arg-ok.xlsx");
+    for (const v of ["1", "6", "12", "36"]) {
+      const out = join(tmp, `o-arg-ok-${v}`);
+      const r = run(["--file", f, "--out-dir", out, "--forecast-window", v]);
+      expect(r.status, v).toBe(0);
+      expect(cert(out).readinessConfig).toEqual({ forecastWindowMonths: Number(v) });
+    }
+  });
+
+  const bare: [string, (f: string, out: string) => string[]][] = [
+    ["--forecast-window as the last argument", (f, out) => ["--file", f, "--out-dir", out, "--forecast-window"]],
+    ["--forecast-window followed by another flag", (f, out) => ["--file", f, "--out-dir", out, "--forecast-window", "--reconcile"]],
+    ["--file as the last argument", (_f, out) => ["--out-dir", out, "--file"]],
+    ["--header-map as the last argument", (f, out) => ["--file", f, "--out-dir", out, "--header-map"]],
+  ];
+  for (const [label, build] of bare) {
+    it(`a flag supplied without its value is rejected, never defaulted: ${label}`, async () => {
+      const out = join(tmp, `o-bare-${label.replace(/\W+/g, "-")}`);
+      seedStale(out);
+      const r = run(build(await workbook(`bare-${label.replace(/\W+/g, "-")}.xlsx`), out));
+      expect(r.status).toBe(2);
+      expect(r.out).toContain("requires a value");
+      expect(cert(out).status).toBe("error");
+      expect(existsSync(join(out, "reconciliation.json"))).toBe(false);
+    });
+  }
+
+  it("--out-dir without a value is rejected before anything is touched (exit 2, no default directory used)", async () => {
+    const envDir = join(tmp, "o-bare-outdir-env");
+    seedStale(envDir);
+    const r = run(["--file", await workbook("bare-out.xlsx"), "--out-dir"], { RWTSA_LOCAL_DIR: envDir });
+    expect(r.status).toBe(2);
+    expect(r.out).toContain("--out-dir requires a value");
+    expect(cert(envDir).runId).toBe("stale-previous-run"); // untouched: the target directory was never determined
+  });
+});
+
+describe("safety refusals keep their exit code and leave other directories alone", SUBPROCESS_TIMEOUT, () => {
   it("a workbook inside the repository: exit 2 with an error certificate (output dir is outside the repo)", async () => {
     const out = join(tmp, "o-refuse-wb");
     const r = run(["--file", join(ROOT, "package.json"), "--out-dir", out]);
