@@ -2,7 +2,7 @@ import "server-only";
 // Authorisation for the Rep boundary and for managing customer assignments. Kept OUT of the "use server" files (which may export only async functions) so several action files share
 // it. Identity resolution is the existing one (authoriseActor: NewQuip org, Quotes module access, Demo Mode effective user, tier, functional roles), re-established inside EVERY
 // action. This slice changes nobody's roles: it only adds the assignment check on top.
-import { authoriseActor, type Actor } from "@/app/newquip-grower/actor";
+import { auditActor, authoriseActor, type Actor } from "@/app/newquip-grower/actor";
 import { createServiceRoleClient } from "@/supabase/server";
 import { assignmentsAvailable } from "@/lib/newquip-assignments/assignment-store";
 
@@ -26,4 +26,14 @@ export async function authoriseAssignmentManager(): Promise<{ actor: Actor; db: 
   const db = createServiceRoleClient();
   if (!(await assignmentsAvailable(db))) throw new Error("Customer assignments are not available yet.");
   return { actor, db };
+}
+
+/**
+ * The activity-log entry for a change that has ALREADY COMMITTED. It is best-effort by design: the authoritative record of an assignment change is the append-only assignment history
+ * written in the same database transaction. A failure here (a rejected or thrown audit write) is logged without the entry's contents and swallowed, so a committed change is never
+ * reported to the caller as failed. Call it only AFTER the database change succeeded; database failures and authorisation errors must still propagate.
+ */
+export async function auditAfterCommit(db: Db, actor: Actor, entry: Parameters<typeof auditActor>[2]): Promise<void> {
+  try { await auditActor(db, actor, entry); }
+  catch (e) { console.error(`activity log write failed after commit (${entry.action}):`, e instanceof Error ? e.message : "unknown error"); }
 }

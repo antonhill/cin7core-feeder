@@ -3,8 +3,8 @@
 // Managing customer -> Rep assignments (Slice 1A; no UI yet). Manager or organisation administrator only; the target must be a current member of THIS organisation who holds the Rep
 // role under the existing role resolution. An assignment grants VISIBILITY only. Every change is audited with the actor (and the owner under Demo Mode). Nothing here changes roles,
 // existing permissions, quotations or Projects, and nothing reaches Cin7. Only async functions and erased types are exported.
-import { authoriseAssignmentManager, errText, type Db, type RepResult } from "./rep-actor";
-import { auditActor, ownerEmailOf } from "@/app/newquip-grower/actor";
+import { auditAfterCommit, authoriseAssignmentManager, errText, type Db, type RepResult } from "./rep-actor";
+import { ownerEmailOf } from "@/app/newquip-grower/actor";
 import { assignRep, assignmentsForCustomer, endAssignment, reassignCustomer, type AssignmentRow } from "@/lib/newquip-assignments/assignment-store";
 import { resolveRoles } from "@/lib/approvals/role-store";
 
@@ -43,7 +43,7 @@ export async function assignRepToCustomerAction(input: { cin7CustomerId: string;
     const c = customerOf(input?.cin7CustomerId, input?.customerName);
     const rep = await resolveRep(db, actor.orgId, String(input?.repUserId ?? ""));
     const r = await assignRep(db, actor.orgId, { email: actor.email, ownerEmail: ownerEmailOf(actor) }, { cin7CustomerId: c.id, customerName: c.name, repUserId: rep.userId, repEmail: rep.email, reason: String(input?.reason ?? "") });
-    if (r.created) await auditActor(db, actor, { action: "newquip.rep_assigned", summary: `Assigned ${rep.email} to customer ${c.name} (visibility only; no role, quotation or Cin7 change)`, detail: { customerId: c.id, repUserId: rep.userId, assignmentId: r.assignment.id } });
+    if (r.created) await auditAfterCommit(db, actor, { action: "newquip.rep_assigned", summary: `Assigned ${rep.email} to customer ${c.name} (visibility only; no role, quotation or Cin7 change)`, detail: { customerId: c.id, repUserId: rep.userId, assignmentId: r.assignment.id } });
     return { ok: true, data: r };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
@@ -52,7 +52,7 @@ export async function endRepAssignmentAction(assignmentId: string, reason: strin
   try {
     const { actor, db } = await authoriseAssignmentManager();
     const row = await endAssignment(db, actor.orgId, { email: actor.email, ownerEmail: ownerEmailOf(actor) }, String(assignmentId ?? ""), String(reason ?? ""));
-    await auditActor(db, actor, { action: "newquip.rep_assignment_ended", summary: `Ended ${row.rep_email}'s access to customer ${row.customer_name} (${row.end_reason})`, detail: { customerId: row.cin7_customer_id, repUserId: row.rep_user_id, assignmentId: row.id } });
+    await auditAfterCommit(db, actor, { action: "newquip.rep_assignment_ended", summary: `Ended ${row.rep_email}'s access to customer ${row.customer_name} (${row.end_reason})`, detail: { customerId: row.cin7_customer_id, repUserId: row.rep_user_id, assignmentId: row.id } });
     return { ok: true, data: row };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
@@ -63,7 +63,7 @@ export async function reassignCustomerAction(input: { cin7CustomerId: string; cu
     const c = customerOf(input?.cin7CustomerId, input?.customerName);
     const to = await resolveRep(db, actor.orgId, String(input?.toRepUserId ?? "")); // validate the new Rep BEFORE the old access is ended
     const r = await reassignCustomer(db, actor.orgId, { email: actor.email, ownerEmail: ownerEmailOf(actor) }, { cin7CustomerId: c.id, customerName: c.name, fromRepUserId: String(input?.fromRepUserId ?? ""), toRepUserId: to.userId, toRepEmail: to.email, reason: String(input?.reason ?? "") });
-    await auditActor(db, actor, { action: "newquip.rep_reassigned", summary: `Moved customer ${c.name} from ${r.ended.rep_email} to ${to.email}${r.created ? "" : " (the new Rep was already assigned)"}`, detail: { customerId: c.id, fromRepUserId: r.ended.rep_user_id, toRepUserId: to.userId, endedAssignmentId: r.ended.id, assignmentId: r.assigned.id, created: r.created } });
+    await auditAfterCommit(db, actor, { action: "newquip.rep_reassigned", summary: `Moved customer ${c.name} from ${r.ended.rep_email} to ${to.email}${r.created ? "" : " (the new Rep was already assigned)"}`, detail: { customerId: c.id, fromRepUserId: r.ended.rep_user_id, toRepUserId: to.userId, endedAssignmentId: r.ended.id, assignmentId: r.assigned.id, created: r.created } });
     return { ok: true, data: r };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }

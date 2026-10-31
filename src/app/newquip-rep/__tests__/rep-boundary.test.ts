@@ -167,6 +167,37 @@ describe("managing assignments", () => {
     expect(logActivity).toHaveBeenCalledTimes(1); expect(vi.mocked(logActivity).mock.calls[0][1]).toMatchObject({ action: "newquip.rep_reassigned", detail: { created: true } });
     as("repA"); expect((await rep.getMyQuoteAction("q1")).ok).toBe(false); as("repB"); expect((await rep.getMyQuoteAction("q1")).ok).toBe(true);
   });
+  describe("post-commit audit is best-effort: a failing activity log never turns a committed change into a failure", () => {
+    const failures: Array<[string, () => Promise<never>]> = [["rejected", () => Promise.reject(new Error("log table unavailable"))], ["thrown synchronously", () => { throw new Error("boom"); }]];
+    for (const [label, boom] of failures) {
+      it(`reassignment: ${label} audit write -> success returned, history intact with the exact successor link`, async () => {
+        const a = await assignAs("mgr", C1, "repA"); vi.mocked(logActivity).mockImplementation(boom as never); const spy = vi.spyOn(console, "error").mockImplementation(() => {}); as("mgr", { admin: true });
+        const r = await manage.reassignCustomerAction({ cin7CustomerId: C1, customerName: "Farm", fromRepUserId: "repA", toRepUserId: "repB", reason: "territory change" });
+        expect(r.ok, r.error).toBe(true); expect(r.data!.created).toBe(true);
+        const rows = db.rows("customer_rep_assignments");
+        expect(rows.find((x) => x.id === a.id)).toMatchObject({ ended_by_email: "mgr@nq.test", end_reason: "territory change", replaced_by_assignment_id: r.data!.assigned.id });
+        expect(rows).toHaveLength(2); as("repA"); expect((await rep.getMyQuoteAction("q1")).ok).toBe(false); as("repB"); expect((await rep.getMyQuoteAction("q1")).ok).toBe(true);
+        expect(spy).toHaveBeenCalled(); expect(String(spy.mock.calls[0][0])).toContain("newquip.rep_reassigned"); expect(JSON.stringify(spy.mock.calls)).not.toContain("territory change");
+        spy.mockRestore(); vi.mocked(logActivity).mockImplementation(() => Promise.resolve());
+      });
+      it(`assign and end: ${label} audit write -> both still succeed and persist`, async () => {
+        vi.mocked(logActivity).mockImplementation(boom as never); const spy = vi.spyOn(console, "error").mockImplementation(() => {}); as("mgr", { admin: true });
+        const assigned = await manage.assignRepToCustomerAction({ cin7CustomerId: C1, customerName: "Farm", repUserId: "repA", reason: "territory" });
+        expect(assigned.ok, assigned.error).toBe(true); expect(db.rows("customer_rep_assignments")).toHaveLength(1);
+        const ended = await manage.endRepAssignmentAction(assigned.data!.assignment.id, "customer left the Rep");
+        expect(ended.ok, ended.error).toBe(true); expect(db.rows("customer_rep_assignments")[0].ended_at).toBeTruthy();
+        spy.mockRestore(); vi.mocked(logActivity).mockImplementation(() => Promise.resolve());
+      });
+    }
+    it("a genuine DATABASE failure is NOT suppressed (and nothing is audited), nor is an authorisation error", async () => {
+      await assignAs("mgr", C1, "repA"); vi.mocked(logActivity).mockClear(); as("mgr", { admin: true });
+      const dbFail = await manage.reassignCustomerAction({ cin7CustomerId: C1, customerName: "Farm", fromRepUserId: "repB", toRepUserId: "repA", reason: "not assigned to B" });
+      expect(dbFail.ok).toBe(false); expect(dbFail.error).toMatch(/not currently assigned/);
+      as("repA"); const denied = await manage.reassignCustomerAction({ cin7CustomerId: C1, customerName: "Farm", fromRepUserId: "repA", toRepUserId: "repB", reason: "I want it" });
+      expect(denied.ok).toBe(false); expect(denied.error).toMatch(/Only a Manager or administrator/);
+      expect(logActivity).not.toHaveBeenCalled();
+    });
+  });
   it("an unauthorised actor cannot reassign: the assignment stays exactly as it was", async () => {
     await assignAs("mgr", C1, "repA"); const before = JSON.stringify(db.rows("customer_rep_assignments"));
     for (const id of ["repA", "repB", "est"]) { as(id); expect((await manage.reassignCustomerAction({ cin7CustomerId: C1, customerName: "Farm", fromRepUserId: "repA", toRepUserId: "repB", reason: "I want it" })).ok).toBe(false); }

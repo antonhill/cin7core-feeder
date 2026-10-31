@@ -79,15 +79,15 @@ export class FakeDb {
     const rows = this.rows(t);
     const from = rows.find((r) => r.org_id === org && r.cin7_customer_id === customer && r.rep_user_id === a.p_from_user && r.ended_at == null);
     if (!from) return fail("that Rep is not currently assigned to this customer");
-    Object.assign(from, { ended_at: clock(), ended_by_email: a.p_actor_email, end_reason: reason });   // (rolled back below if the insert fails)
     let created = false;
     let next = rows.find((r) => r.org_id === org && r.cin7_customer_id === customer && r.rep_user_id === a.p_to_user && r.ended_at == null);
     if (!next) {
       const email = String(a.p_to_email ?? "").trim().toLowerCase();
       if (email.trim().length <= 3) { this.tables[t] = snapshot; return { data: null, error: { message: 'new row for relation "customer_rep_assignments" violates check constraint "customer_rep_assignments_rep_email_check"' } }; }
-      next = { id: `id-${++this.seq}`, created_at: clock(), org_id: org, cin7_customer_id: customer, customer_name: String(a.p_customer_name ?? ""), rep_user_id: a.p_to_user, rep_email: email, assigned_by_email: a.p_actor_email, assigned_by_owner_email: a.p_owner_email ?? null, assigned_reason: reason, assigned_at: clock(), ended_at: null, ended_by_email: null, end_reason: null };
+      next = { id: `id-${++this.seq}`, created_at: clock(), org_id: org, cin7_customer_id: customer, customer_name: String(a.p_customer_name ?? ""), rep_user_id: a.p_to_user, rep_email: email, assigned_by_email: a.p_actor_email, assigned_by_owner_email: a.p_owner_email ?? null, assigned_reason: reason, assigned_at: clock(), ended_at: null, ended_by_email: null, end_reason: null, replaced_by_assignment_id: null };
       rows.push(next); created = true;
     }
+    Object.assign(from, { ended_at: clock(), ended_by_email: a.p_actor_email, end_reason: reason, replaced_by_assignment_id: next.id });   // the ending names the exact successor, in the same call
     this.writes.push({ table: t, op: "rpc:customer_rep_reassign" });
     return { data: { ended: { ...from }, assigned: { ...next }, created }, error: null };
   }
@@ -156,7 +156,7 @@ export class FakeDb {
         }
         if (op === "update") {
           const p = (payload ?? {}) as Row;
-          if (Object.keys(p).some((k) => !["ended_at", "ended_by_email", "end_reason"].includes(k))) return { data: null, error: { message: "customer_rep_assignments: only ending an assignment may change it" } };
+          if (Object.keys(p).some((k) => !["ended_at", "ended_by_email", "end_reason", "replaced_by_assignment_id"].includes(k))) return { data: null, error: { message: "customer_rep_assignments: only ending an assignment may change it" } };
           if (String(p.end_reason ?? "").trim().length < 3 || !p.ended_by_email) return { data: null, error: { message: "new row violates check constraint customer_rep_assignments_check" } };
           if (rowsOf(table).filter((r) => filters.every((f) => f(r))).some((r) => r.ended_at != null)) return { data: null, error: { message: "customer_rep_assignments: an ended assignment never changes" } };
         }

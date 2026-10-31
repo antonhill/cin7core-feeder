@@ -11,6 +11,8 @@ export interface AssignmentRow {
   id: string; org_id: string; cin7_customer_id: string; customer_name: string; rep_user_id: string; rep_email: string;
   assigned_by_email: string; assigned_by_owner_email: string | null; assigned_reason: string; assigned_at: string;
   ended_at: string | null; ended_by_email: string | null; end_reason: string | null;
+  /** Set only when the assignment was ended by a reassignment: the exact assignment that took over (null for a plain end). */
+  replaced_by_assignment_id?: string | null;
 }
 export interface Actor { email: string; ownerEmail?: string | null }
 

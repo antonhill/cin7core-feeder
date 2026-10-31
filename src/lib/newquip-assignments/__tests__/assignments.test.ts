@@ -207,6 +207,42 @@ describe("reassignment is ATOMIC: all of it, or none of it", () => {
     const active = (await assignmentsForCustomer(asDb(db), ORG, "c1")).filter((h) => !h.ended_at);
     expect(active).toHaveLength(1); expect([REP_B.id, REP_C.id]).toContain(active[0].rep_user_id);
     expect(db.rows("customer_rep_assignments").filter((r) => r.ended_at && r.rep_user_id === REP_A.id)).toHaveLength(1);   // A ended exactly once
+    const ended = db.rows("customer_rep_assignments").find((r) => r.ended_at && r.rep_user_id === REP_A.id)!;
+    expect(ended.replaced_by_assignment_id).toBe(active[0].id);                          // the recorded successor is the WINNER's active row, never the loser's
+  });
+  describe("durable replacement linkage (replaced_by_assignment_id)", () => {
+    it("a NEW target: the ended row names exactly the created row, and the new row names nothing", async () => {
+      const { db, a } = await world(); const r = await move(db);
+      expect(r.created).toBe(true);
+      const ended = db.rows("customer_rep_assignments").find((x) => x.id === a.assignment.id)!;
+      expect(ended.replaced_by_assignment_id).toBe(r.assigned.id); expect(r.ended.replaced_by_assignment_id).toBe(r.assigned.id);
+      expect(r.assigned.replaced_by_assignment_id ?? null).toBeNull();
+      expect(r.assigned.rep_user_id).toBe(REP_C.id); expect(ended.rep_user_id).toBe(REP_A.id);   // previous Rep, replacement Rep, actor, reason, timestamp all derivable from the two rows
+      expect(ended.ended_by_email).toBe(MGR.email); expect(ended.end_reason).toBe("territory change"); expect(ended.ended_at).toBeTruthy();
+    });
+    it("an EXISTING active target: the ended row names that existing row, which is not modified", async () => {
+      const { db } = await world(); const c = await assign(db, REP_C, "c1"); const cBefore = JSON.stringify(db.rows("customer_rep_assignments").find((x) => x.id === c.assignment.id));
+      const r = await move(db);
+      expect(r.created).toBe(false); expect(r.ended.replaced_by_assignment_id).toBe(c.assignment.id);
+      expect(JSON.stringify(db.rows("customer_rep_assignments").find((x) => x.id === c.assignment.id))).toBe(cBefore);
+    });
+    it("a failed reassignment leaves NO successor link; a replay does not change the recorded one; a plain end names none", async () => {
+      const { db, a } = await world();
+      await expect(move(db, { toRepEmail: "x@" })).rejects.toThrow(/check constraint/);
+      expect(db.rows("customer_rep_assignments").every((x) => !x.replaced_by_assignment_id)).toBe(true);
+      const r = await move(db); await expect(move(db)).rejects.toThrow(/not currently assigned/);
+      expect(db.rows("customer_rep_assignments").find((x) => x.id === a.assignment.id)!.replaced_by_assignment_id).toBe(r.assigned.id);
+      const plain = await assign(db, REP_B, "c1"); const ended = await endAssignment(asDb(db), ORG, MGR, plain.assignment.id, "no longer covering");
+      expect(ended.replaced_by_assignment_id ?? null).toBeNull();
+    });
+    it("each reassignment in a chain (A to C, then C to B) records its own exact successor", async () => {
+      const { db, a } = await world(); const first = await move(db);
+      const second = await move(db, { fromRepUserId: REP_C.id, toRepUserId: REP_B.id, toRepEmail: REP_B.email });
+      const byId = (id: string) => db.rows("customer_rep_assignments").find((x) => x.id === id)!;
+      expect(byId(a.assignment.id).replaced_by_assignment_id).toBe(first.assigned.id);
+      expect(byId(first.assigned.id).replaced_by_assignment_id).toBe(second.assigned.id);
+      expect(byId(second.assigned.id).replaced_by_assignment_id ?? null).toBeNull();
+    });
   });
   it("it changes NO quotation, Project or approval row, and writes only through the one function", async () => {
     const { db } = await world(); db.rows("projects").push({ id: "p1", org_id: ORG }); db.rows("approval_requests").push({ id: "r1", org_id: ORG });

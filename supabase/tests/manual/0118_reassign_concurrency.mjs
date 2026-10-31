@@ -7,6 +7,7 @@
 //   S2  many rounds of truly parallel conflicting requests: exactly one success per intended Rep, no duplicate active Rep, the customer never uncovered, unrelated Reps untouched;
 //   S3  a plain insert racing a reassignment: the reassignment either commits whole or rolls back whole (the old Rep is kept);
 //   S4  requests that fail AFTER the old row was updated are rolled back whole, leaving no trace.
+//   every scenario also asserts the durable linkage: the ended row's replaced_by_assignment_id names exactly the winning target's assignment (failed/losing attempts leave none).
 // It creates its own organisation/users/customers (tagged per run); the assignment guard forbids deletes, so use a disposable database.
 // Real multi-connection concurrency evidence for customer_rep_reassign (migration 0118). Every worker is its own connection running AS service_role.
 import pg from "pg";
@@ -21,9 +22,11 @@ const conn = async () => { const c = new pg.Client(cfg); await c.connect(); awai
 const assign = (cust, who, email) => adm.query("insert into customer_rep_assignments (org_id, cin7_customer_id, rep_user_id, rep_email, assigned_by_email) values ($1,$2,$3,$4,'mgr@x.test')", [ORG, cust, U[who], email]);
 const call = (c, cust, from, to, email = `${to}@x.test`, reason = "concurrency test") =>
   c.query("select customer_rep_reassign($1,$2,'Farm',$3,$4,$5,'mgr@x.test',null,$6) as r", [ORG, cust, U[from], U[to], email, reason]).then((r) => ({ ok: true, created: r.rows[0].r.created }), (e) => ({ ok: false, msg: e.message.replace("customer_rep_reassign: ", "") }));
-const rows = async (cust) => (await adm.query("select rep_user_id, ended_at, ended_by_email, end_reason, assigned_reason from customer_rep_assignments where org_id=$1 and cin7_customer_id=$2", [ORG, cust])).rows;
+const rows = async (cust) => (await adm.query("select id, replaced_by_assignment_id, rep_user_id, ended_at, ended_by_email, end_reason, assigned_reason from customer_rep_assignments where org_id=$1 and cin7_customer_id=$2", [ORG, cust])).rows;
 const nameOf = (id) => Object.entries(U).find(([, v]) => v === id)[0];
 let violations = 0; const bad = (m) => { violations++; console.log("  INVARIANT VIOLATION:", m); };
+// The durable linkage: the ended row of `from` must name the exact row of `to` (same customer, still the one active row of that Rep, or the Rep's row at that time).
+const linkOf = (rs, from, to) => { const e = rs.find((x) => x.ended_at && nameOf(x.rep_user_id) === from); const t = e && rs.find((x) => x.id === e.replaced_by_assignment_id); return !!t && nameOf(t.rep_user_id) === to && t.id !== e.id; };
 const tally = {};
 const note = (r) => { const k = r.ok ? (r.created ? "ok(created)" : "ok(existing)") : r.msg.slice(0, 48); tally[k] = (tally[k] ?? 0) + 1; };
 
@@ -40,6 +43,7 @@ const note = (r) => { const k = r.ok ? (r.created ? "ok(created)" : "ok(existing
   const act = (await rows(cust)).filter((x) => !x.ended_at).map((x) => nameOf(x.rep_user_id));
   console.log(`S1 blocking: first=${r1.ok ? "ok" : r1.msg}; competitor still waiting after 1.5s=${stillWaiting}; competitor result="${r2.ok ? "ok" : r2.msg}" after ${waited}ms; active=${JSON.stringify(act)}`);
   if (!stillWaiting) bad("S1 competitor did not wait"); if (r2.ok) bad("S1 competitor must lose"); if (JSON.stringify(act) !== '["B"]') bad("S1 final state");
+  if (!linkOf(await rows(cust), "A", "B")) bad("S1 the ended row must name B's assignment as its successor (the loser's target C must not appear)");
   await c1.end(); await c2.end();
 }
 
@@ -53,6 +57,10 @@ for (let i = 0; i < ROUNDS; i++) {
   const rs = await rows(cust); const active = rs.filter((x) => !x.ended_at).map((x) => nameOf(x.rep_user_id));
   const okA = results.filter((r, k) => r.ok && jobs[k][0] === "A").length; const okB = results.filter((r, k) => r.ok && jobs[k][0] === "B").length;
   if (okA > 1) bad(`${cust}: ${okA} reassignments of A succeeded`);
+  const winA = jobs.find((j, k) => results[k].ok && j[0] === "A"); if (winA && !linkOf(rs, "A", winA[1])) bad(`${cust}: A's ended row does not name the WINNING target ${winA[1]}`);
+  const winB = jobs.find((j, k) => results[k].ok && j[0] === "B"); if (winB && !linkOf(rs, "B", winB[1])) bad(`${cust}: B's ended row does not name its target ${winB[1]}`);
+  for (const x of rs) if (!x.ended_at && x.replaced_by_assignment_id) bad(`${cust}: an ACTIVE row carries a successor link`);
+  for (const x of rs.filter((y) => y.ended_at)) if (!x.replaced_by_assignment_id) bad(`${cust}: an ended row has no successor link`);
   const endedA = rs.filter((x) => x.ended_at && nameOf(x.rep_user_id) === "A").length; if (endedA !== okA) bad(`${cust}: A ended ${endedA} times but ${okA} successes`);
   const endedB = rs.filter((x) => x.ended_at && nameOf(x.rep_user_id) === "B").length; if (endedB !== okB) bad(`${cust}: B ended ${endedB} times but ${okB} successes`);
   if (okA === 0 && !active.includes("A")) bad(`${cust}: A lost its assignment although no reassignment of A succeeded`);
@@ -72,7 +80,8 @@ console.log(`S2 ${ROUNDS} rounds x 10 parallel conflicting calls: outcomes ${JSO
     const [r, ins] = await Promise.all([call(clients[0], cust, "A", "C"), adm.query("insert into customer_rep_assignments (org_id, cin7_customer_id, rep_user_id, rep_email, assigned_by_email) values ($1,$2,$3,'c@x.test','mgr@x.test')", [ORG, cust, U.C]).then(() => "ins-ok", (e) => "ins-fail")]);
     const rs = await rows(cust); const active = rs.filter((x) => !x.ended_at).map((x) => nameOf(x.rep_user_id));
     if (new Set(active).size !== active.length) bad(`${cust}: duplicate active ${active}`);
-    if (r.ok) { committed++; if (active.includes("A")) bad(`${cust}: reassignment committed but A still active`); } else { rolledBack++; if (!active.includes("A")) bad(`${cust}: reassignment FAILED (${r.msg}) but A lost its assignment`); }
+    if (r.ok) { committed++; if (active.includes("A")) bad(`${cust}: reassignment committed but A still active`); if (!linkOf(rs, "A", "C")) bad(`${cust}: committed reassignment must name C's assignment`); }
+    else { rolledBack++; if (!active.includes("A")) bad(`${cust}: reassignment FAILED (${r.msg}) but A lost its assignment`); if (rs.some((x) => x.replaced_by_assignment_id)) bad(`${cust}: a rolled-back reassignment left a successor link`); }
     if (active.length === 0) bad(`${cust}: customer with no Rep`);
   }
   console.log(`S3 reassign vs plain insert, 60 rounds: reassignment committed=${committed}, rolled back whole=${rolledBack}`);
@@ -89,6 +98,8 @@ console.log(`S2 ${ROUNDS} rounds x 10 parallel conflicting calls: outcomes ${JSO
     const rs = await rows(cust); const active = rs.filter((x) => !x.ended_at).map((x) => nameOf(x.rep_user_id));
     const wins = results.filter((r) => r.ok).length; winners += wins; failedWhole += results.filter((r) => !r.ok && /check constraint/.test(r.msg)).length;
     if (wins !== 1) bad(`${cust}: expected exactly 1 success, got ${wins}`);
+    if (!linkOf(rs, "A", "D")) bad(`${cust}: A's ended row must name D's assignment (failed attempts must leave no link)`);
+    if (rs.filter((x) => x.replaced_by_assignment_id).length !== 1) bad(`${cust}: exactly one row may carry a successor link`);
     if (!active.includes("B")) bad(`${cust}: unrelated Rep B was affected`);
     if (!active.includes("D") || active.includes("A") || active.includes("C")) bad(`${cust}: final active set ${active} (expected B and D only)`);
     if (rs.filter((x) => x.ended_at && nameOf(x.rep_user_id) === "A").length !== 1) bad(`${cust}: A must be ended exactly once (failed attempts leave no trace)`);

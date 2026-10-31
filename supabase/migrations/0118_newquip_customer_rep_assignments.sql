@@ -35,12 +35,16 @@ create table if not exists customer_rep_assignments (
   ended_at    timestamptz,
   ended_by_email text,
   end_reason  text,
+  -- Set ONLY by customer_rep_reassign, in the same statement that ends this row: the exact assignment that took over (a new row, or the target's already-active row). NULL for a plain end.
+  replaced_by_assignment_id uuid,
   -- an ended assignment says who ended it and why; an active one carries neither
   check ((ended_at is null) = (ended_by_email is null)),
   check ((ended_at is null) = (end_reason is null)),
   check (ended_at is null or length(btrim(end_reason)) >= 3),
   check (ended_at is null or ended_at >= assigned_at),
-  unique (id, org_id)
+  check (replaced_by_assignment_id is null or (ended_at is not null and replaced_by_assignment_id <> id)),
+  unique (id, org_id),
+  foreign key (replaced_by_assignment_id, org_id) references customer_rep_assignments (id, org_id)
 );
 
 -- One ACTIVE assignment per (customer, Rep); many Reps may be active on one customer.
@@ -62,10 +66,14 @@ begin
   end if;
   -- UPDATE: the only permitted change is the one-way end of an active assignment
   if old.ended_at is not null then raise exception 'customer_rep_assignments: an ended assignment never changes'; end if;
-  if (to_jsonb(new) - 'ended_at' - 'ended_by_email' - 'end_reason') is distinct from (to_jsonb(old) - 'ended_at' - 'ended_by_email' - 'end_reason') then
+  if (to_jsonb(new) - 'ended_at' - 'ended_by_email' - 'end_reason' - 'replaced_by_assignment_id') is distinct from (to_jsonb(old) - 'ended_at' - 'ended_by_email' - 'end_reason' - 'replaced_by_assignment_id') then
     raise exception 'customer_rep_assignments: only ending an assignment may change it';
   end if;
   if new.ended_at is null then raise exception 'customer_rep_assignments: an update must end the assignment'; end if;
+  -- the successor must be ANOTHER Rep's assignment of the SAME customer in the SAME organisation
+  if new.replaced_by_assignment_id is not null and not exists (
+    select 1 from customer_rep_assignments t where t.id = new.replaced_by_assignment_id and t.org_id = new.org_id and t.cin7_customer_id = new.cin7_customer_id and t.rep_user_id <> new.rep_user_id
+  ) then raise exception 'customer_rep_assignments: the replacing assignment must be another Rep''s assignment of the same customer'; end if;
   return new;
 end;
 $$;
@@ -73,7 +81,7 @@ drop trigger if exists customer_rep_assignments_guard_trg on customer_rep_assign
 create trigger customer_rep_assignments_guard_trg before insert or update or delete on customer_rep_assignments for each row execute function customer_rep_assignments_guard();
 
 -- ── atomic reassignment ─────────────────────────────────────────────────────
--- Ends p_from_user's ACTIVE assignment of the customer and gives p_to_user access, as ONE transaction. Returns {ended, assigned, created}. If p_to_user is ALREADY actively assigned
+-- Ends p_from_user's ACTIVE assignment of the customer and gives p_to_user access, as ONE transaction; the ended row permanently records the exact successor (replaced_by_assignment_id). Returns {ended, assigned, created}. If p_to_user is ALREADY actively assigned
 -- (several Reps per customer are allowed) the old assignment is ended and the existing one is returned (created = false): never a duplicate. Every raise below aborts the whole call.
 create or replace function customer_rep_reassign(
   p_org uuid, p_customer text, p_customer_name text, p_from_user uuid, p_to_user uuid, p_to_email text, p_actor_email text, p_owner_email text, p_reason text
@@ -97,7 +105,7 @@ begin
   -- lock and read ONLY the assignment being ended
   select * into v_from from customer_rep_assignments where org_id = p_org and cin7_customer_id = v_customer and rep_user_id = p_from_user and ended_at is null for update;
   if not found then raise exception 'customer_rep_reassign: that Rep is not currently assigned to this customer'; end if;
-  update customer_rep_assignments set ended_at = clock_timestamp(), ended_by_email = p_actor_email, end_reason = v_reason where id = v_from.id returning * into v_ended;
+  -- the replacement: the target's existing ACTIVE assignment, else a new one. It is settled BEFORE the old row is ended so the ending can name it.
   select * into v_new from customer_rep_assignments where org_id = p_org and cin7_customer_id = v_customer and rep_user_id = p_to_user and ended_at is null;
   if not found then
     insert into customer_rep_assignments (org_id, cin7_customer_id, customer_name, rep_user_id, rep_email, assigned_by_email, assigned_by_owner_email, assigned_reason)
@@ -105,6 +113,7 @@ begin
       returning * into v_new;
     v_created := true;
   end if;
+  update customer_rep_assignments set ended_at = clock_timestamp(), ended_by_email = p_actor_email, end_reason = v_reason, replaced_by_assignment_id = v_new.id where id = v_from.id returning * into v_ended;
   return jsonb_build_object('ended', to_jsonb(v_ended), 'assigned', to_jsonb(v_new), 'created', v_created);
 end;
 $$;
@@ -116,7 +125,7 @@ alter table customer_rep_assignments enable row level security;
 -- service_role is also reset (Supabase default privileges give it TRUNCATE / REFERENCES / TRIGGER) and then granted only what the Server Actions use.
 revoke all on customer_rep_assignments from public, anon, authenticated, service_role;
 grant select, insert on customer_rep_assignments to service_role;
-grant update (ended_at, ended_by_email, end_reason) on customer_rep_assignments to service_role;   -- ending an assignment; every other column is immutable
+grant update (ended_at, ended_by_email, end_reason, replaced_by_assignment_id) on customer_rep_assignments to service_role;   -- ending an assignment; every other column is immutable
 revoke all on function customer_rep_assignments_guard() from public, anon, authenticated;
 revoke all on function customer_rep_reassign(uuid, text, text, uuid, uuid, text, text, text, text) from public, anon, authenticated;
 grant execute on function customer_rep_reassign(uuid, text, text, uuid, uuid, text, text, text, text) to service_role;

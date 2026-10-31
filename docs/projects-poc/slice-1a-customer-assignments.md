@@ -39,7 +39,12 @@ No existing action, store, page, route, policy or migration was modified. (`fake
   end + create calls: without the function the application fails closed.
 * **Audit.** The authoritative record of who changed what, when and why is the append-only assignment history itself, written inside the same transaction as the change, so it can never disagree
   with the state. The additional activity-log entry is written by the application after the commit and is best-effort by the platform's design (`logActivity` swallows its own errors); it is
-  written only for a reassignment that succeeded.
+  written only for a reassignment that succeeded. **The replacement is recorded durably:** the ended row carries `replaced_by_assignment_id`, set in the same statement that ends it, naming the
+  exact successor assignment (a newly created row, or the target's already-active row when `created = false`). With the ended row's Rep, actor, reason and `ended_at`, and the successor's Rep,
+  actor, reason and `assigned_at`, the previous Rep, replacement Rep, actor, reason and time are all permanent history. The database guard only accepts a successor that is another Rep's
+  assignment of the same customer in the same organisation (the composite foreign key also enforces the organisation); the link can be set only while ending, and never changes afterwards.
+  A plain end leaves it empty. **Post-commit audit resilience:** all three management actions write the activity-log entry through `auditAfterCommit`, which catches and logs (without the
+  entry contents) a rejected or thrown audit write, so a committed change is never reported as failed. Database failures and authorisation errors are not caught by it.
 * **Same denial for everything.** Unassigned, revoked, another organisation's, and non-existent quotations all return exactly `Quote not found.` (no probing), and the check runs *before*
   any quotation data is loaded.
 * **Rep responses are cost-free by construction.** They are built from named fields (no estimator state, baseline or margin sheet), the evaluation is produced with cost withheld, and a

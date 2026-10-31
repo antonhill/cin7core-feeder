@@ -51,10 +51,31 @@ update customer_rep_assignments set ended_at = clock_timestamp(), ended_by_email
 do $$ begin
   if (select count(*) from customer_rep_assignments where cin7_customer_id = 'cust-1' and ended_at is null) <> 1 then raise exception 'ending one assignment leaves the other Rep active'; end if;
 end $$;
+do $$ begin
+  if (select replaced_by_assignment_id from customer_rep_assignments where id = '00000000-0000-0000-0000-0000000018c1') is not null then raise exception 'a plain end names no successor'; end if;
+end $$;
+select pg_temp.expect_denied($q$update customer_rep_assignments set replaced_by_assignment_id = '00000000-0000-0000-0000-0000000018c2' where id = '00000000-0000-0000-0000-0000000018c1'$q$, 'attach a successor to an already-ended row');
 select pg_temp.expect_denied($q$update customer_rep_assignments set ended_at = null, ended_by_email = null, end_reason = null where id = '00000000-0000-0000-0000-0000000018c1'$q$, 'reopen an ended assignment');
 select pg_temp.expect_denied($q$update customer_rep_assignments set end_reason = 'changed my mind' where id = '00000000-0000-0000-0000-0000000018c1'$q$, 'rewrite an ended assignment');
 -- history is never deleted
 select pg_temp.expect_denied($q$delete from customer_rep_assignments where id = '00000000-0000-0000-0000-0000000018c1'$q$, 'delete history');
+
+-- the successor link is guarded: it must be ANOTHER Rep's assignment of the SAME customer in the SAME organisation (c2 = cust-1/a2 active; c3 = cust-8/a3 in org B; c4 = cust-8/a1 org A)
+insert into customer_rep_assignments (id, org_id, cin7_customer_id, rep_user_id, rep_email, assigned_by_email) values
+  ('00000000-0000-0000-0000-0000000018c3', '00000000-0000-0000-0000-0000000018b2', 'cust-8', '00000000-0000-0000-0000-0000000018a3', 'rep3@x.test', 'mgr@x.test'),
+  ('00000000-0000-0000-0000-0000000018c4', '00000000-0000-0000-0000-0000000018b1', 'cust-8', '00000000-0000-0000-0000-0000000018a1', 'rep1@x.test', 'mgr@x.test'),
+  ('00000000-0000-0000-0000-0000000018c5', '00000000-0000-0000-0000-0000000018b1', 'cust-8', '00000000-0000-0000-0000-0000000018a2', 'rep2@x.test', 'mgr@x.test');
+select pg_temp.expect_denied($q$update customer_rep_assignments set ended_at = clock_timestamp(), ended_by_email = 'm@x.test', end_reason = 'moved', replaced_by_assignment_id = '00000000-0000-0000-0000-0000000018c3' where id = '00000000-0000-0000-0000-0000000018c4'$q$, 'successor in ANOTHER organisation');
+select pg_temp.expect_denied($q$update customer_rep_assignments set ended_at = clock_timestamp(), ended_by_email = 'm@x.test', end_reason = 'moved', replaced_by_assignment_id = '00000000-0000-0000-0000-0000000018c2' where id = '00000000-0000-0000-0000-0000000018c4'$q$, 'successor on a DIFFERENT customer');
+select pg_temp.expect_denied($q$update customer_rep_assignments set ended_at = clock_timestamp(), ended_by_email = 'm@x.test', end_reason = 'moved', replaced_by_assignment_id = '00000000-0000-0000-0000-0000000018c4' where id = '00000000-0000-0000-0000-0000000018c4'$q$, 'successor is itself');
+select pg_temp.expect_denied($q$update customer_rep_assignments set ended_at = clock_timestamp(), ended_by_email = 'm@x.test', end_reason = 'moved', replaced_by_assignment_id = gen_random_uuid() where id = '00000000-0000-0000-0000-0000000018c4'$q$, 'successor that does not exist');
+select pg_temp.expect_denied($q$insert into customer_rep_assignments (org_id, cin7_customer_id, rep_user_id, rep_email, assigned_by_email, replaced_by_assignment_id) values ('00000000-0000-0000-0000-0000000018b1', 'cust-9', '00000000-0000-0000-0000-0000000018a1', 'rep1@x.test', 'mgr@x.test', '00000000-0000-0000-0000-0000000018c5')$q$, 'an ACTIVE row naming a successor');
+select pg_temp.expect_denied($q$update customer_rep_assignments set replaced_by_assignment_id = '00000000-0000-0000-0000-0000000018c5' where id = '00000000-0000-0000-0000-0000000018c4'$q$, 'successor without ending');
+update customer_rep_assignments set ended_at = clock_timestamp(), ended_by_email = 'm@x.test', end_reason = 'moved', replaced_by_assignment_id = '00000000-0000-0000-0000-0000000018c5' where id = '00000000-0000-0000-0000-0000000018c4';
+do $$ begin
+  if (select replaced_by_assignment_id from customer_rep_assignments where id = '00000000-0000-0000-0000-0000000018c4') <> '00000000-0000-0000-0000-0000000018c5' then raise exception 'a valid successor is recorded'; end if;
+end $$;
+select pg_temp.expect_denied($q$update customer_rep_assignments set replaced_by_assignment_id = null where id = '00000000-0000-0000-0000-0000000018c4'$q$, 'erase the successor link');
 
 -- the SAME Rep may be assigned again later: a NEW row, with the earlier period preserved
 insert into customer_rep_assignments (org_id, cin7_customer_id, rep_user_id, rep_email, assigned_by_email)
@@ -62,6 +83,9 @@ values ('00000000-0000-0000-0000-0000000018b1', 'cust-1', '00000000-0000-0000-00
 do $$ begin
   if (select count(*) from customer_rep_assignments where cin7_customer_id = 'cust-1' and rep_user_id = '00000000-0000-0000-0000-0000000018a1') <> 2 then raise exception 'history keeps both periods'; end if;
 end $$;
+
+-- a successor must be ANOTHER Rep: the new (active) a1 row of cust-1 cannot name a1's own earlier, ended period as its successor
+select pg_temp.expect_denied($q$update customer_rep_assignments set ended_at = clock_timestamp(), ended_by_email = 'm@x.test', end_reason = 'moved', replaced_by_assignment_id = '00000000-0000-0000-0000-0000000018c1' where cin7_customer_id = 'cust-1' and rep_user_id = '00000000-0000-0000-0000-0000000018a1' and ended_at is null$q$, 'successor that is the same Rep');
 
 -- organisations are independent: the same Cin7 customer id in another organisation is unrelated
 insert into customer_rep_assignments (org_id, cin7_customer_id, rep_user_id, rep_email, assigned_by_email)
@@ -87,6 +111,7 @@ do $$ begin
   if has_table_privilege('service_role', 'customer_rep_assignments', 'REFERENCES') or has_table_privilege('service_role', 'customer_rep_assignments', 'TRIGGER') then raise exception 'excess service_role privileges'; end if;
   if has_table_privilege('service_role', 'customer_rep_assignments', 'UPDATE') then raise exception 'service role has no table-wide UPDATE (column grants only)'; end if;
   if not has_column_privilege('service_role', 'customer_rep_assignments', 'ended_at', 'UPDATE') then raise exception 'service role may end an assignment'; end if;
+  if not has_column_privilege('service_role', 'customer_rep_assignments', 'replaced_by_assignment_id', 'UPDATE') then raise exception 'service role records the successor when ending'; end if;
   if has_column_privilege('service_role', 'customer_rep_assignments', 'rep_user_id', 'UPDATE') or has_column_privilege('service_role', 'customer_rep_assignments', 'cin7_customer_id', 'UPDATE') then raise exception 'identity columns are not updatable'; end if;
 end $$;
 
@@ -129,9 +154,11 @@ begin
   if e.ended_at is null or e.ended_by_email <> 'mgr@x.test' or e.end_reason <> 'territory change' then raise exception 'the intended assignment is ended with actor and reason'; end if;
   select * into n from customer_rep_assignments where org_id = '00000000-0000-0000-0000-0000000018b1' and cin7_customer_id = 'r1' and rep_user_id = '00000000-0000-0000-0000-0000000018a4' and ended_at is null;
   if not found then raise exception 'the replacement assignment exists and is active'; end if;
+  if e.replaced_by_assignment_id is distinct from n.id then raise exception 'P1: the ended row records the exact NEW replacement assignment'; end if;
+  if n.replaced_by_assignment_id is not null then raise exception 'the replacement itself names no successor'; end if;
   if n.rep_email <> 'rep4@x.test' or n.assigned_by_email <> 'mgr@x.test' or n.assigned_by_owner_email <> 'owner@x.test' or n.assigned_reason <> 'territory change' or n.customer_name <> 'Farm R1' then raise exception 'the replacement carries the audit fields'; end if;
   select * into o from customer_rep_assignments where id = '00000000-0000-0000-0000-0000000018d2';
-  if o.ended_at is not null or o.end_reason is not null then raise exception 'an unrelated active Rep assignment must be untouched'; end if;
+  if o.ended_at is not null or o.end_reason is not null or o.replaced_by_assignment_id is not null then raise exception 'an unrelated active Rep assignment must be untouched'; end if;
   if (select count(*) from customer_rep_assignments where cin7_customer_id = 'r1') <> 3 then raise exception 'history: old (ended) + other Rep + replacement'; end if;
 end $$;
 
@@ -140,6 +167,7 @@ select pg_temp.expect_denied($q$select customer_rep_reassign('00000000-0000-0000
 do $$ begin
   if (select count(*) from customer_rep_assignments where cin7_customer_id = 'r1' and ended_at is null) <> 2 then raise exception 'a replay must not change the active set (a2, a4)'; end if;
   if (select count(*) from customer_rep_assignments where cin7_customer_id = 'r1') <> 3 then raise exception 'a replay must not add history rows'; end if;
+  if (select replaced_by_assignment_id from customer_rep_assignments where id = '00000000-0000-0000-0000-0000000018d1') is distinct from (select id from customer_rep_assignments where cin7_customer_id = 'r1' and rep_user_id = '00000000-0000-0000-0000-0000000018a4') then raise exception 'a replay must not change the recorded successor'; end if;
 end $$;
 
 -- ALREADY-ASSIGNED TARGET (several Reps per customer): r3 has a1 and a4; moving a1 -> a4 ends a1 and creates NOTHING (no duplicate active row)
@@ -149,6 +177,8 @@ do $$ declare r jsonb; begin
   if (r->'assigned'->>'id') <> '00000000-0000-0000-0000-0000000018d5' then raise exception 'must return the existing active assignment'; end if;
 end $$;
 do $$ begin
+  if (select replaced_by_assignment_id from customer_rep_assignments where id = '00000000-0000-0000-0000-0000000018d4') is distinct from '00000000-0000-0000-0000-0000000018d5'::uuid then raise exception 'P1: the ended row records the EXISTING target assignment as its successor'; end if;
+  if (select replaced_by_assignment_id from customer_rep_assignments where id = '00000000-0000-0000-0000-0000000018d5') is not null then raise exception 'the existing target row is not modified'; end if;
   if (select count(*) from customer_rep_assignments where cin7_customer_id = 'r3' and ended_at is null) <> 1 then raise exception 'exactly one active Rep remains on r3'; end if;
   if (select count(*) from customer_rep_assignments where cin7_customer_id = 'r3') <> 2 then raise exception 'no extra row was created'; end if;
 end $$;
@@ -158,7 +188,7 @@ select pg_temp.expect_denied($q$select customer_rep_reassign('00000000-0000-0000
 do $$ begin
   if (select ended_at from customer_rep_assignments where id = '00000000-0000-0000-0000-0000000018d3') is not null then raise exception 'ATOMICITY: the previous assignment must still be active after a failed reassignment'; end if;
   if (select count(*) from customer_rep_assignments where cin7_customer_id = 'r2') <> 1 then raise exception 'ATOMICITY: no row may be added by a failed reassignment'; end if;
-  if (select end_reason from customer_rep_assignments where id = '00000000-0000-0000-0000-0000000018d3') is not null then raise exception 'ATOMICITY: no end reason may survive a failed reassignment'; end if;
+  if (select end_reason from customer_rep_assignments where id = '00000000-0000-0000-0000-0000000018d3') is not null or (select replaced_by_assignment_id from customer_rep_assignments where id = '00000000-0000-0000-0000-0000000018d3') is not null then raise exception 'ATOMICITY: no end reason or successor link may survive a failed reassignment'; end if;
 end $$;
 
 -- the new Rep must belong to THIS organisation; nothing changes
