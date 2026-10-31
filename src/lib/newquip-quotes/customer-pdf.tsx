@@ -2,7 +2,9 @@ import "server-only";
 // Renders the customer quotation PDF from a CustomerDocumentModel and NOTHING else (@react-pdf/renderer; standard Helvetica, no network fonts, no remote images).
 // The renderer receives only the allowlisted model, so it cannot print cost, margin, supplier, rate or approval data.
 import { Document, Page, StyleSheet, Text, View, renderToBuffer } from "@react-pdf/renderer";
+import { Image } from "@react-pdf/renderer";
 import type { CustomerDocumentModel } from "./customer-document";
+import { NEWQUIP_LOGO } from "./customer-logo";
 
 /** Helvetica is a standard PDF font (Latin-1 / WinAnsi). Anything outside it is replaced rather than rendered as a broken glyph. */
 export const pdfSafe = (s: string): string => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, "-").replace(/…/g, "...").replace(/ /g, " ").replace(/[^\n\t\x20-\x7E¡-ÿ]/g, "?");
@@ -17,10 +19,11 @@ const fmtDate = (iso: string): string => { const [y, m, d] = iso.split("-"); ret
 const NAVY = "#14304f"; const GREY = "#55606b"; const LINE = "#c9d1d9";
 const st = StyleSheet.create({
   page: { paddingTop: 36, paddingBottom: 56, paddingHorizontal: 40, fontFamily: "Helvetica", fontSize: 9.5, color: "#1c2733", lineHeight: 1.35 },
-  head: { flexDirection: "row", justifyContent: "space-between", borderBottomWidth: 2, borderBottomColor: NAVY, paddingBottom: 10, marginBottom: 14 },
-  brand: { fontSize: 22, fontFamily: "Helvetica-Bold", color: NAVY },
+  head: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", borderBottomWidth: 2, borderBottomColor: NAVY, paddingBottom: 10, marginBottom: 16 },
+  headLeft: { width: "52%", paddingRight: 12 },
+  headRight: { width: "48%", textAlign: "right" },
+  logo: { height: 40, width: 40 * (NEWQUIP_LOGO.width / NEWQUIP_LOGO.height), marginBottom: 6 },
   small: { fontSize: 8.5, color: GREY },
-  right: { textAlign: "right" },
   h1: { fontSize: 15, fontFamily: "Helvetica-Bold", color: NAVY, marginBottom: 6 },
   h2: { fontSize: 10.5, fontFamily: "Helvetica-Bold", color: NAVY, marginTop: 14, marginBottom: 4 },
   row: { flexDirection: "row" },
@@ -43,13 +46,15 @@ export function CustomerQuotationDocument({ m }: { m: CustomerDocumentModel }) {
     <Document title={pdfSafe(`Quotation ${m.quote.reference} revision ${m.quote.revision}`)} author={pdfSafe(co.legalName)} subject="Customer quotation" creator="NewQuip">
       <Page size="A4" style={st.page}>
         <View style={st.head} fixed>
-          <View>
-            <Text style={st.brand}>{pdfSafe(co.brandName)}</Text>
-            <Text style={st.small}>{pdfSafe(co.legalName)} | Reg. {pdfSafe(co.registrationNumber)} | VAT {pdfSafe(co.vatNumber)}</Text>
+          <View style={st.headLeft}>
+            <Image src={NEWQUIP_LOGO.src} style={st.logo} />
+            <Text style={st.small}>{pdfSafe(co.legalName)}</Text>
+            <Text style={st.small}>Reg. {pdfSafe(co.registrationNumber)} | VAT {pdfSafe(co.vatNumber)}</Text>
           </View>
-          <View style={st.right}>
+          <View style={st.headRight}>
             {co.addressLines.map((l, i) => <Text key={i} style={st.small}>{pdfSafe(l)}</Text>)}
-            <Text style={st.small}>{pdfSafe(co.phone)} | {pdfSafe(co.email)}</Text>
+            <Text style={st.small}>{pdfSafe(co.phone)}</Text>
+            <Text style={st.small}>{pdfSafe(co.email)}</Text>
             {co.website ? <Text style={st.small}>{pdfSafe(co.website)}</Text> : null}
           </View>
         </View>
