@@ -50,6 +50,14 @@ const TEST_PROCESS_BANNED: ReadonlySet<string> = new Set(["binding", "dlopen", "
 /** The shell may read named RWTSA_* variables, plus NODE_ENV (only to detect `next dev`). Nothing else. */
 const RWTSA_ENV_NAME = /^(RWTSA_[A-Z0-9_]+|NODE_ENV)$/;
 const NETWORK_URL = /^\s*(https?|wss?|ftp):\/\//i;
+/** A protocol-relative URL ("//host/path") loads from the network just like https://. Flagged outside test files. */
+const PROTOCOL_RELATIVE_URLS: readonly RegExp[] = [
+  /^\s*\/\/[a-z0-9]/i, // the whole string is "//host/..."
+  /(?:url\s*\(|url\s*=|@import\s+)\s*["']?\/\/[a-z0-9]/i, // url(//host), url=//host (meta refresh), @import //host
+  /(?:^|[\s"'=(])\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)+/i, // "... //cdn.example.com/..." anywhere in markup or CSS text
+];
+/** The standalone shell is server-rendered React only: no client components and no browser-global network/DOM reach. */
+const APP_BANNED_IDENTIFIERS: ReadonlySet<string> = new Set(["document", "location", "localStorage", "sessionStorage", "indexedDB", "Image", "Audio", "Notification", "BroadcastChannel"]);
 /** Test files (only) may talk to a server THEY started on the loopback interface. */
 const LOOPBACK_URL = /^\s*http:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/i;
 
@@ -155,6 +163,7 @@ export function scanFile(ctx: ScanContext, file: string, text: string, profile: 
     if (ts.isIdentifier(node)) {
       const name = node.text;
       if (BANNED_IDENTIFIERS.has(name) && !isPropertyNamePosition(node)) report(node, `banned identifier "${name}"`);
+      if (profile === "app" && APP_BANNED_IDENTIFIERS.has(name) && !isPropertyNamePosition(node)) report(node, `banned browser global "${name}" in the standalone shell`);
       if (name === "process") {
         const p = node.parent;
         if (!(p && ts.isPropertyAccessExpression(p) && p.expression === node)) report(node, "`process` may only be used as `process.<allowed property>`");
@@ -178,6 +187,11 @@ export function scanFile(ctx: ScanContext, file: string, text: string, profile: 
 
     if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression) && BANNED_PROPERTY_NAMES.has(node.argumentExpression.text)) {
       report(node, `banned property "${node.argumentExpression.text}"`);
+    }
+
+    if (profile !== "test" && (ts.isStringLiteralLike(node) || ts.isTemplateHead(node)) && PROTOCOL_RELATIVE_URLS.some((re) => re.test(node.text))) report(node, "protocol-relative URL literal");
+    if (profile === "app" && ts.isExpressionStatement(node) && ts.isStringLiteral(node.expression) && node.expression.text === "use client") {
+      report(node, '"use client" is not allowed: the standalone shell is server-rendered only');
     }
 
     if ((ts.isStringLiteralLike(node) || ts.isTemplateHead(node)) && NETWORK_URL.test(node.text) && !(profile === "test" && LOOPBACK_URL.test(node.text))) report(node, "network URL literal");

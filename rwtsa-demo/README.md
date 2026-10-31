@@ -66,11 +66,18 @@ The fallback (a self-contained HTML bundle built with the same engines) remains 
 - Bound to `127.0.0.1` (scripts pass `-H 127.0.0.1`; `next start` otherwise binds all interfaces). Telemetry disabled.
 - Import boundary (AST scanner, `src/rwtsa-demo/__tests__/boundary-scanner.ts`): this app may import only `react`, `next` (types),
   `next/link`, the audited RWTSA code and the five Toolbox UI files. **Not** `next/font`, `next/image`, `next/script`, `next/headers`,
-  `next/server`, analytics, Supabase or Cin7. Environment access is limited to named `RWTSA_*` variables and `NODE_ENV`. The stylesheets
-  contain no remote reference.
+  `next/server`, analytics, Supabase or Cin7. Environment access is limited to named `RWTSA_*` variables and `NODE_ENV`. The shell is server-rendered only: `"use client"`,
+  browser globals (`document`, `location`, `Image`, storage) and protocol-relative `//host` URLs are rejected. Every stylesheet
+  under `rwtsa-demo/` and the Toolbox stylesheet it imports are checked for remote references.
 - Findings, reasons and errors are value-free: tab names, canonical field keys, counts and reason classes. Never a cell value, a file
   name or a path. A sentinel-poisoned workbook is rendered in every page test and the production build output is searched for it.
 - In-memory memoisation only; nothing is cached to disk.
+
+## Running it safely
+
+Use the `npm --prefix rwtsa-demo run ...` scripts above. Do not run `next dev` (or `next start` without `-H 127.0.0.1` and
+`NEXT_TELEMETRY_DISABLED=1`) directly: the scripts exist to guarantee loopback binding and no telemetry, and the development
+server contacts the npm registry.
 
 ## Not here yet
 

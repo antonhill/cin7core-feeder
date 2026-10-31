@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CODE_EXTENSIONS, scanFile, scanTree, type Profile, type ScanContext } from "@/rwtsa-demo/__tests__/boundary-scanner";
@@ -155,6 +155,15 @@ describe("app profile: the standalone shell may use React and next/link, nothing
     ["fetch in a component", `export async function C() { await fetch("/api"); return null; }`],
     ["a credential env var", `export const k = process.env.NEXT_PUBLIC_SUPABASE_URL;`],
     ["a remote URL literal", `export const u = "https://fonts.googleapis.com/css2";`],
+    ["a protocol-relative <img>", `export const a = <img src="//evil.example/x.png" />;`],
+    ["a protocol-relative stylesheet link", `export const a = <link rel="stylesheet" href="//e/x.css" />;`],
+    ["a protocol-relative meta refresh", `export const a = <meta httpEquiv="refresh" content="0;url=//e" />;`],
+    ["a protocol-relative CSS @import in a template", "export const a = <style>{`@import url(//e/a.css)`}</style>;"],
+    ["the 'use client' directive", `"use client";\nexport const a = 1;`],
+    ["document (DOM script injection)", `export const a = () => document.createElement("script");`],
+    ["new Image() beacon", `export const a = () => { new Image().src = "x"; };`],
+    ["location redirect", `export const a = () => { location.href = "x"; };`],
+    ["localStorage", `export const a = () => localStorage.getItem("k");`],
   ] as const) {
     it(`flags: ${label}`, () => expect(app(src).length).toBeGreaterThan(0));
   }
@@ -179,8 +188,16 @@ describe("app profile: the standalone shell may use React and next/link, nothing
     }
   });
 
-  it("no stylesheet in the shell, nor the Toolbox stylesheet it imports, references a remote resource", () => {
-    const css = [path.join(ROOT, "rwtsa-demo", "app", "globals.css"), path.join(ROOT, "src", "app", "globals.css")];
+  it("a protocol-relative URL is flagged in runtime code too, but a comment-like string with a space is not", () => {
+    expect(snippet(`export const u = "//cdn.example/x.js";`).length).toBeGreaterThan(0);
+    expect(app(`export const note = "// not a url";`)).toEqual([]);
+  });
+
+  it("no stylesheet under rwtsa-demo/ (any file), nor the Toolbox stylesheet it imports, references a remote resource", () => {
+    const cssIn = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? (e.name === "node_modules" ? [] : cssIn(path.join(dir, e.name))) : e.name.endsWith(".css") ? [path.join(dir, e.name)] : []));
+    const css = [...cssIn(path.join(ROOT, "rwtsa-demo")), path.join(ROOT, "src", "app", "globals.css")];
+    expect(css.length).toBeGreaterThanOrEqual(2);
     for (const f of css) {
       const text = readFileSync(f, "utf8");
       expect(text, f).not.toMatch(/https?:\/\//i);
