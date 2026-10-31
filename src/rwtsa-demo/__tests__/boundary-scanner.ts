@@ -21,7 +21,7 @@ import path from "node:path";
  * application modules, plus the specific evasions listed in boundary.test.ts.
  */
 
-export type Profile = "runtime" | "test";
+export type Profile = "runtime" | "app" | "test";
 
 export interface ScanContext {
   /** Repository root (used to resolve `@/` to `<root>/src`). */
@@ -36,7 +36,9 @@ export const CODE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".cts", ".cjs", ".
 const RESOLVE_EXTENSIONS = [...CODE_EXTENSIONS, ".json"];
 
 export const RUNTIME_BARE_ALLOWLIST: ReadonlySet<string> = new Set(["exceljs", "zod", "node:fs", "node:path", "node:crypto", "node:os"]);
-export const TEST_BARE_ALLOWLIST: ReadonlySet<string> = new Set([...RUNTIME_BARE_ALLOWLIST, "vitest", "typescript", "node:child_process"]);
+/** The standalone shell (`rwtsa-demo/`) adds only React and Next's types/Link. NOT next/font, next/image, next/headers, next/server: no remote fonts or images, no request-scoped APIs. */
+export const APP_BARE_ALLOWLIST: ReadonlySet<string> = new Set([...RUNTIME_BARE_ALLOWLIST, "react", "react/jsx-runtime", "next", "next/link"]);
+export const TEST_BARE_ALLOWLIST: ReadonlySet<string> = new Set([...RUNTIME_BARE_ALLOWLIST, "vitest", "typescript", "node:child_process", "react", "react-dom/server"]);
 
 const BANNED_IDENTIFIERS: ReadonlySet<string> = new Set([
   "fetch", "XMLHttpRequest", "WebSocket", "EventSource", "WebTransport", "RTCPeerConnection", "Worker", "SharedWorker", "importScripts",
@@ -45,8 +47,11 @@ const BANNED_IDENTIFIERS: ReadonlySet<string> = new Set([
 const BANNED_PROPERTY_NAMES: ReadonlySet<string> = new Set(["fetch", "sendBeacon", "constructor", "__proto__", "binding", "dlopen", "mainModule", "_linkedBinding", "createRequire"]);
 const RUNTIME_PROCESS_ALLOWED: ReadonlySet<string> = new Set(["argv", "exit", "exitCode", "env"]);
 const TEST_PROCESS_BANNED: ReadonlySet<string> = new Set(["binding", "dlopen", "mainModule", "kill", "abort", "reallyExit", "_linkedBinding"]);
-const RWTSA_ENV_NAME = /^RWTSA_[A-Z0-9_]+$/;
+/** The shell may read named RWTSA_* variables, plus NODE_ENV (only to detect `next dev`). Nothing else. */
+const RWTSA_ENV_NAME = /^(RWTSA_[A-Z0-9_]+|NODE_ENV)$/;
 const NETWORK_URL = /^\s*(https?|wss?|ftp):\/\//i;
+/** Test files (only) may talk to a server THEY started on the loopback interface. */
+const LOOPBACK_URL = /^\s*http:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/i;
 
 export interface FileScan {
   readonly violations: string[];
@@ -100,7 +105,7 @@ export function scanFile(ctx: ScanContext, file: string, text: string, profile: 
   const imports: string[] = [];
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, scriptKind(file));
   const rel = path.relative(ctx.rootDir, file);
-  const bare = profile === "test" ? TEST_BARE_ALLOWLIST : RUNTIME_BARE_ALLOWLIST;
+  const bare = profile === "test" ? TEST_BARE_ALLOWLIST : profile === "app" ? APP_BARE_ALLOWLIST : RUNTIME_BARE_ALLOWLIST;
   const externalReal = ctx.externalFiles.map((f) => realOrNull(f) ?? f);
   const rootsReal = ctx.boundaryRoots.map((r) => realOrNull(r) ?? r);
 
@@ -160,13 +165,13 @@ export function scanFile(ctx: ScanContext, file: string, text: string, profile: 
       const prop = node.name.text;
       if (BANNED_PROPERTY_NAMES.has(prop)) report(node, `banned property "${prop}"`);
       if (ts.isIdentifier(node.expression) && node.expression.text === "process") {
-        if (profile === "runtime" && !RUNTIME_PROCESS_ALLOWED.has(prop)) report(node, `process.${prop} is not allowed`);
+        if (profile !== "test" && !RUNTIME_PROCESS_ALLOWED.has(prop)) report(node, `process.${prop} is not allowed`);
         if (profile === "test" && TEST_PROCESS_BANNED.has(prop)) report(node, `process.${prop} is not allowed`);
-        if (profile === "runtime" && prop === "env") {
+        if (profile !== "test" && prop === "env") {
           const outer = node.parent;
           const named = outer && ts.isPropertyAccessExpression(outer) && outer.expression === node && RWTSA_ENV_NAME.test(outer.name.text);
           const namedElem = outer && ts.isElementAccessExpression(outer) && outer.expression === node && ts.isStringLiteral(outer.argumentExpression) && RWTSA_ENV_NAME.test(outer.argumentExpression.text);
-          if (!named && !namedElem) report(node, "process.env may only be read as a named RWTSA_* variable");
+          if (!named && !namedElem) report(node, "process.env may only be read as a named RWTSA_* variable (or NODE_ENV)");
         }
       }
     }
@@ -175,7 +180,7 @@ export function scanFile(ctx: ScanContext, file: string, text: string, profile: 
       report(node, `banned property "${node.argumentExpression.text}"`);
     }
 
-    if ((ts.isStringLiteralLike(node) || ts.isTemplateHead(node)) && NETWORK_URL.test(node.text)) report(node, "network URL literal");
+    if ((ts.isStringLiteralLike(node) || ts.isTemplateHead(node)) && NETWORK_URL.test(node.text) && !(profile === "test" && LOOPBACK_URL.test(node.text))) report(node, "network URL literal");
 
     ts.forEachChild(node, visit);
   };
@@ -193,6 +198,8 @@ function walk(dir: string, rootDir: string, violations: string[], out: string[])
   if (!existsSync(dir)) return;
   for (const entry of readdirSync(dir)) {
     if (entry === "node_modules" || entry === ".next") continue;
+    // Next.js regenerates this git-ignored file (it only references the build output's type stubs). It is not source.
+    if (entry === "next-env.d.ts") continue;
     const full = path.join(dir, entry);
     const st = lstatSync(full);
     if (st.isSymbolicLink()) {
@@ -203,6 +210,14 @@ function walk(dir: string, rootDir: string, violations: string[], out: string[])
       out.push(full);
     }
   }
+}
+
+/** Test files get the test profile; files under `<root>/rwtsa-demo/` the app profile; everything else (incl. allowlisted outside files) runtime. */
+export function profileFor(ctx: ScanContext, real: string, externalReal: ReadonlySet<string>): Profile {
+  if (externalReal.has(real)) return "runtime";
+  if (real.split(path.sep).includes("__tests__")) return "test";
+  const appRoot = realOrNull(path.join(ctx.rootDir, "rwtsa-demo")) ?? path.join(ctx.rootDir, "rwtsa-demo");
+  return isInside(appRoot, real) ? "app" : "runtime";
 }
 
 /** Scans every code file under the boundary roots (all 8 extensions, including `__tests__`), then everything they import. */
@@ -220,7 +235,7 @@ export function scanTree(ctx: ScanContext): TreeScan {
     if (visited.has(real)) continue;
     visited.add(real);
     if (!(CODE_EXTENSIONS as readonly string[]).includes(path.extname(real).toLowerCase())) continue; // data file (e.g. .json): inside-boundary check already done
-    const profile: Profile = !externalReal.has(real) && real.split(path.sep).includes("__tests__") ? "test" : "runtime";
+    const profile = profileFor(ctx, real, externalReal);
     const scan = scanFile(ctx, real, readFileSync(real, "utf8"), profile);
     violations.push(...scan.violations);
     queue.push(...scan.imports);

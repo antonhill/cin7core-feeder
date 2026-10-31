@@ -1,0 +1,11 @@
+{
+  "name": "rwtsa-demo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local-only RWTSA demonstration shell. Not deployed. No Supabase, Cin7, Xero or network access. Production mode only: Next.js's development server fetches the npm registry (its update indicator), so there is deliberately no dev script.",
+  "scripts": {
+    "build": "NEXT_TELEMETRY_DISABLED=1 next build",
+    "start": "NEXT_TELEMETRY_DISABLED=1 next start -H 127.0.0.1 -p 3100",
+    "start:synthetic": "NEXT_TELEMETRY_DISABLED=1 RWTSA_SOURCE=synthetic next start -H 127.0.0.1 -p 3100"
+  }
+}

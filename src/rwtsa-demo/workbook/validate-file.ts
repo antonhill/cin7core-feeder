@@ -4,9 +4,9 @@ import { z } from "zod";
 import { TAB_CONTRACTS, TAB_NAMES, type TabName } from "@/rwtsa-demo/contracts/tabs";
 import type { ReadinessConfig, RwtsaDataset, ScenarioReadiness } from "@/rwtsa-demo/dataset";
 import { RwtsaSafeError, type Finding } from "@/rwtsa-demo/findings";
-import { buildDataset, type HeaderOverrides } from "@/rwtsa-demo/workbook/build-dataset";
+import { buildDataset, type BuildResult, type HeaderOverrides } from "@/rwtsa-demo/workbook/build-dataset";
 import { assertWorkbookPathAllowed } from "@/rwtsa-demo/workbook/path-guard";
-import { readWorkbookFile } from "@/rwtsa-demo/workbook/read";
+import { readWorkbookFile, type ReadResult } from "@/rwtsa-demo/workbook/read";
 
 /**
  * Local structural validation of the protected workbook. The certificate is the ONLY basis on which a screen
@@ -58,6 +58,19 @@ export interface ValidationCertificate {
   readonly controlHash: string | null;
 }
 
+/** Per-tab presence, parsed row counts and missing canonical field names. Value-free. Shared by the certificate and the demo UI. */
+export function summariseTabs(read: ReadResult, built: BuildResult): Record<TabName, TabValidation> {
+  const tabs = {} as Record<TabName, TabValidation>;
+  for (const tab of TAB_NAMES) {
+    tabs[tab] = {
+      present: Boolean(read.tables[tab]),
+      rows: built.parsedRowCounts[tab] ?? null,
+      missingFields: built.findings.filter((f) => f.tab === tab && f.code === "missing_header" && f.field).map((f) => f.field!),
+    };
+  }
+  return tabs;
+}
+
 const overridesSchema = z.record(z.string(), z.record(z.string(), z.string().min(1)));
 
 /**
@@ -103,14 +116,7 @@ export async function validateWorkbookFile(
     readiness: opts.readiness,
   });
 
-  const tabs = {} as Record<TabName, TabValidation>;
-  for (const tab of TAB_NAMES) {
-    tabs[tab] = {
-      present: Boolean(read.tables[tab]),
-      rows: built.parsedRowCounts[tab] ?? null,
-      missingFields: built.findings.filter((f) => f.tab === tab && f.code === "missing_header" && f.field).map((f) => f.field!),
-    };
-  }
+  const tabs = summariseTabs(read, built);
 
   const certificate: ValidationCertificate = {
     schemaVersion: 1,
