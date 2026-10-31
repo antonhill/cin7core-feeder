@@ -1,0 +1,101 @@
+import { readFileSync } from "node:fs";
+import { z } from "zod";
+import { TAB_CONTRACTS, TAB_NAMES, type TabName } from "@/rwtsa-demo/contracts/tabs";
+import type { RwtsaDataset } from "@/rwtsa-demo/dataset";
+import { RwtsaSafeError, type Finding } from "@/rwtsa-demo/findings";
+import { buildDataset, type HeaderOverrides } from "@/rwtsa-demo/workbook/build-dataset";
+import { assertWorkbookPathAllowed } from "@/rwtsa-demo/workbook/path-guard";
+import { readWorkbookFile } from "@/rwtsa-demo/workbook/read";
+
+/**
+ * Local structural validation of the protected workbook. The certificate is the ONLY basis on which a screen
+ * may claim "live data validated": it records pass/fail, per-tab presence, row counts, missing canonical
+ * header names and value-free findings. It contains no cell value, no file name and no path.
+ */
+
+export interface TabValidation {
+  readonly present: boolean;
+  readonly rows: number | null;
+  /** Our canonical field keys that no workbook header matched. */
+  readonly missingFields: readonly string[];
+}
+
+export interface ValidationCertificate {
+  readonly schemaVersion: 1;
+  readonly provenance: "local-workbook";
+  readonly validatedAt: string;
+  readonly status: "pass" | "fail";
+  readonly fileSha256: string;
+  readonly sizeBytes: number;
+  readonly tabs: Readonly<Record<TabName, TabValidation>>;
+  readonly findings: readonly Finding[];
+  /** Content hash of the validated data (null on fail). Irreversible; for matching a later run to this one. */
+  readonly controlHash: string | null;
+}
+
+const overridesSchema = z.record(z.string(), z.record(z.string(), z.string().min(1)));
+
+/**
+ * Loads a LOCAL header-map file: { "<Tab>": { "<canonicalFieldKey>": "<real header text>" } }.
+ * It must live outside every git working tree. Errors never echo the file's content.
+ */
+export function loadHeaderOverrides(file: string): HeaderOverrides {
+  const real = assertWorkbookPathAllowed(file);
+  let parsed: z.infer<typeof overridesSchema>;
+  try {
+    parsed = overridesSchema.parse(JSON.parse(readFileSync(real, "utf8")));
+  } catch {
+    throw new RwtsaSafeError("not_a_workbook", "The header-map file is not valid JSON of the form { Tab: { fieldKey: headerText } }.");
+  }
+  const out: HeaderOverrides = {};
+  let unknown = 0;
+  for (const [tab, map] of Object.entries(parsed)) {
+    if (!(TAB_NAMES as readonly string[]).includes(tab)) {
+      unknown++;
+      continue;
+    }
+    const allowed = new Set(TAB_CONTRACTS[tab as TabName].fields.map((f) => f.key));
+    const kept: Record<string, string> = {};
+    for (const [field, header] of Object.entries(map)) {
+      if (allowed.has(field)) kept[field] = header;
+      else unknown++;
+    }
+    out[tab as TabName] = kept;
+  }
+  if (unknown > 0) throw new RwtsaSafeError("unknown_column", `The header-map file names ${unknown} tab(s) or field(s) that are not in the contract.`);
+  return out;
+}
+
+export async function validateWorkbookFile(
+  file: string,
+  opts: { headerOverrides?: HeaderOverrides; now?: Date } = {}
+): Promise<{ certificate: ValidationCertificate; dataset: RwtsaDataset | null }> {
+  const read = await readWorkbookFile(file);
+  const built = buildDataset(read, {
+    provenance: "local-workbook",
+    source: { label: `local-workbook:${read.sha256.slice(0, 12)}`, sha256: read.sha256, sizeBytes: read.sizeBytes },
+    headerOverrides: opts.headerOverrides,
+  });
+
+  const tabs = {} as Record<TabName, TabValidation>;
+  for (const tab of TAB_NAMES) {
+    tabs[tab] = {
+      present: Boolean(read.tables[tab]),
+      rows: built.parsedRowCounts[tab] ?? null,
+      missingFields: built.findings.filter((f) => f.tab === tab && f.code === "missing_header" && f.field).map((f) => f.field!),
+    };
+  }
+
+  const certificate: ValidationCertificate = {
+    schemaVersion: 1,
+    provenance: "local-workbook",
+    validatedAt: (opts.now ?? new Date()).toISOString(),
+    status: built.ok ? "pass" : "fail",
+    fileSha256: read.sha256,
+    sizeBytes: read.sizeBytes,
+    tabs,
+    findings: built.findings,
+    controlHash: built.dataset?.reconciliation.controlHash ?? null,
+  };
+  return { certificate, dataset: built.dataset };
+}
