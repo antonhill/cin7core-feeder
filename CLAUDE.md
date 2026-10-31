@@ -235,6 +235,16 @@ closing a task.
 
 ---
 
+## NewQuip security guardrails
+
+Current NewQuip security status, the closed 31 Oct 2026 credential incident and the open commercial-launch requirements are in `docs/newquip-security-posture.md` (record: `docs/security-incident-2026-10-31-portal-env-disclosure.md`). Verify live GitHub/Vercel/Supabase state before relying on it. Rules:
+
+- **Never** persist raw `process.env`, privileged tokens or unrestricted request objects in audit or application records; log explicit allowlisted fields only.
+- **Do not** reopen the closed incident without new evidence, and do not call deferred risks P0/P1 without a demonstrated exploitable path.
+- **Do not** merge, deploy, apply migrations, enable Production email or start Cin7 writes without explicit owner approval; Production email and Cin7 writes stay OFF.
+- Use an independent reviewer for changes that cross a new public, credential or authorisation boundary.
+- Do not describe NewQuip as commercially secure or Production-ready: multi-Rep use, a subcontractor Site App and a commercial public portal each have unmet requirements in the posture document.
+
 # Project-specific instructions
 
 @AGENTS.md

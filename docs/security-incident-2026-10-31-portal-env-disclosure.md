@@ -1,6 +1,6 @@
 # Security incident 2026-10-31: public portal persisted its environment (incl. the Supabase service-role key) into `activity_log`
 
-Status: **code remediation prepared on `feature/newquip-completion` (not pushed, not deployed); credential rotation, stored-data sanitisation and the portal redeploy are awaiting owner approval.**
+Status: **CLOSED (2026-10-31).** Code fixed (`adc81ff`, hardened further by PR #128); the portal was redeployed; the compromised legacy Supabase `service_role` and `anon` keys were disabled and return 401; replacement secret/publishable keys are installed and verified; the one affected `activity_log` row was sanitised with the acceptance evidence preserved; a scan of 1,066 rows from 2026-10-30 found no other environment object or credential; no evidence of access or misuse. Do not reopen without new evidence. Open commercial-launch requirements are in `docs/newquip-security-posture.md`. The sections below are the original plan and are kept as the historical record.
 No secret value appears in this document. Key NAMES are not secrets and are listed where needed.
 
 ## 1. What happened
