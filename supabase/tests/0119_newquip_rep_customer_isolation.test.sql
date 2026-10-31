@@ -171,7 +171,7 @@ begin
     if q is null or q !~ 'newquip_project_scope_ok' or q !~ 'is_org_member' then raise exception 'project-scope policy missing on %: %', t, q; end if;
   end loop;
   select string_agg(qual, ' ') into q from pg_policies where tablename = 'approval_notifications' and cmd = 'SELECT';
-  if q is null or q !~ 'newquip_project_scope_ok' or q !~ 'recipient_email' then raise exception 'notification policy keeps its recipient test and gains the scope test: %', q; end if;
+  if q is null or q !~ 'newquip_quote_scope_ok' or q !~ 'recipient_email' then raise exception 'notification policy keeps its recipient test and gains the scope test: %', q; end if;
   select string_agg(qual, ' ') into q from pg_policies where tablename = 'activity_log' and cmd = 'SELECT';
   if q !~ 'newquip_quote_scope_ok' then raise exception 'activity_log policy'; end if;
   -- a table this migration must NOT touch keeps its original predicate

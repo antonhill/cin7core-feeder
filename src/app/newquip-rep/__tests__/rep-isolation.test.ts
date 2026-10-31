@@ -402,18 +402,36 @@ describe("independent-review fixes", () => {
     await assign("repB", C1);                                               // customer 1 now belongs to Rep B (Rep A was reassigned away earlier)
     const mail = (id: string, to: string) => db.rows("approval_notifications").push({ id, org_id: ORG, request_id: null, quote_id: "q1", kind: "RESPONSE", recipient_email: to, channel: "EMAIL", subject: "S", body: "Customer: Farm", dedupe_key: id, status: "PENDING", attempts: 0, last_error: null, provider_message_id: null, sent_at: null, read_at: null, created_at: "2026-10-01T00:00:00Z" });
     mail("m-prev", "a@nq.test"); mail("m-cur", "b@nq.test"); mail("m-est", "est@nq.test"); mail("m-adm", "adm@nq.test"); mail("m-plain", "plain@nq.test"); mail("m-ext", "escalation@external.example");
+    mail("m-removed", "removed@nq.test"); mail("m-unknown", "stranger@external.example");   // a former member, and an unknown address
+    db.rows("approval_settings").push({ org_id: ORG, escalation_email: "escalation@external.example" });
     db.notificationStatuses.push("SUPPRESSED");
     const send = vi.fn(async (_i: unknown) => ({ ok: true, messageId: "m" }));
     await deliverPendingEmails(db as never, send as never, 50, { env: { VERCEL_ENV: "production", NEWQUIP_PRODUCTION_EMAIL_ENABLED: "true" } });
     const sentTo = send.mock.calls.map((c) => (c[0] as { to: string[] }).to[0]).sort();
-    expect(sentTo).toEqual(["adm@nq.test", "b@nq.test", "escalation@external.example", "est@nq.test"]);
+    expect(sentTo).toEqual(["adm@nq.test", "b@nq.test", "escalation@external.example", "est@nq.test"]);   // the configured escalation address is allowed; a removed member and an unknown address are not
     const st = (id: string) => (db.rows("approval_notifications").find((r) => r.id === id) as Record<string, unknown>);
-    expect(st("m-prev").status).toBe("SUPPRESSED"); expect(st("m-plain").status).toBe("SUPPRESSED");
+    expect(st("m-prev").status).toBe("SUPPRESSED"); expect(st("m-plain").status).toBe("SUPPRESSED"); expect(st("m-removed").status).toBe("SUPPRESSED"); expect(st("m-unknown").status).toBe("SUPPRESSED");
     expect(String(st("m-prev").last_error)).toMatch(/customer isolation/);
     // switch OFF: unchanged behaviour, everyone is mailed
     db.rows("newquip_access_settings")[0].rep_isolation_enabled = false; send.mockClear(); mail("m-prev2", "a@nq.test");
     await deliverPendingEmails(db as never, send as never, 50, { env: { VERCEL_ENV: "production", NEWQUIP_PRODUCTION_EMAIL_ENABLED: "true" } });
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("claim and variation e-mail still reaches explicit Project Manager / Procurement staff (and not a Rep); a failing check never stops the rest of the batch", async () => {
+    who("pm", "pm@nq.test", "member", ["PROJECT_MANAGER"]);
+    db.rows("approval_requests").push({ id: "rc", org_id: ORG, doc_type: "CLAIM", doc_id: "claim-1", doc_ref: "c", revision: 1, status: "PENDING", stage: "MANAGER", stage_role: "MANAGER", digest: "d", version: 1, amount_cents: 1, prepared_by_email: "pm@nq.test", submitted_at: "t", created_at: "t", updated_at: "t" });
+    const mail = (id: string, to: string) => db.rows("approval_notifications").push({ id, org_id: ORG, request_id: "rc", quote_id: null, kind: "RETURNED", recipient_email: to, channel: "EMAIL", subject: "S", body: "b", dedupe_key: id, status: "PENDING", attempts: 0, last_error: null, provider_message_id: null, sent_at: null, read_at: null, created_at: "t" });
+    mail("c-pm", "pm@nq.test"); mail("c-rep", "a@nq.test"); mail("c-adm", "adm@nq.test");
+    db.rows("approval_notifications").push({ id: "boom", org_id: ORG, request_id: null, quote_id: "q1", kind: "X", recipient_email: "nobody@unknown.example", channel: "EMAIL", subject: "S", body: "b", dedupe_key: "boom", status: "PENDING", attempts: 0, last_error: null, provider_message_id: null, sent_at: null, read_at: null, created_at: "0" });   // sorts first: its check throws
+    db.notificationStatuses.push("SUPPRESSED");
+    const real = db.from.bind(db);
+    (db as unknown as { from: unknown }).from = (t: string) => { if (t === "approval_settings") throw new Error("settings lookup failed"); return real(t); };
+    const send = vi.fn(async (_i: unknown) => ({ ok: true, messageId: "m" }));
+    await deliverPendingEmails(db as never, send as never, 50, { env: { VERCEL_ENV: "production", NEWQUIP_PRODUCTION_EMAIL_ENABLED: "true" } });
+    expect(send.mock.calls.map((c) => (c[0] as { to: string[] }).to[0]).sort()).toEqual(["adm@nq.test", "pm@nq.test"]);   // PM and admin delivered; the Rep suppressed; the failing row did not stop the batch
+    const st = (id: string) => (db.rows("approval_notifications").find((r) => r.id === id) as Record<string, unknown>).status;
+    expect(st("c-rep")).toBe("SUPPRESSED"); expect(st("boom")).toBe("PENDING");
   });
 
   it("only 'the settings TABLE is not installed' means OFF; a renamed column, a missing function or a connection error never silently turns isolation off", async () => {

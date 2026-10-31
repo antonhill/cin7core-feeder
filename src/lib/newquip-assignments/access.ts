@@ -209,18 +209,34 @@ export class NotAvailableError extends Error { constructor() { super("Not found.
 
 export { NotVisibleError };
 
+/** What a notification is about: a quotation, or a Project matter (claim / variation), or nothing attributable. */
+export type MailSubject = { docType: "QUOTE"; docId: string } | { docType: "PROJECT" } | null;
+
 /**
- * May THIS recipient still receive a message about this quotation? Applied when an e-mail is about to leave (not only when it is queued), so a reassignment stops mail to the previous Rep
- * at once. Isolation OFF, an organisation-wide user, or an address that is not an organisation user (an administrator-configured escalation address) -> yes. An assigned-scoped user ->
- * only if they may see the quotation. Fails closed (no) when the quotation cannot be attributed.
+ * May THIS recipient still receive a message about this subject? Applied when an e-mail is about to leave (not only when it is queued), so a reassignment stops mail to the previous Rep at
+ * once. Isolation OFF or an organisation-wide user -> yes. An assigned-scoped user -> only if they may see the quotation (claims/variations: only if they are a Projects user). Anyone who is
+ * NOT a current organisation user (a removed member, a lookup that failed, a differently-spelled address) -> no, except the administrator-configured escalation address. Fails closed.
+ * Create one gate per delivery run: it caches the switch and the organisation's users so a batch does not repeat the lookups.
  */
-export async function recipientMayReceive(db: Db, orgId: string, email: string, quoteOf: () => Promise<string | null>): Promise<boolean> {
-  if (!(await isolationEnabled(db, orgId))) return true;   // the common case costs one settings read
-  const { listOrgUsers } = await import("@/lib/approvals/role-store");
-  const user = (await listOrgUsers(db, orgId)).find((u) => u.email === email.trim().toLowerCase());
-  if (!user) return true; // not an organisation user: nothing to evaluate here (documented limitation)
-  const scope = await quoteScope(db, { orgId, userId: user.userId, email: user.email, tier: user.tier === "member" ? "member" : "admin" });
-  if (scope.kind === "ORG_WIDE") return true;
-  const quoteId = await quoteOf();
-  return quoteId ? canSeeQuote(db, scope, quoteId) : false;
+export function createRecipientGate(db: Db) {
+  const enabled = new Map<string, Promise<boolean>>();
+  const users = new Map<string, Promise<Array<{ userId: string; email: string; tier: string }>>>();
+  const escalation = new Map<string, Promise<string | null>>();
+  const isOn = (org: string) => { if (!enabled.has(org)) enabled.set(org, isolationEnabled(db, org)); return enabled.get(org)!; };
+  const usersOf = (org: string) => { if (!users.has(org)) users.set(org, import("@/lib/approvals/role-store").then((m) => m.listOrgUsers(db, org))); return users.get(org)!; };
+  const escalationOf = (org: string) => {
+    if (!escalation.has(org)) escalation.set(org, Promise.resolve(db.from("approval_settings").select("escalation_email").eq("org_id", org).maybeSingle()).then((r) => ((r.data as { escalation_email: string | null } | null)?.escalation_email ?? null)?.trim().toLowerCase() || null));
+    return escalation.get(org)!;
+  };
+  return async function mayReceive(orgId: string, email: string, subject: () => Promise<MailSubject>): Promise<boolean> {
+    if (!(await isOn(orgId))) return true;   // the common case costs one cached settings read
+    const addr = email.trim().toLowerCase();
+    const user = (await usersOf(orgId)).find((u) => u.email === addr);
+    if (!user) return addr === (await escalationOf(orgId));
+    const scope = await quoteScope(db, { orgId, userId: user.userId, email: user.email, tier: user.tier === "member" ? "member" : "admin" });
+    if (scope.kind === "ORG_WIDE") return true;
+    const about = await subject();
+    if (!about) return false;
+    return about.docType === "QUOTE" ? canSeeQuote(db, scope, about.docId) : scope.projects;
+  };
 }

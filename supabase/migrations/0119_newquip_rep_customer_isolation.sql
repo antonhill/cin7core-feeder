@@ -121,7 +121,7 @@ create policy "org members read approval_events" on approval_events for select u
 -- the notification recipient policy keeps its recipient test and gains the scope test
 drop policy if exists "recipients read approval_notifications" on approval_notifications;
 create policy "recipients read approval_notifications" on approval_notifications for select
-  using (is_org_member(org_id) and recipient_email = lower(coalesce((auth.jwt() ->> 'email'), '')) and newquip_project_scope_ok(org_id));
+  using (is_org_member(org_id) and recipient_email = lower(coalesce((auth.jwt() ->> 'email'), '')) and newquip_quote_scope_ok(org_id));
 
 -- Projects and everything hanging off them
 drop policy if exists "org members read projects" on projects;
