@@ -84,6 +84,7 @@
     "src/lib/require-org-admin.ts",
     "src/lib/require-privileged.ts",
     "src/lib/require-super-admin.ts",
-    "src/middleware.ts"
+    "src/middleware.ts",
+    "src/app/newquip-rep/rep-actor.ts"
   ]
 }
