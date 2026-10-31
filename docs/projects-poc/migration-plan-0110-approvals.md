@@ -37,5 +37,5 @@ Every caller checks `approvalsAvailable()`. Until 0110 exists, quotes / claims /
 ## Known limitations at release
 - Email: no mail provider is configured (no RESEND_* variables). In-app notifications work; emails queue and show as failed until a provider and recipients are approved.
 - Due dates count Monday to Friday (SAST); public holidays are not modelled.
-- The delivery/reminder cron (`/api/approvals-deliver`) runs only on Production deployments.
+- The delivery/reminder cron (`/api/approvals-deliver`) runs only on Production deployments. **Not currently scheduled** (removed from `vercel.json` after the 2026-10-31 review: the notification queue has no environment tag); see docs/security-incident-2026-10-31-portal-env-disclosure.md section 8.
 - A manager approving their own submission needs the explicit override with a written reason (Approvals page).

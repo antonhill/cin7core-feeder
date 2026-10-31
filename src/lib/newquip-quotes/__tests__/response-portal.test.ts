@@ -465,6 +465,30 @@ describe("Rep notifications for customer responses", () => {
     const log = (w.db.rows("activity_log") as Array<Record<string, any>>).find((a) => a.action === "newquip.customer_link_accepted")!; // eslint-disable-line @typescript-eslint/no-explicit-any
     expect(log.detail).toMatchObject({ tokenValidation: "VALID", documentHash: doc.content_hash, revision: doc.revision });
   });
+  // SECURITY INCIDENT regression (2026-10-31): the portal passed process.env into the audit detail, persisting SUPABASE_SERVICE_ROLE_KEY in a table every organisation member can read.
+  describe("the audit record never contains a secret, whatever the server environment holds", () => {
+    const SENTINELS = { SUPABASE_SERVICE_ROLE_KEY: "eyJSENTINELSERVICEROLE0.SENTINELPAYLOAD0000.SENTINELSIGNATURE00", CRON_SECRET: "sentinel-cron-secret-value", RESEND_API_KEY: "re_sentinel_resend_key_value", ENCRYPTION_KEY: "sentinel-encryption-key-value", SYNC_SHARED_SECRET: "sentinel-sync-secret-value" };
+    const HOSTILE_ENV = { ...PREVIEW, ...SENTINELS, SUPABASE_URL: "https://sentinelref00000000000.supabase.co", NEXT_PUBLIC_A: "a", NEXT_PUBLIC_B: "b", PATH: "/usr/bin", HOME: "/home/x" };
+    it("logs only a coarse environment label, and no value from the environment appears anywhere in the audit rows", async () => {
+      const { w, doc } = await ready(); const s = await sendWithLinks(w, doc.id);
+      const r = await submitPublicResponse(w.db as never, accept(s.token), { ip: IP, env: HOSTILE_ENV, baseEnv: PREVIEW });
+      expect(r.ok).toBe(true);
+      const rows = w.db.rows("activity_log") as Array<Record<string, any>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+      const log = rows.find((a) => a.action === "newquip.customer_link_accepted")!;
+      expect(log.detail.environment).toBe("preview");                                  // a label, not an object
+      const all = JSON.stringify([rows, w.db.rows("newquip_quote_responses"), w.db.rows("approval_notifications")]);
+      for (const v of [...Object.values(SENTINELS), "sentinelref00000000000"]) expect(all, v).not.toContain(v);
+      expect(all).not.toMatch(/SUPABASE_SERVICE_ROLE_KEY|CRON_SECRET|RESEND_API_KEY|ENCRYPTION_KEY/);
+      expect(log.detail).toMatchObject({ tokenValidation: "VALID", documentHash: doc.content_hash, revision: doc.revision });   // legitimate evidence is preserved
+    });
+    it("even if a future change put the whole environment into the detail, the guard replaces it before it is stored", async () => {
+      const { redactSecrets } = await import("@/lib/audit-safety");
+      const leaked = redactSecrets({ quoteId: "q1", environment: HOSTILE_ENV, note: `key ${SENTINELS.CRON_SECRET} here` }, HOSTILE_ENV);
+      const text = JSON.stringify(leaked);
+      for (const v of Object.values(SENTINELS)) expect(text).not.toContain(v);
+      expect(leaked.quoteId).toBe("q1");
+    });
+  });
 });
 
 describe("customer email presentation", () => {

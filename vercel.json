@@ -31,10 +31,6 @@
     {
       "path": "/api/notify-ship-by-changes",
       "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/approvals-deliver",
-      "schedule": "*/10 * * * *"
     }
   ]
 }

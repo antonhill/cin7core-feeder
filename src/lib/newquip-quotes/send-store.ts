@@ -8,7 +8,7 @@ import "server-only";
 //  - the provider result is recorded as ACCEPTED (provider accepted it - NOT proof of inbox delivery or customer receipt) or FAILED; only FAILED can be retried, once at a time.
 import type { createServiceRoleClient } from "@/supabase/server";
 import { sendEmail as resendSend, type SendEmailInput, type SendEmailResult } from "@/lib/email/resend";
-import { applyEmailPolicy, isRestricted, PREVIEW_BODY_BANNER, type EmailEnv } from "@/lib/approvals/email-policy";
+import { applyEmailPolicy, isRestricted, PREVIEW_BODY_BANNER, PREVIEW_SUBJECT_PREFIX, type EmailEnv } from "@/lib/approvals/email-policy";
 import { loadQuote } from "./quote-store";
 import { messageLeaksInternal } from "./customer-document";
 import { isValidEmail } from "./customer-snapshot";
@@ -189,6 +189,23 @@ export async function sendQuotationToCustomer(
   return { send: await deliver(db, row, doc, bytes, sendTo, sendCc, suppressed, subject, finalText, send, links ? htmlOf(doc, message, links, finalText.startsWith(PREVIEW_BODY_BANNER)) : undefined), reused: false };
 }
 
+/**
+ * A retry from Production must satisfy the SAME recipient rules as a first Production send, and must never revive a send that was prepared in a restricted environment.
+ * Sends carry no environment tag (they share one database with Preview), so a send made on a Preview is recognised by what only a restricted environment produces: the
+ * [PREVIEW] subject prefix, or addresses it suppressed. Such a send is refused here: it would otherwise be re-evaluated under the Production policy (no allowlist) and could
+ * email a real customer. Every address must also be a Cin7 contact of the selected customer, or one the original send approved with its audited reason.
+ */
+async function assertRetryAllowedHere(db: Db, orgId: string, row: StoredSend, env: EmailEnv): Promise<void> {
+  if (isRestricted(env)) return;
+  if (row.subject.startsWith(PREVIEW_SUBJECT_PREFIX) || (row.suppressed_emails ?? []).length > 0) throw new Error("This send was prepared in a test (Preview) environment, so it cannot be retried from Production. Send the quotation again from here.");
+  const snap = (await latestSnapshot(db, orgId, row.quote_id))?.snapshot;
+  const contacts = [...(snap?.contacts ?? []).map((c) => (c.email.state === "present" ? c.email.value.toLowerCase() : "")), snap?.chosenContact?.email.toLowerCase() ?? ""].filter(Boolean);
+  const approvedAlternatives = (row.alternative_recipients ?? []).map((a) => a.toLowerCase());
+  const outside = [...row.to_emails, ...row.cc_emails].map((a) => a.toLowerCase()).filter((a) => !contacts.includes(a) && !approvedAlternatives.includes(a));
+  if (outside.length) throw new Error(`${outside.join(", ")} ${outside.length === 1 ? "is" : "are"} not a Cin7 contact of this customer and was not approved with a reason. Send the quotation again with the approved recipients.`);
+  if (approvedAlternatives.length && (row.alternative_reason ?? "").trim().length < 5) throw new Error("The alternative recipients on this send have no recorded reason. Send the quotation again with a reason.");
+}
+
 /** Controlled retry of a FAILED send: the row is claimed FAILED -> QUEUED by compare-and-set, so concurrent retries emit at most one email. */
 export async function retryFailedSend(db: Db, orgId: string, sendId: string, deps: Pick<DocumentDeps, "storage">, env: EmailEnv, send: SendFn = defaultSend): Promise<StoredSend> {
   const found = await db.from("newquip_quote_sends").select("*").eq("org_id", orgId).eq("id", sendId).maybeSingle();
@@ -200,6 +217,7 @@ export async function retryFailedSend(db: Db, orgId: string, sendId: string, dep
   const docs = await listDocuments(db, orgId, row.quote_id);
   const doc = docs.find((d) => d.id === row.document_id);
   if (!q || !doc || docs[0].id !== doc.id || doc.revision !== q.revision || doc.baseline_hash !== q.baseline_hash || q.state !== "MANAGER_APPROVED_FINAL") throw new Error("The quotation changed after this send; issue and send the current document instead.");
+  await assertRetryAllowedHere(db, orgId, row, env);   // before the claim: a refusal changes nothing
   const claim = await db.from("newquip_quote_sends").update({ status: "QUEUED", last_error: null }).eq("org_id", orgId).eq("id", sendId).eq("status", "FAILED").select("*");
   if (claim.error) throw new Error(claim.error.message);
   const claimed = ((claim.data ?? []) as StoredSend[])[0];

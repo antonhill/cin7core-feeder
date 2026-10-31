@@ -170,6 +170,36 @@ describe("duplicate prevention, resend and retry", () => {
     await expect(retryFailedSend(w.db as never, "org-a", r.send.id, w.deps, PREVIEW, good)).rejects.toThrow(/changed after this send/);
     expect(good).not.toHaveBeenCalled();
   });
+  describe("a retry from PRODUCTION enforces the Production recipient rules (incident review P1)", () => {
+    it("refuses to revive a send prepared on a Preview: [PREVIEW] subject, or suppressed (real) addresses, and sends nothing", async () => {
+      const w = await world(); const r = await go(w, bad(), { to: ["rep@sparkconsulting.co.za", "piet@boerdery.example"] });   // Preview: Piet (a real contact) is suppressed, the tester is attempted
+      expect(r.send.suppressed_emails).toEqual(["piet@boerdery.example"]); expect(r.send.status).toBe("FAILED");
+      const good = ok(); const before = JSON.stringify(w.db.rows("newquip_quote_sends"));
+      await expect(retryFailedSend(w.db as never, "org-a", r.send.id, w.deps, PROD, good)).rejects.toThrow(/test \(Preview\) environment/);
+      expect(good).not.toHaveBeenCalled(); expect(JSON.stringify(w.db.rows("newquip_quote_sends"))).toBe(before);   // not even claimed
+    });
+    it("refuses an address that is neither a Cin7 contact of the customer nor an approved alternative", async () => {
+      const w = await world(); const r = await go(w, bad(), { to: ["rep@sparkconsulting.co.za"] });
+      const row = w.db.rows("newquip_quote_sends")[0] as Record<string, unknown>; row.subject = "Quotation NQ-Q-0009 (revision 1) from X"; row.suppressed_emails = [];   // as if prepared outside Preview
+      const good = ok();
+      await expect(retryFailedSend(w.db as never, "org-a", r.send.id, w.deps, PROD, good)).rejects.toThrow(/not a Cin7 contact/);
+      expect(good).not.toHaveBeenCalled(); expect(row.status).toBe("FAILED");
+    });
+    it("allows a Production-prepared send to the customer's own Cin7 contact", async () => {
+      const w = await world(); const r = await go(w, bad(), { to: ["piet@boerdery.example"] }, PROD); const good = ok();
+      expect(r.send.status).toBe("FAILED");
+      await retryFailedSend(w.db as never, "org-a", r.send.id, w.deps, PROD, good);
+      expect(good).toHaveBeenCalledTimes(1); expect(w.db.rows("newquip_quote_sends")[0]).toMatchObject({ status: "ACCEPTED" });
+    });
+    it("allows an alternative recipient only with its recorded reason", async () => {
+      const w = await world(); const r = await go(w, bad(), { to: ["piet@boerdery.example", "buyer@boerdery.example"], alternativeReason: "Piet asked us to copy the buyer" }, PROD);
+      const good = ok(); await retryFailedSend(w.db as never, "org-a", r.send.id, w.deps, PROD, good); expect(good).toHaveBeenCalledTimes(1);
+    });
+    it("a Preview retry is unchanged (the restricted policy already applies)", async () => {
+      const w = await world(); const r = await go(w, bad(), { to: ["anton@sparkconsulting.co.za"] }); const good = ok();
+      await retryFailedSend(w.db as never, "org-a", r.send.id, w.deps, PREVIEW, good); expect(good).toHaveBeenCalledTimes(1);
+    });
+  });
   it("organisation isolation: another organisation can neither send nor retry", async () => {
     const w = await world();
     const r = await go(w, bad());

@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import type { createServiceRoleClient } from "@/supabase/server";
 import type { CustomerDocumentModel } from "@/lib/newquip-quotes/customer-document";
 import { queueResponseNotifications } from "./notify";
+import { redactSecrets } from "@/lib/audit-safety";
 import {
   FAILURE_MESSAGE, MAX_LINK_ATTEMPTS, countsAsAcceptance, environmentOf, isValidEmail, parseToken, sameHash, sha, standingOf,
   type CustomerResponse, type LinkEnv, type LinkFailure, type StoredLink, type StoredResponse, type StoredReview,
@@ -138,7 +139,7 @@ export async function submitPublicResponse(db: Db, input: PublicSubmit, ctx: { i
   await db.from("activity_log").insert({
     org_id: link.org_id, instance_id: null, actor_user_id: null, actor_email: `Customer response link (${email})`, action: `newquip.customer_link_${input.action.toLowerCase()}`,
     summary: `A customer responded through the emailed link: ${input.action} (recorded for internal verification; no project or Cin7 Sale is created)`,
-    detail: { quoteId: link.quote_id, responseId: response.id, linkId: link.id, documentId: doc.id, documentHash: doc.content_hash, revision: doc.revision, origin: "CUSTOMER_LINK", originHint, tokenValidation: "VALID", environment: ctx.env, linkExpiresAt: link.expires_at, submittedAt: now.toISOString() },
+    detail: redactSecrets({ quoteId: link.quote_id, responseId: response.id, linkId: link.id, documentId: doc.id, documentHash: doc.content_hash, revision: doc.revision, origin: "CUSTOMER_LINK", originHint, tokenValidation: "VALID", environment: environmentOf(ctx.env), linkExpiresAt: link.expires_at, submittedAt: now.toISOString() }),
   });
   const event = input.action === "ACCEPTED" ? "ACCEPTED_PENDING" : input.action === "DECLINED" ? "DECLINED" : "CHANGES_REQUESTED";
   // Queue only (no email provider here): the in-app notification is immediate, the email row waits in the internal outbox. The link target is the INTERNAL Toolbox, set explicitly.
