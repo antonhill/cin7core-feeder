@@ -3,6 +3,7 @@
 // NewQuip: company details, issuing the customer quotation document and listing issued documents. LOCAL ONLY (nothing here reaches Cin7). Re-authorised inside EVERY
 // action. Manager approval authorises issue; issuing needs the Rep or Manager role. Company details are controlled configuration changed by a Manager only.
 // Only async functions and erased types are exported.
+import { guardQuote } from "@/lib/newquip-assignments/access";
 import { authoriseActor, auditActor, errText, ownerEmailOf, type Actor } from "./actor";
 import { createServiceRoleClient } from "@/supabase/server";
 import { loadQuote } from "@/lib/newquip-quotes/quote-store";
@@ -45,6 +46,7 @@ export async function saveCompanyProfileAction(input: Partial<CompanyProfile>): 
 export async function getQuoteDocumentsAction(quoteId: string): Promise<DocumentActionResult<QuoteDocumentsView>> {
   try {
     const a = await authoriseActor();
+    await guardQuote(createServiceRoleClient(), a, quoteId);   // Rep isolation (Slice 1B): before any quotation data is read
     const db = createServiceRoleClient();
     const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) throw new Error("Quote not found.");
@@ -67,6 +69,7 @@ export async function getQuoteDocumentsAction(quoteId: string): Promise<Document
 export async function issueQuoteDocumentAction(quoteId: string, scheduleChoice?: ScheduleChoice): Promise<DocumentActionResult<{ documentId: string; version: number; created: boolean }>> {
   try {
     const a = await authoriseActor();
+    await guardQuote(createServiceRoleClient(), a, quoteId);   // Rep isolation (Slice 1B): before any quotation data is read
     if (!a.roles.has("rep") && !a.roles.has("manager")) throw new Error("You do not have permission to issue a customer quotation.");
     const db = createServiceRoleClient();
     const applied = await resolveProjectSchedule(db, a.orgId, scheduleChoice);

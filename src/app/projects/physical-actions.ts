@@ -40,7 +40,7 @@ const NO_CIN7: PhysicalPort = {
 
 export async function getPhysicalStatusAction(projectId: string): Promise<PhysicalActionResult> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     assertNewquipOrg(orgId);
     const db = createServiceRoleClient();
     await guardBillingScope(db, orgId, projectId, await callerIsOrgAdmin());

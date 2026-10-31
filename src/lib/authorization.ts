@@ -60,7 +60,7 @@ import { assertNoDemoImpersonation } from "@/lib/demo-mode/context";
  *     `/settings/billing`, `/reports/natas`) is always allowed here — those are
  *     gated by role/plan/single-org checks instead, not the module toggle.
  */
-export async function requireModuleAccess(moduleHref: string, opts: { allowDemo?: boolean } = {}): Promise<CurrentOrg> {
+export async function requireModuleAccess(moduleHref: string, opts: { allowDemo?: boolean; projectData?: boolean } = {}): Promise<CurrentOrg> {
   // While the owner's NewQuip Demo Mode is impersonating another user, every action DENIES unless it is one of the scoped quotation / approval actions that
   // resolve the effective identity themselves (they pass allowDemo). Otherwise an action could run with the owner's powers under another user's name.
   if (!opts.allowDemo) await assertNoDemoImpersonation();
@@ -105,6 +105,19 @@ export async function requireModuleAccess(moduleHref: string, opts: { allowDemo?
   const disabledModules = computeEffectiveDisabledModules(org?.disabled_modules ?? [], allowedModules);
   if (findBlockedModule(moduleHref, disabledModules)) {
     throw new Error("You don't have access to this feature.");
+  }
+
+  // NewQuip Rep customer isolation (Slice 1B): a Projects-module action that reads or changes PROJECT DATA passes `projectData`. With isolation OFF (the default, and wherever the
+  // switch is not installed) this does nothing. With it ON, an assigned-scoped Rep is not a Projects user. Imported lazily so this shared primitive carries no NewQuip dependency.
+  if (opts.projectData) {
+    const { assertProjectsAccess } = await import("@/lib/newquip-assignments/access");
+    let tier = isSuperAdmin ? "admin" : "member";
+    if (!isSuperAdmin) {
+      const m = await db.from("org_members").select("role").eq("org_id", current.orgId).eq("user_id", current.userId).maybeSingle();
+      if (m.error) throw new Error(m.error.message); // fail closed
+      tier = m.data?.role === "owner" || m.data?.role === "admin" ? "admin" : "member";
+    }
+    await assertProjectsAccess(db, { orgId: current.orgId, userId: current.userId, email: current.email ?? "", tier });
   }
 
   return current;

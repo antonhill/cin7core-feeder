@@ -28,7 +28,7 @@ export interface ProfitabilityActionResult {
 
 export async function getProfitabilityAction(projectId: string): Promise<ProfitabilityActionResult> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     await requireOrgAdmin("view project profitability");
     const db = createServiceRoleClient();
     const base = await loadBaseCost(db, orgId, projectId);
@@ -45,7 +45,7 @@ export interface CostLedgerResult { ok: boolean; error?: string; data?: { availa
 const msg = (e: unknown) => (e instanceof Error ? e.message : "Unexpected error");
 
 async function costContext(projectId: string) {
-  const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+  const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
   assertNewquipOrg(orgId);
   await requireOrgAdmin("manage project costs");
   const db = createServiceRoleClient();

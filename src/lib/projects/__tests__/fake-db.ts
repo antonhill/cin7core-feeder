@@ -58,6 +58,7 @@ export class FakeDb {
   rpc(fn: string, args: Row): Promise<{ data: unknown; error: { message: string } | null }> {
     this.rpcCalls.push({ fn, args });
     if (fn === "customer_rep_reassign") return Promise.resolve(this.reassignRpc(args));
+    if (fn === "newquip_set_rep_isolation") return Promise.resolve(this.setIsolationRpc(args));
     const h = this.rpcHandlers[fn];
     return Promise.resolve({ data: null, error: h ? h(args).error : { message: `no handler for ${fn}` } });
   }
@@ -92,6 +93,22 @@ export class FakeDb {
     return { data: { ended: { ...from }, assigned: { ...next }, created }, error: null };
   }
 
+  /** Emulates migration 0119's newquip_set_rep_isolation: validation, then the setting AND its audit event together (nothing is written when validation fails). */
+  private setIsolationRpc(a: Row): { data: unknown; error: { message: string } | null } {
+    if (!this.accessApplied) return { data: null, error: { message: "Could not find the function public.newquip_set_rep_isolation in the schema cache" } };
+    const fail = (m: string) => ({ data: null, error: { message: `newquip_set_rep_isolation: ${m}` } });
+    const reason = String(a.p_reason ?? "").trim();
+    if (!a.p_org || typeof a.p_enabled !== "boolean") return fail("organisation and desired state are required");
+    if (String(a.p_actor_email ?? "").trim().length <= 3) return fail("the actor is required");
+    if (reason.length < 5) return fail("give a reason (at least 5 characters)");
+    const settings = this.rows("newquip_access_settings"); const cur = settings.find((r) => r.org_id === a.p_org);
+    if (cur) Object.assign(cur, { rep_isolation_enabled: a.p_enabled, changed_by_email: a.p_actor_email, changed_at: this.ts(), change_reason: reason });
+    else settings.push({ org_id: a.p_org, rep_isolation_enabled: a.p_enabled, changed_by_email: a.p_actor_email, changed_at: this.ts(), change_reason: reason });
+    this.rows("newquip_access_setting_events").push({ id: `ev-${++this.seq}`, org_id: a.p_org, enabled: a.p_enabled, actor_email: a.p_actor_email, reason, preflight: a.p_preflight ?? {}, created_at: this.ts() });
+    this.writes.push({ table: "newquip_access_settings", op: "rpc:newquip_set_rep_isolation" });
+    return { data: a.p_enabled, error: null };
+  }
+
   /** Emulates PostgREST's max-rows: a select with no .range() silently returns only this many rows (null = unlimited). */
   maxRows: number | null = null;
 
@@ -107,6 +124,8 @@ export class FakeDb {
   portalApplied = false;
   /** Migration 0118 (customer -> Rep assignments) is not applied unless a test says so. */
   assignmentsApplied = false;
+  /** Migration 0119 (Rep customer isolation switch) is not applied unless a test says so: its tables then read as "does not exist", exactly like a database that has not received it. */
+  accessApplied = false;
   /** Statuses the approval_notifications CHECK accepts. Defaults to the 0110 list (no SUPPRESSED, i.e. migration 0114 not applied); a test sets it to include SUPPRESSED. */
   notificationStatuses: string[] = ["PENDING", "SENT", "FAILED", "ABANDONED"];
 
@@ -132,6 +151,7 @@ export class FakeDb {
     const deliveryOn = () => this.deliveryApplied;
     const portalOn = () => this.portalApplied;
     const assignmentsOn = () => this.assignmentsApplied;
+    const accessOn = () => this.accessApplied;
     const notificationStatuses = () => this.notificationStatuses;
     function exec(): { data: unknown; error: { message: string } | null } {
       const real = REAL_COLUMNS[table];
@@ -142,6 +162,7 @@ export class FakeDb {
         const bad = (Array.isArray(payload) ? payload : [payload]).flatMap((p) => Object.keys(p)).find((k) => COLS_0117.includes(k));
         if (bad) return { data: null, error: { message: `column "${bad}" of relation "newquip_quote_responses" does not exist` } };
       }
+      if ((table === "newquip_access_settings" || table === "newquip_access_setting_events") && !accessOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };
       if (table === "customer_rep_assignments") {
         // Migration 0118: absent until applied; then the same rules its database guard and partial unique index enforce (append-only history, one ACTIVE row per customer + Rep).
         if (!assignmentsOn()) return { data: null, error: { message: `relation "public.${table}" does not exist` } };

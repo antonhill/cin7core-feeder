@@ -61,7 +61,7 @@ export interface Cin7PostingStatus {
 
 export async function getCin7PostingStatusAction(projectId: string): Promise<Cin7ActionResult<Cin7PostingStatus>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const db = createServiceRoleClient();
     const link = await loadSaleLink(db, orgId, projectId).catch(() => null); // deploy-order safety until migration 0104 exists
@@ -79,7 +79,7 @@ export async function getCin7PostingStatusAction(projectId: string): Promise<Cin
  */
 export async function recoverLinkCin7SaleAction(projectId: string, input: { saleId: string; customerName: string; location: string; revenueAccount: string; cin7TaxRule: string; reason: string }): Promise<Cin7ActionResult<SaleLinkRow>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     const gates = await gatesFor(orgId);
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, gates.isManager);
     if (!gates.orgEnabled) throw new Error("Cin7 Sale recovery is not enabled for this organization.");
@@ -107,7 +107,7 @@ export async function postClaimToCin7Action(
   physical?: { lines: Array<{ sku: string; quantity: number }>; earlyReason?: string; deliveryId?: string },
 ): Promise<Cin7ActionResult<{ state: string; message: string; invoiceNumber: string | null }>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const gates = await gatesFor(orgId);
     const db = createServiceRoleClient();
@@ -129,7 +129,7 @@ export async function postClaimToCin7Action(
  */
 export async function getInvoiceProposalAction(projectId: string, claimId: string, deliveryId?: string): Promise<Cin7ActionResult<PreparedInvoice>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     const gates = await gatesFor(orgId);
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, gates.isManager);
     if (!gates.orgEnabled) throw new Error("Not enabled for this organization.");
@@ -146,7 +146,7 @@ export async function getInvoiceProposalAction(projectId: string, claimId: strin
 /** Manager only. READ-ONLY against Cin7 (a single GET). */
 export async function reconcileClaimPostingAction(projectId: string, claimId: string): Promise<Cin7ActionResult<{ state: string; message: string }>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const gates = await gatesFor(orgId);
     const db = createServiceRoleClient();
@@ -178,7 +178,7 @@ export interface Cin7SaleCreationStatus {
 /** Read-only: the creation state and the Sale lines derived from the project's approved product scope. */
 export async function getCin7SaleCreationStatusAction(projectId: string): Promise<Cin7ActionResult<Cin7SaleCreationStatus>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const db = createServiceRoleClient();
     const { items, effective } = await loadProjectScope(db, orgId, projectId);
@@ -197,7 +197,7 @@ export async function getCin7SaleCreationStatusAction(projectId: string): Promis
  */
 export async function resolveScopeItemAction(projectId: string, input: { itemId: string; kind: "MAP" | "MAP_LINES" | "EXCLUDE"; sku?: string; quantity?: number; lines?: Array<{ sku: string; factor: number; unit?: string }>; /** Apply this saved reusable mapping version to the item. */ useSavedVersion?: number; /** After resolving, also save these lines as the next reusable version. */ saveAsReusable?: boolean; reason: string }): Promise<Cin7ActionResult<ScopeItem[]>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     const gates = await gatesFor(orgId);
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, gates.isManager);
     if (!gates.orgEnabled) throw new Error("Not enabled for this organization.");
@@ -242,7 +242,7 @@ export async function createCin7SaleAction(
   input: { confirmation: string; customerName: string; location: string; revenueAccount: string; cin7TaxRule: string },
 ): Promise<Cin7ActionResult<{ state: string; message: string; saleNumber: string | null; linked: boolean }>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const gates = await gatesFor(orgId);
     const db = createServiceRoleClient();
@@ -258,7 +258,7 @@ export async function createCin7SaleAction(
 /** Manager only. READ-ONLY against Cin7; links a Sale only when it reads back exactly as planned. */
 export async function reconcileCin7SaleCreationAction(projectId: string): Promise<Cin7ActionResult<{ state: string; message: string; linked: boolean }>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const gates = await gatesFor(orgId);
     const db = createServiceRoleClient();
@@ -278,7 +278,7 @@ export async function reconcileCin7SaleCreationAction(projectId: string): Promis
  */
 export async function runP0ChecklistAction(projectId: string, input: Omit<P0Input, "externalId">): Promise<Cin7ActionResult<P0Report>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
     const gates = await gatesFor(orgId);
     if (!gates.isManager) throw new Error("Only a manager (org owner/admin) can run the P0 checklist.");
@@ -308,7 +308,7 @@ export interface P0PrepStatus { enabled: boolean; isManager: boolean }
 /** Whether this user should see the P0 preparation panel. Display only; every action below re-checks. */
 export async function getP0PrepStatusAction(): Promise<Cin7ActionResult<P0PrepStatus>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     const g = await gatesFor(orgId);
     return { ok: true, data: { enabled: g.orgEnabled, isManager: g.isManager } };
   } catch (e) {
@@ -319,7 +319,7 @@ export async function getP0PrepStatusAction(): Promise<Cin7ActionResult<P0PrepSt
 /** Manager only. Existing Cin7 products with free stock at a location, from the synced local cache. Reads Supabase only; no Cin7 call. */
 export async function searchP0ProductsAction(location: string, query: string): Promise<Cin7ActionResult<ProductSearchResult>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     const g = await gatesFor(orgId);
     if (!g.orgEnabled) throw new Error("Not enabled for this organization.");
     if (!g.isManager) throw new Error("Only a manager (org owner/admin) can prepare a P0 project.");
@@ -336,7 +336,7 @@ export async function searchP0ProductsAction(location: string, query: string): P
  */
 export async function createP0ProjectAction(input: CreateP0Input): Promise<Cin7ActionResult<{ projectId: string; reference: string }>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     const g = await gatesFor(orgId);
     if (!g.orgEnabled) throw new Error("Not enabled for this organization.");
     if (!g.isManager) throw new Error("Only a manager (org owner/admin) can prepare a P0 project.");
@@ -358,7 +358,7 @@ export async function createP0ProjectAction(input: CreateP0Input): Promise<Cin7A
 /** Read-only: the reusable mapping offered for an item's package (null = none saved yet; "UNAVAILABLE" until the migration is applied). */
 export async function getPackageMappingAction(projectId: string, itemId: string): Promise<Cin7ActionResult<{ packageKey: string; active: PackageMapping | null; unavailable: boolean }>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     const gates = await gatesFor(orgId);
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, gates.isManager);
     if (!gates.orgEnabled) throw new Error("Not enabled for this organization.");

@@ -236,7 +236,8 @@ describe("org-toggleable module actions re-establish their module boundary", () 
     const offenders: string[] = [];
     for (const r of rows) {
       if (DELEGATING_EXEMPTIONS[r.key]) continue;
-      const expected = new RegExp(`require(ModuleAccess|ModuleWrite)\\(${r.module.constant}\\.href\\)`);
+      // the module constant is still mandatory and exact; an options object is allowed ({ allowDemo }, and { projectData: true } for Rep customer isolation, Slice 1B)
+      const expected = new RegExp(`require(ModuleAccess|ModuleWrite)\\(${r.module.constant}\\.href(,\\s*\\{[^}]*\\})?\\)`);
       if (!expected.test(r.body)) offenders.push(`${r.key} (expected ${r.module.constant})`);
     }
     expect(offenders).toEqual([]);

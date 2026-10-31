@@ -60,7 +60,7 @@ function message(e: unknown): string {
 
 export async function listProjectsAction(): Promise<ActionResult<ProjectView[]>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     // Variation billing projects are reached from their BASE project (Variations tab), not listed as separate projects.
     const canSeeCost = await isAdmin();
     return { ok: true, data: (await listProjectViews(createServiceRoleClient(), orgId)).filter(isCustomerFacingProject).map((v) => redactVariationCosts(v, canSeeCost)) };
@@ -71,7 +71,7 @@ export async function listProjectsAction(): Promise<ActionResult<ProjectView[]>>
 
 export async function getProjectAction(projectId: string): Promise<ActionResult<ProjectView>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     const admin = await isAdmin();
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, admin);
     const view = await loadProjectView(createServiceRoleClient(), orgId, projectId);
@@ -90,7 +90,7 @@ export async function getProjectAction(projectId: string): Promise<ActionResult<
  */
 export async function getViewerPermissionsAction(): Promise<ActionResult<{ canApprove: boolean; newquip: boolean }>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     // `newquip` shows the NewQuip-only tabs (Variations, Products & Fulfilment); every such server action re-checks it.
     const newquip = isNewquipPocOrg(orgId);
     try {
@@ -107,7 +107,7 @@ export async function getViewerPermissionsAction(): Promise<ActionResult<{ canAp
 /** Creates the deterministic golden POC project (R10m, six stages, opening claim) in the caller's org. */
 export async function seedGoldenProjectAction(): Promise<ActionResult<{ projectId: string }>> {
   try {
-    const { orgId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     await requireOrgAdmin("create the fixture project");
     const db = createServiceRoleClient();
     const projectId = await seedGoldenFixture(db, orgId, email ?? "unknown", goldenFixtureBaseline());
@@ -130,7 +130,7 @@ export async function recordProgressAction(
   comment: string,
 ): Promise<ActionResult<null>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
     if (approvedPct !== null) await requireOrgAdmin("approve commercial completion");
     const db = createServiceRoleClient();
@@ -147,7 +147,7 @@ export async function recordProgressAction(
 /** Calculates a claim. READ-ONLY: writes nothing, no Cin7 call. */
 export async function previewClaimAction(projectId: string, selectedStageIds?: string[]): Promise<ActionResult<ClaimPreviewResult>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
     const p = await previewClaim(createServiceRoleClient(), orgId, projectId, selectedStageIds);
     return { ok: true, data: { calc: p.calc, claimNumber: p.claimNumber, taxRateBps: p.taxRateBps } };
@@ -159,7 +159,7 @@ export async function previewClaimAction(projectId: string, selectedStageIds?: s
 /** Persists a DRAFT claim locally (reserves nothing). Idempotent for an identical open draft. */
 export async function createClaimDraftAction(projectId: string, selectedStageIds?: string[]): Promise<ActionResult<{ claimId: string; duplicate: boolean }>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
     const db = createServiceRoleClient();
     const r = await createClaimDraft(db, orgId, email ?? "unknown", projectId, selectedStageIds);
@@ -174,7 +174,7 @@ export async function createClaimDraftAction(projectId: string, selectedStageIds
 
 export async function submitClaimForApprovalAction(projectId: string, claimId: string): Promise<ActionResult<null>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
     const db = createServiceRoleClient();
     await submitClaimForApproval(db, orgId, projectId, claimId);
@@ -189,7 +189,7 @@ export async function submitClaimForApprovalAction(projectId: string, claimId: s
 /** Manager approval. Freezes the claim's financial snapshot and RESERVES its value. Creates nothing in Cin7. */
 export async function approveClaimAction(projectId: string, claimId: string): Promise<ActionResult<null>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
     await requireOrgAdmin("approve a progress claim");
     const db = createServiceRoleClient();
@@ -204,7 +204,7 @@ export async function approveClaimAction(projectId: string, claimId: string): Pr
 
 export async function cancelDraftClaimAction(projectId: string, claimId: string): Promise<ActionResult<null>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
     await cancelDraftClaim(createServiceRoleClient(), orgId, projectId, claimId);
     if (await approvalsAvailable(createServiceRoleClient()).catch(() => false)) await withdrawPendingFor(createServiceRoleClient(), legacyCtx(orgId, userId, email, await isAdmin()), "CLAIM", claimId, "The claim was cancelled by its preparer.").catch(() => undefined);
@@ -217,7 +217,7 @@ export async function cancelDraftClaimAction(projectId: string, claimId: string)
 /** Explicitly recalculates a STALE draft: a new draft is calculated fresh and the old one is superseded (cancelled, history kept). */
 export async function recalculateStaleDraftAction(projectId: string, claimId: string): Promise<ActionResult<{ newClaimId: string; supersededClaimId: string }>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
     const db = createServiceRoleClient();
     const r = await recalculateStaleDraft(db, orgId, email ?? "unknown", projectId, claimId);
@@ -234,7 +234,7 @@ export async function recalculateStaleDraftAction(projectId: string, claimId: st
 
 export async function raiseVariationAction(projectId: string, title: string, description: string, amountRands: string, estimatedCostRands = ""): Promise<ActionResult<{ variationId: string; code: string }>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     assertNewquipOrg(orgId);
     const db = createServiceRoleClient();
     if (isNegativeAmountInput(amountRands)) throw new Error(NEGATIVE_VARIATION_UNSUPPORTED);
@@ -250,7 +250,7 @@ export async function raiseVariationAction(projectId: string, title: string, des
 
 export async function repriceVariationAction(projectId: string, variationId: string, amountRands: string): Promise<ActionResult<null>> {
   try {
-    const { orgId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     assertNewquipOrg(orgId);
     if (isNegativeAmountInput(amountRands)) throw new Error(NEGATIVE_VARIATION_UNSUPPORTED);
     await repriceVariation(createServiceRoleClient(), orgId, email ?? "unknown", projectId, variationId, randsToCents(amountRands));
@@ -263,7 +263,7 @@ export async function repriceVariationAction(projectId: string, variationId: str
 /** Submits the variation's CURRENT content for manager approval (it cannot be edited while pending). */
 export async function submitVariationForApprovalAction(projectId: string, variationId: string): Promise<ActionResult<null>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     assertNewquipOrg(orgId);
     const db = createServiceRoleClient();
     if (!(await approvalsAvailable(db))) throw new Error("Approvals are not available (switched off, or the database migration is pending).");
@@ -278,7 +278,7 @@ export async function submitVariationForApprovalAction(projectId: string, variat
 
 export async function approveVariationAction(projectId: string, variationId: string): Promise<ActionResult<null>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     assertNewquipOrg(orgId);
     await requireOrgAdmin("approve a variation");
     const db = createServiceRoleClient();
@@ -293,7 +293,7 @@ export async function approveVariationAction(projectId: string, variationId: str
 
 export async function rejectVariationAction(projectId: string, variationId: string, reason: string): Promise<ActionResult<null>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     assertNewquipOrg(orgId);
     await requireOrgAdmin("reject a variation");
     const db = createServiceRoleClient();
@@ -312,7 +312,7 @@ export async function rejectVariationAction(projectId: string, variationId: stri
  */
 export async function setOpeningCommitmentsAction(projectId: string, items: Array<{ stageId: string; rands: string }>, reason: string): Promise<ActionResult<null>> {
   try {
-    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
     await requireOrgAdmin("set opening commitments");
     const db = createServiceRoleClient();

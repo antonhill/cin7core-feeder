@@ -20,7 +20,7 @@ export interface DeliveryActionResult<T> { ok: boolean; error?: string; data?: T
 const message = (e: unknown) => (e instanceof Error ? e.message : "Unexpected error");
 
 async function managerContext(projectId: string) {
-  const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+  const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
   assertNewquipOrg(orgId);
   const db = createServiceRoleClient();
   await guardBillingScope(db, orgId, projectId, await callerIsOrgAdmin());
@@ -30,7 +30,7 @@ async function managerContext(projectId: string) {
 
 export async function getDeliveryRegisterAction(projectId: string): Promise<DeliveryActionResult<{ register: DeliveryRegister; confirmations: MilestoneConfirmation[] }>> {
   try {
-    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href, { projectData: true });
     assertNewquipOrg(orgId);
     const db = createServiceRoleClient();
     await guardBillingScope(db, orgId, projectId, await callerIsOrgAdmin());

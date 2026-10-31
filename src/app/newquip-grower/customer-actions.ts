@@ -4,6 +4,8 @@
 // (never a create/update/delete), and nothing is written back. Re-authorised inside EVERY action: the NewQuip org check, then the Rep role (the effective Demo user when
 // Demo Mode is on). A quotation of another organisation is indistinguishable from "not found". Only async functions and erased types are exported.
 import { authoriseActor, auditActor, errText, ownerEmailOf, type Actor, type Db } from "./actor";
+import { assertCustomerSelectable, guardQuote, quoteScope } from "@/lib/newquip-assignments/access";
+import { assignedCustomers } from "@/lib/newquip-assignments/visibility";
 import { createServiceRoleClient } from "@/supabase/server";
 import { canEditDraft } from "@/newquip/quote/workflow";
 import { applyCustomerChange, loadQuote } from "@/lib/newquip-quotes/quote-store";
@@ -34,6 +36,7 @@ export interface QuoteCustomerView {
 
 async function editableQuote(a: Actor, db: Db, quoteId: string) {
   if (!a.roles.has("rep")) throw new Error("Only a Rep can select the customer for a quotation.");
+  await guardQuote(db, a, quoteId);   // Rep isolation: the generic "Quote not found." before anything is read
   const q = await loadQuote(db, a.orgId, quoteId);
   if (!q) throw new Error("Quote not found.");
   if (!canEditDraft(a.roles, q.state)) throw new Error(q.state === "MANAGER_APPROVED_FINAL" ? "The customer details of an approved quotation are immutable." : "You cannot change the customer on this quotation in its current state.");
@@ -41,6 +44,7 @@ async function editableQuote(a: Actor, db: Db, quoteId: string) {
 }
 
 async function viewOf(db: Db, a: Actor, quoteId: string): Promise<QuoteCustomerView> {
+  await guardQuote(db, a, quoteId);
   const q = await loadQuote(db, a.orgId, quoteId);
   if (!q) throw new Error("Quote not found.");
   if (!(await customerFeaturesAvailable(db))) return { available: false, snapshot: null, snapshotId: null, seq: null, issues: [], currency: null, editable: false, lockedReason: null, changeReturnsToRep: false, selectedContactIndex: null, confirmationContact: null, history: [] };
@@ -67,7 +71,14 @@ export async function searchQuoteCustomersForQuoteAction(query: string): Promise
   try {
     const a = await authoriseActor();
     if (!a.roles.has("rep")) throw new Error("Only a Rep can search customers for a quotation.");
-    return { ok: true, data: await searchSyncedCustomers(createServiceRoleClient(), a.orgId, query) };
+    const db = createServiceRoleClient();
+    const scope = await quoteScope(db, a);
+    if (scope.kind === "ORG_WIDE") return { ok: true, data: await searchSyncedCustomers(db, a.orgId, query) };
+    // Rep isolation: an assigned-scoped Rep can only find (and so start a quotation for) the customers assigned to them.
+    const term = String(query ?? "").trim().toLowerCase();
+    if (term.length < 2) return { ok: true, data: [] };
+    const mine = await assignedCustomers(db, a.orgId, a.userId);
+    return { ok: true, data: mine.filter((c) => c.customer_name.toLowerCase().includes(term)).slice(0, 20).map((c) => ({ name: c.customer_name, tradingName: null, contactName: null, email: null, phone: null, currency: null })) };
   } catch (e) { return { ok: false, error: errText(e) }; }
 }
 
@@ -85,6 +96,7 @@ export async function selectQuoteCustomerAction(quoteId: string, customerName: s
     const raw = await readCin7Customer(db, a.orgId, customerName);
     if (!raw) throw new Error("That customer was not found in Cin7. Pick a customer from the search results.");
     const snap = buildCustomerSnapshot(raw, new Date().toISOString());
+    await assertCustomerSelectable(db, await quoteScope(db, a), snap.cin7CustomerId);   // Rep isolation: only an assigned customer may be selected
     const cur = await latestSnapshot(db, a.orgId, quoteId);
     if (cur && cur.snapshot.cin7CustomerId === snap.cin7CustomerId) return { ok: true, data: await viewOf(db, a, quoteId) }; // same customer: nothing to replace
     if (cur && !confirmReplace) throw new Error("Confirm that you want to replace the current customer on this quotation.");

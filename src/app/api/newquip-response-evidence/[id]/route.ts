@@ -4,6 +4,7 @@ import { authoriseActor, auditActor } from "@/app/newquip-grower/actor";
 import { createServiceRoleClient } from "@/supabase/server";
 import { defaultDeps } from "@/lib/newquip-quotes/document-store";
 import { readEvidenceBytes } from "@/lib/newquip-quotes/response-evidence";
+import { guardQuote } from "@/lib/newquip-assignments/access";
 
 export const dynamic = "force-dynamic";
 const NO_STORE = { "Cache-Control": "private, no-store" };
@@ -17,6 +18,10 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   if (!/^[0-9a-f-]{36}$/i.test(id)) return new Response("Not found", { status: 404, headers: NO_STORE });
   try {
     const db = createServiceRoleClient();
+    // Rep isolation (Slice 1B): authorise on the evidence's quotation (metadata only) BEFORE the file is read; every refusal is the same generic 404.
+    const meta = await db.from("newquip_response_evidence").select("quote_id").eq("org_id", actor.orgId).eq("id", id).maybeSingle();
+    if (meta.error || !meta.data) throw new Error("Evidence not found.");
+    await guardQuote(db, actor, (meta.data as { quote_id: string }).quote_id);
     const { row, bytes } = await readEvidenceBytes(db, actor.orgId, id, defaultDeps(db).storage);
     await auditActor(db, actor, { action: "newquip.response_evidence_downloaded", summary: "Opened a customer-response evidence file", detail: { evidenceId: row.id, quoteId: row.quote_id, responseId: row.response_id } }).catch(() => undefined);
     const ascii = row.file_name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
