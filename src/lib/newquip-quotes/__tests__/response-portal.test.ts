@@ -511,3 +511,27 @@ describe("customer email presentation", () => {
     for (const bad of [/\bmargin/i, /\bsupplier/i, /\bcost/i, /approval/i, /Toolbox/i, /\bR\s?\d[\d ,.]*\d/]) expect(bad.test(visible), String(bad)).toBe(false);
   });
 });
+
+describe("public portal: a credential/config failure is not an invalid link", () => {
+  const rejecting = (error: { message: string; status: number; code?: string }) => {
+    const q: Record<string, unknown> = {};
+    for (const m of ["select", "eq"]) q[m] = () => q;
+    q.maybeSingle = async () => ({ data: null, error });
+    return { from: () => q };
+  };
+  it("a rejected API key (401) fails closed as UNAVAILABLE and logs a safe diagnostic without the token", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { token } = newToken();
+    const r = await resolveLink(rejecting({ message: "Invalid API key", status: 401, code: "UNAUTHORIZED_INVALID_API_KEY" }) as never, token, { VERCEL_ENV: "preview" });
+    expect(r).toMatchObject({ ok: false, reason: "UNAVAILABLE" });
+    const logged = spy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(logged).toMatch(/status=401/); expect(logged).toMatch(/Invalid API key/);
+    expect(logged).not.toContain(token); expect(logged).not.toContain(token.split(".")[1]);
+    spy.mockRestore();
+  });
+  it("any other database error is also UNAVAILABLE, never INVALID", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await resolveLink(rejecting({ message: "boom", status: 500 }) as never, newToken().token, { VERCEL_ENV: "preview" })).toMatchObject({ reason: "UNAVAILABLE" });
+    spy.mockRestore();
+  });
+});

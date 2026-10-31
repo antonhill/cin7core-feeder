@@ -15,7 +15,10 @@ import {
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 const BUCKET = "newquip-quote-documents";
-const missing = (m: string | undefined) => /does not exist|schema cache|could not find the table/i.test(m ?? "");
+/** A database/credential failure is NOT an invalid link: an unknown token returns no error and no row. Logged without the token, the key or any row data (status/code/message are Supabase's own safe error fields). */
+export function noteStoreFailure(where: string, e: { message?: string; code?: string; status?: number } | null | undefined): void {
+  console.error(`[newquip-portal] ${where} failed: status=${e?.status ?? "?"} code=${e?.code ?? "?"} message=${String(e?.message ?? "").slice(0, 160)}`);
+}
 
 interface PortalDoc { id: string; org_id: string; quote_id: string; quote_ref: string; revision: number; baseline_hash: string; content_hash: string; storage_path: string; content: CustomerDocumentModel }
 interface PortalQuote { id: string; state: string; baseline_hash: string | null; revision: number | null; created_by_email: string | null; handoff_by_email: string | null }
@@ -31,7 +34,7 @@ export async function resolveLink(db: Db, rawToken: string, env: LinkEnv, now = 
   const t = parseToken(rawToken);
   if (!t) return { ok: false, reason: "INVALID" };
   const r = await db.from("newquip_response_links").select("*").eq("id", t.id).maybeSingle();
-  if (r.error) return { ok: false, reason: missing(r.error.message) ? "UNAVAILABLE" : "INVALID" };
+  if (r.error) { noteStoreFailure("link lookup", r.error as { message?: string; code?: string; status?: number }); return { ok: false, reason: "UNAVAILABLE" }; } // fail closed, but never mislabel as an invalid link
   const link = r.data as StoredLink | null;
   if (!link || !sameHash(link.token_hash, sha(t.secret))) {
     if (link) await noteFailedAttempt(db, link); // a wrong secret against a real link id counts toward its lock-out
