@@ -2,7 +2,7 @@
 
 A standalone Next.js app that shows **data provenance, validation, per-scenario readiness, delivery layers and assumptions**
 for the four RWTSA demonstration scenarios. It reads a **local** workbook (or explicitly selected synthetic data) through the
-audited adapter in `src/rwtsa-demo/`. **It has no calculation engines yet: it never shows results, forecasts or findings.**
+audited adapter in `src/rwtsa-demo/`. **Scenario A (Red Flag demand planning) has a working, tested calculation engine and an interactive dashboard; Scenarios B-D have no engine yet and show no results.**
 
 It is not part of the deployed Toolbox. No Supabase, no Cin7, no Xero, no authentication, no database, no external API, no
 remote fonts or analytics, nothing written to disk.
@@ -34,6 +34,23 @@ Every page shows the data provenance (**SYNTHETIC**, **LOCAL WORKBOOK** or **NO 
 (taken only from the validator's per-scenario flag), its **delivery layer** (CIN7 CORE, TOOLBOX, XERO, FAST REACT / EXTERNAL),
 and its assumptions and open inputs. **STRUCTURE PASS is shown separately and is never readiness.** Native Cin7 Core / Xero
 claims are marked "to be verified independently" (owner decision D6).
+
+## Scenario A: Red Flag demand planning
+
+`/scenario-a` is a server-rendered page driven by the pure engine in `src/rwtsa-demo/engine/` (no Next.js, Supabase, Cin7 or network code in it).
+It shows five separate facts: provenance, **STRUCTURE PASS/FAIL**, **READY / NOT READY** (validator only), **ENGINE AVAILABLE / UNAVAILABLE**
+and the **forecast basis** (ANCHORED / ASSUMED / LIMITED). An available engine never makes data ready.
+
+- Controls are a plain GET form (no client script): SKU/style view, forecast window (1-36 months), 13 or 26-week horizon, history anchor,
+  overdue-on-water treatment, size curve, anomaly thresholds, style and shortage filters. Settings live in the URL and are not stored.
+- Planner **exclusions** (a reason is mandatory; reversible) are POSTed to `/api/exclusions` (same-origin only) and saved in
+  `$RWTSA_STATE_DIR` (default `~/.rwtsa-demo`), one small JSON file per data source, **outside every git working tree**. Nothing else is persisted.
+- The page shows the SKU and style codes of the loaded data in your browser (that is the point of a planning screen). Nothing leaves the machine.
+- Synthetic data supplies a size curve; a local workbook does not, so style-level purchase orders stay **unallocated** unless you choose the
+  demand-proportional assumption on screen.
+
+Run on a second port without disturbing a running demo: `RWTSA_SOURCE=synthetic npx next start -H 127.0.0.1 -p 3101` from `rwtsa-demo/`
+(after `npm --prefix rwtsa-demo run build`).
 
 ## Why a standalone Next.js app (feasibility gate result)
 
@@ -81,12 +98,12 @@ server contacts the npm registry.
 
 ## Not here yet
 
-Red Flag, landed-cost, variance, BOM/costing, quote-conversion and Fast React engines. Scenario pages are labelled placeholders for
-those. Scenario A's recent-history check uses the sheet's latest N months and is **not anchored to the stock-as-at date**; the
-Red Flag engine must do that before forecasting readiness is claimed. Scenario B-D readiness is preliminary.
+Landed-cost, variance, BOM/costing, quote-conversion and Fast React engines. Scenarios B-D are labelled placeholders. The validator's
+Scenario A check still uses the sheet's latest N months; the **engine** anchors its own window to the stock date (31 October 2026) and shows
+the difference as an assumption. Scenario B-D readiness is preliminary.
 
 ## Build-test isolation, and deferred items
 
 `standalone-build.test.ts` builds into its own unique directory (`node_modules/.cache/rwtsa-demo-next-test-<pid>-<id>`, selected by `RWTSA_DIST_SUFFIX`, validated by `lib/dist-dir.ts`) and removes only that directory. It never touches the default `rwtsa-demo-next` directory a running demo server uses, and concurrent runs cannot delete one another's output.
 
-Deliberately deferred (not part of this PR): allowlisting bare `next` imports as type-only; the interaction of `RWTSA_HEADER_MAP` with the synthetic source (currently ignored); normalising `RWTSA_SOURCE` values (case-sensitive, trimmed); separate FAST REACT and EXTERNAL layer labels; POSIX-only `NEXT_TELEMETRY_DISABLED=1` script prefix; anchoring the Scenario A sales window to the stock-as-at date, and scenario calculation readiness (belong with the engines in PR-3).
+Deliberately deferred (not part of this PR): allowlisting bare `next` imports as type-only; the interaction of `RWTSA_HEADER_MAP` with the synthetic source (currently ignored); normalising `RWTSA_SOURCE` values (case-sensitive, trimmed); separate FAST REACT and EXTERNAL layer labels; POSIX-only `NEXT_TELEMETRY_DISABLED=1` script prefix.

@@ -227,12 +227,14 @@ describe("11-14 Incoming purchase orders", () => {
   it("13. inbound is not double-counted with Stock in-transit: the projection uses purchase orders only", () => {
     const r = run([base({ sales: flat(0), inTransit: 30 })], [{ poNo: "P1", sku: "S1", qty: 30, etaStores: "2026-11-15", status: "On the water" }]);
     expect(sku(r).balances[12]).toBe(100); // 70 + 30 once, never 130
+    expect(sku(r).inboundTotal).toBe(30); // purchase orders only; Stock in-transit is never added to the inbound figure
     expect(r.inbound.reconciliation.skusConsistent).toBe(1);
     expect(r.inbound.reconciliation.skusMismatched).toBe(0);
   });
   it("13. when Stock in-transit and on-water POs disagree, the two buckets stay separate and the uncertainty is exposed", () => {
     const r = run([base({ sales: flat(0), inTransit: 50 })], [{ poNo: "P1", sku: "S1", qty: 30, etaStores: "2026-11-15", status: "On the water" }]);
     expect(sku(r).balances[12]).toBe(100); // still PO only; nothing invented
+    expect(sku(r).inboundTotal).toBe(30);
     expect(r.inbound.reconciliation).toMatchObject({ skusMismatched: 1, inTransitStockUnits: 50, onWaterPoUnits: 30 });
     expect(r.limitations.join(" ")).toMatch(/in.transit/i);
   });
@@ -375,6 +377,8 @@ describe("20 Tender products", () => {
   it("a tender SKU with a minimum level set still never proposes an order", () => {
     const t = sku(run([{ ...tender, minLevel: 50 }]), "T1");
     expect(t.proposedOrder).toBe(0);
+    expect(t.shortfall).toBe(0);
+    expect(t.firstBreachWeek).toBeNull();
   });
   it("an unknown tender flag (blank) is not treated as tender", () => {
     const t = sku(run([base({ tender: null })]));

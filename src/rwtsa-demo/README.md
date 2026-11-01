@@ -18,6 +18,19 @@ network code, no database migration, no credentials** in the audited code (see "
 
 Calculation engines (Red Flag, landed cost, variance, BOM/cost, quotes, Fast React) do not exist yet; the shell shows labelled placeholders only.
 
+## Red Flag engine (`engine/`)
+
+Pure functions over the validated dataset: `runRedFlag(dataset, config, exclusions)`.
+
+- **Available** = JHB + Durban + Cape Town + Factory Store - Committed, per SKU, reconciled against the workbook's own Available (differences are reported; the formula wins). Bond and In transit are excluded.
+- **Forecast** = average monthly demand over the window / 4.345. The window is anchored to the stock date (default 2026-10-31): `strict` requires the N months to the last complete month and gives no forecast where months are absent (nothing older is substituted); `last-available` (default) uses the last N months on file and shows the months in between as an assumption. Sales for those months are never invented. A blank cell is missing; an explicit 0 is valid.
+- **Projection**: balance(w) = balance(w-1) + inbound(w) - forecast(w) - committed_due(w), starting from Available, committed_due = 0 unless a separate dated schedule is supplied. First breach = first week strictly below the minimum; shortfall = maximum shortfall over the horizon (13 or 26 weeks); proposed order = that, rounded up, never negative (a proposal, not a purchase order). Tender SKUs never propose an order.
+- **Inbound**: open purchase orders by ETA to stores (week 1 = the 7 days after the stock date). On-water and on-order are separate; an overdue on-water shipment is assumed to land in week 1 (switchable); overdue on-order, received/closed, unrecognised-status, unmatched and beyond-horizon quantities are excluded and reported. Stock "In transit" is never added (purchase orders only), and any disagreement is exposed. Style-level lines are split to sizes by a supplied size curve (largest-remainder, exact), or held unallocated.
+- **Anomalies**: a month exceeding both `multiple x SKU median` (5) and `floor` (40 units) is flagged. A planner exclusion needs a reason and removes the month from the demand total and the observation count (no median substitution).
+- **Style roll-up**: quantities are sums of SKU quantities and reconcile exactly; ratios are recomputed from totals.
+
+Known gaps: the workbook's PO status vocabulary and the real size curve are unknown (unrecognised statuses are excluded and counted); the real history's end month and the treatment of September-October remain the owner's decision.
+
 ## STRUCTURE PASS is not readiness
 
 `validate.ts` prints one headline, `STRUCTURE PASS|FAIL · N of 4 scenarios READY`, and reports two **separate** things.
