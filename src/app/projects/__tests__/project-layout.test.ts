@@ -41,4 +41,9 @@ describe("UAT-015 claim history cards", () => {
   it("is responsive (cards in a grid) rather than a wide table", () => {
     expect(ws).toMatch(/grid gap-3 lg:grid-cols-2/);
   });
+  it("milestone confirmation is hidden in the embedded variation workspace and loads itself with feedback (review F1/F2)", () => {
+    expect(ws).toMatch(/\{newquip && !embedded && \(\s*<div>\s*<Alert tone="info">Milestone confirmation/);
+    expect(alloc).toMatch(/if \(section === "milestones"\) void load\(\)/);
+    expect(alloc).toMatch(/section === "milestones" && msg/);
+  });
 });

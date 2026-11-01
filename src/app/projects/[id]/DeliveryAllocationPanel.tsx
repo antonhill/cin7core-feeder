@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -35,6 +35,8 @@ export function DeliveryAllocationPanel({ view, section = "both" }: { view: Proj
     const r = await getDeliveryRegisterAction(projectId);
     if (r.ok && r.data) setData(r.data); else setMsg({ tone: "danger", text: r.error ?? "Could not load deliveries." });
   }, [projectId]);
+  // The milestone list on the Commercial / Claims tab must not look empty until someone presses Load: it loads itself.
+  useEffect(() => { if (section === "milestones") void load(); }, [section, load]);
 
   const run = async (fn: () => Promise<DeliveryActionResult<unknown>>, ok: string) => {
     setBusy(true); setMsg(null);
@@ -102,6 +104,7 @@ export function DeliveryAllocationPanel({ view, section = "both" }: { view: Proj
 
       {section !== "deliveries" && <Panel>
         <PanelTitle>Commercial milestone confirmation</PanelTitle>
+        {section === "milestones" && msg && <div className="mt-2"><Alert tone={msg.tone}>{msg.text}</Alert></div>}
         <p className="mt-1 text-xs text-slate-500">A manager records that a commercial milestone has been met (for example &quot;about 90% delivered&quot; or &quot;installation accepted&quot;) with its supporting evidence. This is independent of reported physical progress.</p>
         {data?.confirmations.length ? <ul className="mt-2 text-sm">{data.confirmations.map((c) => <li key={c.id}>{view.stages.find((s) => s.id === c.stage_id)?.name ?? "Stage"}: {c.note}{c.evidence_ref ? ` [${c.evidence_ref}]` : ""} - {c.confirmed_by_email}, {new Date(c.confirmed_at).toLocaleDateString()}</li>)}</ul> : null}
         <div className="mt-3 grid gap-3 sm:grid-cols-3">

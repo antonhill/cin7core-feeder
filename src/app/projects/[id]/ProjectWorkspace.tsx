@@ -544,7 +544,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                         <dd className="mt-0.5">{cl.reserves ? <span className="font-medium text-indigo-700">{cl.status === "FAILED_UNCERTAIN" ? "Stays reserved (outcome uncertain)" : "Reserves value"}</span> : <span className="text-slate-500">No reservation</span>}</dd>
                       </div>
                     </dl>
-                    <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700"><span className="font-medium text-slate-900">Next: </span>{claimNextStep({ status: cl.status, cin7Kind: cl.cin7Status.kind, stageRole: cl.approval?.stageRole })}</p>
+                    <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700"><span className="font-medium text-slate-900">Next: </span>{claimNextStep({ status: cl.status, cin7Kind: cl.cin7Status.kind, stageRole: cl.approval?.stageRole, canApproveHere: plan.approveHere, canAct: perm !== "loading" })}</p>
                     {cl.cin7Status.detail && !["DRAFT_CREATED", "AUTHORISED"].includes(cl.cin7Status.kind) && <p className="mt-2 text-xs text-slate-500">{cl.cin7Status.detail}</p>}
                     <div className="mt-3">
                       <div className="flex flex-wrap items-center gap-1">
@@ -565,7 +565,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               })}
             </div>
           </div>
-          {newquip && (
+          {newquip && !embedded && (
             <div>
               <Alert tone="info">Milestone confirmation records contractual evidence that a billing milestone was met. It is independent of physical delivery: a deposit or an authorised early invoice never needs goods to have moved.</Alert>
               <DeliveryAllocationPanel view={view} section="milestones" />

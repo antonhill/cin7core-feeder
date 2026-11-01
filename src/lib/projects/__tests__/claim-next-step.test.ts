@@ -16,4 +16,9 @@ describe("UAT-015 claim next-step line", () => {
   it("closed claims say nothing was sent", () => {
     expect(claimNextStep({ status: "CANCELLED_BEFORE_WRITE", cin7Kind: "NOT_POSTED" })).toMatch(/nothing was sent/);
   });
+  it("never promises an action the viewer lacks (review F3)", () => {
+    expect(claimNextStep({ status: "READY_FOR_APPROVAL", cin7Kind: "NOT_POSTED", stageRole: "MANAGER", canApproveHere: true })).toMatch(/You can approve it here/);
+    expect(claimNextStep({ status: "READY_FOR_APPROVAL", cin7Kind: "NOT_POSTED", stageRole: "MANAGER", canApproveHere: false })).toMatch(/Waiting for manager/);
+    expect(claimNextStep({ status: "DRAFT", cin7Kind: "NOT_POSTED", canAct: false })).not.toMatch(/Submit it/);
+  });
 });
