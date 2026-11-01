@@ -287,7 +287,7 @@ export function QuoteConversionPageView({ model }: { model: CrmModel }) {
                   ))}
                 </select>
               </label>
-              {r.byProduct.available || s.product !== null || r.options.products.length > 0 ? (
+              {r.options.products.length > 0 ? (
                 <label className="flex flex-col gap-1">
                   Product
                   <select name="product" defaultValue={s.values.product} className={field}>

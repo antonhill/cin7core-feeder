@@ -210,6 +210,22 @@ function splitProducts(raw: string | null): string[] {
   return out;
 }
 
+const SUM_KEYS = ["quotes", "won", "lost", "open", "unclassified", "wonCents", "lostCents", "openCents", "unclassifiedCents"] as const;
+function sumOfGroups(rows: readonly Metrics[]): Record<(typeof SUM_KEYS)[number], number> {
+  return Object.fromEntries(SUM_KEYS.map((k) => [k, rows.reduce((a, r) => a + r[k], 0)])) as Record<(typeof SUM_KEYS)[number], number>;
+}
+/** True only when the groups add back to the overall totals on every count and every amount. An empty list never reconciles a non-empty total. */
+export function reconcileGroups(rows: readonly Metrics[], total: Metrics): boolean {
+  const s = sumOfGroups(rows);
+  return SUM_KEYS.every((k) => s[k] === total[k]);
+}
+
+/** A reconciliation line for the page: pass/fail is computed from the same sums it shows. */
+export function groupCheck(code: string, label: string, rows: readonly Metrics[], total: Metrics): Check {
+  const s = sumOfGroups(rows);
+  return { code, label, pass: reconcileGroups(rows, total), detail: `${s.quotes} of ${total.quotes} quotes; won ${s.wonCents} of ${total.wonCents} cents; lost ${s.lostCents} of ${total.lostCents} cents` };
+}
+
 class Acc {
   quotes = 0; won = 0; lost = 0; open = 0; unclassified = 0;
   wonCents = 0; lostCents = 0; openCents = 0; unclassifiedCents = 0; valueMissing = 0;
@@ -399,25 +415,12 @@ export function runQuoteConversion(ds: RwtsaDataset, opts: QuoteOptions = {}): Q
   const unclassifiedValues = [...new Set(records.filter((q) => q.status === "UNCLASSIFIED").map((q) => (q.rawStatus === "" ? "(blank)" : q.rawStatus.slice(0, 40))))].slice(0, 10);
 
   // 9. Reconciliation: every grouping must add back to the overall totals.
-  const sumM = (rows: readonly Metrics[]) => ({
-    quotes: rows.reduce((a, r) => a + r.quotes, 0), won: rows.reduce((a, r) => a + r.won, 0), lost: rows.reduce((a, r) => a + r.lost, 0), open: rows.reduce((a, r) => a + r.open, 0),
-    unclassified: rows.reduce((a, r) => a + r.unclassified, 0), wonCents: rows.reduce((a, r) => a + r.wonCents, 0), lostCents: rows.reduce((a, r) => a + r.lostCents, 0),
-    openCents: rows.reduce((a, r) => a + r.openCents, 0), unclassifiedCents: rows.reduce((a, r) => a + r.unclassifiedCents, 0),
-  });
-  const same = (rows: readonly Metrics[]): boolean => {
-    const s = sumM(rows);
-    return s.quotes === total.quotes && s.won === total.won && s.lost === total.lost && s.open === total.open && s.unclassified === total.unclassified && s.wonCents === total.wonCents && s.lostCents === total.lostCents && s.openCents === total.openCents && s.unclassifiedCents === total.unclassifiedCents;
-  };
-  const groupCheck = (code: string, label: string, rows: readonly Metrics[]): Check => {
-    const s = sumM(rows);
-    return { code, label, pass: same(rows), detail: `${s.quotes} of ${total.quotes} quotes; won ${s.wonCents} of ${total.wonCents} cents; lost ${s.lostCents} of ${total.lostCents} cents` };
-  };
   const soleSum = productRows.reduce((a, p) => a + p.soleQuotes, 0);
   const checks: Check[] = [
     { code: "status", label: "Won + lost + open + unclassified = total quotes", pass: total.won + total.lost + total.open + total.unclassified === total.quotes && total.quotes === records.length, detail: `${total.won} + ${total.lost} + ${total.open} + ${total.unclassified} = ${total.quotes}` },
-    groupCheck("rep", "Representative groups add up to the total", byRep),
-    groupCheck("customer", "Customer groups add up to the total", byCustomer),
-    groupCheck("period", "Period groups add up to the total", byPeriod),
+    groupCheck("rep", "Representative groups add up to the total", byRep, total),
+    groupCheck("customer", "Customer groups add up to the total", byCustomer, total),
+    groupCheck("period", "Period groups add up to the total", byPeriod, total),
     { code: "reasons", label: "Lost reasons (plus missing) = lost quotes, by count and value", pass: reasonRows.reduce((a, r) => a + r.count, 0) + missing.count === total.lost && reasonRows.reduce((a, r) => a + r.cents, 0) + missing.cents === total.lostCents, detail: `${reasonRows.reduce((a, r) => a + r.count, 0)} + ${missing.count} missing = ${total.lost} lost` },
     { code: "product", label: "Single-product + multi-product + no-product quotes = total quotes", pass: soleSum + multi + none === total.quotes, detail: `${soleSum} + ${multi} + ${none} = ${total.quotes}` },
   ];

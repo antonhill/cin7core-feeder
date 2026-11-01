@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { periodKey, runQuoteConversion, type Metrics } from "@/rwtsa-demo/engine/quote-conversion";
+import { groupCheck, periodKey, reconcileGroups, runQuoteConversion, type Metrics } from "@/rwtsa-demo/engine/quote-conversion";
 import { quoteDataset, REFERENCE, type QSpec } from "./quote-fixture";
 
 /**
@@ -388,5 +388,24 @@ describe("options, assumptions and determinism", () => {
     expect(r.byRep).toEqual([]);
     expect(r.completeness.complete).toBe(false);
     expect(r.completeness.reasons.join(" ")).toMatch(/no quotes/i);
+  });
+});
+
+describe("the reconciliation check can actually fail", () => {
+  it("reconcileGroups is true for consistent groups and false when any total is off by one", () => {
+    const r = ref();
+    expect(reconcileGroups(r.byRep, r.total)).toBe(true);
+    const tweaks: Partial<Metrics>[] = [{ quotes: 1 }, { won: 1 }, { lost: 1 }, { open: 1 }, { unclassified: 1 }, { wonCents: 1 }, { lostCents: 1 }, { openCents: 1 }, { unclassifiedCents: 1 }];
+    for (const t of tweaks) {
+      const bad = r.byRep.map((g, i) => (i === 0 ? { ...g, ...Object.fromEntries(Object.entries(t).map(([k, v]) => [k, (g as unknown as Record<string, number>)[k] + (v as number)])) } : g));
+      expect(reconcileGroups(bad, r.total), JSON.stringify(t)).toBe(false);
+    }
+    expect(reconcileGroups([], r.total)).toBe(false);
+    const ok = groupCheck("rep", "label", r.byRep, r.total);
+    expect(ok).toMatchObject({ code: "rep", pass: true });
+    expect(ok.detail).toContain("6 of 6 quotes");
+    const dropped = groupCheck("rep", "label", r.byRep.slice(1), r.total);
+    expect(dropped.pass).toBe(false);
+    expect(dropped.detail).toContain("3 of 6 quotes");
   });
 });

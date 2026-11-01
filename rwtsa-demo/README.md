@@ -2,7 +2,7 @@
 
 A standalone Next.js app that shows **data provenance, validation, per-scenario readiness, delivery layers and assumptions**
 for the four RWTSA demonstration scenarios. It reads a **local** workbook (or explicitly selected synthetic data) through the
-audited adapter in `src/rwtsa-demo/`. **Scenarios A (Red Flag demand planning), B (production variance and BOM costing) and C (landed cost and USD exposure) have working, tested calculation engines and interactive pages; Scenario D has no engine yet and shows no results.**
+audited adapter in `src/rwtsa-demo/`. **Scenarios A (Red Flag demand planning), B (production variance and BOM costing), C (landed cost and USD exposure) and D (quote conversion) have working, tested calculation engines and interactive pages.**
 
 It is not part of the deployed Toolbox. No Supabase, no Cin7, no Xero, no authentication, no database, no external API, no
 remote fonts or analytics, nothing written to disk.
@@ -84,6 +84,25 @@ saved, and it neither reads nor writes Cin7 Core or Xero (the page lists which f
 - **Real-workbook readiness is UNVERIFIED**: no authorised local workbook was available when this was built. Unconfirmed: BOM units and quantities, the overhead / efficiency / margin conventions, the
   meaning of efficiency (a level, as assumed here) and of overhead's base, which component replaces which, and whether the routing margin column has any role (it is not used).
 
+## Scenario D: CRM, quote conversion and sales analytics
+
+`/scenario-d` is driven by `engine/quote-conversion.ts` (integer cents, read-only, nothing written, no Cin7 or Xero call, no quotation or sales order created).
+
+- **Status** is normalised from an explicit table (`contracts/quote-status.ts`): won / closed won / accepted, lost / closed lost / declined / rejected, open / pending / sent / quoted.
+  Anything else, including a blank, is **UNCLASSIFIED**: reported, listed, shown in the quote list, and never treated as open. To make that possible the `Quotes.status` contract field is now free text
+  (previously an enum that failed the whole workbook on one unfamiliar word).
+- **Closed = won + lost.** Count conversion = won / closed x 100. Value conversion = won value / closed value x 100, in whole cents. Open and unclassified quotes are never in a denominator. With nothing
+  closed (or no closed value) the rate is **N/A, not 0%**.
+- **By** representative, customer, period (month, quarter or year, on the **quote date**: the workbook has no won/lost date) and product. A quote that names several products (separated by `;`, `|` or a new
+  line) counts once under each for **counts**, and once overall; its value is **withheld** from product value figures, never split. Without a product column the product analysis is withheld with a reason.
+- **Win/loss by reason**: lost quotes only, reasons merged ignoring case and spacing. A LOST quote with no reason is shown as "Reason missing", is a finding, and makes the analysis INCOMPLETE; no default reason exists.
+  A WON quote with no sales-order reference is an incomplete conversion record; the original reference is shown exactly as supplied and nothing is generated.
+- **Completeness** is stated on the page: unrecognised statuses, missing reasons, missing sales-order references, unusable values and duplicate quote numbers each make the analysis INCOMPLETE. Missing dates,
+  representatives, customers not in the Customers tab and unmatched products are shown as notes. Reconciliation checks show every grouping adds back to the overall totals.
+- **Controls** (plain GET form): quote-date range (inclusive), reporting period, representative, customer, product, status (narrows the quote list only, because conversion needs both won and lost) and a
+  count / value comparison for the chart.
+- **Real-workbook readiness is UNVERIFIED**: no authorised local workbook was available. Unconfirmed: the status vocabulary, whether quotes carry a product (or several), the date meaning, and the currency.
+
 ## Why a standalone Next.js app (feasibility gate result)
 
 The 3-hour feasibility gate was **passed in minutes**; the offline-HTML fallback was **not needed**. The standalone app:
@@ -130,9 +149,9 @@ server contacts the npm registry.
 
 ## Not here yet
 
-The quote-conversion and Fast React exchange engines. Scenario D is a labelled placeholder. The validator's
+The Fast React exchange. The validator's
 Scenario A check still uses the sheet's latest N months; the **engine** anchors its own window to the stock date (31 October 2026) and shows
-the difference as an assumption. Scenario B-D readiness is preliminary.
+the difference as an assumption. Scenario B-D readiness is preliminary (the validator checks presence and population, not units or vocabulary).
 
 ## Build-test isolation, and deferred items
 
