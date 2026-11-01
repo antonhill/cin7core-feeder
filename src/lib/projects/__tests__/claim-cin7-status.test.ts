@@ -53,6 +53,9 @@ describe("claim action plan (UAT-016/017)", () => {
     expect(claimActionPlan({ status: "DRAFT", approval: null }, "member")).toMatchObject({ submit: true, recalculate: true, cancel: true, openInApprovals: false });
     expect(claimActionPlan({ status: "APPROVED", approval: null }, "admin")).toMatchObject({ submit: false, recalculate: false, cancel: false, approveHere: false });
   });
+  it("an admin with the direct Approve button is not also shown contradictory waiting text", () => {
+    expect(claimActionPlan({ status: "READY_FOR_APPROVAL", approval }, "admin").waitingText).toBeNull();
+  });
   it("a submitted claim with no approval request says so rather than pointing at a missing link", () => {
     const p = claimActionPlan({ status: "READY_FOR_APPROVAL", approval: null }, "member");
     expect(p.openInApprovals).toBe(false);

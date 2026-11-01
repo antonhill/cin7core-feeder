@@ -27,9 +27,9 @@ export function claimActionPlan(c: { status: string; approval: { requestId: stri
     cancel: (draft || submitted) && canWrite,
     cancelLabel: submitted ? "Withdraw claim" : "Cancel",
     openInApprovals: submitted && !!c.approval,
-    waitingText: submitted
+    waitingText: submitted && tier !== "admin"
       ? c.approval
-        ? `Awaiting ${stage ?? "approver"} approval in Approvals${tier === "admin" ? "" : ` (needs the ${stage ?? "approver"} role; the preparer cannot approve their own claim)`}`
+        ? `Awaiting ${stage ?? "approver"} approval in Approvals (needs the ${stage ?? "approver"} role; the preparer cannot approve their own claim)`
         : "Submitted. No approval request was found: ask an owner/admin to check Approvals."
       : null,
   };

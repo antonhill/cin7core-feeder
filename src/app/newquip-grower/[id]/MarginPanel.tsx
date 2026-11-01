@@ -8,7 +8,7 @@ import type { QuoteDraft } from "@/newquip/grower/draft";
 import type { BudgetQuote } from "@/newquip/grower/quote-bridge";
 import type { GrowerItemKey } from "@/newquip/grower/types";
 import type { AcceptedBaseline } from "@/newquip/quote/baseline";
-import { buildMarginSheet, previewCostOverrides, type MarginFigures, type MarginSheet } from "@/newquip/quote/margin";
+import { buildMarginSheet, NO_AMOUNT_YET, previewCostOverrides, type MarginFigures, type MarginSheet } from "@/newquip/quote/margin";
 import { fmtCents, NumField, TextField } from "../fields";
 
 // INTERNAL margin sheet (managers only - the page renders this only when the viewer may see commercials; the server also redacts the data for
@@ -45,11 +45,11 @@ export function MarginPanel({ budget, draft, final, frozen, editable, edit }: {
 
   const setOverride = (key: string, patch: { rands?: number | null; reason?: string }) => edit((d) => {
     const cur = d.estimator.costOverrides?.[key as GrowerItemKey];
-    const rands = patch.rands !== undefined ? patch.rands : cur ? cur.lineCostCents / 100 : null;
+    const rands = patch.rands !== undefined ? patch.rands : cur && cur.lineCostCents >= 0 ? cur.lineCostCents / 100 : null;
     const reason = patch.reason !== undefined ? patch.reason : cur?.reason ?? "";
     const next = { ...(d.estimator.costOverrides ?? {}) };
     if (rands == null && !reason) delete next[key as GrowerItemKey];
-    else next[key as GrowerItemKey] = { lineCostCents: Math.round((rands ?? 0) * 100), reason, by: cur?.by ?? "", at: cur?.at ?? "" };
+    else next[key as GrowerItemKey] = { lineCostCents: rands == null ? NO_AMOUNT_YET : Math.round(rands * 100), reason, by: cur?.by ?? "", at: cur?.at ?? "" };
     d.estimator.costOverrides = next;
   });
 
@@ -111,7 +111,7 @@ export function MarginPanel({ budget, draft, final, frozen, editable, edit }: {
             return (
               <div key={l.key} className="grid gap-2 md:grid-cols-[1fr_12rem_1fr] md:items-end">
                 <span className="text-sm text-slate-700">{l.label}</span>
-                <NumField label="Line cost" unit="R ex VAT" value={cur ? cur.lineCostCents / 100 : null} onChange={(v) => setOverride(l.key, { rands: v })} />
+                <NumField label="Line cost" unit="R ex VAT" value={cur && cur.lineCostCents >= 0 ? cur.lineCostCents / 100 : null} onChange={(v) => setOverride(l.key, { rands: v })} />
                 <TextField label="Reason" value={cur?.reason ?? ""} onChange={(v) => setOverride(l.key, { reason: v })} hint={preview.errors[l.key]} />
                 {cur?.by && <span className="text-xs text-slate-400 md:col-span-3">Recorded by {cur.by} at {cur.at}</span>}
               </div>

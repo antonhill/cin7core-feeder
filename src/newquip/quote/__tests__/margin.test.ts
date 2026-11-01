@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { evaluateDraft } from "../../grower/evaluate";
 import { readyDraft } from "../../grower/__tests__/golden";
 import { testPriceSource } from "../../grower/__tests__/test-snapshot";
-import { assemblyUnitCost, buildMarginSheet, marginFigures, previewCostOverrides, redactInternalFinancials, stampCostOverrides, validateCostOverride, type CostOverride } from "../margin";
+import { assemblyUnitCost, buildMarginSheet, marginFigures, NO_AMOUNT_YET, previewCostOverrides, redactInternalFinancials, stampCostOverrides, validateCostOverride, type CostOverride } from "../margin";
 import { buildAcceptedBaseline, baselineMatchesHash, hashOf } from "../baseline";
 import { quoteToProjectBaseline } from "../to-project";
 import { buildCustomerSummary } from "../../grower/customer-summary";
@@ -179,6 +179,12 @@ describe("previewCostOverrides (UAT-005: typing an override never blanks the ove
     const r = previewCostOverrides({ a: { lineCostCents: 5_000, reason: "supplier quote", by: "", at: "" } });
     expect(Object.keys(r.usable)).toEqual(["a"]);
     expect(r.errors).toEqual({});
+  });
+  it("a reason with NO amount is reported, never applied as a R0 cost", () => {
+    const r = previewCostOverrides({ a: { lineCostCents: NO_AMOUNT_YET, reason: "supplier quote", by: "", at: "" } });
+    expect(r.usable).toEqual({});
+    expect(r.errors.a).toMatch(/line cost/);
+    expect(validateCostOverride({ lineCostCents: NO_AMOUNT_YET, reason: "x", by: "e", at: "t" })).not.toBeNull(); // Save rejects it too
   });
   it("a bad amount is reported, a good neighbour is still usable, and nothing throws", () => {
     const r = previewCostOverrides({ a: { lineCostCents: -1, reason: "x", by: "", at: "" }, b: ov(100) });
