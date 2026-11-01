@@ -29,6 +29,7 @@ import {
 import { formatSast } from "@/lib/approvals/time";
 import { isOptionalItemKey } from "@/newquip/grower/types";
 import { mappingControlFor } from "@/newquip/grower/mapping-access";
+import { blankExclusions, latestOnly } from "@/newquip/grower/preview-draft";
 import { previewCostOverrides } from "@/newquip/quote/margin";
 import { ProductMappingPicker } from "./ProductMappingPicker";
 import { fmtCents, fmtZar, NumField, TextField } from "../fields";
@@ -79,6 +80,12 @@ export default function QuoteEditorPage() {
   const [draft, setDraft] = useState<QuoteDraft | null>(null);
   const [ev, setEv] = useState<QuoteEvaluation | null>(null);
   const [dirty, setDirty] = useState(false);
+  // The draft the displayed figures were last calculated for, and the draft a failed recalculation belongs to: no synchronous state juggling in the effect.
+  const [previewedFor, setPreviewedFor] = useState<QuoteDraft | null>(null);
+  const [failedFor, setFailedFor] = useState<{ draft: QuoteDraft; message: string } | null>(null);
+  const recalculating = dirty && !!draft && previewedFor !== draft && failedFor?.draft !== draft;
+  const previewFailure = dirty && failedFor && failedFor.draft === draft ? failedFor.message : null;
+  const blankExclusionKeys = draft ? blankExclusions(draft) : [];
   const incompleteOverrides = draft ? Object.keys(previewCostOverrides(draft.estimator.costOverrides).errors).length > 0 : false;
   const [scheduleChoice, setScheduleChoice] = useState<ScheduleChoice | undefined>(undefined);
   const [gate, setGate] = useState<DeliveryGate>({ requires: false, accepted: false, status: null, hasDocument: false });
@@ -94,7 +101,7 @@ export default function QuoteEditorPage() {
   const [demoLoaded, setDemoLoaded] = useState<string[] | null>(null);
   const [isWorking, start] = useTransition();
   const [returnReason, setReturnReason] = useState("");
-  const seq = useRef(0);
+  const latest = useRef(latestOnly());
 
   function adopt(v: QuoteView) {
     setView(v);
@@ -122,13 +129,15 @@ export default function QuoteEditorPage() {
     return () => { live = false; };
   }, [id, finalNow, gateKey, gateTry]);
 
-  // Live recalculation (writes nothing).
+  // Live recalculation (writes nothing): the same server engine as Save, on the unsaved draft. Every change bumps the sequence (and so does a save or reload), so
+  // an answer to an older request can never replace newer figures; while one is outstanding the page says so instead of showing stale totals as current.
   useEffect(() => {
+    const mine = latest.current.next();
     if (!draft || !dirty) return;
-    const mine = ++seq.current;
     const t = setTimeout(async () => {
       const r = await previewGrowerDraftAction(draft);
-      if (mine === seq.current && r.ok && r.data) setEv(r.data);
+      if (!latest.current.isCurrent(mine)) return;
+      if (r.ok && r.data) { setEv(r.data); setPreviewedFor(draft); setFailedFor(null); } else setFailedFor({ draft, message: r.error ?? "The live recalculation failed." });
     }, 300);
     return () => clearTimeout(t);
   }, [draft, dirty]);
@@ -236,9 +245,12 @@ export default function QuoteEditorPage() {
 
       {stage <= 2 && (
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <Button onClick={save} loading={isWorking} disabled={!editable || !dirty || incompleteOverrides}>Save draft</Button>
+          <Button onClick={save} loading={isWorking} disabled={!editable || !dirty || incompleteOverrides || blankExclusionKeys.length > 0}>Save draft</Button>
           {incompleteOverrides && <span className="text-xs text-amber-700">Complete or clear the highlighted cost overrides (a reason and an amount) before saving.</span>}
-          {dirty && <span className="text-xs text-amber-700">Unsaved changes — the quotation figures below are a live preview. The Cin7 cost estimate, sign-off and approval use the SAVED draft: save to update them.</span>}
+          {dirty && <Badge tone="warning" dot>Unsaved changes</Badge>}
+          {dirty && <span className="text-xs text-amber-700" data-testid="unsaved-note">{recalculating ? "Recalculating… " : ""}The prices, costs, margins and totals below are a live preview of your edits and nothing is saved until you press Save draft. Sign-off and approval use the SAVED draft.</span>}
+          {previewFailure && <span className="text-xs text-red-700">The live recalculation failed ({previewFailure}); the figures shown may be out of date. Edit again or reload.</span>}
+          {blankExclusionKeys.length > 0 && <span className="text-xs text-amber-700">Enter a reason for each ticked exclusion before saving (the preview already applies it).</span>}
           {!editable && <span className="text-xs text-slate-500">{final ? "Read-only: accepted quote." : "You do not have permission to edit."}</span>}
           {editable && !confirmDemo && <Button variant="secondary" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load Demo Defaults</Button>}
           {editable && confirmDemo && (
@@ -481,7 +493,7 @@ export default function QuoteEditorPage() {
 
           <ScopePanel quoteId={id} draft={draft} />
           {/* Right under the physical scope, where the estimator resolves the SKUs: capture the latest Cin7 costs for a draft quotation. */}
-          {!final && view.viewer.canViewCommercials && <CostPanel quoteId={id} unsaved={dirty} />}
+          {!final && view.viewer.canViewCommercials && <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? draft : null} />}
 
           {(budget?.lines ?? []).some((b) => ["unmapped", "not_in_price_source", "supplier_quote_required", "package_unconfirmed", "package_incomplete"].includes(b.status) || b.pricedBy === "estimator_resolution") && (
             <Panel>

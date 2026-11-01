@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -12,6 +12,8 @@ import {
   selectSupplierAction, setManualCostEstimateAction, type QuoteCostView,
 } from "../cost-actions";
 import { fmtCents } from "../fields";
+import type { QuoteDraft } from "@/newquip/grower/draft";
+import { latestOnly } from "@/newquip/grower/preview-draft";
 import type { SupplierOption } from "@/lib/projects/supplier-price";
 
 // INTERNAL physical-SKU cost estimate from Cin7 LATEST SUPPLIER PRICES, across every supplier, in ZAR. The page mounts it only for a viewer who may see costs
@@ -125,7 +127,7 @@ export function CostPanelBody(p: CostPanelBodyProps) {
         <PanelTitle>Cin7 latest cost - capture and margin (physical SKUs)</PanelTitle>
         {v && (v.frozen ? <Badge tone="info">Frozen with the approval</Badge> : <Badge tone="neutral">Draft</Badge>)}
       </div>
-      {p.unsaved && <div className="mt-2"><Alert tone="warning">You have unsaved changes. This cost estimate is calculated from the last SAVED draft (for example, a component you just excluded is still counted here). Save the draft to refresh it.</Alert></div>}
+      {p.unsaved && <div className="mt-2"><Alert tone="warning">Unsaved changes. This estimate is a live preview of your edits (nothing is saved). Capturing or selecting supplier prices works on the SAVED draft: save first.</Alert></div>}
       <p className="mt-1 text-xs text-slate-500">Internal. Latest Supplier Price from Cin7 for every supplier, in rand. This is separate from the workbook-basis margin above; the two are not combined. {v?.note ?? ""} A missing cost is never treated as zero, FixedCost and AverageCost are never substituted, and a manual estimate is always labelled as one.</p>
       {p.loading && !v && !error && <p className="mt-2 text-sm text-slate-600">Loading the cost estimate…</p>}
       {error && (
@@ -197,19 +199,30 @@ export function CostPanelBody(p: CostPanelBodyProps) {
   );
 }
 
-export function CostPanel({ quoteId, reload, unsaved }: { quoteId: string; reload?: () => void; unsaved?: boolean }) {
+export function CostPanel({ quoteId, reload, unsaved, previewDraft }: { quoteId: string; reload?: () => void; unsaved?: boolean; previewDraft?: QuoteDraft | null }) {
   const [v, setV] = useState<QuoteCostView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [manual, setManual] = useState<{ sku: string; rand: string; reason: string } | null>(null);
 
+  // The estimate follows the UNSAVED edits (read-only server preview, same builders); an answer to an older request never overwrites a newer one.
+  const latest = useRef(latestOnly());
+  const draftRef = useRef(previewDraft ?? null);
+  useEffect(() => { draftRef.current = previewDraft ?? null; }, [previewDraft]);
   const load = useCallback(() => {
-    getQuoteCostEstimateAction(quoteId).then((r) => {
+    const mine = latest.current.next();
+    getQuoteCostEstimateAction(quoteId, draftRef.current ?? undefined).then((r) => {
+      if (!latest.current.isCurrent(mine)) return;
       if (r.ok && r.data) { setV(r.data); setError(null); } else setError(r.error ?? "The cost estimate could not be read.");
     });
   }, [quoteId]);
   useEffect(load, [load]);
+  useEffect(() => {
+    if (previewDraft === undefined) return;
+    const t = setTimeout(load, 300);
+    return () => clearTimeout(t);
+  }, [previewDraft, load]);
   const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string) => {
     setBusy(true); setError(null); setNote(null);
     const r = await fn(); setBusy(false);
