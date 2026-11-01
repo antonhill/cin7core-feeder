@@ -22,6 +22,11 @@ describe("USD exposure by due date", () => {
     expect(r.rows.find((x) => x.poNo === "PO-0")!.open).toBe(false);
     expect(r.warnings.join(" ")).toMatch(/before the as-at date/i);
   });
+  it("a payment due exactly on the as-at date is open; one the day before is not", () => {
+    const r = run([{ po: "P1", due: "2026-10-31", usd: 100 }, { po: "P2", due: "2026-10-30", usd: 50 }]);
+    expect(r.rows.map((x) => [x.poNo, x.open])).toEqual([["P1", true], ["P2", false]]);
+    expect(r.totals.openUsdCents).toBe(10000);
+  });
   it("splits open exposure into covered by an FEC and uncovered", () => {
     const r = run();
     expect(fromCents(r.totals.coveredUsdCents)).toBe(5000 + 2500.5);
