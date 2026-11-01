@@ -2,7 +2,7 @@
 
 A standalone Next.js app that shows **data provenance, validation, per-scenario readiness, delivery layers and assumptions**
 for the four RWTSA demonstration scenarios. It reads a **local** workbook (or explicitly selected synthetic data) through the
-audited adapter in `src/rwtsa-demo/`. **Scenario A (Red Flag demand planning) has a working, tested calculation engine and an interactive dashboard; Scenarios B-D have no engine yet and show no results.**
+audited adapter in `src/rwtsa-demo/`. **Scenario A (Red Flag demand planning) and Scenario C (landed cost and USD exposure) have working, tested calculation engines and interactive pages; Scenarios B and D have no engine yet and show no results.**
 
 It is not part of the deployed Toolbox. No Supabase, no Cin7, no Xero, no authentication, no database, no external API, no
 remote fonts or analytics, nothing written to disk.
@@ -52,6 +52,22 @@ and the **forecast basis** (ANCHORED / ASSUMED / LIMITED). An available engine n
 Run on a second port without disturbing a running demo: `RWTSA_SOURCE=synthetic npx next start -H 127.0.0.1 -p 3101` from `rwtsa-demo/`
 (after `npm --prefix rwtsa-demo run build`).
 
+## Scenario C: landed cost and imports/FX
+
+`/scenario-c` is driven by the pure engines `engine/landed-cost.ts`, `engine/fx-exposure.ts` and `engine/money.ts`. It is read-only: no form posts, nothing is
+saved, and it neither reads nor writes Cin7 Core or Xero (the page lists which functions belong to which layer).
+
+- All money is integer cents, so every total adds up exactly. Shipment freight is split by each line's CBM share **within that shipment only**
+  (largest remainder), so a SKU in two shipments gets a separate allocation in each; the SKU totals view adds the shipments' own allocations and never re-allocates.
+- Landed (actual) = FOB USD x customs FX + duty + allocated freight. Estimate = FOB USD x planning FX + duty + the same freight. FX variance = actual - estimate,
+  with the rate columns named. Duty is the workbook's ZAR amount, or an on-screen duty rate on customs value (an assumption, labelled).
+- Missing inputs are named and leave the figure blank (a missing FOB, FX, duty or freight is never replaced by zero); an incomplete shipment's total is withheld.
+- Seven reconciliation checks are shown, including allocated freight = shipment freight, lines = shipments = grand total, and the workbook's own freight allocation versus the CBM split.
+- USD exposure by due date (month or week) counts payments due on or after the as-at date (default 2026-10-31) and splits them into covered by an FEC (reference and locked rate) and uncovered.
+  The workbook has no paid flag, so earlier payments are listed separately. Planning / FEC / customs ZAR values are compared per payment through ImportPOs; where a PO is not in exactly one
+  shipment with one rate, the comparison is withheld. This is not an FEC register.
+- Unconfirmed until the real workbook is inspected: that `fobUsd` is the line total, that customs value equals FOB at customs FX, what the duty column holds, and the PO-to-shipment link.
+
 ## Why a standalone Next.js app (feasibility gate result)
 
 The 3-hour feasibility gate was **passed in minutes**; the offline-HTML fallback was **not needed**. The standalone app:
@@ -98,7 +114,7 @@ server contacts the npm registry.
 
 ## Not here yet
 
-Landed-cost, variance, BOM/costing, quote-conversion and Fast React engines. Scenarios B-D are labelled placeholders. The validator's
+Variance, BOM/costing, quote-conversion and Fast React engines. Scenarios B and D are labelled placeholders. The validator's
 Scenario A check still uses the sheet's latest N months; the **engine** anchors its own window to the stock date (31 October 2026) and shows
 the difference as an assumption. Scenario B-D readiness is preliminary.
 

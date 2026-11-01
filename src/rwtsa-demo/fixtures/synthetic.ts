@@ -238,6 +238,8 @@ export function buildSyntheticWorkbook(opts: SyntheticOptions = {}): SyntheticWo
       ["PO-SYN-001", "SYN Supplier Ltd", utc("2026-08-15"), 0, utc("2026-08-01"), 5400, "FEC-SYN-1", 18.1, 97740, true],
       ["PO-SYN-001", "SYN Supplier Ltd", utc("2026-08-15"), 30, utc("2026-09-14"), 5400, "FEC-SYN-1", 18.1, 97740, false],
       ["PO-SYN-002", "SYN Supplier Ltd", utc("2026-09-20"), 60, utc("2026-11-19"), 4050, "FEC-SYN-2", 18.3, 74115, false],
+      ["PO-SYN-003", "SYN Supplier Ltd", utc("2026-11-10"), 30, utc("2026-12-10"), 3150, null, null, null, false],
+      ["PO-SYN-004", "SYN Supplier Ltd", utc("2026-12-20"), 30, utc("2027-01-19"), 6750, null, null, null, false],
     ],
   };
 

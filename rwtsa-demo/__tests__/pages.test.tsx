@@ -39,10 +39,11 @@ const testid = (markup: string, id: string) => {
   return m ? text(m[1]).trim() : null;
 };
 const A_PAGE = ScenarioAWithQuery();
+const C_PAGE = () => ScenarioCPage({ searchParams: Promise.resolve({}) });
 const SCENARIO_PAGES = [
   ["A", A_PAGE, aModule],
   ["B", ScenarioBPage, bModule],
-  ["C", ScenarioCPage, cModule],
+  ["C", C_PAGE, cModule],
   ["D", ScenarioDPage, dModule],
 ] as const;
 const ALL_MODULES = [overviewModule, validationModule, aModule, bModule, cModule, dModule];
@@ -65,7 +66,7 @@ describe("explicit synthetic selection", () => {
     expect(a).toContain('data-testid="indicators"');
     expect(a).toContain('data-testid="chart"');
     expect(a).toContain('data-testid="assumptions"');
-    for (const [id, Page] of SCENARIO_PAGES.filter(([i]) => i !== "A")) {
+    for (const [id, Page] of SCENARIO_PAGES.filter(([i]) => i !== "A" && i !== "C")) {
       const m = await html(Page);
       expect(testid(m, "provenance"), id).toBe("SYNTHETIC");
       expect(testid(m, "readiness"), id).toBe("READY");
@@ -84,7 +85,7 @@ describe("explicit synthetic selection", () => {
     env({ RWTSA_SOURCE: "synthetic" });
     expect(text(await html(ScenarioDPage))).toContain("TOOLBOX");
     expect(text(await html(ScenarioBPage))).toContain("FAST REACT / EXTERNAL");
-    expect(text(await html(ScenarioCPage))).toContain("XERO");
+    expect(text(await html(C_PAGE))).toContain("XERO");
   });
 
   it("the overview separates STRUCTURE PASS from readiness, shows only the Red Flag engine as available", async () => {
@@ -93,8 +94,8 @@ describe("explicit synthetic selection", () => {
     expect(testid(m, "provenance")).toBe("SYNTHETIC");
     expect(text(m)).toContain("STRUCTURE PASS · 4 of 4 scenarios READY");
     expect(text(m)).toContain("does not mean any scenario is ready");
-    expect((text(m).match(/NOT IMPLEMENTED/g) ?? []).length).toBe(3);
-    expect((text(m).match(/ENGINE AVAILABLE/g) ?? []).length).toBe(1);
+    expect((text(m).match(/NOT IMPLEMENTED/g) ?? []).length).toBe(2);
+    expect((text(m).match(/ENGINE AVAILABLE/g) ?? []).length).toBe(2);
   });
 
   it("the validation page shows structure, source label, forecast window, tabs and per-scenario readiness", async () => {
@@ -190,7 +191,7 @@ describe("a valid local workbook", () => {
       })
     );
     env({ RWTSA_WORKBOOK_PATH: file });
-    for (const Page of [OverviewPage, ValidationPage, A_PAGE, ScenarioBPage, ScenarioCPage, ScenarioDPage]) {
+    for (const Page of [OverviewPage, ValidationPage, A_PAGE, ScenarioBPage, C_PAGE, ScenarioDPage]) {
       const m = await html(Page);
       expect(m).not.toContain(S);
       expect(m).not.toContain(tmp);
