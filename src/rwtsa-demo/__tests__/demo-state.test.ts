@@ -221,10 +221,10 @@ describe("delivery layers, assumptions and engine status (static, brief-derived)
     for (const sc of SCENARIOS) for (const c of sc.capabilities) if (c.layer === "CIN7 CORE" || c.layer === "XERO") expect(c.verify, `${sc.id}: ${c.name}`).toBe(true);
   });
 
-  it("only the Scenario A (Red Flag) and C (landed cost) engines exist; B and D claim none", async () => {
-    for (const sc of SCENARIOS) expect(sc.engine.implemented).toBe(sc.id === "A" || sc.id === "C");
+  it("Scenarios A, B and C have engines; D claims none", async () => {
+    for (const sc of SCENARIOS) expect(sc.engine.implemented).toBe(sc.id !== "D");
     const s = await loadDemoState({ source: "synthetic" });
-    for (const id of IDS) expect(scenarioView(s, id).engineImplemented).toBe(id === "A" || id === "C");
+    for (const id of IDS) expect(scenarioView(s, id).engineImplemented).toBe(id !== "D");
     // An available engine never makes data READY: an unusable source has the engine flag but is NOT READY.
     expect(scenarioView({ kind: "not-loaded" }, "A")).toMatchObject({ engineImplemented: true, readiness: "NOT READY" });
   });
