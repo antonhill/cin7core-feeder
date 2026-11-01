@@ -112,6 +112,8 @@ export interface StyleResult {
   readonly styleCode: string;
   readonly skuCount: number;
   readonly available: number;
+  /** Opening Available of the SKUs that can be projected: the same basis as `balances` and `minLevel`. */
+  readonly projectedOpening: number;
   readonly inboundTotal: number;
   readonly monthlyForecast: number;
   readonly weeklyForecast: number;
@@ -158,6 +160,8 @@ export interface RedFlagSummary {
   readonly tenderExemptSkus: number;
   readonly skusWithoutForecast: number;
   readonly availableMismatchSkus: number;
+  /** Planner exclusions in force, whether or not the detector currently flags the month. */
+  readonly exclusionsApplied: number;
 }
 
 export interface RedFlagResult {

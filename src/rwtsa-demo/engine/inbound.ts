@@ -8,10 +8,12 @@ export type PoStatusClass = "on-water" | "on-order" | "received" | "unclassified
  * Received/closed/cancelled lines are excluded because received stock is already in the Stock tab.
  */
 export function classifyPoStatus(status: string): PoStatusClass {
-  const s = status.toLowerCase();
-  if (/receiv|deliver|arriv|complet|closed|cancel|grn/.test(s)) return "received";
-  if (/water|transit|sail|shipped|vessel|afloat|at sea/.test(s)) return "on-water";
-  if (/order|plan|book|confirm|produc|open|pending/.test(s)) return "on-order";
+  const s = status.toLowerCase().trim();
+  // Negated, partial or in-progress wording is ambiguous: never guess, report it as unclassified.
+  if (/\b(not|un|awaiting|partial(ly)?|incomplete|arriving|pending delivery|delivery pending|production complete)\b|\bun(shipped|delivered|received)\b|not yet/.test(s)) return "unclassified";
+  if (/\b(received|delivered|arrived|complete|completed|closed|cancel(l?ed)?|grn)\b/.test(s)) return "received";
+  if (/\b(on the water|on water|in transit|at sea|sailing|shipped|vessel|afloat)\b/.test(s)) return "on-water";
+  if (/\b(on order|ordered|planned|booked|confirmed|open|pending|in production)\b/.test(s)) return "on-order";
   return "unclassified";
 }
 

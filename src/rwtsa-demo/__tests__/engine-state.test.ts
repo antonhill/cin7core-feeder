@@ -75,6 +75,10 @@ describe("exclusion form", () => {
     for (const reason of [null, "", "   "]) expect(applyExclusionForm(d, "a", ds, { action: "exclude", skus: ["S1"], month: "2026-08", reason })).toBe("reason");
     expect(loadExclusions(d, "a")).toHaveLength(0);
   });
+  it("rejects a month with no observation", () => {
+    const blank = makeDataset({ skus: [{ sku: "S1", sales: [1, null, 1, 1, 1, 1] }] });
+    expect(applyExclusionForm(tmp(), "a", blank, { action: "exclude", skus: ["S1"], month: "2026-04", reason: "r" })).toBe("unknown");
+  });
   it("rejects unknown SKUs/months and malformed requests", () => {
     const d = tmp();
     expect(applyExclusionForm(d, "a", ds, { action: "exclude", skus: ["NOPE"], month: "2026-08", reason: "r" })).toBe("unknown");
@@ -188,6 +192,13 @@ describe("page model", () => {
     expect(before.rows.filter((r) => r.anomalyKind === "review").map((r) => r.style)).toEqual(Array(8).fill(planted.tenderSpike.styleCode));
     expect(after.rows.filter((r) => r.anomalyKind === "excluded")).toHaveLength(8);
     expect(redFlagModel(st, settings({ sel: "SYN-VEST-A-M" }, st), []).chart?.key).toBe("SYN-VEST-A-M");
+  });
+  it("a corrupt exclusion store makes the engine unavailable rather than showing unreviewed figures", async () => {
+    const st = await synth();
+    const m = redFlagModel(st, settings({}, st), [], "The saved exclusions file is unreadable or corrupt.");
+    expect(m.engine).toBe("UNAVAILABLE");
+    expect(m.rows).toEqual([]);
+    expect(m.engineNote).toMatch(/exclusions could not be read/);
   });
   it("an invalid exclusion in the store becomes an UNAVAILABLE engine with a fixed message, not an exception", async () => {
     const st = await synth();

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { availableOf } from "@/rwtsa-demo/engine/stock";
 import { median, detectAnomalies } from "@/rwtsa-demo/engine/anomaly";
-import { allocateUnits } from "@/rwtsa-demo/engine/inbound";
+import { allocateUnits, classifyPoStatus } from "@/rwtsa-demo/engine/inbound";
 import { weekOfDate } from "@/rwtsa-demo/engine/calendar";
 import { DEFAULT_RED_FLAG_CONFIG, WEEKS_PER_MONTH, runRedFlag, type RedFlagResult, type SkuResult } from "@/rwtsa-demo/engine";
 import { makeDataset, type PoSpec, type SkuSpec } from "./engine-fixture";
@@ -499,5 +499,37 @@ describe("23-24 Edge cases and horizon", () => {
   });
   it("defaults match the brief", () => {
     expect(DEFAULT_RED_FLAG_CONFIG).toMatchObject({ stockDate: "2026-10-31", forecastWindowMonths: 6, horizonWeeks: 13, overdueOnWater: "week-1", anomaly: { multiple: 5, floor: 40 } });
+  });
+});
+
+describe("review hardening", () => {
+  it("P2-3: ambiguous or negated PO statuses are unclassified, not silently received or on the water", () => {
+    for (const t of ["Awaiting delivery", "Not yet delivered", "Delivery pending", "Arriving", "Partially received", "Production complete", "Incomplete", "Not shipped", "Unshipped", "???"]) expect(classifyPoStatus(t), t).toBe("unclassified");
+    for (const t of ["Received", "Delivered", "Closed", "Cancelled", "Complete"]) expect(classifyPoStatus(t), t).toBe("received");
+    for (const t of ["On the water", "In transit", "Shipped"]) expect(classifyPoStatus(t), t).toBe("on-water");
+    for (const t of ["On order", "Open", "Confirmed"]) expect(classifyPoStatus(t), t).toBe("on-order");
+  });
+  it("P2-5: an exclusion cannot target a month with no observation", () => {
+    expect(() => run([base({ sales: [40, 40, null, 40, 40, 40] })], [], {}, [{ sku: "S1", month: "2026-05", reason: "r" }])).toThrow(/no observation/i);
+  });
+  it("P2-2: a style's projected opening and minimum are on the same basis as its balances when a SKU has no forecast", () => {
+    const r = run([base({ sku: "A", size: "S", jhb: 100, committed: 0, sales: flat(0) }), base({ sku: "B", size: "M", jhb: 50, committed: 0, sales: [null, 1, 1, 1, 1, 1], minLevel: 7 })]);
+    const st = r.styles[0];
+    expect(st.available).toBe(150);
+    expect(st.projectedOpening).toBe(100);
+    expect(st.balances[0]).toBe(100);
+    expect(st.minLevel).toBe(10);
+  });
+  it("P3: last-available never uses months after the stock date", () => {
+    const months = ["2026-08", "2026-09", "2026-10", "2026-11", "2026-12"];
+    const r = run([base({ sales: [1, 2, 3, 400, 500] })], [], { forecastWindowMonths: 3 }, [], months);
+    expect(r.window.months).toEqual(["2026-08", "2026-09", "2026-10"]);
+    expect(sku(r).monthlyForecast).toBe(2);
+  });
+  it("P2-1: stored exclusions are reported independent of the detector", () => {
+    const r = run([base({ sales: [40, 40, 40, 40, 40, 90] })], [], { anomaly: { multiple: 50, floor: 1000 } }, [{ sku: "S1", month: "2026-08", reason: "r" }]);
+    expect(r.anomalies).toHaveLength(0);
+    expect(r.summary.exclusionsApplied).toBe(1);
+    expect(sku(r).excludedMonths).toEqual(["2026-08"]);
   });
 });

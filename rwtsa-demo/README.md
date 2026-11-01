@@ -107,3 +107,10 @@ the difference as an assumption. Scenario B-D readiness is preliminary.
 `standalone-build.test.ts` builds into its own unique directory (`node_modules/.cache/rwtsa-demo-next-test-<pid>-<id>`, selected by `RWTSA_DIST_SUFFIX`, validated by `lib/dist-dir.ts`) and removes only that directory. It never touches the default `rwtsa-demo-next` directory a running demo server uses, and concurrent runs cannot delete one another's output.
 
 Deliberately deferred (not part of this PR): allowlisting bare `next` imports as type-only; the interaction of `RWTSA_HEADER_MAP` with the synthetic source (currently ignored); normalising `RWTSA_SOURCE` values (case-sensitive, trimmed); separate FAST REACT and EXTERNAL layer labels; POSIX-only `NEXT_TELEMETRY_DISABLED=1` script prefix.
+
+## Known limitation: DNS rebinding on GET
+
+The exclusion POST accepts only loopback `Host` values (and a matching `Origin`). The GET pages do not check `Host`, so a hostile web page that
+rebinds its own name to 127.0.0.1 while the demo is running could read a page. Mitigation today: run the demo only while you need it, and do not
+browse untrusted sites meanwhile. A proper fix is a `Host` allowlist in the app's proxy, left for a follow-up because it changes the middleware
+manifest the build test pins.

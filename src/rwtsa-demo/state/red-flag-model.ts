@@ -88,6 +88,9 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
     stateError,
   };
   const structure = state.kind === "validated" ? state.summary.structure : state.kind === "not-loaded" ? ("NO DATA" as const) : ("ERROR" as const);
+  if (stateError !== null && state.kind === "validated") {
+    return { ...base, structure, engine: "UNAVAILABLE", engineNote: "The saved exclusions could not be read, so no figures are shown: they could include distorted, unreviewed demand.", basis: "NONE", result: null, rows: [], chart: null };
+  }
   if (state.kind !== "validated" || state.dataset === null) {
     return { ...base, structure, engine: "UNAVAILABLE", engineNote: "No validated dataset is available: the engine has nothing to calculate from. No other data was substituted.", basis: "NONE", result: null, rows: [], chart: null };
   }
@@ -130,7 +133,7 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
       chart = { key: s.sku, title: `${s.sku} (${s.styleCode}, ${s.size})`, opening: s.available, balances: s.balances, minLevel: s.minLevel, firstBreachWeek: s.firstBreachWeek, horizon: result.config.horizonWeeks, note: s.balances.length === 0 ? (s.limitation ?? "Cannot be projected.") : null };
     } else {
       const st = result.styles.find((x) => x.styleCode === selected.key) as StyleResult;
-      chart = { key: st.styleCode, title: `${st.styleCode} (sum of its SKUs)`, opening: st.available, balances: st.balances, minLevel: st.minLevel, firstBreachWeek: st.firstBreachWeek, horizon: result.config.horizonWeeks, note: "Style balance is the sum of its SKU balances; sizes are not netted for ordering." };
+      chart = { key: st.styleCode, title: `${st.styleCode} (sum of its SKUs)`, opening: st.projectedOpening, balances: st.balances, minLevel: st.minLevel, firstBreachWeek: st.firstBreachWeek, horizon: result.config.horizonWeeks, note: "Style balance is the sum of its SKU balances; sizes are not netted for ordering." };
     }
   }
 

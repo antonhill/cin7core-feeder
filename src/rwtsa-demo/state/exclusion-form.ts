@@ -33,6 +33,10 @@ export function applyExclusionForm(dir: string, sourceLabel: string, dataset: Rw
   if (form.skus.length === 0 || form.skus.length > 500 || form.month === null) return "invalid";
   const known = new Set(dataset.tables.items.map((i) => i.sku));
   if (!dataset.months.includes(form.month) || form.skus.some((s) => !known.has(s))) return "unknown";
+  if (form.action === "exclude") {
+    const have = new Set(dataset.tables.salesHistory.filter((p) => p.month === form.month && p.qty !== null).map((p) => p.sku));
+    if (form.skus.some((s) => !have.has(s))) return "unknown";
+  }
   try {
     if (form.action === "reverse") {
       removeExclusions(dir, sourceLabel, form.skus.map((sku) => ({ sku, month: form.month as string })));

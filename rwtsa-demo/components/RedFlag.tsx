@@ -446,6 +446,52 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
           </Panel>
 
           <Panel>
+            <PanelTitle>Saved exclusions</PanelTitle>
+            {model.exclusions.length === 0 ? (
+              <p className="mt-2 text-sm text-slate-700">None. Every flagged month is counted in the forecast.</p>
+            ) : (
+              <>
+                <p className="mt-1 text-sm text-slate-600">These months are out of the demand forecast whether or not the current thresholds still flag them. Reverse one to count it again.</p>
+                <div data-testid="saved-exclusions" className="mt-3 overflow-x-auto">
+                  <Table>
+                    <THead>
+                      <TR>
+                        <TH>SKU</TH>
+                        <TH>Month</TH>
+                        <TH>Reason</TH>
+                        <TH>Action</TH>
+                      </TR>
+                    </THead>
+                    <TBody>
+                      {model.exclusions.slice(0, 300).map((e) => (
+                        <TR key={`${e.sku}|${e.month}`}>
+                          <TD>
+                            <span data-testid="saved-exclusion" />
+                            {e.sku}
+                          </TD>
+                          <TD>{e.month}</TD>
+                          <TD>{e.reason}</TD>
+                          <TD>
+                            <form method="post" action="/api/exclusions">
+                              <input type="hidden" name="action" value="reverse" />
+                              <input type="hidden" name="month" value={e.month} />
+                              <input type="hidden" name="sku" value={e.sku} />
+                              <input type="hidden" name="returnTo" value={returnTo} />
+                              <button type="submit" className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold">
+                                Reverse
+                              </button>
+                            </form>
+                          </TD>
+                        </TR>
+                      ))}
+                    </TBody>
+                  </Table>
+                </div>
+              </>
+            )}
+          </Panel>
+
+          <Panel>
             <PanelTitle>Incoming stock reconciliation</PanelTitle>
             <div className="mt-3 overflow-x-auto">
               <Table>

@@ -216,6 +216,18 @@ describe("exclusion round trip", () => {
     expect(indicator(restored, "ind-shortfall")).toBe(indicator(before, "ind-shortfall"));
   });
 
+  it("an exclusion stays visible and reversible after the thresholds change so the month is no longer flagged", async () => {
+    synthetic();
+    await post([["action", "exclude"], ["month", month], ["reason", "Tender"], ["returnTo", "/scenario-a"], ...flaggedSkus.map((s): [string, string] => ["sku", s])]);
+    const hidden = await page({ mult: "500" });
+    expect(indicator(hidden, "ind-anomalies")).toBe("0");
+    expect(hidden).toContain('data-testid="saved-exclusions"');
+    expect((hidden.match(/data-testid="saved-exclusion"/g) ?? []).length).toBe(8);
+    expect(text(hidden)).toContain("Reverse");
+    await post([["action", "reverse"], ["month", month], ["returnTo", "/scenario-a"], ...flaggedSkus.map((s): [string, string] => ["sku", s])]);
+    expect(await page({ mult: "500" })).not.toContain('data-testid="saved-exclusions"');
+  });
+
   it("a missing reason changes nothing", async () => {
     synthetic();
     const res = await post([["action", "exclude"], ["month", month], ["reason", "   "], ["returnTo", "/scenario-a"], ["sku", flaggedSkus[0]]]);
@@ -230,6 +242,17 @@ describe("exclusion round trip", () => {
     expect((await post([["action", "exclude"], ["month", month], ["reason", "r"], ["sku", "NOPE"]])).headers.get("location")).toBe("/scenario-a?done=unknown");
     expect((await post([["action", "wipe"], ["month", month], ["reason", "r"], ["sku", flaggedSkus[0]]])).headers.get("location")).toBe("/scenario-a?done=invalid");
     expect(readdirSync(stateDir)).toHaveLength(0);
+  });
+
+  it("refuses any Host that is not loopback (DNS rebinding), even with a matching Origin", async () => {
+    synthetic();
+    const fields: [string, string][] = [["action", "exclude"], ["month", month], ["reason", "r"], ["sku", flaggedSkus[0]]];
+    for (const host of ["evil.example", "evil.example:3100", "127.0.0.1.evil.example", "10.0.0.5:3100"]) {
+      const origin = ["http:", "//" + host].join("");
+      expect((await post(fields, { host, origin })).status, host).toBe(403);
+    }
+    expect(readdirSync(stateDir)).toHaveLength(0);
+    for (const host of ["127.0.0.1:3100", "localhost:3100", "[::1]:3100"]) expect((await post(fields, { host, origin: ["http:", "//" + host].join("") })).status, host).toBe(303);
   });
 
   it("refuses cross-origin and header-less posts, and writes nothing", async () => {
@@ -274,7 +297,8 @@ describe("exclusion round trip", () => {
     writeFileSync(f, "{broken");
     const m = await page();
     expect(text(m)).toContain("unreadable or corrupt");
-    expect(indicator(m, "ind-anomalies")).toBe("8");
+    expect(text(m)).toContain("ENGINE UNAVAILABLE");
+    expect(indicator(m, "ind-anomalies")).toBeNull(); // no figures are shown while the exclusions cannot be read
   });
 });
 

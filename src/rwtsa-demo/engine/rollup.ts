@@ -29,6 +29,7 @@ export function rollUpStyles(skus: readonly SkuResult[], anomalies: readonly Ano
       styleCode,
       skuCount: m.length,
       available: m.reduce((a, s) => a + (s.available ?? 0), 0),
+      projectedOpening: withBalances.reduce((a, s) => a + (s.available ?? 0), 0),
       inboundTotal: m.reduce((a, s) => a + s.inboundTotal, 0),
       monthlyForecast: m.reduce((a, s) => a + (s.monthlyForecast ?? 0), 0),
       weeklyForecast: m.reduce((a, s) => a + (s.weeklyForecast ?? 0), 0),

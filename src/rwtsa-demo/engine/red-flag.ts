@@ -13,12 +13,19 @@ const EPS = 1e-9;
 function validateExclusions(ds: RwtsaDataset, exclusions: readonly Exclusion[]): Map<string, Map<string, string>> {
   const skus = new Set(ds.tables.items.map((i) => i.sku));
   const months = new Set(ds.months);
+  const obsOf = new Map<string, Map<string, number | null>>();
+  for (const p of ds.tables.salesHistory) {
+    const m = obsOf.get(p.sku) ?? new Map<string, number | null>();
+    m.set(p.month, p.qty);
+    obsOf.set(p.sku, m);
+  }
   const out = new Map<string, Map<string, string>>();
   for (const e of exclusions) {
     const reason = e.reason.trim();
     if (reason === "") throw new Error("An exclusion needs a non-empty reason.");
     if (!skus.has(e.sku)) throw new Error("Exclusion names an unknown SKU.");
     if (!months.has(e.month)) throw new Error("Exclusion names an unknown month.");
+    if ((obsOf.get(e.sku)?.get(e.month) ?? null) === null) throw new Error("Exclusion names a month with no observation for that SKU.");
     const m = out.get(e.sku) ?? new Map<string, string>();
     m.set(e.month, reason);
     out.set(e.sku, m);
@@ -29,7 +36,8 @@ function validateExclusions(ds: RwtsaDataset, exclusions: readonly Exclusion[]):
 function resolveWindow(ds: RwtsaDataset, cfg: RedFlagConfig): WindowInfo {
   const stockMonth = lastCompleteMonth(cfg.stockDate);
   const lastHistoryMonth = ds.months.length > 0 ? ds.months[ds.months.length - 1] : null;
-  const end = cfg.historyAnchor === "strict" || lastHistoryMonth === null ? stockMonth : lastHistoryMonth;
+  // Months after the stock date are never used, even if the workbook has them.
+  const end = cfg.historyAnchor === "strict" || lastHistoryMonth === null || lastHistoryMonth > stockMonth ? stockMonth : lastHistoryMonth;
   const months = monthsEndingAt(end, cfg.forecastWindowMonths);
   const have = new Set(ds.months);
   return {
@@ -256,6 +264,7 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
     anomaliesExcluded: anomalies.filter((a) => a.excluded).length,
     tenderExemptSkus: skus.filter((s) => s.tenderExempt).length,
     skusWithoutForecast: skus.filter((s) => s.forecast.status === "insufficient").length,
+    exclusionsApplied: [...excl.values()].reduce((a, m) => a + m.size, 0),
     availableMismatchSkus: skus.filter((s) => s.availableDifference !== null && Math.abs(s.availableDifference) > EPS).length,
   };
 

@@ -10,8 +10,14 @@ import { stateDir } from "./exclusions";
  * Scenario A page; it is never taken from the request verbatim.
  */
 
+/** Only loopback names are served. This defeats DNS rebinding, where an attacker's name resolves to 127.0.0.1 and the Host/Origin pair still match. */
+export function isLoopbackHost(host: string | null): boolean {
+  return host !== null && /^(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$/i.test(host);
+}
+
 function sameOrigin(request: Request): boolean {
   const host = request.headers.get("host");
+  if (!isLoopbackHost(host)) return false;
   const origin = request.headers.get("origin");
   if (origin !== null && host !== null) {
     try {
