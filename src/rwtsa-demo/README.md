@@ -1,4 +1,4 @@
-# RWTSA demonstration: local workbook adapter (PR-1)
+# RWTSA demonstration: local workbook adapter (PR-1) and shell state (PR-2)
 
 Local, read-only, offline foundation for the RWTSA vendor demonstration. **No Supabase client, no Cin7 client, no
 network code, no database migration, no credentials** in the audited code (see "What the boundary test proves"). Nothing here changes the deployed Toolbox application.
@@ -12,9 +12,11 @@ network code, no database migration, no credentials** in the audited code (see "
 | `reconcile.ts` | Deterministic control totals and a canonical content hash. |
 | `findings.ts` | Value-free findings and errors. |
 | `fixtures/synthetic.ts` | Seeded **synthetic** workbook generator (tests only; never committed as a file). |
+| `state/` | PR-2: scenario metadata (delivery layers, assumptions), the demo state loader and the pure views the shell renders. READY is derived only from the validator's per-scenario flags. |
 | `../../scripts/rwtsa-demo/validate.ts` | Local structure-only validation of the protected workbook. |
+| `../../rwtsa-demo/` | PR-2: the standalone local-only Next.js shell (see its README). |
 
-Calculation engines (Red Flag, landed cost, variance, BOM/cost, quotes, Fast React) are **not** in this PR.
+Calculation engines (Red Flag, landed cost, variance, BOM/cost, quotes, Fast React) do not exist yet; the shell shows labelled placeholders only.
 
 ## STRUCTURE PASS is not readiness
 
@@ -79,7 +81,7 @@ error or safety refusal.
 ## What the boundary test proves (and does not)
 
 `__tests__/boundary.test.ts` + `boundary-scanner.ts` parse every code file (`.ts .tsx .js .jsx .cts .cjs .mts .mjs`,
-tests included) under `src/rwtsa-demo`, `scripts/rwtsa-demo` and `rwtsa-demo/` with the TypeScript AST, and follow
+tests included) under `src/rwtsa-demo`, `scripts/rwtsa-demo` and `rwtsa-demo/` with the TypeScript AST (three profiles: runtime, app, test), and follow
 first-party imports transitively (currently also `src/lib/csv-upload-limits.ts` and `src/lib/format-count.ts`), resolving
 canonical real paths (no string-prefix comparison; symlinks inside the boundary are violations). It proves that the
 audited code: imports only an allowlist (`exceljs`, `zod`, `node:fs`, `node:path`, `node:crypto`, `node:os`; tests add

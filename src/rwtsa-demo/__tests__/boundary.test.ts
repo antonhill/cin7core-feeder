@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CODE_EXTENSIONS, scanFile, scanTree, type Profile, type ScanContext } from "@/rwtsa-demo/__tests__/boundary-scanner";
@@ -17,7 +17,12 @@ const ROOT = realpathSync(path.join(__dirname, "..", "..", ".."));
 const REAL_CTX: ScanContext = {
   rootDir: ROOT,
   boundaryRoots: [path.join(ROOT, "src", "rwtsa-demo"), path.join(ROOT, "scripts", "rwtsa-demo"), path.join(ROOT, "rwtsa-demo")],
-  externalFiles: [path.join(ROOT, "src", "lib", "csv-upload-limits.ts"), path.join(ROOT, "src", "lib", "format-count.ts")],
+  externalFiles: [
+    path.join(ROOT, "src", "lib", "csv-upload-limits.ts"),
+    path.join(ROOT, "src", "lib", "format-count.ts"),
+    // The approved presentational Toolbox components the standalone shell reuses (all import nothing).
+    ...["Alert", "Badge", "EmptyState", "Panel", "Table"].map((n) => path.join(ROOT, "src", "components", "ui", `${n}.tsx`)),
+  ],
 };
 const VIRTUAL_FILE = path.join(ROOT, "src", "rwtsa-demo", "workbook", "virtual-snippet.ts");
 
@@ -127,6 +132,81 @@ describe("negative tests: every bypass identified in the review of PR #129 is no
   });
 });
 
+describe("app profile: the standalone shell may use React and next/link, nothing else from Next", () => {
+  const appFile = path.join(ROOT, "rwtsa-demo", "components", "virtual.tsx");
+  const app = (text: string) => snippet(text, "app", appFile);
+
+  it("allows react, next (types) and next/link, the audited RWTSA code and the approved UI files", () => {
+    expect(app(`import Link from "next/link";\nimport type { NextConfig } from "next";\nimport { Badge } from "@/components/ui/Badge";\nimport { overviewView } from "@/rwtsa-demo/state/demo-state";\nexport const x = <Link href="/">a</Link>;`)).toEqual([]);
+  });
+
+  for (const [label, src] of [
+    ["next/font/google (remote fonts)", `import { Geist } from "next/font/google";`],
+    ["next/font/local", `import localFont from "next/font/local";`],
+    ["next/image", `import Image from "next/image";`],
+    ["next/script", `import Script from "next/script";`],
+    ["next/headers", `import { cookies } from "next/headers";`],
+    ["next/server", `import { NextResponse } from "next/server";`],
+    ["next/navigation", `import { redirect } from "next/navigation";`],
+    ["react-dom/server in app code", `import { renderToString } from "react-dom/server";`],
+    ["an analytics package", `import { Analytics } from "@vercel/analytics/react";`],
+    ["a root application module", `import { x } from "@/lib/billing";`],
+    ["supabase", `import { createClient } from "@supabase/supabase-js";`],
+    ["fetch in a component", `export async function C() { await fetch("/api"); return null; }`],
+    ["a credential env var", `export const k = process.env.NEXT_PUBLIC_SUPABASE_URL;`],
+    ["a remote URL literal", `export const u = "https://fonts.googleapis.com/css2";`],
+    ["a protocol-relative <img>", `export const a = <img src="//evil.example/x.png" />;`],
+    ["a protocol-relative stylesheet link", `export const a = <link rel="stylesheet" href="//e/x.css" />;`],
+    ["a protocol-relative meta refresh", `export const a = <meta httpEquiv="refresh" content="0;url=//e" />;`],
+    ["a protocol-relative CSS @import in a template", "export const a = <style>{`@import url(//e/a.css)`}</style>;"],
+    ["the 'use client' directive", `"use client";\nexport const a = 1;`],
+    ["document (DOM script injection)", `export const a = () => document.createElement("script");`],
+    ["new Image() beacon", `export const a = () => { new Image().src = "x"; };`],
+    ["location redirect", `export const a = () => { location.href = "x"; };`],
+    ["localStorage", `export const a = () => localStorage.getItem("k");`],
+  ] as const) {
+    it(`flags: ${label}`, () => expect(app(src).length).toBeGreaterThan(0));
+  }
+
+  it("loopback URLs are allowed in test files only; external URLs are flagged everywhere", () => {
+    const t = path.join(ROOT, "rwtsa-demo", "__tests__", "virtual.test.ts");
+    expect(snippet("const u = `http://127.0.0.1:${port}/`; const v = 'http://localhost:3000/x';", "test", t)).toEqual([]);
+    expect(snippet("const u = 'http://127.0.0.1:3000/';", "app", appFile).length).toBeGreaterThan(0);
+    expect(snippet("const u = 'http://127.0.0.1:3000/';", "runtime").length).toBeGreaterThan(0);
+    // Built from parts so this test file itself contains no URL literal for the scanner to flag.
+    const bads: [string, string][] = [["https", "example.com/"], ["http", "127.0.0.1.evil.example/"], ["http", "localhost.evil.example/"], ["http", "0.0.0.0:3000/"], ["ftp", "127.0.0.1/"]];
+    for (const [scheme, rest] of bads) {
+      expect(snippet(`const u = '${scheme}:` + `//${rest}';`, "test", t).length, `${scheme} ${rest}`).toBeGreaterThan(0);
+    }
+  });
+
+  it("reads only named RWTSA_* environment variables, plus NODE_ENV (to detect `next dev`)", () => {
+    expect(app(`export const s = process.env.RWTSA_SOURCE;`)).toEqual([]);
+    expect(app(`export const d = process.env.NODE_ENV === "development";`)).toEqual([]);
+    for (const bad of [`process.env.PATH`, `process.env.HOME`, `process.env["NODE_OPTIONS"]`, `process.env.NODE_ENV_X`, `const { NODE_ENV } = process.env`, `use(process.env)`]) {
+      expect(app(`export const x = ${bad};`).length, bad).toBeGreaterThan(0);
+    }
+  });
+
+  it("a protocol-relative URL is flagged in runtime code too, but a comment-like string with a space is not", () => {
+    expect(snippet(`export const u = "//cdn.example/x.js";`).length).toBeGreaterThan(0);
+    expect(app(`export const note = "// not a url";`)).toEqual([]);
+  });
+
+  it("no stylesheet under rwtsa-demo/ (any file), nor the Toolbox stylesheet it imports, references a remote resource", () => {
+    const cssIn = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? (e.name === "node_modules" ? [] : cssIn(path.join(dir, e.name))) : e.name.endsWith(".css") ? [path.join(dir, e.name)] : []));
+    const css = [...cssIn(path.join(ROOT, "rwtsa-demo")), path.join(ROOT, "src", "app", "globals.css")];
+    expect(css.length).toBeGreaterThanOrEqual(2);
+    for (const f of css) {
+      const text = readFileSync(f, "utf8");
+      expect(text, f).not.toMatch(/https?:\/\//i);
+      expect(text, f).not.toMatch(/url\s*\(/i);
+      expect(text, f).not.toMatch(/@import\s+url/i);
+    }
+  });
+});
+
 describe("walker and transitive closure on a temporary tree", () => {
   let tmp: string;
   let ctx: ScanContext;
@@ -140,6 +220,14 @@ describe("walker and transitive closure on a temporary tree", () => {
     mkdirSync(path.dirname(path.join(tmp, rel)), { recursive: true });
     writeFileSync(path.join(tmp, rel), text);
   };
+
+  it("skips only Next's generated next-env.d.ts, not other .d.ts files", () => {
+    put("src/rwtsa-demo/next-env.d.ts", `import "./../elsewhere/leak";`);
+    put("src/rwtsa-demo/other.d.ts", `import "./../elsewhere/leak";`);
+    const { violations } = scanTree(ctx);
+    expect(violations.some((v) => v.includes("next-env.d.ts"))).toBe(false);
+    expect(violations.some((v) => v.includes("other.d.ts"))).toBe(true);
+  });
 
   it("scans every code extension (.ts .tsx .js .jsx .cts .cjs .mts .mjs) and reports each offender", () => {
     for (const ext of CODE_EXTENSIONS) put(`src/rwtsa-demo/bad${ext}`, `export const x = fetch("u");`);

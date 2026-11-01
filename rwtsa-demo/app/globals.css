@@ -1,0 +1,4 @@
+/* Design tokens and Tailwind come from the Toolbox stylesheet; nothing here loads a remote resource. */
+@import "../../src/app/globals.css";
+@source "../../src/components/ui";
+@source "../";
