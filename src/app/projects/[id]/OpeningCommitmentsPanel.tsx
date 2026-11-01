@@ -18,6 +18,8 @@ export function OpeningCommitmentsPanel({ view, isAdmin, run, working }: { view:
   const [vals, setVals] = useState<Record<string, string>>(() => Object.fromEntries(view.stages.map((s) => [s.id, existing.has(s.id) ? String((existing.get(s.id) as number) / 100) : ""])));
   const [reason, setReason] = useState(view.openingCommitments[0]?.reason ?? DEFAULT_REASON);
   const locked = view.openingCommitmentsLocked;
+  const [expanded, setExpanded] = useState(false); // collapsed by default: most Projects have no opening commitments
+  const has = view.openingCommitments.length > 0;
   const total = view.openingCommitments.reduce((n, o) => n + o.amount_cents, 0);
   if (!isAdmin && view.openingCommitments.length === 0) return null;
 
@@ -29,6 +31,15 @@ export function OpeningCommitmentsPanel({ view, isAdmin, run, working }: { view:
       {locked ? (
         <p className="mt-3 text-sm text-slate-600">Frozen — a claim exists. Total opening commitments: <strong className="tabular-nums">{formatCents(total)}</strong>.</p>
       ) : null}
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+        {has
+          ? <span className="text-slate-700">Recorded: <strong className="tabular-nums">{formatCents(total)}</strong> across {view.openingCommitments.length} stage{view.openingCommitments.length === 1 ? "" : "s"}.</span>
+          : <span className="text-slate-600">None recorded.</span>}
+        {(has || (isAdmin && !locked)) && (
+          <Button size="sm" variant="secondary" onClick={() => setExpanded((v) => !v)}>{expanded ? "Hide details" : has ? (isAdmin && !locked ? "View / edit" : "View details") : "Add Opening Commitments"}</Button>
+        )}
+      </div>
+      {expanded && <>
       <div className="mt-4 overflow-x-auto">
         <table className="w-full max-w-xl text-sm">
           <thead><tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500"><th className="py-2 text-left">Stage</th><th className="py-2 text-right">Stage value</th><th className="py-2 text-right">Opening committed (R)</th></tr></thead>
@@ -55,6 +66,7 @@ export function OpeningCommitmentsPanel({ view, isAdmin, run, working }: { view:
           <Button loading={working} disabled={!reason.trim()} onClick={() => run(() => setOpeningCommitmentsAction(view.project.id, view.stages.map((s) => ({ stageId: s.id, rands: vals[s.id] ?? "" })), reason), "Opening commitments saved. They now count toward billed / committed.")}>Save opening commitments</Button>
         </div>
       )}
+      </>}
       {!isAdmin && <p className="mt-3 text-xs text-slate-500">Only a manager (org owner/admin) can set opening commitments.</p>}
     </Panel>
   );

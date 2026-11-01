@@ -15,16 +15,16 @@ BLOCKED BY EXTERNAL INTEGRATION, DEFERRED WITH REASON, plus NOT STARTED (work no
 | UAT-006 | Estimator sign-off button persists | IMPLEMENTED, AWAITING LIVE UAT | PR-A | completed state in UI; server refuses a second sign-off, atomic `is null` guard; test + mutation |
 | UAT-007 | Customer emails missing from Outlook | INVESTIGATION COMPLETE, DECISION NEEDED | - | Both sends recorded ACCEPTED with Resend IDs (07:04:08Z first send, 07:07:04Z deliberate re-send, rep@ as sender, [PREVIEW] subject). Application side is consistent; not a sending-code defect on this evidence. Toolbox notifications from the same sender domain DID reach the mailbox (07:00, 07:16Z), and the Junk folder holds neither quote email, so the loss is specific to the customer-quote message (likely tenant quarantine / anti-spoof or attachment policy). Owner check: Microsoft 365 Message trace + Quarantine for 07:04-07:08Z. No emails sent. |
 | UAT-008 | Create Project visible to Reps | IMPLEMENTED, AWAITING LIVE UAT | PR-A | server requires Manager (`PROJECT_CREATE_ROLES`); UI hides control; mutation killed |
-| UAT-009 | Opening Commitments collapsed by default | NOT STARTED | - | - |
+| UAT-009 | Opening Commitments collapsed | IMPLEMENTED, AWAITING LIVE UAT | PR-C | collapsed by default with a compact summary and 'Add Opening Commitments'; calculations and freeze rules untouched; source-level test only |
 | UAT-010 | Cin7 location / account dropdowns | NOT STARTED | - | needs Cin7 account-type acceptance evidence |
-| UAT-011 | Cin7 Sale confirmation checkbox | NOT STARTED | - | - |
-| UAT-012 | Cin7 Sale wording / recovery section | NOT STARTED | - | - |
+| UAT-011 | Cin7 Sale confirmation friction | IMPLEMENTED, AWAITING LIVE UAT | PR-C | unchecked confirmation checkbox replaces the typed phrase; server token, writes flag, instance pin and one-Sale rule unchanged; mutation killed |
+| UAT-012 | Confusing Cin7 Sale wording | IMPLEMENTED, AWAITING LIVE UAT | PR-C | 'Sales Order' wording and a linked-order summary; attach-existing stays inside the admin-only 'Advanced / administrative recovery' section with its validation |
 | UAT-013 | Selective progress claims | IMPLEMENTED, AWAITING LIVE UAT (migration 0120 NOT applied) | PR-B (#136) + PR-D | Stage selection (#136) and partial amounts (PR-D): engine/store/actions/UI, migration 0120 + SQL test (runs in CI only; no local Postgres), 14 financial tests, 8 mutations killed. Partial claims need 0120 applied before they can be saved; full claims work without it. Plan: docs/projects-poc/migration-plan-0120-partial-claims.md |
-| UAT-014 | Preview Claim / Refresh Preview | NOT STARTED | - | - |
+| UAT-014 | Preview Claim button | IMPLEMENTED, AWAITING LIVE UAT | PR-C | 'Refresh preview' when stale, disabled when current, Save disabled while stale; preview stays read-only; 2 tests + mutation |
 | UAT-015 | Claim History redesign | NOT STARTED | - | status/next-action clarity partly addressed by UAT-016/017/022 |
 | UAT-016 | Claim actions after submission | IMPLEMENTED, AWAITING LIVE UAT | PR-A | no Recalculate/Submit when submitted (UI + server); Cancel relabelled "Withdraw claim"; 2 existing tests moved to the controlled return-to-draft path |
 | UAT-017 | Manager approval navigation | IMPLEMENTED, AWAITING LIVE UAT | PR-A | "Open in Approvals" link; waiting text names the real stage role |
-| UAT-018 | Approval filter visibility | NOT STARTED | - | - |
+| UAT-018 | Approval filters | IMPLEMENTED, AWAITING LIVE UAT | PR-C | active-filter chips (including the default Pending status) and Clear filters; 3 tests + mutation |
 | UAT-019/020 | Cin7 billing vs fulfilment | INVESTIGATION COMPLETE, DECISION NEEDED | PR-B (doc only) | `docs/projects-poc/uat-019-020-cin7-billing-vs-fulfilment.md`: code supports the required sequences; Cin7 behaviour for fulfilment after invoicing and bulk population is UNPROVEN; controlled proof proposed, not run |
 | UAT-021 | Project operations layout | NOT STARTED | - | - |
 | UAT-022 | Incorrect Cin7 claim status | IMPLEMENTED, AWAITING LIVE UAT | PR-A | root cause: history read legacy `project_cin7_links` (0 rows); now reads `project_claim_cin7_postings` (C01 = RECONCILED, INV-00032, DRAFT); 4 tests; mutation killed |

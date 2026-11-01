@@ -13,10 +13,10 @@ export function filterQueue(rows: readonly ApprovalRequestRow[], f: QueueFilters
   return rows.filter((r) => {
     if (f.mine && !(r.status === "PENDING" ? awaitsMe(r, me, myRoles) : lc(r.assigned_to_email) === lc(me))) return false;
     if (f.docType && r.doc_type !== f.docType) return false;
-    if (f.customer && !lc(r.customer_name).includes(lc(f.customer))) return false;
-    if (f.project && !(lc(r.project_ref).includes(lc(f.project)) || lc(r.doc_ref).includes(lc(f.project)))) return false;
-    if (f.preparer && !lc(r.prepared_by_email).includes(lc(f.preparer))) return false;
-    if (f.assignee && !lc(r.assigned_to_email).includes(lc(f.assignee))) return false;
+    if (f.customer?.trim() && !lc(r.customer_name).includes(lc(f.customer?.trim()))) return false;
+    if (f.project?.trim() && !(lc(r.project_ref).includes(lc(f.project?.trim())) || lc(r.doc_ref).includes(lc(f.project?.trim())))) return false;
+    if (f.preparer?.trim() && !lc(r.prepared_by_email).includes(lc(f.preparer?.trim()))) return false;
+    if (f.assignee?.trim() && !lc(r.assigned_to_email).includes(lc(f.assignee?.trim()))) return false;
     if (f.status && f.status !== "ANY" && r.status !== f.status) return false;
     if (f.from && r.submitted_at < f.from) return false;
     if (f.to && r.submitted_at > f.to) return false;
@@ -74,3 +74,22 @@ export function currentReturned(rows: readonly ApprovalRequestRow[]): ApprovalRe
   for (const r of rows) { const k = `${r.doc_type}:${r.doc_id}`; const c = latest.get(k); if (!c || r.revision > c.revision) latest.set(k, r); }
   return [...latest.values()].filter((r) => r.status === "RETURNED");
 }
+
+/** The filters that are ACTIVE (narrowing the list), as short labelled chips, so a hidden request is never a mystery. "Status: Any" is not active. */
+export interface ActiveFilter { key: keyof QueueFilters; label: string }
+export function activeFilters(f: QueueFilters, statusLabel: (s: ApprovalStatus) => string = (s) => s): ActiveFilter[] {
+  const out: ActiveFilter[] = [];
+  if (f.mine) out.push({ key: "mine", label: "My approvals" });
+  if (f.docType) out.push({ key: "docType", label: `Type: ${f.docType.toLowerCase()}` });
+  if (f.status && f.status !== "ANY") out.push({ key: "status", label: `Status: ${statusLabel(f.status)}` });
+  if (f.customer?.trim()) out.push({ key: "customer", label: `Customer: ${f.customer.trim()}` });
+  if (f.project?.trim()) out.push({ key: "project", label: `Project: ${f.project.trim()}` });
+  if (f.preparer?.trim()) out.push({ key: "preparer", label: `Submitted by: ${f.preparer.trim()}` });
+  if (f.assignee?.trim()) out.push({ key: "assignee", label: `Manager: ${f.assignee.trim()}` });
+  if (f.from) out.push({ key: "from", label: `From ${f.from.slice(0, 10)}` });
+  if (f.to) out.push({ key: "to", label: `To ${f.to.slice(0, 10)}` });
+  if (f.overdueOnly) out.push({ key: "overdueOnly", label: "Overdue only" });
+  return out;
+}
+/** Removes every narrowing filter (status goes to ANY, not back to the Pending default). */
+export const CLEARED_FILTERS: QueueFilters = { status: "ANY" };
