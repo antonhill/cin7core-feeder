@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Select } from "@/components/ui/Select";
+import { applyDecision, showDecisionPanel } from "@/lib/approvals/detail-state";
 import { formatSast, isOverdue, waitingLabel } from "@/lib/approvals/time";
 import { DOC_TYPE_LABEL, STATUS_LABEL, type ApprovalAction, type ApprovalStatus } from "@/lib/approvals/types";
 import { decideApprovalAction, getApprovalDetailAction, reassignApprovalAction, type ApprovalDetail } from "../actions";
@@ -32,7 +33,7 @@ export default function ApprovalDetailPage() {
   const [busy, setBusy] = useState(false);
   const [newApprover, setNewApprover] = useState("");
 
-  const load = useCallback(() => { getApprovalDetailAction(id).then((r) => { if (r.ok && r.data) { setD(r.data); setError(null); } else setError(r.error ?? "Could not load this approval."); }); }, [id]);
+  const load = useCallback(() => { getApprovalDetailAction(id).then((r) => { if (r.ok && r.data) { setD((cur) => (cur && cur.request.status !== "PENDING" && r.data!.request.status === "PENDING" ? cur : r.data!)); setError(null); } else setError(r.error ?? "Could not load this approval."); }); }, [id]);
   useEffect(load, [load]);
 
   if (!d) return <main className="mx-auto w-full max-w-[1200px] px-6 py-12"><ModuleHeader module={APPROVALS_MODULE}>Approval</ModuleHeader>{error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <p className="mt-6 text-sm text-slate-500">Loading…</p>}</main>;
@@ -42,8 +43,10 @@ export default function ApprovalDetailPage() {
   const docHref = r.doc_type === "QUOTE" ? `/newquip-grower/${r.doc_id}` : r.project_id ? `/projects/${r.project_id}` : "/projects";
   const decide = async (action: ApprovalAction) => {
     setBusy(true); setNotice(null);
+    if (r.status !== "PENDING") { setBusy(false); return; } // a decided request can never be decided again from this page
     const res = await decideApprovalAction(r.id, action, { reason, override, destination: action === "RETURN" && d.can.returnToEstimator ? returnTo : undefined, expectedVersion: r.version, expectedDigest: r.digest });
     setBusy(false);
+    if (res.ok && res.data) setD((cur) => (cur ? applyDecision(cur, res.data!) : cur));
     if (res.ok) { setNotice(action === "APPROVE" ? "Approved. This authorises the document only; nothing was sent to Cin7." : action === "RETURN" ? "Returned to the preparer for changes." : action === "REJECT" ? "Rejected." : "Withdrawn."); setMode(null); setReason(""); setOverride(false); }
     else setNotice(res.error ?? "The decision was not recorded.");
     load();
@@ -78,7 +81,17 @@ export default function ApprovalDetailPage() {
         </Panel>
       ))}
 
-      {r.status === "PENDING" && (d.can.decide || d.can.withdraw) && (
+      {r.status !== "PENDING" && r.decided_at && (
+        <Panel className="mt-4">
+          <PanelTitle>Decision recorded</PanelTitle>
+          <p className="mt-2 text-sm text-slate-800"><Badge tone={TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge> by <strong>{r.decided_by_name ?? r.decided_by_email}</strong> on {formatSast(r.decided_at)}.</p>
+          {r.admin_override && <div className="mt-2"><Alert tone="warning"><strong>Administrator override of separation of duties.</strong> {r.decision_reason ? `Reason given: ${r.decision_reason}` : "No reason was recorded."}</Alert></div>}
+          {!r.admin_override && r.decision_reason && <p className="mt-2 text-sm text-slate-700"><strong>Reason:</strong> {r.decision_reason}</p>}
+          <p className="mt-2 text-xs text-slate-500">This decision is final. It cannot be repeated or changed from here.</p>
+        </Panel>
+      )}
+
+      {showDecisionPanel(d) && (
         <Panel className="mt-4">
           <PanelTitle>Decision</PanelTitle>
           {d.can.needsOverride && <div className="mt-2"><Alert tone="warning">You prepared this submission. You can approve it only as an explicit administrator override with a written reason, which is permanently recorded. You can still return or reject it.</Alert></div>}
