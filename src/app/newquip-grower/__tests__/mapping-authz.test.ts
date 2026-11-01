@@ -52,6 +52,37 @@ async function storedQuote() {
 }
 const mapped = async (id: string) => (await loadQuote(db as never, ORG, id))!.draft.estimator.confirmedMappings;
 
+vi.mock("@/lib/projects/catalogue-search", () => ({
+  searchCatalogue: vi.fn(async () => ({ outcome: "FOUND", products: [{ sku: "THOMAS-CL1", name: "Thomas CL1 controller", type: "Stock", active: true, available: null, stocked: true }], detail: "1 product found.", truncated: false })),
+}));
+
+describe("the product chooser's catalogue search (UAT-001)", () => {
+  it("an Estimator can search the catalogue for the controller; a Rep is refused and no search runs", async () => {
+    const { searchCatalogue } = await import("@/lib/projects/catalogue-search");
+    asRoles("REP", "ESTIMATOR");
+    const ok = await actions.searchCin7CatalogueForMappingAction("controller");
+    expect(ok.ok).toBe(true);
+    expect(ok.data?.products.map((p) => p.sku)).toEqual(["THOMAS-CL1"]);
+    vi.mocked(searchCatalogue).mockClear();
+    asRoles("REP");
+    const refused = await actions.searchCin7CatalogueForMappingAction("controller");
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toMatch(/Only an Estimator or Manager can map a product/);
+    expect(searchCatalogue).not.toHaveBeenCalled();
+  });
+  it("an Estimator can store the controller mapping, and it is verified against the catalogue; a Rep cannot", async () => {
+    db.rows("products").push({ org_id: ORG, sku: "THOMAS-CL1", name: "Thomas CL1 controller", active: true });
+    const id = await storedQuote();
+    const d = readyDraft();
+    d.estimator.confirmedMappings = { ...d.estimator.confirmedMappings, controller: "THOMAS-CL1" };
+    asRoles("REP");
+    expect((await actions.saveGrowerDraftAction(id, d)).error).toMatch(/Only an Estimator or Manager/);
+    asRoles("REP", "ESTIMATOR");
+    expect((await actions.saveGrowerDraftAction(id, d)).ok).toBe(true);
+    expect((await mapped(id)).controller).toBe("THOMAS-CL1");
+  });
+});
+
 describe("a Rep cannot change a product mapping", () => {
   it("not a non-optional one (pvc_door), not the source-backed ones, not an optional one — each is refused and nothing is stored", async () => {
     const id = await storedQuote();
