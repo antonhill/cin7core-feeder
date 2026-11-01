@@ -364,6 +364,16 @@ describe("UAT-027: commercial-only variation Sale with Cin7's empty fulfilment c
     expect(port.creates).toHaveLength(1);
   });
 
+  it("the live SO-00028 shape (Ship also carries ShippingAddress and ShippingNotes): Reconcile links the same Sale, creating nothing", async () => {
+    port.tamper = withFulfilments([{ ...EMPTY[0], Pick: { Status: "AUTHORISED", Lines: [{ SKU: "NQ2886", Quantity: 1 }] } }]);
+    await createVariation(); // created, refused (stock activity), unlinked
+    const saleId = String(variationRow()!.cin7_sale_id);
+    const live = [{ ...EMPTY[0], Ship: { Status: "AUTHORISED", RequireBy: null, ShippingAddress: { DisplayAddressLine1: "Test Farm 1", City: "Brits" }, ShippingNotes: "Leave at gate", Lines: [] } }];
+    port.sales.set(saleId, withFulfilments(live)(port.sales.get(saleId)!));
+    expect(await reconcileSaleCreation(db as never, port, { isManager: true }, "mgr@x", { orgId: ORG, projectId: pid })).toMatchObject({ state: "RECONCILED", linked: true });
+    expect(db.rows("project_cin7_sale_links").filter((l) => l.project_id === pid)).toHaveLength(1);
+    expect(port.creates).toHaveLength(1);
+  });
   it("Reconcile still refuses a Sale with real shipments", async () => {
     port.tamper = withFulfilments([{ ...EMPTY[0], Ship: { Status: "AUTHORISED", Lines: [{ IsShipped: true, ShipmentDate: "2026-11-01" }] } }]);
     await createVariation();

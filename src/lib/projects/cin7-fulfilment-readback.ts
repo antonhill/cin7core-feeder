@@ -20,7 +20,8 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object
 
 /** The only fields Cin7 documents on a stage (src/cin7/sales.ts). Any other key might carry stock we do not understand, so it makes the fulfilment unreadable. */
 const PICK_PACK_KEYS = new Set(["Status", "Lines"]);
-const SHIP_KEYS = new Set(["Status", "RequireBy", "Lines"]);
+/** Ship also carries ShippingAddress and ShippingNotes (seen live on SO-00028): where a shipment would go and a note. Metadata only - movement is evidenced solely by Ship.Lines (IsShipped, ShipmentDate), which are still read. */
+const SHIP_KEYS = new Set(["Status", "RequireBy", "ShippingAddress", "ShippingNotes", "Lines"]);
 function unknownKeys(stage: Record<string, unknown>, name: string, allowed: Set<string>, unreadable: string[]) {
   for (const k of Object.keys(stage)) if (!allowed.has(k)) unreadable.push(`${name} has an unexpected field "${k.slice(0, 40)}"`);
 }
