@@ -278,6 +278,16 @@ describe("grouping and reconciliation", () => {
     expect(rep.completeness).toMatchObject({ complete: true, scope: "filtered" });
     expect(rep.completeness.notes.join(" ")).toMatch(/1 of 2 quotes/);
   });
+  it("an undated quote that another filter already excludes is not counted as dropped by the date range", () => {
+    const specs: QSpec[] = [{ no: "a", status: "won", so: "S", rep: "R1", date: "2026-02-01" }, { no: "b", status: "lost", reason: "x", rep: "R2", date: null }];
+    const r = run(specs, { rep: "R1", from: "2026-01-01" });
+    expect(r.filtered.undatedExcluded).toBe(0);
+    expect(r.completeness.complete).toBe(true);
+    expect(r.completeness.scope).toBe("filtered");
+    const own = run([{ no: "c", status: "lost", reason: "x", rep: "R1", date: null }], { rep: "R1", from: "2026-01-01" });
+    expect(own.filtered.undatedExcluded).toBe(1);
+    expect(own.completeness.complete).toBe(false);
+  });
   it("representative and customer filters narrow every table", () => {
     const r = run(REFERENCE, { rep: "R2" });
     expect(r.total).toMatchObject({ quotes: 3, lost: 2, open: 1 });

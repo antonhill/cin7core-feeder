@@ -11,5 +11,6 @@ describe("rate formatting never rounds to a false extreme", () => {
     expect(formatRate(99.97)).toBe(">99.9%");
     expect(formatRate(99.94)).toBe("99.9%");
     expect(formatRate(55.5556)).toBe("55.6%");
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, -0.01]) expect(formatRate(bad)).toBe("N/A");
   });
 });

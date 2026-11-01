@@ -334,14 +334,15 @@ export function runQuoteConversion(ds: RwtsaDataset, opts: QuoteOptions = {}): Q
   const dateFiltered = (opts.from ?? null) !== null || (opts.to ?? null) !== null;
   let undatedExcluded = 0;
   const records = everyRecord.filter((q) => {
+    if (opts.rep && fold(repLabel(q)) !== fold(opts.rep)) return false;
+    if (opts.customer && fold(q.customer) !== fold(opts.customer)) return false;
+    if (opts.product && !q.products.some((p) => fold(p) === fold(opts.product as string))) return false;
+    // The date range goes last, so only quotes the other filters would keep are counted as dropped for lack of a date.
     if (dateFiltered) {
       if (q.date === null) { undatedExcluded++; return false; }
       if (opts.from && q.date < opts.from) return false;
       if (opts.to && q.date > opts.to) return false;
     }
-    if (opts.rep && fold(repLabel(q)) !== fold(opts.rep)) return false;
-    if (opts.customer && fold(q.customer) !== fold(opts.customer)) return false;
-    if (opts.product && !q.products.some((p) => fold(p) === fold(opts.product as string))) return false;
     return true;
   });
 

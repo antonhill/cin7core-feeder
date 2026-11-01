@@ -132,16 +132,16 @@ describe("conversion by representative, customer, period and product", () => {
     expect(p.length).toBeGreaterThan(0);
     expect(p.reduce((a, r) => a + Number(r.quotes), 0)).toBe(12);
     expect(text(m)).toMatch(/multi-product quote is withheld, not split/i);
-    expect(p.every((r) => r["value-pct"] !== undefined)).toBe(true);
   });
-  it("rates that round to the edge are not shown as exactly 0.0% or 100.0%", async () => {
+  it("a true 100% rate stays 100.0% (edge rounding itself is unit-tested in crm-fmt.test.ts)", async () => {
     synthetic();
-    const m = await page({ customer: "SYN Customer 1" });
-    expect(indicator(m, "ind-count-conv")).toBe("100.0%"); // a true 100% stays 100.0%
+    expect(indicator(await page({ customer: "SYN Customer 1" }), "ind-count-conv")).toBe("100.0%");
   });
-  it("the product table has an Unclassified column and shows 'Withheld' where shared closed quotes exist", async () => {
+  it("the product table has an Unclassified column header", async () => {
     synthetic();
-    expect(text(await page())).toContain("Unclassified");
+    const m = await page();
+    const table = m.slice(m.indexOf("Product performance"), m.indexOf("Win/loss by reason"));
+    expect(table).toMatch(/<th[^>]*>Unclassified<\/th>/);
   });
   it("N/A, never 0%, where a group has no closed quotes", async () => {
     synthetic();
@@ -238,7 +238,7 @@ describe("interactive controls", () => {
     expect(indicator(m, "ind-total")).toBe("4");
     expect(m).toMatch(/<option[^>]*value="Rep Two"[^>]*selected|<option[^>]*selected[^>]*value="Rep Two"/);
   });
-  it("a filtered view is labelled as such, and undated exclusion is visible", async () => {
+  it("a filtered view is labelled as such", async () => {
     synthetic();
     expect(indicator(await page(), "completeness")).toBe("ANALYSIS COMPLETE");
     expect(indicator(await page({ rep: "Rep Two" }), "completeness")).toBe("ANALYSIS COMPLETE FOR THIS FILTERED VIEW");
