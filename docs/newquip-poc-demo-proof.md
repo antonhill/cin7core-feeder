@@ -106,10 +106,13 @@ No transaction below is authorised. Each needs its own explicit "GO <step>" (pla
 | Cin7 populate vs Additional Charges | T6 | Whether Cin7's own populate function would double revenue |
 | Reconcile INV-00037 | owner clicks **Reconcile with Cin7 (read-only)** on PRJ-NQ-Q-0017, claim C05 | Moves the posting from `CREATED` to `RECONCILED`; read-only; recommended before the demo |
 
-## 5. Workstreams C and D
+## 5. Workstreams C and D (separate PRs, all against #126, none merged)
 
-Delivered in separate PRs (numbers and heads are in the final report):
-**PR A, UAT-025/UAT-023:** inline action feedback with rendered tests. **PR B, executive Project dashboard.** The demo segments that use them are marked below.
+| PR | Content | Head | CI |
+|---|---|---|---|
+| #152 (PR A) | UAT-025 inline action feedback; UAT-023 root cause; rendered tests; no server action or policy change | `a413b65` | see final report |
+| #151 (PR B) | Executive Project Overview (read-only; unknowns stay unknown; cost/margin admin-only) | `f915635` | green |
+| this PR (PR C) | This document, the UAT register update, `poc-scenarios.test.ts` | see PR | see PR |
 
 ## 6. Twenty-minute demonstration
 
