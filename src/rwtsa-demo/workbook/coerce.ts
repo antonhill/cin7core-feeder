@@ -68,6 +68,10 @@ export function coerceCell(spec: FieldSpec, raw: unknown): CellResult {
         const s = raw.trim().toLowerCase();
         if (["yes", "y", "true", "1"].includes(s)) return { ok: true, value: true };
         if (["no", "n", "false", "0"].includes(s)) return { ok: true, value: false };
+        if (spec.boolPrefix) {
+          const m = /^(yes|no)(?=$|\s|\()/.exec(s);
+          if (m) return { ok: true, value: m[1] === "yes" };
+        }
       }
       return { ok: false, reason: "boolean_format" };
     }

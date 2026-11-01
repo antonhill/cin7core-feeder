@@ -5,6 +5,7 @@ import { MAX_CSV_COLUMNS, MAX_CSV_FIELD_LENGTH, MAX_CSV_ROWS } from "@/lib/csv-u
 import { normaliseHeader } from "@/rwtsa-demo/contracts/fields";
 import { TAB_NAMES, type TabName } from "@/rwtsa-demo/contracts/tabs";
 import { finding, RwtsaSafeError, type Finding } from "@/rwtsa-demo/findings";
+import { extractTable, SUPPLEMENTARY_SHEETS, type GridRow, type TabLayoutReport } from "@/rwtsa-demo/workbook/layouts";
 import { assertWorkbookPathAllowed } from "@/rwtsa-demo/workbook/path-guard";
 
 /**
@@ -28,9 +29,12 @@ export interface RawTable {
 export interface ReadResult {
   readonly tables: Partial<Record<TabName, RawTable>>;
   readonly findings: readonly Finding[];
+  /** Per-tab layout and row accounting (header row, title / note / trailing rows, derived values). */
+  readonly layout: Partial<Record<TabName, TabLayoutReport>>;
 }
 
 const TAB_BY_NORMALISED: ReadonlyMap<string, TabName> = new Map(TAB_NAMES.map((t) => [normaliseHeader(t), t]));
+const SUPPLEMENTARY: ReadonlySet<string> = new Set(SUPPLEMENTARY_SHEETS.map(normaliseHeader));
 
 interface FlatCounters {
   formulaNoResult: number;
@@ -70,23 +74,25 @@ export function flattenCell(value: unknown, counters: FlatCounters): unknown {
   return value;
 }
 
-function headerText(value: unknown): string {
-  if (value instanceof Date) return Number.isNaN(value.getTime()) ? "" : value.toISOString().slice(0, 7);
-  if (typeof value === "string") return value.trim();
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return "";
+/** True when the number format contains a real percent token (not one inside quotes, escaped, or in a [bracket] condition). */
+export function isPercentFormat(fmt: string): boolean {
+  return fmt.replace(/"[^"]*"/g, "").replace(/\\./g, "").replace(/\[[^\]]*\]/g, "").includes("%");
 }
 
 export function readWorkbook(wb: ExcelJS.Workbook): ReadResult {
   const findings: Finding[] = [];
   const tables: Partial<Record<TabName, RawTable>> = {};
+  const layout: Partial<Record<TabName, TabLayoutReport>> = {};
   let unknownTabs = 0;
+  let supplementary = 0;
   const duplicateSheets: Partial<Record<TabName, number>> = {};
 
   for (const ws of wb.worksheets) {
-    const tab = TAB_BY_NORMALISED.get(normaliseHeader(ws.name));
+    const key = normaliseHeader(ws.name);
+    const tab = TAB_BY_NORMALISED.get(key);
     if (!tab) {
-      unknownTabs++;
+      if (SUPPLEMENTARY.has(key)) supplementary++;
+      else unknownTabs++;
       continue;
     }
     if (tables[tab]) {
@@ -97,34 +103,42 @@ export function readWorkbook(wb: ExcelJS.Workbook): ReadResult {
     }
 
     const counters: FlatCounters = { formulaNoResult: 0, errorCells: 0, tooLong: 0 };
-    let headers: string[] | null = null;
-    const rowNumbers: number[] = [];
-    const rows: unknown[][] = [];
+    let percentCells = 0;
+    const columnScale = new Map<number, { pct: number; plain: number }>();
+    const grid: GridRow[] = [];
     let tooManyRows = false;
     let tooManyColumns = false;
 
     ws.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-      const values = (row.values as unknown[]).slice(1);
-      if (headers === null) {
-        if (values.length > MAX_CSV_COLUMNS) {
-          tooManyColumns = true;
-          headers = [];
-          return;
-        }
-        headers = values.map((v) => headerText(flattenCell(v, counters)));
+      if (tooManyColumns) return;
+      const width = (row.values as unknown[]).length - 1;
+      if (width > MAX_CSV_COLUMNS) {
+        tooManyColumns = true;
         return;
       }
-      if (tooManyColumns) return;
-      if (rows.length >= MAX_CSV_ROWS) {
+      if (grid.length >= MAX_CSV_ROWS + 1) {
         tooManyRows = true;
         return;
       }
-      const width = headers.length;
       const cells: unknown[] = [];
-      for (let c = 0; c < width; c++) cells.push(flattenCell(values[c], counters));
+      for (let c = 1; c <= width; c++) {
+        const cell = row.getCell(c);
+        let v = flattenCell(cell.value, counters);
+        // A cell FORMATTED as a percentage (0.0%, 0%) is read as it is displayed: 0.857 shown as 85.7% is 85.7. A bare
+        // number in a General cell is never reinterpreted.
+        if (typeof v === "number") {
+          const col = columnScale.get(c) ?? { pct: 0, plain: 0 };
+          if (typeof cell.numFmt === "string" && isPercentFormat(cell.numFmt)) {
+            v = Math.round(v * 100 * 1e9) / 1e9;
+            percentCells++;
+            col.pct++;
+          } else col.plain++;
+          columnScale.set(c, col);
+        }
+        cells.push(v);
+      }
       if (cells.every((c) => c === null || (typeof c === "string" && c.trim() === ""))) return; // fully blank row
-      rowNumbers.push(rowNumber);
-      rows.push(cells);
+      grid.push({ rowNumber, cells });
     });
 
     if (tooManyColumns) findings.push(finding({ severity: "error", code: "too_many_columns", tab, count: 1 }));
@@ -132,8 +146,15 @@ export function readWorkbook(wb: ExcelJS.Workbook): ReadResult {
     if (counters.tooLong > 0) findings.push(finding({ severity: "error", code: "cell_too_long", tab, count: counters.tooLong }));
     if (counters.formulaNoResult > 0) findings.push(finding({ severity: "warning", code: "formula_without_cached_result", tab, count: counters.formulaNoResult }));
     if (counters.errorCells > 0) findings.push(finding({ severity: "warning", code: "error_cell", tab, count: counters.errorCells }));
+    if (percentCells > 0) findings.push(finding({ severity: "info", code: "percent_cells_read_as_points", tab, count: percentCells }));
+    // A column holding both percent-formatted and plain numbers mixes scales (15% read as 15, a bare 0.15 left as 0.15).
+    const mixed = [...columnScale.values()].filter((x) => x.pct > 0 && x.plain > 0).length;
+    if (mixed > 0) findings.push(finding({ severity: "warning", code: "percent_scale_mixed", tab, count: mixed }));
 
-    tables[tab] = { tab, headers: headers ?? [], rowNumbers, rows };
+    const extracted = extractTable(tab, tooManyColumns ? [] : grid);
+    findings.push(...extracted.findings);
+    tables[tab] = extracted.table;
+    layout[tab] = extracted.report;
   }
 
   for (const tab of TAB_NAMES) {
@@ -141,9 +162,10 @@ export function readWorkbook(wb: ExcelJS.Workbook): ReadResult {
     const dup = duplicateSheets[tab];
     if (dup) findings.push(finding({ severity: "error", code: "duplicate_sheet", tab, count: dup }));
   }
+  if (supplementary > 0) findings.push(finding({ severity: "info", code: "supplementary_sheet", tab: null, count: supplementary }));
   if (unknownTabs > 0) findings.push(finding({ severity: "warning", code: "unknown_tab", tab: null, count: unknownTabs }));
 
-  return { tables, findings };
+  return { tables, findings, layout };
 }
 
 export interface FileReadResult extends ReadResult {

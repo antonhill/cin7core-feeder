@@ -39,6 +39,11 @@ export interface FieldSpec {
    * scenario "not ready" (the workbook can still be valid overall). Optional fields without this are only noted (info).
    */
   readonly critical?: ScenarioId;
+  /**
+   * bool only. Accept "Yes" / "No" followed by a description ("No (duty-free, direct to stores)"). Declared per field, never
+   * global: every other boolean column keeps the strict yes/no/true/false/1/0 vocabulary.
+   */
+  readonly boolPrefix?: boolean;
 }
 
 type KindToTs = { str: string; num: number; date: string; bool: boolean; enum: string };

@@ -154,6 +154,26 @@ Keys are our tab names and canonical field keys (see `contracts/tabs.ts`).
 - Two concurrent `validate.ts` runs in the same output directory can interleave (each run's `runId` differs, so a
   mismatched pair is detectable). No lock file yet.
 
+## Sheet layouts (the original workbook loads directly)
+
+The advisor's workbook is not uniformly tabular, and `workbook/layouts.ts` reads it **as supplied** (no reshaping, no header-map file). Every rule is explicit and per sheet; unknown headers are never fuzzy-matched.
+
+- **Tabular sheets** (Items, SalesHistory, Stock, ImportPOs, Customers, Quotes): header in the first non-empty row. The real header wording is accepted through explicit aliases in `contracts/tabs.ts`.
+- **Report sheets** (BOM, Routing_SMV, ProductionOrders, LandedCost, Payments_FEC): the header is tried on the first row, then on that sheet's named rows (4, 4, 3, 4, 3). The data region ends at the first gap or the first row with no key. Everything below it is counted as a trailing **summary** row (carries a number or date) or **note** row (text only).
+- **Title and text-line context**: BOM style (`Style: <code>` on row 2), Routing style (row 1) and cost per minute (`R<amount>` on row 2), LandedCost shipment (row 1), planning FX, customs FX and freight total (row 2). A missing identifier is an error naming our field; a missing optional rate is a warning and the field stays blank.
+- **BOM**: `Applies to sizes` lists become one row per size (`All ...` means every size; an unknown size token is an error); the component label is the code and name; a `Labour` line whose quantity and cost are text pointing at the routing is an explained, counted exclusion (labour is costed from Routing_SMV), while any other non-numeric line is still an error.
+- **LandedCost**: only the exact header `FOB (USD/unit)` is converted (unit price x quantity = the line total the engine expects); `Duty %` is a rate column and is kept apart from the duty amount; a product that is an Items style code is a style-level line.
+- **Composite product text** (`SKU / style` on ImportPOs, the Style cell on ProductionOrders) is resolved against Items: an exact SKU or style, else exactly one SKU as a whole token, else exactly one style. Two different codes, or none, is unresolved: the text is kept, a PO line is a **warning** (the Red Flag engine counts its units as unmatched) and a production order is an error.
+- **Percent-formatted cells** (`0.0%`, `0%`) are read as displayed (0.857 shown as 85.7% is 85.7). A bare number in a General cell is never reinterpreted.
+- **Yes/No with a description** is accepted for `ImportPOs.bondOnArrival` only.
+- **Rows below a report table** that still look like table rows (a key and about as many distinct values as the data rows) are an error, not a summary. This is a heuristic with known limits: a plain total row with as many distinct values as the data rows would be flagged, and a short keyed row with one value would be counted as a summary. Both are visible in the row accounting.
+- **Merged note rows** (nothing in the first column, one repeated text) and the **ReadMe** sheet are recognised, counted and not parsed.
+- **Row accounting**: for every tab, title + header + data + notes + explained exclusions + trailing summary + trailing notes = non-empty sheet rows, and parsed rows = data rows + rows added by size lists. The validation page shows it; findings carry counts and row numbers only.
+
+Not decided here (open commercial rules, shown by name and withheld): tender classification, overdue on-water treatment, sales-history gap treatment, overhead / efficiency / margin in product cost, and paid-or-open USD exposure.
+
+Run `RWTSA_WORKBOOK_PATH=<file outside git> npx vitest run src/rwtsa-demo/__tests__/original-workbook.local.test.ts` to check a protected workbook locally. The test is skipped when the variable is unset and prints nothing from the file.
+
 ## Known unknowns (not guessed here)
 
 Real header strings; status vocabulary; date and percent formats; the tender marker column; whether `Quotes` has a

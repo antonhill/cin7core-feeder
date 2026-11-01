@@ -8,6 +8,7 @@ import { fromCents, type Cents } from "@/rwtsa-demo/engine/money";
 import { scenarioById } from "@/rwtsa-demo/state/layers";
 import type { LandedModel } from "@/rwtsa-demo/state/landed-model";
 import { LayerBadge, ProvenanceBadge, ReadinessBadge } from "./Badges";
+import { RulesBadge, RulesPanel } from "./Rules";
 
 const group = (s: string): string => s.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const money = (c: Cents | null, cur: "R" | "$" = "R"): string => {
@@ -96,6 +97,7 @@ export function LandedPageView({ model }: { model: LandedModel }) {
             <Badge tone={model.engine === "AVAILABLE" ? "success" : "danger"}>{`ENGINE ${model.engine}`}</Badge>
           </span>
           <Badge tone="success">CALCULATED HERE: TOOLBOX</Badge>
+          <RulesBadge rules={model.rules} />
         </div>
       </div>
 
@@ -126,6 +128,8 @@ export function LandedPageView({ model }: { model: LandedModel }) {
         )}
         {model.engineNote && <p className="mt-2 text-sm text-red-700">{model.engineNote}</p>}
       </Panel>
+
+      <RulesPanel rules={model.rules} />
 
       <Panel>
         <PanelTitle>Where each function lives</PanelTitle>
@@ -169,12 +173,12 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                 </li>
               ))}
             </ul>
-            {(r.shipments.some((sh) => sh.warnings.length > 0) || x.warnings.length > 0) && (
+            {(r.shipments.some((sh) => sh.warnings.length > 0) || (!model.exposureWithheld && x.warnings.length > 0)) && (
               <>
                 <p className="mt-3 text-sm font-medium text-slate-800">Warnings on these results</p>
                 <ul data-testid="warnings" className="mt-1 list-disc space-y-1 pl-5 text-sm text-slate-700">
                   {r.shipments.flatMap((sh) => sh.warnings.map((w) => <li key={`${sh.shipmentRef}|${w}`}>{`${sh.shipmentRef}: ${w}`}</li>))}
-                  {x.warnings.map((w) => (
+                  {!model.exposureWithheld && x.warnings.map((w) => (
                     <li key={w}>{w}</li>
                   ))}
                 </ul>
@@ -208,6 +212,15 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                 Exposure as-at date
                 <input name="asof" type="date" defaultValue={s.values.asof} className={field} />
               </label>
+              {model.provenance === "LOCAL WORKBOOK" && (
+                <label className="flex flex-col gap-1">
+                  Paid / open status (no paid column in the workbook)
+                  <select name="exposure" defaultValue={s.values.exposure} className={field}>
+                    <option value="">Not chosen (exposure withheld)</option>
+                    <option value="due">Treat payments due on or after the as-at date as open</option>
+                  </select>
+                </label>
+              )}
               <label className="flex flex-col gap-1">
                 Exposure buckets
                 <select name="bucket" defaultValue={s.values.bucket} className={field}>
@@ -229,7 +242,7 @@ export function LandedPageView({ model }: { model: LandedModel }) {
             <Indicator label="Landed cost (actual)" testid="ind-landed" value={money(r.totals.landedActualCents)} hint={r.totals.complete ? "all lines complete" : "complete lines only"} />
             <Indicator label="FX variance" testid="ind-variance" value={signed(r.totals.fxVarianceCents)} hint={`actual minus estimate (planning FX)${r.totals.complete ? "" : "; complete lines only"}`} />
             <Indicator label="Incomplete lines" testid="ind-incomplete" value={String(incomplete)} hint="inputs missing, nothing invented" />
-            <Indicator label="Open USD exposure" testid="ind-exposure" value={money(x.totals.openUsdCents, "$")} hint={`uncovered ${money(x.totals.uncoveredUsdCents, "$")}`} />
+            <Indicator label="Open USD exposure" testid="ind-exposure" value={model.exposureWithheld ? "Withheld" : money(x.totals.openUsdCents, "$")} hint={model.exposureWithheld ? "paid / open status unresolved" : `uncovered ${money(x.totals.uncoveredUsdCents, "$")}`} />
           </div>
 
           <Panel>
@@ -472,10 +485,18 @@ export function LandedPageView({ model }: { model: LandedModel }) {
             </div>
           </Panel>
 
+          {model.exposureWithheld ? (
+            <Panel>
+              <PanelTitle>USD exposure by due date (read-only)</PanelTitle>
+              <p data-testid="exposure-withheld" className="mt-2 text-sm text-slate-700">
+                Withheld: the workbook has no paid-status column, so which payments are still open is not known. Choose the basis in the controls to see the exposure; nothing has been assumed.
+              </p>
+            </Panel>
+          ) : (
           <Panel>
             <PanelTitle>USD exposure by due date (read-only)</PanelTitle>
             <p className="mt-1 text-sm text-slate-600">
-              Payments due on or after {x.asOf}. Not a forward-contract register; nothing is recorded. The workbook has no paid flag.
+              {model.provenance === "LOCAL WORKBOOK" ? "Basis chosen on this page: " : ""}Payments due on or after {x.asOf}. Not a forward-contract register; nothing is recorded. The workbook has no paid flag.
             </p>
             {x.buckets.length === 0 ? (
               <p className="mt-3 text-sm text-slate-700" data-testid="no-exposure">
@@ -523,6 +544,8 @@ export function LandedPageView({ model }: { model: LandedModel }) {
             )}
           </Panel>
 
+          )}
+
           <Panel>
             <PanelTitle>Planning, FEC and customs FX compared, per payment</PanelTitle>
             <p className="mt-1 text-xs text-slate-600">Positive = the FEC costs more than that rate would. Rates are matched through ImportPOs to one shipment; where that is not possible the comparison is withheld, not guessed.</p>
@@ -546,7 +569,7 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                   {x.rows.map((p) => (
                     <TR key={`${p.poNo}|${p.dueDate}|${p.usdCents}`}>
                       <TD>
-                        <span data-testid="payment-row" data-po={p.poNo} data-open={String(p.open)} />
+                        <span data-testid="payment-row" data-po={p.poNo} {...(model.exposureWithheld ? {} : { "data-open": String(p.open) })} />
                         {p.poNo}
                         {p.deposit && (
                           <div>
@@ -556,7 +579,7 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                       </TD>
                       <TD>
                         {p.dueDate}
-                        {!p.open && <div className="text-xs text-amber-700">before as-at date; paid status unknown</div>}
+                        {!model.exposureWithheld && !p.open && <div className="text-xs text-amber-700">before as-at date; paid status unknown</div>}
                       </TD>
                       <TD align="right" numeric>
                         {money(p.usdCents, "$")}

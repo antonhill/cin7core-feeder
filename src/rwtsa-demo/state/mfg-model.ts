@@ -3,6 +3,7 @@ import { runProductionVariance, type GroupVariance, type VarianceResult } from "
 import { bannerOf, isScenarioReady, provenanceOf, reasonsFor, type Banner, type DemoState, type ProvenanceLabel, type ReadinessLabel } from "@/rwtsa-demo/state/demo-state";
 import type { MfgSettings } from "@/rwtsa-demo/state/mfg-settings";
 import type { PercentScale } from "@/rwtsa-demo/engine/bom-costing";
+import { overheadRule, overheadUnresolved, rulesApply, type UnresolvedRule } from "@/rwtsa-demo/state/rules";
 
 /** The synthetic source declares its own percentage scale (the fixture is known to use fractions). A local workbook declares none. */
 export function suggestedScaleFor(state: DemoState): PercentScale | null {
@@ -26,6 +27,8 @@ export interface MfgModel {
   readonly styles: readonly string[];
   readonly style: StyleCosting | null;
   readonly size: SizeCosting | null;
+  /** Commercial rules the workbook does not establish (local workbook only). */
+  readonly rules: readonly UnresolvedRule[];
 }
 
 export function mfgModel(state: DemoState, settings: MfgSettings): MfgModel {
@@ -39,6 +42,7 @@ export function mfgModel(state: DemoState, settings: MfgSettings): MfgModel {
     realWorkbook: (state.kind === "validated" && state.provenance === "LOCAL WORKBOOK" && state.summary.structure === "PASS" ? "STRUCTURE VALIDATED, UNITS AND SCALE UNVERIFIED" : "UNVERIFIED") as MfgModel["realWorkbook"],
     settings,
     styles: [] as string[],
+    rules: [] as UnresolvedRule[],
   };
   if (state.kind !== "validated" || state.dataset === null) {
     return { ...base, engine: "UNAVAILABLE", engineNote: "No validated dataset is available: the engines have nothing to calculate from. No other data was substituted.", variance: null, costing: null, groups: [], style: null, size: null };
@@ -50,7 +54,17 @@ export function mfgModel(state: DemoState, settings: MfgSettings): MfgModel {
     const style = costing.styles.find((s) => s.styleCode === settings.style) ?? costing.styles[0] ?? null;
     const size = style ? (style.sizes.find((z) => z.size === settings.size) ?? style.sizes.find((z) => z.size === "M") ?? style.sizes[0] ?? null) : null;
     const groups = settings.by === "line" ? variance.byLine : settings.by === "bracket" ? variance.byBracket : variance.byStyle;
-    return { ...base, engine: "AVAILABLE", engineNote: null, variance, costing, groups, styles, style, size };
+    const rules: UnresolvedRule[] = rulesApply(state) && overheadUnresolved(state.dataset) ? [overheadRule()] : [];
+    if (rules.length === 0) return { ...base, engine: "AVAILABLE", engineNote: null, variance, costing, groups, styles, style, size, rules };
+    // While the overhead / efficiency rule is open no product cost total, selling price or reference difference may be shown,
+    // whatever the engine could compute for a style whose routing happens to carry some values.
+    const reason = "overhead / efficiency rule unresolved: product cost withheld";
+    const hide = (z: SizeCosting): SizeCosting => ({ ...z, totalCents: null, sellingCents: null, diffCents: null, diffPct: null, deltaVsBaseCents: null, status: "incomplete", missing: z.missing.includes(reason) ? z.missing : [...z.missing, reason] });
+    // The engine's own checks and warnings describe the totals that are now withheld, so they are not shown either.
+    const hidden: CostingResult = { ...costing, checks: [], warnings: ["Cost totals and selling prices are withheld while the overhead / efficiency rule is unresolved."], styles: costing.styles.map((st) => ({ ...st, sizes: st.sizes.map(hide) })) };
+    const hStyle = hidden.styles.find((s) => s.styleCode === style?.styleCode) ?? null;
+    const hSize = hStyle ? (hStyle.sizes.find((z) => z.size === size?.size) ?? null) : null;
+    return { ...base, engine: "AVAILABLE", engineNote: null, variance, costing: hidden, groups, styles, style: hStyle, size: hSize, rules };
   } catch {
     return { ...base, engine: "UNAVAILABLE", engineNote: "The engines could not run with these inputs.", variance: null, costing: null, groups: [], style: null, size: null };
   }

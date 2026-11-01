@@ -103,6 +103,20 @@ saved, and it neither reads nor writes Cin7 Core or Xero (the page lists which f
   count / value comparison for the chart.
 - **Real-workbook readiness is UNVERIFIED**: no authorised local workbook was available. Unconfirmed: the status vocabulary, whether quotes carry a product (or several), the date meaning, and the currency.
 
+## Unresolved commercial rules (local workbook only)
+
+For a **local** workbook the demo never picks a business rule the workbook does not establish. Each open rule is listed by name on the scenario page (`RULES: n OPEN`, separate from STRUCTURE, READY and ENGINE) with what it withholds and how it is resolved:
+
+| Rule | Scenario | Withheld until resolved | Resolved by |
+|---|---|---|---|
+| Overdue shipments on the water | A | all results | a choice in the controls |
+| Sales history ends before the stock month | A | all results | a choice in the controls |
+| Tender SKU classification (no SKU-level marker) | A | proposed order quantities | owner decision |
+| Overhead, efficiency allowance and margin | B | product cost totals and selling prices | owner decision |
+| Paid or open USD exposure (no paid column) | C | open / covered / uncovered exposure | a choice in the controls |
+
+The synthetic source declares its own conventions and has no open rules. The validation page shows the sheet layout and row accounting for the loaded workbook.
+
 ## Why a standalone Next.js app (feasibility gate result)
 
 The 3-hour feasibility gate was **passed in minutes**; the offline-HTML fallback was **not needed**. The standalone app:

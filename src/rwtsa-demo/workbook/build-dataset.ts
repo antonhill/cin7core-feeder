@@ -16,6 +16,8 @@ import type { DatasetSource, Provenance, ReadinessConfig, RwtsaDataset, SalesFil
 import { finding, hasErrors, MAX_ROWS_LISTED, type Finding } from "@/rwtsa-demo/findings";
 import { computeAvailable, reconcile } from "@/rwtsa-demo/reconcile";
 import { parseTab, type FieldHeaderOverrides, type ParsedTab } from "@/rwtsa-demo/workbook/parse-tab";
+import { applyComposite } from "@/rwtsa-demo/workbook/composite";
+import type { TabLayoutReport } from "@/rwtsa-demo/workbook/layouts";
 import { computeReadiness, normaliseReadinessConfig } from "@/rwtsa-demo/workbook/readiness";
 import type { ReadResult } from "@/rwtsa-demo/workbook/read";
 
@@ -40,6 +42,8 @@ export interface BuildResult {
   /** Per-scenario readiness, separate from overall validity. Present even when the workbook is invalid (then never ready). */
   readonly readiness: readonly ScenarioReadiness[];
   readonly readinessConfig: ReadinessConfig;
+  /** Per-tab layout and row accounting (header row, title / note / trailing rows, derived values, parsed rows). */
+  readonly layout: Partial<Record<TabName, TabLayoutReport>>;
 }
 
 const EPS = 1e-9;
@@ -65,7 +69,14 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
       findings.push(finding({ severity: (CORE_TABS as readonly TabName[]).includes(tab) ? "error" : "warning", code: "empty_tab", tab, count: 1 }));
     }
 
-    const p = parseTab(TAB_CONTRACTS[tab], raw, opts.headerOverrides?.[tab] ?? {});
+    // Composite product text is resolved against the Items master, which is parsed first (TAB_NAMES order).
+    let source = raw;
+    if ((tab === "ImportPOs" || tab === "ProductionOrders") && parsed.Items) {
+      const c = applyComposite(tab, raw, parsed.Items.rows.map((r) => r.sku as string), [...new Set(parsed.Items.rows.map((r) => r.styleCode as string))]);
+      source = c.table;
+      findings.push(...c.findings);
+    }
+    const p = parseTab(TAB_CONTRACTS[tab], source, opts.headerOverrides?.[tab] ?? {});
     parsed[tab] = p;
     parsedRowCounts[tab] = p.rows.length;
     findings.push(...p.findings);
@@ -118,7 +129,7 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
   const itemSkus = new Set(items.map((i) => i.sku));
   const itemStyles = new Set(items.map((i) => i.styleCode));
   const styleBySku = new Map(items.map((i) => [i.sku, i.styleCode]));
-  const orphan = (tab: TabName, field: string, code: "orphan_sku" | "orphan_style", values: (string | null)[], rowNumbers: number[], known: Set<string>) => {
+  const orphan = (tab: TabName, field: string, code: "orphan_sku" | "orphan_style", values: (string | null)[], rowNumbers: number[], known: Set<string>, severity: "error" | "warning" = "error") => {
     let count = 0;
     const rows: number[] = [];
     values.forEach((v, i) => {
@@ -127,7 +138,7 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
         if (rows.length < MAX_ROWS_LISTED) rows.push(rowNumbers[i]);
       }
     });
-    if (count > 0) findings.push(finding({ severity: "error", code, tab, field, count, rows }));
+    if (count > 0) findings.push(finding({ severity, code, tab, field, count, rows }));
   };
 
   if (parsed.Items) {
@@ -137,10 +148,13 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
       orphan("Stock", "styleCode", "orphan_style", parsed.Stock.rows.map((r) => r.styleCode as string | null), parsed.Stock.rowNumbers, itemStyles);
     }
     if (parsed.ImportPOs) {
-      orphan("ImportPOs", "sku", "orphan_sku", parsed.ImportPOs.rows.map((r) => r.sku as string | null), parsed.ImportPOs.rowNumbers, itemSkus);
-      orphan("ImportPOs", "styleCode", "orphan_style", parsed.ImportPOs.rows.map((r) => r.styleCode as string | null), parsed.ImportPOs.rowNumbers, itemStyles);
+      // A PO line may legitimately name a product that is not in Items yet (a new style on order). It stays in the data, is
+      // reported as a WARNING, and the Red Flag engine counts its units as unmatched; it is never dropped.
+      orphan("ImportPOs", "sku", "orphan_sku", parsed.ImportPOs.rows.map((r) => r.sku as string | null), parsed.ImportPOs.rowNumbers, itemSkus, "warning");
+      orphan("ImportPOs", "styleCode", "orphan_style", parsed.ImportPOs.rows.map((r) => r.styleCode as string | null), parsed.ImportPOs.rowNumbers, itemStyles, "warning");
     }
-    if (parsed.LandedCost) orphan("LandedCost", "sku", "orphan_sku", parsed.LandedCost.rows.map((r) => r.sku as string), parsed.LandedCost.rowNumbers, itemSkus);
+    // Landed-cost lines may be per SKU or per STYLE (the product is an Items style code); anything else is an orphan.
+    if (parsed.LandedCost) orphan("LandedCost", "sku", "orphan_sku", parsed.LandedCost.rows.map((r) => r.sku as string), parsed.LandedCost.rowNumbers, new Set([...itemSkus, ...itemStyles]));
     if (parsed.BOM) orphan("BOM", "styleCode", "orphan_style", parsed.BOM.rows.map((r) => r.styleCode as string), parsed.BOM.rowNumbers, itemStyles);
     if (parsed.Routing_SMV) orphan("Routing_SMV", "styleCode", "orphan_style", parsed.Routing_SMV.rows.map((r) => r.styleCode as string), parsed.Routing_SMV.rowNumbers, itemStyles);
     if (parsed.ProductionOrders) {
@@ -197,13 +211,24 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
     if (lostNoReason.length > 0) findings.push(finding({ severity: "warning", code: "lost_without_reason", tab: "Quotes", field: "lostReason", count: lostNoReason.length, rows: lostNoReason }));
   }
 
+  const layoutOut: Partial<Record<TabName, TabLayoutReport>> = {};
+  for (const tab of TAB_NAMES) {
+    const l = read.layout?.[tab];
+    if (!l) continue;
+    layoutOut[tab] = {
+      ...l,
+      parsedRows: parsed[tab]?.rows.length ?? 0,
+      ...(tab === "LandedCost" ? { styleLevelLines: landedCost.filter((r) => !itemSkus.has(r.sku) && itemStyles.has(r.sku)).length } : {}),
+    };
+  }
+
   const ok = !hasErrors(findings);
 
   // Scenario readiness is SEPARATE from overall validity (see workbook/readiness.ts): ready = valid workbook + needed tabs
   // have data + critical columns present AND populated + (scenario A) a complete recent sales window for every SKU.
   const readiness = computeReadiness({ ok, read, parsed, findings, config: readinessConfig });
 
-  if (!ok) return { ok: false, dataset: null, findings, parsedRowCounts, readiness, readinessConfig };
+  if (!ok) return { ok: false, dataset: null, findings, parsedRowCounts, readiness, readinessConfig, layout: layoutOut };
 
   const months = sales?.months ?? [];
   const tables: RwtsaDataset["tables"] = { items, salesHistory, salesFileAverages, stock, importPos, bom, routing, productionOrders, landedCost, paymentsFec, customers, quotes };
@@ -214,8 +239,9 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
     months,
     tables,
     reconciliation: reconcile(tables, months),
+    layout: layoutOut,
     readiness,
     findings,
   };
-  return { ok: true, dataset, findings, parsedRowCounts, readiness, readinessConfig };
+  return { ok: true, dataset, findings, parsedRowCounts, readiness, readinessConfig, layout: layoutOut };
 }

@@ -15,6 +15,8 @@ export interface RedFlagSettings {
   readonly shortageOnly: boolean;
   readonly sel: string | null;
   readonly curve: CurveChoice;
+  /** For a LOCAL workbook the history anchor and the overdue treatment are never defaulted: false until the viewer chooses. */
+  readonly chosen: { readonly anchor: boolean; readonly overdue: boolean };
   /** Raw, validated control values for redisplay and for building links. */
   readonly values: Readonly<Record<"view" | "window" | "horizon" | "anchor" | "overdue" | "curve" | "mult" | "floor", string>>;
   readonly errors: readonly string[];
@@ -30,6 +32,8 @@ function one(q: RawQuery, k: string): string | undefined {
 export interface SettingsOptions {
   /** A size curve supplied with the data (the synthetic source supplies one; a local workbook does not). */
   readonly suppliedCurve: Readonly<Record<string, number>> | null;
+  /** True for a local workbook: the anchor and overdue controls start unset and results wait for an explicit choice. */
+  readonly requireChoices?: boolean;
 }
 
 export function parseSettings(q: RawQuery, opts: SettingsOptions): RedFlagSettings {
@@ -64,6 +68,9 @@ export function parseSettings(q: RawQuery, opts: SettingsOptions): RedFlagSettin
   const horizon = pick("horizon", ["13", "26"] as const, "13", "Horizon");
   const anchor = pick("anchor", ["last", "strict"] as const, "last", "History anchor");
   const overdue = pick("overdue", ["week1", "exclude"] as const, "week1", "Overdue on-water");
+  // An invalid value is reported above and counts as NOT chosen when choices are required.
+  const given = (k: string, allowed: readonly string[]) => allowed.includes(one(q, k) ?? "");
+  const chosen = { anchor: !opts.requireChoices || given("anchor", ["last", "strict"]), overdue: !opts.requireChoices || given("overdue", ["week1", "exclude"]) };
   const mult = num("mult", 0.01, d.anomaly.multiple, "Anomaly multiple");
   const floor = num("floor", 0, d.anomaly.floor, "Anomaly floor");
   const defaultCurve: CurveChoice = opts.suppliedCurve ? "supplied" : "none";
@@ -86,7 +93,8 @@ export function parseSettings(q: RawQuery, opts: SettingsOptions): RedFlagSettin
     shortageOnly: one(q, "only") === "shortage",
     sel: sel && sel !== "" ? sel : null,
     curve,
-    values: { view, window: String(win), horizon, anchor, overdue, curve, mult: String(mult), floor: String(floor) },
+    chosen,
+    values: { view, window: String(win), horizon, anchor: chosen.anchor ? anchor : "", overdue: chosen.overdue ? overdue : "", curve, mult: String(mult), floor: String(floor) },
     errors,
   };
 }

@@ -8,6 +8,7 @@ import { OUTCOME_MESSAGES, type FormOutcome } from "@/rwtsa-demo/state/exclusion
 import type { ChartSeries, RedFlagModel } from "@/rwtsa-demo/state/red-flag-model";
 import { settingsQuery } from "@/rwtsa-demo/state/red-flag-settings";
 import { ProvenanceBadge, ReadinessBadge } from "./Badges";
+import { RulesBadge, RulesPanel } from "./Rules";
 
 const n0 = (v: number): string => Math.round(v).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const n1 = (v: number): string => (Math.round(v * 10) / 10).toFixed(1);
@@ -129,6 +130,7 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
           <span data-testid="basis">
             <Badge tone={basis.tone}>{basis.text}</Badge>
           </span>
+          <RulesBadge rules={model.rules} />
         </div>
       </div>
 
@@ -161,6 +163,8 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
         )}
         {model.engineNote && <p className="mt-2 text-sm text-red-700">{model.engineNote}</p>}
       </Panel>
+
+      <RulesPanel rules={model.rules} />
 
       {!r ? (
         <Panel>
@@ -216,6 +220,7 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
               <label className="flex flex-col gap-1">
                 Sales history vs stock date
                 <select name="anchor" defaultValue={s.values.anchor} className={field}>
+                  {!s.chosen.anchor && <option value="">Not chosen (results withheld)</option>}
                   <option value="last">Assume: use the last months on file</option>
                   <option value="strict">Strict: require months to the stock date</option>
                 </select>
@@ -223,6 +228,7 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
               <label className="flex flex-col gap-1">
                 Overdue shipment on the water
                 <select name="overdue" defaultValue={s.values.overdue} className={field}>
+                  {!s.chosen.overdue && <option value="">Not chosen (results withheld)</option>}
                   <option value="week1">Assume it arrives in week 1</option>
                   <option value="exclude">Do not count it</option>
                 </select>
@@ -268,10 +274,19 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
             </form>
           </Panel>
 
+          {model.withheld.results ? (
+            <Panel>
+              <PanelTitle>Results withheld</PanelTitle>
+              <p data-testid="results-withheld" className="mt-2 text-sm text-slate-700">
+                Results are withheld because a rule above has not been resolved. Choose the history and overdue-shipment treatments in the controls and recalculate. Nothing has been assumed in the meantime.
+              </p>
+            </Panel>
+          ) : (
+          <>
           <div data-testid="indicators" className="grid grid-cols-2 gap-3 md:grid-cols-5">
             <Indicator label="Projected shortage SKUs" testid="ind-shortage" value={String(r.summary.shortageSkus)} hint={`of ${r.summary.skuCount} SKUs`} />
             <Indicator label="First projected breach" testid="ind-first" value={r.summary.firstBreachWeek === null ? "None" : `Week ${r.summary.firstBreachWeek}`} hint={`of ${r.config.horizonWeeks}`} />
-            <Indicator label="Total projected shortfall" testid="ind-shortfall" value={`${n0(r.summary.totalShortfall)} units`} hint={`proposed ${n0(r.summary.totalProposedOrder)} units`} />
+            <Indicator label="Total projected shortfall" testid="ind-shortfall" value={`${n0(r.summary.totalShortfall)} units`} hint={model.withheld.proposedOrders ? "proposed orders withheld" : `proposed ${n0(r.summary.totalProposedOrder)} units`} />
             <Indicator label="Anomalies to review" testid="ind-anomalies" value={String(r.summary.anomaliesToReview)} hint={`${r.summary.anomaliesExcluded} excluded`} />
             <Indicator label="Tender-exempt SKUs" testid="ind-tender" value={String(r.summary.tenderExemptSkus)} hint="not auto-ordered" />
           </div>
@@ -279,6 +294,7 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
           <Panel>
             <PanelTitle>{s.view === "sku" ? "Results by SKU / size" : "Results by style"}</PanelTitle>
             <p className="mt-1 text-xs text-slate-600">{r.labels.proposedOrder}</p>
+            {model.withheld.proposedOrders && <p data-testid="proposed-withheld" className="mt-1 text-xs text-amber-700">Proposed order quantities are withheld: a tender classification rule above is unresolved, so no SKU can be confirmed as orderable.</p>}
             <div className="mt-3 overflow-x-auto">
               <Table>
                 <THead>
@@ -342,7 +358,8 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
                         <span data-anomaly={row.anomalyKind}>{row.anomaly}</span>
                       </TD>
                       <TD align="right" numeric>
-                        {row.tenderExempt ? "0 (tender)" : row.proposedOrder > 0 ? n0(row.proposedOrder) : dash}
+                        <span data-testid="proposed-cell" data-state={model.withheld.proposedOrders ? "withheld" : "value"} />
+                        {model.withheld.proposedOrders ? "Withheld" : row.tenderExempt ? "0 (tender)" : row.proposedOrder > 0 ? n0(row.proposedOrder) : dash}
                       </TD>
                     </TR>
                   ))}
@@ -531,6 +548,8 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
               </Table>
             </div>
           </Panel>
+          </>
+          )}
         </>
       )}
     </div>
