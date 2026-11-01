@@ -303,6 +303,11 @@ export async function createClaimDraft(
   db: Db, orgId: string, email: string, projectId: string, selectedStageIds?: string[], supersedesClaimId?: string, partial?: { amountsCents?: Record<string, number>; clamp?: boolean },
 ): Promise<{ claimId: string; duplicate: boolean }> {
   const p = await previewClaim(db, orgId, projectId, selectedStageIds, undefined, partial);
+  if (p.calc.lines.some((l) => l.partial)) {
+    // Fail BEFORE any row is written if the database does not have migration 0120 yet (otherwise an empty DRAFT claim would be left behind).
+    const probe = await db.from("project_claim_lines").select("partial").limit(1);
+    if (probe.error) fail("Partial claims need database migration 0120, which has not been applied yet. Nothing was saved. Claim the full amount, or ask for the migration to be applied.");
+  }
   // New selections must be honoured exactly. A recalculation (supersedesClaimId) keeps its earlier behaviour: a stage that has since gone to zero drops out.
   if (selectedStageIds && !supersedesClaimId) assertSelectionHonoured(selectedStageIds, p.calc.lines);
 

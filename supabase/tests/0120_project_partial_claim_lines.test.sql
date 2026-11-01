@@ -72,7 +72,7 @@ select pg_temp.expect_denied($q$update project_claims set status = 'APPROVED', a
 insert into project_claims (id, org_id, project_id, claim_seq, claim_number, claim_date, tax_rate_bps, subtotal_cents, tax_cents, total_cents, snapshot_hash, baseline_hash, idempotency_key, author_email)
 values ('00000000-0000-0000-0000-0000000120a4', '00000000-0000-0000-0000-0000000120b1', '00000000-0000-0000-0000-0000000120c1', 4, 'C-4', current_date, 1500, 20000000, 3000000, 23000000, 'h4', 'b', 'k4', 'a@x');
 select pg_temp.expect_denied($q$insert into project_claim_lines (org_id, project_id, claim_id, stage_id, stage_name, stage_value_cents, approved_bps, earned_to_date_cents, previously_committed_cents, current_claim_cents, tax_cents, partial)
-  values ('00000000-0000-0000-0000-0000000120b1','00000000-0000-0000-0000-0000000120c1','00000000-0000-0000-0000-0000000120a4','00000000-0000-0000-0000-0000000120d1','Deposit2',100000000,10000,100000000,90000000,20000000,3000000,true)$q$, 'committed beyond the stage value');
+  values ('00000000-0000-0000-0000-0000000120b1','00000000-0000-0000-0000-0000000120c1','00000000-0000-0000-0000-0000000120a4','00000000-0000-0000-0000-0000000120d1','Deposit2',100000000,10000,200000000,90000000,20000000,3000000,true)$q$, 'committed beyond the stage value (passes the amount rule: 20M < 200M-90M, but 90M+20M > 100M)');
 
 select 'ALL 0120 PROJECT PARTIAL CLAIM LINE TESTS PASSED' as result;
 rollback;

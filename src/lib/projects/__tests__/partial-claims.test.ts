@@ -132,3 +132,22 @@ describe("partial amount parsing", () => {
     expect(() => parsePartialAmounts(["a"], { z: "10" })).toThrow(/not selected/);
   });
 });
+
+describe("partial claim on a database without migration 0120", () => {
+  it("is refused before anything is written (no orphan draft), while full claims still work", async () => {
+    const w = await world();
+    (w.db as unknown as { failColumn?: string }).failColumn = "partial";
+    const real = w.db.from.bind(w.db);
+    (w.db as unknown as { from: unknown }).from = (t: string) => {
+      const q = real(t) as Record<string, unknown>;
+      if (t !== "project_claim_lines") return q;
+      const select = (q.select as (c: string) => unknown).bind(q);
+      q.select = (cols: string) => (/partial/.test(cols) ? { limit: async () => ({ data: null, error: { message: 'column "partial" does not exist' } }), eq: () => ({ eq: async () => ({ data: null, error: { message: 'column "partial" does not exist' } }) }) } : select(cols));
+      return q;
+    };
+    await expect(createClaimDraft(w.db as never, ORG, "pm@a", w.projectId, [w.dep.id], undefined, { amountsCents: { [w.dep.id]: 1000 } })).rejects.toThrow(/migration 0120/);
+    expect(w.db.rows("project_claims").filter((c) => c.status === "DRAFT")).toHaveLength(0);
+    const full = await createClaimDraft(w.db as never, ORG, "pm@a", w.projectId, [w.dep.id]);
+    expect(w.lines(full.claimId)).toHaveLength(1);
+  });
+});
