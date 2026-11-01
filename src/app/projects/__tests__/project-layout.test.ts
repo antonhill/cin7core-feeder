@@ -43,7 +43,7 @@ describe("UAT-015 claim history cards", () => {
   });
   it("milestone confirmation is hidden in the embedded variation workspace and loads itself with feedback (review F1/F2)", () => {
     expect(ws).toMatch(/\{newquip && !embedded && \(\s*<div>\s*<Alert tone="info">Milestone confirmation/);
-    expect(alloc).toMatch(/if \(section === "milestones"\) void load\(\)/);
+    expect(alloc).toMatch(/if \(section === "milestones"\) void Promise\.resolve\(\)\.then\(load\)/);
     expect(alloc).toMatch(/section === "milestones" && msg/);
   });
 });

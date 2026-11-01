@@ -36,7 +36,7 @@ export function DeliveryAllocationPanel({ view, section = "both" }: { view: Proj
     if (r.ok && r.data) setData(r.data); else setMsg({ tone: "danger", text: r.error ?? "Could not load deliveries." });
   }, [projectId]);
   // The milestone list on the Commercial / Claims tab must not look empty until someone presses Load: it loads itself.
-  useEffect(() => { if (section === "milestones") void load(); }, [section, load]);
+  useEffect(() => { if (section === "milestones") void Promise.resolve().then(load); }, [section, load]);
 
   const run = async (fn: () => Promise<DeliveryActionResult<unknown>>, ok: string) => {
     setBusy(true); setMsg(null);
