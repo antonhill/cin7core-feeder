@@ -6,6 +6,7 @@ import { useEffect, useState, useTransition } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
+import { ActionFeedback, useKeyedActions } from "@/components/ui/action-feedback";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -21,6 +22,7 @@ import { DeliveryAllocationPanel } from "./DeliveryAllocationPanel";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { Cin7PostingPanel } from "./Cin7PostingPanel";
 import { Cin7SaleCreationPanel } from "./Cin7SaleCreationPanel";
+import { Feedback, ProjectFeedbackProvider } from "./feedback-context";
 import { PhysicalPanel } from "./PhysicalPanel";
 import { ProcurementPanel } from "./ProcurementPanel";
 import { ProfitabilityPanel } from "./ProfitabilityPanel";
@@ -56,6 +58,13 @@ const CLAIM_TONE: Record<string, BadgeTone> = {
   DRAFT: "neutral", READY_FOR_APPROVAL: "info", APPROVED: "primary", CIN7_PENDING: "warning", CIN7_CREATED: "success",
   RECONCILED: "success", FAILED_UNCERTAIN: "danger", FAILED_CONFIRMED_NO_WRITE: "neutral", CANCELLED_BEFORE_WRITE: "neutral",
 };
+
+/** Claim statuses that mean "approved, and possibly already posted": the claim has been through approval. */
+const APPROVED_OR_LATER = ["APPROVED", "CIN7_PENDING", "CIN7_CREATED", "RECONCILED"];
+/** A separation-of-duties / role refusal from the approval policy: the Project page cannot override, Approvals can. */
+const SOD_REFUSAL = /override|role|prepared or originated|cannot approve/i;
+const claimStatus = (v: ProjectView | null, claimId: string): string | undefined => v?.claims.find((c) => c.id === claimId)?.status;
+const statusNote = (v: ProjectView | null, claimId: string): string => { const s = claimStatus(v, claimId); return s ? ` Status now: ${s.replace(/_/g, " ").toLowerCase()}.` : " Refresh to see the latest status."; };
 
 type BarTone = "sky" | "indigo" | "emerald";
 const BAR_FILL: Record<BarTone, string> = { sky: "bg-sky-500", indigo: "bg-indigo-500", emerald: "bg-emerald-500" };
@@ -126,7 +135,6 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   const router = useRouter();
   const [view, setView] = useState<ProjectView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>(embedded ? "stages" : "overview");
   const [preview, setPreview] = useState<ClaimPreviewResult | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -138,7 +146,9 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   const [previewedAmounts, setPreviewedAmounts] = useState<Record<string, string>>({});
   const [previewShownKey, setPreviewShownKey] = useState<string | null>(null);
   const [isLoading, startLoading] = useTransition();
-  const [isWorking, startWorking] = useTransition();
+  const [isWorkingT, startWorking] = useTransition();
+  const acts = useKeyedActions();
+  const isWorking = isWorkingT || acts.anyPending;
 
   function load() {
     startLoading(async () => {
@@ -160,21 +170,43 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
     getViewerPermissionsAction().then((r) => { setPerm(r.ok && r.data?.canApprove ? "admin" : "member"); setNewquip(Boolean(r.ok && r.data?.newquip)); });
   }, []);
 
-  /** Resolves true only when the action succeeded (forms use this to reset themselves; a failure keeps their input). */
-  function run(fn: () => Promise<{ ok: boolean; error?: string }>, done?: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      startWorking(async () => {
-        const res = await fn();
-        if (!res.ok) {
-          setError(res.error ?? "Unknown error");
-          return resolve(false);
-        }
-        setError(null);
-        setNotice(done ?? null);
-        setPreview(null);
-        load();
-        resolve(true);
-      });
+  /** Re-reads the authoritative project state (not a transition: callers await it). A failed read keeps the view on screen. */
+  async function reloadView(): Promise<ProjectView | null> {
+    const res = await getProjectAction(id);
+    if (!res.ok || !res.data) return null;
+    setView(res.data);
+    setError(null);
+    return res.data;
+  }
+
+  /**
+   * Runs one action under `key` and shows its progress, result or failure in the feedback region for that key (render <Feedback k=key/> beside the
+   * control). A second click while it is in flight is ignored. Success re-reads the authoritative state, so the message can name the RESULTING
+   * status. A thrown error or lost response re-reads the state first (`confirm` says whether it shows the action took effect) before any retry is
+   * suggested. Unkeyed callers use "page": a floating region inside the viewport, never a banner above the fold.
+   * Resolves true only when the action succeeded (forms use this to reset themselves; a failure keeps their input).
+   */
+  function run(
+    fn: () => Promise<{ ok: boolean; error?: string; data?: unknown }>,
+    done?: string,
+    key = "page",
+    opts: { success?: (view: ProjectView | null, res: { data?: unknown }) => string; confirm?: (view: ProjectView) => boolean } = {},
+  ): Promise<boolean> {
+    return acts.run(key, async () => {
+      const res = await fn();
+      if (!res.ok) return { ...res, view: null as ProjectView | null };
+      setPreview(null);
+      const v = await reloadView();
+      return { ...res, view: v };
+    }, {
+      pending: "Working… please wait",
+      success: (r) => (opts.success ? opts.success(r.view, r) : done ?? "Done."),
+      reconcile: async () => {
+        const v = await reloadView();
+        if (!v) return "unknown";
+        return opts.confirm ? (opts.confirm(v) ? "done" : "not_done") : "unknown";
+      },
+      doneAfterReconcile: done ? `${done} (The response was lost, but the current status shows it was recorded.)` : undefined,
     });
   }
 
@@ -208,6 +240,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
 
   const Shell = embedded ? "div" : "main";
   return (
+    <ProjectFeedbackProvider value={acts.stateOf}>
     <Shell className={embedded ? "mt-2" : "mx-auto w-full max-w-[1480px] px-6 py-12"}>
       {!embedded && (
         <ModuleHeader module={PROJECTS_MODULE}>
@@ -221,7 +254,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
       {!embedded && view.project.billing_scope === "VARIATION" && view.project.parent_project_id && (
         <div className="mt-6"><Alert tone="info">This is the internal billing scope of a variation, not a separate project: its contract is part of the original project&apos;s revised contract. <Link className="underline" href={`/projects/${view.project.parent_project_id}`}>Open the project</Link>.</Alert></div>
       )}
-      {notice && <div className="mt-6"><Alert tone="success">{notice}</Alert></div>}
+      <ActionFeedback state={acts.stateOf("page")} floating />
       {c.uncertainClaimBlocking && (
         <div className="mt-6">
           <Alert tone="warning">A claim has an uncertain Cin7 outcome. Its value stays reserved and billing of its stages is blocked until it is reconciled.</Alert>
@@ -407,8 +440,8 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                 stage={s}
                 disabled={isWorking}
                 perm={perm}
-                onPhysical={(reported, comment) => run(() => recordProgressAction(id, s.id, reported, null, comment), `Physical progress recorded for ${s.name}. Commercial approval and claims are unchanged.`)}
-                onCommercial={(approved, comment) => run(() => recordProgressAction(id, s.id, (s.reportedBps / 100).toString(), approved, comment), `Commercial approval recorded for ${s.name}. Nothing was claimed or sent to Cin7.`)}
+                onPhysical={(reported, comment) => run(() => recordProgressAction(id, s.id, reported, null, comment), `Physical progress recorded for ${s.name}. Commercial approval and claims are unchanged.`, `stage:${s.id}`)}
+                onCommercial={(approved, comment) => run(() => recordProgressAction(id, s.id, (s.reportedBps / 100).toString(), approved, comment), `Commercial approval recorded for ${s.name}. Nothing was claimed or sent to Cin7.`, `stage:${s.id}`)}
               />
             ))}
           </div>
@@ -501,9 +534,10 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             <div className="mt-4 flex flex-wrap gap-2">
               <Button variant="secondary" size="sm" onClick={doPreview} loading={isWorking} disabled={chosen.length === 0 || (!!preview && pvState === "CURRENT")}>{!preview ? "Preview claim" : pvState === "STALE" ? "Refresh preview" : "Preview is up to date"}</Button>
               {preview && (
-                <Button size="sm" onClick={() => run(() => createClaimDraftAction(id, previewedIds, previewedAmounts), "Draft claim saved locally.")} loading={isWorking} disabled={pvState === "STALE"}>Save as draft claim</Button>
+                <Button size="sm" onClick={() => run(() => createClaimDraftAction(id, previewedIds, previewedAmounts), "Draft claim saved locally.", "claim:new")} loading={acts.isPending("claim:new")} disabled={isWorking || pvState === "STALE"}>Save as draft claim</Button>
               )}
             </div>
+            <Feedback k="claim:new" />
             {previewError && <div className="mt-3"><Alert tone="warning">{previewError}</Alert></div>}
             {preview && pvState === "STALE" && <div className="mt-3"><Alert tone="warning">This preview is out of date: the project changed after it was calculated. Refresh the preview before saving a draft.</Alert></div>}
             {preview && (
@@ -551,6 +585,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             <div className="grid gap-3 lg:grid-cols-2">
               {view.claims.map((cl) => {
                 const plan = claimActionPlan(cl, perm === "admin" ? "admin" : perm === "member" ? "member" : "none");
+                const claimKey = `claim:${cl.id}`;
                 return (
                   <article key={cl.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                     <header className="flex flex-wrap items-start justify-between gap-2">
@@ -581,13 +616,14 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                     {cl.cin7Status.detail && !["DRAFT_CREATED", "AUTHORISED"].includes(cl.cin7Status.kind) && <p className="mt-2 text-xs text-slate-500">{cl.cin7Status.detail}</p>}
                     <div className="mt-3">
                       <div className="flex flex-wrap items-center gap-1">
-                            {plan.submit && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.")} disabled={isWorking}>Submit</Button>}
+                            {plan.submit && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.", claimKey, { success: (v) => `${cl.claim_number} submitted for approval.${statusNote(v, cl.id)}`, confirm: (v) => ["READY_FOR_APPROVAL", ...APPROVED_OR_LATER].includes(claimStatus(v, cl.id) ?? "") })} loading={acts.isPending(claimKey)} disabled={isWorking}>Submit</Button>}
                             {plan.openInApprovals && cl.approval && <Link href={`/approvals/${cl.approval.requestId}`} className="inline-flex h-8 items-center rounded-md border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-800 hover:bg-indigo-100">Open in Approvals</Link>}
-                            {plan.approveHere && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.")} disabled={isWorking}>Approve</Button>}
+                            {plan.approveHere && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.", claimKey, { success: (v) => `${cl.claim_number} approved — value reserved. Nothing was sent to Cin7.${statusNote(v, cl.id)}`, confirm: (v) => APPROVED_OR_LATER.includes(claimStatus(v, cl.id) ?? "") })} loading={acts.isPending(claimKey)} disabled={isWorking}>Approve</Button>}
                             {plan.waitingText && <span className="self-center text-xs text-slate-500">{plan.waitingText}</span>}
-                            {plan.recalculate && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.")} disabled={isWorking}>Recalculate</Button>}
-                            {plan.cancel && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), cl.status === "READY_FOR_APPROVAL" ? "Claim withdrawn." : "Claim cancelled.")} disabled={isWorking}>{plan.cancelLabel}</Button>}
+                            {plan.recalculate && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.", claimKey)} disabled={isWorking}>Recalculate</Button>}
+                            {plan.cancel && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), cl.status === "READY_FOR_APPROVAL" ? "Claim withdrawn." : "Claim cancelled.", claimKey)} disabled={isWorking}>{plan.cancelLabel}</Button>}
                           </div>
+                      <Feedback k={claimKey} errorAction={cl.approval && SOD_REFUSAL.test(acts.stateOf(claimKey).kind === "error" ? (acts.stateOf(claimKey) as { message: string }).message : "") ? <Link href={`/approvals/${cl.approval.requestId}`} className="font-medium underline">Open this claim in Approvals to decide it with a written override</Link> : undefined} />
                     </div>
                     <details className="mt-3 text-xs">
                       <summary className="cursor-pointer text-slate-600">Approval history</summary>
@@ -607,6 +643,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
         </div>
       )}
     </Shell>
+    </ProjectFeedbackProvider>
   );
 }
 
@@ -631,7 +668,8 @@ function ProgressForm({
   const [reported, setReported] = useState(currentReported);
   const [approved, setApproved] = useState(currentApproved);
   const [comment, setComment] = useState("");
-  const [localError, setLocalError] = useState<string | null>(null);
+  // Validation shown BESIDE the field that needs fixing (and keeping everything typed so far).
+  const [fieldErr, setFieldErr] = useState<{ approved?: string; comment?: string }>({});
   const [open, setOpen] = useState(false);
 
   // Inputs restart from the latest saved values every time the form is opened (after a save, or if someone else changed the stage).
@@ -646,15 +684,17 @@ function ProgressForm({
   async function finish(save: Promise<boolean>) {
     if (await save) {
       setComment("");
-      setLocalError(null);
+      setFieldErr({});
       setOpen(false);
     }
   }
 
   function submitCommercial() {
-    if (approved === currentApproved) return setLocalError("Enter a different approved percentage to record an approval.");
-    if (!comment.trim()) return setLocalError("A reason is required when approved commercial completion changes.");
-    setLocalError(null);
+    const e: { approved?: string; comment?: string } = {};
+    if (approved === currentApproved) e.approved = "Enter a different approved percentage to record an approval.";
+    if (!comment.trim()) e.comment = "A reason is required when approved commercial completion changes.";
+    if (e.approved || e.comment) return setFieldErr(e);
+    setFieldErr({});
     void finish(onCommercial(approved, comment));
   }
 
@@ -684,26 +724,26 @@ function ProgressForm({
       </div>
       {open && (
         <div className="mt-3 space-y-4">
-          <Input label="Comment / reason" value={comment} onChange={(e) => setComment(e.target.value)} helperText="Optional for physical progress; required for a commercial approval." />
+          <Input label="Comment / reason" value={comment} onChange={(e) => { setComment(e.target.value); setFieldErr((f) => ({ ...f, comment: undefined })); }} error={fieldErr.comment} helperText="Optional for physical progress; required for a commercial approval." />
           <div className="space-y-2 rounded-md border border-sky-200 bg-sky-50/40 p-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-sky-800">Report physical progress</p>
             <Input label={`Physical completion (%) — now ${formatBps(stage.reportedBps)}`} value={reported} onChange={(e) => setReported(e.target.value)} inputMode="decimal" />
             <p className="text-xs text-slate-500">Informational. Does not change commercial approval and never creates or changes a claim.</p>
-            <Button size="sm" variant="secondary" disabled={disabled || reported === currentReported} onClick={() => { setLocalError(null); void finish(onPhysical(reported, comment)); }}>Record physical progress</Button>
+            <Button size="sm" variant="secondary" disabled={disabled || reported === currentReported} onClick={() => { setFieldErr({}); void finish(onPhysical(reported, comment)); }}>Record physical progress</Button>
           </div>
           {perm === "admin" ? (
             <div className="space-y-2 rounded-md border border-indigo-200 bg-indigo-50/40 p-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-indigo-800">Approve commercial progress (owner/admin)</p>
-              <Input label={`Approved commercial completion (%) — now ${formatBps(stage.approvedBps)}, physical ${formatBps(stage.reportedBps)}`} value={approved} onChange={(e) => setApproved(e.target.value)} inputMode="decimal" />
+              <Input label={`Approved commercial completion (%) — now ${formatBps(stage.approvedBps)}, physical ${formatBps(stage.reportedBps)}`} value={approved} onChange={(e) => { setApproved(e.target.value); setFieldErr((f) => ({ ...f, approved: undefined })); }} error={fieldErr.approved} inputMode="decimal" />
               <p className="text-xs text-slate-500">This is the only completion that drives a claim. Recording it creates no claim and sends nothing to Cin7.</p>
               <Button size="sm" disabled={disabled} onClick={submitCommercial}>Approve commercial progress</Button>
             </div>
           ) : perm === "member" ? (
             <p className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">Commercial approval is set by an organisation owner or admin.</p>
           ) : null}
-          {localError && <Alert tone="warning">{localError}</Alert>}
         </div>
       )}
+      <Feedback k={`stage:${stage.id}`} />
       {stage.history.length > 0 && (
         <details className="mt-3 text-xs text-slate-600">
           <summary className="cursor-pointer">Progress history ({stage.history.length})</summary>
