@@ -96,10 +96,11 @@ export const SCENARIOS: readonly ScenarioMeta[] = [
     assumptions: [
       { status: "Approved", text: "The forward exchange contract (FEC) is a documented configuration: neither Cin7 Core nor Xero has a forward-contract register." },
       { status: "Brief", text: "Landed cost = FOB (ZAR at customs FX) + duty on customs value + shipment freight allocated by CBM share within that shipment only." },
-      { status: "Open", text: "The definition of customs value and the duty column semantics are unconfirmed until the workbook is inspected locally." },
+      { status: "Open", text: "The definition of customs value and the duty column semantics are unconfirmed until the workbook is inspected locally. The engine reads the duty column as a ZAR amount and offers a duty-rate input as an on-screen alternative." },
+      { status: "Open", text: "USD exposure is read-only and counts payments due on or after the as-at date; the workbook has no paid flag, so earlier-dated payments are listed separately. It is not an FEC register." },
       { status: "Open", text: "Cin7 Core's own landed-cost / additional-cost allocation and the Xero features must be verified independently before being claimed (D6)." },
     ],
-    engine: { name: "Landed-cost and FX exposure engines", implemented: false },
+    engine: { name: "Landed-cost and FX exposure engines", implemented: true },
   },
   {
     id: "D",
