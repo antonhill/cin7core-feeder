@@ -113,8 +113,10 @@ describe("Scenario 5: fully billed, not fully shipped", () => {
       fulfilments: [{ number: 1, packLines: [{ sku: "A", quantity: 6 }], shipped: true }],
     });
     expect(physical.rows[0]).toMatchObject({ ordered: 10, shipped: 6, remainingToDeliver: 4, available: 3, shortfall: 1 }); // the shortage stays visible
-    // the Toolbox has no fulfilment-writing capability at all: its Cin7 port can only read a Sale and create an invoice
-    expect(Object.getOwnPropertyNames(Port.prototype).filter((n) => n !== "constructor").sort()).toEqual(["createInvoice", "fetchSale"]);
+    // the Toolbox has no fulfilment-writing capability: the REAL Cin7Port interface can only read a Sale and create an invoice.
+    // This is a compile-time check: adding any method to Cin7Port makes this object literal fail `tsc`, forcing a conscious review.
+    const realPortMethods: Record<keyof Cin7Port, true> = { fetchSale: true, createInvoice: true };
+    expect(Object.keys(realPortMethods).sort()).toEqual(["createInvoice", "fetchSale"]);
   });
   it("an unknown stock read is shown as unknown, never as zero", () => {
     const physical = buildPhysicalStatus({
