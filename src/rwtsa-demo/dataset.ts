@@ -1,3 +1,4 @@
+import type { TabLayoutReport } from "@/rwtsa-demo/workbook/layouts";
 import type {
   BomRow,
   CustomerRow,
@@ -106,6 +107,8 @@ export interface RwtsaDataset {
     readonly quotes: readonly QuoteRow[];
   };
   readonly reconciliation: Reconciliation;
+  /** Per-tab layout and row accounting from the reader (absent on hand-built datasets). */
+  readonly layout?: Readonly<Partial<Record<TabName, TabLayoutReport>>>;
   readonly readiness: readonly ScenarioReadiness[];
   /** Warnings and info only: a dataset with any error finding is never produced. */
   readonly findings: readonly Finding[];

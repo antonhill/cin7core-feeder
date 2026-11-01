@@ -47,7 +47,16 @@ export type FindingCode =
   | "style_mismatch"
   | "po_sku_style_mismatch"
   | "duplicate_sheet"
-  | "optional_header_absent";
+  | "optional_header_absent"
+  | "supplementary_sheet"
+  | "note_row_ignored"
+  | "layout_trailing_rows"
+  | "layout_row_excluded"
+  | "size_token_unrecognised"
+  | "context_missing"
+  | "composite_resolved"
+  | "composite_unresolved"
+  | "percent_cells_read_as_points";
 
 export interface Finding {
   readonly severity: Severity;

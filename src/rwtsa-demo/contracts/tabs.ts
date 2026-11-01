@@ -24,7 +24,7 @@ export const ITEMS_FIELDS = defineFields([
   { key: "sku", headers: ["SKU", "Item code", "Product code"], kind: "str", required: true },
   { key: "styleCode", headers: ["Style code", "Style"], kind: "str", required: true },
   { key: "description", headers: ["Description"], kind: "str", required: false },
-  { key: "productionCode", headers: ["Production code", "Prod code"], kind: "str", required: false },
+  { key: "productionCode", headers: ["Production code", "Prod code", "Production Z-code"], kind: "str", required: false },
   { key: "fabric", headers: ["Fabric"], kind: "str", required: false },
   { key: "colour", headers: ["Colour", "Color"], kind: "str", required: false },
   { key: "size", headers: ["Size"], kind: "str", required: true },
@@ -32,8 +32,8 @@ export const ITEMS_FIELDS = defineFields([
   { key: "unit", headers: ["Unit", "UoM"], kind: "str", required: false },
   { key: "minLevel", headers: ["Min level", "Minimum level", "Min stock", "Minimum stock"], kind: "num", required: false, critical: "A", negativeIsError: true },
   { key: "reorderPoint", headers: ["Reorder point", "Reorder level"], kind: "num", required: false, negativeIsError: true },
-  { key: "standardCost", headers: ["Standard cost", "Std cost"], kind: "num", required: true, negativeIsError: true },
-  { key: "standardSellPrice", headers: ["Standard sell price", "Std sell price", "Sell price"], kind: "num", required: false, negativeIsError: true },
+  { key: "standardCost", headers: ["Standard cost", "Std cost", "Std cost (ZAR)"], kind: "num", required: true, negativeIsError: true },
+  { key: "standardSellPrice", headers: ["Standard sell price", "Std sell price", "Sell price", "Std sell price (ZAR)"], kind: "num", required: false, negativeIsError: true },
   // Not listed in the brief's Items shape, but DP-16 needs a tender / customer-order-only marker. Optional until
   // the real workbook is inspected locally.
   { key: "isTender", headers: ["Tender", "Tender flag", "Customer order only", "Tender / customer order only"], kind: "bool", required: false, critical: "A" },
@@ -43,8 +43,8 @@ export type ItemRow = RowOf<typeof ITEMS_FIELDS>;
 /** SalesHistory is SKU rows x `YYYY-MM` month columns; the month columns are dynamic, so only fixed fields are declared. */
 export const SALES_HISTORY_FIELDS = defineFields([
   { key: "sku", headers: ["SKU", "Item code", "Product code"], kind: "str", required: true },
-  { key: "avg6", headers: ["6 month average", "6m average", "6 month avg", "Avg 6", "Average 6 months"], kind: "num", required: false },
-  { key: "avg12", headers: ["12 month average", "12m average", "12 month avg", "Avg 12", "Average 12 months"], kind: "num", required: false },
+  { key: "avg6", headers: ["6 month average", "6m average", "6 month avg", "Avg 6", "Average 6 months", "6-mo avg"], kind: "num", required: false },
+  { key: "avg12", headers: ["12 month average", "12m average", "12 month avg", "Avg 12", "Average 12 months", "12-mo avg"], kind: "num", required: false },
 ] as const);
 
 export const STOCK_FIELDS = defineFields([
@@ -58,14 +58,14 @@ export const STOCK_FIELDS = defineFields([
   { key: "bond", headers: ["Bond", "Bond (not available)"], kind: "num", required: true, negativeIsError: true },
   { key: "factoryStore", headers: ["Factory store", "Factory"], kind: "num", required: true, negativeIsError: true },
   { key: "inTransit", headers: ["In transit", "Transit"], kind: "num", required: true, negativeIsError: true },
-  { key: "committed", headers: ["Committed"], kind: "num", required: true, negativeIsError: true },
+  { key: "committed", headers: ["Committed", "Committed (SO)"], kind: "num", required: true, negativeIsError: true },
   { key: "available", headers: ["Available", "Available (excl. Bond)"], kind: "num", required: false, allowNegative: true },
 ] as const);
 export type StockFileRow = RowOf<typeof STOCK_FIELDS>;
 
 export const IMPORT_POS_FIELDS = defineFields([
   { key: "poNo", headers: ["PO no", "PO number", "PO"], kind: "str", required: true },
-  { key: "supplier", headers: ["Supplier"], kind: "str", required: true },
+  { key: "supplier", headers: ["Supplier", "Supplier (anon)"], kind: "str", required: true },
   { key: "country", headers: ["Country"], kind: "str", required: false },
   { key: "currency", headers: ["Currency"], kind: "str", required: false },
   { key: "incoterm", headers: ["Incoterm"], kind: "str", required: false },
@@ -75,10 +75,10 @@ export const IMPORT_POS_FIELDS = defineFields([
   { key: "qty", headers: ["Qty", "Quantity"], kind: "num", required: true, negativeIsError: true },
   { key: "unitPriceUsd", headers: ["Unit price USD", "Unit price (USD)", "Unit price"], kind: "num", required: true, negativeIsError: true },
   { key: "etd", headers: ["ETD"], kind: "date", required: false },
-  { key: "etaPort", headers: ["ETA port"], kind: "date", required: false },
-  { key: "etaStores", headers: ["ETA stores", "ETA to stores"], kind: "date", required: true },
+  { key: "etaPort", headers: ["ETA port", "ETA port (Durban)"], kind: "date", required: false },
+  { key: "etaStores", headers: ["ETA stores", "ETA to stores", "ETA JHB stores"], kind: "date", required: true },
   { key: "status", headers: ["Status"], kind: "str", required: true },
-  { key: "bondOnArrival", headers: ["Bond on arrival"], kind: "bool", required: false },
+  { key: "bondOnArrival", headers: ["Bond on arrival"], kind: "bool", required: false, boolPrefix: true },
   { key: "shipmentRef", headers: ["Shipment", "Shipment ref", "Shipment reference"], kind: "str", required: false },
 ] as const);
 export type ImportPoRow = RowOf<typeof IMPORT_POS_FIELDS>;
@@ -88,9 +88,9 @@ export const BOM_FIELDS = defineFields([
   { key: "componentCode", headers: ["Component code", "Component", "Material code"], kind: "str", required: true },
   { key: "componentName", headers: ["Component name", "Description"], kind: "str", required: false },
   { key: "componentType", headers: ["Component type", "Type", "Category"], kind: "str", required: false },
-  { key: "qtyPerUnit", headers: ["Qty per unit", "Quantity per unit", "Qty", "Quantity"], kind: "num", required: true, negativeIsError: true },
+  { key: "qtyPerUnit", headers: ["Qty per unit", "Quantity per unit", "Qty", "Quantity", "Qty / unit"], kind: "num", required: true, negativeIsError: true },
   { key: "unit", headers: ["Unit", "UoM"], kind: "str", required: false },
-  { key: "unitCost", headers: ["Unit cost", "Cost"], kind: "num", required: false, negativeIsError: true },
+  { key: "unitCost", headers: ["Unit cost", "Cost", "Std cost (ZAR)"], kind: "num", required: false, negativeIsError: true },
   // Size-varying component (e.g. a longer zip from a given size up): either an explicit size or a from-size.
   { key: "size", headers: ["Size"], kind: "str", required: false },
   { key: "sizeFrom", headers: ["Size from", "From size", "Applies from size"], kind: "str", required: false },
@@ -100,7 +100,7 @@ export type BomRow = RowOf<typeof BOM_FIELDS>;
 export const ROUTING_SMV_FIELDS = defineFields([
   { key: "styleCode", headers: ["Style code", "Style"], kind: "str", required: true },
   { key: "operation", headers: ["Operation", "Operation name"], kind: "str", required: true },
-  { key: "smv", headers: ["SMV", "Standard minute value", "Minutes"], kind: "num", required: true, negativeIsError: true },
+  { key: "smv", headers: ["SMV", "Standard minute value", "Minutes", "SMV (min)"], kind: "num", required: true, negativeIsError: true },
   { key: "costPerMinute", headers: ["Cost per minute", "Cost/min", "Rate per minute"], kind: "num", required: true, negativeIsError: true },
   { key: "overhead", headers: ["Overhead", "Overhead %"], kind: "num", required: false, critical: "B", negativeIsError: true },
   { key: "efficiency", headers: ["Efficiency", "Efficiency %", "Efficiency allowance"], kind: "num", required: false, critical: "B", negativeIsError: true },
@@ -109,10 +109,10 @@ export const ROUTING_SMV_FIELDS = defineFields([
 export type RoutingRow = RowOf<typeof ROUTING_SMV_FIELDS>;
 
 export const PRODUCTION_ORDERS_FIELDS = defineFields([
-  { key: "orderNo", headers: ["Order", "Order no", "Production order"], kind: "str", required: true },
+  { key: "orderNo", headers: ["Order", "Order no", "Production order", "Prod order"], kind: "str", required: true },
   { key: "styleCode", headers: ["Style code", "Style"], kind: "str", required: true },
   { key: "qty", headers: ["Qty", "Quantity", "Order qty"], kind: "num", required: true, negativeIsError: true },
-  { key: "plannedSmv", headers: ["Planned SMV"], kind: "num", required: false, negativeIsError: true },
+  { key: "plannedSmv", headers: ["Planned SMV", "Planned SMV/unit"], kind: "num", required: false, negativeIsError: true },
   { key: "plannedMinutes", headers: ["Planned minutes"], kind: "num", required: true, negativeIsError: true },
   { key: "actualMinutes", headers: ["Actual minutes"], kind: "num", required: true, negativeIsError: true },
   { key: "plannedFabricM", headers: ["Planned fabric (m)", "Planned fabric m", "Planned fabric"], kind: "num", required: true, negativeIsError: true },
@@ -120,8 +120,8 @@ export const PRODUCTION_ORDERS_FIELDS = defineFields([
   { key: "standardPrice", headers: ["Planned price", "Standard price", "Std price", "Planned fabric price"], kind: "num", required: false, critical: "B", negativeIsError: true },
   { key: "actualPrice", headers: ["Actual price", "Actual fabric price"], kind: "num", required: false, critical: "B", negativeIsError: true },
   { key: "labourRecoveryPct", headers: ["Labour recovery %", "Labour recovery"], kind: "num", required: false, negativeIsError: true },
-  { key: "usageVariance", headers: ["Usage variance"], kind: "num", required: false, allowNegative: true },
-  { key: "priceVariance", headers: ["Price variance"], kind: "num", required: false, allowNegative: true },
+  { key: "usageVariance", headers: ["Usage variance", "Usage variance (m)"], kind: "num", required: false, allowNegative: true },
+  { key: "priceVariance", headers: ["Price variance", "Price variance (ZAR)"], kind: "num", required: false, allowNegative: true },
   { key: "productionLine", headers: ["Production line", "Line"], kind: "str", required: true },
 ] as const);
 export type ProductionOrderRow = RowOf<typeof PRODUCTION_ORDERS_FIELDS>;
@@ -129,28 +129,28 @@ export type ProductionOrderRow = RowOf<typeof PRODUCTION_ORDERS_FIELDS>;
 /** Only the fields needed to prove structure and shipment scoping are required; the calculation PR will tighten this after local inspection. */
 export const LANDED_COST_FIELDS = defineFields([
   { key: "shipmentRef", headers: ["Shipment", "Shipment ref", "Shipment reference"], kind: "str", required: true },
-  { key: "sku", headers: ["SKU"], kind: "str", required: true },
+  { key: "sku", headers: ["SKU", "Product"], kind: "str", required: true },
   { key: "qty", headers: ["Qty", "Quantity"], kind: "num", required: true, negativeIsError: true },
   { key: "fobUsd", headers: ["FOB USD", "FOB (USD)", "FOB"], kind: "num", required: false, critical: "C", negativeIsError: true },
   { key: "planningFx", headers: ["Planning FX", "Planning rate"], kind: "num", required: false, critical: "C", negativeIsError: true },
   { key: "customsFx", headers: ["Customs FX", "Customs rate"], kind: "num", required: false, critical: "C", negativeIsError: true },
   { key: "dutyZar", headers: ["Duty", "Duty ZAR", "Duty (ZAR)"], kind: "num", required: false, critical: "C", negativeIsError: true },
-  { key: "cbm", headers: ["CBM", "Volume (CBM)"], kind: "num", required: true, negativeIsError: true },
+  { key: "cbm", headers: ["CBM", "Volume (CBM)", "CBM total"], kind: "num", required: true, negativeIsError: true },
   { key: "freightTotalZar", headers: ["Freight", "Freight ZAR", "Shipment freight"], kind: "num", required: false, critical: "C", negativeIsError: true },
-  { key: "freightAllocatedZar", headers: ["Freight allocated", "Allocated freight"], kind: "num", required: false, negativeIsError: true },
+  { key: "freightAllocatedZar", headers: ["Freight allocated", "Allocated freight", "Allocated freight (ZAR)"], kind: "num", required: false, negativeIsError: true },
 ] as const);
 export type LandedCostRow = RowOf<typeof LANDED_COST_FIELDS>;
 
 export const PAYMENTS_FEC_FIELDS = defineFields([
   { key: "poNo", headers: ["PO no", "PO number", "PO"], kind: "str", required: true },
-  { key: "supplier", headers: ["Supplier"], kind: "str", required: true },
+  { key: "supplier", headers: ["Supplier", "Supplier (anon)"], kind: "str", required: true },
   { key: "shipmentDate", headers: ["Shipment date"], kind: "date", required: false },
   { key: "termsDays", headers: ["Terms (days)", "Terms days", "Terms"], kind: "num", required: false, negativeIsError: true },
   { key: "dueDate", headers: ["Due date"], kind: "date", required: true },
   { key: "usdAmount", headers: ["USD amount", "Amount USD", "USD"], kind: "num", required: true, negativeIsError: true },
   { key: "fecRef", headers: ["FEC reference", "FEC ref", "FEC"], kind: "str", required: false, critical: "C" },
-  { key: "lockedRate", headers: ["Locked rate", "FEC rate"], kind: "num", required: false, critical: "C", negativeIsError: true },
-  { key: "zarValue", headers: ["ZAR value", "Amount ZAR", "ZAR"], kind: "num", required: false, negativeIsError: true },
+  { key: "lockedRate", headers: ["Locked rate", "FEC rate", "FEC locked rate"], kind: "num", required: false, critical: "C", negativeIsError: true },
+  { key: "zarValue", headers: ["ZAR value", "Amount ZAR", "ZAR", "ZAR value @ FEC"], kind: "num", required: false, negativeIsError: true },
   { key: "isDeposit", headers: ["Deposit", "Is deposit"], kind: "bool", required: false },
 ] as const);
 export type PaymentFecRow = RowOf<typeof PAYMENTS_FEC_FIELDS>;
@@ -169,9 +169,9 @@ export const QUOTES_FIELDS = defineFields([
   // Free text on purpose: an unrecognised status must reach the engine as UNCLASSIFIED and be reported, not fail the whole workbook.
   // Normalised by contracts/quote-status.ts.
   { key: "status", headers: ["Status"], kind: "str", required: true },
-  { key: "value", headers: ["Value", "Quote value", "Amount"], kind: "num", required: true, negativeIsError: true },
+  { key: "value", headers: ["Value", "Quote value", "Amount", "Value (ZAR)"], kind: "num", required: true, negativeIsError: true },
   { key: "lostReason", headers: ["Lost reason", "Reason lost"], kind: "str", required: false, critical: "D" },
-  { key: "convertedOrder", headers: ["Converted order", "Sales order", "Original SO", "Order no"], kind: "str", required: false, critical: "D" },
+  { key: "convertedOrder", headers: ["Converted order", "Sales order", "Original SO", "Order no", "Converted order no"], kind: "str", required: false, critical: "D" },
   { key: "quoteDate", headers: ["Quote date", "Date"], kind: "date", required: false },
   { key: "product", headers: ["Product", "Style", "Style code"], kind: "str", required: false },
 ] as const);
