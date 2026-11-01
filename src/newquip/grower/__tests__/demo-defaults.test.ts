@@ -52,7 +52,7 @@ describe("Load Demo Defaults", () => {
     expect(overridden).toEqual(["concrete_slat", "cup_drinker", "feed_saver_mat", "led_light", "pvc_door"]);
     for (const l of b.lines.filter((x) => x.status !== "not_selected")) expect(["priced"]).toContain(l.status);
     expect(b.blockers).toEqual([]);
-    expect(b.lines.filter((l) => l.pricedBy === "estimator_resolution").every((l) => /POC MANUAL PRICE OVERRIDE/.test(l.reason))).toBe(true);
+    expect(b.lines.filter((l) => l.pricedBy === "estimator_resolution").every((l) => /MANUAL QUOTATION PRICE/.test(l.reason))).toBe(true);
   });
   it("is REPEATABLE: applying twice gives the identical draft, with no duplicated products, sections or charges", () => {
     const once = applyDemoDefaults(emptyDraft()).draft;

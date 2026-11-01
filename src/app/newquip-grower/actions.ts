@@ -8,6 +8,9 @@ import { QUOTES_MODULE } from "@/app/module-nav";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
 import { evaluateDraft, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import type { QuoteDraft } from "@/newquip/grower/draft";
+import { stampPriceResolutions } from "@/newquip/quote/price-resolution";
+import { optionalMappedSkus, optionalMappingError } from "@/newquip/grower/optional-mapping";
+import { searchCatalogue, type CatalogueResult } from "@/lib/projects/catalogue-search";
 import { hasAny, PROJECT_CREATE_ROLES, type OrgTier, type QuoteRole } from "@/newquip/quote/roles";
 import { toQuoteRoles } from "@/lib/approvals/roles";
 import { canSeeCosts, resolveRoles } from "@/lib/approvals/role-store";
@@ -152,12 +155,37 @@ export async function previewGrowerDraftAction(draft: QuoteDraft): Promise<Growe
   }
 }
 
+/**
+ * Search the synced Cin7 catalogue to map an optional additional element to a product. Read-only, org-scoped from the session, Estimator or Manager
+ * authority only (a plain Rep cannot change what the quotation is built from), NewQuip organisation only.
+ */
+export async function searchCin7CatalogueForMappingAction(query: string): Promise<GrowerActionResult<CatalogueResult>> {
+  try {
+    const a = await authorise();
+    if (!hasAny(a.roles, ["estimator", "manager"])) throw new Error("Only an Estimator or Manager can map a product.");
+    return { ok: true, data: await searchCatalogue(createServiceRoleClient(), a.orgId, query) };
+  } catch (e) {
+    return { ok: false, error: errMsg(e) };
+  }
+}
+
 export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft): Promise<GrowerActionResult<QuoteView>> {
   try {
     const a = await authorise();
     const db = createServiceRoleClient();
+    // Every optional element mapped to a Cin7 product must be a real, active product of THIS organisation's synced catalogue (verified server-side on every save).
+    const mapped = optionalMappedSkus(draft.estimator.confirmedMappings);
+    if (mapped.length) {
+      const rows = await db.from("products").select("sku, active").eq("org_id", a.orgId).in("sku", mapped.map((m) => m.sku));
+      if (rows.error) throw new Error(`The mapped products could not be verified against the Cin7 catalogue (${rows.error.message}). Nothing was saved.`);
+      const err = optionalMappingError(mapped, (rows.data ?? []) as Array<{ sku: string; active: boolean | null }>);
+      if (err) throw new Error(err);
+    }
     const prior = await loadQuote(db, a.orgId, quoteId);
-    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(draft, prior?.draft.estimator.costOverrides, a.canSeeCost, a.email, new Date().toISOString()), prior?.draft.estimator.physicalCosts), prior?.draft.estimator.costBasis));
+    const nowIso = new Date().toISOString();
+    // Manual quotation prices: provenance is stamped here (never trusted from the client) and only an Estimator or Manager may change them.
+    const withResolutions: QuoteDraft = { ...draft, estimator: { ...draft.estimator, priceResolutions: stampPriceResolutions(draft.estimator.priceResolutions, prior?.draft.estimator.priceResolutions, a.roles, a.email, nowIso) as QuoteDraft["estimator"]["priceResolutions"] } };
+    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(withResolutions, prior?.draft.estimator.costOverrides, a.canSeeCost, a.email, new Date().toISOString()), prior?.draft.estimator.physicalCosts), prior?.draft.estimator.costBasis));
     // Changed content invalidates the estimator's sign-off (saveDraft clears it) and any open approval of the older content: the quote goes back to estimator review.
     if (saved.draftHash !== prior?.draft_hash && (await stagedAvailable(db))) await resyncQuoteApprovals(db, ctxOf(a), quoteId, { quiet: true }).catch(() => undefined);
     const q = await loadQuote(db, a.orgId, quoteId);

@@ -22,6 +22,8 @@ import type { SupplierOption } from "@/lib/projects/supplier-price";
 
 export interface CostPanelBodyProps {
   v: QuoteCostView | null; loading: boolean; error: string | null; note: string | null; busy: boolean;
+  /** The quotation has unsaved edits: this panel reflects the SAVED draft only. */
+  unsaved?: boolean;
   manual: { sku: string; rand: string; reason: string } | null;
   onCapture: (replaceSelections?: boolean) => void; onRetry: () => void; onClearManual: (sku: string) => void;
   onStartManual: (sku: string) => void; onManualChange: (m: { sku: string; rand: string; reason: string } | null) => void; onSaveManual: () => void;
@@ -123,6 +125,7 @@ export function CostPanelBody(p: CostPanelBodyProps) {
         <PanelTitle>Cin7 latest cost - capture and margin (physical SKUs)</PanelTitle>
         {v && (v.frozen ? <Badge tone="info">Frozen with the approval</Badge> : <Badge tone="neutral">Draft</Badge>)}
       </div>
+      {p.unsaved && <div className="mt-2"><Alert tone="warning">You have unsaved changes. This cost estimate is calculated from the last SAVED draft (for example, a component you just excluded is still counted here). Save the draft to refresh it.</Alert></div>}
       <p className="mt-1 text-xs text-slate-500">Internal. Latest Supplier Price from Cin7 for every supplier, in rand. This is separate from the workbook-basis margin above; the two are not combined. {v?.note ?? ""} A missing cost is never treated as zero, FixedCost and AverageCost are never substituted, and a manual estimate is always labelled as one.</p>
       {p.loading && !v && !error && <p className="mt-2 text-sm text-slate-600">Loading the cost estimate…</p>}
       {error && (
@@ -194,7 +197,7 @@ export function CostPanelBody(p: CostPanelBodyProps) {
   );
 }
 
-export function CostPanel({ quoteId, reload }: { quoteId: string; reload?: () => void }) {
+export function CostPanel({ quoteId, reload, unsaved }: { quoteId: string; reload?: () => void; unsaved?: boolean }) {
   const [v, setV] = useState<QuoteCostView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -215,7 +218,7 @@ export function CostPanel({ quoteId, reload }: { quoteId: string; reload?: () =>
   };
   return (
     <CostPanelBody
-      v={v} loading={!v && !error} error={error} note={note} busy={busy} manual={manual}
+      v={v} loading={!v && !error} error={error} note={note} busy={busy} manual={manual} unsaved={unsaved}
       onRetry={() => { setError(null); load(); }}
       onCapture={(replace) => run(() => captureLatestCostsAction(quoteId, { replaceSelections: !!replace }), "Supplier prices read from Cin7 (read-only). Select a supplier where asked. The estimator's sign-off, if any, must be given again on the new costs.")}
       onSelect={(sku, s, reason) => run(() => selectSupplierAction(quoteId, sku, s, reason), "Supplier selected and recorded.")}
