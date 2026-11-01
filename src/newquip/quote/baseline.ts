@@ -46,7 +46,7 @@ export interface AcceptedBaseline {
   selectedProducts: { itemKey: string; sku: string | null; variant: string | null }[];
   overrides: { itemKey: string; quantityPerRoom: number | null; defaultQuantityPerRoom: number | null; reason: string | null }[];
   exclusions: { itemKey: string; reason: string }[];
-  priceResolutions: { itemKey: string; unitPriceExVat: number; reason: string }[];
+  priceResolutions: { itemKey: string; unitPriceExVat: number; reason: string; /** Server-stamped provenance (who/when), sealed with the baseline. */ by?: string; at?: string }[];
   pricing: { source: PriceSourceDescriptor; quoteType: QuoteType; basis: string };
   commercial: {
     lines: BaselineCommercialLine[];
@@ -166,7 +166,7 @@ export function buildAcceptedBaseline(i: BaselineInput): { baseline: AcceptedBas
     selectedProducts: lines.map((l) => ({ itemKey: l.itemKey, sku: l.sku, variant: l.itemKey === "feeder" ? (draft.config.feederVariant ?? "STANDARD") : null })),
     overrides: ev.calc.lines.filter((l) => l.overrideState === "manual_override").map((l) => ({ itemKey: l.itemKey, quantityPerRoom: l.quantityPerRoom, defaultQuantityPerRoom: l.defaultQuantityPerRoom, reason: l.overrideReason })),
     exclusions: ev.calc.lines.filter((l) => l.exclusionReason).map((l) => ({ itemKey: l.itemKey, reason: l.exclusionReason! })),
-    priceResolutions: Object.entries(draft.estimator.priceResolutions).filter(([k]) => b.lines.some((l) => l.itemKey === k && l.pricedBy === "estimator_resolution")).map(([itemKey, r]) => ({ itemKey, unitPriceExVat: r!.unitPriceExVat, reason: r!.reason })),
+    priceResolutions: Object.entries(draft.estimator.priceResolutions).filter(([k]) => b.lines.some((l) => l.itemKey === k && l.pricedBy === "estimator_resolution")).map(([itemKey, r]) => ({ itemKey, unitPriceExVat: r!.unitPriceExVat, reason: r!.reason, ...(r!.by ? { by: r!.by } : {}), ...(r!.at ? { at: r!.at } : {}) })),
     pricing: { source: b.priceSource, quoteType: b.quoteType, basis: b.pricingBasis },
     commercial: {
       lines,

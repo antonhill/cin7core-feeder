@@ -31,10 +31,14 @@ export function accountOptions(accounts: readonly Cin7Account[]): AccountOption[
   return accounts.map(classifyAccount).sort((x, y) => Number(y.selectable) - Number(x.selectable) || x.code.localeCompare(y.code, undefined, { numeric: true }));
 }
 
-/** Server-side re-check of a chosen code against a fresh read: it must exist and be selectable. */
-export function chosenAccountError(accounts: readonly Cin7Account[], code: string): string | null {
-  const a = accounts.find((x) => x.code === code);
+/**
+ * Server-side check of the account a Sale is created with, whichever way it was entered (picker, typed, or a direct call). It refuses an account that does not
+ * exist and every account KNOWN to be unsupported (inactive, Cin7 special account, balance-sheet liability). It does NOT require a positively recognised revenue
+ * class: Cin7's exact class names were not observable when this was written, and refusing everything on a naming mismatch would block Sale creation entirely.
+ */
+export function unsupportedAccountError(accounts: readonly Cin7Account[], code: string): string | null {
+  const a = accounts.find((x) => x.code === code.trim());
   if (!a) return `Account ${code} was not found in Cin7.`;
   const o = classifyAccount(a);
-  return o.selectable ? null : `Account ${code} (${a.name}) cannot be used: ${o.note}`;
+  return o.group === "INACTIVE" || o.group === "SYSTEM" || o.group === "LIABILITY" ? `Account ${code} (${a.name}) cannot be used: ${o.note}` : null;
 }

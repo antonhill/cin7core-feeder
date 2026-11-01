@@ -22,3 +22,19 @@ export function optionalMappingError(mapped: ReadonlyArray<{ itemKey: string; sk
   }
   return null;
 }
+
+/** Trims every optional mapping and drops anything that is not a non-empty string, so what is verified is exactly what is stored. */
+export function normaliseOptionalMappings<T extends { estimator: { confirmedMappings: Partial<Record<string, string>> } }>(draft: T): T {
+  const next = { ...draft.estimator.confirmedMappings } as Record<string, unknown>;
+  for (const k of OPTIONAL_ITEM_KEYS) {
+    const v = next[k];
+    if (v === undefined) continue;
+    if (typeof v === "string" && v.trim()) next[k] = v.trim(); else delete next[k];
+  }
+  return { ...draft, estimator: { ...draft.estimator, confirmedMappings: next as Partial<Record<string, string>> } };
+}
+
+/** True when the optional-element mappings differ between two drafts (a change of WHAT the quotation is built from). */
+export function optionalMappingsChanged(prior: Partial<Record<string, string>> | undefined, next: Partial<Record<string, string>> | undefined): boolean {
+  return OPTIONAL_ITEM_KEYS.some((k) => (prior?.[k] ?? null) !== (next?.[k] ?? null));
+}

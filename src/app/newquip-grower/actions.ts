@@ -9,7 +9,7 @@ import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
 import { evaluateDraft, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { stampPriceResolutions } from "@/newquip/quote/price-resolution";
-import { optionalMappedSkus, optionalMappingError } from "@/newquip/grower/optional-mapping";
+import { normaliseOptionalMappings, optionalMappedSkus, optionalMappingError, optionalMappingsChanged } from "@/newquip/grower/optional-mapping";
 import { searchCatalogue, type CatalogueResult } from "@/lib/projects/catalogue-search";
 import { hasAny, PROJECT_CREATE_ROLES, type OrgTier, type QuoteRole } from "@/newquip/quote/roles";
 import { toQuoteRoles } from "@/lib/approvals/roles";
@@ -173,6 +173,10 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
   try {
     const a = await authorise();
     const db = createServiceRoleClient();
+    const prior0 = await loadQuote(db, a.orgId, quoteId);
+    draft = normaliseOptionalMappings(draft);
+    // Only an Estimator or Manager may change which Cin7 product an optional element is mapped to (the server enforces what the picker hides).
+    if (optionalMappingsChanged(prior0?.draft.estimator.confirmedMappings, draft.estimator.confirmedMappings) && !hasAny(a.roles, ["estimator", "manager"])) throw new Error("Only an Estimator or Manager can map a product.");
     // Every optional element mapped to a Cin7 product must be a real, active product of THIS organisation's synced catalogue (verified server-side on every save).
     const mapped = optionalMappedSkus(draft.estimator.confirmedMappings);
     if (mapped.length) {

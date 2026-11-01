@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { evaluateDraft } from "../evaluate";
 import { readyDraft } from "./golden";
 import { testPriceSource } from "./test-snapshot";
-import { optionalMappedSkus, optionalMappingError } from "../optional-mapping";
+import { readFileSync } from "node:fs";
+import { normaliseOptionalMappings, optionalMappedSkus, optionalMappingError, optionalMappingsChanged } from "../optional-mapping";
 import { isOptionalItemKey, OPTIONAL_ITEM_KEYS } from "../types";
 
 const draftWith = (mapping?: string, resolution?: { unitPriceExVat: number; reason: string }) => {
@@ -56,5 +57,25 @@ describe("optional mapping verification against the catalogue", () => {
     expect(optionalMappingError(m, [{ sku: "C1", active: false }])).toMatch(/inactive/);
     expect(optionalMappingError(m, [{ sku: "C1", active: true }])).toBeNull();
     expect(optionalMappingError(m, [{ sku: "C1", active: null }])).toBeNull();
+  });
+});
+
+describe("review P1/P2: mapping changes are authorised and normalised on the server", () => {
+  it("detects a change to an optional mapping (add, change, remove) and ignores unrelated keys", () => {
+    expect(optionalMappingsChanged({}, { controller: "C1" })).toBe(true);
+    expect(optionalMappingsChanged({ controller: "C1" }, { controller: "C2" })).toBe(true);
+    expect(optionalMappingsChanged({ controller: "C1" }, {})).toBe(true);
+    expect(optionalMappingsChanged({ controller: "C1", feeder: "A" }, { controller: "C1", feeder: "B" })).toBe(false);
+  });
+  it("trims mappings and drops non-strings and blanks, so the verified value is the stored value", () => {
+    const d = { estimator: { confirmedMappings: { controller: " REAL ", pad_cooling: 123 as never, cone_fans: "  ", feeder: "PNQ082" } } };
+    expect(normaliseOptionalMappings(d).estimator.confirmedMappings).toEqual({ controller: "REAL", feeder: "PNQ082" });
+  });
+  it("saveGrowerDraftAction refuses a mapping change from a caller without Estimator/Manager authority, before saving", () => {
+    const src = readFileSync(new URL("../../../app/newquip-grower/actions.ts", import.meta.url), "utf8");
+    const guard = src.indexOf("optionalMappingsChanged(prior0");
+    expect(guard).toBeGreaterThan(0);
+    expect(src.slice(guard, guard + 260)).toMatch(/hasAny\(a\.roles, \["estimator", "manager"\]\)/);
+    expect(guard).toBeLessThan(src.indexOf("await saveDraft(db, a.orgId, a.roles, quoteId"));
   });
 });

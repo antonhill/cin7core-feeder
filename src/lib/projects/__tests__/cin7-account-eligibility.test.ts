@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { accountOptions, chosenAccountError, classifyAccount } from "../cin7-account-eligibility";
+import { accountOptions, unsupportedAccountError, classifyAccount } from "../cin7-account-eligibility";
 import { fetchAllAccounts, REF_ACCOUNT_PATH } from "@/cin7/reference-lookups";
 import { cin7Request } from "@/cin7/http";
 
@@ -28,9 +29,9 @@ describe("UAT-010 which Cin7 accounts can be chosen", () => {
   it("selectable accounts sort first; a chosen code is re-checked against a fresh read", () => {
     const list = [acct({ code: "820", type: "CURRLIAB", accountClass: "LIABILITY" }), acct({ code: "200" }), acct({ code: "210", name: "Other sales" })];
     expect(accountOptions(list).map((a) => a.code)).toEqual(["200", "210", "820"]);
-    expect(chosenAccountError(list, "200")).toBeNull();
-    expect(chosenAccountError(list, "820")).toMatch(/cannot be used/);
-    expect(chosenAccountError(list, "999")).toMatch(/not found/);
+    expect(unsupportedAccountError(list, "200")).toBeNull();
+    expect(unsupportedAccountError(list, "820")).toMatch(/cannot be used/);
+    expect(unsupportedAccountError(list, "999")).toMatch(/not found/);
   });
 });
 
@@ -46,5 +47,23 @@ describe("fetchAllAccounts (read-only)", () => {
     expect(vi.mocked(cin7Request).mock.calls.every((c) => !(c[2] as { method?: string } | undefined)?.method || (c[2] as { method?: string }).method === "GET")).toBe(true); // reads only
     expect(all.find((a) => a.code === "800")).toMatchObject({ systemAccount: "Accounts payable", accountClass: "LIABILITY", type: null, active: true });
     expect(all.find((a) => a.code === "999")?.active).toBe(false);
+  });
+});
+
+describe("server-side account check (review P1)", () => {
+  it("refuses liability, system and inactive accounts and unknown codes however they were entered, but does not demand a recognised revenue class", () => {
+    const list = [acct({ code: "820", type: "CURRLIAB", accountClass: "LIABILITY" }), acct({ code: "800", systemAccount: "Accounts payable" }), acct({ code: "900", active: false }), acct({ code: "300", type: "X", accountClass: "WEIRD" })];
+    for (const c of ["820", "800", "900"]) expect(unsupportedAccountError(list, c)).toMatch(/cannot be used/);
+    expect(unsupportedAccountError(list, "nope")).toMatch(/not found/);
+    expect(unsupportedAccountError(list, "300")).toBeNull();
+  });
+  it("createCin7SaleAction runs the server-side account check before it can create anything", () => {
+    const src = readFileSync(new URL("../../../app/projects/cin7-actions.ts", import.meta.url), "utf8");
+    const check = src.indexOf("verifyRevenueAccountForSale(");
+    const create = src.indexOf("createSaleForProject(db,");
+    expect(check).toBeGreaterThan(0);
+    expect(check).toBeLessThan(create);
+    expect(src.slice(check, create)).toMatch(/if \(accountError\) throw new Error\(accountError\)/); // the result is enforced, not just read
+    expect(src.slice(check - 200, check)).toMatch(/gates\.isManager && gates\.writesEnabled && gates\.orgEnabled/);
   });
 });

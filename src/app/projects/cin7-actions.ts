@@ -18,7 +18,7 @@ import { runP0, type P0Input, type P0Report } from "@/lib/projects/p0-checklist"
 import { externalIdFor } from "@/lib/projects/cin7-sale-creation";
 import { guardBillingScope } from "@/lib/projects/scope-access";
 import { cin7WritesEnabled } from "@/lib/projects/write-flag";
-import { readCin7ReferenceOptions } from "@/lib/projects/cin7-reference-adapter";
+import { readCin7ReferenceOptions, verifyRevenueAccountForSale } from "@/lib/projects/cin7-reference-adapter";
 import { NEWQUIP_POC_CIN7_INSTANCE_ID, OPERATIONAL_CUSTOMER_DENYLIST, isNewquipPocOrg } from "@/newquip/access";
 import { buildCin7Port, singleActiveInstanceId } from "@/lib/projects/cin7-adapter";
 import { buildSaleCreationPort } from "@/lib/projects/cin7-sale-creation-adapter";
@@ -249,6 +249,11 @@ export async function createCin7SaleAction(
     const db = createServiceRoleClient();
     const instanceId = await singleActiveInstanceId(db, orgId);
     if (instanceId !== NEWQUIP_POC_CIN7_INSTANCE_ID) throw new Error("A Sale can only be created on the expected NewQuip POC Cin7 instance; this organisation's active instance is not it.");
+    // Whatever way the account was entered, a known-unsupported one (inactive, special, liability) or an unknown code is refused before any Sale is attempted (read-only).
+    if (gates.isManager && gates.writesEnabled && gates.orgEnabled) {
+      const accountError = await verifyRevenueAccountForSale(db, orgId, instanceId, input.revenueAccount);
+      if (accountError) throw new Error(accountError);
+    }
     const r = await createSaleForProject(db, buildSaleCreationPort(db, orgId, instanceId), gates, email ?? "unknown", { orgId, projectId, instanceId, ...input });
     await logActivity(db, { orgId, actor: { userId, email }, action: "projects.cin7_sale_create", summary: `Cin7 Advanced Sale creation: ${r.state}`, detail: { projectId, creationId: r.creation.id, state: r.state, externalId: r.creation.external_id, saleNumber: r.creation.cin7_sale_number } });
     return { ok: true, data: { state: r.state, message: r.message, saleNumber: r.creation.cin7_sale_number, linked: r.linked } };
