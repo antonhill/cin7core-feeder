@@ -28,6 +28,7 @@ import {
 } from "../actions";
 import { formatSast } from "@/lib/approvals/time";
 import { isOptionalItemKey } from "@/newquip/grower/types";
+import { mappingControlFor } from "@/newquip/grower/mapping-access";
 import { previewCostOverrides } from "@/newquip/quote/margin";
 import { ProductMappingPicker } from "./ProductMappingPicker";
 import { fmtCents, fmtZar, NumField, TextField } from "../fields";
@@ -380,6 +381,7 @@ export default function QuoteEditorPage() {
                     const kind = valueKindOf(l);
                     const k = l.itemKey as GrowerItemKey;
                     const optionalOff = l.basis === "not_selected" && !l.exclusionReason;
+                    const mapControl = mappingControlFor(l.itemKey, l.basis, roles, editable);
                     return (
                       <tr key={l.itemKey} className={`border-b border-slate-100 align-top ${optionalOff ? "opacity-60" : ""}`}>
                         <td className="py-3 pr-3"><div className="font-medium text-slate-900">{l.label}</div><div className="font-mono text-[11px] text-slate-400">{l.ruleId}</div>
@@ -404,7 +406,12 @@ export default function QuoteEditorPage() {
                           {l.basis === "not_selected" && !l.exclusionReason && <span className="text-xs text-slate-400">Optional — not selected</span>}
                         </td>
                         <td className="py-3 pr-3 text-right tabular-nums">{l.projectQuantity ?? "—"}</td>
-                        <td className="py-3 pr-3 text-xs text-slate-700">{b?.sku ?? (b?.pricedBy === "penning_rate" ? "Pig-size / running-metre basis" : b?.pricedBy === "estimator_input" ? "Estimator-priced system" : b?.pricedBy === "estimator_resolution" ? "Estimator-resolved" : "—")}</td>
+                        <td className="py-3 pr-3 text-xs text-slate-700">{mapControl === "chooser" ? (
+                          <div className="min-w-[280px]" data-testid={`mapping-chooser-${l.itemKey}`}>
+                            <ProductMappingPicker label={l.label} value={draft.estimator.confirmedMappings[l.itemKey]}
+                              onChange={(sku) => edit((d) => { if (sku) d.estimator.confirmedMappings[l.itemKey] = sku; else delete d.estimator.confirmedMappings[l.itemKey]; })} />
+                          </div>
+                        ) : mapControl === "waiting_for_estimator" && !b?.sku ? <span className="text-amber-700">Awaiting an Estimator to choose the Cin7 product.</span> : b?.sku ?? (b?.pricedBy === "penning_rate" ? "Pig-size / running-metre basis" : b?.pricedBy === "estimator_input" ? "Estimator-priced system" : b?.pricedBy === "estimator_resolution" ? "Estimator-resolved" : "—")}</td>
                         <td className="py-3 pr-3 text-right tabular-nums">{b?.revenueExTax != null ? fmtZar(b.revenueExTax) : "—"}</td>
                         <td className="py-3 text-xs">{b ? (b.status === "priced" ? <span className="text-emerald-700">Priced</span> : b.status === "not_selected" ? "" : <span className="text-amber-700" title={b.reason}>{b.reason.slice(0, 80)}</span>) : ""}</td>
                       </tr>
@@ -445,8 +452,7 @@ export default function QuoteEditorPage() {
                           {manualSelectionSkusFor("pvc_door").map((s) => <option key={s} value={s}>{s}</option>)}
                         </select>
                       ) : isOptionalItemKey(l.itemKey) ? (
-                        <ProductMappingPicker label={l.label} value={confirmed} disabled={!editable}
-                          onChange={(sku) => edit((d) => { if (sku) d.estimator.confirmedMappings[l.itemKey] = sku; else delete d.estimator.confirmedMappings[l.itemKey]; })} />
+                        confirmed ? <Badge tone="success">Mapped to {confirmed}</Badge> : <Badge tone="warning">Not chosen - choose the product in the Line decisions table above</Badge>
                       ) : pkg ? (
                         <Badge tone={draft.estimator.confirmedPackages.includes(l.itemKey) ? "success" : "warning"}>{draft.estimator.confirmedPackages.includes(l.itemKey) ? "Package confirmed" : "Package unconfirmed"}</Badge>
                       ) : (
