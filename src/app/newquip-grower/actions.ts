@@ -9,7 +9,8 @@ import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
 import { evaluateDraft, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { stampPriceResolutions } from "@/newquip/quote/price-resolution";
-import { normaliseOptionalMappings, optionalMappedSkus, optionalMappingError, optionalMappingsChanged } from "@/newquip/grower/optional-mapping";
+import { changedMappings, mappingsChanged, normaliseMappings } from "@/newquip/grower/mapping-integrity";
+import { verifyMappings } from "@/lib/newquip-quotes/mapping-check";
 import { searchCatalogue, type CatalogueResult } from "@/lib/projects/catalogue-search";
 import { hasAny, PROJECT_CREATE_ROLES, type OrgTier, type QuoteRole } from "@/newquip/quote/roles";
 import { toQuoteRoles } from "@/lib/approvals/roles";
@@ -127,15 +128,11 @@ export async function listGrowerQuotesAction(): Promise<GrowerActionResult<Array
  * manual quotation prices (authorised, provenance stamped by the server) and the cost fields (stamped / server-owned). `prior` is the stored draft, if any.
  */
 async function sanitiseSubmittedDraft(a: Actor, db: ReturnType<typeof createServiceRoleClient>, draft: QuoteDraft, prior: QuoteDraft | undefined): Promise<QuoteDraft> {
-  let d = normaliseOptionalMappings(draft);
-  if (optionalMappingsChanged(prior?.estimator.confirmedMappings, d.estimator.confirmedMappings) && !hasAny(a.roles, ["estimator", "manager"])) throw new Error("Only an Estimator or Manager can map a product.");
-  const mapped = optionalMappedSkus(d.estimator.confirmedMappings);
-  if (mapped.length) {
-    const rows = await db.from("products").select("sku, active").eq("org_id", a.orgId).in("sku", mapped.map((m) => m.sku));
-    if (rows.error) throw new Error(`The mapped products could not be verified against the Cin7 catalogue (${rows.error.message}). Nothing was saved.`);
-    const err = optionalMappingError(mapped, (rows.data ?? []) as Array<{ sku: string; active: boolean | null }>);
-    if (err) throw new Error(err);
-  }
+  let d = normaliseMappings(draft);
+  // Any change to any product mapping (a Rep included, on create or on save) is an Estimator/Manager decision.
+  if (mappingsChanged(prior?.estimator.confirmedMappings, d.estimator.confirmedMappings) && !hasAny(a.roles, ["estimator", "manager"])) throw new Error("Only an Estimator or Manager can map a product.");
+  // Only new or changed mappings are verified here, so a SKU that later goes inactive cannot block unrelated edits; sign-off re-verifies all of them.
+  await verifyMappings(db, a.orgId, changedMappings(prior?.estimator.confirmedMappings, d.estimator.confirmedMappings), d.config.feederVariant);
   const nowIso = new Date().toISOString();
   d = { ...d, estimator: { ...d.estimator, priceResolutions: stampPriceResolutions(d.estimator.priceResolutions, prior?.estimator.priceResolutions, a.roles, a.email, nowIso) as QuoteDraft["estimator"]["priceResolutions"] } };
   return keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(d, prior?.estimator.costOverrides, a.canSeeCost, a.email, nowIso), prior?.estimator.physicalCosts), prior?.estimator.costBasis);

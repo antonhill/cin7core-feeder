@@ -2,6 +2,7 @@
 // duplicate-decision protection, driven through the REAL quote store and approval store over the in-memory twin of the 0112 functions.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
+import { seedGoldenCatalogue } from "@/newquip/grower/__tests__/golden-catalogue";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
@@ -25,6 +26,7 @@ const total = Math.round(evaluateDraft(draft, priceCtx).budget!.totals.subtotalE
 
 function world(opts: { strict?: boolean } = {}) {
   const db = new FakeDb();
+  seedGoldenCatalogue(db as never, ORG);
   db.approvalsApplied = true; db.rolesApplied = true;
   installStaged(db);
   (db as any).auth = { admin: { getUserById: async (id: string) => ({ data: { user: { email: EMAILS[id] } } }) } }; // eslint-disable-line @typescript-eslint/no-explicit-any

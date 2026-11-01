@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
+import { seedGoldenCatalogue } from "@/newquip/grower/__tests__/golden-catalogue";
 import { POC_SIX_STAGE_SCHEDULE, NEWQUIP_STANDARD_SCHEDULE } from "@/newquip/quote/billing-schedule";
 import { createQuote, createProjectFromAcceptedQuote, estimatorSignOff, loadQuote, managerApprove, saveDraft, sendToEstimator } from "../quote-store";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
@@ -21,7 +22,8 @@ const TODAY = "2026-10-29";
 const PREVIEW = { VERCEL_ENV: "preview" };
 
 async function world(opts: { gated: boolean }) {
-  const db = new FakeDb(); db.deliveryApplied = true;
+  const db = new FakeDb();
+  seedGoldenCatalogue(db as never, ORG); db.deliveryApplied = true;
   const files = new Map<string, Uint8Array>();
   const deps: DocumentDeps = { today: () => TODAY, render: renderCustomerPdf, storage: { upload: async (p, b) => { files.set(p, b); }, download: async (p) => files.get(p)!, remove: async (p) => { files.delete(p); } } };
   const draft = readyDraft(); draft.customerName = "Boerdery (Pty) Ltd"; draft.siteName = "Paarl";
@@ -203,7 +205,8 @@ describe("REGRESSION: Project creation is idempotent (reload, reopen, double cli
 
 describe("UAT-006: estimator sign-off is recorded once", () => {
   it("a second sign-off of the same content is refused and does not re-stamp who/when", async () => {
-    const db = new FakeDb(); db.deliveryApplied = true;
+    const db = new FakeDb();
+    seedGoldenCatalogue(db as never, ORG); db.deliveryApplied = true;
     const draft = readyDraft();
     const { id } = await createQuote(db as never, ORG, "rep@nq");
     await saveDraft(db as never, ORG, rep, id, draft);
@@ -219,7 +222,8 @@ describe("UAT-006: estimator sign-off is recorded once", () => {
     expect(after.estimator_signoff_at).toBe(first.estimator_signoff_at);
   });
   it("a legacy sign-off hash that no longer matches the content does not lock the quote: it can be signed again (review hardening)", async () => {
-    const db = new FakeDb(); db.deliveryApplied = true;
+    const db = new FakeDb();
+    seedGoldenCatalogue(db as never, ORG); db.deliveryApplied = true;
     const draft = readyDraft();
     const { id } = await createQuote(db as never, ORG, "rep@nq");
     await saveDraft(db as never, ORG, rep, id, draft);
