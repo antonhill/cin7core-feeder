@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -20,7 +20,9 @@ import {
 type Loaded = NonNullable<Awaited<ReturnType<typeof getDeliveryRegisterAction>>["data"]>;
 const q = (n: number | null) => (n === null ? "?" : String(n));
 
-export function DeliveryAllocationPanel({ view }: { view: ProjectView }) {
+/** `section` chooses which part of this logistics/commercial pair is shown: the delivery plan (Deliveries tab) or the milestone evidence (Commercial / Claims tab). */
+export type AllocationSection = "deliveries" | "milestones" | "both";
+export function DeliveryAllocationPanel({ view, section = "both" }: { view: ProjectView; section?: AllocationSection }) {
   const projectId = view.project.id;
   const [data, setData] = useState<Loaded | null>(null);
   const [msg, setMsg] = useState<{ tone: "danger" | "success"; text: string } | null>(null);
@@ -33,6 +35,8 @@ export function DeliveryAllocationPanel({ view }: { view: ProjectView }) {
     const r = await getDeliveryRegisterAction(projectId);
     if (r.ok && r.data) setData(r.data); else setMsg({ tone: "danger", text: r.error ?? "Could not load deliveries." });
   }, [projectId]);
+  // The milestone list on the Commercial / Claims tab must not look empty until someone presses Load: it loads itself.
+  useEffect(() => { if (section === "milestones") void Promise.resolve().then(load); }, [section, load]);
 
   const run = async (fn: () => Promise<DeliveryActionResult<unknown>>, ok: string) => {
     setBusy(true); setMsg(null);
@@ -46,9 +50,9 @@ export function DeliveryAllocationPanel({ view }: { view: ProjectView }) {
   const live = reg?.deliveries.filter((d) => d.status !== "CANCELLED") ?? [];
   return (
     <div className="mt-6 space-y-6">
-      <Panel>
+      {section !== "milestones" && <Panel>
         <div className="flex flex-wrap items-center justify-between gap-3"><PanelTitle>Delivery allocation</PanelTitle><Button size="sm" variant="secondary" disabled={busy} onClick={() => { setBusy(true); void load().finally(() => setBusy(false)); }}>{data ? "Refresh" : "Load deliveries"}</Button></div>
-        <p className="mt-1 text-xs text-slate-500">Plan which products go on which delivery. An allocation is a plan for invoicing only - it does not reserve stock in Cin7 and does not ship anything. It can never exceed the approved (or ordered) quantity. &quot;?&quot; means unknown, never zero.</p>
+        <p className="mt-1 text-xs text-slate-500">Deliveries are a logistics plan: which products go on which delivery. An allocation is a plan for invoicing only - it does not reserve stock in Cin7 and does not ship anything. It can never exceed the approved (or ordered) quantity. &quot;?&quot; means unknown, never zero.</p>
         {msg && <div className="mt-2"><Alert tone={msg.tone}>{msg.text}</Alert></div>}
         {reg && reg.positions.length > 0 && (
           <div className="mt-3 overflow-x-auto">
@@ -96,10 +100,11 @@ export function DeliveryAllocationPanel({ view }: { view: ProjectView }) {
           <Input label="Reason (required for every change)" value={reason} onChange={(e) => setReason(e.target.value)} />
         </div>
         <div className="mt-3"><Button disabled={busy || !delivery || !sku || qty.trim() === "" || !reason.trim()} onClick={() => run(() => setAllocationAction(projectId, delivery, sku, Number(qty), reason), "Allocation saved and audited.")}>Save allocation</Button></div>
-      </Panel>
+      </Panel>}
 
-      <Panel>
+      {section !== "deliveries" && <Panel>
         <PanelTitle>Commercial milestone confirmation</PanelTitle>
+        {section === "milestones" && msg && <div className="mt-2"><Alert tone={msg.tone}>{msg.text}</Alert></div>}
         <p className="mt-1 text-xs text-slate-500">A manager records that a commercial milestone has been met (for example &quot;about 90% delivered&quot; or &quot;installation accepted&quot;) with its supporting evidence. This is independent of reported physical progress.</p>
         {data?.confirmations.length ? <ul className="mt-2 text-sm">{data.confirmations.map((c) => <li key={c.id}>{view.stages.find((s) => s.id === c.stage_id)?.name ?? "Stage"}: {c.note}{c.evidence_ref ? ` [${c.evidence_ref}]` : ""} - {c.confirmed_by_email}, {new Date(c.confirmed_at).toLocaleDateString()}</li>)}</ul> : null}
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
@@ -108,7 +113,7 @@ export function DeliveryAllocationPanel({ view }: { view: ProjectView }) {
           <Input label="Evidence reference (POD, certificate…)" value={evidence} onChange={(e) => setEvidence(e.target.value)} />
         </div>
         <div className="mt-3"><Button disabled={busy || !stageId || !note.trim()} onClick={() => run(() => confirmMilestoneAction(projectId, stageId, note, evidence || undefined), "Milestone confirmation recorded.").then(() => { setNote(""); setEvidence(""); })}>Record confirmation</Button></div>
-      </Panel>
+      </Panel>}
     </div>
   );
 }

@@ -13,9 +13,11 @@ import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { claimActionPlan } from "@/lib/projects/claim-actions";
 import { previewKey, previewState } from "@/lib/projects/preview-staleness";
+import { claimNextStep } from "@/lib/projects/claim-next-step";
 import { formatBps, formatCents, type ProjectView, type StageView } from "@/lib/projects/project-view";
 import { VariationsPanel } from "./VariationsPanel";
 import { OpeningCommitmentsPanel } from "./OpeningCommitmentsPanel";
+import { DeliveryAllocationPanel } from "./DeliveryAllocationPanel";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { Cin7PostingPanel } from "./Cin7PostingPanel";
 import { Cin7SaleCreationPanel } from "./Cin7SaleCreationPanel";
@@ -36,15 +38,16 @@ import {
 } from "../actions";
 
 type ViewerPermission = "loading" | "member" | "admin";
-type Tab = "overview" | "stages" | "components" | "claims" | "variations" | "physical" | "procurement" | "profitability";
-const NEWQUIP_ONLY_TABS: Tab[] = ["variations", "physical", "procurement"];
+type Tab = "overview" | "stages" | "components" | "claims" | "variations" | "deliveries" | "physical" | "procurement" | "profitability";
+const NEWQUIP_ONLY_TABS: Tab[] = ["variations", "deliveries", "physical", "procurement"];
 const TABS: { value: Tab; label: string }[] = [
   { value: "overview", label: "Overview" },
   { value: "stages", label: "Stages" },
   { value: "components", label: "Components / scope" },
-  { value: "claims", label: "Claims" },
+  { value: "claims", label: "Commercial / Claims" },
   { value: "variations", label: "Variations" },
-  { value: "physical", label: "Products & Fulfilment" },
+  { value: "deliveries", label: "Deliveries" },
+  { value: "physical", label: "Products & Stock" },
   { value: "procurement", label: "Procurement / Cost Targets" },
   { value: "profitability", label: "Profitability" },
 ];
@@ -229,7 +232,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
       )}
 
       <nav className="mt-6 inline-flex max-w-full gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1 shadow-sm" aria-label="Project sections">
-        {TABS.filter((t) => !(embedded && (t.value === "variations" || t.value === "physical" || t.value === "procurement" || t.value === "profitability" || t.value === "components")) && (t.value !== "profitability" || perm === "admin") && (!NEWQUIP_ONLY_TABS.includes(t.value) || newquip)).map((t) => {
+        {TABS.filter((t) => !(embedded && (t.value === "variations" || t.value === "deliveries" || t.value === "physical" || t.value === "procurement" || t.value === "profitability" || t.value === "components")) && (t.value !== "profitability" || perm === "admin") && (!NEWQUIP_ONLY_TABS.includes(t.value) || newquip)).map((t) => {
           const count = t.value === "stages" ? view.stages.length : t.value === "claims" ? view.claims.length : t.value === "variations" ? view.variations.length : null;
           return (
             <button
@@ -450,6 +453,12 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
         </div>
       )}
 
+      {tab === "deliveries" && newquip && (
+        <div>
+          <Alert tone="info">Deliveries are a logistics plan. Planning a delivery does not move stock in Cin7 and does not decide what can be invoiced; invoicing is controlled on the Commercial / Claims tab.</Alert>
+          <DeliveryAllocationPanel view={view} section="deliveries" />
+        </div>
+      )}
       {tab === "physical" && newquip && <PhysicalPanel view={view} />}
       {tab === "procurement" && newquip && <ProcurementPanel view={view} />}
       {tab === "profitability" && perm === "admin" && <ProfitabilityPanel view={view} />}
@@ -538,36 +547,40 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               <h2 className="text-base font-semibold text-slate-900">Claim history</h2>
               <p className="text-xs text-slate-500">{view.claims.length} claim{view.claims.length === 1 ? "" : "s"}</p>
             </div>
-            <Table>
-              <THead><tr><TH>Claim #</TH><TH>Date</TH><TH>Status</TH><TH>Reservation</TH><TH align="right">Ex VAT</TH><TH align="right">VAT</TH><TH align="right">Total</TH><TH>Cin7</TH><TH>Actions</TH></tr></THead>
-              <TBody>
-                {view.claims.length === 0 && <TR><TD>No claims yet.</TD></TR>}
-                {view.claims.map((cl) => (
-                  <TR key={cl.id}>
-                    <TD className="whitespace-nowrap font-semibold text-slate-900">
-                      {cl.claim_number}
-                      {cl.supersedes_claim_id && <span className="ml-2 text-xs font-normal text-slate-500">supersedes {view.claims.find((x) => x.id === cl.supersedes_claim_id)?.claim_number ?? "an earlier draft"}</span>}
-                    </TD>
-                    <TD className="whitespace-nowrap">{cl.claim_date}</TD>
-                    <TD className="whitespace-nowrap"><Badge tone={CLAIM_TONE[cl.status] ?? "neutral"}>{cl.status}</Badge></TD>
-                    <TD className="whitespace-nowrap text-xs">
-                      {cl.reserves
-                        ? <span className="font-medium text-indigo-700">{cl.status === "FAILED_UNCERTAIN" ? "Value stays reserved (outcome uncertain)" : "Reserves value"}</span>
-                        : <span className="text-slate-500">No reservation</span>}
-                    </TD>
-                    <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(cl.subtotal_cents)}</TD>
-                    <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(cl.tax_cents)}</TD>
-                    <TD align="right" className="tabular-nums whitespace-nowrap font-semibold">{formatCents(cl.total_cents)}</TD>
-                    <TD className="whitespace-nowrap">
-                      <Badge tone={cl.cin7Status.tone}>{cl.cin7Status.label}</Badge>
-                      {cl.cin7Status.invoiceNumber && <div className="mt-0.5 text-xs text-slate-600">{cl.cin7Status.invoiceNumber}{cl.cin7Status.reconciled ? " · reconciled" : ""}</div>}
-                      {cl.cin7Status.detail && cl.cin7Status.kind !== "DRAFT_CREATED" && cl.cin7Status.kind !== "AUTHORISED" && <div className="mt-0.5 max-w-[16rem] whitespace-normal text-xs text-slate-500">{cl.cin7Status.detail}</div>}
-                    </TD>
-                    <TD>
-                      {(() => {
-                        const plan = claimActionPlan(cl, perm === "admin" ? "admin" : perm === "member" ? "member" : "none");
-                        return (
-                          <div className="flex flex-wrap items-center gap-1">
+            {view.claims.length === 0 && <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No claims yet.</p>}
+            <div className="grid gap-3 lg:grid-cols-2">
+              {view.claims.map((cl) => {
+                const plan = claimActionPlan(cl, perm === "admin" ? "admin" : perm === "member" ? "member" : "none");
+                return (
+                  <article key={cl.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <header className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <h3 className="text-base font-semibold text-slate-900">{cl.claim_number}</h3>
+                        <p className="text-xs text-slate-500">{cl.claim_date}{cl.supersedes_claim_id ? ` · supersedes ${view.claims.find((x) => x.id === cl.supersedes_claim_id)?.claim_number ?? "an earlier draft"}` : ""}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="whitespace-nowrap text-xl font-bold tabular-nums text-slate-900">{formatCents(cl.total_cents)}</p>
+                        <p className="whitespace-nowrap text-xs tabular-nums text-slate-500">{formatCents(cl.subtotal_cents)} ex VAT + {formatCents(cl.tax_cents)} VAT</p>
+                      </div>
+                    </header>
+                    <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                      <div><dt className="text-slate-500">Approval</dt><dd className="mt-0.5"><Badge tone={CLAIM_TONE[cl.status] ?? "neutral"}>{cl.status.replace(/_/g, " ")}</Badge></dd></div>
+                      <div>
+                        <dt className="text-slate-500">Cin7</dt>
+                        <dd className="mt-0.5">
+                          <Badge tone={cl.cin7Status.tone}>{cl.cin7Status.label}</Badge>
+                          {cl.cin7Status.invoiceNumber && <span className="ml-1 text-slate-600">{cl.cin7Status.invoiceNumber}{cl.cin7Status.reconciled ? " · reconciled" : ""}</span>}
+                        </dd>
+                      </div>
+                      <div className="col-span-2">
+                        <dt className="text-slate-500">Value</dt>
+                        <dd className="mt-0.5">{cl.reserves ? <span className="font-medium text-indigo-700">{cl.status === "FAILED_UNCERTAIN" ? "Stays reserved (outcome uncertain)" : "Reserves value"}</span> : <span className="text-slate-500">No reservation</span>}</dd>
+                      </div>
+                    </dl>
+                    <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700"><span className="font-medium text-slate-900">Next: </span>{claimNextStep({ status: cl.status, cin7Kind: cl.cin7Status.kind, stageRole: cl.approval?.stageRole, canApproveHere: plan.approveHere, canAct: perm !== "loading" })}</p>
+                    {cl.cin7Status.detail && !["DRAFT_CREATED", "AUTHORISED"].includes(cl.cin7Status.kind) && <p className="mt-2 text-xs text-slate-500">{cl.cin7Status.detail}</p>}
+                    <div className="mt-3">
+                      <div className="flex flex-wrap items-center gap-1">
                             {plan.submit && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.")} disabled={isWorking}>Submit</Button>}
                             {plan.openInApprovals && cl.approval && <Link href={`/approvals/${cl.approval.requestId}`} className="inline-flex h-8 items-center rounded-md border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-800 hover:bg-indigo-100">Open in Approvals</Link>}
                             {plan.approveHere && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.")} disabled={isWorking}>Approve</Button>}
@@ -575,15 +588,22 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                             {plan.recalculate && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.")} disabled={isWorking}>Recalculate</Button>}
                             {plan.cancel && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), cl.status === "READY_FOR_APPROVAL" ? "Claim withdrawn." : "Claim cancelled.")} disabled={isWorking}>{plan.cancelLabel}</Button>}
                           </div>
-                        );
-                      })()}
+                    </div>
+                    <details className="mt-3 text-xs">
+                      <summary className="cursor-pointer text-slate-600">Approval history</summary>
                       <div className="mt-1"><ApprovalHistory docType="CLAIM" docId={cl.id} label="Approval history" /></div>
-                    </TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
+                    </details>
+                  </article>
+                );
+              })}
+            </div>
           </div>
+          {newquip && !embedded && (
+            <div>
+              <Alert tone="info">Milestone confirmation records contractual evidence that a billing milestone was met. It is independent of physical delivery: a deposit or an authorised early invoice never needs goods to have moved.</Alert>
+              <DeliveryAllocationPanel view={view} section="milestones" />
+            </div>
+          )}
         </div>
       )}
     </Shell>
