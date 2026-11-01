@@ -309,6 +309,13 @@ describe("incomplete data is exposed, never repaired", () => {
     expect(text(m)).toContain("ENGINE UNAVAILABLE");
     expect(m).not.toContain('data-testid="indicators"');
   });
+  it("never shows the workbook path or file name (the quotes themselves are the only workbook text shown)", async () => {
+    await withWorkbook(() => undefined, "SENTINEL_FILE_NAME_D.xlsx");
+    const m = await page();
+    expect(m).not.toContain("SENTINEL_FILE_NAME_D");
+    expect(m).not.toContain(tmp);
+    expect(m).not.toContain("rwtsa-scenario-d-");
+  });
   it("a local workbook with every column present passes structure and is labelled units-unverified, not verified", async () => {
     await withWorkbook(() => undefined, "ok.xlsx");
     const t = text(await page());
