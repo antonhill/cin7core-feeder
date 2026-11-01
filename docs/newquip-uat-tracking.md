@@ -35,3 +35,17 @@ BLOCKED BY EXTERNAL INTEGRATION, DEFERRED WITH REASON, plus NOT STARTED (work no
 
 Branch `fix/newquip-uat-p1-defects`, based on `feature/newquip-completion` (#126 head `30e9ea6`).
 No migrations. No Cin7 or Xero writes. No emails.
+
+## Integration-readiness addendum: product-mapping safeguards (security/newquip-mapping-integrity)
+
+Closes the two gaps left open on PR #140:
+
+| Gap | Change |
+|---|---|
+| Non-optional mappings (pvc_door and the source-backed items) could be changed by a Rep through a direct save | `sanitiseSubmittedDraft` now treats a change to ANY item mapping (add / change / remove) as Estimator/Manager authority, on create and on save. Unknown slots are dropped. Non-optional items must equal their source-backed SKU (the feeder follows its variant); pvc_door and the optional elements are the estimator's choice. |
+| Mapping integrity was checked only when the draft was saved | `estimatorSignOff` re-verifies EVERY mapped SKU against this organisation's synced catalogue (exists, active, source-backed) before stamping the sign-off; failure stamps nothing. |
+
+Also: a save now verifies only NEW or CHANGED mappings, so a SKU that later goes inactive no longer blocks unrelated edits (it blocks sign-off instead, which is the right place). Manager approval and approved baselines are untouched (approval never calls the check; approved quotations stay immutable).
+
+Read-only hosted check (1 Nov 2026): the six source-backed / default SKUs are active in the NewQuip POC catalogue and every mapping on the four in-flight REP_DRAFT quotes resolves, so existing quotes will pass sign-off.
+Operational note: sign-off now depends on the Cin7 product sync having run; a missing or inactive mapped product blocks sign-off until it is remapped by an Estimator/Manager.

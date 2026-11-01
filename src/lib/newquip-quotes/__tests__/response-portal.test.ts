@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
+import { seedGoldenCatalogue } from "@/newquip/grower/__tests__/golden-catalogue";
 import { POC_SIX_STAGE_SCHEDULE, NEWQUIP_STANDARD_SCHEDULE } from "@/newquip/quote/billing-schedule";
 import { createQuote, createProjectFromAcceptedQuote, estimatorSignOff, loadQuote, managerApprove, saveDraft, sendToEstimator } from "../quote-store";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
@@ -31,7 +32,8 @@ const TODAY = "2026-10-29";
 const PREVIEW = { VERCEL_ENV: "preview", NEXT_PUBLIC_SITE_URL: "https://internal.newquip.example", NEWQUIP_PUBLIC_PORTAL_URL: "https://preview.newquip.example", NEWQUIP_INTERNAL_APP_URL: "https://internal.newquip.example" };
 
 async function world(opts: { gated: boolean; portal?: boolean }) {
-  const db = new FakeDb(); db.deliveryApplied = true; db.portalApplied = opts.portal ?? true; db.approvalsApplied = true; db.notificationStatuses = ["PENDING", "SENT", "FAILED", "ABANDONED", "SUPPRESSED"];
+  const db = new FakeDb();
+  seedGoldenCatalogue(db as never, ORG); db.deliveryApplied = true; db.portalApplied = opts.portal ?? true; db.approvalsApplied = true; db.notificationStatuses = ["PENDING", "SENT", "FAILED", "ABANDONED", "SUPPRESSED"];
   const files = new Map<string, Uint8Array>();
   const deps: DocumentDeps = { today: () => TODAY, render: renderCustomerPdf, storage: { upload: async (p, b) => { files.set(p, b); }, download: async (p) => files.get(p)!, remove: async (p) => { files.delete(p); } } };
   const draft = readyDraft(); draft.customerName = "Boerdery (Pty) Ltd"; draft.siteName = "Paarl";

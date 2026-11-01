@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
+import { seedGoldenCatalogue } from "@/newquip/grower/__tests__/golden-catalogue";
 import { installStaged } from "@/lib/approvals/__tests__/staged-emulator";
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
@@ -43,7 +44,8 @@ function as(userId: string, admin: boolean) {
 }
 
 beforeEach(() => {
-  db = new FakeDb(); db.approvalsApplied = true; db.rolesApplied = true; installStaged(db);
+  db = new FakeDb();
+  seedGoldenCatalogue(db as never, ORG); db.approvalsApplied = true; db.rolesApplied = true; installStaged(db);
   (db as any).auth = { admin: { getUserById: async (id: string) => ({ data: { user: { email: EMAILS[id] } } }) } }; // eslint-disable-line @typescript-eslint/no-explicit-any
   db.rows("org_members").push({ org_id: ORG, user_id: "u-rep", role: "member" }, { org_id: ORG, user_id: "u-est", role: "member" }, { org_id: ORG, user_id: "u-mgr", role: "admin" }, { org_id: ORG, user_id: "u-adm", role: "admin" }, { org_id: ORG, user_id: "u-adm2", role: "member" }, { org_id: ORG, user_id: "u-mgr2", role: "member" });
   const grant = (u: string, role: string) => db.rows("org_functional_roles").push({ id: `r-${u}-${role}`, org_id: ORG, user_id: u, user_email: EMAILS[u], role, assigned_by_email: "adm@a", assigned_at: "t" });

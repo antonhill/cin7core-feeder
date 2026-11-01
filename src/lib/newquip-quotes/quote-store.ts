@@ -16,6 +16,8 @@ import { createProjectFromBaseline } from "@/lib/projects/project-store";
 import { libraryOf, listActiveMappings } from "@/lib/projects/package-mapping-store";
 import { requireAcceptance } from "./acceptance";
 import { latestSnapshot } from "./customer-store";
+import { verifyMappings } from "./mapping-check";
+import { mappedSkus } from "@/newquip/grower/mapping-integrity";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
 
@@ -196,6 +198,8 @@ export async function estimatorSignOff(db: Db, orgId: string, roles: ReadonlySet
   if (!auth.ok) fail(auth.error);
   const ev = evaluateDraft(q.draft, ctx);
   if (ev.readiness.state !== "READY") fail(`The quote is ${ev.readiness.state}; resolve ${ev.readiness.reasons[0] ?? "the outstanding items"} before signing off.`);
+  // Mapping integrity is re-checked NOW, not only when the draft was saved: the catalogue may have changed since (a product deactivated or removed). Nothing is stamped on failure.
+  await verifyMappings(db, orgId, mappedSkus(q.draft.estimator.confirmedMappings), q.draft.config.feederVariant).catch((e: Error) => fail(`Cannot sign off: ${e.message}`));
   // Any content change clears the sign-off (saveDraft), so a stored sign-off means THIS content is already signed off. It is never re-stamped.
   const priorHash = q.estimator_signoff_hash;
   if (priorHash && priorHash === q.draft_hash) fail(`This quote was already signed off by ${q.estimator_signoff_by_email ?? "an estimator"}${q.estimator_signoff_at ? ` at ${q.estimator_signoff_at}` : ""}.`);

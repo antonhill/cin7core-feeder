@@ -27,6 +27,12 @@ export type GrowerItemKey =
   | "cone_fans"
   | "manure_plug";
 
+/** Runtime list of every item key. A confirmed product mapping may only be stored under one of these. */
+export const GROWER_ITEM_KEYS: readonly GrowerItemKey[] = [
+  "bulk_tank", "flex_auger", "feeder", "feed_saver_mat", "cup_drinker", "concrete_slat", "penning_package", "led_light", "pvc_door",
+  "controller", "silo_weighing", "control_panel", "emergency_windows", "pad_cooling", "cone_fans", "manure_plug",
+];
+
 export type OptionalItemKey =
   | "controller"
   | "silo_weighing"

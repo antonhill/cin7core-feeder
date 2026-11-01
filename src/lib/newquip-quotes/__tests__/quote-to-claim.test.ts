@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
+import { seedGoldenCatalogue } from "@/newquip/grower/__tests__/golden-catalogue";
 import { POC_SIX_STAGE_SCHEDULE } from "@/newquip/quote/billing-schedule";
 import { createQuote, createProjectFromAcceptedQuote, estimatorSignOff, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator } from "../quote-store";
 import { approveClaim, createClaimDraft, loadProjectView, previewClaim, recordProgress, submitClaimForApproval } from "@/lib/projects/project-store";
@@ -49,6 +50,7 @@ describe("GATE 1 — quote workflow to a frozen baseline and a Project", () => {
 
   it("REP_DRAFT → ESTIMATOR_REVIEW → MANAGER_APPROVED_FINAL, recording each person and the customer's confirmation", async () => {
     const db = new FakeDb();
+    seedGoldenCatalogue(db as never, ORG);
     const { id, approved } = await acceptedQuote(db);
     const q = (await loadQuote(db as never, ORG, id))!;
     expect(q.state).toBe("MANAGER_APPROVED_FINAL");
@@ -59,6 +61,7 @@ describe("GATE 1 — quote workflow to a frozen baseline and a Project", () => {
 
   it("a rep cannot approve; approval needs the customer's confirmation, the estimator's sign-off of THIS content, and an unchanged total", async () => {
     const db = new FakeDb();
+    seedGoldenCatalogue(db as never, ORG);
     const { id } = await createQuote(db as never, ORG, "rep@nq");
     await saveDraft(db as never, ORG, rep, id, tenMillionDraft());
     // wrong amount
@@ -93,6 +96,7 @@ describe("GATE 1 — quote workflow to a frozen baseline and a Project", () => {
 
   it("an incomplete quote cannot be handed off, signed off or approved (BLOCKED)", async () => {
     const db = new FakeDb();
+    seedGoldenCatalogue(db as never, ORG);
     const { id } = await createQuote(db as never, ORG, "rep@nq");
     const d = tenMillionDraft();
     d.estimator.unitPrices = {}; // M75 commercial price missing
@@ -102,6 +106,7 @@ describe("GATE 1 — quote workflow to a frozen baseline and a Project", () => {
 
   it("manager approval FREEZES the accepted baseline: the quote is no longer editable and later price/rule changes cannot mutate it", async () => {
     const db = new FakeDb();
+    seedGoldenCatalogue(db as never, ORG);
     const { id } = await acceptedQuote(db);
     const q = (await loadQuote(db as never, ORG, id))!;
     const before = JSON.stringify(q.accepted_baseline);
@@ -133,6 +138,7 @@ describe("GATE 1 — quote workflow to a frozen baseline and a Project", () => {
 
   it("a tampered baseline is refused before any Project is created", async () => {
     const db = new FakeDb();
+    seedGoldenCatalogue(db as never, ORG);
     const { id } = await acceptedQuote(db);
     db.rows("newquip_quotes")[0].accepted_baseline = { ...structuredClone(db.rows("newquip_quotes")[0].accepted_baseline as object), contractCents: 1 };
     expect(await err(createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id, POC_SIX_STAGE_SCHEDULE))).toMatch(/no longer matches its seal/);
@@ -141,12 +147,14 @@ describe("GATE 1 — quote workflow to a frozen baseline and a Project", () => {
 
   it("only an approved quote can become a Project", async () => {
     const db = new FakeDb();
+    seedGoldenCatalogue(db as never, ORG);
     const { id } = await createQuote(db as never, ORG, "rep@nq");
     expect(await err(createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id, POC_SIX_STAGE_SCHEDULE))).toMatch(/manager-approved final quote/);
   });
 
   it("a quote of another organisation is invisible", async () => {
     const db = new FakeDb();
+    seedGoldenCatalogue(db as never, ORG);
     const { id } = await acceptedQuote(db);
     expect(await loadQuote(db as never, "org-other", id)).toBeNull();
     expect(await err(managerApprove(db as never, "org-other", mgr, "m@x", id, ctx))).toMatch(/Quote not found/);
@@ -156,6 +164,7 @@ describe("GATE 1 — quote workflow to a frozen baseline and a Project", () => {
 describe("GATE 1 → 2 — Quote → Project, with no engineering recalculation", () => {
   it("creates an ACTIVE, balanced Project carrying customer, site, quote ref, contract value, tax basis, stages, scope and provenance", async () => {
     const db = new FakeDb();
+    seedGoldenCatalogue(db as never, ORG);
     const { id } = await acceptedQuote(db);
     const q = (await loadQuote(db as never, ORG, id))!;
     const { projectId, created } = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id, POC_SIX_STAGE_SCHEDULE);
@@ -174,6 +183,7 @@ describe("GATE 1 → 2 — Quote → Project, with no engineering recalculation"
 
   it("is idempotent, and recovers a project that was created but not linked", async () => {
     const db = new FakeDb();
+    seedGoldenCatalogue(db as never, ORG);
     const { id } = await acceptedQuote(db);
     const a = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id, POC_SIX_STAGE_SCHEDULE);
     const b = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id, POC_SIX_STAGE_SCHEDULE);
@@ -187,6 +197,7 @@ describe("GATE 1 → 2 — Quote → Project, with no engineering recalculation"
 
   it("crash recovery links the BASE project, never a variation billing project that carries the same originating quote reference", async () => {
     const db = new FakeDb();
+    seedGoldenCatalogue(db as never, ORG);
     const { id } = await acceptedQuote(db);
     const a = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id, POC_SIX_STAGE_SCHEDULE);
     const base = db.rows("projects")[0];
@@ -202,6 +213,7 @@ describe("GATE 1 → 2 — Quote → Project, with no engineering recalculation"
 describe("GATE 2 — progress, the R950,000 golden claim, Variation V001, revised contract", () => {
   async function projectAtGoldenPosition() {
     const db = new FakeDb();
+    seedGoldenCatalogue(db as never, ORG);
     const { id } = await acceptedQuote(db);
     const { projectId } = await createProjectFromAcceptedQuote(db as never, ORG, "m@nq", id, POC_SIX_STAGE_SCHEDULE);
     const view = (await loadProjectView(db as never, ORG, projectId))!;
