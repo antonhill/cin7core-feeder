@@ -318,7 +318,7 @@ export interface ClaimInput {
   priorClaims: PriorClaim[];
   /** Tax rate in bps (15% = 1500). Tax is rounded half-up PER LINE, matching how Cin7 takes a per-line Tax figure. */
   taxRateBps: Bps;
-  /** Restrict the claim to these stages; default = every stage with a positive current claim. */
+  /** Restrict the claim to these stages (a stage with nothing to claim is skipped here, which is how staleness is detected; callers that create a claim check the selection was honoured); omitted = every stage with a positive current claim (engine default only: the actions require an explicit choice). */
   selectedStageIds?: string[];
 }
 

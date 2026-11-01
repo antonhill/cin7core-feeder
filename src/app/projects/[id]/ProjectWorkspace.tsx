@@ -126,6 +126,9 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   const [tab, setTab] = useState<Tab>(embedded ? "stages" : "overview");
   const [preview, setPreview] = useState<ClaimPreviewResult | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  // Which billing stages the next claim covers. Empty by default: a claim never silently includes every claimable stage.
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [previewedIds, setPreviewedIds] = useState<string[]>([]);
   const [isLoading, startLoading] = useTransition();
   const [isWorking, startWorking] = useTransition();
 
@@ -169,13 +172,14 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
 
   function doPreview() {
     startWorking(async () => {
-      const res = await previewClaimAction(id);
+      const res = await previewClaimAction(id, chosen);
       if (!res.ok) {
         setPreview(null);
         return setPreviewError(res.error ?? "Unknown error");
       }
       setPreviewError(null);
       setPreview(res.data ?? null);
+      setPreviewedIds(chosen);
     });
   }
 
@@ -457,10 +461,26 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               </div>
               <span className="whitespace-nowrap rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">Not sent to Cin7</span>
             </div>
+            <fieldset className="mt-4 rounded-lg border border-slate-200 p-3">
+              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Billing stages to include</legend>
+              <div className="space-y-1">
+                {view.stages.map((s) => {
+                  const ok = s.claimableCents > 0;
+                  return (
+                    <label key={s.id} className={`flex items-center gap-3 text-sm ${ok ? "text-slate-800" : "text-slate-400"}`}>
+                      <input type="checkbox" disabled={!ok} checked={chosen.includes(s.id)} onChange={(e) => { setChosen((cur) => (e.target.checked ? [...cur, s.id] : cur.filter((x) => x !== s.id))); setPreview(null); setPreviewError(null); }} />
+                      <span className="flex-1">{s.name}</span>
+                      <span className="tabular-nums">{ok ? `${formatCents(s.claimableCents)} claimable` : s.remainingCents === 0 ? "fully committed" : "nothing claimable yet"}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              {chosen.length === 0 && <p className="mt-2 text-xs text-slate-500">Tick the stage(s) this claim covers, for example only the deposit.</p>}
+            </fieldset>
             <div className="mt-4 flex flex-wrap gap-2">
-              <Button variant="secondary" size="sm" onClick={doPreview} loading={isWorking}>Preview claim</Button>
+              <Button variant="secondary" size="sm" onClick={doPreview} loading={isWorking} disabled={chosen.length === 0}>Preview claim</Button>
               {preview && (
-                <Button size="sm" onClick={() => run(() => createClaimDraftAction(id), "Draft claim saved locally.")} loading={isWorking}>Save as draft claim</Button>
+                <Button size="sm" onClick={() => run(() => createClaimDraftAction(id, previewedIds), "Draft claim saved locally.")} loading={isWorking}>Save as draft claim</Button>
               )}
             </div>
             {previewError && <div className="mt-3"><Alert tone="warning">{previewError}</Alert></div>}
