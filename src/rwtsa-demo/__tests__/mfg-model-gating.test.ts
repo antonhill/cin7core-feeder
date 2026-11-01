@@ -23,6 +23,10 @@ describe("Scenario B model: the open overhead rule hides every cost total and se
     expect(m.rules.map((r) => r.id)).toEqual(["overhead-efficiency-margin"]);
     expect(sizes(m).every((z) => z.totalCents === null && z.sellingCents === null && z.diffCents === null && z.status === "incomplete")).toBe(true);
     expect(m.size?.totalCents).toBeNull();
+    // Nothing contradicts the withholding: every size says why, and no check or warning claims completeness.
+    expect(sizes(m).every((z) => z.missing.length > 0)).toBe(true);
+    expect(m.costing!.checks).toEqual([]);
+    expect(m.costing!.warnings.join(" ")).toMatch(/withheld/i);
   });
   it("the same data as SYNTHETIC is untouched: the engine's own totals are shown", () => {
     const m = mfgModel(state("SYNTHETIC"), parseMfgSettings({ scale: "fraction", style: "A" }, { suggestedScale: "fraction" }));

@@ -153,8 +153,8 @@ function parseNumber(text: string): number | null {
 }
 
 const SIZE_SET: ReadonlySet<string> = new Set(SIZE_ORDER);
-/** Every size. Only these explicit forms: "All", "All sizes", optionally followed by a plain-words bracket. "All except ..." is not one of them. */
-const ALL_SIZES = /^all(?:\s+sizes)?(?:\s*\((?![^)]*\b(?:except|excluding|but|not|only)\b)[A-Za-z ]+\))?$/i;
+/** Every size. Only these explicit forms: "All", "All sizes", optionally followed by "(per size)" or "(customer logo)". Any other bracket or wording is not accepted as "every size". */
+const ALL_SIZES = /^all(?:\s+sizes)?(?:\s*\((?:per size|customer logo)\))?$/i;
 
 /** Builds the raw table for one recognised sheet from its non-empty grid rows. Pure. */
 export function extractTable(tab: TabName, grid: readonly GridRow[]): LayoutResult {

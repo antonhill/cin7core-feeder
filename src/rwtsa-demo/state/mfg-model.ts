@@ -58,8 +58,10 @@ export function mfgModel(state: DemoState, settings: MfgSettings): MfgModel {
     if (rules.length === 0) return { ...base, engine: "AVAILABLE", engineNote: null, variance, costing, groups, styles, style, size, rules };
     // While the overhead / efficiency rule is open no product cost total, selling price or reference difference may be shown,
     // whatever the engine could compute for a style whose routing happens to carry some values.
-    const hide = (z: SizeCosting): SizeCosting => ({ ...z, totalCents: null, sellingCents: null, diffCents: null, diffPct: null, deltaVsBaseCents: null, status: "incomplete" });
-    const hidden: CostingResult = { ...costing, styles: costing.styles.map((st) => ({ ...st, sizes: st.sizes.map(hide) })) };
+    const reason = "overhead / efficiency rule unresolved: product cost withheld";
+    const hide = (z: SizeCosting): SizeCosting => ({ ...z, totalCents: null, sellingCents: null, diffCents: null, diffPct: null, deltaVsBaseCents: null, status: "incomplete", missing: z.missing.includes(reason) ? z.missing : [...z.missing, reason] });
+    // The engine's own checks and warnings describe the totals that are now withheld, so they are not shown either.
+    const hidden: CostingResult = { ...costing, checks: [], warnings: ["Cost totals and selling prices are withheld while the overhead / efficiency rule is unresolved."], styles: costing.styles.map((st) => ({ ...st, sizes: st.sizes.map(hide) })) };
     const hStyle = hidden.styles.find((s) => s.styleCode === style?.styleCode) ?? null;
     const hSize = hStyle ? (hStyle.sizes.find((z) => z.size === size?.size) ?? null) : null;
     return { ...base, engine: "AVAILABLE", engineNote: null, variance, costing: hidden, groups, styles, style: hStyle, size: hSize, rules };

@@ -166,6 +166,7 @@ The advisor's workbook is not uniformly tabular, and `workbook/layouts.ts` reads
 - **Composite product text** (`SKU / style` on ImportPOs, the Style cell on ProductionOrders) is resolved against Items: an exact SKU or style, else exactly one SKU as a whole token, else exactly one style. Two different codes, or none, is unresolved: the text is kept, a PO line is a **warning** (the Red Flag engine counts its units as unmatched) and a production order is an error.
 - **Percent-formatted cells** (`0.0%`, `0%`) are read as displayed (0.857 shown as 85.7% is 85.7). A bare number in a General cell is never reinterpreted.
 - **Yes/No with a description** is accepted for `ImportPOs.bondOnArrival` only.
+- **Rows below a report table** that still look like table rows (a key and about as many distinct values as the data rows) are an error, not a summary. This is a heuristic with known limits: a plain total row with as many distinct values as the data rows would be flagged, and a short keyed row with one value would be counted as a summary. Both are visible in the row accounting.
 - **Merged note rows** (nothing in the first column, one repeated text) and the **ReadMe** sheet are recognised, counted and not parsed.
 - **Row accounting**: for every tab, title + header + data + notes + explained exclusions + trailing summary + trailing notes = non-empty sheet rows, and parsed rows = data rows + rows added by size lists. The validation page shows it; findings carry counts and row numbers only.
 

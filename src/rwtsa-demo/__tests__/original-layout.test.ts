@@ -239,10 +239,10 @@ describe("what is NOT accepted (explicit, conservative rules)", () => {
 
 describe("review hardening: nothing is interpreted more loosely than the workbook states", () => {
   it("'Applies to sizes' accepts only an explicit All form; 'All except ...' and a blank cell are errors, not every size", async () => {
-    for (const text of ["All except 5XL", "All sizes but S", "all", "", "All (per size)", "All sizes"]) {
+    for (const text of ["All except 5XL", "All sizes but S", "All (apart from L)", "All sizes (omit XL)", "All sizes (excl XL)", "All (ex XL)", "All sizes (XS and S)", "All sizes (S M)", "all", "", "All (per size)", "All (customer logo)", "All sizes"]) {
       const r = await load((wb) => void (wb.getWorksheet("BOM")!.getCell("C5").value = text === "" ? null : text));
       const bad = codes(r, "size_token_unrecognised").some((f) => f.tab === "BOM" && (f.rows ?? []).includes(5));
-      expect(bad, JSON.stringify(text)).toBe(/except|but|^$/i.test(text));
+      expect(bad, JSON.stringify(text)).toBe(/except|but|apart|omit|excl|\(ex |XS|S M|^$/i.test(text));
     }
   });
   it("a size list with a repeated size does not create duplicate rows", async () => {

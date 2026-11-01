@@ -34,7 +34,7 @@ export const tenderRule = (): UnresolvedRule => ({
 export const overdueRule = (units: number): UnresolvedRule => ({
   id: "overdue-on-water",
   title: "Overdue shipments on the water",
-  detail: `${units} unit(s) on purchase-order lines still marked on the water have an ETA to stores before the stock date. The workbook does not say whether they have arrived, are late or are misdated. Choose a treatment in the controls.`,
+  detail: `${units} unit(s) on purchase-order lines still marked on the water have an ETA to stores on or before the stock date. The workbook does not say whether they have arrived, are late or are misdated. Choose a treatment in the controls.`,
   withholds: "All Scenario A results (projection, first breach, shortfall, proposed orders) until a treatment is chosen",
   how: "choose",
 });
@@ -54,7 +54,7 @@ export function overheadUnresolved(ds: RwtsaDataset): boolean {
 export const overheadRule = (): UnresolvedRule => ({
   id: "overhead-efficiency-margin",
   title: "Overhead, efficiency allowance and margin",
-  detail: "Routing_SMV carries no overhead, efficiency or margin values the cost model can use. Whether these enter product cost, and how, is not established by the workbook. Any amounts stated elsewhere on the sheet are not used.",
+  detail: "Not every routing line carries the overhead and efficiency values the cost model needs. Whether overhead, efficiency and margin enter product cost, and how, is not established by the workbook. Any amounts stated elsewhere on the sheet are not used.",
   withholds: "Product cost totals and selling prices are withheld",
   how: "owner",
 });
