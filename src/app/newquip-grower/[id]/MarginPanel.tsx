@@ -8,7 +8,7 @@ import type { QuoteDraft } from "@/newquip/grower/draft";
 import type { BudgetQuote } from "@/newquip/grower/quote-bridge";
 import type { GrowerItemKey } from "@/newquip/grower/types";
 import type { AcceptedBaseline } from "@/newquip/quote/baseline";
-import { buildMarginSheet, type MarginFigures, type MarginSheet } from "@/newquip/quote/margin";
+import { buildMarginSheet, previewCostOverrides, type MarginFigures, type MarginSheet } from "@/newquip/quote/margin";
 import { fmtCents, NumField, TextField } from "../fields";
 
 // INTERNAL margin sheet (managers only - the page renders this only when the viewer may see commercials; the server also redacts the data for
@@ -38,7 +38,9 @@ export function MarginPanel({ budget, draft, final, frozen, editable, edit }: {
   let sheet: MarginSheet | null = null;
   let error: string | null = null;
   if (final) sheet = frozen ?? null;
-  else { try { sheet = buildMarginSheet(budget, draft.estimator.costOverrides ?? {}); } catch (e) { error = e instanceof Error ? e.message : "Invalid cost override"; } }
+  // Incomplete overrides are reported beside their own inputs and left out of the live sheet; they never blank the sheet or the inputs.
+  const preview = previewCostOverrides(draft.estimator.costOverrides);
+  if (!final) { try { sheet = buildMarginSheet(budget, preview.usable); } catch (e) { error = e instanceof Error ? e.message : "Invalid cost override"; } }
   if (final && !sheet) return <Alert tone="info">This quote was approved before margins were frozen with the baseline; no frozen margin sheet exists.</Alert>;
 
   const setOverride = (key: string, patch: { rands?: number | null; reason?: string }) => edit((d) => {
@@ -103,13 +105,14 @@ export function MarginPanel({ budget, draft, final, frozen, editable, edit }: {
         <div className="mt-5 space-y-3">
           <p className="text-sm font-medium text-slate-800">Cost overrides (audited: reason, who and when are recorded)</p>
           <p className="text-xs text-slate-500">Enter the total cost for a whole line (ex VAT) where the price source has none or is wrong. This changes the estimated cost only - never the selling price.</p>
+          {Object.keys(preview.errors).length > 0 && <Alert tone="warning">Some cost overrides are incomplete and are not applied yet. Fix the highlighted lines, then Save.</Alert>}
           {sheet && [...sheet.lines.map((l) => ({ key: l.itemKey, label: l.label })), ...(budget.charges.filter((c) => c.amountExTax).map((c) => ({ key: c.key as string, label: c.label })))].map((l) => {
             const cur = draft.estimator.costOverrides?.[l.key as GrowerItemKey];
             return (
               <div key={l.key} className="grid gap-2 md:grid-cols-[1fr_12rem_1fr] md:items-end">
                 <span className="text-sm text-slate-700">{l.label}</span>
                 <NumField label="Line cost" unit="R ex VAT" value={cur ? cur.lineCostCents / 100 : null} onChange={(v) => setOverride(l.key, { rands: v })} />
-                <TextField label="Reason" value={cur?.reason ?? ""} onChange={(v) => setOverride(l.key, { reason: v })} />
+                <TextField label="Reason" value={cur?.reason ?? ""} onChange={(v) => setOverride(l.key, { reason: v })} hint={preview.errors[l.key]} />
                 {cur?.by && <span className="text-xs text-slate-400 md:col-span-3">Recorded by {cur.by} at {cur.at}</span>}
               </div>
             );

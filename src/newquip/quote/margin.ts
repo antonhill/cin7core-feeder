@@ -68,6 +68,22 @@ export function validateCostOverride(o: CostOverride): string | null {
   return null;
 }
 
+/**
+ * UI preview of overrides that are still being typed. An override that is incomplete (no reason yet, or no amount) is NOT applied to the
+ * live sheet and is reported as a per-line message instead, so the inputs stay on screen and the entered values are kept. Who/when are
+ * stamped by the server at Save, so a placeholder stands in for them here. Saving is still validated by stampCostOverrides.
+ */
+export function previewCostOverrides(raw: Partial<Record<string, CostOverride>> | undefined): { usable: Partial<Record<GrowerItemKey, CostOverride>>; errors: Record<string, string> } {
+  const usable: Partial<Record<GrowerItemKey, CostOverride>> = {};
+  const errors: Record<string, string> = {};
+  for (const [k, o] of Object.entries(raw ?? {})) {
+    if (!o) continue;
+    const err = validateCostOverride({ ...o, by: o.by || "pending", at: o.at || "pending" });
+    if (err) errors[k] = err; else usable[k as GrowerItemKey] = o;
+  }
+  return { usable, errors };
+}
+
 // ── the sheet ───────────────────────────────────────────────────────────────
 
 export interface MarginLine extends MarginFigures {

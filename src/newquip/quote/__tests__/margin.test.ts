@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { evaluateDraft } from "../../grower/evaluate";
 import { readyDraft } from "../../grower/__tests__/golden";
 import { testPriceSource } from "../../grower/__tests__/test-snapshot";
-import { assemblyUnitCost, buildMarginSheet, marginFigures, redactInternalFinancials, stampCostOverrides, validateCostOverride, type CostOverride } from "../margin";
+import { assemblyUnitCost, buildMarginSheet, marginFigures, previewCostOverrides, redactInternalFinancials, stampCostOverrides, validateCostOverride, type CostOverride } from "../margin";
 import { buildAcceptedBaseline, baselineMatchesHash, hashOf } from "../baseline";
 import { quoteToProjectBaseline } from "../to-project";
 import { buildCustomerSummary } from "../../grower/customer-summary";
@@ -166,5 +166,30 @@ describe("override stamping and viewer redaction", () => {
     expect(good.contractCents).toBe(naive.contractCents);
     const mismatched = evalDraft(false, { ...draft, estimator: { ...draft.estimator, charges: { ...draft.estimator.charges, delivery: 1 } } }).ev;
     expect(() => buildAcceptedBaseline({ quoteRef: "Q", revision: 1, draft, evaluation: withheld, marginEvaluation: mismatched, approvals })).toThrow(/does not match/);
+  });
+});
+
+describe("previewCostOverrides (UAT-005: typing an override never blanks the override inputs)", () => {
+  it("an override with no reason is reported against its own line and kept out of the sheet, instead of throwing", () => {
+    const r = previewCostOverrides({ a: { lineCostCents: 5_000, reason: "  ", by: "", at: "" } });
+    expect(r.usable).toEqual({});
+    expect(r.errors.a).toBe("A cost override needs a reason.");
+  });
+  it("a complete override that has not been saved yet (no by/at) is usable in the preview", () => {
+    const r = previewCostOverrides({ a: { lineCostCents: 5_000, reason: "supplier quote", by: "", at: "" } });
+    expect(Object.keys(r.usable)).toEqual(["a"]);
+    expect(r.errors).toEqual({});
+  });
+  it("a bad amount is reported, a good neighbour is still usable, and nothing throws", () => {
+    const r = previewCostOverrides({ a: { lineCostCents: -1, reason: "x", by: "", at: "" }, b: ov(100) });
+    expect(Object.keys(r.errors)).toEqual(["a"]);
+    expect(Object.keys(r.usable)).toEqual(["b"]);
+  });
+  it("the sheet builds with the usable part while an incomplete override is pending", () => {
+    const { ev } = evalDraft();
+    const first = ev.budget.lines.find((l) => l.status === "priced")!;
+    const { usable, errors } = previewCostOverrides({ [first.itemKey]: { lineCostCents: 1_000, reason: "", by: "", at: "" } });
+    expect(Object.keys(errors)).toEqual([first.itemKey]);
+    expect(() => buildMarginSheet(ev.budget, usable)).not.toThrow();
   });
 });
