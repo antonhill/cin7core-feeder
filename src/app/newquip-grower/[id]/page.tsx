@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { QUOTES_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
@@ -29,7 +29,7 @@ import {
 import { formatSast } from "@/lib/approvals/time";
 import { isOptionalItemKey } from "@/newquip/grower/types";
 import { mappingControlFor } from "@/newquip/grower/mapping-access";
-import { blankExclusions, latestOnly } from "@/newquip/grower/preview-draft";
+import { blankExclusions, createRecalcLoop } from "@/newquip/grower/preview-draft";
 import { previewCostOverrides } from "@/newquip/quote/margin";
 import { ProductMappingPicker } from "./ProductMappingPicker";
 import { fmtCents, fmtZar, NumField, TextField } from "../fields";
@@ -101,13 +101,18 @@ export default function QuoteEditorPage() {
   const [demoLoaded, setDemoLoaded] = useState<string[] | null>(null);
   const [isWorking, start] = useTransition();
   const [returnReason, setReturnReason] = useState("");
-  const latest = useRef(latestOnly());
+  // ONE recalculation in flight at a time (server actions run serially and a round trip is slow): edits made meanwhile collapse into a single follow-up for the newest draft.
+  const [loop] = useState(() => createRecalcLoop<QuoteDraft, Awaited<ReturnType<typeof previewGrowerDraftAction>>>((d) => previewGrowerDraftAction(d), {
+    onResult: (d, r) => { if (r.ok && r.data) { setEv(r.data); setPreviewedFor(d); setFailedFor(null); } else setFailedFor({ draft: d, message: r.error ?? "The live recalculation failed." }); },
+    onError: (d, e) => setFailedFor({ draft: d, message: e instanceof Error ? e.message : "The live recalculation failed." }),
+  }));
 
   function adopt(v: QuoteView) {
     setView(v);
     setDraft(v.quote.draft);
     setEv(v.evaluation);
     setDirty(false);
+    loop.cancel(); setPreviewedFor(null); setFailedFor(null); // the server's figures replace any preview still on its way
   }
   useEffect(() => {
     getGrowerQuoteAction(id).then((r) => (r.ok && r.data ? (adopt(r.data), setError(null)) : setError(r.error ?? "Unknown error")));
@@ -129,18 +134,12 @@ export default function QuoteEditorPage() {
     return () => { live = false; };
   }, [id, finalNow, gateKey, gateTry]);
 
-  // Live recalculation (writes nothing): the same server engine as Save, on the unsaved draft. Every change bumps the sequence (and so does a save or reload), so
-  // an answer to an older request can never replace newer figures; while one is outstanding the page says so instead of showing stale totals as current.
+  // Live recalculation (writes nothing): the same server engine as Save, on the unsaved draft, after a short pause in typing.
   useEffect(() => {
-    const mine = latest.current.next();
     if (!draft || !dirty) return;
-    const t = setTimeout(async () => {
-      const r = await previewGrowerDraftAction(draft);
-      if (!latest.current.isCurrent(mine)) return;
-      if (r.ok && r.data) { setEv(r.data); setPreviewedFor(draft); setFailedFor(null); } else setFailedFor({ draft, message: r.error ?? "The live recalculation failed." });
-    }, 300);
+    const t = setTimeout(() => loop.request(draft), 300);
     return () => clearTimeout(t);
-  }, [draft, dirty]);
+  }, [draft, dirty, loop]);
 
   if (!view || !draft || !ev) {
     return (
@@ -491,9 +490,9 @@ export default function QuoteEditorPage() {
             </Panel>
           </div>
 
-          <ScopePanel quoteId={id} draft={draft} />
+          <ScopePanel quoteId={id} draft={dirty && previewedFor ? previewedFor : draft} />
           {/* Right under the physical scope, where the estimator resolves the SKUs: capture the latest Cin7 costs for a draft quotation. */}
-          {!final && view.viewer.canViewCommercials && <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? draft : null} />}
+          {!final && view.viewer.canViewCommercials && <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? previewedFor : null} />}
 
           {(budget?.lines ?? []).some((b) => ["unmapped", "not_in_price_source", "supplier_quote_required", "package_unconfirmed", "package_incomplete"].includes(b.status) || b.pricedBy === "estimator_resolution") && (
             <Panel>
@@ -535,8 +534,11 @@ export default function QuoteEditorPage() {
 
           {budget && (
             <Panel>
-              <PanelTitle>Totals</PanelTitle>
-              <dl className="mt-3 grid max-w-xl grid-cols-2 gap-y-1 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <PanelTitle>Totals</PanelTitle>
+                {dirty && <Badge tone="warning" dot>{recalculating ? "Recalculating - figures below are not yet current" : "Unsaved - live preview"}</Badge>}
+              </div>
+              <dl className={`mt-3 grid max-w-xl grid-cols-2 gap-y-1 text-sm ${recalculating ? "opacity-50" : ""}`} aria-busy={recalculating}>
                 <dt className="text-slate-600">Subtotal (ex VAT)</dt><dd className="text-right tabular-nums">{fmtZar(budget.totals.subtotalExTax)}</dd>
                 <dt className="text-slate-600">VAT 15%</dt><dd className="text-right tabular-nums">{fmtZar(budget.totals.taxTotal)}</dd>
                 <dt className="font-semibold text-slate-900">Total</dt><dd className="text-right font-semibold tabular-nums">{fmtZar(budget.totals.totalIncTax)}</dd>
@@ -547,7 +549,7 @@ export default function QuoteEditorPage() {
           )}
 
           {budget && view.viewer.canViewCommercials && (
-            <MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={editable} edit={edit} />
+            <div className={recalculating ? "opacity-50" : ""} aria-busy={recalculating}><MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={editable} edit={edit} /></div>
           )}
         </fieldset>
       )}

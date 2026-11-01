@@ -26,3 +26,36 @@ export function latestOnly() {
   let n = 0;
   return { next: (): number => ++n, isCurrent: (ticket: number): boolean => ticket === n };
 }
+
+/**
+ * Single-flight recalculation with a trailing run. The browser's server actions are executed ONE AT A TIME and a round trip is slow, so firing one request per
+ * edit builds a queue whose answers arrive long after the click (and stale ones are discarded, so the figures never move). Instead: at most one request is ever
+ * in flight; edits made meanwhile collapse into ONE follow-up for the newest draft. Every answer is applied (it is a real calculation of a draft the user had),
+ * `settled` says whether the newest draft is the one shown, and `cancel()` (a save or reload adopted the server's figures) discards anything still in flight.
+ */
+export function createRecalcLoop<D, R>(run: (draft: D) => Promise<R>, hooks: { onResult: (draft: D, result: R) => void; onError: (draft: D, error: unknown) => void }) {
+  let newest: D | null = null;
+  let waiting = false;
+  let busy = false;
+  let epoch = 0;
+  const pump = async (): Promise<void> => {
+    if (busy) return;
+    busy = true;
+    while (waiting) {
+      waiting = false;
+      const draft = newest as D;
+      const mine = epoch;
+      try {
+        const result = await run(draft);
+        if (mine === epoch) hooks.onResult(draft, result);
+      } catch (e) {
+        if (mine === epoch) hooks.onError(draft, e);
+      }
+    }
+    busy = false;
+  };
+  return {
+    request(draft: D): void { newest = draft; waiting = true; void pump(); },
+    cancel(): void { epoch++; waiting = false; newest = null; },
+  };
+}

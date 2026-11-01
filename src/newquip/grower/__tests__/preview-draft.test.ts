@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { evaluateDraft } from "../evaluate";
-import { blankExclusions, latestOnly, PENDING_EXCLUSION_REASON, previewDraftOf } from "../preview-draft";
+import { blankExclusions, createRecalcLoop, latestOnly, PENDING_EXCLUSION_REASON, previewDraftOf } from "../preview-draft";
 import { buildMarginSheet } from "../../quote/margin";
 import { readyDraft } from "./golden";
 import { testPriceSource } from "./test-snapshot";
@@ -81,5 +81,35 @@ describe("rapid consecutive changes never leave stale totals", () => {
     const inFlight = g.next();
     g.next(); // the save adopts the server's figures
     expect(g.isCurrent(inFlight)).toBe(false);
+  });
+});
+
+describe("single-flight recalculation (server actions run one at a time, slowly)", () => {
+  const slow = (log: string[], ms = 20) => async (d: string) => { log.push(`start ${d}`); await new Promise((r) => setTimeout(r, ms)); log.push(`end ${d}`); return d.toUpperCase(); };
+  it("never has two requests in flight; edits made meanwhile collapse into one follow-up for the NEWEST draft, and every answer is applied", async () => {
+    const log: string[] = []; const shown: string[] = [];
+    const loop = createRecalcLoop(slow(log), { onResult: (_d, r) => shown.push(r), onError: () => undefined });
+    loop.request("a"); loop.request("b"); loop.request("c"); loop.request("d");
+    await new Promise((r) => setTimeout(r, 120));
+    expect(log).toEqual(["start a", "end a", "start d", "end d"]);
+    expect(shown).toEqual(["A", "D"]);
+  });
+  it("cancel (a save or reload) discards the answer still in flight and the pending follow-up", async () => {
+    const log: string[] = []; const shown: string[] = [];
+    const loop = createRecalcLoop(slow(log), { onResult: (_d, r) => shown.push(r), onError: () => undefined });
+    loop.request("a"); loop.request("b");
+    loop.cancel();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(shown).toEqual([]);
+    loop.request("c");
+    await new Promise((r) => setTimeout(r, 60));
+    expect(shown).toEqual(["C"]);
+  });
+  it("a failure is reported for its draft and does not stop later requests", async () => {
+    const errors: string[] = []; const shown: string[] = [];
+    const loop = createRecalcLoop(async (d: string) => { if (d === "bad") throw new Error("boom"); return d; }, { onResult: (_d, r) => shown.push(r), onError: (d) => errors.push(d) });
+    loop.request("bad"); await new Promise((r) => setTimeout(r, 10));
+    loop.request("ok"); await new Promise((r) => setTimeout(r, 10));
+    expect(errors).toEqual(["bad"]); expect(shown).toEqual(["ok"]);
   });
 });

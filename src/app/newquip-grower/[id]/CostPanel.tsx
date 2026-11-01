@@ -220,7 +220,7 @@ export function CostPanel({ quoteId, reload, unsaved, previewDraft }: { quoteId:
   useEffect(load, [load]);
   useEffect(() => {
     if (previewDraft === undefined) return;
-    const t = setTimeout(load, 300);
+    const t = setTimeout(load, 800);
     return () => clearTimeout(t);
   }, [previewDraft, load]);
   const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string) => {

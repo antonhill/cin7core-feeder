@@ -32,7 +32,7 @@ export function ScopePanel({ quoteId, draft }: { quoteId: string; draft: QuoteDr
   const load = useCallback(() => {
     getQuoteScopeAction(quoteId, JSON.parse(draftKey) as QuoteDraft).then((r) => { if (r.ok && r.data) { setView(r.data); setError(null); } else setError(r.error ?? "Could not load the scope."); });
   }, [quoteId, draftKey]);
-  useEffect(() => { const t = setTimeout(load, 400); return () => clearTimeout(t); }, [load]);
+  useEffect(() => { const t = setTimeout(load, 800); return () => clearTimeout(t); }, [load]);
 
   if (error) return <Panel><PanelTitle>Physical scope (internal)</PanelTitle><div className="mt-2"><Alert tone="warning">{error}</Alert></div></Panel>;
   if (!view) return <Panel><PanelTitle>Physical scope (internal)</PanelTitle><p className="mt-2 text-sm text-slate-500">Loading…</p></Panel>;
