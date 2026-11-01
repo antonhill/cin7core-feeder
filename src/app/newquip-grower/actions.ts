@@ -7,6 +7,7 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { QUOTES_MODULE } from "@/app/module-nav";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
 import { evaluateDraft, type QuoteEvaluation } from "@/newquip/grower/evaluate";
+import { blankExclusions, previewDraftOf } from "@/newquip/grower/preview-draft";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { stampPriceResolutions } from "@/newquip/quote/price-resolution";
 import { changedMappings, mappingsChanged, normaliseMappings } from "@/newquip/grower/mapping-integrity";
@@ -128,6 +129,8 @@ export async function listGrowerQuotesAction(): Promise<GrowerActionResult<Array
  * manual quotation prices (authorised, provenance stamped by the server) and the cost fields (stamped / server-owned). `prior` is the stored draft, if any.
  */
 async function sanitiseSubmittedDraft(a: Actor, db: ReturnType<typeof createServiceRoleClient>, draft: QuoteDraft, prior: QuoteDraft | undefined): Promise<QuoteDraft> {
+  // The live preview applies a ticked exclusion at once, so a blank reason must never be stored: saved figures would then differ from the previewed ones.
+  if (blankExclusions(draft).length > 0) throw new Error("Give a reason for every exclusion before saving (it is shown to the customer and frozen at approval).");
   let d = normaliseMappings(draft);
   // Any change to any product mapping (a Rep included, on create or on save) is an Estimator/Manager decision.
   if (mappingsChanged(prior?.estimator.confirmedMappings, d.estimator.confirmedMappings) && !hasAny(a.roles, ["estimator", "manager"])) throw new Error("Only an Estimator or Manager can map a product.");
@@ -166,7 +169,8 @@ export async function getGrowerQuoteAction(quoteId: string): Promise<GrowerActio
 export async function previewGrowerDraftAction(draft: QuoteDraft): Promise<GrowerActionResult<QuoteEvaluation>> {
   try {
     const a = await authorise();
-    return { ok: true, data: evaluateDraft(draft, evaluationContext(!a.canSeeCost)) };
+    // Read-only live preview: the same engine as Save, with a ticked-but-unexplained exclusion applied so the click shows its effect. Nothing is stored.
+    return { ok: true, data: evaluateDraft(previewDraftOf(draft), evaluationContext(!a.canSeeCost)) };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }

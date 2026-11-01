@@ -88,6 +88,36 @@ describe("cost actions are internal and server-enforced (role and organisation i
   });
 });
 
+describe("the cost estimate follows UNSAVED edits as a read-only preview (UAT-003)", () => {
+  const skusOf = async (unsaved?: typeof draft) => (await cost.getQuoteCostEstimateAction("q1", unsaved)).data!.estimate!.lines.map((l) => l.sku);
+  const excluding = (key: string, reason = "") => ({ ...draft, config: { ...draft.config, exclusions: { [key]: reason } } }) as typeof draft;
+  it("excluding an element drops its products from the estimate at once (no reason needed for the preview), and re-including brings them back; nothing is stored", async () => {
+    as(true);
+    const saved = await skusOf();
+    const stored = JSON.stringify(quote());
+    let shrank = false;
+    for (const k of ["feed_saver_mat", "concrete_slat", "bulk_tank", "feeder", "cup_drinker", "led_light"]) {
+      const without = await skusOf(excluding(k));
+      expect(without.length).toBeLessThanOrEqual(saved.length);
+      if (without.length < saved.length) { shrank = true; expect(without.every((x) => saved.includes(x))).toBe(true); }
+    }
+    expect(shrank).toBe(true);
+    expect(await skusOf(draft)).toEqual(saved); // re-included: the original estimate exactly
+    expect(JSON.stringify(quote())).toBe(stored);
+  });
+  it("an approved (final) quotation ignores any supplied draft: its frozen estimate is never recomputed", async () => {
+    as(true);
+    quote().state = "MANAGER_APPROVED_FINAL";
+    const a = await cost.getQuoteCostEstimateAction("q1");
+    const b = await cost.getQuoteCostEstimateAction("q1", excluding("feeder", "x"));
+    expect(b).toEqual(a);
+  });
+  it("a member still cannot read it, with or without a draft", async () => {
+    as(false);
+    expect((await cost.getQuoteCostEstimateAction("q1", excluding("feeder", "x"))).error).toMatch(/internal/i);
+  });
+});
+
 describe("Owner visibility on an editable draft quotation (regression: the Capture button was not visible)", () => {
   it("the Owner is a cost viewer, the cost read succeeds and offers capture, for a rep draft and for a quotation in estimator review", async () => {
     for (const state of ["REP_DRAFT", "ESTIMATOR_REVIEW"]) {

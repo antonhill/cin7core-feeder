@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { QUOTES_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
@@ -29,6 +29,7 @@ import {
 import { formatSast } from "@/lib/approvals/time";
 import { isOptionalItemKey } from "@/newquip/grower/types";
 import { mappingControlFor } from "@/newquip/grower/mapping-access";
+import { blankExclusions, createRecalcLoop } from "@/newquip/grower/preview-draft";
 import { previewCostOverrides } from "@/newquip/quote/margin";
 import { ProductMappingPicker } from "./ProductMappingPicker";
 import { fmtCents, fmtZar, NumField, TextField } from "../fields";
@@ -79,6 +80,12 @@ export default function QuoteEditorPage() {
   const [draft, setDraft] = useState<QuoteDraft | null>(null);
   const [ev, setEv] = useState<QuoteEvaluation | null>(null);
   const [dirty, setDirty] = useState(false);
+  // The draft the displayed figures were last calculated for, and the draft a failed recalculation belongs to: no synchronous state juggling in the effect.
+  const [previewedFor, setPreviewedFor] = useState<QuoteDraft | null>(null);
+  const [failedFor, setFailedFor] = useState<{ draft: QuoteDraft; message: string } | null>(null);
+  const recalculating = dirty && !!draft && previewedFor !== draft && failedFor?.draft !== draft;
+  const previewFailure = dirty && failedFor && failedFor.draft === draft ? failedFor.message : null;
+  const blankExclusionKeys = draft ? blankExclusions(draft) : [];
   const incompleteOverrides = draft ? Object.keys(previewCostOverrides(draft.estimator.costOverrides).errors).length > 0 : false;
   const [scheduleChoice, setScheduleChoice] = useState<ScheduleChoice | undefined>(undefined);
   const [gate, setGate] = useState<DeliveryGate>({ requires: false, accepted: false, status: null, hasDocument: false });
@@ -94,13 +101,18 @@ export default function QuoteEditorPage() {
   const [demoLoaded, setDemoLoaded] = useState<string[] | null>(null);
   const [isWorking, start] = useTransition();
   const [returnReason, setReturnReason] = useState("");
-  const seq = useRef(0);
+  // ONE recalculation in flight at a time (server actions run serially and a round trip is slow): edits made meanwhile collapse into a single follow-up for the newest draft.
+  const [loop] = useState(() => createRecalcLoop<QuoteDraft, Awaited<ReturnType<typeof previewGrowerDraftAction>>>((d) => previewGrowerDraftAction(d), {
+    onResult: (d, r) => { if (r.ok && r.data) { setEv(r.data); setPreviewedFor(d); setFailedFor(null); } else setFailedFor({ draft: d, message: r.error ?? "The live recalculation failed." }); },
+    onError: (d, e) => setFailedFor({ draft: d, message: e instanceof Error ? e.message : "The live recalculation failed." }),
+  }));
 
   function adopt(v: QuoteView) {
     setView(v);
     setDraft(v.quote.draft);
     setEv(v.evaluation);
     setDirty(false);
+    loop.cancel(); setPreviewedFor(null); setFailedFor(null); // the server's figures replace any preview still on its way
   }
   useEffect(() => {
     getGrowerQuoteAction(id).then((r) => (r.ok && r.data ? (adopt(r.data), setError(null)) : setError(r.error ?? "Unknown error")));
@@ -122,16 +134,12 @@ export default function QuoteEditorPage() {
     return () => { live = false; };
   }, [id, finalNow, gateKey, gateTry]);
 
-  // Live recalculation (writes nothing).
+  // Live recalculation (writes nothing): the same server engine as Save, on the unsaved draft, after a short pause in typing.
   useEffect(() => {
     if (!draft || !dirty) return;
-    const mine = ++seq.current;
-    const t = setTimeout(async () => {
-      const r = await previewGrowerDraftAction(draft);
-      if (mine === seq.current && r.ok && r.data) setEv(r.data);
-    }, 300);
+    const t = setTimeout(() => loop.request(draft), 300);
     return () => clearTimeout(t);
-  }, [draft, dirty]);
+  }, [draft, dirty, loop]);
 
   if (!view || !draft || !ev) {
     return (
@@ -236,9 +244,12 @@ export default function QuoteEditorPage() {
 
       {stage <= 2 && (
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <Button onClick={save} loading={isWorking} disabled={!editable || !dirty || incompleteOverrides}>Save draft</Button>
+          <Button onClick={save} loading={isWorking} disabled={!editable || !dirty || incompleteOverrides || blankExclusionKeys.length > 0}>Save draft</Button>
           {incompleteOverrides && <span className="text-xs text-amber-700">Complete or clear the highlighted cost overrides (a reason and an amount) before saving.</span>}
-          {dirty && <span className="text-xs text-amber-700">Unsaved changes — the quotation figures below are a live preview. The Cin7 cost estimate, sign-off and approval use the SAVED draft: save to update them.</span>}
+          {dirty && <Badge tone="warning" dot>Unsaved changes</Badge>}
+          {dirty && <span className="text-xs text-amber-700" data-testid="unsaved-note">{recalculating ? "Recalculating… " : ""}The prices, costs, margins and totals below are a live preview of your edits and nothing is saved until you press Save draft. Sign-off and approval use the SAVED draft.</span>}
+          {previewFailure && <span className="text-xs text-red-700">The live recalculation failed ({previewFailure}); the figures shown may be out of date. Edit again or reload.</span>}
+          {blankExclusionKeys.length > 0 && <span className="text-xs text-amber-700">Enter a reason for each ticked exclusion before saving (the preview already applies it).</span>}
           {!editable && <span className="text-xs text-slate-500">{final ? "Read-only: accepted quote." : "You do not have permission to edit."}</span>}
           {editable && !confirmDemo && <Button variant="secondary" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load Demo Defaults</Button>}
           {editable && confirmDemo && (
@@ -479,9 +490,9 @@ export default function QuoteEditorPage() {
             </Panel>
           </div>
 
-          <ScopePanel quoteId={id} draft={draft} />
+          <ScopePanel quoteId={id} draft={dirty ? (previewedFor ?? q.draft) : draft} />
           {/* Right under the physical scope, where the estimator resolves the SKUs: capture the latest Cin7 costs for a draft quotation. */}
-          {!final && view.viewer.canViewCommercials && <CostPanel quoteId={id} unsaved={dirty} />}
+          {!final && view.viewer.canViewCommercials && <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? previewedFor : null} />}
 
           {(budget?.lines ?? []).some((b) => ["unmapped", "not_in_price_source", "supplier_quote_required", "package_unconfirmed", "package_incomplete"].includes(b.status) || b.pricedBy === "estimator_resolution") && (
             <Panel>
@@ -523,8 +534,11 @@ export default function QuoteEditorPage() {
 
           {budget && (
             <Panel>
-              <PanelTitle>Totals</PanelTitle>
-              <dl className="mt-3 grid max-w-xl grid-cols-2 gap-y-1 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <PanelTitle>Totals</PanelTitle>
+                {dirty && <Badge tone="warning" dot>{recalculating ? "Recalculating - figures below are not yet current" : "Unsaved - live preview"}</Badge>}
+              </div>
+              <dl className={`mt-3 grid max-w-xl grid-cols-2 gap-y-1 text-sm ${recalculating ? "opacity-50" : ""}`} aria-busy={recalculating}>
                 <dt className="text-slate-600">Subtotal (ex VAT)</dt><dd className="text-right tabular-nums">{fmtZar(budget.totals.subtotalExTax)}</dd>
                 <dt className="text-slate-600">VAT 15%</dt><dd className="text-right tabular-nums">{fmtZar(budget.totals.taxTotal)}</dd>
                 <dt className="font-semibold text-slate-900">Total</dt><dd className="text-right font-semibold tabular-nums">{fmtZar(budget.totals.totalIncTax)}</dd>
@@ -535,7 +549,7 @@ export default function QuoteEditorPage() {
           )}
 
           {budget && view.viewer.canViewCommercials && (
-            <MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={editable} edit={edit} />
+            <div className={recalculating ? "opacity-50" : ""} aria-busy={recalculating}><MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={editable} edit={edit} /></div>
           )}
         </fieldset>
       )}

@@ -15,6 +15,7 @@ import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
 import { NEWQUIP_POC_CIN7_INSTANCE_ID } from "@/newquip/access";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import type { QuoteDraft } from "@/newquip/grower/draft";
+import { previewDraftOf } from "@/newquip/grower/preview-draft";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
 import { loadQuote, saveDraft } from "@/lib/newquip-quotes/quote-store";
 import { effectiveScope, applyMappingLibrary } from "@/lib/projects/product-scope";
@@ -63,10 +64,11 @@ async function costEnv(db: Db, orgId: string, basis: CostBasis | undefined, nowI
   return { env: { fx: rates ?? {}, nowIso, maxRateAgeHours: DEFAULT_MAX_RATE_AGE_HOURS, unitBasis: basis?.unitBasis ?? null }, fxAvailable: rates !== null };
 }
 
-async function currentScope(db: Db, orgId: string, quoteId: string) {
+async function currentScope(db: Db, orgId: string, quoteId: string, unsavedDraft?: QuoteDraft) {
   const q = await loadQuote(db, orgId, quoteId);
   if (!q) throw new Error("Quote not found.");
-  const evaluation = evaluateDraft(q.draft, evaluationContext(true));
+  // An unsaved draft (read-only live preview) is evaluated by the same engine; only the SCOPE changes, never anything stored.
+  const evaluation = evaluateDraft(unsavedDraft ? previewDraftOf(unsavedDraft) : q.draft, evaluationContext(true));
   const library = await listActiveMappings(db, orgId);
   // The effective scope of the DRAFT with the active reusable mappings applied: the SAME builders approval uses to seal the physical scope.
   const items = evaluation.budget ? buildPhysicalScope(commercialLinesOf(evaluation.budget)) : [];
@@ -76,7 +78,7 @@ async function currentScope(db: Db, orgId: string, quoteId: string) {
 
 const sameCost = (a: CostEntry, b: CostEntry) => a.unitCostCents === b.unitCostCents && a.selectionStatus === b.selectionStatus && (a.selection?.supplierName ?? null) === (b.selection?.supplierName ?? null);
 
-export async function getQuoteCostEstimateAction(quoteId: string): Promise<CostActionResult<QuoteCostView>> {
+export async function getQuoteCostEstimateAction(quoteId: string, unsavedDraft?: QuoteDraft): Promise<CostActionResult<QuoteCostView>> {
   try {
     const a = await actor();
     const db = createServiceRoleClient();
@@ -94,7 +96,7 @@ export async function getQuoteCostEstimateAction(quoteId: string): Promise<CostA
         note: e ? "Frozen with the approved quotation. Later Cin7 prices and exchange rates do not alter it." : "No physical costs were captured before this quotation was approved.", canCapture: false, retrievedAt: e?.lines[0]?.retrievedAt ?? null, skuOptions: {}, ...common,
         unitBasis: (e?.costBasis?.unitBasis as UnitBasis | undefined) ?? null, incompleteAccepted: e?.costBasis?.incompleteAccepted ?? null } };
     }
-    const { eff, contractCents, q: live } = await currentScope(db, a.orgId, quoteId);
+    const { eff, contractCents, q: live } = await currentScope(db, a.orgId, quoteId, unsavedDraft);
     const captured = live.draft.estimator.physicalCosts ?? {};
     const skuOptions: Record<string, SkuOptionsView> = {};
     for (const [sku, entry] of Object.entries(captured)) {
