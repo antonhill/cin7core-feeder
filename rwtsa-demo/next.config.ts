@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import path from "node:path";
+import { distDirFor } from "./lib/dist-dir";
 
 /**
  * Standalone, local-only RWTSA demonstration shell. It lives beside the Toolbox app but is NOT part of it: its own
@@ -14,7 +15,7 @@ import path from "node:path";
 const nextConfig: NextConfig = {
   // Build/dev output goes under node_modules/.cache (already ignored by git, ESLint and tsc) so running this shell never
   // pollutes the Toolbox app's own `.next`, root lint or root type-check, and nothing workbook-derived is left in the tree.
-  distDir: "../node_modules/.cache/rwtsa-demo-next",
+  distDir: distDirFor(process.env.RWTSA_DIST_SUFFIX),
   turbopack: { root: path.join(__dirname, "..") },
   serverExternalPackages: ["exceljs"],
   poweredByHeader: false,

@@ -84,3 +84,9 @@ server contacts the npm registry.
 Red Flag, landed-cost, variance, BOM/costing, quote-conversion and Fast React engines. Scenario pages are labelled placeholders for
 those. Scenario A's recent-history check uses the sheet's latest N months and is **not anchored to the stock-as-at date**; the
 Red Flag engine must do that before forecasting readiness is claimed. Scenario B-D readiness is preliminary.
+
+## Build-test isolation, and deferred items
+
+`standalone-build.test.ts` builds into its own unique directory (`node_modules/.cache/rwtsa-demo-next-test-<pid>-<id>`, selected by `RWTSA_DIST_SUFFIX`, validated by `lib/dist-dir.ts`) and removes only that directory. It never touches the default `rwtsa-demo-next` directory a running demo server uses, and concurrent runs cannot delete one another's output.
+
+Deliberately deferred (not part of this PR): allowlisting bare `next` imports as type-only; the interaction of `RWTSA_HEADER_MAP` with the synthetic source (currently ignored); normalising `RWTSA_SOURCE` values (case-sensitive, trimmed); separate FAST REACT and EXTERNAL layer labels; POSIX-only `NEXT_TELEMETRY_DISABLED=1` script prefix; anchoring the Scenario A sales window to the stock-as-at date, and scenario calculation readiness (belong with the engines in PR-3).

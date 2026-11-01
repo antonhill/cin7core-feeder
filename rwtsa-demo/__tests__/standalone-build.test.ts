@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { join, resolve } from "node:path";
+import { distDirFor } from "../lib/dist-dir";
 import { buildSyntheticWorkbook } from "@/rwtsa-demo/fixtures/synthetic";
 
 /**
@@ -17,7 +19,13 @@ import { buildSyntheticWorkbook } from "@/rwtsa-demo/fixtures/synthetic";
 
 const ROOT = join(__dirname, "..", "..");
 const APP = join(ROOT, "rwtsa-demo");
-const DIST = join(ROOT, "node_modules", ".cache", "rwtsa-demo-next");
+// Test-owned output directory: unique per run, so a developer's running demo server (default directory) is never
+// disturbed and concurrent runs cannot delete one another's artefacts. Cleanup is confined to exactly this directory.
+const CACHE = join(ROOT, "node_modules", ".cache");
+const DEFAULT_DIST = join(CACHE, "rwtsa-demo-next");
+const SUFFIX = `test-${process.pid}-${randomUUID().slice(0, 8)}`;
+const DEFAULT_MARKER = join(DEFAULT_DIST, `.test-marker-${SUFFIX}`);
+const DIST = join(CACHE, `rwtsa-demo-next-${SUFFIX}`);
 const NEXT_BIN = join(ROOT, "node_modules", "next", "dist", "bin", "next");
 const S = "SENTINEL_STANDALONE_C07D";
 const PORT = 41000 + Math.floor(Math.random() * 8000);
@@ -30,7 +38,7 @@ let serverLog = "";
 let buildLog = "";
 
 function minimalEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
-  return { PATH: process.env.PATH, HOME: process.env.HOME, NEXT_TELEMETRY_DISABLED: "1", ...extra } as unknown as NodeJS.ProcessEnv;
+  return { PATH: process.env.PATH, HOME: process.env.HOME, NEXT_TELEMETRY_DISABLED: "1", RWTSA_DIST_SUFFIX: SUFFIX, ...extra } as unknown as NodeJS.ProcessEnv;
 }
 function get(path: string): { status: number; body: string } {
   const out = execFileSync("curl", ["-s", "-m", "20", "-w", "\n%{http_code}", `${BASE}${path}`], { encoding: "utf8" });
@@ -57,7 +65,10 @@ describe("the standalone shell builds and runs without Toolbox middleware, Supab
     wb.addWorksheet(`${S}_sheet`).addRow([`${S}_cell`]);
     writeFileSync(workbook, Buffer.from(await wb.xlsx.writeBuffer()));
 
-    rmSync(DIST, { recursive: true, force: true });
+    // Stand-in for a developer's running demo server: a file in the DEFAULT output directory that must survive.
+    mkdirSync(DEFAULT_DIST, { recursive: true });
+    writeFileSync(DEFAULT_MARKER, "running-demo-server-artefact");
+    expect(existsSync(DIST)).toBe(false);
     try {
       buildLog = execFileSync(process.execPath, [NEXT_BIN, "build"], { cwd: APP, env: minimalEnv({ RWTSA_WORKBOOK_PATH: workbook }), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 240_000 });
     } catch (e) {
@@ -81,6 +92,9 @@ describe("the standalone shell builds and runs without Toolbox middleware, Supab
   afterAll(() => {
     server?.kill();
     rmSync(tmp, { recursive: true, force: true });
+    rmSync(DEFAULT_MARKER, { force: true }); // our own marker file only; never the default directory itself
+    // Only the test-owned directory, and only if it is exactly where we expect it.
+    if (resolve(DIST).startsWith(CACHE + "/rwtsa-demo-next-test-")) rmSync(DIST, { recursive: true, force: true });
   });
 
   it("the production build does not bundle the Toolbox middleware or any Supabase client", () => {
@@ -126,5 +140,28 @@ describe("the standalone shell builds and runs without Toolbox middleware, Supab
   it("the server listens on loopback only", () => {
     expect(serverLog).toContain("127.0.0.1");
     expect(existsSync(join(DIST, "BUILD_ID"))).toBe(true);
+  });
+
+  // --- cache isolation (must run before afterAll removes the test-owned directory and marker) ---
+  it("builds into a unique test-owned directory, never the default one", () => {
+    expect(DIST).not.toBe(DEFAULT_DIST);
+    expect(DIST.startsWith(join(CACHE, "rwtsa-demo-next-test-"))).toBe(true);
+    expect(existsSync(join(DIST, "BUILD_ID"))).toBe(true);
+  });
+
+  it("leaves another run's default output directory untouched (the old test deleted it)", () => {
+    expect(existsSync(DEFAULT_MARKER)).toBe(true);
+    expect(readFileSync(DEFAULT_MARKER, "utf8")).toBe("running-demo-server-artefact");
+  });
+
+  it("two runs get different directories", () => {
+    const other = `test-${process.pid}-${randomUUID().slice(0, 8)}`;
+    expect(other).not.toBe(SUFFIX);
+  });
+
+  it("the dist directory honours the suffix and rejects anything that could escape node_modules/.cache", () => {
+    expect(distDirFor(undefined)).toBe("../node_modules/.cache/rwtsa-demo-next");
+    expect(distDirFor("abc-1_X")).toBe("../node_modules/.cache/rwtsa-demo-next-abc-1_X");
+    for (const bad of ["../x", "a/b", "", "a b", "x".repeat(65)]) expect(() => distDirFor(bad), bad).toThrow(/RWTSA_DIST_SUFFIX/);
   });
 });
