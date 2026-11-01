@@ -13,7 +13,7 @@ BLOCKED BY EXTERNAL INTEGRATION, DEFERRED WITH REASON, plus NOT STARTED (work no
 | UAT-004 | Cost override vs Procurement workflow | NOT STARTED | - | - |
 | UAT-005 | Cost override inputs disappear | IMPLEMENTED, AWAITING LIVE UAT | PR-A | `previewCostOverrides`; 4 tests; mutation killed by 3 |
 | UAT-006 | Estimator sign-off button persists | IMPLEMENTED, AWAITING LIVE UAT | PR-A | completed state in UI; server refuses a second sign-off, atomic `is null` guard; test + mutation |
-| UAT-007 | Customer emails missing from Outlook | NOT STARTED (investigation) | - | needs send records + Resend IDs; no emails will be sent |
+| UAT-007 | Customer emails missing from Outlook | INVESTIGATION COMPLETE, DECISION NEEDED | - | Both sends recorded ACCEPTED with Resend IDs (07:04:08Z first send, 07:07:04Z deliberate re-send, rep@ as sender, [PREVIEW] subject). Application side is consistent; not a sending-code defect on this evidence. Toolbox notifications from the same sender domain DID reach the mailbox (07:00, 07:16Z), and the Junk folder holds neither quote email, so the loss is specific to the customer-quote message (likely tenant quarantine / anti-spoof or attachment policy). Owner check: Microsoft 365 Message trace + Quarantine for 07:04-07:08Z. No emails sent. |
 | UAT-008 | Create Project visible to Reps | IMPLEMENTED, AWAITING LIVE UAT | PR-A | server requires Manager (`PROJECT_CREATE_ROLES`); UI hides control; mutation killed |
 | UAT-009 | Opening Commitments collapsed by default | NOT STARTED | - | - |
 | UAT-010 | Cin7 location / account dropdowns | NOT STARTED | - | needs Cin7 account-type acceptance evidence |
