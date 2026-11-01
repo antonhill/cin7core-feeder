@@ -19,6 +19,7 @@ import { freezeClaimSnapshot, hashClaimSnapshot } from "./claim-snapshot";
 import type { ApprovedCommercialBaseline } from "./baseline";
 import type { VariationRow } from "./variations";
 import type { ClaimPostingRow } from "./claim-cin7-status";
+import { assertSelectionHonoured } from "./claim-selection";
 import { openingAsPriorClaim, type OpeningCommitmentRow } from "./opening-commitments";
 import {
   buildProjectView,
@@ -300,6 +301,7 @@ export async function createClaimDraft(
   db: Db, orgId: string, email: string, projectId: string, selectedStageIds?: string[], supersedesClaimId?: string,
 ): Promise<{ claimId: string; duplicate: boolean }> {
   const p = await previewClaim(db, orgId, projectId, selectedStageIds);
+  if (selectedStageIds) assertSelectionHonoured(selectedStageIds, p.calc.lines);
 
   // Same content already sitting as an open draft -> idempotent no-op.
   const open = (await db.from("project_claims").select("id, snapshot_hash, baseline_hash, status").eq("org_id", orgId).eq("project_id", projectId).in("status", ["DRAFT", "READY_FOR_APPROVAL"]));
