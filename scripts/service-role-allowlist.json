@@ -32,6 +32,7 @@
     "src/app/health/actions.ts",
     "src/app/import/actions.ts",
     "src/app/migrate/actions.ts",
+    "src/app/newquip-diagnostics/so-00028/actions.ts",
     "src/app/newquip-grower/actions.ts",
     "src/app/newquip-grower/actor.ts",
     "src/app/newquip-grower/cost-actions.ts",
