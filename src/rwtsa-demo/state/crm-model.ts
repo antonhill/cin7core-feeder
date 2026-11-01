@@ -38,7 +38,8 @@ export function crmModel(state: DemoState, requested: CrmSettings): CrmModel {
     const errors = [...requested.errors];
     const known = (v: string | null, list: readonly string[], label: string): string | null => {
       if (v === null) return null;
-      if (list.some((x) => x.toLowerCase() === v.toLowerCase())) return v;
+      const hit = list.find((x) => x.toLowerCase() === v.toLowerCase());
+      if (hit !== undefined) return hit; // the canonical spelling, so the control shows the active filter
       errors.push(`${label}: not in the loaded data, so the filter was not applied.`);
       return null;
     };

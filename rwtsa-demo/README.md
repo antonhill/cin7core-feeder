@@ -94,7 +94,7 @@ saved, and it neither reads nor writes Cin7 Core or Xero (the page lists which f
 - **Closed = won + lost.** Count conversion = won / closed x 100. Value conversion = won value / closed value x 100, in whole cents. Open and unclassified quotes are never in a denominator. With nothing
   closed (or no closed value) the rate is **N/A, not 0%**.
 - **By** representative, customer, period (month, quarter or year, on the **quote date**: the workbook has no won/lost date) and product. A quote that names several products (separated by `;`, `|` or a new
-  line) counts once under each for **counts**, and once overall; its value is **withheld** from product value figures, never split. Without a product column the product analysis is withheld with a reason.
+  line) counts once under each for **counts**, and once overall; its value is never split, and a product's value conversion is **withheld** (shown as "Withheld") whenever a closed multi-product quote featuring it had to be left out, because the remaining figure would be a biased subset. Without a product column the product analysis is withheld with a reason.
 - **Win/loss by reason**: lost quotes only, reasons merged ignoring case and spacing. A LOST quote with no reason is shown as "Reason missing", is a finding, and makes the analysis INCOMPLETE; no default reason exists.
   A WON quote with no sales-order reference is an incomplete conversion record; the original reference is shown exactly as supplied and nothing is generated.
 - **Completeness** is stated on the page: unrecognised statuses, missing reasons, missing sales-order references, unusable values and duplicate quote numbers each make the analysis INCOMPLETE. Missing dates,

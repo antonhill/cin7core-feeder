@@ -16,7 +16,7 @@ network code, no database migration, no credentials** in the audited code (see "
 | `../../scripts/rwtsa-demo/validate.ts` | Local structure-only validation of the protected workbook. |
 | `../../rwtsa-demo/` | PR-2: the standalone local-only Next.js shell (see its README). |
 
-Calculation engines (Red Flag, landed cost, variance, BOM/cost, quotes, Fast React) do not exist yet; the shell shows labelled placeholders only.
+Calculation engines exist for scenarios A (Red Flag), B (variance, BOM/cost), C (landed cost, FX exposure) and D (quote conversion, `engine/quote-conversion.ts`; status table in `contracts/quote-status.ts`). The Fast React exchange does not exist yet.
 
 ## Red Flag engine (`engine/`)
 

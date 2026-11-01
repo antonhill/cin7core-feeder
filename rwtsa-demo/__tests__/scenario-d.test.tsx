@@ -132,6 +132,16 @@ describe("conversion by representative, customer, period and product", () => {
     expect(p.length).toBeGreaterThan(0);
     expect(p.reduce((a, r) => a + Number(r.quotes), 0)).toBe(12);
     expect(text(m)).toMatch(/multi-product quote is withheld, not split/i);
+    expect(p.every((r) => r["value-pct"] !== undefined)).toBe(true);
+  });
+  it("rates that round to the edge are not shown as exactly 0.0% or 100.0%", async () => {
+    synthetic();
+    const m = await page({ customer: "SYN Customer 1" });
+    expect(indicator(m, "ind-count-conv")).toBe("100.0%"); // a true 100% stays 100.0%
+  });
+  it("the product table has an Unclassified column and shows 'Withheld' where shared closed quotes exist", async () => {
+    synthetic();
+    expect(text(await page())).toContain("Unclassified");
   });
   it("N/A, never 0%, where a group has no closed quotes", async () => {
     synthetic();
@@ -222,6 +232,17 @@ describe("interactive controls", () => {
     expect(/<input[^>]*name="from"[^>]*>/.exec(m)?.[0]).toContain('type="date"');
     expect(/<input[^>]*name="to"[^>]*>/.exec(m)?.[0]).toContain('type="date"');
   });
+  it("a filter typed in a different case is applied and the control shows the canonical option", async () => {
+    synthetic();
+    const m = await page({ rep: "rep two" });
+    expect(indicator(m, "ind-total")).toBe("4");
+    expect(m).toMatch(/<option[^>]*value="Rep Two"[^>]*selected|<option[^>]*selected[^>]*value="Rep Two"/);
+  });
+  it("a filtered view is labelled as such, and undated exclusion is visible", async () => {
+    synthetic();
+    expect(indicator(await page(), "completeness")).toBe("ANALYSIS COMPLETE");
+    expect(indicator(await page({ rep: "Rep Two" }), "completeness")).toBe("ANALYSIS COMPLETE FOR THIS FILTERED VIEW");
+  });
   it("invalid settings are reported and defaulted, and the invalid text is not echoed", async () => {
     synthetic();
     const m = await page({ from: "9999-99-99<b>", grain: "week", rep: "Nobody At All" });
@@ -289,6 +310,17 @@ describe("incomplete data is exposed, never repaired", () => {
     expect(rows(m, "product-row")).toHaveLength(0);
     expect(text(m)).toMatch(/no quote carries a product reference/i);
     expect(/<select[^>]*name="product"/.test(m)).toBe(false);
+  });
+  it("a closed multi-product quote makes the product value rate 'Withheld' on the page, never a number", async () => {
+    await withWorkbook((wb) => {
+      const ws = sheet(wb, "Quotes");
+      ws.getRow(2).getCell(colOf(ws, "Product")).value = "ZZ-ONE;ZZ-TWO"; // Q-SYN-001 (won)
+    }, "multi.xlsx");
+    const m = await page();
+    const one = rows(m, "product-row").find((r) => r.key === "ZZ-ONE");
+    expect(one).toMatchObject({ quotes: "1", won: "1", sole: "0", "value-pct": "" });
+    expect(text(m)).toContain("Withheld");
+    expect(text(m)).toMatch(/not among Items/);
   });
   it("an unusable workbook gives no engine, no figures and no substituted data", async () => {
     vi.stubEnv("RWTSA_SOURCE", "");

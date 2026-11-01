@@ -8,6 +8,7 @@ import { fromCents, type Cents } from "@/rwtsa-demo/engine/money";
 import { ISSUE_CODES, ISSUE_LABELS, type GroupMetrics } from "@/rwtsa-demo/engine/quote-conversion";
 import type { CrmModel } from "@/rwtsa-demo/state/crm-model";
 import { scenarioById } from "@/rwtsa-demo/state/layers";
+import { formatRate } from "@/rwtsa-demo/state/crm-format";
 import { LayerBadge, ProvenanceBadge, ReadinessBadge } from "./Badges";
 
 const group = (s: string): string => s.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -16,7 +17,7 @@ const money = (c: Cents | null): string => {
   const [i, d] = fromCents(Math.abs(c)).toFixed(2).split(".");
   return `${c < 0 ? "-" : ""}R${group(i)}.${d}`;
 };
-const pct = (n: number | null): string => (n === null ? "N/A" : `${n.toFixed(1)}%`);
+const pct = formatRate;
 const raw2 = (n: number | null): string => (n === null ? "" : n.toFixed(2));
 const field = "rounded-md border border-slate-300 bg-white px-2 py-1 text-sm";
 const MAX_DETAIL = 200;
@@ -144,7 +145,7 @@ export function QuoteConversionPageView({ model }: { model: CrmModel }) {
       <Panel>
         <PanelTitle>Data readiness is separate from the engine</PanelTitle>
         {model.readiness === "READY" ? (
-          <p className="mt-2 text-sm text-slate-700">The validator reports the quote inputs as present and populated. It cannot confirm that the figures are right, so the assumptions below still apply.</p>
+          <p className="mt-2 text-sm text-slate-700">The validator reports the quote inputs as present and populated. It cannot confirm that the figures are right, so the assumptions below still apply.{r && r.total.unclassified > 0 ? ` ${r.total.unclassified} quote(s) have an unrecognised status (UNCLASSIFIED), so READY here does not mean the analysis is complete.` : ""}</p>
         ) : (
           <div className="mt-2">
             <Alert tone="warning">The engine being available does not make the data ready. These inputs are NOT READY, so treat any figure below as indicative only.</Alert>
@@ -194,7 +195,7 @@ export function QuoteConversionPageView({ model }: { model: CrmModel }) {
           <Panel>
             <PanelTitle>Completeness of this analysis</PanelTitle>
             <p data-testid="completeness" className={`mt-2 inline-block rounded-md px-2 py-1 text-sm font-semibold ${r.completeness.complete ? "bg-green-50 text-green-800" : "bg-amber-50 text-amber-800"}`}>
-              {r.completeness.complete ? "ANALYSIS COMPLETE" : "ANALYSIS INCOMPLETE"}
+              {r.completeness.complete ? (r.completeness.scope === "filtered" ? "ANALYSIS COMPLETE FOR THIS FILTERED VIEW" : "ANALYSIS COMPLETE") : "ANALYSIS INCOMPLETE"}
             </p>
             {r.completeness.reasons.length > 0 && (
               <ul data-testid="incomplete-reasons" className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-800">
@@ -379,12 +380,13 @@ export function QuoteConversionPageView({ model }: { model: CrmModel }) {
                         <TH align="right">Won</TH>
                         <TH align="right">Lost</TH>
                         <TH align="right">Open</TH>
+                        <TH align="right">Unclassified</TH>
                         <TH align="right">Count conversion</TH>
                         <TH align="right">Single-product quotes</TH>
                         <TH align="right">Won value</TH>
                         <TH align="right">Closed value</TH>
                         <TH align="right">Value conversion</TH>
-                        <TH align="right">Closed value withheld (quotes)</TH>
+                        <TH align="right">Closed multi-product quotes (value withheld)</TH>
                       </TR>
                     </THead>
                     <TBody>
@@ -399,11 +401,12 @@ export function QuoteConversionPageView({ model }: { model: CrmModel }) {
                           <TD align="right" numeric>{p.won}</TD>
                           <TD align="right" numeric>{p.lost}</TD>
                           <TD align="right" numeric>{p.open}</TD>
+                          <TD align="right" numeric>{p.unclassified}</TD>
                           <TD align="right" numeric>{pct(p.countConversionPct)}</TD>
                           <TD align="right" numeric>{p.soleQuotes}</TD>
-                          <TD align="right" numeric>{money(p.wonCents)}</TD>
-                          <TD align="right" numeric>{money(p.closedCents)}</TD>
-                          <TD align="right" numeric>{pct(p.valueConversionPct)}</TD>
+                          <TD align="right" numeric>{p.valueWithheld ? "Withheld" : money(p.wonCents)}</TD>
+                          <TD align="right" numeric>{p.valueWithheld ? "Withheld" : money(p.closedCents)}</TD>
+                          <TD align="right" numeric>{p.valueWithheld ? "Withheld" : pct(p.valueConversionPct)}</TD>
                           <TD align="right" numeric>{p.sharedClosed}</TD>
                         </TR>
                       ))}

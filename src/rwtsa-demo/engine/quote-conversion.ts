@@ -106,7 +106,9 @@ export interface ProductMetrics {
   readonly wonCents: Cents;
   readonly lostCents: Cents;
   readonly closedCents: Cents;
+  /** Null (withheld) whenever a closed multi-product quote featuring this product was left out: a biased subset is not shown as a rate. */
   readonly valueConversionPct: number | null;
+  readonly valueWithheld: boolean;
   /** Closed multi-product quotes featuring this product, whose value is withheld from the figures above. */
   readonly sharedClosed: number;
   /** Whether the reference matches an Items style code or SKU; null when there are no Items to compare with. */
@@ -172,6 +174,8 @@ export interface QuoteResult {
   readonly options: { readonly reps: readonly string[]; readonly customers: readonly string[]; readonly products: readonly string[] };
   readonly completeness: {
     readonly complete: boolean;
+    /** "filtered" when a filter hides part of the data: completeness then applies to the view shown, not the whole data set. */
+    readonly scope: "all" | "filtered";
     readonly winLossComplete: boolean;
     readonly conversionComplete: boolean;
     readonly valuesComplete: boolean;
@@ -285,7 +289,7 @@ export function runQuoteConversion(ds: RwtsaDataset, opts: QuoteOptions = {}): Q
     }
     seen.add(key);
     const status = normaliseQuoteStatus(q.status);
-    const valueCents = typeof q.value === "number" && Number.isFinite(q.value) && q.value >= 0 ? toCents(q.value) : null;
+    const valueCents = typeof q.value === "number" && Number.isFinite(q.value) && q.value >= 0 && Number.isSafeInteger(toCents(q.value)) ? toCents(q.value) : null;
     const reason = typeof q.lostReason === "string" && q.lostReason.trim() !== "" ? collapse(q.lostReason) : null;
     const order = typeof q.convertedOrder === "string" && q.convertedOrder.trim() !== "" ? q.convertedOrder : null;
     const rep = typeof q.rep === "string" && q.rep.trim() !== "" ? q.rep.trim() : null;
@@ -387,7 +391,7 @@ export function runQuoteConversion(ds: RwtsaDataset, opts: QuoteOptions = {}): Q
       const s = e.solesAcc.done();
       return {
         key: e.key, quotes: c.quotes, won: c.won, lost: c.lost, open: c.open, unclassified: c.unclassified, closed: c.closed, countConversionPct: c.countConversionPct,
-        soleQuotes: s.quotes, wonCents: s.wonCents, lostCents: s.lostCents, closedCents: s.closedCents, valueConversionPct: s.valueConversionPct, sharedClosed: e.sharedClosed,
+        soleQuotes: s.quotes, wonCents: s.wonCents, lostCents: s.lostCents, closedCents: s.closedCents, valueConversionPct: e.sharedClosed > 0 ? null : s.valueConversionPct, valueWithheld: e.sharedClosed > 0, sharedClosed: e.sharedClosed,
         inItems: itemRefs.size === 0 ? null : itemRefs.has(k),
       };
     });
@@ -432,8 +436,13 @@ export function runQuoteConversion(ds: RwtsaDataset, opts: QuoteOptions = {}): Q
   if (issues.lost_reason_missing > 0) reasons.push(`${issues.lost_reason_missing} LOST quote(s) have no reason, so the win/loss analysis is incomplete.`);
   if (issues.conversion_ref_missing > 0) reasons.push(`${issues.conversion_ref_missing} WON quote(s) have no converted sales-order reference, so their conversion records are incomplete.`);
   if (issues.value_invalid > 0) reasons.push(`${issues.value_invalid} quote(s) have no usable value, so value totals are understated.`);
+  if (issues.order_ref_duplicate > 0) reasons.push(`${issues.order_ref_duplicate} WON quote(s) share a sales-order reference with another WON quote: the same order appears to be converted from more than one quote.`);
+  if (undatedExcluded > 0) reasons.push(`${undatedExcluded} undated quote(s) are left out because a date range is set, so this view is not the whole data set.`);
   if (issues.duplicate_quote > 0) reasons.push(`${issues.duplicate_quote} duplicate quote number(s) were excluded.`);
   const notes: string[] = [];
+  const isFiltered = records.length < everyRecord.length || undatedExcluded > 0;
+  if (isFiltered) notes.push(`Filtered view: ${records.length} of ${everyRecord.length} quotes. Duplicate quote numbers are counted across the whole data set.`);
+  if (masterNames.size === 0 && records.length > 0) notes.push("The Customers tab is empty, so customer names could not be checked against it.");
   if (issues.date_missing > 0) notes.push(`${issues.date_missing} quote(s) have no date: period analysis is partial.`);
   if (issues.rep_missing > 0) notes.push(`${issues.rep_missing} quote(s) have no sales representative (shown as unassigned).`);
   if (issues.customer_not_in_master > 0) notes.push(`${issues.customer_not_in_master} quote(s) name a customer that is not in the Customers tab.`);
@@ -441,8 +450,9 @@ export function runQuoteConversion(ds: RwtsaDataset, opts: QuoteOptions = {}): Q
   if (issues.product_unmatched > 0) notes.push(`${issues.product_unmatched} quote(s) name a product that is not among the Items.`);
   const completeness = {
     complete: reasons.length === 0,
+    scope: (isFiltered ? "filtered" : "all") as "all" | "filtered",
     winLossComplete: issues.lost_reason_missing === 0 && issues.unclassified_status === 0 && total.quotes > 0,
-    conversionComplete: issues.conversion_ref_missing === 0,
+    conversionComplete: issues.conversion_ref_missing === 0 && issues.order_ref_duplicate === 0,
     valuesComplete: issues.value_invalid === 0,
     reasons,
     notes,
@@ -456,6 +466,7 @@ export function runQuoteConversion(ds: RwtsaDataset, opts: QuoteOptions = {}): Q
     { id: "rep", text: "The representative on the quote is used. The Customers tab representative is never substituted; a conflict is only counted." },
     { id: "product", text: "A quote has one product cell. Several products in it may be separated by semicolons, vertical bars or new lines (not commas). A multi-product quote counts once per product for counts and is left out of product value figures." },
     { id: "reasons", text: "Lost reasons are grouped ignoring case and extra spaces. A LOST quote with no reason is shown as missing; no default reason is invented." },
+    { id: "dupes", text: "A duplicate quote number keeps its first row; later rows are excluded and reported. The workbook does not say which row is the latest state." },
     { id: "refs", text: "The converted sales-order reference is shown exactly as supplied. This demonstration does not create, check or synchronise sales orders in Cin7 Core." },
   ];
 

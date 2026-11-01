@@ -146,6 +146,12 @@ describe("validation findings", () => {
     const r = run([{ no: "1", status: "won", so: "SO-1" }, { no: "2", status: "won", so: "SO-1" }]);
     expect(r.issues.order_ref_duplicate).toBe(2);
   });
+  it("a sales order converted from two WON quotes makes the analysis incomplete", () => {
+    const r = run([{ no: "1", status: "won", so: "SO-1" }, { no: "2", status: "won", so: "so-1" }]);
+    expect(r.completeness.complete).toBe(false);
+    expect(r.completeness.conversionComplete).toBe(false);
+    expect(r.completeness.reasons.join(" ")).toMatch(/share a sales-order reference/i);
+  });
   it("detects duplicate quote numbers (case-insensitive); the first is analysed, later ones are excluded and reported", () => {
     const r = run([{ no: "Q1", status: "won", so: "S", value: 100 }, { no: "q1 ", status: "lost", reason: "x", value: 900 }, { no: "Q2", status: "open" }]);
     expect(r.duplicates).toEqual(["q1"]);
@@ -162,6 +168,15 @@ describe("validation findings", () => {
     expect(r.total.wonCents).toBe(10000);
     expect(r.total.closedCents).toBe(10000);
     expect(r.completeness.valuesComplete).toBe(false);
+  });
+  it("a value too large to hold exactly in whole cents is flagged, not summed", () => {
+    const r = run([{ no: "1", status: "won", so: "S", value: 1e300 }, { no: "2", status: "won", so: "T", value: 100 }]);
+    expect(r.issues.value_invalid).toBe(1);
+    expect(r.total.wonCents).toBe(10000);
+  });
+  it("an empty Customers tab is noted (customers could not be checked)", () => {
+    expect(run([{ no: "1", status: "open" }]).completeness.notes.join(" ")).toMatch(/Customers tab is empty/i);
+    expect(run([{ no: "1", status: "open" }], {}, { customers: [{ customer: "C1" }] }).completeness.notes.join(" ")).not.toMatch(/Customers tab is empty/i);
   });
   it("a clean set is complete", () => {
     const r = run([{ no: "1", status: "won", so: "S" }, { no: "2", status: "lost", reason: "x" }, { no: "3", status: "open" }]);
@@ -248,6 +263,21 @@ describe("grouping and reconciliation", () => {
     expect(run(specs, { to: "2026-02-01" }).records.map((q) => q.ref)).toEqual(["a", "b"]);
     expect(run(specs).records).toHaveLength(5);
   });
+  it("a date range that drops undated quotes cannot be reported as a complete analysis; a filtered view says so", () => {
+    const specs: QSpec[] = [{ no: "a", status: "won", so: "S", date: "2026-02-01" }, { no: "b", status: "lost", reason: "x", date: null }];
+    const all = run(specs);
+    expect(all.completeness.scope).toBe("all");
+    expect(all.completeness.complete).toBe(true); // a missing date is a note, not a conversion defect
+    const clean = run([{ no: "a", status: "won", so: "S" }, { no: "b", status: "lost", reason: "x" }]);
+    expect(clean.completeness).toMatchObject({ complete: true, scope: "all" });
+    const f = run(specs, { from: "2026-01-01", to: "2026-12-31" });
+    expect(f.filtered.undatedExcluded).toBe(1);
+    expect(f.completeness.complete).toBe(false);
+    expect(f.completeness.reasons.join(" ")).toMatch(/undated/i);
+    const rep = run([{ no: "a", status: "won", so: "S", rep: "R1" }, { no: "b", status: "lost", reason: "x", rep: "R2" }], { rep: "R1" });
+    expect(rep.completeness).toMatchObject({ complete: true, scope: "filtered" });
+    expect(rep.completeness.notes.join(" ")).toMatch(/1 of 2 quotes/);
+  });
   it("representative and customer filters narrow every table", () => {
     const r = run(REFERENCE, { rep: "R2" });
     expect(r.total).toMatchObject({ quotes: 3, lost: 2, open: 1 });
@@ -329,10 +359,22 @@ describe("product analysis", () => {
   it("value metrics use only single-product quotes; multi-product quote values are withheld, not split", () => {
     const r = ref();
     const p1 = by(r.byProduct.rows, "P1");
-    expect(p1).toMatchObject({ soleQuotes: 3, wonCents: 300050, lostCents: 0, valueConversionPct: 100, sharedClosed: 1 });
+    expect(p1).toMatchObject({ soleQuotes: 3, wonCents: 300050, lostCents: 0, valueConversionPct: null, valueWithheld: true, sharedClosed: 1 });
     const p2 = by(r.byProduct.rows, "P2");
-    expect(p2).toMatchObject({ soleQuotes: 2, wonCents: 0, lostCents: 150000, valueConversionPct: 0, sharedClosed: 1 });
+    expect(p2).toMatchObject({ soleQuotes: 2, wonCents: 0, lostCents: 150000, valueConversionPct: null, valueWithheld: true, sharedClosed: 1 });
     expect(r.byProduct.valueNote).toMatch(/not split|withheld/i);
+  });
+  it("product value conversion is shown only when no closed multi-product quote was left out of it (a biased subset is withheld, not shown)", () => {
+    const r = run([
+      { no: "1", status: "won", so: "S", value: 100, product: "P" },
+      { no: "2", status: "lost", reason: "x", value: 1000000, product: "P;Q" },
+      { no: "3", status: "won", so: "T", value: 100, product: "R" },
+      { no: "4", status: "lost", reason: "x", value: 300, product: "R" },
+      { no: "5", status: "open", value: 5, product: "R;Q" },
+    ]);
+    expect(by(r.byProduct.rows, "P")).toMatchObject({ valueConversionPct: null, valueWithheld: true, sharedClosed: 1 });
+    expect(by(r.byProduct.rows, "R")).toMatchObject({ valueConversionPct: 25, valueWithheld: false, sharedClosed: 0 }); // an OPEN shared quote is not closed
+    expect(by(r.byProduct.rows, "Q")).toMatchObject({ valueConversionPct: null, valueWithheld: true });
   });
   it("sole-product + multi-product + no-product quotes account for every quote", () => {
     const r = run([...REFERENCE, { no: "Q7", status: "open", product: null }]);
