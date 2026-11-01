@@ -187,9 +187,9 @@ describe("previewCostOverrides (UAT-005: typing an override never blanks the ove
   });
   it("the sheet builds with the usable part while an incomplete override is pending", () => {
     const { ev } = evalDraft();
-    const first = ev.budget.lines.find((l) => l.status === "priced")!;
+    const first = ev.budget!.lines.find((l) => l.status === "priced")!;
     const { usable, errors } = previewCostOverrides({ [first.itemKey]: { lineCostCents: 1_000, reason: "", by: "", at: "" } });
     expect(Object.keys(errors)).toEqual([first.itemKey]);
-    expect(() => buildMarginSheet(ev.budget, usable)).not.toThrow();
+    expect(() => buildMarginSheet(ev.budget!, usable)).not.toThrow();
   });
 });

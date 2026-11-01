@@ -3,7 +3,7 @@ import { FakeDb } from "./fake-db";
 import { goldenFixtureBaseline } from "../baseline";
 import { ProjectInvariantError } from "../claim-engine";
 import {
-  approveClaim, cancelDraftClaim, createClaimDraft, createProjectFromBaseline, loadProjectView, previewClaim, recalculateStaleDraft, recordProgress,
+  approveClaim, cancelDraftClaim, createClaimDraft, createProjectFromBaseline, loadProjectView, previewClaim, recalculateStaleDraft, recordProgress, returnClaimToDraft,
   seedGoldenFixture, submitClaimForApproval,
 } from "../project-store";
 
@@ -201,6 +201,14 @@ describe("stale draft policy", () => {
     expect(db.rows("project_claims")).toHaveLength(2); // opening claim + the one stale draft — no new draft appeared
   });
 
+  it("UAT-016: a SUBMITTED claim cannot be recalculated in place - its amount is frozen until it is returned to draft", async () => {
+    const { db, projectId, draft } = await staleDraft();
+    await submitClaimForApproval(db as never, ORG_A, projectId, draft.claimId);
+    const before = JSON.stringify(db.rows("project_claims"));
+    await expect(recalculateStaleDraft(db as never, ORG_A, "pm@a", projectId, draft.claimId)).rejects.toThrow(/submitted claim cannot be recalculated/i);
+    expect(JSON.stringify(db.rows("project_claims"))).toBe(before);
+  });
+
   it("explicit recalculation creates a NEW snapshot and supersedes the old draft with lineage", async () => {
     const { db, projectId, draft } = await staleDraft();
     const oldHash = claim(db, draft.claimId).snapshot_hash;
@@ -352,14 +360,16 @@ describe("what makes a draft stale (and what does not)", () => {
     it("a non-stale draft is refused", async () => {
       const f = await draftOnFreshProject();
       await f.rec("Delivery", "25", "25", "unrelated");
+      await returnClaimToDraft(f.db as never, ORG_A, f.projectId, f.draft.claimId); // a submitted claim is returned (controlled) before it can be recalculated
       expect(await code(recalculateStaleDraft(f.db as never, ORG_A, "pm@a", f.projectId, f.draft.claimId))).toBe("STALE_DRAFT");
-      expect(f.claim().status).toBe("READY_FOR_APPROVAL");
+      expect(f.claim().status).toBe("DRAFT");
     });
     it("a baseline-only change (customer) still produces a NEW draft that supersedes the old one", async () => {
       const f = await draftOnFreshProject();
       const oldBaseline = f.claim().baseline_hash;
       const oldSnapshot = f.claim().snapshot_hash;
       f.proj().customer_name = "A Different Customer";
+      await returnClaimToDraft(f.db as never, ORG_A, f.projectId, f.draft.claimId);
       const r = await recalculateStaleDraft(f.db as never, ORG_A, "pm@a", f.projectId, f.draft.claimId);
       expect(r.newClaimId).not.toBe(f.draft.claimId); // not collapsed into the old draft
       const fresh = f.db.rows("project_claims").find((c) => c.id === r.newClaimId)!;

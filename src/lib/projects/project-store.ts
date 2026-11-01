@@ -18,6 +18,7 @@ import {
 import { freezeClaimSnapshot, hashClaimSnapshot } from "./claim-snapshot";
 import type { ApprovedCommercialBaseline } from "./baseline";
 import type { VariationRow } from "./variations";
+import type { ClaimPostingRow } from "./claim-cin7-status";
 import { openingAsPriorClaim, type OpeningCommitmentRow } from "./opening-commitments";
 import {
   buildProjectView,
@@ -42,7 +43,7 @@ export async function loadProjectView(db: Db, orgId: string, projectId: string):
   const { data: project, error } = await db.from("projects").select("*").eq("org_id", orgId).eq("id", projectId).maybeSingle();
   if (error) fail(`load project: ${error.message}`);
   if (!project) return null; // includes "belongs to another org"
-  const [stages, events, claims, claimLines, allocations, links, variations, opening] = await Promise.all([
+  const [stages, events, claims, claimLines, allocations, links, variations, opening, postings, pendingApprovals] = await Promise.all([
     db.from("project_stages").select("*").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_progress_events").select("*").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_claims").select("*").eq("org_id", orgId).eq("project_id", projectId),
@@ -51,6 +52,8 @@ export async function loadProjectView(db: Db, orgId: string, projectId: string):
     db.from("project_cin7_links").select("claim_id, cin7_invoice_number, cin7_status, reconciled_at").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_variations").select("*").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_opening_commitments").select("*").eq("org_id", orgId).eq("project_id", projectId),
+    db.from("project_claim_cin7_postings").select("claim_id, posting_state, cin7_invoice_number, cin7_status, reconciled_at, last_error_message").eq("org_id", orgId).eq("project_id", projectId),
+    db.from("approval_requests").select("id, doc_id, stage, stage_role, assigned_to_email").eq("org_id", orgId).eq("project_id", projectId).eq("doc_type", "CLAIM").eq("status", "PENDING"),
   ]);
   return buildProjectView({
     project: project as ProjectRow,
@@ -60,6 +63,10 @@ export async function loadProjectView(db: Db, orgId: string, projectId: string):
     claimLines: must(claimLines, "load claim lines") as ClaimLineRow[],
     allocations: must(allocations, "load allocations") as AllocationRow[],
     links: must(links, "load links") as Cin7LinkRow[],
+    // Fail closed: if the posting rows cannot be read, the screen errors rather than showing "Not posted" for a claim that has an invoice.
+    postings: must(postings, "load Cin7 postings") as ClaimPostingRow[],
+    // Deploy-order safety (migration 0110): without the approvals table a submitted claim simply has no "Open in Approvals" link.
+    approvals: pendingApprovals.error && /does not exist|schema cache/i.test(pendingApprovals.error.message) ? [] : (must(pendingApprovals, "load pending claim approvals") as Array<{ id: string; doc_id: string; stage: string | null; stage_role: string | null; assigned_to_email: string | null }>).map((a) => ({ claimId: a.doc_id, requestId: a.id, stage: a.stage, stageRole: a.stage_role, assignedToEmail: a.assigned_to_email })),
     // Deploy-order safety: until migration 0102 is applied the table does not exist, and no variation can exist either — so a
     // missing table reads as "no variations" rather than breaking every project screen. Any OTHER error still fails closed.
     variations: variations.error && /does not exist|schema cache/i.test(variations.error.message) ? [] : (must(variations, "load variations") as VariationRow[]),
@@ -421,7 +428,8 @@ export async function recalculateStaleDraft(
   if (c.error) fail(c.error.message);
   const old = c.data as { status: string; snapshot_hash: string; baseline_hash: string } | null;
   if (!old) fail("Claim not found.");
-  if (old.status !== "DRAFT" && old.status !== "READY_FOR_APPROVAL") fail("Only a DRAFT or READY_FOR_APPROVAL claim can be recalculated.");
+  // A SUBMITTED claim's amount must not change under its approver: it has to be returned to draft through the approval process first.
+  if (old.status !== "DRAFT") fail(old.status === "READY_FOR_APPROVAL" ? "A submitted claim cannot be recalculated. Ask the approver to return it to draft first." : "Only a DRAFT claim can be recalculated.");
   const lines = must(await db.from("project_claim_lines").select("stage_id").eq("org_id", orgId).eq("claim_id", claimId), "load claim lines") as { stage_id: string }[];
   const stageIds = lines.map((l) => l.stage_id);
 
@@ -434,7 +442,7 @@ export async function recalculateStaleDraft(
   const cancel = await db.from("project_claims").update({
     status: "CANCELLED_BEFORE_WRITE",
     no_write_evidence: { method: "NEVER_SENT", checkedAt: new Date().toISOString(), detail: `Superseded by recalculated draft ${created.claimId}; no Cin7 call was ever made.` },
-  }).eq("org_id", orgId).eq("project_id", projectId).eq("id", claimId).in("status", ["DRAFT", "READY_FOR_APPROVAL"]).select("id");
+  }).eq("org_id", orgId).eq("project_id", projectId).eq("id", claimId).eq("status", "DRAFT").select("id");
   if (cancel.error) fail(cancel.error.message);
   if (!cancel.data || cancel.data.length === 0) fail("The stale draft could not be superseded (state changed).");
   return { newClaimId: created.claimId, supersededClaimId: claimId };

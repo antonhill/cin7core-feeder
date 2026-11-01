@@ -43,6 +43,9 @@ export interface AllocationRow {
   id: string; stage_id: string; baseline_line_ref: string; sku: string | null; description: string;
   quantity: number; sales_value_cents: number; estimated_cost_cents: number | null; allocation_bps: number;
 }
+import { claimCin7Status, type ClaimCin7Status, type ClaimPostingRow } from "./claim-cin7-status";
+/** The PENDING approval request of a submitted claim (the Approvals dashboard is where it is decided). */
+export interface ClaimApprovalRef { requestId: string; stage: string | null; stageRole: string | null; assignedToEmail: string | null }
 export interface Cin7LinkRow { claim_id: string; cin7_invoice_number: string | null; cin7_status: string | null; reconciled_at: string | null }
 
 export interface StageView {
@@ -82,7 +85,7 @@ export interface ProjectView {
     uncertainClaimBlocking: boolean;
   };
   stages: StageView[];
-  claims: Array<ClaimRow & { reserves: boolean; cin7: Cin7LinkRow | null }>;
+  claims: Array<ClaimRow & { reserves: boolean; cin7: Cin7LinkRow | null; cin7Status: ClaimCin7Status; approval: ClaimApprovalRef | null }>;
   allocations: AllocationRow[];
   variations: VariationRow[];
   /** Value committed before the Toolbox claim workflow (already included in each stage's committed amount). */
@@ -103,6 +106,10 @@ export function buildProjectView(input: {
   claimLines: ClaimLineRow[];
   allocations: AllocationRow[];
   links: Cin7LinkRow[];
+  /** Authoritative Cin7 posting rows (project_claim_cin7_postings). */
+  postings?: ClaimPostingRow[];
+  /** Pending claim approval requests, keyed by claim id. */
+  approvals?: Array<ClaimApprovalRef & { claimId: string }>;
   variations?: VariationRow[];
   openingCommitments?: OpeningCommitmentRow[];
 }): ProjectView {
@@ -150,6 +157,8 @@ export function buildProjectView(input: {
   const committed = stageViews.reduce((n, s) => n + s.committedCents, 0);
   const claimable = stageViews.reduce((n, s) => n + s.claimableCents, 0);
   const linkByClaim = new Map(input.links.map((l) => [l.claim_id, l]));
+  const approvalByClaim = new Map((input.approvals ?? []).map((a) => [a.claimId, { requestId: a.requestId, stage: a.stage, stageRole: a.stageRole, assignedToEmail: a.assignedToEmail }]));
+  const postingByClaim = new Map((input.postings ?? []).map((x) => [x.claim_id, x]));
   const variationRows = input.variations ?? [];
   const position = contractPosition(project.original_contract_cents, variationRows);
   const variations = position.approvedVariationsCents;
@@ -171,7 +180,7 @@ export function buildProjectView(input: {
     stages: stageViews,
     claims: [...input.claims]
       .sort((a, b) => b.claim_seq - a.claim_seq)
-      .map((c) => ({ ...c, reserves: isClaimStatus(c.status) && reservesValue(c.status), cin7: linkByClaim.get(c.id) ?? null })),
+      .map((c) => ({ ...c, reserves: isClaimStatus(c.status) && reservesValue(c.status), cin7: linkByClaim.get(c.id) ?? null, cin7Status: claimCin7Status(postingByClaim.get(c.id)), approval: approvalByClaim.get(c.id) ?? null })),
     allocations: input.allocations,
     openingCommitments: openingRows,
     openingCommitmentsLocked: input.claims.length > 0,
