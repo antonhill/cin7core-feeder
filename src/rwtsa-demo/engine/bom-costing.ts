@@ -107,7 +107,8 @@ export function detectPercentScale(values: readonly (number | null)[]): ScaleObs
   return { hint, count: v.length, min, max };
 }
 
-const sizeIndex = (s: string): number => (SIZE_ORDER as readonly string[]).indexOf(s);
+const normSize = (s: string): string => s.trim().toUpperCase();
+const sizeIndex = (s: string): number => (SIZE_ORDER as readonly string[]).indexOf(normSize(s));
 
 function categoryOf(type: string | null): CostLine["category"] {
   const t = (type ?? "").toLowerCase();
@@ -154,14 +155,18 @@ export function runCosting(ds: RwtsaDataset, config: CostingConfig): CostingResu
   const warnings: string[] = [];
   const unclassified = new Set<string>();
   const added = new Set<string>();
+  const superseded = new Set<string>();
+  const ambiguous = new Set<string>();
 
   /** Converts a stored percentage to a fraction under the chosen scale, or returns why it cannot. */
   const toFraction = (v: number | null, what: "overhead" | "efficiency"): { f: number } | { why: string } => {
     if (v === null) return { why: `${what} (blank in Routing_SMV)` };
     if (scale === null) return { why: "percentage scale not chosen" };
     const f = scale === "percent" ? v / 100 : v;
+    // Efficiency is a level between 10% and 100%; overhead up to 500%. Outside these the chosen scale is almost certainly wrong.
     const max = what === "efficiency" ? 1 : 5;
-    if (!Number.isFinite(f) || f < 0 || f > max || (what === "efficiency" && f === 0)) return { why: `${what} value out of range for the ${scale} scale` };
+    const min = what === "efficiency" ? 0.1 : 0;
+    if (!Number.isFinite(f) || f < min || f > max) return { why: `${what} value out of range for the ${scale} scale` };
     return { f };
   };
 
@@ -182,7 +187,7 @@ export function runCosting(ds: RwtsaDataset, config: CostingConfig): CostingResu
       const restricted = (b: typeof bom[number]) => b.size !== null || b.sizeFrom !== null;
       const applies = (b: typeof bom[number]): boolean | null => {
         if (b.size !== null && b.sizeFrom !== null) return null;
-        if (b.size !== null) return b.size === item.size;
+        if (b.size !== null) return normSize(b.size) === normSize(item.size);
         if (b.sizeFrom !== null) {
           const from = sizeIndex(b.sizeFrom);
           if (idx < 0 || from < 0) return null;
@@ -201,20 +206,31 @@ export function runCosting(ds: RwtsaDataset, config: CostingConfig): CostingResu
         if (a) applicable.push(b);
       }
       if (sizeRule === "replace") {
+        const key = (b: typeof bom[number]) => groupOf(b.componentType, b.componentName, b.componentCode);
         const specific = applicable.filter(restricted);
-        const specificGroups = new Map(specific.map((b) => [groupOf(b.componentType, b.componentName, b.componentCode), b]));
-        for (const b of applicable) {
-          if (restricted(b)) {
-            rows.push(b);
-            continue;
-          }
-          const repl = specificGroups.get(groupOf(b.componentType, b.componentName, b.componentCode));
-          if (repl) subs.push({ replaced: b.componentCode, by: repl.componentCode, group: stemOf(b.componentName, b.componentCode) });
-          else rows.push(b);
-        }
+        // Rank: an exact-size row beats a size-from row; a higher size-from beats a lower one.
+        const rank = (b: typeof bom[number]) => (b.size !== null ? 1000 : sizeIndex(b.sizeFrom as string));
+        const winners = new Map<string, typeof bom[number]>();
+        for (const b of [...specific].sort((x, y) => rank(x) - rank(y))) winners.set(key(b), b);
         for (const b of specific) {
-          const hasBase = bom.some((u) => !restricted(u) && groupOf(u.componentType, u.componentName, u.componentCode) === groupOf(b.componentType, b.componentName, b.componentCode));
-          if (!hasBase) added.add(`${styleCode}:${b.componentCode}`);
+          if (winners.get(key(b)) !== b) superseded.add(`${styleCode}:${b.componentCode}`);
+        }
+        const bases = applicable.filter((b) => !restricted(b));
+        for (const b of bases) {
+          const w = winners.get(key(b));
+          const baseCount = bases.filter((u) => key(u) === key(b)).length;
+          if (w && baseCount === 1) subs.push({ replaced: b.componentCode, by: w.componentCode, group: stemOf(b.componentName, b.componentCode) });
+          else {
+            rows.push(b);
+            if (w) ambiguous.add(`${styleCode}:${w.componentCode}`);
+          }
+        }
+        for (const w of winners.values()) {
+          const baseCount = bom.filter((u) => !restricted(u) && key(u) === key(w)).length;
+          if (baseCount !== 1) {
+            rows.push(w);
+            if (baseCount === 0) added.add(`${styleCode}:${w.componentCode}`);
+          } else rows.push(w);
         }
       } else {
         rows = applicable;
@@ -312,9 +328,17 @@ export function runCosting(ds: RwtsaDataset, config: CostingConfig): CostingResu
 
   if (all.length > complete.length) warnings.push(`${all.length - complete.length} style/size cost(s) are incomplete; their totals are withheld rather than estimated.`);
   if (unclassified.size > 0) warnings.push(`${unclassified.size} BOM component(s) have an unclassified type; they are included in the cost under "Other".`);
+  if (superseded.size > 0) warnings.push(`${superseded.size} size-specific BOM row(s) were superseded by a more specific row of the same component group and are not costed for that size.`);
+  if (ambiguous.size > 0) warnings.push(`${ambiguous.size} size-specific BOM row(s) match several base components of the same group, so the substitution is ambiguous: the base components are kept and the size-specific row is added.`);
   if (added.size > 0) warnings.push(`${added.size} size-specific BOM row(s) have no matching base component, so they are added rather than substituted.`);
 
+  const itemStyles = new Set(styleOrder);
+  const orphan = new Set([...ds.tables.bom.map((b) => b.styleCode), ...ds.tables.routing.map((r) => r.styleCode), ...ds.tables.productionOrders.map((o) => o.styleCode)].filter((x) => !itemStyles.has(x)));
+  if (orphan.size > 0) warnings.push(`${orphan.size} style(s) appear in the BOM, routing or production orders but have no Items rows, so they are not costed.`);
+  checks.push({ id: "styles", label: "Every style in the BOM, routing and production orders has Items rows to cost", ok: orphan.size === 0, detail: orphan.size === 0 ? "All styles accounted for." : `${orphan.size} style(s) not costed.` });
   const routingPcts = ds.tables.routing.flatMap((r) => [r.overhead, r.efficiency, r.margin]);
+  const observation = detectPercentScale(routingPcts);
+  if (scale === "percent" && observation.hint === "fraction-or-small-percent") warnings.push("The percent scale is chosen, but every overhead, efficiency and margin value is all at or below 1, which would mean 1% or less. That is usually a fraction (0.15 = 15%): check the scale.");
   const assumptions: CostingAssumption[] = [
     { id: "size-substitution", text: sizeRule === "replace" ? "A BOM row restricted to a size (size, or size from) REPLACES the base component of the same type and name (before any bracket), for the sizes it applies to. No supplied link says which component replaces which, so this match is an assumption; switch to 'add' to keep both." : "A size-restricted BOM row is ADDED to the base components for the sizes it applies to (nothing is substituted)." },
     { id: "labour-size", text: "Routing_SMV has no size column, so labour minutes are the same for every size of a style." },
@@ -324,5 +348,5 @@ export function runCosting(ds: RwtsaDataset, config: CostingConfig): CostingResu
     { id: "percent-scale", text: scale === null ? "The percentage scale of overhead and efficiency has NOT been chosen, so those lines are unresolved. 15, 0.15 and 15% are not assumed to mean the same." : `Overhead and efficiency are read on the ${scale === "percent" ? "percent (15 means 15%)" : "fraction (0.15 means 15%)"} scale because it was chosen, not because the workbook says so.` },
   ];
 
-  return { config: { percentScale: scale, markup, sizeRule }, scale, scaleObservation: detectPercentScale(routingPcts), styles, checks, assumptions, warnings };
+  return { config: { percentScale: scale, markup, sizeRule }, scale, scaleObservation: observation, styles, checks, assumptions, warnings };
 }

@@ -115,7 +115,7 @@ describe("missing and invalid observations are explicit", () => {
     const o = order(run([{ ...O1, actualMin: 0 }]), "O1");
     expect(o.labourRecoveryPct).toBeNull();
     expect(o.issues.join(" ")).toMatch(/zero actual minutes/i);
-    expect(Z(o.labourVarianceCents!)).toBe(-1700 * 1.5);
+    expect(o.labourVarianceCents).toBeNull(); // not produced yet: no saving is claimed
   });
   it("missing prices leave the rand variances blank, not zero, and the group says how many were included", () => {
     const r = run([{ ...O1, stdPrice: null }, { ...O2, actPrice: null }]);
@@ -174,5 +174,33 @@ describe("reconciliation checks", () => {
     const r = run([O1, O2]);
     expect(r.checks.length).toBeGreaterThanOrEqual(5);
     expect(r.checks.every((c) => c.ok)).toBe(true);
+  });
+});
+
+describe("review hardening: unobserved (zero-actual) orders", () => {
+  const notBuilt: OrderSpec = { no: "A", plannedM: 100, actualM: 0, plannedMin: 100, actualMin: 0 };
+  const built: OrderSpec = { no: "B", plannedM: 100, actualM: 100, plannedMin: 100, actualMin: 100 };
+  it("an order with no actual minutes does not enter recovery or labour aggregation, and the group is partial", () => {
+    const r = run([notBuilt, built]);
+    const g = r.byStyle[0];
+    expect(g.labourRecoveryPct).toBe(100); // B only, not 200%
+    expect(g.plannedMinutes).toBe(100);
+    expect(g.actualMinutes).toBe(100);
+    expect(g.labourVarianceCents).toBe(0);
+    expect(g.labourIncluded).toBe(1);
+    expect(g.orders).toBe(2);
+    expect(g.complete).toBe(false);
+    expect(r.total.complete).toBe(false);
+  });
+  it("zero actual fabric against a planned quantity is not booked as a saving", () => {
+    const r = run([notBuilt, built]);
+    expect(order(r, "A").usageVarianceCents).toBeNull();
+    expect(order(r, "A").priceVarianceCents).toBeNull();
+    expect(r.byStyle[0].usageVarianceCents).toBe(0);
+    expect(r.byStyle[0].usageIncluded).toBe(1);
+  });
+  it("an order with zero planned and zero actual is a valid observation", () => {
+    const r = run([{ no: "Z", plannedM: 0, actualM: 0, plannedMin: 0, actualMin: 0 }]);
+    expect(order(r, "Z").usageVarianceCents).toBe(0);
   });
 });

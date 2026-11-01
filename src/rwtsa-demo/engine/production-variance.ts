@@ -69,6 +69,8 @@ export interface GroupVariance {
   readonly priceIncluded: number;
   readonly plannedMinutes: number;
   readonly actualMinutes: number;
+  /** Orders with actual minutes > 0: only these enter the minutes, recovery and labour figures. */
+  readonly minutesObserved: number;
   /** Total planned / total actual x 100 (never an average of percentages). Null when there are no actual minutes. */
   readonly labourRecoveryPct: number | null;
   readonly labourVarianceCents: Cents;
@@ -125,8 +127,10 @@ function group(key: string, os: readonly OrderVariance[]): GroupVariance {
   const withUsage = os.filter((o) => o.usageVarianceCents !== null);
   const withPrice = os.filter((o) => o.priceVarianceCents !== null);
   const withLabour = os.filter((o) => o.labourVarianceCents !== null);
-  const planned = sum(os.map((o) => o.plannedMinutes));
-  const actual = sum(os.map((o) => o.actualMinutes));
+  // Recovery uses only orders whose actual minutes were observed (> 0): an unproduced order's plan is not "recovered".
+  const observed = os.filter((o) => o.actualMinutes > 0);
+  const planned = sum(observed.map((o) => o.plannedMinutes));
+  const actual = sum(observed.map((o) => o.actualMinutes));
   return {
     key,
     orders: os.length,
@@ -140,10 +144,11 @@ function group(key: string, os: readonly OrderVariance[]): GroupVariance {
     priceIncluded: withPrice.length,
     plannedMinutes: round6(planned),
     actualMinutes: round6(actual),
+    minutesObserved: observed.length,
     labourRecoveryPct: actual > 0 ? round6((planned / actual) * 100) : null,
     labourVarianceCents: sum(withLabour.map((o) => o.labourVarianceCents as number)),
     labourIncluded: withLabour.length,
-    complete: os.length > 0 && withUsage.length === os.length && withPrice.length === os.length && withLabour.length === os.length,
+    complete: os.length > 0 && observed.length === os.length && withUsage.length === os.length && withPrice.length === os.length && withLabour.length === os.length,
   };
 }
 
@@ -177,15 +182,18 @@ export function runProductionVariance(ds: RwtsaDataset, config: VarianceConfig =
     if (!valid) issues.push("A measurement is negative or not a number, so this order is excluded from every total.");
     const rate = cpm.get(p.styleCode) ?? null;
     if (rate === null) issues.push("No routing for this style, so the labour variance in rand cannot be calculated.");
-    if (valid && p.actualMinutes === 0) issues.push("Zero actual minutes: labour recovery is undefined.");
+    const minutesObserved = valid && p.actualMinutes > 0;
+    const fabricObserved = valid && !(p.actualFabricM === 0 && p.plannedFabricM > 0);
+    if (valid && !minutesObserved) issues.push("Zero actual minutes: not yet produced or not recorded, so labour recovery and labour variance are not calculated for this order.");
+    if (valid && !fabricObserved) issues.push("Zero actual fabric against a planned quantity: treated as not observed, so no usage or price variance is calculated.");
     if (valid && p.standardPrice === null) issues.push("No standard price: usage and price variances in rand are unavailable.");
     else if (valid && p.actualPrice === null) issues.push("No actual price: the price variance in rand is unavailable.");
 
     const usageM = p.actualFabricM - p.plannedFabricM;
-    const usage = valid && p.standardPrice !== null ? toCents(usageM * p.standardPrice) : null;
-    const price = valid && p.standardPrice !== null && p.actualPrice !== null ? toCents(p.actualFabricM * (p.actualPrice - p.standardPrice)) : null;
-    const recovery = valid && p.actualMinutes > 0 ? round6((p.plannedMinutes / p.actualMinutes) * 100) : null;
-    const labour = valid && rate !== null ? toCents((p.actualMinutes - p.plannedMinutes) * rate) : null;
+    const usage = fabricObserved && p.standardPrice !== null ? toCents(usageM * p.standardPrice) : null;
+    const price = fabricObserved && p.standardPrice !== null && p.actualPrice !== null ? toCents(p.actualFabricM * (p.actualPrice - p.standardPrice)) : null;
+    const recovery = minutesObserved ? round6((p.plannedMinutes / p.actualMinutes) * 100) : null;
+    const labour = minutesObserved && rate !== null ? toCents((p.actualMinutes - p.plannedMinutes) * rate) : null;
     return {
       orderNo: p.orderNo,
       styleCode: p.styleCode,
@@ -230,7 +238,7 @@ export function runProductionVariance(ds: RwtsaDataset, config: VarianceConfig =
   const noActual = good.filter((o) => o.usageVarianceCents !== null && o.priceVarianceCents === null).length;
   if (noActual > 0) warnings.push(`${noActual} order(s) have no actual price, so no price variance in rand.`);
   const zero = good.filter((o) => o.actualMinutes === 0).length;
-  if (zero > 0) warnings.push(`${zero} order(s) have zero actual minutes, so no labour recovery percentage.`);
+  if (zero > 0) warnings.push(`${zero} order(s) have zero actual minutes and are left out of the minutes, recovery and labour figures (not yet produced or not recorded).`);
   const wb = good.filter((o) => (o.workbookDiff.usageCents ?? 0) !== 0 || (o.workbookDiff.priceCents ?? 0) !== 0 || (o.workbookDiff.recoveryPct ?? 0) !== 0).length;
   if (wb > 0) warnings.push(`The workbook's own variance columns differ from the calculation on ${wb} order(s); the calculation is shown.`);
 

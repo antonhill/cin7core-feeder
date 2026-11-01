@@ -182,8 +182,13 @@ describe("per-size costing", () => {
   it("a different chosen scale changes the result, so the choice matters", async () => {
     synthetic();
     const m = await page({ style: "SYN-VEST-A", size: "M", scale: "percent" });
-    // 0.10 and 0.85 read as percent are 0.1% and 0.85%: accepted as the user's choice, and clearly different.
-    expect(indicator(m, "sel-total")).not.toBe("R114.50");
+    // 0.85 read as a percent is 0.85% efficiency: implausible, so the cost is withheld instead of being shown.
+    expect(indicator(m, "sel-total")).toBe("-");
+    expect(text(m)).toContain("efficiency value out of range");
+  });
+  it("a tiny negative variance never renders as -0.00", async () => {
+    synthetic();
+    expect(text(await page())).not.toContain("-0.00");
   });
   it("invalid controls are reported, replaced by defaults, and never echoed", async () => {
     synthetic();

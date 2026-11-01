@@ -108,10 +108,15 @@ describe("percentage scale is never assumed", () => {
     expect(m.status).toBe("incomplete");
     expect(m.missing.join(" ")).toMatch(/efficiency/i);
   });
-  it("0.85 read as a percent (0.85%) is accepted as written: the scale is the user's, the maths follows it", () => {
+  it("0.85 read as a percent (0.85% efficiency) is implausible, so it is rejected rather than used", () => {
     const m = sz(run({}, { percentScale: "percent" }), "M");
-    expect(m.status).toBe("complete");
-    expect(m.totalCents!).toBeGreaterThan(114.5 * 100); // 0.85% efficiency inflates labour enormously
+    expect(m.status).toBe("incomplete");
+    expect(m.totalCents).toBeNull();
+    expect(m.missing.join(" ")).toMatch(/efficiency value out of range/i);
+  });
+  it("a chosen scale that contradicts what the values look like is warned about", () => {
+    expect(run({}, { percentScale: "percent" }).warnings.join(" ")).toMatch(/all at or below 1/i);
+    expect(run({}, { percentScale: "fraction" }).warnings.join(" ")).not.toMatch(/all at or below 1/i);
   });
   it("detects what the data looks like but never applies it", () => {
     expect(detectPercentScale([0.1, 0.15, 0.85]).hint).toBe("fraction-or-small-percent");
@@ -236,5 +241,56 @@ describe("rounding is in whole cents and totals are exact", () => {
   it("a fractional-cent component rounds half up per line", () => {
     const m = sz(run({ bom: [{ code: "F", type: "Material", qty: 1.2345, cost: 3.33 }], ops: [] }, { percentScale: "fraction" }), "M");
     expect(m.lines.find((l) => l.code === "F")!.cents).toBe(Math.round(1.2345 * 3.33 * 100)); // 411.0 cents
+  });
+});
+
+describe("review hardening: substitutions and coverage", () => {
+  const trimBom = (extra: BomSpec[]) => [{ code: "F", name: "Fabric", type: "Material", qty: 1, cost: 10 }, ...extra];
+  it("two restricted rows of one group that both apply: the most specific wins, the other is flagged, nothing is double counted", () => {
+    const r = run({
+      items: [{ size: "5XL" }, { size: "3XL" }],
+      bom: trimBom([
+        { code: "Z-S", name: "Zip (short)", type: "Trim", qty: 1, cost: 6 },
+        { code: "Z-L", name: "Zip (long)", type: "Trim", qty: 1, cost: 8, sizeFrom: "3XL" },
+        { code: "Z-XL", name: "Zip (extra long)", type: "Trim", qty: 1, cost: 9, size: "5XL" },
+      ]),
+      ops: [],
+    });
+    expect(Z(sz(r, "5XL").groups.trimsThreadCents!)).toBe(9); // exact size beats size-from
+    expect(Z(sz(r, "3XL").groups.trimsThreadCents!)).toBe(8);
+    expect(r.warnings.join(" ")).toMatch(/superseded/i);
+  });
+  it("several base components sharing one name stem are not all dropped by one size-specific row: ambiguous, so added and flagged", () => {
+    const r = run({
+      items: [{ size: "3XL" }],
+      bom: trimBom([
+        { code: "T-B", name: "Thread (body)", type: "Thread", qty: 1, cost: 2 },
+        { code: "T-O", name: "Thread (overlock)", type: "Thread", qty: 1, cost: 3 },
+        { code: "T-X", name: "Thread (3XL)", type: "Thread", qty: 1, cost: 4, sizeFrom: "3XL" },
+      ]),
+      ops: [],
+    });
+    expect(Z(sz(r, "3XL").groups.trimsThreadCents!)).toBe(9); // all three kept
+    expect(sz(r, "3XL").substitutions).toEqual([]);
+    expect(r.warnings.join(" ")).toMatch(/ambiguous/i);
+  });
+  it("size labels match without regard to case or surrounding spaces", () => {
+    const r = run({ items: [{ size: "3XL" }], bom: trimBom([{ code: "Z-L", name: "Zip", type: "Trim", qty: 1, cost: 8, size: " 3xl " }]), ops: [] });
+    expect(Z(sz(r, "3XL").groups.trimsThreadCents!)).toBe(8);
+  });
+  it("a style present in the BOM, routing or production orders but not in Items is reported, not silently dropped", () => {
+    const r = runCosting(
+      mfgDataset({
+        items: [{ style: "A", size: "M" }],
+        bom: [{ style: "A", code: "F", type: "Material", qty: 1, cost: 1 }, { style: "GHOST", code: "F", type: "Material", qty: 1, cost: 1 }],
+        ops: [{ style: "A", op: "Cut", smv: 1 }, { style: "PHANTOM", op: "Cut", smv: 1 }],
+        orders: [{ no: "O", style: "SPECTRE" }],
+      }),
+      { percentScale: "fraction" }
+    );
+    expect(r.styles.map((x) => x.styleCode)).toEqual(["A"]);
+    expect(r.warnings.join(" ")).toMatch(/3 style\(s\).*no Items rows/i);
+    expect(r.checks.find((c) => c.id === "styles")!.ok).toBe(false);
+    expect(run().checks.find((c) => c.id === "styles")!.ok).toBe(true);
   });
 });

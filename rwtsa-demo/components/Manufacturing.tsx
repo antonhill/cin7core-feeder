@@ -18,8 +18,10 @@ const money = (c: Cents | null): string => {
 const signed = (c: Cents | null): string => (c === null ? "-" : `${c > 0 ? "+" : ""}${money(c)}`);
 const num = (n: number | null, dp = 2): string => {
   if (n === null) return "-";
-  const [i, d] = Math.abs(n).toFixed(dp).split(".");
-  return `${n < 0 ? "-" : ""}${group(i)}${d === undefined ? "" : `.${d}`}`;
+  const body = Math.abs(n).toFixed(dp);
+  const [i, d] = body.split(".");
+  const neg = n < 0 && Number(body) !== 0;
+  return `${neg ? "-" : ""}${group(i)}${d === undefined ? "" : `.${d}`}`;
 };
 const pct = (n: number | null): string => (n === null ? "n/a" : `${n.toFixed(1)}%`);
 const field = "rounded-md border border-slate-300 bg-white px-2 py-1 text-sm";
@@ -542,8 +544,8 @@ export function ManufacturingPageView({ model }: { model: MfgModel }) {
                     </TR>
                   </THead>
                   <TBody>
-                    {sizeSel.lines.map((l) => (
-                      <TR key={l.code}>
+                    {sizeSel.lines.map((l, idx) => (
+                      <TR key={`${l.code}|${idx}`}>
                         <TD>
                           <span data-testid="cost-line" data-code={l.code} data-cents={l.cents} />
                           {l.label}
