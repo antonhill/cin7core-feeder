@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { POST_CONFIRMATION_TEXT, canReconcile, canSend, memoFor, type PostingDisplayState } from "@/lib/projects/cin7-posting";
+import { clearSelection, populateEligible, selectAllEligible, selectionToQuantities, toggleLine, visibleLines } from "@/lib/projects/invoice-selection";
 import type { PreparedInvoice } from "@/lib/projects/invoice-proposal-store";
 import { getCin7PostingStatusAction, recoverLinkCin7SaleAction, getInvoiceProposalAction, postClaimToCin7Action, reconcileClaimPostingAction, type Cin7PostingStatus } from "../cin7-actions";
 
@@ -30,11 +31,15 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
   const [prep, setPrep] = useState<Record<string, { busy: boolean; error?: string; data?: PreparedInvoice }>>({});
   const [qty, setQty] = useState<Record<string, Record<string, string>>>({});
   const [early, setEarly] = useState<Record<string, string>>({});
+  const [picked, setPicked] = useState<Record<string, string[]>>({});
+  const [onlySelected, setOnlySelected] = useState<Record<string, boolean>>({});
+  const selOf = (claimId: string) => ({ selected: new Set(picked[claimId] ?? []), qty: qty[claimId] ?? {} });
+  const applySel = (claimId: string, s: { selected: ReadonlySet<string>; qty: Readonly<Record<string, string>> }) => { setPicked((m) => ({ ...m, [claimId]: [...s.selected] })); setQty((q) => ({ ...q, [claimId]: { ...s.qty } })); };
   const populate = async (claimId: string) => {
     setPrep((p) => ({ ...p, [claimId]: { busy: true } }));
     const r = await getInvoiceProposalAction(projectId, claimId);
     setPrep((p) => ({ ...p, [claimId]: r.ok && r.data ? { busy: false, data: r.data } : { busy: false, error: r.error ?? "Could not prepare the invoice" } }));
-    if (r.ok && r.data) setQty((q) => ({ ...q, [claimId]: Object.fromEntries(r.data!.proposal.lines.map((l) => [l.sku, String(l.proposed)])) }));
+    if (r.ok && r.data) applySel(claimId, selectAllEligible(r.data.proposal.lines));
   };
 
   const load = useCallback(() => { getCin7PostingStatusAction(projectId).then((r) => r.ok && r.data && setSt(r.data)); }, [projectId]);
@@ -137,13 +142,22 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
                         </div>
                         <div>
                           <p className="font-medium text-slate-900">Physical product lines (always R0; quantity only)</p>
+                          {pp.lines.length > 1 && (
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                              <Button size="sm" variant="secondary" disabled={working} onClick={() => applySel(c.id, selectAllEligible(pp.lines))}>Select all eligible</Button>
+                              <Button size="sm" variant="secondary" disabled={working} onClick={() => applySel(c.id, populateEligible(pp.lines, selOf(c.id)))}>Populate eligible quantities</Button>
+                              <Button size="sm" variant="ghost" disabled={working} onClick={() => applySel(c.id, clearSelection(pp.lines))}>Clear selection</Button>
+                              <label className="flex items-center gap-1"><input type="checkbox" checked={!!onlySelected[c.id]} onChange={(e) => setOnlySelected((m) => ({ ...m, [c.id]: e.target.checked }))} /> Show selected only</label>
+                              <span className="text-slate-600">{selOf(c.id).selected.size} of {pp.lines.length} selected</span>
+                            </div>
+                          )}
                           {pp.lines.length === 0 ? <p className="text-slate-600">The Cin7 Sale has no product lines.</p> : (
                             <table className="mt-1 min-w-full text-xs">
                               <thead><tr className="text-left text-slate-500"><th className="pr-3">SKU</th><th className="pr-3 text-right">Ordered</th><th className="pr-3 text-right">Invoiced</th><th className="pr-3 text-right">Shipped</th><th className="pr-3 text-right">Remaining</th><th className="pr-3 text-right">Eligible</th><th className="pr-3">Invoice qty</th><th>Why</th></tr></thead>
-                              <tbody>{pp.lines.map((l) => (
-                                <tr key={l.sku} className="align-top"><td className="pr-3 font-mono">{l.sku}</td>
+                              <tbody>{visibleLines(pp.lines, selOf(c.id), !!onlySelected[c.id]).map((l) => (
+                                <tr key={l.sku} className="align-top"><td className="pr-3 font-mono"><label className="flex items-center gap-1"><input type="checkbox" aria-label={`Select ${l.sku}`} disabled={l.status === "UNKNOWN" || l.status === "EXCLUDED"} checked={(picked[c.id] ?? []).includes(l.sku)} onChange={(e) => applySel(c.id, toggleLine(pp.lines, selOf(c.id), l.sku, e.target.checked))} />{l.sku}</label></td>
                                   {[l.ordered, l.invoiced, l.shipped, l.remainingToInvoice, l.eligible].map((v, i) => <td key={i} className="pr-3 text-right tabular-nums">{v === null ? "?" : v}</td>)}
-                                  <td className="pr-3"><input aria-label={`Invoice quantity for ${l.sku}`} className="h-7 w-20 rounded border border-slate-300 px-2 tabular-nums" value={qty[c.id]?.[l.sku] ?? "0"} disabled={l.status === "UNKNOWN"} onChange={(e) => setQty((q) => ({ ...q, [c.id]: { ...(q[c.id] ?? {}), [l.sku]: e.target.value } }))} /></td>
+                                  <td className="pr-3"><input aria-label={`Invoice quantity for ${l.sku}`} className="h-7 w-20 rounded border border-slate-300 px-2 tabular-nums" value={qty[c.id]?.[l.sku] ?? "0"} disabled={l.status === "UNKNOWN"} onChange={(e) => { const cur = selOf(c.id); const sel = new Set(cur.selected); if (Number(e.target.value) > 0) sel.add(l.sku); else sel.delete(l.sku); applySel(c.id, { selected: sel, qty: { ...cur.qty, [l.sku]: e.target.value } }); }} /></td>
                                   <td className="text-slate-600">{l.reasons.join(" ") || (l.status === "PROPOSED" ? "Dispatched and not yet invoiced." : "")}</td></tr>
                               ))}</tbody>
                             </table>
@@ -165,7 +179,7 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
                     ))}
                   </dl>
                   <div className="mt-3 flex gap-2">
-                    <Button loading={working} onClick={() => after(() => postClaimToCin7Action(projectId, c.id, POST_CONFIRMATION_TEXT, { lines: Object.entries(qty[c.id] ?? {}).map(([sku, q]) => ({ sku, quantity: Number(q) })).filter((x) => Number.isFinite(x.quantity) && x.quantity > 0), earlyReason: early[c.id] })).then(() => setConfirming(null))}>{POST_CONFIRMATION_TEXT}</Button>
+                    <Button loading={working} onClick={() => after(() => postClaimToCin7Action(projectId, c.id, POST_CONFIRMATION_TEXT, { lines: selectionToQuantities(prep[c.id]?.data?.proposal.lines ?? [], selOf(c.id)), earlyReason: early[c.id] })).then(() => setConfirming(null))}>{POST_CONFIRMATION_TEXT}</Button>
                     <Button variant="ghost" onClick={() => setConfirming(null)}>Cancel</Button>
                   </div>
                 </div>
