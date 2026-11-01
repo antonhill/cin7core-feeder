@@ -30,7 +30,7 @@ import { approveVariation, raiseVariation, rejectVariation, repriceVariation } f
 import { approvalsAvailable, decideDocument, legacyCtx, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
 import { redactVariationCosts } from "@/lib/projects/variations";
 import { randsToCents } from "@/lib/projects/claim-engine";
-import { assertSelectionHonoured, requireExplicitSelection } from "@/lib/projects/claim-selection";
+import { assertSelectionHonoured, parsePartialAmounts, requireExplicitSelection } from "@/lib/projects/claim-selection";
 import { BillingScopeAccessError, guardBillingScope } from "@/lib/projects/scope-access";
 import { NEGATIVE_VARIATION_UNSUPPORTED, isNegativeAmountInput } from "@/lib/projects/variations";
 import { isCustomerFacingProject, type ProjectView } from "@/lib/projects/project-view";
@@ -146,12 +146,12 @@ export async function recordProgressAction(
 }
 
 /** Calculates a claim. READ-ONLY: writes nothing, no Cin7 call. */
-export async function previewClaimAction(projectId: string, selectedStageIds?: string[]): Promise<ActionResult<ClaimPreviewResult>> {
+export async function previewClaimAction(projectId: string, selectedStageIds?: string[], partialRands?: Record<string, string>): Promise<ActionResult<ClaimPreviewResult>> {
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
     const chosen = requireExplicitSelection(selectedStageIds);
-    const p = await previewClaim(createServiceRoleClient(), orgId, projectId, chosen);
+    const p = await previewClaim(createServiceRoleClient(), orgId, projectId, chosen, undefined, { amountsCents: parsePartialAmounts(chosen, partialRands) });
     assertSelectionHonoured(chosen, p.calc.lines);
     return { ok: true, data: { calc: p.calc, claimNumber: p.claimNumber, taxRateBps: p.taxRateBps } };
   } catch (e) {
@@ -160,12 +160,13 @@ export async function previewClaimAction(projectId: string, selectedStageIds?: s
 }
 
 /** Persists a DRAFT claim locally (reserves nothing). Idempotent for an identical open draft. */
-export async function createClaimDraftAction(projectId: string, selectedStageIds?: string[]): Promise<ActionResult<{ claimId: string; duplicate: boolean }>> {
+export async function createClaimDraftAction(projectId: string, selectedStageIds?: string[], partialRands?: Record<string, string>): Promise<ActionResult<{ claimId: string; duplicate: boolean }>> {
   try {
     const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, await isAdmin());
     const db = createServiceRoleClient();
-    const r = await createClaimDraft(db, orgId, email ?? "unknown", projectId, requireExplicitSelection(selectedStageIds));
+    const chosen = requireExplicitSelection(selectedStageIds);
+    const r = await createClaimDraft(db, orgId, email ?? "unknown", projectId, chosen, undefined, { amountsCents: parsePartialAmounts(chosen, partialRands) });
     if (!r.duplicate) {
       await logActivity(db, { orgId, actor: { userId, email }, action: "projects.claim_drafted", summary: "Drafted a project progress claim (local only; no Cin7 write)", detail: { projectId, claimId: r.claimId } });
     }
