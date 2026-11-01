@@ -32,7 +32,9 @@ const CIN7_SALE_CREATION_ADAPTER = "src/lib/projects/cin7-sale-creation-adapter.
 const CIN7_PHYSICAL_ADAPTER = "src/lib/projects/physical-adapter.ts";
 /** DELIBERATE EDIT (cost estimate slice): a fourth adapter that only READS (GET /Product) the supplier costs for the NewQuip cost estimate - pinned below to contain no write verb. */
 const CIN7_COST_ADAPTER = "src/lib/projects/latest-cost-adapter.ts";
-const ADAPTERS = [CIN7_ADAPTER, CIN7_SALE_CREATION_ADAPTER, CIN7_PHYSICAL_ADAPTER, CIN7_COST_ADAPTER];
+/** DELIBERATE EDIT (UAT-010 pick lists): a fifth adapter that only READS locations and the Chart of Accounts - pinned below to contain no write verb. */
+const CIN7_REFERENCE_ADAPTER = "src/lib/projects/cin7-reference-adapter.ts";
+const ADAPTERS = [CIN7_ADAPTER, CIN7_SALE_CREATION_ADAPTER, CIN7_PHYSICAL_ADAPTER, CIN7_COST_ADAPTER, CIN7_REFERENCE_ADAPTER];
 
 describe("Projects POC has no Cin7 / external write path", () => {
   it("found source files to check", () => expect(sources.length).toBeGreaterThan(5));
@@ -87,7 +89,7 @@ describe("delivery allocation writes only local tables", () => {
 });
 
 describe("the physical-visibility path can only read", () => {
-  it.each(["src/lib/projects/physical-adapter.ts", "src/lib/projects/physical-store.ts", "src/lib/projects/physical-status.ts", "src/app/projects/physical-actions.ts", "src/app/projects/profitability-actions.ts", "src/lib/projects/profitability.ts", "src/lib/projects/profitability-store.ts", "src/cin7/sale-inspect.ts", "src/lib/projects/latest-cost-adapter.ts", "src/cin7/latest-cost.ts"])("%s contains no write verb or create endpoint", (rel) => {
+  it.each(["src/lib/projects/cin7-reference-adapter.ts", "src/lib/projects/cin7-account-eligibility.ts", "src/lib/projects/physical-adapter.ts", "src/lib/projects/physical-store.ts", "src/lib/projects/physical-status.ts", "src/app/projects/physical-actions.ts", "src/app/projects/profitability-actions.ts", "src/lib/projects/profitability.ts", "src/lib/projects/profitability-store.ts", "src/cin7/sale-inspect.ts", "src/lib/projects/latest-cost-adapter.ts", "src/cin7/latest-cost.ts"])("%s contains no write verb or create endpoint", (rel) => {
     const src = readFileSync(join(ROOT, rel), "utf8");
     expect(src).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/i);
     expect(src).not.toMatch(/nonIdempotentCreate|sale\/invoice|sale\/order|\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/);

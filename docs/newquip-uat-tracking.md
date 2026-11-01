@@ -7,16 +7,16 @@ BLOCKED BY EXTERNAL INTEGRATION, DEFERRED WITH REASON, plus NOT STARTED (work no
 
 | ID | Finding | Status | Where | Evidence |
 |---|---|---|---|---|
-| UAT-001 | Additional element product mapping control | NOT STARTED | - | - |
-| UAT-002 | POC selling-price overrides / pricing source | NOT STARTED | - | - |
-| UAT-003 | Exclusion recalculation feedback | NOT STARTED | - | - |
-| UAT-004 | Cost override vs Procurement workflow | NOT STARTED | - | - |
+| UAT-001 | Additional element product mapping | IMPLEMENTED, AWAITING LIVE UAT | PR-E | The seven optional elements had no matcher so could never be mapped. Searchable Cin7 catalogue chooser (Estimator/Manager), SKU verified server-side (exists, active, this org) on every save; unpriced SKUs still need an explicit manual price; 7 tests + 4 mutations |
+| UAT-002 | POC selling-price overrides | IMPLEMENTED, AWAITING LIVE UAT | PR-E | Manual price relabelled MANUAL QUOTATION PRICE (exceptional); server-stamped by/at, Estimator/Manager only, frozen in baseline, shown to approvers; POC wording about the price SOURCE kept because the source is not ready; 3 tests + 3 mutations |
+| UAT-003 | Exclusion recalculation feedback | IMPLEMENTED, AWAITING LIVE UAT (not reproduced) | PR-E | The quote totals already recalculated live while unsaved; the saved-draft-based Cin7 cost estimate did not. Banner now says so and the cost panel shows an unsaved warning. Not reproduced live |
+| UAT-004 | Cost override and Procurement | IMPLEMENTED (verification + docs), AWAITING LIVE UAT | PR-E | Carry-through proved by test (override -> frozen sheet -> Project budget input, incomplete sheet gives no cost); Procurement targets already role-gated and read-only; relationships documented in docs/projects-poc/cost-and-pricing-provenance.md |
 | UAT-005 | Cost override inputs disappear | IMPLEMENTED, AWAITING LIVE UAT | PR-A | `previewCostOverrides`; reason-without-amount no longer becomes a R0 override (found by independent review); 5 tests; mutations killed |
 | UAT-006 | Estimator sign-off button persists | IMPLEMENTED, AWAITING LIVE UAT | PR-A | completed state in UI; server refuses a second sign-off, atomic `is null` guard; test + mutation |
 | UAT-007 | Customer emails missing from Outlook | INVESTIGATION COMPLETE, DECISION NEEDED | - | Both sends recorded ACCEPTED with Resend IDs (07:04:08Z first send, 07:07:04Z deliberate re-send, rep@ as sender, [PREVIEW] subject). Application side is consistent; not a sending-code defect on this evidence. Toolbox notifications from the same sender domain DID reach the mailbox (07:00, 07:16Z), and the Junk folder holds neither quote email, so the loss is specific to the customer-quote message (likely tenant quarantine / anti-spoof or attachment policy). Owner check: Microsoft 365 Message trace + Quarantine for 07:04-07:08Z. No emails sent. |
 | UAT-008 | Create Project visible to Reps | IMPLEMENTED, AWAITING LIVE UAT | PR-A | server requires Manager (`PROJECT_CREATE_ROLES`); UI hides control; mutation killed |
 | UAT-009 | Opening Commitments collapsed by default | NOT STARTED | - | - |
-| UAT-010 | Cin7 location / account dropdowns | NOT STARTED | - | needs Cin7 account-type acceptance evidence |
+| UAT-010 | Cin7 location/account dropdowns | IMPLEMENTED, AWAITING LIVE UAT (class names unverified live) | PR-E | Read-only lookup behind a new read-only adapter; only active revenue accounts selectable; liability/balance-sheet accounts listed but locked pending proof T7; typed fallback kept; live Cin7 class names could not be observed here |
 | UAT-011 | Cin7 Sale confirmation checkbox | NOT STARTED | - | - |
 | UAT-012 | Cin7 Sale wording / recovery section | NOT STARTED | - | - |
 | UAT-013 | Selective progress claims | NOT STARTED | - | - |

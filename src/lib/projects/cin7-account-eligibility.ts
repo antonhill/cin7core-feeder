@@ -7,7 +7,10 @@
 // Cin7's special accounts (SystemAccount set, e.g. Accounts receivable/payable) and inactive accounts are never selectable.
 // An account whose class cannot be read is not guessed at: it is shown as unclassified and is not selectable.
 
-import type { Cin7Account } from "@/cin7/reference-lookups";
+/** A Chart of Accounts entry as read from Cin7 (structurally the same as the lookup's result; declared here so this pure module imports nothing from Cin7). */
+export interface Cin7Account {
+  code: string; name: string; type: string | null; accountClass: string | null; systemAccount: string | null; active: boolean;
+}
 
 export type AccountGroup = "REVENUE" | "LIABILITY" | "SYSTEM" | "INACTIVE" | "OTHER";
 export interface AccountOption { code: string; name: string; group: AccountGroup; selectable: boolean; note: string }

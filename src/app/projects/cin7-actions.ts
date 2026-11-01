@@ -18,9 +18,7 @@ import { runP0, type P0Input, type P0Report } from "@/lib/projects/p0-checklist"
 import { externalIdFor } from "@/lib/projects/cin7-sale-creation";
 import { guardBillingScope } from "@/lib/projects/scope-access";
 import { cin7WritesEnabled } from "@/lib/projects/write-flag";
-import { loadCin7Credentials } from "@/cin7/load-credentials";
-import { fetchAllAccounts, fetchAllLocations } from "@/cin7/reference-lookups";
-import { accountOptions } from "@/lib/projects/cin7-account-eligibility";
+import { readCin7ReferenceOptions } from "@/lib/projects/cin7-reference-adapter";
 import { NEWQUIP_POC_CIN7_INSTANCE_ID, OPERATIONAL_CUSTOMER_DENYLIST, isNewquipPocOrg } from "@/newquip/access";
 import { buildCin7Port, singleActiveInstanceId } from "@/lib/projects/cin7-adapter";
 import { buildSaleCreationPort } from "@/lib/projects/cin7-sale-creation-adapter";
@@ -377,10 +375,7 @@ export async function getPackageMappingAction(projectId: string, itemId: string)
   }
 }
 
-export interface Cin7ReferenceOptions {
-  locations: string[];
-  accounts: Array<{ code: string; name: string; group: string; selectable: boolean; note: string }>;
-}
+export type Cin7ReferenceOptions = Awaited<ReturnType<typeof readCin7ReferenceOptions>>;
 
 /**
  * Manager only. READ-ONLY lookup of the Cin7 locations and Chart of Accounts of the organisation's single pinned instance, so Location and Revenue Account
@@ -398,9 +393,7 @@ export async function getCin7ReferenceOptionsAction(projectId: string): Promise<
     if (inst.error) throw new Error(inst.error.message);
     const list = (inst.data ?? []) as Array<{ id: string }>;
     if (list.length !== 1 || list[0].id !== NEWQUIP_POC_CIN7_INSTANCE_ID) throw new Error("The lists can only be read from the single NewQuip Cin7 instance.");
-    const creds = await loadCin7Credentials(db, orgId, list[0].id);
-    const [locations, accounts] = await Promise.all([fetchAllLocations(creds), fetchAllAccounts(creds)]);
-    return { ok: true, data: { locations: locations.map((l) => l.name).sort((x, y) => x.localeCompare(y)), accounts: accountOptions(accounts) } };
+    return { ok: true, data: await readCin7ReferenceOptions(db, orgId, list[0].id) };
   } catch (e) {
     return { ok: false, error: message(e) };
   }
