@@ -76,11 +76,12 @@ export const SCENARIOS: readonly ScenarioMeta[] = [
     assumptions: [
       { status: "Brief", text: "Cost = materials + trims + thread + labour (SMV x cost per minute) + print + packaging; selling price = cost x 1.6." },
       { status: "Brief", text: "Labour recovery % = planned minutes / actual minutes, aggregated as total planned over total actual." },
-      { status: "Open", text: "The meaning of the overhead, efficiency and margin columns in Routing_SMV is unconfirmed until the workbook is inspected locally." },
+      { status: "Open", text: "The meaning and SCALE of the overhead, efficiency and margin columns in Routing_SMV (15, 0.15 or 15%) is unconfirmed until the workbook is inspected locally. The engine never assumes it: the scale is chosen on screen, and without a choice the percentage-dependent cost lines stay unresolved." },
+      { status: "Open", text: "Which BOM component replaces which at a larger size is not stated in the workbook. The engine matches a size-restricted row to the base component of the same type and name (before any bracket); 'add' keeps both. The real workbook has not been validated: real-workbook readiness is UNVERIFIED." },
       { status: "Open", text: "Fast React's return-file layout, external IDs, date format, delete synchronisation and update direction are unknown; any return file is a Spark proposal, not a vendor specification." },
       { status: "Open", text: "Whether Cin7 Core's family BOM variation mapping supports a size-dependent component must be verified independently (D6)." },
     ],
-    engine: { name: "Variance, BOM costing and Fast React exchange engines", implemented: false },
+    engine: { name: "Variance and BOM costing engines (the Fast React exchange is not built)", implemented: true },
   },
   {
     id: "C",
