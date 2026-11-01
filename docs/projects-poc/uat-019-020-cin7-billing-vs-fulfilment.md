@@ -12,7 +12,7 @@ Additional Charges only; physical product lines on an invoice are quantity-only 
 | 2 Standard claim after fulfilment | default rule: eligible = shipped - invoiced - reserved | supported (read-only evidence of shipments) |
 | 3 Authorised early invoicing | manager selects above eligible up to the Sale's remaining invoiceable quantity; `validateSelection` demands a recorded `earlyReason`, stored on the posting | supported in code; behaviour in Cin7 unproven (section 3) |
 | 4 Later pick/pack/ship on the same Sale | fulfilment is never created by the Toolbox | the P5 DRAFT invoice caused no pick/pack/ship/stock/COGS; the reverse order is unproven |
-| 5 Multiple claims/invoices on one Sale | `project_claim_cin7_postings` unique per claim; memo `NEWQUIP-PROJECTS:<project>:<claim>` | proven for two invoices (P5, INV-00032 on SO-00026) |
+| 5 Multiple claims/invoices on one Sale | `project_claim_cin7_postings` unique per claim; memo `NEWQUIP-PROJECTS:<project>:<claim>` | single-invoice creation proven twice (P5 INV-00019 on SO-00015; the Toolbox writer INV-00032 on SO-00026); several live invoices on one Sale at once is NOT separately proven |
 | 6 Zero-value internal physical lines | R0 lines with quantity; read-back requires `Price = 0` | writer implemented; contract C4/C6 not proven |
 | 7 Customer invoice shows Additional Charges only | charges carry the whole value | proven for charge-only invoices; invoices with R0 lines need a visual check against the customised template |
 | 8 No overwriting of earlier charges | each invoice is a separate task with its own charges; cumulative claims <= approved | within Toolbox proven by design/tests; Cin7's own bulk functions are UNVERIFIED (section 3) |
