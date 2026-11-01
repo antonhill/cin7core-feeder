@@ -138,3 +138,40 @@ describe("UAT-027: ambiguous or unreadable fulfilment data fails closed", () => 
     expect(r.length).toBeGreaterThanOrEqual(4);
   });
 });
+
+// UAT-027 live finding: on the owner's Reconcile the real Ship object also carried ShippingAddress and ShippingNotes (Cin7's documented ship-to
+// metadata). They describe where a shipment WOULD go; they are not movement. Movement evidence stays in Ship.Lines (and Pick/Pack lines).
+describe("UAT-027 live: Ship carries ShippingAddress and ShippingNotes", () => {
+  const address = { DisplayAddressLine1: "Test Farm 1", DisplayAddressLine2: "R512", City: "Brits", State: "NW", Postcode: "0250", Country: "South Africa", Company: "Spark", Contact: "Anton" };
+  const shipWith = (extra: Record<string, unknown>, lines: unknown[] = []) => withFulfilment((f) => ({ ...f, Ship: { Status: "AUTHORISED", RequireBy: null, ShippingAddress: address, ShippingNotes: "Leave at gate", Lines: lines, ...extra } }));
+
+  it("an empty container whose Ship has non-empty ShippingAddress and ShippingNotes passes", () => {
+    expect(verify(shipWith({}))).toEqual([]);
+  });
+  it("passes with the fields empty, null or absent too, and with the address as a plain string", () => {
+    for (const extra of [{ ShippingAddress: null, ShippingNotes: null }, { ShippingAddress: {}, ShippingNotes: "" }, { ShippingAddress: "1 Farm Rd", ShippingNotes: undefined }]) expect(verify(shipWith(extra))).toEqual([]);
+  });
+  it("the metadata cannot hide movement: shipment lines, shipped units and shipment dates still fail", () => {
+    expect(verify(shipWith({}, [{ IsShipped: true }])).join("|")).toMatch(/shipped units/);
+    expect(verify(shipWith({}, [{ IsShipped: false, ShipmentDate: "2026-11-01T08:00:00Z" }])).join("|")).toMatch(/shipment date/);
+    expect(verify(shipWith({}, [{ IsShipped: false }])).join("|")).toMatch(/1 shipment line/);
+    expect(verify(shipWith({ ShippingNotes: "SHIPPED - tracking TRK-1" }, [{ TrackingNumber: "TRK-1", Carrier: "DHL" }])).join("|")).toMatch(/shipment line/);
+  });
+  it("the metadata cannot hide picked or packed stock either", () => {
+    expect(verify(withFulfilment((f) => ({ ...f, Pick: { Status: "AUTHORISED", Lines: [{ SKU: "NQ2886", Quantity: 2 }] }, Ship: { Status: "AUTHORISED", ShippingAddress: address, ShippingNotes: "x", Lines: [] } }))).join("|")).toMatch(/picked stock/);
+    expect(verify(withFulfilment((f) => ({ ...f, Pack: { Status: "AUTHORISED", Lines: [{ SKU: "NQ2886", Quantity: 2 }] }, Ship: { Status: "AUTHORISED", ShippingAddress: address, ShippingNotes: "x", Lines: [] } }))).join("|")).toMatch(/packed stock/);
+  });
+  it("the allowance is for Ship only: the same fields on Pick or Pack are still unexpected", () => {
+    expect(verify(withFulfilment((f) => ({ ...f, Pick: { Status: "AUTHORISED", Lines: [], ShippingNotes: "x" } }))).join("|")).toMatch(/Pick has an unexpected field "ShippingNotes"/);
+    expect(verify(withFulfilment((f) => ({ ...f, Pack: { Status: "AUTHORISED", Lines: [], ShippingAddress: address } }))).join("|")).toMatch(/Pack has an unexpected field "ShippingAddress"/);
+  });
+  it("any other unknown Ship field is still unreadable (the allowlist did not become a free-for-all)", () => {
+    expect(verify(shipWith({ TrackingNumber: "T1" })).join("|")).toMatch(/Ship has an unexpected field "TrackingNumber"/);
+    expect(verify(shipWith({ ShippedQuantity: 3 })).join("|")).toMatch(/Ship has an unexpected field "ShippedQuantity"/);
+  });
+  it("the Sale checks still apply around it (invoice, plan with stock, ExternalID)", () => {
+    expect(verify(shipWith({}), { invoiceCount: 1 }).join("|")).toMatch(/invoice/);
+    expect(verify(shipWith({}), { externalId: "NEWQUIP-PROJECTS-SALE:OTHER" }).join("|")).toMatch(/ExternalID/);
+    expect(verify(shipWith({}), { lines: [{ sku: "NQ2886", quantity: 1, priceCents: 0 }] }).join("|")).toMatch(/1 fulfilment\(s\) already exist/);
+  });
+});
