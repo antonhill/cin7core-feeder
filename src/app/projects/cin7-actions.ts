@@ -18,6 +18,9 @@ import { runP0, type P0Input, type P0Report } from "@/lib/projects/p0-checklist"
 import { externalIdFor } from "@/lib/projects/cin7-sale-creation";
 import { guardBillingScope } from "@/lib/projects/scope-access";
 import { cin7WritesEnabled } from "@/lib/projects/write-flag";
+import { loadCin7Credentials } from "@/cin7/load-credentials";
+import { fetchAllAccounts, fetchAllLocations } from "@/cin7/reference-lookups";
+import { accountOptions } from "@/lib/projects/cin7-account-eligibility";
 import { NEWQUIP_POC_CIN7_INSTANCE_ID, OPERATIONAL_CUSTOMER_DENYLIST, isNewquipPocOrg } from "@/newquip/access";
 import { buildCin7Port, singleActiveInstanceId } from "@/lib/projects/cin7-adapter";
 import { buildSaleCreationPort } from "@/lib/projects/cin7-sale-creation-adapter";
@@ -369,6 +372,35 @@ export async function getPackageMappingAction(projectId: string, itemId: string)
     const key = packageKeyOf(item);
     const m = await activeMapping(db, orgId, key);
     return { ok: true, data: { packageKey: key, active: m === "UNAVAILABLE" ? null : m, unavailable: m === "UNAVAILABLE" } };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+export interface Cin7ReferenceOptions {
+  locations: string[];
+  accounts: Array<{ code: string; name: string; group: string; selectable: boolean; note: string }>;
+}
+
+/**
+ * Manager only. READ-ONLY lookup of the Cin7 locations and Chart of Accounts of the organisation's single pinned instance, so Location and Revenue Account
+ * are chosen rather than typed. Writes nothing in Cin7 or the database. If the lists cannot be read the caller gets an error and the typed fields remain.
+ */
+export async function getCin7ReferenceOptionsAction(projectId: string): Promise<Cin7ActionResult<Cin7ReferenceOptions>> {
+  try {
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const gates = await gatesFor(orgId);
+    await guardBillingScope(createServiceRoleClient(), orgId, projectId, gates.isManager);
+    if (!gates.orgEnabled) throw new Error("Not enabled for this organization.");
+    if (!gates.isManager) throw new Error("Only an owner or admin can load the Cin7 lists.");
+    const db = createServiceRoleClient();
+    const inst = await db.from("cin7_instances").select("id").eq("org_id", orgId).eq("active", true);
+    if (inst.error) throw new Error(inst.error.message);
+    const list = (inst.data ?? []) as Array<{ id: string }>;
+    if (list.length !== 1 || list[0].id !== NEWQUIP_POC_CIN7_INSTANCE_ID) throw new Error("The lists can only be read from the single NewQuip Cin7 instance.");
+    const creds = await loadCin7Credentials(db, orgId, list[0].id);
+    const [locations, accounts] = await Promise.all([fetchAllLocations(creds), fetchAllAccounts(creds)]);
+    return { ok: true, data: { locations: locations.map((l) => l.name).sort((x, y) => x.localeCompare(y)), accounts: accountOptions(accounts) } };
   } catch (e) {
     return { ok: false, error: message(e) };
   }
