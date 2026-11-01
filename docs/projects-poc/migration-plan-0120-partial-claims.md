@@ -14,10 +14,10 @@ Stack: PR-D, stacked on #136 (selective claims), #135 and #126. Owner approval i
   reserves only its own amount; the remainder stays claimable. Two partials cannot reserve the same room (the second is refused as stale).
 - Snapshot hash: unchanged format (`partial` is not hashed), so no existing draft becomes stale.
 - Before the migration: the application writes the `partial` column only on a partial line, and reads it with a fallback, so full claims work on a database without 0120.
-  A partial claim attempted before 0120 fails at insert with a database error (no partial data is written).
+  A partial claim attempted before 0120 is refused BEFORE any row is written: `createClaimDraft` probes for the `partial` column first, so no empty DRAFT claim is left behind.
 
 ## Pre-apply checks (read-only)
-1. `select conname, pg_get_constraintdef(oid) from pg_constraint where conrelid='public.project_claim_lines'::regclass and contype='c';` shows `project_claim_lines_check` with the equality (verified on hosted on 2026-11-01).
+1. `select conname, pg_get_constraintdef(oid) from pg_constraint where conrelid='public.project_claim_lines'::regclass and contype='c';` shows exactly ONE check whose definition contains `current_claim_cents = (earned_to_date_cents - previously_committed_cents)` (observed read-only on hosted on 2026-11-01 as `project_claim_lines_check`; re-run this at apply time, and stop if the count is not exactly one). The migration matches by definition, not by name.
 2. `select count(*) from project_claim_lines;` and the current claims table state (record the count; nothing is expected to change).
 
 ## Apply
