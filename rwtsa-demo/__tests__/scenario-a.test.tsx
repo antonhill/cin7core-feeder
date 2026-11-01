@@ -315,7 +315,8 @@ describe("a workbook whose inputs are not ready", () => {
     vi.stubEnv("RWTSA_SOURCE", "");
     vi.stubEnv("RWTSA_WORKBOOK_PATH", file);
     vi.stubEnv("RWTSA_STATE_DIR", join(tmp, "state-nr"));
-    const m = await page();
+    // A local workbook never defaults the history and overdue treatments: they are chosen explicitly here.
+    const m = await page({ anchor: "last", overdue: "week1" });
     const t = text(m);
     expect(t).toContain("LOCAL WORKBOOK");
     expect(t).toContain("NOT READY");

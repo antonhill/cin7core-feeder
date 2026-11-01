@@ -188,6 +188,54 @@ describe("cell normalisation", () => {
   });
 });
 
+describe("what is NOT accepted (explicit, conservative rules)", () => {
+  it("a candidate header row that matches fewer than the required contract fields is not taken as the header", async () => {
+    const r = await load((wb) => {
+      const ws = wb.getWorksheet("BOM")!;
+      for (const c of ["C4", "D4", "E4", "F4", "G4"]) ws.getCell(c).value = `junk ${c}`; // only Component and Type still match
+    });
+    expect(lay(r).BOM.layout).toBe("standard");
+    expect(r.ok).toBe(false);
+    expect(codes(r, "missing_header").some((f) => f.tab === "BOM")).toBe(true);
+  });
+  it("a row whose first cell is filled is never a note, even if every filled cell repeats the same text", async () => {
+    const r = await load((wb) => {
+      wb.getWorksheet("Stock")!.getRow(12).values = ["REPEATED", "REPEATED", "REPEATED"];
+    });
+    expect(codes(r, "note_row_ignored").some((f) => f.tab === "Stock")).toBe(false);
+    expect(r.ok).toBe(false);
+  });
+  it("a row with two different texts and no key is not a note", async () => {
+    const r = await load((wb) => {
+      wb.getWorksheet("Stock")!.getRow(12).values = [null, "one text", "another text, quite different"];
+    });
+    expect(codes(r, "note_row_ignored").some((f) => f.tab === "Stock")).toBe(false);
+    expect(r.ok).toBe(false);
+  });
+  it("a single short text with no key is not a note (it may be a data row that lost its key)", async () => {
+    const r = await load((wb) => {
+      wb.getWorksheet("Stock")!.getRow(12).values = [null, null, null, null, "short"];
+    });
+    expect(codes(r, "note_row_ignored").some((f) => f.tab === "Stock")).toBe(false);
+    expect(r.ok).toBe(false);
+  });
+  it("a number in a cell with some OTHER number format is not treated as a percentage", async () => {
+    const r = await load((wb) => {
+      wb.getWorksheet("Items")!.getCell("L2").numFmt = "#,##0.00";
+      wb.getWorksheet("Items")!.getCell("J3").numFmt = "0.00";
+    });
+    expect(r.dataset!.tables.items[1].minLevel).toBe(10);
+    expect(codes(r, "percent_cells_read_as_points").map((f) => f.tab).sort()).toEqual(["LandedCost", "ProductionOrders"]);
+  });
+  it("a composite that names two different SKUs is not resolved (it is not reduced to their shared style)", async () => {
+    const r = await load((wb) => void (wb.getWorksheet("ImportPOs")!.getCell("F2").value = `${O.styleB}-M and ${O.styleB}-L`));
+    const first = r.dataset!.tables.importPos[0];
+    expect(first.sku).toBeNull();
+    expect(first.styleCode).toBe(`${O.styleB}-M and ${O.styleB}-L`);
+    expect(codes(r, "composite_unresolved")[0].rows).toContain(2);
+  });
+});
+
 describe("every sheet row is accounted for", () => {
   it("title + header + data + notes + explained exclusions + trailing summary/note rows = non-empty sheet rows, per tab", async () => {
     const L = lay(await load());
@@ -280,5 +328,27 @@ describe("regression: the tabular synthetic workbook and the strict contract are
     });
     expect(r.ok).toBe(false);
     expect(codes(r, "missing_header").some((f) => f.tab === "Stock")).toBe(true);
+  });
+});
+
+describe("confidentiality of the layout findings and accounting", () => {
+  it("no title, note, ReadMe, composite or size text reaches a finding or the layout report", async () => {
+    const S = "SENTINEL_LAYOUT_9F3A";
+    const r = await load((wb) => {
+      wb.getWorksheet("ReadMe")!.getCell("B2").value = `${S}_readme`;
+      wb.getWorksheet("Items")!.getCell(`G${O.itemsNoteRow}`).value = `${S}_itemsnote`;
+      const bom = wb.getWorksheet("BOM")!;
+      bom.getCell("A1").value = `${S}_bomtitle`;
+      bom.getCell("A20").value = `${S}_bomnote`;
+      bom.getCell("C6").value = `S, ${S}_size`;
+      bom.getCell("A8").value = `${S}_component`;
+      wb.getWorksheet("Routing_SMV")!.getCell("A11").value = `${S}_routingnote`;
+      wb.getWorksheet("ProductionOrders")!.getCell("A7").value = `${S}_ponote`;
+      wb.getWorksheet("ImportPOs")!.getCell("F5").value = `${S}_unknown product`;
+      wb.getWorksheet("LandedCost")!.getCell("A2").value = `${S}_fxline`;
+    });
+    const out = JSON.stringify({ f: r.findings, l: r.layout });
+    expect(out).not.toContain(S);
+    expect(r.findings.length).toBeGreaterThan(0);
   });
 });

@@ -1,3 +1,4 @@
+import type { TabLayoutReport } from "@/rwtsa-demo/workbook/layouts";
 import type { ScenarioId } from "@/rwtsa-demo/contracts/fields";
 import { SCENARIO_TABS, TAB_NAMES, type TabName } from "@/rwtsa-demo/contracts/tabs";
 import { DEFAULT_FORECAST_WINDOW_MONTHS, type ReadinessConfig, type RwtsaDataset, type ScenarioReadiness } from "@/rwtsa-demo/dataset";
@@ -47,6 +48,8 @@ export interface ValidationSummary {
   readonly readinessConfig: ReadinessConfig;
   /** `synthetic:seed=N` or `local-workbook:<sha256 prefix>`. Never a file name or path. */
   readonly sourceLabel: string;
+  /** Per-tab layout and row accounting from the reader. */
+  readonly layout?: Partial<Record<TabName, TabLayoutReport>>;
 }
 
 export type DemoState =
@@ -104,6 +107,7 @@ export async function loadDemoState(config: DemoConfig): Promise<DemoState> {
       scenariosReady: built.readiness.filter((r) => r.ready).length,
       readinessConfig: built.readinessConfig,
       sourceLabel: label,
+      layout: built.layout,
     };
     return { kind: "validated", provenance: "SYNTHETIC", summary, dataset: built.dataset };
   }
@@ -124,6 +128,7 @@ export async function loadDemoState(config: DemoConfig): Promise<DemoState> {
         scenariosReady: certificate.scenariosReady,
         readinessConfig: certificate.readinessConfig,
         sourceLabel: `local-workbook:${certificate.fileSha256.slice(0, 12)}`,
+        layout: certificate.layout,
       },
       dataset,
     };
@@ -272,6 +277,7 @@ export interface ValidationView {
   readonly tabs: readonly { readonly tab: TabName; readonly present: boolean; readonly rows: number | null; readonly missingFields: readonly string[] }[];
   readonly findings: readonly Finding[];
   readonly readiness: readonly { readonly scenario: ScenarioId; readonly label: ReadinessLabel; readonly reasons: readonly string[] }[];
+  readonly layout: readonly TabLayoutReport[];
   readonly message: string | null;
 }
 
@@ -287,6 +293,7 @@ export function validationView(state: DemoState): ValidationView {
       tabs: [],
       findings: [],
       readiness,
+      layout: [],
       message: state.kind === "not-loaded" ? null : state.message,
     };
   }
@@ -299,6 +306,7 @@ export function validationView(state: DemoState): ValidationView {
     tabs: TAB_NAMES.map((tab) => ({ tab, ...state.summary.tabs[tab] })),
     findings: state.summary.findings,
     readiness,
+    layout: TAB_NAMES.flatMap((t) => (state.summary.layout?.[t] ? [state.summary.layout[t] as TabLayoutReport] : [])),
     message: null,
   };
 }

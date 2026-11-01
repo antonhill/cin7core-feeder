@@ -1,6 +1,7 @@
 import { runQuoteConversion, type QuoteRecord, type QuoteResult } from "@/rwtsa-demo/engine/quote-conversion";
 import { bannerOf, isScenarioReady, provenanceOf, reasonsFor, type Banner, type DemoState, type ProvenanceLabel, type ReadinessLabel } from "@/rwtsa-demo/state/demo-state";
 import type { CrmSettings } from "@/rwtsa-demo/state/crm-settings";
+import type { UnresolvedRule } from "@/rwtsa-demo/state/rules";
 
 export interface CrmModel {
   readonly provenance: ProvenanceLabel;
@@ -17,6 +18,8 @@ export interface CrmModel {
   readonly result: QuoteResult | null;
   /** The quote list: the analytics' quotes, narrowed by the status filter only. */
   readonly detail: readonly QuoteRecord[];
+  /** Scenario D has no open commercial rule on the workbooks seen so far; the field keeps the indicator uniform across scenarios. */
+  readonly rules: readonly UnresolvedRule[];
 }
 
 export function crmModel(state: DemoState, requested: CrmSettings): CrmModel {
@@ -30,7 +33,7 @@ export function crmModel(state: DemoState, requested: CrmSettings): CrmModel {
     realWorkbook: (state.kind === "validated" && state.provenance === "LOCAL WORKBOOK" && state.summary.structure === "PASS" ? "STRUCTURE VALIDATED, UNITS AND SCALE UNVERIFIED" : "UNVERIFIED") as CrmModel["realWorkbook"],
   };
   if (state.kind !== "validated" || state.dataset === null) {
-    return { ...base, engine: "UNAVAILABLE", engineNote: "No validated dataset is available: the engine has nothing to calculate from. No other data was substituted.", settings: requested, result: null, detail: [] };
+    return { ...base, engine: "UNAVAILABLE", engineNote: "No validated dataset is available: the engine has nothing to calculate from. No other data was substituted.", settings: requested, result: null, detail: [], rules: [] };
   }
   try {
     // A filter must name something that is in the loaded data; otherwise it is dropped (and reported), never silently empty.
@@ -49,8 +52,8 @@ export function crmModel(state: DemoState, requested: CrmSettings): CrmModel {
     const settings: CrmSettings = { ...requested, rep, customer, product, values: { ...requested.values, rep: rep ?? "", customer: customer ?? "", product: product ?? "" }, errors };
     const result = runQuoteConversion(state.dataset, { from: settings.from, to: settings.to, rep, customer, product, grain: settings.grain });
     const detail = settings.status === "ALL" ? result.records : result.records.filter((q) => q.status === settings.status);
-    return { ...base, engine: "AVAILABLE", engineNote: null, settings, result, detail };
+    return { ...base, engine: "AVAILABLE", engineNote: null, settings, result, detail, rules: [] };
   } catch {
-    return { ...base, engine: "UNAVAILABLE", engineNote: "The engine could not run with these inputs.", settings: requested, result: null, detail: [] };
+    return { ...base, engine: "UNAVAILABLE", engineNote: "The engine could not run with these inputs.", settings: requested, result: null, detail: [], rules: [] };
   }
 }

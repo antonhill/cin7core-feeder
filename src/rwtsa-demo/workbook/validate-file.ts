@@ -1,3 +1,4 @@
+import type { TabLayoutReport } from "@/rwtsa-demo/workbook/layouts";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { z } from "zod";
@@ -56,6 +57,8 @@ export interface ValidationCertificate {
   readonly readinessConfig: ReadinessConfig;
   /** Content hash of the validated data (null on fail). Irreversible; for matching a later run to this one. */
   readonly controlHash: string | null;
+  /** Per-tab layout and row accounting: header rows, title / note / trailing rows, derived-value sources. Counts and our own names only. */
+  readonly layout: Partial<Record<TabName, TabLayoutReport>>;
 }
 
 /** Per-tab presence, parsed row counts and missing canonical field names. Value-free. Shared by the certificate and the demo UI. */
@@ -132,6 +135,7 @@ export async function validateWorkbookFile(
     scenariosReady: built.readiness.filter((r) => r.ready).length,
     readinessConfig: built.readinessConfig,
     controlHash: built.dataset?.reconciliation.controlHash ?? null,
+    layout: built.layout,
   };
   return { certificate, dataset: built.dataset };
 }

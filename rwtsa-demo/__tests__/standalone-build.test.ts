@@ -165,7 +165,8 @@ describe("the standalone shell builds and runs without Toolbox middleware, Supab
     expect(ok.location).toBe("/scenario-a?view=sku&done=excluded");
     const saved = readdirSync(join(tmp, "state"));
     expect(saved).toHaveLength(1);
-    const page = get("/scenario-a?view=sku&done=excluded");
+    // A local workbook shows results only once the history and overdue treatments are chosen.
+    const page = get("/scenario-a?view=sku&done=excluded&anchor=last&overdue=week1");
     expect(page.status).toBe(200);
     expect(text(page.body)).toContain("Month excluded from the demand forecast");
     expect(text(page.body)).toContain(`EXCLUDED: ${S}_reason`); // the planner's own reason is shown to the planner only

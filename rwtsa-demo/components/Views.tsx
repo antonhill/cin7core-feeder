@@ -206,6 +206,54 @@ export function ValidationPageView({ view }: { view: ValidationView }) {
         <p className="mt-3 text-sm text-slate-600">Structure PASS is not readiness. Readiness is decided per scenario, below.</p>
       </Panel>
 
+      {view.layout.length > 0 && (
+        <Panel>
+          <PanelTitle>Sheet layout and row accounting</PanelTitle>
+          <p className="mt-1 text-sm text-slate-600">How each sheet was read, with every non-empty row accounted for. Counts and field names only: no cell values. The ReadMe sheet is recognised as supplementary and is not parsed.</p>
+          <div className="mt-3 overflow-x-auto">
+            <Table>
+              <THead>
+                <TR>
+                  <TH>Tab</TH>
+                  <TH>Layout</TH>
+                  <TH align="right">Header row</TH>
+                  <TH align="right">Sheet rows</TH>
+                  <TH align="right">Title</TH>
+                  <TH align="right">Data</TH>
+                  <TH align="right">Notes</TH>
+                  <TH align="right">Excluded (explained)</TH>
+                  <TH align="right">Trailing summary</TH>
+                  <TH align="right">Trailing notes</TH>
+                  <TH align="right">Parsed rows</TH>
+                  <TH>Values taken from titles, text lines or derived</TH>
+                </TR>
+              </THead>
+              <TBody>
+                {view.layout.map((l) => (
+                  <TR key={l.tab}>
+                    <TD>
+                      <span data-testid="layout-row" data-tab={l.tab} data-layout={l.layout} data-header-row={l.headerRow} />
+                      {l.tab}
+                    </TD>
+                    <TD>{l.layout}</TD>
+                    <TD align="right" numeric>{l.headerRow}</TD>
+                    <TD align="right" numeric>{l.sheetRows}</TD>
+                    <TD align="right" numeric>{l.titleRows}</TD>
+                    <TD align="right" numeric>{l.dataRows}</TD>
+                    <TD align="right" numeric>{l.noteRows}</TD>
+                    <TD align="right" numeric>{l.excludedRows}</TD>
+                    <TD align="right" numeric>{l.trailingSummaryRows}</TD>
+                    <TD align="right" numeric>{l.trailingNoteRows}</TD>
+                    <TD align="right" numeric>{l.parsedRows}{l.expandedRows > 0 ? ` (+${l.expandedRows} from size lists)` : ""}</TD>
+                    <TD>{l.derived.length === 0 ? "-" : l.derived.map((d) => `${d.field} (${d.source})`).join("; ")}</TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          </div>
+        </Panel>
+      )}
+
       <Panel>
         <PanelTitle>Per-scenario readiness (validator flags)</PanelTitle>
         <div className="mt-3">

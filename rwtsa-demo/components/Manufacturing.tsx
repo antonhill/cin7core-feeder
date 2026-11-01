@@ -8,6 +8,7 @@ import { fromCents, type Cents } from "@/rwtsa-demo/engine/money";
 import { scenarioById } from "@/rwtsa-demo/state/layers";
 import type { MfgModel } from "@/rwtsa-demo/state/mfg-model";
 import { LayerBadge, ProvenanceBadge, ReadinessBadge } from "./Badges";
+import { RulesBadge, RulesPanel } from "./Rules";
 
 const group = (s: string): string => s.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const money = (c: Cents | null): string => {
@@ -118,6 +119,7 @@ export function ManufacturingPageView({ model }: { model: MfgModel }) {
             <Badge tone="warning">{`REAL WORKBOOK: ${model.realWorkbook}`}</Badge>
           </span>
           <Badge tone="success">CALCULATED HERE: TOOLBOX</Badge>
+          <RulesBadge rules={model.rules} />
         </div>
       </div>
 
@@ -148,6 +150,8 @@ export function ManufacturingPageView({ model }: { model: MfgModel }) {
         )}
         {model.engineNote && <p className="mt-2 text-sm text-red-700">{model.engineNote}</p>}
       </Panel>
+
+      <RulesPanel rules={model.rules} />
 
       <Panel>
         <PanelTitle>Where each function lives</PanelTitle>

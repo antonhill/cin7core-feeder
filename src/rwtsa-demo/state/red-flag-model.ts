@@ -1,7 +1,9 @@
 import { SYNTHETIC_SIZE_CURVE } from "@/rwtsa-demo/fixtures/synthetic";
+import { classifyPoStatus } from "@/rwtsa-demo/engine/inbound";
 import { runRedFlag, type Exclusion, type RedFlagResult, type SkuResult, type StyleResult } from "@/rwtsa-demo/engine";
 import { bannerOf, isScenarioReady, provenanceOf, reasonsFor, type Banner, type DemoState, type ProvenanceLabel, type ReadinessLabel } from "@/rwtsa-demo/state/demo-state";
 import type { RedFlagSettings } from "@/rwtsa-demo/state/red-flag-settings";
+import { historyGapRule, overdueRule, rulesApply, tenderRule, type UnresolvedRule } from "@/rwtsa-demo/state/rules";
 
 /** The size curve supplied with the SYNTHETIC source only. A local workbook has none until one is supplied. */
 export function suppliedCurveFor(state: DemoState): Readonly<Record<string, number>> | null {
@@ -58,6 +60,10 @@ export interface RedFlagModel {
   readonly styles: readonly string[];
   readonly exclusions: readonly Exclusion[];
   readonly stateError: string | null;
+  /** Commercial rules the workbook does not establish (local workbook only). */
+  readonly rules: readonly UnresolvedRule[];
+  /** What those rules withhold: everything, or only the proposed order quantities. */
+  readonly withheld: { readonly results: boolean; readonly proposedOrders: boolean };
 }
 
 function skuAnomalyText(s: SkuResult, r: RedFlagResult): { text: string; kind: "none" | "review" | "excluded" } {
@@ -86,6 +92,8 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
     styles: [] as string[],
     exclusions,
     stateError,
+    rules: [] as UnresolvedRule[],
+    withheld: { results: false, proposedOrders: false },
   };
   const structure = state.kind === "validated" ? state.summary.structure : state.kind === "not-loaded" ? ("NO DATA" as const) : ("ERROR" as const);
   if (stateError !== null && state.kind === "validated") {
@@ -103,6 +111,20 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
     return { ...base, structure, engine: "UNAVAILABLE", engineNote: message, basis: "NONE", result: null, rows: [], chart: null };
   }
 
+  // Unresolved commercial rules (local workbook only). They are decided from the loaded data, never from the file name.
+  const rules: UnresolvedRule[] = [];
+  if (rulesApply(state)) {
+    // Units on lines still marked on the water whose ETA to stores is before the stock date. Counted from the purchase-order
+    // lines themselves, so a style-level line that is not yet split to sizes is not missed.
+    const overdueUnits = state.dataset.tables.importPos.filter((p) => classifyPoStatus(p.status) === "on-water" && p.etaStores < result.config.stockDate).reduce((a, p) => a + p.qty, 0);
+    if (!settings.chosen.overdue && overdueUnits > 0) rules.push(overdueRule(overdueUnits));
+    if (!settings.chosen.anchor && result.window.gapMonths.length > 0) rules.push(historyGapRule(result.window.lastHistoryMonth, result.window.gapMonths));
+    if (state.dataset.tables.items.length > 0 && state.dataset.tables.items.every((i) => i.isTender === null)) rules.push(tenderRule());
+  }
+  const withheld = { results: rules.some((r) => r.how === "choose"), proposedOrders: rules.length > 0 };
+  if (withheld.results) {
+    return { ...base, structure, engine: "AVAILABLE", engineNote: null, basis: "NONE", result, rows: [], chart: null, styles: [...new Set(result.skus.map((s) => s.styleCode))].sort(), rules, withheld };
+  }
   const styleNames = [...new Set(result.skus.map((s) => s.styleCode))].sort();
   const shortOnly = settings.shortageOnly;
   const styleOk = (code: string) => settings.style === null || settings.style === code;
@@ -143,5 +165,5 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
       ? w.missingMonths.length > 0 ? "LIMITED" : "ANCHORED"
       : w.gapMonths.length > 0 ? "ASSUMED" : "ANCHORED";
 
-  return { ...base, structure, engine: "AVAILABLE", engineNote: null, basis, result, rows, chart, styles: styleNames };
+  return { ...base, structure, engine: "AVAILABLE", engineNote: null, basis, result, rows, chart, styles: styleNames, rules, withheld };
 }
