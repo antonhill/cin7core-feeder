@@ -136,6 +136,18 @@ describe("mapping integrity is re-verified at estimator sign-off", () => {
     await expect(estimatorSignOff(db as never, ORG, member, "est@nq", id, ctx)).rejects.toThrow(/Cannot sign off: NQ2114 is inactive/);
     expect((await loadQuote(db as never, ORG, id))!.estimator_signoff_hash).toBeNull();
   });
+  it("a stale mapping on an item that is NOT in the quotation does not block sign-off (review P2)", async () => {
+    asRoles("REP", "ESTIMATOR");
+    const id = await storedQuote();
+    const d = readyDraft();
+    d.estimator.confirmedMappings.controller = "DOOR-NEW"; // optional element, not selected in the golden draft
+    await actions.saveGrowerDraftAction(id, d);
+    const total = evaluateDraft(d, ctx).budget!.totals.subtotalExTax;
+    await sendToEstimator(db as never, ORG, member, "rep@nq", id, ctx, { confirmedAmountCents: Math.round(total * 100), confirmedBy: "Joe" });
+    deactivate("DOOR-NEW", false);
+    await estimatorSignOff(db as never, ORG, member, "est@nq", id, ctx);
+    expect((await loadQuote(db as never, ORG, id))!.estimator_signoff_hash).not.toBeNull();
+  });
   it("a mapped product removed from the catalogue blocks sign-off", async () => {
     const id = await inReview();
     db.tables["products"] = db.rows("products").filter((p) => p.sku !== "SYSH-2750-3");
