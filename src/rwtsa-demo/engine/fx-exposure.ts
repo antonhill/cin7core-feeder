@@ -166,4 +166,3 @@ export function runFxExposure(ds: RwtsaDataset, config: ExposureConfig = {}): Ex
   if (unmatched > 0) warnings.push(`${unmatched} payment(s) could not be matched to a single planning and customs rate; the comparison is withheld for them.`);
   return { asOf, bucket, rows, buckets, totals, warnings };
 }
-
