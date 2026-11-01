@@ -36,6 +36,7 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
   // Choose Location and Revenue Account from Cin7's own lists (read-only). If the lists cannot be read, the typed fields stay available.
   const [refs, setRefs] = useState<Cin7ReferenceOptions | null>(null);
   const [refsError, setRefsError] = useState<string | null>(null);
+  const [typedAccounts, setTypedAccounts] = useState(false);
   const [p0, setP0] = useState<P0Report | null>(null);
   const [p0Error, setP0Error] = useState<string | null>(null);
   const [p0Busy, setP0Busy] = useState(false);
