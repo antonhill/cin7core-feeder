@@ -200,3 +200,22 @@ describe("REGRESSION: Project creation is idempotent (reload, reopen, double cli
     expect(w.db.rows("projects")).toHaveLength(0);
   });
 });
+
+describe("UAT-006: estimator sign-off is recorded once", () => {
+  it("a second sign-off of the same content is refused and does not re-stamp who/when", async () => {
+    const db = new FakeDb(); db.deliveryApplied = true;
+    const draft = readyDraft();
+    const { id } = await createQuote(db as never, ORG, "rep@nq");
+    await saveDraft(db as never, ORG, rep, id, draft);
+    const total = Math.round(evaluateDraft(draft, ctx).budget!.totals.subtotalExTax * 100);
+    await sendToEstimator(db as never, ORG, rep, "rep@nq", id, ctx, { confirmedAmountCents: total, confirmedBy: "Farmer Joe" });
+    await estimatorSignOff(db as never, ORG, rep, "est@nq", id, ctx);
+    const first = { ...(db.rows("newquip_quotes")[0] as Record<string, unknown>) };
+    expect(first.estimator_signoff_by_email).toBe("est@nq");
+    const msg = await err(estimatorSignOff(db as never, ORG, rep, "other@nq", id, ctx));
+    expect(msg).toMatch(/already signed off by est@nq/);
+    const after = db.rows("newquip_quotes")[0] as Record<string, unknown>;
+    expect(after.estimator_signoff_by_email).toBe("est@nq");
+    expect(after.estimator_signoff_at).toBe(first.estimator_signoff_at);
+  });
+});

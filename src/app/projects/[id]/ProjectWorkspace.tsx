@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
+import { claimActionPlan } from "@/lib/projects/claim-actions";
 import { formatBps, formatCents, type ProjectView, type StageView } from "@/lib/projects/project-view";
 import { VariationsPanel } from "./VariationsPanel";
 import { OpeningCommitmentsPanel } from "./OpeningCommitmentsPanel";
@@ -524,15 +525,25 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                     <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(cl.subtotal_cents)}</TD>
                     <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(cl.tax_cents)}</TD>
                     <TD align="right" className="tabular-nums whitespace-nowrap font-semibold">{formatCents(cl.total_cents)}</TD>
-                    <TD className="whitespace-nowrap">{cl.cin7 ? `${cl.cin7.cin7_invoice_number ?? "—"} (${cl.cin7.cin7_status ?? "—"})` : <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-medium text-slate-600">Not sent to Cin7</span>}</TD>
+                    <TD className="whitespace-nowrap">
+                      <Badge tone={cl.cin7Status.tone}>{cl.cin7Status.label}</Badge>
+                      {cl.cin7Status.invoiceNumber && <div className="mt-0.5 text-xs text-slate-600">{cl.cin7Status.invoiceNumber}{cl.cin7Status.reconciled ? " · reconciled" : ""}</div>}
+                      {cl.cin7Status.detail && cl.cin7Status.kind !== "DRAFT_CREATED" && cl.cin7Status.kind !== "AUTHORISED" && <div className="mt-0.5 max-w-[16rem] whitespace-normal text-xs text-slate-500">{cl.cin7Status.detail}</div>}
+                    </TD>
                     <TD>
-                      <div className="flex flex-wrap items-center gap-1">
-                        {cl.status === "DRAFT" && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.")} disabled={isWorking}>Submit</Button>}
-                        {cl.status === "READY_FOR_APPROVAL" && perm === "admin" && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.")} disabled={isWorking}>Approve</Button>}
-                        {cl.status === "READY_FOR_APPROVAL" && perm === "member" && <span className="self-center whitespace-nowrap text-xs text-slate-500">Awaiting owner/admin approval</span>}
-                        {(cl.status === "DRAFT" || cl.status === "READY_FOR_APPROVAL") && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.")} disabled={isWorking}>Recalculate</Button>}
-                        {(cl.status === "DRAFT" || cl.status === "READY_FOR_APPROVAL") && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), "Claim cancelled.")} disabled={isWorking}>Cancel</Button>}
-                      </div>
+                      {(() => {
+                        const plan = claimActionPlan(cl, perm === "admin" ? "admin" : perm === "member" ? "member" : "none");
+                        return (
+                          <div className="flex flex-wrap items-center gap-1">
+                            {plan.submit && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.")} disabled={isWorking}>Submit</Button>}
+                            {plan.openInApprovals && cl.approval && <Link href={`/approvals/${cl.approval.requestId}`} className="inline-flex h-8 items-center rounded-md border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-800 hover:bg-indigo-100">Open in Approvals</Link>}
+                            {plan.approveHere && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.")} disabled={isWorking}>Approve</Button>}
+                            {plan.waitingText && <span className="self-center text-xs text-slate-500">{plan.waitingText}</span>}
+                            {plan.recalculate && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.")} disabled={isWorking}>Recalculate</Button>}
+                            {plan.cancel && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), cl.status === "READY_FOR_APPROVAL" ? "Claim withdrawn." : "Claim cancelled.")} disabled={isWorking}>{plan.cancelLabel}</Button>}
+                          </div>
+                        );
+                      })()}
                       <div className="mt-1"><ApprovalHistory docType="CLAIM" docId={cl.id} label="Approval history" /></div>
                     </TD>
                   </TR>

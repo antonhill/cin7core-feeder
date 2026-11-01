@@ -26,6 +26,7 @@ import {
   approveGrowerQuoteAction, createProjectFromGrowerQuoteAction, getGrowerQuoteAction, previewGrowerDraftAction, returnGrowerQuoteToEstimatorAction, returnGrowerQuoteToRepAction,
   saveGrowerDraftAction, sendGrowerQuoteToEstimatorAction, signOffGrowerQuoteAction, type QuoteView,
 } from "../actions";
+import { formatSast } from "@/lib/approvals/time";
 import { fmtCents, fmtZar, NumField, TextField } from "../fields";
 import { MarginPanel } from "./MarginPanel";
 import { BuildStamp } from "@/components/BuildStamp";
@@ -557,7 +558,9 @@ export default function QuoteEditorPage() {
               )}
               {q.state === "ESTIMATOR_REVIEW" && (
                 <>
-                  <Button loading={isWorking} disabled={!roles.has("estimator") || rd.state !== "READY"} onClick={() => act(() => signOffGrowerQuoteAction(id), "Estimator sign-off recorded for this exact content.")}>Estimator: I double-checked this quote</Button>
+                  {q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash
+                    ? <Badge tone="success" dot>Estimator sign-off complete - {q.estimator_signoff_by_email ?? "estimator"}{q.estimator_signoff_at ? `, ${formatSast(q.estimator_signoff_at)}` : ""}</Badge>
+                    : <Button loading={isWorking} disabled={!roles.has("estimator") || rd.state !== "READY"} onClick={() => act(() => signOffGrowerQuoteAction(id), "Estimator sign-off recorded for this exact content.")}>Estimator: I double-checked this quote</Button>}
                   {roles.has("estimator") && (<>
                   <TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} />
                   <Button variant="secondary" loading={isWorking} disabled={!returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.")}>Return to rep</Button>
@@ -702,7 +705,7 @@ export default function QuoteEditorPage() {
                   <>
                   {gate.requires ? <p className="mb-2 text-sm text-slate-600">The Project will use the billing schedule printed on the quotation the customer accepted.</p> : <ScheduleChooser contractCents={q.accepted_baseline.contractCents} onChange={setScheduleChoice} />}
                   <p className="mb-2"><BuildStamp /></p>
-                  <Button loading={isWorking} disabled={!gate.requires && !resolveScheduleChoice(scheduleChoice).ok} onClick={() => start(async () => {
+                  {!roles.has("manager") ? <Alert tone="info">A Manager creates the Project from the accepted quotation after verifying the customer&apos;s acceptance. You will be able to open it from here once it exists.</Alert> : <Button loading={isWorking} disabled={!gate.requires && !resolveScheduleChoice(scheduleChoice).ok} onClick={() => start(async () => {
                     const r = await createProjectFromGrowerQuoteAction(id, scheduleChoice);
                     if (!r.ok) return setError(r.error ?? "Unknown error");
                     setError(null);
@@ -710,7 +713,7 @@ export default function QuoteEditorPage() {
                     setNotice(`Project ${made?.created === false ? "already existed (its stages were not changed)" : "created from the accepted baseline (no engineering recalculation)"}. Billing stages: ${(made?.stages ?? []).map((x) => `${x.name} ${fmtCents(x.valueCents)}`).join(" · ") || "none"}.`);
                     const v = await getGrowerQuoteAction(id);
                     if (v.ok && v.data) adopt(v.data);
-                  })}>Create Project from accepted quote</Button>
+                  })}>Create Project from accepted quote</Button>}
                   </>
                 )}
               </div>
