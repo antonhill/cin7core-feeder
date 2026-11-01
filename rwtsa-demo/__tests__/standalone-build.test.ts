@@ -108,6 +108,12 @@ describe("the standalone shell builds and runs without Toolbox middleware, Supab
   it("the production build does not bundle the Toolbox middleware or any Supabase client", () => {
     const manifest = JSON.parse(readFileSync(join(DIST, "server", "middleware-manifest.json"), "utf8"));
     expect(manifest.middleware).toEqual({});
+    // The ONLY proxy is this app's own Host gate (matching every path); it is the shadow of the Toolbox middleware.
+    const fns = JSON.parse(readFileSync(join(DIST, "server", "functions-config-manifest.json"), "utf8")).functions as Record<string, { matchers: { originalSource: string }[] }>;
+    expect(Object.keys(fns)).toEqual(["/_middleware"]);
+    expect(fns["/_middleware"].matchers.map((m) => m.originalSource)).toEqual(["/:path*"]);
+    const gate = [...files(join(DIST, "server"))].filter((f) => /\.js$/.test(f) && readFileSync(f, "utf8").includes("only answers requests addressed to a loopback host"));
+    expect(gate.length).toBeGreaterThan(0);
     const offenders = [...files(DIST)].filter((f) => /\.(js|mjs|json)$/.test(f) && /createServerClient|NEXT_PUBLIC_SUPABASE|supabase\.co/i.test(readFileSync(f, "utf8")));
     expect(offenders.map((f) => f.slice(DIST.length))).toEqual([]);
   });
@@ -172,6 +178,33 @@ describe("the standalone shell builds and runs without Toolbox middleware, Supab
     expect(serverLog).not.toContain(`${S}_reason`);
     // Nothing the planner typed reaches the build output either.
     expect([...files(DIST)].some((f) => { try { return readFileSync(f, "utf8").includes(`${S}_reason`); } catch { return false; } })).toBe(false);
+  });
+
+  it("Host gate on the real server: an external Host is refused on pages, the API and static files; loopback names are served", () => {
+    const status = (path: string, host: string | null, extra: string[] = [], method = "GET") => {
+      const args = ["-s", "-o", "/dev/null", "-D", "-", "-m", "20", "-X", method, "--resolve", `localhost:${PORT}:127.0.0.1`];
+      if (host !== null) args.push("-H", `Host: ${host}`);
+      for (const h of extra) args.push("-H", h);
+      const out = execFileSync("curl", [...args, `http://127.0.0.1:${PORT}${path}`], { encoding: "utf8" });
+      return { code: Number(/^HTTP\/[\d.]+ (\d+)/m.exec(out)?.[1]), location: /^location:/im.test(out), out };
+    };
+    for (const evil of ["evil.example", `evil.example:${PORT}`, `127.0.0.1.evil.example:${PORT}`, "10.0.0.5"]) {
+      for (const path of ["/", "/scenario-a", "/validation", "/api/exclusions", "/_next/static/anything.js"]) {
+        const r = status(path, evil);
+        expect(r.code, `${evil} ${path}`).toBe(403);
+        expect(r.location, `${evil} ${path}`).toBe(false);
+        expect(r.out, `${evil} ${path}`).not.toContain("evil.example");
+      }
+    }
+    expect(status("/", `evil.example`, [`Origin: http://evil.example`], "POST").code).toBe(403);
+    // Legitimate loopback operation is unaffected.
+    expect(status("/", `127.0.0.1:${PORT}`).code).toBe(200);
+    expect(status("/scenario-a", `localhost:${PORT}`).code).toBe(200);
+    expect(status("/validation", `127.0.0.1:${PORT}`).code).toBe(200);
+    // Loopback Host but a cross-site POST is refused by the gate before the route runs.
+    expect(status("/api/exclusions", `127.0.0.1:${PORT}`, ["Origin: http://evil.example"], "POST").code).toBe(403);
+    expect(readdirSync(tmp).some((f) => f === "state")).toBe(true); // state from the earlier exclusion test only; nothing new was written
+    expect(serverLog).not.toContain("evil.example");
   });
 
   // --- cache isolation (must run before afterAll removes the test-owned directory and marker) ---

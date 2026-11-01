@@ -108,9 +108,9 @@ the difference as an assumption. Scenario B-D readiness is preliminary.
 
 Deliberately deferred (not part of this PR): allowlisting bare `next` imports as type-only; the interaction of `RWTSA_HEADER_MAP` with the synthetic source (currently ignored); normalising `RWTSA_SOURCE` values (case-sensitive, trimmed); separate FAST REACT and EXTERNAL layer labels; POSIX-only `NEXT_TELEMETRY_DISABLED=1` script prefix.
 
-## Known limitation: DNS rebinding on GET
+## Host and Origin gate (DNS rebinding)
 
-The exclusion POST accepts only loopback `Host` values (and a matching `Origin`). The GET pages do not check `Host`, so a hostile web page that
-rebinds its own name to 127.0.0.1 while the demo is running could read a page. Mitigation today: run the demo only while you need it, and do not
-browse untrusted sites meanwhile. A proper fix is a `Host` allowlist in the app's proxy, left for a follow-up because it changes the middleware
-manifest the build test pins.
+`proxy.ts` answers every request (pages, API, static files) only if its `Host` is `127.0.0.1`, `localhost` or `[::1]` (any port), and any
+`X-Forwarded-Host` is too; state-changing requests also need a matching same-origin `Origin` (or `Sec-Fetch-Site: same-origin`). Anything else gets
+a bare 403: no redirect and no echo of the header. The exclusion route repeats the check. The same file shadows the Toolbox middleware (see
+above). Note that a server started before this change keeps the old behaviour until it is rebuilt and restarted.

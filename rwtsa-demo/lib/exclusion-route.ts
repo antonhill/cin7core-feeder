@@ -1,3 +1,4 @@
+import { guardRequest } from "@/rwtsa-demo/state/host-guard";
 import { applyExclusionForm } from "@/rwtsa-demo/state/exclusion-form";
 import { getDemoState } from "./state";
 import { stateDir } from "./exclusions";
@@ -10,23 +11,9 @@ import { stateDir } from "./exclusions";
  * Scenario A page; it is never taken from the request verbatim.
  */
 
-/** Only loopback names are served. This defeats DNS rebinding, where an attacker's name resolves to 127.0.0.1 and the Host/Origin pair still match. */
-export function isLoopbackHost(host: string | null): boolean {
-  return host !== null && /^(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$/i.test(host);
-}
-
 function sameOrigin(request: Request): boolean {
-  const host = request.headers.get("host");
-  if (!isLoopbackHost(host)) return false;
-  const origin = request.headers.get("origin");
-  if (origin !== null && host !== null) {
-    try {
-      return new URL(origin).host === host;
-    } catch {
-      return false;
-    }
-  }
-  return request.headers.get("sec-fetch-site") === "same-origin";
+  // The proxy already applies this; it is repeated here so the route is safe on its own (defence in depth).
+  return guardRequest("POST", request.headers).ok;
 }
 
 export function safeReturnTo(value: string | null): string {
