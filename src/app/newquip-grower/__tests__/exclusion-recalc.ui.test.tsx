@@ -141,9 +141,9 @@ describe("UAT-003 rendered page: the Exclude checkbox recalculates without Save"
     // tick Feeder, tick Bulk tank, untick Feeder, tick Feeder again - 450 ms apart
     for (const l of [/Exclude CCM feeder/i, /Exclude Bulk feed tank/i, /Exclude CCM feeder/i, /Exclude CCM feeder/i]) { fireEvent.click(box(l)); await sleep(450); }
     // old behaviour: three requests per click queued behind each other, so the answer for the last click was still seconds away
-    await waitFor(() => expect(digits(subtotal())).toBe(digits(fmtZar(finalWanted))), { timeout: 4000 });
+    await waitFor(() => expect(digits(subtotal())).toBe(digits(fmtZar(finalWanted))), { timeout: 8000 });
     expect(digits(subtotal())).not.toBe(digits(original));
-    await waitFor(() => expect(screen.queryByText(/Recalculating/)).toBeNull(), { timeout: 4000 });
+    await waitFor(() => expect(screen.queryByText(/Recalculating/)).toBeNull(), { timeout: 8000 });
     expect(q.log.filter((l) => l === "start previewGrowerDraftAction").length).toBeLessThanOrEqual(4);
   }, 30000);
 

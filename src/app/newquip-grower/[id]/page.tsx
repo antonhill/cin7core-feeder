@@ -490,7 +490,7 @@ export default function QuoteEditorPage() {
             </Panel>
           </div>
 
-          <ScopePanel quoteId={id} draft={dirty && previewedFor ? previewedFor : draft} />
+          <ScopePanel quoteId={id} draft={dirty ? (previewedFor ?? q.draft) : draft} />
           {/* Right under the physical scope, where the estimator resolves the SKUs: capture the latest Cin7 costs for a draft quotation. */}
           {!final && view.viewer.canViewCommercials && <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? previewedFor : null} />}
 
