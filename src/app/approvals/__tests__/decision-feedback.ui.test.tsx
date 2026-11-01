@@ -129,8 +129,23 @@ describe("outcomes appear beside the Confirm button", () => {
     fireEvent.click(tick());
     vi.mocked(actions.getApprovalDetailAction).mockResolvedValue({ ok: true, data: detail({ decide: false, needsOverride: false }, { status: "APPROVED", admin_override: true, decided_at: "2026-11-01T11:00:00Z", decided_by_email: "admin@x.co" }) } as never);
     fireEvent.click(confirm(box));
-    expect(await screen.findByText(/lost, but the current status shows it was recorded/i)).toBeTruthy();
+    const note = await screen.findByText(/The request is now Approved/);
+    // Without the server's own result we cannot know it was THIS user's decision (it could have been concurrent): say only what the request now is.
+    expect(note.textContent).toMatch(/check the decision record on this page for who recorded it/);
+    expect(note.textContent).not.toMatch(/your decision was|you approved/i);
     expect(document.querySelector('[data-testid="action-feedback"][data-kind="error"]')).toBeNull(); // not reported as a failure
+  });
+
+  it("a lost response whose re-read ALSO fails says it could not refresh (never 'refreshed') and does not suggest retrying", async () => {
+    vi.mocked(actions.decideApprovalAction).mockRejectedValue(new Error("Failed to fetch"));
+    const box = await openOverride();
+    fireEvent.change(screen.getByLabelText(REASON), { target: { value: "Manager unavailable; owner authorised" } });
+    fireEvent.click(tick());
+    vi.mocked(actions.getApprovalDetailAction).mockResolvedValue({ ok: false, error: "offline" } as never);
+    fireEvent.click(confirm(box));
+    const alert = await fb("error");
+    expect(alert.textContent).toMatch(/could not refresh the status/i);
+    expect(alert.textContent).not.toMatch(/has been refreshed|you can try again/i);
   });
 
   it("a double-click on Confirm records the decision once", async () => {

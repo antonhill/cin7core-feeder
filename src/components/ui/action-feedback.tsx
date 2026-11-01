@@ -19,8 +19,14 @@ export type FeedbackState =
   | { kind: "error"; message: string; ambiguous?: boolean };
 
 export type ActionOutcome = { ok: boolean; error?: string; data?: unknown };
-/** What a re-read of the authoritative state says about an action whose outcome was lost. */
-export type Reconciled = "done" | "not_done" | "unknown";
+/**
+ * What a re-read of the authoritative state says about an action whose outcome was lost:
+ *  done       - the re-read shows the action took effect;
+ *  not_done   - the re-read positively shows it did not;
+ *  unknown    - the re-read succeeded but cannot say either way (the fresh state is on the page);
+ *  unreadable - the re-read itself failed (or there is none): nothing is known.
+ */
+export type Reconciled = "done" | "not_done" | "unknown" | "unreadable";
 
 export interface RunOptions<R extends ActionOutcome> {
   /** Shown while the request is in flight. */
@@ -30,14 +36,27 @@ export interface RunOptions<R extends ActionOutcome> {
   /** Re-read the authoritative state after a thrown/lost response. */
   reconcile?: () => Promise<Reconciled>;
   /** Message when reconcile finds the action did in fact complete. */
-  doneAfterReconcile?: string;
+  doneAfterReconcile?: string | (() => string);
+  /**
+   * A financial / Cin7 action: while ANY exclusive action is in flight, another exclusive action (under any key) is ignored, so two different buttons
+   * clicked in the same tick cannot both fire.
+   */
+  exclusive?: boolean;
+  /** An uncertain outcome of this action may already exist in Cin7: never suggest simply trying again. */
+  cin7?: boolean;
 }
 
-export const AMBIGUOUS_UNKNOWN = "We could not confirm whether this was saved. The page has been refreshed: check the current status before trying again.";
+/** The re-read worked but cannot say whether the action took effect: the fresh state is on the page. */
+export const AMBIGUOUS_UNKNOWN = "We could not confirm whether this was saved. The latest status is shown on this page: check it before doing anything else.";
+/** The re-read itself failed (or there was none): nothing is known, and we do not claim the page was refreshed. */
+export const AMBIGUOUS_UNREADABLE = "We could not confirm whether this was saved, and we could not refresh the status either. Reload the page and check the current status (in Cin7 for a Cin7 action) before doing anything else.";
 export const AMBIGUOUS_NOT_DONE = "The request did not complete and nothing was changed. You can try again.";
+/** Positive evidence that nothing was recorded here - but Cin7 may differ, so no "try again". */
+export const AMBIGUOUS_NOT_DONE_CIN7 = "No record of this action was found after the failure. Check Cin7 before starting it again.";
 
 export function useKeyedActions() {
   const inFlight = useRef<Set<string>>(new Set());
+  const exclusiveKey = useRef<string | null>(null); // the one financial / Cin7 action in flight, whatever its key
   const [states, setStates] = useState<Record<string, FeedbackState>>({});
   const [pendingCount, setPendingCount] = useState(0);
   const set = useCallback((key: string, s: FeedbackState) => setStates((m) => ({ ...m, [key]: s })), []);
@@ -45,6 +64,7 @@ export function useKeyedActions() {
   /** Resolves true only when the action succeeded (or reconciled as already done). A duplicate click while in flight resolves false without calling `fn`. */
   const run = useCallback(async <R extends ActionOutcome>(key: string, fn: () => Promise<R>, opts: RunOptions<R> = {}): Promise<boolean> => {
     if (inFlight.current.has(key)) return false;
+    if (opts.exclusive) { if (exclusiveKey.current !== null) return false; exclusiveKey.current = key; }
     inFlight.current.add(key);
     setPendingCount((n) => n + 1);
     set(key, { kind: "pending", label: opts.pending ?? "Working…" });
@@ -57,12 +77,18 @@ export function useKeyedActions() {
       set(key, { kind: "error", message: res.error ?? "The action failed. Nothing was changed." });
       return false;
     } catch {
-      let verdict: Reconciled = "unknown";
-      try { verdict = opts.reconcile ? await opts.reconcile() : "unknown"; } catch { verdict = "unknown"; }
-      if (verdict === "done") { set(key, { kind: "success", message: opts.doneAfterReconcile ?? "Done. The request's response was lost, but the current status shows it was recorded." }); return true; }
-      set(key, { kind: "error", ambiguous: true, message: verdict === "not_done" ? AMBIGUOUS_NOT_DONE : AMBIGUOUS_UNKNOWN });
+      let verdict: Reconciled = "unreadable";
+      try { verdict = opts.reconcile ? await opts.reconcile() : "unreadable"; } catch { verdict = "unreadable"; }
+      if (verdict === "done") {
+        const text = typeof opts.doneAfterReconcile === "function" ? opts.doneAfterReconcile() : opts.doneAfterReconcile;
+        set(key, { kind: "success", message: text ?? "Done. The request's response was lost, but the current status shows it was recorded." });
+        return true;
+      }
+      const message = verdict === "not_done" ? (opts.cin7 ? AMBIGUOUS_NOT_DONE_CIN7 : AMBIGUOUS_NOT_DONE) : verdict === "unknown" ? AMBIGUOUS_UNKNOWN : AMBIGUOUS_UNREADABLE;
+      set(key, { kind: "error", ambiguous: true, message });
       return false;
     } finally {
+      if (opts.exclusive && exclusiveKey.current === key) exclusiveKey.current = null;
       inFlight.current.delete(key);
       setPendingCount((n) => n - 1);
     }

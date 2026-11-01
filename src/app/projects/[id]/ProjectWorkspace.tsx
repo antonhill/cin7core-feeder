@@ -6,13 +6,14 @@ import { useEffect, useState, useTransition } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
-import { ActionFeedback, useKeyedActions } from "@/components/ui/action-feedback";
+import { ActionFeedback, useKeyedActions, type Reconciled } from "@/components/ui/action-feedback";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { claimActionPlan } from "@/lib/projects/claim-actions";
+import { percentToBps } from "@/lib/projects/claim-engine";
 import { previewKey, previewState } from "@/lib/projects/preview-staleness";
 import { claimNextStep } from "@/lib/projects/claim-next-step";
 import { formatBps, formatCents, type ProjectView, type StageView } from "@/lib/projects/project-view";
@@ -63,6 +64,8 @@ const CLAIM_TONE: Record<string, BadgeTone> = {
 const APPROVED_OR_LATER = ["APPROVED", "CIN7_PENDING", "CIN7_CREATED", "RECONCILED"];
 /** A separation-of-duties / role refusal from the approval policy: the Project page cannot override, Approvals can. */
 const SOD_REFUSAL = /override|role|prepared or originated|cannot approve/i;
+/** The percentage as typed -> basis points, with the SAME conversion the server uses; null if it is not a valid percentage (the server would have refused it). */
+const pctToBps = (pct: string): number | null => { try { return percentToBps(pct); } catch { return null; } };
 const claimStatus = (v: ProjectView | null, claimId: string): string | undefined => v?.claims.find((c) => c.id === claimId)?.status;
 const statusNote = (v: ProjectView | null, claimId: string): string => { const s = claimStatus(v, claimId); return s ? ` Status now: ${s.replace(/_/g, " ").toLowerCase()}.` : " Refresh to see the latest status."; };
 
@@ -190,7 +193,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
     fn: () => Promise<{ ok: boolean; error?: string; data?: unknown }>,
     done?: string,
     key = "page",
-    opts: { success?: (view: ProjectView | null, res: { data?: unknown }) => string; confirm?: (view: ProjectView) => boolean } = {},
+    opts: { success?: (view: ProjectView | null, res: { data?: unknown }) => string; confirm?: (view: ProjectView) => boolean; reconcile?: () => Promise<Reconciled>; doneAfterReconcile?: string; exclusive?: boolean; cin7?: boolean } = {},
   ): Promise<boolean> {
     return acts.run(key, async () => {
       const res = await fn();
@@ -201,12 +204,16 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
     }, {
       pending: "Working… please wait",
       success: (r) => (opts.success ? opts.success(r.view, r) : done ?? "Done."),
-      reconcile: async () => {
+      // A panel can supply its own re-read (its state is not in this view). Otherwise: re-read the project. A failed read is "unreadable"; a good read
+      // that has no way to tell whether this action took effect is "unknown" (the fresh state is on the page).
+      reconcile: opts.reconcile ?? (async () => {
         const v = await reloadView();
-        if (!v) return "unknown";
+        if (!v) return "unreadable";
         return opts.confirm ? (opts.confirm(v) ? "done" : "not_done") : "unknown";
-      },
-      doneAfterReconcile: done ? `${done} (The response was lost, but the current status shows it was recorded.)` : undefined,
+      }),
+      exclusive: opts.exclusive,
+      cin7: opts.cin7,
+      doneAfterReconcile: opts.doneAfterReconcile ?? (done ? `${done} (The response was lost, but the current status shows it was recorded.)` : undefined),
     });
   }
 
@@ -440,8 +447,8 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                 stage={s}
                 disabled={isWorking}
                 perm={perm}
-                onPhysical={(reported, comment) => run(() => recordProgressAction(id, s.id, reported, null, comment), `Physical progress recorded for ${s.name}. Commercial approval and claims are unchanged.`, `stage:${s.id}`)}
-                onCommercial={(approved, comment) => run(() => recordProgressAction(id, s.id, (s.reportedBps / 100).toString(), approved, comment), `Commercial approval recorded for ${s.name}. Nothing was claimed or sent to Cin7.`, `stage:${s.id}`)}
+                onPhysical={(reported, comment) => run(() => recordProgressAction(id, s.id, reported, null, comment), `Physical progress recorded for ${s.name}. Commercial approval and claims are unchanged.`, `stage:${s.id}`, { confirm: (v) => v.stages.find((x) => x.id === s.id)?.reportedBps === pctToBps(reported) && pctToBps(reported) !== null })}
+                onCommercial={(approved, comment) => run(() => recordProgressAction(id, s.id, (s.reportedBps / 100).toString(), approved, comment), `Commercial approval recorded for ${s.name}. Nothing was claimed or sent to Cin7.`, `stage:${s.id}`, { confirm: (v) => v.stages.find((x) => x.id === s.id)?.approvedBps === pctToBps(approved) && pctToBps(approved) !== null })}
               />
             ))}
           </div>
@@ -534,7 +541,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             <div className="mt-4 flex flex-wrap gap-2">
               <Button variant="secondary" size="sm" onClick={doPreview} loading={isWorking} disabled={chosen.length === 0 || (!!preview && pvState === "CURRENT")}>{!preview ? "Preview claim" : pvState === "STALE" ? "Refresh preview" : "Preview is up to date"}</Button>
               {preview && (
-                <Button size="sm" onClick={() => run(() => createClaimDraftAction(id, previewedIds, previewedAmounts), "Draft claim saved locally.", "claim:new")} loading={acts.isPending("claim:new")} disabled={isWorking || pvState === "STALE"}>Save as draft claim</Button>
+                <Button size="sm" onClick={() => { const claimsBefore = view.claims.length; return run(() => createClaimDraftAction(id, previewedIds, previewedAmounts), "Draft claim saved locally.", "claim:new", { confirm: (v) => v.claims.length > claimsBefore }); }} loading={acts.isPending("claim:new")} disabled={isWorking || pvState === "STALE"}>Save as draft claim</Button>
               )}
             </div>
             <Feedback k="claim:new" />
@@ -618,10 +625,10 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                       <div className="flex flex-wrap items-center gap-1">
                             {plan.submit && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.", claimKey, { success: (v) => `${cl.claim_number} submitted for approval.${statusNote(v, cl.id)}`, confirm: (v) => ["READY_FOR_APPROVAL", ...APPROVED_OR_LATER].includes(claimStatus(v, cl.id) ?? "") })} loading={acts.isPending(claimKey)} disabled={isWorking}>Submit</Button>}
                             {plan.openInApprovals && cl.approval && <Link href={`/approvals/${cl.approval.requestId}`} className="inline-flex h-8 items-center rounded-md border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-800 hover:bg-indigo-100">Open in Approvals</Link>}
-                            {plan.approveHere && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.", claimKey, { success: (v) => `${cl.claim_number} approved — value reserved. Nothing was sent to Cin7.${statusNote(v, cl.id)}`, confirm: (v) => APPROVED_OR_LATER.includes(claimStatus(v, cl.id) ?? "") })} loading={acts.isPending(claimKey)} disabled={isWorking}>Approve</Button>}
+                            {plan.approveHere && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.", claimKey, { success: (v) => `${cl.claim_number} approved — value reserved. Nothing was sent to Cin7.${statusNote(v, cl.id)}`, confirm: (v) => APPROVED_OR_LATER.includes(claimStatus(v, cl.id) ?? ""), exclusive: true })} loading={acts.isPending(claimKey)} disabled={isWorking}>Approve</Button>}
                             {plan.waitingText && <span className="self-center text-xs text-slate-500">{plan.waitingText}</span>}
-                            {plan.recalculate && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.", claimKey)} disabled={isWorking}>Recalculate</Button>}
-                            {plan.cancel && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), cl.status === "READY_FOR_APPROVAL" ? "Claim withdrawn." : "Claim cancelled.", claimKey)} disabled={isWorking}>{plan.cancelLabel}</Button>}
+                            {plan.recalculate && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.", claimKey, { confirm: (v) => v.claims.some((x) => x.supersedes_claim_id === cl.id) })} disabled={isWorking}>Recalculate</Button>}
+                            {plan.cancel && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), cl.status === "READY_FOR_APPROVAL" ? "Claim withdrawn." : "Claim cancelled.", claimKey, { confirm: (v) => claimStatus(v, cl.id) === "CANCELLED_BEFORE_WRITE", exclusive: true })} disabled={isWorking}>{plan.cancelLabel}</Button>}
                           </div>
                       <Feedback k={claimKey} errorAction={cl.approval && SOD_REFUSAL.test(acts.stateOf(claimKey).kind === "error" ? (acts.stateOf(claimKey) as { message: string }).message : "") ? <Link href={`/approvals/${cl.approval.requestId}`} className="font-medium underline">Open this claim in Approvals to decide it with a written override</Link> : undefined} />
                     </div>

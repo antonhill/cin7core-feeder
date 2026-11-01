@@ -192,3 +192,96 @@ describe("stage progress updates (commercial approval)", () => {
     await waitFor(() => expect(screen.queryByLabelText(/Comment \/ reason/)).toBeNull());
   });
 });
+
+// ── review findings P2b / P3a / P3c ─────────────────────────────────────────
+const claimOf = (id: string, status: string, over: Record<string, unknown> = {}) => ({ ...claim(status), id, claim_number: `PRJ-X-${id}`, approval: status === "READY_FOR_APPROVAL" ? { requestId: `req-${id}`, stageRole: "MANAGER" } : null, ...over });
+const viewWith = (claims: unknown[], stageOver: Record<string, unknown> = {}): ProjectView => ({ ...view("DRAFT"), claims, stages: [{ ...stage(1), ...stageOver }, stage(2)] } as unknown as ProjectView);
+async function openClaimsOf(claims: unknown[]) {
+  vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: viewWith(claims) } as never);
+  render(<ProjectWorkspace id="p1" />);
+  fireEvent.click(await screen.findByRole("button", { name: /Commercial \/ Claims/ }));
+  return await waitFor(() => { const a = document.querySelectorAll("article"); expect(a.length).toBe(claims.length); return Array.from(a) as HTMLElement[]; });
+}
+const fbKind = (kind: string) => waitFor(() => { const e = document.querySelector(`[data-testid="action-feedback"][data-kind="${kind}"]`) as HTMLElement | null; expect(e).not.toBeNull(); return e!; });
+
+describe("P3a: two different financial buttons cannot fire in the same tick", () => {
+  it("Approve on claim A and Withdraw on claim B within one act(): only one action runs", async () => {
+    const [a, b] = await openClaimsOf([claimOf("cA", "READY_FOR_APPROVAL"), claimOf("cB", "READY_FOR_APPROVAL")]);
+    const d = deferred<{ ok: boolean }>();
+    vi.mocked(actions.approveClaimAction).mockReturnValue(d.promise as never);
+    vi.mocked(actions.cancelDraftClaimAction).mockResolvedValue({ ok: true } as never);
+    act(() => { fireEvent.click(within(a).getByRole("button", { name: "Approve" })); fireEvent.click(within(b).getByRole("button", { name: "Withdraw claim" })); });
+    expect(actions.approveClaimAction).toHaveBeenCalledTimes(1);
+    expect(actions.cancelDraftClaimAction).not.toHaveBeenCalled();
+    await act(async () => d.resolve({ ok: true }));
+  });
+});
+
+describe("P2b: the wording says what the re-read actually showed", () => {
+  it("re-read FAILED: 'could not refresh', never 'has been refreshed', never 'try again'", async () => {
+    const [card] = await openClaimsOf([claimOf("cA", "READY_FOR_APPROVAL")]);
+    vi.mocked(actions.approveClaimAction).mockRejectedValue(new Error("offline"));
+    vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: false, error: "offline" } as never);
+    fireEvent.click(within(card).getByRole("button", { name: "Approve" }));
+    const alert = await within(card).findByRole("alert");
+    expect(alert.textContent).toMatch(/could not refresh the status/i);
+    expect(alert.textContent).not.toMatch(/has been refreshed|try again/i);
+  });
+  it("Withdraw: a successful re-read showing the claim cancelled is reported as recorded", async () => {
+    const [card] = await openClaimsOf([claimOf("cA", "READY_FOR_APPROVAL")]);
+    vi.mocked(actions.cancelDraftClaimAction).mockRejectedValue(new Error("lost"));
+    vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: viewWith([claimOf("cA", "CANCELLED_BEFORE_WRITE")]) } as never);
+    fireEvent.click(within(card).getByRole("button", { name: "Withdraw claim" }));
+    const ok = await within(card).findByText(/Claim withdrawn\.[\s\S]*recorded/);
+    expect(ok.closest("[role=status]")).not.toBeNull();
+  });
+  it("Recalculate: a re-read showing the superseding draft is reported as recorded; showing none is 'did not complete'", async () => {
+    const [card] = await openClaimsOf([claimOf("cA", "DRAFT")]);
+    vi.mocked(actions.recalculateStaleDraftAction).mockRejectedValue(new Error("lost"));
+    vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: viewWith([claimOf("cA", "CANCELLED_BEFORE_WRITE"), claimOf("cB", "DRAFT", { supersedes_claim_id: "cA" })]) } as never);
+    fireEvent.click(within(card).getByRole("button", { name: "Recalculate" }));
+    expect((await screen.findByText(/Recalculated[\s\S]*recorded/)).closest("[role=status]")).not.toBeNull();
+  });
+  it("Recalculate: a re-read showing nothing changed says it did not complete", async () => {
+    const [card] = await openClaimsOf([claimOf("cA", "DRAFT")]);
+    vi.mocked(actions.recalculateStaleDraftAction).mockRejectedValue(new Error("lost"));
+    fireEvent.click(within(card).getByRole("button", { name: "Recalculate" }));
+    expect((await within(card).findByRole("alert")).textContent).toMatch(/did not complete and nothing was changed/);
+  });
+});
+
+describe("P3c: a lost response on a stage-progress save is checked against the stage", () => {
+  async function stageForm() {
+    vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: viewWith([]) } as never);
+    render(<ProjectWorkspace id="p1" />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Stages/ }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "Update progress" }))[0]);
+    fireEvent.change(screen.getByLabelText(/Approved commercial completion/), { target: { value: "40" } });
+    fireEvent.change(screen.getByLabelText(/Comment \/ reason/), { target: { value: "Milestone met" } });
+  }
+  it("the re-read shows the stage now approved at 40%: reported as recorded", async () => {
+    await stageForm();
+    vi.mocked(actions.recordProgressAction).mockRejectedValue(new Error("Failed to fetch"));
+    vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: viewWith([], { approvedBps: 4000 }) } as never);
+    fireEvent.click(screen.getByRole("button", { name: "Approve commercial progress" }));
+    const ok = await screen.findByText(/Commercial approval recorded for Stage 1[\s\S]*recorded/);
+    expect(ok.closest("[role=status]")).not.toBeNull();
+  });
+  it("the re-read shows the stage unchanged: told it did not complete (a retry is fine), and the typed values are kept", async () => {
+    await stageForm();
+    vi.mocked(actions.recordProgressAction).mockRejectedValue(new Error("Failed to fetch"));
+    fireEvent.click(screen.getByRole("button", { name: "Approve commercial progress" }));
+    const alert = await fbKind("error");
+    expect(alert.textContent).toMatch(/did not complete and nothing was changed\. You can try again/);
+    expect((screen.getByLabelText(/Comment \/ reason/) as HTMLInputElement).value).toBe("Milestone met");
+    expect((screen.getByLabelText(/Approved commercial completion/) as HTMLInputElement).value).toBe("40");
+  });
+  it("physical progress: the re-read matching the reported percentage is reported as recorded", async () => {
+    await stageForm();
+    vi.mocked(actions.recordProgressAction).mockRejectedValue(new Error("Failed to fetch"));
+    fireEvent.change(screen.getByLabelText(/Physical completion/), { target: { value: "25" } });
+    vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: viewWith([], { reportedBps: 2500 }) } as never);
+    fireEvent.click(screen.getByRole("button", { name: "Record physical progress" }));
+    expect(await screen.findByText(/Physical progress recorded for Stage 1[\s\S]*recorded/)).toBeTruthy();
+  });
+});

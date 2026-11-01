@@ -58,6 +58,7 @@ export default function ApprovalDetailPage() {
     if (r.status !== "PENDING") return; // a decided request can never be decided again from this page
     setReasonTouched(true);
     if (reasonError(action) !== undefined || (action === "APPROVE" && d.can.needsOverride && reason.trim().length < 10)) return; // shown beside the field; nothing is submitted
+    let seen: ApprovalStatus | null = null;
     const ok = await acts.run("decision", async () => {
       const res = await decideApprovalAction(r.id, action, { reason, override, destination: action === "RETURN" && d.can.returnToEstimator ? returnTo : undefined, expectedVersion: r.version, expectedDigest: r.digest });
       if (res.ok && res.data) setD((cur) => (cur ? applyDecision(cur, res.data!) : cur));
@@ -67,11 +68,14 @@ export default function ApprovalDetailPage() {
       success: (res) => `${DONE[action]}${res.data ? ` Status now: ${STATUS_LABEL[res.data.status]}.` : ""}`,
       reconcile: async () => {
         const x = await getApprovalDetailAction(id);
-        if (!x.ok || !x.data) return "unknown";
+        if (!x.ok || !x.data) return "unreadable";
         const status = x.data.request.status;
+        seen = status;
         if (status !== "PENDING") setD(x.data);
         return status === EXPECTED[action] ? "done" : status === "PENDING" ? "not_done" : "unknown";
       },
+      // Without the server's own result we cannot know the decision was THIS user's (someone may have decided at the same moment), so say only what the request now is.
+      doneAfterReconcile: () => `The request is now ${seen ? STATUS_LABEL[seen] : "decided"}. The response to your click was lost, so check the decision record on this page for who recorded it.`,
     });
     if (ok) { setMode(null); setReason(""); setOverride(false); setReasonTouched(false); } else load(); // a failure keeps the reason and the override tick exactly as typed
   };
@@ -147,7 +151,7 @@ export default function ApprovalDetailPage() {
           {d.can.reassign && (
             <div className="mt-4 flex flex-wrap items-end gap-2">
               <Select label="Reassign to" value={newApprover} onChange={(e) => setNewApprover(e.target.value)}><option value="">Choose an approver…</option>{d.managers.filter((m) => m !== r.assigned_to_email).map((m) => <option key={m} value={m}>{m}</option>)}</Select>
-              <Button size="sm" variant="secondary" disabled={!newApprover || busy} onClick={async () => { await acts.run("reassign", () => reassignApprovalAction(r.id, newApprover, r.version), { pending: "Reassigning…", success: "Reassigned.", reconcile: async () => { const x = await getApprovalDetailAction(id); return x.ok && x.data && x.data.request.assigned_to_email === newApprover ? "done" : "unknown"; } }); load(); }}>Reassign</Button>
+              <Button size="sm" variant="secondary" disabled={!newApprover || busy} onClick={async () => { await acts.run("reassign", () => reassignApprovalAction(r.id, newApprover, r.version), { pending: "Reassigning…", success: "Reassigned.", reconcile: async () => { const x = await getApprovalDetailAction(id); if (!x.ok || !x.data) return "unreadable"; return x.data.request.assigned_to_email === newApprover ? "done" : "unknown"; } }); load(); }}>Reassign</Button>
             </div>
           )}
           {d.can.reassign && <ActionFeedback state={acts.stateOf("reassign")} />}

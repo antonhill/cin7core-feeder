@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { ActionFeedback, AMBIGUOUS_NOT_DONE, AMBIGUOUS_UNKNOWN, useKeyedActions, type ActionOutcome, type Reconciled } from "../action-feedback";
+import { ActionFeedback, AMBIGUOUS_NOT_DONE, AMBIGUOUS_NOT_DONE_CIN7, AMBIGUOUS_UNKNOWN, AMBIGUOUS_UNREADABLE, useKeyedActions, type ActionOutcome, type Reconciled } from "../action-feedback";
 
 afterEach(() => cleanup());
 
 type Fn = () => Promise<ActionOutcome>;
-function Harness({ fn, reconcile, twice = false }: { fn: Fn; reconcile?: () => Promise<Reconciled>; twice?: boolean }) {
+function Harness({ fn, reconcile, twice = false, cin7 = false }: { fn: Fn; reconcile?: () => Promise<Reconciled>; twice?: boolean; cin7?: boolean }) {
   const acts = useKeyedActions();
-  const go = () => acts.run("k", fn, { pending: "Saving…", success: "Saved.", reconcile });
+  const go = () => acts.run("k", fn, { pending: "Saving…", success: "Saved.", reconcile, cin7 });
   return (
     <div>
       {/* `twice` calls run() twice inside ONE event: no re-render happens between the calls, so only a ref guard (not a `disabled` flag in state) can stop the second. */}
@@ -68,12 +68,32 @@ describe("useKeyedActions / ActionFeedback", () => {
       fireEvent.click(screen.getByRole("button", { name: "Go" }));
       expect((await screen.findByRole("alert")).textContent).toBe(AMBIGUOUS_NOT_DONE);
     });
-    it("cannot be verified: told to check the current status, never told to simply retry", async () => {
+    it("the re-read itself failed: says so (never 'refreshed'), and never says to simply retry", async () => {
       render(<Harness fn={async () => { throw new Error("x"); }} reconcile={async () => { throw new Error("read failed"); }} />);
       fireEvent.click(screen.getByRole("button", { name: "Go" }));
       const text = (await screen.findByRole("alert")).textContent ?? "";
+      expect(text).toBe(AMBIGUOUS_UNREADABLE);
+      expect(text).toMatch(/could not refresh the status/);
+      expect(text).not.toMatch(/has been refreshed|you can try again/i);
+    });
+    it("there is no re-read at all: the same honest 'could not refresh' wording", async () => {
+      render(<Harness fn={async () => { throw new Error("x"); }} />);
+      fireEvent.click(screen.getByRole("button", { name: "Go" }));
+      expect((await screen.findByRole("alert")).textContent).toBe(AMBIGUOUS_UNREADABLE);
+    });
+    it("the re-read worked but cannot tell: points at the fresh status shown on the page", async () => {
+      render(<Harness fn={async () => { throw new Error("x"); }} reconcile={async () => "unknown"} />);
+      fireEvent.click(screen.getByRole("button", { name: "Go" }));
+      const text = (await screen.findByRole("alert")).textContent ?? "";
       expect(text).toBe(AMBIGUOUS_UNKNOWN);
-      expect(text).not.toMatch(/you can try again/i);
+      expect(text).not.toMatch(/try again/i);
+    });
+    it("a Cin7 action that verifiably left no record never says 'try again'", async () => {
+      render(<Harness cin7 fn={async () => { throw new Error("x"); }} reconcile={async () => "not_done"} />);
+      fireEvent.click(screen.getByRole("button", { name: "Go" }));
+      const text = (await screen.findByRole("alert")).textContent ?? "";
+      expect(text).toBe(AMBIGUOUS_NOT_DONE_CIN7);
+      expect(text).not.toMatch(/try again/i);
     });
     it("the control never stays stuck after a thrown error (the old hang)", async () => {
       render(<Harness fn={async () => { throw new Error("boom"); }} />);
@@ -81,6 +101,23 @@ describe("useKeyedActions / ActionFeedback", () => {
       await screen.findByRole("alert");
       await waitFor(() => expect((screen.getByRole("button", { name: "Go" }) as HTMLButtonElement).disabled).toBe(false));
     });
+  });
+
+  it("two DIFFERENT exclusive (financial) actions cannot both fire in the same tick; non-exclusive ones are unaffected", async () => {
+    const a = vi.fn(async () => ({ ok: true })); const b = vi.fn(async () => ({ ok: true })); const c = vi.fn(async () => ({ ok: true }));
+    function Two() {
+      const acts = useKeyedActions();
+      return <button onClick={() => { void acts.run("a", a, { exclusive: true }); void acts.run("b", b, { exclusive: true }); void acts.run("c", c); }}>Fire</button>;
+    }
+    render(<Two />);
+    fireEvent.click(screen.getByRole("button", { name: "Fire" }));
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(b).not.toHaveBeenCalled(); // blocked by the other financial action in flight
+    expect(c).toHaveBeenCalledTimes(1); // not exclusive
+    await act(async () => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Fire" })); // the lock is released afterwards
+    expect(a).toHaveBeenCalledTimes(2);
+    await act(async () => undefined);
   });
 
   it("the floating backstop pins the message inside the viewport and keeps its ARIA role", () => {
