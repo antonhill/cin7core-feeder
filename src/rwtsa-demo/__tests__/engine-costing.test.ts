@@ -69,7 +69,8 @@ describe("size-dependent components (longer zip from 3XL)", () => {
   it("an exact-size row applies to that size only", () => {
     const r = run({ bom: [...BOM, { code: "EXTRA", name: "Label", type: "Trim", qty: 1, cost: 1, size: "L" }] });
     expect(Z(sz(r, "L").groups.trimsThreadCents!)).toBe(10);
-    expect(Z(sz(r, "M").groups.trimsThreadCents!)).toBe(9);
+    for (const other of ["S", "M", "XL", "2XL"]) expect(Z(sz(r, other).groups.trimsThreadCents!), other).toBe(9);
+    for (const other of ["3XL", "4XL", "5XL"]) expect(Z(sz(r, other).groups.trimsThreadCents!), other).toBe(11.5);
   });
   it("the 'add' rule keeps both zips instead of substituting", () => {
     const r = run({}, { percentScale: "fraction", sizeRule: "add" });

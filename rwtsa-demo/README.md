@@ -2,7 +2,7 @@
 
 A standalone Next.js app that shows **data provenance, validation, per-scenario readiness, delivery layers and assumptions**
 for the four RWTSA demonstration scenarios. It reads a **local** workbook (or explicitly selected synthetic data) through the
-audited adapter in `src/rwtsa-demo/`. **Scenario A (Red Flag demand planning) and Scenario C (landed cost and USD exposure) have working, tested calculation engines and interactive pages; Scenarios B and D have no engine yet and show no results.**
+audited adapter in `src/rwtsa-demo/`. **Scenarios A (Red Flag demand planning), B (production variance and BOM costing) and C (landed cost and USD exposure) have working, tested calculation engines and interactive pages; Scenario D has no engine yet and shows no results.**
 
 It is not part of the deployed Toolbox. No Supabase, no Cin7, no Xero, no authentication, no database, no external API, no
 remote fonts or analytics, nothing written to disk.
@@ -68,6 +68,22 @@ saved, and it neither reads nor writes Cin7 Core or Xero (the page lists which f
   shipment with one rate, the comparison is withheld. This is not an FEC register.
 - Unconfirmed until the real workbook is inspected: that `fobUsd` is the line total, that customs value equals FOB at customs FX, what the duty column holds, and the PO-to-shipment link.
 
+## Scenario B: production variance and BOM costing
+
+`/scenario-b` is driven by `engine/production-variance.ts` and `engine/bom-costing.ts` (integer cents, read-only, nothing written, no Fast React file built).
+
+- **Variance** per order and by style, production line and configurable order-size bracket: usage (m) = actual - planned; usage (rand) = (actual - planned) x standard price;
+  price = actual quantity x (actual - standard price); labour recovery = planned / actual minutes x 100, **aggregated as total planned over total actual**;
+  labour variance = (actual - planned minutes) x cost per minute (the SMV-weighted rate of the style's routing). Positive rand variances are unfavourable.
+  Zero actual minutes, missing prices, no routing and negative/invalid measurements are explicit (blank, counted, never zero).
+- **Costing** per style and size: BOM quantity x unit cost (fabric/materials, trims/thread, print/packaging), labour = SMV x cost per minute split into cut / make / trim, efficiency allowance,
+  overhead, selling price = cost x 1.6 (configurable). Size-specific BOM rows (exact size, or size from) replace the base component of the same type and name (the longer zip from 3XL), or are added.
+  Calculated cost is reconciled with the workbook's reference cost (`Items.standardCost`).
+- **The percentage scale is never assumed.** 15, 0.15 and 15% are different things. Overhead and efficiency need a scale, which is chosen on screen (the synthetic source declares fractions; a local
+  workbook declares nothing). Until it is chosen those lines are unresolved and the cost is incomplete. The page shows what the values look like (a hint only, never applied).
+- **Real-workbook readiness is UNVERIFIED**: no authorised local workbook was available when this was built. Unconfirmed: BOM units and quantities, the overhead / efficiency / margin conventions, the
+  meaning of efficiency (a level, as assumed here) and of overhead's base, which component replaces which, and whether the routing margin column has any role (it is not used).
+
 ## Why a standalone Next.js app (feasibility gate result)
 
 The 3-hour feasibility gate was **passed in minutes**; the offline-HTML fallback was **not needed**. The standalone app:
@@ -114,7 +130,7 @@ server contacts the npm registry.
 
 ## Not here yet
 
-Variance, BOM/costing, quote-conversion and Fast React engines. Scenarios B and D are labelled placeholders. The validator's
+The quote-conversion and Fast React exchange engines. Scenario D is a labelled placeholder. The validator's
 Scenario A check still uses the sheet's latest N months; the **engine** anchors its own window to the stock date (31 October 2026) and shows
 the difference as an assumption. Scenario B-D readiness is preliminary.
 
