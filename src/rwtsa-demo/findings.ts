@@ -56,7 +56,9 @@ export type FindingCode =
   | "context_missing"
   | "composite_resolved"
   | "composite_unresolved"
-  | "percent_cells_read_as_points";
+  | "percent_cells_read_as_points"
+  | "percent_scale_mixed"
+  | "layout_trailing_data_suspected";
 
 export interface Finding {
   readonly severity: Severity;

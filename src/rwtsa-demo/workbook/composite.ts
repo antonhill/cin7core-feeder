@@ -17,7 +17,8 @@ export type ProductRef = { kind: "sku"; value: string } | { kind: "style"; value
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function containsToken(text: string, code: string): boolean {
-  return new RegExp(`(^|[^A-Za-z0-9])${escape(code)}(?![A-Za-z0-9])`, "i").test(text);
+  // Codes contain - . and _, so those characters continue a code: "ABC" is not found inside "ABC-10" or "X-ABC" or "ABC.9".
+  return new RegExp(`(?<![A-Za-z0-9._-])${escape(code)}(?![A-Za-z0-9_-]|\\.[A-Za-z0-9])`, "i").test(text);
 }
 
 export function resolveProductRef(text: string, skus: readonly string[], styles: readonly string[]): ProductRef {

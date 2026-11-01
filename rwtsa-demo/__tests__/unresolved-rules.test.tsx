@@ -23,6 +23,12 @@ beforeAll(async () => {
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 afterEach(() => vi.unstubAllEnvs());
 
+async function withFile(name: string, mutate: Parameters<typeof originalShapedBuffer>[0]) {
+  writeFileSync(join(tmp, name), await originalShapedBuffer(mutate));
+  vi.stubEnv("RWTSA_SOURCE", "");
+  vi.stubEnv("RWTSA_WORKBOOK_PATH", join(tmp, name));
+  vi.stubEnv("RWTSA_STATE_DIR", join(tmp, "state"));
+}
 const local = () => {
   vi.stubEnv("RWTSA_SOURCE", "");
   vi.stubEnv("RWTSA_WORKBOOK_PATH", join(tmp, "orig.xlsx"));
@@ -117,6 +123,44 @@ describe("Scenario A: unresolved rules withhold the affected outputs", () => {
   });
 });
 
+describe("rule detection is not fooled by edge cases", () => {
+  it("an on-water line whose ETA equals the stock date counts as overdue (the engine treats week 0 as overdue)", async () => {
+    await withFile("eta-equal.xlsx", (wb) => {
+      const ws = wb.getWorksheet("ImportPOs")!;
+      ws.getCell("K2").value = "2026-12-01"; // no longer overdue
+      ws.getCell("K3").value = "2026-10-31"; // exactly the stock date
+    });
+    expect(ruleIds(await A())).toContain("overdue-on-water");
+  });
+  it("a PARTIAL tender column (some SKUs unmarked) keeps the tender rule open", async () => {
+    await withFile("tender-partial.xlsx", (wb) => {
+      const ws = wb.getWorksheet("Items")!;
+      ws.getCell("N1").value = "Tender";
+      ws.getCell("N2").value = "Yes";
+      ws.getCell("N3").value = "No";
+    });
+    expect(ruleIds(await A({ anchor: "last", overdue: "week1" }))).toEqual(["tender-classification"]);
+  });
+  it("a COMPLETE tender column closes the tender rule", async () => {
+    await withFile("tender-full.xlsx", (wb) => {
+      const ws = wb.getWorksheet("Items")!;
+      ws.getCell("N1").value = "Tender";
+      for (let r = 2; r <= 11; r++) ws.getCell(`N${r}`).value = r === 2 ? "Yes" : "No";
+    });
+    expect(ruleIds(await A({ anchor: "last", overdue: "week1" }))).toEqual([]);
+  });
+  it("overhead and efficiency on only SOME routing lines keeps the overhead rule open", async () => {
+    await withFile("overhead-partial.xlsx", (wb) => {
+      const ws = wb.getWorksheet("Routing_SMV")!;
+      ws.getCell("E4").value = "Overhead";
+      ws.getCell("F4").value = "Efficiency";
+      ws.getCell("E5").value = 0.1;
+      ws.getCell("F5").value = 0.85;
+    });
+    expect(ruleIds(await B({ scale: "fraction" }))).toEqual(["overhead-efficiency-margin"]);
+  });
+});
+
 describe("Scenario B: overhead, efficiency and margin", () => {
   it("names the unresolved rule and withholds cost totals and selling prices (nothing assumed)", async () => {
     local();
@@ -125,6 +169,15 @@ describe("Scenario B: overhead, efficiency and margin", () => {
     expect(badge(m)).toBe("RULES: 1 OPEN");
     expect(indicator(m, "ind-costs")).toBe("0 of 10");
     expect(text(m)).toContain("Product cost totals and selling prices are withheld");
+  });
+  it("no cost total or selling price is populated anywhere while the rule is open", async () => {
+    local();
+    const m = await B({ scale: "fraction" });
+    const sizes = [...m.matchAll(/data-testid="size-row" data-size="([^"]*)" data-total="([^"]*)" data-selling="([^"]*)"/g)];
+    expect(sizes.length).toBeGreaterThan(0);
+    expect(sizes.every((x) => x[2] === "" && x[3] === "")).toBe(true);
+    expect(indicator(m, "sel-total")).toBe("-");
+    expect(indicator(m, "sel-selling")).toBe("-");
   });
   it("production variance is unaffected and still shown", async () => {
     local();
@@ -148,6 +201,14 @@ describe("Scenario C: paid or open exposure", () => {
     expect(ruleIds(m)).toEqual([]);
     expect(indicator(m, "ind-exposure")).not.toBe("Withheld");
     expect(text(m)).toContain("Basis chosen on this page");
+  });
+  it("while withheld, nothing says which payments are open: no open flag, no paid-status note, no 'fall due before' warning", async () => {
+    local();
+    const m = await C();
+    expect(m).not.toContain("data-open=");
+    expect(text(m)).not.toMatch(/fall due before|before as-at date|paid status unknown/i);
+    const chosen = await C({ exposure: "due" });
+    expect(chosen).toContain("data-open=");
   });
   it("landed cost itself is unaffected by the exposure rule", async () => {
     local();

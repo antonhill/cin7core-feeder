@@ -26,7 +26,7 @@ export function rulesApply(state: DemoState): boolean {
 export const tenderRule = (): UnresolvedRule => ({
   id: "tender-classification",
   title: "Tender SKU classification",
-  detail: "The workbook has no SKU-level tender marker (Items.isTender is absent), so the tender replenishment exemption cannot be applied and no SKU can be treated as tender-exempt.",
+  detail: "Not every SKU carries a tender marker (Items.isTender is absent or incomplete), so the tender replenishment exemption cannot be applied reliably and no unmarked SKU can be confirmed as orderable.",
   withholds: "Proposed order quantities",
   how: "owner",
 });
@@ -47,9 +47,9 @@ export const historyGapRule = (lastMonth: string | null, gap: readonly string[])
   how: "choose",
 });
 
-/** True when no routing line carries an overhead, efficiency or margin value the cost model can use. */
+/** True when any routing line lacks the overhead or efficiency value the cost model needs. */
 export function overheadUnresolved(ds: RwtsaDataset): boolean {
-  return ds.tables.routing.length > 0 && ds.tables.routing.every((r) => r.overhead === null && r.efficiency === null && r.margin === null);
+  return ds.tables.routing.length > 0 && ds.tables.routing.some((r) => r.overhead === null || r.efficiency === null);
 }
 export const overheadRule = (): UnresolvedRule => ({
   id: "overhead-efficiency-margin",

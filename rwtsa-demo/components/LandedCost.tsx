@@ -173,12 +173,12 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                 </li>
               ))}
             </ul>
-            {(r.shipments.some((sh) => sh.warnings.length > 0) || x.warnings.length > 0) && (
+            {(r.shipments.some((sh) => sh.warnings.length > 0) || (!model.exposureWithheld && x.warnings.length > 0)) && (
               <>
                 <p className="mt-3 text-sm font-medium text-slate-800">Warnings on these results</p>
                 <ul data-testid="warnings" className="mt-1 list-disc space-y-1 pl-5 text-sm text-slate-700">
                   {r.shipments.flatMap((sh) => sh.warnings.map((w) => <li key={`${sh.shipmentRef}|${w}`}>{`${sh.shipmentRef}: ${w}`}</li>))}
-                  {x.warnings.map((w) => (
+                  {!model.exposureWithheld && x.warnings.map((w) => (
                     <li key={w}>{w}</li>
                   ))}
                 </ul>
@@ -569,7 +569,7 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                   {x.rows.map((p) => (
                     <TR key={`${p.poNo}|${p.dueDate}|${p.usdCents}`}>
                       <TD>
-                        <span data-testid="payment-row" data-po={p.poNo} data-open={String(p.open)} />
+                        <span data-testid="payment-row" data-po={p.poNo} {...(model.exposureWithheld ? {} : { "data-open": String(p.open) })} />
                         {p.poNo}
                         {p.deposit && (
                           <div>
@@ -579,7 +579,7 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                       </TD>
                       <TD>
                         {p.dueDate}
-                        {!p.open && <div className="text-xs text-amber-700">before as-at date; paid status unknown</div>}
+                        {!model.exposureWithheld && !p.open && <div className="text-xs text-amber-700">before as-at date; paid status unknown</div>}
                       </TD>
                       <TD align="right" numeric>
                         {money(p.usdCents, "$")}

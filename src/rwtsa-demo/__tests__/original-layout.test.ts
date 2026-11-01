@@ -8,6 +8,7 @@ import { runQuoteConversion } from "@/rwtsa-demo/engine/quote-conversion";
 import { runRedFlag } from "@/rwtsa-demo/engine/red-flag";
 import { TAB_NAMES, type TabName } from "@/rwtsa-demo/contracts/tabs";
 import type { TabLayoutReport } from "@/rwtsa-demo/workbook/layouts";
+import { isPercentFormat } from "@/rwtsa-demo/workbook/read";
 
 /**
  * The advisor's workbook is NOT tabular on five tabs and uses its own header wording on the rest. These tests load a
@@ -236,6 +237,64 @@ describe("what is NOT accepted (explicit, conservative rules)", () => {
   });
 });
 
+describe("review hardening: nothing is interpreted more loosely than the workbook states", () => {
+  it("'Applies to sizes' accepts only an explicit All form; 'All except ...' and a blank cell are errors, not every size", async () => {
+    for (const text of ["All except 5XL", "All sizes but S", "all", "", "All (per size)", "All sizes"]) {
+      const r = await load((wb) => void (wb.getWorksheet("BOM")!.getCell("C5").value = text === "" ? null : text));
+      const bad = codes(r, "size_token_unrecognised").some((f) => f.tab === "BOM" && (f.rows ?? []).includes(5));
+      expect(bad, JSON.stringify(text)).toBe(/except|but|^$/i.test(text));
+    }
+  });
+  it("a size list with a repeated size does not create duplicate rows", async () => {
+    const r = await load((wb) => void (wb.getWorksheet("BOM")!.getCell("C6").value = "S, S, M, L"));
+    const bom = r.dataset!.tables.bom.filter((b) => b.componentName === "Zip 32cm");
+    expect(bom.map((b) => b.size)).toEqual(["S", "M", "L"]);
+  });
+  it("a code that is only the PREFIX or SUFFIX of a longer, unknown code is not resolved to the shorter one", async () => {
+    for (const text of [`${O.styleA}-9 - all sizes`, `X-${O.styleA} (all)`, `${O.styleA}.9 all`]) {
+      const r = await load((wb) => void (wb.getWorksheet("ImportPOs")!.getCell("F2").value = text));
+      expect(r.dataset!.tables.importPos[0].styleCode, text).toBe(text);
+      expect(codes(r, "composite_unresolved")[0].rows, text).toContain(2);
+    }
+    const ok = await load((wb) => void (wb.getWorksheet("ImportPOs")!.getCell("F2").value = `${O.styleA}. All sizes`));
+    expect(ok.dataset!.tables.importPos[0].styleCode).toBe(O.styleA);
+  });
+  it("a number format with a literal percent sign is not a percentage, and mixed scales in one column are warned about", async () => {
+    const lit = await load((wb) => void (wb.getWorksheet("ProductionOrders")!.getCell("K4").numFmt = '0"%"'));
+    expect(lit.dataset!.tables.productionOrders[0].labourRecoveryPct).toBe(0.8);
+    expect(codes(lit, "percent_scale_mixed").map((f) => f.tab)).toEqual(["ProductionOrders"]);
+    // ExcelJS drops a backslash escape when it reads a file, so the escape handling is checked on the function itself.
+    for (const [fmt, pct] of [["0.0%", true], ["0%", true], ["0.00%;[Red]-0.00%", true], ['0"%"', false], ["0\\%", false], ['#,##0.00', false], ["[>=1]0;0%", true], ['0"pct"', false]] as const) expect(isPercentFormat(fmt), fmt).toBe(pct);
+    expect(codes(await load(), "percent_scale_mixed")).toEqual([]);
+  });
+  it("a comma that is not a thousands separator is not read as one (18,5 is not 185; R 1,25 is not 1)", async () => {
+    const fx = await load((wb) => void (wb.getWorksheet("LandedCost")!.getCell("A2").value = "Planning FX (est): 18,5 · Customs/settlement FX (actual): 18.50 · x (ZAR) = 4,200, y"));
+    expect(fx.dataset!.tables.landedCost.map((l) => l.planningFx)).toEqual([null, null]);
+    expect(codes(fx, "context_missing").map((f) => f.field)).toContain("planningFx");
+    expect(fx.dataset!.tables.landedCost[0].freightTotalZar).toBe(4200);
+    const cpm = await load((wb) => void (wb.getWorksheet("Routing_SMV")!.getCell("A2").value = "Cost-per-minute (direct only): R 1,25."));
+    expect(codes(cpm, "context_missing").map((f) => `${f.tab}:${f.field}`)).toContain("Routing_SMV:costPerMinute");
+    expect(cpm.ok).toBe(false);
+  });
+  it("a Labour line is excluded only when BOTH its quantity and cost are non-numeric", async () => {
+    const half = await load((wb) => {
+      wb.getWorksheet("BOM")!.getCell("D10").value = "TBC";
+      wb.getWorksheet("BOM")!.getCell("F10").value = 12;
+    });
+    expect(codes(half, "layout_row_excluded")).toEqual([]);
+    expect(codes(half, "invalid_cell").some((f) => f.tab === "BOM" && f.field === "qtyPerUnit")).toBe(true);
+    expect(half.ok).toBe(false);
+  });
+  it("Yes/No accepts a description in brackets or after a space, not trailing punctuation", async () => {
+    const ok = await load((wb) => void (wb.getWorksheet("ImportPOs")!.getCell("M2").value = "Yes (bonded)"));
+    expect(ok.dataset!.tables.importPos[0].bondOnArrival).toBe(true);
+    for (const t of ["Yes?", "No!", "Yes-ish"]) {
+      const r = await load((wb) => void (wb.getWorksheet("ImportPOs")!.getCell("M2").value = t));
+      expect(codes(r, "invalid_cell").map((f) => f.field), t).toEqual(["bondOnArrival"]);
+    }
+  });
+});
+
 describe("every sheet row is accounted for", () => {
   it("title + header + data + notes + explained exclusions + trailing summary/note rows = non-empty sheet rows, per tab", async () => {
     const L = lay(await load());
@@ -260,13 +319,35 @@ describe("every sheet row is accounted for", () => {
     const trailing = codes(r, "layout_trailing_rows").map((f) => `${f.tab}:${f.reason}:${f.count}`).sort();
     expect(trailing).toEqual(["BOM:note:2", "BOM:summary:3", "ProductionOrders:note:1", "Routing_SMV:note:1", "Routing_SMV:summary:5"]);
   });
-  it("a data-looking row after a blank gap in a report tab is reported as trailing, not parsed and not hidden", async () => {
+  it("a data-looking row after a blank gap in a report tab is NOT silently dropped: it is an error naming the rows", async () => {
+    const r = await load((wb) => void (wb.getWorksheet("Routing_SMV")!.getRow(20).values = [40, "Extra op", "x", 5]));
+    expect(codes(r, "layout_trailing_data_suspected")).toEqual([expect.objectContaining({ tab: "Routing_SMV", severity: "error", count: 1, rows: [20] })]);
+    expect(r.ok).toBe(false);
+  });
+  it("a spacer row in the middle of a table does not truncate it silently", async () => {
     const r = await load((wb) => {
-      const ws = wb.getWorksheet("Routing_SMV")!;
-      ws.getRow(20).values = [40, "Extra op", "x", 5];
+      const ws = wb.getWorksheet("BOM")!;
+      ws.getRow(8).values = []; // blank spacer inside the component list
     });
-    expect(lay(r).Routing_SMV.trailingSummaryRows).toBe(6);
-    expect(r.dataset!.tables.routing).toHaveLength(3);
+    const f = codes(r, "layout_trailing_data_suspected").find((x) => x.tab === "BOM");
+    expect(f?.severity).toBe("error");
+    expect(f?.rows).toContain(9);
+    expect(r.ok).toBe(false);
+  });
+  it("a summary row whose label is MERGED across several columns (same text repeated) is still a summary", async () => {
+    const r = await load((wb) => {
+      const ws = wb.getWorksheet("BOM")!;
+      ws.mergeCells("A19:D19");
+      ws.getCell("A19").value = "Merged roll-up label (synthetic)";
+      ws.getCell("F19").value = 12.5;
+    });
+    expect(codes(r, "layout_trailing_data_suspected")).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+  it("genuine summary rows (a label and one number) and note text below the table are still accepted", async () => {
+    const r = await load();
+    expect(codes(r, "layout_trailing_data_suspected")).toEqual([]);
+    expect(r.ok).toBe(true);
   });
   it("a non-note row with a blank key in a tabular tab is still an error", async () => {
     const r = await load((wb) => {

@@ -74,6 +74,11 @@ export function flattenCell(value: unknown, counters: FlatCounters): unknown {
   return value;
 }
 
+/** True when the number format contains a real percent token (not one inside quotes, escaped, or in a [bracket] condition). */
+export function isPercentFormat(fmt: string): boolean {
+  return fmt.replace(/"[^"]*"/g, "").replace(/\\./g, "").replace(/\[[^\]]*\]/g, "").includes("%");
+}
+
 export function readWorkbook(wb: ExcelJS.Workbook): ReadResult {
   const findings: Finding[] = [];
   const tables: Partial<Record<TabName, RawTable>> = {};
@@ -99,6 +104,7 @@ export function readWorkbook(wb: ExcelJS.Workbook): ReadResult {
 
     const counters: FlatCounters = { formulaNoResult: 0, errorCells: 0, tooLong: 0 };
     let percentCells = 0;
+    const columnScale = new Map<number, { pct: number; plain: number }>();
     const grid: GridRow[] = [];
     let tooManyRows = false;
     let tooManyColumns = false;
@@ -120,9 +126,14 @@ export function readWorkbook(wb: ExcelJS.Workbook): ReadResult {
         let v = flattenCell(cell.value, counters);
         // A cell FORMATTED as a percentage (0.0%, 0%) is read as it is displayed: 0.857 shown as 85.7% is 85.7. A bare
         // number in a General cell is never reinterpreted.
-        if (typeof v === "number" && typeof cell.numFmt === "string" && cell.numFmt.includes("%")) {
-          v = Math.round(v * 100 * 1e9) / 1e9;
-          percentCells++;
+        if (typeof v === "number") {
+          const col = columnScale.get(c) ?? { pct: 0, plain: 0 };
+          if (typeof cell.numFmt === "string" && isPercentFormat(cell.numFmt)) {
+            v = Math.round(v * 100 * 1e9) / 1e9;
+            percentCells++;
+            col.pct++;
+          } else col.plain++;
+          columnScale.set(c, col);
         }
         cells.push(v);
       }
@@ -136,6 +147,9 @@ export function readWorkbook(wb: ExcelJS.Workbook): ReadResult {
     if (counters.formulaNoResult > 0) findings.push(finding({ severity: "warning", code: "formula_without_cached_result", tab, count: counters.formulaNoResult }));
     if (counters.errorCells > 0) findings.push(finding({ severity: "warning", code: "error_cell", tab, count: counters.errorCells }));
     if (percentCells > 0) findings.push(finding({ severity: "info", code: "percent_cells_read_as_points", tab, count: percentCells }));
+    // A column holding both percent-formatted and plain numbers mixes scales (15% read as 15, a bare 0.15 left as 0.15).
+    const mixed = [...columnScale.values()].filter((x) => x.pct > 0 && x.plain > 0).length;
+    if (mixed > 0) findings.push(finding({ severity: "warning", code: "percent_scale_mixed", tab, count: mixed }));
 
     const extracted = extractTable(tab, tooManyColumns ? [] : grid);
     findings.push(...extracted.findings);

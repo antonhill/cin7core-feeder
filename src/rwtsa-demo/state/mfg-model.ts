@@ -55,7 +55,14 @@ export function mfgModel(state: DemoState, settings: MfgSettings): MfgModel {
     const size = style ? (style.sizes.find((z) => z.size === settings.size) ?? style.sizes.find((z) => z.size === "M") ?? style.sizes[0] ?? null) : null;
     const groups = settings.by === "line" ? variance.byLine : settings.by === "bracket" ? variance.byBracket : variance.byStyle;
     const rules: UnresolvedRule[] = rulesApply(state) && overheadUnresolved(state.dataset) ? [overheadRule()] : [];
-    return { ...base, engine: "AVAILABLE", engineNote: null, variance, costing, groups, styles, style, size, rules };
+    if (rules.length === 0) return { ...base, engine: "AVAILABLE", engineNote: null, variance, costing, groups, styles, style, size, rules };
+    // While the overhead / efficiency rule is open no product cost total, selling price or reference difference may be shown,
+    // whatever the engine could compute for a style whose routing happens to carry some values.
+    const hide = (z: SizeCosting): SizeCosting => ({ ...z, totalCents: null, sellingCents: null, diffCents: null, diffPct: null, deltaVsBaseCents: null, status: "incomplete" });
+    const hidden: CostingResult = { ...costing, styles: costing.styles.map((st) => ({ ...st, sizes: st.sizes.map(hide) })) };
+    const hStyle = hidden.styles.find((s) => s.styleCode === style?.styleCode) ?? null;
+    const hSize = hStyle ? (hStyle.sizes.find((z) => z.size === size?.size) ?? null) : null;
+    return { ...base, engine: "AVAILABLE", engineNote: null, variance, costing: hidden, groups, styles, style: hStyle, size: hSize, rules };
   } catch {
     return { ...base, engine: "UNAVAILABLE", engineNote: "The engines could not run with these inputs.", variance: null, costing: null, groups: [], style: null, size: null };
   }

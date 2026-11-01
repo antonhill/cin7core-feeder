@@ -73,7 +73,8 @@ interface ReportSpec {
 }
 
 const TOKEN = "[A-Za-z0-9][A-Za-z0-9._-]*";
-const NUM = "(\\d[\\d,]*(?:\\.\\d+)?)";
+// A thousands separator must be followed by exactly three digits: "18,5" is not 185 and is not accepted at all.
+const NUM = "(\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?|\\d+(?:\\.\\d+)?)(?!\\d|,\\d)";
 
 export const REPORT_SPECS: Readonly<Partial<Record<TabName, ReportSpec>>> = {
   BOM: {
@@ -85,7 +86,7 @@ export const REPORT_SPECS: Readonly<Partial<Record<TabName, ReportSpec>>> = {
     minHeaderMatches: 2,
     context: [
       { field: "styleCode", source: "title row", row: 1, pattern: new RegExp(`\\s[-\\u2013\\u2014]\\s(${TOKEN})\\s*\\(`), severity: "error" },
-      { field: "costPerMinute", source: "text line", row: 2, pattern: new RegExp(`Cost-per-minute[^:]*:\\s*R\\s*(\\d+(?:\\.\\d+)?)`), numeric: true, severity: "error" },
+      { field: "costPerMinute", source: "text line", row: 2, pattern: new RegExp(`Cost-per-minute[^:]*:\\s*R\\s*(\\d+(?:\\.\\d+)?)(?!\\d|,\\d)`), numeric: true, severity: "error" },
     ],
   },
   ProductionOrders: { headerRows: [3], context: [] },
@@ -152,6 +153,8 @@ function parseNumber(text: string): number | null {
 }
 
 const SIZE_SET: ReadonlySet<string> = new Set(SIZE_ORDER);
+/** Every size. Only these explicit forms: "All", "All sizes", optionally followed by a plain-words bracket. "All except ..." is not one of them. */
+const ALL_SIZES = /^all(?:\s+sizes)?(?:\s*\((?![^)]*\b(?:except|excluding|but|not|only)\b)[A-Za-z ]+\))?$/i;
 
 /** Builds the raw table for one recognised sheet from its non-empty grid rows. Pure. */
 export function extractTable(tab: TabName, grid: readonly GridRow[]): LayoutResult {
@@ -207,6 +210,18 @@ export function extractTable(tab: TabName, grid: readonly GridRow[]): LayoutResu
   if (trailingSummary > 0) findings.push(finding({ severity: "info", code: "layout_trailing_rows", tab, reason: "summary", count: trailingSummary, rows: trailing.filter((g) => g.cells.some(isNumberish)).map((g) => g.rowNumber) }));
   if (trailingNote > 0) findings.push(finding({ severity: "info", code: "layout_trailing_rows", tab, reason: "note", count: trailingNote, rows: trailing.filter((g) => !g.cells.some(isNumberish)).map((g) => g.rowNumber) }));
 
+  // Rows after the break that still look like table rows (a key and about as many populated cells as the data rows) are
+  // NOT summaries: parsing would silently truncate the table, so they are an error naming the rows.
+  if (isReport && trailing.length > 0) {
+    // Distinct values, not cells: a label merged across several columns repeats its text and must count once.
+    const populated = (g: GridRow) => new Set(g.cells.filter((c) => !isBlank(c)).map((c) => (c instanceof Date ? c.toISOString() : String(c).trim()))).size;
+    const counts = region.map(populated).sort((a, b) => a - b);
+    const median = counts.length === 0 ? 0 : counts[Math.floor(counts.length / 2)];
+    const floor = Math.max(3, Math.ceil(0.6 * median));
+    const suspect = trailing.filter((g) => !isBlank(g.cells[0]) && populated(g) >= floor);
+    if (suspect.length > 0) findings.push(finding({ severity: "error", code: "layout_trailing_data_suspected", tab, count: suspect.length, rows: suspect.map((g) => g.rowNumber) }));
+  }
+
   const noteRows = region.filter((g) => isNoteRow(g.cells));
   if (noteRows.length > 0) findings.push(finding({ severity: "info", code: "note_row_ignored", tab, count: noteRows.length, rows: noteRows.map((g) => g.rowNumber) }));
   let data = region.filter((g) => !isNoteRow(g.cells));
@@ -251,7 +266,7 @@ export function extractTable(tab: TabName, grid: readonly GridRow[]): LayoutResu
     const costCol = columns.get("unitCost");
     if (typeCol !== undefined && qtyCol !== undefined && costCol !== undefined) {
       const isNum = (v: unknown) => typeof v === "number" || (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v.replace(/[\s ]/g, "")));
-      const labour = rows.filter((r) => typeof r.cells[typeCol] === "string" && (r.cells[typeCol] as string).trim().toLowerCase() === "labour" && !(isNum(r.cells[qtyCol]) && isNum(r.cells[costCol])));
+      const labour = rows.filter((r) => typeof r.cells[typeCol] === "string" && (r.cells[typeCol] as string).trim().toLowerCase() === "labour" && !isNum(r.cells[qtyCol]) && !isNum(r.cells[costCol]));
       if (labour.length > 0) {
         findings.push(finding({ severity: "info", code: "layout_row_excluded", tab, reason: "routing_derived_labour", count: labour.length, rows: labour.map((r) => r.rowNumber) }));
         excluded = labour.length;
@@ -267,11 +282,11 @@ export function extractTable(tab: TabName, grid: readonly GridRow[]): LayoutResu
       const bad: number[] = [];
       for (const r of rows) {
         const text = typeof r.cells[appliesCol] === "string" ? (r.cells[appliesCol] as string).trim() : "";
-        if (text === "" || /^all\b/i.test(text)) {
+        if (text !== "" && ALL_SIZES.test(text)) {
           out.push({ rowNumber: r.rowNumber, cells: [...r.cells, null] });
           continue;
         }
-        const tokens = text.split(/[,;/]+/).map((t) => t.trim().toUpperCase()).filter(Boolean);
+        const tokens = [...new Set(text.split(/[,;/]+/).map((t) => t.trim().toUpperCase()).filter(Boolean))];
         if (tokens.length === 0 || !tokens.every((t) => SIZE_SET.has(t))) {
           bad.push(r.rowNumber);
           out.push({ rowNumber: r.rowNumber, cells: [...r.cells, null] });

@@ -114,12 +114,12 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
   // Unresolved commercial rules (local workbook only). They are decided from the loaded data, never from the file name.
   const rules: UnresolvedRule[] = [];
   if (rulesApply(state)) {
-    // Units on lines still marked on the water whose ETA to stores is before the stock date. Counted from the purchase-order
+    // Units on lines still marked on the water whose ETA to stores is on or before the stock date (the engine treats week 0 as overdue). Counted from the purchase-order
     // lines themselves, so a style-level line that is not yet split to sizes is not missed.
-    const overdueUnits = state.dataset.tables.importPos.filter((p) => classifyPoStatus(p.status) === "on-water" && p.etaStores < result.config.stockDate).reduce((a, p) => a + p.qty, 0);
+    const overdueUnits = state.dataset.tables.importPos.filter((p) => classifyPoStatus(p.status) === "on-water" && p.etaStores <= result.config.stockDate).reduce((a, p) => a + p.qty, 0);
     if (!settings.chosen.overdue && overdueUnits > 0) rules.push(overdueRule(overdueUnits));
     if (!settings.chosen.anchor && result.window.gapMonths.length > 0) rules.push(historyGapRule(result.window.lastHistoryMonth, result.window.gapMonths));
-    if (state.dataset.tables.items.length > 0 && state.dataset.tables.items.every((i) => i.isTender === null)) rules.push(tenderRule());
+    if (state.dataset.tables.items.length > 0 && state.dataset.tables.items.some((i) => i.isTender === null)) rules.push(tenderRule());
   }
   const withheld = { results: rules.some((r) => r.how === "choose"), proposedOrders: rules.length > 0 };
   if (withheld.results) {
