@@ -8,6 +8,9 @@ import { QUOTES_MODULE } from "@/app/module-nav";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
 import { evaluateDraft, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import type { QuoteDraft } from "@/newquip/grower/draft";
+import { stampPriceResolutions } from "@/newquip/quote/price-resolution";
+import { normaliseOptionalMappings, optionalMappedSkus, optionalMappingError, optionalMappingsChanged } from "@/newquip/grower/optional-mapping";
+import { searchCatalogue, type CatalogueResult } from "@/lib/projects/catalogue-search";
 import { hasAny, PROJECT_CREATE_ROLES, type OrgTier, type QuoteRole } from "@/newquip/quote/roles";
 import { toQuoteRoles } from "@/lib/approvals/roles";
 import { canSeeCosts, resolveRoles } from "@/lib/approvals/role-store";
@@ -118,12 +121,32 @@ export async function listGrowerQuotesAction(): Promise<GrowerActionResult<Array
   }
 }
 
+/**
+ * Everything in a submitted draft that only an Estimator or Manager may decide, or that the server owns, is checked/stamped HERE, for every route that stores a
+ * client-supplied draft (create AND save): optional-element product mappings (trimmed, authorised, verified against this organisation's active catalogue),
+ * manual quotation prices (authorised, provenance stamped by the server) and the cost fields (stamped / server-owned). `prior` is the stored draft, if any.
+ */
+async function sanitiseSubmittedDraft(a: Actor, db: ReturnType<typeof createServiceRoleClient>, draft: QuoteDraft, prior: QuoteDraft | undefined): Promise<QuoteDraft> {
+  let d = normaliseOptionalMappings(draft);
+  if (optionalMappingsChanged(prior?.estimator.confirmedMappings, d.estimator.confirmedMappings) && !hasAny(a.roles, ["estimator", "manager"])) throw new Error("Only an Estimator or Manager can map a product.");
+  const mapped = optionalMappedSkus(d.estimator.confirmedMappings);
+  if (mapped.length) {
+    const rows = await db.from("products").select("sku, active").eq("org_id", a.orgId).in("sku", mapped.map((m) => m.sku));
+    if (rows.error) throw new Error(`The mapped products could not be verified against the Cin7 catalogue (${rows.error.message}). Nothing was saved.`);
+    const err = optionalMappingError(mapped, (rows.data ?? []) as Array<{ sku: string; active: boolean | null }>);
+    if (err) throw new Error(err);
+  }
+  const nowIso = new Date().toISOString();
+  d = { ...d, estimator: { ...d.estimator, priceResolutions: stampPriceResolutions(d.estimator.priceResolutions, prior?.estimator.priceResolutions, a.roles, a.email, nowIso) as QuoteDraft["estimator"]["priceResolutions"] } };
+  return keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(d, prior?.estimator.costOverrides, a.canSeeCost, a.email, nowIso), prior?.estimator.physicalCosts), prior?.estimator.costBasis);
+}
+
 export async function createGrowerQuoteAction(draft?: QuoteDraft): Promise<GrowerActionResult<{ id: string; quoteRef: string }>> {
   try {
     const a = await authorise();
     if (!a.roles.has("rep")) throw new Error("Only a rep can start a quote.");
     const db = createServiceRoleClient();
-    const r = await createQuote(db, a.orgId, a.email, draft);
+    const r = await createQuote(db, a.orgId, a.email, draft ? await sanitiseSubmittedDraft(a, db, draft, undefined) : undefined);
     await audit(db, a, { action: "newquip.quote_created", summary: `Started NewQuip quote ${r.quoteRef} (local only; no Cin7 write)`, detail: { quoteId: r.id } });
     return { ok: true, data: r };
   } catch (e) {
@@ -152,12 +175,26 @@ export async function previewGrowerDraftAction(draft: QuoteDraft): Promise<Growe
   }
 }
 
+/**
+ * Search the synced Cin7 catalogue to map an optional additional element to a product. Read-only, org-scoped from the session, Estimator or Manager
+ * authority only (a plain Rep cannot change what the quotation is built from), NewQuip organisation only.
+ */
+export async function searchCin7CatalogueForMappingAction(query: string): Promise<GrowerActionResult<CatalogueResult>> {
+  try {
+    const a = await authorise();
+    if (!hasAny(a.roles, ["estimator", "manager"])) throw new Error("Only an Estimator or Manager can map a product.");
+    return { ok: true, data: await searchCatalogue(createServiceRoleClient(), a.orgId, query) };
+  } catch (e) {
+    return { ok: false, error: errMsg(e) };
+  }
+}
+
 export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft): Promise<GrowerActionResult<QuoteView>> {
   try {
     const a = await authorise();
     const db = createServiceRoleClient();
     const prior = await loadQuote(db, a.orgId, quoteId);
-    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(draft, prior?.draft.estimator.costOverrides, a.canSeeCost, a.email, new Date().toISOString()), prior?.draft.estimator.physicalCosts), prior?.draft.estimator.costBasis));
+    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, await sanitiseSubmittedDraft(a, db, draft, prior?.draft));
     // Changed content invalidates the estimator's sign-off (saveDraft clears it) and any open approval of the older content: the quote goes back to estimator review.
     if (saved.draftHash !== prior?.draft_hash && (await stagedAvailable(db))) await resyncQuoteApprovals(db, ctxOf(a), quoteId, { quiet: true }).catch(() => undefined);
     const q = await loadQuote(db, a.orgId, quoteId);

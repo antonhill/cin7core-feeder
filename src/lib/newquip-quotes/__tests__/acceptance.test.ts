@@ -218,4 +218,15 @@ describe("UAT-006: estimator sign-off is recorded once", () => {
     expect(after.estimator_signoff_by_email).toBe("est@nq");
     expect(after.estimator_signoff_at).toBe(first.estimator_signoff_at);
   });
+  it("a legacy sign-off hash that no longer matches the content does not lock the quote: it can be signed again (review hardening)", async () => {
+    const db = new FakeDb(); db.deliveryApplied = true;
+    const draft = readyDraft();
+    const { id } = await createQuote(db as never, ORG, "rep@nq");
+    await saveDraft(db as never, ORG, rep, id, draft);
+    const total = Math.round(evaluateDraft(draft, ctx).budget!.totals.subtotalExTax * 100);
+    await sendToEstimator(db as never, ORG, rep, "rep@nq", id, ctx, { confirmedAmountCents: total, confirmedBy: "Farmer Joe" });
+    (db.rows("newquip_quotes")[0] as Record<string, unknown>).estimator_signoff_hash = "stale-hash"; (db.rows("newquip_quotes")[0] as Record<string, unknown>).estimator_signoff_by_email = "old@nq";
+    await estimatorSignOff(db as never, ORG, rep, "est@nq", id, ctx);
+    expect((db.rows("newquip_quotes")[0] as Record<string, unknown>).estimator_signoff_by_email).toBe("est@nq");
+  });
 });

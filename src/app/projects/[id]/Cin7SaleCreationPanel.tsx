@@ -5,6 +5,7 @@ import { Alert } from "@/components/ui/Alert";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { isP0Disposable } from "@/lib/projects/p0-project";
 import type { P0Report } from "@/lib/projects/p0-checklist";
@@ -12,7 +13,7 @@ import { CREATE_CONFIRMATION_TEXT } from "@/lib/projects/cin7-sale-creation";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { VariationProductPicker, type PickedProduct } from "./VariationProductPicker";
 import type { PackageMapping } from "@/lib/projects/package-mapping-store";
-import { createCin7SaleAction, getPackageMappingAction, getCin7SaleCreationStatusAction, reconcileCin7SaleCreationAction, resolveScopeItemAction, runP0ChecklistAction, type Cin7SaleCreationStatus } from "../cin7-actions";
+import { getCin7ReferenceOptionsAction, type Cin7ReferenceOptions, createCin7SaleAction, getPackageMappingAction, getCin7SaleCreationStatusAction, reconcileCin7SaleCreationAction, resolveScopeItemAction, runP0ChecklistAction, type Cin7SaleCreationStatus } from "../cin7-actions";
 
 // Create the project's Cin7 ADVANCED SALE. The physical products come from the project's APPROVED PRODUCT SCOPE (inherited from the quotation,
 // or from the variation): nobody types or picks SKUs here. Anything the scope cannot identify as a real Cin7 SKU is listed as a blocker and
@@ -32,6 +33,9 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
   const [account, setAccount] = useState("");
   const [taxRule, setTaxRule] = useState("Standard Rate Sales");
   const [confirmed, setConfirmed] = useState(false); // unchecked by default; the server still requires the confirmation token, the flag, the instance pin and refuses a second Sale
+  // Choose Location and Revenue Account from Cin7's own lists (read-only). If the lists cannot be read, the typed fields stay available.
+  const [refs, setRefs] = useState<Cin7ReferenceOptions | null>(null);
+  const [refsError, setRefsError] = useState<string | null>(null);
   const [p0, setP0] = useState<P0Report | null>(null);
   const [p0Error, setP0Error] = useState<string | null>(null);
   const [p0Busy, setP0Busy] = useState(false);
@@ -40,6 +44,11 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
   const [multi, setMulti] = useState<Record<string, PickedProduct[]>>({});
   const [res, setRes] = useState<Record<string, { sku: string; quantity: string; reason: string }>>({});
 
+  useEffect(() => {
+    let live = true;
+    getCin7ReferenceOptionsAction(projectId).then((r) => { if (!live) return; if (r.ok && r.data) { setRefs(r.data); setRefsError(null); } else setRefsError(r.error ?? "The Cin7 lists could not be loaded."); });
+    return () => { live = false; };
+  }, [projectId]);
   const load = useCallback(() => { getCin7SaleCreationStatusAction(projectId).then((r) => { if (r.ok && r.data) setSt(r.data); }); }, [projectId]);
   useEffect(load, [load]);
 
@@ -130,10 +139,22 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
         <div className="mt-4 space-y-3">
           <div className="grid gap-3 md:grid-cols-4">
             <Input label="Cin7 customer name (must already exist)" value={customer} onChange={(e) => setCustomer(e.target.value)} />
-            <Input label="Cin7 location" value={location} onChange={(e) => setLocation(e.target.value)} />
-            <Input label="Revenue account code" value={account} onChange={(e) => setAccount(e.target.value)} />
+            {refs && !typedAccounts ? (
+              <Select label="Cin7 location" value={location} onChange={(e) => setLocation(e.target.value)}>
+                <option value="">Choose a location…</option>
+                {refs.locations.map((l) => <option key={l} value={l}>{l}</option>)}
+              </Select>
+            ) : <Input label="Cin7 location" value={location} onChange={(e) => setLocation(e.target.value)} />}
+            {refs && !typedAccounts ? (
+              <Select label="Revenue account" value={account} onChange={(e) => setAccount(e.target.value)} helperText="Only revenue accounts Cin7 is proven to accept can be chosen.">
+                <option value="">Choose an account…</option>
+                {refs.accounts.map((a) => <option key={a.code} value={a.code} disabled={!a.selectable} title={a.note}>{a.code} · {a.name}{a.selectable ? "" : ` (${a.group === "LIABILITY" ? "balance sheet, not yet verified" : a.group === "SYSTEM" ? "system account" : a.group === "INACTIVE" ? "inactive" : "not a revenue account"})`}</option>)}
+              </Select>
+            ) : <Input label="Revenue account code" value={account} onChange={(e) => setAccount(e.target.value)} />}
             <Input label="Cin7 tax rule name" value={taxRule} onChange={(e) => setTaxRule(e.target.value)} />
           </div>
+          {refsError && <p className="text-xs text-amber-700">The Cin7 lists could not be loaded ({refsError}). Type the location and account code instead; they are still checked before anything is created.</p>}
+          {refs && <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" checked={typedAccounts} onChange={(e) => setTypedAccounts(e.target.checked)} /> Type the location and account manually instead</label>}
           <details className="rounded-lg border border-slate-200 p-3">
             <summary className="cursor-pointer text-sm text-slate-700">Optional: run the read-only pre-flight check</summary>
             <div className="mt-2 flex flex-wrap items-center gap-3">

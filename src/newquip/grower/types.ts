@@ -36,6 +36,10 @@ export type OptionalItemKey =
   | "cone_fans"
   | "manure_plug";
 
+/** Runtime list of the optional additional elements (GROWER-OPT-001..007). They have no recommended SKU: the estimator maps each to a Cin7 product. */
+export const OPTIONAL_ITEM_KEYS: readonly OptionalItemKey[] = ["controller", "silo_weighing", "control_panel", "emergency_windows", "pad_cooling", "cone_fans", "manure_plug"];
+export const isOptionalItemKey = (k: string): k is OptionalItemKey => (OPTIONAL_ITEM_KEYS as readonly string[]).includes(k);
+
 export type FeederType = "CCM" | "CAWI";
 export type DrinkerType = "CUP_NEW" | "PIGBITE";
 export type FlooringType = "CONCRETE_1200X450X70" | "PLASTIC_SOW_SLAT";

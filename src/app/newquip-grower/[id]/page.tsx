@@ -27,6 +27,9 @@ import {
   saveGrowerDraftAction, sendGrowerQuoteToEstimatorAction, signOffGrowerQuoteAction, type QuoteView,
 } from "../actions";
 import { formatSast } from "@/lib/approvals/time";
+import { isOptionalItemKey } from "@/newquip/grower/types";
+import { previewCostOverrides } from "@/newquip/quote/margin";
+import { ProductMappingPicker } from "./ProductMappingPicker";
 import { fmtCents, fmtZar, NumField, TextField } from "../fields";
 import { MarginPanel } from "./MarginPanel";
 import { BuildStamp } from "@/components/BuildStamp";
@@ -75,6 +78,7 @@ export default function QuoteEditorPage() {
   const [draft, setDraft] = useState<QuoteDraft | null>(null);
   const [ev, setEv] = useState<QuoteEvaluation | null>(null);
   const [dirty, setDirty] = useState(false);
+  const incompleteOverrides = draft ? Object.keys(previewCostOverrides(draft.estimator.costOverrides).errors).length > 0 : false;
   const [scheduleChoice, setScheduleChoice] = useState<ScheduleChoice | undefined>(undefined);
   const [gate, setGate] = useState<DeliveryGate>({ requires: false, accepted: false, status: null, hasDocument: false });
   const search = useSearchParams();
@@ -231,8 +235,9 @@ export default function QuoteEditorPage() {
 
       {stage <= 2 && (
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <Button onClick={save} loading={isWorking} disabled={!editable || !dirty}>Save draft</Button>
-          {dirty && <span className="text-xs text-amber-700">Unsaved changes — figures below are a live preview.</span>}
+          <Button onClick={save} loading={isWorking} disabled={!editable || !dirty || incompleteOverrides}>Save draft</Button>
+          {incompleteOverrides && <span className="text-xs text-amber-700">Complete or clear the highlighted cost overrides (a reason and an amount) before saving.</span>}
+          {dirty && <span className="text-xs text-amber-700">Unsaved changes — the quotation figures below are a live preview. The Cin7 cost estimate, sign-off and approval use the SAVED draft: save to update them.</span>}
           {!editable && <span className="text-xs text-slate-500">{final ? "Read-only: accepted quote." : "You do not have permission to edit."}</span>}
           {editable && !confirmDemo && <Button variant="secondary" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load Demo Defaults</Button>}
           {editable && confirmDemo && (
@@ -250,7 +255,7 @@ export default function QuoteEditorPage() {
             Demo defaults loaded into this draft ({DEMO_DEFAULTS_SOURCE}) {demoLoaded.length ? `Replaced: ${demoLoaded.join(", ")}.` : "The draft already matched the demonstration; nothing changed."}{" "}
             Status: {READINESS_LABEL[rd.state]}.{rd.reasons.length ? ` Open: ${rd.reasons.join("; ")}.` : ""}
             {rd.counts.supplierQuoteRequired + rd.counts.missingMappings + rd.counts.pricingExceptions > 0 ? ` Unresolved: ${rd.counts.supplierQuoteRequired} supplier-quote-required, ${rd.counts.missingMappings} unmapped, ${rd.counts.pricingExceptions} pricing exceptions (listed below).` : " No supplier-quote-required, unmapped or pricing-exception items remain."}
-            {" "}Prices marked POC MANUAL PRICE OVERRIDE are the demonstration quote&apos;s own estimator values. Not saved, approved, frozen or sent anywhere.
+            {" "}Prices marked MANUAL QUOTATION PRICE are the demonstration quote&apos;s own estimator values. Not saved, approved, frozen or sent anywhere.
           </Alert>
         </div>
       )}
@@ -439,6 +444,9 @@ export default function QuoteEditorPage() {
                           <option value="">Select door product…</option>
                           {manualSelectionSkusFor("pvc_door").map((s) => <option key={s} value={s}>{s}</option>)}
                         </select>
+                      ) : isOptionalItemKey(l.itemKey) ? (
+                        <ProductMappingPicker label={l.label} value={confirmed} disabled={!editable}
+                          onChange={(sku) => edit((d) => { if (sku) d.estimator.confirmedMappings[l.itemKey] = sku; else delete d.estimator.confirmedMappings[l.itemKey]; })} />
                       ) : pkg ? (
                         <Badge tone={draft.estimator.confirmedPackages.includes(l.itemKey) ? "success" : "warning"}>{draft.estimator.confirmedPackages.includes(l.itemKey) ? "Package confirmed" : "Package unconfirmed"}</Badge>
                       ) : (
@@ -467,12 +475,12 @@ export default function QuoteEditorPage() {
 
           <ScopePanel quoteId={id} draft={draft} />
           {/* Right under the physical scope, where the estimator resolves the SKUs: capture the latest Cin7 costs for a draft quotation. */}
-          {!final && view.viewer.canViewCommercials && <CostPanel quoteId={id} />}
+          {!final && view.viewer.canViewCommercials && <CostPanel quoteId={id} unsaved={dirty} />}
 
           {(budget?.lines ?? []).some((b) => ["unmapped", "not_in_price_source", "supplier_quote_required", "package_unconfirmed", "package_incomplete"].includes(b.status) || b.pricedBy === "estimator_resolution") && (
             <Panel>
-              <PanelTitle>POC MANUAL PRICE OVERRIDE — pricing exceptions</PanelTitle>
-              <p className="mt-2 text-xs text-slate-500">A line the price source cannot price (no SKU yet, not in the workbook, or a zero price needing a supplier quote) is never quoted at R0. Enter the commercial unit price and why (e.g. “Master workbook has no usable price for this SKU. Temporary POC estimator value only.”). This is a quote input — it is never written back to the Master snapshot.</p>
+              <PanelTitle>Manual quotation prices — exceptions to the approved price source</PanelTitle>
+              <p className="mt-2 text-xs text-slate-500">A line the price source cannot price (no SKU yet, not in the workbook, or a zero price needing a supplier quote) is never quoted at R0. Enter the commercial unit price and why (e.g. “Supplier quote dated … for this product; the price source has no usable price”). It is an exceptional quote input: it is labelled as manual wherever it appears, recorded with who entered it and when, shown to the approver, and never written back to Cin7 or the price snapshot. Only an Estimator or Manager can enter one.</p>
               <div className="mt-4 space-y-4">
                 {(budget?.lines ?? []).filter((b) => ["unmapped", "not_in_price_source", "supplier_quote_required", "package_unconfirmed", "package_incomplete"].includes(b.status) || b.pricedBy === "estimator_resolution").map((b) => {
                   const k = b.itemKey as GrowerItemKey;
@@ -481,7 +489,8 @@ export default function QuoteEditorPage() {
                     <div key={b.itemKey} className="grid items-end gap-3 md:grid-cols-[1.4fr_1fr_2fr]">
                       <div><div className="text-sm font-medium text-slate-900">{b.label}</div><div className="text-xs text-amber-700">{b.reason}</div></div>
                       <NumField label="Unit price" unit="R ex VAT" value={r?.unitPriceExVat ?? null} onChange={(v) => edit((d) => { d.estimator.priceResolutions = { ...d.estimator.priceResolutions, [k]: { unitPriceExVat: v ?? 0, reason: d.estimator.priceResolutions[k]?.reason ?? "" } }; })} />
-                      <TextField label="Reason" value={r?.reason ?? ""} onChange={(v) => edit((d) => { d.estimator.priceResolutions = { ...d.estimator.priceResolutions, [k]: { unitPriceExVat: d.estimator.priceResolutions[k]?.unitPriceExVat ?? 0, reason: v } }; })} />
+                      <TextField label="Reason" value={r?.reason ?? ""} onChange={(v) => edit((d) => { d.estimator.priceResolutions = { ...d.estimator.priceResolutions, [k]: { unitPriceExVat: d.estimator.priceResolutions[k]?.unitPriceExVat ?? 0, reason: v } }; })} hint={r && !r.reason.trim() ? "A reason is required before this price is used." : undefined} />
+                      {r?.by && <span className="text-xs text-slate-400 md:col-span-3">Entered by {r.by}{r.at ? ` at ${formatSast(r.at)}` : ""}</span>}
                     </div>
                   );
                 })}
