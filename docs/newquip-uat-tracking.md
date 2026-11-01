@@ -19,7 +19,7 @@ BLOCKED BY EXTERNAL INTEGRATION, DEFERRED WITH REASON, plus NOT STARTED (work no
 | UAT-010 | Cin7 location / account dropdowns | NOT STARTED | - | needs Cin7 account-type acceptance evidence |
 | UAT-011 | Cin7 Sale confirmation checkbox | NOT STARTED | - | - |
 | UAT-012 | Cin7 Sale wording / recovery section | NOT STARTED | - | - |
-| UAT-013 | Selective progress claims | PARTLY IMPLEMENTED (stage selection); PARTIAL AMOUNTS NEED A DECISION | PR-B | Stage checkboxes, no implicit 'all claimable', server requires an explicit selection and refuses a silently dropped stage; Deposit-only/combined/cumulative-limit tests; 3 mutations killed. Partial amounts need a migration (line CHECK ties current claim to earned minus committed): see uat-019-020 doc section 5 |
+| UAT-013 | Selective progress claims | IMPLEMENTED, AWAITING LIVE UAT (migration 0120 NOT applied) | PR-B (#136) + PR-D | Stage selection (#136) and partial amounts (PR-D): engine/store/actions/UI, migration 0120 + SQL test (runs in CI only; no local Postgres), 14 financial tests, 8 mutations killed. Partial claims need 0120 applied before they can be saved; full claims work without it. Plan: docs/projects-poc/migration-plan-0120-partial-claims.md |
 | UAT-014 | Preview Claim / Refresh Preview | NOT STARTED | - | - |
 | UAT-015 | Claim History redesign | NOT STARTED | - | status/next-action clarity partly addressed by UAT-016/017/022 |
 | UAT-016 | Claim actions after submission | IMPLEMENTED, AWAITING LIVE UAT | PR-A | no Recalculate/Submit when submitted (UI + server); Cancel relabelled "Withdraw claim"; 2 existing tests moved to the controlled return-to-draft path |

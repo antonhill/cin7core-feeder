@@ -133,8 +133,8 @@ describe("tenant is derived from the session, never from a caller argument", () 
   });
   it("action signatures carry no org id parameter (arity = project/claim ids + stage selection only)", () => {
     expect(actions.getProjectAction.length).toBe(1);
-    expect(actions.previewClaimAction.length).toBe(2); // projectId, selectedStageIds?
-    expect(actions.createClaimDraftAction.length).toBe(2);
+    expect(actions.previewClaimAction.length).toBe(3); // projectId, selectedStageIds?, partialRands?
+    expect(actions.createClaimDraftAction.length).toBe(3);
     expect(actions.approveClaimAction.length).toBe(2); // projectId, claimId
   });
 });

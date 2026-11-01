@@ -129,6 +129,9 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   // Which billing stages the next claim covers. Empty by default: a claim never silently includes every claimable stage.
   const [chosen, setChosen] = useState<string[]>([]);
   const [previewedIds, setPreviewedIds] = useState<string[]>([]);
+  // Optional partial amount (rands) per chosen stage; blank = the full claimable amount.
+  const [amounts, setAmounts] = useState<Record<string, string>>({});
+  const [previewedAmounts, setPreviewedAmounts] = useState<Record<string, string>>({});
   const [isLoading, startLoading] = useTransition();
   const [isWorking, startWorking] = useTransition();
 
@@ -172,7 +175,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
 
   function doPreview() {
     startWorking(async () => {
-      const res = await previewClaimAction(id, chosen);
+      const res = await previewClaimAction(id, chosen, amounts);
       if (!res.ok) {
         setPreview(null);
         return setPreviewError(res.error ?? "Unknown error");
@@ -180,6 +183,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
       setPreviewError(null);
       setPreview(res.data ?? null);
       setPreviewedIds(chosen);
+      setPreviewedAmounts(amounts);
     });
   }
 
@@ -468,19 +472,23 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                   const ok = s.claimableCents > 0;
                   return (
                     <label key={s.id} className={`flex items-center gap-3 text-sm ${ok ? "text-slate-800" : "text-slate-400"}`}>
-                      <input type="checkbox" disabled={!ok} checked={chosen.includes(s.id)} onChange={(e) => { setChosen((cur) => (e.target.checked ? [...cur, s.id] : cur.filter((x) => x !== s.id))); setPreview(null); setPreviewError(null); }} />
+                      <input type="checkbox" disabled={!ok} checked={chosen.includes(s.id)} onChange={(e) => { setChosen((cur) => (e.target.checked ? [...cur, s.id] : cur.filter((x) => x !== s.id))); if (!e.target.checked) setAmounts((m) => { const n = { ...m }; delete n[s.id]; return n; }); setPreview(null); setPreviewError(null); }} />
                       <span className="flex-1">{s.name}</span>
+                      {ok && chosen.includes(s.id) && (
+                        <input aria-label={`Amount to claim for ${s.name} (rands, blank = all)`} placeholder="all" inputMode="decimal" className="h-7 w-28 rounded border border-slate-300 px-2 text-right tabular-nums text-slate-900"
+                          value={amounts[s.id] ?? ""} onChange={(e) => { setAmounts((m) => ({ ...m, [s.id]: e.target.value })); setPreview(null); setPreviewError(null); }} />
+                      )}
                       <span className="tabular-nums">{ok ? `${formatCents(s.claimableCents)} claimable` : s.remainingCents === 0 ? "fully committed" : "nothing claimable yet"}</span>
                     </label>
                   );
                 })}
               </div>
-              {chosen.length === 0 && <p className="mt-2 text-xs text-slate-500">Tick the stage(s) this claim covers, for example only the deposit.</p>}
+              {chosen.length === 0 && <p className="mt-2 text-xs text-slate-500">Tick the stage(s) this claim covers, for example only the deposit. To claim less than the full amount, enter it beside the stage; leave it blank to claim everything claimable.</p>}
             </fieldset>
             <div className="mt-4 flex flex-wrap gap-2">
               <Button variant="secondary" size="sm" onClick={doPreview} loading={isWorking} disabled={chosen.length === 0}>Preview claim</Button>
               {preview && (
-                <Button size="sm" onClick={() => run(() => createClaimDraftAction(id, previewedIds), "Draft claim saved locally.")} loading={isWorking}>Save as draft claim</Button>
+                <Button size="sm" onClick={() => run(() => createClaimDraftAction(id, previewedIds, previewedAmounts), "Draft claim saved locally.")} loading={isWorking}>Save as draft claim</Button>
               )}
             </div>
             {previewError && <div className="mt-3"><Alert tone="warning">{previewError}</Alert></div>}
