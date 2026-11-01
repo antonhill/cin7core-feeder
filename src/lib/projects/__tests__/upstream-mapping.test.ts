@@ -284,7 +284,7 @@ describe("UAT-011/012: Sale creation confirmation is a checkbox, wording is plai
   const sale = readFileSync(new URL("../../../app/projects/[id]/Cin7SaleCreationPanel.tsx", import.meta.url), "utf8");
   it("no typed phrase; an UNCHECKED confirmation checkbox gates the button", () => {
     expect(sale).not.toMatch(/Type exactly/);
-    expect(sale).toMatch(/useState\(false\)/);
+    expect(sale).toMatch(/const \[confirmed, setConfirmed\] = useState\(false\)/);
     expect(sale).toMatch(/&& confirmed;/);
     expect(sale).toMatch(/type="checkbox"[^>]*checked=\{confirmed\}/);
   });
