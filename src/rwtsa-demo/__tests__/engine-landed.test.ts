@@ -274,3 +274,27 @@ describe("incomplete inputs are exposed, never invented", () => {
     expect(ids).toEqual(expect.arrayContaining(["customs-value", "duty-source", "freight-cbm", "fob-total"]));
   });
 });
+
+describe("review hardening", () => {
+  it("zero freight over zero CBM is a valid allocation of zero", () => {
+    const r = run([{ shipment: "S", sku: "A", cbm: 0, freight: 0 }, { shipment: "S", sku: "B", cbm: 0, freight: 0 }]);
+    expect(r.lines.map((l) => l.freightCents)).toEqual([0, 0]);
+    expect(r.shipments[0].complete).toBe(true);
+  });
+  it("a non-positive FX rate is treated as missing, not as a valid zero", () => {
+    const a = line(run([{ ...S1[0], customsFx: 0 }]), "S1", "A");
+    expect(a.status).toBe("incomplete");
+    expect(a.missing).toContain("customsFx");
+    expect(a.customsValueCents).toBeNull();
+    const b = line(run([{ ...S1[0], planningFx: 0 }]), "S1", "A");
+    expect(b.missing).toContain("planningFx");
+    expect(b.landedEstimatedCents).toBeNull();
+    expect(b.status).toBe("complete");
+  });
+  it("a zero-CBM line in a shipment with positive CBM gets zero freight and is flagged", () => {
+    const r = run([{ shipment: "S", sku: "A", cbm: 0, freight: 100 }, { shipment: "S", sku: "B", cbm: 2, freight: 100 }]);
+    expect(line(r, "S", "A").freightCents).toBe(0);
+    expect(line(r, "S", "B").freightCents).toBe(10000);
+    expect(r.shipments[0].warnings.join(" ")).toMatch(/zero cbm/i);
+  });
+});

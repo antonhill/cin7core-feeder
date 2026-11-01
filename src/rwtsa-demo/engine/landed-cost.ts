@@ -187,22 +187,26 @@ export function runLandedCost(ds: RwtsaDataset, config: LandedConfig = {}): Land
     const totalCbm = sum(rs.map((r) => r.cbm));
     let shares: Cents[] | null = null;
     if (freightTotal !== null) {
-      shares = allocateCents(freightTotal, rs.map((r) => r.cbm));
+      shares = freightTotal === 0 ? rs.map(() => 0) : allocateCents(freightTotal, rs.map((r) => r.cbm));
       if (shares === null) warnings.push("This shipment has no CBM on any line, so its freight cannot be split by CBM share.");
+      else if (freightTotal !== 0 && totalCbm > 0 && rs.some((r) => r.cbm <= 0)) warnings.push("A line with zero CBM receives zero freight.");
     }
 
     const shipLines: LandedLine[] = rs.map((r, i) => {
       const missing: string[] = [];
       const fob = r.fobUsd === null ? null : toCents(r.fobUsd);
       if (fob === null) missing.push("fobUsd");
-      if (r.customsFx === null) missing.push("customsFx");
-      if (r.planningFx === null) missing.push("planningFx");
+      // A rate of 0 (or less) is not a usable exchange rate: treat it as missing rather than as a valid zero.
+      const customsFx = r.customsFx !== null && r.customsFx > 0 ? r.customsFx : null;
+      const planningFx = r.planningFx !== null && r.planningFx > 0 ? r.planningFx : null;
+      if (customsFx === null) missing.push("customsFx");
+      if (planningFx === null) missing.push("planningFx");
       if (rate === null && r.dutyZar === null) missing.push("dutyZar");
       if (freightTotal === null) missing.push("freightTotalZar");
       else if (shares === null) missing.push("cbm");
 
-      const customsValue = fob !== null && r.customsFx !== null ? scaleCents(fob, r.customsFx) : null;
-      const planningValue = fob !== null && r.planningFx !== null ? scaleCents(fob, r.planningFx) : null;
+      const customsValue = fob !== null && customsFx !== null ? scaleCents(fob, customsFx) : null;
+      const planningValue = fob !== null && planningFx !== null ? scaleCents(fob, planningFx) : null;
       let duty: Cents | null = null;
       let dutyEst: Cents | null = null;
       let dutySource: LandedLine["dutySource"] = null;
@@ -226,8 +230,8 @@ export function runLandedCost(ds: RwtsaDataset, config: LandedConfig = {}): Land
         cbm: r.cbm,
         cbmShare: totalCbm > 0 ? r.cbm / totalCbm : null,
         fobUsdCents: fob,
-        planningFx: r.planningFx,
-        customsFx: r.customsFx,
+        planningFx,
+        customsFx,
         customsValueCents: customsValue,
         planningValueCents: planningValue,
         dutyCents: duty,
@@ -258,7 +262,7 @@ export function runLandedCost(ds: RwtsaDataset, config: LandedConfig = {}): Land
       shipmentRef: ref,
       lineCount: shipLines.length,
       totalQty: sum(shipLines.map((l) => l.qty)),
-      totalCbm,
+      totalCbm: Math.round(totalCbm * 1e6) / 1e6,
       freightTotalCents: freightTotal,
       freightAllocatedCents: sum(shipLines.map((l) => l.freightCents ?? 0)),
       complete,

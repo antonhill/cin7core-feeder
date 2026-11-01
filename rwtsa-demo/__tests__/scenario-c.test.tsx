@@ -186,6 +186,24 @@ describe("USD exposure by due date and FX comparison", () => {
   });
 });
 
+describe("review hardening (labels and formats)", () => {
+  it("marks partial totals as partial wherever they appear", async () => {
+    vi.stubEnv("RWTSA_SOURCE", "");
+    const file = join(tmp, "partial.xlsx");
+    writeFileSync(file, await synthBuffer({}, (wb) => { const ws = sheet(wb, "LandedCost"); ws.getRow(2).getCell(colOf(ws, "FOB USD")).value = null; }));
+    vi.stubEnv("RWTSA_WORKBOOK_PATH", file);
+    const m = await page();
+    expect(text(m)).toMatch(/FX variance[^]*complete lines only/);
+    expect(indicator(m, "ind-variance")).not.toBeNull();
+    expect((text(m).match(/\(partial\)/g) ?? []).length).toBeGreaterThanOrEqual(3);
+  });
+  it("formats quantities and CBM sensibly", async () => {
+    synthetic();
+    const t = text(await page());
+    expect(t).not.toMatch(/\d\.\d{6,}/);
+  });
+});
+
 describe("incomplete or missing inputs are exposed, never invented", () => {
   async function withWorkbook(mutate: Parameters<typeof synthBuffer>[1], name: string) {
     const file = join(tmp, name);

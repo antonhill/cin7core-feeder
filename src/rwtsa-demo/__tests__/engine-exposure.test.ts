@@ -106,3 +106,23 @@ describe("planning / FEC / customs FX comparison", () => {
     expect(fromCents(p2.zarAtPlanningCents!)).toBe(72000); // planning is still shown
   });
 });
+
+describe("review hardening", () => {
+  it("a locked rate without an FEC reference is not cover, and no FEC value is shown for it", () => {
+    const r = run([{ po: "PO-1", due: "2026-11-10", usd: 5000, fec: null, locked: 18.1 }]);
+    expect(r.rows[0].covered).toBe(false);
+    expect(r.rows[0].zarAtFecCents).toBeNull();
+    expect(r.rows[0].fecVsPlanningCents).toBeNull();
+    expect(r.warnings.join(" ")).toMatch(/locked rate but no FEC reference/i);
+  });
+  it("a shipment line with no planning rate withholds the planning comparison rather than using the other lines' rate", () => {
+    const r = run([{ po: "PO-1", due: "2026-11-10", usd: 100 }], {}, [{ shipment: "S1", sku: "A", planningFx: 18 }, { shipment: "S1", sku: "B", planningFx: null }], [{ po: "PO-1", shipment: "S1" }]);
+    expect(r.rows[0].zarAtPlanningCents).toBeNull();
+    expect(r.rows[0].rateNote).toMatch(/no planning or customs rate/i);
+  });
+  it("buckets order correctly across the year boundary", () => {
+    const r = run([{ po: "A", due: "2027-01-05", usd: 1 }, { po: "B", due: "2026-12-20", usd: 1 }, { po: "C", due: "2026-11-02", usd: 1 }]);
+    expect(r.buckets.map((b) => b.key)).toEqual(["2026-11", "2026-12", "2027-01"]);
+    expect(run([{ po: "A", due: "2027-01-05", usd: 1 }, { po: "B", due: "2026-12-20", usd: 1 }], { bucket: "week" }).buckets.map((b) => b.key)).toEqual(["week 8", "week 10"]);
+  });
+});

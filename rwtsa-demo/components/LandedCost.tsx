@@ -17,6 +17,10 @@ const money = (c: Cents | null, cur: "R" | "$" = "R"): string => {
   return `${c < 0 ? "-" : ""}${cur}${group(i)}.${d}`;
 };
 const signed = (c: Cents | null): string => (c === null ? "-" : `${c > 0 ? "+" : ""}${money(c)}`);
+const qty = (n: number): string => {
+  const [i, d] = String(n).split(".");
+  return d === undefined ? group(i) : `${group(i)}.${d}`;
+};
 const rate = (v: number | null): string => (v === null ? "-" : String(v));
 const field = "rounded-md border border-slate-300 bg-white px-2 py-1 text-sm";
 
@@ -223,7 +227,7 @@ export function LandedPageView({ model }: { model: LandedModel }) {
           <div data-testid="indicators" className="grid grid-cols-2 gap-3 md:grid-cols-5">
             <Indicator label="Shipments" testid="ind-shipments" value={String(r.shipments.length)} hint={`${r.lines.length} lines`} />
             <Indicator label="Landed cost (actual)" testid="ind-landed" value={money(r.totals.landedActualCents)} hint={r.totals.complete ? "all lines complete" : "complete lines only"} />
-            <Indicator label="FX variance" testid="ind-variance" value={signed(r.totals.fxVarianceCents)} hint="actual minus estimate (planning FX)" />
+            <Indicator label="FX variance" testid="ind-variance" value={signed(r.totals.fxVarianceCents)} hint={`actual minus estimate (planning FX)${r.totals.complete ? "" : "; complete lines only"}`} />
             <Indicator label="Incomplete lines" testid="ind-incomplete" value={String(incomplete)} hint="inputs missing, nothing invented" />
             <Indicator label="Open USD exposure" testid="ind-exposure" value={money(x.totals.openUsdCents, "$")} hint={`uncovered ${money(x.totals.uncoveredUsdCents, "$")}`} />
           </div>
@@ -303,12 +307,15 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                           </TD>
                           <TD align="right" numeric>
                             {money(t.landedActualCents)}
+                            {!sh.complete && " (partial)"}
                           </TD>
                           <TD align="right" numeric>
                             {money(t.landedEstimatedCents)}
+                            {!sh.complete && " (partial)"}
                           </TD>
                           <TD align="right" numeric>
                             {signed(t.fxVarianceCents)}
+                            {!sh.complete && " (partial)"}
                           </TD>
                           <TD>{sh.complete ? <Badge tone="success">COMPLETE</Badge> : <Badge tone="warning">{`INCOMPLETE: partial (${sh.partial.lineCount} of ${sh.lineCount} lines)`}</Badge>}</TD>
                         </TR>
@@ -356,7 +363,7 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                       </TD>
                       <TD>{l.sku}</TD>
                       <TD align="right" numeric>
-                        {group(String(l.qty))}
+                        {qty(l.qty)}
                       </TD>
                       <TD align="right" numeric>
                         {l.cbmShare === null ? "-" : `${(l.cbmShare * 100).toFixed(1)}%`}
@@ -419,7 +426,7 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                       </TD>
                       <TD>{k.shipments.join(", ")}</TD>
                       <TD align="right" numeric>
-                        {group(String(k.qty))}
+                        {qty(k.qty)}
                       </TD>
                       <TD align="right" numeric>
                         {money(k.freightCents)}

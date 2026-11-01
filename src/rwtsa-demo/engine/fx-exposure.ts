@@ -82,14 +82,19 @@ export function runFxExposure(ds: RwtsaDataset, config: ExposureConfig = {}): Ex
     s.add(p.shipmentRef);
     shipmentsOfPo.set(p.poNo, s);
   }
-  const rateSet = (ref: string, key: "planningFx" | "customsFx"): number[] =>
-    [...new Set(ds.tables.landedCost.filter((l) => l.shipmentRef === ref).map((l) => l[key]).filter((x): x is number => x !== null))];
+  /** Distinct usable rates of a shipment, or null when any of its lines lacks one (a partial set is not trusted). */
+  const rateSet = (ref: string, key: "planningFx" | "customsFx"): number[] | null => {
+    const vals = ds.tables.landedCost.filter((l) => l.shipmentRef === ref).map((l) => l[key]);
+    if (vals.some((x) => x === null || x <= 0)) return null;
+    return [...new Set(vals as number[])];
+  };
 
   const warnings: string[] = [];
   const rows: PaymentExposure[] = ds.tables.paymentsFec.map((p) => {
     const usd = toCents(p.usdAmount);
     const covered = p.fecRef !== null && p.fecRef !== "" && p.lockedRate !== null;
-    const zarFec = p.lockedRate !== null ? scaleCents(usd, p.lockedRate) : null;
+    // A locked rate without an FEC reference is not cover, so no FEC value is shown for it.
+    const zarFec = covered && p.lockedRate !== null ? scaleCents(usd, p.lockedRate) : null;
     const reported = p.zarValue === null ? null : toCents(p.zarValue);
 
     let shipmentRef: string | null = null;
@@ -103,11 +108,11 @@ export function runFxExposure(ds: RwtsaDataset, config: ExposureConfig = {}): Ex
       shipmentRef = [...ships][0];
       const pl = rateSet(shipmentRef, "planningFx");
       const cu = rateSet(shipmentRef, "customsFx");
-      if (pl.length > 1 || cu.length > 1) note = "The shipment's lines use more than one planning or customs rate, so none is matched.";
+      if (pl === null || cu === null || pl.length === 0 || cu.length === 0) note = "The shipment has no planning or customs rate on one or more LandedCost lines, so none is matched.";
+      else if (pl.length > 1 || cu.length > 1) note = "The shipment's lines use more than one planning or customs rate, so none is matched.";
       else {
-        planning = pl[0] ?? null;
-        customs = cu[0] ?? null;
-        if (planning === null || customs === null) note = "The shipment has no planning or customs rate in LandedCost.";
+        planning = pl[0];
+        customs = cu[0];
       }
     }
     const zarPlan = planning === null ? null : scaleCents(usd, planning);
@@ -162,6 +167,8 @@ export function runFxExposure(ds: RwtsaDataset, config: ExposureConfig = {}): Ex
   if (before.length > 0) warnings.push(`${before.length} payment(s) worth USD ${fromCents(totals.dueBeforeAsAtUsdCents).toFixed(2)} fall due before the as-at date. The workbook has no paid flag, so they are listed but not counted as open exposure.`);
   const diffs = rows.filter((r) => r.zarReportedDiffCents !== null && r.zarReportedDiffCents !== 0).length;
   if (diffs > 0) warnings.push(`The workbook's ZAR value differs from USD x locked rate on ${diffs} payment(s).`);
+  const lockedNoRef = rows.filter((r) => r.lockedRate !== null && !r.covered).length;
+  if (lockedNoRef > 0) warnings.push(`${lockedNoRef} payment(s) have a locked rate but no FEC reference; they are treated as uncovered.`);
   const unmatched = rows.filter((r) => r.rateNote !== null).length;
   if (unmatched > 0) warnings.push(`${unmatched} payment(s) could not be matched to a single planning and customs rate; the comparison is withheld for them.`);
   return { asOf, bucket, rows, buckets, totals, warnings };
