@@ -59,6 +59,10 @@ const STOCK_DATE = "2026-10-31";
 const STYLE_CODES = ["SYN-VEST-A", "SYN-VEST-B", "SYN-VEST-TT", "SYN-VEST-C", "SYN-VEST-D", "SYN-VEST-TT2"] as const;
 const SIZE_WEIGHT = [0.5, 1.2, 1.6, 1.4, 1.0, 0.6, 0.3, 0.15];
 const STYLE_BASE = [60, 45, 30, 40, 35, 25];
+/** The synthetic size curve (units per size, relative). Real size curves are supplied separately and are not in the workbook. */
+export const SYNTHETIC_SIZE_CURVE: Readonly<Record<string, number>> = Object.fromEntries(SIZE_ORDER.map((sz, i) => [sz, SIZE_WEIGHT[i]]));
+/** Units on the (style-level) purchase order for the spike style; its size split uses SIZE_WEIGHT. */
+const SPIKE_PO_QTY = 900;
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -103,7 +107,10 @@ export function buildSyntheticWorkbook(opts: SyntheticOptions = {}): SyntheticWo
 
   // --- SalesHistory (and per-SKU medians, used to size the planted spike) ---
   const spikeStyle = styles[1];
-  const spikeMonth = months[24];
+  // Inside the default six-month demand window (the last six history months), so the spike distorts the forecast until the planner excludes it.
+  const SPIKE_INDEX = months.length - 3;
+  const spikeMonth = months[SPIKE_INDEX];
+  const cleanAvg6 = new Map<string, number>();
   const salesRows: Cell[][] = [];
   for (const [si, st] of styles.entries()) {
     for (const [zi, sz] of SIZE_ORDER.entries()) {
@@ -111,7 +118,8 @@ export function buildSyntheticWorkbook(opts: SyntheticOptions = {}): SyntheticWo
       const series = months.map((_, mi) => Math.max(1, Math.round(base * (0.8 + 0.4 * rand()) * (1 + 0.2 * Math.sin(mi / 2)))));
       if (st === spikeStyle) {
         const med = median(series);
-        series[24] = Math.round(med * 12 + 60);
+        cleanAvg6.set(skuOf(st, sz), series.slice(-6).reduce((a, b) => a + b, 0) / 6);
+        series[SPIKE_INDEX] = Math.round(med * 12 + 60);
       }
       const last6 = series.slice(-6);
       const last12 = series.slice(-12);
@@ -145,6 +153,17 @@ export function buildSyntheticWorkbook(opts: SyntheticOptions = {}): SyntheticWo
       const factory = randInt(0, 80);
       const inTransit = randInt(0, 300);
       const committed = randInt(0, 150);
+      const clean = cleanAvg6.get(sku);
+      if (clean !== undefined) {
+        // Spike style: stock is sized so the clean (spike-excluded) demand never breaches the minimum over 13 weeks, but the
+        // spike-inflated forecast does. That is the "false stock-out" the planner removes by excluding the tender month.
+        const zi = SIZE_ORDER.indexOf(size as (typeof SIZE_ORDER)[number]);
+        const minLevel = Math.max(5, Math.round(STYLE_BASE[styles.indexOf(style)] * SIZE_WEIGHT[zi] * 0.8));
+        const clean13 = (clean / 4.345) * 13;
+        const inboundShare = (SPIKE_PO_QTY * SIZE_WEIGHT[zi]) / SIZE_WEIGHT.reduce((a, b) => a + b, 0);
+        const needed = Math.max(0, Math.ceil(minLevel + clean13 * 1.5 - inboundShare));
+        return [sku, style, "Orange", size, needed, 0, 0, bond, 0, inTransit, 0, needed];
+      }
       return [sku, style, "Orange", size, jhb, durban, capeTown, bond, factory, inTransit, committed, jhb + durban + capeTown + factory - committed];
     }),
   };
@@ -154,7 +173,7 @@ export function buildSyntheticWorkbook(opts: SyntheticOptions = {}): SyntheticWo
   const poFor = (n: number, style: string, qty: number, etaStores: string, status: string, ship: string) =>
     poRows.push([`PO-SYN-${String(n).padStart(3, "0")}`, "SYN Supplier Ltd", "Synthetica", "USD", "FOB", null, style, qty, 4.5 + n * 0.1, utc("2026-08-15"), utc("2026-10-01"), utc(etaStores), status, "No", ship]);
   poFor(1, styles[0], 1200, "2026-10-10", "On the water", "SHIP-SYN-1"); // overdue: ETA precedes the stock date, still on the water
-  poFor(2, styles[1], 900, "2026-11-20", "On the water", "SHIP-SYN-1");
+  poFor(2, styles[1], SPIKE_PO_QTY, "2026-11-20", "On the water", "SHIP-SYN-1");
   poFor(3, styles[2], 700, "2026-12-15", "On order", "SHIP-SYN-2");
   poFor(4, styles[0], 1500, "2027-01-30", "On order", "SHIP-SYN-2");
   const importPos: Table = {
