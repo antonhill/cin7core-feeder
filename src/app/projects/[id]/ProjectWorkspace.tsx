@@ -280,7 +280,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             </div>
           </section>
 
-          {!embedded && newquip && <ProjectOverview projectId={id} refreshKey={previewKey(view)} onOpenTab={(t) => { setTab(t); window.scrollTo({ top: 0, behavior: "smooth" }); }} />}
+          {!embedded && newquip && view.project.billing_scope !== "VARIATION" && <ProjectOverview projectId={id} refreshKey={previewKey(view)} onOpenTab={(t) => { setTab(t); window.scrollTo({ top: 0, behavior: "smooth" }); }} />}
 
           <div>
             <h2 className="mb-3 text-sm font-semibold text-slate-700">Commercial position (ex VAT)</h2>

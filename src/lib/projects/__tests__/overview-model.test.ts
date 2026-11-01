@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProjectOverview, XERO_NOTE, STOCK_NOTE, type OverviewEstimateInput, type OverviewInput } from "../overview-model";
+import { buildProjectOverview, CIN7_NOTE, XERO_NOTE, STOCK_NOTE, type OverviewEstimateInput, type OverviewInput } from "../overview-model";
 import { marginFigures } from "../margin-figures";
 import { R, approvedVariation, claim, demoInput, physRow, physSection, posting, progress, project, scope, stage } from "./overview-fixtures";
 
@@ -127,7 +127,7 @@ describe("C3 physical fulfilment - unknown is never zero", () => {
   it("stock is labelled account-wide, and shortages are listed with the account-wide figure", () => {
     const o = buildProjectOverview(demoInput({ physical: { state: "loaded", asOf: "t", sections: [physSection([physRow("A", { remaining: 6, available: 2, shortfall: 4 })])] } }));
     expect(o.physical.notes).toContain(STOCK_NOTE);
-    expect(o.physical.shortages).toEqual([{ section: "Original contract", sku: "A", name: "Product A", remaining: 6, availableAccountWide: 2, shortfall: 4 }]);
+    expect(o.physical.shortages).toEqual([{ sections: ["Original contract"], sku: "A", name: "Product A", remaining: 6, availableAccountWide: 2, shortfall: 4 }]);
     expect(exId(o, "stock-shortages")?.detail).toMatch(/account-wide/);
   });
   it("a failed Cin7 read is an error state with an exception, not a silent zero", () => {
@@ -146,7 +146,7 @@ describe("C4 reconciliation - Cin7 invoices, not Xero", () => {
   it("lists each Sale with its claims, invoice numbers and reconciliation state", () => {
     const base = o.reconciliation.scopes[0];
     expect(base).toMatchObject({ saleNumber: "SO-27", saleLinked: true });
-    expect(base.summary).toMatchObject({ invoiceCount: 4, reconciledCount: 3, notPostedCount: 0, problemCount: 0, invoicedExVatCents: R(10_072_000) });
+    expect(base.summary).toMatchObject({ invoiceCount: 4, reconciledCount: 3, notPostedCount: 0, uncertainCount: 0, retryableCount: 0, invoicedExVatCents: R(10_072_000) });
     expect(base.claims.find((c) => c.claimNumber === "C05")).toMatchObject({ invoiceNumber: "INV-5", cin7Label: "Draft invoice created", reconciled: false });
     expect(o.reconciliation.scopes[1]).toMatchObject({ saleNumber: "SO-28", label: "V001 variation" });
     expect(o.reconciliation.scopes[1].summary.invoicedExVatCents).toBe(R(500_000));
@@ -240,5 +240,85 @@ describe("authorisation-based redaction (cost and margin)", () => {
   it("a negative estimated margin is a critical cost exception (administrators only)", () => {
     const o = buildProjectOverview(demoInput({ estimates: estimates({ revised: marginFigures(R(100), R(150)) }) }));
     expect(exId(o, "negative-margin")?.severity).toBe("critical");
+  });
+});
+
+// ── review round 1 (PR #151) ────────────────────────────────────────────────────────────────────────────
+
+describe("stock shortages count each SKU once across scopes", () => {
+  const two = (a: Parameters<typeof physRow>[1], b: Parameters<typeof physRow>[1]) => buildProjectOverview(demoInput({ physical: { state: "loaded", asOf: "t", sections: [
+    physSection([physRow("A", a)]), physSection([physRow("A", b)], { label: "V001 variation", scope: "VARIATION", saleNumber: "SO-28" })] } }));
+  it("the same SKU short in BOTH the original and a variation is ONE shortage, summed against the single account-wide stock", () => {
+    const o = two({ remaining: 6, available: 2, shortfall: 4 }, { remaining: 6, available: 2, shortfall: 4 });
+    expect(o.physical.totals?.shortSkuCount).toBe(1);
+    expect(o.physical.shortages).toEqual([{ sections: ["Original contract", "V001 variation"], sku: "A", name: "Product A", remaining: 12, availableAccountWide: 2, shortfall: 10 }]);
+    expect(exId(o, "stock-shortages")?.title).toBe("1 product short of free stock");
+    expect(exId(o, "stock-shortages")?.detail).toMatch(/A \(short 10, all scopes combined\)/);
+  });
+  it("a shortage that exists only in total (each scope fits the stock alone) is still found", () => {
+    const o = two({ remaining: 6, available: 8, shortfall: 0 }, { remaining: 6, available: 8, shortfall: 0 });
+    expect(o.physical.totals?.shortSkuCount).toBe(1);
+    expect(o.physical.shortages[0]).toMatchObject({ remaining: 12, availableAccountWide: 8, shortfall: 4 });
+  });
+  it("an unknown outstanding quantity in either scope means the SKU is not reported as short (unknown, not zero)", () => {
+    const o = two({ remaining: 6, available: 2, shortfall: 4 }, { remaining: null, shortfall: null, available: 2 });
+    expect(o.physical.shortages).toEqual([]);
+    expect(o.physical.totals?.shortSkuCount).toBe(0);
+  });
+  it("distinct SKUs are counted separately, and no stock reading means no shortage claim", () => {
+    const o = buildProjectOverview(demoInput({ physical: { state: "loaded", asOf: "t", sections: [physSection([physRow("A", { remaining: 5, available: 1, shortfall: 4 }), physRow("B", { remaining: 5, available: null, shortfall: null })])] } }));
+    expect(o.physical.shortages.map((s) => s.sku)).toEqual(["A"]);
+  });
+});
+
+describe("claims awaiting approval link sensibly", () => {
+  const pend = (ids: string[]) => {
+    const base = project({ id: "p", project_reference: "PRJ-T-7", original_contract_cents: R(1000) });
+    const stages = ids.map((id, n) => stage(`s${n}`, n + 1, `S${n}`, R(1000 / ids.length)));
+    const s = scope({ project: base, stages, claims: ids.map((id, n) => claim(id, n + 1, "READY_FOR_APPROVAL", R(1000 / ids.length))), lines: ids.map((id, n) => ({ claim_id: id, stage_id: `s${n}`, current_claim_cents: R(1000 / ids.length) })),
+      approvals: ids.map((id, n) => ({ claimId: id, requestId: `req-${n + 1}`, stage: "MANAGER", stageRole: "MANAGER", assignedToEmail: null })) });
+    return buildProjectOverview({ ...demoInput(), scopes: [s], unbilledApprovedVariations: [] });
+  };
+  it("several pending claims link to the Approvals list with the count, not arbitrarily to the first request", () => {
+    expect(exId(pend(["c1", "c2", "c3"]), "claims-awaiting-approval")).toMatchObject({ link: { kind: "href", href: "/approvals" }, linkLabel: "Open Approvals (3 pending)", title: "3 claims awaiting approval" });
+  });
+  it("exactly one pending claim links straight to its request", () => {
+    expect(exId(pend(["c1"]), "claims-awaiting-approval")).toMatchObject({ link: { kind: "href", href: "/approvals/req-1" }, linkLabel: "Open in Approvals" });
+  });
+});
+
+describe("a claim Cin7 refused is retryable, an uncertain one is not", () => {
+  const withClaim = (status: string, state: string) => {
+    const base = project({ id: "p", project_reference: "PRJ-T-8", original_contract_cents: R(1000) });
+    const s = scope({ project: base, stages: [stage("s1", 1, "A", R(1000))], events: [progress("s1", 0, 10_000)], claims: [claim("c1", 1, status, R(1000))], postings: [posting("c1", state, null, null, false, "Cin7 said no")] });
+    return buildProjectOverview({ ...demoInput(), scopes: [s], unbilledApprovedVariations: [] });
+  };
+  it("FAILED_CONFIRMED_NO_WRITE: an attention item that says nothing was created and posting can be tried again - not 'failed'", () => {
+    const o = withClaim("FAILED_CONFIRMED_NO_WRITE", "FAILED_CONFIRMED_NO_WRITE");
+    const e = exId(o, "posting-retryable-p");
+    expect(e).toMatchObject({ severity: "attention", title: "Original contract: 1 claim not created in Cin7 - can be retried" });
+    expect(e?.detail).toMatch(/Cin7 confirmed nothing was created, so posting can safely be tried again/);
+    expect(exId(o, "posting-problem-p")).toBeUndefined();
+    expect(o.reconciliation.scopes[0].claims[0].cin7Label).toBe("Not created in Cin7 - can be retried");
+    expect(o.reconciliation.scopes[0].summary).toMatchObject({ retryableCount: 1, uncertainCount: 0 });
+    expect(JSON.stringify(o.exceptions)).not.toMatch(/failed/i);
+  });
+  it("FAILED_UNCERTAIN stays critical and says to reconcile before retrying", () => {
+    const o = withClaim("FAILED_UNCERTAIN", "FAILED_UNCERTAIN");
+    expect(exId(o, "posting-problem-p")).toMatchObject({ severity: "critical" });
+    expect(exId(o, "posting-problem-p")?.detail).toMatch(/reconcile before anything is retried/);
+    expect(exId(o, "posting-retryable-p")).toBeUndefined();
+    expect(o.reconciliation.scopes[0].summary).toMatchObject({ uncertainCount: 1, retryableCount: 0 });
+  });
+});
+
+describe("invoice status wording is honest about being recorded, not live", () => {
+  it("the Cin7 note says the status is last recorded and not a live read", () => {
+    expect(CIN7_NOTE).toMatch(/last recorded/);
+    expect(CIN7_NOTE).toMatch(/not a live read of Cin7/);
+  });
+  it("a Cin7 read with no timestamp keeps asOf unknown rather than inventing one", () => {
+    const o = buildProjectOverview(demoInput({ physical: { state: "loaded", asOf: null, sections: [physSection([physRow("A")])] } }));
+    expect(o.physical.asOf).toBeNull();
   });
 });

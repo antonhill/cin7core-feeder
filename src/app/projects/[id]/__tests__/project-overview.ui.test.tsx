@@ -6,7 +6,7 @@ import { getProjectOverviewDataAction } from "../../overview-actions";
 import { getPhysicalStatusAction } from "../../physical-actions";
 import { formatCents } from "@/lib/projects/project-view";
 import { marginFigures } from "@/lib/projects/margin-figures";
-import { R, demoInput, physRow, project, scope } from "@/lib/projects/__tests__/overview-fixtures";
+import { R, claim, demoInput, physRow, posting, project, scope, stage } from "@/lib/projects/__tests__/overview-fixtures";
 
 // The REAL component and the REAL view-model; only the two server actions are replaced.
 vi.mock("../../overview-actions", () => ({ getProjectOverviewDataAction: vi.fn() }));
@@ -149,5 +149,51 @@ describe("Executive overview - access, empty and error states", () => {
     overviewAction.mockResolvedValue({ ok: true, data: { scopes: [i.scopes[1]], unbilledApprovedVariations: [], deliveries: null, estimates: null, viewer: { isAdmin: true } } });
     renderIt();
     expect((await screen.findByTestId("overview-error")).textContent).toMatch(/exactly one original/);
+  });
+});
+
+describe("review round 1 (PR #151) - rendered behaviour", () => {
+  beforeEach(() => { overviewAction.mockResolvedValue(dataOf()); });
+
+  it("when Cin7's read carries no timestamp the screen says 'Not read', never a made-up time", async () => {
+    physicalAction.mockResolvedValue({ ok: true, data: { sections: [] } } as never);
+    renderIt();
+    await screen.findByTestId("overview");
+    fireEvent.click(screen.getByRole("button", { name: "Read fulfilment from Cin7" }));
+    const asOf = await screen.findByTestId("physical-asof");
+    expect(asOf.textContent).toBe("As of: Not read");
+    expect(asOf.textContent).not.toMatch(/UTC/);
+  });
+
+  it("a fulfilment read is dropped when the project's commercial data changes, so shipped figures never silently disagree with newer billing", async () => {
+    physicalAction.mockResolvedValue({ ok: true, data: { sections: [{ label: "Original contract", scope: "BASE", linked: true, saleNumber: "SO-27", scopeBlockers: [], exceptions: [], asOf: "2026-11-01T16:00:00Z", rows: [physRow("NQ-A")] }] } } as never);
+    const { rerender } = renderIt({ refreshKey: "k1" });
+    await screen.findByTestId("overview");
+    fireEvent.click(screen.getByRole("button", { name: "Read fulfilment from Cin7" }));
+    await screen.findByTestId("physical-totals");
+    rerender(<ProjectOverview projectId="p-base" refreshKey="k2" onOpenTab={vi.fn()} />);
+    await waitFor(() => expect(screen.queryByTestId("physical-totals")).toBeNull());
+    expect(screen.getByTestId("physical-not-loaded")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Read fulfilment from Cin7" })).toBeTruthy();
+  });
+
+  it("labels the Cin7 invoice status as last recorded, and the note explains it is not a live read", async () => {
+    renderIt();
+    await screen.findByTestId("overview");
+    expect(screen.getAllByText("Cin7 invoice status (last recorded)").length).toBeGreaterThan(0);
+    expect(screen.getByText(/not a live read of Cin7/)).toBeTruthy();
+  });
+
+  it("a claim Cin7 refused reads 'can be retried', not 'failed'", async () => {
+    const i = demoInput();
+    const base = project({ id: "p-base", project_reference: "PRJ-T-0001", original_contract_cents: R(1000) });
+    const s = scope({ project: base, stages: [stage("s1", 1, "All", R(1000))], claims: [claim("c1", 1, "FAILED_CONFIRMED_NO_WRITE", R(1000))], postings: [posting("c1", "FAILED_CONFIRMED_NO_WRITE", null, null, false)] });
+    overviewAction.mockResolvedValue({ ok: true, data: { scopes: [s], unbilledApprovedVariations: [], deliveries: i.deliveries, estimates: null, viewer: i.viewer } });
+    renderIt();
+    await screen.findByTestId("overview");
+    expect(within(screen.getByTestId("exceptions")).getByText(/not created in Cin7 - can be retried/)).toBeTruthy();
+    expect(screen.getAllByText("Not created in Cin7 - can be retried").length).toBeGreaterThan(0);
+    expect(screen.getByText(/1 not created in Cin7 \(can be retried\)/)).toBeTruthy();
+    expect(screen.queryByText(/failed/i)).toBeNull();
   });
 });

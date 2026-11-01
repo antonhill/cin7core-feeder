@@ -48,7 +48,7 @@ export interface PhysicalSectionInput {
 export type PhysicalLoad =
   | { state: "not_loaded" }
   | { state: "error"; error: string }
-  | { state: "loaded"; asOf: string; sections: PhysicalSectionInput[] };
+  | { state: "loaded"; /** When Cin7 was read; null if the read did not say. Never invented. */ asOf: string | null; sections: PhysicalSectionInput[] };
 export interface DeliverySummaryInput { total: number; dispatched: number; inProgress: number; cancelled: number; latestActivityAt: string | null }
 
 export interface OverviewInput {
@@ -97,10 +97,11 @@ export interface PhysicalOverviewRow {
 export interface PhysicalOverview {
   state: "not_loaded" | "error" | "loaded";
   error?: string;
-  asOf?: string;
+  asOf?: string | null;
   sections: Array<{ label: string; scope: "BASE" | "VARIATION"; linked: boolean; saleNumber: string | null; rows: PhysicalOverviewRow[] }>;
   totals: { orderedUnits: number | null; shippedUnits: number | null; remainingUnits: number | null; skuCount: number; unknownRowCount: number; shortSkuCount: number } | null;
-  shortages: Array<{ section: string; sku: string; name: string; remaining: number; availableAccountWide: number | null; shortfall: number }>;
+  /** One entry per SKU across ALL scopes: needs are summed and compared once with the single account-wide stock figure. */
+  shortages: Array<{ sections: string[]; sku: string; name: string; remaining: number; availableAccountWide: number; shortfall: number }>;
   /** Deliveries recorded in the Toolbox delivery register; null = could not be read. */
   deliveries: DeliverySummaryInput | null;
   notes: string[];
@@ -112,7 +113,7 @@ export interface ReconClaim {
 export interface ReconScope {
   projectId: string; scope: "BASE" | "VARIATION"; label: string; saleNumber: string | null; saleLinked: boolean;
   claims: ReconClaim[];
-  summary: { invoiceCount: number; reconciledCount: number; notPostedCount: number; problemCount: number; invoicedExVatCents: number };
+  summary: { invoiceCount: number; reconciledCount: number; notPostedCount: number; uncertainCount: number; retryableCount: number; invoicedExVatCents: number };
 }
 export interface ExceptionItem {
   id: string;
@@ -135,7 +136,7 @@ export interface ProjectOverview {
 }
 
 export const XERO_NOTE = "Xero bank and payment reconciliation is not connected or verified in this view. A Cin7 invoice that is reconciled here means the Toolbox read the invoice back from Cin7 and it matches the approved claim; it does not mean the customer has paid.";
-export const CIN7_NOTE = "Cin7 invoice reconciliation: the Toolbox compares each Cin7 invoice with the approved claim it was raised for. Draft invoices are shown as drafts.";
+export const CIN7_NOTE = "Cin7 invoice reconciliation: the Toolbox compares each Cin7 invoice with the approved claim it was raised for. The invoice status shown (draft, authorised) is the status last recorded when the Toolbox posted or reconciled the invoice; it is not a live read of Cin7, and an invoice can be authorised in Cin7 afterwards.";
 export const STOCK_NOTE = "Stock shown is Cin7 stock across the whole account. It is not reserved for this project.";
 export const PICK_PACK_NOTE = "Shipped quantities come from fulfilments Cin7 reports as shipped. Picked and packed quantities that are not yet shipped are not part of this read.";
 
@@ -160,7 +161,7 @@ function reconScope(s: OverviewScopeInput): ReconScope {
   const relevant = s.view.claims.filter((c) => c.reserves || c.status === "FAILED_CONFIRMED_NO_WRITE");
   const claims: ReconClaim[] = relevant.map((c) => ({
     claimNumber: claimLabel(c), claimStatus: c.status, exVatCents: c.subtotal_cents,
-    cin7Kind: c.cin7Status.kind, cin7Label: c.cin7Status.label, invoiceNumber: c.cin7Status.invoiceNumber, reconciled: c.cin7Status.reconciled,
+    cin7Kind: c.cin7Status.kind, cin7Label: c.cin7Status.kind === "FAILED" ? "Not created in Cin7 - can be retried" : c.cin7Status.label, invoiceNumber: c.cin7Status.invoiceNumber, reconciled: c.cin7Status.reconciled,
   }));
   const live = claims.filter((c) => LIVE_INVOICE.has(c.cin7Kind));
   return {
@@ -168,7 +169,9 @@ function reconScope(s: OverviewScopeInput): ReconScope {
     summary: {
       invoiceCount: live.length, reconciledCount: live.filter((c) => c.reconciled).length,
       notPostedCount: claims.filter((c) => c.cin7Kind === "NOT_POSTED" || c.cin7Kind === "POSTING").length,
-      problemCount: claims.filter((c) => c.cin7Kind === "UNCERTAIN" || c.cin7Kind === "FAILED").length,
+      // UNCERTAIN: Cin7's outcome is unknown, so it must be reconciled before anything is retried. FAILED: Cin7 confirmed nothing was created; posting may be tried again.
+      uncertainCount: claims.filter((c) => c.cin7Kind === "UNCERTAIN").length,
+      retryableCount: claims.filter((c) => c.cin7Kind === "FAILED").length,
       invoicedExVatCents: live.reduce((n, c) => n + c.exVatCents, 0),
     },
   };
@@ -188,9 +191,20 @@ function physicalOverview(i: OverviewInput): PhysicalOverview {
     })),
   }));
   const rows = sections.flatMap((s) => s.rows);
-  const shortages = sections.flatMap((s) => s.rows.filter((r) => r.shortfall !== null && r.shortfall > 0 && r.remaining !== null).map((r) => ({
-    section: s.label, sku: r.sku, name: r.name, remaining: r.remaining as number, availableAccountWide: r.availableAccountWide, shortfall: r.shortfall as number,
-  })));
+  // A SKU can be on the original Sale AND on a variation Sale, but Cin7 stock is ONE account-wide figure. Summing each scope's own shortfall would count the
+  // same stock twice (and miss a shortage that only exists in total), so needs are summed per SKU and compared ONCE. Unknown stays unknown: if any scope's
+  // outstanding quantity or the stock is unreadable, that SKU is not reported as short. If scopes disagree on stock, the lower (safer) figure is used.
+  const needs = new Map<string, { name: string; sections: string[]; remaining: number; unknown: boolean; available: number | null }>();
+  for (const sec of sections) for (const r of sec.rows) {
+    const n = needs.get(r.sku) ?? { name: r.name, sections: [], remaining: 0, unknown: false, available: null };
+    n.sections.push(sec.label);
+    if (r.remaining === null) n.unknown = true; else n.remaining += r.remaining;
+    if (r.availableAccountWide !== null) n.available = n.available === null ? r.availableAccountWide : Math.min(n.available, r.availableAccountWide);
+    needs.set(r.sku, n);
+  }
+  const shortages = [...needs.entries()]
+    .filter(([, n]) => !n.unknown && n.available !== null && n.remaining > n.available)
+    .map(([sku, n]) => ({ sections: n.sections, sku, name: n.name, remaining: n.remaining, availableAccountWide: n.available as number, shortfall: n.remaining - (n.available as number) }));
   return {
     state: "loaded", asOf: i.physical.asOf, sections,
     totals: {
@@ -253,19 +267,23 @@ export function buildProjectOverview(i: OverviewInput): ProjectOverview {
   const add = (e: ExceptionItem) => ex.push(e);
   const pending = allClaims.filter(({ claim }) => claim.status === "READY_FOR_APPROVAL");
   if (pending.length) {
-    const first = pending.find(({ claim }) => claim.approval)?.claim.approval;
+    // One pending claim links straight to its request; several link to the Approvals list (not arbitrarily to the first).
+    const one = pending.length === 1 ? pending[0].claim.approval : null;
     add({
       id: "claims-awaiting-approval", severity: "attention", area: "Claims", title: `${pending.length} claim${pending.length === 1 ? "" : "s"} awaiting approval`,
       detail: pending.map(({ claim }) => claim.claim_number).join(", "),
-      link: first ? { kind: "href", href: `/approvals/${first.requestId}` } : { kind: "tab", tab: "claims" }, linkLabel: first ? "Open in Approvals" : "Open claims",
+      link: one ? { kind: "href", href: `/approvals/${one.requestId}` } : pending.length > 1 ? { kind: "href", href: "/approvals" } : { kind: "tab", tab: "claims" },
+      linkLabel: one ? "Open in Approvals" : pending.length > 1 ? `Open Approvals (${pending.length} pending)` : "Open claims",
     });
   }
   if (outstanding.length) {
     add({ id: "approved-not-posted", severity: "attention", area: "Cin7", title: `${outstanding.length} approved claim${outstanding.length === 1 ? "" : "s"} not yet invoiced in Cin7`, detail: outstanding.map(({ claim }) => claim.claim_number).join(", "), link: { kind: "tab", tab: "claims" }, linkLabel: "Open claims" });
   }
   for (const r of recon) {
-    const bad = r.claims.filter((cl) => cl.cin7Kind === "UNCERTAIN" || cl.cin7Kind === "FAILED");
-    if (bad.length) add({ id: `posting-problem-${r.projectId}`, severity: "critical", area: "Cin7", title: `${r.label}: ${bad.length} Cin7 posting${bad.length === 1 ? "" : "s"} failed or uncertain`, detail: bad.map((x) => `${x.claimNumber} (${x.cin7Label})`).join(", "), link: { kind: "tab", tab: "claims" }, linkLabel: "Reconcile in claims" });
+    const uncertain = r.claims.filter((cl) => cl.cin7Kind === "UNCERTAIN");
+    if (uncertain.length) add({ id: `posting-problem-${r.projectId}`, severity: "critical", area: "Cin7", title: `${r.label}: ${uncertain.length} Cin7 posting${uncertain.length === 1 ? "" : "s"} with an uncertain outcome`, detail: `${uncertain.map((x) => x.claimNumber).join(", ")}. Cin7 did not confirm the result: reconcile before anything is retried.`, link: { kind: "tab", tab: "claims" }, linkLabel: "Reconcile in claims" });
+    const retryable = r.claims.filter((cl) => cl.cin7Kind === "FAILED");
+    if (retryable.length) add({ id: `posting-retryable-${r.projectId}`, severity: "attention", area: "Cin7", title: `${r.label}: ${retryable.length} claim${retryable.length === 1 ? "" : "s"} not created in Cin7 - can be retried`, detail: `${retryable.map((x) => x.claimNumber).join(", ")}. Cin7 confirmed nothing was created, so posting can safely be tried again.`, link: { kind: "tab", tab: "claims" }, linkLabel: "Open claims" });
     const unrec = r.claims.filter((cl) => LIVE_INVOICE.has(cl.cin7Kind) && !cl.reconciled);
     if (unrec.length) add({ id: `unreconciled-${r.projectId}`, severity: "attention", area: "Cin7", title: `${r.label}: ${unrec.length} Cin7 invoice${unrec.length === 1 ? "" : "s"} created but not reconciled`, detail: unrec.map((x) => x.invoiceNumber ?? x.claimNumber).join(", "), link: { kind: "tab", tab: "claims" }, linkLabel: "Reconcile with Cin7" });
     if (!r.saleLinked && r.claims.length > 0) add({ id: `no-sale-${r.projectId}`, severity: "attention", area: "Cin7", title: `${r.label}: no Cin7 Sale is linked`, detail: "Claims exist but no Advanced Sale is linked to this scope.", link: { kind: "tab", tab: r.scope === "BASE" ? "claims" : "variations" }, linkLabel: "Open Cin7 Sale" });
@@ -291,7 +309,7 @@ export function buildProjectOverview(i: OverviewInput): ProjectOverview {
     const t = physical.totals;
     if (t.remainingUnits !== null && t.remainingUnits > 0) add({ id: "outstanding-delivery", severity: "attention", area: "Delivery", title: `${t.remainingUnits} unit${t.remainingUnits === 1 ? "" : "s"} still to ship`, detail: `${t.shippedUnits ?? "Unknown"} of ${t.orderedUnits ?? "unknown"} shipped.`, link: { kind: "tab", tab: "deliveries" }, linkLabel: "Open deliveries" });
     if (t.unknownRowCount > 0) add({ id: "physical-unknown", severity: "attention", area: "Delivery", title: `${t.unknownRowCount} product line${t.unknownRowCount === 1 ? "" : "s"} could not be read`, detail: "Their shipped or remaining quantity is unknown, not zero.", link: { kind: "tab", tab: "physical" }, linkLabel: "Open Products & Stock" });
-    if (physical.shortages.length) add({ id: "stock-shortages", severity: "attention", area: "Stock", title: `${physical.shortages.length} product${physical.shortages.length === 1 ? "" : "s"} short of free stock`, detail: physical.shortages.slice(0, 5).map((s) => `${s.sku} (short ${s.shortfall})`).join(", ") + " - account-wide stock, an estimate.", link: { kind: "tab", tab: "physical" }, linkLabel: "Open Products & Stock" });
+    if (physical.shortages.length) add({ id: "stock-shortages", severity: "attention", area: "Stock", title: `${physical.shortages.length} product${physical.shortages.length === 1 ? "" : "s"} short of free stock`, detail: physical.shortages.slice(0, 5).map((s) => `${s.sku} (short ${s.shortfall}${s.sections.length > 1 ? ", all scopes combined" : ""})`).join(", ") + " - account-wide stock, an estimate.", link: { kind: "tab", tab: "physical" }, linkLabel: "Open Products & Stock" });
   }
   if (i.deliveries && i.deliveries.inProgress > 0) add({ id: "deliveries-in-progress", severity: "info", area: "Delivery", title: `${i.deliveries.inProgress} deliver${i.deliveries.inProgress === 1 ? "y" : "ies"} planned or loading`, detail: "Not yet dispatched.", link: { kind: "tab", tab: "deliveries" }, linkLabel: "Open deliveries" });
 

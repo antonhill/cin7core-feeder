@@ -61,7 +61,11 @@ function Section({ id, title, subtitle, children }: { id: string; title: string;
 
 export function ProjectOverview({ projectId, refreshKey, onOpenTab }: { projectId: string; refreshKey: string; onOpenTab: (tab: OverviewTab) => void }) {
   const [res, setRes] = useState<OverviewDataResult | null>(null);
-  const [phys, setPhys] = useState<PhysicalLoad>({ state: "not_loaded" });
+  // A Cin7 fulfilment read belongs to the project state it was made against: when the commercial data changes (refreshKey) it is no longer current, so it is
+  // dropped back to "not read" rather than left beside newer commercial figures it may disagree with.
+  const [physRead, setPhysRead] = useState<{ key: string; load: PhysicalLoad } | null>(null);
+  const phys = useMemo<PhysicalLoad>(() => (physRead && physRead.key === refreshKey ? physRead.load : { state: "not_loaded" }), [physRead, refreshKey]);
+  const setPhys = (load: PhysicalLoad) => setPhysRead({ key: refreshKey, load });
   const [physBusy, setPhysBusy] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
@@ -76,7 +80,7 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab }: { projectI
     try {
       const r = await getPhysicalStatusAction(projectId);
       setPhys(r.ok && r.data
-        ? { state: "loaded", asOf: r.data.sections[0]?.asOf ?? new Date().toISOString(), sections: r.data.sections.map((s) => ({ label: s.label, scope: s.scope, linked: s.linked, saleNumber: s.saleNumber, rows: s.rows, exceptions: s.exceptions, scopeBlockers: s.scopeBlockers })) }
+        ? { state: "loaded", asOf: r.data.sections[0]?.asOf ?? null, sections: r.data.sections.map((s) => ({ label: s.label, scope: s.scope, linked: s.linked, saleNumber: s.saleNumber, rows: s.rows, exceptions: s.exceptions, scopeBlockers: s.scopeBlockers })) }
         : { state: "error", error: r.error ?? "Cin7 fulfilment could not be read." });
     } catch {
       setPhys({ state: "error", error: "Cin7 fulfilment could not be read." });
@@ -165,7 +169,7 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab }: { projectI
       <Section id="ov-physical" title="Physical fulfilment" subtitle="What Cin7 holds for the Sale, read only when you ask. Physical delivery is separate from billing.">
         <div className="flex flex-wrap items-center gap-3">
           <Button size="sm" variant="secondary" loading={physBusy} onClick={readFulfilment}>{o.physical.state === "loaded" ? "Refresh from Cin7" : "Read fulfilment from Cin7"}</Button>
-          {o.physical.asOf && <span className="text-xs text-slate-500">As of {stamp(o.physical.asOf)}</span>}
+          {o.physical.state === "loaded" && <span className="text-xs text-slate-500" data-testid="physical-asof">{o.physical.asOf ? `As of ${stamp(o.physical.asOf)}` : "As of: Not read"}</span>}
         </div>
         {o.physical.state === "error" && <Alert tone="warning">{o.physical.error}</Alert>}
         {o.physical.state === "not_loaded" && <p className="text-sm text-slate-600" data-testid="physical-not-loaded">Not read yet. Quantities are unknown until Cin7 is read; they are not zero.</p>}
@@ -206,7 +210,7 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab }: { projectI
             {r.claims.length === 0 ? <p className="mt-2 text-sm text-slate-500">No claims have been raised against this Sale yet.</p> : (
               <div className="mt-2">
                 <Table>
-                  <THead><TR><TH>Claim</TH><TH align="right">Amount (ex VAT)</TH><TH>Cin7 invoice</TH><TH>Cin7 status</TH><TH>Toolbox reconciliation</TH></TR></THead>
+                  <THead><TR><TH>Claim</TH><TH align="right">Amount (ex VAT)</TH><TH>Cin7 invoice</TH><TH>Cin7 invoice status (last recorded)</TH><TH>Toolbox reconciliation</TH></TR></THead>
                   <TBody>
                     {r.claims.map((cl) => (
                       <TR key={cl.claimNumber}>
@@ -217,7 +221,7 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab }: { projectI
                     ))}
                   </TBody>
                 </Table>
-                <p className="mt-2 text-xs text-slate-500">{r.summary.invoiceCount} Cin7 invoice{r.summary.invoiceCount === 1 ? "" : "s"} ({formatCents(r.summary.invoicedExVatCents)} ex VAT), {r.summary.reconciledCount} reconciled{r.summary.notPostedCount ? `, ${r.summary.notPostedCount} approved claim${r.summary.notPostedCount === 1 ? "" : "s"} not yet invoiced` : ""}{r.summary.problemCount ? `, ${r.summary.problemCount} failed or uncertain` : ""}.</p>
+                <p className="mt-2 text-xs text-slate-500">{r.summary.invoiceCount} Cin7 invoice{r.summary.invoiceCount === 1 ? "" : "s"} ({formatCents(r.summary.invoicedExVatCents)} ex VAT), {r.summary.reconciledCount} reconciled{r.summary.notPostedCount ? `, ${r.summary.notPostedCount} approved claim${r.summary.notPostedCount === 1 ? "" : "s"} not yet invoiced` : ""}{r.summary.uncertainCount ? `, ${r.summary.uncertainCount} with an uncertain outcome` : ""}{r.summary.retryableCount ? `, ${r.summary.retryableCount} not created in Cin7 (can be retried)` : ""}.</p>
               </div>
             )}
           </Panel>
