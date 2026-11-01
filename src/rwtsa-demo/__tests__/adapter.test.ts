@@ -252,10 +252,10 @@ describe("AT-8: duplicate, orphan and rule findings (value-free)", () => {
       const pos = sheet(wb, "ImportPOs");
       pos.getRow(2).getCell(colOf(pos, "ETA stores")).value = "next week";
       const q = sheet(wb, "Quotes");
-      q.getRow(2).getCell(colOf(q, "Status")).value = "pending";
+      q.getRow(2).getCell(colOf(q, "Value")).value = "abc";
     });
     const inv = codes(r, "invalid_cell").map((f) => `${f.tab}:${f.field}:${f.reason}:${f.count}`).sort();
-    expect(inv).toEqual(["ImportPOs:etaStores:date_format:1", "Quotes:status:enum_value:1", "Stock:jhb:number_format:2"]);
+    expect(inv).toEqual(["ImportPOs:etaStores:date_format:1", "Quotes:value:number_format:1", "Stock:jhb:number_format:2"]);
     expect(r.ok).toBe(false);
   });
 

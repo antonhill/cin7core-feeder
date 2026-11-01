@@ -109,14 +109,20 @@ export const SCENARIOS: readonly ScenarioMeta[] = [
     title: "CRM and quote conversion",
     summary: "Quote conversion by representative, customer, product and period; win/loss by reason.",
     capabilities: [
-      { name: "Customers, contacts, representatives and quotes (source records)", layer: "CIN7 CORE", verify: true },
-      { name: "Conversion by count and by value; win/loss by reason", layer: "TOOLBOX" },
+      { name: "Customers, contacts and sales representatives (source records)", layer: "CIN7 CORE", verify: true },
+      { name: "Native quotations and quote-to-sales-order conversion", layer: "CIN7 CORE", verify: true },
+      { name: "Conversion by count and by value; by representative, customer, product and period", layer: "TOOLBOX" },
+      { name: "Win/loss reporting by reason; original sales-order references kept", layer: "TOOLBOX" },
     ],
     assumptions: [
-      { status: "Brief", text: "Conversion = won / closed by count and by value; every lost quote needs a reason; the original sales-order number is kept as a reference." },
-      { status: "Open", text: "Whether the Quotes tab carries a product dimension is unconfirmed until the workbook is inspected locally." },
+      { status: "Brief", text: "Closed = won + lost. Count conversion = won / closed; value conversion = won value / closed value. Open and unclassified quotes are never in a denominator. With nothing closed the rate is N/A, not 0%." },
+      { status: "Brief", text: "Every lost quote needs a reason and every won quote keeps its original sales-order reference. A missing one is reported and the analysis is marked incomplete; nothing is defaulted or generated." },
+      { status: "Open", text: "Status text is normalised from an explicit table; any other text is UNCLASSIFIED and is never treated as open. The real workbook's status vocabulary is unknown until it is inspected locally." },
+      { status: "Open", text: "Periods use the quote date only: the workbook has no won or lost date, so a quote is attributed to the period it was quoted in." },
+      { status: "Open", text: "Whether the Quotes tab carries a product, and whether a quote can name several, is unconfirmed until the workbook is inspected locally. Product value is withheld for multi-product quotes rather than split." },
+      { status: "Open", text: "The Cin7 Core native quotation and sales-order conversion must be verified independently in the dedicated demo instance. This demonstration is not synchronised with Cin7 Core and writes nothing to it." },
     ],
-    engine: { name: "Quote conversion analytics engine", implemented: false },
+    engine: { name: "Quote conversion analytics engine", implemented: true },
   },
 ];
 
