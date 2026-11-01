@@ -179,7 +179,7 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
                     ))}
                   </dl>
                   <div className="mt-3 flex gap-2">
-                    <Button loading={working} onClick={() => after(() => postClaimToCin7Action(projectId, c.id, POST_CONFIRMATION_TEXT, { lines: selectionToQuantities(prep[c.id]?.data?.proposal.lines ?? [], selOf(c.id)), earlyReason: early[c.id] })).then(() => setConfirming(null))}>{POST_CONFIRMATION_TEXT}</Button>
+                    <Button loading={working} disabled={!prep[c.id]?.data} onClick={() => after(() => postClaimToCin7Action(projectId, c.id, POST_CONFIRMATION_TEXT, { lines: selectionToQuantities(prep[c.id]?.data?.proposal.lines ?? [], selOf(c.id)), earlyReason: early[c.id] })).then(() => setConfirming(null))}>{POST_CONFIRMATION_TEXT}</Button>
                     <Button variant="ghost" onClick={() => setConfirming(null)}>Cancel</Button>
                   </div>
                 </div>

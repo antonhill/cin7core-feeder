@@ -78,3 +78,18 @@ describe("claim selection helpers", () => {
     expect(() => assertSelectionHonoured(["a"], [{ stageId: "a", stageName: "A" }])).not.toThrow();
   });
 });
+
+describe("recalculating a stale draft keeps its lenient behaviour (review finding)", () => {
+  it("a stage that has gone to zero drops out of the recalculated draft instead of blocking it", async () => {
+    const w = await world();
+    const dep = w.stage("Deposit / Commencement"); const man = w.stage("Manufacturing");
+    const d = await createClaimDraft(w.db as never, ORG, "pm@a", w.projectId, [dep.id, man.id]);
+    // Manufacturing is committed elsewhere, so only the deposit remains claimable
+    const other = await createClaimDraft(w.db as never, ORG, "pm@a", w.projectId, [man.id]);
+    await submitClaimForApproval(w.db as never, ORG, w.projectId, other.claimId);
+    await approveClaim(w.db as never, ORG, "mgr@a", w.projectId, other.claimId);
+    const { recalculateStaleDraft } = await import("../project-store");
+    const r = await recalculateStaleDraft(w.db as never, ORG, "pm@a", w.projectId, d.claimId);
+    expect(w.lines(r.newClaimId).map((l) => l.stage_id)).toEqual([dep.id]);
+  });
+});
