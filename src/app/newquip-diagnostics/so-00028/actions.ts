@@ -1,15 +1,15 @@
 "use server";
 
 // TEMPORARY (UAT-027): one read-only look at the existing Cin7 Sale SO-00028. Takes NO arguments - the Sale, organisation and Cin7 instance are pinned
-// in code. Owner/admin only. Exactly one Cin7 GET (cin7Request, maxRetries 0); no Cin7 write, no database write, no audit payload, no retry, no reconciliation.
+// in code. Owner/admin only. Exactly one Cin7 GET (fetchSaleDetailOnce: no retries); no Cin7 write, no database write, no audit payload, no retry, no reconciliation.
 // Credentials are loaded and decrypted by the existing server-side loader and never leave this function. This file may export ONLY async functions.
 
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { createServiceRoleClient } from "@/supabase/server";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
-import { cin7Request } from "@/cin7/http";
+import { fetchSaleDetailOnce } from "@/cin7/sales";
 import { singleActiveInstanceId } from "@/lib/projects/cin7-adapter";
-import { INSPECTED_SALE, inspectSale, type InspectableSale, type SaleInspection } from "@/lib/projects/sale-inspection";
+import { INSPECTED_SALE, inspectSale, type SaleInspection } from "@/lib/projects/sale-inspection";
 
 /** A refusal this diagnostic raises itself: the only messages shown to the browser verbatim. Anything else is logged server-side and shown generically. */
 class Refusal extends Error {}
@@ -26,8 +26,8 @@ export async function inspectSaleSo00028Action(): Promise<{ ok: boolean; error?:
     if (known.error) throw new Refusal("The Sale could not be checked against the creation records.");
     if ((known.data ?? []).length !== 1) throw new Refusal("The pinned Sale is not recorded as created by this organisation.");
 
-    // The one Cin7 GET: the same GET /sale?ID= the Toolbox sale reader makes, with maxRetries 0 so a rate-limit or network error is reported, never retried.
-    const detail = await cin7Request<InspectableSale>(await loadCin7Credentials(db, orgId, INSPECTED_SALE.instanceId), "/sale", { query: { ID: INSPECTED_SALE.saleId }, maxRetries: 0 });
+    // The one Cin7 GET (/sale?ID=), with no retries: a rate-limit or network error is reported, never repeated.
+    const detail = await fetchSaleDetailOnce(await loadCin7Credentials(db, orgId, INSPECTED_SALE.instanceId), INSPECTED_SALE.saleId);
     if (detail.ID !== INSPECTED_SALE.saleId) throw new Refusal("Cin7 returned a different Sale than the pinned one; nothing is shown.");
     return { ok: true, data: inspectSale(detail) };
   } catch (e) {

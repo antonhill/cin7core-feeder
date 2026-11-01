@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { inspectSaleSo00028Action } from "../actions";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { loadCin7Credentials } from "@/cin7/load-credentials";
-import { cin7Request } from "@/cin7/http";
+import { fetchSaleDetail, fetchSaleDetailOnce } from "@/cin7/sales";
 import { singleActiveInstanceId } from "@/lib/projects/cin7-adapter";
 import { INSPECTED_SALE, inspectSale } from "@/lib/projects/sale-inspection";
 
@@ -21,7 +21,7 @@ const query = (): unknown => new Proxy({}, {
 vi.mock("@/lib/require-org-admin", () => ({ requireOrgAdmin: vi.fn() }));
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: vi.fn(() => ({ from: (t: string) => { dbCalls.push(`from:${t}`); return query(); } })) }));
 vi.mock("@/cin7/load-credentials", () => ({ loadCin7Credentials: vi.fn(() => Promise.resolve({ name: "n", accountId: "a", applicationKey: "SECRET-KEY-VALUE", baseUrl: "https://x" })) }));
-vi.mock("@/cin7/http", () => ({ cin7Request: vi.fn() }));
+vi.mock("@/cin7/sales", () => ({ fetchSaleDetailOnce: vi.fn(), fetchSaleDetail: vi.fn() }));
 vi.mock("@/lib/projects/cin7-adapter", () => ({ singleActiveInstanceId: vi.fn() }));
 
 // The shape of an Advanced Sale with ONE commercial charge, no product lines and an empty fulfilment container.
@@ -40,7 +40,7 @@ beforeEach(() => {
   creationRows = [{ id: "c1" }];
   vi.mocked(requireOrgAdmin).mockResolvedValue({ orgId: INSPECTED_SALE.orgId, userId: "u" } as never);
   vi.mocked(singleActiveInstanceId).mockResolvedValue(INSPECTED_SALE.instanceId);
-  vi.mocked(cin7Request).mockResolvedValue(emptyContainerSale() as never);
+  vi.mocked(fetchSaleDetailOnce).mockResolvedValue(emptyContainerSale() as never);
 });
 
 describe("access: refused before any Cin7 call", () => {
@@ -50,36 +50,36 @@ describe("access: refused before any Cin7 call", () => {
     expect(r.ok).toBe(false);
     expect(r.data).toBeUndefined();
     expect(loadCin7Credentials).not.toHaveBeenCalled();
-    expect(cin7Request).not.toHaveBeenCalled();
+    expect(fetchSaleDetailOnce).not.toHaveBeenCalled();
   });
   it("another organisation is refused", async () => {
     vi.mocked(requireOrgAdmin).mockResolvedValue({ orgId: "00000000-0000-0000-0000-000000000000", userId: "u" } as never);
     const r = await inspectSaleSo00028Action();
     expect(r).toMatchObject({ ok: false });
-    expect(cin7Request).not.toHaveBeenCalled();
+    expect(fetchSaleDetailOnce).not.toHaveBeenCalled();
   });
   it("another Cin7 instance is refused", async () => {
     vi.mocked(singleActiveInstanceId).mockResolvedValue("11111111-1111-1111-1111-111111111111");
     expect((await inspectSaleSo00028Action()).ok).toBe(false);
-    expect(cin7Request).not.toHaveBeenCalled();
+    expect(fetchSaleDetailOnce).not.toHaveBeenCalled();
   });
   it("a Sale the Toolbox did not record creating for the organisation is refused", async () => {
     creationRows = [];
     expect((await inspectSaleSo00028Action()).ok).toBe(false);
-    expect(cin7Request).not.toHaveBeenCalled();
+    expect(fetchSaleDetailOnce).not.toHaveBeenCalled();
   });
   it("takes no argument, so no other Sale ID can be requested", () => {
     expect(inspectSaleSo00028Action.length).toBe(0);
   });
   it("does not echo unexpected error text to the browser", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    vi.mocked(cin7Request).mockRejectedValue(new Error("Cin7 said: Authorization header was Bearer abc123"));
+    vi.mocked(fetchSaleDetailOnce).mockRejectedValue(new Error("Cin7 said: Authorization header was Bearer abc123"));
     const r = await inspectSaleSo00028Action();
     expect(r.ok).toBe(false);
     expect(JSON.stringify(r)).not.toContain("abc123");
   });
   it("shows nothing if Cin7 answers with a different Sale", async () => {
-    vi.mocked(cin7Request).mockResolvedValue({ ...emptyContainerSale(), ID: "another-sale-id" } as never);
+    vi.mocked(fetchSaleDetailOnce).mockResolvedValue({ ...emptyContainerSale(), ID: "another-sale-id" } as never);
     const r = await inspectSaleSo00028Action();
     expect(r.ok).toBe(false);
     expect(r.data).toBeUndefined();
@@ -90,20 +90,20 @@ describe("the one read-only operation", () => {
   it("makes exactly one GET (no retries), for the pinned Sale ID, and only SELECTs on the database", async () => {
     const r = await inspectSaleSo00028Action();
     expect(r.ok).toBe(true);
-    expect(cin7Request).toHaveBeenCalledTimes(1);
-    const [creds, path, opts] = vi.mocked(cin7Request).mock.calls[0];
+    expect(fetchSaleDetailOnce).toHaveBeenCalledTimes(1);
+    const [creds, id] = vi.mocked(fetchSaleDetailOnce).mock.calls[0];
     expect(creds).toMatchObject({ applicationKey: "SECRET-KEY-VALUE" });
-    expect(path).toBe("/sale");
-    expect(opts).toEqual({ query: { ID: "ab919729-36e5-44c4-ae7b-f7a4797e8b75" }, maxRetries: 0 }); // GET (no method), no retry
+    expect(id).toBe("ab919729-36e5-44c4-ae7b-f7a4797e8b75");
+    expect(fetchSaleDetail).not.toHaveBeenCalled(); // the retrying reader is never used
     expect(dbCalls.every((c) => c.startsWith("from:") || ["select", "eq"].includes(c))).toBe(true);
     expect(dbCalls).toContain("from:project_cin7_sale_creations");
   });
   it("the module can reach no Cin7 write, no database write, no audit log and no retry", () => {
     const src = readFileSync(join(__dirname, "..", "actions.ts"), "utf8");
     expect(src).not.toMatch(/\.(insert|update|upsert|delete|rpc)\(/);
-    expect(src).not.toMatch(/logActivity|createAdvancedSale|fetchSaleDetail|sale-order-write|method:|reconcile|recoverLink|postClaim|setTimeout|for \(|while \(/);
+    expect(src).not.toMatch(/logActivity|createAdvancedSale|cin7Request|fetchSaleDetail\(|sale-order-write|method:|reconcile|recoverLink|postClaim|setTimeout|for \(|while \(/);
     const imports = [...src.matchAll(/^import .* from "([^"]+)"/gm)].map((m) => m[1]).sort();
-    expect(imports).toEqual(["@/cin7/http", "@/cin7/load-credentials", "@/lib/projects/cin7-adapter", "@/lib/projects/sale-inspection", "@/lib/require-org-admin", "@/supabase/server"]);
+    expect(imports).toEqual(["@/cin7/load-credentials", "@/cin7/sales", "@/lib/projects/cin7-adapter", "@/lib/projects/sale-inspection", "@/lib/require-org-admin", "@/supabase/server"]);
     // "use server" rule: only async function exports
     expect([...src.matchAll(/^export (.*)$/gm)].every((m) => m[1].startsWith("async function "))).toBe(true);
   });

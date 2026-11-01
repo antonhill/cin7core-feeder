@@ -308,6 +308,11 @@ export async function fetchSaleDetail(creds: Cin7Credentials, saleId: string): P
   return cin7Request<Cin7SaleDetail>(creds, "/sale", { query: { ID: saleId } });
 }
 
+/** The same read-only GET /sale?ID= as fetchSaleDetail but with NO retries (maxRetries 0): a rate-limit or network error is reported, never repeated. For one-off diagnostics. */
+export async function fetchSaleDetailOnce(creds: Cin7Credentials, saleId: string): Promise<Cin7SaleDetail> {
+  return cin7Request<Cin7SaleDetail>(creds, "/sale", { query: { ID: saleId }, maxRetries: 0 });
+}
+
 /**
  * Updates a Sale's ShipBy date in Cin7 Core (e.g. dragging a card to a new
  * day on the shipping calendar). `PUT /sale` requires the full writable
