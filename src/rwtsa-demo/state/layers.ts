@@ -33,8 +33,8 @@ export interface ScenarioMeta {
   readonly summary: string;
   readonly capabilities: readonly Capability[];
   readonly assumptions: readonly Assumption[];
-  /** The calculation engine this scenario will use. `implemented: false` is a literal type: PR-2 cannot claim otherwise. */
-  readonly engine: { readonly name: string; readonly implemented: false };
+  /** The calculation engine for this scenario. `implemented` is true only when the engine exists and is tested; it says nothing about data readiness. */
+  readonly engine: { readonly name: string; readonly implemented: boolean };
 }
 
 export const SCENARIOS: readonly ScenarioMeta[] = [
@@ -56,10 +56,11 @@ export const SCENARIOS: readonly ScenarioMeta[] = [
       { status: "Brief", text: "Weekly forecast = average monthly demand over the window / 4.345 (default window 6 months, configurable)." },
       { status: "Brief", text: "Anomaly rule: a month above 5 x the SKU median and above 40 units is flagged (both configurable)." },
       { status: "Brief", text: "A tender or customer-order-only SKU carries no standing reorder level and does not drive replenishment." },
-      { status: "Open", text: "Shipments past their ETA but still on the water are treated as overdue and arriving in week 1 (shown as an assumption)." },
-      { status: "Open", text: "The forecast window is not yet anchored to the stock-as-at date; the Red Flag engine must do this before forecasting readiness is claimed." },
+      { status: "Open", text: "Shipments past their ETA but still on the water are treated as overdue and arriving in week 1 (shown as an assumption, switchable on screen)." },
+      { status: "Open", text: "Sales history is reported to end before the stock date (31 October 2026). The engine anchors the demand window to the stock date and treats the months in between as a visible, switchable assumption; it never invents their sales. The owner must confirm that treatment." },
+      { status: "Open", text: "The size curve used to split style-level purchase orders to sizes has not been supplied; until it is, style-level quantities stay unallocated unless a demand-proportional split is chosen on screen." },
     ],
-    engine: { name: "Red Flag projection engine", implemented: false },
+    engine: { name: "Red Flag projection engine", implemented: true },
   },
   {
     id: "B",

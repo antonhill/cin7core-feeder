@@ -38,12 +38,20 @@ let serverLog = "";
 let buildLog = "";
 
 function minimalEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
-  return { PATH: process.env.PATH, HOME: process.env.HOME, NEXT_TELEMETRY_DISABLED: "1", RWTSA_DIST_SUFFIX: SUFFIX, ...extra } as unknown as NodeJS.ProcessEnv;
+  return { PATH: process.env.PATH, HOME: process.env.HOME, NEXT_TELEMETRY_DISABLED: "1", RWTSA_DIST_SUFFIX: SUFFIX, RWTSA_STATE_DIR: join(tmp, "state"), ...extra } as unknown as NodeJS.ProcessEnv;
 }
 function get(path: string): { status: number; body: string } {
   const out = execFileSync("curl", ["-s", "-m", "20", "-w", "\n%{http_code}", `${BASE}${path}`], { encoding: "utf8" });
   const i = out.lastIndexOf("\n");
   return { status: Number(out.slice(i + 1)), body: out.slice(0, i) };
+}
+function post(path: string, headers: string[], fields: [string, string][]): { status: number; location: string | null } {
+  const args = ["-s", "-o", "/dev/null", "-D", "-", "-m", "20", "-X", "POST"];
+  for (const h of headers) args.push("-H", h);
+  for (const [k, v] of fields) args.push("--data-urlencode", `${k}=${v}`);
+  const out = execFileSync("curl", [...args, `${BASE}${path}`], { encoding: "utf8" });
+  const status = Number(/^HTTP\/[\d.]+ (\d+)/m.exec(out)?.[1]);
+  return { status, location: /^location: (.*)$/im.exec(out)?.[1]?.trim() ?? null };
 }
 function* files(dir: string): Generator<string> {
   for (const e of readdirSync(dir)) {
@@ -140,6 +148,30 @@ describe("the standalone shell builds and runs without Toolbox middleware, Supab
   it("the server listens on loopback only", () => {
     expect(serverLog).toContain("127.0.0.1");
     expect(existsSync(join(DIST, "BUILD_ID"))).toBe(true);
+  });
+
+  it("the exclusion route works in the real production server, is same-origin only, and writes only to the local state directory", () => {
+    const fields: [string, string][] = [["action", "exclude"], ["month", "2026-06"], ["reason", `${S}_reason`], ["returnTo", "/scenario-a?view=sku"], ["sku", "SYN-VEST-B-M"]];
+    expect(post("/api/exclusions", [`Origin: http://evil.invalid`], fields).status).toBe(403);
+    expect(existsSync(join(tmp, "state"))).toBe(false);
+    const ok = post("/api/exclusions", [`Origin: ${BASE}`], fields);
+    expect(ok.status).toBe(303);
+    expect(ok.location).toBe("/scenario-a?view=sku&done=excluded");
+    const saved = readdirSync(join(tmp, "state"));
+    expect(saved).toHaveLength(1);
+    const page = get("/scenario-a?view=sku&done=excluded");
+    expect(page.status).toBe(200);
+    expect(text(page.body)).toContain("Month excluded from the demand forecast");
+    expect(text(page.body)).toContain(`EXCLUDED: ${S}_reason`); // the planner's own reason is shown to the planner only
+    const noReason = post("/api/exclusions", [`Origin: ${BASE}`], [["action", "exclude"], ["month", "2026-06"], ["reason", " "], ["sku", "SYN-VEST-B-L"]]);
+    expect(noReason.location).toBe("/scenario-a?done=reason");
+    expect(readdirSync(join(tmp, "state"))).toHaveLength(1);
+    const rev = post("/api/exclusions", [`Origin: ${BASE}`], [["action", "reverse"], ["month", "2026-06"], ["sku", "SYN-VEST-B-M"]]);
+    expect(rev.location).toBe("/scenario-a?done=reversed");
+    expect(text(get("/scenario-a").body)).not.toContain(`${S}_reason`);
+    expect(serverLog).not.toContain(`${S}_reason`);
+    // Nothing the planner typed reaches the build output either.
+    expect([...files(DIST)].some((f) => { try { return readFileSync(f, "utf8").includes(`${S}_reason`); } catch { return false; } })).toBe(false);
   });
 
   // --- cache isolation (must run before afterAll removes the test-owned directory and marker) ---
