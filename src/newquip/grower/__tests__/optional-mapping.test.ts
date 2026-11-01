@@ -71,11 +71,19 @@ describe("review P1/P2: mapping changes are authorised and normalised on the ser
     const d = { estimator: { confirmedMappings: { controller: " REAL ", pad_cooling: 123 as never, cone_fans: "  ", feeder: "PNQ082" } } };
     expect(normaliseOptionalMappings(d).estimator.confirmedMappings).toEqual({ controller: "REAL", feeder: "PNQ082" });
   });
-  it("saveGrowerDraftAction refuses a mapping change from a caller without Estimator/Manager authority, before saving", () => {
+  it("BOTH routes that store a client-supplied draft (create and save) go through the same sanitising step, and it enforces authority before storing (review P1)", () => {
     const src = readFileSync(new URL("../../../app/newquip-grower/actions.ts", import.meta.url), "utf8");
-    const guard = src.indexOf("optionalMappingsChanged(prior0");
-    expect(guard).toBeGreaterThan(0);
-    expect(src.slice(guard, guard + 260)).toMatch(/hasAny\(a\.roles, \["estimator", "manager"\]\)/);
-    expect(guard).toBeLessThan(src.indexOf("await saveDraft(db, a.orgId, a.roles, quoteId"));
+    const helper = src.indexOf("async function sanitiseSubmittedDraft(");
+    expect(helper).toBeGreaterThan(0);
+    const body = src.slice(helper, src.indexOf("\n}\n", helper));
+    expect(body).toMatch(/optionalMappingsChanged\(prior\?\.estimator\.confirmedMappings/);
+    expect(body).toMatch(/hasAny\(a\.roles, \["estimator", "manager"\]\)/);
+    expect(body).toMatch(/optionalMappingError\(/);
+    expect(body).toMatch(/stampPriceResolutions\(/);
+    expect(body).toMatch(/stampCostOverrides\(/);
+    const create = src.slice(src.indexOf("export async function createGrowerQuoteAction("), src.indexOf("export async function getGrowerQuoteAction("));
+    expect(create).toMatch(/await sanitiseSubmittedDraft\(a, db, draft, undefined\)/);
+    const save = src.slice(src.indexOf("export async function saveGrowerDraftAction("));
+    expect(save.slice(0, 900)).toMatch(/await sanitiseSubmittedDraft\(a, db, draft, prior\?\.draft\)/);
   });
 });
