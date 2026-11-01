@@ -45,6 +45,7 @@
     "src/app/projects/actions.ts",
     "src/app/projects/cin7-actions.ts",
     "src/app/projects/delivery-actions.ts",
+    "src/app/projects/overview-actions.ts",
     "src/app/projects/physical-actions.ts",
     "src/app/projects/procurement-actions.ts",
     "src/app/projects/profitability-actions.ts",

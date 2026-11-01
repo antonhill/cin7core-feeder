@@ -24,6 +24,7 @@ import { Cin7SaleCreationPanel } from "./Cin7SaleCreationPanel";
 import { PhysicalPanel } from "./PhysicalPanel";
 import { ProcurementPanel } from "./ProcurementPanel";
 import { ProfitabilityPanel } from "./ProfitabilityPanel";
+import { ProjectOverview } from "./ProjectOverview";
 import {
   approveClaimAction,
   cancelDraftClaimAction,
@@ -278,6 +279,8 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               </div>
             </div>
           </section>
+
+          {!embedded && newquip && <ProjectOverview projectId={id} refreshKey={previewKey(view)} onOpenTab={(t) => { setTab(t); window.scrollTo({ top: 0, behavior: "smooth" }); }} />}
 
           <div>
             <h2 className="mb-3 text-sm font-semibold text-slate-700">Commercial position (ex VAT)</h2>
