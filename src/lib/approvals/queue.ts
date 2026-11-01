@@ -13,10 +13,10 @@ export function filterQueue(rows: readonly ApprovalRequestRow[], f: QueueFilters
   return rows.filter((r) => {
     if (f.mine && !(r.status === "PENDING" ? awaitsMe(r, me, myRoles) : lc(r.assigned_to_email) === lc(me))) return false;
     if (f.docType && r.doc_type !== f.docType) return false;
-    if (f.customer && !lc(r.customer_name).includes(lc(f.customer))) return false;
-    if (f.project && !(lc(r.project_ref).includes(lc(f.project)) || lc(r.doc_ref).includes(lc(f.project)))) return false;
-    if (f.preparer && !lc(r.prepared_by_email).includes(lc(f.preparer))) return false;
-    if (f.assignee && !lc(r.assigned_to_email).includes(lc(f.assignee))) return false;
+    if (f.customer?.trim() && !lc(r.customer_name).includes(lc(f.customer?.trim()))) return false;
+    if (f.project?.trim() && !(lc(r.project_ref).includes(lc(f.project?.trim())) || lc(r.doc_ref).includes(lc(f.project?.trim())))) return false;
+    if (f.preparer?.trim() && !lc(r.prepared_by_email).includes(lc(f.preparer?.trim()))) return false;
+    if (f.assignee?.trim() && !lc(r.assigned_to_email).includes(lc(f.assignee?.trim()))) return false;
     if (f.status && f.status !== "ANY" && r.status !== f.status) return false;
     if (f.from && r.submitted_at < f.from) return false;
     if (f.to && r.submitted_at > f.to) return false;

@@ -15,3 +15,13 @@ describe("UAT-018 active filters are visible and clearable", () => {
     expect(CLEARED_FILTERS.status).toBe("ANY"); // not back to the Pending default
   });
 });
+
+import { filterQueue } from "../queue";
+describe("a whitespace-only text filter neither filters nor hides the Clear option", () => {
+  it("is ignored by filterQueue, consistent with the chips", () => {
+    const rows = [{ status: "PENDING", doc_type: "CLAIM", customer_name: "Spark", project_ref: "P", doc_ref: "D", prepared_by_email: "a@x", assigned_to_email: null, submitted_at: "2026-11-01T00:00:00Z", due_at: null }] as never;
+    expect(filterQueue(rows, { status: "ANY", customer: " " }, "me@x", "2026-11-02T00:00:00Z")).toHaveLength(1);
+    expect(filterQueue(rows, { status: "ANY", customer: "spark" }, "me@x", "2026-11-02T00:00:00Z")).toHaveLength(1);
+    expect(filterQueue(rows, { status: "ANY", customer: "zzz" }, "me@x", "2026-11-02T00:00:00Z")).toHaveLength(0);
+  });
+});
