@@ -1,3 +1,4 @@
+import { normaliseQuoteStatus } from "@/rwtsa-demo/contracts/quote-status";
 import { CORE_TABS, TAB_CONTRACTS, TAB_NAMES, type TabName } from "@/rwtsa-demo/contracts/tabs";
 import type {
   BomRow,
@@ -192,7 +193,7 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
 
   // Quotes: a lost quote must carry a reason (CRM-06).
   if (parsed.Quotes) {
-    const lostNoReason = parsed.Quotes.rows.flatMap((r, i) => (r.status === "lost" && r.lostReason === null ? [parsed.Quotes!.rowNumbers[i]] : []));
+    const lostNoReason = parsed.Quotes.rows.flatMap((r, i) => (normaliseQuoteStatus(r.status) === "LOST" && r.lostReason === null ? [parsed.Quotes!.rowNumbers[i]] : []));
     if (lostNoReason.length > 0) findings.push(finding({ severity: "warning", code: "lost_without_reason", tab: "Quotes", field: "lostReason", count: lostNoReason.length, rows: lostNoReason }));
   }
 

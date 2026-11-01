@@ -125,6 +125,42 @@ describe("a critical column that is present but unpopulated is NOT ready", () =>
     expect(by(r).D.unpopulatedFields.map((u) => u.field).sort()).toEqual(["Quotes.convertedOrder", "Quotes.lostReason"]);
   });
 
+  it("scenario D: status text is matched case-insensitively and through the explicit table (Closed Lost / ACCEPTED), not by exact lower-case text", async () => {
+    const r = await build((wb) => {
+      const ws = sheet(wb, "Quotes");
+      const status = colOf(ws, "Status");
+      for (let row = 2; row <= ws.rowCount; row++) {
+        const v = ws.getRow(row).getCell(status).value;
+        if (v === "lost") {
+          ws.getRow(row).getCell(status).value = "Closed Lost";
+          ws.getRow(row).getCell(colOf(ws, "Lost reason")).value = null;
+        }
+        if (v === "won") {
+          ws.getRow(row).getCell(status).value = "ACCEPTED";
+          ws.getRow(row).getCell(colOf(ws, "Converted order")).value = null;
+        }
+      }
+    });
+    expect(r.ok).toBe(true);
+    expect(by(r).D.unpopulatedFields.map((u) => u.field).sort()).toEqual(["Quotes.convertedOrder", "Quotes.lostReason"]);
+    expect(codes(r, "lost_without_reason")).toHaveLength(1);
+  });
+
+  it("scenario D: an unrecognised quote status does not fail the workbook (it reaches the engine as UNCLASSIFIED); a blank status still does", async () => {
+    const odd = await build((wb) => {
+      const ws = sheet(wb, "Quotes");
+      ws.getRow(2).getCell(colOf(ws, "Status")).value = "Awaiting board";
+    });
+    expect(odd.ok).toBe(true);
+    expect(odd.dataset?.tables.quotes.some((q) => q.status === "Awaiting board")).toBe(true);
+    const blank = await build((wb) => {
+      const ws = sheet(wb, "Quotes");
+      ws.getRow(2).getCell(colOf(ws, "Status")).value = null;
+    });
+    expect(blank.ok).toBe(false);
+    expect(codes(blank, "required_blank").map((f) => f.field)).toContain("status");
+  });
+
   it("no scenario is ready when the workbook is invalid, however populated", async () => {
     const r = await build((wb) => {
       sheet(wb, "Stock").getRow(2).getCell(2).value = "SYN-VEST-B"; // style mismatch => error

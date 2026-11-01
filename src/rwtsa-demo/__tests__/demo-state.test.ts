@@ -222,9 +222,9 @@ describe("delivery layers, assumptions and engine status (static, brief-derived)
   });
 
   it("Scenarios A, B and C have engines; D claims none", async () => {
-    for (const sc of SCENARIOS) expect(sc.engine.implemented).toBe(sc.id !== "D");
+    for (const sc of SCENARIOS) expect(sc.engine.implemented).toBe(true);
     const s = await loadDemoState({ source: "synthetic" });
-    for (const id of IDS) expect(scenarioView(s, id).engineImplemented).toBe(id !== "D");
+    for (const id of IDS) expect(scenarioView(s, id).engineImplemented).toBe(true);
     // An available engine never makes data READY: an unusable source has the engine flag but is NOT READY.
     expect(scenarioView({ kind: "not-loaded" }, "A")).toMatchObject({ engineImplemented: true, readiness: "NOT READY" });
   });

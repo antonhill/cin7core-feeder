@@ -1,3 +1,4 @@
+import { normaliseQuoteStatus } from "@/rwtsa-demo/contracts/quote-status";
 import type { ScenarioId } from "@/rwtsa-demo/contracts/fields";
 import { SCENARIO_TABS, TAB_CONTRACTS, TAB_NAMES, type TabName } from "@/rwtsa-demo/contracts/tabs";
 import { DEFAULT_FORECAST_WINDOW_MONTHS, type ReadinessConfig, type ScenarioReadiness } from "@/rwtsa-demo/dataset";
@@ -46,8 +47,8 @@ export function populationGap(tab: TabName, field: string, rows: readonly Parsed
   const countBlank = (rs: readonly ParsedRow[]) => rs.filter((r) => isBlank(r[field])).length;
   if (tab === "Items" && field === "minLevel") return countBlank(rows.filter((r) => r.isTender !== true));
   if (tab === "Items" && field === "isTender") return countBlank(rows);
-  if (tab === "Quotes" && field === "lostReason") return countBlank(rows.filter((r) => r.status === "lost"));
-  if (tab === "Quotes" && field === "convertedOrder") return countBlank(rows.filter((r) => r.status === "won"));
+  if (tab === "Quotes" && field === "lostReason") return countBlank(rows.filter((r) => normaliseQuoteStatus(r.status) === "LOST"));
+  if (tab === "Quotes" && field === "convertedOrder") return countBlank(rows.filter((r) => normaliseQuoteStatus(r.status) === "WON"));
   return rows.length > 0 && rows.every((r) => isBlank(r[field])) ? rows.length : 0;
 }
 

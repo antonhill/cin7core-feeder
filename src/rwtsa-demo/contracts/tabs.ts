@@ -162,13 +162,13 @@ export const CUSTOMERS_FIELDS = defineFields([
 ] as const);
 export type CustomerRow = RowOf<typeof CUSTOMERS_FIELDS>;
 
-export const QUOTE_STATUSES = ["won", "lost", "open"] as const;
-
 export const QUOTES_FIELDS = defineFields([
   { key: "quoteNo", headers: ["Quote", "Quote no", "Quote number"], kind: "str", required: true },
   { key: "customer", headers: ["Customer", "Customer name", "Customer code"], kind: "str", required: true },
   { key: "rep", headers: ["Rep", "Sales rep", "Sales representative"], kind: "str", required: false },
-  { key: "status", headers: ["Status"], kind: "enum", required: true, values: QUOTE_STATUSES },
+  // Free text on purpose: an unrecognised status must reach the engine as UNCLASSIFIED and be reported, not fail the whole workbook.
+  // Normalised by contracts/quote-status.ts.
+  { key: "status", headers: ["Status"], kind: "str", required: true },
   { key: "value", headers: ["Value", "Quote value", "Amount"], kind: "num", required: true, negativeIsError: true },
   { key: "lostReason", headers: ["Lost reason", "Reason lost"], kind: "str", required: false, critical: "D" },
   { key: "convertedOrder", headers: ["Converted order", "Sales order", "Original SO", "Order no"], kind: "str", required: false, critical: "D" },
