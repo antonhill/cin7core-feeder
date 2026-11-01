@@ -31,7 +31,7 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
   const [location, setLocation] = useState(isP0Project ? "MSTR" : "");
   const [account, setAccount] = useState("");
   const [taxRule, setTaxRule] = useState("Standard Rate Sales");
-  const [typed, setTyped] = useState("");
+  const [confirmed, setConfirmed] = useState(false); // unchecked by default; the server still requires the confirmation token, the flag, the instance pin and refuses a second Sale
   const [p0, setP0] = useState<P0Report | null>(null);
   const [p0Error, setP0Error] = useState<string | null>(null);
   const [p0Busy, setP0Busy] = useState(false);
@@ -48,13 +48,13 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
   if (st.linked && !creation) return null; // a manually linked Sale: nothing to create
   const after = (fn: () => Promise<{ ok: boolean; error?: string; data?: unknown }>) =>
     run(async () => { const r = await fn(); if (r.ok) setNote((r.data as { message?: string } | undefined)?.message ?? null); load(); return r; });
-  const canCreate = gates.isManager && gates.writesEnabled && !working && !creation && st.blockers.length === 0 && customer.trim() && location.trim() && account.trim() && taxRule.trim() && typed === CREATE_CONFIRMATION_TEXT;
+  const canCreate = gates.isManager && gates.writesEnabled && !working && !creation && st.blockers.length === 0 && customer.trim() && location.trim() && account.trim() && taxRule.trim() && confirmed;
   const unresolved = st.scopeItems.filter((i) => i.mapping.status === "UNMAPPED" && !i.resolution);
 
   return (
     <Panel>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <PanelTitle>Create the Cin7 Advanced Sale</PanelTitle>
+        <PanelTitle>Create the Cin7 Sales Order</PanelTitle>
         <Badge tone={gates.writesEnabled ? "warning" : "neutral"} dot>{gates.writesEnabled ? "Cin7 writes ENABLED" : "Cin7 writes OFF"}</Badge>
       </div>
       <p className="mt-1 text-sm text-slate-500">Creates ONE Advanced Sale from this project&apos;s approved product scope: the products below at R0, and the approved contract value as Additional Charges (one per billing stage). It is read back and verified before it is linked. No customer, invoice, fulfilment or stock movement is created.</p>
@@ -156,9 +156,9 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
               </div>
             )}
           </details>
-          <Input label={`Type exactly: ${CREATE_CONFIRMATION_TEXT}`} value={typed} onChange={(e) => setTyped(e.target.value)} />
+          <label className="flex items-start gap-2 text-sm text-slate-800"><input type="checkbox" className="mt-1" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} /> <span>I confirm I want to create one Cin7 Sales Order for this project. This creates a real order in the connected Cin7 instance, and only one can ever be created for a project.</span></label>
           {!gates.writesEnabled && <p className="text-xs text-slate-500">Cin7 writes are switched off on this deployment; the button stays disabled.</p>}
-          <Button disabled={!canCreate} onClick={() => after(() => createCin7SaleAction(projectId, { confirmation: typed, customerName: customer, location, revenueAccount: account, cin7TaxRule: taxRule }))}>Create Advanced Sale in Cin7</Button>
+          <Button disabled={!canCreate} onClick={() => after(() => createCin7SaleAction(projectId, { confirmation: CREATE_CONFIRMATION_TEXT, customerName: customer, location, revenueAccount: account, cin7TaxRule: taxRule }))}>Create Sales Order in Cin7</Button>
         </div>
       )}
     </Panel>

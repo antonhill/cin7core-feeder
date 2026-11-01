@@ -229,8 +229,8 @@ describe("10: the normal project interface no longer offers manual Sale linking"
   it("the old SaleID / revenue-account form is gone; recovery is a collapsed, admin-only, reason-requiring section", () => {
     expect(posting).not.toMatch(/Link Cin7 Sale/);
     expect(posting).not.toMatch(/from the sale&apos;s URL/);
-    expect(posting).toMatch(/Administrative recovery/);
-    expect(posting).toMatch(/<details[^>]*>\s*<summary[^>]*>Administrative recovery/);
+    expect(posting).toMatch(/Advanced \/ administrative recovery/);
+    expect(posting).toMatch(/<details[^>]*>\s*<summary[^>]*>Advanced \/ administrative recovery/);
     expect(posting).toMatch(/gates\.isManager/);
     expect(posting).toMatch(/Reason for recovery \(required, audited\)/);
   });
@@ -277,5 +277,19 @@ describe("sellable-products mapping model (no BOM classification)", () => {
     for (const file of ["../../../app/projects/[id]/VariationProductPicker.tsx", "../../../app/newquip-grower/[id]/ScopePanel.tsx", "../../../app/projects/[id]/Cin7SaleCreationPanel.tsx"]) {
       expect(f(file)).not.toMatch(/BOM component \(reference only\)|Finished good \(on the Sales Order\)|withRole/);
     }
+  });
+});
+
+describe("UAT-011/012: Sale creation confirmation is a checkbox, wording is plain", () => {
+  const sale = readFileSync(new URL("../../../app/projects/[id]/Cin7SaleCreationPanel.tsx", import.meta.url), "utf8");
+  it("no typed phrase; an UNCHECKED confirmation checkbox gates the button", () => {
+    expect(sale).not.toMatch(/Type exactly/);
+    expect(sale).toMatch(/useState\(false\)/);
+    expect(sale).toMatch(/&& confirmed;/);
+    expect(sale).toMatch(/type="checkbox"[^>]*checked=\{confirmed\}/);
+  });
+  it("the server-side confirmation token, flag and instance checks are still sent / enforced", () => {
+    expect(sale).toMatch(/confirmation: CREATE_CONFIRMATION_TEXT/);
+    expect(sale).toMatch(/gates\.writesEnabled/);
   });
 });

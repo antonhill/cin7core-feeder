@@ -53,24 +53,24 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
         <PanelTitle>Cin7 Core</PanelTitle>
         <Badge tone={gates.writesEnabled ? "warning" : "neutral"} dot>{gates.writesEnabled ? "Cin7 writes ENABLED" : "Cin7 writes OFF"}</Badge>
       </div>
-      <p className="mt-1 text-sm text-slate-500">One Project → one Cin7 Advanced Sale (created automatically) → one invoice per approved claim. Posting creates a DRAFT commercial invoice with no stock lines (no fulfilment, stock or COGS).</p>
+      <p className="mt-1 text-sm text-slate-500">Each Project has one Cin7 Sales Order, and each approved claim becomes one draft invoice on it. Posting never ships goods or moves stock.</p>
       {note && <div className="mt-3"><Alert tone="info">{note}</Alert></div>}
 
       <div className="mt-4 rounded-lg border border-slate-200 p-4 text-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="font-medium text-slate-900">Cin7 Advanced Sale</p>
-          {link && <Badge tone="success" dot>{st.linkOrigin === "ADMIN_RECOVERY" ? "Linked by administrator recovery" : "Created and verified by the Toolbox"}</Badge>}
+          <p className="font-medium text-slate-900">Cin7 Sales Order</p>
+          {link && <Badge tone="success" dot>{link.cin7_sale_number ? `${link.cin7_sale_number} · ` : ""}{st.linkOrigin === "ADMIN_RECOVERY" ? "Linked by administrator recovery" : "Linked and verified"}</Badge>}
         </div>
         {link ? (
           <dl className="mt-2 grid gap-x-8 gap-y-1 sm:grid-cols-4">
-            {[["Sale", link.cin7_sale_number ?? "—"], ["Status", link.link_status === "LINKED" ? "Linked" : link.link_status], ["Linked", new Date(link.created_at).toLocaleDateString("en-ZA")], ["Last reconciled", link.last_reconciled_at ? new Date(link.last_reconciled_at).toLocaleString("en-ZA") : "—"]].map(([k, v]) => (
+            {[["Sales Order", link.cin7_sale_number ?? "—"], ["Link status", link.link_status === "LINKED" ? "Linked" : link.link_status], ["Linked", new Date(link.created_at).toLocaleDateString("en-ZA")], ["Last reconciled", link.last_reconciled_at ? new Date(link.last_reconciled_at).toLocaleString("en-ZA") : "—"]].map(([k, v]) => (
               <div key={k}><dt className="text-xs text-slate-500">{k}</dt><dd className="font-medium text-slate-900">{v}</dd></div>
             ))}
           </dl>
-        ) : <p className="mt-1 text-slate-600">No Cin7 Sale yet. Use <strong>Create the Cin7 Advanced Sale</strong> above: the products and charges come from the approved quotation, and the Sale is read back, verified and linked automatically.</p>}
+        ) : <p className="mt-1 text-slate-600">No Cin7 Sales Order yet. Use <strong>Create the Cin7 Sales Order</strong> above: products and charges come from the approved quotation, and the order is checked and linked automatically.</p>}
         {!link && gates.isManager && (
           <details className="mt-3 rounded border border-amber-200 bg-amber-50/40 p-3">
-            <summary className="cursor-pointer text-xs font-medium text-amber-800">Administrative recovery: attach a Sale that already exists in Cin7</summary>
+            <summary className="cursor-pointer text-xs font-medium text-amber-800">Advanced / administrative recovery (administrators only): attach an existing Cin7 Sale</summary>
             <p className="mt-2 text-xs text-slate-600">Only for a Sale the automatic creation could not finish linking. It reads the Sale live and links it ONLY if it is this project&apos;s own Sale (ExternalID, customer, products and totals all match the project). Another project&apos;s Sale, or any mismatch, is refused. A reason is required and the attempt is audited. Nothing is written to Cin7.</p>
             <div className="mt-2 grid gap-2 md:grid-cols-3">
               {([["saleId", "Cin7 SaleID"], ["customerName", "Cin7 customer name"], ["location", "Cin7 location"], ["revenueAccount", "Revenue account code"], ["cin7TaxRule", "Cin7 tax rule name"]] as const).map(([k, label]) => (

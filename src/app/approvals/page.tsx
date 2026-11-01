@@ -13,7 +13,7 @@ import { Select } from "@/components/ui/Select";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatSast, isOverdue, waitingLabel } from "@/lib/approvals/time";
 import { DOC_TYPE_LABEL, STATUS_LABEL, type ApprovalDocType, type ApprovalNotificationRow, type ApprovalStatus } from "@/lib/approvals/types";
-import type { QueueFilters, QueueSort } from "@/lib/approvals/queue";
+import { activeFilters, CLEARED_FILTERS, type QueueFilters, type QueueSort } from "@/lib/approvals/queue";
 import { displayEmailStatus, EMAIL_STATUS_NOTE, type EmailDisplayStatus } from "@/lib/approvals/email-policy";
 import { getApprovalsDashboardAction, getEmailStatusAction, getMyNotificationsAction, retryEmailAction, saveApprovalSettingsAction, sendPendingNowAction, sendTestEmailAction, type ApprovalsDashboard } from "./actions";
 
@@ -75,6 +75,15 @@ export default function ApprovalsPage() {
       {tab === "queue" && (
         <Panel className="mt-3">
           <div className="grid gap-3 md:grid-cols-4 xl:grid-cols-6">
+            <div className="col-span-full flex flex-wrap items-center gap-2 text-xs">
+              {activeFilters(f, (s) => STATUS_LABEL[s]).length === 0
+                ? <span className="text-slate-500">No filters: showing every approval.</span>
+                : <>
+                    <span className="font-medium text-slate-700">Active filters:</span>
+                    {activeFilters(f, (s) => STATUS_LABEL[s]).map((a) => <span key={a.key} className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-indigo-800">{a.label}</span>)}
+                    <Button size="sm" variant="secondary" onClick={() => setF(CLEARED_FILTERS)}>Clear filters</Button>
+                  </>}
+            </div>
             <Select label="Show" value={f.mine ? "mine" : "all"} onChange={(e) => setF({ ...f, mine: e.target.value === "mine" })}><option value="all">All approvals</option><option value="mine">My approvals (assigned to me)</option></Select>
             <Select label="Type" value={f.docType ?? ""} onChange={(e) => setF({ ...f, docType: (e.target.value || undefined) as ApprovalDocType | undefined })}><option value="">All types</option>{(["QUOTE", "CLAIM", "VARIATION"] as const).map((t) => <option key={t} value={t}>{DOC_TYPE_LABEL[t]}</option>)}</Select>
             <Select label="Status" value={f.status ?? "ANY"} onChange={(e) => setF({ ...f, status: e.target.value as ApprovalStatus | "ANY" })}><option value="ANY">Any status</option>{(Object.keys(STATUS_LABEL) as ApprovalStatus[]).map((k) => <option key={k} value={k}>{STATUS_LABEL[k]}</option>)}</Select>
@@ -88,7 +97,7 @@ export default function ApprovalsPage() {
             <label className="flex items-end gap-2 pb-2 text-sm text-slate-700"><input type="checkbox" checked={!!f.overdueOnly} onChange={(e) => setF({ ...f, overdueOnly: e.target.checked })} /> Overdue only</label>
           </div>
           <div className="mt-4">
-            {d.rows.length === 0 ? <p className="text-sm text-slate-600">{d.available ? "Nothing matches these filters." : "No approvals yet."}</p> : (
+            {d.rows.length === 0 ? <p className="text-sm text-slate-600">{d.available ? (activeFilters(f).length ? "Nothing matches these filters. Use Clear filters to see every approval." : "Nothing to show.") : "No approvals yet."}</p> : (
               <Table>
                 <THead><TR>{["Reference", "Project", "Customer", "Type", "Rev", "Amount (ex VAT)", "Submitted by", "Submitted at", "Stage", "Assigned approver", "Status", "Waiting", "Due"].map((h) => <TH key={h} align={h.startsWith("Amount") ? "right" : "left"}>{h}</TH>)}</TR></THead>
                 <TBody>

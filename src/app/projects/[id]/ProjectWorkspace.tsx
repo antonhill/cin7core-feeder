@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { claimActionPlan } from "@/lib/projects/claim-actions";
+import { previewKey, previewState } from "@/lib/projects/preview-staleness";
 import { formatBps, formatCents, type ProjectView, type StageView } from "@/lib/projects/project-view";
 import { VariationsPanel } from "./VariationsPanel";
 import { OpeningCommitmentsPanel } from "./OpeningCommitmentsPanel";
@@ -126,6 +127,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   const [tab, setTab] = useState<Tab>(embedded ? "stages" : "overview");
   const [preview, setPreview] = useState<ClaimPreviewResult | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewShownKey, setPreviewShownKey] = useState<string | null>(null);
   const [isLoading, startLoading] = useTransition();
   const [isWorking, startWorking] = useTransition();
 
@@ -176,6 +178,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
       }
       setPreviewError(null);
       setPreview(res.data ?? null);
+      setPreviewShownKey(view ? previewKey(view) : null);
     });
   }
 
@@ -190,6 +193,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
     );
   }
   const { project, commercial: c } = view;
+  const pvState = previewState(previewShownKey, previewKey(view));
 
   const Shell = embedded ? "div" : "main";
   return (
@@ -458,12 +462,13 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               <span className="whitespace-nowrap rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">Not sent to Cin7</span>
             </div>
             <div className="mt-4 flex flex-wrap gap-2">
-              <Button variant="secondary" size="sm" onClick={doPreview} loading={isWorking}>Preview claim</Button>
+              <Button variant="secondary" size="sm" onClick={doPreview} loading={isWorking} disabled={!!preview && pvState === "CURRENT"}>{!preview ? "Preview claim" : pvState === "STALE" ? "Refresh preview" : "Preview is up to date"}</Button>
               {preview && (
-                <Button size="sm" onClick={() => run(() => createClaimDraftAction(id), "Draft claim saved locally.")} loading={isWorking}>Save as draft claim</Button>
+                <Button size="sm" onClick={() => run(() => createClaimDraftAction(id), "Draft claim saved locally.")} loading={isWorking} disabled={pvState === "STALE"}>Save as draft claim</Button>
               )}
             </div>
             {previewError && <div className="mt-3"><Alert tone="warning">{previewError}</Alert></div>}
+            {preview && pvState === "STALE" && <div className="mt-3"><Alert tone="warning">This preview is out of date: the project changed after it was calculated. Refresh the preview before saving a draft.</Alert></div>}
             {preview && (
               <div className="mt-5 space-y-4">
                 <p className="text-sm font-medium text-slate-700">Claim {preview.claimNumber} <span className="font-normal text-slate-500">· preview only, nothing saved yet</span></p>
