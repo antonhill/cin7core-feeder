@@ -196,10 +196,13 @@ export async function estimatorSignOff(db: Db, orgId: string, roles: ReadonlySet
   if (!auth.ok) fail(auth.error);
   const ev = evaluateDraft(q.draft, ctx);
   if (ev.readiness.state !== "READY") fail(`The quote is ${ev.readiness.state}; resolve ${ev.readiness.reasons[0] ?? "the outstanding items"} before signing off.`);
+  // Any content change clears the sign-off (saveDraft), so a stored sign-off means THIS content is already signed off. It is never re-stamped.
+  if (q.estimator_signoff_hash) fail(`This quote was already signed off by ${q.estimator_signoff_by_email ?? "an estimator"}${q.estimator_signoff_at ? ` at ${q.estimator_signoff_at}` : ""}.`);
+  // The "still unsigned" condition is part of the UPDATE, so two concurrent sign-offs cannot both succeed.
   const r = await db.from("newquip_quotes").update({ estimator_signoff_hash: q.draft_hash, estimator_signoff_by_email: email, estimator_signoff_at: new Date().toISOString() })
-    .eq("org_id", orgId).eq("id", quoteId).eq("state", "ESTIMATOR_REVIEW").eq("draft_hash", q.draft_hash).select("id");
+    .eq("org_id", orgId).eq("id", quoteId).eq("state", "ESTIMATOR_REVIEW").eq("draft_hash", q.draft_hash).is("estimator_signoff_hash", null).select("id");
   if (r.error) fail(r.error.message);
-  if (!r.data || r.data.length === 0) fail("The quote changed while signing off; refresh and try again.");
+  if (!r.data || r.data.length === 0) fail("The quote changed or was signed off while signing off; refresh and try again.");
 }
 
 /**

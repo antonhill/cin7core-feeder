@@ -8,7 +8,7 @@ import { QUOTES_MODULE } from "@/app/module-nav";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
 import { evaluateDraft, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import type { QuoteDraft } from "@/newquip/grower/draft";
-import { type OrgTier, type QuoteRole } from "@/newquip/quote/roles";
+import { hasAny, PROJECT_CREATE_ROLES, type OrgTier, type QuoteRole } from "@/newquip/quote/roles";
 import { toQuoteRoles } from "@/lib/approvals/roles";
 import { canSeeCosts, resolveRoles } from "@/lib/approvals/role-store";
 import { demoAuditDetail, resolveActing, type DemoInfo } from "@/lib/demo-mode/context";
@@ -269,7 +269,7 @@ export interface CreatedProjectResult { projectId: string; created: boolean; bil
 export async function createProjectFromGrowerQuoteAction(quoteId: string, scheduleChoice?: ScheduleChoice): Promise<GrowerActionResult<CreatedProjectResult>> {
   try {
     const a = await authorise();
-    if (!a.roles.has("manager") && !a.roles.has("estimator")) throw new Error("You do not have permission to create a Project.");
+    if (!hasAny(a.roles, PROJECT_CREATE_ROLES)) throw new Error("Only a Manager can create a Project from an accepted quotation.");
     const db = createServiceRoleClient();
     const applied = await resolveProjectSchedule(db, a.orgId, scheduleChoice);
     const resolved = { schedule: applied.schedule, label: applied.label };
