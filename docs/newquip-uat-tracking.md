@@ -21,12 +21,12 @@ BLOCKED BY EXTERNAL INTEGRATION, DEFERRED WITH REASON, plus NOT STARTED (work no
 | UAT-012 | Cin7 Sale wording / recovery section | NOT STARTED | - | - |
 | UAT-013 | Selective progress claims | NOT STARTED | - | - |
 | UAT-014 | Preview Claim / Refresh Preview | NOT STARTED | - | - |
-| UAT-015 | Claim History redesign | NOT STARTED | - | status/next-action clarity partly addressed by UAT-016/017/022 |
+| UAT-015 | Claim History redesign | IMPLEMENTED, AWAITING LIVE UAT | PR-F | Responsive claim cards: reference, approval state, total with ex VAT/VAT, Cin7 status + invoice, plain next-step line, the existing role/state action plan, approval history in a disclosure; layout verified by source-level tests only (no browser run) |
 | UAT-016 | Claim actions after submission | IMPLEMENTED, AWAITING LIVE UAT | PR-A | no Recalculate/Submit when submitted (UI + server); Cancel relabelled "Withdraw claim"; 2 existing tests moved to the controlled return-to-draft path |
 | UAT-017 | Manager approval navigation | IMPLEMENTED, AWAITING LIVE UAT | PR-A | "Open in Approvals" link; waiting text names the real stage role |
 | UAT-018 | Approval filter visibility | NOT STARTED | - | - |
 | UAT-019/020 | Cin7 billing vs fulfilment | NOT STARTED | - | needs Cin7 API semantics investigation; no live write without owner approval |
-| UAT-021 | Project operations layout | NOT STARTED | - | - |
+| UAT-021 | Simplify Project operations layout | IMPLEMENTED, AWAITING LIVE UAT | PR-F | Commercial / Claims (with milestone confirmation), Deliveries (logistics plan only) and Products & Stock; no business logic changed; statements that a plan moves no stock and milestones are independent of physical delivery; source-level tests only |
 | UAT-022 | Incorrect Cin7 claim status | IMPLEMENTED, AWAITING LIVE UAT | PR-A | root cause: history read legacy `project_cin7_links` (0 rows); now reads `project_claim_cin7_postings` (C01 = RECONCILED, INV-00032, DRAFT); 4 tests; mutation killed |
 | UAT-023 | Administrator override approval UI | IMPLEMENTED, AWAITING LIVE UAT | PR-A | root cause by code reading (database closes the request atomically; page relied on a reload); decided state applied immediately; decision panel with approver, time, override reason; not reproduced live |
 | UAT-024 | Bulk product selection | NOT STARTED | - | - |

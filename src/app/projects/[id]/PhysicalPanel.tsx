@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import type { ProjectView } from "@/lib/projects/project-view";
-import { DeliveryAllocationPanel } from "./DeliveryAllocationPanel";
 import { getPhysicalStatusAction, type PhysicalActionResult } from "../physical-actions";
 
 // PRODUCTS & FULFILMENT: the approved product scope (inherited from the quotation / variation - never re-typed) against what Cin7 actually holds,
@@ -59,7 +58,6 @@ export function PhysicalPanel({ view }: { view: ProjectView }) {
           </div>
         ))}
       </Panel>
-      <DeliveryAllocationPanel view={view} />
     </div>
   );
 }
