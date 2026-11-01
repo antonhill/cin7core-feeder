@@ -38,12 +38,20 @@ let serverLog = "";
 let buildLog = "";
 
 function minimalEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
-  return { PATH: process.env.PATH, HOME: process.env.HOME, NEXT_TELEMETRY_DISABLED: "1", RWTSA_DIST_SUFFIX: SUFFIX, ...extra } as unknown as NodeJS.ProcessEnv;
+  return { PATH: process.env.PATH, HOME: process.env.HOME, NEXT_TELEMETRY_DISABLED: "1", RWTSA_DIST_SUFFIX: SUFFIX, RWTSA_STATE_DIR: join(tmp, "state"), ...extra } as unknown as NodeJS.ProcessEnv;
 }
 function get(path: string): { status: number; body: string } {
   const out = execFileSync("curl", ["-s", "-m", "20", "-w", "\n%{http_code}", `${BASE}${path}`], { encoding: "utf8" });
   const i = out.lastIndexOf("\n");
   return { status: Number(out.slice(i + 1)), body: out.slice(0, i) };
+}
+function post(path: string, headers: string[], fields: [string, string][]): { status: number; location: string | null } {
+  const args = ["-s", "-o", "/dev/null", "-D", "-", "-m", "20", "-X", "POST"];
+  for (const h of headers) args.push("-H", h);
+  for (const [k, v] of fields) args.push("--data-urlencode", `${k}=${v}`);
+  const out = execFileSync("curl", [...args, `${BASE}${path}`], { encoding: "utf8" });
+  const status = Number(/^HTTP\/[\d.]+ (\d+)/m.exec(out)?.[1]);
+  return { status, location: /^location: (.*)$/im.exec(out)?.[1]?.trim() ?? null };
 }
 function* files(dir: string): Generator<string> {
   for (const e of readdirSync(dir)) {
@@ -100,6 +108,12 @@ describe("the standalone shell builds and runs without Toolbox middleware, Supab
   it("the production build does not bundle the Toolbox middleware or any Supabase client", () => {
     const manifest = JSON.parse(readFileSync(join(DIST, "server", "middleware-manifest.json"), "utf8"));
     expect(manifest.middleware).toEqual({});
+    // The ONLY proxy is this app's own Host gate (matching every path); it is the shadow of the Toolbox middleware.
+    const fns = JSON.parse(readFileSync(join(DIST, "server", "functions-config-manifest.json"), "utf8")).functions as Record<string, { matchers: { originalSource: string }[] }>;
+    expect(Object.keys(fns)).toEqual(["/_middleware"]);
+    expect(fns["/_middleware"].matchers.map((m) => m.originalSource)).toEqual(["/:path*"]);
+    const gate = [...files(join(DIST, "server"))].filter((f) => /\.js$/.test(f) && readFileSync(f, "utf8").includes("only answers requests addressed to a loopback host"));
+    expect(gate.length).toBeGreaterThan(0);
     const offenders = [...files(DIST)].filter((f) => /\.(js|mjs|json)$/.test(f) && /createServerClient|NEXT_PUBLIC_SUPABASE|supabase\.co/i.test(readFileSync(f, "utf8")));
     expect(offenders.map((f) => f.slice(DIST.length))).toEqual([]);
   });
@@ -140,6 +154,57 @@ describe("the standalone shell builds and runs without Toolbox middleware, Supab
   it("the server listens on loopback only", () => {
     expect(serverLog).toContain("127.0.0.1");
     expect(existsSync(join(DIST, "BUILD_ID"))).toBe(true);
+  });
+
+  it("the exclusion route works in the real production server, is same-origin only, and writes only to the local state directory", () => {
+    const fields: [string, string][] = [["action", "exclude"], ["month", "2026-06"], ["reason", `${S}_reason`], ["returnTo", "/scenario-a?view=sku"], ["sku", "SYN-VEST-B-M"]];
+    expect(post("/api/exclusions", [`Origin: http://evil.invalid`], fields).status).toBe(403);
+    expect(existsSync(join(tmp, "state"))).toBe(false);
+    const ok = post("/api/exclusions", [`Origin: ${BASE}`], fields);
+    expect(ok.status).toBe(303);
+    expect(ok.location).toBe("/scenario-a?view=sku&done=excluded");
+    const saved = readdirSync(join(tmp, "state"));
+    expect(saved).toHaveLength(1);
+    const page = get("/scenario-a?view=sku&done=excluded");
+    expect(page.status).toBe(200);
+    expect(text(page.body)).toContain("Month excluded from the demand forecast");
+    expect(text(page.body)).toContain(`EXCLUDED: ${S}_reason`); // the planner's own reason is shown to the planner only
+    const noReason = post("/api/exclusions", [`Origin: ${BASE}`], [["action", "exclude"], ["month", "2026-06"], ["reason", " "], ["sku", "SYN-VEST-B-L"]]);
+    expect(noReason.location).toBe("/scenario-a?done=reason");
+    expect(readdirSync(join(tmp, "state"))).toHaveLength(1);
+    const rev = post("/api/exclusions", [`Origin: ${BASE}`], [["action", "reverse"], ["month", "2026-06"], ["sku", "SYN-VEST-B-M"]]);
+    expect(rev.location).toBe("/scenario-a?done=reversed");
+    expect(text(get("/scenario-a").body)).not.toContain(`${S}_reason`);
+    expect(serverLog).not.toContain(`${S}_reason`);
+    // Nothing the planner typed reaches the build output either.
+    expect([...files(DIST)].some((f) => { try { return readFileSync(f, "utf8").includes(`${S}_reason`); } catch { return false; } })).toBe(false);
+  });
+
+  it("Host gate on the real server: an external Host is refused on pages, the API and static files; loopback names are served", () => {
+    const status = (path: string, host: string | null, extra: string[] = [], method = "GET") => {
+      const args = ["-s", "-o", "/dev/null", "-D", "-", "-m", "20", "-X", method, "--resolve", `localhost:${PORT}:127.0.0.1`];
+      if (host !== null) args.push("-H", `Host: ${host}`);
+      for (const h of extra) args.push("-H", h);
+      const out = execFileSync("curl", [...args, `http://127.0.0.1:${PORT}${path}`], { encoding: "utf8" });
+      return { code: Number(/^HTTP\/[\d.]+ (\d+)/m.exec(out)?.[1]), location: /^location:/im.test(out), out };
+    };
+    for (const evil of ["evil.example", `evil.example:${PORT}`, `127.0.0.1.evil.example:${PORT}`, "10.0.0.5"]) {
+      for (const path of ["/", "/scenario-a", "/validation", "/api/exclusions", "/_next/static/anything.js"]) {
+        const r = status(path, evil);
+        expect(r.code, `${evil} ${path}`).toBe(403);
+        expect(r.location, `${evil} ${path}`).toBe(false);
+        expect(r.out, `${evil} ${path}`).not.toContain("evil.example");
+      }
+    }
+    expect(status("/", `evil.example`, [`Origin: http://evil.example`], "POST").code).toBe(403);
+    // Legitimate loopback operation is unaffected.
+    expect(status("/", `127.0.0.1:${PORT}`).code).toBe(200);
+    expect(status("/scenario-a", `localhost:${PORT}`).code).toBe(200);
+    expect(status("/validation", `127.0.0.1:${PORT}`).code).toBe(200);
+    // Loopback Host but a cross-site POST is refused by the gate before the route runs.
+    expect(status("/api/exclusions", `127.0.0.1:${PORT}`, ["Origin: http://evil.example"], "POST").code).toBe(403);
+    expect(readdirSync(tmp).some((f) => f === "state")).toBe(true); // state from the earlier exclusion test only; nothing new was written
+    expect(serverLog).not.toContain("evil.example");
   });
 
   // --- cache isolation (must run before afterAll removes the test-owned directory and marker) ---

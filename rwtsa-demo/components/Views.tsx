@@ -55,7 +55,7 @@ export function OverviewPageView({ view }: { view: OverviewView }) {
                     <ReadinessBadge readiness={s.readiness} />
                   </TD>
                   <TD>
-                    <Badge tone="neutral">NOT IMPLEMENTED</Badge>
+                    {s.engineImplemented ? <Badge tone="success">ENGINE AVAILABLE</Badge> : <Badge tone="neutral">NOT IMPLEMENTED</Badge>}
                   </TD>
                 </TR>
               ))}
@@ -83,7 +83,7 @@ export function ScenarioPageView({ view }: { view: ScenarioView }) {
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <ProvenanceBadge provenance={view.provenance} />
           <ReadinessBadge readiness={view.readiness} />
-          <Badge tone="neutral">ENGINE NOT IMPLEMENTED</Badge>
+          <Badge tone="neutral">{view.engineImplemented ? "ENGINE AVAILABLE" : "ENGINE NOT IMPLEMENTED"}</Badge>
         </div>
       </div>
       <BannerAlert banner={view.banner} />
@@ -201,7 +201,7 @@ export function ValidationPageView({ view }: { view: ValidationView }) {
           <dt className="text-slate-500">Source</dt>
           <dd className="font-mono text-slate-700">{view.sourceLabel ?? "-"}</dd>
           <dt className="text-slate-500">Forecast window</dt>
-          <dd className="text-slate-700">{view.forecastWindowMonths === null ? "-" : `${view.forecastWindowMonths} months (latest N available sales-history months; not anchored to the stock date)`}</dd>
+          <dd className="text-slate-700">{view.forecastWindowMonths === null ? "-" : `${view.forecastWindowMonths} months (the validator checks the latest N months on the sheet; the Scenario A engine anchors its own window to the stock date and shows the difference as an assumption)`}</dd>
         </dl>
         <p className="mt-3 text-sm text-slate-600">Structure PASS is not readiness. Readiness is decided per scenario, below.</p>
       </Panel>

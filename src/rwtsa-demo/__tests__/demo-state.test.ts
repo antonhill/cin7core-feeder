@@ -124,7 +124,7 @@ describe("a local workbook that cannot be validated never produces READY and nev
   });
 
   it("defence in depth: even a state whose flags say ready is NOT READY if its structure failed", () => {
-    const real: DemoState = { kind: "validated", provenance: "LOCAL WORKBOOK", summary: { structure: "FAIL", tabs: Object.fromEntries(TAB_NAMES.map((t) => [t, { present: true, rows: 1, missingFields: [] }])) as never, findings: [], readiness: IDS.map((scenario) => ({ scenario, ready: true, missingTabs: [], missingFields: [], unpopulatedFields: [], salesWindow: null })), scenariosReady: 4, readinessConfig: { forecastWindowMonths: 6 }, sourceLabel: "x" } };
+    const real: DemoState = { kind: "validated", provenance: "LOCAL WORKBOOK", summary: { structure: "FAIL", tabs: Object.fromEntries(TAB_NAMES.map((t) => [t, { present: true, rows: 1, missingFields: [] }])) as never, findings: [], readiness: IDS.map((scenario) => ({ scenario, ready: true, missingTabs: [], missingFields: [], unpopulatedFields: [], salesWindow: null })), scenariosReady: 4, readinessConfig: { forecastWindowMonths: 6 }, sourceLabel: "x" }, dataset: null };
     expect(allNotReady(real)).toBe(true);
     expect(overviewView(real).scenariosReady).toBe(0);
   });
@@ -221,10 +221,12 @@ describe("delivery layers, assumptions and engine status (static, brief-derived)
     for (const sc of SCENARIOS) for (const c of sc.capabilities) if (c.layer === "CIN7 CORE" || c.layer === "XERO") expect(c.verify, `${sc.id}: ${c.name}`).toBe(true);
   });
 
-  it("no calculation engine is implemented; no scenario view claims one", async () => {
-    for (const sc of SCENARIOS) expect(sc.engine.implemented).toBe(false);
+  it("only the Scenario A (Red Flag) engine exists; no other scenario claims one", async () => {
+    for (const sc of SCENARIOS) expect(sc.engine.implemented).toBe(sc.id === "A");
     const s = await loadDemoState({ source: "synthetic" });
-    for (const id of IDS) expect(scenarioView(s, id).engineImplemented).toBe(false);
+    for (const id of IDS) expect(scenarioView(s, id).engineImplemented).toBe(id === "A");
+    // An available engine never makes data READY: an unusable source has the engine flag but is NOT READY.
+    expect(scenarioView({ kind: "not-loaded" }, "A")).toMatchObject({ engineImplemented: true, readiness: "NOT READY" });
   });
 
   it("the approved decisions are recorded as such (D2 Available start, D3 exclusion rule, D4 FEC documented configuration)", () => {

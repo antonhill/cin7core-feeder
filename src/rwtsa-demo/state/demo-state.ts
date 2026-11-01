@@ -1,6 +1,6 @@
 import type { ScenarioId } from "@/rwtsa-demo/contracts/fields";
 import { SCENARIO_TABS, TAB_NAMES, type TabName } from "@/rwtsa-demo/contracts/tabs";
-import { DEFAULT_FORECAST_WINDOW_MONTHS, type ReadinessConfig, type ScenarioReadiness } from "@/rwtsa-demo/dataset";
+import { DEFAULT_FORECAST_WINDOW_MONTHS, type ReadinessConfig, type RwtsaDataset, type ScenarioReadiness } from "@/rwtsa-demo/dataset";
 import { toSafeMessage, type Finding } from "@/rwtsa-demo/findings";
 import { buildSyntheticWorkbook } from "@/rwtsa-demo/fixtures/synthetic";
 import { SCENARIOS, scenarioById, type Assumption, type Capability, type ScenarioMeta } from "@/rwtsa-demo/state/layers";
@@ -53,7 +53,13 @@ export type DemoState =
   | { readonly kind: "not-loaded" }
   | { readonly kind: "config-error"; readonly message: string }
   | { readonly kind: "error"; readonly provenance: "LOCAL WORKBOOK"; readonly message: string }
-  | { readonly kind: "validated"; readonly provenance: "SYNTHETIC" | "LOCAL WORKBOOK"; readonly summary: ValidationSummary };
+  | {
+      readonly kind: "validated";
+      readonly provenance: "SYNTHETIC" | "LOCAL WORKBOOK";
+      readonly summary: ValidationSummary;
+      /** The typed dataset the engines read, in memory only. Null when the workbook failed structural validation (no engine input exists). */
+      readonly dataset: RwtsaDataset | null;
+    };
 
 export const DEFAULT_SYNTHETIC_SEED = 20261031;
 
@@ -99,14 +105,14 @@ export async function loadDemoState(config: DemoConfig): Promise<DemoState> {
       readinessConfig: built.readinessConfig,
       sourceLabel: label,
     };
-    return { kind: "validated", provenance: "SYNTHETIC", summary };
+    return { kind: "validated", provenance: "SYNTHETIC", summary, dataset: built.dataset };
   }
 
   if (workbookPath === "") return { kind: "not-loaded" };
 
   try {
     const headerOverrides = config.headerMapPath && config.headerMapPath.trim() !== "" ? loadHeaderOverrides(config.headerMapPath.trim()) : undefined;
-    const { certificate } = await validateWorkbookFile(workbookPath, { headerOverrides, readiness });
+    const { certificate, dataset } = await validateWorkbookFile(workbookPath, { headerOverrides, readiness });
     return {
       kind: "validated",
       provenance: "LOCAL WORKBOOK",
@@ -119,6 +125,7 @@ export async function loadDemoState(config: DemoConfig): Promise<DemoState> {
         readinessConfig: certificate.readinessConfig,
         sourceLabel: `local-workbook:${certificate.fileSha256.slice(0, 12)}`,
       },
+      dataset,
     };
   } catch (e) {
     // Missing path, a path inside a git working tree, not an .xlsx, bad header map ... Value-free by construction.
@@ -180,7 +187,7 @@ export interface ScenarioView {
   readonly detail: ScenarioReadiness | null;
   readonly capabilities: readonly Capability[];
   readonly assumptions: readonly Assumption[];
-  readonly engineImplemented: false;
+  readonly engineImplemented: boolean;
 }
 
 export function reasonsFor(state: DemoState, id: ScenarioId): string[] {
@@ -229,7 +236,7 @@ export function scenarioView(state: DemoState, id: ScenarioId): ScenarioView {
     detail: state.kind === "validated" ? (state.summary.readiness.find((r) => r.scenario === id) ?? null) : null,
     capabilities: meta.capabilities,
     assumptions: meta.assumptions,
-    engineImplemented: false,
+    engineImplemented: meta.engine.implemented,
   };
 }
 
@@ -239,18 +246,18 @@ export interface OverviewView {
   /** e.g. `STRUCTURE PASS · 4 of 4 scenarios READY`. */
   readonly headline: string;
   readonly scenariosReady: number;
-  readonly scenarios: readonly { readonly id: ScenarioId; readonly slug: string; readonly title: string; readonly readiness: ReadinessLabel }[];
+  readonly scenarios: readonly { readonly id: ScenarioId; readonly slug: string; readonly title: string; readonly readiness: ReadinessLabel; readonly engineImplemented: boolean }[];
   readonly notices: readonly string[];
 }
 
 export function overviewView(state: DemoState): OverviewView {
-  const scenarios = SCENARIOS.map((s) => ({ id: s.id, slug: s.slug, title: s.title, readiness: (isScenarioReady(state, s.id) ? "READY" : "NOT READY") as ReadinessLabel }));
+  const scenarios = SCENARIOS.map((s) => ({ id: s.id, slug: s.slug, title: s.title, engineImplemented: s.engine.implemented, readiness: (isScenarioReady(state, s.id) ? "READY" : "NOT READY") as ReadinessLabel }));
   const scenariosReady = scenarios.filter((s) => s.readiness === "READY").length;
   const head =
     state.kind === "validated" ? `STRUCTURE ${state.summary.structure}` : state.kind === "not-loaded" ? "NO DATA LOADED" : state.kind === "error" ? "LOAD ERROR" : "CONFIGURATION ERROR";
   const notices = [
     "STRUCTURE PASS means the workbook is structurally valid. It does not mean any scenario is ready: only the READY flags below do.",
-    "Calculation engines are not implemented in this build. No scenario shows results, forecasts or findings.",
+    "Only the Scenario A (Red Flag) engine exists. An available engine does not make its data ready: read the READY flag and the reasons beside it. Scenarios B-D show no results.",
     ...(state.kind === "validated" && state.provenance === "SYNTHETIC" ? ["Synthetic data is for development only and must not be presented as the advisor's workbook."] : []),
   ];
   return { provenance: provenanceOf(state), banner: bannerOf(state), headline: `${head} · ${scenariosReady} of ${scenarios.length} scenarios READY`, scenariosReady, scenarios, notices };

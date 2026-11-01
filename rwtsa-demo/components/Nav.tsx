@@ -9,7 +9,7 @@ export function Nav() {
   ];
   return (
     <header className="border-b border-slate-200 bg-white">
-      <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-6 gap-y-2 px-6 py-3">
+      <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-6 gap-y-2 px-6 py-3">
         <span className="text-sm font-semibold text-slate-900">RWTSA demonstration (local)</span>
         <nav aria-label="Demonstration" className="flex flex-wrap gap-4 text-sm">
           {links.map((l) => (
