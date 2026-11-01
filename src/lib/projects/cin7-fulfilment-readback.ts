@@ -18,6 +18,13 @@ export interface ReadBackFulfilment {
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
+/** The only fields Cin7 documents on a stage (src/cin7/sales.ts). Any other key might carry stock we do not understand, so it makes the fulfilment unreadable. */
+const PICK_PACK_KEYS = new Set(["Status", "Lines"]);
+const SHIP_KEYS = new Set(["Status", "RequireBy", "Lines"]);
+function unknownKeys(stage: Record<string, unknown>, name: string, allowed: Set<string>, unreadable: string[]) {
+  for (const k of Object.keys(stage)) if (!allowed.has(k)) unreadable.push(`${name} has an unexpected field "${k.slice(0, 40)}"`);
+}
+
 /** Lines of a stage: absent = none; present must be a list of objects. */
 function linesOf(stage: Record<string, unknown>, name: string, unreadable: string[]): Array<Record<string, unknown>> {
   const l = stage.Lines;
@@ -30,6 +37,7 @@ function linesOf(stage: Record<string, unknown>, name: string, unreadable: strin
 
 function stageOf(raw: unknown, name: string, unreadable: string[]): ReadBackStage {
   if (!isObj(raw)) { unreadable.push(`${name} is missing`); return { lineCount: 0, totalQuantity: 0 }; }
+  unknownKeys(raw, name, PICK_PACK_KEYS, unreadable);
   const lines = linesOf(raw, name, unreadable);
   let total = 0;
   for (const l of lines) {
@@ -42,6 +50,7 @@ function stageOf(raw: unknown, name: string, unreadable: string[]): ReadBackStag
 
 function shipOf(raw: unknown, unreadable: string[]): ReadBackShip {
   if (!isObj(raw)) { unreadable.push("Ship is missing"); return { lineCount: 0, shippedCount: 0, hasShipmentDate: false }; }
+  unknownKeys(raw, "Ship", SHIP_KEYS, unreadable);
   const lines = linesOf(raw, "Ship", unreadable);
   return {
     lineCount: lines.length,
@@ -57,7 +66,7 @@ export function readBackFulfilments(raw: unknown): ReadBackFulfilment[] {
   return raw.map((f): ReadBackFulfilment => {
     const unreadable: string[] = [];
     if (!isObj(f)) return { number: null, linkedInvoice: null, pick: { lineCount: 0, totalQuantity: 0 }, pack: { lineCount: 0, totalQuantity: 0 }, ship: { lineCount: 0, shippedCount: 0, hasShipmentDate: false }, unreadable: ["a fulfilment cannot be read"] };
-    const n = Number(f.FulfillmentNumber);
+    const n = f.FulfillmentNumber === undefined || f.FulfillmentNumber === null || f.FulfillmentNumber === "" ? Number.NaN : Number(f.FulfillmentNumber);
     const inv = typeof f.LinkedInvoiceNumber === "string" ? f.LinkedInvoiceNumber.trim() : f.LinkedInvoiceNumber === undefined || f.LinkedInvoiceNumber === null ? "" : (unreadable.push("the linked invoice cannot be read"), "");
     return {
       number: Number.isFinite(n) ? n : null, linkedInvoice: inv || null,

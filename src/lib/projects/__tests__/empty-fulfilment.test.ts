@@ -116,6 +116,17 @@ describe("UAT-027: ambiguous or unreadable fulfilment data fails closed", () => 
     expect(bad(withFulfilment((f) => ({ ...f, Pick: { Status: "AUTHORISED", Lines: "none" } })))).toMatch(/Pick lines are not a list/);
     expect(bad(withFulfilment((f) => ({ ...f, Pack: { Status: "AUTHORISED", Lines: [{ SKU: "X", Quantity: "lots" }] } })))).toMatch(/no readable quantity/);
   });
+  it("an unexpected field on Pick, Pack or Ship (stock could be carried somewhere we do not read) is unreadable", () => {
+    expect(bad(withFulfilment((f) => ({ ...f, Pick: { Status: "AUTHORISED", Lines: [], PickLines: [{ Quantity: 5 }] } })))).toMatch(/Pick has an unexpected field "PickLines"/);
+    expect(bad(withFulfilment((f) => ({ ...f, Pack: { Status: "AUTHORISED", Lines: [], Quantity: 5 } })))).toMatch(/Pack has an unexpected field "Quantity"/);
+    expect(bad(withFulfilment((f) => ({ ...f, Ship: { Status: "AUTHORISED", Lines: [], TrackingNumber: "T1" } })))).toMatch(/Ship has an unexpected field "TrackingNumber"/);
+  });
+  it("Ship's documented RequireBy is allowed", () => {
+    expect(verify(withFulfilment((f) => ({ ...f, Ship: { Status: "AUTHORISED", RequireBy: null, Lines: [] } })))).toEqual([]);
+  });
+  it("an unnumbered fulfilment is labelled as such, not as fulfilment 0", () => {
+    expect(bad(withFulfilment((f) => ({ ...f, FulfillmentNumber: undefined, Ship: { Lines: [{}] } })))).toMatch(/fulfilment \(unnumbered\) has 1 shipment line/);
+  });
   it("an unreadable linked invoice", () => expect(bad(withFulfilment((f) => ({ ...f, LinkedInvoiceNumber: 12345 })))).toMatch(/linked invoice cannot be read/));
   it("a count with no facts (an older read-back shape) is rejected, never assumed empty", () => {
     const rb: SaleReadBack = { ...sale([]), fulfilmentCount: 1, fulfilments: undefined };
