@@ -1,5 +1,5 @@
 import { SIZE_ORDER } from "@/rwtsa-demo/contracts/tabs";
-import type { RwtsaDataset } from "@/rwtsa-demo/dataset";
+import type { RoutingCostKind, RwtsaDataset } from "@/rwtsa-demo/dataset";
 import { scaleCents, toCents, type Cents } from "./money";
 
 /**
@@ -19,7 +19,40 @@ import { scaleCents, toCents, type Cents } from "./money";
 export type PercentScale = "fraction" | "percent";
 export type SizeRule = "replace" | "add";
 
+/**
+ * How the routing cost build-up amounts (overhead recovery, efficiency allowance, margin) are read, as a CONDITIONAL analysis:
+ *   - "per-garment":    the amount is rand per garment, as stated in the same column as the per-garment labour line;
+ *   - "per-smv-minute": the amount is rand per SMV minute, so the per-garment value is amount x total SMV.
+ * Neither is the confirmed RWTSA costing policy. Neither is ever a percentage.
+ */
+export type BuildUpUnits = "per-garment" | "per-smv-minute";
+
+export interface BuildUpLine {
+  readonly kind: RoutingCostKind;
+  readonly label: string;
+  readonly unitLabel: string | null;
+  readonly basis: string | null;
+  readonly sourceRow: number;
+  /** The number exactly as written in the sheet. */
+  readonly rawAmount: number;
+  /** Per-garment value under the chosen interpretation (labour is always as stated: it is a reconciliation line). */
+  readonly cents: Cents;
+}
+
+export interface BuildUpAnalysis {
+  readonly units: BuildUpUnits;
+  readonly totalSmv: number;
+  readonly lines: readonly BuildUpLine[];
+  /** Labour stated in the build-up equals SMV x cost per minute from the operations, to the cent. Null when either is absent. */
+  readonly labourReconciles: boolean | null;
+  /** Base BOM cost + overhead + efficiency allowance. Margin is NEVER included. Null unless base, overhead and efficiency are all present. */
+  readonly conditionalFullyLoadedCents: Cents | null;
+  /** Shown beside, never added. */
+  readonly marginCents: Cents | null;
+}
+
 export interface CostingConfig {
+  readonly buildUpUnits?: BuildUpUnits;
   readonly percentScale: PercentScale | null;
   readonly markup?: number;
   readonly sizeRule?: SizeRule;
@@ -50,6 +83,9 @@ export interface SizeCosting {
   readonly efficiencyAllowanceCents: Cents | null;
   readonly overheadCents: Cents | null;
   readonly totalCents: Cents | null;
+  /** Materials, trims, print, packaging and labour (SMV x cost per minute): the workbook's reference basis. Excludes overhead, efficiency and margin. */
+  readonly baseBomCents: Cents | null;
+  readonly buildUp: BuildUpAnalysis | null;
   readonly sellingCents: Cents | null;
   readonly referenceCents: Cents | null;
   /** calculated - reference. */
@@ -87,7 +123,7 @@ export interface ScaleObservation {
 }
 
 export interface CostingResult {
-  readonly config: { readonly percentScale: PercentScale | null; readonly markup: number; readonly sizeRule: SizeRule };
+  readonly config: { readonly percentScale: PercentScale | null; readonly markup: number; readonly sizeRule: SizeRule; readonly buildUpUnits: BuildUpUnits };
   readonly scale: PercentScale | null;
   /** What the overhead / efficiency / margin columns look like. A hint only: it is never applied. */
   readonly scaleObservation: ScaleObservation;
@@ -135,6 +171,8 @@ export function runCosting(ds: RwtsaDataset, config: CostingConfig): CostingResu
   const sizeRule = config.sizeRule ?? "replace";
   if (!Number.isFinite(markup) || markup < 1) throw new Error("Invalid markup: a multiplier of at least 1.");
   if (sizeRule !== "replace" && sizeRule !== "add") throw new Error("Invalid size rule.");
+  const buildUpUnits = config.buildUpUnits ?? "per-garment";
+  if (buildUpUnits !== "per-garment" && buildUpUnits !== "per-smv-minute") throw new Error("Invalid build-up units.");
   const scale = config.percentScale;
   if (scale !== null && scale !== "fraction" && scale !== "percent") throw new Error("Invalid percentage scale.");
 
@@ -255,13 +293,17 @@ export function runCosting(ds: RwtsaDataset, config: CostingConfig): CostingResu
       let base = 0;
       let allowance = 0;
       let overhead = 0;
-      let pctOk = ops.length > 0;
+      // The per-operation percentage model applies only when the routing carries overhead or efficiency values per operation.
+      // A routing without them (the workbook states them as separate lines instead) costs on the base basis and is NOT incomplete.
+      const pctModel = ops.some((o) => o.overhead !== null || o.efficiency !== null);
+      let pctOk = ops.length > 0 && pctModel;
       const pctWhy = new Set<string>();
       for (const o of ops) {
         const opBase = toCents(o.smv * o.costPerMinute);
         base += opBase;
         cmt[cmtOf(o.operation)] += opBase;
         lines.push({ code: `labour:${o.operation}`, label: `Labour: ${o.operation}`, category: "labour", cents: opBase });
+        if (!pctModel) continue;
         const eff = toFraction(o.efficiency, "efficiency");
         const ovh = toFraction(o.overhead, "overhead");
         if ("why" in eff) pctWhy.add(eff.why);
@@ -278,9 +320,31 @@ export function runCosting(ds: RwtsaDataset, config: CostingConfig): CostingResu
         lines.push({ code: `efficiency:${o.operation}`, label: `Efficiency allowance: ${o.operation}`, category: "efficiency", cents: allow });
         lines.push({ code: `overhead:${o.operation}`, label: `Overhead: ${o.operation}`, category: "overhead", cents: ovhCents });
       }
-      if (!pctOk && ops.length > 0) for (const w of pctWhy) missing.push(w.startsWith("percentage scale") ? "percentage scale (overhead and efficiency need it)" : w);
+      if (!pctOk && pctModel) for (const w of pctWhy) missing.push(w.startsWith("percentage scale") ? "percentage scale (overhead and efficiency need it)" : w);
 
       const total = missing.length === 0 ? lines.reduce((a, l) => a + l.cents, 0) : null;
+      const baseMissing = missing.filter((m) => !(m.startsWith("percentage scale") || /^(overhead|efficiency) (\(blank in Routing_SMV\)|value out of range)/.test(m)));
+      const baseBom = baseMissing.length === 0 && ops.length > 0 ? lines.filter((l) => l.category !== "efficiency" && l.category !== "overhead").reduce((a, l) => a + l.cents, 0) : null;
+      // Routing cost build-up (separate lines stated under the routing table): a conditional analysis, never the product cost.
+      const stated = (ds.routingCosts?.lines ?? []).filter((l) => l.styleCode === styleCode);
+      let buildUp: BuildUpAnalysis | null = null;
+      if (stated.length > 0) {
+        const totalSmv = ops.reduce((a, o) => a + o.smv, 0);
+        const valueOf = (rawAmount: number, kind: RoutingCostKind): Cents => (kind === "labour" || buildUpUnits === "per-garment" ? toCents(rawAmount) : toCents(rawAmount * totalSmv));
+        const bLines: BuildUpLine[] = stated.map((l) => ({ kind: l.kind, label: l.label, unitLabel: l.unitLabel, basis: l.basis, sourceRow: l.sourceRow, rawAmount: l.amount, cents: valueOf(l.amount, l.kind) }));
+        const get = (k: RoutingCostKind) => bLines.find((l) => l.kind === k)?.cents ?? null;
+        const lab = get("labour");
+        const oh = get("overhead");
+        const ef = get("efficiency");
+        buildUp = {
+          units: buildUpUnits,
+          totalSmv,
+          lines: bLines,
+          labourReconciles: lab !== null && ops.length > 0 ? Math.abs(lab - base) <= 1 : null,
+          conditionalFullyLoadedCents: baseBom !== null && oh !== null && ef !== null ? baseBom + oh + ef : null,
+          marginCents: get("margin"),
+        };
+      }
       const sell = total === null ? null : scaleCents(total, markup);
       const reference = toCents(item.standardCost);
       const diff = total === null ? null : total - reference;
@@ -294,6 +358,8 @@ export function runCosting(ds: RwtsaDataset, config: CostingConfig): CostingResu
         efficiencyAllowanceCents: pctOk && ops.length > 0 ? allowance : null,
         overheadCents: pctOk && ops.length > 0 ? overhead : null,
         totalCents: total,
+        baseBomCents: baseBom,
+        buildUp,
         sellingCents: sell,
         referenceCents: reference,
         diffCents: diff,
@@ -348,5 +414,5 @@ export function runCosting(ds: RwtsaDataset, config: CostingConfig): CostingResu
     { id: "percent-scale", text: scale === null ? "The percentage scale of overhead and efficiency has NOT been chosen, so those lines are unresolved. 15, 0.15 and 15% are not assumed to mean the same." : `Overhead and efficiency are read on the ${scale === "percent" ? "percent (15 means 15%)" : "fraction (0.15 means 15%)"} scale because it was chosen, not because the workbook says so.` },
   ];
 
-  return { config: { percentScale: scale, markup, sizeRule }, scale, scaleObservation: observation, styles, checks, assumptions, warnings };
+  return { config: { percentScale: scale, markup, sizeRule, buildUpUnits }, scale, scaleObservation: observation, styles, checks, assumptions, warnings };
 }

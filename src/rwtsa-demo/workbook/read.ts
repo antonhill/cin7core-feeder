@@ -5,6 +5,7 @@ import { MAX_CSV_COLUMNS, MAX_CSV_FIELD_LENGTH, MAX_CSV_ROWS } from "@/lib/csv-u
 import { normaliseHeader } from "@/rwtsa-demo/contracts/fields";
 import { TAB_NAMES, type TabName } from "@/rwtsa-demo/contracts/tabs";
 import { finding, RwtsaSafeError, type Finding } from "@/rwtsa-demo/findings";
+import type { RoutingCostReport } from "@/rwtsa-demo/dataset";
 import { extractTable, SUPPLEMENTARY_SHEETS, type GridRow, type TabLayoutReport } from "@/rwtsa-demo/workbook/layouts";
 import { assertWorkbookPathAllowed } from "@/rwtsa-demo/workbook/path-guard";
 
@@ -31,6 +32,8 @@ export interface ReadResult {
   readonly findings: readonly Finding[];
   /** Per-tab layout and row accounting (header row, title / note / trailing rows, derived values). */
   readonly layout: Partial<Record<TabName, TabLayoutReport>>;
+  /** Routing_SMV cost build-up lines and reconciliation references, when the sheet states them. */
+  readonly routingCosts?: RoutingCostReport;
 }
 
 const TAB_BY_NORMALISED: ReadonlyMap<string, TabName> = new Map(TAB_NAMES.map((t) => [normaliseHeader(t), t]));
@@ -83,6 +86,7 @@ export function readWorkbook(wb: ExcelJS.Workbook): ReadResult {
   const findings: Finding[] = [];
   const tables: Partial<Record<TabName, RawTable>> = {};
   const layout: Partial<Record<TabName, TabLayoutReport>> = {};
+  let routingCosts: RoutingCostReport | undefined;
   let unknownTabs = 0;
   let supplementary = 0;
   const duplicateSheets: Partial<Record<TabName, number>> = {};
@@ -155,6 +159,7 @@ export function readWorkbook(wb: ExcelJS.Workbook): ReadResult {
     findings.push(...extracted.findings);
     tables[tab] = extracted.table;
     layout[tab] = extracted.report;
+    if (extracted.routingCosts) routingCosts = extracted.routingCosts;
   }
 
   for (const tab of TAB_NAMES) {
@@ -165,7 +170,7 @@ export function readWorkbook(wb: ExcelJS.Workbook): ReadResult {
   if (supplementary > 0) findings.push(finding({ severity: "info", code: "supplementary_sheet", tab: null, count: supplementary }));
   if (unknownTabs > 0) findings.push(finding({ severity: "warning", code: "unknown_tab", tab: null, count: unknownTabs }));
 
-  return { tables, findings, layout };
+  return { tables, findings, layout, ...(routingCosts ? { routingCosts } : {}) };
 }
 
 export interface FileReadResult extends ReadResult {

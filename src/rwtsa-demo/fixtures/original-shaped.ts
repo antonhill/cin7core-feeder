@@ -134,9 +134,10 @@ export function buildOriginalShapedWorkbook(): ExcelJS.Workbook {
   put(rt, 8, [null, "Total SMV per garment", null, f(8)]);
   put(rt, 9, [null, "Direct CMT cost = Total SMV x R2.70", null, f(21.6)]);
   put(rt, 11, [null, "Cost build-up (unbundled - separate lines):"]);
-  put(rt, 12, [null, "Factory overhead recovery (per min)", "synthetic", f(6.8)]);
-  put(rt, 13, [null, "Efficiency allowance", "synthetic", f(3.6)]);
-  put(rt, 14, [null, "Margin", "synthetic", f(3.2)]);
+  put(rt, 12, [null, "Direct + indirect labour (SMV x CPM)", "from routing", f(21.6)]);
+  put(rt, 13, [null, "Factory overhead recovery (per min)", "synthetic basis", f(5.4)]);
+  put(rt, 14, [null, "Efficiency allowance", "synthetic basis", f(2.5)]);
+  put(rt, 15, [null, "Margin (intercompany)", "synthetic basis", f(1.8)]);
 
   // ---- ProductionOrders: report layout, header on row 3, composite style, percent-formatted recovery, note below ----
   const po = wb.addWorksheet("ProductionOrders");

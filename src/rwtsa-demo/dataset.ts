@@ -86,6 +86,33 @@ export interface StockRow extends StockFileRow {
   readonly availableComputed: number;
 }
 
+/** What a Routing_SMV cost build-up line is, by its explicit label. Never a percentage. */
+export type RoutingCostKind = "labour" | "overhead" | "efficiency" | "margin";
+
+/**
+ * One line of the cost build-up stated under the routing table. The amount is the number exactly as written in the sheet; the
+ * unit label is the text the sheet puts in brackets after the label (for example "per min"), which can disagree with the column
+ * the amount sits in, so no unit is decided here.
+ */
+export interface RoutingCostLine {
+  readonly styleCode: string;
+  readonly kind: RoutingCostKind;
+  readonly label: string;
+  /** Second text cell on the row (what the amount is derived from), or null. */
+  readonly basis: string | null;
+  readonly amount: number;
+  /** Text in the last brackets of the label, or null. */
+  readonly unitLabel: string | null;
+  /** 1-based sheet row. */
+  readonly sourceRow: number;
+}
+export interface RoutingCostReport {
+  readonly lines: readonly RoutingCostLine[];
+  /** The sheet's own "Total SMV" and "Direct CMT cost" report rows, kept for reconciliation only (never loaded as cost records). */
+  readonly reportedTotalSmv: number | null;
+  readonly reportedDirectCmt: number | null;
+}
+
 export interface RwtsaDataset {
   readonly schemaVersion: 1;
   readonly provenance: Provenance;
@@ -109,6 +136,8 @@ export interface RwtsaDataset {
   readonly reconciliation: Reconciliation;
   /** Per-tab layout and row accounting from the reader (absent on hand-built datasets). */
   readonly layout?: Readonly<Partial<Record<TabName, TabLayoutReport>>>;
+  /** Routing_SMV cost build-up lines found under the routing table (absent when the sheet has none). */
+  readonly routingCosts?: RoutingCostReport;
   readonly readiness: readonly ScenarioReadiness[];
   /** Warnings and info only: a dataset with any error finding is never produced. */
   readonly findings: readonly Finding[];

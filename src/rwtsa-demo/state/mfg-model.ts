@@ -49,22 +49,26 @@ export function mfgModel(state: DemoState, settings: MfgSettings): MfgModel {
   }
   try {
     const variance = runProductionVariance(state.dataset, { bracketBreaks: settings.bracketBreaks });
-    const costing = runCosting(state.dataset, { percentScale: settings.percentScale, markup: settings.markup, sizeRule: settings.sizeRule });
+    const costing = runCosting(state.dataset, { percentScale: settings.percentScale, markup: settings.markup, sizeRule: settings.sizeRule, buildUpUnits: settings.buildUpUnits });
     const styles = costing.styles.map((s) => s.styleCode);
     const style = costing.styles.find((s) => s.styleCode === settings.style) ?? costing.styles[0] ?? null;
     const size = style ? (style.sizes.find((z) => z.size === settings.size) ?? style.sizes.find((z) => z.size === "M") ?? style.sizes[0] ?? null) : null;
     const groups = settings.by === "line" ? variance.byLine : settings.by === "bracket" ? variance.byBracket : variance.byStyle;
-    const rules: UnresolvedRule[] = rulesApply(state) && overheadUnresolved(state.dataset) ? [overheadRule()] : [];
+    const rules: UnresolvedRule[] = rulesApply(state) && overheadUnresolved(state.dataset) ? [overheadRule((state.dataset.routingCosts?.lines.length ?? 0) > 0)] : [];
+    // The base BOM cost and the reference selling price do not depend on the unresolved rule and stay visible. What the rule withholds
+    // (a fully loaded cost presented as the product cost, and any price derived from it) is never computed: the build-up is shown
+    // only as a labelled conditional analysis.
     if (rules.length === 0) return { ...base, engine: "AVAILABLE", engineNote: null, variance, costing, groups, styles, style, size, rules };
-    // While the overhead / efficiency rule is open no product cost total, selling price or reference difference may be shown,
-    // whatever the engine could compute for a style whose routing happens to carry some values.
-    const reason = "overhead / efficiency rule unresolved: product cost withheld";
-    const hide = (z: SizeCosting): SizeCosting => ({ ...z, totalCents: null, sellingCents: null, diffCents: null, diffPct: null, deltaVsBaseCents: null, status: "incomplete", missing: z.missing.includes(reason) ? z.missing : [...z.missing, reason] });
-    // The engine's own checks and warnings describe the totals that are now withheld, so they are not shown either.
-    const hidden: CostingResult = { ...costing, checks: [], warnings: ["Cost totals and selling prices are withheld while the overhead / efficiency rule is unresolved."], styles: costing.styles.map((st) => ({ ...st, sizes: st.sizes.map(hide) })) };
-    const hStyle = hidden.styles.find((s) => s.styleCode === style?.styleCode) ?? null;
+    // A size whose total includes the per-operation overhead / efficiency percentages is a fully loaded figure, which the open rule
+    // withholds (with its selling price and reference difference). Sizes on the base basis are untouched.
+    const reason = "overhead / efficiency rule unresolved: fully loaded cost withheld";
+    const isLoaded = (z: SizeCosting) => z.efficiencyAllowanceCents !== null || z.overheadCents !== null;
+    const hide = (z: SizeCosting): SizeCosting => (isLoaded(z) ? { ...z, totalCents: null, sellingCents: null, diffCents: null, diffPct: null, deltaVsBaseCents: null, status: "incomplete", missing: z.missing.includes(reason) ? z.missing : [...z.missing, reason] } : z);
+    const anyLoaded = costing.styles.some((st) => st.sizes.some(isLoaded));
+    const shown: CostingResult = anyLoaded ? { ...costing, checks: [], warnings: [...costing.warnings, "Fully loaded cost totals and their selling prices are withheld while the overhead / efficiency rule is unresolved."], styles: costing.styles.map((st) => ({ ...st, sizes: st.sizes.map(hide) })) } : costing;
+    const hStyle = shown.styles.find((s) => s.styleCode === style?.styleCode) ?? null;
     const hSize = hStyle ? (hStyle.sizes.find((z) => z.size === size?.size) ?? null) : null;
-    return { ...base, engine: "AVAILABLE", engineNote: null, variance, costing: hidden, groups, styles, style: hStyle, size: hSize, rules };
+    return { ...base, engine: "AVAILABLE", engineNote: null, variance, costing: shown, groups, styles, style: hStyle, size: hSize, rules };
   } catch {
     return { ...base, engine: "UNAVAILABLE", engineNote: "The engines could not run with these inputs.", variance: null, costing: null, groups: [], style: null, size: null };
   }

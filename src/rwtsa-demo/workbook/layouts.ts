@@ -1,3 +1,4 @@
+import type { RoutingCostKind, RoutingCostLine, RoutingCostReport } from "@/rwtsa-demo/dataset";
 import { normaliseHeader } from "@/rwtsa-demo/contracts/fields";
 import { SIZE_ORDER, TAB_CONTRACTS, type TabName } from "@/rwtsa-demo/contracts/tabs";
 import { finding, type Finding } from "@/rwtsa-demo/findings";
@@ -38,6 +39,8 @@ export interface TabLayoutReport {
   readonly excludedRows: number;
   readonly trailingSummaryRows: number;
   readonly trailingNoteRows: number;
+  /** Routing_SMV only: trailing cost build-up rows loaded as cost lines (a subset of trailingSummaryRows). */
+  readonly costRecordRows?: number;
   /** Extra parsed rows created by expanding a size list. */
   readonly expandedRows: number;
   /** Rows in the dataset for this tab (filled in once parsed). */
@@ -48,6 +51,7 @@ export interface TabLayoutReport {
 }
 
 export interface LayoutResult {
+  readonly routingCosts?: RoutingCostReport;
   readonly table: RawTable;
   readonly report: TabLayoutReport;
   readonly findings: readonly Finding[];
@@ -258,6 +262,68 @@ export function extractTable(tab: TabName, grid: readonly GridRow[]): LayoutResu
     columns = fieldColumns(tab, outHeaders);
   };
 
+  // Routing_SMV: the cost build-up stated UNDER the routing table. Genuine cost lines are those after an explicit "Cost build-up"
+  // heading whose LABEL is one of the four known kinds; "Total SMV" and "Direct CMT cost" report rows are kept only as reconciliation
+  // references. Anything else stays an ordinary trailing summary row (counted), and an unrecognised label under the heading is reported.
+  let routingCosts: RoutingCostReport | undefined;
+  let costRecordRows = 0;
+  if (tab === "Routing_SMV" && isReport && trailing.length > 0) {
+    const styleCode = typeof constants.get("styleCode") === "string" ? (constants.get("styleCode") as string) : "";
+    const textCells = (g: GridRow) => g.cells.filter((c): c is string => typeof c === "string" && c.trim() !== "").map((c) => c.trim());
+    const numCell = (g: GridRow): number | null => {
+      for (const c of g.cells) {
+        if (typeof c === "number" && Number.isFinite(c)) return c;
+        if (typeof c === "string" && /^-?\d+(\.\d+)?$/.test(c.trim())) return Number(c.trim());
+      }
+      return null;
+    };
+    const kindOf = (label: string): RoutingCostKind | null => {
+      // A total, price or check row that merely mentions a kind word is not a build-up line.
+      if (/^(total|selling|gross|net|sub-?total)\b|\b(total|price|check|incl\.?|including)\b/i.test(label)) return null;
+      if (/\boverhead\b/i.test(label)) return "overhead";
+      if (/\befficiency\b/i.test(label)) return "efficiency";
+      if (/\bmargin\b/i.test(label)) return "margin";
+      if (/\blabour\b/i.test(label)) return "labour";
+      return null;
+    };
+    let reportedTotalSmv: number | null = null;
+    let reportedDirectCmt: number | null = null;
+    const lines: RoutingCostLine[] = [];
+    const unrecognised: number[] = [];
+    let inBuildUp = false;
+    const seen = new Set<RoutingCostKind>();
+    for (const g of trailing) {
+      const texts = textCells(g);
+      const n = numCell(g);
+      const label = texts[0] ?? "";
+      if (/^total\s+smv\b/i.test(label) && n !== null) {
+        reportedTotalSmv = n;
+        continue;
+      }
+      if (/^direct\s+cmt\s+cost\b/i.test(label) && n !== null) {
+        reportedDirectCmt = n;
+        continue;
+      }
+      if (/^cost\s+build-?up\b/i.test(label) && n === null) {
+        inBuildUp = true;
+        continue;
+      }
+      if (!inBuildUp || n === null) continue;
+      const kind = kindOf(label);
+      if (kind === null || seen.has(kind)) {
+        unrecognised.push(g.rowNumber);
+        continue;
+      }
+      seen.add(kind);
+      const bracket = /\(([^()]*)\)\s*$/.exec(label);
+      lines.push({ styleCode, kind, label, basis: texts[1] ?? null, amount: n, unitLabel: bracket && /\bper\b|\bx\b|\//i.test(bracket[1]) ? bracket[1].trim() : null, sourceRow: g.rowNumber });
+    }
+    costRecordRows = lines.length;
+    if (unrecognised.length > 0) findings.push(finding({ severity: "warning", code: "routing_cost_label_unrecognised", tab, count: unrecognised.length, rows: unrecognised }));
+    if (lines.length > 0) findings.push(finding({ severity: "info", code: "routing_cost_lines_loaded", tab, count: lines.length, rows: lines.map((l) => l.sourceRow) }));
+    if (lines.length > 0 || reportedTotalSmv !== null || reportedDirectCmt !== null) routingCosts = { lines, reportedTotalSmv, reportedDirectCmt };
+  }
+
   if (tab === "BOM" && isReport) {
     // A Labour line whose quantity and cost are text pointing at the routing is not a costed component: labour is costed
     // from Routing_SMV. It is counted and reported; any OTHER non-numeric line stays for the strict parse to reject.
@@ -359,9 +425,10 @@ export function extractTable(tab: TabName, grid: readonly GridRow[]): LayoutResu
     excludedRows: excluded,
     trailingSummaryRows: trailingSummary,
     trailingNoteRows: trailingNote,
+    ...(tab === "Routing_SMV" ? { costRecordRows } : {}),
     expandedRows: expanded,
     parsedRows: 0,
     derived: derivedOut,
   };
-  return { table, report, findings };
+  return { table, report, findings, ...(routingCosts ? { routingCosts } : {}) };
 }

@@ -51,11 +51,13 @@ export const historyGapRule = (lastMonth: string | null, gap: readonly string[])
 export function overheadUnresolved(ds: RwtsaDataset): boolean {
   return ds.tables.routing.length > 0 && ds.tables.routing.some((r) => r.overhead === null || r.efficiency === null);
 }
-export const overheadRule = (): UnresolvedRule => ({
+export const overheadRule = (hasBuildUp = false): UnresolvedRule => ({
   id: "overhead-efficiency-margin",
   title: "Overhead, efficiency allowance and margin",
-  detail: "Not every routing line carries the overhead and efficiency values the cost model needs. Whether overhead, efficiency and margin enter product cost, and how, is not established by the workbook. Any amounts stated elsewhere on the sheet are not used.",
-  withholds: "Product cost totals and selling prices are withheld",
+  detail: hasBuildUp
+    ? "The routing states overhead recovery, an efficiency allowance and margin as separate rand lines. Their unit is not confirmed (the sheet labels one of them per minute, while they sit beside a per-garment labour amount), and whether they enter product cost is not established. They are shown separately as a conditional analysis; margin is never added to cost."
+    : "Not every routing line carries overhead and efficiency values and the sheet states none as separate lines. Whether overhead, efficiency and margin enter product cost, and how, is not established.",
+  withholds: "Fully loaded product cost and any selling price derived from it. The base BOM cost and the reference selling price are shown",
   how: "owner",
 });
 

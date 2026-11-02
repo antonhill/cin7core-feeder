@@ -162,22 +162,36 @@ describe("rule detection is not fooled by edge cases", () => {
 });
 
 describe("Scenario B: overhead, efficiency and margin", () => {
-  it("names the unresolved rule and withholds cost totals and selling prices (nothing assumed)", async () => {
+  it("names the unresolved rule, says what it withholds, and still shows the base BOM cost and the reference selling price", async () => {
     local();
     const m = await B({ scale: "fraction" });
     expect(ruleIds(m)).toEqual(["overhead-efficiency-margin"]);
     expect(badge(m)).toBe("RULES: 1 OPEN");
-    expect(indicator(m, "ind-costs")).toBe("0 of 10");
-    expect(text(m)).toContain("Product cost totals and selling prices are withheld");
+    expect(text(m)).toContain("Fully loaded product cost and any selling price derived from it");
+    expect(indicator(m, "sel-base")).not.toBe("-");
+    expect(indicator(m, "sel-total")).not.toBe("-");
+    expect(indicator(m, "sel-selling")).not.toBe("-");
   });
-  it("no cost total or selling price is populated anywhere while the rule is open", async () => {
+  it("the routing build-up is shown as a labelled CONDITIONAL analysis: separate lines, margin beside and not included, no policy claimed", async () => {
     local();
-    const m = await B({ scale: "fraction" });
-    const sizes = [...m.matchAll(/data-testid="size-row" data-size="([^"]*)" data-total="([^"]*)" data-selling="([^"]*)"/g)];
-    expect(sizes.length).toBeGreaterThan(0);
-    expect(sizes.every((x) => x[2] === "" && x[3] === "")).toBe(true);
-    expect(indicator(m, "sel-total")).toBe("-");
-    expect(indicator(m, "sel-selling")).toBe("-");
+    const m = await B();
+    const kinds = [...m.matchAll(/data-testid="buildup-line" data-kind="([^"]*)"/g)].map((x) => x[1]);
+    expect(kinds).toEqual(["labour", "overhead", "efficiency", "margin"]);
+    expect(text(m)).toMatch(/conditional analysis, not a costing policy/i);
+    expect(text(m)).toMatch(/never percentages/i);
+    expect(text(m)).toMatch(/never added to cost/i);
+    expect(indicator(m, "buildup-loaded")).not.toBe("-");
+    expect(indicator(m, "buildup-margin")).not.toBe("-");
+    expect(indicator(m, "buildup-reconciles")).toBe("Yes");
+  });
+  it("switching to the per-SMV-minute reading changes only the conditional analysis, never the base cost or reference selling price", async () => {
+    local();
+    const a = await B();
+    const b = await B({ units: "per-smv-minute" });
+    expect(indicator(b, "sel-base")).toBe(indicator(a, "sel-base"));
+    expect(indicator(b, "sel-selling")).toBe(indicator(a, "sel-selling"));
+    expect(indicator(b, "buildup-loaded")).not.toBe(indicator(a, "buildup-loaded"));
+    expect(text(b)).toMatch(/per SMV minute x total SMV/);
   });
   it("production variance is unaffected and still shown", async () => {
     local();

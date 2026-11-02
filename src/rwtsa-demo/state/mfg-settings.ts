@@ -1,5 +1,5 @@
 import { DEFAULT_BRACKET_BREAKS } from "@/rwtsa-demo/engine/production-variance";
-import type { PercentScale, SizeRule } from "@/rwtsa-demo/engine/bom-costing";
+import type { BuildUpUnits, PercentScale, SizeRule } from "@/rwtsa-demo/engine/bom-costing";
 import type { RawQuery } from "@/rwtsa-demo/state/red-flag-settings";
 
 /** Scenario B controls, carried in the URL (plain GET form). Invalid values are reported and replaced by the default; never echoed. */
@@ -9,11 +9,13 @@ export interface MfgSettings {
   readonly percentScale: PercentScale | null;
   readonly markup: number;
   readonly sizeRule: SizeRule;
+  /** Conditional-analysis reading of the routing build-up amounts. Never a confirmed policy. */
+  readonly buildUpUnits: BuildUpUnits;
   readonly bracketBreaks: readonly number[];
   readonly by: GroupBy;
   readonly style: string | null;
   readonly size: string | null;
-  readonly values: Readonly<Record<"scale" | "markup" | "rule" | "brackets" | "by", string>>;
+  readonly values: Readonly<Record<"scale" | "markup" | "rule" | "brackets" | "by" | "units", string>>;
   readonly errors: readonly string[];
 }
 
@@ -45,6 +47,12 @@ export function parseMfgSettings(q: RawQuery, opts: { suggestedScale: PercentSca
     if (ru === "replace" || ru === "add") rule = ru;
     else errors.push("Size rule: unsupported value, default used.");
   }
+  let units: BuildUpUnits = "per-garment";
+  const un = one(q, "units");
+  if (un !== undefined && un !== "") {
+    if (un === "per-garment" || un === "per-smv-minute") units = un;
+    else errors.push("Build-up units: per garment or per SMV minute; default used.");
+  }
   let breaks: readonly number[] = DEFAULT_BRACKET_BREAKS;
   const br = one(q, "brackets");
   if (br !== undefined && br !== "") {
@@ -66,11 +74,12 @@ export function parseMfgSettings(q: RawQuery, opts: { suggestedScale: PercentSca
     percentScale: scale,
     markup,
     sizeRule: rule,
+    buildUpUnits: units,
     bracketBreaks: breaks,
     by,
     style: style && style !== "" ? style : null,
     size: size && size !== "" ? size : null,
-    values: { scale: scale ?? "unset", markup: String(markup), rule, brackets: breaks.join(","), by },
+    values: { scale: scale ?? "unset", markup: String(markup), rule, brackets: breaks.join(","), by, units },
     errors,
   };
 }

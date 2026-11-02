@@ -15,16 +15,19 @@ const state = (provenance: "LOCAL WORKBOOK" | "SYNTHETIC"): DemoState => ({
     ops: [{ style: "A", op: "Sew", smv: 2, cpm: 1.5, overhead: 0.1, efficiency: 0.85 }, { style: "B", op: "Sew", smv: 2, cpm: 1.5, overhead: null, efficiency: null }],
   }),
 });
-const sizes = (m: ReturnType<typeof mfgModel>) => m.costing!.styles.flatMap((s) => s.sizes);
 
-describe("Scenario B model: the open overhead rule hides every cost total and selling price", () => {
-  it("LOCAL: a style the engine can total is still withheld while any routing line lacks overhead / efficiency", () => {
+describe("Scenario B model: the open overhead rule withholds fully loaded totals only", () => {
+  it("LOCAL: a style whose total includes the per-operation percentages is withheld; a style on the base basis keeps its cost", () => {
     const m = mfgModel(state("LOCAL WORKBOOK"), parseMfgSettings({ scale: "fraction" }, { suggestedScale: null }));
     expect(m.rules.map((r) => r.id)).toEqual(["overhead-efficiency-margin"]);
-    expect(sizes(m).every((z) => z.totalCents === null && z.sellingCents === null && z.diffCents === null && z.status === "incomplete")).toBe(true);
-    expect(m.size?.totalCents).toBeNull();
-    // Nothing contradicts the withholding: every size says why, and no check or warning claims completeness.
-    expect(sizes(m).every((z) => z.missing.length > 0)).toBe(true);
+    const A = m.costing!.styles.find((s) => s.styleCode === "A")!.sizes[0];
+    const B = m.costing!.styles.find((s) => s.styleCode === "B")!.sizes[0];
+    expect([A.totalCents, A.sellingCents, A.diffCents, A.status]).toEqual([null, null, null, "incomplete"]);
+    expect(A.missing.join(" ")).toMatch(/fully loaded cost withheld/);
+    expect(A.baseBomCents).not.toBeNull(); // the base basis is still known
+    expect(B.status).toBe("complete");
+    expect(B.totalCents).toBe(B.baseBomCents);
+    expect(B.sellingCents).not.toBeNull();
     expect(m.costing!.checks).toEqual([]);
     expect(m.costing!.warnings.join(" ")).toMatch(/withheld/i);
   });

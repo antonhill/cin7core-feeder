@@ -79,6 +79,7 @@ saved, and it neither reads nor writes Cin7 Core or Xero (the page lists which f
 - **Costing** per style and size: BOM quantity x unit cost (fabric/materials, trims/thread, print/packaging), labour = SMV x cost per minute split into cut / make / trim, efficiency allowance,
   overhead, selling price = cost x 1.6 (configurable). Size-specific BOM rows (exact size, or size from) replace the base component of the same type and name (the longer zip from 3XL), or are added.
   Calculated cost is reconciled with the workbook's reference cost (`Items.standardCost`).
+- **Routing cost build-up.** Where the routing sheet states overhead recovery, an efficiency allowance and margin as separate rand lines under the table, they are loaded with their source label, unit label, basis text and sheet row (the sheet's Total SMV and Direct CMT rows are kept only as reconciliation references). They are rand amounts, never percentages. The base BOM cost (materials, trims, print, packaging and labour = SMV x cost per minute) and the reference selling price are unchanged and do not depend on them. The lines are shown separately as a CONDITIONAL analysis under a chosen reading (rand per garment as stated, or rand per SMV minute x total SMV); neither is a confirmed costing policy, and margin is never added to cost. A routing with no per-operation overhead or efficiency columns is costed on the base basis, not treated as incomplete. Known limit: a build-up amount stored as a percent-formatted cell is read as the number displayed, not flagged; and lines are attributed to the style named in the sheet title.
 - **The percentage scale is never assumed.** 15, 0.15 and 15% are different things. Overhead and efficiency need a scale, which is chosen on screen (the synthetic source declares fractions; a local
   workbook declares nothing). Until it is chosen those lines are unresolved and the cost is incomplete. The page shows what the values look like (a hint only, never applied).
 - **Real-workbook readiness is UNVERIFIED**: no authorised local workbook was available when this was built. Unconfirmed: BOM units and quantities, the overhead / efficiency / margin conventions, the
@@ -112,7 +113,7 @@ For a **local** workbook the demo never picks a business rule the workbook does 
 | Overdue shipments on the water | A | all results | a choice in the controls |
 | Sales history ends before the stock month | A | all results | a choice in the controls |
 | Tender SKU classification (no SKU-level marker) | A | proposed order quantities | owner decision |
-| Overhead, efficiency allowance and margin | B | product cost totals and selling prices | owner decision |
+| Overhead, efficiency allowance and margin (units and inclusion) | B | fully loaded product cost and any price derived from it; the base BOM cost and reference price are shown | owner decision |
 | Paid or open status of each payment (no paid column) | C | confirmed open exposure (potential exposure is shown, labelled) | owner decision: supply the status per payment |
 
 The synthetic source declares its own conventions and has no open rules. The validation page shows the sheet layout and row accounting for the loaded workbook.
