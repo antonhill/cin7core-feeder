@@ -11,9 +11,9 @@ describe("loadSaleNumbersByProject", () => {
     const d = db([link("org-a", "vp1", "SO-1001"), link("org-a", "vp2", "SO-1002")]);
     expect(await loadSaleNumbersByProject(d as never, "org-a", ["vp1", "vp2"])).toEqual({ vp1: "SO-1001", vp2: "SO-1002" });
   });
-  it("omits a project with no link, and a link with no stored number: nothing is invented", async () => {
+  it("omits a project with no link; a link with no stored number is null, never an invented number", async () => {
     const d = db([link("org-a", "vp2", null)]);
-    expect(await loadSaleNumbersByProject(d as never, "org-a", ["vp1", "vp2"])).toEqual({});
+    expect(await loadSaleNumbersByProject(d as never, "org-a", ["vp1", "vp2"])).toEqual({ vp2: null });
   });
   it("reads only the projects asked for: the BASE project's Sale is not returned for a variation lookup", async () => {
     const d = db([link("org-a", "base", "SO-BASE"), link("org-a", "vp1", "SO-V1")]);
@@ -38,5 +38,6 @@ describe("saleNumbersByVariation", () => {
   });
   it("ignores numbers of projects that are not a variation's billing project (e.g. the base project)", () => {
     expect(saleNumbersByVariation({ v1: "vp1" }, { base: "SO-BASE" })).toEqual({});
+    expect(saleNumbersByVariation({ v1: "vp1" }, { vp1: null })).toEqual({ v1: null });
   });
 });

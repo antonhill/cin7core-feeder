@@ -564,7 +564,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                         <span className="sr-only">Cin7 invoice: </span><span aria-hidden className="mb-0.5 block text-xs font-semibold uppercase tracking-wider text-slate-600 lg:hidden">Cin7 invoice (as last recorded)</span>
                         <Status tone={cl.cin7Status.tone}>{cl.cin7Status.label}</Status>
                         {cl.cin7Status.invoiceNumber && <span className="ml-1.5 font-mono text-xs text-slate-700">{cl.cin7Status.invoiceNumber}</span>}
-                        {cl.cin7Status.invoiceNumber && cl.cin7Status.reconciled && <p className="mt-1 text-xs font-medium text-slate-700">✓ Reconciled with Cin7</p>}
+                        {cl.cin7Status.invoiceNumber && cl.cin7Status.reconciled && <p className="mt-1 text-xs font-medium text-slate-700"><span aria-hidden>✓</span> Reconciled with Cin7</p>}
                       </div>
                     </div>
                     <p className="mt-2 border-t border-slate-100 pt-2 text-sm text-slate-700"><span className="font-medium text-slate-900">Next: </span>{claimNextStep({ status: cl.status, cin7Kind: cl.cin7Status.kind, stageRole: cl.approval?.stageRole, canApproveHere: plan.approveHere, canAct: perm !== "loading" })}</p>

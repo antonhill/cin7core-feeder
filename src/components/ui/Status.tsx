@@ -40,7 +40,7 @@ const WORDING: Record<string, string> = {
 
 /** Sentence-case wording for a stored status or state code, e.g. READY_FOR_APPROVAL -> "Ready for approval", CIN7_CREATED -> "Cin7 created". */
 export function statusText(code: string): string {
-  if (WORDING[code]) return WORDING[code];
+  if (Object.hasOwn(WORDING, code)) return WORDING[code];
   const s = code.replace(/_/g, " ").toLowerCase().replace(/\bcin7\b/g, "Cin7").replace(/\bvat\b/g, "VAT");
   return s.charAt(0).toUpperCase() + s.slice(1);
 }

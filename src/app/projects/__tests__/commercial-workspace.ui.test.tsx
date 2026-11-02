@@ -122,6 +122,12 @@ describe("Commercial / Claims workspace (P2)", () => {
     const done = [...document.querySelectorAll("article")].filter((x) => x.textContent!.includes("PRJ-X-C01") || x.textContent!.includes("PRJ-X-C02"));
     expect(done.every((x) => !x.hasAttribute("data-needs-action") && !x.textContent!.includes("Needs your action"))).toBe(true);
   });
+  it("marks no claim for a viewer who can act on none (needs-action follows the same plan as the buttons)", async () => {
+    await openCommercial();
+    const marked = document.querySelectorAll("article[data-needs-action]").length;
+    const withActionButtons = [...document.querySelectorAll("article")].filter((x) => [...x.querySelectorAll("button")].some((b) => /^(Submit|Approve|Recalculate)$/.test(b.textContent ?? ""))).length;
+    expect(marked).toBe(withActionButtons); // a marked claim always has its action beside it, and an actionable claim is always marked
+  });
   it("keeps the actions beside the claim they act on (a manager approves a claim from its own record)", async () => {
     await openCommercial();
     const a = (Array.from(document.querySelectorAll("article")) as HTMLElement[]).find((x) => x.textContent!.includes("PRJ-X-C03"))!;
