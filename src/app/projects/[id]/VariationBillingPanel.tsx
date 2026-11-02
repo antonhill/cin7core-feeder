@@ -47,31 +47,49 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
   const [prods, setProds] = useState<Record<string, Array<{ sku: string; description: string; quantity: string }>>>({});
 
   const [version, setVersion] = useState(0);
-  const awaitingReload = useRef(new Set<string>()); // variations whose save/amend succeeded and whose reloaded schedule has not arrived yet
-  const [reloading, setReloading] = useState<Record<string, boolean>>({});
+  const verRef = useRef(0);
+  const bump = () => { verRef.current += 1; setVersion(verRef.current); };
+  // Per variation, after a successful save/amend: "reloading" = the reloaded schedule has not arrived (typed rows stay on screen and the controls are blocked);
+  // "unrefreshed" = the reload failed (typed rows are kept, honestly labelled, until a later reload succeeds). `gen` is the fetch generation that will resolve a marker:
+  // only a fetch started AFTER the save (generation >= gen) may clear it, so an older in-flight fetch can never clear a newer save's marker.
+  type Phase = { st: "reloading" | "unrefreshed"; gen: number };
+  const phaseRef = useRef<Record<string, Phase>>({});
+  const [phase, setPhaseState] = useState<Record<string, Phase>>({});
+  const setPhase = (next: Record<string, Phase>) => { phaseRef.current = next; setPhaseState(next); };
   const [openId, setOpenId] = useState<string | null>(null); // the ONE variation whose detailed workspace is expanded; nothing is expanded until asked
   const [everOpened, setEverOpened] = useState<Record<string, boolean>>({}); // a hidden workspace stays mounted so an action in flight in it is never lost
   const variationKey = view.variations.map((v) => `${v.id}:${v.status}`).join(",");
   useEffect(() => {
-    if (view.variations.length === 0) return; // nothing to bill: no read
+    if (view.variations.length === 0) { if (Object.keys(phaseRef.current).length) setPhase({}); return; } // nothing to bill: no read, and no marker may outlive it
     let live = true;
-    void getVariationBillingAction(projectId).then((r) => {
-      if (!live) return;
-      if (r.ok && r.data) { setState(r.data); setError(null); } else setError(r.error ?? "Could not load variation billing.");
-      // The reload that follows a successful save/amend has landed (or failed): only now are the typed rows discarded (on success) and Save/Amend re-enabled.
-      const ids = Array.from(awaitingReload.current);
-      if (ids.length) {
-        awaitingReload.current.clear();
-        if (r.ok && r.data) setEdit((m) => Object.fromEntries(Object.entries(m).filter(([k]) => !ids.includes(k))));
-        setReloading({});
-      }
-    });
+    const gen = version;
+    void getVariationBillingAction(projectId)
+      .catch((e: unknown) => ({ ok: false as const, error: e instanceof Error ? e.message : "Could not load variation billing.", data: undefined }))
+      .then((r) => {
+        if (!live) return; // superseded: the newer fetch owns every marker at or beyond its generation
+        const ok = !!(r.ok && r.data);
+        if (ok && r.data) { setState(r.data); setError(null); } else setError(r.error ?? "Could not load variation billing.");
+        const cur = phaseRef.current;
+        const next: Record<string, Phase> = {};
+        const dropIds: string[] = [];
+        for (const [id, ph] of Object.entries(cur)) {
+          if (ph.gen > gen) next[id] = ph; // saved after this fetch started: not covered by it
+          else if (ok) dropIds.push(id); // reloaded schedule arrived: typed rows are discarded
+          else next[id] = { st: "unrefreshed", gen: ph.gen }; // reload failed: keep the typed rows, say so, unblock
+        }
+        if (Object.keys(cur).length) setPhase(next);
+        if (dropIds.length) setEdit((m) => Object.fromEntries(Object.entries(m).filter(([k]) => !dropIds.includes(k))));
+      });
     return () => { live = false; };
   }, [projectId, variationKey, version, view.variations.length]);
 
   const act = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string, savedId?: string): Promise<boolean> => {
     const ok = await run(fn, done);
-    if (ok) { if (savedId) { awaitingReload.current.add(savedId); setReloading((m) => ({ ...m, [savedId]: true })); } setVersion((n) => n + 1); }
+    if (ok) {
+      verRef.current += 1;
+      if (savedId) setPhase({ ...phaseRef.current, [savedId]: { st: "reloading", gen: verRef.current } });
+      setVersion(verRef.current);
+    }
     return ok;
   };
   const c = state?.consolidated;
@@ -91,7 +109,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
   return (
     <div className="space-y-4">
       {state && error && (
-        <Alert tone="warning">The billing figures could not be refreshed ({error}); what is shown may be out of date.<span className="ml-2"><Button size="sm" variant="secondary" onClick={() => setVersion((n) => n + 1)}>Try again</Button></span></Alert>
+        <Alert tone="warning">The billing figures could not be refreshed ({error}); what is shown may be out of date.<span className="ml-2"><Button size="sm" variant="secondary" onClick={bump}>Try again</Button></span></Alert>
       )}
 
       {variations.length === 0 ? null : variations.map((v) => {
@@ -105,7 +123,8 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
         const canToggle = !!state && v.status === "APPROVED" && !!billingId && isAdmin;
         const stagesLocked = (v.status === "APPROVED" && !isAdmin) || (!!billingId && v.status === "APPROVED");
         const reasonText = reason[v.id] ?? "";
-        const busy = working || !!reloading[v.id]; // also busy while this variation's reloaded schedule is outstanding: its typed rows are still shown, and a second Save must not resubmit stale rows
+        const reloadingNow = phase[v.id]?.st === "reloading";
+        const busy = working || reloadingNow; // also busy while this variation's reloaded schedule is outstanding: its typed rows are still shown, and a second Save must not resubmit stale rows
         const sid = (k: string) => `${k}-${v.id}`;
         return (
           <section key={v.id} aria-label={`${v.code} variation`} className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] sm:p-6">
@@ -133,7 +152,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
             {legacy && <div className="mt-3"><Alert tone="warning">This variation was approved before billing schedules existed. A manager must set its schedule (an audited amendment) before billing can start. Nothing is created automatically.</Alert></div>}
             {!state ? (
               error
-                ? <div className="mt-3"><Alert tone="warning">The billing figures for this variation could not be loaded ({error}). The decision controls below still work.</Alert><div className="mt-2"><Button size="sm" variant="secondary" onClick={() => setVersion((n) => n + 1)}>Try again</Button></div></div>
+                ? <div className="mt-3"><Alert tone="warning">The billing figures for this variation could not be loaded ({error}). The decision controls below still work.</Alert><div className="mt-2"><Button size="sm" variant="secondary" onClick={bump}>Try again</Button></div></div>
                 : <div role="status" aria-busy="true" className="mt-3"><p className="text-sm text-slate-600">Loading the billing position…</p><Block className="mt-2 h-12 w-full" /></div>
             ) : scope ? (
               <div className="mt-3 border-t border-slate-200 pt-3">
@@ -172,8 +191,8 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
             <div className="mt-3 space-y-2">
               {rows.map((r, i) => (
                 <div key={i} className="flex flex-wrap items-end gap-2">
-                  <Input label="Stage" value={r.name} disabled={stagesLocked} onChange={(e) => setEdit({ ...edit, [v.id]: rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} />
-                  <Input label="%" value={r.percent} disabled={stagesLocked} onChange={(e) => setEdit({ ...edit, [v.id]: rows.map((x, j) => (j === i ? { ...x, percent: e.target.value } : x)) })} />
+                  <Input label="Stage" value={r.name} disabled={stagesLocked || reloadingNow} onChange={(e) => setEdit({ ...edit, [v.id]: rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} />
+                  <Input label="%" value={r.percent} disabled={stagesLocked || reloadingNow} onChange={(e) => setEdit({ ...edit, [v.id]: rows.map((x, j) => (j === i ? { ...x, percent: e.target.value } : x)) })} />
                 </div>
               ))}
               <p className={`text-sm ${total === 100 ? "text-slate-600" : "font-semibold text-red-700"}`}>Total {total}% {total === 100 ? "" : "- must be exactly 100%"}</p>
@@ -192,7 +211,9 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
                     </>
                   )}
                 </div>
-                {busy ? <p id={sid("sched-busy")} className="text-sm text-slate-700">{BUSY}</p>
+                <div role="status" aria-live="polite">{busy && <p id={sid("sched-busy")} className="text-sm text-slate-700">{reloadingNow ? "Saved. Reloading the schedule - these controls come back when it arrives." : BUSY}</p>}</div>
+                {phase[v.id]?.st === "unrefreshed" && <p role="status" className="text-sm text-amber-800">Saved. The latest schedule could not be reloaded, so the rows shown are the ones you saved. <Button size="sm" variant="secondary" onClick={bump}>Try again</Button></p>}
+                {busy ? null
                   : total !== 100 ? <p id={sid("sched-total")} className="text-sm text-slate-700">Total must be exactly 100% to {v.status === "DRAFT" ? "save" : "amend"} the schedule.</p>
                   : v.status !== "DRAFT" && !reasonText.trim() ? <p id={sid("sched-reason")} className="text-sm text-slate-700">Enter a reason to amend.</p> : null}
                 </div>

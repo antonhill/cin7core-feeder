@@ -172,6 +172,73 @@ describe("VariationBillingPanel unsaved guard", () => {
     expect(unload()).toBe(true);
     expect(save().disabled).toBe(false);
   });
+  async function twoVariations(saved: Record<string, Array<{ name: string; bps: number }>>) {
+    const saveAction = vi.mocked(billingActions.saveVariationScheduleAction);
+    saveAction.mockResolvedValue({ ok: true } as never);
+    const run = vi.fn(async (fn: () => Promise<{ ok: boolean }>) => (await fn()).ok);
+    h.billing = state(saved);
+    render(<VariationBillingPanel view={view([variation("v1", "DRAFT"), variation("v2", "DRAFT")])} isAdmin run={run as never} working={false} />);
+    await waitFor(() => expect(screen.getAllByLabelText("Stage").length).toBeGreaterThan(0));
+    const pct = (n: number) => screen.getAllByLabelText("%")[n] as HTMLInputElement;
+    const save = (n: number) => screen.getAllByRole("button", { name: "Save schedule" })[n] as HTMLButtonElement;
+    return { saveAction, pct, save };
+  }
+  const two = [{ name: "A", bps: 5000 }, { name: "B", bps: 5000 }];
+  it("inputs are disabled while the post-save reload is outstanding, so typing cannot be silently dropped", async () => {
+    const { pct, save } = await twoVariations({ v1: two, v2: two });
+    fireEvent.change(pct(0), { target: { value: "60" } }); fireEvent.change(pct(1), { target: { value: "40" } });
+    let release!: (v: unknown) => void;
+    h.billing = new Promise((r) => { release = r; });
+    fireEvent.click(save(0));
+    await waitFor(() => expect(pct(0).disabled).toBe(true));
+    expect(pct(2).disabled).toBe(false); // the other variation is untouched
+    release(state({ v1: [{ name: "A", bps: 6000 }, { name: "B", bps: 4000 }], v2: two }));
+    await waitFor(() => expect(pct(0).disabled).toBe(false));
+  });
+  it("a REJECTED reload cannot leave the controls stuck: Save re-enables, the rows are kept and labelled, Try again recovers and releases the guard", async () => {
+    const { pct, save } = await twoVariations({ v1: two, v2: two });
+    fireEvent.change(pct(0), { target: { value: "60" } }); fireEvent.change(pct(1), { target: { value: "40" } });
+    h.billing = Promise.reject(new Error("network down")) as never;
+    (h.billing as Promise<unknown>).catch(() => {});
+    fireEvent.click(save(0));
+    await screen.findByText(/could not be reloaded/);
+    expect(save(0).disabled).toBe(false);
+    expect(pct(0).value).toBe("60");
+    expect(unload()).toBe(true); // honest: the shown rows differ from the last loaded schedule
+    h.billing = state({ v1: [{ name: "A", bps: 6000 }, { name: "B", bps: 4000 }], v2: two });
+    fireEvent.click(screen.getAllByRole("button", { name: "Try again" })[0]);
+    await waitFor(() => expect(screen.queryByText(/could not be reloaded/)).toBeNull());
+    await waitFor(() => expect(unload()).toBe(false));
+    expect(pct(0).value).toBe("60");
+  });
+  it("double-save race: an older in-flight fetch landing after a newer save never clears its marker or shows the pre-save schedule", async () => {
+    const { pct, save } = await twoVariations({ v1: two, v2: two });
+    fireEvent.change(pct(0), { target: { value: "60" } }); fireEvent.change(pct(1), { target: { value: "40" } });
+    fireEvent.change(pct(2), { target: { value: "70" } }); fireEvent.change(pct(3), { target: { value: "30" } });
+    let relA!: (v: unknown) => void, relB!: (v: unknown) => void;
+    h.billing = new Promise((r) => { relA = r; });
+    fireEvent.click(save(0));
+    await waitFor(() => expect(pct(0).disabled).toBe(true));
+    h.billing = new Promise((r) => { relB = r; });
+    fireEvent.click(save(1));
+    await waitFor(() => expect(pct(2).disabled).toBe(true));
+    relA(state({ v1: two, v2: two })); // the OLDER fetch resolves first, with the pre-save data
+    await new Promise((r) => setTimeout(r, 20));
+    expect(pct(0).disabled).toBe(true); expect(pct(2).disabled).toBe(true); // markers survive
+    expect(pct(0).value).toBe("60");
+    relB(state({ v1: [{ name: "A", bps: 6000 }, { name: "B", bps: 4000 }], v2: [{ name: "A", bps: 7000 }, { name: "B", bps: 3000 }] }));
+    await waitFor(() => expect(pct(0).disabled).toBe(false));
+    expect(pct(0).value).toBe("60"); expect(pct(2).value).toBe("70");
+    await waitFor(() => expect(unload()).toBe(false));
+  });
+  it("the busy explanation is announced from a polite live region", async () => {
+    const { pct, save } = await twoVariations({ v1: two, v2: two });
+    fireEvent.change(pct(0), { target: { value: "60" } }); fireEvent.change(pct(1), { target: { value: "40" } });
+    h.billing = new Promise(() => {});
+    fireEvent.click(save(0));
+    const msg = await screen.findByText(/Reloading the schedule/);
+    expect(msg.closest('[role="status"]')?.getAttribute("aria-live")).toBe("polite");
+  });
   it("Cin7 Sale line: no billing project says billing not started even when the Sale lookup failed", async () => {
     await billing(view([variation("v1", "APPROVED")]), { ok: true, data: { ...(state({ v1: [{ name: "Variation", bps: 10000 }] }) as { data: object }).data, saleLookupFailed: true } });
     expect(screen.getByText("billing not started")).toBeTruthy();
