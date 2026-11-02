@@ -7,6 +7,11 @@ import { runFxExposure } from "@/rwtsa-demo/engine/fx-exposure";
 import { runRedFlag } from "@/rwtsa-demo/engine";
 import { REV2_SIZE_CURVE } from "@/rwtsa-demo/engine/size-curve";
 import { buildDataset } from "@/rwtsa-demo/workbook/build-dataset";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { buildExport, type ExchangeSource } from "@/rwtsa-demo/fastreact/export";
+import { buildSampleReturn, parseReturnFile } from "@/rwtsa-demo/fastreact/return-format";
+import { EMPTY_RETURNS, planReturn } from "@/rwtsa-demo/fastreact/return-reconcile";
 
 /**
  * LOCAL ONLY. Runs when RWTSA_WORKBOOK_PATH names the advisor's protected workbook (outside every git working tree);
@@ -156,5 +161,70 @@ describe.skipIf(!FILE)("the original RWTSA workbook loads directly (local only)"
     expect(ex.inbound.overdueOnWaterUnits).toBe(wk.inbound.overdueOnWaterUnits);
     expect(ex.skus.reduce((t, s) => t + s.inboundTotal, 0)).toBeLessThanOrEqual(wk.skus.reduce((t, s) => t + s.inboundTotal, 0));
     expect(ex.skus.map((s) => s.available)).toEqual(wk.skus.map((s) => s.available));
+  });
+});
+
+describe.skipIf(!FILE)("Fast React exchange on the original workbook (local only)", () => {
+  const load = async () => {
+    const read = await readWorkbookFile(FILE as string);
+    const built = buildDataset(read, { provenance: "local-workbook", source: { label: "local-test" } });
+    if (!built.ok || built.dataset === null) throw new Error("dataset not built");
+    const t = built.dataset.tables;
+    const source: ExchangeSource = {
+      provenance: "local-workbook",
+      sourceLabel: "local-test",
+      customers: t.customers.map((c) => c.customer),
+      items: t.items.map((i) => ({ sku: i.sku, styleCode: i.styleCode, productionCode: i.productionCode ?? null, description: i.description ?? null })),
+      orders: t.productionOrders.map((o) => ({ orderNo: o.orderNo, styleCode: o.styleCode, qty: o.qty })),
+    };
+    return { source, t };
+  };
+  const sha = (f: string) => createHash("sha256").update(readFileSync(f)).digest("hex");
+  const opts = { delimiter: "tab", dateFormat: "YYYY-MM-DD", headerStyle: "standard", selectedOrders: null, updates: [] } as const;
+
+  it("without planner inputs: CUSTOMER is valid, the order-dependent files fail on exactly the values the workbook lacks, and nothing is substituted", async () => {
+    const { source, t } = await load();
+    const r = buildExport(source, { orders: {}, productTypes: {} }, opts);
+    const by = (id: string) => r.files.find((f) => f.id === id)!;
+    expect(by("CUSTOMER").status).toBe("READY");
+    expect(by("CUSTOMER").rowCount).toBe(new Set(t.customers.map((c) => c.customer)).size);
+    expect(by("PRODUCTS").status).toBe("FAILED");
+    expect(by("PRODUCTS").issues.every((i) => i.field === "P.TYPE" && i.kind === "missing-required")).toBe(true);
+    expect(by("ORDERS").status).toBe("FAILED");
+    expect(new Set(by("ORDERS").issues.map((i) => `${i.field}:${i.kind}`))).toEqual(new Set(["O.PROD:reference", "O.CUST:missing-required", "O^DD:1:missing-required"]));
+    expect(by("UPDATE").status).toBe("NOT_EXPORTABLE");
+    expect(r.baseSetReady).toBe(false);
+  });
+
+  it("with planner-stated customer, date and product type: the base set is valid and consistent, deterministic, and matches the production orders", async () => {
+    const { source, t } = await load();
+    const customers = [...new Set(source.customers)].sort();
+    const supp = {
+      orders: Object.fromEntries(source.orders.map((o, i) => [o.orderNo, { customer: customers[i % customers.length], deliveryDate: "2026-12-04", status: null }])),
+      productTypes: Object.fromEntries([...new Set(source.orders.map((o) => o.styleCode))].map((s) => [s, { code: "TYPE-A" }])),
+    };
+    const r = buildExport(source, supp, opts);
+    expect(r.files.slice(0, 4).map((f) => f.status)).toEqual(["READY", "READY", "READY", "READY"]);
+    expect(r.baseSetReady).toBe(true);
+    const orders = r.files.find((f) => f.id === "ORDERS")!;
+    expect(orders.rowCount).toBe(t.productionOrders.length);
+    const rows = (orders.text as string).trimEnd().split("\r\n").slice(1).map((l) => l.split("\t"));
+    for (const o of t.productionOrders) expect(rows.some((c) => c[0] === o.orderNo && Number(c[4]) === o.qty)).toBe(true);
+    const again = buildExport(source, supp, opts);
+    expect(again.files.map((f) => f.sha256)).toEqual(r.files.map((f) => f.sha256));
+    // every exported product code is the style's single production code from Items
+    const prod = r.files.find((f) => f.id === "PRODUCTS")!;
+    const codes = new Set(t.items.map((i) => i.productionCode));
+    for (const l of (prod.text as string).trimEnd().split("\r\n").slice(1)) expect(codes.has(l.split("\t")[0])).toBe(true);
+  });
+
+  it("running the export and a return-file plan never alters the workbook file", async () => {
+    const before = sha(FILE as string);
+    const { source } = await load();
+    buildExport(source, { orders: {}, productTypes: {} }, opts);
+    const text = buildSampleReturn(source.orders.map((o) => ({ orderNo: o.orderNo, qty: o.qty })), new Date());
+    const plan = planReturn(parseReturnFile(text), source.orders.map((o) => ({ orderNo: o.orderNo, qty: o.qty })), EMPTY_RETURNS, { now: new Date(), fileHash: "x" });
+    expect(plan.rows.every((r) => r.outcome === "NEW")).toBe(true);
+    expect(sha(FILE as string)).toBe(before);
   });
 });

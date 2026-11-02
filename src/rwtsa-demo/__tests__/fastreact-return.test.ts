@@ -166,6 +166,18 @@ describe("row validation and planning", () => {
     expect(lower.outcome).toBe("CONFLICT");
     expect(lower.reasons.join(" ")).toMatch(/lower|reopen|regress/i);
   });
+  it("a newer update that lowers the completed quantity, on its own, is a CONFLICT", () => {
+    const state = applyPlan(EMPTY_RETURNS, plan([row({ "SPK.QTYDONE": "400" })]), { appliedAt: "x", fileHash: "h1", sourceKind: "upload" });
+    const r = planReturn(parseReturnFile(tab([row({ "SPK.QTYDONE": "300", "SPK.UPDATED": "2026-11-05T11:00:00Z" })])), ORDERS, state, { now: NOW, fileHash: "h2" }).rows[0];
+    expect(r.outcome).toBe("CONFLICT");
+    expect(r.reasons.join(" ")).toMatch(/lower/i);
+  });
+  it("a newer update that reopens a COMPLETE order with the same quantity, on its own, is a CONFLICT", () => {
+    const done = applyPlan(EMPTY_RETURNS, plan([row({ "SPK.STATUS": "COMPLETE", "SPK.QTYDONE": "900" })]), { appliedAt: "x", fileHash: "h1", sourceKind: "upload" });
+    const r = planReturn(parseReturnFile(tab([row({ "SPK.STATUS": "IN_PROGRESS", "SPK.QTYDONE": "900", "SPK.UPDATED": "2026-11-05T11:00:00Z" })])), ORDERS, done, { now: NOW, fileHash: "h2" }).rows[0];
+    expect(r.outcome).toBe("CONFLICT");
+    expect(r.reasons.join(" ")).toMatch(/reopen/i);
+  });
   it("within one file: identical repeats are DUPLICATE, the older of two timestamps is superseded, equal timestamps with different content conflict", () => {
     const a = row();
     const b = row({ "SPK.QTYDONE": "450", "SPK.UPDATED": "2026-11-05T09:00:00Z" });
@@ -218,6 +230,21 @@ describe("apply and idempotency", () => {
     const p = planReturn(parseReturnFile(bad), ORDERS, s1, { now: NOW, fileHash: "h9" });
     const s2 = applyPlan(s1, p, meta("h9"));
     expect(s2.orders).toEqual(s1.orders);
+  });
+  it("when a file mixes an accepted row with a stale and a conflicting row, only the accepted row is written", () => {
+    const s1 = applyPlan(EMPTY_RETURNS, planReturn(parseReturnFile(tab([row()])), ORDERS, EMPTY_RETURNS, { now: NOW, fileHash: "h1" }), meta("h1"));
+    const mixed = tab([
+      row({ "SPK.ORDER": "PO-1", "SPK.QTYDONE": "10", "SPK.UPDATED": "2026-11-05T01:00:00Z" }), // stale for PO-1
+      row({ "SPK.ORDER": "PO-2", "SPK.QTYDONE": "100", "SPK.UPDATED": "2026-11-05T08:30:00Z" }), // new
+    ]);
+    const p = planReturn(parseReturnFile(mixed), ORDERS, s1, { now: NOW, fileHash: "h2" });
+    expect(p.rows.map((r) => r.outcome)).toEqual(["STALE", "NEW"]);
+    const s2 = applyPlan(s1, p, meta("h2"));
+    expect(s2.orders["PO-1"]).toEqual(s1.orders["PO-1"]);
+    expect(s2.orders["PO-2"]).toMatchObject({ qtyDone: 100 });
+    const conflict = planReturn(parseReturnFile(tab([row({ "SPK.QTYDONE": "401" }), row({ "SPK.ORDER": "PO-2", "SPK.QTYDONE": "50", "SPK.UPDATED": "2026-11-05T09:00:00Z" })])), ORDERS, s1, { now: NOW, fileHash: "h3" });
+    const s3 = applyPlan(s1, conflict, meta("h3"));
+    expect(s3.orders["PO-1"]).toEqual(s1.orders["PO-1"]);
   });
   it("does not mutate its inputs", () => {
     const frozen = JSON.parse(JSON.stringify(EMPTY_RETURNS));

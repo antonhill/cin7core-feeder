@@ -210,8 +210,7 @@ describe("request safety", () => {
   it("refuses an oversized body with 413 before reading it all", async () => {
     const big = "x".repeat(300 * 1024);
     const r = await send([["action", "return-upload"], ["file", new File([big], "big.txt")]], { ...GOOD }, true);
-    expect([303, 413]).toContain(r.status);
-    expect(r.status === 413 || String(r.headers.get("location")).includes("return-rejected")).toBe(true);
+    expect(r.status).toBe(413);
     const huge = await POST(new Request(`${SELF}/api/fast-react`, { method: "POST", headers: { ...GOOD, "content-length": String(10 * 1024 * 1024), "content-type": "multipart/form-data; boundary=x" }, body: "x" }));
     expect(huge.status).toBe(413);
   });
