@@ -19,7 +19,7 @@ export function StageNav({ stages, current, viewing, onSelect }: { stages: Stage
             return (
               <li key={s.id}>
                 <button type="button" onClick={() => onSelect(s.id)} aria-current={on ? "step" : undefined} data-stage={s.id}
-                  className={`flex h-full w-full flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors ${on ? "border-indigo-600 bg-indigo-50 ring-2 ring-indigo-600" : "border-slate-200 bg-white hover:bg-slate-50"} ${s.status === "NOT_AVAILABLE" ? "opacity-70" : ""}`}>
+                  className={`flex h-full w-full flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors ${on ? "border-indigo-600 bg-indigo-50 ring-2 ring-indigo-600" : "border-slate-200 bg-white hover:bg-slate-50"}${s.status === "NOT_AVAILABLE" && !on ? " border-dashed bg-slate-50" : ""}`}>
                   <span className="flex w-full items-center justify-between gap-2 text-xs font-semibold text-slate-600">
                     <span>Stage {s.id}{s.id === current ? " · you are here" : ""}</span>
                   </span>

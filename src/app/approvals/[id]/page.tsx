@@ -91,17 +91,24 @@ export default function ApprovalDetailPage() {
       <ModuleHeader variant="workspace" module={APPROVALS_MODULE}>{DOC_TYPE_LABEL[r.doc_type]} {r.doc_ref}</ModuleHeader>
       <p className="mt-1 text-sm"><Link href="/approvals" className="underline">All approvals</Link> · <Link href={docHref} className="underline">View {r.doc_type === "QUOTE" ? "document" : "project"}</Link></p>
       {error && <div className="mt-3"><Alert tone="danger">{error}</Alert></div>}
+      {r.status === "PENDING" && d.can.decide && <div className="mt-3" data-testid="needs-your-decision"><Alert tone="warning"><strong>Waiting for your decision.</strong> Review the submitted revision below, then <a href="#decision" className="underline">decide</a>.</Alert></div>}
+      {r.status === "PENDING" && !showDecisionPanel(d) && <div className="mt-3"><Alert tone="info">{r.assigned_to_email ? `This approval is waiting for ${r.assigned_to_email}.` : `This approval is waiting for ${d.stage ? `any ${d.stage.role.toLowerCase().replace("_", " ")}` : "a manager"}.`} You cannot decide it from this account, so there is nothing for you to do here.</Alert></div>}
 
       <Panel className="mt-4">
         <div className="flex flex-wrap items-center gap-2"><PanelTitle>Revision {r.revision}</PanelTitle><Status tone={TONE[r.status]}>{STATUS_LABEL[r.status]}</Status>{r.admin_override && <Status tone="warning">administrator override</Status>}{late && <Status tone="danger">overdue</Status>}</div>
-        <dl className="mt-3 grid gap-x-8 gap-y-2 text-sm sm:grid-cols-3">
+        <dl className="mt-3 grid gap-x-8 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
           {([
             ["Customer", r.customer_name ?? "-"], ["Project", r.project_ref ?? "-"], ["Amount (ex VAT)", rand(r.amount_cents)],
             ["Submitted by", r.prepared_by_email], ["Submitted at", formatSast(r.submitted_at)], ["Waiting", r.status === "PENDING" ? waitingLabel(r.submitted_at, now) : "-"],
-            ...(d.stage ? [["Stage", d.stage.label]] : []), ["Assigned approver", r.assigned_to_email ?? (d.stage ? `any ${d.stage.role.toLowerCase().replace("_", " ")}` : "any manager")], ...(r.return_destination ? [["Returned to", r.return_destination === "ESTIMATOR" ? "The estimator" : "The preparer"]] : []), ["Assigned at", formatSast(r.assigned_at)], ["Due", r.due_at ? formatSast(r.due_at) : "-"],
-            ["First viewed", formatSast(r.first_viewed_at)], ["Decided", r.decided_at ? `${formatSast(r.decided_at)} by ${r.decided_by_name ?? r.decided_by_email}` : "-"], ["Content seal", `${r.digest.slice(0, 12)}…`],
-          ] as Array<[string, string]>).map(([k, v]) => <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="font-medium text-slate-900 tabular-nums">{v}</dd></div>)}
+            ...(d.stage ? [["Stage", d.stage.label]] : []), ["Assigned approver", r.assigned_to_email ?? (d.stage ? `any ${d.stage.role.toLowerCase().replace("_", " ")}` : "any manager")], ...(r.return_destination ? [["Returned to", r.return_destination === "ESTIMATOR" ? "The estimator" : "The preparer"]] : []), ["Due", r.due_at ? formatSast(r.due_at) : "-"],
+          ] as Array<[string, string]>).map(([k, v]) => <div key={k}><dt className="text-xs text-slate-700">{k}</dt><dd className="font-medium text-slate-900 tabular-nums">{v}</dd></div>)}
         </dl>
+        <details className="mt-3 text-sm">
+          <summary className="cursor-pointer text-slate-700">Audit details</summary>
+          <dl className="mt-2 grid gap-x-8 gap-y-2 sm:grid-cols-2 lg:grid-cols-4">
+            {([["Assigned at", formatSast(r.assigned_at)], ["First viewed", formatSast(r.first_viewed_at)], ["Content seal", `${r.digest.slice(0, 12)}…`]] as Array<[string, string]>).map(([k, v]) => <div key={k}><dt className="text-xs text-slate-700">{k}</dt><dd className="font-medium text-slate-900 tabular-nums">{v}</dd></div>)}
+          </dl>
+        </details>
         {r.decision_reason && <p className="mt-3 text-sm text-slate-700"><strong>Reason:</strong> {r.decision_reason}</p>}
       </Panel>
 
@@ -109,7 +116,7 @@ export default function ApprovalDetailPage() {
         <Panel key={s.title} className="mt-4">
           <PanelTitle>{s.title}</PanelTitle>
           {s.warning && <div className="mt-2"><Alert tone="warning">{s.warning}</Alert></div>}
-          {s.rows.length > 0 && <dl className="mt-2 grid gap-x-8 gap-y-1 text-sm sm:grid-cols-2">{s.rows.map(([k, v]) => <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="text-slate-900">{v}</dd></div>)}</dl>}
+          {s.rows.length > 0 && <dl className="mt-2 grid gap-x-8 gap-y-1 text-sm sm:grid-cols-2">{s.rows.map(([k, v]) => <div key={k}><dt className="text-xs text-slate-700">{k}</dt><dd className="text-slate-900">{v}</dd></div>)}</dl>}
           {s.items && s.items.length > 0 && <ul className="mt-2 list-disc space-y-0.5 pl-5 text-sm text-slate-700">{s.items.map((i, n) => <li key={n}>{i}</li>)}</ul>}
         </Panel>
       ))}
@@ -127,16 +134,16 @@ export default function ApprovalDetailPage() {
 
       {showDecisionPanel(d) && (
         <Panel className="mt-4">
-          <PanelTitle>Decision</PanelTitle>
+          <div id="decision" tabIndex={-1} className="focus:outline-none"><PanelTitle>Decision</PanelTitle></div>
           {d.can.needsOverride && <div className="mt-2"><Alert tone="warning">You prepared this submission. You can approve it only as an explicit administrator override with a written reason, which is permanently recorded. You can still return or reject it.</Alert></div>}
           <div className="mt-3 flex flex-wrap gap-2">
-            {d.can.decide && <Button disabled={busy} onClick={() => setMode("APPROVE")}>Approve…</Button>}
-            {d.can.decide && <Button variant="secondary" disabled={busy} onClick={() => setMode("RETURN")}>Return for changes…</Button>}
-            {d.can.decide && <Button variant="destructive" disabled={busy} onClick={() => setMode("REJECT")}>Reject…</Button>}
-            {d.can.withdraw && <Button variant="secondary" disabled={busy} onClick={() => setMode("WITHDRAW")}>Withdraw…</Button>}
+            {d.can.decide && <Button aria-pressed={mode === "APPROVE"} disabled={busy} onClick={() => setMode("APPROVE")}>Approve…</Button>}
+            {d.can.decide && <Button variant="secondary" aria-pressed={mode === "RETURN"} disabled={busy} onClick={() => setMode("RETURN")}>Return for changes…</Button>}
+            {d.can.decide && <Button variant="destructive" aria-pressed={mode === "REJECT"} disabled={busy} onClick={() => setMode("REJECT")}>Reject…</Button>}
+            {d.can.withdraw && <Button variant="secondary" aria-pressed={mode === "WITHDRAW"} disabled={busy} onClick={() => setMode("WITHDRAW")}>Withdraw…</Button>}
           </div>
           {mode && (
-            <div className="mt-3 space-y-2 rounded-lg border border-slate-200 p-3 text-sm">
+            <div className="mt-3 max-w-2xl space-y-2 border-l-4 border-indigo-600 bg-slate-50 py-3 pl-4 pr-3 text-sm">
               <p>{mode === "APPROVE" ? "Approve" : mode === "RETURN" ? "Return" : mode === "REJECT" ? "Reject" : "Withdraw"} {DOC_TYPE_LABEL[r.doc_type].toLowerCase()} <strong>{r.doc_ref}</strong>, revision {r.revision}, <strong>{rand(r.amount_cents)}</strong> ex VAT, submitted {formatSast(r.submitted_at)}?</p>
               <Input label={mode === "RETURN" ? "What must change? (required)" : mode === "REJECT" ? "Reason for rejection (required)" : mode === "APPROVE" && d.can.needsOverride ? "Override reason (required)" : "Comment (optional)"} value={reason} onChange={(e) => { setReason(e.target.value); setReasonTouched(true); }} error={reasonError(mode)} />
               {mode === "RETURN" && d.can.returnToEstimator && (
@@ -151,7 +158,7 @@ export default function ApprovalDetailPage() {
                 <Button variant="secondary" disabled={busy} onClick={() => { setMode(null); setReasonTouched(false); }}>Cancel</Button>
               </div>
               <ActionFeedback state={acts.stateOf("decision")} />
-              <p className="text-xs text-slate-600">Approving records the decision only. It does not create or authorise anything in Cin7, and does not skip the existing stock, claim-posting or variation-billing controls.</p>
+              <p className="text-xs text-slate-700">Approving records the decision only. It does not create or authorise anything in Cin7, and does not skip the existing stock, claim-posting or variation-billing controls.</p>
             </div>
           )}
           {d.can.reassign && (

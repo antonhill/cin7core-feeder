@@ -12,6 +12,7 @@ import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
 import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { Select } from "@/components/ui/Select";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { GROWER_RULES, CCM_FEEDER_CAPACITY_PIGS, PIGS_PER_DRINKER } from "@/newquip/grower/rules";
 import { buildCustomerSummary } from "@/newquip/grower/customer-summary";
@@ -226,6 +227,17 @@ export default function QuoteEditorPage() {
   const loadingStages = final && !gateReady;
   // While the commercial status is unread, stages 4-5 (and 6 without a Project link) show a loading placeholder instead of their panels.
   const hold = (n: StageId) => loadingStages && (n === 4 || n === 5 || (n === 6 && !q.project_id));
+  const staleCue = previewFailure ? "(out of date)" : recalculating ? "Recalculating…" : null;
+  const handoffFacts = (
+    <dl className="mt-3 grid gap-x-8 gap-y-2 text-sm md:grid-cols-2 xl:grid-cols-4">
+      {[
+        ["Pre-approval amount confirmed", q.customer_confirmed_cents ? `${fmtCents(q.customer_confirmed_cents)} · ${q.customer_confirmed_by ?? ""}` : "—"],
+        ["Sent to estimator by", q.handoff_by_email ?? "—"],
+        ["Estimator sign-off", q.estimator_signoff_hash ? (q.estimator_signoff_hash === q.draft_hash ? `${q.estimator_signoff_by_email} · current` : "stale") : "—"],
+        ["Manager approval", q.approved_by_email ? `${q.approved_by_email}` : "—"],
+      ].map(([k, v]) => <div key={k}><dt className="text-xs text-slate-700">{k}</dt><dd className="mt-0.5 font-medium text-slate-900">{v}</dd></div>)}
+    </dl>
+  );
   const here = currentStage(stages);
   const stage: StageId = picked ?? here;
   const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); u.searchParams.set("stage", String(n)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
@@ -236,20 +248,21 @@ export default function QuoteEditorPage() {
         <Link href="/newquip-grower" className="text-indigo-700 hover:underline">← Grower quotes</Link> · {q.quote_ref} <span className="text-slate-600">rev {q.revision}</span>
       </ModuleHeader>
 
-      <div className="mt-6 flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
-            <span>Grower House Template v1</span><span className="text-slate-300">·</span>
-            <span>{QUOTE_TYPE_LABEL[draft.quoteType]} pricing</span><span className="text-slate-300">·</span>
-            <span>{budget?.priceSource.label ?? "NewQuip Master workbook – POC controlled snapshot"}</span>
+      <p className="mt-4 text-sm text-slate-700">
+        Grower House Template v1 · {QUOTE_TYPE_LABEL[draft.quoteType]} pricing · {budget?.priceSource.label ?? "NewQuip Master workbook – POC controlled snapshot"}
+      </p>
+      {/* The price and margin summary stays in view while the form scrolls. It always shows the same figures as the Totals below (the live preview of unsaved edits). */}
+      <div className="top-0 z-10 mt-3 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm md:sticky" data-testid="quote-summary-bar" aria-busy={recalculating}>
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Status tone={READY_TONE[rd.state]}>{READINESS_LABEL[rd.state]}</Status>
+            {previewFailure ? <Status tone="danger">Recalculation failed - figures are out of date</Status> : dirty && <Status tone="warning">Preview of unsaved edits</Status>}
           </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <Status tone={READY_TONE[rd.state]}>{READINESS_LABEL[rd.state]}</Status>
-          <div className="text-right">
-            <p className="text-xs uppercase tracking-wide text-slate-600">Quote total (ex VAT)</p>
-            <p className="whitespace-nowrap text-2xl font-bold tabular-nums text-slate-900">{totalCents == null ? "—" : fmtCents(totalCents)}</p>
-          </div>
+          <dl className="flex flex-wrap items-end gap-x-8 gap-y-1">
+            <div><dt className="text-xs uppercase tracking-wide text-slate-700">Quote total (ex VAT)</dt><dd className={`whitespace-nowrap text-2xl font-bold tabular-nums ${previewFailure ? "text-slate-700 line-through decoration-1" : "text-slate-900"}`}>{totalCents == null ? "—" : fmtCents(totalCents)}{staleCue && <span className="ml-2 text-sm font-semibold no-underline" data-testid="summary-stale">{staleCue}</span>}</dd></div>
+            {budget && !budget.incomplete && <div><dt className="text-xs uppercase tracking-wide text-slate-700">Total (inc VAT)</dt><dd className="whitespace-nowrap text-lg font-semibold tabular-nums text-slate-900">{fmtZar(budget.totals.totalIncTax)}</dd></div>}
+            {budget && view.viewer.canViewCommercials && stage < 4 && <div><dt className="text-xs uppercase tracking-wide text-slate-700">Gross margin</dt><dd className="whitespace-nowrap text-lg font-semibold tabular-nums text-slate-900">{budget.totals.overallMarginPct == null ? "N/A" : `${budget.totals.overallMarginPct.toFixed(1)}%`}</dd></div>}
+          </dl>
         </div>
       </div>
 
@@ -261,26 +274,28 @@ export default function QuoteEditorPage() {
       <StageNav stages={stages} current={here} viewing={stage} onSelect={goStage} />
 
       {stage <= 2 && (
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <Button onClick={save} loading={isWorking} disabled={!editable || !dirty || incompleteOverrides || blankExclusionKeys.length > 0}>Save draft</Button>
-          {incompleteOverrides && <span className="text-xs text-amber-700">Complete or clear the highlighted cost overrides (a reason and an amount) before saving.</span>}
-          {dirty && <Status tone="warning">Unsaved changes</Status>}
-          {dirty && <span className="text-xs text-amber-700" data-testid="unsaved-note">{recalculating ? "Recalculating… " : ""}The prices, costs, margins and totals below are a live preview of your edits and nothing is saved until you press Save draft. Sign-off and approval use the SAVED draft.</span>}
-          {previewFailure && <span className="text-xs text-red-700">The live recalculation failed ({previewFailure}); the figures shown may be out of date. Edit again or reload.</span>}
-          {blankExclusionKeys.length > 0 && <span className="text-xs text-amber-700">Enter a reason for each ticked exclusion before saving (the preview already applies it).</span>}
-          {!editable && <span className="text-xs text-slate-600">{final ? "Read-only: accepted quote." : "You do not have permission to edit."}</span>}
-          {editable && !confirmDemo && <Button variant="secondary" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load Demo Defaults</Button>}
+        <>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Button onClick={save} loading={acts.isPending("save")} disabled={isWorking || !editable || !dirty || incompleteOverrides || blankExclusionKeys.length > 0}>Save draft</Button>
+            {dirty && <Status tone="warning">Unsaved changes</Status>}
+            {editable && !confirmDemo && <Button variant="secondary" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load Demo Defaults</Button>}
+            {!editable && <span className="text-sm text-slate-700">{final ? "Read-only: accepted quote." : "You do not have permission to edit."}</span>}
+          </div>
+          <div className="mt-2"><ActionFeedback state={acts.stateOf("save")} /></div>
+          <div className="mt-2 space-y-2">
+          {dirty && <p className="max-w-4xl text-sm text-slate-700" data-testid="unsaved-note">{recalculating ? "Recalculating… " : ""}The prices, costs, margins and totals are a live preview of your edits and nothing is saved until you press Save draft. Sign-off and approval use the SAVED draft.</p>}
+          {previewFailure && <p className="max-w-4xl text-sm text-red-700">The live recalculation failed ({previewFailure}); the figures shown may be out of date. Edit again or reload.</p>}
+          {incompleteOverrides && <p className="max-w-4xl text-sm text-amber-800">Complete or clear the highlighted cost overrides (a reason and an amount) before saving.</p>}
+          {blankExclusionKeys.length > 0 && <p className="max-w-4xl text-sm text-amber-800">Enter a reason for each ticked exclusion before saving (the preview already applies it).</p>}
           {editable && confirmDemo && (
-            <span className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm text-amber-900">
-              This replaces the values in this draft with the demonstration quotation (nothing is saved until you press Save draft). The customer you selected is kept.
+            <div className="flex max-w-4xl flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <span>This replaces the values in this draft with the demonstration quotation (nothing is saved until you press Save draft). The customer you selected is kept.</span>
               <Button size="sm" onClick={loadDemo}>Replace with demo</Button>
               <Button size="sm" variant="secondary" onClick={() => setConfirmDemo(false)}>Cancel</Button>
-            </span>
+            </div>
           )}
-        </div>
-      )}
-      {stage <= 2 && (
-        <div className="mt-2"><ActionFeedback state={acts.stateOf("save")} /></div>
+          </div>
+        </>
       )}
       {demoLoaded && stage <= 2 && (
         <div className="mt-3">
@@ -295,19 +310,16 @@ export default function QuoteEditorPage() {
 
       {/* ───────────── 1 · CONFIGURATION ───────────── */}
       {stage === 1 && (
-        <fieldset disabled={!editable} className="mt-4 space-y-6 border-0 p-0">
+        <fieldset disabled={!editable} className="mt-4 max-w-6xl space-y-6 border-0 p-0">
           <Panel>
             <PanelTitle>Customer & site</PanelTitle>
             <div className="mt-4 grid gap-4 md:grid-cols-3">
               <TextField label="Customer" value={draft.customerName} onChange={(v) => edit((d) => { d.customerName = v; })} />
               <TextField label="Site / project name" value={draft.siteName} onChange={(v) => edit((d) => { d.siteName = v; })} />
-              <label className="flex flex-col gap-1 text-sm">
-                <span className="font-medium text-slate-700">Pricing basis</span>
-                <select value={draft.quoteType} onChange={(e) => edit((d) => { d.quoteType = e.target.value as QuoteType; })} className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm">
-                  <option value="project">Project — landed cost + 20%</option>
-                  <option value="day_to_day">Day-to-day — workbook Retail ex VAT</option>
-                </select>
-              </label>
+              <Select label="Pricing basis" value={draft.quoteType} onChange={(e) => edit((d) => { d.quoteType = e.target.value as QuoteType; })}>
+                <option value="project">Project — landed cost + 20%</option>
+                <option value="day_to_day">Day-to-day — workbook Retail ex VAT</option>
+              </Select>
             </div>
             <CustomerPanel quoteId={id} editable={editable} onPicked={onCustomerChanged} />
           </Panel>
@@ -335,21 +347,14 @@ export default function QuoteEditorPage() {
           <Panel>
             <PanelTitle>Selections</PanelTitle>
             <div className="mt-4 grid gap-4 md:grid-cols-3">
-              <label className="flex flex-col gap-1 text-sm">
-                <span className="font-medium text-slate-700">CCM feeder variant</span>
-                <select value={cfg.feederVariant ?? "STANDARD"} onChange={(e) => edit((d) => { d.config.feederVariant = e.target.value as "STANDARD" | "WINDOW"; delete d.estimator.confirmedMappings.feeder; })} className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm">
-                  <option value="STANDARD">Standard — PNQ082</option>
-                  <option value="WINDOW">With window — PNQ082-WINDOW</option>
-                </select>
-                <span className="text-xs text-slate-600">One feeder, two variants. Capacity {CCM_FEEDER_CAPACITY_PIGS} pigs per feeder.</span>
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                <span className="font-medium text-slate-700">Penning pig size</span>
-                <select value={cfg.penningPigSize ?? ""} onChange={(e) => edit((d) => { d.config.penningPigSize = (e.target.value || null) as PenningPigSize | null; })} className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm">
-                  <option value="">Select…</option>
-                  {(Object.keys(PIG_SIZE_LABEL) as PenningPigSize[]).map((k) => <option key={k} value={k}>{PIG_SIZE_LABEL[k]}</option>)}
-                </select>
-              </label>
+              <Select label="CCM feeder variant" helperText={`One feeder, two variants. Capacity ${CCM_FEEDER_CAPACITY_PIGS} pigs per feeder.`} value={cfg.feederVariant ?? "STANDARD"} onChange={(e) => edit((d) => { d.config.feederVariant = e.target.value as "STANDARD" | "WINDOW"; delete d.estimator.confirmedMappings.feeder; })}>
+                <option value="STANDARD">Standard — PNQ082</option>
+                <option value="WINDOW">With window — PNQ082-WINDOW</option>
+              </Select>
+              <Select label="Penning pig size" value={cfg.penningPigSize ?? ""} onChange={(e) => edit((d) => { d.config.penningPigSize = (e.target.value || null) as PenningPigSize | null; })}>
+                <option value="">Select…</option>
+                {(Object.keys(PIG_SIZE_LABEL) as PenningPigSize[]).map((k) => <option key={k} value={k}>{PIG_SIZE_LABEL[k]}</option>)}
+              </Select>
               <NumField label="Penning running metres" unit="per room" value={cfg.penningRunningMetresPerRoom} onChange={(v) => edit((d) => { d.config.penningRunningMetresPerRoom = v; })} hint="Running metres, not m²" />
               <NumField label="Slatted floor area (context only)" unit="m², one room" value={cfg.slattedFloorAreaM2} onChange={(v) => edit((d) => { d.config.slattedFloorAreaM2 = v; })} hint="Never converted to a slat quantity — the rep enters the quantity" />
             </div>
@@ -357,21 +362,27 @@ export default function QuoteEditorPage() {
 
           <Panel>
             <PanelTitle>Ventilation — optional inside Grower</PanelTitle>
-            <p className="mt-2 text-xs text-warning">{VENTILATION_SCOPE_STATUS}. AS.03 is not yet ingested: no fan, cooling or controller rule is invented — once selected, the estimator enters the quantity after engineering review.</p>
-            <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
-              {(Object.keys(OPTIONAL_LABELS) as OptionalItemKey[]).map((k) => (
-                <label key={k} className="flex items-center gap-2 text-sm text-slate-700">
-                  <input type="checkbox" checked={cfg.optionalEquipment[k]} onChange={(e) => edit((d) => { d.config.optionalEquipment[k] = e.target.checked; })} /> {OPTIONAL_LABELS[k]}
-                </label>
-              ))}
-            </div>
+            <p className="mt-2 max-w-4xl text-sm text-amber-800">{VENTILATION_SCOPE_STATUS}. AS.03 is not yet ingested: no fan, cooling or controller rule is invented — once selected, the estimator enters the quantity after engineering review.</p>
+            <ul className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {(Object.keys(OPTIONAL_LABELS) as OptionalItemKey[]).map((k) => {
+                const on = cfg.optionalEquipment[k];
+                return (
+                  <li key={k}>
+                    <label className={`flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm ${on ? "border-indigo-600 bg-indigo-50 text-slate-900" : "border-slate-300 bg-white text-slate-700"}`}>
+                      <span className="flex items-center gap-2"><input type="checkbox" checked={on} onChange={(e) => edit((d) => { d.config.optionalEquipment[k] = e.target.checked; })} /> {OPTIONAL_LABELS[k]}</span>
+                      <span className={`text-xs font-semibold ${on ? "text-indigo-800" : "text-slate-600"}`} aria-hidden>{on ? "✓ Included" : "Not included"}</span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
           </Panel>
         </fieldset>
       )}
 
       {/* ───────────── 2 · ESTIMATOR REVIEW ───────────── */}
       {stage === 2 && (
-        <fieldset disabled={!editable} className="mt-4 space-y-6 border-0 p-0">
+        <fieldset disabled={!editable} className="mt-4 min-w-0 space-y-6 border-0 p-0">
           <Panel>
             <div className="flex flex-wrap items-center gap-3">
               <PanelTitle>Quote readiness</PanelTitle>
@@ -399,7 +410,7 @@ export default function QuoteEditorPage() {
           <Panel>
             <PanelTitle>Line decisions (per room × {cfg.rooms || 0} rooms)</PanelTitle>
             <div className="mt-4 overflow-x-auto">
-              <table className="w-full min-w-[1080px] text-left text-sm">
+              <table className="w-full min-w-[1080px] text-left text-sm" aria-label="Line decisions">
                 <thead>
                   <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-600">
                     <th className="py-2 pr-3">Item</th><th className="py-2 pr-3">Basis</th><th className="py-2 pr-3">Quantity per room</th><th className="py-2 pr-3 text-right">Project qty</th>
@@ -415,9 +426,10 @@ export default function QuoteEditorPage() {
                     const optionalOff = l.basis === "not_selected" && !l.exclusionReason;
                     const mapControl = mappingControlFor(l.itemKey, l.basis, roles, editable);
                     return (
-                      <tr key={l.itemKey} className={`border-b border-slate-100 align-top ${optionalOff ? "opacity-60" : ""}`}>
+                      <tr key={l.itemKey} className={`border-b border-slate-100 align-top ${l.exclusionReason ? "bg-amber-50" : optionalOff ? "bg-slate-50" : ""}`}>
                         <td className="py-3 pr-3"><div className="font-medium text-slate-900">{l.label}</div><div className="font-mono text-xs text-slate-600">{l.ruleId}</div>
-                          {l.exclusionReason && <div className="mt-1 text-xs text-amber-700">Excluded — {l.exclusionReason}</div>}</td>
+                          {l.exclusionReason && <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-amber-900"><Status tone="warning">Excluded</Status>{l.exclusionReason}</div>}
+                          {optionalOff && <div className="mt-1"><Status tone="neutral">Not selected</Status></div>}</td>
                         <td className="py-3 pr-3"><Status tone={l.overrideState === "manual_override" ? "warning" : KIND_TONE[kind]}>{l.overrideState === "manual_override" ? "OVERRIDE" : VALUE_KIND_LABEL[kind]}</Status>
                           <div className="mt-1 text-xs text-slate-600">{rule.treatment.replace(/_/g, " ")}</div></td>
                         <td className="py-3 pr-3 min-w-[230px]">
@@ -435,7 +447,7 @@ export default function QuoteEditorPage() {
                               )}
                             </div>
                           )}
-                          {l.basis === "not_selected" && !l.exclusionReason && <span className="text-xs text-slate-600">Optional — not selected</span>}
+                          {l.basis === "not_selected" && !l.exclusionReason && <span className="text-xs text-slate-700">Optional equipment is not included. Tick it on the Configuration stage to add it.</span>}
                         </td>
                         <td className="py-3 pr-3 text-right tabular-nums">{l.projectQuantity ?? "—"}</td>
                         <td className="py-3 pr-3 text-xs text-slate-700">{mapControl === "chooser" ? (
@@ -443,9 +455,9 @@ export default function QuoteEditorPage() {
                             <ProductMappingPicker label={l.label} value={draft.estimator.confirmedMappings[l.itemKey]}
                               onChange={(sku) => edit((d) => { if (sku) d.estimator.confirmedMappings[l.itemKey] = sku; else delete d.estimator.confirmedMappings[l.itemKey]; })} />
                           </div>
-                        ) : mapControl === "waiting_for_estimator" && !b?.sku ? <span className="text-amber-700">Awaiting an Estimator to choose the Cin7 product.</span> : b?.sku ?? (b?.pricedBy === "penning_rate" ? "Pig-size / running-metre basis" : b?.pricedBy === "estimator_input" ? "Estimator-priced system" : b?.pricedBy === "estimator_resolution" ? "Estimator-resolved" : "—")}</td>
+                        ) : mapControl === "waiting_for_estimator" && !b?.sku ? <span className="text-amber-800">Awaiting an Estimator to choose the Cin7 product.</span> : b?.sku ?? (b?.pricedBy === "penning_rate" ? "Pig-size / running-metre basis" : b?.pricedBy === "estimator_input" ? "Estimator-priced system" : b?.pricedBy === "estimator_resolution" ? "Estimator-resolved" : "—")}</td>
                         <td className="py-3 pr-3 text-right tabular-nums">{b?.revenueExTax != null ? fmtZar(b.revenueExTax) : "—"}</td>
-                        <td className="py-3 text-xs">{b ? (b.status === "priced" ? <span className="text-emerald-700">Priced</span> : b.status === "not_selected" ? "" : <span className="text-amber-700" title={b.reason}>{b.reason.slice(0, 80)}</span>) : ""}</td>
+                        <td className="py-3 text-xs">{b ? (b.status === "priced" ? <span className="text-emerald-800"><span aria-hidden>✓ </span>Priced</span> : b.status === "not_selected" ? "" : <span className="text-amber-800">{b.reason}</span>) : ""}</td>
                       </tr>
                     );
                   })}
@@ -479,7 +491,7 @@ export default function QuoteEditorPage() {
                     <li key={l.itemKey} className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
                       <span className="text-slate-700">{l.label}</span>
                       {door ? (
-                        <select value={confirmed ?? ""} onChange={(e) => edit((d) => { if (e.target.value) d.estimator.confirmedMappings.pvc_door = e.target.value; else delete d.estimator.confirmedMappings.pvc_door; })} className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs">
+                        <select aria-label="Door product" value={confirmed ?? ""} onChange={(e) => edit((d) => { if (e.target.value) d.estimator.confirmedMappings.pvc_door = e.target.value; else delete d.estimator.confirmedMappings.pvc_door; })} className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm">
                           <option value="">Select door product…</option>
                           {manualSelectionSkusFor("pvc_door").map((s) => <option key={s} value={s}>{s}</option>)}
                         </select>
@@ -539,18 +551,21 @@ export default function QuoteEditorPage() {
           <Panel>
             <PanelTitle>Customer-driven exclusions</PanelTitle>
             <p className="mt-2 text-xs text-slate-600">Everything in the template is required by default. Exclude a section only at the customer&apos;s request, with a reason that stays visible and is frozen in the baseline.</p>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <ul className="mt-3 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
               {ev.calc.lines.filter((l) => !GROWER_RULES.find((r) => r.itemKey === l.itemKey)!.optionalKey).map((l) => {
                 const k = l.itemKey as GrowerItemKey;
                 const on = cfg.exclusions?.[k] !== undefined;
                 return (
-                  <div key={l.itemKey} className="flex items-center gap-3 text-sm">
-                    <label className="flex w-64 items-center gap-2 text-slate-700"><input type="checkbox" checked={on} onChange={(e) => edit((d) => { d.config.exclusions = { ...d.config.exclusions }; if (e.target.checked) d.config.exclusions[k] = ""; else delete d.config.exclusions[k]; })} /> Exclude {l.label.split(" (")[0]}</label>
-                    {on && <TextField label="" placeholder="Reason (required)" value={cfg.exclusions?.[k] ?? ""} onChange={(v) => edit((d) => { d.config.exclusions = { ...d.config.exclusions, [k]: v }; })} />}
-                  </div>
+                  <li key={l.itemKey} className={`rounded-md border px-3 py-2 text-sm ${on ? "border-amber-400 bg-amber-50" : "border-slate-200 bg-white"}`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <label className="flex items-center gap-2 text-slate-800"><input type="checkbox" checked={on} onChange={(e) => edit((d) => { d.config.exclusions = { ...d.config.exclusions }; if (e.target.checked) d.config.exclusions[k] = ""; else delete d.config.exclusions[k]; })} /> Exclude {l.label.split(" (")[0]}</label>
+                      <span className={`text-xs font-semibold ${on ? "text-amber-900" : "text-slate-600"}`} aria-hidden>{on ? "! Excluded" : "Included"}</span>
+                    </div>
+                    {on && <div className="mt-2"><TextField label="" placeholder="Reason (required)" value={cfg.exclusions?.[k] ?? ""} onChange={(v) => edit((d) => { d.config.exclusions = { ...d.config.exclusions, [k]: v }; })} hint={(cfg.exclusions?.[k] ?? "").trim() ? undefined : "A reason is required before this can be saved."} /></div>}
+                  </li>
                 );
               })}
-            </div>
+            </ul>
           </Panel>
 
           {budget && (
@@ -559,7 +574,7 @@ export default function QuoteEditorPage() {
                 <PanelTitle>Totals</PanelTitle>
                 {dirty && <Status tone="warning">{recalculating ? "Recalculating - figures below are not yet current" : "Unsaved - live preview"}</Status>}
               </div>
-              <dl className={`mt-3 grid max-w-xl grid-cols-2 gap-y-1 text-sm ${recalculating ? "opacity-50" : ""}`} aria-busy={recalculating}>
+              <dl className="mt-3 grid max-w-xl grid-cols-2 gap-y-1 text-sm" aria-busy={recalculating}>
                 <dt className="text-slate-600">Subtotal (ex VAT)</dt><dd className="text-right tabular-nums">{fmtZar(budget.totals.subtotalExTax)}</dd>
                 <dt className="text-slate-600">VAT 15%</dt><dd className="text-right tabular-nums">{fmtZar(budget.totals.taxTotal)}</dd>
                 <dt className="font-semibold text-slate-900">Total</dt><dd className="text-right font-semibold tabular-nums">{fmtZar(budget.totals.totalIncTax)}</dd>
@@ -570,7 +585,7 @@ export default function QuoteEditorPage() {
           )}
 
           {budget && view.viewer.canViewCommercials && (
-            <div className={recalculating ? "opacity-50" : ""} aria-busy={recalculating}><MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={editable} edit={edit} /></div>
+            <div aria-busy={recalculating}><MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={editable} edit={edit} /></div>
           )}
         </fieldset>
       )}
@@ -581,14 +596,7 @@ export default function QuoteEditorPage() {
           <Panel>
             <PanelTitle>Estimator review and handoff</PanelTitle>
             <p className="mt-1 text-xs text-slate-600">The Rep records the pre-approval price confirmation and sends the quote to the Estimator. The Estimator signs off or returns it. This is not the customer&apos;s formal acceptance, which comes after Manager approval.</p>
-            <dl className="mt-3 grid gap-x-8 gap-y-2 text-sm md:grid-cols-2 xl:grid-cols-4">
-              {[
-                ["Pre-approval amount confirmed", q.customer_confirmed_cents ? `${fmtCents(q.customer_confirmed_cents)} · ${q.customer_confirmed_by ?? ""}` : "—"],
-                ["Sent to estimator by", q.handoff_by_email ?? "—"],
-                ["Estimator sign-off", q.estimator_signoff_hash ? (q.estimator_signoff_hash === q.draft_hash ? `${q.estimator_signoff_by_email} · current` : "stale") : "—"],
-                ["Manager approval", q.approved_by_email ? `${q.approved_by_email}` : "—"],
-              ].map(([k, v]) => <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="mt-0.5 font-medium text-slate-900">{v}</dd></div>)}
-            </dl>
+            {handoffFacts}
 
             {q.state !== "REP_DRAFT" && q.customer_confirmed_cents != null && (
               <div className="mt-3 space-y-2">
@@ -640,32 +648,29 @@ export default function QuoteEditorPage() {
           <Panel>
             <PanelTitle>Manager approval</PanelTitle>
             <p className="mt-1 text-xs text-slate-600">Final internal commercial approval. The Rep sees the outcome here and by notification; only a Manager can decide.</p>
-            <dl className="mt-3 grid gap-x-8 gap-y-2 text-sm md:grid-cols-2 xl:grid-cols-4">
-              {[
-                ["Pre-approval amount confirmed", q.customer_confirmed_cents ? `${fmtCents(q.customer_confirmed_cents)} · ${q.customer_confirmed_by ?? ""}` : "—"],
-                ["Sent to estimator by", q.handoff_by_email ?? "—"],
-                ["Estimator sign-off", q.estimator_signoff_hash ? (q.estimator_signoff_hash === q.draft_hash ? `${q.estimator_signoff_by_email} · current` : "stale") : "—"],
-                ["Manager approval", q.approved_by_email ? `${q.approved_by_email}` : "—"],
-              ].map(([k, v]) => <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="mt-0.5 font-medium text-slate-900">{v}</dd></div>)}
-            </dl>
+            {handoffFacts}
 
             {q.state === "ESTIMATOR_REVIEW" && !q.estimator_signoff_hash && <Alert tone="info">Waiting for the Estimator&apos;s sign-off before the Manager can decide.</Alert>}
-            <div className="mt-5 flex flex-wrap items-end gap-3 border-t border-slate-100 pt-5">
+            {q.state === "ESTIMATOR_REVIEW" && !!q.estimator_signoff_hash && q.estimator_signoff_hash !== q.draft_hash && <Alert tone="warning">The Estimator&apos;s sign-off no longer matches the current quotation. It must be given again before the Manager can decide.</Alert>}
+            {q.state === "ESTIMATOR_REVIEW" && dirty && <Alert tone="warning" >You have unsaved edits. Save or discard your edits first: approval applies to the saved quotation.</Alert>}
+            <div className="mt-5 space-y-3 border-t border-slate-100 pt-5">
               {q.state === "ESTIMATOR_REVIEW" && (
                 <>
-                  <Button variant="primary" loading={isWorking} disabled={!roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty}
-                    onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")}>Manager: final approval</Button>
-                  {!roles.has("manager") && <span className="text-xs text-slate-600">Final approval needs the manager role (org owner/admin).</span>}
-                  {roles.has("manager") && (<>
-                  <TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} />
-                  <Button variant="secondary" loading={isWorking} disabled={!returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "approve", (v) => v.quote.state === "REP_DRAFT")}>Return to rep (reject)</Button>
-                  {q.estimator_signoff_hash && (
-                    <Button variant="secondary" loading={isWorking} disabled={!roles.has("manager") || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToEstimatorAction(id, returnReason), "Returned to the estimator. Their sign-off is withdrawn and must be given again; the quote and its history are kept.", "approve", (v) => !v.quote.estimator_signoff_hash)}>Manager: return to estimator</Button>
-                  )}
-                  </>)}
+                  {roles.has("manager") && <div className="max-w-xl"><TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} hint="Required only when you return the quotation instead of approving it." /></div>}
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button variant="primary" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty}
+                      onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")}>Manager: final approval</Button>
+                    {roles.has("manager") && (<>
+                      <Button variant="secondary" disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "approve", (v) => v.quote.state === "REP_DRAFT")}>Return to rep (reject)</Button>
+                      {q.estimator_signoff_hash && (
+                        <Button variant="secondary" disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToEstimatorAction(id, returnReason), "Returned to the estimator. Their sign-off is withdrawn and must be given again; the quote and its history are kept.", "approve", (v) => !v.quote.estimator_signoff_hash)}>Manager: return to estimator</Button>
+                      )}
+                    </>)}
+                  </div>
+                  {!roles.has("manager") && <p className="text-sm text-slate-700">Final approval needs the manager role (org owner/admin).</p>}
                 </>
               )}
-              {q.state === "REP_DRAFT" && <span className="text-sm text-slate-600">This quotation is with the Rep ({q.revision > 1 ? "returned as a new revision" : "not yet sent for review"}).</span>}
+              {q.state === "REP_DRAFT" && <p className="text-sm text-slate-700">This quotation is with the Rep ({q.revision > 1 ? "returned as a new revision" : "not yet sent for review"}).</p>}
               {final && <Status tone="success">Manager approved — final</Status>}
             </div>
             <ActionFeedback state={acts.stateOf("approve")} />
