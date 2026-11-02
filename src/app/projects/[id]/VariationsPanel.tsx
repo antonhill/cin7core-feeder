@@ -9,7 +9,7 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { NEGATIVE_VARIATION_UNSUPPORTED, isNegativeAmountInput } from "@/lib/projects/variations";
 import { ConsolidatedReportPanel } from "./ConsolidatedReportPanel";
-import { VariationBillingPanel } from "./VariationBillingPanel";
+import { BUSY, VariationBillingPanel } from "./VariationBillingPanel";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { approveVariationAction, raiseVariationAction, rejectVariationAction, repriceVariationAction, submitVariationForApprovalAction } from "../actions";
 
@@ -29,27 +29,39 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
   const [price, setPrice] = useState<Record<string, string>>({});
 
   /** The decision controls (or who decided and why) shown INSIDE each variation's record. */
-  const decisionOf = (v: ProjectView["variations"][number]) => (
+  const decisionOf = (v: ProjectView["variations"][number]) => {
+    const rid = `${v.id}-reprice-why`, bid = `${v.id}-busy`, xid = `${v.id}-reject-why`;
+    const noPrice = !(price[v.id] ?? "").trim(), noReason = !(reason[v.id] ?? "").trim();
+    return (
     <div>
-                      {v.status === "DRAFT" ? (
+      {v.status === "DRAFT" ? (
+        <div className="space-y-2">
         <div className="flex flex-wrap items-end gap-2">
           <Input label="Re-price (R)" value={price[v.id] ?? ""} onChange={(e) => setPrice({ ...price, [v.id]: e.target.value })} placeholder={(v.amount_cents / 100).toString()} />
-          <Button size="sm" variant="secondary" disabled={working || !(price[v.id] ?? "").trim()} onClick={() => run(() => repriceVariationAction(projectId, v.id, price[v.id]), `Re-priced ${v.code}.`)}>Re-price</Button>
-          <Button size="sm" variant="secondary" disabled={working} onClick={() => run(() => submitVariationForApprovalAction(projectId, v.id), `Submitted ${v.code} for manager approval. It cannot be edited while it is pending.`)}>Submit for approval</Button>
+          <Button size="sm" variant="secondary" disabled={working || noPrice} aria-describedby={working ? bid : noPrice ? rid : undefined} onClick={() => run(() => repriceVariationAction(projectId, v.id, price[v.id]), `Re-priced ${v.code}.`)}>Re-price</Button>
+          <Button size="sm" variant="secondary" disabled={working} aria-describedby={working ? bid : undefined} onClick={() => run(() => submitVariationForApprovalAction(projectId, v.id), `Submitted ${v.code} for manager approval. It cannot be edited while it is pending.`)}>Submit for approval</Button>
           {isAdmin ? (
             <>
-              <Button size="sm" disabled={working} onClick={() => run(() => approveVariationAction(projectId, v.id), `Approved ${v.code}. The revised contract value now includes it; the original is unchanged.`)}>Approve</Button>
+              <Button size="sm" disabled={working} aria-describedby={working ? bid : undefined} onClick={() => run(() => approveVariationAction(projectId, v.id), `Approved ${v.code}. The revised contract value now includes it; the original is unchanged.`)}>Approve</Button>
               <Input label="Reject reason" value={reason[v.id] ?? ""} onChange={(e) => setReason({ ...reason, [v.id]: e.target.value })} />
-              <Button size="sm" variant="destructive" disabled={working || !(reason[v.id] ?? "").trim()} onClick={() => run(() => rejectVariationAction(projectId, v.id, reason[v.id]), `Rejected ${v.code}.`)}>Reject</Button>
+              <Button size="sm" variant="destructive" disabled={working || noReason} aria-describedby={working ? bid : noReason ? xid : undefined} onClick={() => run(() => rejectVariationAction(projectId, v.id, reason[v.id]), `Rejected ${v.code}.`)}>Reject</Button>
             </>
-          ) : <span className="text-xs text-slate-600">Manager approval required</span>}
+          ) : <span className="text-sm text-slate-600">Manager approval required</span>}
+        </div>
+        {working ? <p id={bid} className="text-sm text-slate-700">{BUSY}</p> : (
+          <>
+            {noPrice && <p id={rid} className="text-sm text-slate-700">Enter a new price to re-price.</p>}
+            {isAdmin && noReason && <p id={xid} className="text-sm text-slate-700">Enter a reason to reject.</p>}
+          </>
+        )}
         </div>
       ) : (
         <span className="text-xs text-slate-600">{v.decided_by_email} · {v.decision_reason ?? "approved"}</span>
       )}
       <div className="mt-1"><ApprovalHistory docType="VARIATION" docId={v.id} label="Approval history" /></div>
     </div>
-  );
+    );
+  };
   const rejected = view.variations.filter((v) => v.status === "REJECTED");
 
   return (
