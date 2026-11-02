@@ -19,6 +19,7 @@ import { Select } from "@/components/ui/Select";
 import { applyDecision, showDecisionPanel } from "@/lib/approvals/detail-state";
 import { formatSast, isOverdue, waitingLabel } from "@/lib/approvals/time";
 import { DOC_TYPE_LABEL, STATUS_LABEL, type ApprovalAction, type ApprovalStatus } from "@/lib/approvals/types";
+import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { decideApprovalAction, getApprovalDetailAction, reassignApprovalAction, type ApprovalDetail } from "../actions";
 
 // Review workspace: the exact revision and values that were SUBMITTED. If anything changed since, the server refuses the decision and this page says so.
@@ -37,6 +38,8 @@ export default function ApprovalDetailPage() {
   const busy = acts.anyPending; // a ref-guarded in-flight set, so a fast double-click cannot submit twice
   const [reasonTouched, setReasonTouched] = useState(false);
   const [newApprover, setNewApprover] = useState("");
+  // Guard only while a decision form is open with a typed reason (or the override tick); Cancel, a recorded decision, or an untouched form release it.
+  useUnsavedGuard(mode !== null && (reason.trim() !== "" || override));
 
   const load = useCallback(() => { getApprovalDetailAction(id).then((r) => { if (r.ok && r.data) { setD((cur) => (cur && cur.request.status !== "PENDING" && r.data!.request.status === "PENDING" ? cur : r.data!)); setError(null); } else setError(r.error ?? "Could not load this approval."); }); }, [id]);
   useEffect(load, [load]);

@@ -177,3 +177,16 @@ describe("Commercial / Claims workspace (P2)", () => {
     expect(screen.getByTestId("commercial-summary")).toBeTruthy();
   });
 });
+
+describe("unsaved claim protection", () => {
+  const unload = () => { const e = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
+  it("guards the tab only while stages are selected for a claim that is not saved yet", async () => {
+    await openCommercial();
+    expect(unload()).toBe(false); // read-only viewing: never guarded
+    const box = within(document.getElementById("new-claim-p1")!).getAllByRole("checkbox")[0];
+    fireEvent.click(box);
+    expect(unload()).toBe(true);
+    fireEvent.click(box); // selection cleared again
+    expect(unload()).toBe(false);
+  });
+});

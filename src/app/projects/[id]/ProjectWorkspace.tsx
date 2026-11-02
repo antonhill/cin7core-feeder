@@ -3,6 +3,7 @@
 import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { PROJECTS_MODULE } from "@/app/module-nav";
@@ -98,16 +99,21 @@ function PctCell({ bps, tone }: { bps: number; tone: BarTone }) {
   );
 }
 
-function Kpi({ label, value, hint, accent = false }: { label: string; value: string; hint?: string; accent?: boolean }) {
+function FigureGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div
-      className={`rounded-xl border p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_12px_28px_-18px_rgba(15,23,42,0.25)] ${
-        accent ? "border-indigo-200 bg-gradient-to-br from-indigo-50 to-white" : "border-slate-200 bg-white"
-      }`}
-    >
-      <p className={`text-xs font-semibold uppercase tracking-wider ${accent ? "text-indigo-700" : "text-slate-600"}`}>{label}</p>
-      <p className={`mt-2 whitespace-nowrap text-2xl font-bold tabular-nums tracking-tight ${accent ? "text-indigo-900" : "text-slate-900"}`}>{value}</p>
-      {hint && <p className="mt-1 text-xs leading-snug text-slate-600">{hint}</p>}
+    <div>
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600">{title}</h3>
+      <dl className="mt-2 grid grid-cols-3 gap-x-4">{children}</dl>
+    </div>
+  );
+}
+
+/** One figure in a hero group: labels sit on one baseline and values align, with the primary (revised contract) figure set heavier rather than in a bigger tile. */
+function Figure({ label, value, primary = false }: { label: string; value: string; primary?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-xs text-slate-600">{label}</dt>
+      <dd className={`mt-1 whitespace-nowrap tabular-nums tracking-tight text-slate-900 ${primary ? "text-xl font-bold" : "text-lg font-semibold"}`}>{value}</dd>
     </div>
   );
 }
@@ -129,7 +135,7 @@ function LegendDot({ className, label, value }: { className: string; label: stri
   return (
     <div className="flex items-center gap-2.5">
       <span className={`h-2.5 w-2.5 rounded-full ${className}`} aria-hidden />
-      <span className="text-sm text-slate-600">{label}</span>
+      <span className="text-sm text-slate-700">{label}</span>
       <span className="text-sm font-semibold tabular-nums text-slate-900">{value}</span>
     </div>
   );
@@ -158,6 +164,12 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   const [isWorkingT, startWorking] = useTransition();
   const acts = useKeyedActions();
   const isWorking = isWorkingT || acts.anyPending;
+  // A claim being assembled is unsaved input until a draft is saved. Saving adds a claim to the project, so the form counts as clean once the claim count has
+  // grown past what it was when the selection began; an empty selection (re)sets that baseline.
+  const claimCount = view?.claims.length ?? 0;
+  const [claimBase, setClaimBase] = useState(claimCount);
+  if (chosen.length === 0 && claimBase !== claimCount) setClaimBase(claimCount);
+  useUnsavedGuard(chosen.length > 0 && claimCount <= claimBase);
 
   // Display only: every mutating action re-checks the owner/admin role on the server.
   // LOADING until known, so privileged controls (and the non-admin explanation) never flash; any failure => MEMBER (fail closed).
@@ -320,46 +332,39 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
 
       {tab === "overview" && (
         <div className="mt-6 space-y-6">
-          <section className="rounded-xl border border-slate-200 bg-white p-5 md:p-6">
-            <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-md bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-700">{project.project_reference}</span>
-                  <Status tone={project.status === "ACTIVE" ? "success" : "neutral"}>{statusText(project.status)}</Status>
-                </div>
-                <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-900">{project.name}</h2>
-                <p className="mt-1 text-slate-600">{project.customer_name}</p>
-              </div>
-              <div className="lg:text-right">
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">Revised contract value (ex VAT)</p>
-                <p className="mt-1 whitespace-nowrap text-3xl font-semibold tabular-nums tracking-tight text-slate-900">{formatCents(c.revisedContractCents)}</p>
-              </div>
+          <section aria-label="Project and financial summary" className="rounded-xl border border-slate-200 bg-white p-5 md:p-6">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-md bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-700">{project.project_reference}</span>
+              <Status tone={project.status === "ACTIVE" ? "success" : "neutral"}>{statusText(project.status)}</Status>
             </div>
-            <div className="mt-5">
+            <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-900">{project.name}</h2>
+            <p className="mt-1 text-slate-700">{project.customer_name}</p>
+
+            <div className="mt-6 grid gap-x-10 gap-y-6 border-t border-slate-200 pt-5 lg:grid-cols-2">
+              <FigureGroup title="Contract (ex VAT)">
+                <Figure label="Original contract" value={formatCents(c.originalContractCents)} />
+                <Figure label="Approved variations" value={formatCents(c.approvedVariationsCents)} />
+                <Figure label="Revised contract value" value={formatCents(c.revisedContractCents)} primary />
+              </FigureGroup>
+              <FigureGroup title="Billing (ex VAT)">
+                <Figure label="Invoiced / committed" value={formatCents(c.committedCents)} />
+                <Figure label="Claimable now" value={formatCents(c.claimableCents)} />
+                <Figure label="Remaining to bill / commit" value={formatCents(c.remainingCents)} />
+              </FigureGroup>
+            </div>
+
+            <div className="mt-6">
               <ContractBar contract={c.revisedContractCents} committed={c.committedCents} claimable={c.claimableCents} />
-              <div className="mt-4 flex flex-wrap gap-x-8 gap-y-2">
+              <div className="mt-3 flex flex-wrap gap-x-8 gap-y-2">
                 <LegendDot className="bg-emerald-600" label="Invoiced / committed" value={formatCents(c.committedCents)} />
                 <LegendDot className="bg-amber-500" label="Claimable now" value={formatCents(c.claimableCents)} />
-                <LegendDot className="bg-slate-200" label="Not yet approved for billing" value={formatCents(Math.max(0, c.revisedContractCents - c.committedCents - c.claimableCents))} />
+                <LegendDot className="bg-slate-300" label="Not yet approved for billing" value={formatCents(Math.max(0, c.revisedContractCents - c.committedCents - c.claimableCents))} />
               </div>
+              <p className="mt-3 text-xs text-slate-600">Approved completion {formatBps(c.approvedCompletionBps)} · Earned to date {formatCents(c.earnedCents)} (stage value × approved completion). Claimable = earned − invoiced / committed; remaining = contract − invoiced / committed.</p>
             </div>
           </section>
 
           {!embedded && newquip && view.project.billing_scope !== "VARIATION" && <ProjectOverview projectId={id} refreshKey={previewKey(view)} onOpenTab={(t) => { goTab(t); window.scrollTo({ top: 0, behavior: "smooth" }); }} />}
-
-          <div>
-            <h2 className="mb-3 text-sm font-semibold text-slate-700">Commercial position (ex VAT)</h2>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <Kpi label="Original contract value" value={formatCents(c.originalContractCents)} />
-              <Kpi label="Approved variations" value={formatCents(c.approvedVariationsCents)} hint="Approved variations only" />
-              <Kpi label="Revised contract value" value={formatCents(c.revisedContractCents)} />
-              <Kpi label="Approved completion" value={formatBps(c.approvedCompletionBps)} hint="Earned ÷ contract" />
-              <Kpi label="Earned / certified to date" value={formatCents(c.earnedCents)} hint="Stage value × APPROVED completion" />
-              <Kpi label="Invoiced / committed" value={formatCents(c.committedCents)} hint="Approved, sent or uncertain claims" />
-              <Kpi label="Currently claimable" value={formatCents(c.claimableCents)} hint="Earned − invoiced / committed" accent />
-              <Kpi label="Remaining to bill / commit" value={formatCents(c.remainingCents)} hint="Contract value − invoiced / committed (not − earned)" />
-            </div>
-          </div>
 
           <ProjectDetailsPanel view={view} isAdmin={perm === "admin"} run={run} working={isWorking} editable={!embedded && view.project.billing_scope !== "VARIATION"} />
         </div>

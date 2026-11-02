@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectWorkspace } from "../ProjectWorkspace";
 import { getProjectAction } from "@/app/projects/actions";
@@ -74,5 +74,16 @@ describe("ProjectWorkspace integration of the executive overview", () => {
     expect((await screen.findAllByText(/Revised contract value/)).length).toBeGreaterThan(0);
     expect(screen.queryByTestId("overview")).toBeNull();
     expect(overviewAction).not.toHaveBeenCalled();
+  });
+
+  it("the summary groups identity, contract and billing figures once, with the revised contract inside the Contract group", async () => {
+    withProject(baseView());
+    render(<ProjectWorkspace id="p-base" />);
+    const hero = await screen.findByRole("region", { name: "Project and financial summary" });
+    const contract = within(hero).getByRole("heading", { name: "Contract (ex VAT)" }).parentElement!;
+    const billing = within(hero).getByRole("heading", { name: "Billing (ex VAT)" }).parentElement!;
+    for (const l of ["Original contract", "Approved variations", "Revised contract value"]) expect(within(contract).getByText(l)).toBeTruthy();
+    for (const l of ["Invoiced / committed", "Claimable now", "Remaining to bill / commit"]) expect(within(billing).getByText(l)).toBeTruthy();
+    expect(screen.getAllByText("Revised contract value")).toHaveLength(1); // no second copy of the same figure
   });
 });
