@@ -1,4 +1,5 @@
 import "server-only";
+import { formatZarCents } from "@/lib/format-money";
 // The review workspace content for a submission: the supporting commercial details a manager needs, per document type. Read-only; internal cost
 // and margin appear only because every approver is a manager (org owner/admin) and the caller passes `showInternal`. Optional sections that
 // cannot be loaded say so ("unavailable") instead of being omitted silently.
@@ -20,7 +21,7 @@ import type { ApprovalRequestRow } from "./types";
 type Db = ReturnType<typeof createServiceRoleClient>;
 export interface ReviewSection { title: string; rows: Array<[string, string]>; items?: string[]; warning?: string }
 export interface ReviewDetail { sections: ReviewSection[] }
-const rand = (c: number | null | undefined) => (c == null ? "unknown" : `R ${(c / 100).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+const rand = (c: number | null | undefined) => (c == null ? "unknown" : formatZarCents(c));
 const pct = (n: number | null) => (n == null ? "unknown" : `${n.toFixed(2)}%`);
 const tolerate = async <T,>(f: () => Promise<T>): Promise<T | null> => { try { return await f(); } catch { return null; } };
 

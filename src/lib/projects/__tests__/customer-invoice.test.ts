@@ -34,6 +34,6 @@ describe("customer-facing invoice summary", () => {
     const s = buildCustomerInvoiceSummary(base());
     expect(reconcileCustomerInvoice(s, { subtotalCents: 4_000_000, taxCents: 600_000, totalCents: 4_600_000 })).toEqual({ ok: true, differences: [] });
     const bad = reconcileCustomerInvoice(s, { subtotalCents: 4_000_000, taxCents: 600_001, totalCents: 4_600_001 });
-    expect(bad.ok).toBe(false); expect(bad.differences).toHaveLength(2); expect(bad.differences.join()).toMatch(/VAT: customer document 6000.00 vs Cin7 6000.01/);
+    expect(bad.ok).toBe(false); expect(bad.differences).toHaveLength(2); expect(bad.differences.join()).toMatch(/VAT: customer document R\u00A06\u00A0000,00 vs Cin7 R\u00A06\u00A0000,01/);
   });
 });

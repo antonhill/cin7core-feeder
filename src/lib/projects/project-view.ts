@@ -1,6 +1,7 @@
 // Projects POC — read model for the project screens (PURE). Derives the commercial position from
 // stored rows. Three notions stay separate in the output: reported PHYSICAL %, APPROVED commercial %
 // and BILLED/COMMITTED. Nothing here writes, and nothing here reads Cin7.
+import { formatZarCents } from "../format-money";
 import { BPS_FULL, applyBps, reservesValue, isClaimStatus, type Bps, type Cents } from "./claim-engine";
 import type { OpeningCommitmentRow } from "./opening-commitments";
 import { cin7PocRepresentation, contractPosition, type CommitmentRepresentation, type VariationRow } from "./variations";
@@ -189,14 +190,9 @@ export function buildProjectView(input: {
   };
 }
 
-/** Formatting helper for UI/tests: integer cents -> "R 1,950,000.00" without floating-point. */
+/** Integer cents -> "R 1 950 000,00" (shared SA format, see src/lib/format-money.ts). */
 export function formatCents(cents: Cents): string {
-  const neg = cents < 0;
-  const abs = Math.abs(cents);
-  const rands = Math.floor(abs / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  const c = (abs % 100).toString().padStart(2, "0");
-  // U+00A0 (non-breaking) so the currency symbol can never wrap away from the amount.
-  return `${neg ? "-" : ""}R\u00A0${rands}.${c}`;
+  return formatZarCents(cents);
 }
 
 /** bps -> "65%" / "62.5%" / "0.25%" (trims trailing zeros). */

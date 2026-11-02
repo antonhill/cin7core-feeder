@@ -187,8 +187,8 @@ describe("a successful post", () => {
       port.landedOnCreate = (req) => port.landed(req, { taxCents: R(30), totalCents: R(950_030) });
       const r = await post();
       expect(r.state).toBe("CREATED");
-      expect(r.message).toMatch(/VAT R30\.00 vs approved R142500\.00/);
-      expect(r.message).toMatch(/total R950030\.00 vs approved R1092500\.00/);
+      expect(r.message).toMatch(/VAT R\u00A030,00 vs approved R\u00A0142\u00A0500,00/);
+      expect(r.message).toMatch(/total R\u00A0950\u00A0030,00 vs approved R\u00A01\u00A0092\u00A0500,00/);
       expect(JSON.stringify(row())).not.toMatch(/NaN/);
       expect(row()).toMatchObject({ posting_state: "CREATED", last_error_code: "AMOUNT_MISMATCH", cin7_invoice_number: "INV-00100" });
     });
@@ -206,7 +206,7 @@ describe("a successful post", () => {
       port.sale.invoices = [{ ...INV21, memo: String(row().memo), subtotalCents: R(950_000), taxCents: R(30), totalCents: R(950_030) }];
       const before = port.created.length;
       const r = await rec();
-      expect(r.message).toMatch(/VAT R30\.00 vs approved R142500\.00/);
+      expect(r.message).toMatch(/VAT R\u00A030,00 vs approved R\u00A0142\u00A0500,00/);
       expect(row()).toMatchObject({ posting_state: "CREATED", last_error_code: "AMOUNT_MISMATCH" });
       expect(row().reconciled_at ?? null).toBeNull();
       expect(JSON.stringify(row())).not.toMatch(/NaN/);

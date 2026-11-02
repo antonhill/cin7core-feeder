@@ -32,6 +32,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Alert } from "@/components/ui/Alert";
 import { Panel } from "@/components/ui/Panel";
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/Table";
+import { formatZar } from "@/lib/format-money";
 
 // The interactive quote builder. Every margin figure shown here is computed CLIENT-SIDE by the
 // same pure engine the server uses (src/lib/quote-margin.ts) — so the numbers on screen match what
@@ -39,10 +40,8 @@ import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/Table";
 // here is trusted as authoritative. Cost comes from the org's synced Cin7 Average Cost, carried on
 // each line for display only (never sent back). ZAR-only for V1.
 
-const money = new Intl.NumberFormat("en-ZA", { style: "currency", currency: "ZAR" });
 function fmtMoney(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return "—";
-  return money.format(n);
+  return formatZar(n);
 }
 function fmtPct(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "N/A";

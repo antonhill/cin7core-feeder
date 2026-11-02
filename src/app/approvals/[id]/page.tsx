@@ -1,6 +1,7 @@
 "use client";
 
 import { pageContainerClass } from "@/app/PageContainer";
+import { formatZarCents } from "@/lib/format-money";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -23,7 +24,7 @@ import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { decideApprovalAction, getApprovalDetailAction, reassignApprovalAction, type ApprovalDetail } from "../actions";
 
 // Review workspace: the exact revision and values that were SUBMITTED. If anything changed since, the server refuses the decision and this page says so.
-const rand = (c: number) => `R ${(c / 100).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const rand = (c: number) => formatZarCents(c);
 const TONE: Record<ApprovalStatus, BadgeTone> = { PENDING: "warning", APPROVED: "success", RETURNED: "warning", REJECTED: "danger", WITHDRAWN: "neutral", SUPERSEDED: "neutral" };
 
 export default function ApprovalDetailPage() {

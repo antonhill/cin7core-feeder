@@ -1,4 +1,5 @@
-// Projects - the CONSOLIDATED COMMERCIAL REPORT of an original project across its BASE scope and every approved variation (pure, generic).
+
+import { formatZarCents } from "../format-money";// Projects - the CONSOLIDATED COMMERCIAL REPORT of an original project across its BASE scope and every approved variation (pure, generic).
 //
 // Each billing scope is counted ONCE: the original project is the BASE scope, and each variation is counted from the variation record (its approved
 // amount) and its own billing project (its claims and Cin7 invoices). The internal billing projects are never added on top of their variations.
@@ -51,7 +52,7 @@ export function buildConsolidatedCommercial(scopes: readonly ReportScopeInput[])
 
   const lines: ConsolidatedScopeLine[] = unique.map((s) => {
     const invoicedCents = s.invoices.reduce((n, i) => n + i.amountExVatCents, 0);
-    if (invoicedCents > s.contractCents) warnings.push(`${s.label}: invoiced ${(invoicedCents / 100).toFixed(2)} exceeds its contract ${(s.contractCents / 100).toFixed(2)}.`);
+    if (invoicedCents > s.contractCents) warnings.push(`${s.label}: invoiced ${formatZarCents(invoicedCents)} exceeds its contract ${formatZarCents(s.contractCents)}.`);
     if (!s.billingStarted && s.scope === "VARIATION") warnings.push(`${s.label}: approved but billing has not started, so it is in the contract value but not yet invoiceable.`);
     return {
       scope: s.scope, label: s.label, projectId: s.projectId, contractCents: s.contractCents, invoicedCents, invoiceNumbers: s.invoices.map((i) => i.invoiceNumber ?? "(number pending)"),

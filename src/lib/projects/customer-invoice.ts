@@ -1,4 +1,5 @@
-// Projects - the CUSTOMER-FACING view of a progress invoice (pure, generic). The Cin7 invoice keeps everything (R0 physical SKU lines + the
+
+import { formatZarCents } from "../format-money";// Projects - the CUSTOMER-FACING view of a progress invoice (pure, generic). The Cin7 invoice keeps everything (R0 physical SKU lines + the
 // commercial milestone charges) because Cin7 is the system of record for fulfilment and stock. The customer should only see the commercial
 // picture: who/what/when, the milestone being billed, the ex-VAT amount, VAT and total. This module derives that from the SAME approved claim and
 // posting figures that went to Cin7, never from a second calculation, and proves the two reconcile to the cent. It generates no document and
@@ -55,7 +56,7 @@ export interface Reconciliation { ok: boolean; differences: string[] }
 /** The customer document must equal the Cin7 invoice exactly (ex VAT, VAT and gross). Any difference is reported; nothing is "close enough". */
 export function reconcileCustomerInvoice(summary: CustomerInvoiceSummary, cin7: Cin7InvoiceTotals): Reconciliation {
   const d: string[] = [];
-  const chk = (label: string, a: number, b: number) => { if (a !== b) d.push(`${label}: customer document ${(a / 100).toFixed(2)} vs Cin7 ${(b / 100).toFixed(2)}`); };
+  const chk = (label: string, a: number, b: number) => { if (a !== b) d.push(`${label}: customer document ${formatZarCents(a)} vs Cin7 ${formatZarCents(b)}`); };
   chk("Ex VAT", summary.subtotalCents, cin7.subtotalCents);
   chk("VAT", summary.vatCents, cin7.taxCents);
   chk("Total", summary.totalCents, cin7.totalCents);

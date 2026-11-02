@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { formatZar, formatZarCents } from "@/lib/format-money";
 
 // Small presentational inputs shared by the NewQuip quote editor. No business logic: values go up as numbers (or null when blank).
 
@@ -47,6 +48,5 @@ export function TextField({ label, value, onChange, hint, placeholder, disabled 
   );
 }
 
-const ZAR = new Intl.NumberFormat("en-ZA", { style: "currency", currency: "ZAR" });
-export const fmtZar = (n: number | null | undefined): string => (n == null || !Number.isFinite(n) ? "—" : ZAR.format(n).replace(/ /g, " "));
-export const fmtCents = (c: number | null | undefined): string => (c == null ? "—" : fmtZar(c / 100));
+export const fmtZar = (n: number | null | undefined): string => formatZar(n);
+export const fmtCents = (c: number | null | undefined): string => formatZarCents(c);

@@ -1,6 +1,7 @@
 "use client";
 
 import { pageContainerClass } from "@/app/PageContainer";
+import { formatZarCents } from "@/lib/format-money";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -23,7 +24,7 @@ import { getApprovalsDashboardAction, getEmailStatusAction, getMyNotificationsAc
 
 // The single place a manager sees every outstanding quotation, claim and variation approval. All figures come from the canonical approval records
 // (never counters). Times are exact SAST; "waiting" is elapsed calendar time shown beside the exact submission time.
-const rand = (c: number) => `R ${(c / 100).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const rand = (c: number) => formatZarCents(c);
 const TONE: Record<ApprovalStatus, BadgeTone> = { PENDING: "warning", APPROVED: "success", RETURNED: "warning", REJECTED: "danger", WITHDRAWN: "neutral", SUPERSEDED: "neutral" };
 
 export default function ApprovalsPage() {
