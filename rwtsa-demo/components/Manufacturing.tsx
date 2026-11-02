@@ -155,7 +155,7 @@ export function ManufacturingPageView({ model }: { model: MfgModel }) {
 
       <Panel>
         <PanelTitle>Where each function lives</PanelTitle>
-        <p className="mt-1 text-sm text-slate-600">Only the TOOLBOX rows are calculated on this page. The BOM and production orders are source records held in Cin7 Core; this page reads the loaded workbook, writes nothing, and builds no Fast React file.</p>
+        <p className="mt-1 text-sm text-slate-600">Only the TOOLBOX rows are calculated on this page. The BOM and production orders are source records held in Cin7 Core; this page reads the loaded workbook, writes nothing, and builds no Fast React file. The file exchange is demonstrated separately on the Fast React exchange page.</p>
         <div data-testid="layers" className="mt-3 overflow-x-auto">
           <Table>
             <THead>
