@@ -117,15 +117,15 @@ function classify(p: PaymentFecRow, asOf: string): Classified {
   const statusPaid = PAID_WORDS.test(status);
   const statusOpen = OPEN_WORDS.test(status);
   const unrecognised = status !== "" && !statusPaid && !statusOpen;
-  if (statusOpen && hasPaidDate) return { settlement: "unknown", basis: "none", unrecognised: false, conflict: true };
   // A paid date AFTER the as-at date means the payment was still outstanding at the as-at date.
-  if (hasPaidDate && daysBetween(asOf, p.paidDate as string) > 0) return { settlement: "open", basis: "paid-after-as-at", unrecognised: false, conflict: false };
+  if (hasPaidDate && daysBetween(asOf, p.paidDate as string) > 0) return { settlement: "open", basis: "paid-after-as-at", unrecognised, conflict: false };
+  if (statusOpen && hasPaidDate) return { settlement: "unknown", basis: "none", unrecognised: false, conflict: true };
   if (statusPaid) return { settlement: "paid", basis: "explicit-status", unrecognised: false, conflict: false };
   if (hasPaidDate) return { settlement: "paid", basis: "paid-date", unrecognised: false, conflict: false };
   if (statusOpen) return { settlement: "open", basis: "explicit-open", unrecognised: false, conflict: false };
   const depositEvidence = p.isDeposit === true || (typeof p.remark === "string" && DEPOSIT_REMARK.test(p.remark));
   // Rev2: the deposit was paid AT SHIPMENT. So the payment must be due on the shipment date itself (0 days, same day).
-  const atShipment = p.termsDays === 0 && p.shipmentDate !== null && p.shipmentDate !== undefined && p.shipmentDate === p.dueDate;
+  const atShipment = p.termsDays === 0 && p.shipmentDate !== null && p.shipmentDate !== undefined && p.shipmentDate === p.dueDate && daysBetween(asOf, p.shipmentDate) <= 0; // not yet shipped at the as-at date: cannot have been paid at shipment
   if (depositEvidence && atShipment) return { settlement: "paid", basis: "deposit-rev2", unrecognised, conflict: false };
   return { settlement: "unknown", basis: "none", unrecognised, conflict: false };
 }

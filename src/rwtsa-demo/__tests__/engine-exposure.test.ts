@@ -113,6 +113,17 @@ describe("USD exposure by due date: settlement is never assumed", () => {
     expect(later.rows.map((x) => x.settlement)).toEqual(["paid", "paid", "paid"]);
     expect(later.totals.confirmedOpenUsdCents).toBeNull();
   });
+  it("a deposit whose shipment is AFTER the as-at date cannot have been paid at shipment yet", () => {
+    const r = run([{ po: "F", due: "2027-01-15", shipped: "2027-01-15", usd: 5, terms: 0, deposit: true }], { asOf: "2026-10-31" });
+    expect(r.rows[0].settlement).toBe("unknown");
+    expect(run([{ po: "F", due: "2027-01-15", shipped: "2027-01-15", usd: 5, terms: 0, deposit: true }], { asOf: "2027-01-15" }).rows[0].settlement).toBe("paid");
+  });
+  it("an Open status with a paid date after the as-at date is open then (not a conflict); with a paid date on or before it, a conflict", () => {
+    const r = run([{ po: "A", due: "2026-09-01", usd: 1, status: "Open", paidDate: "2026-11-15" }, { po: "B", due: "2026-09-01", usd: 1, status: "Open", paidDate: "2026-10-01" }, { po: "C", due: "2026-09-01", usd: 1, status: "chasing", paidDate: "2026-11-15" }]);
+    expect(r.rows.map((x) => [x.settlement, x.settlementBasis])).toEqual([["open", "paid-after-as-at"], ["unknown", "none"], ["open", "paid-after-as-at"]]);
+    expect(r.warnings.join(" ")).toMatch(/conflicts with a paid date/);
+    expect(r.warnings.join(" ")).toMatch(/unrecognised payment status/);
+  });
   it("a remark that merely mentions a deposit, or negates or times it, is not evidence of settlement", () => {
     const r = run([
       { po: "A", due: "2026-08-22", usd: 1, terms: 0, remark: "balance after deposit" },
