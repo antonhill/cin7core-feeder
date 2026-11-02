@@ -46,7 +46,8 @@ export function InvoiceStatusSection({ view, postings, projectId, isManager }: {
     success: (r) => {
       const d = (r as { data?: InvoiceVerification }).data;
       const changed = d?.invoices.filter((i) => i.outcome !== "SAME").length ?? 0;
-      return changed === 0 ? "Verified against Cin7: every invoice matches what was recorded." : `Verified against Cin7: ${changed} invoice${changed === 1 ? "" : "s"} differ${changed === 1 ? "s" : ""} from what was recorded.`;
+      const notices = (d?.unresolvedPostings ?? 0) > 0 || (d?.unaccounted.length ?? 0) > 0 ? " See the notices below." : "";
+      return (changed === 0 ? "Verified against Cin7: the invoices listed match what was recorded." : `Verified against Cin7: ${changed} invoice${changed === 1 ? "" : "s"} differ${changed === 1 ? "s" : ""} from what was recorded.`) + notices;
     },
   });
 

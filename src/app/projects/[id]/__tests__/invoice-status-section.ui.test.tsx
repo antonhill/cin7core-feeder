@@ -47,7 +47,8 @@ describe("Invoices in Cin7 (UAT-028)", () => {
     expect(now34.textContent).toContain("Changed in Cin7");
     expect(screen.getByTestId("now-INV-00037").textContent).toContain("Matches");
     expect(screen.getByTestId("verified-at").textContent).toMatch(/SO-00027.*at /);
-    expect(await screen.findByText(/1 invoice differs from what was recorded/)).toBeTruthy();
+    expect(await screen.findByText(/1 invoice differs from what was recorded\./)).toBeTruthy();
+    expect(screen.queryByText(/See the notices below/)).toBeNull();
     // the RECORDED column still says what it recorded: verification never rewrites it
     expect(screen.getByText("Draft")).toBeTruthy();
   });
@@ -94,6 +95,7 @@ describe("Invoices in Cin7 (UAT-028)", () => {
     mount({ postings: [...POSTINGS, posting("", "cl-34", "DRAFT", { posting_state: "FAILED_UNCERTAIN", cin7_invoice_number: null } as never)] });
     fireEvent.click(screen.getByRole("button", { name: "Verify invoice statuses" }));
     expect(await screen.findByText(/one of these may be its invoice: reconcile that claim, do not post it again/)).toBeTruthy();
+    expect(screen.getByText(/See the notices below\./)).toBeTruthy(); // the success line never reads as an all-clear when there is a notice
     expect(screen.queryByText(/raised by hand/)).toBeNull();
   });
   it("an unresolved posting is flagged even before anything is verified, and the section shows with no checkable invoice at all", () => {
