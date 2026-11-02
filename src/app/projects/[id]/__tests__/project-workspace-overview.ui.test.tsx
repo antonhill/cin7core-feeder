@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectWorkspace } from "../ProjectWorkspace";
 import { getProjectAction } from "@/app/projects/actions";
 import { getProjectOverviewDataAction } from "@/app/projects/overview-actions";
+import { formatCents } from "@/lib/projects/project-view";
 import { demoInput, project, stage, view } from "@/lib/projects/__tests__/overview-fixtures";
 
 // The REAL ProjectWorkspace (tabs, banners, the integration point) and the REAL overview; only server actions and the router are replaced. Panels that
@@ -74,5 +75,37 @@ describe("ProjectWorkspace integration of the executive overview", () => {
     expect((await screen.findAllByText(/Revised contract value/)).length).toBeGreaterThan(0);
     expect(screen.queryByTestId("overview")).toBeNull();
     expect(overviewAction).not.toHaveBeenCalled();
+  });
+
+  it("the summary groups the contract and billing figures, each label beside ITS OWN amount, and states earned / completion", async () => {
+    const v = baseView();
+    // distinct, recognisable values so that swapping any two labels is detectable
+    v.commercial = { ...v.commercial, originalContractCents: 1_111_100, approvedVariationsCents: 2_222_200, revisedContractCents: 3_333_300, committedCents: 4_444_400, claimableCents: 5_555_500, remainingCents: 6_666_600, earnedCents: 7_777_700, approvedCompletionBps: 4321 };
+    withProject(v);
+    render(<ProjectWorkspace id="p-base" />);
+    const hero = await screen.findByRole("region", { name: "Project and financial summary" });
+    const amountOf = (scope: HTMLElement, label: string) => within(scope).getByText(label).nextElementSibling!.textContent;
+    const contract = within(hero).getByRole("heading", { name: "Contract (ex VAT)" }).parentElement!;
+    const billing = within(hero).getByRole("heading", { name: "Billing (ex VAT)" }).parentElement!;
+    expect(amountOf(contract, "Original contract")).toBe(formatCents(1_111_100));
+    expect(amountOf(contract, "Approved variations")).toBe(formatCents(2_222_200));
+    expect(amountOf(contract, "Revised contract value")).toBe(formatCents(3_333_300));
+    expect(amountOf(billing, "Invoiced / committed")).toBe(formatCents(4_444_400));
+    expect(amountOf(billing, "Claimable now")).toBe(formatCents(5_555_500));
+    expect(amountOf(billing, "Remaining to bill / commit")).toBe(formatCents(6_666_600));
+    expect(within(billing).getByText("Contract value − invoiced / committed (not − earned)")).toBeTruthy();
+    expect(within(hero).getByText(/Approved completion 43\.21%/).textContent).toContain(`Earned to date ${formatCents(7_777_700)}`);
+  });
+
+  it("the hero figure groups are one column on a phone and three from the sm breakpoint (values never overlap at 390px)", async () => {
+    withProject(baseView());
+    render(<ProjectWorkspace id="p-base" />);
+    const hero = await screen.findByRole("region", { name: "Project and financial summary" });
+    for (const h of ["Contract (ex VAT)", "Billing (ex VAT)"]) {
+      const dl = within(hero).getByRole("heading", { name: h }).parentElement!.querySelector("dl")!;
+      expect(dl.className).toContain("grid-cols-1");
+      expect(dl.className).toContain("sm:grid-cols-3");
+      expect(dl.className).not.toMatch(/(^|\s)grid-cols-3/);
+    }
   });
 });
