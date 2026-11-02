@@ -1,13 +1,13 @@
 // Notification content (pure). Plain text: no editable token, credential or internal identifier other than the request's own page link, which still
 // requires login and server-side authorisation. Times are always SAST.
 import { DOC_TYPE_LABEL, type ApprovalRequestRow } from "./types";
-import { formatZarCents } from "@/lib/format-money";
 import { formatSast } from "./time";
 import { safeReason } from "./email-policy";
 
 export type NotificationKind = "SIGNED_OFF_FOR_REP" | "RETURNED_TO_ESTIMATOR_FOR_REP" | "APPROVED_FOR_REP" | "ESTIMATOR_ASSIGNED" | "MANAGER_SUBMITTED" | "RETURNED_TO_ESTIMATOR" | "RETURNED_TO_REP" | "SUBMITTED" | "REASSIGNED" | "REASSIGNED_AWAY" | "APPROVED" | "RETURNED" | "REJECTED" | "RESUBMITTED" | "OVERDUE" | "ESCALATED";
 export interface NotificationSpec { kind: string; recipient: string; subject: string; body: string }
-const rand = (c: number) => formatZarCents(c);
+// Plain-text email: deliberately NOT the in-app formatter (src/lib/format-money.ts, which uses non-breaking spaces). This line is unchanged from before the D4 currency work.
+const rand = (c: number) => `R ${(c / 100).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const ACTION: Record<NotificationKind, string> = {
   SIGNED_OFF_FOR_REP: "No action needed from you: the Estimator signed this off and it is now with the Manager for the final decision.",
