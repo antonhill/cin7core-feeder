@@ -187,6 +187,13 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   // deliberately NOT kept while the user is on another tab: the panels change this state themselves (create a Sale, post an invoice) and a remounted panel must never
   // start from an older, more permissive picture. It is also tied to the project it was read for, so it can never be shown for another one.
   const [commercial, setCommercial] = useState<{ projectId: string; creation: Cin7SaleCreationStatus | null; posting: Cin7PostingStatus | null } | null>(null);
+  // Claims awaiting THIS user's action (submit, approve here, recalculate) are marked and counted, never re-ordered: a card that moves when its own action
+  // completes would carry the result message away from the button that was just pressed (UAT-025).
+  const claimRows = (view?.claims ?? []).map((cl) => {
+    const plan = claimActionPlan(cl, perm === "admin" ? "admin" : perm === "member" ? "member" : "none");
+    return { cl, plan, needsYou: plan.submit || plan.approveHere || plan.recalculate };
+  });
+  const needsYouCount = claimRows.filter((r) => r.needsYou).length;
   const commercialNow = tab === "claims" && commercial?.projectId === id ? commercial : null;
   /** Every tab change goes through here so that leaving Commercial / Claims drops its cached state. */
   const goTab = (t: Tab) => { if (t !== "claims") setCommercial(null); setTab(t); };
@@ -526,21 +533,21 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
           <div>
             <div className="mb-2 flex items-baseline justify-between">
               <h2 className="text-base font-semibold text-slate-900">Claims and invoices</h2>
-              <p className="flex items-center gap-3 text-xs text-slate-600">{view.claims.length} claim{view.claims.length === 1 ? "" : "s"}<a href={`#new-claim-${id}`} className="inline-flex min-h-6 items-center font-medium text-indigo-700 hover:underline">Create a progress claim</a></p>
+              <p className="flex items-center gap-3 text-xs text-slate-600">{needsYouCount > 0 && <span className="font-semibold text-indigo-800">{needsYouCount} need{needsYouCount === 1 ? "s" : ""} your action</span>}{view.claims.length} claim{view.claims.length === 1 ? "" : "s"}<a href={`#new-claim-${id}`} className="inline-flex min-h-6 items-center font-medium text-indigo-700 hover:underline">Create a progress claim</a></p>
             </div>
             {view.claims.length === 0 && <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-600">No claims yet.</p>}
             {view.claims.length > 0 && <div className="hidden grid-cols-[minmax(8rem,1fr)_16.5rem_11rem_minmax(14rem,1.3fr)] gap-x-4 px-4 pb-1 text-xs font-semibold uppercase tracking-wider text-slate-600 lg:grid" aria-hidden>
               <span>Claim</span><span className="text-right">Amount</span><span>Approval</span><span>Cin7 invoice (as last recorded)</span>
             </div>}
             <div className="space-y-2">
-              {view.claims.map((cl) => {
-                const plan = claimActionPlan(cl, perm === "admin" ? "admin" : perm === "member" ? "member" : "none");
+              {claimRows.map(({ cl, plan, needsYou }) => {
                 const claimKey = `claim:${cl.id}`;
                 return (
-                  <article key={cl.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                  <article key={cl.id} className={`rounded-xl border bg-white px-4 py-3 ${needsYou ? "border-indigo-300 border-l-4 border-l-indigo-600" : "border-slate-200"}`} data-needs-action={needsYou || undefined}>
                     <div className="grid gap-x-4 gap-y-2 lg:grid-cols-[minmax(8rem,1fr)_16.5rem_11rem_minmax(14rem,1.3fr)] lg:items-start">
                       <div>
                         <h3 className="text-base font-semibold text-slate-900">{cl.claim_number}</h3>
+                        {needsYou && <p className="text-xs font-semibold text-indigo-800">Needs your action</p>}
                         <p className="text-xs text-slate-600">{cl.claim_date}{cl.supersedes_claim_id ? ` · supersedes ${view.claims.find((x) => x.id === cl.supersedes_claim_id)?.claim_number ?? "an earlier draft"}` : ""}</p>
                       </div>
                       <div className="lg:text-right">
@@ -551,13 +558,13 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                       <div>
                         <span className="sr-only">Approval: </span><span aria-hidden className="mb-0.5 block text-xs font-semibold uppercase tracking-wider text-slate-600 lg:hidden">Approval</span>
                         <Status tone={CLAIM_TONE[cl.status] ?? "neutral"}>{statusText(cl.status)}</Status>
-                        <p className="mt-1 text-xs">{cl.reserves ? <span className="font-medium text-indigo-700">{cl.status === "FAILED_UNCERTAIN" ? "Stays reserved (outcome uncertain)" : "Reserves value"}</span> : <span className="text-slate-600">No reservation</span>}</p>
+                        {cl.reserves && <p className="mt-1 text-xs font-medium text-indigo-800">{cl.status === "FAILED_UNCERTAIN" ? "Stays reserved (outcome uncertain)" : "Reserves value"}</p>}
                       </div>
                       <div>
                         <span className="sr-only">Cin7 invoice: </span><span aria-hidden className="mb-0.5 block text-xs font-semibold uppercase tracking-wider text-slate-600 lg:hidden">Cin7 invoice (as last recorded)</span>
                         <Status tone={cl.cin7Status.tone}>{cl.cin7Status.label}</Status>
                         {cl.cin7Status.invoiceNumber && <span className="ml-1.5 font-mono text-xs text-slate-700">{cl.cin7Status.invoiceNumber}</span>}
-                        {cl.cin7Status.invoiceNumber && cl.cin7Status.reconciled && <span className="ml-1.5"><Status tone="neutral">Reconciled</Status></span>}
+                        {cl.cin7Status.invoiceNumber && cl.cin7Status.reconciled && <p className="mt-1 text-xs font-medium text-slate-700">✓ Reconciled with Cin7</p>}
                       </div>
                     </div>
                     <p className="mt-2 border-t border-slate-100 pt-2 text-sm text-slate-700"><span className="font-medium text-slate-900">Next: </span>{claimNextStep({ status: cl.status, cin7Kind: cl.cin7Status.kind, stageRole: cl.approval?.stageRole, canApproveHere: plan.approveHere, canAct: perm !== "loading" })}</p>
