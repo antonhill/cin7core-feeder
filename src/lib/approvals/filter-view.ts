@@ -1,9 +1,9 @@
 // Presentation helpers for the Approvals queue filter bar. Pure: they never decide WHICH rows match (filterQueue / the server does), only how the
 // current filter state is summarised and which filters sit behind "More filters".
-import { activeFilters, type ActiveFilter, type QueueFilters, type QueueSort } from "./queue";
+import { activeFilters, CLEARED_FILTERS, type ActiveFilter, type QueueFilters, type QueueSort } from "./queue";
 import type { ApprovalStatus } from "./types";
 
-/** What the page loads with. "Clear filters" returns to exactly this. */
+/** What the page loads with. NOT what "Clear filters" returns to: Clear goes to CLEARED_FILTERS (Status Any), the UAT-018 behaviour. */
 export const DEFAULT_QUEUE_FILTERS: QueueFilters = { status: "PENDING" };
 export const DEFAULT_QUEUE_SORT: QueueSort = "submitted_asc";
 export const SORT_LABEL: Record<QueueSort, string> = {
@@ -27,3 +27,7 @@ export function isDefaultView(f: QueueFilters, sort: QueueSort): boolean {
   const a = activeFilters(f);
   return sort === DEFAULT_QUEUE_SORT && f.status === "PENDING" && a.length === 1 && a[0].key === "status";
 }
+
+/** UAT-018: Clear filters is offered whenever any filter narrows the list, including the default Pending status (that is what hides history). */
+export const hasActiveFilters = (f: QueueFilters): boolean => activeFilters(f).length > 0;
+export { CLEARED_FILTERS };

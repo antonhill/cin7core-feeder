@@ -19,7 +19,7 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatSast, isOverdue, waitingLabel } from "@/lib/approvals/time";
 import { DOC_TYPE_LABEL, STATUS_LABEL, type ApprovalNotificationRow, type ApprovalStatus } from "@/lib/approvals/types";
 import { activeFilters, type QueueFilters, type QueueSort } from "@/lib/approvals/queue";
-import { DEFAULT_QUEUE_FILTERS, DEFAULT_QUEUE_SORT, isDefaultView } from "@/lib/approvals/filter-view";
+import { DEFAULT_QUEUE_FILTERS, DEFAULT_QUEUE_SORT } from "@/lib/approvals/filter-view";
 import { ApprovalQueueFilters } from "@/components/ApprovalQueueFilters";
 import { displayEmailStatus, EMAIL_STATUS_NOTE, type EmailDisplayStatus } from "@/lib/approvals/email-policy";
 import { getApprovalsDashboardAction, getEmailStatusAction, getMyNotificationsAction, retryEmailAction, saveApprovalSettingsAction, sendPendingNowAction, sendTestEmailAction, type ApprovalsDashboard, type DispatchSummary } from "./actions";
@@ -97,7 +97,7 @@ export default function ApprovalsPage() {
         <Panel className="mt-3">
           <ApprovalQueueFilters f={f} setF={setF} sort={sort} setSort={setSort} />
           <div className="mt-4">
-            {d.rows.length === 0 ? <p className="text-sm text-slate-600">{d.available ? (isDefaultView(f, sort) ? "No pending approvals. Set Status to Any status to see completed ones." : activeFilters(f).length ? "Nothing matches these filters. Use Clear filters to return to the default view, or set Status to Any status." : "Nothing to show.") : "No approvals yet."}</p> : (
+            {d.rows.length === 0 ? <p className="text-sm text-slate-600">{d.available ? (activeFilters(f).length ? "Nothing matches these filters. Use Clear filters to see every approval." : "Nothing to show.") : "No approvals yet."}</p> : (
               <>
               <p className="mb-2 text-sm text-slate-700" data-testid="queue-count">{d.rows.length} {d.rows.length === 1 ? "approval" : "approvals"}: <strong>{d.rows.filter((r) => r.status === "PENDING").length} pending</strong>, {d.rows.filter((r) => r.status !== "PENDING").length} completed or returned.</p>
               <Table scrollLabel="Approvals queue">

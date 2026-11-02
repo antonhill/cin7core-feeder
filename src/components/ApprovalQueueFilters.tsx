@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { DOC_TYPE_LABEL, STATUS_LABEL, type ApprovalDocType, type ApprovalStatus } from "@/lib/approvals/types";
 import type { QueueFilters, QueueSort } from "@/lib/approvals/queue";
-import { DEFAULT_QUEUE_FILTERS, DEFAULT_QUEUE_SORT, isDefaultView, secondaryActive, SORT_LABEL, summaryItems } from "@/lib/approvals/filter-view";
+import { CLEARED_FILTERS, hasActiveFilters, secondaryActive, SORT_LABEL, summaryItems } from "@/lib/approvals/filter-view";
 
 // The Approvals queue filter bar: Show and Status are always visible; Type, Sort and the other filters sit behind "More filters (n)". The summary line is always
 // visible and lists EVERY selection that differs from the default (including ones hidden in the disclosure). Same state, same predicates as before.
@@ -16,7 +16,8 @@ export function ApprovalQueueFilters({ f, setF, sort, setSort }: { f: QueueFilte
   const summaryRef = useRef<HTMLParagraphElement>(null);
   const hidden = secondaryActive(f);
   const items = summaryItems(f, sort, (s) => STATUS_LABEL[s]);
-  const clear = () => { setF({ ...DEFAULT_QUEUE_FILTERS }); setSort(DEFAULT_QUEUE_SORT); summaryRef.current?.focus(); }; // the Clear button disappears, so focus moves to the summary
+  // UAT-018: Clear filters returns Status to Any (every approval, history included) and drops the other filters. The sort is a view preference, not a filter, so it is left alone.
+  const clear = () => { setF({ ...CLEARED_FILTERS }); summaryRef.current?.focus(); }; // the Clear button disappears once nothing is active, so focus moves to the summary
 
   return (
     <div data-testid="queue-filters">
@@ -28,7 +29,7 @@ export function ApprovalQueueFilters({ f, setF, sort, setSort }: { f: QueueFilte
         <Button size="sm" variant="secondary" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((o) => !o)}>
           {open ? "Fewer filters" : "More filters"}{hidden.length ? ` (${hidden.length})` : ""}
         </Button>
-        {!isDefaultView(f, sort) && <Button size="sm" variant="secondary" onClick={clear}>Clear filters</Button>}
+        {hasActiveFilters(f) && <Button size="sm" variant="secondary" onClick={clear}>Clear filters</Button>}
       </div>
       <div id={panelId} hidden={!open} className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
         <Select label="Type" value={f.docType ?? ""} onChange={(e) => setF({ ...f, docType: (e.target.value || undefined) as ApprovalDocType | undefined })}><option value="">All types</option>{(["QUOTE", "CLAIM", "VARIATION"] as const).map((t) => <option key={t} value={t}>{DOC_TYPE_LABEL[t]}</option>)}</Select>

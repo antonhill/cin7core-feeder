@@ -47,7 +47,7 @@ describe("F-10 Approvals filters", () => {
     expect(panel.hidden).toBe(true);
     expect(more().getAttribute("aria-expanded")).toBe("false");
     expect(more().textContent).toBe("More filters"); // nothing hidden is active, so no count
-    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull(); // nothing to clear in the default view
+    expect(screen.getByRole("button", { name: "Clear filters" })).toBeTruthy(); // UAT-018: the default Pending status hides history, so Clear is offered
     expect(summary().textContent).toMatch(/Status: Pending approval/);
     expect(lastFilters()).toEqual({ status: "PENDING" }); // the server is asked for exactly what it was before
   });
@@ -79,21 +79,20 @@ describe("F-10 Approvals filters", () => {
     await waitFor(() => expect(lastFilters()).toMatchObject({ status: "PENDING", customer: "Spark", overdueOnly: true, docType: "CLAIM" }));
   });
 
-  it("Clear filters appears only when something differs from the default, resets every filter and the sort to the page defaults, and moves focus to the summary", async () => {
+  it("UAT-018: Clear filters sets Status back to Any (all history discoverable), drops every other filter, leaves the sort alone, and moves focus to the summary", async () => {
     render(<ApprovalsPage />);
     await screen.findByText("NQ-A");
     openMore();
     fireEvent.change(screen.getByLabelText("Assigned manager"), { target: { value: "mgr" } });
-    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "ANY" } });
     fireEvent.change(screen.getByLabelText("Sort"), { target: { value: "amount_desc" } });
     fireEvent.change(screen.getByLabelText("Show"), { target: { value: "mine" } });
-    expect(summary().textContent).toMatch(/Status: Any/);
-    expect(summary().textContent).toMatch(/Sorted: Amount, high to low/);
     fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
-    await waitFor(() => expect(lastFilters()).toEqual({ status: "PENDING" }));
-    expect(vi.mocked(actions.getApprovalsDashboardAction).mock.calls.at(-1)![1]).toBe("submitted_asc");
+    await waitFor(() => expect(lastFilters()).toEqual({ status: "ANY" }));
+    expect(vi.mocked(actions.getApprovalsDashboardAction).mock.calls.at(-1)![1]).toBe("amount_desc"); // sort rule untouched
+    expect((screen.getByLabelText("Status") as HTMLSelectElement).value).toBe("ANY");
+    expect((screen.getByLabelText("Show") as HTMLSelectElement).value).toBe("all");
     expect((screen.getByLabelText("Assigned manager") as HTMLInputElement).value).toBe("");
-    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull(); // nothing narrows any more
     expect(document.activeElement).toBe(summary());
   });
 
@@ -103,8 +102,9 @@ describe("F-10 Approvals filters", () => {
     expect(more().tagName).toBe("BUTTON");
     expect(more().tabIndex).toBe(0);
     const order = [...document.querySelectorAll<HTMLElement>("[data-testid='queue-filters'] select, [data-testid='queue-filters'] button")].filter((e) => !e.closest("[hidden]")).map((e) => e.textContent!.trim() || e.getAttribute("id"));
-    expect(order.at(-1)).toBe("More filters");
-    expect(order).toHaveLength(3);
+    expect(order[2]).toBe("More filters"); // after Show and Status
+    expect(order.at(-1)).toBe("Clear filters"); // offered in the default Pending view (UAT-018)
+    expect(order).toHaveLength(4);
     // hidden controls are not focusable until the disclosure is open (the panel uses the hidden attribute)
     expect(document.getElementById(more().getAttribute("aria-controls")!)!.hidden).toBe(true);
   });
@@ -115,17 +115,16 @@ describe("F-10 Approvals filters", () => {
     expect(filterQueue(rows, f, "x", "2026-11-02T00:00:00Z").map((r) => r.id)).toEqual(["1"]);
   });
 
-  it("an empty DEFAULT view does not point at a Clear filters button that is hidden there; it says how to see completed approvals", async () => {
+  it("an empty default (Pending) view points at Clear filters, which is visible there", async () => {
     vi.mocked(actions.getApprovalsDashboardAction).mockResolvedValue({ ok: true, data: dash({ rows: [] }) } as never);
     render(<ApprovalsPage />);
-    await screen.findByText("No pending approvals. Set Status to Any status to see completed ones.");
-    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
-    expect(screen.queryByText(/Use Clear filters/)).toBeNull();
+    await screen.findByText("Nothing matches these filters. Use Clear filters to see every approval.");
+    expect(screen.getByRole("button", { name: "Clear filters" })).toBeTruthy();
   });
   it("an empty result under changed filters points at Clear filters, which is then visible", async () => {
     vi.mocked(actions.getApprovalsDashboardAction).mockResolvedValue({ ok: true, data: dash({ rows: [] }) } as never);
     render(<ApprovalsPage />);
-    await screen.findByText(/No pending approvals/);
+    await screen.findByText(/Nothing matches these filters/);
     fireEvent.change(screen.getByLabelText("Status"), { target: { value: "APPROVED" } });
     await screen.findByText(/Nothing matches these filters/);
     expect(screen.getByRole("button", { name: "Clear filters" })).toBeTruthy();
