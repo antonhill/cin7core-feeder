@@ -59,7 +59,7 @@ describe("Status", () => {
     expect(statusText("FAILED_CONFIRMED_NO_WRITE")).toBe("Failed, nothing written");
     expect(statusText("FAILED_UNCERTAIN")).toBe("Outcome uncertain");
     expect(statusText("CANCELLED_BEFORE_WRITE")).toBe("Cancelled");
-    expect(statusText("CIN7_PENDING")).toBe("Sending to Cin7");
+    expect(statusText("CIN7_PENDING")).toBe("Awaiting Cin7 result");
   });
 });
 

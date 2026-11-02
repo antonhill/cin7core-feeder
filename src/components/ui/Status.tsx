@@ -35,7 +35,7 @@ const WORDING: Record<string, string> = {
   FAILED_CONFIRMED_NO_WRITE: "Failed, nothing written",
   FAILED_UNCERTAIN: "Outcome uncertain",
   CANCELLED_BEFORE_WRITE: "Cancelled",
-  CIN7_PENDING: "Sending to Cin7",
+  CIN7_PENDING: "Awaiting Cin7 result",
 };
 
 /** Sentence-case wording for a stored status or state code, e.g. READY_FOR_APPROVAL -> "Ready for approval", CIN7_CREATED -> "Cin7 created". */

@@ -256,6 +256,15 @@ describe("Variation workspace (P3)", () => {
       await waitFor(() => expect(within(rec).getByText("SO-00028")).toBeTruthy());
       expect(within(rec).getByText("Variation").closest("[data-tone]")?.getAttribute("data-tone")).toBe("primary");
     });
+    it("puts each variation's own number on its own record", async () => {
+      setup([variation("v1", "V001", "APPROVED"), variation("v2", "V002", "APPROVED")], { v1: "vp1", v2: "vp2" }, undefined, { v1: "SO-00111", v2: "SO-00222" });
+      await openVariations();
+      const r1 = await record("V001"); const r2 = await record("V002");
+      await waitFor(() => expect(r1.textContent).toContain("SO-00111"));
+      await waitFor(() => expect(r2.textContent).toContain("SO-00222"));
+      expect(r1.textContent).not.toContain("SO-00222");
+      expect(r2.textContent).not.toContain("SO-00111");
+    });
     it("says so plainly when billing started but no Sale is linked, and when billing has not started: no number is invented", async () => {
       setup([variation("v1", "V001", "APPROVED"), variation("v2", "V002", "APPROVED")], { v1: "vp1" });
       await openVariations();

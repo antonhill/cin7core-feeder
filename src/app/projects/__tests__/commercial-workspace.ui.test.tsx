@@ -112,6 +112,16 @@ describe("Commercial / Claims workspace (P2)", () => {
     const shown = articles.map((a) => a.textContent!).join(" ");
     expect(CLAIMS.every((c) => shown.includes(formatCents(c.total_cents)))).toBe(true);
   });
+  it("marks and counts the claims awaiting this user's action, and no others", async () => {
+    await openCommercial();
+    const marked = [...document.querySelectorAll("article[data-needs-action]")].map((x) => x.textContent!);
+    expect(marked.length).toBe(2); // PRJ-X-C03 (approve here) and PRJ-X-C04 (draft: submit)
+    expect(marked.some((t) => t.includes("PRJ-X-C03"))).toBe(true);
+    expect(marked.some((t) => t.includes("PRJ-X-C04"))).toBe(true);
+    expect(screen.getByText("2 need your action")).toBeTruthy();
+    const done = [...document.querySelectorAll("article")].filter((x) => x.textContent!.includes("PRJ-X-C01") || x.textContent!.includes("PRJ-X-C02"));
+    expect(done.every((x) => !x.hasAttribute("data-needs-action") && !x.textContent!.includes("Needs your action"))).toBe(true);
+  });
   it("keeps the actions beside the claim they act on (a manager approves a claim from its own record)", async () => {
     await openCommercial();
     const a = (Array.from(document.querySelectorAll("article")) as HTMLElement[]).find((x) => x.textContent!.includes("PRJ-X-C03"))!;

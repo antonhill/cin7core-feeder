@@ -12,7 +12,7 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { assertNewquipOrg } from "@/lib/projects/newquip-gate";
 import type { ConsolidatedCommercial } from "@/lib/projects/consolidated-report";
-import { amendVariationSchedule, createVariationBillingProject, loadConsolidatedCommercial, listVariationStages, loadConsolidatedProject, loadSaleNumbersByProject, saveDraftSchedule, type ConsolidatedProject } from "@/lib/projects/variation-billing-store";
+import { amendVariationSchedule, createVariationBillingProject, loadConsolidatedCommercial, listVariationStages, loadConsolidatedProject, loadSaleNumbersByProject, saleNumbersByVariation, saveDraftSchedule, type ConsolidatedProject } from "@/lib/projects/variation-billing-store";
 import { resolveVariationProducts, searchCatalogue, type CatalogueResult } from "@/lib/projects/catalogue-search";
 import { callerIsOrgAdmin } from "@/lib/projects/scope-access";
 import { scheduleFromPercents } from "@/lib/projects/variation-schedule";
@@ -48,9 +48,9 @@ export async function getVariationBillingAction(projectId: string): Promise<Vari
       const vid = consolidated.base.variations.find((v) => v.code === s.variationCode)?.id;
       if (s.scope === "VARIATION" && vid) billingProjectByVariation[vid] = s.projectId;
     }
-    const numbers = await loadSaleNumbersByProject(db, orgId, Object.values(billingProjectByVariation));
-    const saleNumberByVariation: Record<string, string> = {};
-    for (const [vid, pid] of Object.entries(billingProjectByVariation)) if (numbers[pid]) saleNumberByVariation[vid] = numbers[pid];
+    // The Sale number is a convenience read: if it cannot be loaded the billing state (and its decision controls) must still load, so a failure degrades to "no number shown".
+    const numbers = await loadSaleNumbersByProject(db, orgId, Object.values(billingProjectByVariation)).catch(() => ({} as Record<string, string>));
+    const saleNumberByVariation = saleNumbersByVariation(billingProjectByVariation, numbers);
     return { ok: true, data: { consolidated: { ...consolidated, closureBlockers: admin ? consolidated.closureBlockers : [] }, schedules, billingProjectByVariation, saleNumberByVariation } };
   } catch (e) {
     return { ok: false, error: message(e) };

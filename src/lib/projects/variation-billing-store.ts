@@ -268,3 +268,10 @@ export async function loadSaleNumbersByProject(db: Db, orgId: string, projectIds
   for (const row of (r.data ?? []) as Array<{ project_id: string; cin7_sale_number: string | null }>) if (row.cin7_sale_number) out[row.project_id] = row.cin7_sale_number;
   return out;
 }
+
+/** variation id -> Sale number, joining each variation's own billing project to that project's stored number. A variation whose project has no number is absent. */
+export function saleNumbersByVariation(billingProjectByVariation: Record<string, string>, numberByProject: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [variationId, projectId] of Object.entries(billingProjectByVariation)) if (numberByProject[projectId]) out[variationId] = numberByProject[projectId];
+  return out;
+}
