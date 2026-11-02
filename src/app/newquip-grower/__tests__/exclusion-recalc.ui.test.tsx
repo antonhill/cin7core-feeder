@@ -237,7 +237,7 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
     expect(within(bar).getByText("Gross margin")).toBeTruthy(); // the viewer can see commercials
     expect(within(bar).queryByText(/unsaved edits/)).toBeNull();
     fireEvent.click(box(/Exclude CCM feeder/i));
-    expect(within(bar).getByText(/Recalculating…|Preview of unsaved edits/)).toBeTruthy();
+    expect(within(bar).getByText("Preview of unsaved edits")).toBeTruthy();
     await waitFor(() => expect(within(bar).getByText("Preview of unsaved edits")).toBeTruthy(), { timeout: 8000 });
   }, 30000);
   it("an excluded section is marked 'Excluded' beside its own checkbox at once, and the unticked one says 'Included'", async () => {
@@ -265,4 +265,83 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
     fireEvent.click(box(/Silo weighing/));
     expect(silo.textContent).toMatch(/✓ Included/);
   }, 30000);
+
+  it("when the live recalculation FAILS the bar says so in text, marks the total out of date, and does not call it a preview", async () => {
+    await open();
+    const bar = screen.getByTestId("quote-summary-bar");
+    vi.spyOn(actions, "previewGrowerDraftAction").mockResolvedValue({ ok: false, error: "engine down" } as never);
+    fireEvent.click(box(/Exclude CCM feeder/i));
+    await waitFor(() => expect(within(bar).getByText("Recalculation failed - figures are out of date")).toBeTruthy(), { timeout: 8000 });
+    expect(within(bar).queryByText("Preview of unsaved edits")).toBeNull();
+    expect(within(bar).getByTestId("summary-stale").textContent).toBe("(out of date)");
+  }, 30000);
+  it("while recalculating, the total carries a visible 'Recalculating…' cue (not only an opacity change)", async () => {
+    await open();
+    vi.spyOn(actions, "previewGrowerDraftAction").mockImplementation(() => new Promise(() => undefined) as never);
+    fireEvent.click(box(/Exclude CCM feeder/i));
+    await waitFor(() => expect(screen.getByTestId("summary-stale").textContent).toBe("Recalculating…"), { timeout: 8000 });
+    expect(screen.getByTestId("quote-summary-bar").getAttribute("aria-busy")).toBe("true");
+  }, 30000);
+  it("NEGATIVE: a viewer who cannot see commercials never sees the margin on any stage", async () => {
+    for (const stage of ["1", "2", "4"]) {
+      (globalThis as { __STAGE?: string }).__STAGE = stage;
+      asRoles("REP");
+      vi.mocked(canSeeCosts).mockResolvedValue(false);
+      const id = await storedQuote();
+      (globalThis as { __QID?: string }).__QID = id;
+      const { default: Page } = await import("../[id]/page");
+      render(createElement(Page));
+      await waitFor(() => expect(screen.getByTestId("quote-summary-bar")).toBeTruthy(), { timeout: 8000 });
+      await sleep(300);
+      expect(within(screen.getByTestId("quote-summary-bar")).queryByText("Gross margin")).toBeNull();
+      cleanup();
+    }
+  }, 60000);
+  it("margin is shown on the working stages but hidden on the customer-facing quotation stage", async () => {
+    await open();
+    expect(within(screen.getByTestId("quote-summary-bar")).getByText("Gross margin")).toBeTruthy();
+    cleanup();
+    (globalThis as { __STAGE?: string }).__STAGE = "4";
+    await open().catch(() => undefined);
+    await waitFor(() => expect(screen.getByTestId("quote-summary-bar")).toBeTruthy(), { timeout: 8000 });
+    expect(within(screen.getByTestId("quote-summary-bar")).queryByText("Gross margin")).toBeNull();
+  }, 30000);
+  describe("Manager: why Final approval is disabled", () => {
+    async function openAsManager(signoff: "none" | "stale" | "current") {
+      (globalThis as { __STAGE?: string }).__STAGE = "3";
+      asRoles("MANAGER", "REP");
+      vi.mocked(canSeeCosts).mockResolvedValue(true);
+      const id = await storedQuote();
+      const row = db.rows("newquip_quotes").find((r) => r.id === id)!;
+      row.state = "ESTIMATOR_REVIEW";
+      row.estimator_signoff_hash = signoff === "none" ? null : signoff === "stale" ? "stale-hash" : row.draft_hash;
+      (globalThis as { __QID?: string }).__QID = id;
+      const { default: Page } = await import("../[id]/page");
+      render(createElement(Page));
+      await waitFor(() => expect(screen.getByText("Manager approval", { selector: "p" })).toBeTruthy(), { timeout: 8000 });
+    }
+    const approve = () => screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement;
+    it("no sign-off: says it is waiting for the Estimator exactly once", async () => {
+      await openAsManager("none");
+      expect(screen.getAllByText(/Waiting for the Estimator/)).toHaveLength(1);
+      expect(approve().disabled).toBe(true);
+    }, 30000);
+    it("stale sign-off: says the sign-off no longer matches", async () => {
+      await openAsManager("stale");
+      expect(screen.getByText(/no longer matches the current quotation/)).toBeTruthy();
+      expect(approve().disabled).toBe(true);
+    }, 30000);
+    it("current sign-off but unsaved edits: says to save or discard first, and approval is disabled until then", async () => {
+      await openAsManager("current");
+      expect(screen.queryByText(/Save or discard your edits first/)).toBeNull();
+      expect(approve().disabled).toBe(false);
+      const nav = (n: number) => fireEvent.click(document.querySelector(`[data-stage="${n}"]`) as HTMLElement);
+      nav(1);
+      fireEvent.click(await screen.findByLabelText(/Silo weighing/)); // an unsaved edit
+      nav(3);
+      expect(await screen.findByText(/Save or discard your edits first/)).toBeTruthy();
+      expect(approve().disabled).toBe(true);
+      cleanup();
+    }, 30000);
+  });
 });

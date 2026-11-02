@@ -17,7 +17,7 @@ import { Select } from "@/components/ui/Select";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatSast, isOverdue, waitingLabel } from "@/lib/approvals/time";
 import { DOC_TYPE_LABEL, STATUS_LABEL, type ApprovalDocType, type ApprovalNotificationRow, type ApprovalStatus } from "@/lib/approvals/types";
-import { activeFilters, awaitsMe, CLEARED_FILTERS, type QueueFilters, type QueueSort } from "@/lib/approvals/queue";
+import { activeFilters, CLEARED_FILTERS, type QueueFilters, type QueueSort } from "@/lib/approvals/queue";
 import { displayEmailStatus, EMAIL_STATUS_NOTE, type EmailDisplayStatus } from "@/lib/approvals/email-policy";
 import { getApprovalsDashboardAction, getEmailStatusAction, getMyNotificationsAction, retryEmailAction, saveApprovalSettingsAction, sendPendingNowAction, sendTestEmailAction, type ApprovalsDashboard, type DispatchSummary } from "./actions";
 
@@ -119,7 +119,7 @@ export default function ApprovalsPage() {
                 <TBody>
                   {d.rows.map((r) => {
                     const late = r.status === "PENDING" && isOverdue(r.due_at, d.nowIso);
-                    const mine = r.status === "PENDING" && awaitsMe(r, d.me);
+                    const mine = r.status === "PENDING" && d.awaitingMeIds.includes(r.id);
                     return (
                       <TR key={r.id} flagged={mine ? "warning" : undefined} className={r.status === "PENDING" ? "" : "bg-slate-50"}>
                         <TD><Link href={`/approvals/${r.id}`} className="font-medium text-blue-700 underline">{r.doc_ref}</Link>{mine && <div className="mt-1"><Status tone="warning">Your decision</Status></div>}</TD>

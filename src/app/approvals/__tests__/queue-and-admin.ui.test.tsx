@@ -24,7 +24,7 @@ const req = (over: Record<string, unknown> = {}) => ({
 });
 const dash = (over: Record<string, unknown> = {}) => ({
   available: true, me: "me@x.co", isManager: true, nowIso: "2026-11-02T10:00:00Z", unread: 0, managers: [], settings: { targetBusinessDays: 2, reminderEveryHours: 24, maxReminders: 3, escalationEmail: null },
-  summary: { awaitingMe: 1, pending: 2, overdue: 0, returned: 0, approvedToday: 0, approvedThisWeek: 0, rejected: 0, pendingValueCents: 0 }, needsPreparerAction: [],
+  awaitingMeIds: ["mine"], summary: { awaitingMe: 1, pending: 2, overdue: 0, returned: 0, approvedToday: 0, approvedThisWeek: 0, rejected: 0, pendingValueCents: 0 }, needsPreparerAction: [],
   failedEmails: [], recentEmails: [], rows: [req({ id: "mine", doc_ref: "NQ-MINE", assigned_to_email: "me@x.co" }), req({ id: "other", doc_ref: "NQ-OTHER" }), req({ id: "done", doc_ref: "NQ-DONE", status: "APPROVED" })], ...over,
 });
 const deferred = <T,>() => { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; };
@@ -42,6 +42,13 @@ describe("Approvals list: what needs me, pending versus completed", () => {
     expect(screen.getAllByText("Your decision")).toHaveLength(1);
     expect(screen.getByTestId("awaiting-me").textContent).toMatch(/1 approval is waiting for your decision/);
     expect(screen.getByTestId("queue-count").textContent).toMatch(/3 approvals: 2 pending, 1 completed or returned/);
+  });
+  it("a role-based, unassigned item that I may decide is marked too (the badge agrees with the count and the filter, which are role-aware)", async () => {
+    vi.mocked(actions.getApprovalsDashboardAction).mockResolvedValue({ ok: true, data: dash({ awaitingMeIds: ["byrole"], summary: { ...dash().summary, awaitingMe: 1 }, rows: [req({ id: "byrole", doc_ref: "NQ-ROLE", assigned_to_email: null }), req({ id: "other", doc_ref: "NQ-OTHER", assigned_to_email: null })] }) } as never);
+    render(<ApprovalsPage />);
+    await screen.findByText("NQ-ROLE");
+    expect(within(screen.getByText("NQ-ROLE").closest("tr")!).getByText("Your decision")).toBeTruthy();
+    expect(within(screen.getByText("NQ-OTHER").closest("tr")!).queryByText("Your decision")).toBeNull();
   });
   it("'Show what needs my decision' filters to my pending approvals", async () => {
     render(<ApprovalsPage />);

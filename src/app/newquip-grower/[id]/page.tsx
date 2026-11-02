@@ -225,6 +225,7 @@ export default function QuoteEditorPage() {
   const loadingStages = final && !gateReady;
   // While the commercial status is unread, stages 4-5 (and 6 without a Project link) show a loading placeholder instead of their panels.
   const hold = (n: StageId) => loadingStages && (n === 4 || n === 5 || (n === 6 && !q.project_id));
+  const staleCue = previewFailure ? "(out of date)" : recalculating ? "Recalculating…" : null;
   const handoffFacts = (
     <dl className="mt-3 grid gap-x-8 gap-y-2 text-sm md:grid-cols-2 xl:grid-cols-4">
       {[
@@ -253,12 +254,12 @@ export default function QuoteEditorPage() {
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <Status tone={READY_TONE[rd.state]}>{READINESS_LABEL[rd.state]}</Status>
-            {dirty && <Status tone="warning">{recalculating ? "Recalculating…" : "Preview of unsaved edits"}</Status>}
+            {previewFailure ? <Status tone="danger">Recalculation failed - figures are out of date</Status> : dirty && <Status tone="warning">Preview of unsaved edits</Status>}
           </div>
           <dl className="flex flex-wrap items-end gap-x-8 gap-y-1">
-            <div><dt className="text-xs uppercase tracking-wide text-slate-700">Quote total (ex VAT)</dt><dd className="whitespace-nowrap text-2xl font-bold tabular-nums text-slate-900">{totalCents == null ? "—" : fmtCents(totalCents)}</dd></div>
+            <div><dt className="text-xs uppercase tracking-wide text-slate-700">Quote total (ex VAT)</dt><dd className={`whitespace-nowrap text-2xl font-bold tabular-nums ${previewFailure ? "text-slate-700 line-through decoration-1" : "text-slate-900"}`}>{totalCents == null ? "—" : fmtCents(totalCents)}{staleCue && <span className="ml-2 text-sm font-semibold no-underline" data-testid="summary-stale">{staleCue}</span>}</dd></div>
             {budget && !budget.incomplete && <div><dt className="text-xs uppercase tracking-wide text-slate-700">Total (inc VAT)</dt><dd className="whitespace-nowrap text-lg font-semibold tabular-nums text-slate-900">{fmtZar(budget.totals.totalIncTax)}</dd></div>}
-            {budget && view.viewer.canViewCommercials && <div><dt className="text-xs uppercase tracking-wide text-slate-700">Gross margin</dt><dd className="whitespace-nowrap text-lg font-semibold tabular-nums text-slate-900">{budget.totals.overallMarginPct == null ? "N/A" : `${budget.totals.overallMarginPct.toFixed(1)}%`}</dd></div>}
+            {budget && view.viewer.canViewCommercials && stage < 4 && <div><dt className="text-xs uppercase tracking-wide text-slate-700">Gross margin</dt><dd className="whitespace-nowrap text-lg font-semibold tabular-nums text-slate-900">{budget.totals.overallMarginPct == null ? "N/A" : `${budget.totals.overallMarginPct.toFixed(1)}%`}</dd></div>}
           </dl>
         </div>
       </div>
@@ -648,6 +649,8 @@ export default function QuoteEditorPage() {
             {handoffFacts}
 
             {q.state === "ESTIMATOR_REVIEW" && !q.estimator_signoff_hash && <Alert tone="info">Waiting for the Estimator&apos;s sign-off before the Manager can decide.</Alert>}
+            {q.state === "ESTIMATOR_REVIEW" && !!q.estimator_signoff_hash && q.estimator_signoff_hash !== q.draft_hash && <Alert tone="warning">The Estimator&apos;s sign-off no longer matches the current quotation. It must be given again before the Manager can decide.</Alert>}
+            {q.state === "ESTIMATOR_REVIEW" && dirty && <Alert tone="warning" >You have unsaved edits. Save or discard your edits first: approval applies to the saved quotation.</Alert>}
             <div className="mt-5 space-y-3 border-t border-slate-100 pt-5">
               {q.state === "ESTIMATOR_REVIEW" && (
                 <>
@@ -663,7 +666,6 @@ export default function QuoteEditorPage() {
                     </>)}
                   </div>
                   {!roles.has("manager") && <p className="text-sm text-slate-700">Final approval needs the manager role (org owner/admin).</p>}
-                  {roles.has("manager") && (!q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash) && <p className="text-sm text-slate-700">Final approval unlocks once the Estimator&apos;s sign-off matches the current quotation.</p>}
                 </>
               )}
               {q.state === "REP_DRAFT" && <p className="text-sm text-slate-700">This quotation is with the Rep ({q.revision > 1 ? "returned as a new revision" : "not yet sent for review"}).</p>}
