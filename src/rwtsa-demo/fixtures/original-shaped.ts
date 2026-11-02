@@ -162,6 +162,8 @@ export function buildOriginalShapedWorkbook(): ExcelJS.Workbook {
   put(pay, 4, ["PO-SYN-1", "SYN Supplier (anon)", utc("2026-10-16"), 30, f(utc("2026-11-15")), 3000, "FEC-SYN-1", 18.2, f(54600), "balance"]);
   put(pay, 5, ["PO-SYN-2", "SYN Supplier (anon)", utc("2026-10-31"), 30, f(utc("2026-11-30")), 1500, null, null, null, "no cover"]);
   put(pay, 6, ["PO-SYN-1", "SYN Supplier (anon)", utc("2026-08-31"), 30, f(utc("2026-09-30")), 500, null, null, null, "deposit"]);
+  put(pay, 7, ["PO-SYN-3", "SYN Supplier (anon)", utc("2026-08-20"), 0, f(utc("2026-08-20")), 600, null, null, null, "Deposit before production (30%)"]);
+  put(pay, 8, ["SYN-QC", "SYN Inspector (anon)", utc("2026-08-04"), 0, f(utc("2026-08-04")), 110, null, null, null, "Per-shipment QC cost"]);
   pay.getCell("C4").numFmt = "yyyy-mm-dd";
 
   // ---- Customers / Quotes: tabular, real-style headers ----
