@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
+import { Block } from "./LoadingSkeletons";
 import { ProjectWorkspace } from "./ProjectWorkspace";
 import { VariationProductPicker } from "./VariationProductPicker";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
@@ -22,7 +23,7 @@ const pct = (bps: number) => (bps / 100).toFixed(2).replace(/\.00$/, "");
 const rowsOf = (s: Array<{ name: string; bps: number }> | undefined): Row[] => (s && s.length ? s.map((x) => ({ name: x.name, percent: pct(x.bps) })) : [{ name: "Variation", percent: "100" }]);
 const totalOf = (rows: Row[]) => Math.round(rows.reduce((n, r) => n + (Number(r.percent) || 0), 0) * 100) / 100;
 
-export function VariationBillingPanel({ view, isAdmin, run, working }: { view: ProjectView; isAdmin: boolean; run: Run; working: boolean }) {
+export function VariationBillingPanel({ view, isAdmin, run, working, renderDecision }: { view: ProjectView; isAdmin: boolean; run: Run; working: boolean; renderDecision?: (v: ProjectView["variations"][number]) => React.ReactNode }) {
   const projectId = view.project.id;
   const [state, setState] = useState<VariationBillingState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -31,6 +32,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working }: { view: P
   const [prods, setProds] = useState<Record<string, Array<{ sku: string; description: string; quantity: string }>>>({});
 
   const [version, setVersion] = useState(0);
+  const [openWs, setOpenWs] = useState<Record<string, boolean>>({});
   const variationKey = view.variations.map((v) => `${v.id}:${v.status}`).join(",");
   useEffect(() => {
     let live = true;
@@ -43,12 +45,103 @@ export function VariationBillingPanel({ view, isAdmin, run, working }: { view: P
 
   const act = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string) => { if (await run(fn, done)) setVersion((n) => n + 1); };
   if (error) return <Alert tone="danger">{error}</Alert>;
-  if (!state) return <p className="text-sm text-slate-500">Loading variation billing…</p>;
+  if (!state) return (
+    <div role="status" aria-live="polite" aria-busy="true" className="min-h-40 rounded-2xl border border-slate-200 bg-white p-5">
+      <p className="text-sm text-slate-500">Loading the variations…</p>
+      <Block className="mt-4 h-24 w-full" />
+    </div>
+  );
   const c = state.consolidated;
   const variations = view.variations.filter((v) => v.status !== "REJECTED");
+  const firstBilled = variations.find((x) => x.status === "APPROVED" && state.billingProjectByVariation[x.id])?.id;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+
+      {variations.length === 0 ? <p className="text-sm text-slate-600">No variations to bill.</p> : variations.map((v) => {
+        const sched = state.schedules[v.id];
+        const rows = edit[v.id] ?? rowsOf(sched);
+        const total = totalOf(rows);
+        const billingId = state.billingProjectByVariation[v.id];
+        const legacy = v.status === "APPROVED" && (!sched || sched.length === 0);
+        const scope = billingId ? c.scopes.find((x) => x.projectId === billingId) : undefined;
+        const wsOpen = openWs[v.id] ?? v.id === firstBilled; // the first billed variation opens on its claims and invoices; others open on request (one workspace's reads, not every variation's)
+        return (
+          <Panel key={v.id}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <PanelTitle>{v.code} – {v.title} <Badge tone={v.status === "APPROVED" ? "success" : "neutral"}>{v.status}</Badge></PanelTitle>
+                {v.description && <p className="mt-1 text-sm text-slate-600">{v.description}</p>}
+              </div>
+              <div className="text-right">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Approved value (ex VAT)</p>
+                <p className="whitespace-nowrap text-xl font-bold tabular-nums text-slate-900">{formatCents(v.amount_cents)}</p>
+              </div>
+            </div>
+            {legacy && <Alert tone="warning">This variation was approved before billing schedules existed. A manager must set its schedule (an audited amendment) before billing can start. Nothing is created automatically.</Alert>}
+            {scope ? (
+              <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 rounded-lg bg-slate-50 px-4 py-3 text-sm sm:grid-cols-4" aria-label={`${v.code} billing position (ex VAT)`}>
+                {([["Earned", scope.earnedCents], ["Billed / committed", scope.committedCents], ["Claimable now", scope.claimableCents], ["Remaining", scope.remainingCents]] as const).map(([k, n]) => (
+                  <div key={k}><dt className="text-xs text-slate-500">{k}</dt><dd className="font-semibold tabular-nums text-slate-900">{formatCents(n)}</dd></div>
+                ))}
+              </dl>
+            ) : <p className="mt-3 text-sm text-slate-600">{v.status === "APPROVED" ? "Billing has not started for this variation." : "Counts for nothing until a manager approves it."}</p>}
+            <div className="mt-3">{renderDecision ? renderDecision(v) : null}</div>
+            {v.status === "APPROVED" && (
+              <div className="mt-4">
+                {billingId ? (
+                  isAdmin ? (
+                    <div>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-medium text-slate-800">{v.code} billing: progress, claims, Cin7 Sale and invoices</p>
+                        <Button size="sm" variant="secondary" aria-expanded={wsOpen} onClick={() => setOpenWs({ ...openWs, [v.id]: !wsOpen })}>{wsOpen ? "Hide billing workspace" : "Open billing workspace"}</Button>
+                      </div>
+                      {wsOpen && <div className="mt-2"><ProjectWorkspace key={billingId} id={billingId} embedded /></div>}
+                    </div>
+                  ) : <span className="text-sm text-slate-600">Billing for {v.code} is active; a manager operates it.</span>
+                ) : isAdmin ? (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-slate-800">Products in this variation (picked once from Cin7; the Sale and invoices inherit them)</p>
+                    <VariationProductPicker picked={prods[v.id] ?? []} onChange={(next) => setProds({ ...prods, [v.id]: next })} disabled={working} />
+                    <div className="flex flex-wrap gap-2">
+                      <Button disabled={working || legacy} onClick={() => act(() => startVariationBillingAction(projectId, v.id, (prods[v.id] ?? []).map((p) => ({ sku: p.sku, description: p.description, quantity: Number(p.quantity) }))), `Started billing for ${v.code}. Create its Cin7 Sale below.`)}>Start variation billing</Button>
+                    </div>
+                  </div>
+                ) : <span className="text-xs text-slate-500">A manager starts variation billing.</span>}
+              </div>
+            )}
+            <details className="mt-4 rounded border border-slate-200 p-3">
+              <summary className="cursor-pointer text-sm font-medium text-slate-800">Billing schedule{v.status === "APPROVED" && !billingId && isAdmin ? ", products" : ""} and history</summary>
+            <p className="mt-1 text-xs text-slate-500">Approved value {formatCents(v.amount_cents)} ex VAT. Percentages are applied to this value in whole cents (largest remainder), so the stages always sum to it exactly.</p>
+            <div className="mt-3 space-y-2">
+              {rows.map((r, i) => (
+                <div key={i} className="flex flex-wrap items-end gap-2">
+                  <Input label="Stage" value={r.name} disabled={v.status === "APPROVED" && !isAdmin || !!billingId && v.status === "APPROVED"} onChange={(e) => setEdit({ ...edit, [v.id]: rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} />
+                  <Input label="%" value={r.percent} disabled={v.status === "APPROVED" && !isAdmin || !!billingId && v.status === "APPROVED"} onChange={(e) => setEdit({ ...edit, [v.id]: rows.map((x, j) => (j === i ? { ...x, percent: e.target.value } : x)) })} />
+                </div>
+              ))}
+              <p className={`text-sm ${total === 100 ? "text-slate-600" : "font-semibold text-red-700"}`}>Total {total}% {total === 100 ? "" : "- must be exactly 100%"}</p>
+              {(v.status === "DRAFT" || (isAdmin && !billingId)) && (
+                <div className="flex flex-wrap items-end gap-2">
+                  <Button size="sm" variant="secondary" disabled={working} onClick={() => setEdit({ ...edit, [v.id]: [...rows, { name: "", percent: "" }] })}>Add stage</Button>
+                  {rows.length > 1 && <Button size="sm" variant="secondary" disabled={working} onClick={() => setEdit({ ...edit, [v.id]: rows.slice(0, -1) })}>Remove last</Button>}
+                  {v.status === "DRAFT" ? (
+                    <Button size="sm" disabled={working || total !== 100} onClick={() => act(() => saveVariationScheduleAction(projectId, v.id, rows), `Saved the ${v.code} billing schedule.`)}>Save schedule</Button>
+                  ) : (
+                    <>
+                      <Input label="Reason for amendment" value={reason[v.id] ?? ""} onChange={(e) => setReason({ ...reason, [v.id]: e.target.value })} />
+                      <Button size="sm" disabled={working || total !== 100 || !(reason[v.id] ?? "").trim()} onClick={() => act(() => amendVariationScheduleAction(projectId, v.id, rows, reason[v.id]), `Amended the ${v.code} schedule (audited).`)}>Amend schedule</Button>
+                    </>
+                  )}
+                </div>
+              )}
+              {v.status === "APPROVED" && billingId && <p className="text-xs text-slate-500">Billing has started. The schedule can no longer be amended once the billing project has claims or progress; the database refuses.</p>}
+            </div>
+            </details>
+          </Panel>
+        );
+      })}
+
       <Panel>
         <PanelTitle>Consolidated billing (base + variations)</PanelTitle>
         <div className="mt-4 overflow-x-auto">
@@ -81,65 +174,6 @@ export function VariationBillingPanel({ view, isAdmin, run, working }: { view: P
         <Alert tone="info">This project cannot be completed or closed yet: {c.closureBlockers.join("; ")}.</Alert>
       )}
       <Alert tone="info">Negative variations (credits, omissions, cancellations) are not supported: Toolbox never creates a credit note or a negative Sale. Handle a reduction in scope manually in Cin7.</Alert>
-
-      {variations.length === 0 ? <p className="text-sm text-slate-600">No variations to bill.</p> : variations.map((v) => {
-        const sched = state.schedules[v.id];
-        const rows = edit[v.id] ?? rowsOf(sched);
-        const total = totalOf(rows);
-        const billingId = state.billingProjectByVariation[v.id];
-        const legacy = v.status === "APPROVED" && (!sched || sched.length === 0);
-        return (
-          <Panel key={v.id}>
-            <PanelTitle>{v.code} – {v.title} <Badge tone={v.status === "APPROVED" ? "success" : "neutral"}>{v.status}</Badge></PanelTitle>
-            <p className="mt-1 text-xs text-slate-500">Approved value {formatCents(v.amount_cents)} ex VAT. Percentages are applied to this value in whole cents (largest remainder), so the stages always sum to it exactly.</p>
-            {legacy && <Alert tone="warning">This variation was approved before billing schedules existed. A manager must set its schedule (an audited amendment) before billing can start. Nothing is created automatically.</Alert>}
-            <div className="mt-3 space-y-2">
-              {rows.map((r, i) => (
-                <div key={i} className="flex flex-wrap items-end gap-2">
-                  <Input label="Stage" value={r.name} disabled={v.status === "APPROVED" && !isAdmin || !!billingId && v.status === "APPROVED"} onChange={(e) => setEdit({ ...edit, [v.id]: rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} />
-                  <Input label="%" value={r.percent} disabled={v.status === "APPROVED" && !isAdmin || !!billingId && v.status === "APPROVED"} onChange={(e) => setEdit({ ...edit, [v.id]: rows.map((x, j) => (j === i ? { ...x, percent: e.target.value } : x)) })} />
-                </div>
-              ))}
-              <p className={`text-sm ${total === 100 ? "text-slate-600" : "font-semibold text-red-700"}`}>Total {total}% {total === 100 ? "" : "- must be exactly 100%"}</p>
-              {(v.status === "DRAFT" || (isAdmin && !billingId)) && (
-                <div className="flex flex-wrap items-end gap-2">
-                  <Button size="sm" variant="secondary" disabled={working} onClick={() => setEdit({ ...edit, [v.id]: [...rows, { name: "", percent: "" }] })}>Add stage</Button>
-                  {rows.length > 1 && <Button size="sm" variant="secondary" disabled={working} onClick={() => setEdit({ ...edit, [v.id]: rows.slice(0, -1) })}>Remove last</Button>}
-                  {v.status === "DRAFT" ? (
-                    <Button size="sm" disabled={working || total !== 100} onClick={() => act(() => saveVariationScheduleAction(projectId, v.id, rows), `Saved the ${v.code} billing schedule.`)}>Save schedule</Button>
-                  ) : (
-                    <>
-                      <Input label="Reason for amendment" value={reason[v.id] ?? ""} onChange={(e) => setReason({ ...reason, [v.id]: e.target.value })} />
-                      <Button size="sm" disabled={working || total !== 100 || !(reason[v.id] ?? "").trim()} onClick={() => act(() => amendVariationScheduleAction(projectId, v.id, rows, reason[v.id]), `Amended the ${v.code} schedule (audited).`)}>Amend schedule</Button>
-                    </>
-                  )}
-                </div>
-              )}
-              {v.status === "APPROVED" && billingId && <p className="text-xs text-slate-500">Billing has started. The schedule can no longer be amended once the billing project has claims or progress; the database refuses.</p>}
-            </div>
-            {v.status === "APPROVED" && (
-              <div className="mt-4">
-                {billingId ? (
-                  isAdmin ? (
-                    <details className="rounded border border-slate-200 p-3" open>
-                      <summary className="cursor-pointer text-sm font-medium text-slate-800">{v.code} billing workspace - progress, claims, Cin7 Sale and invoices (works here, inside the original project)</summary>
-                      <ProjectWorkspace key={billingId} id={billingId} embedded />
-                    </details>
-                  ) : <span className="text-sm text-slate-600">Billing for {v.code} is active; a manager operates it.</span>
-                ) : isAdmin ? (
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium text-slate-800">Products in this variation (picked once from Cin7; the Sale and invoices inherit them)</p>
-                    <VariationProductPicker picked={prods[v.id] ?? []} onChange={(next) => setProds({ ...prods, [v.id]: next })} disabled={working} />
-                    <div className="flex flex-wrap gap-2">
-                      <Button disabled={working || legacy} onClick={() => act(() => startVariationBillingAction(projectId, v.id, (prods[v.id] ?? []).map((p) => ({ sku: p.sku, description: p.description, quantity: Number(p.quantity) }))), `Started billing for ${v.code}. Create its Cin7 Sale below.`)}>Start variation billing</Button>
-                    </div>
-                  </div>
-                ) : <span className="text-xs text-slate-500">A manager starts variation billing.</span>}
-              </div>
-            )}
-          </Panel>
-        );
-      })}
     </div>
   );
 }

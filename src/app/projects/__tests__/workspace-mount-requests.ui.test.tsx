@@ -52,7 +52,7 @@ const view = (over: Record<string, unknown> = {}, variations: unknown[] = []): P
 
 const linkedSale = { ok: true, data: { gates, creation: null, linked: true, scopeItems: [], saleLines: [], blockers: [], excluded: [] } };
 const unlinkedSale = { ok: true, data: { gates, creation: null, linked: false, scopeItems: [], saleLines: [], blockers: [], excluded: [] } };
-const postStatus = { ok: true, data: { gates, link: { id: "l1", cin7_sale_number: "SO-00030", cin7_sale_id: "sale-1" }, linkOrigin: "AUTOMATIC", postings: [] } };
+const postStatus = { ok: true, data: { gates, link: { id: "l1", cin7_sale_number: "SO-00030", cin7_sale_id: "sale-1" }, linkOrigin: "AUTOMATIC", postings: [{ id: "po1", claim_id: "c1", posting_state: "RECONCILED", cin7_invoice_number: "INV-00038", cin7_task_id: null, cin7_status: "DRAFT", completed_at: null, reconciled_at: null }] } };
 const zero = { contractCents: 0, earnedCents: 0, committedCents: 0, claimableCents: 0, remainingCents: 0 };
 const billing = { ok: true, data: { consolidated: { scopes: [], totals: zero, unbilledApprovedVariations: [], closureBlockers: [] }, schedules: { v1: [{ name: "Variation", bps: 10_000 }] }, billingProjectByVariation: { v1: "vp1" } } };
 // The variation's own billing project, as the embedded workspace loads it.
@@ -160,32 +160,35 @@ describe("what a Project fires when it opens", () => {
     expect(slot.className).toMatch(/min-h-/);
   });
 
-  it("opening Variations: the permission read is not repeated for the variation's own workspace", async () => {
+  it("opening Variations: the first billed variation opens on its claims and invoices in one read, with no repeated permission read and no Cin7 read", async () => {
     h.responses.getProjectAction = (id: string) => proj(id === "vp1" ? variationProject() : view({}, [approvedVariation]));
     render(<ProjectWorkspace id="p1" />);
     fireEvent.click(await screen.findByRole("button", { name: /^Variations/ }));
-    await screen.findByText(/V001 billing workspace/);
+    await screen.findByText(/V001 billing: progress, claims, Cin7 Sale and invoices/);
+    await screen.findByText("Invoices in Cin7"); // the variation's invoices are on screen: nothing to expand, nothing to click
     await settled();
     report("Variations tab, one billed variation");
-    expect(names()).toEqual(["getProjectAction", "getProjectOverviewDataAction", "getVariationBillingAction", "getProjectAction"]);
+    expect(names()).toEqual(["getProjectAction", "getProjectOverviewDataAction", "getVariationBillingAction", "getProjectAction", "getCommercialBootAction"]);
     expect(count("getViewerPermissionsAction")).toBe(0);
+    expect(h.calls.filter((c) => CIN7_READS.includes(c))).toEqual([]);
   });
 
-  it("opening the variation's Commercial / Claims: one Sale + invoice read, no live Cin7 read, no permission read", async () => {
-    h.responses.getProjectAction = (id: string) => proj(id === "vp1" ? variationProject() : view({}, [approvedVariation]));
+  it("a second billed variation opens on request only, and then costs one read", async () => {
+    const second = { ...approvedVariation, id: "v2", code: "V002", title: "More" };
+    h.responses.getVariationBillingAction = { ok: true, data: { ...billing.data, schedules: { v1: [{ name: "Variation", bps: 10_000 }], v2: [{ name: "Variation", bps: 10_000 }] }, billingProjectByVariation: { v1: "vp1", v2: "vp2" } } };
+    h.responses.getProjectAction = (id: string) => proj(id === "vp1" ? variationProject() : id === "vp2" ? view({ id: "vp2", billing_scope: "VARIATION", parent_project_id: "p1", project_reference: "PRJ-X-V002" }) : view({}, [approvedVariation, second]));
     render(<ProjectWorkspace id="p1" />);
     fireEvent.click(await screen.findByRole("button", { name: /^Variations/ }));
-    await screen.findByText(/V001 billing workspace/);
+    await screen.findByText("Invoices in Cin7");
     await settled();
     const before = h.calls.length;
-    const tabs = await screen.findAllByRole("button", { name: /Commercial \/ Claims/ });
-    fireEvent.click(tabs[tabs.length - 1]); // the one inside the variation's workspace
+    expect(screen.getAllByRole("button", { name: "Open billing workspace" }).length).toBe(1); // V002 is closed
+    fireEvent.click(screen.getByRole("button", { name: "Open billing workspace" }));
+    await waitFor(() => expect(count("getProjectAction")).toBe(3));
     await settled();
-    const mine = h.calls.slice(before);
-    console.info(`[perf] variation workspace, Commercial / Claims: ${mine.length} server actions: ${mine.join(", ")}`);
-    expect(mine.filter((c) => CIN7_READS.includes(c))).toEqual([]);
-    expect(mine).toEqual(["getCommercialBootAction"]);
+    expect(h.calls.slice(before)).toEqual(["getProjectAction", "getCommercialBootAction"]);
   });
+
   it("while the project loads, the page already shows its structure and says what it is waiting for", async () => {
     h.responses.getProjectAction = () => new Promise(() => undefined); // never answers
     render(<ProjectWorkspace id="p1" />);

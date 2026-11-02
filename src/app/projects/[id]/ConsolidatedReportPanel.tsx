@@ -29,7 +29,7 @@ export function ConsolidatedReportPanel({ view }: { view: ProjectView }) {
     <Panel>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <PanelTitle>Consolidated project position (original + approved variations)</PanelTitle>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="secondary" disabled={busy} onClick={loadCommercial}>{rep ? "Refresh" : "Show commercial position"}</Button>
           <Button size="sm" variant="secondary" disabled={busy} onClick={loadPhysical}>{physical ? "Refresh physical (Cin7)" : "Add physical products (reads Cin7)"}</Button>
         </div>
