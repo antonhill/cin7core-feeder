@@ -86,7 +86,7 @@ describe("ProjectWorkspace integration of the executive overview", () => {
     const hero = await screen.findByRole("region", { name: "Project and financial summary" });
     const amountOf = (scope: HTMLElement, label: string) => within(scope).getByText(label).nextElementSibling!.textContent;
     const contract = within(hero).getByRole("heading", { name: "Contract (ex VAT)" }).parentElement!;
-    const billing = within(hero).getByRole("heading", { name: "Billing (ex VAT)" }).parentElement!;
+    const billing = within(hero).getByRole("heading", { name: "Billing on this project's own claims (ex VAT)" }).parentElement!;
     expect(amountOf(contract, "Original contract")).toBe(formatCents(1_111_100));
     expect(amountOf(contract, "Approved variations")).toBe(formatCents(2_222_200));
     expect(amountOf(contract, "Revised contract value")).toBe(formatCents(3_333_300));
@@ -101,11 +101,54 @@ describe("ProjectWorkspace integration of the executive overview", () => {
     withProject(baseView());
     render(<ProjectWorkspace id="p-base" />);
     const hero = await screen.findByRole("region", { name: "Project and financial summary" });
-    for (const h of ["Contract (ex VAT)", "Billing (ex VAT)"]) {
+    for (const h of ["Contract (ex VAT)", "Billing on this project's own claims (ex VAT)"]) {
       const dl = within(hero).getByRole("heading", { name: h }).parentElement!.querySelector("dl")!;
       expect(dl.className).toContain("grid-cols-1");
       expect(dl.className).toContain("sm:grid-cols-3");
       expect(dl.className).not.toMatch(/(^|\s)grid-cols-3/);
     }
+  });
+
+  // D4 F-11: the contract figures are stated ONCE on the Overview. The hero owns Original / Approved variations / Revised; the executive summary owns cost, margin and billing across
+  // the original project and its variations, and says so in words.
+  const distinct = () => { const v = baseView(); v.commercial = { ...v.commercial, originalContractCents: 1_111_100, approvedVariationsCents: 2_222_200, revisedContractCents: 3_333_300, committedCents: 4_444_400, claimableCents: 5_555_500, remainingCents: 6_666_600, earnedCents: 7_777_700, approvedCompletionBps: 4321 }; return v; };
+  const occurrences = (root: HTMLElement, text: string) => (root.textContent!.match(new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length;
+
+  it("D4 F-11: each hero billing amount appears once (the bar's key no longer repeats them)", async () => {
+    withProject(distinct());
+    render(<ProjectWorkspace id="p-base" />);
+    const hero = await screen.findByRole("region", { name: "Project and financial summary" });
+    for (const cents of [1_111_100, 2_222_200, 3_333_300, 4_444_400, 5_555_500, 6_666_600]) expect(occurrences(hero, formatCents(cents))).toBe(1);
+    expect(occurrences(hero, formatCents(7_777_700))).toBe(1); // earned, in the one-line footnote
+    expect(hero.textContent).not.toMatch(/Claimable = earned/); // the definitions are not recited a second time beside the figures
+  });
+
+  it("D4 F-11: on the Overview the contract labels exist once, the summary shows cost/margin and billing only, and its billing scope is stated in words", async () => {
+    withProject(distinct());
+    const { container } = render(<ProjectWorkspace id="p-base" />);
+    await screen.findByTestId("overview");
+    const dts = (label: string) => Array.from(container.querySelectorAll("dt")).filter((d) => d.textContent!.trim() === label).length;
+    expect(dts("Original contract")).toBe(1);
+    expect(dts("Approved variations")).toBe(1);
+    expect(dts("Revised contract value")).toBe(1);
+    for (const id of ["original", "variations", "revised"]) expect(screen.queryByTestId(`kpi-${id}`)).toBeNull();
+    for (const id of ["billed", "remaining", "outstanding"]) expect(screen.getByTestId(`kpi-${id}`)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Billing: original contract and variations" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Billing on this project's own claims (ex VAT)" })).toBeTruthy(); // the two scopes are told apart in their titles
+    expect(screen.getByText(/in the project summary above/)).toBeTruthy();
+    expect(screen.getByTestId("kpi-cost")).toBeTruthy(); // admin: cost and margin still shown (gating unchanged)
+  });
+
+  it("D4 F-11: a viewer who cannot see cost still gets the contract and billing figures once, and no cost or margin", async () => {
+    const i = demoInput();
+    overviewAction.mockResolvedValue({ ok: true, data: { scopes: i.scopes, unbilledApprovedVariations: [], deliveries: i.deliveries, estimates: null, viewer: { isAdmin: false } } });
+    viewer = { canApprove: false, newquip: true };
+    withProject(distinct());
+    render(<ProjectWorkspace id="p-base" />);
+    await screen.findByTestId("overview");
+    expect(screen.queryByTestId("kpi-cost")).toBeNull();
+    expect(screen.queryByTestId("kpi-gp")).toBeNull();
+    expect(screen.getByTestId("kpi-billed")).toBeTruthy();
+    expect(screen.getByTestId("cost-hidden")).toBeTruthy();
   });
 });

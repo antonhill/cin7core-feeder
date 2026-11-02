@@ -9,6 +9,7 @@ import { statusText } from "@/components/ui/Status";
 import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { formatBps, type ProjectView } from "@/lib/projects/project-view";
 import { Feedback, type RunFn } from "./feedback-context";
+import { DisabledReason } from "./DisabledReason";
 import { listProjectManagerOptionsAction, updateProjectDetailsAction } from "../actions";
 
 // Project details (UAT-029). Reading is for everyone with access; the project manager, start date and target completion date can be edited by an owner/admin only. The
@@ -35,14 +36,16 @@ export function ProjectDetailsPanel({ view, isAdmin, run, working, editable }: {
   const options = [...new Set([...(people ?? []), ...(project.project_manager ? [project.project_manager] : [])])].sort();
   const dateOrder = start && target && target < start;
   // Dirty only while the form is open AND differs from the saved record; closing it (Cancel or a successful save) releases the guard.
-  useUnsavedGuard(editing && (manager !== (project.project_manager ?? "") || start !== (project.start_date ?? "") || target !== (project.target_completion_date ?? "")));
+  const changed = manager !== (project.project_manager ?? "") || start !== (project.start_date ?? "") || target !== (project.target_completion_date ?? "");
+  useUnsavedGuard(editing && changed);
 
   return (
     <Panel>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <PanelTitle>Project details</PanelTitle>
-        {isAdmin && editable && !editing && <Button size="sm" variant="secondary" onClick={open} disabled={working}>Edit details</Button>}
+        {isAdmin && editable && !editing && <Button size="sm" variant="secondary" onClick={open} disabled={working} aria-describedby="details-edit-reason">Edit details</Button>}
       </div>
+      {isAdmin && editable && !editing && working && <DisabledReason id="details-edit-reason" className="mt-1">Edit details is disabled while another action is in progress.</DisabledReason>}
       <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-4 text-sm sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {[
           ["Customer", project.customer_name], ["Project reference", project.project_reference],
@@ -65,9 +68,10 @@ export function ProjectDetailsPanel({ view, isAdmin, run, working, editable }: {
             <Input label="Target completion" type="date" value={target} onChange={(e) => setTarget(e.target.value)} error={dateOrder ? "Cannot be before the start date." : undefined} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="submit" size="sm" disabled={working || !!dateOrder}>Save details</Button>
+            <Button type="submit" size="sm" disabled={working || !!dateOrder || !changed} aria-describedby="details-save-reason">Save details</Button>
             <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={working}>Cancel</Button>
           </div>
+          {(working || dateOrder || !changed) && <DisabledReason id="details-save-reason">{working ? "Save details is disabled while another action is in progress." : dateOrder ? "Save details is disabled: the target completion date cannot be before the start date." : "Save details is disabled because nothing has changed yet."}</DisabledReason>}
           <p className="max-w-prose text-xs text-slate-600">Only these three fields can be changed here. The approved quotation, contract value, tax and billing stages are fixed; use a Variation for any change to them.</p>
         </form>
       )}

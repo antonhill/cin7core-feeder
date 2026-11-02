@@ -28,6 +28,7 @@ import { Cin7PostingPanel } from "./Cin7PostingPanel";
 import { ProjectDetailsPanel } from "./ProjectDetailsPanel";
 import { CommercialSummary } from "./CommercialSummary";
 import { Cin7SaleCreationPanel } from "./Cin7SaleCreationPanel";
+import { DisabledReason } from "./DisabledReason";
 import { Block, WorkspaceSkeleton } from "./LoadingSkeletons";
 import { getCommercialBootAction, type Cin7PostingStatus, type Cin7SaleCreationStatus } from "../cin7-actions";
 import { Feedback, ProjectFeedbackProvider } from "./feedback-context";
@@ -73,6 +74,7 @@ const APPROVED_OR_LATER = ["APPROVED", "CIN7_PENDING", "CIN7_CREATED", "RECONCIL
 const SOD_REFUSAL = /override|role|prepared or originated|cannot approve/i;
 /** The percentage as typed -> basis points, with the SAME conversion the server uses; null if it is not a valid percentage (the server would have refused it). */
 const pctToBps = (pct: string): number | null => { try { return percentToBps(pct); } catch { return null; } };
+const busyId = (claimId: string): string => `claim-busy-${claimId}`;
 const claimStatus = (v: ProjectView | null, claimId: string): string | undefined => v?.claims.find((c) => c.id === claimId)?.status;
 const statusNote = (v: ProjectView | null, claimId: string): string => { const s = claimStatus(v, claimId); return s ? ` Status now: ${s.replace(/_/g, " ").toLowerCase()}.` : " Refresh to see the latest status."; };
 
@@ -132,12 +134,13 @@ function ContractBar({ contract, committed, claimable }: { contract: number; com
   );
 }
 
-function LegendDot({ className, label, value }: { className: string; label: string; value: string }) {
+/** The bar's key. A segment whose amount is already a labelled figure in the groups above (invoiced / committed, claimable now) is NOT repeated here: `value` is given only for the segment that appears nowhere else. */
+function LegendDot({ className, label, value }: { className: string; label: string; value?: string }) {
   return (
     <div className="flex items-center gap-2.5">
       <span className={`h-2.5 w-2.5 rounded-full ${className}`} aria-hidden />
       <span className="text-sm text-slate-700">{label}</span>
-      <span className="text-sm font-semibold tabular-nums text-slate-900">{value}</span>
+      {value !== undefined && <span className="text-sm font-semibold tabular-nums text-slate-900">{value}</span>}
     </div>
   );
 }
@@ -351,7 +354,8 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                 <Figure label="Approved variations" value={formatCents(c.approvedVariationsCents)} />
                 <Figure label="Revised contract value" value={formatCents(c.revisedContractCents)} primary />
               </FigureGroup>
-              <FigureGroup title="Billing (ex VAT)">
+              {/* The scope is stated in the title: the executive summary below reports billing across the original project AND its variations. */}
+              <FigureGroup title="Billing on this project's own claims (ex VAT)">
                 <Figure label="Invoiced / committed" value={formatCents(c.committedCents)} />
                 <Figure label="Claimable now" value={formatCents(c.claimableCents)} />
                 <Figure label="Remaining to bill / commit" value={formatCents(c.remainingCents)} hint="Contract value − invoiced / committed (not − earned)" />
@@ -361,15 +365,15 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             <div className="mt-6">
               <ContractBar contract={c.revisedContractCents} committed={c.committedCents} claimable={c.claimableCents} />
               <div className="mt-3 flex flex-wrap gap-x-8 gap-y-2">
-                <LegendDot className="bg-emerald-600" label="Invoiced / committed" value={formatCents(c.committedCents)} />
-                <LegendDot className="bg-amber-500" label="Claimable now" value={formatCents(c.claimableCents)} />
+                <LegendDot className="bg-emerald-600" label="Invoiced / committed" />
+                <LegendDot className="bg-amber-500" label="Claimable now" />
                 <LegendDot className="bg-slate-300" label="Not yet approved for billing" value={formatCents(Math.max(0, c.revisedContractCents - c.committedCents - c.claimableCents))} />
               </div>
-              <p className="mt-3 text-xs text-slate-600">Approved completion {formatBps(c.approvedCompletionBps)} · Earned to date {formatCents(c.earnedCents)} (stage value × approved completion). Claimable = earned − invoiced / committed; remaining = contract − invoiced / committed.</p>
+              <p className="mt-3 text-xs text-slate-600">Approved completion {formatBps(c.approvedCompletionBps)} · Earned to date {formatCents(c.earnedCents)} (stage value × approved completion).</p>
             </div>
           </section>
 
-          {!embedded && newquip && view.project.billing_scope !== "VARIATION" && <ProjectOverview projectId={id} refreshKey={previewKey(view)} onOpenTab={(t) => { goTab(t); window.scrollTo({ top: 0, behavior: "smooth" }); }} />}
+          {!embedded && newquip && view.project.billing_scope !== "VARIATION" && <ProjectOverview contractShownAbove projectId={id} refreshKey={previewKey(view)} onOpenTab={(t) => { goTab(t); window.scrollTo({ top: 0, behavior: "smooth" }); }} />}
 
           <ProjectDetailsPanel view={view} isAdmin={perm === "admin"} run={run} working={isWorking} editable={!embedded && view.project.billing_scope !== "VARIATION"} />
         </div>
@@ -573,14 +577,16 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                     <p className="mt-2 border-t border-slate-100 pt-2 text-sm text-slate-700"><span className="font-medium text-slate-900">Next: </span>{claimNextStep({ status: cl.status, cin7Kind: cl.cin7Status.kind, stageRole: cl.approval?.stageRole, canApproveHere: plan.approveHere, canAct: perm !== "loading" })}</p>
                     {cl.cin7Status.detail && !["DRAFT_CREATED", "AUTHORISED"].includes(cl.cin7Status.kind) && <p className="mt-2 text-xs text-slate-600">{cl.cin7Status.detail}</p>}
                     <div className="mt-2">
+                      {/* Every disabled claim button below is disabled for ONE reason that can be seen from here: another action is running. (Approval by another role has its own text, plan.waitingText.) */}
                       <div className="flex flex-wrap items-center gap-1">
-                            {plan.submit && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.", claimKey, { success: (v) => `${cl.claim_number} submitted for approval.${statusNote(v, cl.id)}`, confirm: (v) => ["READY_FOR_APPROVAL", ...APPROVED_OR_LATER].includes(claimStatus(v, cl.id) ?? "") })} loading={acts.isPending(claimKey)} disabled={isWorking}>Submit</Button>}
+                            {plan.submit && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.", claimKey, { success: (v) => `${cl.claim_number} submitted for approval.${statusNote(v, cl.id)}`, confirm: (v) => ["READY_FOR_APPROVAL", ...APPROVED_OR_LATER].includes(claimStatus(v, cl.id) ?? "") })} loading={acts.isPending(claimKey)} disabled={isWorking} aria-describedby={busyId(cl.id)}>Submit</Button>}
                             {plan.openInApprovals && cl.approval && <Link href={`/approvals/${cl.approval.requestId}`} className="inline-flex h-8 items-center rounded-md border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-800 hover:bg-indigo-100">Open in Approvals</Link>}
-                            {plan.approveHere && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.", claimKey, { success: (v) => `${cl.claim_number} approved — value reserved. Nothing was sent to Cin7.${statusNote(v, cl.id)}`, confirm: (v) => APPROVED_OR_LATER.includes(claimStatus(v, cl.id) ?? ""), exclusive: true })} loading={acts.isPending(claimKey)} disabled={isWorking}>Approve</Button>}
-                            {plan.waitingText && <span className="self-center text-xs text-slate-600">{plan.waitingText}</span>}
-                            {plan.recalculate && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.", claimKey, { confirm: (v) => v.claims.some((x) => x.supersedes_claim_id === cl.id) })} disabled={isWorking}>Recalculate</Button>}
-                            {plan.cancel && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), cl.status === "READY_FOR_APPROVAL" ? "Claim withdrawn." : "Claim cancelled.", claimKey, { confirm: (v) => claimStatus(v, cl.id) === "CANCELLED_BEFORE_WRITE", exclusive: true })} disabled={isWorking}>{plan.cancelLabel}</Button>}
+                            {plan.approveHere && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.", claimKey, { success: (v) => `${cl.claim_number} approved — value reserved. Nothing was sent to Cin7.${statusNote(v, cl.id)}`, confirm: (v) => APPROVED_OR_LATER.includes(claimStatus(v, cl.id) ?? ""), exclusive: true })} loading={acts.isPending(claimKey)} disabled={isWorking} aria-describedby={busyId(cl.id)}>Approve</Button>}
+                            {plan.waitingText && <span className="self-center text-xs text-slate-600" data-testid="claim-waiting">{plan.waitingText}</span>}
+                            {plan.recalculate && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.", claimKey, { confirm: (v) => v.claims.some((x) => x.supersedes_claim_id === cl.id) })} disabled={isWorking} aria-describedby={busyId(cl.id)}>Recalculate</Button>}
+                            {plan.cancel && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), cl.status === "READY_FOR_APPROVAL" ? "Claim withdrawn." : "Claim cancelled.", claimKey, { confirm: (v) => claimStatus(v, cl.id) === "CANCELLED_BEFORE_WRITE", exclusive: true })} disabled={isWorking} aria-describedby={busyId(cl.id)}>{plan.cancelLabel}</Button>}
                           </div>
+                      {isWorking && (plan.submit || plan.approveHere || plan.recalculate || plan.cancel) && <DisabledReason id={busyId(cl.id)} className="mt-1">These buttons are disabled because another action is in progress. They come back when it finishes.</DisabledReason>}
                       <Feedback k={claimKey} errorAction={cl.approval && SOD_REFUSAL.test(acts.stateOf(claimKey).kind === "error" ? (acts.stateOf(claimKey) as { message: string }).message : "") ? <Link href={`/approvals/${cl.approval.requestId}`} className="font-medium underline">Open this claim in Approvals to decide it with a written override</Link> : undefined} />
                     </div>
                     <details className="mt-2 text-xs">
@@ -633,11 +639,12 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               {chosen.length === 0 && <p className="mt-2 text-xs text-slate-600">Tick the stage(s) this claim covers, for example only the deposit. To claim less than the full amount, enter it beside the stage; leave it blank to claim everything claimable.</p>}
             </fieldset>
             <div className="mt-4 flex flex-wrap gap-2">
-              <Button variant="secondary" size="sm" onClick={doPreview} loading={isWorking} disabled={chosen.length === 0 || (!!preview && pvState === "CURRENT")}>{!preview ? "Preview claim" : pvState === "STALE" ? "Refresh preview" : "Preview is up to date"}</Button>
-              {preview && (
-                <Button size="sm" onClick={async () => { const claimsBefore = view.claims.length; const saved = await run(() => createClaimDraftAction(id, previewedIds, previewedAmounts), "Draft claim saved locally.", "claim:new", { confirm: (v) => v.claims.length > claimsBefore }); if (saved) { setChosen([]); setAmounts({}); setPreview(null); setPreviewedIds([]); setPreviewedAmounts({}); } }} loading={acts.isPending("claim:new")} disabled={isWorking || pvState === "STALE"}>Save as draft claim</Button>
-              )}
+              <Button variant="secondary" size="sm" onClick={doPreview} loading={isWorking} disabled={chosen.length === 0 || (!!preview && pvState === "CURRENT")} aria-describedby="preview-reason">{!preview ? "Preview claim" : pvState === "STALE" ? "Refresh preview" : "Preview is up to date"}</Button>
+              <Button size="sm" onClick={async () => { const claimsBefore = view.claims.length; const saved = await run(() => createClaimDraftAction(id, previewedIds, previewedAmounts), "Draft claim saved locally.", "claim:new", { confirm: (v) => v.claims.length > claimsBefore }); if (saved) { setChosen([]); setAmounts({}); setPreview(null); setPreviewedIds([]); setPreviewedAmounts({}); } }} loading={acts.isPending("claim:new")} disabled={!preview || isWorking || pvState === "STALE"} aria-describedby="save-draft-reason">Save as draft claim</Button>
             </div>
+            {/* Why each of the two buttons above is (or is not) available - always visible, and wired to the buttons with aria-describedby. */}
+            {(chosen.length === 0 || isWorking || (preview && pvState === "CURRENT")) && <DisabledReason id="preview-reason" className="mt-2">{chosen.length === 0 ? "Preview claim is disabled until you tick at least one billing stage above." : isWorking ? "Preview claim is disabled while another action is in progress." : "The preview is up to date. Change the stages or amounts to preview again."}</DisabledReason>}
+            {(!preview || pvState === "STALE" || isWorking) && <DisabledReason id="save-draft-reason" className="mt-1">{!preview ? "Save as draft claim is disabled until you have previewed the claim." : pvState === "STALE" ? "Save as draft claim is disabled because the preview is out of date. Refresh the preview first." : "Save as draft claim is disabled while another action is in progress."}</DisabledReason>}
             <Feedback k="claim:new" />
             {previewError && <div className="mt-3"><Alert tone="warning">{previewError}</Alert></div>}
             {preview && pvState === "STALE" && <div className="mt-3"><Alert tone="warning">This preview is out of date: the project changed after it was calculated. Refresh the preview before saving a draft.</Alert></div>}

@@ -125,4 +125,19 @@ describe("Project details: unsaved-change protection", () => {
     expect((screen.getByLabelText("Start date") as HTMLInputElement).value).toBe("2026-12-01");
     expect(unload()).toBe(true);
   });
+  it("D4 F-12: Save details is disabled until something changes, and says so; a bad date order says why", async () => {
+    render(<Host v={view({ project_manager: "boss@x.co.za", start_date: "2026-11-02" })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
+    await screen.findByLabelText("Project manager");
+    const save = screen.getByRole("button", { name: "Save details" }) as HTMLButtonElement;
+    const why = () => (save.getAttribute("aria-describedby") ?? "").split(" ").map((id) => document.getElementById(id)?.textContent ?? "").join("");
+    expect(save.disabled).toBe(true);
+    expect(why()).toMatch(/nothing has changed yet/);
+    fireEvent.change(screen.getByLabelText("Target completion"), { target: { value: "2026-10-01" } });
+    expect(save.disabled).toBe(true);
+    expect(why()).toMatch(/cannot be before the start date/);
+    fireEvent.change(screen.getByLabelText("Target completion"), { target: { value: "2027-01-01" } });
+    expect(save.disabled).toBe(false);
+    expect(why()).toBe("");
+  });
 });
