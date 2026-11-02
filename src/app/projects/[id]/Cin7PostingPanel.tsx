@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Feedback, type RunFn } from "./feedback-context";
 import type { Reconciled } from "@/components/ui/action-feedback";
@@ -25,6 +25,7 @@ const LABEL: Record<PostingDisplayState, string> = {
 };
 
 export function Cin7PostingPanel({ view, run, working, boot }: { view: ProjectView; run: RunFn; working: boolean; boot: Cin7PostingStatus | null }) {
+  const uid = useId(); // ids are unique per mounted workspace: several can be on one page (embedded per variation, hidden-but-mounted)
   const projectId = view.project.id;
   const [st, setSt] = useState<Cin7PostingStatus | null>(boot); // the initial state arrives with the tab (one round trip for the whole Commercial tab)
   // Administrative recovery only (collapsed, admin-only): never part of the normal flow.
@@ -123,7 +124,7 @@ export function Cin7PostingPanel({ view, run, working, boot }: { view: ProjectVi
               ))}
               <label className="flex flex-col gap-1 md:col-span-3"><span className="text-xs text-slate-600">Reason for recovery (required, audited)</span><input value={rec.reason} onChange={(e) => setRec({ ...rec, reason: e.target.value })} className="h-9 rounded-md border border-slate-300 px-3 text-sm" /></label>
             </div>
-            <div className="mt-2"><Button size="sm" variant="secondary" loading={working} disabled={Object.values(rec).some((v) => !v.trim())} aria-describedby="post-recover-reason" onClick={() => after(() => recoverLinkCin7SaleAction(projectId, rec), "post:recover")}>Verify and link this Sale</Button>{Object.values(rec).some((v) => !v.trim()) && <DisabledReason id="post-recover-reason" className="mt-1">Verify and link is disabled until every field above, including the reason, is filled in.</DisabledReason>}<Feedback k="post:recover" /></div>
+            <div className="mt-2"><Button size="sm" variant="secondary" loading={working} disabled={Object.values(rec).some((v) => !v.trim())} aria-describedby={Object.values(rec).some((v) => !v.trim()) ? `${uid}-post-recover-reason` : undefined} onClick={() => after(() => recoverLinkCin7SaleAction(projectId, rec), "post:recover")}>Verify and link this Sale</Button>{Object.values(rec).some((v) => !v.trim()) && <DisabledReason id={`${uid}-post-recover-reason`} className="mt-1">Verify and link is disabled until every field above, including the reason, is filled in.</DisabledReason>}<Feedback k="post:recover" /></div>
           </details>
         )}
       </div>
@@ -155,15 +156,15 @@ export function Cin7PostingPanel({ view, run, working, boot }: { view: ProjectVi
 
               <div className="mt-3 flex flex-wrap gap-2">
                 {canSend(state) && gates.isManager && link && (
-                  <Button size="sm" variant="secondary" disabled={working || rereading || !gates.writesEnabled} aria-describedby={`post-reason-${c.id}`} onClick={() => { const open = confirming === c.id; setConfirming(open ? null : c.id); if (!open) void populate(c.id); }}>{state === "NOT_SENT" ? "Prepare and post claim to Cin7" : "Retry (confirmed no invoice)"}</Button>
+                  <Button size="sm" variant="secondary" disabled={working || rereading || !gates.writesEnabled} aria-describedby={!link || working || rereading || !gates.writesEnabled ? `${uid}-post-reason-${c.id}` : undefined} onClick={() => { const open = confirming === c.id; setConfirming(open ? null : c.id); if (!open) void populate(c.id); }}>{state === "NOT_SENT" ? "Prepare and post claim to Cin7" : "Retry (confirmed no invoice)"}</Button>
                 )}
-                {canReconcile(state) && gates.isManager && <Button size="sm" variant="secondary" loading={working} aria-describedby={`post-reconcile-reason-${c.id}`} onClick={() => after(() => reconcileClaimPostingAction(projectId, c.id), `post:${c.id}`, c.id)}>Reconcile with Cin7 (read-only)</Button>}
-                {canReconcile(state) && gates.isManager && working && <DisabledReason id={`post-reconcile-reason-${c.id}`} className="self-center">Another action is in progress.</DisabledReason>}
-                {canSend(state) && gates.isManager && !link && <DisabledReason id={`post-reason-${c.id}`} className="self-center">Posting needs a linked Cin7 Sales Order. Create or link it above first.</DisabledReason>}
+                {canReconcile(state) && gates.isManager && <Button size="sm" variant="secondary" loading={working} aria-describedby={working ? `${uid}-post-reconcile-reason-${c.id}` : undefined} onClick={() => after(() => reconcileClaimPostingAction(projectId, c.id), `post:${c.id}`, c.id)}>Reconcile with Cin7 (read-only)</Button>}
+                {canReconcile(state) && gates.isManager && working && <DisabledReason id={`${uid}-post-reconcile-reason-${c.id}`} className="self-center">Another action is in progress.</DisabledReason>}
+                {canSend(state) && gates.isManager && !link && <DisabledReason id={`${uid}-post-reason-${c.id}`} className="self-center">Posting needs a linked Cin7 Sales Order. Create or link it above first.</DisabledReason>}
                 {canSend(state) && gates.isManager && link && (working || rereading || !gates.writesEnabled) && (
-                  <DisabledReason id={`post-reason-${c.id}`} className="self-center">{[!gates.writesEnabled && "Posting is disabled: Cin7 writes are switched off for this organisation.", working && "Another action is in progress.", rereading && "The Cin7 status is being re-read."].filter(Boolean).join(" ")}</DisabledReason>
+                  <DisabledReason id={`${uid}-post-reason-${c.id}`} className="self-center">{[!gates.writesEnabled && "Posting is disabled: Cin7 writes are switched off for this organisation.", working && "Another action is in progress.", rereading && "The Cin7 status is being re-read."].filter(Boolean).join(" ")}</DisabledReason>
                 )}
-                {!gates.isManager && <DisabledReason id={`post-reason-${c.id}`} className="self-center">Only a manager can post to Cin7.</DisabledReason>}
+                {!gates.isManager && <DisabledReason id={`${uid}-post-reason-${c.id}`} className="self-center">Only a manager can post to Cin7.</DisabledReason>}
               </div>
               <Feedback k={`post:${c.id}`} />
 
@@ -229,10 +230,10 @@ export function Cin7PostingPanel({ view, run, working, boot }: { view: ProjectVi
                     {rereading && <Alert tone="warning">{checking ? "Checking the current Cin7 status. Posting stays disabled until it has been re-read." : "The outcome of the last request could not be confirmed and the status could not be re-read. Reload the page. Posting stays disabled until the status has been read."}</Alert>}
                   </div>
                   <div className="mt-3 flex gap-2">
-                    <Button loading={working} disabled={!prep[c.id]?.data || rereading} aria-describedby={`post-confirm-reason-${c.id}`} onClick={() => after(() => postClaimToCin7Action(projectId, c.id, POST_CONFIRMATION_TEXT, { lines: selectionToQuantities(prep[c.id]?.data?.proposal.lines ?? [], selOf(c.id)), earlyReason: early[c.id] }), `post:${c.id}`, c.id).then((ok) => { if (ok) setConfirming(null); })}>{POST_CONFIRMATION_TEXT}</Button>
+                    <Button loading={working} disabled={!prep[c.id]?.data || rereading} aria-describedby={!prep[c.id]?.data || rereading ? `${uid}-post-confirm-reason-${c.id}` : undefined} onClick={() => after(() => postClaimToCin7Action(projectId, c.id, POST_CONFIRMATION_TEXT, { lines: selectionToQuantities(prep[c.id]?.data?.proposal.lines ?? [], selOf(c.id)), earlyReason: early[c.id] }), `post:${c.id}`, c.id).then((ok) => { if (ok) setConfirming(null); })}>{POST_CONFIRMATION_TEXT}</Button>
                     <Button variant="ghost" onClick={() => setConfirming(null)}>Cancel</Button>
                   </div>
-                  {(!prep[c.id]?.data || rereading) && <DisabledReason id={`post-confirm-reason-${c.id}`} className="mt-2">{rereading ? "Posting is disabled until the Cin7 status has been re-read." : prep[c.id]?.error ? "Posting is disabled because the proposed invoice could not be prepared. Use Populate Products from Project once the problem is fixed." : "Posting is disabled until the proposed invoice has been prepared."}</DisabledReason>}
+                  {(!prep[c.id]?.data || rereading) && <DisabledReason id={`${uid}-post-confirm-reason-${c.id}`} className="mt-2">{rereading ? "Posting is disabled until the Cin7 status has been re-read." : prep[c.id]?.error ? "Posting is disabled because the proposed invoice could not be prepared. Use Populate Products from Project once the problem is fixed." : "Posting is disabled until the proposed invoice has been prepared."}</DisabledReason>}
                 </div>
               )}
             </div>

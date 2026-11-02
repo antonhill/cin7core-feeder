@@ -120,6 +120,29 @@ describe("VariationBillingPanel unsaved guard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save schedule" }));
     await waitFor(() => expect(unload()).toBe(false));
   });
+  it("normalised comparison: \"50.0\" and a padded name equal the saved schedule, so they are not unsaved changes", async () => {
+    await billing(view([variation("v1", "DRAFT")]), state({ v1: [{ name: "Deposit", bps: 5000 }, { name: "Final", bps: 5000 }] }));
+    fireEvent.change(screen.getAllByLabelText("%")[0], { target: { value: "50.0" } });
+    fireEvent.change(screen.getAllByLabelText("Stage")[0], { target: { value: " Deposit " } });
+    expect(unload()).toBe(false);
+    fireEvent.change(screen.getAllByLabelText("%")[0], { target: { value: "50.5" } });
+    expect(unload()).toBe(true);
+  });
+  it("a value the server normalises differently (25.505 -> 25.51) still releases after Save, because the typed rows are discarded", async () => {
+    await billing(view([variation("v1", "DRAFT")]), state({ v1: [{ name: "Deposit", bps: 5000 }, { name: "Final", bps: 5000 }] }));
+    fireEvent.change(screen.getAllByLabelText("%")[0], { target: { value: "25.505" } });
+    fireEvent.change(screen.getAllByLabelText("%")[1], { target: { value: "74.495" } });
+    expect(unload()).toBe(true);
+    h.billing = state({ v1: [{ name: "Deposit", bps: 2551 }, { name: "Final", bps: 7449 }] });
+    fireEvent.click(screen.getByRole("button", { name: "Save schedule" }));
+    await waitFor(() => expect(unload()).toBe(false));
+    await waitFor(() => expect((screen.getAllByLabelText("%")[0] as HTMLInputElement).value).toBe("25.51"));
+  });
+  it("Cin7 Sale line: no billing project says billing not started even when the Sale lookup failed", async () => {
+    await billing(view([variation("v1", "APPROVED")]), { ok: true, data: { ...(state({ v1: [{ name: "Variation", bps: 10000 }] }) as { data: object }).data, saleLookupFailed: true } });
+    expect(screen.getByText("billing not started")).toBeTruthy();
+    expect(screen.queryByText(/number unavailable/)).toBeNull();
+  });
   it("Add stage guards; Remove last releases", async () => {
     await billing(view([variation("v1", "DRAFT")]), state({ v1: [{ name: "Variation", bps: 10000 }] }));
     fireEvent.click(screen.getByRole("button", { name: "Add stage" }));

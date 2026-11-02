@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
@@ -16,6 +16,7 @@ import { listProjectManagerOptionsAction, updateProjectDetailsAction } from "../
 // server re-checks the role and validates the manager against the organisation's users and the dates as real dates; nothing else about the project can be changed here.
 
 export function ProjectDetailsPanel({ view, isAdmin, run, working, editable }: { view: ProjectView; isAdmin: boolean; run: RunFn; working: boolean; editable: boolean }) {
+  const uid = useId(); // ids are unique per mounted workspace: several can be on one page (embedded per variation, hidden-but-mounted)
   const project = view.project;
   const [editing, setEditing] = useState(false);
   const [manager, setManager] = useState("");
@@ -43,9 +44,9 @@ export function ProjectDetailsPanel({ view, isAdmin, run, working, editable }: {
     <Panel>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <PanelTitle>Project details</PanelTitle>
-        {isAdmin && editable && !editing && <Button size="sm" variant="secondary" onClick={open} disabled={working} aria-describedby="details-edit-reason">Edit details</Button>}
+        {isAdmin && editable && !editing && <Button size="sm" variant="secondary" onClick={open} disabled={working} aria-describedby={working ? `${uid}-details-edit-reason` : undefined}>Edit details</Button>}
       </div>
-      {isAdmin && editable && !editing && working && <DisabledReason id="details-edit-reason" className="mt-1">Edit details is disabled while another action is in progress.</DisabledReason>}
+      {isAdmin && editable && !editing && working && <DisabledReason id={`${uid}-details-edit-reason`} className="mt-1">Edit details is disabled while another action is in progress.</DisabledReason>}
       <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-4 text-sm sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {[
           ["Customer", project.customer_name], ["Project reference", project.project_reference],
@@ -68,10 +69,10 @@ export function ProjectDetailsPanel({ view, isAdmin, run, working, editable }: {
             <Input label="Target completion" type="date" value={target} onChange={(e) => setTarget(e.target.value)} error={dateOrder ? "Cannot be before the start date." : undefined} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="submit" size="sm" disabled={working || !!dateOrder || !changed} aria-describedby="details-save-reason">Save details</Button>
+            <Button type="submit" size="sm" disabled={working || !!dateOrder || !changed} aria-describedby={working || dateOrder || !changed ? `${uid}-details-save-reason` : undefined}>Save details</Button>
             <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={working}>Cancel</Button>
           </div>
-          {(working || dateOrder || !changed) && <DisabledReason id="details-save-reason">{working ? "Save details is disabled while another action is in progress." : dateOrder ? "Save details is disabled: the target completion date cannot be before the start date." : "Save details is disabled because nothing has changed yet."}</DisabledReason>}
+          {(working || dateOrder || !changed) && <DisabledReason id={`${uid}-details-save-reason`}>{working ? "Save details is disabled while another action is in progress." : dateOrder ? "Save details is disabled: the target completion date cannot be before the start date." : "Save details is disabled because nothing has changed yet."}</DisabledReason>}
           <p className="max-w-prose text-xs text-slate-600">Only these three fields can be changed here. The approved quotation, contract value, tax and billing stages are fixed; use a Variation for any change to them.</p>
         </form>
       )}

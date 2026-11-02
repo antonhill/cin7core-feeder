@@ -24,15 +24,18 @@ type Row = { name: string; percent: string };
 function saleLine(state: VariationBillingState, variationId: string, billingStarted: boolean) {
   const n = state.saleNumberByVariation?.[variationId];
   if (n) return <span className="font-mono font-medium text-slate-900">{n}</span>;
+  if (!billingStarted) return <span className="text-slate-600">billing not started</span>; // no billing project means there is nothing to look up: a failed lookup is irrelevant
   if (state.saleLookupFailed) return <span className="text-slate-600">number unavailable (could not be loaded)</span>;
   if (n === null) return <span className="text-slate-600">linked, number not recorded</span>;
-  return <span className="text-slate-600">{billingStarted ? "not created yet" : "billing not started"}</span>;
+  return <span className="text-slate-600">not created yet</span>;
 }
 
 const pct = (bps: number) => (bps / 100).toFixed(2).replace(/\.00$/, "");
 const rowsOf = (s: Array<{ name: string; bps: number }> | undefined): Row[] => (s && s.length ? s.map((x) => ({ name: x.name, percent: pct(x.bps) })) : [{ name: "Variation", percent: "100" }]);
 /** Shown beside every control that is disabled only because a server action is running. */
 export const BUSY = "Another action is in progress.";
+/** Rows as the server would see them (trimmed names, numeric percents), so "50.0" or " Deposit " equals the saved "50" / "Deposit". */
+const normRows = (rows: Row[]) => rows.map((x) => ({ name: x.name.trim(), percent: Number(x.percent.trim()) }));
 const totalOf = (rows: Row[]) => Math.round(rows.reduce((n, r) => n + (Number(r.percent) || 0), 0) * 100) / 100;
 
 export function VariationBillingPanel({ view, isAdmin, run, working, renderDecision }: { view: ProjectView; isAdmin: boolean; run: Run; working: boolean; renderDecision?: (v: ProjectView["variations"][number]) => React.ReactNode }) {
@@ -58,6 +61,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
   }, [projectId, variationKey, version, view.variations.length]);
 
   const act = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string): Promise<boolean> => { const ok = await run(fn, done); if (ok) setVersion((n) => n + 1); return ok; };
+  const dropEdit = (id: string) => setEdit((m) => Object.fromEntries(Object.entries(m).filter(([k]) => k !== id))); // after a successful save the reloaded schedule is the truth; the typed strings are discarded
   const c = state?.consolidated;
   const variations = view.variations.filter((v) => v.status !== "REJECTED");
 
@@ -66,7 +70,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
   const scheduleDirty = !!state && variations.some((v) => {
     const locked = (v.status === "APPROVED" && !isAdmin) || (!!state.billingProjectByVariation[v.id] && v.status === "APPROVED");
     if (locked) return false;
-    const rowsChanged = edit[v.id] !== undefined && JSON.stringify(edit[v.id]) !== JSON.stringify(rowsOf(state.schedules[v.id]));
+    const rowsChanged = edit[v.id] !== undefined && JSON.stringify(normRows(edit[v.id])) !== JSON.stringify(normRows(rowsOf(state.schedules[v.id])));
     return rowsChanged || (v.status !== "DRAFT" && (reason[v.id] ?? "").trim() !== "");
   });
   useUnsavedGuard(scheduleDirty);
@@ -167,11 +171,11 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
                   <Button size="sm" variant="secondary" disabled={working} aria-describedby={working ? sid("sched-busy") : undefined} onClick={() => setEdit({ ...edit, [v.id]: [...rows, { name: "", percent: "" }] })}>Add stage</Button>
                   {rows.length > 1 && <Button size="sm" variant="secondary" disabled={working} aria-describedby={working ? sid("sched-busy") : undefined} onClick={() => setEdit({ ...edit, [v.id]: rows.slice(0, -1) })}>Remove last</Button>}
                   {v.status === "DRAFT" ? (
-                    <Button size="sm" disabled={working || total !== 100} aria-describedby={working ? sid("sched-busy") : total !== 100 ? sid("sched-total") : undefined} onClick={() => act(() => saveVariationScheduleAction(projectId, v.id, rows), `Saved the ${v.code} billing schedule.`)}>Save schedule</Button>
+                    <Button size="sm" disabled={working || total !== 100} aria-describedby={working ? sid("sched-busy") : total !== 100 ? sid("sched-total") : undefined} onClick={async () => { if (await act(() => saveVariationScheduleAction(projectId, v.id, rows), `Saved the ${v.code} billing schedule.`)) dropEdit(v.id); }}>Save schedule</Button>
                   ) : (
                     <>
                       <Input label="Reason for amendment" value={reasonText} onChange={(e) => setReason({ ...reason, [v.id]: e.target.value })} />
-                      <Button size="sm" disabled={working || total !== 100 || !reasonText.trim()} aria-describedby={working ? sid("sched-busy") : total !== 100 ? sid("sched-total") : !reasonText.trim() ? sid("sched-reason") : undefined} onClick={async () => { if (await act(() => amendVariationScheduleAction(projectId, v.id, rows, reason[v.id]), `Amended the ${v.code} schedule (audited).`)) setReason((m) => ({ ...m, [v.id]: "" })); }}>Amend schedule</Button>
+                      <Button size="sm" disabled={working || total !== 100 || !reasonText.trim()} aria-describedby={working ? sid("sched-busy") : total !== 100 ? sid("sched-total") : !reasonText.trim() ? sid("sched-reason") : undefined} onClick={async () => { if (await act(() => amendVariationScheduleAction(projectId, v.id, rows, reason[v.id]), `Amended the ${v.code} schedule (audited).`)) { setReason((m) => ({ ...m, [v.id]: "" })); dropEdit(v.id); } }}>Amend schedule</Button>
                     </>
                   )}
                 </div>

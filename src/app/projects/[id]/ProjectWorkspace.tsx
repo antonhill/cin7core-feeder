@@ -4,7 +4,7 @@ import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
@@ -74,7 +74,6 @@ const APPROVED_OR_LATER = ["APPROVED", "CIN7_PENDING", "CIN7_CREATED", "RECONCIL
 const SOD_REFUSAL = /override|role|prepared or originated|cannot approve/i;
 /** The percentage as typed -> basis points, with the SAME conversion the server uses; null if it is not a valid percentage (the server would have refused it). */
 const pctToBps = (pct: string): number | null => { try { return percentToBps(pct); } catch { return null; } };
-const busyId = (claimId: string): string => `claim-busy-${claimId}`;
 const claimStatus = (v: ProjectView | null, claimId: string): string | undefined => v?.claims.find((c) => c.id === claimId)?.status;
 const statusNote = (v: ProjectView | null, claimId: string): string => { const s = claimStatus(v, claimId); return s ? ` Status now: ${s.replace(/_/g, " ").toLowerCase()}.` : " Refresh to see the latest status."; };
 
@@ -151,6 +150,8 @@ function LegendDot({ className, label, value }: { className: string; label: stri
  * make sense on a top-level project. All permission checks still happen server-side in each action.
  */
 export function ProjectWorkspace({ id, embedded = false }: { id: string; embedded?: boolean }) {
+  const uid = useId();
+  const busyId = (claimId: string): string => `${uid}-claim-busy-${claimId}`; // ids are unique per mounted workspace: several can be on one page (embedded per variation, hidden-but-mounted)
   const router = useRouter();
   const [view, setView] = useState<ProjectView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -357,7 +358,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               {/* The scope is stated in the title: the executive summary below reports billing across the original project AND its variations. */}
               <FigureGroup title="Billing on this project's own claims (ex VAT)">
                 <Figure label="Invoiced / committed" value={formatCents(c.committedCents)} />
-                <Figure label="Claimable now" value={formatCents(c.claimableCents)} />
+                <Figure label="Claimable now" value={formatCents(c.claimableCents)} hint="Earned − invoiced / committed" />
                 <Figure label="Remaining to bill / commit" value={formatCents(c.remainingCents)} hint="Contract value − invoiced / committed (not − earned)" />
               </FigureGroup>
             </div>
@@ -579,12 +580,12 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                     <div className="mt-2">
                       {/* Every disabled claim button below is disabled for ONE reason that can be seen from here: another action is running. (Approval by another role has its own text, plan.waitingText.) */}
                       <div className="flex flex-wrap items-center gap-1">
-                            {plan.submit && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.", claimKey, { success: (v) => `${cl.claim_number} submitted for approval.${statusNote(v, cl.id)}`, confirm: (v) => ["READY_FOR_APPROVAL", ...APPROVED_OR_LATER].includes(claimStatus(v, cl.id) ?? "") })} loading={acts.isPending(claimKey)} disabled={isWorking} aria-describedby={busyId(cl.id)}>Submit</Button>}
+                            {plan.submit && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.", claimKey, { success: (v) => `${cl.claim_number} submitted for approval.${statusNote(v, cl.id)}`, confirm: (v) => ["READY_FOR_APPROVAL", ...APPROVED_OR_LATER].includes(claimStatus(v, cl.id) ?? "") })} loading={acts.isPending(claimKey)} disabled={isWorking} aria-describedby={isWorking ? busyId(cl.id) : undefined}>Submit</Button>}
                             {plan.openInApprovals && cl.approval && <Link href={`/approvals/${cl.approval.requestId}`} className="inline-flex h-8 items-center rounded-md border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-800 hover:bg-indigo-100">Open in Approvals</Link>}
-                            {plan.approveHere && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.", claimKey, { success: (v) => `${cl.claim_number} approved — value reserved. Nothing was sent to Cin7.${statusNote(v, cl.id)}`, confirm: (v) => APPROVED_OR_LATER.includes(claimStatus(v, cl.id) ?? ""), exclusive: true })} loading={acts.isPending(claimKey)} disabled={isWorking} aria-describedby={busyId(cl.id)}>Approve</Button>}
+                            {plan.approveHere && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.", claimKey, { success: (v) => `${cl.claim_number} approved — value reserved. Nothing was sent to Cin7.${statusNote(v, cl.id)}`, confirm: (v) => APPROVED_OR_LATER.includes(claimStatus(v, cl.id) ?? ""), exclusive: true })} loading={acts.isPending(claimKey)} disabled={isWorking} aria-describedby={isWorking ? busyId(cl.id) : undefined}>Approve</Button>}
                             {plan.waitingText && <span className="self-center text-xs text-slate-600" data-testid="claim-waiting">{plan.waitingText}</span>}
-                            {plan.recalculate && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.", claimKey, { confirm: (v) => v.claims.some((x) => x.supersedes_claim_id === cl.id) })} disabled={isWorking} aria-describedby={busyId(cl.id)}>Recalculate</Button>}
-                            {plan.cancel && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), cl.status === "READY_FOR_APPROVAL" ? "Claim withdrawn." : "Claim cancelled.", claimKey, { confirm: (v) => claimStatus(v, cl.id) === "CANCELLED_BEFORE_WRITE", exclusive: true })} disabled={isWorking} aria-describedby={busyId(cl.id)}>{plan.cancelLabel}</Button>}
+                            {plan.recalculate && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.", claimKey, { confirm: (v) => v.claims.some((x) => x.supersedes_claim_id === cl.id) })} disabled={isWorking} aria-describedby={isWorking ? busyId(cl.id) : undefined}>Recalculate</Button>}
+                            {plan.cancel && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), cl.status === "READY_FOR_APPROVAL" ? "Claim withdrawn." : "Claim cancelled.", claimKey, { confirm: (v) => claimStatus(v, cl.id) === "CANCELLED_BEFORE_WRITE", exclusive: true })} disabled={isWorking} aria-describedby={isWorking ? busyId(cl.id) : undefined}>{plan.cancelLabel}</Button>}
                           </div>
                       {isWorking && (plan.submit || plan.approveHere || plan.recalculate || plan.cancel) && <DisabledReason id={busyId(cl.id)} className="mt-1">These buttons are disabled because another action is in progress. They come back when it finishes.</DisabledReason>}
                       <Feedback k={claimKey} errorAction={cl.approval && SOD_REFUSAL.test(acts.stateOf(claimKey).kind === "error" ? (acts.stateOf(claimKey) as { message: string }).message : "") ? <Link href={`/approvals/${cl.approval.requestId}`} className="font-medium underline">Open this claim in Approvals to decide it with a written override</Link> : undefined} />
@@ -639,12 +640,12 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               {chosen.length === 0 && <p className="mt-2 text-xs text-slate-600">Tick the stage(s) this claim covers, for example only the deposit. To claim less than the full amount, enter it beside the stage; leave it blank to claim everything claimable.</p>}
             </fieldset>
             <div className="mt-4 flex flex-wrap gap-2">
-              <Button variant="secondary" size="sm" onClick={doPreview} loading={isWorking} disabled={chosen.length === 0 || (!!preview && pvState === "CURRENT")} aria-describedby="preview-reason">{!preview ? "Preview claim" : pvState === "STALE" ? "Refresh preview" : "Preview is up to date"}</Button>
-              <Button size="sm" onClick={async () => { const claimsBefore = view.claims.length; const saved = await run(() => createClaimDraftAction(id, previewedIds, previewedAmounts), "Draft claim saved locally.", "claim:new", { confirm: (v) => v.claims.length > claimsBefore }); if (saved) { setChosen([]); setAmounts({}); setPreview(null); setPreviewedIds([]); setPreviewedAmounts({}); } }} loading={acts.isPending("claim:new")} disabled={!preview || isWorking || pvState === "STALE"} aria-describedby="save-draft-reason">Save as draft claim</Button>
+              <Button variant="secondary" size="sm" onClick={doPreview} loading={isWorking} disabled={chosen.length === 0 || (!!preview && pvState === "CURRENT")} aria-describedby={chosen.length === 0 || isWorking || (preview && pvState === "CURRENT") ? `${uid}-preview-reason` : undefined}>{!preview ? "Preview claim" : pvState === "STALE" ? "Refresh preview" : "Preview is up to date"}</Button>
+              <Button size="sm" onClick={async () => { const claimsBefore = view.claims.length; const saved = await run(() => createClaimDraftAction(id, previewedIds, previewedAmounts), "Draft claim saved locally.", "claim:new", { confirm: (v) => v.claims.length > claimsBefore }); if (saved) { setChosen([]); setAmounts({}); setPreview(null); setPreviewedIds([]); setPreviewedAmounts({}); } }} loading={acts.isPending("claim:new")} disabled={!preview || isWorking || pvState === "STALE"} aria-describedby={!preview || pvState === "STALE" || isWorking ? `${uid}-save-draft-reason` : undefined}>Save as draft claim</Button>
             </div>
             {/* Why each of the two buttons above is (or is not) available - always visible, and wired to the buttons with aria-describedby. */}
-            {(chosen.length === 0 || isWorking || (preview && pvState === "CURRENT")) && <DisabledReason id="preview-reason" className="mt-2">{chosen.length === 0 ? "Preview claim is disabled until you tick at least one billing stage above." : isWorking ? "Preview claim is disabled while another action is in progress." : "The preview is up to date. Change the stages or amounts to preview again."}</DisabledReason>}
-            {(!preview || pvState === "STALE" || isWorking) && <DisabledReason id="save-draft-reason" className="mt-1">{!preview ? "Save as draft claim is disabled until you have previewed the claim." : pvState === "STALE" ? "Save as draft claim is disabled because the preview is out of date. Refresh the preview first." : "Save as draft claim is disabled while another action is in progress."}</DisabledReason>}
+            {(chosen.length === 0 || isWorking || (preview && pvState === "CURRENT")) && <DisabledReason id={`${uid}-preview-reason`} className="mt-2">{chosen.length === 0 ? "Preview claim is disabled until you tick at least one billing stage above." : isWorking ? "Preview claim is disabled while another action is in progress." : "The preview is up to date. Change the stages or amounts to preview again."}</DisabledReason>}
+            {(!preview || pvState === "STALE" || isWorking) && <DisabledReason id={`${uid}-save-draft-reason`} className="mt-1">{!preview ? "Save as draft claim is disabled until you have previewed the claim." : pvState === "STALE" ? "Save as draft claim is disabled because the preview is out of date. Refresh the preview first." : "Save as draft claim is disabled while another action is in progress."}</DisabledReason>}
             <Feedback k="claim:new" />
             {previewError && <div className="mt-3"><Alert tone="warning">{previewError}</Alert></div>}
             {preview && pvState === "STALE" && <div className="mt-3"><Alert tone="warning">This preview is out of date: the project changed after it was calculated. Refresh the preview before saving a draft.</Alert></div>}

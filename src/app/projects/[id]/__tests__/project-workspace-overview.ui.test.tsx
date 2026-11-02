@@ -92,6 +92,7 @@ describe("ProjectWorkspace integration of the executive overview", () => {
     expect(amountOf(contract, "Revised contract value")).toBe(formatCents(3_333_300));
     expect(amountOf(billing, "Invoiced / committed")).toBe(formatCents(4_444_400));
     expect(amountOf(billing, "Claimable now")).toBe(formatCents(5_555_500));
+    expect(billing.textContent).toContain("Earned − invoiced / committed"); // the Claimable formula hint
     expect(amountOf(billing, "Remaining to bill / commit")).toBe(formatCents(6_666_600));
     expect(within(billing).getByText("Contract value − invoiced / committed (not − earned)")).toBeTruthy();
     expect(within(hero).getByText(/Approved completion 43\.21%/).textContent).toContain(`Earned to date ${formatCents(7_777_700)}`);
