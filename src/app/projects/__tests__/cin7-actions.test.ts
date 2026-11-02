@@ -6,7 +6,7 @@ import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import * as store from "@/lib/projects/cin7-posting-store";
 import { NEWQUIP_POC_CIN7_INSTANCE_ID, NEWQUIP_POC_ORG_IDS } from "@/newquip/access";
-import { singleActiveInstanceId } from "@/lib/projects/cin7-adapter";
+import { buildCin7Port, singleActiveInstanceId } from "@/lib/projects/cin7-adapter";
 import * as saleStore from "@/lib/projects/cin7-sale-creation-store";
 import { POST_CONFIRMATION_TEXT } from "@/lib/projects/cin7-posting";
 const REC = { saleId: "x", customerName: "c", location: "l", revenueAccount: "200", cin7TaxRule: "t", reason: "a reason that is long enough" };
@@ -166,5 +166,70 @@ describe("getCommercialBootAction: the Commercial tab's Sale + invoice state in 
     vi.mocked(requireOrgAdmin).mockRejectedValue(new Error("not admin"));
     const r = await actions.getCommercialBootAction("p1");
     expect(r.data!.posting!.gates.isManager).toBe(false);
+  });
+});
+
+describe("verifyInvoiceStatusesAction (UAT-028): read-only, manager only, one Sale read", () => {
+  const postingRow = (n: string, status: string, over: Record<string, unknown> = {}) => ({ id: `po-${n}`, claim_id: `cl-${n}`, posting_state: "RECONCILED", cin7_invoice_number: n, cin7_task_id: null, cin7_status: status, ...over });
+  const sale = (invoices: Array<{ invoiceNumber: string; status: string }>, id = "s") => ({ id, saleNumber: "SO-27", type: null, orderStatus: null, taxRule: null, invoices: invoices.map((i) => ({ ...i, taskId: null, memo: null, subtotalCents: 0, taxCents: 0, totalCents: 0 })) });
+  const fetchSale = vi.fn();
+  const createInvoice = vi.fn();
+  beforeEach(() => {
+    fetchSale.mockReset(); createInvoice.mockReset();
+    vi.mocked(buildCin7Port).mockReturnValue({ fetchSale, createInvoice } as never);
+    vi.mocked(singleActiveInstanceId).mockResolvedValue(NEWQUIP_POC_CIN7_INSTANCE_ID);
+    vi.mocked(store.loadSaleLink).mockResolvedValue({ id: "l", instance_id: NEWQUIP_POC_CIN7_INSTANCE_ID, cin7_sale_id: "s" } as never);
+    vi.mocked(store.listPostings).mockResolvedValue([postingRow("INV-34", "DRAFT"), postingRow("INV-35", "DRAFT"), postingRow("INV-37", "AUTHORISED")] as never);
+    fetchSale.mockResolvedValue(sale([{ invoiceNumber: "INV-34", status: "AUTHORISED" }, { invoiceNumber: "INV-35", status: "AUTHORISED" }, { invoiceNumber: "INV-37", status: "AUTHORISED" }]));
+  });
+
+  it("reads the Sale ONCE for all invoices and returns recorded vs current with a timestamp; nothing is written and no invoice is created", async () => {
+    const r = await actions.verifyInvoiceStatusesAction("p1");
+    expect(r.ok).toBe(true);
+    expect(fetchSale).toHaveBeenCalledTimes(1);
+    expect(fetchSale).toHaveBeenCalledWith("s");
+    expect(createInvoice).not.toHaveBeenCalled();
+    expect(r.data!.invoices.map((i) => [i.invoiceNumber, i.recordedStatus, i.currentStatus, i.outcome])).toEqual([["INV-34", "DRAFT", "AUTHORISED", "CHANGED"], ["INV-35", "DRAFT", "AUTHORISED", "CHANGED"], ["INV-37", "AUTHORISED", "AUTHORISED", "SAME"]]);
+    expect(Number.isNaN(Date.parse(r.data!.verifiedAt))).toBe(false);
+    for (const fn of [store.linkCin7Sale, store.postClaimToCin7, store.reconcileClaimPosting, saleStore.createSaleForProject, saleStore.reconcileSaleCreation]) expect(fn).not.toHaveBeenCalled(); // the posting record is never touched
+    expect((await import("@/lib/activity-log")).logActivity).not.toHaveBeenCalled(); // not even an audit write: a read leaves no trace in the data
+    const db = vi.mocked((await import("@/supabase/server")).createServiceRoleClient).mock.results.map((x) => x.value as Record<string, unknown>);
+    for (const d of db) expect(Object.keys(d)).toEqual(["__db"]); // the database client the action used has no query surface at all in this test, so any direct read or write would have thrown
+  });
+  it("re-establishes module access and the billing-scope guard first; a refusal reads nothing", async () => {
+    const scope = await import("@/lib/projects/scope-access");
+    vi.mocked(requireModuleAccess).mockRejectedValueOnce(new Error("You don't have access to this feature."));
+    expect((await actions.verifyInvoiceStatusesAction("p1")).ok).toBe(false);
+    vi.mocked(scope.guardBillingScope).mockRejectedValueOnce(new Error("Open the original project."));
+    expect((await actions.verifyInvoiceStatusesAction("p1")).ok).toBe(false);
+    expect(fetchSale).not.toHaveBeenCalled();
+  });
+  it("is owner/admin only: a plain user is refused and Cin7 is not read", async () => {
+    vi.mocked(requireOrgAdmin).mockRejectedValue(new Error("not admin"));
+    expect(await actions.verifyInvoiceStatusesAction("p1")).toEqual({ ok: false, error: "Only an owner or admin can verify invoice statuses against Cin7." });
+    expect(fetchSale).not.toHaveBeenCalled();
+  });
+  it("a project with no linked Sale, a Sale on another instance, or another instance being active reads nothing", async () => {
+    vi.mocked(store.loadSaleLink).mockResolvedValueOnce(null);
+    expect((await actions.verifyInvoiceStatusesAction("p1")).error).toMatch(/No Cin7 Sales Order is linked/);
+    vi.mocked(store.loadSaleLink).mockResolvedValueOnce({ id: "l", instance_id: "other", cin7_sale_id: "s" } as never);
+    expect((await actions.verifyInvoiceStatusesAction("p1")).error).toMatch(/different Cin7 instance/);
+    vi.mocked(singleActiveInstanceId).mockResolvedValueOnce("not-the-poc-instance");
+    expect((await actions.verifyInvoiceStatusesAction("p1")).ok).toBe(false);
+    expect(fetchSale).not.toHaveBeenCalled();
+  });
+  it("Cin7 returning a different Sale than the linked one verifies nothing", async () => {
+    fetchSale.mockResolvedValue(sale([{ invoiceNumber: "INV-34", status: "AUTHORISED" }], "someone-elses"));
+    const r = await actions.verifyInvoiceStatusesAction("p1");
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/different Sale/);
+  });
+  it("a Cin7 failure is reported as a failure, not as 'all matches'", async () => {
+    fetchSale.mockRejectedValue(new Error("Cin7 timed out"));
+    expect(await actions.verifyInvoiceStatusesAction("p1")).toEqual({ ok: false, error: "Cin7 timed out" });
+  });
+  it("is never run automatically by the status reads the page makes on opening", async () => {
+    await actions.getCin7PostingStatusAction("p1"); await actions.getCommercialBootAction("p1"); await actions.getCin7SaleCreationStatusAction("p1");
+    expect(fetchSale).not.toHaveBeenCalled();
   });
 });
