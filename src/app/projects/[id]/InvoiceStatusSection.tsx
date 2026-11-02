@@ -6,6 +6,7 @@ import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
 import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { DisabledReason } from "./DisabledReason";
 import { formatSast } from "@/lib/approvals/time";
 import type { PostingRow } from "@/lib/projects/cin7-posting-store";
 import { statusLabel, type InvoiceVerification, type VerifyOutcome } from "@/lib/projects/invoice-verification";
@@ -60,9 +61,10 @@ export function InvoiceStatusSection({ view, postings, projectId, isManager }: {
           <p className="text-xs text-slate-600">&ldquo;Recorded&rdquo; is what Toolbox saw when the invoice was created or last reconciled. It is not live. Verify reads Cin7 once and compares; nothing is changed or saved.</p>
         </div>
         {isManager
-          ? <Button size="sm" variant="secondary" onClick={verify} loading={acts.isPending("verify")} disabled={acts.anyPending}>Verify invoice statuses</Button>
+          ? <Button size="sm" variant="secondary" onClick={verify} loading={acts.isPending("verify")} disabled={acts.anyPending} aria-describedby="verify-reason">Verify invoice statuses</Button>
           : <span className="text-xs text-slate-600">An owner or admin can verify these against Cin7.</span>}
       </div>
+      {isManager && acts.anyPending && <DisabledReason id="verify-reason" className="mt-1">Verify is disabled while the Cin7 read is in progress.</DisabledReason>}
       <ActionFeedback state={acts.stateOf("verify")} />
       {rows.length > 0 && <div className="mt-3 overflow-x-auto">
         <table className="w-full min-w-[34rem] text-left">

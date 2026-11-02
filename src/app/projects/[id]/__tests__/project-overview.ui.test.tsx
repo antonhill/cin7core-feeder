@@ -104,6 +104,20 @@ describe("Executive overview - populated", () => {
   });
 });
 
+describe("Executive overview - D4 F-11 contract group", () => {
+  beforeEach(() => { overviewAction.mockResolvedValue(dataOf()); });
+  it("standing alone it still shows the contract group; with the summary above (contractShownAbove) it does not repeat it", async () => {
+    const { unmount } = renderIt();
+    await screen.findByTestId("overview");
+    for (const id of ["original", "variations", "revised"]) expect(screen.getByTestId(`kpi-${id}`)).toBeTruthy();
+    unmount();
+    render(<ProjectOverview contractShownAbove projectId="p-base" refreshKey="k1" onOpenTab={vi.fn() as never} />);
+    await screen.findByTestId("overview");
+    for (const id of ["original", "variations", "revised"]) expect(screen.queryByTestId(`kpi-${id}`)).toBeNull();
+    expect(screen.getByTestId("kpi-billed").textContent).toContain(formatCents(R(10_572_000)));
+  });
+});
+
 describe("Executive overview - access, empty and error states", () => {
   it("hides cost and margin from a viewer who may not see cost and says why", async () => {
     overviewAction.mockResolvedValue(dataOf({ viewer: { isAdmin: false }, estimates: null }));

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
+import { DisabledReason } from "./DisabledReason";
 import { Status, statusText } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -112,7 +113,9 @@ export function DeliveryAllocationPanel({ view, section = "both" }: { view: Proj
           <Input label="What was confirmed" value={note} onChange={(e) => setNote(e.target.value)} />
           <Input label="Evidence reference (POD, certificate…)" value={evidence} onChange={(e) => setEvidence(e.target.value)} />
         </div>
-        <div className="mt-3"><Button disabled={busy || !stageId || !note.trim()} onClick={() => run(() => confirmMilestoneAction(projectId, stageId, note, evidence || undefined), "Milestone confirmation recorded.").then(() => { setNote(""); setEvidence(""); })}>Record confirmation</Button></div>
+        <div className="mt-3"><Button disabled={busy || !stageId || !note.trim()} aria-describedby="milestone-confirm-reason" onClick={() => run(() => confirmMilestoneAction(projectId, stageId, note, evidence || undefined), "Milestone confirmation recorded.").then(() => { setNote(""); setEvidence(""); })}>Record confirmation</Button>
+          {(busy || !stageId || !note.trim()) && <DisabledReason id="milestone-confirm-reason" className="mt-1">{busy ? "Record confirmation is disabled while another action is in progress." : `Record confirmation is disabled until you ${[!stageId && "choose a milestone", !note.trim() && "say what was confirmed"].filter(Boolean).join(" and ")}. The evidence reference is optional.`}</DisabledReason>}
+        </div>
       </Panel>}
     </div>
   );
