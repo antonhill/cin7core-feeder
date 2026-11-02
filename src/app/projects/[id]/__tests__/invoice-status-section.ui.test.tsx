@@ -79,7 +79,8 @@ describe("Invoices in Cin7 (UAT-028)", () => {
     vi.mocked(c7.verifyInvoiceStatusesAction).mockResolvedValue(result({ invoices: [{ postingId: "po-INV-00034", claimId: "cl-34", invoiceNumber: "INV-00034", recordedStatus: "DRAFT", currentStatus: null, outcome: "NOT_IN_SALE" }] }) as never);
     mount();
     fireEvent.click(screen.getByRole("button", { name: "Verify invoice statuses" }));
-    expect((await screen.findByTestId("now-INV-00034")).textContent).toContain("Not found on the Sale");
+    // the cell exists ("Not verified") before the result lands, so wait for the text itself, not for the element
+    await waitFor(() => expect(screen.getByTestId("now-INV-00034").textContent).toContain("Not found on the Sale"));
     expect(screen.getByTestId("now-INV-00034").textContent).toContain("Not read");
   });
   it("invoices Toolbox did not create are listed for information", async () => {
