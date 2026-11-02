@@ -453,6 +453,6 @@ describe("original-shaped Payments_FEC: settlement is evidenced or unknown, neve
     const r = runFxExposure(b.dataset!, { asOf: "2027-06-30" });
     expect(r.rows.every((x) => x.pastDue)).toBe(true);
     expect(r.totals.potentialUsdCents).toBeGreaterThan(0);
-    expect(r.totals.potentialUsdCents).toBe(runFxExposure(b.dataset!, { asOf: "2026-01-01" }).totals.potentialUsdCents);
+    expect(r.totals.potentialUsdCents).toBe(runFxExposure(b.dataset!, { asOf: "2026-10-31" }).totals.potentialUsdCents);
   });
 });

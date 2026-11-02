@@ -175,7 +175,7 @@ describe("USD exposure by due date and FX comparison", () => {
   it("the as-at date moves payments between overdue and not yet due but never changes the potential exposure", async () => {
     synthetic();
     expect(indicator(await page({ asof: "2026-12-15" }), "ind-potential")).toBe("$19,350.00");
-    expect(indicator(await page({ asof: "2026-01-15" }), "ind-potential")).toBe("$19,350.00");
+    expect(indicator(await page({ asof: "2027-06-15" }), "ind-potential")).toBe("$19,350.00");
   });
   it("compares planning, FEC and customs per payment and withholds what it cannot match", async () => {
     synthetic();

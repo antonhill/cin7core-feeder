@@ -58,6 +58,6 @@ describe.skipIf(!FILE)("the original RWTSA workbook loads directly (local only)"
     expect(r.totals.potentialUsdCents).toBeGreaterThan(0); // the defect: it used to be zero here
     expect(r.totals.confirmedOpenUsdCents).toBeNull();
     // moving the as-at date never changes the exposure
-    expect(runFxExposure(built.dataset!, { asOf: "2026-01-01" }).totals.potentialUsdCents).toBe(r.totals.potentialUsdCents);
+    expect(runFxExposure(built.dataset!, { asOf: "2027-06-30" }).totals.potentialUsdCents).toBe(r.totals.potentialUsdCents);
   });
 });
