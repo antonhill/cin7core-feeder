@@ -37,12 +37,8 @@ export function OpeningCommitmentsPanel({ view, isAdmin, run, working }: { view:
           <Button size="sm" variant="secondary" onClick={() => setExpanded((v) => !v)}>{expanded ? "Hide details" : has ? (isAdmin && !locked ? "View / edit" : "View details") : "Add Opening Commitments"}</Button>
         )}
       </div>
-      {expanded && (
-        <>
-          <p className="mt-2 text-sm text-slate-500">Value already committed / certified before this project entered the Toolbox claim workflow. It counts toward &quot;Billed / committed&quot; and does not create Cin7 invoices or claims.</p>
-        </>
-      )}
       {expanded && <>
+      <p className="mt-2 text-sm text-slate-500">Value already committed / certified before this project entered the Toolbox claim workflow. It counts toward &quot;Billed / committed&quot; and does not create Cin7 invoices or claims.</p>
       <div className="mt-4 overflow-x-auto">
         <table className="w-full max-w-xl text-sm">
           <thead><tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500"><th className="py-2 text-left">Stage</th><th className="py-2 text-right">Stage value</th><th className="py-2 text-right">Opening committed (R)</th></tr></thead>

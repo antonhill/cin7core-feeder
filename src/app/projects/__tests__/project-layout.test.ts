@@ -46,7 +46,7 @@ describe("UAT-015 claim history cards", () => {
   });
   it("the Commercial tab opens with the summary and the claims and invoices, before the Cin7 posting panel and the claim creator", () => {
     const at = (needle: string) => ws.indexOf(needle, ws.indexOf('{tab === "claims"'));
-    const order = [at("<CommercialSummary"), at("Claims and invoices"), at("{commercialNow ? ("), at('id="new-claim"'), at("<OpeningCommitmentsPanel"), at('section="milestones"')];
+    const order = [at("<CommercialSummary"), at("Claims and invoices"), at("{commercialNow ? ("), at("id={`new-claim-${id}`}"), at("<OpeningCommitmentsPanel"), at('section="milestones"')];
     expect(order.every((n) => n > 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });

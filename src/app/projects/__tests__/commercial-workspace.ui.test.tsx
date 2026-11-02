@@ -102,7 +102,7 @@ describe("Commercial / Claims workspace (P2)", () => {
     await openCommercial();
     const text = document.body.innerHTML;
     const at = (needle: string) => text.indexOf(needle);
-    const order = [at('data-testid="commercial-summary"'), at("Claims and invoices"), at("<article"), at("Invoices in Cin7"), at('id="new-claim"'), at("Create progress claim")];
+    const order = [at('data-testid="commercial-summary"'), at("Claims and invoices"), at("<article"), at("Invoices in Cin7"), at("id=\"new-claim-p1\""), at("Create progress claim")];
     expect(order.every((n) => n > 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
@@ -115,8 +115,8 @@ describe("Commercial / Claims workspace (P2)", () => {
   it("a link in the claims header jumps to the claim creator", async () => {
     await openCommercial();
     const link = screen.getByRole("link", { name: "Create a progress claim" });
-    expect(link.getAttribute("href")).toBe("#new-claim");
-    expect(document.getElementById("new-claim")).not.toBeNull();
+    expect(link.getAttribute("href")).toBe("#new-claim-p1"); // per project, so an embedded variation workspace never duplicates the id
+    expect(document.getElementById("new-claim-p1")).not.toBeNull();
   });
   it("uses a stacked layout on narrow screens and aligned columns only from lg, with no table", async () => {
     await openCommercial();
@@ -124,6 +124,20 @@ describe("Commercial / Claims workspace (P2)", () => {
     expect(row.className).toMatch(/lg:grid-cols-\[/);
     expect(row.className).not.toMatch(/(^|\s)grid-cols-\[/); // no fixed columns on a phone
     expect(document.querySelector("article table")).toBeNull();
+  });
+  it("a phone user sees which badge is the approval and which is the Cin7 invoice: a visible caption below lg, hidden from lg where the column headings show", async () => {
+    await openCommercial();
+    const a = document.querySelector("article") as HTMLElement;
+    const captions = Array.from(a.querySelectorAll("span[aria-hidden]")).map((e) => e.textContent);
+    expect(captions).toEqual(["Amount", "Approval", "Cin7 invoice (as last recorded)"]);
+    for (const e of a.querySelectorAll("span[aria-hidden]")) expect(e.className).toMatch(/lg:hidden/);
+  });
+  it("the column headings are only shown when there are claims", async () => {
+    h.responses.getProjectAction = { ok: true, data: { ...view(), claims: [] }, viewer: { canApprove: true, newquip: true } };
+    render(<ProjectWorkspace id="p1" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Commercial \/ Claims/ }));
+    await screen.findByText("No claims yet.");
+    expect(screen.queryByText("Cin7 invoice (as last recorded)")).toBeNull();
   });
   it("labels each value for assistive technology", async () => {
     await openCommercial();
@@ -135,7 +149,7 @@ describe("Commercial / Claims workspace (P2)", () => {
     render(<ProjectWorkspace id="p1" />);
     fireEvent.click(await screen.findByRole("button", { name: /Commercial \/ Claims/ }));
     expect(await screen.findByText("No claims yet.")).toBeTruthy();
-    await waitFor(() => expect(document.getElementById("new-claim")).not.toBeNull());
+    await waitFor(() => expect(document.getElementById("new-claim-p1")).not.toBeNull());
     expect(screen.getByTestId("commercial-summary")).toBeTruthy();
   });
 });

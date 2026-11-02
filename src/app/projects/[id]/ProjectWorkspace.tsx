@@ -520,12 +520,12 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
           <div>
             <div className="mb-2 flex items-baseline justify-between">
               <h2 className="text-base font-semibold text-slate-900">Claims and invoices</h2>
-              <p className="flex items-center gap-3 text-xs text-slate-500">{view.claims.length} claim{view.claims.length === 1 ? "" : "s"}<a href="#new-claim" className="font-medium text-indigo-700 hover:underline">Create a progress claim</a></p>
+              <p className="flex items-center gap-3 text-xs text-slate-500">{view.claims.length} claim{view.claims.length === 1 ? "" : "s"}<a href={`#new-claim-${id}`} className="font-medium text-indigo-700 hover:underline">Create a progress claim</a></p>
             </div>
             {view.claims.length === 0 && <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No claims yet.</p>}
-            <div className="hidden grid-cols-[minmax(8rem,1fr)_16.5rem_11rem_minmax(14rem,1.3fr)] gap-x-4 px-4 pb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500 lg:grid" aria-hidden>
+            {view.claims.length > 0 && <div className="hidden grid-cols-[minmax(8rem,1fr)_16.5rem_11rem_minmax(14rem,1.3fr)] gap-x-4 px-4 pb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500 lg:grid" aria-hidden>
               <span>Claim</span><span className="text-right">Amount</span><span>Approval</span><span>Cin7 invoice (as last recorded)</span>
-            </div>
+            </div>}
             <div className="space-y-2">
               {view.claims.map((cl) => {
                 const plan = claimActionPlan(cl, perm === "admin" ? "admin" : perm === "member" ? "member" : "none");
@@ -538,17 +538,17 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                         <p className="text-xs text-slate-500">{cl.claim_date}{cl.supersedes_claim_id ? ` · supersedes ${view.claims.find((x) => x.id === cl.supersedes_claim_id)?.claim_number ?? "an earlier draft"}` : ""}</p>
                       </div>
                       <div className="lg:text-right">
-                        <span className="sr-only">Amount: </span>
+                        <span className="sr-only">Amount: </span><span aria-hidden className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500 lg:hidden">Amount</span>
                         <p className="whitespace-nowrap text-lg font-bold tabular-nums text-slate-900">{formatCents(cl.total_cents)}</p>
                         <p className="whitespace-nowrap text-xs tabular-nums text-slate-500">{formatCents(cl.subtotal_cents)} ex VAT + {formatCents(cl.tax_cents)} VAT</p>
                       </div>
                       <div>
-                        <span className="sr-only">Approval: </span>
+                        <span className="sr-only">Approval: </span><span aria-hidden className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500 lg:hidden">Approval</span>
                         <Badge tone={CLAIM_TONE[cl.status] ?? "neutral"}>{cl.status.replace(/_/g, " ")}</Badge>
                         <p className="mt-1 text-xs">{cl.reserves ? <span className="font-medium text-indigo-700">{cl.status === "FAILED_UNCERTAIN" ? "Stays reserved (outcome uncertain)" : "Reserves value"}</span> : <span className="text-slate-500">No reservation</span>}</p>
                       </div>
                       <div>
-                        <span className="sr-only">Cin7 invoice: </span>
+                        <span className="sr-only">Cin7 invoice: </span><span aria-hidden className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500 lg:hidden">Cin7 invoice (as last recorded)</span>
                         <Badge tone={cl.cin7Status.tone}>{cl.cin7Status.label}</Badge>
                         {cl.cin7Status.invoiceNumber && <span className="ml-1 text-xs text-slate-600">{cl.cin7Status.invoiceNumber}{cl.cin7Status.reconciled ? " · reconciled" : ""}</span>}
                       </div>
@@ -586,7 +586,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               <Block className="mt-4 h-24 w-full" />
             </div>
           )}
-          <div id="new-claim" className="scroll-mt-4">
+          <div id={`new-claim-${id}`} className="scroll-mt-4">
           <Panel>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
