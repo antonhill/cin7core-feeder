@@ -21,6 +21,8 @@ type Row = { name: string; percent: string };
 
 const pct = (bps: number) => (bps / 100).toFixed(2).replace(/\.00$/, "");
 const rowsOf = (s: Array<{ name: string; bps: number }> | undefined): Row[] => (s && s.length ? s.map((x) => ({ name: x.name, percent: pct(x.bps) })) : [{ name: "Variation", percent: "100" }]);
+/** Shown beside every control that is disabled only because a server action is running. */
+export const BUSY = "Another action is in progress.";
 const totalOf = (rows: Row[]) => Math.round(rows.reduce((n, r) => n + (Number(r.percent) || 0), 0) * 100) / 100;
 
 export function VariationBillingPanel({ view, isAdmin, run, working, renderDecision }: { view: ProjectView; isAdmin: boolean; run: Run; working: boolean; renderDecision?: (v: ProjectView["variations"][number]) => React.ReactNode }) {
@@ -32,7 +34,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
   const [prods, setProds] = useState<Record<string, Array<{ sku: string; description: string; quantity: string }>>>({});
 
   const [version, setVersion] = useState(0);
-  const [openWs, setOpenWs] = useState<Record<string, boolean>>({});
+  const [openId, setOpenId] = useState<string | null>(null); // the ONE variation whose detailed workspace is expanded; nothing is expanded until asked
   const [everOpened, setEverOpened] = useState<Record<string, boolean>>({}); // a hidden workspace stays mounted so an action in flight in it is never lost
   const variationKey = view.variations.map((v) => `${v.id}:${v.status}`).join(",");
   useEffect(() => {
@@ -48,7 +50,6 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
   const act = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string) => { if (await run(fn, done)) setVersion((n) => n + 1); };
   const c = state?.consolidated;
   const variations = view.variations.filter((v) => v.status !== "REJECTED");
-  const firstBilled = variations.find((x) => x.status === "APPROVED" && state?.billingProjectByVariation[x.id])?.id;
   if (view.variations.length === 0) return null; // the Variations tab says so itself
 
   return (
@@ -64,9 +65,13 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
         const billingId = state?.billingProjectByVariation[v.id];
         const legacy = !!state && v.status === "APPROVED" && (!sched || sched.length === 0);
         const scope = billingId && c ? c.scopes.find((x) => x.projectId === billingId) : undefined;
-        const wsOpen = openWs[v.id] ?? v.id === firstBilled; // the first billed variation opens on its claims and invoices; others open on request (one workspace's reads, not every variation's)
+        const wsOpen = openId === v.id; // ONE detailed workspace is expanded at a time, and only on request (one workspace's reads, not every variation's)
+        const canToggle = !!state && v.status === "APPROVED" && !!billingId && isAdmin;
+        const stagesLocked = (v.status === "APPROVED" && !isAdmin) || (!!billingId && v.status === "APPROVED");
+        const reasonText = reason[v.id] ?? "";
+        const sid = (k: string) => `${k}-${v.id}`;
         return (
-          <Panel key={v.id}>
+          <section key={v.id} aria-label={`${v.code} variation`} className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <PanelTitle><span className="inline-flex flex-wrap items-center gap-2">{v.code} – {v.title} <ScopeTag scope="VARIATION" /><Status tone={v.status === "APPROVED" ? "success" : "neutral"}>{statusText(v.status)}</Status></span></PanelTitle>
@@ -78,12 +83,17 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
                   </p>
                 )}
               </div>
-              <div className="text-right">
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">{v.status === "APPROVED" ? "Approved value (ex VAT)" : "Proposed value (ex VAT)"}</p>
-                <p className="whitespace-nowrap text-xl font-bold tabular-nums text-slate-900">{formatCents(v.amount_cents)}</p>
+              <div className="flex flex-col items-end gap-2 text-right">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">{v.status === "APPROVED" ? "Approved value (ex VAT)" : "Proposed value (ex VAT)"}</p>
+                  <p className="whitespace-nowrap text-xl font-bold tabular-nums text-slate-900">{formatCents(v.amount_cents)}</p>
+                </div>
+                {canToggle && (
+                  <Button size="sm" variant="secondary" aria-expanded={wsOpen} aria-controls={`ws-${v.id}`} onClick={() => { if (wsOpen) setOpenId(null); else { setOpenId(v.id); setEverOpened((e) => ({ ...e, [v.id]: true })); } }}>{wsOpen ? "Hide billing workspace" : "Open billing workspace"}</Button>
+                )}
               </div>
             </div>
-            {legacy && <Alert tone="warning">This variation was approved before billing schedules existed. A manager must set its schedule (an audited amendment) before billing can start. Nothing is created automatically.</Alert>}
+            {legacy && <div className="mt-3"><Alert tone="warning">This variation was approved before billing schedules existed. A manager must set its schedule (an audited amendment) before billing can start. Nothing is created automatically.</Alert></div>}
             {!state ? (
               error
                 ? <div className="mt-3"><Alert tone="warning">The billing figures for this variation could not be loaded ({error}). The decision controls below still work.</Alert><div className="mt-2"><Button size="sm" variant="secondary" onClick={() => setVersion((n) => n + 1)}>Try again</Button></div></div>
@@ -91,10 +101,11 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
             ) : scope ? (
               <div className="mt-3 border-t border-slate-200 pt-3">
               <p className="text-xs text-slate-600">Billing position of this variation only, ex VAT</p>
-              <dl className="mt-1 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4" aria-label={`${v.code} billing position (ex VAT)`}>
+              <dl className="mt-1 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3 lg:grid-cols-5" aria-label={`${v.code} billing position (ex VAT)`}>
                 {([["Earned", scope.earnedCents], ["Billed / committed", scope.committedCents], ["Claimable now", scope.claimableCents], ["Remaining", scope.remainingCents]] as const).map(([k, n]) => (
                   <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="font-semibold tabular-nums text-slate-900">{formatCents(n)}</dd></div>
                 ))}
+                <div><dt className="text-xs text-slate-600">Reconciliation</dt><dd className="text-sm text-slate-700">{isAdmin ? "Per invoice, in the billing workspace" : "Checked by a manager"}</dd></div>
               </dl>
               </div>
             ) : <p className="mt-3 text-sm text-slate-600">{v.status === "APPROVED" ? "Billing has not started for this variation." : "Counts for nothing until a manager approves it."}</p>}
@@ -102,21 +113,17 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
             {state && v.status === "APPROVED" && (
               <div className="mt-4">
                 {billingId ? (
-                  isAdmin ? (
-                    <div>
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-sm font-medium text-slate-800">{v.code} billing: progress, claims, Cin7 Sale and invoices</p>
-                        <Button size="sm" variant="secondary" aria-expanded={wsOpen} aria-controls={`ws-${v.id}`} onClick={() => { setOpenWs({ ...openWs, [v.id]: !wsOpen }); if (!wsOpen) setEverOpened({ ...everOpened, [v.id]: true }); }}>{wsOpen ? "Hide billing workspace" : "Open billing workspace"}</Button>
-                      </div>
-                      {(wsOpen || everOpened[v.id]) && <div id={`ws-${v.id}`} className={wsOpen ? "mt-2" : "hidden"}><ProjectWorkspace key={billingId} id={billingId} embedded /></div>}
-                    </div>
-                  ) : <span className="text-sm text-slate-600">Billing for {v.code} is active; a manager operates it.</span>
+                  isAdmin ? null : <span className="text-sm text-slate-600">Billing for {v.code} is active; a manager operates it.</span>
                 ) : isAdmin ? (
                   <div className="space-y-2">
-                    <p className="text-sm font-medium text-slate-800">Products in this variation (picked once from Cin7; the Sale and invoices inherit them)</p>
-                    <VariationProductPicker picked={prods[v.id] ?? []} onChange={(next) => setProds({ ...prods, [v.id]: next })} disabled={working} />
-                    <div className="flex flex-wrap gap-2">
-                      <Button disabled={working || legacy} onClick={() => act(() => startVariationBillingAction(projectId, v.id, (prods[v.id] ?? []).map((p) => ({ sku: p.sku, description: p.description, quantity: Number(p.quantity) }))), `Started billing for ${v.code}. Create its Cin7 Sale below.`)}>Start variation billing</Button>
+                    <details>
+                      <summary className="cursor-pointer py-1.5 text-sm font-medium text-slate-800">Products in this variation (picked once from Cin7; the Sale and invoices inherit them)</summary>
+                      <div className="mt-2"><VariationProductPicker picked={prods[v.id] ?? []} onChange={(next) => setProds({ ...prods, [v.id]: next })} disabled={working} /></div>
+                    </details>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button disabled={working || legacy} aria-describedby={legacy ? sid("start-why") : working ? sid("start-busy") : undefined} onClick={() => act(() => startVariationBillingAction(projectId, v.id, (prods[v.id] ?? []).map((p) => ({ sku: p.sku, description: p.description, quantity: Number(p.quantity) }))), `Started billing for ${v.code}. Create its Cin7 Sale below.`)}>Start variation billing</Button>
+                      {legacy ? <p id={sid("start-why")} className="text-sm text-slate-700">Set the billing schedule first (this variation was approved before schedules existed).</p>
+                        : working ? <p id={sid("start-busy")} className="text-sm text-slate-700">{BUSY}</p> : null}
                     </div>
                   </div>
                 ) : <span className="text-xs text-slate-600">A manager starts variation billing.</span>}
@@ -128,29 +135,36 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
             <div className="mt-3 space-y-2">
               {rows.map((r, i) => (
                 <div key={i} className="flex flex-wrap items-end gap-2">
-                  <Input label="Stage" value={r.name} disabled={v.status === "APPROVED" && !isAdmin || !!billingId && v.status === "APPROVED"} onChange={(e) => setEdit({ ...edit, [v.id]: rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} />
-                  <Input label="%" value={r.percent} disabled={v.status === "APPROVED" && !isAdmin || !!billingId && v.status === "APPROVED"} onChange={(e) => setEdit({ ...edit, [v.id]: rows.map((x, j) => (j === i ? { ...x, percent: e.target.value } : x)) })} />
+                  <Input label="Stage" value={r.name} disabled={stagesLocked} onChange={(e) => setEdit({ ...edit, [v.id]: rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} />
+                  <Input label="%" value={r.percent} disabled={stagesLocked} onChange={(e) => setEdit({ ...edit, [v.id]: rows.map((x, j) => (j === i ? { ...x, percent: e.target.value } : x)) })} />
                 </div>
               ))}
               <p className={`text-sm ${total === 100 ? "text-slate-600" : "font-semibold text-red-700"}`}>Total {total}% {total === 100 ? "" : "- must be exactly 100%"}</p>
+              {stagesLocked && !billingId && <p className="text-xs text-slate-600">Only a manager can change an approved variation&apos;s schedule.</p>}
               {(v.status === "DRAFT" || (isAdmin && !billingId)) && (
+                <div className="space-y-2">
                 <div className="flex flex-wrap items-end gap-2">
-                  <Button size="sm" variant="secondary" disabled={working} onClick={() => setEdit({ ...edit, [v.id]: [...rows, { name: "", percent: "" }] })}>Add stage</Button>
-                  {rows.length > 1 && <Button size="sm" variant="secondary" disabled={working} onClick={() => setEdit({ ...edit, [v.id]: rows.slice(0, -1) })}>Remove last</Button>}
+                  <Button size="sm" variant="secondary" disabled={working} aria-describedby={working ? sid("sched-busy") : undefined} onClick={() => setEdit({ ...edit, [v.id]: [...rows, { name: "", percent: "" }] })}>Add stage</Button>
+                  {rows.length > 1 && <Button size="sm" variant="secondary" disabled={working} aria-describedby={working ? sid("sched-busy") : undefined} onClick={() => setEdit({ ...edit, [v.id]: rows.slice(0, -1) })}>Remove last</Button>}
                   {v.status === "DRAFT" ? (
-                    <Button size="sm" disabled={working || total !== 100} onClick={() => act(() => saveVariationScheduleAction(projectId, v.id, rows), `Saved the ${v.code} billing schedule.`)}>Save schedule</Button>
+                    <Button size="sm" disabled={working || total !== 100} aria-describedby={working ? sid("sched-busy") : total !== 100 ? sid("sched-total") : undefined} onClick={() => act(() => saveVariationScheduleAction(projectId, v.id, rows), `Saved the ${v.code} billing schedule.`)}>Save schedule</Button>
                   ) : (
                     <>
-                      <Input label="Reason for amendment" value={reason[v.id] ?? ""} onChange={(e) => setReason({ ...reason, [v.id]: e.target.value })} />
-                      <Button size="sm" disabled={working || total !== 100 || !(reason[v.id] ?? "").trim()} onClick={() => act(() => amendVariationScheduleAction(projectId, v.id, rows, reason[v.id]), `Amended the ${v.code} schedule (audited).`)}>Amend schedule</Button>
+                      <Input label="Reason for amendment" value={reasonText} onChange={(e) => setReason({ ...reason, [v.id]: e.target.value })} />
+                      <Button size="sm" disabled={working || total !== 100 || !reasonText.trim()} aria-describedby={working ? sid("sched-busy") : total !== 100 ? sid("sched-total") : !reasonText.trim() ? sid("sched-reason") : undefined} onClick={() => act(() => amendVariationScheduleAction(projectId, v.id, rows, reason[v.id]), `Amended the ${v.code} schedule (audited).`)}>Amend schedule</Button>
                     </>
                   )}
+                </div>
+                {working ? <p id={sid("sched-busy")} className="text-sm text-slate-700">{BUSY}</p>
+                  : total !== 100 ? <p id={sid("sched-total")} className="text-sm text-slate-700">Total must be exactly 100% to {v.status === "DRAFT" ? "save" : "amend"} the schedule.</p>
+                  : v.status !== "DRAFT" && !reasonText.trim() ? <p id={sid("sched-reason")} className="text-sm text-slate-700">Enter a reason to amend.</p> : null}
                 </div>
               )}
               {v.status === "APPROVED" && billingId && <p className="text-xs text-slate-600">Billing has started. The schedule can no longer be amended once the billing project has claims or progress; the database refuses.</p>}
             </div>
             </details>}
-          </Panel>
+            {canToggle && (wsOpen || everOpened[v.id]) && <div id={`ws-${v.id}`} className={wsOpen ? "mt-4 border-t border-slate-200 pt-2" : "hidden"}><ProjectWorkspace key={billingId} id={billingId!} embedded /></div>}
+          </section>
         );
       })}
 

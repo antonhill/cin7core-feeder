@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ProjectWorkspace } from "../[id]/ProjectWorkspace";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 
@@ -52,14 +52,15 @@ beforeEach(() => { for (const k of Object.keys(h.responses)) delete h.responses[
 const called = (name: string) => h.calls.filter(([n]) => n === name);
 afterEach(() => cleanup());
 async function openVariations() { render(<ProjectWorkspace id="p1" />); fireEvent.click(await screen.findByRole("button", { name: /^Variations/ })); }
+const openWs = async (code: string) => { const rec = await record(code); fireEvent.click(within(rec).getByRole("button", { name: "Open billing workspace" })); return rec; };
 const record = async (code: string) => (await screen.findByText(new RegExp(`^${code} – `))).closest("[class*='p-6']") as HTMLElement;
 
 describe("Variation workspace (P3)", () => {
   it("a billed variation is ONE record: approval, value, billing position, Cin7 Sale and invoices - with nothing to expand to find the invoice", async () => {
     setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" });
     await openVariations();
-    const rec = await record("V001");
-    expect(await within(rec).findByText("Invoices in Cin7")).toBeTruthy();         // the invoice list is already there
+    const rec = await openWs("V001");
+    expect(await within(rec).findByText("Invoices in Cin7")).toBeTruthy();         // the invoice list is there once the workspace is asked for
     expect(within(rec).getByText("INV-00038")).toBeTruthy();
     expect(rec.textContent).toContain("SO-00028");                                 // the linked Sale
     expect(rec.textContent).toContain("Approved");
@@ -120,11 +121,11 @@ describe("Variation workspace (P3)", () => {
     expect(await within(rec).findByText("Billing has not started for this variation.")).toBeTruthy();
     expect(within(rec).getByRole("button", { name: "Start variation billing" }).closest("details")).toBeNull();
   });
-  it("the first billed variation is open, a second opens on request; the contract position by scope appears ONCE", async () => {
+  it("no billing workspace is open by default, each opens on request; the contract position by scope appears ONCE", async () => {
     setup([variation("v1", "V001", "APPROVED"), variation("v2", "V002", "APPROVED")], { v1: "vp1", v2: "vp2" });
     await openVariations();
-    await within(await record("V001")).findByText("Invoices in Cin7");
-    expect(within(await record("V002")).queryByText("Invoices in Cin7")).toBeNull();
+    await record("V001");
+    expect(screen.queryByText("Invoices in Cin7")).toBeNull();
     const open = within(await record("V002")).getByRole("button", { name: "Open billing workspace" });
     expect(open.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(open);
@@ -134,7 +135,7 @@ describe("Variation workspace (P3)", () => {
   it("the duplicated summaries are folded away: the consolidated report and the Cin7 planning placeholder are collapsed and honestly labelled", async () => {
     setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" });
     await openVariations();
-    await screen.findByText("Invoices in Cin7");
+    await record("V001");
     const planning = screen.getByText(/Cin7 planning view \(placeholder references, nothing is sent\)/).closest("details") as HTMLDetailsElement;
     const report = screen.getByText(/Consolidated report: invoices by scope/).closest("details") as HTMLDetailsElement;
     expect(planning.open).toBe(false);
@@ -144,7 +145,7 @@ describe("Variation workspace (P3)", () => {
   it("Raise a variation is collapsed once variations exist and open when there are none", async () => {
     setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" });
     await openVariations();
-    await screen.findByText("Invoices in Cin7");
+    await record("V001");
     expect((screen.getByText("Raise a variation").closest("details") as HTMLDetailsElement).open).toBe(false);
     cleanup();
     setup([], {});
@@ -205,8 +206,7 @@ describe("Variation workspace (P3)", () => {
   it("hiding a billing workspace keeps it mounted (an action in flight in it is not lost) and showing it again reads nothing", async () => {
     setup([variation("v1", "V001", "APPROVED"), variation("v2", "V002", "APPROVED")], { v1: "vp1", v2: "vp2" });
     await openVariations();
-    const rec2 = await record("V002");
-    fireEvent.click(within(rec2).getByRole("button", { name: "Open billing workspace" }));
+    const rec2 = await openWs("V002");
     await within(rec2).findByText("Invoices in Cin7");
     const reads = called("getProjectAction").length;
     fireEvent.click(within(rec2).getByRole("button", { name: "Hide billing workspace" }));
@@ -257,6 +257,109 @@ describe("Variation workspace (P3)", () => {
     expect(await screen.findByText(/could not be refreshed \(db down\)/)).toBeTruthy();
     expect(within(rec).queryByText("Loading the billing position…")).toBeNull(); // the record is still there
     expect(await within(rec).findByRole("button", { name: /^Approve/ })).toBeTruthy();
+  });
+
+  describe("D4F: compact variations", () => {
+    const deferred = <T,>() => { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; };
+    it("each variation is ONE compact summary: identity, scope tag, approval state, value, Sale number, billed/committed, claimable, reconciliation, and the open control - with no workspace mounted", async () => {
+      setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" }, undefined, { v1: "SO-00028" });
+      await openVariations();
+      const rec = await record("V001");
+      await waitFor(() => expect(rec.textContent).toContain("SO-00028"));
+      expect(rec.textContent).toContain("V001 – V001 title");
+      expect(within(rec).getByText("Variation").closest("[data-tone]")).toBeTruthy();
+      expect(rec.textContent).toContain("Approved");
+      expect(rec.textContent).toContain(money(500_000_00));
+      const pos = within(rec).getByLabelText("V001 billing position (ex VAT)");
+      expect(pos.textContent).toContain("Billed / committed" + money(500_000_00));
+      expect(pos.textContent).toContain("Claimable now" + money(25_000_00));
+      expect(pos.textContent).toMatch(/Reconciliation.+billing workspace/);
+      const btn = within(rec).getByRole("button", { name: "Open billing workspace" });
+      expect(btn.getAttribute("aria-expanded")).toBe("false");
+      expect(btn.getAttribute("aria-controls")).toBe("ws-v1");
+      expect(document.getElementById("ws-v1")).toBeNull();
+      expect(screen.getAllByRole("button", { name: /Commercial \/ Claims/ }).length).toBe(1);
+    });
+    it("only ONE workspace is expanded at a time: opening another collapses the previous (kept mounted, hidden)", async () => {
+      setup([variation("v1", "V001", "APPROVED"), variation("v2", "V002", "APPROVED")], { v1: "vp1", v2: "vp2" });
+      await openVariations();
+      const r1 = await openWs("V001");
+      await within(r1).findByText("Invoices in Cin7");
+      const r2 = await openWs("V002");
+      await within(r2).findByText("Invoices in Cin7");
+      expect(within(r1).getByRole("button", { name: "Open billing workspace" }).getAttribute("aria-expanded")).toBe("false");
+      expect(within(r2).getByRole("button", { name: "Hide billing workspace" }).getAttribute("aria-expanded")).toBe("true");
+      expect(document.getElementById("ws-v1")!.className).toMatch(/hidden/);
+      expect(document.getElementById("ws-v2")!.className).not.toMatch(/hidden/);
+    });
+    it("collapsing a workspace while an action in it is pending does not lose its feedback (UAT-025)", async () => {
+      setup([variation("v1", "V001", "APPROVED"), variation("v2", "V002", "APPROVED")], { v1: "vp1", v2: "vp2" });
+      h.responses.getCommercialBootAction = { ok: true, data: { creation: { gates: { ...gates, writesEnabled: true }, creation: { id: "cr1", creation_state: "CREATED", cin7_sale_number: "SO-00028", last_error_message: null, last_error_code: null }, linked: false, scopeItems: [], saleLines: [], blockers: [], excluded: [] }, posting: posting.data } };
+      const d = deferred<{ ok: boolean; data: unknown }>();
+      h.responses.reconcileCin7SaleCreationAction = () => d.promise;
+      await openVariations();
+      const r1 = await openWs("V001");
+      fireEvent.click(await within(r1).findByRole("button", { name: /Reconcile with Cin7/ }));
+      await within(r1).findByText(/Working/);
+      fireEvent.click(within(await record("V002")).getByRole("button", { name: "Open billing workspace" })); // collapses V001 while its action is pending
+      const ws1 = document.getElementById("ws-v1") as HTMLElement;
+      expect(ws1.className).toMatch(/hidden/);
+      expect(within(ws1).getByText(/Working/)).toBeTruthy();                 // still mounted, still pending
+      await act(async () => d.resolve({ ok: true, data: { message: "Reconciled: SO-00028 matches the plan and is now linked." } }));
+      expect(within(ws1).getByText(/Reconciled: SO-00028 matches the plan/)).toBeTruthy(); // the outcome arrived in the collapsed workspace
+      fireEvent.click(within(r1).getByRole("button", { name: "Open billing workspace" }));
+      expect(within(document.getElementById("ws-v1") as HTMLElement).getByText(/Reconciled: SO-00028 matches the plan/)).toBeTruthy(); // and is there when it is reopened
+    });
+    it("Hide returns to the compact summary (aria-expanded false) and the control is a real button reachable by keyboard", async () => {
+      setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" });
+      await openVariations();
+      const rec = await openWs("V001");
+      const hide = within(rec).getByRole("button", { name: "Hide billing workspace" });
+      expect(hide.tagName).toBe("BUTTON");
+      expect(hide.getAttribute("aria-expanded")).toBe("true");
+      fireEvent.click(hide);
+      expect(within(rec).getByRole("button", { name: "Open billing workspace" }).getAttribute("aria-expanded")).toBe("false");
+    });
+    const describedBy = (b: HTMLElement) => (b.getAttribute("aria-describedby") ?? "").split(" ").map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
+    it("F-12: Start variation billing says why it is disabled for a legacy variation with no schedule", async () => {
+      setup([variation("v1", "V001", "APPROVED")], {});
+      h.responses.getVariationBillingAction = { ok: true, data: { ...billing({}).data, schedules: {}, billingProjectByVariation: {} } };
+      await openVariations();
+      const rec = await record("V001");
+      const start = await within(rec).findByRole("button", { name: "Start variation billing" }) as HTMLButtonElement;
+      expect(start.disabled).toBe(true);
+      expect(describedBy(start)).toMatch(/Set the billing schedule first \(this variation was approved before schedules existed\)/);
+      expect(rec.textContent).toContain("Set the billing schedule first"); // visible text, not a title
+    });
+    it("F-12: Approve, Reject and Re-price say why they are disabled: another action in progress, or the missing input", async () => {
+      setup([variation("v1", "V001", "DRAFT")], {});
+      const d = deferred<{ ok: boolean }>();
+      h.responses.approveVariationAction = () => d.promise;
+      await openVariations();
+      const rec = await record("V001");
+      const reject = within(rec).getByRole("button", { name: /Reject/ });
+      const reprice = within(rec).getByRole("button", { name: /Re-price/ });
+      expect(describedBy(reject)).toMatch(/Enter a reason to reject/);
+      expect(describedBy(reprice)).toMatch(/Enter a new price/);
+      fireEvent.click(within(rec).getByRole("button", { name: /^Approve/ }));
+      await waitFor(() => expect((within(rec).getByRole("button", { name: /^Approve/ }) as HTMLButtonElement).disabled).toBe(true));
+      for (const name of [/^Approve/, /Reject/, /Re-price/, /Submit/]) expect(describedBy(within(rec).getByRole("button", { name }))).toBe("Another action is in progress.");
+      await act(async () => d.resolve({ ok: false }));
+    });
+    it("F-12: Amend schedule says why it is disabled (reason, then total)", async () => {
+      setup([variation("v1", "V001", "APPROVED")], {});
+      await openVariations();
+      const rec = await record("V001");
+      (await within(rec).findByText("Billing schedule")).closest("details")!.open = true;
+      const amend = within(rec).getByRole("button", { name: "Amend schedule" }) as HTMLButtonElement;
+      expect(amend.disabled).toBe(true);
+      expect(describedBy(amend)).toBe("Enter a reason to amend.");
+      fireEvent.change(within(rec).getByLabelText("Reason for amendment"), { target: { value: "client asked" } });
+      expect(amend.disabled).toBe(false);
+      fireEvent.change(within(rec).getByLabelText("%"), { target: { value: "60" } });
+      expect(amend.disabled).toBe(true);
+      expect(describedBy(amend)).toBe("Total must be exactly 100% to amend the schedule.");
+    });
   });
 
   describe("D3-A: scope and Cin7 Sale identification", () => {
