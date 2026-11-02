@@ -4,7 +4,7 @@ import type { DemoState } from "@/rwtsa-demo/state/demo-state";
 /**
  * Commercial rules a LOCAL workbook does not establish. Each is named, says what it withholds, and says how it is resolved:
  *   - "choose": a control on the page, set explicitly by the viewer (never defaulted for a local workbook),
- *   - "owner":  an owner decision that cannot be made on the page; the affected output stays withheld.
+ *   - "owner":  an owner decision that cannot be made on the page; the affected output is withheld or, where the rule says so, shown under a labelled assumption.
  * The synthetic source declares its own conventions, so it has no open rules.
  */
 
@@ -34,17 +34,17 @@ export const tenderRule = (): UnresolvedRule => ({
 export const overdueRule = (units: number): UnresolvedRule => ({
   id: "overdue-on-water",
   title: "Overdue shipments on the water",
-  detail: `${units} unit(s) on purchase-order lines still marked on the water have an ETA to stores on or before the stock date. The workbook does not say whether they have arrived, are late or are misdated. Choose a treatment in the controls.`,
-  withholds: "All Scenario A results (projection, first breach, shortfall, proposed orders) until a treatment is chosen",
-  how: "choose",
+  detail: `${units} unit(s) on purchase-order lines still marked on the water have an ETA to stores on or before the stock date. The workbook does not say whether they have arrived, are late or are misdated. They are NEVER counted as received and are kept apart from Available. The page applies a labelled demonstration assumption (excluded from usable inbound unless you switch it in the controls); the customer's treatment is an owner decision.`,
+  withholds: "Nothing: opening stock, history, forecast and cover are unaffected. The projection, first shortage and shortfall are shown under the labelled demonstration assumption",
+  how: "owner",
 });
 
 export const historyGapRule = (lastMonth: string | null, gap: readonly string[]): UnresolvedRule => ({
   id: "sales-history-gap",
   title: "Sales history ends before the stock month",
-  detail: `History ends in ${lastMonth ?? "an unknown month"}; ${gap.length} month(s) before the stock date have no data. Whether to forecast from the last months on file or to require months up to the stock date is a business rule. Choose in the controls.`,
-  withholds: "All Scenario A results until a treatment is chosen",
-  how: "choose",
+  detail: `History ends in ${lastMonth ?? "an unknown month"}; ${gap.length} month(s) before the stock date have no data and none is invented. The forecast uses the latest observed months, which is also how the workbook's own six- and twelve-month averages are built. Confirming that basis is an owner decision.`,
+  withholds: "Nothing: the forecast is shown on the latest observed months with a stale-history warning",
+  how: "owner",
 });
 
 /** True when any routing line lacks the overhead or efficiency value the cost model needs. */

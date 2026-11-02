@@ -110,8 +110,8 @@ For a **local** workbook the demo never picks a business rule the workbook does 
 
 | Rule | Scenario | Withheld until resolved | Resolved by |
 |---|---|---|---|
-| Overdue shipments on the water | A | all results | a choice in the controls |
-| Sales history ends before the stock month | A | all results | a choice in the controls |
+| Overdue shipments on the water | A | nothing: shown under a labelled demonstration assumption (not counted as received; excluded from usable inbound by default, switchable) | owner decision |
+| Sales history ends before the stock month | A | nothing: forecast on the latest observed months with a stale-history warning | owner decision |
 | Tender SKU classification (no SKU-level marker) | A | proposed order quantities | owner decision |
 | Overhead, efficiency allowance and margin (units and inclusion) | B | fully loaded product cost and any price derived from it; the base BOM cost and reference price are shown | owner decision |
 | Paid or open status of each payment (no paid column) | C | confirmed open exposure (potential exposure is shown, labelled) | owner decision: supply the status per payment |

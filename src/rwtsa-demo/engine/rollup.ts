@@ -39,6 +39,8 @@ export function rollUpStyles(skus: readonly SkuResult[], anomalies: readonly Ano
       shortfall: m.reduce((a, s) => a + s.shortfall, 0),
       proposedOrder: m.reduce((a, s) => a + s.proposedOrder, 0),
       monthsOfCover: den > 0 ? Math.max(0, num / den) : null,
+      monthsOfCoverWithInbound: den > 0 ? Math.max(0, (num + forecastable.reduce((a, s) => a + s.coverInboundUnits, 0)) / den) : null,
+      netRequirement: m.some((s) => !s.tenderExempt && s.netRequirement === null) ? null : m.reduce((a, s) => a + (s.netRequirement ?? 0), 0),
       shortageSkus: m.filter((s) => !s.tenderExempt && s.shortfall > 0).length,
       skusWithoutForecast: m.filter((s) => s.forecast.status === "insufficient").length,
       tenderExemptSkus: m.filter((s) => s.tenderExempt).length,

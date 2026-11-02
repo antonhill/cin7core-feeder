@@ -1,4 +1,5 @@
 import { DEFAULT_RED_FLAG_CONFIG, type RedFlagConfigInput, type SizeCurveConfig } from "@/rwtsa-demo/engine";
+import { REV2_CURVE_LABEL, REV2_CURVE_PROVENANCE, REV2_SIZE_CURVE } from "@/rwtsa-demo/engine/size-curve";
 
 /**
  * The Scenario A controls, carried in the page URL (plain GET form, no client-side script). Invalid values are reported and
@@ -6,7 +7,7 @@ import { DEFAULT_RED_FLAG_CONFIG, type RedFlagConfigInput, type SizeCurveConfig 
  */
 
 export type ResultView = "sku" | "style";
-export type CurveChoice = "none" | "demand" | "supplied";
+export type CurveChoice = "none" | "demand" | "supplied" | "rev2";
 
 export interface RedFlagSettings {
   readonly config: RedFlagConfigInput;
@@ -15,7 +16,7 @@ export interface RedFlagSettings {
   readonly shortageOnly: boolean;
   readonly sel: string | null;
   readonly curve: CurveChoice;
-  /** For a LOCAL workbook the history anchor and the overdue treatment are never defaulted: false until the viewer chooses. */
+  /** True when the viewer explicitly set the control; false when the labelled default applies. Neither blocks any result. */
   readonly chosen: { readonly anchor: boolean; readonly overdue: boolean };
   /** Raw, validated control values for redisplay and for building links. */
   readonly values: Readonly<Record<"view" | "window" | "horizon" | "anchor" | "overdue" | "curve" | "mult" | "floor", string>>;
@@ -32,8 +33,8 @@ function one(q: RawQuery, k: string): string | undefined {
 export interface SettingsOptions {
   /** A size curve supplied with the data (the synthetic source supplies one; a local workbook does not). */
   readonly suppliedCurve: Readonly<Record<string, number>> | null;
-  /** True for a local workbook: the anchor and overdue controls start unset and results wait for an explicit choice. */
-  readonly requireChoices?: boolean;
+  /** True for a local workbook: the overdue default is the conservative "exclude" and the size curve defaults to the documented Rev2 curve. */
+  readonly local?: boolean;
 }
 
 export function parseSettings(q: RawQuery, opts: SettingsOptions): RedFlagSettings {
@@ -67,18 +68,18 @@ export function parseSettings(q: RawQuery, opts: SettingsOptions): RedFlagSettin
   const win = int("window", 1, 36, d.forecastWindowMonths, "Forecast window");
   const horizon = pick("horizon", ["13", "26"] as const, "13", "Horizon");
   const anchor = pick("anchor", ["last", "strict"] as const, "last", "History anchor");
-  const overdue = pick("overdue", ["week1", "exclude"] as const, "week1", "Overdue on-water");
+  const overdue = pick("overdue", ["week1", "exclude"] as const, opts.local ? "exclude" : "week1", "Overdue on-water");
   // An invalid value is reported above and counts as NOT chosen when choices are required.
   const given = (k: string, allowed: readonly string[]) => allowed.includes(one(q, k) ?? "");
-  const chosen = { anchor: !opts.requireChoices || given("anchor", ["last", "strict"]), overdue: !opts.requireChoices || given("overdue", ["week1", "exclude"]) };
+  const chosen = { anchor: given("anchor", ["last", "strict"]), overdue: given("overdue", ["week1", "exclude"]) };
   const mult = num("mult", 0.01, d.anomaly.multiple, "Anomaly multiple");
   const floor = num("floor", 0, d.anomaly.floor, "Anomaly floor");
-  const defaultCurve: CurveChoice = opts.suppliedCurve ? "supplied" : "none";
-  const curve = pick<CurveChoice>("curve", opts.suppliedCurve ? ["none", "demand", "supplied"] : ["none", "demand"], defaultCurve, "Size curve");
+  const defaultCurve: CurveChoice = opts.suppliedCurve ? "supplied" : opts.local ? "rev2" : "none";
+  const curve = pick<CurveChoice>("curve", opts.suppliedCurve ? ["none", "demand", "rev2", "supplied"] : ["none", "demand", "rev2"], defaultCurve, "Size curve");
   const style = one(q, "style");
   const sel = one(q, "sel");
 
-  const sizeCurve: SizeCurveConfig = curve === "supplied" && opts.suppliedCurve ? { kind: "explicit", weights: opts.suppliedCurve } : curve === "demand" ? { kind: "demand-proportional" } : { kind: "none" };
+  const sizeCurve: SizeCurveConfig = curve === "supplied" && opts.suppliedCurve ? { kind: "explicit", weights: opts.suppliedCurve, label: "Size curve supplied with the synthetic data", provenance: "Synthetic fixture" } : curve === "rev2" ? { kind: "explicit", weights: REV2_SIZE_CURVE, label: REV2_CURVE_LABEL, provenance: REV2_CURVE_PROVENANCE } : curve === "demand" ? { kind: "demand-proportional" } : { kind: "none" };
   return {
     config: {
       forecastWindowMonths: win,
@@ -94,7 +95,7 @@ export function parseSettings(q: RawQuery, opts: SettingsOptions): RedFlagSettin
     sel: sel && sel !== "" ? sel : null,
     curve,
     chosen,
-    values: { view, window: String(win), horizon, anchor: chosen.anchor ? anchor : "", overdue: chosen.overdue ? overdue : "", curve, mult: String(mult), floor: String(floor) },
+    values: { view, window: String(win), horizon, anchor, overdue, curve, mult: String(mult), floor: String(floor) },
     errors,
   };
 }

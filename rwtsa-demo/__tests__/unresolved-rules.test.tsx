@@ -73,33 +73,43 @@ describe("the original-shaped workbook loads directly as a LOCAL workbook", () =
   });
 });
 
-describe("Scenario A: unresolved rules withhold the affected outputs", () => {
-  it("lists the open rules and withholds ALL results until history and overdue treatments are chosen", async () => {
+describe("Scenario A: unresolved rules withhold ONLY what depends on them", () => {
+  it("lists the three owner decisions, and still shows results (nothing is withheld wholesale)", async () => {
     local();
     const m = await A();
     expect(ruleIds(m)).toEqual(["overdue-on-water", "sales-history-gap", "tender-classification"]);
-    expect(m).not.toContain('data-testid="indicators"');
-    expect(m).not.toContain('data-testid="row-key"');
-    expect(text(m)).toMatch(/results are withheld/i);
+    expect(m).toContain('data-testid="indicators"');
+    expect(m).toContain('data-testid="row-key"');
+    expect(text(m)).not.toMatch(/results are withheld/i);
     expect(badge(m)).toBe("RULES: 3 OPEN");
   });
-  it("choosing only one of the two treatments keeps results withheld", async () => {
+  it("each output is judged separately: stock, committed, history and forecast are not affected by the overdue or tender rules", async () => {
     local();
-    expect(ruleIds(await A({ anchor: "last" }))).toEqual(["overdue-on-water", "tender-classification"]);
-    expect(await A({ anchor: "last" })).not.toContain('data-testid="indicators"');
-    expect(ruleIds(await A({ overdue: "week1" }))).toEqual(["sales-history-gap", "tender-classification"]);
+    const m = await A();
+    const st = Object.fromEntries([...m.matchAll(/data-testid="eligibility-row" data-id="([^"]*)" data-state="([^"]*)"/g)].map((x) => [x[1], x[2]]));
+    expect(st.available).toBe("available");
+    expect(st.committed).toBe("available");
+    expect(st.history).toBe("assumption"); // stale history, labelled
+    expect(st.forecast).toBe("assumption");
+    expect(st.projection).toBe("assumption"); // overdue shipments, labelled demonstration assumption
+    expect(st["first-shortage"]).toBe("assumption");
+    expect(st.shortfall).toBe("assumption");
+    expect(st["proposed-orders"]).toBe("withheld"); // only this depends on the tender classification
   });
-  it("with both treatments chosen the projection is shown, and ONLY the tender-dependent proposed orders stay withheld", async () => {
+  it("only the proposed orders wait for the tender classification; they are the only withheld cells", async () => {
     local();
-    const m = await A({ anchor: "last", overdue: "week1" });
-    expect(ruleIds(m)).toEqual(["tender-classification"]);
-    expect(m).toContain('data-testid="indicators"');
+    const m = await A();
     expect(indicator(m, "ind-shortage")).not.toBeNull();
     const cells = [...m.matchAll(/data-testid="proposed-cell" data-state="([^"]*)"/g)].map((x) => x[1]);
     expect(cells.length).toBe(10);
     expect(new Set(cells)).toEqual(new Set(["withheld"]));
     expect(text(m)).toContain("Proposed order quantities are withheld");
-    expect(badge(m)).toBe("RULES: 1 OPEN");
+  });
+  it("the overdue treatment defaults to the conservative one and is labelled a demonstration assumption", async () => {
+    local();
+    const m = await A();
+    expect(text(m)).toContain("not an established customer policy");
+    expect(text(m)).toMatch(/excluded from usable inbound/);
   });
   it("the choice is honoured: 'do not count it' removes the overdue shipment from the inbound", async () => {
     local();
@@ -139,7 +149,7 @@ describe("rule detection is not fooled by edge cases", () => {
       ws.getCell("N2").value = "Yes";
       ws.getCell("N3").value = "No";
     });
-    expect(ruleIds(await A({ anchor: "last", overdue: "week1" }))).toEqual(["tender-classification"]);
+    expect(ruleIds(await A({ anchor: "last", overdue: "week1" }))).toContain("tender-classification");
   });
   it("a COMPLETE tender column closes the tender rule", async () => {
     await withFile("tender-full.xlsx", (wb) => {
@@ -147,7 +157,7 @@ describe("rule detection is not fooled by edge cases", () => {
       ws.getCell("N1").value = "Tender";
       for (let r = 2; r <= 11; r++) ws.getCell(`N${r}`).value = r === 2 ? "Yes" : "No";
     });
-    expect(ruleIds(await A({ anchor: "last", overdue: "week1" }))).toEqual([]);
+    expect(ruleIds(await A({ anchor: "last", overdue: "week1" }))).not.toContain("tender-classification");
   });
   it("overhead and efficiency on only SOME routing lines keeps the overhead rule open", async () => {
     await withFile("overhead-partial.xlsx", (wb) => {

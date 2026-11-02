@@ -5,7 +5,7 @@ export type HistoryAnchor = "last-available" | "strict";
 export type OverdueOnWater = "week-1" | "exclude";
 export type SizeCurveConfig =
   | { readonly kind: "none" }
-  | { readonly kind: "explicit"; readonly weights: Readonly<Record<string, number>> }
+  | { readonly kind: "explicit"; readonly weights: Readonly<Record<string, number>>; readonly label?: string; readonly provenance?: string }
   | { readonly kind: "demand-proportional" };
 
 export interface RedFlagConfig {
@@ -65,6 +65,11 @@ export interface WindowInfo {
   readonly gapMonths: readonly string[];
   /** Window months that are not in the workbook's history at all. */
   readonly missingMonths: readonly string[];
+  /** The last month of the forecast window: the last observed month under "last-available". */
+  readonly windowEnd: string;
+  /** Whole months between the last observed month and the stock month (0 = history is current). */
+  readonly staleMonths: number;
+  readonly staleWarning: string | null;
 }
 
 export interface AnomalyRow {
@@ -101,7 +106,14 @@ export interface SkuResult {
   readonly shortfall: number;
   /** A PROPOSAL (whole units, >= 0). Always 0 for a tender SKU. */
   readonly proposedOrder: number;
+  /** OPENING cover: opening Available / average monthly demand. */
   readonly monthsOfCover: number | null;
+  /** Units of usable inbound supply inside the horizon (overdue and beyond-horizon units are not in it). */
+  readonly coverInboundUnits: number;
+  /** RFP DP-17 cover: (opening Available + usable inbound within the horizon) / average monthly demand. Committed is already netted in Available. */
+  readonly monthsOfCoverWithInbound: number | null;
+  /** RFP DP-13 net requirement: forecast demand over the horizon - Available - usable inbound, whole units, >= 0. Always 0 for a tender SKU. A DIFFERENT formula from the approved minimum-shortfall proposal. */
+  readonly netRequirement: number | null;
   readonly anomalyStatus: "none" | "review" | "excluded";
   readonly excludedMonths: readonly string[];
   readonly evaluable: boolean;
@@ -123,6 +135,9 @@ export interface StyleResult {
   readonly shortfall: number;
   readonly proposedOrder: number;
   readonly monthsOfCover: number | null;
+  readonly monthsOfCoverWithInbound: number | null;
+  /** Sum of its SKUs' net requirements; null when any non-tender SKU has none (unknowns are not counted as zero). */
+  readonly netRequirement: number | null;
   readonly shortageSkus: number;
   readonly skusWithoutForecast: number;
   readonly tenderExemptSkus: number;
@@ -130,7 +145,27 @@ export interface StyleResult {
   readonly anomaliesExcluded: number;
 }
 
+export interface SizeAllocationLine {
+  readonly styleCode: string;
+  readonly poNo: string;
+  /** The style-level quantity on the purchase-order line. */
+  readonly qty: number;
+  readonly parts: readonly { readonly sku: string; readonly size: string; readonly units: number }[];
+}
+export interface SizeAllocationReport {
+  readonly curveLabel: string | null;
+  readonly curveProvenance: string | null;
+  readonly lines: readonly SizeAllocationLine[];
+  readonly unitsIn: number;
+  readonly unitsAllocated: number;
+  /** Every line's allocated sizes add up to its original style-level quantity, exactly. */
+  readonly reconciles: boolean;
+}
+
 export interface InboundReport {
+  /** All units on lines still marked on the water whose ETA to stores is on or before the stock date, whatever the treatment. */
+  readonly overdueOnWaterUnits: number;
+  readonly sizeAllocation: SizeAllocationReport;
   readonly onWaterUnits: number;
   readonly onOrderUnits: number;
   readonly overdueAssumedWeek1Units: number;
@@ -164,7 +199,28 @@ export interface RedFlagSummary {
   readonly exclusionsApplied: number;
 }
 
+export interface ComparisonRow {
+  readonly sku: string;
+  readonly styleCode: string;
+  /** Averages over the 6 and 12 months ending at the window end; null when a month is missing (nothing is invented). Planner exclusions are NOT applied: this reconciles raw history. */
+  readonly avg6: number | null;
+  readonly avg12: number | null;
+  readonly ref6: number | null;
+  readonly ref12: number | null;
+  readonly match6: boolean | null;
+  readonly match12: boolean | null;
+}
+export interface ComparisonReport {
+  readonly windowEnd: string;
+  readonly rows: readonly ComparisonRow[];
+  readonly compared6: number;
+  readonly matched6: number;
+  readonly compared12: number;
+  readonly matched12: number;
+}
+
 export interface RedFlagResult {
+  readonly comparison: ComparisonReport;
   readonly config: RedFlagConfig;
   readonly window: WindowInfo;
   readonly skus: readonly SkuResult[];

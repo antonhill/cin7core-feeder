@@ -5,7 +5,8 @@ import { resolveConfig, type RedFlagConfigInput } from "./config";
 import { demandForecast, WEEKS_PER_MONTH, type DemandForecast } from "./forecast";
 import { allocateUnits, classifyPoStatus, etaWeek } from "./inbound";
 import { availableOf } from "./stock";
-import type { AnomalyRow, Assumption, Exclusion, InboundReport, RedFlagConfig, RedFlagResult, SkuResult, WindowInfo } from "./types";
+import { SIZE_ORDER } from "@/rwtsa-demo/contracts/tabs";
+import type { AnomalyRow, Assumption, Exclusion, InboundReport, RedFlagConfig, RedFlagResult, SizeAllocationLine, SkuResult, WindowInfo } from "./types";
 import { rollUpStyles } from "./rollup";
 
 const EPS = 1e-9;
@@ -40,12 +41,16 @@ function resolveWindow(ds: RwtsaDataset, cfg: RedFlagConfig): WindowInfo {
   const end = cfg.historyAnchor === "strict" || lastHistoryMonth === null || lastHistoryMonth > stockMonth ? stockMonth : lastHistoryMonth;
   const months = monthsEndingAt(end, cfg.forecastWindowMonths);
   const have = new Set(ds.months);
+  const gapMonths = lastHistoryMonth === null ? [] : monthsBetweenExclusive(lastHistoryMonth, stockMonth);
   return {
+    windowEnd: end,
+    staleMonths: gapMonths.length,
+    staleWarning: gapMonths.length > 0 ? `STALE HISTORY: the last observed month is ${lastHistoryMonth}, but stock is dated ${cfg.stockDate}. ${gapMonths.length} month(s) (${gapMonths.join(", ")}) have no sales data and none is invented.` : null,
     anchor: cfg.historyAnchor,
     months,
     lastHistoryMonth,
     stockMonth,
-    gapMonths: lastHistoryMonth === null ? [] : monthsBetweenExclusive(lastHistoryMonth, stockMonth),
+    gapMonths,
     missingMonths: months.filter((m) => !have.has(m)),
   };
 }
@@ -98,6 +103,11 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
   const membersByStyle = new Map<string, typeof items>();
   for (const it of items) membersByStyle.set(it.styleCode, [...(membersByStyle.get(it.styleCode) ?? []), it]);
   let usedDemandCurve = false;
+  const sizesNotInCurve = new Set<string>();
+  let overdueOnWaterUnits = 0;
+  const allocLines: SizeAllocationLine[] = [];
+  let unitsIn = 0;
+  let unitsAllocated = 0;
 
   for (const po of ds.tables.importPos) {
     const cls = classifyPoStatus(po.status);
@@ -110,6 +120,10 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
       continue;
     }
 
+    // Overdue on-water units are counted for every line that belongs to a known SKU or style, including a style-level line that cannot be split to
+    // sizes. A line that matches nothing is reported as unmatched and is not an overdue shipment of anything we hold.
+    const overdueLine = cls === "on-water" && etaWeek(cfg.stockDate, po.etaStores) <= 0;
+
     // Which SKUs does this line belong to?
     let parts: [string, number][] | null;
     if (po.sku !== null && po.sku !== "") {
@@ -119,15 +133,18 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
         continue;
       }
     } else {
-      const members = po.styleCode ? (membersByStyle.get(po.styleCode) ?? []) : [];
+      const sizeRank = (z: string) => { const i = (SIZE_ORDER as readonly string[]).indexOf(z.trim().toUpperCase()); return i < 0 ? 99 : i; };
+      const members = [...(po.styleCode ? (membersByStyle.get(po.styleCode) ?? []) : [])].sort((a, b) => sizeRank(a.size) - sizeRank(b.size));
       if (members.length === 0) {
         inbound.unmatchedUnits += po.qty;
         continue;
       }
       let weights: [string, number][];
       if (cfg.sizeCurve.kind === "explicit") {
-        const curve = cfg.sizeCurve.weights;
-        weights = members.map((m) => [m.sku, curve[m.size] ?? 0]);
+        const norm = (z: string) => z.trim().toUpperCase();
+        const curve = new Map(Object.entries(cfg.sizeCurve.weights).map(([k, v]) => [norm(k), v]));
+        for (const m of members) if (!curve.has(norm(m.size))) sizesNotInCurve.add(m.size);
+        weights = members.map((m) => [m.sku, curve.get(norm(m.size)) ?? 0]);
       } else if (cfg.sizeCurve.kind === "demand-proportional") {
         weights = members.map((m) => [m.sku, monthly.get(m.sku) ?? 0]);
         usedDemandCurve = true;
@@ -137,10 +154,15 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
       parts = weights.length === 0 ? null : allocateUnits(po.qty, weights);
       if (parts === null) {
         inbound.unallocatedStyleUnits += po.qty;
+        if (overdueLine) overdueOnWaterUnits += po.qty;
         continue;
       }
+      unitsIn += po.qty;
+      unitsAllocated += parts.reduce((a, [, u]) => a + u, 0);
+      allocLines.push({ styleCode: po.styleCode as string, poNo: po.poNo, qty: po.qty, parts: parts.map(([sku, units]) => ({ sku, size: (itemBySku.get(sku) as { size: string }).size, units })) });
     }
 
+    if (overdueLine) overdueOnWaterUnits += po.qty;
     if (cls === "on-water") for (const [sku, u] of parts) onWaterPoBySku.set(sku, (onWaterPoBySku.get(sku) ?? 0) + u);
 
     let week = etaWeek(cfg.stockDate, po.etaStores);
@@ -181,7 +203,16 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
     if (Math.abs(a - b) < 0.5) consistent += 1;
     else mismatched += 1;
   }
-  const inboundReport: InboundReport = { ...inbound, reconciliation: { skusConsistent: consistent, skusMismatched: mismatched, inTransitStockUnits: inTransitUnits, onWaterPoUnits } };
+  const curveCfg = cfg.sizeCurve;
+  const sizeAllocation = {
+    curveLabel: curveCfg.kind === "explicit" ? (curveCfg.label ?? "Explicit size curve supplied with the data") : curveCfg.kind === "demand-proportional" ? "Proportional to each SKU's forecast demand" : null,
+    curveProvenance: curveCfg.kind === "explicit" ? (curveCfg.provenance ?? null) : null,
+    lines: allocLines,
+    unitsIn,
+    unitsAllocated,
+    reconciles: allocLines.every((l) => l.parts.reduce((a, p) => a + p.units, 0) === l.qty),
+  };
+  const inboundReport: InboundReport = { ...inbound, overdueOnWaterUnits, sizeAllocation, reconciliation: { skusConsistent: consistent, skusMismatched: mismatched, inTransitStockUnits: inTransitUnits, onWaterPoUnits } };
 
   // --- projection per SKU ---
   const skus: SkuResult[] = items.map((it) => {
@@ -224,6 +255,11 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
     if (shortfall < EPS) shortfall = 0;
     const proposedOrder = tender || shortfall === 0 ? 0 : Math.ceil(shortfall - EPS);
     const monthsOfCover = available === null || m === null || m <= 0 ? null : Math.max(0, available / m);
+    // RFP DP-17: (available + inbound) / average demand. Available already nets committed stock. Only usable inbound inside the horizon counts.
+    const monthsOfCoverWithInbound = available === null || m === null || m <= 0 ? null : Math.max(0, (available + inboundTotal) / m);
+    // RFP DP-13 net requirement: forecast demand over the horizon less available stock less usable inbound. A different formula from the approved minimum-shortfall proposal.
+    const dueTotal = Object.entries(cfg.committedDue[it.sku] ?? {}).reduce((a, [w, u]) => (Number(w) >= 1 && Number(w) <= H ? a + u : a), 0);
+    const netRequirement = tender ? 0 : available === null || weekly === null ? null : Math.max(0, Math.ceil(weekly * H + dueTotal - available - inboundTotal - EPS));
 
     return {
       sku: it.sku,
@@ -244,6 +280,9 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
       shortfall,
       proposedOrder,
       monthsOfCover,
+      coverInboundUnits: inboundTotal,
+      monthsOfCoverWithInbound,
+      netRequirement,
       anomalyStatus: anomalyStatus.get(it.sku) ?? "none",
       excludedMonths: [...(excl.get(it.sku)?.keys() ?? [])].sort(),
       evaluable,
@@ -252,6 +291,35 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
   });
 
   const styles = rollUpStyles(skus, anomalies, H);
+
+  // --- DP-04: 6- and 12-month averages side by side, reconciled to the workbook's own reference averages ---
+  const refBy = new Map(ds.tables.salesFileAverages.map((r) => [r.sku, r]));
+  const avgOver = (obs: ReadonlyMap<string, number | null>, n: number): number | null => {
+    const ms = monthsEndingAt(win.windowEnd, n);
+    let total = 0;
+    for (const mo of ms) {
+      const v = obs.get(mo) ?? null;
+      if (v === null) return null;
+      total += v;
+    }
+    return total / n;
+  };
+  const near = (a: number | null, b: number | null): boolean | null => (a === null || b === null ? null : Math.abs(a - b) < 0.005);
+  const compRows = items.map((it) => {
+    const obs = obsBy.get(it.sku) ?? new Map<string, number | null>();
+    const a6 = avgOver(obs, 6);
+    const a12 = avgOver(obs, 12);
+    const ref = refBy.get(it.sku);
+    return { sku: it.sku, styleCode: it.styleCode, avg6: a6, avg12: a12, ref6: ref?.avg6 ?? null, ref12: ref?.avg12 ?? null, match6: near(a6, ref?.avg6 ?? null), match12: near(a12, ref?.avg12 ?? null) };
+  });
+  const comparison = {
+    windowEnd: win.windowEnd,
+    rows: compRows,
+    compared6: compRows.filter((r) => r.match6 !== null).length,
+    matched6: compRows.filter((r) => r.match6 === true).length,
+    compared12: compRows.filter((r) => r.match12 !== null).length,
+    matched12: compRows.filter((r) => r.match12 === true).length,
+  };
 
   const breaches = skus.filter((s) => s.firstBreachWeek !== null);
   const summary = {
@@ -281,9 +349,9 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
     });
   }
   if (cfg.overdueOnWater === "week-1") {
-    assumptions.push({ id: "overdue-on-water", text: "An overdue shipment still marked on the water is assumed to arrive in week 1 (demonstration assumption). Overdue shipments only on order are not assumed to arrive." });
+    assumptions.push({ id: "overdue-on-water", text: "DEMONSTRATION ASSUMPTION, not an established customer policy: an overdue shipment still marked on the water is assumed to arrive in week 1. Overdue shipments only on order are not assumed to arrive." });
   } else {
-    assumptions.push({ id: "overdue-on-water", text: "Overdue shipments still marked on the water are excluded from inbound (no arrival assumed)." });
+    assumptions.push({ id: "overdue-on-water", text: "DEMONSTRATION ASSUMPTION, not an established customer policy: overdue shipments still marked on the water are NOT counted as received and are excluded from usable projected inbound (a conservative treatment). They are kept separate from Available, and Stock In transit is never added to them." });
   }
   if (usedDemandCurve) assumptions.push({ id: "size-curve-demand", text: "Style-level purchase orders are split to sizes in proportion to each SKU's current forecast demand (assumption: no supplied size curve)." });
 
@@ -294,12 +362,14 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
   if (skus.some((s) => !s.tenderExempt && s.minLevel === null)) limitations.push(`${skus.filter((s) => !s.tenderExempt && s.minLevel === null).length} non-tender SKU(s) have no minimum level, so shortage is not evaluated for them.`);
   if (inboundReport.reconciliation.skusMismatched > 0) limitations.push(`Stock in-transit and on-water purchase orders disagree for ${inboundReport.reconciliation.skusMismatched} SKU(s) (stock ${inboundReport.reconciliation.inTransitStockUnits} units, purchase orders ${inboundReport.reconciliation.onWaterPoUnits} units). They are kept separate; the projection uses purchase orders only.`);
   if (inboundReport.unallocatedStyleUnits > 0) limitations.push(`${inboundReport.unallocatedStyleUnits} units on style-level purchase orders could not be split to sizes (no usable size curve) and are held unallocated.`);
+  if (sizesNotInCurve.size > 0) limitations.push(`Size label(s) ${[...sizesNotInCurve].sort().join(", ")} are not in the applied size curve, so they receive no share of style-level purchase orders; their share goes to the sizes that are in the curve. Check the size labels.`);
   if (inboundReport.unmatchedUnits > 0) limitations.push(`${inboundReport.unmatchedUnits} units on purchase-order lines match no SKU or style in Items.`);
   if (inboundReport.unclassifiedUnits > 0) limitations.push(`${inboundReport.unclassifiedUnits} units on purchase-order lines have an unrecognised status and are excluded.`);
   if (inboundReport.overdueOnOrderUnits > 0) limitations.push(`${inboundReport.overdueOnOrderUnits} units are overdue and only on order: excluded (no arrival date can be assumed).`);
   if (summary.availableMismatchSkus > 0) limitations.push(`Computed Available differs from the workbook's Available for ${summary.availableMismatchSkus} SKU(s); the brief's formula is used.`);
 
   return {
+    comparison,
     config: cfg,
     window: win,
     skus,
