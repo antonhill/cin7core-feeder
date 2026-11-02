@@ -75,7 +75,7 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
         <section aria-label="Rejected variations" className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
           <p className="font-medium text-slate-900">Rejected ({rejected.length})</p>
           <ul className="mt-1 space-y-1 text-slate-600">
-            {rejected.map((v) => <li key={v.id}><span className="font-mono">{v.code}</span> {v.title} · {formatCents(v.amount_cents)} ex VAT · {v.decided_by_email ?? "—"}{v.decision_reason ? ` · ${v.decision_reason}` : ""}</li>)}
+            {rejected.map((v) => <li key={v.id}><span className="font-mono">{v.code}</span> {v.title} · {formatCents(v.amount_cents)} ex VAT · {v.decided_by_email ?? "—"}{v.decision_reason ? ` · ${v.decision_reason}` : ""}<div className="mt-0.5"><ApprovalHistory docType="VARIATION" docId={v.id} label="Approval history" /></div></li>)}
           </ul>
         </section>
       )}

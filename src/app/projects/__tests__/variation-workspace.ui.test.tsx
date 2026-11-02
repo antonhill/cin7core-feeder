@@ -14,7 +14,7 @@ const h = vi.hoisted(() => {
   return { responses, calls, stub };
 });
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn(), push: vi.fn() }) }));
-vi.mock("@/components/ApprovalHistory", () => ({ ApprovalHistory: () => null }));
+vi.mock("@/components/ApprovalHistory", () => ({ ApprovalHistory: ({ docId }: { docId: string }) => <span data-testid={`history-${docId}`} /> }));
 vi.mock("../[id]/VariationProductPicker", () => ({ VariationProductPicker: () => <div>product picker</div> }));
 vi.mock("../actions", () => h.stub());
 vi.mock("../cin7-actions", () => h.stub());
@@ -223,5 +223,26 @@ describe("Variation workspace (P3)", () => {
     setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" });
     await openVariations();
     expect(await screen.findByText("Billing position of this variation only, ex VAT")).toBeTruthy();
+  });
+  it("a rejected variation keeps its approval history for audit", async () => {
+    setup([variation("v1", "V001", "APPROVED"), variation("v2", "V002", "REJECTED")], {});
+    await openVariations();
+    const rej = await screen.findByLabelText("Rejected variations");
+    expect(within(rej).getByTestId("history-v2")).toBeTruthy();
+  });
+  it("if a later refresh of the billing figures fails, the figures already shown say they may be out of date and can be retried", async () => {
+    setup([variation("v1", "V001", "DRAFT")], {});
+    let reads = 0;
+    h.responses.getVariationBillingAction = () => (reads++ === 0 ? billing({}) : { ok: false, error: "db down" });
+    h.responses.saveVariationScheduleAction = { ok: true };
+    await openVariations();
+    const rec = await record("V001");
+    const details = (await within(rec).findByText("Billing schedule")).closest("details") as HTMLDetailsElement;
+    details.open = true;
+    expect(screen.queryByText(/could not be refreshed/)).toBeNull();
+    fireEvent.click(within(rec).getByRole("button", { name: "Save schedule" })); // a successful change refetches the billing figures; that read fails
+    expect(await screen.findByText(/could not be refreshed \(db down\)/)).toBeTruthy();
+    expect(within(rec).queryByText("Loading the billing position…")).toBeNull(); // the record is still there
+    expect(await within(rec).findByRole("button", { name: /^Approve/ })).toBeTruthy();
   });
 });

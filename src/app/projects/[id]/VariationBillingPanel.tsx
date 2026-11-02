@@ -53,6 +53,9 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
 
   return (
     <div className="space-y-4">
+      {state && error && (
+        <Alert tone="warning">The billing figures could not be refreshed ({error}); what is shown may be out of date.<span className="ml-2"><Button size="sm" variant="secondary" onClick={() => setVersion((n) => n + 1)}>Try again</Button></span></Alert>
+      )}
 
       {variations.length === 0 ? null : variations.map((v) => {
         const sched = state?.schedules[v.id];
