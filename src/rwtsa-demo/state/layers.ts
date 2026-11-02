@@ -82,7 +82,7 @@ export const SCENARIOS: readonly ScenarioMeta[] = [
       { status: "Open", text: "Fast React's return-file layout, external IDs, date format, delete synchronisation and update direction are unknown; any return file is a Spark proposal, not a vendor specification." },
       { status: "Open", text: "Whether Cin7 Core's family BOM variation mapping supports a size-dependent component must be verified independently (D6)." },
     ],
-    engine: { name: "Variance and BOM costing engines (the Fast React exchange is not built)", implemented: true },
+    engine: { name: "Variance and BOM costing engines (the Fast React file exchange is demonstrated on its own page: local files only, no live connection)", implemented: true },
   },
   {
     id: "C",

@@ -5,6 +5,7 @@ export function Nav() {
   const links = [
     { href: "/", label: "Overview" },
     ...SCENARIOS.map((s) => ({ href: `/${s.slug}`, label: `Scenario ${s.id}` })),
+    { href: "/fast-react", label: "Fast React exchange" },
     { href: "/validation", label: "Validation" },
   ];
   return (
