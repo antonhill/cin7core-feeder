@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBrowserSupabaseClient } from "@/supabase/browser";
 import { signOutAction } from "@/actions/auth";
+import { wipeDrafts } from "@/lib/form-draft-signout";
 import { Spinner } from "@/app/Spinner";
 
 export default function MfaChallengePage() {
@@ -74,7 +75,7 @@ export default function MfaChallengePage() {
         {error && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
       </form>
 
-      <form action={signOutAction} className="mt-4 self-center">
+      <form action={signOutAction} onSubmit={wipeDrafts} className="mt-4 self-center">
         <button type="submit" className="text-sm text-slate-500 hover:underline">
           Sign out instead
         </button>

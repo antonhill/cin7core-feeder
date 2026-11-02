@@ -4,6 +4,7 @@ import { useEffect, useState, useSyncExternalStore, useTransition } from "react"
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOutAction } from "@/actions/auth";
+import { wipeDrafts } from "@/lib/form-draft-signout";
 import { uploadCurrentOrgLogo } from "@/actions/org-logo";
 import { triggerSalesSyncAction } from "@/app/reports/actions";
 import { buildNavItems, isNavLinkActive, type ModuleConfig, type NavItem, BillingIcon, ShieldIcon, DiagnosticsIcon, TeamIcon, NotificationsIcon, SyncIcon, SignOutIcon } from "@/app/module-nav";
@@ -358,7 +359,7 @@ export function AppNav({
                 <DiagnosticsIcon className="h-5 w-5" />
               </NavIconButton>
             )}
-            <form action={signOutAction}>
+            <form action={signOutAction} onSubmit={wipeDrafts}>
               <NavIconButton label="Sign out">
                 <SignOutIcon className="h-5 w-5" />
               </NavIconButton>
