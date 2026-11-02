@@ -52,7 +52,6 @@ import { computeStages, currentStage, parseStage, type CommercialState, type Sta
 import { getQuoteDeliveryAction } from "../delivery-actions";
 import { ScopePanel } from "./ScopePanel";
 import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
-import { useFormDraft } from "@/lib/use-form-draft";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { DisabledReason } from "@/components/ApprovalDisabledReason";
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
@@ -83,7 +82,6 @@ const CHARGE_HELP: Record<ChargeKey, string> = {
   concrete_slat_delivery: "Truck price ÷ slat weight, by distance.",
 };
 
-const isQuoteDraftShape = (d: unknown): d is QuoteDraft | null => typeof d === "object" && d !== null && "estimator" in d;
 
 export default function QuoteEditorPage() {
   const { id } = useParams<{ id: string }>();
@@ -93,7 +91,6 @@ export default function QuoteEditorPage() {
   const [dirty, setDirty] = useState(false);
   useUnsavedGuard(dirty); // the editor already tracks unsaved edits; saving or reloading from the server clears it
   // Unsaved edits also survive an accidental reload/close of the tab (sessionStorage, this user + this quotation, only if the server copy has not moved on).
-  const localDraft = useFormDraft<QuoteDraft | null>({ kind: "quote", recordId: id, base: view ? view.quote.draft_hash : null, dirty, value: draft, validate: isQuoteDraftShape });
   // The draft the displayed figures were last calculated for, and the draft a failed recalculation belongs to: no synchronous state juggling in the effect.
   const [previewedFor, setPreviewedFor] = useState<QuoteDraft | null>(null);
   const [failedFor, setFailedFor] = useState<{ draft: QuoteDraft; message: string } | null>(null);
@@ -286,16 +283,6 @@ export default function QuoteEditorPage() {
         </div>
       </div>
 
-      {localDraft.restorable && editable && (
-        <div className="mt-4"><Alert tone="warning">
-          <span data-testid="draft-restore">You have unsaved edits to this quotation from {new Date(localDraft.restorable.savedAt).toLocaleString()} that were not saved.</span>{" "}
-          <Button size="sm" variant="secondary" onClick={() => { const d = localDraft.restore(); if (d) { setDraft(d); setDirty(true); } }}>Restore my edits</Button>{" "}
-          <Button size="sm" variant="ghost" onClick={localDraft.discard}>Discard</Button>
-        </Alert></div>
-      )}
-      {localDraft.dropped && (
-        <div className="mt-4"><Alert tone="info">Unsaved edits from an earlier visit were not restored because this quotation has changed since (or they were too old). <Button size="sm" variant="ghost" onClick={localDraft.dismissDropped}>Dismiss</Button></Alert></div>
-      )}
       {error && <div className="mt-4"><Alert tone="danger">{error}</Alert></div>}
       <ActionFeedback state={acts.stateOf("page")} floating />
       {final && <div className="mt-4"><Alert tone="info">This quote is the manager-approved final. Its accepted baseline is frozen; any change after acceptance must be a Variation on the Project.</Alert></div>}

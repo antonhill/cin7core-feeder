@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOutAction } from "@/actions/auth";
-import { wipeDrafts } from "@/lib/form-draft-signout";
 import { isNavLinkActive, type ModuleConfig } from "@/app/module-nav";
 
 /**
@@ -64,7 +63,7 @@ export function NewquipShell({
           <div className="ml-auto flex min-w-0 items-center gap-3">
             {orgName && <span className="max-w-[16rem] truncate text-sm text-slate-700" title={orgName}>{orgName}</span>}
             {userEmail && <span className="hidden max-w-[16rem] truncate text-sm text-slate-600 xl:inline" title={userEmail}>{userEmail}</span>}
-            <form action={signOutAction} onSubmit={wipeDrafts}>
+            <form action={signOutAction}>
               <button
                 type="submit"
                 className="inline-flex min-h-11 items-center rounded-md px-2 text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 md:min-h-9"

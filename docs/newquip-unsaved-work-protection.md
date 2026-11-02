@@ -23,19 +23,13 @@ Known failure modes of the usual "Back blocker" (popstate plus a sentinel `pushS
 
 Deliberately NOT done: cancelling `push`/`replace` navigate events. Demonstrated: when a `router.push` navigate event is cancelled the URL stays on the old page but the App Router has already rendered the new page (URL says /a, screen shows page B). That is a silent corruption, worse than no guard.
 
-`src/lib/form-draft.ts` + `src/lib/use-form-draft.ts`: DRAFT PERSISTENCE for form input. Wired ONLY to the quotation editor (`src/app/newquip-grower/[id]/page.tsx`).
+### Draft persistence: removed
 
-- sessionStorage only (per tab, gone when the tab closes; nothing in localStorage, so a shared computer keeps nothing after the tab is closed).
-- Key `nq-draft:v1:<authUserId>:<kind>:<recordId>`: another signed-in user in the same tab never sees it; record ids are per-organisation UUIDs.
-- Envelope stores the server `draft_hash` it was based on. If the server copy has changed (another person saved), the draft is STALE: it is removed, never restored over newer saved work, and the user is told.
-- 12 hour TTL, 200k character cap, versioned, shape-validated, every storage access try/caught.
-- Written 400 ms after the last edit while dirty; cleared when the editor returns to clean (Save, reload from server, discard). Restore is explicit (a banner with "Restore my edits" / "Discard"), never automatic.
-- Only the form value is stored (the quotation draft the editor already holds). No tokens, no passwords.
-- Residual risk: the quotation draft includes cost overrides when the user may see commercials; they sit in that tab's sessionStorage until the tab closes, the draft is saved/discarded, or 12 hours pass. `clearAllDrafts()` is now called when the user signs out (see Sign-out below), so the draft does not outlive the session in that tab.
+An earlier D4 revision also kept the quotation draft in `sessionStorage` with a "Restore my edits" offer. It was removed: the quotation draft (`QuoteDraft`, `src/newquip/grower/draft.ts`) carries `estimator.costOverrides` (confidential cost), `estimator.unitPrices`, `charges` and the margin inputs, so persisting it would put cost and customer-sensitive pricing into browser storage, and stripping those fields reliably would also change what a "restore" means. Nothing is written to `sessionStorage`/`localStorage` by any NewQuip form now, no sign-out wipe is needed, and the editor no longer calls `auth.getUser()` on mount. Unsaved-change WARNINGS (the layers above) are unchanged.
 
 ## Browser evidence (Chrome, real `next build && next start`, driven by playwright-core)
 
-A throwaway two-route lab app (not committed) using the repo's Next version and the SHIPPED `use-unsaved-guard.ts` / `form-draft.ts`. Headless Chrome via CDP. Honest limits: Back/Forward were driven with CDP history traversal (`page.goBack()`), NOT a physical click of the browser's Back button (macOS blocked synthetic keystrokes); the real button follows the same Navigation API path but was not exercised.
+A throwaway two-route lab app (not committed) using the repo's Next version and the SHIPPED `use-unsaved-guard.ts`. Headless Chrome via CDP. Honest limits: Back/Forward were driven with CDP history traversal (`page.goBack()`), NOT a physical click of the browser's Back button (macOS blocked synthetic keystrokes); the real button follows the same Navigation API path but was not exercised.
 
 | Scenario (form dirty) | Result | Evidence |
 |---|---|---|
@@ -55,21 +49,19 @@ A throwaway two-route lab app (not committed) using the repo's Next version and 
 | `router.push` / `router.replace` | NOT guarded (leaves with no prompt) | browser |
 | Experiment: cancel `push`/`replace` navigate events | URL stays, screen shows new page: CORRUPTS, rejected | browser |
 | Experiment: popstate + sentinel `pushState` | extra history entry (length +1), accept leaves user on same page, link clicks not covered: rejected | browser |
-| Draft: reload keeps edits; other user key sees none; server version changed -> stale dropped; new tab sees none; cleared after save | as stated | browser (storage module only, in the lab page) |
-| Draft restore banner and quotation editor wiring | | jsdom/unit only: the real editor needs an authenticated Supabase session and data and was not run in a browser |
 | Firefox, Safari, Back in a real UI, mobile | | NOT tested |
 
 ## Coverage by form
 
-| Form | Tab close/reload | In-app link click | Back/Forward (Chromium) | router.push | Draft restore |
-|---|---|---|---|---|---|
-| Quotation configuration (newquip-grower/[id]) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | no | yes (jsdom/unit only; not run in a browser) |
-| Project Details edit form | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | no | no |
-| Partial claim selection (ProjectWorkspace, claims tab) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | no | no |
-| Approval reason / override (approvals/[id]) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | no | no |
-| Variation raise / re-price / reject (VariationsPanel) | yes (jsdom only) | yes (jsdom only) | by the shared hook, lab-verified (form itself not run in a browser) | no | no |
-| Variation billing schedule editor + amend reason (VariationBillingPanel) | yes (jsdom only) | yes (jsdom only) | by the shared hook, lab-verified (form itself not run in a browser) | no | no |
-| Approvals admin settings | yes (jsdom only) | yes (jsdom only) | by the shared hook, lab-verified (form itself not run in a browser) | no | no |
+| Form | Tab close/reload | In-app link click | Back/Forward (Chromium) | router.push |
+|---|---|---|---|---|
+| Quotation configuration (newquip-grower/[id]) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | no |
+| Project Details edit form | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | no |
+| Partial claim selection (ProjectWorkspace, claims tab) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | no |
+| Approval reason / override (approvals/[id]) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | no |
+| Variation raise / re-price / reject (VariationsPanel) | yes (jsdom only) | yes (jsdom only) | by the shared hook, lab-verified (form itself not run in a browser) | no |
+| Variation billing schedule editor + amend reason (VariationBillingPanel) | yes (jsdom only) | yes (jsdom only) | by the shared hook, lab-verified (form itself not run in a browser) | no |
+| Approvals admin settings | yes (jsdom only) | yes (jsdom only) | by the shared hook, lab-verified (form itself not run in a browser) | no |
 
 Evidence levels: the hook's tab-close, link-click and Back/Forward behaviour is browser-demonstrated (table above, a lab app using the shipped hook). The three rows added by the wiring workstream are covered by jsdom tests only: they assert the `beforeunload` guard is on when the form differs from its saved/initial value and off when clean, reverted, cancelled, saved, or read-only. Those forms were not driven in a real browser (they need an authenticated session and data). The in-app link-click column for those rows is the same shared hook, not separately asserted in their tests.
 
@@ -81,19 +73,21 @@ What is dirty, per form (a guard exists only while true):
 
 Back/Forward protection comes automatically with the existing wiring; no per-form change was needed. Firefox and Safari get layers 1 and 2 only.
 
-## Restore offer is withdrawn
-
-The quotation editor's "Restore my edits" offer (`useFormDraft.restorable`) is withdrawn as soon as the form becomes dirty or the server version (`base`) changes, so it cannot overwrite newer saved work. jsdom-tested in `use-form-draft.ui.test.tsx`.
-
-## Sign-out clears drafts
-
-`signOutAction` is unchanged (a server action). The Sign out forms (`NewquipShell`, `AppNav`, and the MFA challenge page's "Sign out instead") carry `onSubmit={wipeDrafts}` (`src/lib/form-draft-signout.ts`, which calls `clearAllDrafts(defaultDraftStorage())`). It runs before the action, removes every `nq-draft:v1:` key from this tab's sessionStorage and leaves other keys alone. Tested in jsdom for `NewquipShell` (drafts removed on submit, kept without a submit); the `AppNav` and MFA forms use the same one-line handler and are not separately tested. Not covered: signing out in another tab (that tab's sessionStorage is separate), a session that simply expires, or closing the tab (sessionStorage then goes anyway).
-
-Draft persistence can still be added to the other forms with `useFormDraft` (needs a server `base` such as an updated_at/hash).
-
 ## Recommendations
 
 1. Keep this layered approach; do not add a popstate/sentinel Back blocker or cancel push/replace navigate events.
-2. (Done: the remaining forms and sign-out are wired; jsdom-tested only.)
+2. (Done: the remaining forms are wired; jsdom-tested only.)
 4. Where a form's main risk is a programmatic `router.push` (e.g. "Save and go"), make sure the code saves first or confirms inline before calling it; the platform offers no safe interception.
 5. Run the lab scenarios with a physical Back button, Firefox and Safari before claiming more than the table states.
+
+## Which navigation methods have been tested, exactly
+
+| Method | Real application (authenticated forms) | Lab app with the shipped hook (Chromium, CDP) | jsdom tests |
+|---|---|---|---|
+| Tab close / reload / address bar (`beforeunload`) | NOT tested | yes | yes (guard on/off) |
+| In-app link click | NOT tested | yes | yes (hook and some forms) |
+| Back / Forward | NOT tested | yes, via CDP history traversal, not a physical button | no |
+| `router.push` / `router.replace` | NOT protected | confirmed unguarded | n/a |
+| Firefox, Safari, mobile browsers | NOT tested | NOT tested | n/a |
+
+So: NO navigation method has been exercised in the real, signed-in application (it needs a Supabase session and data). Back/Forward protection exists only in Chromium. Do not describe the forms as fully protected; the owner's browser UAT must run: edit, then leave via a link, via Back, and by closing the tab, on each form.
