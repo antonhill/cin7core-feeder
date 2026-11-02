@@ -114,18 +114,18 @@ export default function ApprovalsPage() {
             {d.rows.length === 0 ? <p className="text-sm text-slate-600">{d.available ? (activeFilters(f).length ? "Nothing matches these filters. Use Clear filters to see every approval." : "Nothing to show.") : "No approvals yet."}</p> : (
               <>
               <p className="mb-2 text-sm text-slate-700" data-testid="queue-count">{d.rows.length} {d.rows.length === 1 ? "approval" : "approvals"}: <strong>{d.rows.filter((r) => r.status === "PENDING").length} pending</strong>, {d.rows.filter((r) => r.status !== "PENDING").length} completed or returned.</p>
-              <Table>
-                <THead><TR>{["Reference", "Project", "Customer", "Type", "Rev", "Amount (ex VAT)", "Submitted by", "Submitted at", "Stage", "Assigned approver", "Status", "Waiting", "Due"].map((h) => <TH key={h} align={h.startsWith("Amount") ? "right" : "left"}>{h}</TH>)}</TR></THead>
+              <Table scrollLabel="Approvals queue">
+                <THead><TR>{["Reference", "Project", "Customer", "Type", "Amount (ex VAT)", "Submitted", "Stage", "Assigned approver", "Status", "Waiting", "Due"].map((h) => <TH key={h} align={h.startsWith("Amount") ? "right" : "left"}>{h}</TH>)}</TR></THead>
                 <TBody>
                   {d.rows.map((r) => {
                     const late = r.status === "PENDING" && isOverdue(r.due_at, d.nowIso);
                     const mine = r.status === "PENDING" && d.awaitingMeIds.includes(r.id);
                     return (
                       <TR key={r.id} flagged={mine ? "warning" : undefined} className={r.status === "PENDING" ? "" : "bg-slate-50"}>
-                        <TD><Link href={`/approvals/${r.id}`} className="font-medium text-blue-700 underline">{r.doc_ref}</Link>{mine && <div className="mt-1"><Status tone="warning">Your decision</Status></div>}</TD>
-                        <TD>{r.project_ref ?? "-"}</TD><TD>{r.customer_name ?? "-"}</TD><TD>{DOC_TYPE_LABEL[r.doc_type]}</TD><TD>{r.revision}</TD>
+                        <TD><Link href={`/approvals/${r.id}`} className="font-medium text-blue-700 underline">{r.doc_ref}</Link><div className="text-xs text-slate-600">rev {r.revision}</div>{mine && <div className="mt-1"><Status tone="warning">Your decision</Status></div>}</TD>
+                        <TD>{r.project_ref ?? "-"}</TD><TD>{r.customer_name ?? "-"}</TD><TD>{DOC_TYPE_LABEL[r.doc_type]}</TD>
                         <TD align="right" className="whitespace-nowrap tabular-nums">{rand(r.amount_cents)}</TD>
-                        <TD className="text-xs">{r.prepared_by_email}</TD><TD className="whitespace-nowrap text-xs">{formatSast(r.submitted_at)}</TD>
+                        <TD className="text-xs"><div>{r.prepared_by_email}</div><div className="whitespace-nowrap text-slate-600">{formatSast(r.submitted_at)}</div></TD>
                         <TD className="text-xs">{r.stage === "ESTIMATOR" ? "Estimator review" : r.doc_type === "QUOTE" ? "Manager approval" : "Approval"}</TD>
                         <TD className="text-xs">{r.assigned_to_email ?? (r.stage_role ? `any ${r.stage_role.toLowerCase().replace("_", " ")}` : "any manager")}</TD>
                         <TD><Status tone={TONE[r.status]}>{STATUS_LABEL[r.status]}</Status>{r.admin_override && <Status tone="warning">override</Status>}</TD>

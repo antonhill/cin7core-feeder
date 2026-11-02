@@ -100,7 +100,7 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
         <p>Pre-approval amount confirmed: <b>{amountLabel ? `${amountLabel} ex VAT` : "not available yet"}</b></p>
         <p>Confirmation contact: <b>{picked ? `${picked.name}${picked.email ? ` <${picked.email}>` : ""}` : "—"}</b>{picked && <span className="text-slate-600"> · {picked.origin}</span>}</p>
         <div className="mt-2">
-          <Button loading={loading} disabled={!canAct || !ready || !amountLabel || !input || (v.available && !s)} onClick={() => input && onConfirm(input)}>Record pre-approval price confirmation &amp; send to Estimator</Button>
+          <Button className="h-auto! max-w-full whitespace-normal! py-2 text-left" loading={loading} disabled={!canAct || !ready || !amountLabel || !input || (v.available && !s)} onClick={() => input && onConfirm(input)}>Record pre-approval price confirmation &amp; send to Estimator</Button>
         </div>
         {!ready && <p className="mt-1 text-xs text-amber-700">The quote must be READY before the amount can be confirmed.</p>}
         {choice === "default" && !quotationContact && s && <p className="mt-1 text-xs text-amber-700">No quotation contact is chosen yet: choose one in Step 1, or pick a contact above.</p>}

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Select } from "@/components/ui/Select";
+import { statusText } from "@/components/ui/Status";
 import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { formatBps, type ProjectView } from "@/lib/projects/project-view";
 import { Feedback, type RunFn } from "./feedback-context";
@@ -47,7 +48,7 @@ export function ProjectDetailsPanel({ view, isAdmin, run, working, editable }: {
           ["Customer", project.customer_name], ["Project reference", project.project_reference],
           ["Originating quote", project.originating_quote_ref ?? "—"], ["Salesperson", project.salesperson ?? "—"],
           ["Project manager", project.project_manager ?? "Not set"], ["Start date", project.start_date ?? "Not set"],
-          ["Target completion", project.target_completion_date ?? "Not set"], ["Status", project.status],
+          ["Target completion", project.target_completion_date ?? "Not set"], ["Status", statusText(project.status)],
           ["Tax", `${project.tax_rule ?? "—"} (${formatBps(project.tax_rate_bps)})`],
         ].map(([k, v]) => (
           <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="mt-0.5 font-medium text-slate-900">{v}</dd></div>

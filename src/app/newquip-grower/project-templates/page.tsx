@@ -4,7 +4,7 @@ import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
-import { QUOTES_MODULE } from "@/app/module-nav";
+import { SOLUTION_BUILDER_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
@@ -62,7 +62,7 @@ export default function ProjectTemplatesPage() {
 
   return (
     <main className={pageContainerClass("form", "compact")}>
-      <ModuleHeader variant="workspace" module={QUOTES_MODULE}>Project templates</ModuleHeader>
+      <ModuleHeader variant="workspace" module={SOLUTION_BUILDER_MODULE}>Project templates</ModuleHeader>
       <p className="mt-2 text-sm text-slate-600">Reusable billing milestones for new projects. Percentages must total exactly 100%. A project keeps its own copy of the stages it was created with: editing or retiring a template never changes an existing project or an approved quotation.</p>
       <div className="mt-2"><Link className="text-sm text-slate-700 underline" href="/newquip-grower">Back to Solution Builder</Link></div>
       {data?.unavailable && <div className="mt-4"><Alert tone="warning">Project templates activate once the templates database migration (0111) has been applied. Until then new projects use the built-in schedules.</Alert></div>}

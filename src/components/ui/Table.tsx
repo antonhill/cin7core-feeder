@@ -7,11 +7,14 @@
  * actual columns are too different per page to force through one generic
  * row component.
  */
-export function Table({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+export function Table({ children, className = "", scrollLabel }: { children: React.ReactNode; className?: string; /** A wide table: names the keyboard-scrollable region and shows a visible "scroll sideways" cue until the screen is wide enough to need none. */ scrollLabel?: string }) {
   return (
-    <div className="w-full overflow-x-auto rounded-lg border border-slate-200">
-      <table className={`w-full border-collapse text-sm ${className}`}>{children}</table>
-    </div>
+    <>
+      {scrollLabel && <p className="mb-1 text-xs text-slate-600 2xl:hidden" data-testid="table-scroll-cue">Scroll sideways to see every column &rarr;</p>}
+      <div className="w-full overflow-x-auto rounded-lg border border-slate-200" {...(scrollLabel ? { role: "region", "aria-label": scrollLabel, tabIndex: 0 } : {})}>
+        <table className={`w-full border-collapse text-sm ${className}`}>{children}</table>
+      </div>
+    </>
   );
 }
 

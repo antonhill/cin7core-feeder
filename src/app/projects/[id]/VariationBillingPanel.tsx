@@ -79,7 +79,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
                 )}
               </div>
               <div className="text-right">
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">Approved value (ex VAT)</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">{v.status === "APPROVED" ? "Approved value (ex VAT)" : "Proposed value (ex VAT)"}</p>
                 <p className="whitespace-nowrap text-xl font-bold tabular-nums text-slate-900">{formatCents(v.amount_cents)}</p>
               </div>
             </div>
@@ -124,7 +124,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
             )}
             {state && <details className="mt-4 border-t border-slate-200 pt-1" open={legacy}>
               <summary className="cursor-pointer py-1.5 text-sm font-medium text-slate-800">Billing schedule</summary>
-            <p className="mt-1 text-xs text-slate-600">Approved value {formatCents(v.amount_cents)} ex VAT. Percentages are applied to this value in whole cents (largest remainder), so the stages always sum to it exactly.</p>
+            <p className="mt-1 text-xs text-slate-600">{v.status === "APPROVED" ? "Approved" : "Proposed"} value {formatCents(v.amount_cents)} ex VAT. Percentages are applied to this value in whole cents (largest remainder), so the stages always sum to it exactly.</p>
             <div className="mt-3 space-y-2">
               {rows.map((r, i) => (
                 <div key={i} className="flex flex-wrap items-end gap-2">

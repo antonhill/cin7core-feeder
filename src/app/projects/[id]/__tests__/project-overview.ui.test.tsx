@@ -88,6 +88,14 @@ describe("Executive overview - populated", () => {
     expect(onOpenTab).toHaveBeenCalledWith("claims");
   });
 
+  it("D4 F-08: each Needs-attention row stacks chip, text and link below sm (and only lays them out in a row from sm up)", async () => {
+    renderIt();
+    await screen.findByTestId("overview");
+    const rows = within(screen.getByTestId("exceptions")).getAllByRole("listitem");
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) { expect(r.className).toContain("flex-col"); expect(r.className).toContain("sm:flex-row"); }
+  });
+
   it("reloads when the project changes (refreshKey)", async () => {
     const { rerender } = renderIt({ refreshKey: "k1" });
     await screen.findByTestId("overview");

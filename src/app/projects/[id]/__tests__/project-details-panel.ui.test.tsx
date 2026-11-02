@@ -34,6 +34,11 @@ describe("Project details (UAT-029)", () => {
     expect(screen.getAllByText("Not set").length).toBe(3);
     expect(screen.getByRole("button", { name: "Edit details" })).toBeTruthy();
   });
+  it("D4 F-04: the Status shows words (Active), never the raw code (ACTIVE)", () => {
+    render(<Host v={view({ status: "ACTIVE" })} />);
+    const dd = screen.getByText("Status").nextElementSibling as HTMLElement;
+    expect(dd.textContent).toBe("Active");
+  });
   it("a non-administrator cannot edit: no Edit action and no user list is requested", () => {
     render(<Host v={view()} isAdmin={false} />);
     expect(screen.queryByRole("button", { name: "Edit details" })).toBeNull();

@@ -2,7 +2,7 @@ import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ModuleHeader } from "@/app/ModuleHeader";
-import { QUOTES_MODULE } from "@/app/module-nav";
+import { SOLUTION_BUILDER_MODULE } from "@/app/module-nav";
 import { Status } from "@/components/ui/Status";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
@@ -22,8 +22,8 @@ export default async function GrowerTemplatePage() {
   const sections = growerTemplateSections();
   return (
     <main className={pageContainerClass("wide")}>
-      <ModuleHeader variant="workspace" module={QUOTES_MODULE}>
-        <Link href="/newquip-grower" className="text-indigo-700 hover:underline">← Grower quotes</Link> · Template detail
+      <ModuleHeader variant="workspace" module={SOLUTION_BUILDER_MODULE}>
+        <Link href="/newquip-grower" className="text-indigo-700 hover:underline">← Solution Builder quotes</Link> · Template detail
       </ModuleHeader>
 
       <Panel className="mt-6">

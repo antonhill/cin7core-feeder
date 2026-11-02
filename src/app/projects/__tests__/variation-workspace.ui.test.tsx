@@ -93,6 +93,17 @@ describe("Variation workspace (P3)", () => {
     expect(await within(member).findByText("Manager approval required")).toBeTruthy();
     expect(within(member).queryByRole("button", { name: /^Approve/ })).toBeNull();
   });
+  it("D4 F-09: a DRAFT or REJECTED variation's value is labelled Proposed, never Approved; an APPROVED one keeps Approved (same amount)", async () => {
+    setup([variation("v1", "V001", "DRAFT"), variation("v2", "V002", "APPROVED"), variation("v3", "V003", "REJECTED")], { v2: "vp1" });
+    await openVariations();
+    const draft = await record("V001");
+    expect(draft.textContent).toContain("Proposed value (ex VAT)");
+    expect(draft.textContent).not.toContain("Approved value");
+    expect(draft.textContent).toContain(money(500_000_00));
+    const approved = await record("V002");
+    expect(approved.textContent).toContain("Approved value (ex VAT)");
+    expect(approved.textContent).not.toContain("Proposed value");
+  });
   it("a decided variation says who decided and why, and a rejected one is listed apart", async () => {
     setup([variation("v1", "V001", "APPROVED"), variation("v2", "V002", "REJECTED")], {});
     await openVariations();

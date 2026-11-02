@@ -65,6 +65,24 @@ describe("Approvals list: what needs me, pending versus completed", () => {
   });
 });
 
+describe("D4 F-05: the queue table scrolls inside its own labelled region and says so", () => {
+  it("a keyboard-reachable, named scroll region with a visible cue; Rev and Submitted by/at are folded into Reference and Submitted (no data dropped)", async () => {
+    render(<ApprovalsPage />);
+    await screen.findByText("NQ-MINE");
+    const region = screen.getByRole("region", { name: "Approvals queue" });
+    expect(region.getAttribute("tabindex")).toBe("0");
+    expect(region.className).toContain("overflow-x-auto");
+    expect(screen.getByTestId("table-scroll-cue").textContent).toMatch(/Scroll sideways/);
+    const heads = within(region).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(heads).toContain("Submitted");
+    expect(heads).not.toContain("Rev");
+    expect(heads).not.toContain("Submitted by");
+    const row = within(region).getByText("NQ-MINE").closest("tr") as HTMLElement;
+    expect(row.textContent).toContain("rev 1");
+    expect(row.textContent).toContain("prep@x.co");
+  });
+});
+
 describe("admin actions report beside the button and cannot be double-submitted", () => {
   it("Save settings: a fast double click saves once, shows progress then the result next to the button", async () => {
     const d = deferred<{ ok: boolean }>();

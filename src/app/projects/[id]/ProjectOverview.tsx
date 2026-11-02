@@ -149,7 +149,7 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab }: { projectI
         ) : (
           <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white" data-testid="exceptions">
             {o.exceptions.map((e) => (
-              <li key={e.id} className="flex flex-wrap items-start gap-x-4 gap-y-1 px-4 py-3">
+              <li key={e.id} className="flex flex-col items-start gap-1.5 px-4 py-3 sm:flex-row sm:flex-wrap sm:gap-x-4 sm:gap-y-1">
                 <span className="mt-0.5"><Status tone={SEVERITY_TONE[e.severity]}>{SEVERITY_LABEL[e.severity]}</Status></span>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-slate-900">{e.title} <span className="font-normal text-slate-600">· {e.area}</span></p>

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Alert } from "@/components/ui/Alert";
-import { ScopeTag } from "@/components/ui/Status";
+import { ScopeTag, statusText } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
@@ -56,7 +56,7 @@ export function ConsolidatedReportPanel({ view }: { view: ProjectView }) {
                   <TD>{s.label} {s.scope === "VARIATION" && <ScopeTag scope="VARIATION" />}{!s.billingStarted && <div className="text-xs text-amber-700">billing not started</div>}</TD>
                   <TD align="right" className="tabular-nums">{formatCents(s.contractCents)}</TD><TD align="right" className="tabular-nums">{formatCents(s.invoicedCents)}</TD>
                   <TD className="font-mono text-xs">{s.invoiceNumbers.join(", ") || "-"}</TD><TD align="right" className="tabular-nums">{formatCents(s.remainingCents)}</TD>
-                  <TD className="text-xs">{s.claims.length === 0 ? "-" : s.claims.map((c) => `${c.claimNumber} ${c.status}${c.invoiceNumber ? ` (${c.invoiceNumber})` : ""} ${formatCents(c.subtotalCents)}`).join("; ")}</TD>
+                  <TD className="text-xs">{s.claims.length === 0 ? "-" : s.claims.map((c) => `${c.claimNumber} ${statusText(c.status)}${c.invoiceNumber ? ` (${c.invoiceNumber})` : ""} ${formatCents(c.subtotalCents)}`).join("; ")}</TD>
                 </TR>))}</TBody>
             </Table>
           </div>
