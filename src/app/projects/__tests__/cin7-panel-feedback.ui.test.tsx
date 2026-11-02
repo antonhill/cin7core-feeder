@@ -19,17 +19,20 @@ const view = { project: { id: "p1", customer_name: "Spark", originating_quote_re
 const creation = { id: "cr1", creation_state: "CREATED", cin7_sale_number: "SO-00028", last_error_message: "The Sale was created but does not read back as planned; it was NOT linked.", last_error_code: "VERIFICATION_FAILED" };
 const status = (over: Record<string, unknown> = {}) => ({ ok: true, data: { gates: { orgEnabled: true, isManager: true, writesEnabled: true }, creation, linked: false, scopeItems: [], saleLines: [], blockers: [], excluded: [], ...over } });
 
+// The initial record arrives with the Commercial tab (one round trip); the panel itself only re-reads after an action.
+let initial: ReturnType<typeof status>["data"] | null = null;
 function Host() {
   const acts = useKeyedActions();
   const run = (fn: () => Promise<{ ok: boolean; error?: string; data?: unknown }>, done?: string, key = "page", opts?: { success?: (v: unknown, r: { data?: unknown }) => string }) =>
     acts.run(key, async () => ({ ...(await fn()) }), { success: (r) => (opts?.success ? opts.success(null, r) : done ?? "Done.") });
-  return <ProjectFeedbackProvider value={acts.stateOf}><Cin7SaleCreationPanel view={view} run={run} working={acts.anyPending} /></ProjectFeedbackProvider>;
+  return <ProjectFeedbackProvider value={acts.stateOf}><Cin7SaleCreationPanel view={view} run={run} working={acts.anyPending} boot={initial as never} /></ProjectFeedbackProvider>;
 }
 const reconcileBtn = () => screen.getByRole("button", { name: /Reconcile with Cin7/ }) as HTMLButtonElement;
 const deferred = <T,>() => { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; };
 
 beforeEach(() => {
   vi.mocked(c7.getCin7SaleCreationStatusAction).mockResolvedValue(status() as never);
+  initial = status().data;
   vi.mocked(c7.getCin7ReferenceOptionsAction).mockResolvedValue({ ok: false, error: "n/a" } as never);
 });
 afterEach(() => { cleanup(); vi.clearAllMocks(); });

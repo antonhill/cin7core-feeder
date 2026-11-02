@@ -23,6 +23,8 @@ import { DeliveryAllocationPanel } from "./DeliveryAllocationPanel";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { Cin7PostingPanel } from "./Cin7PostingPanel";
 import { Cin7SaleCreationPanel } from "./Cin7SaleCreationPanel";
+import { Block, WorkspaceSkeleton } from "./LoadingSkeletons";
+import { getCommercialBootAction, type Cin7PostingStatus, type Cin7SaleCreationStatus } from "../cin7-actions";
 import { Feedback, ProjectFeedbackProvider } from "./feedback-context";
 import { PhysicalPanel } from "./PhysicalPanel";
 import { ProcurementPanel } from "./ProcurementPanel";
@@ -33,7 +35,6 @@ import {
   cancelDraftClaimAction,
   createClaimDraftAction,
   getProjectAction,
-  getViewerPermissionsAction,
   previewClaimAction,
   recalculateStaleDraftAction,
   recordProgressAction,
@@ -154,9 +155,16 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   const acts = useKeyedActions();
   const isWorking = isWorkingT || acts.anyPending;
 
+  // Display only: every mutating action re-checks the owner/admin role on the server.
+  // LOADING until known, so privileged controls (and the non-admin explanation) never flash; any failure => MEMBER (fail closed).
+  const [perm, setPerm] = useState<ViewerPermission>("loading");
+  const [newquip, setNewquip] = useState(false); // NewQuip-only tabs (Variations, Products & Fulfilment); hidden until the server confirms
   function load() {
     startLoading(async () => {
-      const res = await getProjectAction(id);
+      // The project and the viewer's DISPLAY permissions come back from one server round trip (they were two serial ones); the server still checks everything.
+      let res: Awaited<ReturnType<typeof getProjectAction>>;
+      try { res = await getProjectAction(id); } catch { setPerm("member"); return setError("The project could not be loaded."); }
+      setPerm(res.ok && res.viewer?.canApprove ? "admin" : "member"); setNewquip(Boolean(res.ok && res.viewer?.newquip)); // no answer => member / no NewQuip tabs (fail closed)
       // An internal variation billing scope is not for ordinary users: send them to the project it belongs to.
       if (!res.ok && res.redirectTo && !embedded) return router.replace(`/projects/${res.redirectTo}`);
       if (!res.ok) return setError(res.error ?? "Unknown error");
@@ -166,13 +174,22 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- load is re-created every render; it only needs to re-run when the project id changes
   useEffect(load, [id]);
-  // Display only: every mutating action re-checks the owner/admin role on the server.
-  // LOADING until known, so privileged controls (and the non-admin explanation) never flash; any failure => MEMBER (fail closed).
-  const [perm, setPerm] = useState<ViewerPermission>("loading");
-  const [newquip, setNewquip] = useState(false); // NewQuip-only tabs (Variations, Products & Fulfilment); hidden until the server confirms
+
+  // Commercial / Claims: the Sale-creation record and the invoice-posting state arrive together (ONE round trip instead of three) every time the tab is opened. It is
+  // deliberately NOT kept while the user is on another tab: the panels change this state themselves (create a Sale, post an invoice) and a remounted panel must never
+  // start from an older, more permissive picture. It is also tied to the project it was read for, so it can never be shown for another one.
+  const [commercial, setCommercial] = useState<{ projectId: string; creation: Cin7SaleCreationStatus | null; posting: Cin7PostingStatus | null } | null>(null);
+  const commercialNow = tab === "claims" && commercial?.projectId === id ? commercial : null;
+  /** Every tab change goes through here so that leaving Commercial / Claims drops its cached state. */
+  const goTab = (t: Tab) => { if (t !== "claims") setCommercial(null); setTab(t); };
   useEffect(() => {
-    getViewerPermissionsAction().then((r) => { setPerm(r.ok && r.data?.canApprove ? "admin" : "member"); setNewquip(Boolean(r.ok && r.data?.newquip)); });
-  }, []);
+    if (tab !== "claims" || commercialNow) return;
+    let live = true;
+    getCommercialBootAction(id)
+      .then((b) => { if (live) setCommercial({ projectId: id, creation: b.ok && b.data ? b.data.creation : null, posting: b.ok && b.data ? b.data.posting : null }); })
+      .catch(() => { if (live) setCommercial({ projectId: id, creation: null, posting: null }); });
+    return () => { live = false; };
+  }, [tab, id, commercialNow]);
 
   /** Re-reads the authoritative project state (not a transition: callers await it). A failed read keeps the view on screen. */
   async function reloadView(): Promise<ProjectView | null> {
@@ -239,7 +256,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
     ) : (
       <main className="mx-auto w-full max-w-[1480px] px-6 py-12">
         <ModuleHeader module={PROJECTS_MODULE}>{isLoading ? "Loading project…" : "Project"}</ModuleHeader>
-        {error && <div className="mt-6"><Alert tone="danger">{error}</Alert></div>}
+        {error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <WorkspaceSkeleton />}
       </main>
     );
   }
@@ -278,7 +295,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
           return (
             <button
               key={t.value}
-              onClick={() => setTab(t.value)}
+              onClick={() => goTab(t.value)}
               aria-current={tab === t.value ? "page" : undefined}
               className={`flex items-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
                 tab === t.value ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
@@ -320,7 +337,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             </div>
           </section>
 
-          {!embedded && newquip && view.project.billing_scope !== "VARIATION" && <ProjectOverview projectId={id} refreshKey={previewKey(view)} onOpenTab={(t) => { setTab(t); window.scrollTo({ top: 0, behavior: "smooth" }); }} />}
+          {!embedded && newquip && view.project.billing_scope !== "VARIATION" && <ProjectOverview projectId={id} refreshKey={previewKey(view)} onOpenTab={(t) => { goTab(t); window.scrollTo({ top: 0, behavior: "smooth" }); }} />}
 
           <div>
             <h2 className="mb-3 text-sm font-semibold text-slate-700">Commercial position (ex VAT)</h2>
@@ -511,8 +528,17 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
       {tab === "claims" && (
         <div className="mt-6 space-y-6">
           <OpeningCommitmentsPanel key={`${view.openingCommitments.length}-${view.claims.length}`} view={view} isAdmin={perm === "admin"} run={run} working={isWorking} />
-          <Cin7SaleCreationPanel view={view} run={run} working={isWorking} />
-          <Cin7PostingPanel view={view} run={run} working={isWorking} />
+          {commercialNow ? (
+            <>
+              <Cin7SaleCreationPanel key={commercialNow.projectId} view={view} run={run} working={isWorking} boot={commercialNow.creation} />
+              <Cin7PostingPanel key={commercialNow.projectId} view={view} run={run} working={isWorking} boot={commercialNow.posting} />
+            </>
+          ) : (
+            <div role="status" aria-live="polite" aria-busy="true" data-testid="commercial-loading" className="min-h-40 rounded-2xl border border-slate-200 bg-white p-5">
+              <p className="text-sm text-slate-500">Loading the Cin7 Sale and invoice status…</p>
+              <Block className="mt-4 h-24 w-full" />
+            </div>
+          )}
           <Panel>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>

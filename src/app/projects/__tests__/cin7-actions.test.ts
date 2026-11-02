@@ -129,3 +129,42 @@ describe("Sale creation is pinned to the expected NewQuip POC Cin7 instance", ()
     expect(vi.mocked(saleStore.createSaleForProject).mock.calls[0][2]).toMatchObject({ writesEnabled: false }); vi.unstubAllEnvs();
   });
 });
+
+describe("getCommercialBootAction: the Commercial tab's Sale + invoice state in one guarded read", () => {
+  it("re-establishes module access and billing scope itself, once, before reading anything", async () => {
+    const scope = await import("@/lib/projects/scope-access");
+    await actions.getCommercialBootAction("p1");
+    expect(requireModuleAccess).toHaveBeenCalledTimes(1);
+    expect(scope.guardBillingScope).toHaveBeenCalledTimes(1);
+    vi.clearAllMocks();
+    vi.mocked(requireModuleAccess).mockRejectedValue(new Error("You don't have access to this feature."));
+    const denied = await actions.getCommercialBootAction("p1");
+    expect(denied).toEqual({ ok: false, error: "You don't have access to this feature." });
+    expect(store.loadSaleLink).not.toHaveBeenCalled();
+    expect(store.listPostings).not.toHaveBeenCalled();
+  });
+  it("an internal billing scope the caller may not open is refused with nothing read", async () => {
+    const scope = await import("@/lib/projects/scope-access");
+    vi.mocked(scope.guardBillingScope).mockRejectedValueOnce(new Error("Open the original project."));
+    const r = await actions.getCommercialBootAction("p1");
+    expect(r.ok).toBe(false);
+    expect(store.listPostings).not.toHaveBeenCalled();
+  });
+  it("returns the same posting state as the single action; a failure in one half does not hide the other", async () => {
+    const single = await actions.getCin7PostingStatusAction("p1");
+    const boot = await actions.getCommercialBootAction("p1");
+    expect(boot.ok).toBe(true);
+    expect(boot.data!.posting).toEqual(single.data);
+    // the creation half fails (no scope can be read from the stub db) while the posting half still answers
+    expect(boot.data!.creation).toBeNull();
+    vi.mocked(store.listPostings).mockRejectedValueOnce(new Error("db down"));
+    const again = await actions.getCommercialBootAction("p1");
+    expect(again.ok).toBe(true);
+    expect(again.data!.posting).toBeNull();
+  });
+  it("a plain member gets display gates with isManager=false (the manager check is the server's, not the page's)", async () => {
+    vi.mocked(requireOrgAdmin).mockRejectedValue(new Error("not admin"));
+    const r = await actions.getCommercialBootAction("p1");
+    expect(r.data!.posting!.gates.isManager).toBe(false);
+  });
+});

@@ -42,6 +42,8 @@ export interface ActionResult<T> {
   data?: T;
   /** Set when the caller asked for an internal billing scope they may not open: the project to show instead. */
   redirectTo?: string;
+  /** getProjectAction only: DISPLAY permissions of the caller, returned with the project so the page needs no second round trip. Every mutating action re-checks on the server. */
+  viewer?: { canApprove: boolean; newquip: boolean };
 }
 
 export interface ClaimPreviewResult {
@@ -77,7 +79,8 @@ export async function getProjectAction(projectId: string): Promise<ActionResult<
     await guardBillingScope(createServiceRoleClient(), orgId, projectId, admin);
     const view = await loadProjectView(createServiceRoleClient(), orgId, projectId);
     if (!view) return { ok: false, error: "Project not found." };
-    return { ok: true, data: redactVariationCosts(view, admin) };
+    // `admin` is the same owner/admin check getViewerPermissionsAction makes; `newquip` is the organisation rollout flag. Display only.
+    return { ok: true, data: redactVariationCosts(view, admin), viewer: { canApprove: admin, newquip: isNewquipPocOrg(orgId) } };
   } catch (e) {
     if (e instanceof BillingScopeAccessError) return { ok: false, error: e.message, ...(e.parentProjectId ? { redirectTo: e.parentProjectId } : {}) };
     return { ok: false, error: message(e) };

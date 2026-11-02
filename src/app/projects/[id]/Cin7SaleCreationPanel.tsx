@@ -24,9 +24,9 @@ import { getCin7ReferenceOptionsAction, type Cin7ReferenceOptions, createCin7Sal
 // only after reading it back and verifying it matches the plan exactly.
 const TONE: Record<string, BadgeTone> = { PENDING: "warning", CREATED: "warning", RECONCILED: "success", FAILED_CONFIRMED_NO_WRITE: "warning", FAILED_UNCERTAIN: "danger" };
 
-export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectView; run: RunFn; working: boolean }) {
+export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: ProjectView; run: RunFn; working: boolean; boot: Cin7SaleCreationStatus | null }) {
   const projectId = view.project.id;
-  const [st, setSt] = useState<Cin7SaleCreationStatus | null>(null);
+  const [st, setSt] = useState<Cin7SaleCreationStatus | null>(boot); // the initial record arrives with the tab (one round trip for the whole Commercial tab)
   // A disposable P0 project already knows its customer and location (entered when it was prepared); everything else stays explicit.
   const isP0Project = isP0Disposable(view.project.originating_quote_ref);
   const [customer, setCustomer] = useState(view.project.customer_name ?? "");
@@ -49,11 +49,15 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
   const [multi, setMulti] = useState<Record<string, PickedProduct[]>>({});
   const [res, setRes] = useState<Record<string, { sku: string; quantity: string; reason: string }>>({});
 
+  // The Cin7 location / account lists are a LIVE Cin7 read (credentials + paged requests). They are only the options of the Create form, so they are fetched only when
+  // that form is actually shown: a manager, on a project that has no Sale yet. They were read on every open of the tab, for every project and every variation.
+  const needsLists = !!st && st.gates.orgEnabled && st.gates.isManager && !st.linked && !st.creation;
   useEffect(() => {
+    if (!needsLists) return;
     let live = true;
     getCin7ReferenceOptionsAction(projectId).then((r) => { if (!live) return; if (r.ok && r.data) { setRefs(r.data); setRefsError(null); } else setRefsError(r.error ?? "The Cin7 lists could not be loaded."); });
     return () => { live = false; };
-  }, [projectId]);
+  }, [projectId, needsLists]);
   /** Re-reads the creation record. Null when the read failed (callers must then treat the outcome as unknown). */
   const reload = useCallback(async (): Promise<Cin7SaleCreationStatus | null> => {
     try {
@@ -61,11 +65,6 @@ export function Cin7SaleCreationPanel({ view, run, working }: { view: ProjectVie
       if (r.ok && r.data) { setSt(r.data); setUncertain(false); return r.data; }
     } catch { /* treated as a failed read below */ }
     return null;
-  }, [projectId]);
-  useEffect(() => {
-    let live = true;
-    getCin7SaleCreationStatusAction(projectId).then((r) => { if (live && r.ok && r.data) setSt(r.data); });
-    return () => { live = false; };
   }, [projectId]);
 
   if (!st || !st.gates.orgEnabled) return null;
