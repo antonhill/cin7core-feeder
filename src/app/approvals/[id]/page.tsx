@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Select } from "@/components/ui/Select";
+import { DisabledReason } from "@/components/ApprovalDisabledReason";
 import { applyDecision, showDecisionPanel } from "@/lib/approvals/detail-state";
 import { formatSast, isOverdue, waitingLabel } from "@/lib/approvals/time";
 import { DOC_TYPE_LABEL, STATUS_LABEL, type ApprovalAction, type ApprovalStatus } from "@/lib/approvals/types";
@@ -60,6 +61,16 @@ export default function ApprovalDetailPage() {
     if (action === "APPROVE" && d.can.needsOverride && n < 10) return "An override needs a written reason of at least 10 characters.";
     return undefined;
   };
+  // Why a control is disabled, in words (the server stays the authority; these mirror what the page already knows, naming no one).
+  const busyWhy = busy ? "A decision is being recorded. Please wait for it to finish." : undefined;
+  const confirmWhy = (action: ApprovalAction | null): string | undefined => {
+    if (!action) return undefined;
+    if (busy) return busyWhy;
+    if (action === "APPROVE" && d.can.needsOverride && !override) return "Tick the administrator override confirmation to approve your own submission.";
+    if ((action === "RETURN" || action === "REJECT") && reason.trim().length < 3) return action === "RETURN" ? "Enter what must change (at least 3 characters) to return it." : "Enter a reason (at least 3 characters) to reject it.";
+    return undefined;
+  };
+  const overrideReasonHint = mode === "APPROVE" && d.can.needsOverride && reason.trim().length < 10 ? "An override needs a written reason of at least 10 characters before it can be recorded." : undefined;
   const decide = async (action: ApprovalAction) => {
     if (r.status !== "PENDING") return; // a decided request can never be decided again from this page
     setReasonTouched(true);
@@ -137,15 +148,17 @@ export default function ApprovalDetailPage() {
           <div id="decision" tabIndex={-1} className="focus:outline-none"><PanelTitle>Decision</PanelTitle></div>
           {d.can.needsOverride && <div className="mt-2"><Alert tone="warning">You prepared this submission. You can approve it only as an explicit administrator override with a written reason, which is permanently recorded. You can still return or reject it.</Alert></div>}
           <div className="mt-3 flex flex-wrap gap-2">
-            {d.can.decide && <Button aria-pressed={mode === "APPROVE"} disabled={busy} onClick={() => setMode("APPROVE")}>Approve…</Button>}
-            {d.can.decide && <Button variant="secondary" aria-pressed={mode === "RETURN"} disabled={busy} onClick={() => setMode("RETURN")}>Return for changes…</Button>}
-            {d.can.decide && <Button variant="destructive" aria-pressed={mode === "REJECT"} disabled={busy} onClick={() => setMode("REJECT")}>Reject…</Button>}
-            {d.can.withdraw && <Button variant="secondary" aria-pressed={mode === "WITHDRAW"} disabled={busy} onClick={() => setMode("WITHDRAW")}>Withdraw…</Button>}
+            {d.can.decide && <Button aria-pressed={mode === "APPROVE"} aria-describedby={busy ? "decision-busy-why" : undefined} disabled={busy} onClick={() => setMode("APPROVE")}>Approve…</Button>}
+            {d.can.decide && <Button variant="secondary" aria-pressed={mode === "RETURN"} aria-describedby={busy ? "decision-busy-why" : undefined} disabled={busy} onClick={() => setMode("RETURN")}>Return for changes…</Button>}
+            {d.can.decide && <Button variant="destructive" aria-pressed={mode === "REJECT"} aria-describedby={busy ? "decision-busy-why" : undefined} disabled={busy} onClick={() => setMode("REJECT")}>Reject…</Button>}
+            {d.can.withdraw && <Button variant="secondary" aria-pressed={mode === "WITHDRAW"} aria-describedby={busy ? "decision-busy-why" : undefined} disabled={busy} onClick={() => setMode("WITHDRAW")}>Withdraw…</Button>}
           </div>
+          <div className="mt-2"><DisabledReason id="decision-busy-why">{busyWhy}</DisabledReason></div>
           {mode && (
             <div className="mt-3 max-w-2xl space-y-2 border-l-4 border-indigo-600 bg-slate-50 py-3 pl-4 pr-3 text-sm">
               <p>{mode === "APPROVE" ? "Approve" : mode === "RETURN" ? "Return" : mode === "REJECT" ? "Reject" : "Withdraw"} {DOC_TYPE_LABEL[r.doc_type].toLowerCase()} <strong>{r.doc_ref}</strong>, revision {r.revision}, <strong>{rand(r.amount_cents)}</strong> ex VAT, submitted {formatSast(r.submitted_at)}?</p>
-              <Input label={mode === "RETURN" ? "What must change? (required)" : mode === "REJECT" ? "Reason for rejection (required)" : mode === "APPROVE" && d.can.needsOverride ? "Override reason (required)" : "Comment (optional)"} value={reason} onChange={(e) => { setReason(e.target.value); setReasonTouched(true); }} error={reasonError(mode)} />
+              <Input {...(overrideReasonHint && !reasonError(mode) ? { "aria-describedby": "override-reason-why" } : {})} label={mode === "RETURN" ? "What must change? (required)" : mode === "REJECT" ? "Reason for rejection (required)" : mode === "APPROVE" && d.can.needsOverride ? "Override reason (required)" : "Comment (optional)"} value={reason} onChange={(e) => { setReason(e.target.value); setReasonTouched(true); }} error={reasonError(mode)} />
+              {!reasonError(mode) && <DisabledReason id="override-reason-why">{overrideReasonHint}</DisabledReason>}
               {mode === "RETURN" && d.can.returnToEstimator && (
                 <Select label="Return to" value={returnTo} onChange={(e) => setReturnTo(e.target.value as "ESTIMATOR" | "PREPARER")}>
                   <option value="ESTIMATOR">The estimator (their sign-off is withdrawn and must be given again)</option>
@@ -154,9 +167,10 @@ export default function ApprovalDetailPage() {
               )}
               {mode === "APPROVE" && d.can.needsOverride && <label className="flex items-center gap-2"><input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} /> I confirm this is an administrator override of separation of duties</label>}
               <div className="flex gap-2">
-                <Button loading={acts.isPending("decision")} disabled={busy || (mode === "APPROVE" && d.can.needsOverride && !override) || ((mode === "RETURN" || mode === "REJECT") && reason.trim().length < 3)} onClick={() => decide(mode)}>Confirm</Button>
-                <Button variant="secondary" disabled={busy} onClick={() => { setMode(null); setReasonTouched(false); }}>Cancel</Button>
+                <Button loading={acts.isPending("decision")} aria-describedby={confirmWhy(mode) ? "confirm-why" : undefined} disabled={busy || (mode === "APPROVE" && d.can.needsOverride && !override) || ((mode === "RETURN" || mode === "REJECT") && reason.trim().length < 3)} onClick={() => decide(mode)}>Confirm</Button>
+                <Button variant="secondary" aria-describedby={busy ? "confirm-why" : undefined} disabled={busy} onClick={() => { setMode(null); setReasonTouched(false); }}>Cancel</Button>
               </div>
+              <DisabledReason id="confirm-why">{confirmWhy(mode)}</DisabledReason>
               <ActionFeedback state={acts.stateOf("decision")} />
               <p className="text-xs text-slate-700">Approving records the decision only. It does not create or authorise anything in Cin7, and does not skip the existing stock, claim-posting or variation-billing controls.</p>
             </div>
@@ -164,9 +178,10 @@ export default function ApprovalDetailPage() {
           {d.can.reassign && (
             <div className="mt-4 flex flex-wrap items-end gap-2">
               <Select label="Reassign to" value={newApprover} onChange={(e) => setNewApprover(e.target.value)}><option value="">Choose an approver…</option>{d.managers.filter((m) => m !== r.assigned_to_email).map((m) => <option key={m} value={m}>{m}</option>)}</Select>
-              <Button size="sm" variant="secondary" disabled={!newApprover || busy} onClick={async () => { await acts.run("reassign", () => reassignApprovalAction(r.id, newApprover, r.version), { pending: "Reassigning…", success: "Reassigned.", reconcile: async () => { const x = await getApprovalDetailAction(id); if (!x.ok || !x.data) return "unreadable"; return x.data.request.assigned_to_email === newApprover ? "done" : "unknown"; } }); load(); }}>Reassign</Button>
+              <Button size="sm" variant="secondary" aria-describedby={!newApprover || busy ? "reassign-why" : undefined} disabled={!newApprover || busy} onClick={async () => { await acts.run("reassign", () => reassignApprovalAction(r.id, newApprover, r.version), { pending: "Reassigning…", success: "Reassigned.", reconcile: async () => { const x = await getApprovalDetailAction(id); if (!x.ok || !x.data) return "unreadable"; return x.data.request.assigned_to_email === newApprover ? "done" : "unknown"; } }); load(); }}>Reassign</Button>
             </div>
           )}
+          {d.can.reassign && <DisabledReason id="reassign-why">{busy ? busyWhy : !newApprover ? "Choose an approver above to enable Reassign." : undefined}</DisabledReason>}
           {d.can.reassign && <ActionFeedback state={acts.stateOf("reassign")} />}
         </Panel>
       )}

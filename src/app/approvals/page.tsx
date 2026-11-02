@@ -13,11 +13,12 @@ import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
-import { Select } from "@/components/ui/Select";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatSast, isOverdue, waitingLabel } from "@/lib/approvals/time";
-import { DOC_TYPE_LABEL, STATUS_LABEL, type ApprovalDocType, type ApprovalNotificationRow, type ApprovalStatus } from "@/lib/approvals/types";
-import { activeFilters, CLEARED_FILTERS, type QueueFilters, type QueueSort } from "@/lib/approvals/queue";
+import { DOC_TYPE_LABEL, STATUS_LABEL, type ApprovalNotificationRow, type ApprovalStatus } from "@/lib/approvals/types";
+import { activeFilters, type QueueFilters, type QueueSort } from "@/lib/approvals/queue";
+import { DEFAULT_QUEUE_FILTERS, DEFAULT_QUEUE_SORT } from "@/lib/approvals/filter-view";
+import { ApprovalQueueFilters } from "@/components/ApprovalQueueFilters";
 import { displayEmailStatus, EMAIL_STATUS_NOTE, type EmailDisplayStatus } from "@/lib/approvals/email-policy";
 import { getApprovalsDashboardAction, getEmailStatusAction, getMyNotificationsAction, retryEmailAction, saveApprovalSettingsAction, sendPendingNowAction, sendTestEmailAction, type ApprovalsDashboard, type DispatchSummary } from "./actions";
 
@@ -29,8 +30,8 @@ const TONE: Record<ApprovalStatus, BadgeTone> = { PENDING: "warning", APPROVED: 
 export default function ApprovalsPage() {
   const [d, setD] = useState<ApprovalsDashboard | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [f, setF] = useState<QueueFilters>({ status: "PENDING" });
-  const [sort, setSort] = useState<QueueSort>("submitted_asc");
+  const [f, setF] = useState<QueueFilters>({ ...DEFAULT_QUEUE_FILTERS });
+  const [sort, setSort] = useState<QueueSort>(DEFAULT_QUEUE_SORT);
   const [notes, setNotes] = useState<ApprovalNotificationRow[] | null>(null);
   const [tab, setTab] = useState<"queue" | "notifications" | "admin">("queue");
   const [settings, setSettings] = useState({ targetBusinessDays: "2", reminderEveryHours: "24", maxReminders: "3", escalationEmail: "" });
@@ -67,11 +68,11 @@ export default function ApprovalsPage() {
           <Button size="sm" onClick={() => { setTab("queue"); setF({ mine: true, status: "PENDING" }); }}>Show what needs my decision</Button>
         </div>
       )}
-      <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4 xl:grid-cols-7" data-testid="approvals-summary">
+      <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-1.5 sm:grid-cols-4 xl:grid-cols-7" data-testid="approvals-summary">
         {cards.map(([k, v, tone]) => (
-          <div key={k}>
+          <div key={k} className="flex items-baseline justify-between gap-2 sm:block">
             <dt className="text-xs text-slate-700">{k}</dt>
-            <dd className={`mt-0.5 text-xl font-semibold tabular-nums ${tone === "danger" ? "text-red-700" : "text-slate-900"}`}>{v}</dd>
+            <dd className={`whitespace-nowrap text-base font-semibold tabular-nums sm:mt-0.5 sm:text-xl ${tone === "danger" ? "text-red-700" : "text-slate-900"}`}>{v}</dd>
           </div>
         ))}
       </dl>
@@ -88,30 +89,9 @@ export default function ApprovalsPage() {
 
       {tab === "queue" && (
         <Panel className="mt-3">
-          <div className="grid gap-3 md:grid-cols-4 xl:grid-cols-6">
-            <div className="col-span-full flex flex-wrap items-center gap-2 text-xs">
-              {activeFilters(f, (s) => STATUS_LABEL[s]).length === 0
-                ? <span className="text-slate-600">No filters: showing every approval.</span>
-                : <>
-                    <span className="font-medium text-slate-700">Active filters:</span>
-                    {activeFilters(f, (s) => STATUS_LABEL[s]).map((a) => <span key={a.key} className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-indigo-800">{a.label}</span>)}
-                    <Button size="sm" variant="secondary" onClick={() => setF(CLEARED_FILTERS)}>Clear filters</Button>
-                  </>}
-            </div>
-            <Select label="Show" value={f.mine ? "mine" : "all"} onChange={(e) => setF({ ...f, mine: e.target.value === "mine" })}><option value="all">All approvals</option><option value="mine">My approvals (assigned to me)</option></Select>
-            <Select label="Type" value={f.docType ?? ""} onChange={(e) => setF({ ...f, docType: (e.target.value || undefined) as ApprovalDocType | undefined })}><option value="">All types</option>{(["QUOTE", "CLAIM", "VARIATION"] as const).map((t) => <option key={t} value={t}>{DOC_TYPE_LABEL[t]}</option>)}</Select>
-            <Select label="Status" value={f.status ?? "ANY"} onChange={(e) => setF({ ...f, status: e.target.value as ApprovalStatus | "ANY" })}><option value="ANY">Any status</option>{(Object.keys(STATUS_LABEL) as ApprovalStatus[]).map((k) => <option key={k} value={k}>{STATUS_LABEL[k]}</option>)}</Select>
-            <Input label="Customer" value={f.customer ?? ""} onChange={(e) => setF({ ...f, customer: e.target.value })} />
-            <Input label="Project / reference" value={f.project ?? ""} onChange={(e) => setF({ ...f, project: e.target.value })} />
-            <Input label="Submitted by" value={f.preparer ?? ""} onChange={(e) => setF({ ...f, preparer: e.target.value })} />
-            <Input label="Assigned manager" value={f.assignee ?? ""} onChange={(e) => setF({ ...f, assignee: e.target.value })} />
-            <Input label="Submitted from" type="date" value={f.from?.slice(0, 10) ?? ""} onChange={(e) => setF({ ...f, from: e.target.value ? `${e.target.value}T00:00:00+02:00` : undefined })} />
-            <Input label="Submitted to" type="date" value={f.to?.slice(0, 10) ?? ""} onChange={(e) => setF({ ...f, to: e.target.value ? `${e.target.value}T23:59:59+02:00` : undefined })} />
-            <Select label="Sort" value={sort} onChange={(e) => setSort(e.target.value as QueueSort)}><option value="submitted_asc">Oldest submission first</option><option value="submitted_desc">Newest submission first</option><option value="waiting_desc">Longest waiting</option><option value="amount_desc">Amount, high to low</option><option value="amount_asc">Amount, low to high</option></Select>
-            <label className="flex items-end gap-2 pb-2 text-sm text-slate-700"><input type="checkbox" checked={!!f.overdueOnly} onChange={(e) => setF({ ...f, overdueOnly: e.target.checked })} /> Overdue only</label>
-          </div>
+          <ApprovalQueueFilters f={f} setF={setF} sort={sort} setSort={setSort} />
           <div className="mt-4">
-            {d.rows.length === 0 ? <p className="text-sm text-slate-600">{d.available ? (activeFilters(f).length ? "Nothing matches these filters. Use Clear filters to see every approval." : "Nothing to show.") : "No approvals yet."}</p> : (
+            {d.rows.length === 0 ? <p className="text-sm text-slate-600">{d.available ? (activeFilters(f).length ? "Nothing matches these filters. Use Clear filters to return to the default view, or set Status to Any status." : "Nothing to show.") : "No approvals yet."}</p> : (
               <>
               <p className="mb-2 text-sm text-slate-700" data-testid="queue-count">{d.rows.length} {d.rows.length === 1 ? "approval" : "approvals"}: <strong>{d.rows.filter((r) => r.status === "PENDING").length} pending</strong>, {d.rows.filter((r) => r.status !== "PENDING").length} completed or returned.</p>
               <Table scrollLabel="Approvals queue">
