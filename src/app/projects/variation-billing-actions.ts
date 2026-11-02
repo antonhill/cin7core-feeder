@@ -27,7 +27,9 @@ export interface VariationBillingState {
   schedules: Record<string, Array<{ name: string; bps: number }>>;
   billingProjectByVariation: Record<string, string>;
   /** variation id -> the Cin7 Sale number already stored for its billing project; absent when none is linked. Read from stored links only. */
-  saleNumberByVariation: Record<string, string>;
+  saleNumberByVariation: Record<string, string | null>;
+  /** True when the Sale-number lookup itself failed: the panel must then say the number is unavailable, never that no Sale exists. */
+  saleLookupFailed?: boolean;
 }
 export interface SchedulePercentRow { name: string; percent: string }
 
@@ -48,10 +50,17 @@ export async function getVariationBillingAction(projectId: string): Promise<Vari
       const vid = consolidated.base.variations.find((v) => v.code === s.variationCode)?.id;
       if (s.scope === "VARIATION" && vid) billingProjectByVariation[vid] = s.projectId;
     }
-    // The Sale number is a convenience read: if it cannot be loaded the billing state (and its decision controls) must still load, so a failure degrades to "no number shown".
-    const numbers = await loadSaleNumbersByProject(db, orgId, Object.values(billingProjectByVariation)).catch(() => ({} as Record<string, string>));
-    const saleNumberByVariation = saleNumbersByVariation(billingProjectByVariation, numbers);
-    return { ok: true, data: { consolidated: { ...consolidated, closureBlockers: admin ? consolidated.closureBlockers : [] }, schedules, billingProjectByVariation, saleNumberByVariation } };
+    // The Sale number is a convenience read: if it cannot be loaded the billing state (and its decision controls) must still load, but the panel is told so and says
+    // "unavailable" rather than "not created yet".
+    let saleNumberByVariation: Record<string, string | null> = {};
+    let saleLookupFailed = false;
+    try {
+      saleNumberByVariation = saleNumbersByVariation(billingProjectByVariation, await loadSaleNumbersByProject(db, orgId, Object.values(billingProjectByVariation)));
+    } catch (e) {
+      saleLookupFailed = true;
+      console.error("variation billing: Cin7 Sale number lookup failed", message(e));
+    }
+    return { ok: true, data: { consolidated: { ...consolidated, closureBlockers: admin ? consolidated.closureBlockers : [] }, schedules, billingProjectByVariation, saleNumberByVariation, saleLookupFailed } };
   } catch (e) {
     return { ok: false, error: message(e) };
   }

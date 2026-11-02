@@ -258,20 +258,21 @@ export async function loadConsolidatedCommercial(db: Db, orgId: string, projectI
 
 /**
  * The Cin7 Sale number already stored against each given billing project (project_cin7_sale_links.cin7_sale_number). READ ONLY: no Cin7 call, no write.
- * Org-scoped, and only the projects asked for are read. A project with no link, or a link with no stored number, is simply absent: a number is never inferred.
+ * Org-scoped, and only the projects asked for are read. A project WITH a link has a key: its value is the stored number, or null when the link carries no number.
+ * A project with no link has no key. A number is never inferred.
  */
-export async function loadSaleNumbersByProject(db: Db, orgId: string, projectIds: readonly string[]): Promise<Record<string, string>> {
+export async function loadSaleNumbersByProject(db: Db, orgId: string, projectIds: readonly string[]): Promise<Record<string, string | null>> {
   if (projectIds.length === 0) return {};
   const r = await db.from("project_cin7_sale_links").select("project_id, cin7_sale_number").eq("org_id", orgId).in("project_id", [...projectIds]);
   if (r.error) fail(`load Cin7 Sale numbers: ${r.error.message}`);
-  const out: Record<string, string> = {};
-  for (const row of (r.data ?? []) as Array<{ project_id: string; cin7_sale_number: string | null }>) if (row.cin7_sale_number) out[row.project_id] = row.cin7_sale_number;
+  const out: Record<string, string | null> = {};
+  for (const row of (r.data ?? []) as Array<{ project_id: string; cin7_sale_number: string | null }>) out[row.project_id] = row.cin7_sale_number || null;
   return out;
 }
 
-/** variation id -> Sale number, joining each variation's own billing project to that project's stored number. A variation whose project has no number is absent. */
-export function saleNumbersByVariation(billingProjectByVariation: Record<string, string>, numberByProject: Record<string, string>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [variationId, projectId] of Object.entries(billingProjectByVariation)) if (numberByProject[projectId]) out[variationId] = numberByProject[projectId];
+/** variation id -> Sale number (or null: linked, number not recorded), joining each variation's own billing project to that project's link. A variation whose project has no link is absent. */
+export function saleNumbersByVariation(billingProjectByVariation: Record<string, string>, numberByProject: Record<string, string | null>): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  for (const [variationId, projectId] of Object.entries(billingProjectByVariation)) if (projectId in numberByProject) out[variationId] = numberByProject[projectId];
   return out;
 }

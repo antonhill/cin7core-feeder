@@ -19,6 +19,15 @@ import { amendVariationScheduleAction, getVariationBillingAction, saveVariationS
 type Run = (fn: () => Promise<{ ok: boolean; error?: string }>, done?: string) => Promise<boolean>;
 type Row = { name: string; percent: string };
 
+/** The Cin7 Sale line: a stored number, or an honest account of why there is none. A failed lookup is never reported as "no Sale". */
+function saleLine(state: VariationBillingState, variationId: string, billingStarted: boolean) {
+  const n = state.saleNumberByVariation?.[variationId];
+  if (n) return <span className="font-mono font-medium text-slate-900">{n}</span>;
+  if (state.saleLookupFailed) return <span className="text-slate-600">number unavailable (could not be loaded)</span>;
+  if (n === null) return <span className="text-slate-600">linked, number not recorded</span>;
+  return <span className="text-slate-600">{billingStarted ? "not created yet" : "billing not started"}</span>;
+}
+
 const pct = (bps: number) => (bps / 100).toFixed(2).replace(/\.00$/, "");
 const rowsOf = (s: Array<{ name: string; bps: number }> | undefined): Row[] => (s && s.length ? s.map((x) => ({ name: x.name, percent: pct(x.bps) })) : [{ name: "Variation", percent: "100" }]);
 const totalOf = (rows: Row[]) => Math.round(rows.reduce((n, r) => n + (Number(r.percent) || 0), 0) * 100) / 100;
@@ -74,7 +83,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
                 {state && v.status === "APPROVED" && (
                   <p className="mt-1 text-sm text-slate-700">
                     <span className="text-slate-600">Cin7 Sale: </span>
-                    {state.saleNumberByVariation?.[v.id] ? <span className="font-mono font-medium text-slate-900">{state.saleNumberByVariation?.[v.id]}</span> : <span className="text-slate-600">{billingId ? "not created yet" : "billing not started"}</span>}
+                    {saleLine(state, v.id, !!billingId)}
                   </p>
                 )}
               </div>

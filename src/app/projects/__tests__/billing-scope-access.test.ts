@@ -108,3 +108,39 @@ describe("opening commitments", () => {
     expect(db.rows("project_opening_commitments")).toHaveLength(0);
   });
 });
+
+describe("Cin7 Sale number on the variation billing state (read only, org-scoped)", () => {
+  beforeEach(() => { asMember(); });
+  const link = (org: string, project: string, num: string | null) => db.rows("project_cin7_sale_links").push({ org_id: org, project_id: project, cin7_sale_id: `s-${project}`, cin7_sale_number: num });
+  it("returns the stored number against the variation's own billing project, and nothing for the base project's Sale", async () => {
+    link(ORG, scope, "SO-V1"); link(ORG, parent, "SO-BASE");
+    const r = await billingActions.getVariationBillingAction(parent);
+    const vid = Object.keys(r.data!.billingProjectByVariation)[0];
+    expect(r.data!.saleNumberByVariation).toEqual({ [vid]: "SO-V1" });
+    expect(r.data!.saleLookupFailed).toBe(false);
+  });
+  it("reports a link with no stored number as null (linked, number not recorded), and no link as absent", async () => {
+    let r = await billingActions.getVariationBillingAction(parent);
+    expect(r.data!.saleNumberByVariation).toEqual({});
+    link(ORG, scope, null);
+    r = await billingActions.getVariationBillingAction(parent);
+    const vid = Object.keys(r.data!.billingProjectByVariation)[0];
+    expect(r.data!.saleNumberByVariation).toEqual({ [vid]: null });
+  });
+  it("never returns another organisation's Sale for the same project id", async () => {
+    link("other-org", scope, "SO-OTHER");
+    const r = await billingActions.getVariationBillingAction(parent);
+    expect(r.data!.saleNumberByVariation).toEqual({});
+  });
+  it("a failing Sale lookup does NOT fail the billing state: it is flagged, logged and no number is shown", async () => {
+    const real = db.from.bind(db);
+    (db as unknown as { from: (t: string) => unknown }).from = (t: string) => { if (t === "project_cin7_sale_links") throw new Error("boom"); return real(t); };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await billingActions.getVariationBillingAction(parent);
+    expect(r.ok).toBe(true);
+    expect(r.data!.saleLookupFailed).toBe(true);
+    expect(r.data!.saleNumberByVariation).toEqual({});
+    expect(log).toHaveBeenCalled();
+    log.mockRestore();
+  });
+});
