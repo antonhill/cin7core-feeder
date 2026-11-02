@@ -132,13 +132,14 @@ export function buildSyntheticWorkbook(opts: SyntheticOptions = {}): SyntheticWo
   // --- Items ---
   const items: Table = {
     headers: ["SKU", "Style code", "Description", "Production code", "Fabric", "Colour", "Size", "Source", "Unit", "Min level", "Reorder point", "Standard cost", "Standard sell price", "Tender"],
-    rows: allSkus.map(({ style, size, sku }, i) => {
+    rows: allSkus.map(({ style, size, sku }) => {
+      // One production code per STYLE, as in the original workbook (a style resolves to exactly one Fast React product code).
       const si = styles.indexOf(style);
       const zi = SIZE_ORDER.indexOf(size as (typeof SIZE_ORDER)[number]);
       const cost = 100 + si * 10 + zi * 2;
       const isTender = sku === tenderSku;
       const minLevel = isTender ? null : Math.max(5, Math.round(STYLE_BASE[si] * SIZE_WEIGHT[zi] * 0.8));
-      return [sku, style, `Synthetic vest ${style} ${size}`, `PC-${i}`, "SYN-FABRIC", si === 2 ? "Orange/Navy" : "Orange", size, "Import", "ea", minLevel, minLevel === null ? null : minLevel * 2, cost, Math.round(cost * 1.6 * 100) / 100, isTender];
+      return [sku, style, `Synthetic vest ${style} ${size}`, `PC-${style}`, "SYN-FABRIC", si === 2 ? "Orange/Navy" : "Orange", size, "Import", "ea", minLevel, minLevel === null ? null : minLevel * 2, cost, Math.round(cost * 1.6 * 100) / 100, isTender];
     }),
   };
 
