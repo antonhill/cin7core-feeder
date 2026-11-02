@@ -30,6 +30,21 @@ function saleLine(state: VariationBillingState, variationId: string, billingStar
   return <span className="text-slate-600">not created yet</span>;
 }
 
+/**
+ * The Cin7 reconciliation line: what is recorded against THIS variation's own billing project's invoices. Reconciliation (Toolbox's read-only check of a Cin7 invoice
+ * against what was approved) is a different thing from approving a claim to be invoiced; this line speaks only about the former. A failed read is never "nothing to reconcile".
+ */
+function reconciliationLine(state: VariationBillingState, variationId: string): string {
+  const r = state.reconciliationByVariation?.[variationId];
+  if (!r) return state.reconciliationLookupFailed ? "unavailable (could not be loaded)" : "unavailable";
+  const parts: string[] = [];
+  if (r.invoices === 0) parts.push("no Cin7 invoice yet, nothing to reconcile");
+  else if (r.awaiting === 0) parts.push(r.invoices === 1 ? "the Cin7 invoice is reconciled" : `all ${r.invoices} Cin7 invoices are reconciled`);
+  else parts.push(`${r.reconciled} of ${r.invoices} Cin7 ${r.invoices === 1 ? "invoice" : "invoices"} reconciled, ${r.awaiting} awaiting reconciliation`);
+  if (r.uncertain > 0) parts.push(`${r.uncertain} ${r.uncertain === 1 ? "posting has" : "postings have"} an uncertain outcome and must be reconciled`);
+  return parts.join("; ");
+}
+
 const pct = (bps: number) => (bps / 100).toFixed(2).replace(/\.00$/, "");
 const rowsOf = (s: Array<{ name: string; bps: number }> | undefined): Row[] => (s && s.length ? s.map((x) => ({ name: x.name, percent: pct(x.bps) })) : [{ name: "Variation", percent: "100" }]);
 /** Shown beside every control that is disabled only because a server action is running. */
@@ -138,6 +153,12 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
                     {saleLine(state, v.id, !!billingId)}
                   </p>
                 )}
+                {state && v.status === "APPROVED" && billingId && (
+                  <p className="mt-0.5 text-sm text-slate-700" data-testid={`recon-${v.id}`}>
+                    <span className="text-slate-600">Cin7 reconciliation: </span>{reconciliationLine(state, v.id)}
+                    <span className="text-slate-600"> (separate from approving a claim to invoice)</span>
+                  </p>
+                )}
               </div>
               <div className="flex flex-col items-end gap-2 text-right">
                 <div>
@@ -157,11 +178,10 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
             ) : scope ? (
               <div className="mt-3 border-t border-slate-200 pt-3">
               <p className="text-xs text-slate-600">Billing position of this variation only, ex VAT</p>
-              <dl className="mt-1 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-3 lg:grid-cols-5" aria-label={`${v.code} billing position (ex VAT)`}>
+              <dl className="mt-1 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4" aria-label={`${v.code} billing position (ex VAT)`}>
                 {([["Earned", scope.earnedCents], ["Billed / committed", scope.committedCents], ["Claimable now", scope.claimableCents], ["Remaining", scope.remainingCents]] as const).map(([k, n]) => (
                   <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="font-semibold tabular-nums text-slate-900">{formatCents(n)}</dd></div>
                 ))}
-                <div><dt className="text-xs text-slate-600">Reconciliation</dt><dd className="text-sm text-slate-700">{isAdmin ? "Per invoice, in the billing workspace" : "Checked by a manager"}</dd></div>
               </dl>
               </div>
             ) : <p className="mt-3 text-sm text-slate-600">{v.status === "APPROVED" ? "Billing has not started for this variation." : "Counts for nothing until a manager approves it."}</p>}

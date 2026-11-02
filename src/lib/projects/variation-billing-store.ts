@@ -276,3 +276,44 @@ export function saleNumbersByVariation(billingProjectByVariation: Record<string,
   for (const [variationId, projectId] of Object.entries(billingProjectByVariation)) if (projectId in numberByProject) out[variationId] = numberByProject[projectId];
   return out;
 }
+
+/** What the compact variation summary says about Cin7 reconciliation, counted from the variation's OWN billing project's invoice postings. */
+export interface ReconciliationSummary {
+  /** Cin7 invoices that exist (posting CREATED or RECONCILED). */
+  invoices: number;
+  /** Of those, the ones Toolbox has reconciled against Cin7. */
+  reconciled: number;
+  /** Invoices that exist but have not been reconciled yet (CREATED). */
+  awaiting: number;
+  /** Postings whose outcome is not known (PENDING or FAILED_UNCERTAIN): they need reconciling before anything else. */
+  uncertain: number;
+}
+
+/** Pure: counts one project's postings. FAILED_CONFIRMED_NO_WRITE counts for nothing (no invoice exists). */
+export function summariseReconciliation(states: readonly string[]): ReconciliationSummary {
+  const count = (...s: string[]) => states.filter((x) => s.includes(x)).length;
+  const reconciled = count("RECONCILED");
+  const awaiting = count("CREATED");
+  return { invoices: reconciled + awaiting, reconciled, awaiting, uncertain: count("PENDING", "FAILED_UNCERTAIN") };
+}
+
+/**
+ * The reconciliation state already recorded against each given billing project's invoice postings (project_claim_cin7_postings.posting_state). READ ONLY: no Cin7 call,
+ * no write, no inference. Org-scoped, and only the projects asked for are read (the caller passes VARIATION billing projects, never the BASE project). Every
+ * requested project has a key (zero counts when it has no postings). Any read error throws: a status is never guessed.
+ */
+export async function loadReconciliationByProject(db: Db, orgId: string, projectIds: readonly string[]): Promise<Record<string, ReconciliationSummary>> {
+  if (projectIds.length === 0) return {};
+  const r = await db.from("project_claim_cin7_postings").select("project_id, posting_state").eq("org_id", orgId).in("project_id", [...projectIds]);
+  if (r.error) fail(`load invoice reconciliation: ${r.error.message}`);
+  const states: Record<string, string[]> = Object.fromEntries(projectIds.map((id) => [id, []]));
+  for (const row of (r.data ?? []) as Array<{ project_id: string; posting_state: string }>) states[row.project_id]?.push(row.posting_state);
+  return Object.fromEntries(Object.entries(states).map(([id, st]) => [id, summariseReconciliation(st)]));
+}
+
+/** variation id -> its billing project's reconciliation summary. A variation whose billing project was not read is absent. */
+export function reconciliationByVariation(billingProjectByVariation: Record<string, string>, byProject: Record<string, ReconciliationSummary>): Record<string, ReconciliationSummary> {
+  const out: Record<string, ReconciliationSummary> = {};
+  for (const [variationId, projectId] of Object.entries(billingProjectByVariation)) if (projectId in byProject) out[variationId] = byProject[projectId];
+  return out;
+}
