@@ -1,5 +1,6 @@
 "use client";
 
+import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -40,7 +41,7 @@ export default function ApprovalsPage() {
   useEffect(load, [load]);
   const openNotes = async () => { setTab("notifications"); const r = await getMyNotificationsAction(false); if (r.ok && r.data) setNotes(r.data.notifications); };
 
-  if (!d) return <main className="mx-auto w-full max-w-[1480px] px-6 py-12"><ModuleHeader module={APPROVALS_MODULE}>Approvals</ModuleHeader>{error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <div role="status" aria-live="polite" aria-busy="true" data-testid="approvals-loading"><p className="mt-6 text-sm text-slate-500">Loading approvals…</p><Skeleton className="mt-4 h-12 w-full max-w-3xl" /><Skeleton className="mt-4 h-96 w-full" /></div>}</main>;
+  if (!d) return <main className={pageContainerClass("data")}><ModuleHeader module={APPROVALS_MODULE}>Approvals</ModuleHeader>{error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <div role="status" aria-live="polite" aria-busy="true" data-testid="approvals-loading"><p className="mt-6 text-sm text-slate-500">Loading approvals…</p><Skeleton className="mt-4 h-12 w-full max-w-3xl" /><Skeleton className="mt-4 h-96 w-full" /></div>}</main>;
   const s = d.summary;
   const cards: Array<[string, string, BadgeTone?]> = [
     ["Awaiting my approval", String(s.awaitingMe), s.awaitingMe ? "warning" : undefined], ["All pending", String(s.pending)], ["Overdue", String(s.overdue), s.overdue ? "danger" : undefined],
@@ -48,7 +49,7 @@ export default function ApprovalsPage() {
   ];
 
   return (
-    <main className="mx-auto w-full max-w-[1480px] px-6 py-8">
+    <main className={pageContainerClass("data", "compact")}>
       <ModuleHeader module={APPROVALS_MODULE}>Approvals</ModuleHeader>
       <div className="mt-2"><Link className="text-sm text-slate-700 underline" href="/approvals/roles">Roles and approval routing</Link></div>
       {!d.available && <div className="mt-4"><Alert tone="warning">Approvals are not active (the database migration is pending). Until then quotations, claims and variations keep their existing approve buttons.</Alert></div>}

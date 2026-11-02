@@ -1,5 +1,6 @@
 "use client";
 
+import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -146,7 +147,7 @@ export default function QuoteEditorPage() {
 
   if (!view || !draft || !ev) {
     return (
-      <main className="mx-auto w-full max-w-[1480px] px-6 py-12">
+      <main className={pageContainerClass("wide")}>
         <ModuleHeader module={QUOTES_MODULE}>Grower quote</ModuleHeader>
         {error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <div role="status" aria-live="polite" aria-busy="true" data-testid="quote-loading"><p className="mt-6 text-sm text-slate-500">Loading the quotation…</p><Skeleton className="mt-4 h-14 w-full max-w-4xl" /><Skeleton className="mt-4 h-96 w-full" /></div>}
       </main>
@@ -227,7 +228,7 @@ export default function QuoteEditorPage() {
   const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); u.searchParams.set("stage", String(n)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
 
   return (
-    <main className="mx-auto w-full max-w-[1480px] px-6 py-12">
+    <main className={pageContainerClass("wide")}>
       <ModuleHeader module={QUOTES_MODULE}>
         <Link href="/newquip-grower" className="text-indigo-700 hover:underline">← Grower quotes</Link> · {q.quote_ref} <span className="text-slate-400">rev {q.revision}</span>
       </ModuleHeader>

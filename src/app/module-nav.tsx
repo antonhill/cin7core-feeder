@@ -668,6 +668,20 @@ export function isNavLinkActive(pathname: string, href: string): boolean {
 }
 
 /**
+ * The links of the dedicated NewQuip workspace shell, or [] when the workspace does not apply (not the NewQuip organisation, or every NewQuip module is hidden).
+ * Derived from buildNavItems so visibility (module toggles, the approvals kill switch) cannot drift from the Toolbox sidebar's NewQuip group.
+ */
+export function newquipWorkspaceLinks(orgId: string | null, disabledModules: string[], isSuperAdmin: boolean): ModuleConfig[] {
+  const group = buildNavItems(orgId, disabledModules, isSuperAdmin).find((i) => i.kind === "group");
+  return group && group.kind === "group" ? group.children : [];
+}
+
+/** True for the routes that belong to NewQuip: Solution Builder, Projects and Approvals and everything nested under them (a segment boundary, so /projects-x never matches). Pure and client-safe; it only chooses chrome, authorisation is enforced by each route's layout and actions. */
+export function isNewquipWorkspacePath(pathname: string): boolean {
+  return NEWQUIP_GROUP_HREFS.some((h) => isNavLinkActive(pathname, h));
+}
+
+/**
  * If `pathname` falls under a module this org has disabled, returns that
  * module (used by middleware.ts to block direct URL access, and by the
  * home page to explain why it redirected here) — otherwise undefined.

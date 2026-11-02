@@ -1,5 +1,6 @@
 "use client";
 
+import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
@@ -45,7 +46,7 @@ export default function ProjectsPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-[1480px] px-6 py-12">
+    <main className={pageContainerClass("data")}>
       <ModuleHeader module={PROJECTS_MODULE}>
         Proof of concept — billing against an agreed contract value by approved stage completion. Local only: nothing on this
         screen creates or changes anything in Cin7.

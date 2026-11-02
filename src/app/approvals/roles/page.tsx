@@ -1,5 +1,6 @@
 "use client";
 
+import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
@@ -34,12 +35,12 @@ export default function RolesPage() {
     if (!r.ok) { setError(r.error ?? "Failed"); return; }
     setNote(done); load();
   };
-  if (!d) return <main className="mx-auto w-full max-w-[1200px] px-6 py-12"><ModuleHeader module={APPROVALS_MODULE}>Roles and approval routing</ModuleHeader>{error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <p className="mt-6 text-sm text-slate-500">Loading…</p>}</main>;
+  if (!d) return <main className={pageContainerClass("form")}><ModuleHeader module={APPROVALS_MODULE}>Roles and approval routing</ModuleHeader>{error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <p className="mt-6 text-sm text-slate-500">Loading…</p>}</main>;
   const holders = (role: FunctionalRole) => d.users.filter((u) => u.roles.includes(role)).map((u) => u.email);
   const canEdit = d.canAdminister && d.available;
 
   return (
-    <main className="mx-auto w-full max-w-[1200px] px-6 py-8">
+    <main className={pageContainerClass("form", "compact")}>
       <ModuleHeader module={APPROVALS_MODULE}>Roles and approval routing</ModuleHeader>
       <div className="mt-2"><Link className="text-sm text-slate-700 underline" href="/approvals">Back to Approvals</Link></div>
       {!d.available && <div className="mt-4"><Alert tone="warning">Roles and staged approvals activate once the roles migration (0112) has been applied. Until then approvals use the organisation owner/admin tier, as before.</Alert></div>}

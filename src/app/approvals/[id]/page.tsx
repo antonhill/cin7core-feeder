@@ -1,5 +1,6 @@
 "use client";
 
+import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -39,7 +40,7 @@ export default function ApprovalDetailPage() {
   const load = useCallback(() => { getApprovalDetailAction(id).then((r) => { if (r.ok && r.data) { setD((cur) => (cur && cur.request.status !== "PENDING" && r.data!.request.status === "PENDING" ? cur : r.data!)); setError(null); } else setError(r.error ?? "Could not load this approval."); }); }, [id]);
   useEffect(load, [load]);
 
-  if (!d) return <main className="mx-auto w-full max-w-[1200px] px-6 py-12"><ModuleHeader module={APPROVALS_MODULE}>Approval</ModuleHeader>{error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <div role="status" aria-live="polite" aria-busy="true" data-testid="approval-loading"><p className="mt-6 text-sm text-slate-500">Loading the approval…</p><Skeleton className="mt-4 h-40 w-full" /><Skeleton className="mt-4 h-64 w-full" /></div>}</main>;
+  if (!d) return <main className={pageContainerClass("form")}><ModuleHeader module={APPROVALS_MODULE}>Approval</ModuleHeader>{error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <div role="status" aria-live="polite" aria-busy="true" data-testid="approval-loading"><p className="mt-6 text-sm text-slate-500">Loading the approval…</p><Skeleton className="mt-4 h-40 w-full" /><Skeleton className="mt-4 h-64 w-full" /></div>}</main>;
   const r = d.request;
   const now = new Date().toISOString();
   const late = r.status === "PENDING" && isOverdue(r.due_at, now);
@@ -82,7 +83,7 @@ export default function ApprovalDetailPage() {
   };
 
   return (
-    <main className="mx-auto w-full max-w-[1200px] px-6 py-8">
+    <main className={pageContainerClass("form", "compact")}>
       <ModuleHeader module={APPROVALS_MODULE}>{DOC_TYPE_LABEL[r.doc_type]} {r.doc_ref}</ModuleHeader>
       <p className="mt-1 text-sm"><Link href="/approvals" className="underline">All approvals</Link> · <Link href={docHref} className="underline">View {r.doc_type === "QUOTE" ? "document" : "project"}</Link></p>
       {error && <div className="mt-3"><Alert tone="danger">{error}</Alert></div>}
