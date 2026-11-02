@@ -20,8 +20,6 @@ export interface LandedModel {
   readonly lines: readonly LandedLine[];
   /** Commercial rules the workbook does not establish (local workbook only). */
   readonly rules: readonly UnresolvedRule[];
-  /** True while no payment has explicit open evidence: confirmed open exposure is "not established" (never shown as zero). */
-  readonly confirmedOpenWithheld: boolean;
 }
 
 export function landedModel(state: DemoState, settings: LandedSettings): LandedModel {
@@ -36,7 +34,6 @@ export function landedModel(state: DemoState, settings: LandedSettings): LandedM
     shipmentRefs: [] as string[],
     lines: [] as LandedLine[],
     rules: [] as UnresolvedRule[],
-    confirmedOpenWithheld: false,
   };
   if (state.kind !== "validated" || state.dataset === null) {
     return { ...base, engine: "UNAVAILABLE", engineNote: "No validated dataset is available: the engines have nothing to calculate from. No other data was substituted.", landed: null, exposure: null };
@@ -47,7 +44,7 @@ export function landedModel(state: DemoState, settings: LandedSettings): LandedM
     const shipmentRefs = landed.shipments.map((s) => s.shipmentRef);
     const lines = landed.lines.filter((l) => (settings.shipment === null || l.shipmentRef === settings.shipment) && (!settings.issuesOnly || l.status === "incomplete" || !l.comparisonAvailable || (l.freightDiffCents ?? 0) !== 0));
     const rules: UnresolvedRule[] = rulesApply(state) && exposure.totals.counts.unknown > 0 ? [paymentRule(exposure.totals.counts.unknown)] : [];
-    return { ...base, engine: "AVAILABLE", engineNote: null, landed, exposure, shipmentRefs, lines, rules, confirmedOpenWithheld: exposure.rows.length > 0 && exposure.totals.confirmedOpenUsdCents === null };
+    return { ...base, engine: "AVAILABLE", engineNote: null, landed, exposure, shipmentRefs, lines, rules };
   } catch {
     return { ...base, engine: "UNAVAILABLE", engineNote: "The engines could not run with these inputs.", landed: null, exposure: null };
   }

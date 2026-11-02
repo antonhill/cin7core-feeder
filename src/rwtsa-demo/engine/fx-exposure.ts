@@ -14,8 +14,8 @@ import { fromCents, scaleCents, toCents, type Cents } from "./money";
  * Three tiers are kept apart: SCHEDULED (every payment, as the terms were set), POTENTIAL (every payment not confirmed paid) and
  * CONFIRMED OPEN (only payments with explicit open evidence; null, not zero, when there are none).
  *
- * Deposit rule (RWTSA Rev2 clarification, 29 Oct 2026, Payments_FEC row for the first supplier: "5,640 is the 30% deposit paid at
- * shipment"; RFP DP-23: "a deposit-before-production term"): a payment flagged as a deposit, or remarked as a deposit, AND payable at
+ * Deposit rule (RWTSA Rev2 clarification, 29 Oct 2026: a 30% deposit "paid at shipment"; RFP DP-23: a deposit-before-production
+ * term): a payment flagged as a deposit, or whose remark STARTS with "deposit" without a negation or timing word, AND payable at
  * shipment (0 days) is treated as paid. Zero terms alone (for example a per-shipment QC cost) is NOT a deposit.
  */
 
@@ -97,8 +97,11 @@ export interface ExposureResult {
   readonly warnings: readonly string[];
 }
 
-const PAID_WORDS = /^(paid|settled|paid in full)$/i;
-const OPEN_WORDS = /^(open|unpaid|outstanding|payable|not paid)$/i;
+// Optional input conventions (the workbook has no such column): the minimum vocabulary, nothing more. Anything else is "unknown".
+const PAID_WORDS = /^paid$/i;
+const OPEN_WORDS = /^(open|unpaid)$/i;
+// A remark counts as a deposit only when it STARTS with the word and carries no negation or timing word.
+const DEPOSIT_REMARK = /^\s*deposit\b(?!.*\b(?:not|no|unpaid|due|after|balance)\b)/i;
 
 interface Classified {
   readonly settlement: Settlement;
@@ -118,7 +121,7 @@ function classify(p: PaymentFecRow): Classified {
   if (statusPaid) return { settlement: "paid", basis: "explicit-status", unrecognised: false, conflict: false };
   if (hasPaidDate) return { settlement: "paid", basis: "paid-date", unrecognised: false, conflict: false };
   if (statusOpen) return { settlement: "open", basis: "explicit-open", unrecognised: false, conflict: false };
-  const depositEvidence = p.isDeposit === true || (typeof p.remark === "string" && /\bdeposit\b/i.test(p.remark));
+  const depositEvidence = p.isDeposit === true || (typeof p.remark === "string" && DEPOSIT_REMARK.test(p.remark));
   if (depositEvidence && p.termsDays === 0) return { settlement: "paid", basis: "deposit-rev2", unrecognised, conflict: false };
   return { settlement: "unknown", basis: "none", unrecognised, conflict: false };
 }
@@ -184,7 +187,7 @@ export function runFxExposure(ds: RwtsaDataset, config: ExposureConfig = {}): Ex
       supplier: p.supplier,
       dueDate: p.dueDate,
       usdCents: usd,
-      deposit: p.isDeposit === true || (typeof p.remark === "string" && /\bdeposit\b/i.test(p.remark)),
+      deposit: p.isDeposit === true || (typeof p.remark === "string" && DEPOSIT_REMARK.test(p.remark)),
       settlement: cls.settlement,
       settlementBasis: cls.basis,
       pastDue: daysBetween(asOf, p.dueDate) < 0,

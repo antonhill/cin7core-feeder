@@ -95,6 +95,20 @@ describe("USD exposure by due date: settlement is never assumed", () => {
     expect(r.totals.potentialUsdCents).toBe(56400 + 1100 + 131600);
     expect(r.warnings.join(" ")).toMatch(/Rev2/);
   });
+  it("a remark that merely mentions a deposit, or negates or times it, is not evidence of settlement", () => {
+    const r = run([
+      { po: "A", due: "2026-08-22", usd: 1, terms: 0, remark: "balance after deposit" },
+      { po: "B", due: "2026-08-22", usd: 1, terms: 0, remark: "Deposit not yet paid" },
+      { po: "C", due: "2026-08-22", usd: 1, terms: 0, remark: "no deposit" },
+      { po: "D", due: "2026-08-22", usd: 1, terms: 0, remark: "Deposit due before production" },
+      { po: "E", due: "2026-08-22", usd: 1, terms: 0, remark: "Deposit before production (30%)" },
+    ]);
+    expect(r.rows.map((x) => x.settlement)).toEqual(["unknown", "unknown", "unknown", "unknown", "paid"]);
+  });
+  it("only the minimum status vocabulary is read: paid, open, unpaid; anything else is unknown", () => {
+    const r = run([{ po: "A", due: "2026-09-01", usd: 1, status: "settled" }, { po: "B", due: "2026-09-01", usd: 1, status: "outstanding" }, { po: "C", due: "2026-09-01", usd: 1, status: "Unpaid" }]);
+    expect(r.rows.map((x) => x.settlement)).toEqual(["unknown", "unknown", "open"]);
+  });
   it("covered and uncovered are computed on the same eligibility basis as the potential exposure (paid rows are in neither)", () => {
     const r = run([
       { po: "C", due: "2026-09-01", usd: 100, fec: "F", locked: 18 },
