@@ -26,7 +26,7 @@ export function Select({ id, label, error, helperText, hideLabel, required, clas
           required={required}
           aria-invalid={!!error || undefined}
           aria-describedby={errorId ?? helperId}
-          className={`h-9 w-full appearance-none rounded-md border bg-white px-3 pr-8 text-sm text-slate-900 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400 ${
+          className={`h-9 w-full appearance-none rounded-md border bg-white px-3 pr-8 text-sm text-slate-900 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-600 ${
             error ? "border-danger-border" : "border-slate-300"
           } ${className}`}
           {...props}
@@ -51,7 +51,7 @@ export function Select({ id, label, error, helperText, hideLabel, required, clas
           {error}
         </p>
       ) : helperText ? (
-        <p id={helperId} className="text-xs text-slate-500">
+        <p id={helperId} className="text-xs text-slate-600">
           {helperText}
         </p>
       ) : null}
