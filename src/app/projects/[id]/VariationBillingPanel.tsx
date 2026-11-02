@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Alert } from "@/components/ui/Alert";
 import { ScopeTag, Status, statusText } from "@/components/ui/Status";
@@ -47,6 +47,8 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
   const [prods, setProds] = useState<Record<string, Array<{ sku: string; description: string; quantity: string }>>>({});
 
   const [version, setVersion] = useState(0);
+  const awaitingReload = useRef(new Set<string>()); // variations whose save/amend succeeded and whose reloaded schedule has not arrived yet
+  const [reloading, setReloading] = useState<Record<string, boolean>>({});
   const [openId, setOpenId] = useState<string | null>(null); // the ONE variation whose detailed workspace is expanded; nothing is expanded until asked
   const [everOpened, setEverOpened] = useState<Record<string, boolean>>({}); // a hidden workspace stays mounted so an action in flight in it is never lost
   const variationKey = view.variations.map((v) => `${v.id}:${v.status}`).join(",");
@@ -56,12 +58,22 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
     void getVariationBillingAction(projectId).then((r) => {
       if (!live) return;
       if (r.ok && r.data) { setState(r.data); setError(null); } else setError(r.error ?? "Could not load variation billing.");
+      // The reload that follows a successful save/amend has landed (or failed): only now are the typed rows discarded (on success) and Save/Amend re-enabled.
+      const ids = Array.from(awaitingReload.current);
+      if (ids.length) {
+        awaitingReload.current.clear();
+        if (r.ok && r.data) setEdit((m) => Object.fromEntries(Object.entries(m).filter(([k]) => !ids.includes(k))));
+        setReloading({});
+      }
     });
     return () => { live = false; };
   }, [projectId, variationKey, version, view.variations.length]);
 
-  const act = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string): Promise<boolean> => { const ok = await run(fn, done); if (ok) setVersion((n) => n + 1); return ok; };
-  const dropEdit = (id: string) => setEdit((m) => Object.fromEntries(Object.entries(m).filter(([k]) => k !== id))); // after a successful save the reloaded schedule is the truth; the typed strings are discarded
+  const act = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string, savedId?: string): Promise<boolean> => {
+    const ok = await run(fn, done);
+    if (ok) { if (savedId) { awaitingReload.current.add(savedId); setReloading((m) => ({ ...m, [savedId]: true })); } setVersion((n) => n + 1); }
+    return ok;
+  };
   const c = state?.consolidated;
   const variations = view.variations.filter((v) => v.status !== "REJECTED");
 
@@ -93,6 +105,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
         const canToggle = !!state && v.status === "APPROVED" && !!billingId && isAdmin;
         const stagesLocked = (v.status === "APPROVED" && !isAdmin) || (!!billingId && v.status === "APPROVED");
         const reasonText = reason[v.id] ?? "";
+        const busy = working || !!reloading[v.id]; // also busy while this variation's reloaded schedule is outstanding: its typed rows are still shown, and a second Save must not resubmit stale rows
         const sid = (k: string) => `${k}-${v.id}`;
         return (
           <section key={v.id} aria-label={`${v.code} variation`} className="rounded-lg border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)] sm:p-6">
@@ -168,18 +181,18 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
               {(v.status === "DRAFT" || (isAdmin && !billingId)) && (
                 <div className="space-y-2">
                 <div className="flex flex-wrap items-end gap-2">
-                  <Button size="sm" variant="secondary" disabled={working} aria-describedby={working ? sid("sched-busy") : undefined} onClick={() => setEdit({ ...edit, [v.id]: [...rows, { name: "", percent: "" }] })}>Add stage</Button>
-                  {rows.length > 1 && <Button size="sm" variant="secondary" disabled={working} aria-describedby={working ? sid("sched-busy") : undefined} onClick={() => setEdit({ ...edit, [v.id]: rows.slice(0, -1) })}>Remove last</Button>}
+                  <Button size="sm" variant="secondary" disabled={busy} aria-describedby={busy ? sid("sched-busy") : undefined} onClick={() => setEdit({ ...edit, [v.id]: [...rows, { name: "", percent: "" }] })}>Add stage</Button>
+                  {rows.length > 1 && <Button size="sm" variant="secondary" disabled={busy} aria-describedby={busy ? sid("sched-busy") : undefined} onClick={() => setEdit({ ...edit, [v.id]: rows.slice(0, -1) })}>Remove last</Button>}
                   {v.status === "DRAFT" ? (
-                    <Button size="sm" disabled={working || total !== 100} aria-describedby={working ? sid("sched-busy") : total !== 100 ? sid("sched-total") : undefined} onClick={async () => { if (await act(() => saveVariationScheduleAction(projectId, v.id, rows), `Saved the ${v.code} billing schedule.`)) dropEdit(v.id); }}>Save schedule</Button>
+                    <Button size="sm" disabled={busy || total !== 100} aria-describedby={busy ? sid("sched-busy") : total !== 100 ? sid("sched-total") : undefined} onClick={async () => { if (await act(() => saveVariationScheduleAction(projectId, v.id, rows), `Saved the ${v.code} billing schedule.`, v.id)) { /* typed rows stay on screen until the reloaded schedule arrives */ } }}>Save schedule</Button>
                   ) : (
                     <>
                       <Input label="Reason for amendment" value={reasonText} onChange={(e) => setReason({ ...reason, [v.id]: e.target.value })} />
-                      <Button size="sm" disabled={working || total !== 100 || !reasonText.trim()} aria-describedby={working ? sid("sched-busy") : total !== 100 ? sid("sched-total") : !reasonText.trim() ? sid("sched-reason") : undefined} onClick={async () => { if (await act(() => amendVariationScheduleAction(projectId, v.id, rows, reason[v.id]), `Amended the ${v.code} schedule (audited).`)) { setReason((m) => ({ ...m, [v.id]: "" })); dropEdit(v.id); } }}>Amend schedule</Button>
+                      <Button size="sm" disabled={busy || total !== 100 || !reasonText.trim()} aria-describedby={busy ? sid("sched-busy") : total !== 100 ? sid("sched-total") : !reasonText.trim() ? sid("sched-reason") : undefined} onClick={async () => { if (await act(() => amendVariationScheduleAction(projectId, v.id, rows, reason[v.id]), `Amended the ${v.code} schedule (audited).`, v.id)) setReason((m) => ({ ...m, [v.id]: "" })); }}>Amend schedule</Button>
                     </>
                   )}
                 </div>
-                {working ? <p id={sid("sched-busy")} className="text-sm text-slate-700">{BUSY}</p>
+                {busy ? <p id={sid("sched-busy")} className="text-sm text-slate-700">{BUSY}</p>
                   : total !== 100 ? <p id={sid("sched-total")} className="text-sm text-slate-700">Total must be exactly 100% to {v.status === "DRAFT" ? "save" : "amend"} the schedule.</p>
                   : v.status !== "DRAFT" && !reasonText.trim() ? <p id={sid("sched-reason")} className="text-sm text-slate-700">Enter a reason to amend.</p> : null}
                 </div>

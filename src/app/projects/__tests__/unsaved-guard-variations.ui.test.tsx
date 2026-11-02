@@ -138,6 +138,40 @@ describe("VariationBillingPanel unsaved guard", () => {
     await waitFor(() => expect(unload()).toBe(false));
     await waitFor(() => expect((screen.getAllByLabelText("%")[0] as HTMLInputElement).value).toBe("25.51"));
   });
+  it("after a successful Save the inputs never show the old values and Save is disabled until the reload lands; a failed save keeps rows and guard", async () => {
+    const saveAction = vi.mocked(billingActions.saveVariationScheduleAction);
+    saveAction.mockResolvedValue({ ok: true } as never);
+    const run = vi.fn(async (fn: () => Promise<{ ok: boolean }>) => (await fn()).ok);
+    h.billing = state({ v1: [{ name: "Deposit", bps: 5000 }, { name: "Final", bps: 5000 }] });
+    render(<VariationBillingPanel view={view([variation("v1", "DRAFT"), variation("v2", "DRAFT")])} isAdmin run={run as never} working={false} />);
+    await waitFor(() => expect(screen.getAllByLabelText("Stage").length).toBeGreaterThan(0));
+    const pcts = () => (screen.getAllByLabelText("%") as HTMLInputElement[]).map((i) => i.value);
+    fireEvent.change(screen.getAllByLabelText("%")[0], { target: { value: "60" } });
+    fireEvent.change(screen.getAllByLabelText("%")[1], { target: { value: "40" } });
+    let release!: (v: unknown) => void;
+    h.billing = new Promise((r) => { release = r; }); // the reload after the save is held open
+    const save = () => screen.getAllByRole("button", { name: "Save schedule" })[0] as HTMLButtonElement;
+    fireEvent.click(save());
+    await waitFor(() => expect(saveAction).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(save().disabled).toBe(true));
+    expect(pcts().slice(0, 2)).toEqual(["60", "40"]); // never the pre-save 50 / 50
+    fireEvent.click(save()); // a second click during the reload is inert
+    expect(saveAction).toHaveBeenCalledTimes(1);
+    expect(unload()).toBe(true); // still unsaved from the user's point of view until the reload confirms
+    release(state({ v1: [{ name: "Deposit", bps: 6000 }, { name: "Final", bps: 4000 }] }));
+    await waitFor(() => expect(unload()).toBe(false));
+    expect(pcts().slice(0, 2)).toEqual(["60", "40"]);
+    await waitFor(() => expect(save().disabled).toBe(false));
+    // a failed save keeps the rows, the guard and the button
+    saveAction.mockResolvedValue({ ok: false, error: "no" } as never);
+    fireEvent.change(screen.getAllByLabelText("%")[0], { target: { value: "70" } });
+    fireEvent.change(screen.getAllByLabelText("%")[1], { target: { value: "30" } });
+    fireEvent.click(save());
+    await waitFor(() => expect(saveAction).toHaveBeenCalledTimes(2));
+    expect(pcts().slice(0, 2)).toEqual(["70", "30"]);
+    expect(unload()).toBe(true);
+    expect(save().disabled).toBe(false);
+  });
   it("Cin7 Sale line: no billing project says billing not started even when the Sale lookup failed", async () => {
     await billing(view([variation("v1", "APPROVED")]), { ok: true, data: { ...(state({ v1: [{ name: "Variation", bps: 10000 }] }) as { data: object }).data, saleLookupFailed: true } });
     expect(screen.getByText("billing not started")).toBeTruthy();
