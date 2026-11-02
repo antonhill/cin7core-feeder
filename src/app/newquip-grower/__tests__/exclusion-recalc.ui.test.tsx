@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
@@ -43,7 +43,7 @@ beforeEach(() => {
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: (globalThis as { __QID?: string }).__QID }),
-  useSearchParams: () => new URLSearchParams("stage=2"),
+  useSearchParams: () => new URLSearchParams("stage=" + ((globalThis as { __STAGE?: string }).__STAGE ?? "2")),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
   usePathname: () => "/newquip-grower/x",
 }));
@@ -225,5 +225,44 @@ describe("UAT-025 rendered page: Save draft reports beside its button", () => {
     act(() => { fireEvent.click(save); fireEvent.click(save); });
     await waitFor(() => expect(region("success")).not.toBeNull(), { timeout: 8000 });
     expect(spy).toHaveBeenCalledTimes(1);
+  }, 30000);
+});
+
+describe("D3-C Solution Builder: visible selected / excluded states and a stable price summary", () => {
+  afterEach(() => { (globalThis as { __STAGE?: string }).__STAGE = undefined; });
+  it("the price summary shows the quote total and, with a response to an edit, says the figures are a preview of unsaved edits", async () => {
+    await open();
+    const bar = screen.getByTestId("quote-summary-bar");
+    expect(within(bar).getByText("Quote total (ex VAT)")).toBeTruthy();
+    expect(within(bar).getByText("Gross margin")).toBeTruthy(); // the viewer can see commercials
+    expect(within(bar).queryByText(/unsaved edits/)).toBeNull();
+    fireEvent.click(box(/Exclude CCM feeder/i));
+    expect(within(bar).getByText(/Recalculating…|Preview of unsaved edits/)).toBeTruthy();
+    await waitFor(() => expect(within(bar).getByText("Preview of unsaved edits")).toBeTruthy(), { timeout: 8000 });
+  }, 30000);
+  it("an excluded section is marked 'Excluded' beside its own checkbox at once, and the unticked one says 'Included'", async () => {
+    await open();
+    const row = box(/Exclude CCM feeder/i).closest("li")!;
+    expect(within(row).getByText("Included")).toBeTruthy();
+    fireEvent.click(box(/Exclude CCM feeder/i));
+    expect(within(row).getByText(/Excluded/)).toBeTruthy();
+    expect(within(row).getByText("A reason is required before this can be saved.")).toBeTruthy();
+    fireEvent.change(within(row).getByPlaceholderText("Reason (required)"), { target: { value: "Customer supplies their own feeders" } });
+    expect(within(row).queryByText("A reason is required before this can be saved.")).toBeNull();
+  }, 30000);
+  it("optional equipment shows Included / Not included beside each choice on the Configuration stage", async () => {
+    (globalThis as { __STAGE?: string }).__STAGE = "1";
+    asRoles("REP", "ESTIMATOR");
+    const id = await storedQuote();
+    (globalThis as { __QID?: string }).__QID = id;
+    const { default: Page } = await import("../[id]/page");
+    render(createElement(Page));
+    await waitFor(() => expect(screen.getByText("Selections")).toBeTruthy(), { timeout: 5000 });
+    const controller = box(/Thomas-CL1 controller/).closest("label")!;
+    expect(controller.textContent).toMatch(/Included/); // the stored draft ticks the controller
+    const silo = box(/Silo weighing/).closest("label")!;
+    expect(silo.textContent).toMatch(/Not included/);
+    fireEvent.click(box(/Silo weighing/));
+    expect(silo.textContent).toMatch(/✓ Included/);
   }, 30000);
 });
