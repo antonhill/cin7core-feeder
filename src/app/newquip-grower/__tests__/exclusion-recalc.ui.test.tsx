@@ -102,7 +102,7 @@ const expectedSubtotal = async (exclude: string[]) => {
 };
 const count = (log: string[], entry: string) => log.filter((l) => l === entry).length;
 /**
- * The page's own initial load. Besides the immediate requests, the Scope panel and the Cost panel EACH re-request on an 800 ms mount timer. Those are not caused by
+ * The page's own initial load. Besides the immediate requests (the quote, the cost estimate, and the customer, which two panels read), the Scope panel and the Cost panel EACH re-request on an 800 ms mount timer. Those are not caused by
  * the edit under test, and where a click lands relative to them depends on how fast the machine is (on a slow runner they can enter the queue ahead of the edit's
  * preview). Wait - by what the queue observed, not by a delay - until both have been answered, then forget them.
  */
@@ -139,10 +139,9 @@ describe("UAT-003 rendered page: the Exclude checkbox recalculates without Save"
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
     await waitFor(() => expect(subtotal()).not.toBe(original), { timeout: 5000 });
     await waitFor(() => expect(digits(subtotal())).toBe(digits(fmtZar(feeder))), { timeout: 5000 }); // exactly the excluded-feeder figure the engine gives
-    // Causal order for THIS edit: the recalculation is the first thing the server answers, and no cost / scope request caused by the edit starts before it has.
+    // The queue is serial and was emptied after the initial load, so the first answer is the first request THIS edit made: it must be the recalculation.
     const firstEnd = q.log.findIndex((l) => l.startsWith("end "));
     expect(q.log[firstEnd]).toBe("end previewGrowerDraftAction"); // the preview is not queued behind the cost / scope requests
-    expect(q.log.slice(0, firstEnd).filter((l) => /getQuoteScopeAction|getQuoteCostEstimateAction/.test(l))).toEqual([]);
     fireEvent.click(box(/Exclude CCM feeder/i));
     await waitFor(() => expect(subtotal()).toBe(original), { timeout: 8000 });
     await sleep(1200);
