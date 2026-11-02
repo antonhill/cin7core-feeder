@@ -2,7 +2,6 @@
 // the server-side store injects the Cin7 port. Everything a posting is built from comes from the FROZEN APPROVED claim — progress is
 // never re-read or recalculated.
 import { createHash } from "node:crypto";
-import { formatZarCents } from "../format-money";
 
 export const POSTING_STATES = ["PENDING", "CREATED", "RECONCILED", "FAILED_CONFIRMED_NO_WRITE", "FAILED_UNCERTAIN"] as const;
 export type PostingState = (typeof POSTING_STATES)[number];
@@ -107,7 +106,7 @@ export type MatchResult =
   | { kind: "mismatch"; invoice: ReadInvoice; differences: string[] };
 
 const isCents = (n: number | null): n is number => typeof n === "number" && Number.isSafeInteger(n);
-const rand = (cents: number) => formatZarCents(cents);
+const rand = (cents: number) => (cents / 100).toFixed(2);
 
 /** Differences between what Cin7 holds and what was frozen, in rands. A missing / non-finite Cin7 amount is itself a difference. */
 export function amountDifferences(
@@ -116,8 +115,8 @@ export function amountDifferences(
 ): string[] {
   const out: string[] = [];
   const check = (label: string, got: number | null, want: number) => {
-    if (!isCents(got)) out.push(`${label} not returned by Cin7 (expected ${rand(want)})`);
-    else if (got !== want) out.push(`${label} ${rand(got)} vs approved ${rand(want)}`);
+    if (!isCents(got)) out.push(`${label} not returned by Cin7 (expected R${rand(want)})`);
+    else if (got !== want) out.push(`${label} R${rand(got)} vs approved R${rand(want)}`);
   };
   check("ex VAT", cin7.subtotalCents, frozen.amount_ex_vat_cents);
   check("VAT", cin7.taxCents, frozen.tax_cents);
@@ -175,7 +174,7 @@ export function lineDifferences(inv: ReadInvoice, expected: Array<{ sku: string;
   const out: string[] = [];
   if (!inv.lines) return expected.length ? ["invoice lines not returned by Cin7"] : [];
   for (const l of inv.lines) {
-    if (l.priceCents === null || l.priceCents !== 0) out.push(`product line ${l.sku ?? "?"} carries a price (${l.priceCents === null ? "unreadable" : rand(l.priceCents)}); physical lines must be R0`);
+    if (l.priceCents === null || l.priceCents !== 0) out.push(`product line ${l.sku ?? "?"} carries a price (${l.priceCents === null ? "unreadable" : `R${rand(l.priceCents)}`}); physical lines must be R0`);
   }
   const got = new Map<string, number>();
   for (const l of inv.lines) got.set(l.sku ?? "?", (got.get(l.sku ?? "?") ?? 0) + (l.quantity ?? NaN));
