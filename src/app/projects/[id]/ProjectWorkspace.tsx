@@ -142,7 +142,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   const router = useRouter();
   const [view, setView] = useState<ProjectView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>(embedded ? "stages" : "overview");
+  const [tab, setTab] = useState<Tab>(embedded ? "claims" : "overview");
   const [preview, setPreview] = useState<ClaimPreviewResult | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   // Which billing stages the next claim covers. Empty by default: a claim never silently includes every claimable stage.
