@@ -20,7 +20,7 @@ import { buildReviewDetail, type ReviewDetail } from "@/lib/approvals/review-det
 import { authoriseStageDecision } from "@/lib/approvals/policy";
 import { canAdminister, STAGE_LABEL, type FunctionalRole } from "@/lib/approvals/roles";
 import { emailsWithRole, resolveRoles } from "@/lib/approvals/role-store";
-import { filterQueue, sortQueue, summarise, currentReturned, type QueueFilters, type QueueSort, type QueueSummary } from "@/lib/approvals/queue";
+import { awaitsMe, filterQueue, sortQueue, summarise, currentReturned, type QueueFilters, type QueueSort, type QueueSummary } from "@/lib/approvals/queue";
 import type { ApprovalAction, ApprovalDocType, ApprovalEventRow, ApprovalNotificationRow, ApprovalRequestRow, ApprovalSettings } from "@/lib/approvals/types";
 
 export interface ApprovalResult<T> { ok: boolean; error?: string; data?: T }
@@ -45,7 +45,7 @@ function notInDemo(ctx: ApprovalCtx, what: string) {
 
 export interface ApprovalsDashboard {
   available: boolean; me: string; isManager: boolean; nowIso: string;
-  summary: QueueSummary; rows: ApprovalRequestRow[]; needsPreparerAction: ApprovalRequestRow[];
+  summary: QueueSummary; /** ids of the pending rows waiting for ME (by name or by the role of their stage), the same rule as the summary count and the 'mine' filter */ awaitingMeIds: string[]; rows: ApprovalRequestRow[]; needsPreparerAction: ApprovalRequestRow[];
   managers: string[]; failedEmails: ApprovalNotificationRow[]; /** the organisation's recent emails in every status (managers only) */ recentEmails: ApprovalNotificationRow[]; unread: number; settings: ApprovalSettings;
 }
 
@@ -54,12 +54,12 @@ export async function getApprovalsDashboardAction(filters: QueueFilters = {}, so
     const ctx = await context();
     const db = createServiceRoleClient();
     const nowIso = new Date().toISOString();
-    if (!(await approvalsAvailable(db))) return { ok: true, data: { available: false, me: ctx.email, isManager: ctx.isManager, nowIso, summary: summarise([], ctx.email, nowIso), rows: [], needsPreparerAction: [], managers: [], failedEmails: [], recentEmails: [], unread: 0, settings: await loadSettings(db, ctx.orgId) } };
+    if (!(await approvalsAvailable(db))) return { ok: true, data: { available: false, me: ctx.email, isManager: ctx.isManager, nowIso, summary: summarise([], ctx.email, nowIso), awaitingMeIds: [], rows: [], needsPreparerAction: [], managers: [], failedEmails: [], recentEmails: [], unread: 0, settings: await loadSettings(db, ctx.orgId) } };
     const all = await listRequests(db, ctx.orgId);
     const myRoles = await resolveRoles(db, ctx.orgId, ctx.userId, ctx.isManager);
     const notes = await myNotifications(db, ctx.orgId, ctx.email, 200);
     return { ok: true, data: {
-      available: true, me: ctx.email, isManager: ctx.isManager, nowIso, summary: summarise(all, ctx.email, nowIso, myRoles), rows: sortQueue(filterQueue(all, filters, ctx.email, nowIso, myRoles), sort),
+      available: true, me: ctx.email, isManager: ctx.isManager, nowIso, summary: summarise(all, ctx.email, nowIso, myRoles), awaitingMeIds: all.filter((r) => r.status === "PENDING" && awaitsMe(r, ctx.email, myRoles)).map((r) => r.id), rows: sortQueue(filterQueue(all, filters, ctx.email, nowIso, myRoles), sort),
       needsPreparerAction: currentReturned(all).filter((r) => r.prepared_by_email === ctx.email), managers: ctx.isManager ? await managerEmails(db, ctx.orgId) : [],
       failedEmails: ctx.isManager ? await failedEmails(db, ctx.orgId) : [], recentEmails: ctx.isManager ? await recentEmails(db, ctx.orgId) : [], unread: notes.filter((n) => !n.read_at).length, settings: await loadSettings(db, ctx.orgId),
     } };
