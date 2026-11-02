@@ -4,6 +4,7 @@
 // are derived HERE, on the server: the rollout flag, the rollout org, and the manager role. The UI only displays them.
 // This file may export ONLY async functions and erased interfaces ("use server" rule in CLAUDE.md).
 
+import { verifyInvoiceStatuses, type InvoiceVerification } from "@/lib/projects/invoice-verification";
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { logActivity } from "@/lib/activity-log";
@@ -415,6 +416,32 @@ export async function getPackageMappingAction(projectId: string, itemId: string)
 }
 
 export type Cin7ReferenceOptions = Awaited<ReturnType<typeof readCin7ReferenceOptions>>;
+
+/**
+ * UAT-028. Manager only, READ-ONLY, on request (never automatic): reads the project's ONE linked Cin7 Sale once - which carries every invoice on it with its status -
+ * and compares those statuses with the ones Toolbox recorded. Writes nothing: not to Cin7, and not to the posting record (the recorded status and the reconciliation
+ * evidence stay exactly as they were; the verified status is returned to the page with its time, never stored as if it were the record). No invoice is created.
+ */
+export async function verifyInvoiceStatusesAction(projectId: string): Promise<Cin7ActionResult<InvoiceVerification>> {
+  try {
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const gates = await gatesFor(orgId);
+    const db = createServiceRoleClient();
+    await guardBillingScope(db, orgId, projectId, gates.isManager);
+    if (!gates.orgEnabled) throw new Error("Not enabled for this organization.");
+    if (!gates.isManager) throw new Error("Only an owner or admin can verify invoice statuses against Cin7.");
+    const instanceId = await singleActiveInstanceId(db, orgId);
+    if (instanceId !== NEWQUIP_POC_CIN7_INSTANCE_ID) throw new Error("Invoice statuses can only be verified on the expected NewQuip POC Cin7 instance; it is not.");
+    const link = await loadSaleLink(db, orgId, projectId);
+    if (!link) throw new Error("No Cin7 Sales Order is linked to this project yet.");
+    if (link.instance_id !== instanceId) throw new Error("The linked Sale belongs to a different Cin7 instance than the active one; nothing was read.");
+    const postings = await listPostings(db, orgId, projectId);
+    const sale = await buildCin7Port(db, orgId, instanceId).fetchSale(link.cin7_sale_id); // ONE read for every invoice on the Sale
+    return { ok: true, data: verifyInvoiceStatuses({ saleId: link.cin7_sale_id, postings, sale, now: new Date() }) };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
 
 /**
  * Manager only. READ-ONLY lookup of the Cin7 locations and Chart of Accounts of the organisation's single pinned instance, so Location and Revenue Account

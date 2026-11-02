@@ -11,6 +11,7 @@ import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { POST_CONFIRMATION_TEXT, canReconcile, canSend, memoFor, type PostingDisplayState } from "@/lib/projects/cin7-posting";
 import { clearSelection, populateEligible, selectAllEligible, selectionToQuantities, toggleLine, visibleLines } from "@/lib/projects/invoice-selection";
 import type { PreparedInvoice } from "@/lib/projects/invoice-proposal-store";
+import { InvoiceStatusSection } from "./InvoiceStatusSection";
 import { getCin7PostingStatusAction, recoverLinkCin7SaleAction, getInvoiceProposalAction, postClaimToCin7Action, reconcileClaimPostingAction, type Cin7PostingStatus } from "../cin7-actions";
 
 // Cin7 Core: link the Project to ONE Advanced Sale, then post each APPROVED claim as ONE invoice. Everything here is display + intent:
@@ -124,6 +125,8 @@ export function Cin7PostingPanel({ view, run, working, boot }: { view: ProjectVi
           </details>
         )}
       </div>
+
+      <InvoiceStatusSection view={view} postings={postings} projectId={projectId} isManager={gates.isManager} />
 
       <div className="mt-4 space-y-3">
         {approved.length === 0 && <p className="text-sm text-slate-600">No approved claims to post yet.</p>}
