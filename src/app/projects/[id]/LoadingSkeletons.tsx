@@ -9,7 +9,7 @@ export const Block = Skeleton;
 export function WorkspaceSkeleton() {
   return (
     <div role="status" aria-live="polite" aria-busy="true" data-testid="workspace-loading">
-      <p className="mt-6 text-sm text-slate-500">Loading the project…</p>
+      <p className="mt-6 text-sm text-slate-600">Loading the project…</p>
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[0, 1, 2, 3].map((i) => <Block key={i} className="h-28" />)}
       </div>
@@ -23,7 +23,7 @@ export function WorkspaceSkeleton() {
 export function OverviewSkeleton() {
   return (
     <div className="space-y-8" role="status" aria-live="polite" aria-busy="true" data-testid="overview-loading">
-      <p className="text-sm text-slate-500">Loading the executive overview…</p>
+      <p className="text-sm text-slate-600">Loading the executive overview…</p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => <Block key={i} className="h-24" />)}
       </div>

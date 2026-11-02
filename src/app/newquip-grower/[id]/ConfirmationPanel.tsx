@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
-import { Badge } from "@/components/ui/Badge";
+import { Status } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { formatSast } from "@/lib/approvals/time";
 import { getQuoteCustomerAction, type QuoteCustomerView } from "../customer-actions";
@@ -29,7 +29,7 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
     return () => { live = false; };
   }, [quoteId, refreshKey]);
 
-  if (!v) return <p className="text-sm text-slate-500">{err ?? "Loading the confirmation contact…"}</p>;
+  if (!v) return <p className="text-sm text-slate-600">{err ?? "Loading the confirmation contact…"}</p>;
   const s = v.snapshot;
   const customer = s ? fieldValue(s.name) ?? "(no name in Cin7)" : null;
   const rc = v.confirmationContact;
@@ -37,11 +37,11 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
   if (recorded) {
     return (
       <div className="rounded-md border border-slate-200 p-3 text-sm" data-testid="confirmation-recorded">
-        <div className="flex items-center gap-2 font-medium text-slate-800">Pre-approval price confirmation {rc ? <Badge tone="success">Recorded</Badge> : <Badge tone="warning">Contact not on record</Badge>}</div>
+        <div className="flex items-center gap-2 font-medium text-slate-800">Pre-approval price confirmation {rc ? <Status tone="success">Recorded</Status> : <Status tone="warning">Contact not on record</Status>}</div>
         {rc ? (
           <p className="mt-1 text-slate-700">{rc.name}{rc.email ? ` <${rc.email}>` : ""} · {rc.origin}{rc.reason ? ` · reason: ${rc.reason}` : ""} · confirmed by {rc.selectedBy} on {formatSast(rc.selectedAt)}</p>
         ) : <p className="mt-1 text-slate-600">No structured contact record (confirmed before contact selection existed).</p>}
-        <p className="mt-1 text-xs text-slate-500">This is the pre-approval price confirmation. The customer&apos;s formal acceptance of the issued quotation is recorded separately after Manager approval.</p>
+        <p className="mt-1 text-xs text-slate-600">This is the pre-approval price confirmation. The customer&apos;s formal acceptance of the issued quotation is recorded separately after Manager approval.</p>
       </div>
     );
   }
@@ -64,7 +64,7 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
   return (
     <div className="space-y-3 rounded-md border border-slate-200 p-3" data-testid="confirmation-panel">
       <p className="text-sm font-medium text-slate-800">Pre-approval price confirmation</p>
-      <p className="text-xs text-slate-500">Record who at the customer confirmed the commercial amount. This is not the customer&apos;s formal acceptance of the issued quotation, which is recorded after Manager approval.</p>
+      <p className="text-xs text-slate-600">Record who at the customer confirmed the commercial amount. This is not the customer&apos;s formal acceptance of the issued quotation, which is recorded after Manager approval.</p>
       {err && <Alert tone="danger">{err}</Alert>}
       {blocked && <Alert tone="warning">{blocked}</Alert>}
       {customer && <p className="text-sm text-slate-700">Customer: <b>{customer}</b></p>}
@@ -95,10 +95,10 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
           )}
         </fieldset>
       )}
-      {quotationContact && <p className="text-xs text-slate-500">Delivery contact for the PDF (unchanged by this): {quotationContact.name} &lt;{quotationContact.email}&gt;</p>}
+      {quotationContact && <p className="text-xs text-slate-600">Delivery contact for the PDF (unchanged by this): {quotationContact.name} &lt;{quotationContact.email}&gt;</p>}
       <div className="border-t border-slate-100 pt-3 text-sm">
         <p>Pre-approval amount confirmed: <b>{amountLabel ? `${amountLabel} ex VAT` : "not available yet"}</b></p>
-        <p>Confirmation contact: <b>{picked ? `${picked.name}${picked.email ? ` <${picked.email}>` : ""}` : "—"}</b>{picked && <span className="text-slate-500"> · {picked.origin}</span>}</p>
+        <p>Confirmation contact: <b>{picked ? `${picked.name}${picked.email ? ` <${picked.email}>` : ""}` : "—"}</b>{picked && <span className="text-slate-600"> · {picked.origin}</span>}</p>
         <div className="mt-2">
           <Button loading={loading} disabled={!canAct || !ready || !amountLabel || !input || (v.available && !s)} onClick={() => input && onConfirm(input)}>Record pre-approval price confirmation &amp; send to Estimator</Button>
         </div>

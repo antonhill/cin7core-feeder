@@ -7,7 +7,8 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { APPROVALS_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
-import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Status } from "@/components/ui/Status";
+import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
@@ -41,7 +42,7 @@ export default function ApprovalsPage() {
   useEffect(load, [load]);
   const openNotes = async () => { setTab("notifications"); const r = await getMyNotificationsAction(false); if (r.ok && r.data) setNotes(r.data.notifications); };
 
-  if (!d) return <main className={pageContainerClass("data")}><ModuleHeader module={APPROVALS_MODULE}>Approvals</ModuleHeader>{error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <div role="status" aria-live="polite" aria-busy="true" data-testid="approvals-loading"><p className="mt-6 text-sm text-slate-500">Loading approvals…</p><Skeleton className="mt-4 h-12 w-full max-w-3xl" /><Skeleton className="mt-4 h-96 w-full" /></div>}</main>;
+  if (!d) return <main className={pageContainerClass("data")}><ModuleHeader variant="workspace" module={APPROVALS_MODULE}>Approvals</ModuleHeader>{error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <div role="status" aria-live="polite" aria-busy="true" data-testid="approvals-loading"><p className="mt-6 text-sm text-slate-600">Loading approvals…</p><Skeleton className="mt-4 h-12 w-full max-w-3xl" /><Skeleton className="mt-4 h-96 w-full" /></div>}</main>;
   const s = d.summary;
   const cards: Array<[string, string, BadgeTone?]> = [
     ["Awaiting my approval", String(s.awaitingMe), s.awaitingMe ? "warning" : undefined], ["All pending", String(s.pending)], ["Overdue", String(s.overdue), s.overdue ? "danger" : undefined],
@@ -50,7 +51,7 @@ export default function ApprovalsPage() {
 
   return (
     <main className={pageContainerClass("data", "compact")}>
-      <ModuleHeader module={APPROVALS_MODULE}>Approvals</ModuleHeader>
+      <ModuleHeader variant="workspace" module={APPROVALS_MODULE}>Approvals</ModuleHeader>
       <div className="mt-2"><Link className="text-sm text-slate-700 underline" href="/approvals/roles">Roles and approval routing</Link></div>
       {!d.available && <div className="mt-4"><Alert tone="warning">Approvals are not active (the database migration is pending). Until then quotations, claims and variations keep their existing approve buttons.</Alert></div>}
       {error && <div className="mt-4"><Alert tone="danger">{error}</Alert></div>}
@@ -58,7 +59,7 @@ export default function ApprovalsPage() {
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map(([k, v, tone]) => (
           <div key={k} className="rounded-lg border border-slate-200 bg-white p-3">
-            <div className="text-xs text-slate-500">{k}</div>
+            <div className="text-xs text-slate-600">{k}</div>
             <div className={`mt-1 text-xl font-semibold tabular-nums ${tone === "danger" ? "text-red-700" : tone === "warning" ? "text-amber-700" : "text-slate-900"}`}>{v}</div>
           </div>
         ))}
@@ -79,7 +80,7 @@ export default function ApprovalsPage() {
           <div className="grid gap-3 md:grid-cols-4 xl:grid-cols-6">
             <div className="col-span-full flex flex-wrap items-center gap-2 text-xs">
               {activeFilters(f, (s) => STATUS_LABEL[s]).length === 0
-                ? <span className="text-slate-500">No filters: showing every approval.</span>
+                ? <span className="text-slate-600">No filters: showing every approval.</span>
                 : <>
                     <span className="font-medium text-slate-700">Active filters:</span>
                     {activeFilters(f, (s) => STATUS_LABEL[s]).map((a) => <span key={a.key} className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-indigo-800">{a.label}</span>)}
@@ -113,7 +114,7 @@ export default function ApprovalsPage() {
                         <TD className="text-xs">{r.prepared_by_email}</TD><TD className="whitespace-nowrap text-xs">{formatSast(r.submitted_at)}</TD>
                         <TD className="text-xs">{r.stage === "ESTIMATOR" ? "Estimator review" : r.doc_type === "QUOTE" ? "Manager approval" : "Approval"}</TD>
                         <TD className="text-xs">{r.assigned_to_email ?? (r.stage_role ? `any ${r.stage_role.toLowerCase().replace("_", " ")}` : "any manager")}</TD>
-                        <TD><Badge tone={TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>{r.admin_override && <Badge tone="warning">override</Badge>}</TD>
+                        <TD><Status tone={TONE[r.status]}>{STATUS_LABEL[r.status]}</Status>{r.admin_override && <Status tone="warning">override</Status>}</TD>
                         <TD className="whitespace-nowrap text-xs">{r.status === "PENDING" ? waitingLabel(r.submitted_at, d.nowIso) : "-"}</TD>
                         <TD className={`whitespace-nowrap text-xs ${late ? "font-medium text-red-700" : ""}`}>{r.due_at ? formatSast(r.due_at) : "-"}{late ? " (overdue)" : ""}</TD>
                       </TR>
@@ -122,7 +123,7 @@ export default function ApprovalsPage() {
                 </TBody>
               </Table>
             )}
-            <p className="mt-2 text-xs text-slate-500">Due dates count business days (Monday to Friday, SAST). Public holidays are not modelled.</p>
+            <p className="mt-2 text-xs text-slate-600">Due dates count business days (Monday to Friday, SAST). Public holidays are not modelled.</p>
           </div>
         </Panel>
       )}
@@ -135,7 +136,7 @@ export default function ApprovalsPage() {
               {notes.map((n) => (
                 <li key={n.id} className={`py-2 text-sm ${n.read_at ? "text-slate-600" : "font-medium text-slate-900"}`}>
                   <Link href={n.request_id ? `/approvals/${n.request_id}` : `/newquip-grower/${n.quote_id}?stage=5`} className="underline">{n.subject}</Link>
-                  <span className="ml-2 text-xs text-slate-500">{formatSast(n.created_at)}{n.read_at ? "" : " · unread"}</span>
+                  <span className="ml-2 text-xs text-slate-600">{formatSast(n.created_at)}{n.read_at ? "" : " · unread"}</span>
                 </li>
               ))}
             </ul>
@@ -147,12 +148,12 @@ export default function ApprovalsPage() {
         <div className="mt-3 space-y-4">
           <Panel>
             <PanelTitle>Email delivery</PanelTitle>
-            <p className="mt-1 text-xs text-slate-500">Approval decisions never depend on email. &ldquo;Accepted&rdquo; means the mail provider (Resend) took the message; it is not confirmation that it reached an inbox. A Preview emails only the listed test mailboxes (anyone else gets the in-app notification only, shown here as Suppressed). A Preview has no scheduled sender: use Send pending now, or Retry on a failed one.</p>
+            <p className="mt-1 text-xs text-slate-600">Approval decisions never depend on email. &ldquo;Accepted&rdquo; means the mail provider (Resend) took the message; it is not confirmation that it reached an inbox. A Preview emails only the listed test mailboxes (anyone else gets the in-app notification only, shown here as Suppressed). A Preview has no scheduled sender: use Send pending now, or Retry on a failed one.</p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
               <Button size="sm" variant="secondary" onClick={async () => { const r = await getEmailStatusAction(); if (r.ok && r.data) setMail(r.data); else setNote(r.error ?? "Could not read the email status."); }}>Check email configuration</Button>
               {mail && (mail.configured
-                ? <Badge tone="success">Provider configured{mail.senderDomain ? ` (sender @${mail.senderDomain})` : ""}</Badge>
-                : <Badge tone="danger">Not configured: {mail.missing.join(", ")} missing. Approval emails cannot be sent; in-app notifications still work.</Badge>)}
+                ? <Status tone="success">Provider configured{mail.senderDomain ? ` (sender @${mail.senderDomain})` : ""}</Status>
+                : <Status tone="danger">Not configured: {mail.missing.join(", ")} missing. Approval emails cannot be sent; in-app notifications still work.</Status>)}
               {mail?.configured && <Button size="sm" variant="secondary" onClick={async () => { const r = await sendTestEmailAction(); setNote(r.ok && r.data ? (r.data.suppressed ? `Not sent: ${r.data.error}` : r.data.accepted ? `The provider accepted a test email to ${r.data.to}${r.data.messageId ? ` (id ${r.data.messageId})` : ""}. Acceptance is not delivery: check that it arrived.` : `The test email was NOT accepted: ${r.data.error ?? "unknown error"}.`) : r.error ?? "Could not send a test email."); }}>Send a test email to me</Button>}
               {mail?.configured && <Button size="sm" variant="secondary" onClick={async () => { const r = await sendPendingNowAction(); setNote(r.ok && r.data ? `Dispatched queued emails: ${r.data.sent} accepted by the provider, ${r.data.failed} failed, ${r.data.suppressed} suppressed.` : r.error ?? "Could not send the pending emails."); load(); }}>Send pending now</Button>}
             </div>
@@ -163,9 +164,9 @@ export default function ApprovalsPage() {
                   const st: EmailDisplayStatus = displayEmailStatus(n);
                   return (
                     <li key={n.id} className="flex flex-wrap items-center gap-2" title={EMAIL_STATUS_NOTE[st]}>
-                      <Badge tone={st === "ACCEPTED" ? "success" : st === "QUEUED" || st === "SUPPRESSED" ? "neutral" : "danger"}>{st === "ACCEPTED" ? "Accepted by provider" : st[0] + st.slice(1).toLowerCase()}</Badge>
+                      <Status tone={st === "ACCEPTED" ? "success" : st === "QUEUED" || st === "SUPPRESSED" ? "neutral" : "danger"}>{st === "ACCEPTED" ? "Accepted by provider" : st[0] + st.slice(1).toLowerCase()}</Status>
                       <span>{n.subject} to {n.recipient_email}</span>
-                      <span className="text-xs text-slate-500">{formatSast(n.sent_at ?? n.created_at)}{n.last_error ? ` · ${n.last_error}` : ""}{n.attempts ? ` · ${n.attempts} attempt(s)` : ""}</span>
+                      <span className="text-xs text-slate-600">{formatSast(n.sent_at ?? n.created_at)}{n.last_error ? ` · ${n.last_error}` : ""}{n.attempts ? ` · ${n.attempts} attempt(s)` : ""}</span>
                       {(st === "FAILED" || st === "ABANDONED" || st === "SUPPRESSED") && <Button size="sm" variant="secondary" onClick={async () => { const r = await retryEmailAction(n.id); setNote(r.ok && r.data ? (r.data.sent ? "Retried: the provider accepted it (acceptance is not inbox delivery)." : r.data.suppressed ? "Retried: still suppressed by the Preview policy." : "Retried: the provider did not accept it; see the reason in the list.") : r.error ?? "Could not retry."); load(); }}>Retry</Button>}
                     </li>
                   );
@@ -182,7 +183,7 @@ export default function ApprovalsPage() {
               <Input label="Escalate to (manager email)" value={settings.escalationEmail} onChange={(e) => setSettings({ ...settings, escalationEmail: e.target.value })} />
             </div>
             <div className="mt-3"><Button size="sm" onClick={async () => { const r = await saveApprovalSettingsAction({ targetBusinessDays: Number(settings.targetBusinessDays), reminderEveryHours: Number(settings.reminderEveryHours), maxReminders: Number(settings.maxReminders), escalationEmail: settings.escalationEmail.trim() || null }); setNote(r.ok ? "Saved." : r.error ?? "Could not save."); load(); }}>Save settings</Button></div>
-            <p className="mt-2 text-xs text-slate-500">An overdue approval is only reminded about: lateness never approves or rejects anything. Reminders stop when the item is decided, withdrawn or superseded.</p>
+            <p className="mt-2 text-xs text-slate-600">An overdue approval is only reminded about: lateness never approves or rejects anything. Reminders stop when the item is decided, withdrawn or superseded.</p>
           </Panel>
           {note && <Alert tone="info">{note}</Alert>}
         </div>

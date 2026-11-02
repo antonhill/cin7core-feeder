@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Alert } from "@/components/ui/Alert";
-import { Badge } from "@/components/ui/Badge";
+import { ScopeTag } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
@@ -53,7 +53,7 @@ export function ConsolidatedReportPanel({ view }: { view: ProjectView }) {
               <THead><TR><TH>Scope</TH><TH align="right">Contract</TH><TH align="right">Invoiced</TH><TH>Cin7 invoices</TH><TH align="right">Remaining</TH><TH>Claims</TH></TR></THead>
               <TBody>{rep.scopes.map((s) => (
                 <TR key={s.projectId}>
-                  <TD>{s.label} {s.scope === "VARIATION" && <Badge tone="warning">VARIATION</Badge>}{!s.billingStarted && <div className="text-xs text-amber-700">billing not started</div>}</TD>
+                  <TD>{s.label} {s.scope === "VARIATION" && <ScopeTag scope="VARIATION" />}{!s.billingStarted && <div className="text-xs text-amber-700">billing not started</div>}</TD>
                   <TD align="right" className="tabular-nums">{formatCents(s.contractCents)}</TD><TD align="right" className="tabular-nums">{formatCents(s.invoicedCents)}</TD>
                   <TD className="font-mono text-xs">{s.invoiceNumbers.join(", ") || "-"}</TD><TD align="right" className="tabular-nums">{formatCents(s.remainingCents)}</TD>
                   <TD className="text-xs">{s.claims.length === 0 ? "-" : s.claims.map((c) => `${c.claimNumber} ${c.status}${c.invoiceNumber ? ` (${c.invoiceNumber})` : ""} ${formatCents(c.subtotalCents)}`).join("; ")}</TD>

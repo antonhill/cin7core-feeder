@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { QUOTES_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
-import { Badge } from "@/components/ui/Badge";
+import { Status } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
@@ -62,7 +62,7 @@ export default function ProjectTemplatesPage() {
 
   return (
     <main className={pageContainerClass("form", "compact")}>
-      <ModuleHeader module={QUOTES_MODULE}>Project templates</ModuleHeader>
+      <ModuleHeader variant="workspace" module={QUOTES_MODULE}>Project templates</ModuleHeader>
       <p className="mt-2 text-sm text-slate-600">Reusable billing milestones for new projects. Percentages must total exactly 100%. A project keeps its own copy of the stages it was created with: editing or retiring a template never changes an existing project or an approved quotation.</p>
       <div className="mt-2"><Link className="text-sm text-slate-700 underline" href="/newquip-grower">Back to Solution Builder</Link></div>
       {data?.unavailable && <div className="mt-4"><Alert tone="warning">Project templates activate once the templates database migration (0111) has been applied. Until then new projects use the built-in schedules.</Alert></div>}
@@ -77,18 +77,18 @@ export default function ProjectTemplatesPage() {
             {(data?.templates ?? []).map((t) => (
               <li key={t.id}>
                 <button type="button" onClick={() => open(t)} className={`w-full rounded-md border px-3 py-2 text-left text-sm ${selected === t.id ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}>
-                  <span className="font-medium">{t.name}</span> <span className="text-xs text-slate-500">v{t.latest?.version ?? "-"}</span>
-                  <span className="ml-1 inline-flex gap-1">{t.isDefault && <Badge tone="info">Default</Badge>}{t.status === "RETIRED" && <Badge tone="neutral">Retired</Badge>}</span>
+                  <span className="font-medium">{t.name}</span> <span className="text-xs text-slate-600">v{t.latest?.version ?? "-"}</span>
+                  <span className="ml-1 inline-flex gap-1">{t.isDefault && <Status tone="info">Default</Status>}{t.status === "RETIRED" && <Status tone="neutral">Retired</Status>}</span>
                 </button>
               </li>
             ))}
-            {data && data.templates.length === 0 && !data.unavailable && <li className="text-sm text-slate-500">No templates yet.</li>}
+            {data && data.templates.length === 0 && !data.unavailable && <li className="text-sm text-slate-600">No templates yet.</li>}
           </ul>
           {canManage && !data?.unavailable && <div className="mt-3"><Button size="sm" onClick={() => open("new")}>New template</Button></div>}
         </Panel>
 
         <Panel>
-          {selected === null ? <p className="text-sm text-slate-500">Select a template, or create a new one.</p> : (
+          {selected === null ? <p className="text-sm text-slate-600">Select a template, or create a new one.</p> : (
             <div className="space-y-3">
               <PanelTitle>{selected === "new" ? "New template" : `${current?.name ?? ""} - edit as a new version`}</PanelTitle>
               <div className="grid gap-3 sm:grid-cols-2">
@@ -142,7 +142,7 @@ export default function ProjectTemplatesPage() {
                 <div>
                   <div className="text-sm font-medium">Version history</div>
                   <ul className="mt-1 space-y-1 text-sm text-slate-700">
-                    {versions.map((v) => <li key={v.id}>v{v.version} - {v.stages.map((s) => `${s.name} ${bpsToPercentText(s.bps)}%`).join(" / ")} <span className="text-xs text-slate-500">({v.createdByEmail}, {new Date(v.createdAt).toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg" })} SAST: {v.reason})</span></li>)}
+                    {versions.map((v) => <li key={v.id}>v{v.version} - {v.stages.map((s) => `${s.name} ${bpsToPercentText(s.bps)}%`).join(" / ")} <span className="text-xs text-slate-600">({v.createdByEmail}, {new Date(v.createdAt).toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg" })} SAST: {v.reason})</span></li>)}
                   </ul>
                 </div>
               )}

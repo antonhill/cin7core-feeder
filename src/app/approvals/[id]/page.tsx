@@ -10,7 +10,8 @@ import { APPROVALS_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
 import { ActionFeedback, useKeyedActions } from "@/components/ui/action-feedback";
 import { ApprovalTimeline } from "@/components/ApprovalTimeline";
-import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Status } from "@/components/ui/Status";
+import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
@@ -40,7 +41,7 @@ export default function ApprovalDetailPage() {
   const load = useCallback(() => { getApprovalDetailAction(id).then((r) => { if (r.ok && r.data) { setD((cur) => (cur && cur.request.status !== "PENDING" && r.data!.request.status === "PENDING" ? cur : r.data!)); setError(null); } else setError(r.error ?? "Could not load this approval."); }); }, [id]);
   useEffect(load, [load]);
 
-  if (!d) return <main className={pageContainerClass("form")}><ModuleHeader module={APPROVALS_MODULE}>Approval</ModuleHeader>{error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <div role="status" aria-live="polite" aria-busy="true" data-testid="approval-loading"><p className="mt-6 text-sm text-slate-500">Loading the approval…</p><Skeleton className="mt-4 h-40 w-full" /><Skeleton className="mt-4 h-64 w-full" /></div>}</main>;
+  if (!d) return <main className={pageContainerClass("form")}><ModuleHeader variant="workspace" module={APPROVALS_MODULE}>Approval</ModuleHeader>{error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <div role="status" aria-live="polite" aria-busy="true" data-testid="approval-loading"><p className="mt-6 text-sm text-slate-600">Loading the approval…</p><Skeleton className="mt-4 h-40 w-full" /><Skeleton className="mt-4 h-64 w-full" /></div>}</main>;
   const r = d.request;
   const now = new Date().toISOString();
   const late = r.status === "PENDING" && isOverdue(r.due_at, now);
@@ -84,19 +85,19 @@ export default function ApprovalDetailPage() {
 
   return (
     <main className={pageContainerClass("form", "compact")}>
-      <ModuleHeader module={APPROVALS_MODULE}>{DOC_TYPE_LABEL[r.doc_type]} {r.doc_ref}</ModuleHeader>
+      <ModuleHeader variant="workspace" module={APPROVALS_MODULE}>{DOC_TYPE_LABEL[r.doc_type]} {r.doc_ref}</ModuleHeader>
       <p className="mt-1 text-sm"><Link href="/approvals" className="underline">All approvals</Link> · <Link href={docHref} className="underline">View {r.doc_type === "QUOTE" ? "document" : "project"}</Link></p>
       {error && <div className="mt-3"><Alert tone="danger">{error}</Alert></div>}
 
       <Panel className="mt-4">
-        <div className="flex flex-wrap items-center gap-2"><PanelTitle>Revision {r.revision}</PanelTitle><Badge tone={TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>{r.admin_override && <Badge tone="warning">administrator override</Badge>}{late && <Badge tone="danger">overdue</Badge>}</div>
+        <div className="flex flex-wrap items-center gap-2"><PanelTitle>Revision {r.revision}</PanelTitle><Status tone={TONE[r.status]}>{STATUS_LABEL[r.status]}</Status>{r.admin_override && <Status tone="warning">administrator override</Status>}{late && <Status tone="danger">overdue</Status>}</div>
         <dl className="mt-3 grid gap-x-8 gap-y-2 text-sm sm:grid-cols-3">
           {([
             ["Customer", r.customer_name ?? "-"], ["Project", r.project_ref ?? "-"], ["Amount (ex VAT)", rand(r.amount_cents)],
             ["Submitted by", r.prepared_by_email], ["Submitted at", formatSast(r.submitted_at)], ["Waiting", r.status === "PENDING" ? waitingLabel(r.submitted_at, now) : "-"],
             ...(d.stage ? [["Stage", d.stage.label]] : []), ["Assigned approver", r.assigned_to_email ?? (d.stage ? `any ${d.stage.role.toLowerCase().replace("_", " ")}` : "any manager")], ...(r.return_destination ? [["Returned to", r.return_destination === "ESTIMATOR" ? "The estimator" : "The preparer"]] : []), ["Assigned at", formatSast(r.assigned_at)], ["Due", r.due_at ? formatSast(r.due_at) : "-"],
             ["First viewed", formatSast(r.first_viewed_at)], ["Decided", r.decided_at ? `${formatSast(r.decided_at)} by ${r.decided_by_name ?? r.decided_by_email}` : "-"], ["Content seal", `${r.digest.slice(0, 12)}…`],
-          ] as Array<[string, string]>).map(([k, v]) => <div key={k}><dt className="text-xs text-slate-500">{k}</dt><dd className="font-medium text-slate-900 tabular-nums">{v}</dd></div>)}
+          ] as Array<[string, string]>).map(([k, v]) => <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="font-medium text-slate-900 tabular-nums">{v}</dd></div>)}
         </dl>
         {r.decision_reason && <p className="mt-3 text-sm text-slate-700"><strong>Reason:</strong> {r.decision_reason}</p>}
       </Panel>
@@ -105,7 +106,7 @@ export default function ApprovalDetailPage() {
         <Panel key={s.title} className="mt-4">
           <PanelTitle>{s.title}</PanelTitle>
           {s.warning && <div className="mt-2"><Alert tone="warning">{s.warning}</Alert></div>}
-          {s.rows.length > 0 && <dl className="mt-2 grid gap-x-8 gap-y-1 text-sm sm:grid-cols-2">{s.rows.map(([k, v]) => <div key={k}><dt className="text-xs text-slate-500">{k}</dt><dd className="text-slate-900">{v}</dd></div>)}</dl>}
+          {s.rows.length > 0 && <dl className="mt-2 grid gap-x-8 gap-y-1 text-sm sm:grid-cols-2">{s.rows.map(([k, v]) => <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="text-slate-900">{v}</dd></div>)}</dl>}
           {s.items && s.items.length > 0 && <ul className="mt-2 list-disc space-y-0.5 pl-5 text-sm text-slate-700">{s.items.map((i, n) => <li key={n}>{i}</li>)}</ul>}
         </Panel>
       ))}
@@ -113,11 +114,11 @@ export default function ApprovalDetailPage() {
       {r.status !== "PENDING" && r.decided_at && (
         <Panel className="mt-4">
           <PanelTitle>Decision recorded</PanelTitle>
-          <p className="mt-2 text-sm text-slate-800"><Badge tone={TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge> by <strong>{r.decided_by_name ?? r.decided_by_email}</strong> on {formatSast(r.decided_at)}.</p>
+          <p className="mt-2 text-sm text-slate-800"><Status tone={TONE[r.status]}>{STATUS_LABEL[r.status]}</Status> by <strong>{r.decided_by_name ?? r.decided_by_email}</strong> on {formatSast(r.decided_at)}.</p>
           {r.admin_override && <div className="mt-2"><Alert tone="warning"><strong>Administrator override of separation of duties.</strong> {r.decision_reason ? `Reason given: ${r.decision_reason}` : "No reason was recorded."}</Alert></div>}
           {!r.admin_override && r.decision_reason && <p className="mt-2 text-sm text-slate-700"><strong>Reason:</strong> {r.decision_reason}</p>}
           <ActionFeedback state={acts.stateOf("decision")} />
-          <p className="mt-2 text-xs text-slate-500">This decision is final. It cannot be repeated or changed from here.</p>
+          <p className="mt-2 text-xs text-slate-600">This decision is final. It cannot be repeated or changed from here.</p>
         </Panel>
       )}
 
@@ -147,7 +148,7 @@ export default function ApprovalDetailPage() {
                 <Button variant="secondary" disabled={busy} onClick={() => { setMode(null); setReasonTouched(false); }}>Cancel</Button>
               </div>
               <ActionFeedback state={acts.stateOf("decision")} />
-              <p className="text-xs text-slate-500">Approving records the decision only. It does not create or authorise anything in Cin7, and does not skip the existing stock, claim-posting or variation-billing controls.</p>
+              <p className="text-xs text-slate-600">Approving records the decision only. It does not create or authorise anything in Cin7, and does not skip the existing stock, claim-posting or variation-billing controls.</p>
             </div>
           )}
           {d.can.reassign && (

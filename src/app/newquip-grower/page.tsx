@@ -7,7 +7,8 @@ import { useEffect, useState, useTransition } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { QUOTES_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
-import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Status } from "@/components/ui/Status";
+import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
@@ -40,7 +41,7 @@ export default function NewquipGrowerPage() {
 
   return (
     <main className={pageContainerClass("data")}>
-      <ModuleHeader module={QUOTES_MODULE}>NewQuip Agri Supplies — Grower House quotes</ModuleHeader>
+      <ModuleHeader variant="workspace" module={QUOTES_MODULE}>NewQuip Agri Supplies — Grower House quotes</ModuleHeader>
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-3xl text-sm text-slate-600">
           Grower House Template v1 → configuration → estimator review → quote → manager approval → accepted baseline → Project.
@@ -57,7 +58,7 @@ export default function NewquipGrowerPage() {
       <Panel className="mt-6">
         <PanelTitle>Quotes</PanelTitle>
         {rows === null ? (
-          <p className="mt-4 text-sm text-slate-500">Loading…</p>
+          <p className="mt-4 text-sm text-slate-600">Loading…</p>
         ) : rows.length === 0 ? (
           <p className="mt-4 text-sm text-slate-600">No quotes yet. Start a Grower quote to walk the whole flow.</p>
         ) : (
@@ -70,7 +71,7 @@ export default function NewquipGrowerPage() {
                     <TD><Link className="font-medium text-indigo-700 hover:underline" href={`/newquip-grower/${q.id}`}>{q.quote_ref}</Link> <span className="text-xs text-slate-400">rev {q.revision}</span></TD>
                     <TD>{q.customer_name || "—"}</TD>
                     <TD>{q.site_name || "—"}</TD>
-                    <TD><Badge tone={STATE_TONE[q.state]}>{QUOTE_STATE_LABEL[q.state]}</Badge></TD>
+                    <TD><Status tone={STATE_TONE[q.state]}>{QUOTE_STATE_LABEL[q.state]}</Status></TD>
                     <TD align="right" className="tabular-nums whitespace-nowrap">{fmtCents(q.contract_cents)}</TD>
                     <TD>{q.project_id ? <Link className="text-indigo-700 hover:underline" href={`/projects/${q.project_id}`}>Open project</Link> : "—"}</TD>
                   </TR>

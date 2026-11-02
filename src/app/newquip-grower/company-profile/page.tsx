@@ -37,7 +37,7 @@ export default function CompanyProfilePage() {
   };
   return (
     <main className={`${pageContainerClass("form", "compact")} space-y-4`}>
-      <ModuleHeader module={QUOTES_MODULE}>Company details and quotation terms</ModuleHeader>
+      <ModuleHeader variant="workspace" module={QUOTES_MODULE}>Company details and quotation terms</ModuleHeader>
       <Link href="/newquip-grower" className="text-sm text-indigo-700 hover:underline">Back to quotes</Link>
       {err && <Alert tone="danger">{err}</Alert>}
       {ok && <Alert tone="success">{ok}</Alert>}
@@ -61,7 +61,7 @@ export default function CompanyProfilePage() {
               <label key={k} className="flex flex-col gap-1 text-sm"><span className="font-medium text-slate-700">{PROFILE_LABELS[k]}</span>
                 <textarea className="min-h-28 rounded-md border border-slate-300 p-2 text-sm" value={String(p[k] ?? "")} onChange={(e) => set(k, e.target.value as never)} /></label>
             ))}
-            {view.canEdit ? <Button type="button" onClick={() => void save()} loading={busy}>Save as a new version</Button> : <p className="text-sm text-slate-500">Only a Manager can change these details.</p>}
+            {view.canEdit ? <Button type="button" onClick={() => void save()} loading={busy}>Save as a new version</Button> : <p className="text-sm text-slate-600">Only a Manager can change these details.</p>}
           </fieldset>
         </Panel>
       )}

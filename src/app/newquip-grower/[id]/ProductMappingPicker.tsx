@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Alert } from "@/components/ui/Alert";
-import { Badge } from "@/components/ui/Badge";
+import { Status } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import type { CatalogueProduct } from "@/lib/projects/catalogue-search";
@@ -25,7 +25,7 @@ export function ProductMappingPicker({ label, value, onChange, disabled }: { lab
   return (
     <div className="w-full space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        {value ? <Badge tone="success">Mapped to {value}</Badge> : <Badge tone="warning">Product not chosen</Badge>}
+        {value ? <Status tone="success">Mapped to {value}</Status> : <Status tone="warning">Product not chosen</Status>}
         {value && !disabled && <Button size="sm" variant="ghost" onClick={() => { onChange(null); }}>Clear</Button>}
       </div>
       {!disabled && (
@@ -47,7 +47,7 @@ export function ProductMappingPicker({ label, value, onChange, disabled }: { lab
               ))}
             </ul>
           )}
-          {results.length > 0 && note && <p className="border-t border-slate-100 p-2 text-xs text-slate-500">{note}</p>}
+          {results.length > 0 && note && <p className="border-t border-slate-100 p-2 text-xs text-slate-600">{note}</p>}
         </div>
       )}
     </div>

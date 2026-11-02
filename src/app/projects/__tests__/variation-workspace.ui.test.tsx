@@ -62,7 +62,7 @@ describe("Variation workspace (P3)", () => {
     expect(await within(rec).findByText("Invoices in Cin7")).toBeTruthy();         // the invoice list is already there
     expect(within(rec).getByText("INV-00038")).toBeTruthy();
     expect(rec.textContent).toContain("SO-00028");                                 // the linked Sale
-    expect(rec.textContent).toContain("APPROVED");
+    expect(rec.textContent).toContain("Approved");
     expect(rec.textContent).toContain(money(500_000_00));                          // approved value
     const pos = within(rec).getByLabelText("V001 billing position (ex VAT)");
     expect(pos.textContent).toContain(money(100_000_00));                          // earned

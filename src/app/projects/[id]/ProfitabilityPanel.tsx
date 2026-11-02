@@ -37,7 +37,7 @@ export function ProfitabilityPanel({ view }: { view: ProjectView }) {
         {res && !res.ok && <Alert tone="danger">{res.error}</Alert>}
         {r && (
           <div className="mt-3 space-y-5 text-sm">
-            <p className="text-xs text-slate-500">{r.reportingBasis} As of {new Date(r.asOf).toLocaleString()}.</p>
+            <p className="text-xs text-slate-600">{r.reportingBasis} As of {new Date(r.asOf).toLocaleString()}.</p>
             <dl className="grid max-w-2xl grid-cols-2 gap-y-1">
               <dt className="text-slate-600">Original contract</dt><dd className="text-right tabular-nums">{formatCents(r.contract.originalCents)}</dd>
               <dt className="text-slate-600">Approved variations</dt><dd className="text-right tabular-nums">{formatCents(r.contract.approvedVariationsCents)}</dd>
@@ -49,9 +49,9 @@ export function ProfitabilityPanel({ view }: { view: ProjectView }) {
             </dl>
             <div className="overflow-x-auto">
               <p className="mb-1 font-medium text-slate-800">Estimated margin (frozen at approval; PROVISIONAL costs)</p>
-              <table className="min-w-full"><thead><tr className="border-b text-left text-xs uppercase tracking-wide text-slate-500"><th className="py-2 pr-3" /><th className="py-2 pr-3 text-right">Selling</th><th className="py-2 pr-3 text-right">Est. cost</th><th className="py-2 pr-3 text-right">Gross profit</th><th className="py-2 pr-3 text-right">Margin</th><th className="py-2 text-right">Markup</th></tr></thead>
+              <table className="min-w-full"><thead><tr className="border-b text-left text-xs uppercase tracking-wide text-slate-600"><th className="py-2 pr-3" /><th className="py-2 pr-3 text-right">Selling</th><th className="py-2 pr-3 text-right">Est. cost</th><th className="py-2 pr-3 text-right">Gross profit</th><th className="py-2 pr-3 text-right">Margin</th><th className="py-2 text-right">Markup</th></tr></thead>
                 <tbody><Row label="Original" m={r.estimated.original} /><Row label="Variations" m={r.estimated.variations} /><Row label="Revised" m={r.estimated.revised} /></tbody></table>
-              {r.estimated.uncostedSellingCents > 0 && <p className="mt-1 text-xs text-slate-500">{formatCents(r.estimated.uncostedSellingCents)} of services (e.g. delivery, installation) has no recorded cost and is excluded from these margins.</p>}
+              {r.estimated.uncostedSellingCents > 0 && <p className="mt-1 text-xs text-slate-600">{formatCents(r.estimated.uncostedSellingCents)} of services (e.g. delivery, installation) has no recorded cost and is excluded from these margins.</p>}
               {r.estimated.incomplete && <Alert tone="warning">Some scopes have no estimated cost; their margin (and the revised total) is withheld.</Alert>}
             </div>
             <div>
@@ -61,7 +61,7 @@ export function ProfitabilityPanel({ view }: { view: ProjectView }) {
                 <dt className="text-slate-600">Invoiced to date (ex VAT)</dt><dd className="text-right tabular-nums">{formatCents(r.actual.invoicedToDateCents)}</dd>
                 <dt className="text-slate-600">Project margin on actuals</dt><dd className="text-right tabular-nums">{r.actual.projectMargin ? `${pct(r.actual.projectMargin.marginPct)} (${formatCents(r.actual.projectMargin.gpCents ?? 0)})` : "not meaningful yet"}</dd>
               </dl>
-              <p className="mt-1 text-xs text-slate-500">{r.actual.reason}</p>
+              <p className="mt-1 text-xs text-slate-600">{r.actual.reason}</p>
               <dl className="mt-3 grid max-w-2xl grid-cols-2 gap-y-1">
                 <dt className="text-slate-600">Cost on Cin7 invoice lines (qty x average cost)</dt><dd className="text-right tabular-nums">{r.actual.invoiceLineCostCents === null ? "unknown" : formatCents(r.actual.invoiceLineCostCents)}</dd>
                 <dt className="text-slate-600">Non-stock costs incurred</dt><dd className="text-right tabular-nums">{r.actual.nonStockIncurredCents === null ? "ledger unavailable" : formatCents(r.actual.nonStockIncurredCents)}</dd>
@@ -69,7 +69,7 @@ export function ProfitabilityPanel({ view }: { view: ProjectView }) {
                 <dt className="font-medium">Incurred cost to date</dt><dd className="text-right font-medium tabular-nums">{r.actual.incurredCostCents === null ? "unknown" : formatCents(r.actual.incurredCostCents)}</dd>
                 <dt className="text-slate-600">Indicative product cost (Cin7 average cost x scope)</dt><dd className="text-right tabular-nums">{r.estimated.indicativeProductCostCents === null ? "unknown" : formatCents(r.estimated.indicativeProductCostCents)}</dd>
               </dl>
-              <p className="mt-1 text-xs text-slate-500">{r.actual.costBasisNote}</p>
+              <p className="mt-1 text-xs text-slate-600">{r.actual.costBasisNote}</p>
             </div>
             {r.exceptions.length > 0 && <div className="space-y-1"><p className="font-medium text-slate-800">Exceptions</p>{r.exceptions.map((e, i) => <Alert key={i} tone="warning">{e.code}: {e.message}</Alert>)}</div>}
           </div>
@@ -96,7 +96,7 @@ function CostLedger({ projectId }: { projectId: string }) {
         <PanelTitle>Non-stock project costs (internal)</PanelTitle>
         <Button size="sm" variant="secondary" disabled={busy} onClick={load}>{d ? "Refresh" : "Open cost ledger"}</Button>
       </div>
-      <p className="mt-1 text-xs text-slate-500">Installation labour, transport, subcontractors, site and other direct costs that Cin7 stock/assembly valuation does not carry (ex VAT). Committed = expected; incurred = actual. Tick &quot;already in Cin7 valuation&quot; for a cost Cin7 already carries - it is shown but never added again. Entries are never deleted; void with a reason.</p>
+      <p className="mt-1 text-xs text-slate-600">Installation labour, transport, subcontractors, site and other direct costs that Cin7 stock/assembly valuation does not carry (ex VAT). Committed = expected; incurred = actual. Tick &quot;already in Cin7 valuation&quot; for a cost Cin7 already carries - it is shown but never added again. Entries are never deleted; void with a reason.</p>
       {res && !res.ok && <Alert tone="danger">{res.error}</Alert>}
       {msg && <div className="mt-2 text-sm text-slate-700">{msg}</div>}
       {d && !d.available && <Alert tone="warning">The cost ledger is not available yet (database migration pending). Non-stock costs are reported as unknown, not zero.</Alert>}
@@ -146,7 +146,7 @@ function CostingBreakdown({ projectId }: { projectId: string }) {
       {res && !res.ok && <Alert tone="danger">{res.error}</Alert>}
       {r && (
         <div className="mt-3 space-y-6 overflow-x-auto text-sm">
-          <ul className="list-disc pl-5 text-xs text-slate-500">{r.basisNotes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+          <ul className="list-disc pl-5 text-xs text-slate-600">{r.basisNotes.map((n, i) => <li key={i}>{n}</li>)}</ul>
           <section>
             <p className="font-medium text-slate-800">Budget vs actual and expected final margin</p>
             <dl className="mt-1 grid max-w-2xl grid-cols-2 gap-y-1 tabular-nums">
@@ -160,19 +160,19 @@ function CostingBreakdown({ projectId }: { projectId: string }) {
             </dl>
           </section>
           <section><p className="font-medium text-slate-800">By scope</p>
-            <table className="min-w-full"><thead><tr className="border-b text-left text-xs uppercase text-slate-500"><th className="py-2 pr-3" /><th className={th}>Contract</th><th className={th}>Est. cost</th><th className={th}>Gross profit</th><th className={th}>Margin</th></tr></thead>
+            <table className="min-w-full"><thead><tr className="border-b text-left text-xs uppercase text-slate-600"><th className="py-2 pr-3" /><th className={th}>Contract</th><th className={th}>Est. cost</th><th className={th}>Gross profit</th><th className={th}>Margin</th></tr></thead>
               <tbody>{r.byScope.map((s) => <tr key={s.scope} className="border-b border-slate-100"><td className="py-2 pr-3">{s.scope}</td><td className={`${th} tabular-nums`}>{money(s.contractCents)}</td><td className={`${th} tabular-nums`}>{money(s.estimatedCostCents)}</td><td className={`${th} tabular-nums`}>{money(s.estimated.gpCents)}</td><td className={`${th} tabular-nums`}>{pct(s.estimated.marginPct)}</td></tr>)}</tbody></table></section>
           <section><p className="font-medium text-slate-800">By package / section</p>
-            <table className="min-w-full"><thead><tr className="border-b text-left text-xs uppercase text-slate-500"><th className="py-2 pr-3" /><th className={th}>Selling</th><th className={th}>Est. cost</th><th className={th}>Margin</th></tr></thead>
+            <table className="min-w-full"><thead><tr className="border-b text-left text-xs uppercase text-slate-600"><th className="py-2 pr-3" /><th className={th}>Selling</th><th className={th}>Est. cost</th><th className={th}>Margin</th></tr></thead>
               <tbody>{r.bySection.map((s) => <tr key={s.section} className="border-b border-slate-100"><td className="py-2 pr-3">{s.section}</td><td className={`${th} tabular-nums`}>{money(s.sellingCents)}</td><td className={`${th} tabular-nums`}>{money(s.costCents)}</td><td className={`${th} tabular-nums`}>{pct(s.marginPct)}</td></tr>)}</tbody></table></section>
           <section><p className="font-medium text-slate-800">By project stage (estimated cost pro rata to stage value)</p>
-            <table className="min-w-full"><thead><tr className="border-b text-left text-xs uppercase text-slate-500"><th className="py-2 pr-3" /><th className={th}>Stage value</th><th className={th}>Est. cost</th><th className={th}>Margin</th></tr></thead>
+            <table className="min-w-full"><thead><tr className="border-b text-left text-xs uppercase text-slate-600"><th className="py-2 pr-3" /><th className={th}>Stage value</th><th className={th}>Est. cost</th><th className={th}>Margin</th></tr></thead>
               <tbody>{r.byStage.map((s) => <tr key={s.stage} className="border-b border-slate-100"><td className="py-2 pr-3">{s.stage}</td><td className={`${th} tabular-nums`}>{money(s.valueCents)}</td><td className={`${th} tabular-nums`}>{money(s.estimatedCostCents)}</td><td className={`${th} tabular-nums`}>{pct(s.marginPct)}</td></tr>)}</tbody></table></section>
           <section><p className="font-medium text-slate-800">By SKU - estimated vs incurred</p>
-            <table className="min-w-full"><thead><tr className="border-b text-left text-xs uppercase text-slate-500"><th className="py-2 pr-3">SKU</th><th className={th}>Est. cost</th><th className={th}>Incurred (invoice lines)</th><th className={th}>Variance</th></tr></thead>
-              <tbody>{r.bySku.map((s) => <tr key={s.sku} className="border-b border-slate-100"><td className="py-2 pr-3"><span className="font-mono">{s.sku}</span> <span className="text-xs text-slate-500">{s.description}</span></td><td className={`${th} tabular-nums`}>{money(s.estimatedCents)}</td><td className={`${th} tabular-nums`}>{money(s.actualCents)}</td><td className={`${th} tabular-nums`}>{money(s.varianceCents)}</td></tr>)}</tbody></table></section>
+            <table className="min-w-full"><thead><tr className="border-b text-left text-xs uppercase text-slate-600"><th className="py-2 pr-3">SKU</th><th className={th}>Est. cost</th><th className={th}>Incurred (invoice lines)</th><th className={th}>Variance</th></tr></thead>
+              <tbody>{r.bySku.map((s) => <tr key={s.sku} className="border-b border-slate-100"><td className="py-2 pr-3"><span className="font-mono">{s.sku}</span> <span className="text-xs text-slate-600">{s.description}</span></td><td className={`${th} tabular-nums`}>{money(s.estimatedCents)}</td><td className={`${th} tabular-nums`}>{money(s.actualCents)}</td><td className={`${th} tabular-nums`}>{money(s.varianceCents)}</td></tr>)}</tbody></table></section>
           <section><p className="font-medium text-slate-800">By supplier (last supplier recorded in Cin7 - indicative)</p>
-            <table className="min-w-full"><thead><tr className="border-b text-left text-xs uppercase text-slate-500"><th className="py-2 pr-3">Supplier</th><th className={th}>SKUs</th><th className={th}>Est. cost</th><th className={th}>Incurred</th></tr></thead>
+            <table className="min-w-full"><thead><tr className="border-b text-left text-xs uppercase text-slate-600"><th className="py-2 pr-3">Supplier</th><th className={th}>SKUs</th><th className={th}>Est. cost</th><th className={th}>Incurred</th></tr></thead>
               <tbody>{r.bySupplier.map((s) => <tr key={s.supplier} className="border-b border-slate-100"><td className="py-2 pr-3">{s.supplier}</td><td className={`${th} tabular-nums`}>{s.skus}</td><td className={`${th} tabular-nums`}>{money(s.estimatedCents)}</td><td className={`${th} tabular-nums`}>{money(s.actualCents)}</td></tr>)}</tbody></table></section>
         </div>
       )}

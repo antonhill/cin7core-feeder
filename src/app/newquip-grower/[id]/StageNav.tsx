@@ -1,6 +1,7 @@
 "use client";
 
-import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Status } from "@/components/ui/Status";
+import type { BadgeTone } from "@/components/ui/Badge";
 import type { StageId, StageStatus, StageView } from "@/newquip/quote/stages";
 
 // The six-stage navigation of the Solution Builder. Pure presentation of computeStages(): the status of every stage is derived from the quotation's existing state and
@@ -19,11 +20,11 @@ export function StageNav({ stages, current, viewing, onSelect }: { stages: Stage
               <li key={s.id}>
                 <button type="button" onClick={() => onSelect(s.id)} aria-current={on ? "step" : undefined} data-stage={s.id}
                   className={`flex h-full w-full flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors ${on ? "border-indigo-600 bg-indigo-50 ring-2 ring-indigo-600" : "border-slate-200 bg-white hover:bg-slate-50"} ${s.status === "NOT_AVAILABLE" ? "opacity-70" : ""}`}>
-                  <span className="flex w-full items-center justify-between gap-2 text-xs font-semibold text-slate-500">
+                  <span className="flex w-full items-center justify-between gap-2 text-xs font-semibold text-slate-600">
                     <span>Stage {s.id}{s.id === current ? " · you are here" : ""}</span>
                   </span>
                   <span className="text-sm font-semibold text-slate-900">{s.label}</span>
-                  <Badge tone={TONE[s.status]} dot>{s.statusLabel}</Badge>
+                  <Status tone={TONE[s.status]}>{s.statusLabel}</Status>
                 </button>
               </li>
             );

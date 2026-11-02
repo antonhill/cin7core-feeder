@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ProjectWorkspace } from "../[id]/ProjectWorkspace";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
+import { statusText } from "@/components/ui/Status";
 
 // P2: the Commercial / Claims workspace. The REAL workspace and panels; only server actions are stubbed. What must not change: every figure, every claim, every action.
 
@@ -83,9 +84,14 @@ describe("Commercial / Claims workspace (P2)", () => {
       expect(a).toBeTruthy();
       expect(a.textContent).toContain(formatCents(c.total_cents));
       expect(a.textContent).toContain(formatCents(c.subtotal_cents));
-      expect(a.textContent).toContain(c.status.replace(/_/g, " "));
+      expect(a.textContent).toContain(statusText(c.status));
       expect(a.textContent).toContain(c.cin7Status.label);
-      if (c.cin7Status.invoiceNumber) expect(a.textContent).toContain(`${c.cin7Status.invoiceNumber} · reconciled`);
+      if (c.cin7Status.invoiceNumber) {
+        expect(a.textContent).toContain(c.cin7Status.invoiceNumber);
+        // reconciliation is its own chip, separate from the Cin7 invoice status chip beside it
+        expect(within(a).getByText("Reconciled")).toBeTruthy();
+        expect(within(a).getByText(c.cin7Status.label)).not.toBe(within(a).getByText("Reconciled"));
+      }
     }
     // no figure was lost or altered by the redesign: the sum of the claim totals on screen equals the sum in the data
     const shown = articles.map((a) => a.textContent!).join(" ");
@@ -128,9 +134,9 @@ describe("Commercial / Claims workspace (P2)", () => {
   it("a phone user sees which badge is the approval and which is the Cin7 invoice: a visible caption below lg, hidden from lg where the column headings show", async () => {
     await openCommercial();
     const a = document.querySelector("article") as HTMLElement;
-    const captions = Array.from(a.querySelectorAll("span[aria-hidden]")).map((e) => e.textContent);
+    const captions = Array.from(a.querySelectorAll("span[aria-hidden]")).filter((e) => e.className.includes("lg:hidden")).map((e) => e.textContent);
     expect(captions).toEqual(["Amount", "Approval", "Cin7 invoice (as last recorded)"]);
-    for (const e of a.querySelectorAll("span[aria-hidden]")) expect(e.className).toMatch(/lg:hidden/);
+    for (const e of a.querySelectorAll("span[aria-hidden].mb-0\\.5")) expect(e.className).toMatch(/lg:hidden/);
   });
   it("the column headings are only shown when there are claims", async () => {
     h.responses.getProjectAction = { ok: true, data: { ...view(), claims: [] }, viewer: { canApprove: true, newquip: true } };
