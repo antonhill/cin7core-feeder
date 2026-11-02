@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
+import { Feedback, type RunFn } from "./feedback-context";
+import type { Reconciled } from "@/components/ui/action-feedback";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
@@ -18,15 +20,16 @@ const TONE: Record<PostingDisplayState, BadgeTone> = { NOT_SENT: "neutral", PEND
 const LABEL: Record<PostingDisplayState, string> = {
   NOT_SENT: "NOT SENT", PENDING: "PENDING", CREATED: "CREATED IN CIN7", RECONCILED: "RECONCILED", FAILED_CONFIRMED_NO_WRITE: "FAILED — NO INVOICE CREATED", FAILED_UNCERTAIN: "OUTCOME UNCERTAIN",
 };
-type Run = (fn: () => Promise<{ ok: boolean; error?: string }>, done?: string) => Promise<boolean>;
 
-export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; run: Run; working: boolean }) {
+export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; run: RunFn; working: boolean }) {
   const projectId = view.project.id;
   const [st, setSt] = useState<Cin7PostingStatus | null>(null);
-  const [note, setNote] = useState<string | null>(null);
   // Administrative recovery only (collapsed, admin-only): never part of the normal flow.
   const [rec, setRec] = useState({ saleId: "", customerName: view.project.customer_name ?? "", location: "", revenueAccount: "", cin7TaxRule: "Standard Rate Sales", reason: "" });
   const [confirming, setConfirming] = useState<string | null>(null);
+  // After a request whose outcome was lost, an invoice may exist in Cin7: nothing may be re-submitted until the posting state has been RE-READ.
+  const [checking, setChecking] = useState(false);
+  const [uncertain, setUncertain] = useState(false); // the last re-read failed: stay blocked
   // Proposed invoice per claim (prepared automatically when the manager opens the claim for posting; "Populate Products from Project" refreshes it).
   const [prep, setPrep] = useState<Record<string, { busy: boolean; error?: string; data?: PreparedInvoice }>>({});
   const [qty, setQty] = useState<Record<string, Record<string, string>>>({});
@@ -43,14 +46,46 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
   };
 
   const load = useCallback(() => { getCin7PostingStatusAction(projectId).then((r) => r.ok && r.data && setSt(r.data)); }, [projectId]);
+  /** Re-reads the posting state for the actions below. Null when the read failed (the outcome is then unknown). */
+  const reload = async (): Promise<Cin7PostingStatus | null> => {
+    try {
+      const r = await getCin7PostingStatusAction(projectId);
+      if (r.ok && r.data) { setSt(r.data); setUncertain(false); return r.data; }
+    } catch { /* treated as a failed read */ }
+    return null;
+  };
   useEffect(load, [load, view.claims.length, view.claims.map((c) => c.status).join()]);
 
   if (!st || !st.gates.orgEnabled) return null; // the Cin7 posting capability is rolled out per organization
   const { gates, link, postings } = st;
   const approved = view.claims.filter((c) => c.status === "APPROVED");
   const stateOf = (claimId: string): PostingDisplayState => (postings.find((p) => p.claim_id === claimId)?.posting_state ?? "NOT_SENT") as PostingDisplayState;
-  const after = (fn: () => Promise<{ ok: boolean; error?: string; data?: unknown }>) =>
-    run(async () => { const r = await fn(); if (r.ok) setNote((r.data as { message?: string } | undefined)?.message ?? null); load(); return r; });
+  // The result's own message (e.g. the posting or reconcile outcome) is the success text, shown beside the control that ran it (key) - never at the top of the page.
+  const rereading = checking || uncertain;
+  const after = (fn: () => Promise<{ ok: boolean; error?: string; data?: unknown }>, key: string, claimId?: string) =>
+    run(async () => {
+      setChecking(true);
+      const r = await fn(); // a throw (lost response) leaves `checking` on: the reconcile below owns the re-read and releases it
+      await reload();
+      setChecking(false);
+      return r;
+    }, undefined, key, {
+      success: (_v, res) => (res.data as { message?: string } | undefined)?.message ?? "Done.",
+      exclusive: true, cin7: true,
+      doneAfterReconcile: "The invoice request was recorded (its response was lost). Its state is shown on the claim.",
+      reconcile: async (): Promise<Reconciled> => {
+        const s2 = await reload();
+        setUncertain(s2 === null); // a failed read keeps posting blocked
+        setChecking(false);
+        if (!s2) return "unreadable";
+        if (!claimId) return "unknown";
+        const row = s2.postings.find((p) => p.claim_id === claimId);
+        if (row) setConfirming(null); // a posting record exists: show it, not the form
+        if (!row) return "not_done";
+        if (row.posting_state === "CREATED" || row.posting_state === "RECONCILED") return "done";
+        return row.posting_state === "FAILED_CONFIRMED_NO_WRITE" ? "not_done" : "unknown"; // PENDING / FAILED_UNCERTAIN: the claim shows it; never "recorded"
+      },
+    });
 
   return (
     <Panel>
@@ -59,7 +94,6 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
         <Badge tone={gates.writesEnabled ? "warning" : "neutral"} dot>{gates.writesEnabled ? "Cin7 writes ENABLED" : "Cin7 writes OFF"}</Badge>
       </div>
       <p className="mt-1 text-sm text-slate-500">Each Project has one Cin7 Sales Order, and each approved claim becomes one draft invoice on it. Posting never ships goods or moves stock.</p>
-      {note && <div className="mt-3"><Alert tone="info">{note}</Alert></div>}
 
       <div className="mt-4 rounded-lg border border-slate-200 p-4 text-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -83,7 +117,7 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
               ))}
               <label className="flex flex-col gap-1 md:col-span-3"><span className="text-xs text-slate-600">Reason for recovery (required, audited)</span><input value={rec.reason} onChange={(e) => setRec({ ...rec, reason: e.target.value })} className="h-9 rounded-md border border-slate-300 px-3 text-sm" /></label>
             </div>
-            <div className="mt-2"><Button size="sm" variant="secondary" loading={working} disabled={Object.values(rec).some((v) => !v.trim())} onClick={() => after(() => recoverLinkCin7SaleAction(projectId, rec))}>Verify and link this Sale</Button></div>
+            <div className="mt-2"><Button size="sm" variant="secondary" loading={working} disabled={Object.values(rec).some((v) => !v.trim())} onClick={() => after(() => recoverLinkCin7SaleAction(projectId, rec), "post:recover")}>Verify and link this Sale</Button><Feedback k="post:recover" /></div>
           </details>
         )}
       </div>
@@ -113,12 +147,13 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
 
               <div className="mt-3 flex flex-wrap gap-2">
                 {canSend(state) && gates.isManager && link && (
-                  <Button size="sm" variant="secondary" disabled={working || !gates.writesEnabled} onClick={() => { const open = confirming === c.id; setConfirming(open ? null : c.id); if (!open) void populate(c.id); }}>{state === "NOT_SENT" ? "Prepare and post claim to Cin7" : "Retry (confirmed no invoice)"}</Button>
+                  <Button size="sm" variant="secondary" disabled={working || rereading || !gates.writesEnabled} onClick={() => { const open = confirming === c.id; setConfirming(open ? null : c.id); if (!open) void populate(c.id); }}>{state === "NOT_SENT" ? "Prepare and post claim to Cin7" : "Retry (confirmed no invoice)"}</Button>
                 )}
-                {canReconcile(state) && gates.isManager && <Button size="sm" variant="secondary" loading={working} onClick={() => after(() => reconcileClaimPostingAction(projectId, c.id))}>Reconcile with Cin7 (read-only)</Button>}
+                {canReconcile(state) && gates.isManager && <Button size="sm" variant="secondary" loading={working} onClick={() => after(() => reconcileClaimPostingAction(projectId, c.id), `post:${c.id}`, c.id)}>Reconcile with Cin7 (read-only)</Button>}
                 {canSend(state) && !gates.writesEnabled && <span className="self-center text-xs text-slate-500">Cin7 writes are switched off.</span>}
                 {!gates.isManager && <span className="self-center text-xs text-slate-500">Only a manager can post to Cin7.</span>}
               </div>
+              <Feedback k={`post:${c.id}`} />
 
               {confirming === c.id && link && (
                 <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-4">
@@ -178,8 +213,11 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
                       <div key={k}><dt className="text-xs text-amber-800">{k}</dt><dd className="break-all font-medium text-slate-900">{v}</dd></div>
                     ))}
                   </dl>
+                  <div className="mt-3">
+                    {rereading && <Alert tone="warning">{checking ? "Checking the current Cin7 status. Posting stays disabled until it has been re-read." : "The outcome of the last request could not be confirmed and the status could not be re-read. Reload the page. Posting stays disabled until the status has been read."}</Alert>}
+                  </div>
                   <div className="mt-3 flex gap-2">
-                    <Button loading={working} disabled={!prep[c.id]?.data} onClick={() => after(() => postClaimToCin7Action(projectId, c.id, POST_CONFIRMATION_TEXT, { lines: selectionToQuantities(prep[c.id]?.data?.proposal.lines ?? [], selOf(c.id)), earlyReason: early[c.id] })).then(() => setConfirming(null))}>{POST_CONFIRMATION_TEXT}</Button>
+                    <Button loading={working} disabled={!prep[c.id]?.data || rereading} onClick={() => after(() => postClaimToCin7Action(projectId, c.id, POST_CONFIRMATION_TEXT, { lines: selectionToQuantities(prep[c.id]?.data?.proposal.lines ?? [], selOf(c.id)), earlyReason: early[c.id] }), `post:${c.id}`, c.id).then((ok) => { if (ok) setConfirming(null); })}>{POST_CONFIRMATION_TEXT}</Button>
                     <Button variant="ghost" onClick={() => setConfirming(null)}>Cancel</Button>
                   </div>
                 </div>

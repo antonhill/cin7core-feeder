@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
+import { ActionFeedback, useKeyedActions } from "@/components/ui/action-feedback";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { QUOTES_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
@@ -96,10 +97,11 @@ export default function QuoteEditorPage() {
   const [gateTry, setGateTry] = useState(0);
   const [picked, setPicked] = useState<StageId | null>(() => parseStage(search.get("stage")));
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [confirmDemo, setConfirmDemo] = useState(false);
   const [demoLoaded, setDemoLoaded] = useState<string[] | null>(null);
-  const [isWorking, start] = useTransition();
+  // UAT-025: every action reports beside its own control (never in a banner above a long page) and ignores a second click while it is in flight.
+  const acts = useKeyedActions();
+  const isWorking = acts.anyPending;
   const [returnReason, setReturnReason] = useState("");
   // ONE recalculation in flight at a time (server actions run serially and a round trip is slow): edits made meanwhile collapse into a single follow-up for the newest draft.
   const [loop] = useState(() => createRecalcLoop<QuoteDraft, Awaited<ReturnType<typeof previewGrowerDraftAction>>>((d) => previewGrowerDraftAction(d), {
@@ -161,7 +163,7 @@ export default function QuoteEditorPage() {
   // One-click demonstration quotation: replaces the inputs of THIS editable draft only (not saved, nothing created, approved or sent).
   function loadDemo() {
     const r = applyDemoDefaults(draft!);
-    setDraft(r.draft); setDirty(true); setConfirmDemo(false); setDemoLoaded(r.replaced); setNotice(null); setError(null);
+    setDraft(r.draft); setDirty(true); setConfirmDemo(false); setDemoLoaded(r.replaced); setError(null);
   }
   // The server already rewrote the customer name (and, from estimator review, returned the quotation to the Rep). Reload the quotation; unsaved local edits are kept.
   const onCustomerChanged = (name: string) => {
@@ -173,27 +175,38 @@ export default function QuoteEditorPage() {
   const edit = (fn: (d: QuoteDraft) => void) => { setDraft((p) => { const n = structuredClone(p!); fn(n); return n; }); setDirty(true); };
   const num = (v: number | null) => v ?? 0;
 
-  function act(fn: () => Promise<{ ok: boolean; error?: string; data?: QuoteView }>, done: string) {
-    start(async () => {
+  /**
+   * Runs one quotation action (saving unsaved edits first) under `key`. `confirm` says, from a fresh read, whether the action took effect: after a lost
+   * response the page checks that BEFORE suggesting a retry (and adopts the server's state if it did).
+   */
+  function act(fn: () => Promise<{ ok: boolean; error?: string; data?: QuoteView }>, done: string, key = "page", confirm?: (v: QuoteView) => boolean) {
+    void acts.run(key, async () => {
       if (dirty && !final) {
         const s = await saveGrowerDraftAction(id, draft!);
-        if (!s.ok) return setError(s.error ?? "Could not save");
+        if (!s.ok) return { ok: false, error: s.error ?? "Could not save" } as { ok: boolean; error?: string; data?: QuoteView };
       }
       const r = await fn();
-      if (!r.ok) return setError(r.error ?? "Unknown error");
-      setError(null);
-      setNotice(done);
-      if (r.data) adopt(r.data);
+      if (r.ok && r.data) adopt(r.data);
+      return r;
+    }, {
+      pending: "Working… please wait",
+      success: done,
+      reconcile: async () => {
+        const v = await getGrowerQuoteAction(id);
+        if (!v.ok || !v.data || !confirm) return "unknown";
+        if (confirm(v.data)) { adopt(v.data); return "done"; }
+        return "not_done";
+      },
     });
   }
   function save() {
-    start(async () => {
+    void acts.run("save", async () => {
       const r = await saveGrowerDraftAction(id, draft!);
-      if (!r.ok || !r.data) return setError(r.error ?? "Could not save");
+      if (!r.ok || !r.data) return { ok: false, error: r.error ?? "Could not save" };
       setError(null);
-      setNotice("Draft saved. Any estimator sign-off made on earlier content no longer applies.");
       adopt(r.data);
-    });
+      return r;
+    }, { pending: "Saving the draft…", success: "Draft saved. Any estimator sign-off made on earlier content no longer applies." });
   }
 
   const cfg = draft.config;
@@ -236,7 +249,7 @@ export default function QuoteEditorPage() {
       </div>
 
       {error && <div className="mt-4"><Alert tone="danger">{error}</Alert></div>}
-      {notice && <div className="mt-4"><Alert tone="success">{notice}</Alert></div>}
+      <ActionFeedback state={acts.stateOf("page")} floating />
       {final && <div className="mt-4"><Alert tone="info">This quote is the manager-approved final. Its accepted baseline is frozen; any change after acceptance must be a Variation on the Project.</Alert></div>}
       {budget && <p className="mt-3 text-xs text-slate-500">{budget.priceSource.notice} Provenance: {budget.priceSource.provenance}</p>}
 
@@ -260,6 +273,9 @@ export default function QuoteEditorPage() {
             </span>
           )}
         </div>
+      )}
+      {stage <= 2 && (
+        <div className="mt-2"><ActionFeedback state={acts.stateOf("save")} /></div>
       )}
       {demoLoaded && stage <= 2 && (
         <div className="mt-3">
@@ -581,7 +597,7 @@ export default function QuoteEditorPage() {
                 <>
                   <div className="w-full">
                     <ConfirmationPanel quoteId={id} amountLabel={totalCents == null ? null : fmtCents(totalCents)} canAct={roles.has("rep")} ready={rd.state === "READY"} loading={isWorking} refreshKey={`${q.revision}:${q.state}:${q.updated_at}`} recorded={false}
-                      onConfirm={(c) => act(() => sendGrowerQuoteToEstimatorAction(id, totalCents!, c), "Pre-approval price confirmation recorded and sent to the estimator.")} />
+                      onConfirm={(c) => act(() => sendGrowerQuoteToEstimatorAction(id, totalCents!, c), "Pre-approval price confirmation recorded and sent to the estimator.", "send", (v) => v.quote.state === "ESTIMATOR_REVIEW")} />
                   </div>
                 </>
               )}
@@ -589,16 +605,18 @@ export default function QuoteEditorPage() {
                 <>
                   {q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash
                     ? <Badge tone="success" dot>Estimator sign-off complete - {q.estimator_signoff_by_email ?? "estimator"}{q.estimator_signoff_at ? `, ${formatSast(q.estimator_signoff_at)}` : ""}</Badge>
-                    : <Button loading={isWorking} disabled={!roles.has("estimator") || rd.state !== "READY"} onClick={() => act(() => signOffGrowerQuoteAction(id), "Estimator sign-off recorded for this exact content.")}>Estimator: I double-checked this quote</Button>}
+                    : <Button loading={isWorking} disabled={!roles.has("estimator") || rd.state !== "READY"} onClick={() => act(() => signOffGrowerQuoteAction(id), "Estimator sign-off recorded for this exact content.", "signoff", (v) => !!v.quote.estimator_signoff_hash && v.quote.estimator_signoff_hash === v.quote.draft_hash)}>Estimator: I double-checked this quote</Button>}
                   {roles.has("estimator") && (<>
                   <TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} />
-                  <Button variant="secondary" loading={isWorking} disabled={!returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.")}>Return to rep</Button>
+                  <Button variant="secondary" loading={isWorking} disabled={!returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "signoff", (v) => v.quote.state === "REP_DRAFT")}>Return to rep</Button>
                   </>)}
                   {!roles.has("estimator") && <span className="text-xs text-slate-500">With the Estimator for review. Only an Estimator can sign off or return it here.</span>}
                 </>
               )}
               {final && <Badge tone="success" dot>Signed off and approved</Badge>}
             </div>
+            <ActionFeedback state={acts.stateOf("send")} />
+            <ActionFeedback state={acts.stateOf("signoff")} />
           </Panel>
           {final ? (
             <>
@@ -631,13 +649,13 @@ export default function QuoteEditorPage() {
               {q.state === "ESTIMATOR_REVIEW" && (
                 <>
                   <Button variant="primary" loading={isWorking} disabled={!roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty}
-                    onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.")}>Manager: final approval</Button>
+                    onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")}>Manager: final approval</Button>
                   {!roles.has("manager") && <span className="text-xs text-slate-500">Final approval needs the manager role (org owner/admin).</span>}
                   {roles.has("manager") && (<>
                   <TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} />
-                  <Button variant="secondary" loading={isWorking} disabled={!returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.")}>Return to rep (reject)</Button>
+                  <Button variant="secondary" loading={isWorking} disabled={!returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "approve", (v) => v.quote.state === "REP_DRAFT")}>Return to rep (reject)</Button>
                   {q.estimator_signoff_hash && (
-                    <Button variant="secondary" loading={isWorking} disabled={!roles.has("manager") || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToEstimatorAction(id, returnReason), "Returned to the estimator. Their sign-off is withdrawn and must be given again; the quote and its history are kept.")}>Manager: return to estimator</Button>
+                    <Button variant="secondary" loading={isWorking} disabled={!roles.has("manager") || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToEstimatorAction(id, returnReason), "Returned to the estimator. Their sign-off is withdrawn and must be given again; the quote and its history are kept.", "approve", (v) => !v.quote.estimator_signoff_hash)}>Manager: return to estimator</Button>
                   )}
                   </>)}
                 </>
@@ -645,6 +663,7 @@ export default function QuoteEditorPage() {
               {q.state === "REP_DRAFT" && <span className="text-sm text-slate-600">This quotation is with the Rep ({q.revision > 1 ? "returned as a new revision" : "not yet sent for review"}).</span>}
               {final && <Badge tone="success" dot>Manager approved — final</Badge>}
             </div>
+            <ActionFeedback state={acts.stateOf("approve")} />
           </Panel>
           <Panel>
             <PanelTitle>Approval history and decisions</PanelTitle>
@@ -734,15 +753,21 @@ export default function QuoteEditorPage() {
                   <>
                   {gate.requires ? <p className="mb-2 text-sm text-slate-600">The Project will use the billing schedule printed on the quotation the customer accepted.</p> : <ScheduleChooser contractCents={q.accepted_baseline.contractCents} onChange={setScheduleChoice} />}
                   <p className="mb-2"><BuildStamp /></p>
-                  {!roles.has("manager") ? <Alert tone="info">A Manager creates the Project from the accepted quotation after verifying the customer&apos;s acceptance. You will be able to open it from here once it exists.</Alert> : <Button loading={isWorking} disabled={!gate.requires && !resolveScheduleChoice(scheduleChoice).ok} onClick={() => start(async () => {
+                  {!roles.has("manager") ? <Alert tone="info">A Manager creates the Project from the accepted quotation after verifying the customer&apos;s acceptance. You will be able to open it from here once it exists.</Alert> : <Button loading={acts.isPending("handover")} disabled={isWorking || (!gate.requires && !resolveScheduleChoice(scheduleChoice).ok)} onClick={() => void acts.run("handover", async () => {
                     const r = await createProjectFromGrowerQuoteAction(id, scheduleChoice);
-                    if (!r.ok) return setError(r.error ?? "Unknown error");
+                    if (!r.ok) return r;
                     setError(null);
-                    const made = r.data;
-                    setNotice(`Project ${made?.created === false ? "already existed (its stages were not changed)" : "created from the accepted baseline (no engineering recalculation)"}. Billing stages: ${(made?.stages ?? []).map((x) => `${x.name} ${fmtCents(x.valueCents)}`).join(" · ") || "none"}.`);
                     const v = await getGrowerQuoteAction(id);
                     if (v.ok && v.data) adopt(v.data);
+                    return r;
+                  }, {
+                    pending: "Creating the Project from the accepted baseline…",
+                    success: (r) => { const made = r.data; return `Project ${made?.created === false ? "already existed (its stages were not changed)" : "created from the accepted baseline (no engineering recalculation)"}. Billing stages: ${(made?.stages ?? []).map((x) => `${x.name} ${fmtCents(x.valueCents)}`).join(" · ") || "none"}.`; },
+                    // A lost response: look for the Project before suggesting another attempt (creating it twice is harmless but confusing).
+                    reconcile: async () => { const v = await getGrowerQuoteAction(id); if (!v.ok || !v.data) return "unknown"; if (v.data.quote.project_id) { adopt(v.data); return "done"; } return "not_done"; },
+                    doneAfterReconcile: "The Project exists (the response was lost, but it was created).",
                   })}>Create Project from accepted quote</Button>}
+                  <ActionFeedback state={acts.stateOf("handover")} />
                   </>
                 )}
               </div>

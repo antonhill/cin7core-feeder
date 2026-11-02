@@ -165,3 +165,48 @@ describe("UAT-003 rendered page: the Exclude checkbox recalculates without Save"
     expect(saved!.draft.config.exclusions).toMatchObject({ feeder: "Customer supplies their own feeders" });
   }, 30000);
 });
+
+// UAT-025 on the quotation page: the result of Save draft is shown directly under the Save row (not in a banner at the top of a long page), a failure keeps the edits,
+// and a double-click saves once.
+describe("UAT-025 rendered page: Save draft reports beside its button", () => {
+  async function editReady() {
+    await open();
+    fireEvent.click(box(/Exclude CCM feeder/i));
+    fireEvent.change(screen.getAllByPlaceholderText("Reason (required)")[0], { target: { value: "Customer supplies their own feeders" } });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Save draft" }) as HTMLButtonElement).disabled).toBe(false), { timeout: 8000 });
+    return screen.getByRole("button", { name: "Save draft" }) as HTMLButtonElement;
+  }
+  const region = (kind: string) => document.querySelector(`[data-testid="action-feedback"][data-kind="${kind}"]`) as HTMLElement | null;
+
+  it("success: the confirmation sits immediately after the Save row", async () => {
+    const save = await editReady();
+    fireEvent.click(save);
+    await waitFor(() => expect(region("success")).not.toBeNull(), { timeout: 8000 });
+    const ok = region("success")!;
+    expect(ok.textContent).toMatch(/Draft saved/);
+    expect(ok.getAttribute("role")).toBe("status");
+    expect(ok.parentElement!.previousElementSibling).toBe(save.parentElement); // directly under the row that holds the Save button
+  }, 30000);
+
+  it("failure: an alert under the Save row with the server's reason, and the unsaved edits are untouched", async () => {
+    const save = await editReady();
+    vi.spyOn(actions, "saveGrowerDraftAction").mockResolvedValue({ ok: false, error: "This quote was changed by someone else. Reload to continue." } as never);
+    fireEvent.click(save);
+    await waitFor(() => expect(region("error")).not.toBeNull(), { timeout: 8000 });
+    const bad = region("error")!;
+    expect(bad.getAttribute("role")).toBe("alert");
+    expect(bad.textContent).toMatch(/changed by someone else/);
+    expect(bad.parentElement!.previousElementSibling).toBe(save.parentElement);
+    expect(screen.getByText("Unsaved changes")).toBeTruthy(); // still dirty: nothing was lost
+    expect((screen.getAllByPlaceholderText("Reason (required)")[0] as HTMLInputElement).value).toBe("Customer supplies their own feeders");
+  }, 30000);
+
+  it("a double-click on Save draft saves once", async () => {
+    const save = await editReady();
+    const spy = vi.spyOn(actions, "saveGrowerDraftAction");
+    const { act } = await import("@testing-library/react");
+    act(() => { fireEvent.click(save); fireEvent.click(save); });
+    await waitFor(() => expect(region("success")).not.toBeNull(), { timeout: 8000 });
+    expect(spy).toHaveBeenCalledTimes(1);
+  }, 30000);
+});
