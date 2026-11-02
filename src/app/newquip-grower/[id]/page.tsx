@@ -231,7 +231,7 @@ export default function QuoteEditorPage() {
   return (
     <main className={pageContainerClass("wide")}>
       <ModuleHeader variant="workspace" module={QUOTES_MODULE}>
-        <Link href="/newquip-grower" className="text-indigo-700 hover:underline">← Grower quotes</Link> · {q.quote_ref} <span className="text-slate-400">rev {q.revision}</span>
+        <Link href="/newquip-grower" className="text-indigo-700 hover:underline">← Grower quotes</Link> · {q.quote_ref} <span className="text-slate-600">rev {q.revision}</span>
       </ModuleHeader>
 
       <div className="mt-6 flex flex-wrap items-start justify-between gap-4">
@@ -385,7 +385,7 @@ export default function QuoteEditorPage() {
                     <span className="text-xs font-medium text-slate-600">{CAT_LABEL[c]}</span>
                     <Status tone={rd.counts[c] > 0 ? CAT_TONE[c] : "neutral"}>{rd.counts[c]}</Status>
                   </summary>
-                  {rd.items[c].length === 0 ? <p className="mt-2 text-xs text-slate-400">None.</p> : (
+                  {rd.items[c].length === 0 ? <p className="mt-2 text-xs text-slate-600">None.</p> : (
                     <ul className="mt-2 space-y-1 text-xs text-slate-700">{rd.items[c].map((i, n) => <li key={n}><span className="font-medium">{i.label}</span> — {i.detail}</li>)}</ul>
                   )}
                 </details>
@@ -414,7 +414,7 @@ export default function QuoteEditorPage() {
                     const mapControl = mappingControlFor(l.itemKey, l.basis, roles, editable);
                     return (
                       <tr key={l.itemKey} className={`border-b border-slate-100 align-top ${optionalOff ? "opacity-60" : ""}`}>
-                        <td className="py-3 pr-3"><div className="font-medium text-slate-900">{l.label}</div><div className="font-mono text-xs text-slate-400">{l.ruleId}</div>
+                        <td className="py-3 pr-3"><div className="font-medium text-slate-900">{l.label}</div><div className="font-mono text-xs text-slate-600">{l.ruleId}</div>
                           {l.exclusionReason && <div className="mt-1 text-xs text-amber-700">Excluded — {l.exclusionReason}</div>}</td>
                         <td className="py-3 pr-3"><Status tone={l.overrideState === "manual_override" ? "warning" : KIND_TONE[kind]}>{l.overrideState === "manual_override" ? "OVERRIDE" : VALUE_KIND_LABEL[kind]}</Status>
                           <div className="mt-1 text-xs text-slate-600">{rule.treatment.replace(/_/g, " ")}</div></td>
@@ -433,7 +433,7 @@ export default function QuoteEditorPage() {
                               )}
                             </div>
                           )}
-                          {l.basis === "not_selected" && !l.exclusionReason && <span className="text-xs text-slate-400">Optional — not selected</span>}
+                          {l.basis === "not_selected" && !l.exclusionReason && <span className="text-xs text-slate-600">Optional — not selected</span>}
                         </td>
                         <td className="py-3 pr-3 text-right tabular-nums">{l.projectQuantity ?? "—"}</td>
                         <td className="py-3 pr-3 text-xs text-slate-700">{mapControl === "chooser" ? (
@@ -526,7 +526,7 @@ export default function QuoteEditorPage() {
                       <div><div className="text-sm font-medium text-slate-900">{b.label}</div><div className="text-xs text-amber-700">{b.reason}</div></div>
                       <NumField label="Unit price" unit="R ex VAT" value={r?.unitPriceExVat ?? null} onChange={(v) => edit((d) => { d.estimator.priceResolutions = { ...d.estimator.priceResolutions, [k]: { unitPriceExVat: v ?? 0, reason: d.estimator.priceResolutions[k]?.reason ?? "" } }; })} />
                       <TextField label="Reason" value={r?.reason ?? ""} onChange={(v) => edit((d) => { d.estimator.priceResolutions = { ...d.estimator.priceResolutions, [k]: { unitPriceExVat: d.estimator.priceResolutions[k]?.unitPriceExVat ?? 0, reason: v } }; })} hint={r && !r.reason.trim() ? "A reason is required before this price is used." : undefined} />
-                      {r?.by && <span className="text-xs text-slate-400 md:col-span-3">Entered by {r.by}{r.at ? ` at ${formatSast(r.at)}` : ""}</span>}
+                      {r?.by && <span className="text-xs text-slate-600 md:col-span-3">Entered by {r.by}{r.at ? ` at ${formatSast(r.at)}` : ""}</span>}
                     </div>
                   );
                 })}
@@ -710,7 +710,7 @@ export default function QuoteEditorPage() {
               </table>
               {draft.estimator.assumptions.trim() && <p className="mt-4 text-xs text-slate-600"><strong>Assumptions:</strong> {draft.estimator.assumptions}</p>}
               {Object.entries(cfg.exclusions ?? {}).filter(([, r]) => r.trim()).length > 0 && <p className="mt-2 text-xs text-slate-600"><strong>Excluded at your request:</strong> {Object.keys(cfg.exclusions ?? {}).filter((k) => cfg.exclusions![k as GrowerItemKey]?.trim()).join(", ").replace(/_/g, " ")}</p>}
-              <p className="mt-6 text-xs text-slate-400">Summary view — individual stock lines are kept on the internal estimator view. Not an e-signature; acceptance is recorded by the manager&apos;s final approval.</p>
+              <p className="mt-6 text-xs text-slate-600">Summary view — individual stock lines are kept on the internal estimator view. Not an e-signature; acceptance is recorded by the manager&apos;s final approval.</p>
             </div>
           )}
         </Panel>

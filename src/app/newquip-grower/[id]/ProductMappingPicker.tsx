@@ -41,7 +41,7 @@ export function ProductMappingPicker({ label, value, onChange, disabled }: { lab
             <ul className="max-h-56 divide-y divide-slate-100 overflow-auto text-xs">
               {results.map((p) => (
                 <li key={p.sku} className="flex items-center justify-between gap-3 p-2">
-                  <span><span className="font-mono font-medium">{p.sku}</span> {p.name}{!p.active && <span className="ml-1 text-amber-700">(inactive)</span>}<span className="ml-1 text-slate-400">{p.type}</span></span>
+                  <span><span className="font-mono font-medium">{p.sku}</span> {p.name}{!p.active && <span className="ml-1 text-amber-700">(inactive)</span>}<span className="ml-1 text-slate-600">{p.type}</span></span>
                   <Button size="sm" variant="secondary" disabled={!p.active} onClick={() => { onChange(p.sku); setResults(null); setQuery(""); }}>Choose</Button>
                 </li>
               ))}

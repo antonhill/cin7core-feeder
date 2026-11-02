@@ -68,7 +68,7 @@ export default function NewquipGrowerPage() {
               <TBody>
                 {rows.map((q) => (
                   <TR key={q.id}>
-                    <TD><Link className="font-medium text-indigo-700 hover:underline" href={`/newquip-grower/${q.id}`}>{q.quote_ref}</Link> <span className="text-xs text-slate-400">rev {q.revision}</span></TD>
+                    <TD><Link className="font-medium text-indigo-700 hover:underline" href={`/newquip-grower/${q.id}`}>{q.quote_ref}</Link> <span className="text-xs text-slate-600">rev {q.revision}</span></TD>
                     <TD>{q.customer_name || "—"}</TD>
                     <TD>{q.site_name || "—"}</TD>
                     <TD><Status tone={STATE_TONE[q.state]}>{QUOTE_STATE_LABEL[q.state]}</Status></TD>

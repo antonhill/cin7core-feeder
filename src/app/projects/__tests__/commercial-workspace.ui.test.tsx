@@ -63,6 +63,20 @@ async function openCommercial() {
   await screen.findByText("Invoices in Cin7");
 }
 
+describe("section strip", () => {
+  it("scrolls the selected section into view without moving the page vertically", async () => {
+    const spy = vi.fn();
+    (HTMLElement.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = spy;
+    render(<ProjectWorkspace id="p1" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Commercial \/ Claims/ }));
+    await screen.findByTestId("commercial-summary");
+    const last = spy.mock.calls.at(-1)!;
+    expect(last[0]).toEqual({ block: "nearest", inline: "nearest" });
+    expect(spy.mock.instances.at(-1)).toBe(screen.getByRole("button", { name: /Commercial \/ Claims/ }));
+    delete (HTMLElement.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+});
+
 describe("Commercial / Claims workspace (P2)", () => {
   it("opens with the commercial summary: every figure is the project's own, ex VAT", async () => {
     await openCommercial();
@@ -90,7 +104,11 @@ describe("Commercial / Claims workspace (P2)", () => {
         expect(a.textContent).toContain(c.cin7Status.invoiceNumber);
         // reconciliation is its own chip, separate from the Cin7 invoice status chip beside it
         expect(within(a).getByText("Reconciled")).toBeTruthy();
-        expect(within(a).getByText(c.cin7Status.label)).not.toBe(within(a).getByText("Reconciled"));
+        const rec = within(a).getByText("Reconciled").closest("[data-tone]")!;
+        const inv = within(a).getByText(c.cin7Status.label).closest("[data-tone]")!;
+        expect(rec).not.toBe(inv);
+        expect(inv.contains(rec) || rec.contains(inv)).toBe(false);
+        expect(rec.getAttribute("data-tone")).toBe("neutral"); // reconciliation is a record-keeping fact: green is not spent on it
       }
     }
     // no figure was lost or altered by the redesign: the sum of the claim totals on screen equals the sum in the data

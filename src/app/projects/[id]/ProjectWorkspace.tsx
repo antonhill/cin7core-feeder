@@ -62,8 +62,8 @@ const TABS: { value: Tab; label: string }[] = [
 ];
 
 const CLAIM_TONE: Record<string, BadgeTone> = {
-  DRAFT: "neutral", READY_FOR_APPROVAL: "info", APPROVED: "primary", CIN7_PENDING: "warning", CIN7_CREATED: "success",
-  RECONCILED: "success", FAILED_UNCERTAIN: "danger", FAILED_CONFIRMED_NO_WRITE: "neutral", CANCELLED_BEFORE_WRITE: "neutral",
+  DRAFT: "neutral", READY_FOR_APPROVAL: "info", APPROVED: "primary", CIN7_PENDING: "warning", CIN7_CREATED: "primary",
+  RECONCILED: "primary", FAILED_UNCERTAIN: "danger", FAILED_CONFIRMED_NO_WRITE: "neutral", CANCELLED_BEFORE_WRITE: "neutral",
 };
 
 /** Claim statuses that mean "approved, and possibly already posted": the claim has been through approval. */
@@ -428,7 +428,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                       {s.claimableCents > 0 ? (
                         <span className="inline-block rounded-lg bg-indigo-600 px-2.5 py-1 text-sm font-semibold tabular-nums text-white">{formatCents(s.claimableCents)}</span>
                       ) : (
-                        <span className="tabular-nums text-slate-400">{formatCents(s.claimableCents)}</span>
+                        <span className="tabular-nums text-slate-600">{formatCents(s.claimableCents)}</span>
                       )}
                     </td>
                     <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3.5 text-right tabular-nums">{formatCents(s.remainingCents)}</td>
@@ -498,7 +498,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                     <TD align="right" className="tabular-nums whitespace-nowrap font-medium">{formatCents(a.sales_value_cents)}</TD>
                     <TD align="right" className="tabular-nums whitespace-nowrap text-slate-600">{a.estimated_cost_cents === null ? "—" : formatCents(a.estimated_cost_cents)}</TD>
                     <TD className="whitespace-nowrap">
-                      {stageName ? <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">{stageName}</span> : <span className="text-slate-400">Unallocated</span>}
+                      {stageName ? <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">{stageName}</span> : <span className="text-slate-600">Unallocated</span>}
                     </TD>
                   </TR>
                 );
@@ -557,7 +557,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                         <span className="sr-only">Cin7 invoice: </span><span aria-hidden className="mb-0.5 block text-xs font-semibold uppercase tracking-wider text-slate-600 lg:hidden">Cin7 invoice (as last recorded)</span>
                         <Status tone={cl.cin7Status.tone}>{cl.cin7Status.label}</Status>
                         {cl.cin7Status.invoiceNumber && <span className="ml-1.5 font-mono text-xs text-slate-700">{cl.cin7Status.invoiceNumber}</span>}
-                        {cl.cin7Status.invoiceNumber && cl.cin7Status.reconciled && <span className="ml-1.5"><Status tone="success">Reconciled</Status></span>}
+                        {cl.cin7Status.invoiceNumber && cl.cin7Status.reconciled && <span className="ml-1.5"><Status tone="neutral">Reconciled</Status></span>}
                       </div>
                     </div>
                     <p className="mt-2 border-t border-slate-100 pt-2 text-sm text-slate-700"><span className="font-medium text-slate-900">Next: </span>{claimNextStep({ status: cl.status, cin7Kind: cl.cin7Status.kind, stageRole: cl.approval?.stageRole, canApproveHere: plan.approveHere, canAct: perm !== "loading" })}</p>
@@ -608,7 +608,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                 {view.stages.map((s) => {
                   const ok = s.claimableCents > 0;
                   return (
-                    <label key={s.id} className={`flex items-center gap-3 text-sm ${ok ? "text-slate-800" : "text-slate-400"}`}>
+                    <label key={s.id} className={`flex items-center gap-3 text-sm ${ok ? "text-slate-800" : "text-slate-600"}`}>
                       <input type="checkbox" disabled={!ok} checked={chosen.includes(s.id)} onChange={(e) => { setChosen((cur) => (e.target.checked ? [...cur, s.id] : cur.filter((x) => x !== s.id))); if (!e.target.checked) setAmounts((m) => { const n = { ...m }; delete n[s.id]; return n; }); setPreview(null); setPreviewError(null); }} />
                       <span className="flex-1">{s.name}</span>
                       {ok && chosen.includes(s.id) && (

@@ -23,7 +23,7 @@ export function NumField({ label, value, onChange, unit, hint, placeholder, disa
   }
   return (
     <label className="flex flex-col gap-1 text-sm">
-      <span className="font-medium text-slate-700">{label}{unit ? <span className="ml-1 font-normal text-slate-400">({unit})</span> : null}</span>
+      <span className="font-medium text-slate-700">{label}{unit ? <span className="ml-1 font-normal text-slate-600">({unit})</span> : null}</span>
       <input
         value={text} disabled={disabled} placeholder={placeholder} inputMode="decimal"
         onChange={(e) => { setText(e.target.value); onChange(parse(e.target.value)); }}

@@ -75,7 +75,7 @@ export function MarginPanel({ budget, draft, final, frozen, editable, edit }: {
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-sm">
               <Head first="Section" />
-              <tbody>{sheet.sections.map((s) => <tr key={s.section} className="border-b border-slate-100"><td className="py-2 pr-3">{s.section} <span className="text-xs text-slate-400">({s.lineCount})</span></td><Cells m={s} /></tr>)}</tbody>
+              <tbody>{sheet.sections.map((s) => <tr key={s.section} className="border-b border-slate-100"><td className="py-2 pr-3">{s.section} <span className="text-xs text-slate-600">({s.lineCount})</span></td><Cells m={s} /></tr>)}</tbody>
             </table>
           </div>
 
@@ -113,7 +113,7 @@ export function MarginPanel({ budget, draft, final, frozen, editable, edit }: {
                 <span className="text-sm text-slate-700">{l.label}</span>
                 <NumField label="Line cost" unit="R ex VAT" value={cur && cur.lineCostCents >= 0 ? cur.lineCostCents / 100 : null} onChange={(v) => setOverride(l.key, { rands: v })} />
                 <TextField label="Reason" value={cur?.reason ?? ""} onChange={(v) => setOverride(l.key, { reason: v })} hint={preview.errors[l.key]} />
-                {cur?.by && <span className="text-xs text-slate-400 md:col-span-3">Recorded by {cur.by} at {cur.at}</span>}
+                {cur?.by && <span className="text-xs text-slate-600 md:col-span-3">Recorded by {cur.by} at {cur.at}</span>}
               </div>
             );
           })}

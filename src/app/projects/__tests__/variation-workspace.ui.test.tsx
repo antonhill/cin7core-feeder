@@ -182,11 +182,13 @@ describe("Variation workspace (P3)", () => {
     expect(reject.disabled).toBe(false); expect(reprice.disabled).toBe(false);
     fireEvent.click(reprice);
     await waitFor(() => expect(called("repriceVariationAction")[0]?.[1]).toEqual(["p1", "v1", "450000"]));
-    fireEvent.click(within(rec).getByRole("button", { name: /Submit/ }));
+    // each action re-reads and re-renders the record while its buttons are disabled: take a fresh, ENABLED button for every step
+    const enabled = (name: RegExp) => waitFor(() => { const r = screen.getByText(/^V001 – /).closest("[class*='p-6']") as HTMLElement; const b = within(r).getByRole("button", { name }) as HTMLButtonElement; expect(b.disabled).toBe(false); return b; });
+    fireEvent.click(await enabled(/Submit/));
     await waitFor(() => expect(called("submitVariationForApprovalAction")[0]?.[1]).toEqual(["p1", "v1"]));
-    fireEvent.click(within(rec).getByRole("button", { name: /^Approve/ }));
+    fireEvent.click(await enabled(/^Approve/));
     await waitFor(() => expect(called("approveVariationAction")[0]?.[1]).toEqual(["p1", "v1"]));
-    fireEvent.click(reject);
+    fireEvent.click(await enabled(/Reject/));
     await waitFor(() => expect(called("rejectVariationAction")[0]?.[1]).toEqual(["p1", "v1", "too dear"]));
   });
   it("hiding a billing workspace keeps it mounted (an action in flight in it is not lost) and showing it again reads nothing", async () => {

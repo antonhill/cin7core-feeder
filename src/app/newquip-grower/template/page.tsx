@@ -50,7 +50,7 @@ export default async function GrowerTemplatePage() {
             <tbody>
               {sections.map((s) => (
                 <tr key={s.n} className="border-b border-slate-100 align-top">
-                  <td className="py-3 pr-3 tabular-nums text-slate-400">{s.n}</td>
+                  <td className="py-3 pr-3 tabular-nums text-slate-600">{s.n}</td>
                   <td className="py-3 pr-3 font-medium text-slate-900">{s.name}<div className="mt-1"><Status tone={s.treatment === "engineering_review" ? "warning" : s.treatment === "estimator_input" || s.treatment === "charge" ? "neutral" : "info"}>{TREATMENT_LABEL[s.treatment]}</Status></div></td>
                   <td className="py-3 pr-3"><Status tone={s.required ? "primary" : "warning"}>{s.required ? "Required" : "Optional"}</Status><div className="mt-1 max-w-[190px] text-xs text-slate-600">{s.requirementNote}</div></td>
                   <td className="py-3 pr-3 font-mono text-xs text-slate-600">{s.ruleRefs.map((r) => <div key={r}>{r}</div>)}</td>

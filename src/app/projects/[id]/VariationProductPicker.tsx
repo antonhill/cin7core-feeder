@@ -63,7 +63,7 @@ export function VariationProductPicker({ picked, onChange, disabled, quantityLab
         <ul className="space-y-2">
           {picked.map((p, i) => (
             <li key={p.sku} className="flex flex-wrap items-end gap-2">
-              <div className="min-w-48"><div className="font-mono text-sm">{p.sku}{p.type && <span className="ml-2 font-sans text-xs text-slate-400">{p.type}</span>}</div><div className="text-xs text-slate-600">{p.description}</div></div>
+              <div className="min-w-48"><div className="font-mono text-sm">{p.sku}{p.type && <span className="ml-2 font-sans text-xs text-slate-600">{p.type}</span>}</div><div className="text-xs text-slate-600">{p.description}</div></div>
               <Input label={quantityLabel} value={p.quantity} inputMode="decimal" disabled={p.confirm} onChange={(e) => onChange(picked.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)))} />
               {withConfirm && (
                 <label className="flex items-center gap-1 pb-2 text-xs text-slate-600"><input type="checkbox" checked={p.confirm ?? false} onChange={(e) => onChange(picked.map((x, j) => (j === i ? { ...x, confirm: e.target.checked } : x)))} /> Quantity depends on the layout: a manager confirms it per quotation</label>

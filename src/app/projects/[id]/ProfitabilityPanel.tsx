@@ -105,7 +105,7 @@ function CostLedger({ projectId }: { projectId: string }) {
           {d.totals && <p className="tabular-nums">Incurred {formatCents(d.totals.incurredCents)} · Committed {formatCents(d.totals.committedCents)}{d.totals.excludedCents > 0 ? ` · Excluded (already in Cin7 valuation) ${formatCents(d.totals.excludedCents)}` : ""}</p>}
           <ul className="space-y-2">
             {d.entries.map((e) => (
-              <li key={e.id} className={`flex flex-wrap items-end gap-2 ${e.voided_at ? "text-slate-400 line-through" : ""}`}>
+              <li key={e.id} className={`flex flex-wrap items-end gap-2 ${e.voided_at ? "text-slate-600 line-through" : ""}`}>
                 <span className="min-w-56">{COST_CATEGORY_LABEL[e.category]}: {e.description}{e.supplier ? ` (${e.supplier})` : ""}{e.reference ? ` [${e.reference}]` : ""}</span>
                 <span className="tabular-nums">{formatCents(e.amount_cents)}</span><span className="text-xs">{e.state}{e.incurred_on ? ` ${e.incurred_on}` : ""}{e.in_cin7_valuation ? " · in Cin7 valuation (excluded)" : ""}</span>
                 {!e.voided_at && e.state === "COMMITTED" && <Button size="sm" variant="secondary" disabled={busy} onClick={() => act(() => markCostIncurredAction(projectId, e.id), "Marked incurred.")}>Mark incurred</Button>}
