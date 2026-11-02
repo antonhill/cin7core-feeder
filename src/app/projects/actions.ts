@@ -8,6 +8,9 @@
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { logActivity } from "@/lib/activity-log";
+import { listOrgUsers } from "@/lib/approvals/role-store";
+import { validateProjectDetails } from "@/lib/projects/project-details";
+import { loadProjectDetails, updateProjectDetails } from "@/lib/projects/project-details-store";
 import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { isNewquipPocOrg } from "@/newquip/access";
@@ -103,6 +106,39 @@ export async function getViewerPermissionsAction(): Promise<ActionResult<{ canAp
     } catch {
       return { ok: true, data: { canApprove: false, newquip } };
     }
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/** Owner/admin only (display list for the Project details editor): the organisation's users a project manager can be chosen from. */
+export async function listProjectManagerOptionsAction(): Promise<ActionResult<string[]>> {
+  try {
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    await requireOrgAdmin("assign a project manager");
+    return { ok: true, data: (await listOrgUsers(createServiceRoleClient(), orgId)).map((u) => u.email) };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/**
+ * Owner/admin only (the manager role). Sets the project manager, start date and target completion date AFTER the project exists (UAT-029). Validated against the
+ * organisation's own users and real dates; touches no other column - the approved quotation, contract value, tax and stages are the frozen baseline. Audited.
+ */
+export async function updateProjectDetailsAction(projectId: string, input: { projectManager: string | null; startDate: string | null; targetCompletionDate: string | null }): Promise<ActionResult<null>> {
+  try {
+    const { orgId, userId, email } = await requireModuleAccess(PROJECTS_MODULE.href);
+    await requireOrgAdmin("edit project details");
+    const db = createServiceRoleClient();
+    await guardBillingScope(db, orgId, projectId, true);
+    const current = await loadProjectDetails(db, orgId, projectId);
+    if (!current) return { ok: false, error: "Project not found." };
+    const checked = validateProjectDetails(input, (await listOrgUsers(db, orgId)).map((u) => u.email), current.project_manager);
+    if (!checked.ok) return { ok: false, error: checked.error };
+    const { before, after } = await updateProjectDetails(db, orgId, projectId, checked.patch);
+    await logActivity(db, { orgId, actor: { userId, email }, action: "projects.details_updated", summary: "Updated a project's manager / start date / target completion date", detail: { projectId, before, after } });
+    return { ok: true, data: null };
   } catch (e) {
     return { ok: false, error: message(e) };
   }

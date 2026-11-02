@@ -22,6 +22,7 @@ import { OpeningCommitmentsPanel } from "./OpeningCommitmentsPanel";
 import { DeliveryAllocationPanel } from "./DeliveryAllocationPanel";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { Cin7PostingPanel } from "./Cin7PostingPanel";
+import { ProjectDetailsPanel } from "./ProjectDetailsPanel";
 import { Cin7SaleCreationPanel } from "./Cin7SaleCreationPanel";
 import { Block, WorkspaceSkeleton } from "./LoadingSkeletons";
 import { getCommercialBootAction, type Cin7PostingStatus, type Cin7SaleCreationStatus } from "../cin7-actions";
@@ -353,20 +354,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             </div>
           </div>
 
-          <Panel>
-            <PanelTitle>Project details</PanelTitle>
-            <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
-              {[
-                ["Customer", project.customer_name], ["Project reference", project.project_reference],
-                ["Originating quote", project.originating_quote_ref ?? "—"], ["Salesperson", project.salesperson ?? "—"],
-                ["Project manager", project.project_manager ?? "—"], ["Start date", project.start_date ?? "—"],
-                ["Target completion", project.target_completion_date ?? "—"], ["Status", project.status],
-                ["Tax", `${project.tax_rule ?? "—"} (${formatBps(project.tax_rate_bps)})`],
-              ].map(([k, v]) => (
-                <div key={k}><dt className="text-xs text-slate-500">{k}</dt><dd className="mt-0.5 font-medium text-slate-900">{v}</dd></div>
-              ))}
-            </dl>
-          </Panel>
+          <ProjectDetailsPanel view={view} isAdmin={perm === "admin"} run={run} working={isWorking} editable={!embedded && view.project.billing_scope !== "VARIATION"} />
         </div>
       )}
 
