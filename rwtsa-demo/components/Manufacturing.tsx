@@ -225,6 +225,13 @@ export function ManufacturingPageView({ model }: { model: MfgModel }) {
                 </select>
               </label>
               <label className="flex flex-col gap-1">
+                Routing build-up amounts read as (conditional analysis only)
+                <select name="units" defaultValue={s.values.units} className={field}>
+                  <option value="per-garment">Rand per garment, as stated</option>
+                  <option value="per-smv-minute">Rand per SMV minute (x total SMV)</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1">
                 Markup (selling = cost x)
                 <input name="markup" type="number" min={1} max={10} step="any" defaultValue={s.values.markup} className={`${field} w-24`} />
               </label>
@@ -498,13 +505,59 @@ export function ManufacturingPageView({ model }: { model: MfgModel }) {
             </div>
           </Panel>
 
+          {sizeSel && sizeSel.buildUp && (
+            <Panel>
+              <PanelTitle>Routing cost build-up as stated in the workbook (conditional analysis, not a costing policy)</PanelTitle>
+              <p data-testid="buildup-note" className="mt-1 text-sm text-slate-700">
+                These are rand amounts, never percentages. Their unit is NOT confirmed: the sheet labels one line per minute, yet the lines sit beside a per-garment labour amount. The reading below ({sizeSel.buildUp.units === "per-garment" ? "rand per garment, as stated" : `rand per SMV minute x total SMV ${sizeSel.buildUp.totalSmv}`}) is a conditional analysis chosen on this page. Margin is shown beside and is never added to cost. The base BOM cost and reference selling price above are unchanged.
+              </p>
+              <div className="mt-3 overflow-x-auto">
+                <Table>
+                  <THead>
+                    <TR>
+                      <TH>Line (as labelled in the sheet)</TH>
+                      <TH>Unit label</TH>
+                      <TH align="right">Amount as written</TH>
+                      <TH align="right">Per garment, this reading</TH>
+                      <TH>Treatment</TH>
+                    </TR>
+                  </THead>
+                  <TBody>
+                    {sizeSel.buildUp.lines.map((l) => (
+                      <TR key={l.kind}>
+                        <TD>
+                          <span data-testid="buildup-line" data-kind={l.kind} data-raw={l.rawAmount} data-cents={l.cents} data-row={l.sourceRow} />
+                          {l.label}
+                        </TD>
+                        <TD>{l.unitLabel ?? "none stated"}</TD>
+                        <TD align="right" numeric>
+                          {l.rawAmount}
+                        </TD>
+                        <TD align="right" numeric>
+                          {money(l.cents)}
+                        </TD>
+                        <TD>{l.kind === "labour" ? "reconciliation only: already in the base BOM cost" : l.kind === "margin" ? "shown beside; never added to cost" : "additional line (conditional)"}</TD>
+                      </TR>
+                    ))}
+                  </TBody>
+                </Table>
+              </div>
+              <div className="mt-3 grid gap-4 md:grid-cols-3">
+                <Indicator label="Labour line reconciles" testid="buildup-reconciles" value={sizeSel.buildUp.labourReconciles === null ? "-" : sizeSel.buildUp.labourReconciles ? "Yes" : "No"} hint="stated labour = SMV x cost per minute" />
+                <Indicator label="CONDITIONAL fully loaded cost" testid="buildup-loaded" value={money(sizeSel.buildUp.conditionalFullyLoadedCents)} hint="base + overhead + efficiency under this reading; excludes margin; not the product cost" />
+                <Indicator label="Margin (not included)" testid="buildup-margin" value={money(sizeSel.buildUp.marginCents)} hint="never added automatically" />
+              </div>
+            </Panel>
+          )}
+
           {sizeSel && (
             <Panel>
               <span id="breakdown" />
               <PanelTitle>
                 Cost breakdown: {model.style?.styleCode} size {sizeSel.size}
               </PanelTitle>
-              <div className="mt-3 grid gap-4 md:grid-cols-3">
+              <div className="mt-3 grid gap-4 md:grid-cols-4">
+                <Indicator label="Base BOM cost" testid="sel-base" value={money(sizeSel.baseBomCents)} hint="materials, trims, print, packaging and labour (SMV x cost per minute); excludes overhead, efficiency and margin" />
                 <Indicator label="Calculated cost" testid="sel-total" value={money(totalCents)} hint={sizeSel.status === "complete" ? "complete" : "incomplete: withheld"} />
                 <Indicator label="Selling price" testid="sel-selling" value={money(sizeSel.sellingCents)} hint={`cost x ${c.config.markup}`} />
                 <Indicator label="Reference cost" testid="sel-reference" value={money(sizeSel.referenceCents)} hint="Items.standardCost" />

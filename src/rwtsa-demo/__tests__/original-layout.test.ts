@@ -308,7 +308,7 @@ describe("every sheet row is accounted for", () => {
     const L = lay(await load());
     expect(L.Items).toMatchObject({ dataRows: 10, noteRows: 1, trailingSummaryRows: 0 });
     expect(L.BOM).toMatchObject({ titleRows: 2, dataRows: 8 - 1, excludedRows: 1, expandedRows: 3, trailingSummaryRows: 3, trailingNoteRows: 2 });
-    expect(L.Routing_SMV).toMatchObject({ titleRows: 2, dataRows: 3, trailingSummaryRows: 5, trailingNoteRows: 1 });
+    expect(L.Routing_SMV).toMatchObject({ titleRows: 2, dataRows: 3, trailingSummaryRows: 6, trailingNoteRows: 1, costRecordRows: 4 });
     expect(L.ProductionOrders).toMatchObject({ titleRows: 1, dataRows: 2, trailingNoteRows: 1 });
     expect(L.LandedCost).toMatchObject({ titleRows: 2, dataRows: 2 });
     expect(L.Payments_FEC).toMatchObject({ titleRows: 1, dataRows: 3 });
@@ -317,7 +317,7 @@ describe("every sheet row is accounted for", () => {
     const r = await load();
     expect(codes(r, "note_row_ignored")).toEqual([expect.objectContaining({ tab: "Items", severity: "info", count: 1, rows: [O.itemsNoteRow] })]);
     const trailing = codes(r, "layout_trailing_rows").map((f) => `${f.tab}:${f.reason}:${f.count}`).sort();
-    expect(trailing).toEqual(["BOM:note:2", "BOM:summary:3", "ProductionOrders:note:1", "Routing_SMV:note:1", "Routing_SMV:summary:5"]);
+    expect(trailing).toEqual(["BOM:note:2", "BOM:summary:3", "ProductionOrders:note:1", "Routing_SMV:note:1", "Routing_SMV:summary:6"]);
   });
   it("a data-looking row after a blank gap in a report tab is NOT silently dropped: it is an error naming the rows", async () => {
     const r = await load((wb) => void (wb.getWorksheet("Routing_SMV")!.getRow(20).values = [40, "Extra op", "x", 5]));
@@ -383,12 +383,17 @@ describe("the engines produce the hand-checked figures from the directly-loaded 
     expect([nonLabour("S"), nonLabour("L"), nonLabour("XL"), nonLabour("2XL")]).toEqual([O.nonLabourSML, O.nonLabourSML, O.nonLabourXLUp, O.nonLabourXLUp]);
     expect((style.sizes.find((z) => z.size === "M")!.labourBaseCents ?? 0) / 100).toBe(O.labour);
   });
-  it("withholds the cost total while overhead and efficiency are absent from the routing (nothing assumed)", async () => {
+  it("a routing with NO per-operation overhead or efficiency costs on the base basis; a PARTIAL set (some operations only) is still incomplete", async () => {
     const c = runCosting((await load()).dataset!, { percentScale: null });
     const m = c.styles.find((s) => s.styleCode === O.styleA)!.sizes.find((z) => z.size === "M")!;
-    expect(m.status).toBe("incomplete");
-    expect(m.totalCents).toBeNull();
-    expect(m.missing.join(" ")).toMatch(/efficiency|overhead/);
+    expect(m.status).toBe("complete");
+    expect(m.totalCents).toBe(m.baseBomCents);
+    const d = (await load()).dataset!;
+    const partial = { ...d, tables: { ...d.tables, routing: d.tables.routing.map((r, i) => (i === 0 ? { ...r, overhead: 0.1, efficiency: 0.9 } : r)) } };
+    const p = runCosting(partial, { percentScale: "fraction" }).styles.find((s) => s.styleCode === O.styleA)!.sizes.find((z) => z.size === "M")!;
+    expect(p.status).toBe("incomplete");
+    expect(p.totalCents).toBeNull();
+    expect(p.baseBomCents).not.toBeNull(); // the base basis does not depend on the percentages
   });
   it("Red Flag and quotes run on the loaded data", async () => {
     const d = (await load()).dataset!;
@@ -431,5 +436,137 @@ describe("confidentiality of the layout findings and accounting", () => {
     const out = JSON.stringify({ f: r.findings, l: r.layout });
     expect(out).not.toContain(S);
     expect(r.findings.length).toBeGreaterThan(0);
+  });
+});
+
+describe("Routing_SMV cost build-up extraction", () => {
+  it("loads the four build-up lines with their source label, unit label, basis text and sheet row; amounts stay rand amounts, never percentages", async () => {
+    const b = await load();
+    const rc = b.dataset!.routingCosts!;
+    expect(rc.lines.map((l) => [l.kind, l.amount, l.unitLabel, l.basis, l.sourceRow])).toEqual([
+      ["labour", 21.6, "SMV x CPM", "from routing", 12],
+      ["overhead", 5.4, "per min", "synthetic basis", 13],
+      ["efficiency", 2.5, null, "synthetic basis", 14],
+      ["margin", 1.8, null, "synthetic basis", 15],
+    ]);
+    expect(rc.lines.every((l) => l.styleCode === ORIGINAL_SHAPED.styleA)).toBe(true);
+    expect(rc.lines.find((l) => l.kind === "overhead")!.label).toBe("Factory overhead recovery (per min)");
+  });
+  it("keeps Total SMV and Direct CMT as reconciliation references only: they are not loaded as cost lines", async () => {
+    const rc = (await load()).dataset!.routingCosts!;
+    expect(rc.reportedTotalSmv).toBe(8);
+    expect(rc.reportedDirectCmt).toBe(21.6);
+    expect(rc.lines.map((l) => l.kind)).not.toContain("total");
+    expect(rc.lines).toHaveLength(4);
+  });
+  it("accounts for every row: build-up lines are counted (costRecordRows), nothing is discarded, and the load is value-free", async () => {
+    const b = await load();
+    const L = b.layout.Routing_SMV!;
+    expect(L.costRecordRows).toBe(4);
+    expect(L.titleRows + 1 + L.dataRows + L.noteRows + L.excludedRows + L.trailingSummaryRows + L.trailingNoteRows).toBe(L.sheetRows);
+    const f = codes(b, "routing_cost_lines_loaded");
+    expect(f).toEqual([expect.objectContaining({ tab: "Routing_SMV", severity: "info", count: 4, rows: [12, 13, 14, 15] })]);
+    expect(JSON.stringify(f)).not.toMatch(/21\.6|5\.4|1\.8/);
+    expect(codes(b, "routing_cost_mismatch")).toEqual([]);
+  });
+  it("a build-up label that is not one of the four kinds is reported, not loaded and not silently dropped; a duplicate kind is reported", async () => {
+    const r = await load((wb) => {
+      const ws = wb.getWorksheet("Routing_SMV")!;
+      ws.getCell("B13").value = "Freight surcharge";
+      ws.getCell("B14").value = "Margin (second)";
+    });
+    expect(r.dataset!.routingCosts!.lines.map((l) => l.kind)).toEqual(["labour", "margin"]);
+    expect(codes(r, "routing_cost_label_unrecognised")).toEqual([expect.objectContaining({ severity: "warning", count: 2, rows: [13, 15] })]);
+  });
+  it("without a 'Cost build-up' heading no row is loaded as a cost line (ordinary report totals are not transactions)", async () => {
+    const r = await load((wb) => void (wb.getWorksheet("Routing_SMV")!.getCell("B11").value = "Notes:"));
+    expect(r.dataset!.routingCosts?.lines ?? []).toEqual([]);
+  });
+  it("reconciles the sheet's own totals against its operations and flags a disagreement without printing values", async () => {
+    const r = await load((wb) => void (wb.getWorksheet("Routing_SMV")!.getCell("D8").value = 9));
+    expect(codes(r, "routing_cost_mismatch")).toEqual([expect.objectContaining({ severity: "warning", fields: ["total_smv"] })]);
+    const r2 = await load((wb) => void (wb.getWorksheet("Routing_SMV")!.getCell("D12").value = 30));
+    expect(codes(r2, "routing_cost_mismatch")).toEqual([expect.objectContaining({ fields: ["labour_line"] })]);
+  });
+  it("a routing sheet with no build-up block has no routing costs", async () => {
+    const r = await load((wb) => {
+      const ws = wb.getWorksheet("Routing_SMV")!;
+      for (const row of [8, 9, 11, 12, 13, 14, 15]) ws.getRow(row).values = [];
+    });
+    expect(r.dataset!.routingCosts).toBeUndefined();
+  });
+});
+
+describe("Scenario B: routing build-up as a conditional analysis; the base BOM reference basis is unchanged", () => {
+  const cost = async (cfg: Parameters<typeof runCosting>[1] = { percentScale: null }, mutate?: Parameters<typeof originalShapedBuffer>[0]) => runCosting((await load(mutate)).dataset!, cfg);
+  const sizeM = (r: ReturnType<typeof runCosting>) => r.styles.find((s) => s.styleCode === O.styleA)!.sizes.find((z) => z.size === "M")!;
+  it("costs on the base basis without any overhead or efficiency column: the routing is NOT incomplete (the original P0 failure)", async () => {
+    const z = sizeM(await cost());
+    expect(z.status).toBe("complete");
+    expect(z.missing).toEqual([]);
+    expect(z.totalCents).not.toBeNull();
+    expect(z.totalCents).toBe(z.baseBomCents);
+    expect(z.sellingCents).toBe(Math.round((z.totalCents as number) * 1.6));
+    expect(z.efficiencyAllowanceCents).toBeNull();
+    expect(z.overheadCents).toBeNull();
+  });
+  it("base BOM cost = materials + trims + print + packaging + labour (SMV x cost per minute), and excludes overhead, efficiency and margin", async () => {
+    const z = sizeM(await cost());
+    const g = z.groups;
+    const sum = (g.fabricMaterialsCents ?? 0) + (g.trimsThreadCents ?? 0) + (g.printPackagingCents ?? 0) + (g.otherCents ?? 0) + (z.labourBaseCents ?? 0);
+    expect(z.baseBomCents).toBe(sum);
+    expect(z.labourBaseCents).toBe(Math.round(O.labour * 100));
+  });
+  it("reads the four lines per garment by default: additional lines separate, conditional fully loaded = base + overhead + efficiency, margin shown beside and never added", async () => {
+    const z = sizeM(await cost());
+    const b = z.buildUp!;
+    expect(b.units).toBe("per-garment");
+    expect(b.lines.map((l) => [l.kind, l.rawAmount, l.cents])).toEqual([["labour", 21.6, 2160], ["overhead", 5.4, 540], ["efficiency", 2.5, 250], ["margin", 1.8, 180]]);
+    expect(b.labourReconciles).toBe(true);
+    expect(b.conditionalFullyLoadedCents).toBe((z.baseBomCents as number) + 540 + 250);
+    expect(b.marginCents).toBe(180);
+    expect(b.conditionalFullyLoadedCents).not.toBe((z.baseBomCents as number) + 540 + 250 + 180);
+    expect(z.totalCents).toBe(z.baseBomCents); // the reference total is untouched by the analysis
+  });
+  it("the per-SMV-minute reading multiplies by the total SMV (8): 5.4 -> 43.20, 2.5 -> 20.00; labour stays as stated; still conditional", async () => {
+    const z = sizeM(await cost({ percentScale: null, buildUpUnits: "per-smv-minute" }));
+    const b = z.buildUp!;
+    expect(b.totalSmv).toBe(8);
+    expect(b.lines.map((l) => [l.kind, l.cents])).toEqual([["labour", 2160], ["overhead", 4320], ["efficiency", 2000], ["margin", 1440]]);
+    expect(b.conditionalFullyLoadedCents).toBe((z.baseBomCents as number) + 4320 + 2000);
+    expect(z.totalCents).toBe(z.baseBomCents);
+  });
+  it("amounts are never read as percentages: the percent scale choice does not change them", async () => {
+    const a = sizeM(await cost({ percentScale: "percent" })).buildUp!;
+    const b = sizeM(await cost({ percentScale: "fraction" })).buildUp!;
+    expect(a.lines.map((l) => l.cents)).toEqual(b.lines.map((l) => l.cents));
+    expect(a.lines.find((l) => l.kind === "overhead")!.cents).toBe(540); // not 5.4% of anything
+  });
+  it("a missing overhead or efficiency line means no conditional fully loaded figure (nothing is invented); margin alone never makes one", async () => {
+    const z = sizeM(await cost({ percentScale: null }, (wb) => void (wb.getWorksheet("Routing_SMV")!.getCell("B14").value = "Allowance note")));
+    expect(z.buildUp!.lines.map((l) => l.kind)).toEqual(["labour", "overhead", "margin"]);
+    expect(z.buildUp!.conditionalFullyLoadedCents).toBeNull();
+    expect(z.buildUp!.marginCents).toBe(180);
+  });
+  it("a stated labour line that disagrees with SMV x cost per minute is reported as not reconciling", async () => {
+    const z = sizeM(await cost({ percentScale: null }, (wb) => void (wb.getWorksheet("Routing_SMV")!.getCell("D12").value = 30)));
+    expect(z.buildUp!.labourReconciles).toBe(false);
+  });
+  it("a workbook without a build-up has no analysis and costs as before", async () => {
+    const z = sizeM(await cost({ percentScale: null }, (wb) => { for (const row of [8, 9, 11, 12, 13, 14, 15]) wb.getWorksheet("Routing_SMV")!.getRow(row).values = []; }));
+    expect(z.buildUp).toBeNull();
+    expect(z.status).toBe("complete");
+  });
+  it("when per-operation percentages ARE present the base BOM cost still excludes the efficiency allowance and overhead lines", async () => {
+    const d = (await load()).dataset!;
+    const full = { ...d, tables: { ...d.tables, routing: d.tables.routing.map((r) => ({ ...r, overhead: 0.1, efficiency: 0.9 })) } };
+    const z = runCosting(full, { percentScale: "fraction" }).styles.find((s) => s.styleCode === O.styleA)!.sizes.find((x) => x.size === "M")!;
+    expect(z.efficiencyAllowanceCents).toBeGreaterThan(0);
+    expect(z.overheadCents).toBeGreaterThan(0);
+    expect(z.totalCents).toBe((z.baseBomCents as number) + (z.efficiencyAllowanceCents as number) + (z.overheadCents as number));
+    expect(z.baseBomCents).toBe(sizeM(await cost()).baseBomCents);
+  });
+  it("rejects an unknown units setting", async () => {
+    await expect(cost({ percentScale: null, buildUpUnits: "percent" as never })).rejects.toThrow(/build-up units/i);
   });
 });

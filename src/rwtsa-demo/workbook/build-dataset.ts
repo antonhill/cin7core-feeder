@@ -211,6 +211,19 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
     if (lostNoReason.length > 0) findings.push(finding({ severity: "warning", code: "lost_without_reason", tab: "Quotes", field: "lostReason", count: lostNoReason.length, rows: lostNoReason }));
   }
 
+  // Routing_SMV cost build-up: the sheet's own reported totals must agree with its operations. Value-free: only the check names.
+  if (read.routingCosts) {
+    const rc = read.routingCosts;
+    const smv = routing.reduce((t, r) => t + r.smv, 0);
+    const direct = routing.reduce((t, r) => t + r.smv * r.costPerMinute, 0);
+    const bad: string[] = [];
+    if (rc.reportedTotalSmv !== null && routing.length > 0 && Math.abs(rc.reportedTotalSmv - smv) > 0.005) bad.push("total_smv");
+    if (rc.reportedDirectCmt !== null && routing.length > 0 && Math.abs(rc.reportedDirectCmt - direct) > 0.005) bad.push("direct_cmt");
+    const labour = rc.lines.find((l) => l.kind === "labour");
+    if (labour && routing.length > 0 && Math.abs(labour.amount - direct) > 0.005) bad.push("labour_line");
+    if (bad.length > 0) findings.push(finding({ severity: "warning", code: "routing_cost_mismatch", tab: "Routing_SMV", fields: bad, count: bad.length }));
+  }
+
   const layoutOut: Partial<Record<TabName, TabLayoutReport>> = {};
   for (const tab of TAB_NAMES) {
     const l = read.layout?.[tab];
@@ -240,6 +253,7 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
     tables,
     reconciliation: reconcile(tables, months),
     layout: layoutOut,
+    ...(read.routingCosts ? { routingCosts: read.routingCosts } : {}),
     readiness,
     findings,
   };
