@@ -45,6 +45,13 @@ export function useFormDraft<T>(o: FormDraftOptions<T>): FormDraftApi<T> {
 
   useEffect(() => { let live = true; void getUserId().then((u) => { if (live) setUserId(u); }); return () => { live = false; }; }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // An offered draft is only valid for the exact server version it was found against, and only while the form is untouched. Editing (dirty), saving (base moves on) or
+  // any version change withdraws the offer, so "Restore my edits" can never overwrite newer work. Declared BEFORE the lookup below so a lookup for the new version can re-offer.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- withdraws an offer when its preconditions (clean form, same server version) stop holding
+    setRestorable(null);
+  }, [dirty, base]);
+
   // Look for an earlier draft once the user and the server version are known (never while the form is already being edited).
   const looked = useRef<string | null>(null);
   useEffect(() => {

@@ -47,6 +47,28 @@ describe("useFormDraft", () => {
     act(() => holder.api.discard());
     expect(s.m.size).toBe(0); expect(holder.api.restorable).toBeNull();
   });
+  it("an offered draft is withdrawn as soon as the form is edited, so Restore cannot overwrite newer work", async () => {
+    const s = mem(); saveDraft(s, draftKey("u1", "quote", "q1"), "h1", "earlier");
+    const { rerender } = render(<Host storage={s} base="h1" dirty={false} value="server" />);
+    await flush();
+    expect(holder.api.restorable?.data).toBe("earlier");
+    rerender(<Host storage={s} base="h1" dirty value="typing" />);
+    await flush();
+    expect(holder.api.restorable).toBeNull();
+    let got: string | null = "x"; act(() => { got = holder.api.restore(); });
+    expect(got).toBeNull();
+  });
+  it("an offered draft is withdrawn when the server version moves on (saved elsewhere / reloaded)", async () => {
+    const s = mem(); saveDraft(s, draftKey("u1", "quote", "q1"), "h1", "earlier");
+    const { rerender } = render(<Host storage={s} base="h1" dirty={false} value="server" />);
+    await flush();
+    expect(holder.api.restorable?.data).toBe("earlier");
+    rerender(<Host storage={s} base="h2" dirty={false} value="newer server copy" />);
+    await flush();
+    expect(holder.api.restorable).toBeNull();
+    let got: string | null = "x"; act(() => { got = holder.api.restore(); });
+    expect(got).toBeNull();
+  });
   it("a draft from another user, or based on an older server version, is never offered", async () => {
     const s = mem(); saveDraft(s, draftKey("u2", "quote", "q1"), "h1", "theirs"); saveDraft(s, draftKey("u1", "quote", "q1"), "OLD", "stale");
     render(<Host storage={s} base="h1" dirty={false} value="x" />);
