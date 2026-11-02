@@ -33,38 +33,34 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
 
   const [version, setVersion] = useState(0);
   const [openWs, setOpenWs] = useState<Record<string, boolean>>({});
+  const [everOpened, setEverOpened] = useState<Record<string, boolean>>({}); // a hidden workspace stays mounted so an action in flight in it is never lost
   const variationKey = view.variations.map((v) => `${v.id}:${v.status}`).join(",");
   useEffect(() => {
+    if (view.variations.length === 0) return; // nothing to bill: no read
     let live = true;
     void getVariationBillingAction(projectId).then((r) => {
       if (!live) return;
       if (r.ok && r.data) { setState(r.data); setError(null); } else setError(r.error ?? "Could not load variation billing.");
     });
     return () => { live = false; };
-  }, [projectId, variationKey, version]);
+  }, [projectId, variationKey, version, view.variations.length]);
 
   const act = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string) => { if (await run(fn, done)) setVersion((n) => n + 1); };
-  if (error) return <Alert tone="danger">{error}</Alert>;
-  if (!state) return (
-    <div role="status" aria-live="polite" aria-busy="true" className="min-h-40 rounded-2xl border border-slate-200 bg-white p-5">
-      <p className="text-sm text-slate-500">Loading the variations…</p>
-      <Block className="mt-4 h-24 w-full" />
-    </div>
-  );
-  const c = state.consolidated;
+  const c = state?.consolidated;
   const variations = view.variations.filter((v) => v.status !== "REJECTED");
-  const firstBilled = variations.find((x) => x.status === "APPROVED" && state.billingProjectByVariation[x.id])?.id;
+  const firstBilled = variations.find((x) => x.status === "APPROVED" && state?.billingProjectByVariation[x.id])?.id;
+  if (view.variations.length === 0) return null; // the Variations tab says so itself
 
   return (
     <div className="space-y-4">
 
-      {variations.length === 0 ? <p className="text-sm text-slate-600">No variations to bill.</p> : variations.map((v) => {
-        const sched = state.schedules[v.id];
+      {variations.length === 0 ? null : variations.map((v) => {
+        const sched = state?.schedules[v.id];
         const rows = edit[v.id] ?? rowsOf(sched);
         const total = totalOf(rows);
-        const billingId = state.billingProjectByVariation[v.id];
-        const legacy = v.status === "APPROVED" && (!sched || sched.length === 0);
-        const scope = billingId ? c.scopes.find((x) => x.projectId === billingId) : undefined;
+        const billingId = state?.billingProjectByVariation[v.id];
+        const legacy = !!state && v.status === "APPROVED" && (!sched || sched.length === 0);
+        const scope = billingId && c ? c.scopes.find((x) => x.projectId === billingId) : undefined;
         const wsOpen = openWs[v.id] ?? v.id === firstBilled; // the first billed variation opens on its claims and invoices; others open on request (one workspace's reads, not every variation's)
         return (
           <Panel key={v.id}>
@@ -79,24 +75,31 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
               </div>
             </div>
             {legacy && <Alert tone="warning">This variation was approved before billing schedules existed. A manager must set its schedule (an audited amendment) before billing can start. Nothing is created automatically.</Alert>}
-            {scope ? (
-              <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 rounded-lg bg-slate-50 px-4 py-3 text-sm sm:grid-cols-4" aria-label={`${v.code} billing position (ex VAT)`}>
+            {!state ? (
+              error
+                ? <div className="mt-3"><Alert tone="warning">The billing figures for this variation could not be loaded ({error}). The decision controls below still work.</Alert><div className="mt-2"><Button size="sm" variant="secondary" onClick={() => setVersion((n) => n + 1)}>Try again</Button></div></div>
+                : <div role="status" aria-busy="true" className="mt-3"><p className="text-sm text-slate-500">Loading the billing position…</p><Block className="mt-2 h-12 w-full" /></div>
+            ) : scope ? (
+              <div>
+              <p className="mt-3 text-xs text-slate-500">Billing position of this variation only, ex VAT</p>
+              <dl className="mt-1 grid grid-cols-2 gap-x-6 gap-y-2 rounded-lg bg-slate-50 px-4 py-3 text-sm sm:grid-cols-4" aria-label={`${v.code} billing position (ex VAT)`}>
                 {([["Earned", scope.earnedCents], ["Billed / committed", scope.committedCents], ["Claimable now", scope.claimableCents], ["Remaining", scope.remainingCents]] as const).map(([k, n]) => (
                   <div key={k}><dt className="text-xs text-slate-500">{k}</dt><dd className="font-semibold tabular-nums text-slate-900">{formatCents(n)}</dd></div>
                 ))}
               </dl>
+              </div>
             ) : <p className="mt-3 text-sm text-slate-600">{v.status === "APPROVED" ? "Billing has not started for this variation." : "Counts for nothing until a manager approves it."}</p>}
             <div className="mt-3">{renderDecision ? renderDecision(v) : null}</div>
-            {v.status === "APPROVED" && (
+            {state && v.status === "APPROVED" && (
               <div className="mt-4">
                 {billingId ? (
                   isAdmin ? (
                     <div>
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-sm font-medium text-slate-800">{v.code} billing: progress, claims, Cin7 Sale and invoices</p>
-                        <Button size="sm" variant="secondary" aria-expanded={wsOpen} onClick={() => setOpenWs({ ...openWs, [v.id]: !wsOpen })}>{wsOpen ? "Hide billing workspace" : "Open billing workspace"}</Button>
+                        <Button size="sm" variant="secondary" aria-expanded={wsOpen} aria-controls={`ws-${v.id}`} onClick={() => { setOpenWs({ ...openWs, [v.id]: !wsOpen }); if (!wsOpen) setEverOpened({ ...everOpened, [v.id]: true }); }}>{wsOpen ? "Hide billing workspace" : "Open billing workspace"}</Button>
                       </div>
-                      {wsOpen && <div className="mt-2"><ProjectWorkspace key={billingId} id={billingId} embedded /></div>}
+                      {(wsOpen || everOpened[v.id]) && <div id={`ws-${v.id}`} className={wsOpen ? "mt-2" : "hidden"}><ProjectWorkspace key={billingId} id={billingId} embedded /></div>}
                     </div>
                   ) : <span className="text-sm text-slate-600">Billing for {v.code} is active; a manager operates it.</span>
                 ) : isAdmin ? (
@@ -110,8 +113,8 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
                 ) : <span className="text-xs text-slate-500">A manager starts variation billing.</span>}
               </div>
             )}
-            <details className="mt-4 rounded border border-slate-200 p-3">
-              <summary className="cursor-pointer text-sm font-medium text-slate-800">Billing schedule{v.status === "APPROVED" && !billingId && isAdmin ? ", products" : ""} and history</summary>
+            {state && <details className="mt-4 rounded border border-slate-200 p-3" open={legacy}>
+              <summary className="cursor-pointer text-sm font-medium text-slate-800">Billing schedule</summary>
             <p className="mt-1 text-xs text-slate-500">Approved value {formatCents(v.amount_cents)} ex VAT. Percentages are applied to this value in whole cents (largest remainder), so the stages always sum to it exactly.</p>
             <div className="mt-3 space-y-2">
               {rows.map((r, i) => (
@@ -137,18 +140,20 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
               )}
               {v.status === "APPROVED" && billingId && <p className="text-xs text-slate-500">Billing has started. The schedule can no longer be amended once the billing project has claims or progress; the database refuses.</p>}
             </div>
-            </details>
+            </details>}
           </Panel>
         );
       })}
 
+      {state && c && (() => { const cc = c; return (
+        <>
       <Panel>
         <PanelTitle>Consolidated billing (base + variations)</PanelTitle>
         <div className="mt-4 overflow-x-auto">
           <Table>
             <THead><TR><TH>Scope</TH><TH align="right">Contract</TH><TH align="right">Earned</TH><TH align="right">Billed / committed</TH><TH align="right">Claimable now</TH><TH align="right">Remaining</TH></TR></THead>
             <TBody>
-              {c.scopes.map((s) => (
+              {cc.scopes.map((s) => (
                 <TR key={s.projectId}>
                   <TD>{s.scope === "BASE" ? "Original contract" : isAdmin ? <Link className="underline" href={`/projects/${s.projectId}`}>{s.variationCode} billing</Link> : `${s.variationCode} variation`}</TD>
                   <TD align="right" className="whitespace-nowrap tabular-nums">{formatCents(s.contractCents)}</TD>
@@ -160,20 +165,22 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
               ))}
               <TR>
                 <TD className="font-semibold">Total (billable)</TD>
-                {[c.totals.contractCents, c.totals.earnedCents, c.totals.committedCents, c.totals.claimableCents, c.totals.remainingCents].map((n, i) => <TD key={i} align="right" className="whitespace-nowrap font-semibold tabular-nums">{formatCents(n)}</TD>)}
+                {[cc.totals.contractCents, cc.totals.earnedCents, cc.totals.committedCents, cc.totals.claimableCents, cc.totals.remainingCents].map((n, i) => <TD key={i} align="right" className="whitespace-nowrap font-semibold tabular-nums">{formatCents(n)}</TD>)}
               </TR>
             </TBody>
           </Table>
         </div>
-        {c.unbilledApprovedVariations.length > 0 && (
-          <Alert tone="warning">Approved but not yet billable (no billing started): {c.unbilledApprovedVariations.map((v) => `${v.code} ${formatCents(v.amountCents)}`).join(", ")}. They are in the revised contract value but not in the billable totals above.</Alert>
+        {cc.unbilledApprovedVariations.length > 0 && (
+          <Alert tone="warning">Approved but not yet billable (no billing started): {cc.unbilledApprovedVariations.map((v) => `${v.code} ${formatCents(v.amountCents)}`).join(", ")}. They are in the revised contract value but not in the billable totals above.</Alert>
         )}
       </Panel>
 
-      {isAdmin && c.closureBlockers.length > 0 && (
-        <Alert tone="info">This project cannot be completed or closed yet: {c.closureBlockers.join("; ")}.</Alert>
+      {isAdmin && cc.closureBlockers.length > 0 && (
+        <Alert tone="info">This project cannot be completed or closed yet: {cc.closureBlockers.join("; ")}.</Alert>
       )}
       <Alert tone="info">Negative variations (credits, omissions, cancellations) are not supported: Toolbox never creates a credit note or a negative Sale. Handle a reduction in scope manually in Cin7.</Alert>
+        </>
+      ); })()}
     </div>
   );
 }

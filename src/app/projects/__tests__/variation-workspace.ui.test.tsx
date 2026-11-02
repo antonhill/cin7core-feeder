@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ProjectWorkspace } from "../[id]/ProjectWorkspace";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 
@@ -9,8 +9,9 @@ import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 
 const h = vi.hoisted(() => {
   const responses: Record<string, unknown> = {};
-  const stub = () => new Proxy({}, { get: (_t, name: string) => (name === "then" ? undefined : name === "__esModule" ? true : (...a: unknown[]) => { const r = responses[name]; return Promise.resolve(typeof r === "function" ? (r as (...x: unknown[]) => unknown)(...a) : r ?? { ok: false, error: "not stubbed" }); }), has: () => true });
-  return { responses, stub };
+  const calls: Array<[string, unknown[]]> = [];
+  const stub = () => new Proxy({}, { get: (_t, name: string) => (name === "then" ? undefined : name === "__esModule" ? true : (...a: unknown[]) => { calls.push([name, a]); const r = responses[name]; return Promise.resolve(typeof r === "function" ? (r as (...x: unknown[]) => unknown)(...a) : r ?? { ok: false, error: "not stubbed" }); }), has: () => true });
+  return { responses, calls, stub };
 });
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn(), push: vi.fn() }) }));
 vi.mock("@/components/ApprovalHistory", () => ({ ApprovalHistory: () => null }));
@@ -47,7 +48,8 @@ function setup(variations: unknown[], billed: Record<string, string>, viewer = {
   h.responses.getCommercialBootAction = commercialBoot;
   h.responses.getCin7PostingStatusAction = posting;
 }
-beforeEach(() => { for (const k of Object.keys(h.responses)) delete h.responses[k]; });
+beforeEach(() => { for (const k of Object.keys(h.responses)) delete h.responses[k]; h.calls.length = 0; });
+const called = (name: string) => h.calls.filter(([n]) => n === name);
 afterEach(() => cleanup());
 async function openVariations() { render(<ProjectWorkspace id="p1" />); fireEvent.click(await screen.findByRole("button", { name: /^Variations/ })); }
 const record = async (code: string) => (await screen.findByText(new RegExp(`^${code} – `))).closest("[class*='p-6']") as HTMLElement;
@@ -73,7 +75,7 @@ describe("Variation workspace (P3)", () => {
     setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" });
     await openVariations();
     const rec = await record("V001");
-    const secondary = within(rec).getByText(/Billing schedule and history/).closest("details") as HTMLDetailsElement;
+    const secondary = within(rec).getByText("Billing schedule").closest("details") as HTMLDetailsElement;
     expect(secondary.open).toBe(false);
     expect(secondary.textContent).toMatch(/Percentages are applied/);
   });
@@ -144,5 +146,82 @@ describe("Variation workspace (P3)", () => {
     await openVariations();
     const sum = within(screen.getByLabelText("Variations and the contract value (ex VAT)"));
     for (const [label, n] of [["Original contract value", 900_000_00], ["Approved variations", 500_000_00], ["Revised contract value", 1_400_000_00]] as const) expect(sum.getByText(label).nextElementSibling!.textContent).toBe(money(n));
+  });
+
+  // ---- review fixes: the approval path must not depend on the billing read ----
+  it("when the billing read FAILS the variation records and their decision controls are still there, with the failure shown inline and a way to retry", async () => {
+    setup([variation("v1", "V001", "DRAFT")], {});
+    h.responses.getVariationBillingAction = { ok: false, error: "db down" };
+    await openVariations();
+    const rec = await record("V001");
+    expect(await within(rec).findByRole("button", { name: /^Approve/ })).toBeTruthy();
+    expect(within(rec).getByRole("button", { name: /Submit/ })).toBeTruthy();
+    expect(within(rec).getByText(/billing figures for this variation could not be loaded \(db down\)/)).toBeTruthy();
+    const before = called("getVariationBillingAction").length;
+    fireEvent.click(within(rec).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(called("getVariationBillingAction").length).toBe(before + 1));
+  });
+  it("while the billing read is still loading the decision controls are already there", async () => {
+    setup([variation("v1", "V001", "DRAFT")], {});
+    h.responses.getVariationBillingAction = () => new Promise(() => undefined);
+    await openVariations();
+    const rec = await record("V001");
+    expect(within(rec).getByRole("button", { name: /^Approve/ })).toBeTruthy();
+    expect(within(rec).getByText("Loading the billing position…")).toBeTruthy();
+  });
+  it("the decision controls call the right actions with the right ids, and Reject / Re-price need their input first", async () => {
+    setup([variation("v1", "V001", "DRAFT")], {});
+    h.responses.approveVariationAction = { ok: true }; h.responses.submitVariationForApprovalAction = { ok: true }; h.responses.rejectVariationAction = { ok: true }; h.responses.repriceVariationAction = { ok: true };
+    await openVariations();
+    const rec = await record("V001");
+    const reject = within(rec).getByRole("button", { name: /Reject/ }) as HTMLButtonElement;
+    const reprice = within(rec).getByRole("button", { name: /Re-price/ }) as HTMLButtonElement;
+    expect(reject.disabled).toBe(true); expect(reprice.disabled).toBe(true);
+    fireEvent.change(within(rec).getByLabelText("Reject reason"), { target: { value: "too dear" } });
+    fireEvent.change(within(rec).getByLabelText("Re-price (R)"), { target: { value: "450000" } });
+    expect(reject.disabled).toBe(false); expect(reprice.disabled).toBe(false);
+    fireEvent.click(reprice);
+    await waitFor(() => expect(called("repriceVariationAction")[0]?.[1]).toEqual(["p1", "v1", "450000"]));
+    fireEvent.click(within(rec).getByRole("button", { name: /Submit/ }));
+    await waitFor(() => expect(called("submitVariationForApprovalAction")[0]?.[1]).toEqual(["p1", "v1"]));
+    fireEvent.click(within(rec).getByRole("button", { name: /^Approve/ }));
+    await waitFor(() => expect(called("approveVariationAction")[0]?.[1]).toEqual(["p1", "v1"]));
+    fireEvent.click(reject);
+    await waitFor(() => expect(called("rejectVariationAction")[0]?.[1]).toEqual(["p1", "v1", "too dear"]));
+  });
+  it("hiding a billing workspace keeps it mounted (an action in flight in it is not lost) and showing it again reads nothing", async () => {
+    setup([variation("v1", "V001", "APPROVED"), variation("v2", "V002", "APPROVED")], { v1: "vp1", v2: "vp2" });
+    await openVariations();
+    const rec2 = await record("V002");
+    fireEvent.click(within(rec2).getByRole("button", { name: "Open billing workspace" }));
+    await within(rec2).findByText("Invoices in Cin7");
+    const reads = called("getProjectAction").length;
+    fireEvent.click(within(rec2).getByRole("button", { name: "Hide billing workspace" }));
+    const ws = document.getElementById("ws-v2") as HTMLElement;
+    expect(ws.className).toMatch(/hidden/);
+    expect(within(ws).getByText("Invoices in Cin7")).toBeTruthy(); // still mounted
+    fireEvent.click(within(rec2).getByRole("button", { name: "Open billing workspace" }));
+    expect(document.getElementById("ws-v2")!.className).not.toMatch(/hidden/);
+    expect(called("getProjectAction").length).toBe(reads);
+  });
+  it("a legacy approved variation (no schedule) opens its schedule and says where to look", async () => {
+    setup([variation("v1", "V001", "APPROVED")], {});
+    h.responses.getVariationBillingAction = { ok: true, data: { ...billing({}).data, schedules: {}, billingProjectByVariation: {} } };
+    await openVariations();
+    const rec = await record("V001");
+    expect(await within(rec).findByText(/approved before billing schedules existed/)).toBeTruthy();
+    expect((within(rec).getByText("Billing schedule").closest("details") as HTMLDetailsElement).open).toBe(true);
+  });
+  it("with no variations the billing panel stays out of the way: no read, no duplicate message", async () => {
+    setup([], {});
+    await openVariations();
+    expect(await screen.findByText("No variations yet.")).toBeTruthy();
+    expect(screen.queryByText("No variations to bill.")).toBeNull();
+    expect(called("getVariationBillingAction")).toEqual([]);
+  });
+  it("the billing position says whose figures they are, in words a person can see", async () => {
+    setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" });
+    await openVariations();
+    expect(await screen.findByText("Billing position of this variation only, ex VAT")).toBeTruthy();
   });
 });
