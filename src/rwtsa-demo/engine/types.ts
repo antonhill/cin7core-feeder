@@ -136,7 +136,8 @@ export interface StyleResult {
   readonly proposedOrder: number;
   readonly monthsOfCover: number | null;
   readonly monthsOfCoverWithInbound: number | null;
-  readonly netRequirement: number;
+  /** Sum of its SKUs' net requirements; null when any non-tender SKU has none (unknowns are not counted as zero). */
+  readonly netRequirement: number | null;
   readonly shortageSkus: number;
   readonly skusWithoutForecast: number;
   readonly tenderExemptSkus: number;

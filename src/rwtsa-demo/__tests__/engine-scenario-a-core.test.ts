@@ -225,3 +225,38 @@ describe("DP-13: the RFP net requirement is reported beside, never instead of, t
     expect(a.styles[0].netRequirement).toBe((a.skus[0].netRequirement as number) + (a.skus[1].netRequirement as number));
   });
 });
+
+describe("review hardening", () => {
+  const SIZES = ["S", "M", "L"];
+  const style3 = SIZES.map((size): SkuSpec => ({ sku: `ST-${size}`, style: "ST", size, minLevel: 0, sales: flat(10) }));
+  it("overdue on-water units on an UNSPLIT style-level line are still counted (no curve selected)", () => {
+    const r = run(ds(style3, [{ poNo: "P", style: "ST", qty: 90, etaStores: "2026-10-01", status: "On the water" }]), { sizeCurve: { kind: "none" } });
+    expect(r.inbound.unallocatedStyleUnits).toBe(90);
+    expect(r.inbound.overdueOnWaterUnits).toBe(90);
+  });
+  it("a size label that is not in the curve is reported, not silently redistributed", () => {
+    const odd = [...style3, { sku: "ST-XXL", style: "ST", size: "XXL", minLevel: 0, sales: flat(10) } as SkuSpec];
+    const r = run(ds(odd, [{ poNo: "P", style: "ST", qty: 100, etaStores: "2026-11-20", status: "On order" }]), { sizeCurve: { kind: "explicit", weights: REV2_SIZE_CURVE } });
+    expect(r.limitations.join(" ")).toMatch(/XXL are not in the applied size curve/);
+    expect(r.skus.find((s) => s.sku === "ST-XXL")!.inboundTotal).toBe(0);
+    expect(r.skus.reduce((a, s) => a + s.inboundTotal, 0)).toBe(100);
+  });
+  it("rounding ties follow the documented size order even when Items lists sizes in another order", () => {
+    const rev = [...style3].reverse();
+    const a = run(ds(style3, [{ poNo: "P", style: "ST", qty: 1, etaStores: "2026-11-20", status: "On order" }]), { sizeCurve: { kind: "explicit", weights: { S: 1, M: 1, L: 1 } } });
+    const b = run(ds(rev, [{ poNo: "P", style: "ST", qty: 1, etaStores: "2026-11-20", status: "On order" }]), { sizeCurve: { kind: "explicit", weights: { S: 1, M: 1, L: 1 } } });
+    expect(a.skus.find((s) => s.sku === "ST-S")!.inboundTotal).toBe(1);
+    expect(b.skus.find((s) => s.sku === "ST-S")!.inboundTotal).toBe(1);
+  });
+  it("a style net requirement is unknown (null), not understated, when a non-tender SKU has no forecast", () => {
+    const d = ds([{ sku: "A-S", style: "ST", size: "S", minLevel: 0, jhb: 10, sales: flat(10) }, { sku: "A-M", style: "ST", size: "M", minLevel: 0, jhb: 10, sales: [null, ...flat(10, 11)] }], [], M12);
+    const r = run(d, { forecastWindowMonths: 12 });
+    expect(r.skus.find((s) => s.sku === "A-M")!.netRequirement).toBeNull();
+    expect(r.styles[0].netRequirement).toBeNull();
+  });
+  it("dated commitments are included in the net requirement like they are in the projection", () => {
+    const s0 = run(ds([{ sku: "A-M", minLevel: 0, jhb: 50, sales: flat(100) }])).skus[0];
+    const s1 = run(ds([{ sku: "A-M", minLevel: 0, jhb: 50, sales: flat(100) }]), { committedDue: { "A-M": { 3: 40, 20: 999 } } }).skus[0];
+    expect((s1.netRequirement as number) - (s0.netRequirement as number)).toBe(40); // the week-20 commitment is beyond the 13-week horizon
+  });
+});

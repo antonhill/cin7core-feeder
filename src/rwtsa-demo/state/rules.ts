@@ -4,7 +4,7 @@ import type { DemoState } from "@/rwtsa-demo/state/demo-state";
 /**
  * Commercial rules a LOCAL workbook does not establish. Each is named, says what it withholds, and says how it is resolved:
  *   - "choose": a control on the page, set explicitly by the viewer (never defaulted for a local workbook),
- *   - "owner":  an owner decision that cannot be made on the page; the affected output stays withheld.
+ *   - "owner":  an owner decision that cannot be made on the page; the affected output is withheld or, where the rule says so, shown under a labelled assumption.
  * The synthetic source declares its own conventions, so it has no open rules.
  */
 

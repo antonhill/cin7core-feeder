@@ -91,6 +91,15 @@ describe("Scenario A core: narrow withholding", () => {
     expect(states(m)["proposed-orders"]).not.toBe("withheld");
     expect(new Set([...m.matchAll(/data-testid="proposed-cell" data-state="([^"]*)"/g)].map((x) => x[1]))).toEqual(new Set(["value"]));
   });
+  it("history that is only stale (nothing overdue) still marks projection and shortage as resting on an assumption", async () => {
+    await withFile("no-overdue.xlsx", (wb) => {
+      const ws = wb.getWorksheet("ImportPOs")!;
+      for (let r = 2; r <= 5; r++) ws.getCell(`K${r}`).value = "2027-03-01"; // ImportPOs has 4 data rows
+    });
+    const st = states(await A());
+    expect(st.projection).toBe("assumption");
+    expect(st.shortfall).toBe("assumption");
+  });
   it("an unresolved overdue rule never withholds history, stock, committed or forecast", async () => {
     local();
     const m = await A();
@@ -160,6 +169,10 @@ describe("Scenario A core: DP-13 formulas by horizon, both labelled", () => {
     const m = await A();
     expect(text(m)).toMatch(/13 wk: approved/);
     expect(m).toContain("Withheld");
+    // the quantities must not be present anywhere in the markup either
+    const rows = [...m.matchAll(/data-testid="horizon-row" data-key="[^"]*" data-a13="([^"]*)" data-n13="([^"]*)" data-a26="([^"]*)" data-n26="([^"]*)"/g)];
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((x) => x.slice(1).every((v) => v === ""))).toBe(true);
   });
 });
 

@@ -104,14 +104,14 @@ function styleAnomalyText(st: StyleResult): { text: string; kind: "none" | "revi
 function eligibilityOf(r: RedFlagResult, tenderOpen: boolean): EligibilityRow[] {
   const noStock = r.skus.filter((s) => s.available === null).length;
   const noForecast = r.summary.skusWithoutForecast;
-  const stale = r.window.staleMonths > 0;
+  const stale = r.window.staleMonths > 0 && r.config.historyAnchor === "last-available";
   const overdue = r.inbound.overdueOnWaterUnits > 0;
-  const projNote = [overdue ? `overdue on-water units (${r.inbound.overdueOnWaterUnits}) are treated under a labelled demonstration assumption` : null, noForecast > 0 ? `${noForecast} SKU(s) have no forecast` : null].filter(Boolean).join("; ");
-  const proj: EligibilityRow["state"] = overdue ? "assumption" : "available";
+  const projNote = [stale ? "driven by the stale-history forecast (latest observed months)" : null, overdue ? `overdue on-water units (${r.inbound.overdueOnWaterUnits}) are treated under a labelled demonstration assumption` : null, noForecast > 0 ? `${noForecast} SKU(s) have no forecast` : null].filter(Boolean).join("; ");
+  const proj: EligibilityRow["state"] = overdue || stale ? "assumption" : "available";
   return [
     { id: "available", label: "Available stock", state: noStock === r.skus.length ? "withheld" : "available", note: noStock > 0 ? `${noStock} SKU(s) have no Stock row` : "from the Stock tab; Bond and In transit excluded" },
     { id: "committed", label: "Committed quantities", state: noStock === r.skus.length ? "withheld" : "available", note: "netted once inside Available; never deducted again" },
-    { id: "history", label: "Historical sales averages (6 and 12 month)", state: r.comparison.compared6 > 0 || r.comparison.rows.some((x) => x.avg6 !== null) ? (stale ? "assumption" : "available") : "withheld", note: stale ? `stale history: last observed month ${r.window.lastHistoryMonth}` : "to the stock month" },
+    { id: "history", label: "Historical sales averages (6 and 12 month)", state: r.comparison.rows.some((x) => x.avg6 !== null) ? (stale ? "assumption" : "available") : "withheld", note: stale ? `stale history: last observed month ${r.window.lastHistoryMonth}` : "to the stock month" },
     { id: "forecast", label: "Forecast demand", state: noForecast === r.skus.length ? "withheld" : stale ? "assumption" : "available", note: stale ? "latest observed months; the missing months are not invented" : noForecast > 0 ? `${noForecast} SKU(s) have no forecast` : "complete" },
     { id: "projection", label: "Future stock projection", state: proj, note: projNote || "complete" },
     { id: "first-shortage", label: "First shortage week", state: proj, note: projNote || "complete" },

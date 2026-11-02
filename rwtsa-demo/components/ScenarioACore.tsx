@@ -130,7 +130,7 @@ export function ScenarioACorePanels({ model }: { model: RedFlagModel }) {
               {model.horizons.map((h) => (
                 <TR key={h.key}>
                   <TD>
-                    <span data-testid="horizon-row" data-key={h.key} data-a13={h.h13.proposed} data-n13={h.h13.net ?? ""} data-a26={h.h26.proposed} data-n26={h.h26.net ?? ""} />
+                    <span data-testid="horizon-row" data-key={h.key} data-a13={model.withheld.proposedOrders ? "" : h.h13.proposed} data-n13={model.withheld.proposedOrders ? "" : (h.h13.net ?? "")} data-a26={model.withheld.proposedOrders ? "" : h.h26.proposed} data-n26={model.withheld.proposedOrders ? "" : (h.h26.net ?? "")} />
                     {h.label}
                     {h.tender && <span className="ml-1 text-xs text-slate-500">(tender)</span>}
                   </TD>
