@@ -38,8 +38,17 @@ describe("UAT-015 claim history cards", () => {
     expect(ws).toMatch(/cl\.cin7Status\.label/);
     expect(ws).toMatch(/<ApprovalHistory docType="CLAIM"/);
   });
-  it("is responsive (cards in a grid) rather than a wide table", () => {
-    expect(ws).toMatch(/grid gap-3 lg:grid-cols-2/);
+  it("is responsive (one stacked record per claim whose columns line up only on wide screens) rather than a wide table", () => {
+    const list = ws.slice(ws.indexOf("Claims and invoices"), ws.indexOf("</article>"));
+    expect(list).toMatch(/grid gap-x-4 gap-y-2 lg:grid-cols-\[/); // a single column on a phone, four aligned columns from lg
+    expect(list).not.toMatch(/<Table|<table/);                       // never a wide table that scrolls sideways
+    expect(list).toMatch(/<article key=\{cl\.id\}/);
+  });
+  it("the Commercial tab opens with the summary and the claims and invoices, before the Cin7 posting panel and the claim creator", () => {
+    const at = (needle: string) => ws.indexOf(needle, ws.indexOf('{tab === "claims"'));
+    const order = [at("<CommercialSummary"), at("Claims and invoices"), at("{commercialNow ? ("), at("id={`new-claim-${id}`}"), at("<OpeningCommitmentsPanel"), at('section="milestones"')];
+    expect(order.every((n) => n > 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
   it("milestone confirmation is hidden in the embedded variation workspace and loads itself with feedback (review F1/F2)", () => {
     expect(ws).toMatch(/\{newquip && !embedded && \(\s*<div>\s*<Alert tone="info">Milestone confirmation/);

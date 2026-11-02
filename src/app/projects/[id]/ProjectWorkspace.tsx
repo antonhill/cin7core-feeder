@@ -23,6 +23,7 @@ import { DeliveryAllocationPanel } from "./DeliveryAllocationPanel";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { Cin7PostingPanel } from "./Cin7PostingPanel";
 import { ProjectDetailsPanel } from "./ProjectDetailsPanel";
+import { CommercialSummary } from "./CommercialSummary";
 import { Cin7SaleCreationPanel } from "./Cin7SaleCreationPanel";
 import { Block, WorkspaceSkeleton } from "./LoadingSkeletons";
 import { getCommercialBootAction, type Cin7PostingStatus, type Cin7SaleCreationStatus } from "../cin7-actions";
@@ -514,8 +515,66 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
       {tab === "variations" && newquip && <VariationsPanel view={view} isAdmin={perm === "admin"} run={run} working={isWorking} />}
 
       {tab === "claims" && (
-        <div className="mt-6 space-y-6">
-          <OpeningCommitmentsPanel key={`${view.openingCommitments.length}-${view.claims.length}`} view={view} isAdmin={perm === "admin"} run={run} working={isWorking} />
+        <div className="mt-6 space-y-5">
+          <CommercialSummary view={view} />
+          <div>
+            <div className="mb-2 flex items-baseline justify-between">
+              <h2 className="text-base font-semibold text-slate-900">Claims and invoices</h2>
+              <p className="flex items-center gap-3 text-xs text-slate-500">{view.claims.length} claim{view.claims.length === 1 ? "" : "s"}<a href={`#new-claim-${id}`} className="font-medium text-indigo-700 hover:underline">Create a progress claim</a></p>
+            </div>
+            {view.claims.length === 0 && <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No claims yet.</p>}
+            {view.claims.length > 0 && <div className="hidden grid-cols-[minmax(8rem,1fr)_16.5rem_11rem_minmax(14rem,1.3fr)] gap-x-4 px-4 pb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500 lg:grid" aria-hidden>
+              <span>Claim</span><span className="text-right">Amount</span><span>Approval</span><span>Cin7 invoice (as last recorded)</span>
+            </div>}
+            <div className="space-y-2">
+              {view.claims.map((cl) => {
+                const plan = claimActionPlan(cl, perm === "admin" ? "admin" : perm === "member" ? "member" : "none");
+                const claimKey = `claim:${cl.id}`;
+                return (
+                  <article key={cl.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                    <div className="grid gap-x-4 gap-y-2 lg:grid-cols-[minmax(8rem,1fr)_16.5rem_11rem_minmax(14rem,1.3fr)] lg:items-start">
+                      <div>
+                        <h3 className="text-base font-semibold text-slate-900">{cl.claim_number}</h3>
+                        <p className="text-xs text-slate-500">{cl.claim_date}{cl.supersedes_claim_id ? ` · supersedes ${view.claims.find((x) => x.id === cl.supersedes_claim_id)?.claim_number ?? "an earlier draft"}` : ""}</p>
+                      </div>
+                      <div className="lg:text-right">
+                        <span className="sr-only">Amount: </span><span aria-hidden className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500 lg:hidden">Amount</span>
+                        <p className="whitespace-nowrap text-lg font-bold tabular-nums text-slate-900">{formatCents(cl.total_cents)}</p>
+                        <p className="whitespace-nowrap text-xs tabular-nums text-slate-500">{formatCents(cl.subtotal_cents)} ex VAT + {formatCents(cl.tax_cents)} VAT</p>
+                      </div>
+                      <div>
+                        <span className="sr-only">Approval: </span><span aria-hidden className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500 lg:hidden">Approval</span>
+                        <Badge tone={CLAIM_TONE[cl.status] ?? "neutral"}>{cl.status.replace(/_/g, " ")}</Badge>
+                        <p className="mt-1 text-xs">{cl.reserves ? <span className="font-medium text-indigo-700">{cl.status === "FAILED_UNCERTAIN" ? "Stays reserved (outcome uncertain)" : "Reserves value"}</span> : <span className="text-slate-500">No reservation</span>}</p>
+                      </div>
+                      <div>
+                        <span className="sr-only">Cin7 invoice: </span><span aria-hidden className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500 lg:hidden">Cin7 invoice (as last recorded)</span>
+                        <Badge tone={cl.cin7Status.tone}>{cl.cin7Status.label}</Badge>
+                        {cl.cin7Status.invoiceNumber && <span className="ml-1 text-xs text-slate-600">{cl.cin7Status.invoiceNumber}{cl.cin7Status.reconciled ? " · reconciled" : ""}</span>}
+                      </div>
+                    </div>
+                    <p className="mt-2 border-t border-slate-100 pt-2 text-sm text-slate-700"><span className="font-medium text-slate-900">Next: </span>{claimNextStep({ status: cl.status, cin7Kind: cl.cin7Status.kind, stageRole: cl.approval?.stageRole, canApproveHere: plan.approveHere, canAct: perm !== "loading" })}</p>
+                    {cl.cin7Status.detail && !["DRAFT_CREATED", "AUTHORISED"].includes(cl.cin7Status.kind) && <p className="mt-2 text-xs text-slate-500">{cl.cin7Status.detail}</p>}
+                    <div className="mt-2">
+                      <div className="flex flex-wrap items-center gap-1">
+                            {plan.submit && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.", claimKey, { success: (v) => `${cl.claim_number} submitted for approval.${statusNote(v, cl.id)}`, confirm: (v) => ["READY_FOR_APPROVAL", ...APPROVED_OR_LATER].includes(claimStatus(v, cl.id) ?? "") })} loading={acts.isPending(claimKey)} disabled={isWorking}>Submit</Button>}
+                            {plan.openInApprovals && cl.approval && <Link href={`/approvals/${cl.approval.requestId}`} className="inline-flex h-8 items-center rounded-md border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-800 hover:bg-indigo-100">Open in Approvals</Link>}
+                            {plan.approveHere && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.", claimKey, { success: (v) => `${cl.claim_number} approved — value reserved. Nothing was sent to Cin7.${statusNote(v, cl.id)}`, confirm: (v) => APPROVED_OR_LATER.includes(claimStatus(v, cl.id) ?? ""), exclusive: true })} loading={acts.isPending(claimKey)} disabled={isWorking}>Approve</Button>}
+                            {plan.waitingText && <span className="self-center text-xs text-slate-500">{plan.waitingText}</span>}
+                            {plan.recalculate && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.", claimKey, { confirm: (v) => v.claims.some((x) => x.supersedes_claim_id === cl.id) })} disabled={isWorking}>Recalculate</Button>}
+                            {plan.cancel && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), cl.status === "READY_FOR_APPROVAL" ? "Claim withdrawn." : "Claim cancelled.", claimKey, { confirm: (v) => claimStatus(v, cl.id) === "CANCELLED_BEFORE_WRITE", exclusive: true })} disabled={isWorking}>{plan.cancelLabel}</Button>}
+                          </div>
+                      <Feedback k={claimKey} errorAction={cl.approval && SOD_REFUSAL.test(acts.stateOf(claimKey).kind === "error" ? (acts.stateOf(claimKey) as { message: string }).message : "") ? <Link href={`/approvals/${cl.approval.requestId}`} className="font-medium underline">Open this claim in Approvals to decide it with a written override</Link> : undefined} />
+                    </div>
+                    <details className="mt-2 text-xs">
+                      <summary className="cursor-pointer text-slate-600">Approval history</summary>
+                      <div className="mt-1"><ApprovalHistory docType="CLAIM" docId={cl.id} label="Approval history" /></div>
+                    </details>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
           {commercialNow ? (
             <>
               <Cin7SaleCreationPanel key={commercialNow.projectId} view={view} run={run} working={isWorking} boot={commercialNow.creation} />
@@ -527,6 +586,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               <Block className="mt-4 h-24 w-full" />
             </div>
           )}
+          <div id={`new-claim-${id}`} className="scroll-mt-4">
           <Panel>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -599,65 +659,8 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               </div>
             )}
           </Panel>
-
-          <div>
-            <div className="mb-2 flex items-baseline justify-between">
-              <h2 className="text-base font-semibold text-slate-900">Claim history</h2>
-              <p className="text-xs text-slate-500">{view.claims.length} claim{view.claims.length === 1 ? "" : "s"}</p>
-            </div>
-            {view.claims.length === 0 && <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No claims yet.</p>}
-            <div className="grid gap-3 lg:grid-cols-2">
-              {view.claims.map((cl) => {
-                const plan = claimActionPlan(cl, perm === "admin" ? "admin" : perm === "member" ? "member" : "none");
-                const claimKey = `claim:${cl.id}`;
-                return (
-                  <article key={cl.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                    <header className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <h3 className="text-base font-semibold text-slate-900">{cl.claim_number}</h3>
-                        <p className="text-xs text-slate-500">{cl.claim_date}{cl.supersedes_claim_id ? ` · supersedes ${view.claims.find((x) => x.id === cl.supersedes_claim_id)?.claim_number ?? "an earlier draft"}` : ""}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="whitespace-nowrap text-xl font-bold tabular-nums text-slate-900">{formatCents(cl.total_cents)}</p>
-                        <p className="whitespace-nowrap text-xs tabular-nums text-slate-500">{formatCents(cl.subtotal_cents)} ex VAT + {formatCents(cl.tax_cents)} VAT</p>
-                      </div>
-                    </header>
-                    <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
-                      <div><dt className="text-slate-500">Approval</dt><dd className="mt-0.5"><Badge tone={CLAIM_TONE[cl.status] ?? "neutral"}>{cl.status.replace(/_/g, " ")}</Badge></dd></div>
-                      <div>
-                        <dt className="text-slate-500">Cin7</dt>
-                        <dd className="mt-0.5">
-                          <Badge tone={cl.cin7Status.tone}>{cl.cin7Status.label}</Badge>
-                          {cl.cin7Status.invoiceNumber && <span className="ml-1 text-slate-600">{cl.cin7Status.invoiceNumber}{cl.cin7Status.reconciled ? " · reconciled" : ""}</span>}
-                        </dd>
-                      </div>
-                      <div className="col-span-2">
-                        <dt className="text-slate-500">Value</dt>
-                        <dd className="mt-0.5">{cl.reserves ? <span className="font-medium text-indigo-700">{cl.status === "FAILED_UNCERTAIN" ? "Stays reserved (outcome uncertain)" : "Reserves value"}</span> : <span className="text-slate-500">No reservation</span>}</dd>
-                      </div>
-                    </dl>
-                    <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700"><span className="font-medium text-slate-900">Next: </span>{claimNextStep({ status: cl.status, cin7Kind: cl.cin7Status.kind, stageRole: cl.approval?.stageRole, canApproveHere: plan.approveHere, canAct: perm !== "loading" })}</p>
-                    {cl.cin7Status.detail && !["DRAFT_CREATED", "AUTHORISED"].includes(cl.cin7Status.kind) && <p className="mt-2 text-xs text-slate-500">{cl.cin7Status.detail}</p>}
-                    <div className="mt-3">
-                      <div className="flex flex-wrap items-center gap-1">
-                            {plan.submit && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.", claimKey, { success: (v) => `${cl.claim_number} submitted for approval.${statusNote(v, cl.id)}`, confirm: (v) => ["READY_FOR_APPROVAL", ...APPROVED_OR_LATER].includes(claimStatus(v, cl.id) ?? "") })} loading={acts.isPending(claimKey)} disabled={isWorking}>Submit</Button>}
-                            {plan.openInApprovals && cl.approval && <Link href={`/approvals/${cl.approval.requestId}`} className="inline-flex h-8 items-center rounded-md border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-800 hover:bg-indigo-100">Open in Approvals</Link>}
-                            {plan.approveHere && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.", claimKey, { success: (v) => `${cl.claim_number} approved — value reserved. Nothing was sent to Cin7.${statusNote(v, cl.id)}`, confirm: (v) => APPROVED_OR_LATER.includes(claimStatus(v, cl.id) ?? ""), exclusive: true })} loading={acts.isPending(claimKey)} disabled={isWorking}>Approve</Button>}
-                            {plan.waitingText && <span className="self-center text-xs text-slate-500">{plan.waitingText}</span>}
-                            {plan.recalculate && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.", claimKey, { confirm: (v) => v.claims.some((x) => x.supersedes_claim_id === cl.id) })} disabled={isWorking}>Recalculate</Button>}
-                            {plan.cancel && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), cl.status === "READY_FOR_APPROVAL" ? "Claim withdrawn." : "Claim cancelled.", claimKey, { confirm: (v) => claimStatus(v, cl.id) === "CANCELLED_BEFORE_WRITE", exclusive: true })} disabled={isWorking}>{plan.cancelLabel}</Button>}
-                          </div>
-                      <Feedback k={claimKey} errorAction={cl.approval && SOD_REFUSAL.test(acts.stateOf(claimKey).kind === "error" ? (acts.stateOf(claimKey) as { message: string }).message : "") ? <Link href={`/approvals/${cl.approval.requestId}`} className="font-medium underline">Open this claim in Approvals to decide it with a written override</Link> : undefined} />
-                    </div>
-                    <details className="mt-3 text-xs">
-                      <summary className="cursor-pointer text-slate-600">Approval history</summary>
-                      <div className="mt-1"><ApprovalHistory docType="CLAIM" docId={cl.id} label="Approval history" /></div>
-                    </details>
-                  </article>
-                );
-              })}
-            </div>
           </div>
+          <OpeningCommitmentsPanel key={`${view.openingCommitments.length}-${view.claims.length}`} view={view} isAdmin={perm === "admin"} run={run} working={isWorking} />
           {newquip && !embedded && (
             <div>
               <Alert tone="info">Milestone confirmation records contractual evidence that a billing milestone was met. It is independent of physical delivery: a deposit or an authorised early invoice never needs goods to have moved.</Alert>

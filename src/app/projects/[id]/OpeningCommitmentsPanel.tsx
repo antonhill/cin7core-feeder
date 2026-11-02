@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
@@ -25,21 +24,21 @@ export function OpeningCommitmentsPanel({ view, isAdmin, run, working }: { view:
 
   return (
     <Panel>
-      <PanelTitle>Opening commitments</PanelTitle>
-      <p className="mt-1 text-sm text-slate-500">Value already committed / certified before this project entered the Toolbox claim workflow. Counts toward &quot;Billed / committed&quot;.</p>
-      <div className="mt-3"><Alert tone="info">These values represent amounts already committed before the current Toolbox claim workflow. They do not create Cin7 invoices or claims.</Alert></div>
-      {locked ? (
-        <p className="mt-3 text-sm text-slate-600">Frozen — a claim exists. Total opening commitments: <strong className="tabular-nums">{formatCents(total)}</strong>.</p>
-      ) : null}
-      <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
-        {has
-          ? <span className="text-slate-700">Recorded: <strong className="tabular-nums">{formatCents(total)}</strong> across {view.openingCommitments.length} stage{view.openingCommitments.length === 1 ? "" : "s"}.</span>
-          : <span className="text-slate-600">None recorded.</span>}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <PanelTitle>Opening commitments</PanelTitle>
+          <span className="text-sm text-slate-700">
+            {has
+              ? <>Recorded: <strong className="tabular-nums">{formatCents(total)}</strong> across {view.openingCommitments.length} stage{view.openingCommitments.length === 1 ? "" : "s"}{locked ? " (frozen: a claim exists)" : ""}.</>
+              : <>None recorded{locked ? " (frozen: a claim exists)" : ""}.</>}
+          </span>
+        </div>
         {(has || (isAdmin && !locked)) && (
           <Button size="sm" variant="secondary" onClick={() => setExpanded((v) => !v)}>{expanded ? "Hide details" : has ? (isAdmin && !locked ? "View / edit" : "View details") : "Add Opening Commitments"}</Button>
         )}
       </div>
       {expanded && <>
+      <p className="mt-2 text-sm text-slate-500">Value already committed / certified before this project entered the Toolbox claim workflow. It counts toward &quot;Billed / committed&quot; and does not create Cin7 invoices or claims.</p>
       <div className="mt-4 overflow-x-auto">
         <table className="w-full max-w-xl text-sm">
           <thead><tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500"><th className="py-2 text-left">Stage</th><th className="py-2 text-right">Stage value</th><th className="py-2 text-right">Opening committed (R)</th></tr></thead>
