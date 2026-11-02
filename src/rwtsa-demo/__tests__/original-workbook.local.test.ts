@@ -38,7 +38,11 @@ describe.skipIf(!FILE)("the original RWTSA workbook loads directly (local only)"
     const ws = wb.getWorksheet("Payments_FEC")!;
     const head = (ws.getRow(3).values as unknown[]).slice(1).map((v) => String(v ?? ""));
     const col = (re: RegExp) => head.findIndex((h) => re.test(h)) + 1;
-    const cUsd = col(/^USD amount/i), cTerms = col(/^Terms/i), cRemark = col(/^Remark/i);
+    const cUsd = col(/^USD amount/i), cTerms = col(/^Terms/i), cRemark = col(/^Remark/i), cShip = col(/^Shipment date/i), cDue = col(/^Due date/i);
+    const day = (v: unknown) => {
+      const x = v !== null && typeof v === "object" && "result" in (v as object) ? (v as { result: unknown }).result : v; // formula cells keep their value in `result`
+      return x instanceof Date ? x.toISOString().slice(0, 10) : String(x ?? "");
+    };
     let scheduled = 0, deposit = 0;
     for (let i = 4; i <= ws.rowCount; i++) {
       const row = ws.getRow(i);
@@ -46,7 +50,7 @@ describe.skipIf(!FILE)("the original RWTSA workbook loads directly (local only)"
       if (!Number.isFinite(usd)) continue;
       scheduled += Math.round(usd * 100);
       const remark = String(row.getCell(cRemark).value ?? "");
-      if (Number(row.getCell(cTerms).value) === 0 && /\bdeposit\b/i.test(remark)) deposit += Math.round(usd * 100);
+      if (Number(row.getCell(cTerms).value) === 0 && /^\s*deposit\b/i.test(remark) && day(row.getCell(cShip).value) === day(row.getCell(cDue).value)) deposit += Math.round(usd * 100);
     }
     expect(r.totals.scheduledUsdCents).toBe(scheduled);
     expect(r.totals.paidUsdCents).toBe(deposit);

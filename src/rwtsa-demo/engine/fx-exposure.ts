@@ -15,13 +15,13 @@ import { fromCents, scaleCents, toCents, type Cents } from "./money";
  * CONFIRMED OPEN (only payments with explicit open evidence; null, not zero, when there are none).
  *
  * Deposit rule (RWTSA Rev2 clarification, 29 Oct 2026: a 30% deposit "paid at shipment"; RFP DP-23: a deposit-before-production
- * term): a payment flagged as a deposit, or whose remark STARTS with "deposit" without a negation or timing word, AND payable at
- * shipment (0 days) is treated as paid. Zero terms alone (for example a per-shipment QC cost) is NOT a deposit.
+ * term): a payment flagged as a deposit, or whose remark STARTS with "deposit" without a negation or timing word, AND due on its
+ * shipment date with 0 terms is treated as paid. A paid date after the as-at date means the payment was open at the as-at date. Zero terms alone (for example a per-shipment QC cost) is NOT a deposit.
  */
 
 export type ExposureBucket = "month" | "week";
 export type Settlement = "paid" | "open" | "unknown";
-export type SettlementBasis = "explicit-status" | "paid-date" | "deposit-rev2" | "explicit-open" | "none";
+export type SettlementBasis = "explicit-status" | "paid-date" | "deposit-rev2" | "explicit-open" | "paid-after-as-at" | "none";
 export const OVERDUE_BUCKET = "Overdue (due before as-at)";
 
 export interface ExposureConfig {
@@ -111,18 +111,22 @@ interface Classified {
 }
 
 /** Evidence only. Anything that is not explicitly documented stays "unknown". */
-function classify(p: PaymentFecRow): Classified {
+function classify(p: PaymentFecRow, asOf: string): Classified {
   const status = p.paymentStatus === null || p.paymentStatus === undefined ? "" : p.paymentStatus.trim();
   const hasPaidDate = p.paidDate !== null && p.paidDate !== undefined && p.paidDate !== "";
   const statusPaid = PAID_WORDS.test(status);
   const statusOpen = OPEN_WORDS.test(status);
   const unrecognised = status !== "" && !statusPaid && !statusOpen;
   if (statusOpen && hasPaidDate) return { settlement: "unknown", basis: "none", unrecognised: false, conflict: true };
+  // A paid date AFTER the as-at date means the payment was still outstanding at the as-at date.
+  if (hasPaidDate && daysBetween(asOf, p.paidDate as string) > 0) return { settlement: "open", basis: "paid-after-as-at", unrecognised: false, conflict: false };
   if (statusPaid) return { settlement: "paid", basis: "explicit-status", unrecognised: false, conflict: false };
   if (hasPaidDate) return { settlement: "paid", basis: "paid-date", unrecognised: false, conflict: false };
   if (statusOpen) return { settlement: "open", basis: "explicit-open", unrecognised: false, conflict: false };
   const depositEvidence = p.isDeposit === true || (typeof p.remark === "string" && DEPOSIT_REMARK.test(p.remark));
-  if (depositEvidence && p.termsDays === 0) return { settlement: "paid", basis: "deposit-rev2", unrecognised, conflict: false };
+  // Rev2: the deposit was paid AT SHIPMENT. So the payment must be due on the shipment date itself (0 days, same day).
+  const atShipment = p.termsDays === 0 && p.shipmentDate !== null && p.shipmentDate !== undefined && p.shipmentDate === p.dueDate;
+  if (depositEvidence && atShipment) return { settlement: "paid", basis: "deposit-rev2", unrecognised, conflict: false };
   return { settlement: "unknown", basis: "none", unrecognised, conflict: false };
 }
 
@@ -158,7 +162,7 @@ export function runFxExposure(ds: RwtsaDataset, config: ExposureConfig = {}): Ex
     // A locked rate without an FEC reference is not cover, so no FEC value is shown for it.
     const zarFec = covered && p.lockedRate !== null ? scaleCents(usd, p.lockedRate) : null;
     const reported = p.zarValue === null ? null : toCents(p.zarValue);
-    const cls = classify(p);
+    const cls = classify(p, asOf);
     if (cls.unrecognised) unrecognisedCount++;
     if (cls.conflict) conflictCount++;
 
@@ -252,7 +256,7 @@ export function runFxExposure(ds: RwtsaDataset, config: ExposureConfig = {}): Ex
   if (unknown.length > 0) warnings.push(`${unknown.length} payment(s) worth USD ${fromCents(totals.unknownUsdCents).toFixed(2)} have no settlement evidence in the workbook. They are counted as potential exposure: not as confirmed open, and not as paid.`);
   if (pastDueUnknown.length > 0) warnings.push(`${pastDueUnknown.length} of them (USD ${fromCents(totals.pastDueUnknownUsdCents).toFixed(2)}) are past their due date. A past due date is not evidence of payment, so they stay in the potential exposure.`);
   const rev2 = rows.filter((r) => r.settlementBasis === "deposit-rev2");
-  if (rev2.length > 0) warnings.push(`${rev2.length} deposit payment(s) worth USD ${fromCents(sum(rev2)).toFixed(2)} are treated as paid at shipment under the RWTSA Rev2 clarification (29 Oct 2026): flagged or remarked as a deposit and payable at shipment (0 days).`);
+  if (rev2.length > 0) warnings.push(`${rev2.length} deposit payment(s) worth USD ${fromCents(sum(rev2)).toFixed(2)} are treated as paid at shipment under the RWTSA Rev2 clarification (29 Oct 2026): flagged or remarked as a deposit and due on the shipment date (0 days).`);
   if (unrecognisedCount > 0) warnings.push(`${unrecognisedCount} payment(s) have an unrecognised payment status; settlement is unknown for them.`);
   if (conflictCount > 0) warnings.push(`${conflictCount} payment(s) have an open status that conflicts with a paid date; settlement is unknown for them.`);
   const diffs = rows.filter((r) => r.zarReportedDiffCents !== null && r.zarReportedDiffCents !== 0).length;

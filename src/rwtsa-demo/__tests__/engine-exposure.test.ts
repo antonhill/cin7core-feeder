@@ -82,9 +82,9 @@ describe("USD exposure by due date: settlement is never assumed", () => {
   });
   it("a deposit is treated as paid ONLY under the documented Rev2 rule: flagged or remarked as a deposit AND payable at shipment (0 days)", () => {
     const r = run([
-      { po: "D1", due: "2026-08-22", usd: 564, terms: 0, deposit: true },
-      { po: "D2", due: "2026-08-22", usd: 564, terms: 0, remark: "Deposit before production (30%)" },
-      { po: "D3", due: "2026-08-22", usd: 564, terms: 30, deposit: true }, // not payable at shipment: no evidence
+      { po: "D1", due: "2026-08-22", shipped: "2026-08-22", usd: 564, terms: 0, deposit: true },
+      { po: "D2", due: "2026-08-22", shipped: "2026-08-22", usd: 564, terms: 0, remark: "Deposit before production (30%)" },
+      { po: "D3", due: "2026-08-22", shipped: "2026-08-22", usd: 564, terms: 30, deposit: true }, // not payable at shipment: no evidence
       { po: "Q", due: "2026-08-04", usd: 11, terms: 0, remark: "Per-shipment QC cost" }, // zero terms alone is not a deposit
       { po: "B", due: "2026-10-06", usd: 1316, terms: 45, remark: "Balance after deposit" },
     ]);
@@ -95,13 +95,31 @@ describe("USD exposure by due date: settlement is never assumed", () => {
     expect(r.totals.potentialUsdCents).toBe(56400 + 1100 + 131600);
     expect(r.warnings.join(" ")).toMatch(/Rev2/);
   });
+  it("a deposit is paid only when due on its shipment date: a missing or different shipment date is not evidence", () => {
+    const r = run([
+      { po: "A", due: "2026-08-22", usd: 1, terms: 0, deposit: true }, // no shipment date
+      { po: "B", due: "2026-08-22", shipped: "2026-08-21", usd: 1, terms: 0, deposit: true }, // due a day after shipment
+      { po: "C", due: "2026-08-22", shipped: "2026-08-22", usd: 1, terms: 0, deposit: true },
+    ]);
+    expect(r.rows.map((x) => x.settlement)).toEqual(["unknown", "unknown", "paid"]);
+  });
+  it("a paid date AFTER the as-at date does not count as paid at that date: it was open then (regression)", () => {
+    const pays = [{ po: "L", due: "2026-09-01", usd: 100, paidDate: "2026-11-15" }, { po: "E", due: "2026-09-01", usd: 50, paidDate: "2026-09-10" }, { po: "S", due: "2026-09-01", usd: 25, paidDate: "2026-10-31" }];
+    const at = run(pays, { asOf: "2026-10-31" });
+    expect(at.rows.map((x) => [x.poNo, x.settlement, x.settlementBasis])).toEqual([["L", "open", "paid-after-as-at"], ["E", "paid", "paid-date"], ["S", "paid", "paid-date"]]); // paid ON the as-at date is paid
+    expect(at.totals.confirmedOpenUsdCents).toBe(10000);
+    expect(at.totals.paidUsdCents).toBe(7500);
+    const later = run(pays, { asOf: "2026-12-01" });
+    expect(later.rows.map((x) => x.settlement)).toEqual(["paid", "paid", "paid"]);
+    expect(later.totals.confirmedOpenUsdCents).toBeNull();
+  });
   it("a remark that merely mentions a deposit, or negates or times it, is not evidence of settlement", () => {
     const r = run([
       { po: "A", due: "2026-08-22", usd: 1, terms: 0, remark: "balance after deposit" },
       { po: "B", due: "2026-08-22", usd: 1, terms: 0, remark: "Deposit not yet paid" },
       { po: "C", due: "2026-08-22", usd: 1, terms: 0, remark: "no deposit" },
       { po: "D", due: "2026-08-22", usd: 1, terms: 0, remark: "Deposit due before production" },
-      { po: "E", due: "2026-08-22", usd: 1, terms: 0, remark: "Deposit before production (30%)" },
+      { po: "E", due: "2026-08-22", shipped: "2026-08-22", usd: 1, terms: 0, remark: "Deposit before production (30%)" },
     ]);
     expect(r.rows.map((x) => x.settlement)).toEqual(["unknown", "unknown", "unknown", "unknown", "paid"]);
   });
