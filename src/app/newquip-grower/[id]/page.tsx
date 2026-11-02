@@ -90,7 +90,6 @@ export default function QuoteEditorPage() {
   const [ev, setEv] = useState<QuoteEvaluation | null>(null);
   const [dirty, setDirty] = useState(false);
   useUnsavedGuard(dirty); // the editor already tracks unsaved edits; saving or reloading from the server clears it
-  // Unsaved edits also survive an accidental reload/close of the tab (sessionStorage, this user + this quotation, only if the server copy has not moved on).
   // The draft the displayed figures were last calculated for, and the draft a failed recalculation belongs to: no synchronous state juggling in the effect.
   const [previewedFor, setPreviewedFor] = useState<QuoteDraft | null>(null);
   const [failedFor, setFailedFor] = useState<{ draft: QuoteDraft; message: string } | null>(null);

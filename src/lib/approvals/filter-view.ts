@@ -22,12 +22,6 @@ export function summaryItems(f: QueueFilters, sort: QueueSort, statusLabel: (s: 
   return items;
 }
 
-/** True when the filters and sort are exactly the page defaults (so there is nothing to clear). */
-export function isDefaultView(f: QueueFilters, sort: QueueSort): boolean {
-  const a = activeFilters(f);
-  return sort === DEFAULT_QUEUE_SORT && f.status === "PENDING" && a.length === 1 && a[0].key === "status";
-}
-
 /** UAT-018: Clear filters is offered whenever any filter narrows the list, including the default Pending status (that is what hides history). */
 export const hasActiveFilters = (f: QueueFilters): boolean => activeFilters(f).length > 0;
 export { CLEARED_FILTERS };

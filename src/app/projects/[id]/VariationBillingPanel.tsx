@@ -38,10 +38,16 @@ function reconciliationLine(state: VariationBillingState, variationId: string): 
   const r = state.reconciliationByVariation?.[variationId];
   if (!r) return state.reconciliationLookupFailed ? "unavailable (could not be loaded)" : "unavailable";
   const parts: string[] = [];
-  if (r.invoices === 0) parts.push("no Cin7 invoice yet, nothing to reconcile");
-  else if (r.awaiting === 0) parts.push(r.invoices === 1 ? "the Cin7 invoice is reconciled" : `all ${r.invoices} Cin7 invoices are reconciled`);
-  else parts.push(`${r.reconciled} of ${r.invoices} Cin7 ${r.invoices === 1 ? "invoice" : "invoices"} reconciled, ${r.awaiting} awaiting reconciliation`);
+  const open = r.uncertain > 0 || r.inProgress > 0; // an unresolved posting may still turn out to be an invoice: never say "nothing to reconcile" then
+  if (r.invoices === 0) { if (!open) parts.push("no Cin7 invoice yet, nothing to reconcile"); else parts.push("no confirmed Cin7 invoice yet"); }
+  else if (r.awaiting === 0 && r.mismatched === 0) parts.push(r.invoices === 1 ? "the Cin7 invoice is reconciled" : `all ${r.invoices} Cin7 invoices are reconciled`);
+  else {
+    parts.push(`${r.reconciled} of ${r.invoices} Cin7 ${r.invoices === 1 ? "invoice" : "invoices"} reconciled`);
+    if (r.awaiting > 0) parts.push(`${r.awaiting} awaiting reconciliation`);
+    if (r.mismatched > 0) parts.push(`${r.mismatched} with a recorded amount mismatch`);
+  }
   if (r.uncertain > 0) parts.push(`${r.uncertain} ${r.uncertain === 1 ? "posting has" : "postings have"} an uncertain outcome and must be reconciled`);
+  if (r.inProgress > 0) parts.push(`${r.inProgress} ${r.inProgress === 1 ? "posting is" : "postings are"} still being sent`);
   return parts.join("; ");
 }
 

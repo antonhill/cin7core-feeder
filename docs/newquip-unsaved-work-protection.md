@@ -77,8 +77,8 @@ Back/Forward protection comes automatically with the existing wiring; no per-for
 
 1. Keep this layered approach; do not add a popstate/sentinel Back blocker or cancel push/replace navigate events.
 2. (Done: the remaining forms are wired; jsdom-tested only.)
-4. Where a form's main risk is a programmatic `router.push` (e.g. "Save and go"), make sure the code saves first or confirms inline before calling it; the platform offers no safe interception.
-5. Run the lab scenarios with a physical Back button, Firefox and Safari before claiming more than the table states.
+3. Where a form's main risk is a programmatic `router.push` (e.g. "Save and go"), make sure the code saves first or confirms inline before calling it; the platform offers no safe interception.
+4. Run the lab scenarios with a physical Back button, Firefox and Safari before claiming more than the table states.
 
 ## Which navigation methods have been tested, exactly
 

@@ -1,7 +1,7 @@
-import { formatZarCents } from "@/lib/format-money";
 // Phase H: commercial approvals. Pure rules + the real orchestration (quote / claim / variation stores, the approval store) over an in-memory database
 // whose approval_* functions mirror migration 0110 line for line. The REAL SQL (state machine, append-only history, grants, RLS) is verified by
 // supabase/tests/0110_newquip_commercial_approvals.test.sql against Postgres; these tests prove the application drives it correctly.
+import { formatZarCents } from "@/lib/format-money";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
 import { goldenFixtureBaseline } from "@/lib/projects/baseline";

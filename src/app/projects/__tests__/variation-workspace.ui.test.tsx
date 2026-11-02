@@ -262,11 +262,11 @@ describe("Variation workspace (P3)", () => {
   describe("D4F: compact variations", () => {
     const deferred = <T,>() => { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; };
     it("each variation is ONE compact summary: identity, scope tag, approval state, value, Sale number, billed/committed, claimable, reconciliation, and the open control - with no workspace mounted", async () => {
-      setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" }, undefined, { v1: "SO-00028" }, false, { v1: { invoices: 2, reconciled: 1, awaiting: 1, uncertain: 0 } });
+      setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" }, undefined, { v1: "SO-00028" }, false, { v1: { invoices: 2, reconciled: 1, awaiting: 1, mismatched: 0, uncertain: 0, inProgress: 0 } });
       await openVariations();
       const rec = await record("V001");
       await waitFor(() => expect(rec.textContent).toContain("SO-00028"));
-      expect(within(rec).getByTestId("recon-v1").textContent).toMatch(/1 of 2 Cin7 invoices reconciled, 1 awaiting reconciliation/);
+      expect(within(rec).getByTestId("recon-v1").textContent).toMatch(/1 of 2 Cin7 invoices reconciled; 1 awaiting reconciliation/);
       expect(rec.textContent).toContain("V001 – V001 title");
       expect(within(rec).getByText("Variation").closest("[data-tone]")).toBeTruthy();
       expect(rec.textContent).toContain("Approved");
@@ -364,7 +364,7 @@ describe("Variation workspace (P3)", () => {
   });
 
   describe("D4 correction: Cin7 reconciliation on the compact summary", () => {
-    const R = (invoices: number, reconciled: number, awaiting: number, uncertain = 0) => ({ invoices, reconciled, awaiting, uncertain });
+    const R = (invoices: number, reconciled: number, awaiting: number, uncertain = 0, inProgress = 0, mismatched = 0) => ({ invoices, reconciled, awaiting, mismatched, uncertain, inProgress });
     const recon = async (sum: Record<string, unknown>, failed = false, id = "V001") => {
       setup([variation("v1", id, "APPROVED")], { v1: "vp1" }, undefined, { v1: "SO-1" }, false, sum, failed);
       await openVariations();
@@ -373,11 +373,22 @@ describe("Variation workspace (P3)", () => {
       return within(rec).getByTestId("recon-v1").textContent!;
     };
     it("says nothing is to be reconciled when the variation has no Cin7 invoice yet", async () => { expect(await recon({ v1: R(0, 0, 0) })).toMatch(/no Cin7 invoice yet, nothing to reconcile/); });
-    it("counts reconciled against awaiting, from the recorded state", async () => { expect(await recon({ v1: R(3, 2, 1) })).toMatch(/2 of 3 Cin7 invoices reconciled, 1 awaiting reconciliation/); });
+    it("counts reconciled against awaiting, from the recorded state", async () => { expect(await recon({ v1: R(3, 2, 1) })).toMatch(/2 of 3 Cin7 invoices reconciled; 1 awaiting reconciliation/); });
     it("says when every invoice is reconciled, singular and plural", async () => {
       expect(await recon({ v1: R(1, 1, 0) })).toMatch(/the Cin7 invoice is reconciled/);
     });
     it("flags an uncertain outcome", async () => { expect(await recon({ v1: R(1, 1, 0, 2) })).toMatch(/2 postings have an uncertain outcome and must be reconciled/); });
+    it("an uncertain posting with no confirmed invoice never says 'nothing to reconcile'", async () => {
+      const t = await recon({ v1: R(0, 0, 0, 1) });
+      expect(t).toMatch(/no confirmed Cin7 invoice yet; 1 posting has an uncertain outcome and must be reconciled/);
+      expect(t).not.toMatch(/nothing to reconcile/);
+    });
+    it("a posting still being sent is 'still being sent', not uncertain, and also blocks 'nothing to reconcile'", async () => {
+      const t = await recon({ v1: R(0, 0, 0, 0, 1) });
+      expect(t).toMatch(/1 posting is still being sent/);
+      expect(t).not.toMatch(/uncertain|nothing to reconcile/);
+    });
+    it("a recorded amount mismatch is shown, not folded into 'awaiting'", async () => { expect(await recon({ v1: R(2, 1, 0, 0, 0, 1) })).toMatch(/1 of 2 Cin7 invoices reconciled; 1 with a recorded amount mismatch/); });
     it("a failed read says unavailable, never 'nothing to reconcile'", async () => {
       const t = await recon({}, true);
       expect(t).toMatch(/unavailable \(could not be loaded\)/);
@@ -398,7 +409,7 @@ describe("Variation workspace (P3)", () => {
       await openVariations();
       const r1 = await record("V001"); const r2 = await record("V002");
       await waitFor(() => expect(within(r1).getByTestId("recon-v1").textContent).toMatch(/the Cin7 invoice is reconciled/));
-      expect(within(r2).getByTestId("recon-v2").textContent).toMatch(/0 of 2 Cin7 invoices reconciled, 2 awaiting/);
+      expect(within(r2).getByTestId("recon-v2").textContent).toMatch(/0 of 2 Cin7 invoices reconciled; 2 awaiting/);
     });
   });
 

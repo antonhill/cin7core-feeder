@@ -10,6 +10,7 @@ import { NEGATIVE_VARIATION_UNSUPPORTED } from "./variations";
 import { variationScope } from "./product-scope";
 import { loadProjectView } from "./project-store";
 import { listPostings } from "./cin7-posting-store";
+import { isStalePending } from "./cin7-posting";
 import { loadCreation } from "./cin7-sale-creation-store";
 import type { ProjectView } from "./project-view";
 import { assertNotPendingApproval } from "@/lib/approvals/pending-guard";
@@ -283,32 +284,40 @@ export interface ReconciliationSummary {
   invoices: number;
   /** Of those, the ones Toolbox has reconciled against Cin7. */
   reconciled: number;
-  /** Invoices that exist but have not been reconciled yet (CREATED). */
+  /** Invoices that exist, have not been reconciled, and have no recorded mismatch (CREATED). */
   awaiting: number;
-  /** Postings whose outcome is not known (PENDING or FAILED_UNCERTAIN): they need reconciling before anything else. */
+  /** Invoices whose last reconciliation recorded an amount mismatch (CREATED with AMOUNT_MISMATCH): the evidence is shown, never reduced to "awaiting". */
+  mismatched: number;
+  /** Postings whose outcome is not known (FAILED_UNCERTAIN, or a PENDING older than the stale window): they may have created an invoice and must be reconciled. */
   uncertain: number;
+  /** Postings still within the normal in-flight window (PENDING, not stale): a post is running; nothing to act on yet. */
+  inProgress: number;
 }
+export interface PostingStateRow { posting_state: string; last_error_code?: string | null; requested_at?: string | null }
 
-/** Pure: counts one project's postings. FAILED_CONFIRMED_NO_WRITE counts for nothing (no invoice exists). */
-export function summariseReconciliation(states: readonly string[]): ReconciliationSummary {
-  const count = (...s: string[]) => states.filter((x) => s.includes(x)).length;
-  const reconciled = count("RECONCILED");
-  const awaiting = count("CREATED");
-  return { invoices: reconciled + awaiting, reconciled, awaiting, uncertain: count("PENDING", "FAILED_UNCERTAIN") };
+/** Pure: counts one project's postings. FAILED_CONFIRMED_NO_WRITE counts for nothing (no invoice exists). A PENDING without a readable time is treated as uncertain, never as in progress. */
+export function summariseReconciliation(rows: readonly PostingStateRow[], now: number = Date.now()): ReconciliationSummary {
+  const of = (st: string) => rows.filter((r) => r.posting_state === st);
+  const created = of("CREATED");
+  const mismatched = created.filter((r) => r.last_error_code === "AMOUNT_MISMATCH").length;
+  const pending = of("PENDING");
+  const fresh = pending.filter((r) => !!r.requested_at && Number.isFinite(Date.parse(r.requested_at)) && !isStalePending(r.requested_at, now)).length;
+  const reconciled = of("RECONCILED").length;
+  return { invoices: reconciled + created.length, reconciled, awaiting: created.length - mismatched, mismatched, uncertain: of("FAILED_UNCERTAIN").length + pending.length - fresh, inProgress: fresh };
 }
 
 /**
- * The reconciliation state already recorded against each given billing project's invoice postings (project_claim_cin7_postings.posting_state). READ ONLY: no Cin7 call,
+ * The reconciliation state already recorded against each given billing project's invoice postings (project_claim_cin7_postings). READ ONLY: no Cin7 call,
  * no write, no inference. Org-scoped, and only the projects asked for are read (the caller passes VARIATION billing projects, never the BASE project). Every
  * requested project has a key (zero counts when it has no postings). Any read error throws: a status is never guessed.
  */
 export async function loadReconciliationByProject(db: Db, orgId: string, projectIds: readonly string[]): Promise<Record<string, ReconciliationSummary>> {
   if (projectIds.length === 0) return {};
-  const r = await db.from("project_claim_cin7_postings").select("project_id, posting_state").eq("org_id", orgId).in("project_id", [...projectIds]);
+  const r = await db.from("project_claim_cin7_postings").select("project_id, posting_state, last_error_code, requested_at").eq("org_id", orgId).in("project_id", [...projectIds]);
   if (r.error) fail(`load invoice reconciliation: ${r.error.message}`);
-  const states: Record<string, string[]> = Object.fromEntries(projectIds.map((id) => [id, []]));
-  for (const row of (r.data ?? []) as Array<{ project_id: string; posting_state: string }>) states[row.project_id]?.push(row.posting_state);
-  return Object.fromEntries(Object.entries(states).map(([id, st]) => [id, summariseReconciliation(st)]));
+  const rows: Record<string, PostingStateRow[]> = Object.fromEntries(projectIds.map((id) => [id, []]));
+  for (const row of (r.data ?? []) as Array<PostingStateRow & { project_id: string }>) rows[row.project_id]?.push(row);
+  return Object.fromEntries(Object.entries(rows).map(([id, st]) => [id, summariseReconciliation(st)]));
 }
 
 /** variation id -> its billing project's reconciliation summary. A variation whose billing project was not read is absent. */
