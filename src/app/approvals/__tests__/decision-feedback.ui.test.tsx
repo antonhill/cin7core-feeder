@@ -159,3 +159,22 @@ describe("outcomes appear beside the Confirm button", () => {
     await act(async () => d.resolve({ ok: false, error: "x" }));
   });
 });
+
+describe("unsaved decision protection", () => {
+  const unload = () => { const e = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
+  it("guards only while a decision form holds a typed reason; cancelling or an untouched form releases it", async () => {
+    render(<ApprovalDetailPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Approve…" }));
+    const field = await screen.findByLabelText(REASON);
+    expect(unload()).toBe(false); // form open, nothing typed
+    fireEvent.change(field, { target: { value: "Manager unavailable; owner authorised" } });
+    expect(unload()).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(unload()).toBe(false);
+  });
+  it("a read-only approval page is never guarded", async () => {
+    render(<ApprovalDetailPage />);
+    await screen.findByRole("button", { name: "Approve…" });
+    expect(unload()).toBe(false);
+  });
+});

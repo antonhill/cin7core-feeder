@@ -41,8 +41,8 @@ export function NewquipShell({
             </svg>
             Back to Toolbox
           </Link>
-          <span aria-hidden className="hidden h-5 w-px bg-slate-200 md:block" />
-          <span className="hidden text-sm font-semibold tracking-tight text-slate-900 md:inline">NewQuip</span>
+          <span aria-hidden className="h-5 w-px bg-slate-200" />
+          <span className="text-sm font-semibold tracking-tight text-slate-900">NewQuip</span>
           <nav aria-label="NewQuip" className="order-last -mx-2 flex w-full items-center gap-1 overflow-x-auto md:order-none md:mx-0 md:w-auto">
             {links.map((l) => {
               const active = isNavLinkActive(pathname, l.href);
