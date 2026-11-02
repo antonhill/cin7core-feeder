@@ -93,11 +93,27 @@ const subtotal = () => {
 
 const box = (label: RegExp) => screen.getByLabelText(label) as HTMLInputElement;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// Captured at import, before any test installs its request queue: the expected figure is computed OUTSIDE the queue under test, so it neither delays nor appears in it.
+const realPreview = actions.previewGrowerDraftAction;
 const expectedSubtotal = async (exclude: string[]) => {
   const d = structuredClone(draft); d.config.exclusions = { ...d.config.exclusions, ...Object.fromEntries(exclude.map((k) => [k, "x"])) };
-  const r = await actions.previewGrowerDraftAction(d);
+  const r = await realPreview(d);
   return r.data!.budget!.totals.subtotalExTax;
 };
+const count = (log: string[], entry: string) => log.filter((l) => l === entry).length;
+/**
+ * The page's own initial load. Besides the immediate requests, the Scope panel and the Cost panel EACH re-request on an 800 ms mount timer. Those are not caused by
+ * the edit under test, and where a click lands relative to them depends on how fast the machine is (on a slow runner they can enter the queue ahead of the edit's
+ * preview). Wait - by what the queue observed, not by a delay - until both have been answered, then forget them.
+ */
+async function settleInitialLoad(log: string[]) {
+  await waitFor(() => {
+    expect(count(log, "end getQuoteScopeAction")).toBeGreaterThanOrEqual(1);
+    expect(count(log, "end getQuoteCostEstimateAction")).toBeGreaterThanOrEqual(2); // the immediate request and the 800 ms one
+  }, { timeout: 8000 });
+  expect(log.filter((l) => l.startsWith("start ")).length).toBe(log.filter((l) => l.startsWith("end ")).length); // nothing still in flight
+  log.length = 0;
+}
 import { fmtZar } from "../fields";
 const digits = (t: string) => t.replace(/[^0-9]/g, "");
 async function open() {
@@ -113,18 +129,20 @@ async function open() {
 
 describe("UAT-003 rendered page: the Exclude checkbox recalculates without Save", () => {
   it("ticking Exclude updates the totals first (before any cost or scope request), shows it is unsaved, and unticking restores them; nothing is stored", async () => {
+    const q = serialQueue(150); // installed BEFORE the page renders, so every request it makes is observed
     const id = await open();
     const stored = JSON.stringify(await loadQuote(db as never, ORG, id));
     const original = subtotal();
-    const q = serialQueue(150);
     const feeder = await expectedSubtotal(["feeder"]);
-    q.log.length = 0;
+    await settleInitialLoad(q.log);
     fireEvent.click(box(/Exclude CCM feeder/i));
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
     await waitFor(() => expect(subtotal()).not.toBe(original), { timeout: 5000 });
     await waitFor(() => expect(digits(subtotal())).toBe(digits(fmtZar(feeder))), { timeout: 5000 }); // exactly the excluded-feeder figure the engine gives
+    // Causal order for THIS edit: the recalculation is the first thing the server answers, and no cost / scope request caused by the edit starts before it has.
     const firstEnd = q.log.findIndex((l) => l.startsWith("end "));
     expect(q.log[firstEnd]).toBe("end previewGrowerDraftAction"); // the preview is not queued behind the cost / scope requests
+    expect(q.log.slice(0, firstEnd).filter((l) => /getQuoteScopeAction|getQuoteCostEstimateAction/.test(l))).toEqual([]);
     fireEvent.click(box(/Exclude CCM feeder/i));
     await waitFor(() => expect(subtotal()).toBe(original), { timeout: 8000 });
     await sleep(1200);
