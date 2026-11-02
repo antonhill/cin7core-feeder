@@ -16,6 +16,7 @@ vi.mock("@/lib/activity-log", () => ({ logActivity: vi.fn(() => Promise.resolve(
 vi.mock("@/lib/projects/project-store", () => ({}));
 vi.mock("@/lib/projects/variation-store", () => ({}));
 vi.mock("@/lib/projects/project-details-store", () => ({
+  loadProjectDetails: vi.fn(() => Promise.resolve({ project_manager: null, start_date: null, target_completion_date: null, billing_scope: "PROJECT", parent_project_id: null })),
   updateProjectDetails: vi.fn((_db, _org, _id, patch) => Promise.resolve({ before: { project_manager: null, start_date: null, target_completion_date: null }, after: patch })),
 }));
 
@@ -64,6 +65,17 @@ describe("updateProjectDetailsAction", () => {
   it("the billing-scope guard runs (an internal scope is not editable from here) and a refusal writes nothing", async () => {
     vi.mocked(guardBillingScope).mockRejectedValueOnce(new Error("Open the original project."));
     expect((await actions.updateProjectDetailsAction("p1", GOOD)).ok).toBe(false);
+    expect(detailsStore.updateProjectDetails).not.toHaveBeenCalled();
+  });
+  it("a project whose manager is legacy free text can still have its dates saved with the manager left as it is", async () => {
+    vi.mocked(detailsStore.loadProjectDetails).mockResolvedValueOnce({ project_manager: "Fixture Project Manager", start_date: null, target_completion_date: null, billing_scope: "PROJECT", parent_project_id: null });
+    const r = await actions.updateProjectDetailsAction("p1", { projectManager: "Fixture Project Manager", startDate: "2026-11-03", targetCompletionDate: null });
+    expect(r.ok).toBe(true);
+    expect(detailsStore.updateProjectDetails).toHaveBeenCalledWith({ __db: true }, "org-1", "p1", { project_manager: "Fixture Project Manager", start_date: "2026-11-03", target_completion_date: null });
+  });
+  it("a project of another organisation (or none) is 'not found' before anything is validated or written", async () => {
+    vi.mocked(detailsStore.loadProjectDetails).mockResolvedValueOnce(null);
+    expect(await actions.updateProjectDetailsAction("p9", GOOD)).toEqual({ ok: false, error: "Project not found." });
     expect(detailsStore.updateProjectDetails).not.toHaveBeenCalled();
   });
   it("accepts clearing all three", async () => {

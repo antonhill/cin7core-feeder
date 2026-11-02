@@ -5,9 +5,9 @@ import type { createServiceRoleClient } from "@/supabase/server";
 import type { ProjectDetailsPatch } from "./project-details";
 
 type Db = ReturnType<typeof createServiceRoleClient>;
-export interface ProjectDetailsRow extends ProjectDetailsPatch { billing_scope: string }
+export interface ProjectDetailsRow extends ProjectDetailsPatch { billing_scope: string; parent_project_id: string | null }
 
-const COLUMNS = "project_manager, start_date, target_completion_date, billing_scope";
+const COLUMNS = "project_manager, start_date, target_completion_date, billing_scope, parent_project_id";
 
 export async function loadProjectDetails(db: Db, orgId: string, projectId: string): Promise<ProjectDetailsRow | null> {
   const r = await db.from("projects").select(COLUMNS).eq("org_id", orgId).eq("id", projectId).maybeSingle();
@@ -19,7 +19,7 @@ export async function loadProjectDetails(db: Db, orgId: string, projectId: strin
 export async function updateProjectDetails(db: Db, orgId: string, projectId: string, patch: ProjectDetailsPatch): Promise<{ before: ProjectDetailsPatch; after: ProjectDetailsPatch }> {
   const cur = await loadProjectDetails(db, orgId, projectId);
   if (!cur) throw new Error("Project not found.");
-  if (cur.billing_scope === "VARIATION") throw new Error("A variation's billing project has no details of its own; edit the original project.");
+  if (cur.billing_scope === "VARIATION" || cur.parent_project_id) throw new Error("A variation's billing project has no details of its own; edit the original project.");
   const before: ProjectDetailsPatch = { project_manager: cur.project_manager, start_date: cur.start_date, target_completion_date: cur.target_completion_date };
   const r = await db.from("projects").update({ project_manager: patch.project_manager, start_date: patch.start_date, target_completion_date: patch.target_completion_date })
     .eq("org_id", orgId).eq("id", projectId).select("id");

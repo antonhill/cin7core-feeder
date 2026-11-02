@@ -24,8 +24,11 @@ export function parseIsoDate(v: string | null | undefined): { ok: true; value: s
 /**
  * Validates an edit. `members` are the organisation's own users (lower-case emails): the project manager must be one of them, because a manager is a person who can
  * actually sign in and act on this project, not free text. Clearing the manager is allowed. The stored value is the member's canonical email.
+ * `current` is the value already on the project: leaving it UNCHANGED is always allowed (a project created before this edit existed may carry free text such as a
+ * fixture's name), so an admin can fix a date without being forced to change the manager. Only a NEW manager must be a user of the organisation.
  */
-export function validateProjectDetails(input: ProjectDetailsInput, members: ReadonlyArray<string>): ProjectDetailsResult {
+export function validateProjectDetails(input: ProjectDetailsInput, members: ReadonlyArray<string>, current: string | null = null): ProjectDetailsResult {
+  for (const v of [input.projectManager, input.startDate, input.targetCompletionDate]) if (v !== null && v !== undefined && typeof v !== "string") return { ok: false, error: "The details must be text." };
   const start = parseIsoDate(input.startDate);
   if (!start.ok) return { ok: false, error: "The start date must be a real date (yyyy-mm-dd)." };
   const target = parseIsoDate(input.targetCompletionDate);
@@ -34,7 +37,9 @@ export function validateProjectDetails(input: ProjectDetailsInput, members: Read
 
   const wanted = (input.projectManager ?? "").trim().toLowerCase();
   let manager: string | null = null;
-  if (wanted !== "") {
+  if (wanted !== "" && current !== null && wanted === current.trim().toLowerCase()) {
+    manager = current; // unchanged: kept exactly as recorded
+  } else if (wanted !== "") {
     const hit = members.find((e) => e.toLowerCase() === wanted);
     if (!hit) return { ok: false, error: "The project manager must be a user of this organisation." };
     manager = hit.toLowerCase();

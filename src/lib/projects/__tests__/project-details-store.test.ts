@@ -39,6 +39,11 @@ describe("updateProjectDetails", () => {
     await expect(updateProjectDetails(db, "org-1", "p1", PATCH)).rejects.toThrow(/edit the original project/);
     expect(rec.update).toBeNull();
   });
+  it("a project that has a parent is an internal billing scope whatever its scope label says", async () => {
+    const { db, rec } = fakeDb({ project_manager: null, start_date: null, target_completion_date: null, billing_scope: "PROJECT", parent_project_id: "base" });
+    await expect(updateProjectDetails(db, "org-1", "p1", PATCH)).rejects.toThrow(/edit the original project/);
+    expect(rec.update).toBeNull();
+  });
   it("an update that matches no row is reported, not silently accepted", async () => {
     const { db } = fakeDb({ project_manager: null, start_date: null, target_completion_date: null, billing_scope: "PROJECT" }, []);
     await expect(updateProjectDetails(db, "org-1", "p1", PATCH)).rejects.toThrow("Project not found.");

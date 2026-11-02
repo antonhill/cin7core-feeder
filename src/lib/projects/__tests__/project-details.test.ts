@@ -40,4 +40,16 @@ describe("validateProjectDetails", () => {
     if (!r.ok) throw new Error("expected a valid result");
     expect(Object.keys(r.patch).sort()).toEqual(["project_manager", "start_date", "target_completion_date"]);
   });
+  it("leaving the CURRENT manager unchanged is always allowed, even free text from before this edit existed (a date can be fixed without changing the manager)", () => {
+    const r = validateProjectDetails(input({ projectManager: "Fixture Project Manager", startDate: "2026-11-03" }), MEMBERS, "Fixture Project Manager");
+    expect(r).toEqual({ ok: true, patch: { project_manager: "Fixture Project Manager", start_date: "2026-11-03", target_completion_date: null } });
+  });
+  it("but a NEW manager must still be a user of the organisation, and the old free text is not a licence for another one", () => {
+    expect(validateProjectDetails(input({ projectManager: "Someone Else" }), MEMBERS, "Fixture Project Manager").ok).toBe(false);
+    expect(validateProjectDetails(input({ projectManager: "pm@newquip.co.za" }), MEMBERS, "Fixture Project Manager").ok).toBe(true);
+  });
+  it("refuses a value that is not text", () => {
+    expect(validateProjectDetails({ projectManager: 5 as never, startDate: null, targetCompletionDate: null }, MEMBERS).ok).toBe(false);
+    expect(validateProjectDetails({ projectManager: null, startDate: 20261102 as never, targetCompletionDate: null }, MEMBERS).ok).toBe(false);
+  });
 });
