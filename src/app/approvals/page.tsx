@@ -1,5 +1,6 @@
 "use client";
 
+import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { pageContainerClass } from "@/app/PageContainer";
 import { formatZarCents } from "@/lib/format-money";
 import Link from "next/link";
@@ -36,12 +37,16 @@ export default function ApprovalsPage() {
   const [notes, setNotes] = useState<ApprovalNotificationRow[] | null>(null);
   const [tab, setTab] = useState<"queue" | "notifications" | "admin">("queue");
   const [settings, setSettings] = useState({ targetBusinessDays: "2", reminderEveryHours: "24", maxReminders: "3", escalationEmail: "" });
+  const [loadedSettings, setLoadedSettings] = useState(settings); // the last values read from the server: the settings form is dirty only when it differs from these
   const acts = useKeyedActions(); // every admin action reports beside its own button and ignores a second click while it is in flight
   const [notesState, setNotesState] = useState<"idle" | "loading" | "error">("idle");
   const [mail, setMail] = useState<{ configured: boolean; missing: string[]; senderDomain: string | null; failed: number; abandoned: number; suppressed: number; restricted: boolean; allowlist: string[]; linkBase: string } | null>(null);
 
+  // Unsaved-work guard: only the managers' settings form (admin tab) can be dirty; a save reloads the server values and releases it.
+  useUnsavedGuard(!!d?.isManager && tab === "admin" && (Object.keys(settings) as Array<keyof typeof settings>).some((k) => settings[k] !== loadedSettings[k]));
+
   const load = useCallback(() => {
-    getApprovalsDashboardAction(f, sort).then((r) => { if (r.ok && r.data) { setD(r.data); setError(null); const t = r.data.settings; setSettings({ targetBusinessDays: String(t.targetBusinessDays), reminderEveryHours: String(t.reminderEveryHours), maxReminders: String(t.maxReminders), escalationEmail: t.escalationEmail ?? "" }); } else setError(r.error ?? "Could not load approvals."); });
+    getApprovalsDashboardAction(f, sort).then((r) => { if (r.ok && r.data) { setD(r.data); setError(null); const t = r.data.settings; const s = { targetBusinessDays: String(t.targetBusinessDays), reminderEveryHours: String(t.reminderEveryHours), maxReminders: String(t.maxReminders), escalationEmail: t.escalationEmail ?? "" }; setSettings(s); setLoadedSettings(s); } else setError(r.error ?? "Could not load approvals."); });
   }, [f, sort]);
   useEffect(load, [load]);
   const openNotes = async () => {

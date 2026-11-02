@@ -10,6 +10,7 @@ import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { NEGATIVE_VARIATION_UNSUPPORTED, isNegativeAmountInput } from "@/lib/projects/variations";
 import { ConsolidatedReportPanel } from "./ConsolidatedReportPanel";
 import { BUSY, VariationBillingPanel } from "./VariationBillingPanel";
+import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { approveVariationAction, raiseVariationAction, rejectVariationAction, repriceVariationAction, submitVariationForApprovalAction } from "../actions";
 
@@ -28,6 +29,15 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
   const [reason, setReason] = useState<Record<string, string>>({});
   const [price, setPrice] = useState<Record<string, string>>({});
 
+  // Unsaved-work guard. Dirty = a form that is currently available differs from its empty/saved starting value: the raise form (project ACTIVE) has any typed field,
+  // a DRAFT variation's re-price differs from its current price, or (managers) a DRAFT variation has a typed reject reason. Cancelling, clearing, or a successful
+  // raise / re-price / reject returns each to its starting value and releases the guard; decided variations and read-only states never guard.
+  const raiseDirty = view.project.status === "ACTIVE" && [title, description, amount, estCost].some((x) => x.trim() !== "");
+  const draftVariations = view.variations.filter((v) => v.status === "DRAFT");
+  const repriceDirty = draftVariations.some((v) => { const p = (price[v.id] ?? "").trim(); return p !== "" && p !== (v.amount_cents / 100).toString(); });
+  const rejectDirty = isAdmin && draftVariations.some((v) => (reason[v.id] ?? "").trim() !== "");
+  useUnsavedGuard(raiseDirty || repriceDirty || rejectDirty);
+
   /** The decision controls (or who decided and why) shown INSIDE each variation's record. */
   const decisionOf = (v: ProjectView["variations"][number]) => {
     const rid = `${v.id}-reprice-why`, bid = `${v.id}-busy`, xid = `${v.id}-reject-why`;
@@ -38,13 +48,13 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
         <div className="space-y-2">
         <div className="flex flex-wrap items-end gap-2">
           <Input label="Re-price (R)" value={price[v.id] ?? ""} onChange={(e) => setPrice({ ...price, [v.id]: e.target.value })} placeholder={(v.amount_cents / 100).toString()} />
-          <Button size="sm" variant="secondary" disabled={working || noPrice} aria-describedby={working ? bid : noPrice ? rid : undefined} onClick={() => run(() => repriceVariationAction(projectId, v.id, price[v.id]), `Re-priced ${v.code}.`)}>Re-price</Button>
+          <Button size="sm" variant="secondary" disabled={working || noPrice} aria-describedby={working ? bid : noPrice ? rid : undefined} onClick={async () => { if (await run(() => repriceVariationAction(projectId, v.id, price[v.id]), `Re-priced ${v.code}.`)) setPrice((m) => ({ ...m, [v.id]: "" })); }}>Re-price</Button>
           <Button size="sm" variant="secondary" disabled={working} aria-describedby={working ? bid : undefined} onClick={() => run(() => submitVariationForApprovalAction(projectId, v.id), `Submitted ${v.code} for manager approval. It cannot be edited while it is pending.`)}>Submit for approval</Button>
           {isAdmin ? (
             <>
               <Button size="sm" disabled={working} aria-describedby={working ? bid : undefined} onClick={() => run(() => approveVariationAction(projectId, v.id), `Approved ${v.code}. The revised contract value now includes it; the original is unchanged.`)}>Approve</Button>
               <Input label="Reject reason" value={reason[v.id] ?? ""} onChange={(e) => setReason({ ...reason, [v.id]: e.target.value })} />
-              <Button size="sm" variant="destructive" disabled={working || noReason} aria-describedby={working ? bid : noReason ? xid : undefined} onClick={() => run(() => rejectVariationAction(projectId, v.id, reason[v.id]), `Rejected ${v.code}.`)}>Reject</Button>
+              <Button size="sm" variant="destructive" disabled={working || noReason} aria-describedby={working ? bid : noReason ? xid : undefined} onClick={async () => { if (await run(() => rejectVariationAction(projectId, v.id, reason[v.id]), `Rejected ${v.code}.`)) setReason((m) => ({ ...m, [v.id]: "" })); }}>Reject</Button>
             </>
           ) : <span className="text-sm text-slate-600">Manager approval required</span>}
         </div>

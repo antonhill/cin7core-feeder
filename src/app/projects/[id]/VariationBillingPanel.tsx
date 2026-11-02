@@ -11,6 +11,7 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { Block } from "./LoadingSkeletons";
 import { ProjectWorkspace } from "./ProjectWorkspace";
 import { VariationProductPicker } from "./VariationProductPicker";
+import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { amendVariationScheduleAction, getVariationBillingAction, saveVariationScheduleAction, startVariationBillingAction, type VariationBillingState } from "../variation-billing-actions";
 
@@ -56,9 +57,19 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
     return () => { live = false; };
   }, [projectId, variationKey, version, view.variations.length]);
 
-  const act = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string) => { if (await run(fn, done)) setVersion((n) => n + 1); };
+  const act = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string): Promise<boolean> => { const ok = await run(fn, done); if (ok) setVersion((n) => n + 1); return ok; };
   const c = state?.consolidated;
   const variations = view.variations.filter((v) => v.status !== "REJECTED");
+
+  // Unsaved-work guard. Dirty = an EDITABLE schedule whose rows differ from the saved schedule, or a typed amendment reason. Read-only (locked) schedules never guard;
+  // a successful save makes the reloaded schedule equal the rows, a successful amendment also clears the reason, so the guard releases.
+  const scheduleDirty = !!state && variations.some((v) => {
+    const locked = (v.status === "APPROVED" && !isAdmin) || (!!state.billingProjectByVariation[v.id] && v.status === "APPROVED");
+    if (locked) return false;
+    const rowsChanged = edit[v.id] !== undefined && JSON.stringify(edit[v.id]) !== JSON.stringify(rowsOf(state.schedules[v.id]));
+    return rowsChanged || (v.status !== "DRAFT" && (reason[v.id] ?? "").trim() !== "");
+  });
+  useUnsavedGuard(scheduleDirty);
   if (view.variations.length === 0) return null; // the Variations tab says so itself
 
   return (
@@ -160,7 +171,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
                   ) : (
                     <>
                       <Input label="Reason for amendment" value={reasonText} onChange={(e) => setReason({ ...reason, [v.id]: e.target.value })} />
-                      <Button size="sm" disabled={working || total !== 100 || !reasonText.trim()} aria-describedby={working ? sid("sched-busy") : total !== 100 ? sid("sched-total") : !reasonText.trim() ? sid("sched-reason") : undefined} onClick={() => act(() => amendVariationScheduleAction(projectId, v.id, rows, reason[v.id]), `Amended the ${v.code} schedule (audited).`)}>Amend schedule</Button>
+                      <Button size="sm" disabled={working || total !== 100 || !reasonText.trim()} aria-describedby={working ? sid("sched-busy") : total !== 100 ? sid("sched-total") : !reasonText.trim() ? sid("sched-reason") : undefined} onClick={async () => { if (await act(() => amendVariationScheduleAction(projectId, v.id, rows, reason[v.id]), `Amended the ${v.code} schedule (audited).`)) setReason((m) => ({ ...m, [v.id]: "" })); }}>Amend schedule</Button>
                     </>
                   )}
                 </div>
