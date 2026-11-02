@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
-import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Status } from "@/components/ui/Status";
+import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { formatSast } from "@/lib/approvals/time";
@@ -47,7 +48,7 @@ export function AcceptancePanel({ quoteId, onGate }: { quoteId: string; onGate: 
   };
   const upload = (form: FormData) => postFormToOwnRoute("/api/newquip-quote-responses", form);
 
-  if (!d) return <Panel><PanelTitle>Customer response</PanelTitle><p className="mt-2 text-sm text-slate-500">{err ?? "Loading…"}</p></Panel>;
+  if (!d) return <Panel><PanelTitle>Customer response</PanelTitle><p className="mt-2 text-sm text-slate-600">{err ?? "Loading…"}</p></Panel>;
   if (!d.available) return <Panel><PanelTitle>Customer response</PanelTitle><Alert tone="info">Customer responses become available once the database update for customer quotations (migration 0115) has been applied.</Alert></Panel>;
 
   const statusTone: BadgeTone = d.status === "CUSTOMER_ACCEPTED" ? "success" : d.status === "ACCEPTANCE_PENDING_VERIFICATION" ? "warning" : d.status === "CUSTOMER_DECLINED" || d.status === "CHANGES_REQUESTED" || d.status === "ACCEPTANCE_REJECTED" ? "danger" : "neutral";
@@ -91,8 +92,8 @@ export function AcceptancePanel({ quoteId, onGate }: { quoteId: string; onGate: 
   const pending = d.responses.filter((r) => r.standing === "PENDING_VERIFICATION" && r.documentId === d.latestDocumentId);
   return (
     <Panel>
-      <div className="flex flex-wrap items-center gap-2"><PanelTitle>Customer response</PanelTitle><Badge tone={statusTone}>{d.statusLabel}</Badge></div>
-      <p className="mt-1 text-xs text-slate-500">Record what the customer answered and keep the evidence. Manager approval is not the customer&apos;s acceptance, and an acceptance that arrives by the emailed link only counts once it has been verified here.</p>
+      <div className="flex flex-wrap items-center gap-2"><PanelTitle>Customer response</PanelTitle><Status tone={statusTone}>{d.statusLabel}</Status></div>
+      <p className="mt-1 text-xs text-slate-600">Record what the customer answered and keep the evidence. Manager approval is not the customer&apos;s acceptance, and an acceptance that arrives by the emailed link only counts once it has been verified here.</p>
       {err && <Alert tone="danger">{err}</Alert>}
       {note && <Alert tone="success">{note}</Alert>}
       {busy && <p role="status" className="mt-2 text-sm text-slate-600">Working…</p>}
@@ -160,23 +161,23 @@ export function AcceptancePanel({ quoteId, onGate }: { quoteId: string; onGate: 
           {d.portal && (
             <label className="flex flex-col gap-1 text-sm"><span className="font-medium text-slate-700">Supporting evidence{response === "ACCEPTED" ? " (required for an acceptance)" : " (optional)"}</span>
               <input ref={fileRef} type="file" multiple accept={EVIDENCE_ACCEPT} onChange={(e) => pick(e.target.files)} className="text-sm" />
-              <span className="text-xs text-slate-500">PDF, JPG, PNG or EML (saved email). Up to {EVIDENCE_MAX_FILES} files, {EVIDENCE_MAX_TOTAL / 1024 / 1024} MB in total per upload (add more later with Add evidence). Stored privately and never overwritten.</span>
+              <span className="text-xs text-slate-600">PDF, JPG, PNG or EML (saved email). Up to {EVIDENCE_MAX_FILES} files, {EVIDENCE_MAX_TOTAL / 1024 / 1024} MB in total per upload (add more later with Add evidence). Stored privately and never overwritten.</span>
               {files.length > 0 && <span className="text-xs text-slate-700">{files.map((x) => `${x.name} (${kb(x.size)})`).join(", ")}</span>}
             </label>
           )}
           <Button type="button" loading={busy === "record"} disabled={!canSubmit} onClick={() => void (d.portal ? record() : recordLegacy())}>Record response</Button>
           {needsFile && files.length === 0 && <p className="text-xs text-amber-700">Attach the evidence (for example the signed quotation or the customer&apos;s confirming email) to record an acceptance.</p>}
         </div>
-      ) : <p className="mt-2 text-sm text-slate-500">{d.accepted ? "Accepted: this acceptance is final." : "A response can be recorded once the quotation has been issued. Only a Rep or Manager can record it."}</p>}
+      ) : <p className="mt-2 text-sm text-slate-600">{d.accepted ? "Accepted: this acceptance is final." : "A response can be recorded once the quotation has been issued. Only a Rep or Manager can record it."}</p>}
 
       <h3 className="mt-5 text-sm font-semibold text-slate-800">Response history</h3>
-      {d.responses.length === 0 ? <p className="mt-2 text-sm text-slate-500">No response has been received yet.</p> : (
+      {d.responses.length === 0 ? <p className="mt-2 text-sm text-slate-600">No response has been received yet.</p> : (
         <ul className="mt-2 divide-y rounded-md border border-slate-200 text-sm" data-testid="response-history">
           {d.responses.map((r) => (
             <li key={r.id} className="space-y-1 p-2">
               <div className="flex flex-wrap items-center gap-2">
-                <b>{RESPONSE_LABEL[r.response]}</b> <Badge tone={STANDING_TONE[r.standing]}>{STANDING_LABEL[r.standing]}</Badge>
-                <span className="text-xs text-slate-500">{r.origin === "CUSTOMER_LINK" ? "via the customer's emailed link" : "recorded by staff"}</span>
+                <b>{RESPONSE_LABEL[r.response]}</b> <Status tone={STANDING_TONE[r.standing]}>{STANDING_LABEL[r.standing]}</Status>
+                <span className="text-xs text-slate-600">{r.origin === "CUSTOMER_LINK" ? "via the customer's emailed link" : "recorded by staff"}</span>
               </div>
               <div>{r.contact}{r.company ? `, ${r.company}` : ""}{r.contactEmail ? ` <${r.contactEmail}>` : ""}{r.contactSource ? ` · ${r.contactSource === "DELIVERY_CONTACT" ? "contact who received the quotation" : r.contactSource === "CIN7_CONTACT" ? "Cin7 contact" : r.contactSource === "ALTERNATIVE" ? "alternative contact" : "details given by the customer"}` : ""} · {r.respondedOn} · {r.origin === "CUSTOMER_LINK" ? "received" : "recorded by"} {r.recordedBy} · {formatSast(r.at)}</div>
               {r.exceptionReason && <div className="text-xs text-amber-800">Exception reason: {r.exceptionReason}</div>}

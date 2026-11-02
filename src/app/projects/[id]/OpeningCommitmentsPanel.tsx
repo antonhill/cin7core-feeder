@@ -38,15 +38,15 @@ export function OpeningCommitmentsPanel({ view, isAdmin, run, working }: { view:
         )}
       </div>
       {expanded && <>
-      <p className="mt-2 text-sm text-slate-500">Value already committed / certified before this project entered the Toolbox claim workflow. It counts toward &quot;Billed / committed&quot; and does not create Cin7 invoices or claims.</p>
+      <p className="mt-2 text-sm text-slate-600">Value already committed / certified before this project entered the Toolbox claim workflow. It counts toward &quot;Billed / committed&quot; and does not create Cin7 invoices or claims.</p>
       <div className="mt-4 overflow-x-auto">
         <table className="w-full max-w-xl text-sm">
-          <thead><tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500"><th className="py-2 text-left">Stage</th><th className="py-2 text-right">Stage value</th><th className="py-2 text-right">Opening committed (R)</th></tr></thead>
+          <thead><tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-600"><th className="py-2 text-left">Stage</th><th className="py-2 text-right">Stage value</th><th className="py-2 text-right">Opening committed (R)</th></tr></thead>
           <tbody>
             {view.stages.map((s) => (
               <tr key={s.id} className="border-b border-slate-100">
                 <td className="py-2">{s.name}</td>
-                <td className="py-2 text-right tabular-nums whitespace-nowrap text-slate-500">{formatCents(s.valueCents)}</td>
+                <td className="py-2 text-right tabular-nums whitespace-nowrap text-slate-600">{formatCents(s.valueCents)}</td>
                 <td className="py-2 text-right">
                   {isAdmin && !locked ? (
                     <input value={vals[s.id] ?? ""} onChange={(e) => setVals({ ...vals, [s.id]: e.target.value })} inputMode="decimal" placeholder="0" aria-label={`${s.name} opening committed`}
@@ -66,7 +66,7 @@ export function OpeningCommitmentsPanel({ view, isAdmin, run, working }: { view:
         </div>
       )}
       </>}
-      {!isAdmin && <p className="mt-3 text-xs text-slate-500">Only a manager (org owner/admin) can set opening commitments.</p>}
+      {!isAdmin && <p className="mt-3 text-xs text-slate-600">Only a manager (org owner/admin) can set opening commitments.</p>}
     </Panel>
   );
 }

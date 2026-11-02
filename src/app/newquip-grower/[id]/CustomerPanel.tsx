@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Spinner } from "@/app/Spinner";
-import { Badge } from "@/components/ui/Badge";
+import { Status } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { formatSast } from "@/lib/approvals/time";
 import { chooseQuoteContactAction, clearQuoteCustomerAction, getQuoteCustomerAction, refreshQuoteCustomerAction, searchQuoteCustomersForQuoteAction, selectQuoteCustomerAction, type QuoteCustomerView, type RefreshPreview } from "../customer-actions";
@@ -68,7 +68,7 @@ export function CustomerPanel({ quoteId, editable, onPicked }: { quoteId: string
     } catch { setErr("Refresh failed. Please try again."); } finally { setLabel(null); }
   };
 
-  if (!v) return <p className="mt-4 text-sm text-slate-500">{err ?? "Loading customer details…"}</p>;
+  if (!v) return <p className="mt-4 text-sm text-slate-600">{err ?? "Loading customer details…"}</p>;
   if (!v.available) return <Alert tone="info">Cin7 customer lookup becomes available once the database update for customer snapshots has been applied. The customer name above is used until then.</Alert>;
   const s = v.snapshot;
   const a = s?.billingAddress;
@@ -76,7 +76,7 @@ export function CustomerPanel({ quoteId, editable, onPicked }: { quoteId: string
   const showSearch = canChange && (!s || changing);
   return (
     <div className="mt-4 space-y-3 rounded-md border border-slate-200 p-3" data-testid="customer-panel">
-      <div className="flex items-center gap-2"><span className="text-sm font-semibold text-slate-800">Cin7 customer</span>{s ? <Badge tone="success">Snapshot #{v.seq}</Badge> : <Badge tone="warning">Not selected</Badge>}</div>
+      <div className="flex items-center gap-2"><span className="text-sm font-semibold text-slate-800">Cin7 customer</span>{s ? <Status tone="success">Snapshot #{v.seq}</Status> : <Status tone="warning">Not selected</Status>}</div>
       {err && <Alert tone="danger">{err}</Alert>}
       {label && <p role="status" aria-live="polite" className="flex items-center gap-2 text-sm text-slate-600" data-testid="customer-busy"><Spinner />{label}</p>}
       {!canChange && <Alert tone="info">{v.lockedReason ?? "The customer cannot be changed here."}</Alert>}
@@ -121,13 +121,13 @@ export function CustomerPanel({ quoteId, editable, onPicked }: { quoteId: string
       )}
       {s && (
         <dl className="grid gap-x-6 gap-y-1 text-sm md:grid-cols-2">
-          <dt className="text-slate-500">Customer (Cin7 ID {s.cin7CustomerId})</dt><dd>{show(s.name)}</dd>
-          <dt className="text-slate-500">Trading name</dt><dd>{show(s.tradingName)}</dd>
-          <dt className="text-slate-500">Billing address</dt><dd>{a ? [a.line1, a.line2, a.city, a.state, a.postcode, a.country].map((f) => fieldValue(f)).filter(Boolean).join(", ") || "blank in Cin7" : "no billing address in Cin7"}</dd>
-          <dt className="text-slate-500">VAT number</dt><dd>{show(s.vatNumber)}</dd>
-          <dt className="text-slate-500">Currency</dt><dd>{show(s.currency)}</dd>
-          <dt className="text-slate-500">Payment terms</dt><dd>{show(s.paymentTerm)}</dd>
-          <dt className="text-slate-500">Quotation contact</dt><dd>{s.chosenContact ? `${s.chosenContact.name} <${s.chosenContact.email}>${s.chosenContact.source === "ENTERED" ? " (entered by you)" : s.chosenContact.emailCorrection ? " (email corrected for this quotation; Cin7 unchanged)" : ""}` : "not chosen"}</dd>
+          <dt className="text-slate-600">Customer (Cin7 ID {s.cin7CustomerId})</dt><dd>{show(s.name)}</dd>
+          <dt className="text-slate-600">Trading name</dt><dd>{show(s.tradingName)}</dd>
+          <dt className="text-slate-600">Billing address</dt><dd>{a ? [a.line1, a.line2, a.city, a.state, a.postcode, a.country].map((f) => fieldValue(f)).filter(Boolean).join(", ") || "blank in Cin7" : "no billing address in Cin7"}</dd>
+          <dt className="text-slate-600">VAT number</dt><dd>{show(s.vatNumber)}</dd>
+          <dt className="text-slate-600">Currency</dt><dd>{show(s.currency)}</dd>
+          <dt className="text-slate-600">Payment terms</dt><dd>{show(s.paymentTerm)}</dd>
+          <dt className="text-slate-600">Quotation contact</dt><dd>{s.chosenContact ? `${s.chosenContact.name} <${s.chosenContact.email}>${s.chosenContact.source === "ENTERED" ? " (entered by you)" : s.chosenContact.emailCorrection ? " (email corrected for this quotation; Cin7 unchanged)" : ""}` : "not chosen"}</dd>
         </dl>
       )}
       {v.currency?.status === "MISSING" && <Alert tone="warning">{v.currency.message}</Alert>}
@@ -159,7 +159,7 @@ export function CustomerPanel({ quoteId, editable, onPicked }: { quoteId: string
                 </Button>
               );
             })}
-            {s.contacts.length === 0 && <span className="text-sm text-slate-500">Cin7 holds no contacts for this customer; add one below.</span>}
+            {s.contacts.length === 0 && <span className="text-sm text-slate-600">Cin7 holds no contacts for this customer; add one below.</span>}
           </div>
           {fix && (
             <div className="flex flex-wrap items-end gap-2 rounded-md border border-amber-300 bg-amber-50 p-2" data-testid="email-fix">
@@ -178,7 +178,7 @@ export function CustomerPanel({ quoteId, editable, onPicked }: { quoteId: string
             <input className={inputCls} placeholder="Phone (optional)" value={entered.phone} onChange={(e) => setEntered({ ...entered, phone: e.target.value })} />
             <Button type="button" variant="secondary" disabled={busy} onClick={() => void run(() => chooseQuoteContactAction(quoteId, { source: "ENTERED", ...entered }))}>Use this contact</Button>
             </div>
-            <p className="text-xs text-slate-500">Separate from the Cin7 contacts above. Entered contacts are validated and audited, used on this quotation only, and never written to Cin7.</p>
+            <p className="text-xs text-slate-600">Separate from the Cin7 contacts above. Entered contacts are validated and audited, used on this quotation only, and never written to Cin7.</p>
           </fieldset>
           <div className="flex items-center gap-2">
             <Button type="button" variant="secondary" disabled={busy} loading={label === "Checking Cin7 for changes…"} onClick={() => void preview(false)}>Check Cin7 for changes</Button>
@@ -189,7 +189,7 @@ export function CustomerPanel({ quoteId, editable, onPicked }: { quoteId: string
             : <ul className="list-disc pl-5 text-sm">{diff.changes.map((c) => <li key={c.field}><b>{c.field}</b>: {c.before} → {c.after}{diff.applied ? " (applied)" : ""}</li>)}</ul>)}
         </div>
       )}
-      {v.history.length > 0 && <p className="text-xs text-slate-500">History: {v.history.map((h) => `#${h.seq}${h.cleared ? " cleared" : ""} ${h.by} ${formatSast(h.at)}`).join(" · ")}</p>}
+      {v.history.length > 0 && <p className="text-xs text-slate-600">History: {v.history.map((h) => `#${h.seq}${h.cleared ? " cleared" : ""} ${h.by} ${formatSast(h.at)}`).join(" · ")}</p>}
     </div>
   );
 }

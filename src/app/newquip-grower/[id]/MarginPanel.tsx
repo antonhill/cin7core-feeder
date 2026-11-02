@@ -2,7 +2,7 @@
 
 import { Fragment } from "react";
 import { Alert } from "@/components/ui/Alert";
-import { Badge } from "@/components/ui/Badge";
+import { Status, statusText } from "@/components/ui/Status";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import type { BudgetQuote } from "@/newquip/grower/quote-bridge";
@@ -26,7 +26,7 @@ const Cells = ({ m }: { m: MarginFigures }) => (
   </>
 );
 const Head = ({ first }: { first: string }) => (
-  <thead><tr className="border-b text-left text-xs uppercase tracking-wide text-slate-500">
+  <thead><tr className="border-b text-left text-xs uppercase tracking-wide text-slate-600">
     <th className="py-2 pr-3">{first}</th><th className="py-2 pr-3 text-right">Selling</th><th className="py-2 pr-3 text-right">Est. cost</th><th className="py-2 pr-3 text-right">Gross profit</th><th className="py-2 pr-3 text-right">Margin</th><th className="py-2 text-right">Markup</th>
   </tr></thead>
 );
@@ -56,7 +56,7 @@ export function MarginPanel({ budget, draft, final, frozen, editable, edit }: {
   return (
     <Panel>
       <PanelTitle>Internal margins - workbook basis {final ? "(frozen at approval)" : "(live estimate)"}</PanelTitle>
-      {sheet && <p className="mt-1 text-xs text-slate-500">Costs here come from the NewQuip Master workbook (landed cost), by quote line. A separate margin on Cin7 latest cost per physical SKU is shown in the next panel; the two are never combined. {sheet.reportingBasis}</p>}
+      {sheet && <p className="mt-1 text-xs text-slate-600">Costs here come from the NewQuip Master workbook (landed cost), by quote line. A separate margin on Cin7 latest cost per physical SKU is shown in the next panel; the two are never combined. {sheet.reportingBasis}</p>}
       {error && <Alert tone="danger">{error}</Alert>}
       {sheet && (
         <>
@@ -75,7 +75,7 @@ export function MarginPanel({ budget, draft, final, frozen, editable, edit }: {
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-sm">
               <Head first="Section" />
-              <tbody>{sheet.sections.map((s) => <tr key={s.section} className="border-b border-slate-100"><td className="py-2 pr-3">{s.section} <span className="text-xs text-slate-400">({s.lineCount})</span></td><Cells m={s} /></tr>)}</tbody>
+              <tbody>{sheet.sections.map((s) => <tr key={s.section} className="border-b border-slate-100"><td className="py-2 pr-3">{s.section} <span className="text-xs text-slate-600">({s.lineCount})</span></td><Cells m={s} /></tr>)}</tbody>
             </table>
           </div>
 
@@ -86,8 +86,8 @@ export function MarginPanel({ budget, draft, final, frozen, editable, edit }: {
                 {sheet.lines.map((l) => (
                   <Fragment key={l.itemKey}>
                     <tr className="border-b border-slate-100 align-top">
-                      <td className="py-2 pr-3">{l.label} {l.costBasis && <Badge tone={l.costBasis === "OVERRIDE" ? "warning" : "neutral"}>{l.costBasis}</Badge>}
-                        {l.overrideReason && <div className="text-xs text-slate-500">Override: {l.overrideReason}</div>}</td>
+                      <td className="py-2 pr-3">{l.label} {l.costBasis && <Status tone={l.costBasis === "OVERRIDE" ? "warning" : "neutral"}>{statusText(l.costBasis)}</Status>}
+                        {l.overrideReason && <div className="text-xs text-slate-600">Override: {l.overrideReason}</div>}</td>
                       <Cells m={l} />
                     </tr>
                     {l.components?.map((c, i) => (
@@ -104,7 +104,7 @@ export function MarginPanel({ budget, draft, final, frozen, editable, edit }: {
       {!final && editable && (
         <div className="mt-5 space-y-3">
           <p className="text-sm font-medium text-slate-800">Cost overrides (audited: reason, who and when are recorded)</p>
-          <p className="text-xs text-slate-500">Enter the total cost for a whole line (ex VAT) where the price source has none or is wrong. This changes the estimated cost only - never the selling price.</p>
+          <p className="text-xs text-slate-600">Enter the total cost for a whole line (ex VAT) where the price source has none or is wrong. This changes the estimated cost only - never the selling price.</p>
           {Object.keys(preview.errors).length > 0 && <Alert tone="warning">Some cost overrides are incomplete and are not applied yet. Fix the highlighted lines, then Save.</Alert>}
           {sheet && [...sheet.lines.map((l) => ({ key: l.itemKey, label: l.label })), ...(budget.charges.filter((c) => c.amountExTax).map((c) => ({ key: c.key as string, label: c.label })))].map((l) => {
             const cur = draft.estimator.costOverrides?.[l.key as GrowerItemKey];
@@ -113,7 +113,7 @@ export function MarginPanel({ budget, draft, final, frozen, editable, edit }: {
                 <span className="text-sm text-slate-700">{l.label}</span>
                 <NumField label="Line cost" unit="R ex VAT" value={cur && cur.lineCostCents >= 0 ? cur.lineCostCents / 100 : null} onChange={(v) => setOverride(l.key, { rands: v })} />
                 <TextField label="Reason" value={cur?.reason ?? ""} onChange={(v) => setOverride(l.key, { reason: v })} hint={preview.errors[l.key]} />
-                {cur?.by && <span className="text-xs text-slate-400 md:col-span-3">Recorded by {cur.by} at {cur.at}</span>}
+                {cur?.by && <span className="text-xs text-slate-600 md:col-span-3">Recorded by {cur.by} at {cur.at}</span>}
               </div>
             );
           })}

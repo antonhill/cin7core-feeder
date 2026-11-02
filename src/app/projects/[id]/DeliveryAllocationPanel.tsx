@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
-import { Badge } from "@/components/ui/Badge";
+import { Status, statusText } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
@@ -52,7 +52,7 @@ export function DeliveryAllocationPanel({ view, section = "both" }: { view: Proj
     <div className="mt-6 space-y-6">
       {section !== "milestones" && <Panel>
         <div className="flex flex-wrap items-center justify-between gap-3"><PanelTitle>Delivery allocation</PanelTitle><Button size="sm" variant="secondary" disabled={busy} onClick={() => { setBusy(true); void load().finally(() => setBusy(false)); }}>{data ? "Refresh" : "Load deliveries"}</Button></div>
-        <p className="mt-1 text-xs text-slate-500">Deliveries are a logistics plan: which products go on which delivery. An allocation is a plan for invoicing only - it does not reserve stock in Cin7 and does not ship anything. It can never exceed the approved (or ordered) quantity. &quot;?&quot; means unknown, never zero.</p>
+        <p className="mt-1 text-xs text-slate-600">Deliveries are a logistics plan: which products go on which delivery. An allocation is a plan for invoicing only - it does not reserve stock in Cin7 and does not ship anything. It can never exceed the approved (or ordered) quantity. &quot;?&quot; means unknown, never zero.</p>
         {msg && <div className="mt-2"><Alert tone={msg.tone}>{msg.text}</Alert></div>}
         {reg && reg.positions.length > 0 && (
           <div className="mt-3 overflow-x-auto">
@@ -60,7 +60,7 @@ export function DeliveryAllocationPanel({ view, section = "both" }: { view: Proj
               <THead><TR><TH>SKU</TH><TH align="right">Quoted</TH><TH align="right">Allocated</TH><TH align="right">Unallocated</TH><TH align="right">Allocated, not invoiced</TH></TR></THead>
               <TBody>{reg.positions.map((p) => (
                 <TR key={p.sku}>
-                  <TD><div className="font-mono">{p.sku}</div><div className="text-xs text-slate-500">{p.description}</div>{p.warnings.map((w, i) => <div key={i} className="text-xs text-amber-700">{w}</div>)}</TD>
+                  <TD><div className="font-mono">{p.sku}</div><div className="text-xs text-slate-600">{p.description}</div>{p.warnings.map((w, i) => <div key={i} className="text-xs text-amber-700">{w}</div>)}</TD>
                   <TD align="right" className="tabular-nums">{p.quoted}</TD><TD align="right" className="tabular-nums">{p.allocated}</TD>
                   <TD align="right" className="tabular-nums">{q(p.unallocated)}</TD><TD align="right" className="tabular-nums">{p.allocatedNotInvoiced}</TD>
                 </TR>))}</TBody>
@@ -72,7 +72,7 @@ export function DeliveryAllocationPanel({ view, section = "both" }: { view: Proj
           return (
             <div key={d.id} className="mt-4 rounded border border-slate-200 p-3">
               <div className="flex flex-wrap items-center gap-2">
-                <p className="font-medium text-slate-900">{d.label}</p><Badge tone={d.status === "CANCELLED" ? "neutral" : "warning"}>{d.status}</Badge>
+                <p className="font-medium text-slate-900">{d.label}</p><Status tone={d.status === "CANCELLED" ? "neutral" : "warning"}>{statusText(d.status)}</Status>
                 {d.planned_date && <span className="text-sm text-slate-600">planned {d.planned_date}</span>}
                 {d.status !== "CANCELLED" && d.status !== "DISPATCHED" && (
                   <span className="ml-auto flex gap-2">
@@ -105,7 +105,7 @@ export function DeliveryAllocationPanel({ view, section = "both" }: { view: Proj
       {section !== "deliveries" && <Panel>
         <PanelTitle>Commercial milestone confirmation</PanelTitle>
         {section === "milestones" && msg && <div className="mt-2"><Alert tone={msg.tone}>{msg.text}</Alert></div>}
-        <p className="mt-1 text-xs text-slate-500">A manager records that a commercial milestone has been met (for example &quot;about 90% delivered&quot; or &quot;installation accepted&quot;) with its supporting evidence. This is independent of reported physical progress.</p>
+        <p className="mt-1 text-xs text-slate-600">A manager records that a commercial milestone has been met (for example &quot;about 90% delivered&quot; or &quot;installation accepted&quot;) with its supporting evidence. This is independent of reported physical progress.</p>
         {data?.confirmations.length ? <ul className="mt-2 text-sm">{data.confirmations.map((c) => <li key={c.id}>{view.stages.find((s) => s.id === c.stage_id)?.name ?? "Stage"}: {c.note}{c.evidence_ref ? ` [${c.evidence_ref}]` : ""} - {c.confirmed_by_email}, {new Date(c.confirmed_at).toLocaleDateString()}</li>)}</ul> : null}
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           <Select label="Milestone" value={stageId} onChange={(e) => setStageId(e.target.value)}><option value="">Select…</option>{view.stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</Select>

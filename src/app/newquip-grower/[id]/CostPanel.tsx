@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
-import { Badge } from "@/components/ui/Badge";
+import { Status } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
@@ -47,12 +47,12 @@ function SupplierChooser({ sku, opts, selectedKey, busy, onSelect }: { sku: stri
           <li key={key(o)} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs">
             <label className="flex items-center gap-1">
               <input type="radio" name={`sup-${sku}`} disabled={busy || o.status !== "USABLE" || !onSelect} checked={selectedKey === key(o)} onChange={() => onSelect?.(sku, { supplierId: o.supplierId, supplierName: o.supplierName }, reason)} />
-              <span className="font-medium">{o.supplierName ?? o.supplierId ?? "(unnamed supplier)"}</span>{o.preferred ? <Badge tone="info">Preferred</Badge> : null}
+              <span className="font-medium">{o.supplierName ?? o.supplierId ?? "(unnamed supplier)"}</span>{o.preferred ? <Status tone="info">Preferred</Status> : null}
             </label>
             <span className="tabular-nums">{price(o.priceMicro, o.currency)}</span>
-            {o.fx && <span className="text-slate-500">x {o.fx.rate} ({o.fx.source}, {formatSast(o.fx.asOf)})</span>}
-            <span className="tabular-nums">{o.zarUnitCents === null ? <Badge tone="danger">Unusable</Badge> : `= ${fmtCents(o.zarUnitCents)} / unit`}</span>
-            <span className="text-slate-500">{o.lastSupplied ? `last supplied ${o.lastSuppliedValid ? o.lastSupplied.slice(0, 10) : "(date unreadable)"}` : ""}</span>
+            {o.fx && <span className="text-slate-600">x {o.fx.rate} ({o.fx.source}, {formatSast(o.fx.asOf)})</span>}
+            <span className="tabular-nums">{o.zarUnitCents === null ? <Status tone="danger">Unusable</Status> : `= ${fmtCents(o.zarUnitCents)} / unit`}</span>
+            <span className="text-slate-600">{o.lastSupplied ? `last supplied ${o.lastSuppliedValid ? o.lastSupplied.slice(0, 10) : "(date unreadable)"}` : ""}</span>
             {o.problems.filter((p) => p.blocking).map((p, i) => <span key={i} className="text-red-700">{p.message}</span>)}
           </li>
         ))}
@@ -81,7 +81,7 @@ function FxForm({ v, busy, onRecordFx }: { v: QuoteCostView; busy: boolean; onRe
           <Button size="sm" disabled={busy || !f.rate || f.source.trim().length < 3 || !f.asOf} onClick={() => onRecordFx(f.currency, f.rate, f.source, new Date(f.asOf).toISOString())}>Record rate</Button>
         </div>
       )}
-      <div className="mt-1 text-slate-500">A rate older than {v.maxRateAgeHours} hours is refused as stale. The rate used by a quotation is frozen into its estimate at approval.</div>
+      <div className="mt-1 text-slate-600">A rate older than {v.maxRateAgeHours} hours is refused as stale. The rate used by a quotation is frozen into its estimate at approval.</div>
     </div>
   );
 }
@@ -125,10 +125,10 @@ export function CostPanelBody(p: CostPanelBodyProps) {
     <Panel>
       <div className="flex flex-wrap items-center gap-2">
         <PanelTitle>Cin7 latest cost - capture and margin (physical SKUs)</PanelTitle>
-        {v && (v.frozen ? <Badge tone="info">Frozen with the approval</Badge> : <Badge tone="neutral">Draft</Badge>)}
+        {v && (v.frozen ? <Status tone="info">Frozen with the approval</Status> : <Status tone="neutral">Draft</Status>)}
       </div>
       {p.unsaved && <div className="mt-2"><Alert tone="warning">Unsaved changes. This estimate is a live preview of your edits (nothing is saved). Capturing or selecting supplier prices works on the SAVED draft: save first.</Alert></div>}
-      <p className="mt-1 text-xs text-slate-500">Internal. Latest Supplier Price from Cin7 for every supplier, in rand. This is separate from the workbook-basis margin above; the two are not combined. {v?.note ?? ""} A missing cost is never treated as zero, FixedCost and AverageCost are never substituted, and a manual estimate is always labelled as one.</p>
+      <p className="mt-1 text-xs text-slate-600">Internal. Latest Supplier Price from Cin7 for every supplier, in rand. This is separate from the workbook-basis margin above; the two are not combined. {v?.note ?? ""} A missing cost is never treated as zero, FixedCost and AverageCost are never substituted, and a manual estimate is always labelled as one.</p>
       {p.loading && !v && !error && <p className="mt-2 text-sm text-slate-600">Loading the cost estimate…</p>}
       {error && (
         <div className="mt-2 space-y-2">
@@ -144,7 +144,7 @@ export function CostPanelBody(p: CostPanelBodyProps) {
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <Button size="sm" disabled={busy || noSkus} loading={busy} onClick={() => p.onCapture(false)}>Capture latest costs from Cin7</Button>
           {noSkus && <span className="text-xs text-amber-700">No physical SKUs yet: map the packages to Cin7 SKUs in the physical scope first, then capture.</span>}
-          {!noSkus && <span className="text-xs text-slate-500">Reads Cin7 only (no writes). Your supplier selections and manual estimates are kept. Changing the costs withdraws the estimator&apos;s sign-off until it is given again.</span>}
+          {!noSkus && <span className="text-xs text-slate-600">Reads Cin7 only (no writes). Your supplier selections and manual estimates are kept. Changing the costs withdraws the estimator&apos;s sign-off until it is given again.</span>}
           {!noSkus && <Button size="sm" variant="secondary" disabled={busy} onClick={() => { if (typeof window === "undefined" || window.confirm("Re-read Cin7 AND discard every supplier selection you made? Manual estimates are kept.")) p.onCapture(true); }}>Capture and replace my selections</Button>}
         </div>
       )}
@@ -153,22 +153,22 @@ export function CostPanelBody(p: CostPanelBodyProps) {
       {v && (!e || e.lines.length === 0 ? <p className="mt-2 text-sm text-slate-600">{v.frozen ? "No physical costs were captured before approval." : "No physical SKUs yet - resolve the package mappings first."}</p> : (
         <div className="mt-3 overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="text-left text-xs text-slate-500"><th className="py-1 pr-3">SKU</th><th className="pr-3 text-right">Qty</th><th className="pr-3">Supplier</th><th className="pr-3 text-right">Supplier price</th><th className="pr-3 text-right">ZAR unit cost</th><th className="pr-3 text-right">Total</th><th className="pr-3">Status</th><th /></tr></thead>
+            <thead><tr className="text-left text-xs text-slate-600"><th className="py-1 pr-3">SKU</th><th className="pr-3 text-right">Qty</th><th className="pr-3">Supplier</th><th className="pr-3 text-right">Supplier price</th><th className="pr-3 text-right">ZAR unit cost</th><th className="pr-3 text-right">Total</th><th className="pr-3">Status</th><th /></tr></thead>
             <tbody>
               {e.lines.map((l) => {
                 const so = v.skuOptions[l.sku];
                 const multi = !!so && so.options.length > 0;
                 return (
                   <tr key={l.sku} className="border-t border-slate-100 align-top">
-                    <td className="py-1 pr-3"><span className="font-medium">{l.sku}</span><div className="text-xs text-slate-500">{l.description}</div>
+                    <td className="py-1 pr-3"><span className="font-medium">{l.sku}</span><div className="text-xs text-slate-600">{l.description}</div>
                       {multi && (v.canCapture || !v.frozen) && <SupplierChooser sku={l.sku} opts={so!.options} selectedKey={so!.selection ? `${so!.selection.supplierId ?? ""}|${so!.selection.supplierName ?? ""}` : null} busy={busy} onSelect={v.canCapture ? p.onSelect : undefined} />}
                     </td>
                     <td className="pr-3 text-right tabular-nums">{l.quantity}</td>
-                    <td className="pr-3 text-xs">{l.supplier ?? "-"}{so?.selection ? <div className="text-slate-500">{so.selection.method === "AUTO_SINGLE" ? "automatic (only supplier)" : so.selection.method === "PREFERRED" ? "preferred supplier" : `chosen by estimator${so.selection.reason ? `: ${so.selection.reason}` : ""}`}</div> : null}{!so && l.basis ? <div className="text-slate-500">{l.basis.selectionMethod === "AUTO_SINGLE" ? "automatic (only supplier)" : l.basis.selectionMethod === "PREFERRED" ? "preferred supplier" : "chosen by estimator"}</div> : null}</td>
-                    <td className="pr-3 text-right text-xs tabular-nums">{l.basis ? <>{price(l.basis.originalPriceMicro, l.basis.currency)}{l.basis.fx && <div className="text-slate-500">x {l.basis.fx.rate}</div>}</> : so?.selection ? (() => { const o = so.options.find((x) => key(x) === `${so.selection!.supplierId ?? ""}|${so.selection!.supplierName ?? ""}`); return o ? <>{price(o.priceMicro, o.currency)}{o.fx && <div className="text-slate-500">x {o.fx.rate}</div>}</> : "-"; })() : "-"}</td>
-                    <td className="pr-3 text-right tabular-nums">{l.unitCostCents === null ? <Badge tone="danger">Missing cost</Badge> : fmtCents(l.unitCostCents)}</td>
+                    <td className="pr-3 text-xs">{l.supplier ?? "-"}{so?.selection ? <div className="text-slate-600">{so.selection.method === "AUTO_SINGLE" ? "automatic (only supplier)" : so.selection.method === "PREFERRED" ? "preferred supplier" : `chosen by estimator${so.selection.reason ? `: ${so.selection.reason}` : ""}`}</div> : null}{!so && l.basis ? <div className="text-slate-600">{l.basis.selectionMethod === "AUTO_SINGLE" ? "automatic (only supplier)" : l.basis.selectionMethod === "PREFERRED" ? "preferred supplier" : "chosen by estimator"}</div> : null}</td>
+                    <td className="pr-3 text-right text-xs tabular-nums">{l.basis ? <>{price(l.basis.originalPriceMicro, l.basis.currency)}{l.basis.fx && <div className="text-slate-600">x {l.basis.fx.rate}</div>}</> : so?.selection ? (() => { const o = so.options.find((x) => key(x) === `${so.selection!.supplierId ?? ""}|${so.selection!.supplierName ?? ""}`); return o ? <>{price(o.priceMicro, o.currency)}{o.fx && <div className="text-slate-600">x {o.fx.rate}</div>}</> : "-"; })() : "-"}</td>
+                    <td className="pr-3 text-right tabular-nums">{l.unitCostCents === null ? <Status tone="danger">Missing cost</Status> : fmtCents(l.unitCostCents)}</td>
                     <td className="pr-3 text-right tabular-nums">{l.totalCostCents === null ? "-" : fmtCents(l.totalCostCents)}</td>
-                    <td className="pr-3 text-xs">{l.status === "LATEST" ? "Cin7 supplier price" : l.status === "MANUAL" ? <span title={l.reason ?? ""}>Manual estimate: {l.reason}</span> : <span className="text-amber-700">{(l.issue && ISSUE[l.issue]) ?? "No cost"}{so?.message ? ` - ${so.message}` : ""}</span>}{l.retrievedAt ? <div className="text-slate-500">read {formatSast(l.retrievedAt)}</div> : null}</td>
+                    <td className="pr-3 text-xs">{l.status === "LATEST" ? "Cin7 supplier price" : l.status === "MANUAL" ? <span title={l.reason ?? ""}>Manual estimate: {l.reason}</span> : <span className="text-amber-700">{(l.issue && ISSUE[l.issue]) ?? "No cost"}{so?.message ? ` - ${so.message}` : ""}</span>}{l.retrievedAt ? <div className="text-slate-600">read {formatSast(l.retrievedAt)}</div> : null}</td>
                     <td>{v.canCapture && (l.status === "MISSING" || l.status === "MANUAL") && (l.status === "MANUAL"
                       ? <Button size="sm" variant="secondary" disabled={busy} onClick={() => p.onClearManual(l.sku)}>Remove</Button>
                       : <Button size="sm" variant="secondary" disabled={busy} onClick={() => p.onStartManual(l.sku)}>Add manual estimate</Button>)}</td>

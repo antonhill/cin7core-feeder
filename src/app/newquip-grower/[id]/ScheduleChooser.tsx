@@ -63,7 +63,7 @@ export function ScheduleChooser({ contractCents, onChange }: { contractCents: nu
         {templates.map((t) => <option key={t.id} value={`TPL:${t.id}`}>Template: {t.name} (v{t.version}){t.isDefault ? " - default" : ""}</option>)}
         <option value="CUSTOM">Custom schedule…</option>
       </Select>
-      {tpl && <p className="text-xs text-slate-500">{edited ? "Customised for this project only; the template itself is unchanged." : "Edit a stage below to customise it for this project only."}</p>}
+      {tpl && <p className="text-xs text-slate-600">{edited ? "Customised for this project only; the template itself is unchanged." : "Edit a stage below to customise it for this project only."}</p>}
       {rowsEditable && (
         <div className="space-y-2">
           {shown.map((s, i) => (
@@ -78,7 +78,7 @@ export function ScheduleChooser({ contractCents, onChange }: { contractCents: nu
       )}
       {resolved.ok ? (
         <ul className="text-sm text-slate-700">
-          {rows.map((r) => <li key={r.name} className="tabular-nums">{r.name}: {fmtCents(r.valueCents)} <span className="text-xs text-slate-500">(ex VAT)</span></li>)}
+          {rows.map((r) => <li key={r.name} className="tabular-nums">{r.name}: {fmtCents(r.valueCents)} <span className="text-xs text-slate-600">(ex VAT)</span></li>)}
         </ul>
       ) : <Alert tone="danger">{resolved.errors.join(" ")}</Alert>}
     </div>

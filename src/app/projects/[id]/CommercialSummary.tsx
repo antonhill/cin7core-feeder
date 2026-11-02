@@ -15,16 +15,16 @@ export function CommercialSummary({ view }: { view: ProjectView }) {
   ];
   return (
     <section aria-label="Commercial summary (ex VAT)" data-testid="commercial-summary">
-      <dl className="grid grid-cols-2 gap-x-6 gap-y-3 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm sm:grid-cols-3 lg:grid-cols-6">
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-3 rounded-xl border border-slate-200 bg-white px-5 py-4 sm:grid-cols-3 lg:grid-cols-6">
         {cells.map((k) => (
           <div key={k.label} className="min-w-0">
-            <dt className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{k.label}</dt>
+            <dt className="text-xs font-semibold uppercase tracking-wider text-slate-600">{k.label}</dt>
             <dd className={`mt-1 whitespace-nowrap text-lg font-bold tabular-nums ${k.emphasis ? "text-indigo-800" : "text-slate-900"}`}>{k.value}</dd>
-            {k.hint && <p className="text-xs text-slate-500">{k.hint}</p>}
+            {k.hint && <p className="text-xs text-slate-600">{k.hint}</p>}
           </div>
         ))}
       </dl>
-      <p className="mt-1 text-xs text-slate-500">Amounts are ex VAT. Claim totals below include VAT.</p>
+      <p className="mt-1 text-xs text-slate-600">Amounts are ex VAT. Claim totals below include VAT.</p>
     </section>
   );
 }

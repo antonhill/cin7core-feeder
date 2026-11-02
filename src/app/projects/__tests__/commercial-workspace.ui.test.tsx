@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ProjectWorkspace } from "../[id]/ProjectWorkspace";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
+import { statusText } from "@/components/ui/Status";
 
 // P2: the Commercial / Claims workspace. The REAL workspace and panels; only server actions are stubbed. What must not change: every figure, every claim, every action.
 
@@ -62,6 +63,20 @@ async function openCommercial() {
   await screen.findByText("Invoices in Cin7");
 }
 
+describe("section strip", () => {
+  it("scrolls the selected section into view without moving the page vertically", async () => {
+    const spy = vi.fn();
+    (HTMLElement.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = spy;
+    render(<ProjectWorkspace id="p1" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Commercial \/ Claims/ }));
+    await screen.findByTestId("commercial-summary");
+    const last = spy.mock.calls.at(-1)!;
+    expect(last[0]).toEqual({ block: "nearest", inline: "nearest" });
+    expect(spy.mock.instances.at(-1)).toBe(screen.getByRole("button", { name: /Commercial \/ Claims/ }));
+    delete (HTMLElement.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+});
+
 describe("Commercial / Claims workspace (P2)", () => {
   it("opens with the commercial summary: every figure is the project's own, ex VAT", async () => {
     await openCommercial();
@@ -83,9 +98,18 @@ describe("Commercial / Claims workspace (P2)", () => {
       expect(a).toBeTruthy();
       expect(a.textContent).toContain(formatCents(c.total_cents));
       expect(a.textContent).toContain(formatCents(c.subtotal_cents));
-      expect(a.textContent).toContain(c.status.replace(/_/g, " "));
+      expect(a.textContent).toContain(statusText(c.status));
       expect(a.textContent).toContain(c.cin7Status.label);
-      if (c.cin7Status.invoiceNumber) expect(a.textContent).toContain(`${c.cin7Status.invoiceNumber} · reconciled`);
+      if (c.cin7Status.invoiceNumber) {
+        expect(a.textContent).toContain(c.cin7Status.invoiceNumber);
+        // reconciliation is its own chip, separate from the Cin7 invoice status chip beside it
+        expect(within(a).getByText("Reconciled")).toBeTruthy();
+        const rec = within(a).getByText("Reconciled").closest("[data-tone]")!;
+        const inv = within(a).getByText(c.cin7Status.label).closest("[data-tone]")!;
+        expect(rec).not.toBe(inv);
+        expect(inv.contains(rec) || rec.contains(inv)).toBe(false);
+        expect(rec.getAttribute("data-tone")).toBe("neutral"); // reconciliation is a record-keeping fact: green is not spent on it
+      }
     }
     // no figure was lost or altered by the redesign: the sum of the claim totals on screen equals the sum in the data
     const shown = articles.map((a) => a.textContent!).join(" ");
@@ -128,9 +152,9 @@ describe("Commercial / Claims workspace (P2)", () => {
   it("a phone user sees which badge is the approval and which is the Cin7 invoice: a visible caption below lg, hidden from lg where the column headings show", async () => {
     await openCommercial();
     const a = document.querySelector("article") as HTMLElement;
-    const captions = Array.from(a.querySelectorAll("span[aria-hidden]")).map((e) => e.textContent);
+    const captions = Array.from(a.querySelectorAll("span[aria-hidden]")).filter((e) => e.className.includes("lg:hidden")).map((e) => e.textContent);
     expect(captions).toEqual(["Amount", "Approval", "Cin7 invoice (as last recorded)"]);
-    for (const e of a.querySelectorAll("span[aria-hidden]")) expect(e.className).toMatch(/lg:hidden/);
+    for (const e of a.querySelectorAll("span[aria-hidden].mb-0\\.5")) expect(e.className).toMatch(/lg:hidden/);
   });
   it("the column headings are only shown when there are claims", async () => {
     h.responses.getProjectAction = { ok: true, data: { ...view(), claims: [] }, viewer: { canApprove: true, newquip: true } };

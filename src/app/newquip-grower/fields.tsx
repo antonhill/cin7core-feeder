@@ -23,13 +23,13 @@ export function NumField({ label, value, onChange, unit, hint, placeholder, disa
   }
   return (
     <label className="flex flex-col gap-1 text-sm">
-      <span className="font-medium text-slate-700">{label}{unit ? <span className="ml-1 font-normal text-slate-400">({unit})</span> : null}</span>
+      <span className="font-medium text-slate-700">{label}{unit ? <span className="ml-1 font-normal text-slate-600">({unit})</span> : null}</span>
       <input
         value={text} disabled={disabled} placeholder={placeholder} inputMode="decimal"
         onChange={(e) => { setText(e.target.value); onChange(parse(e.target.value)); }}
-        className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm tabular-nums text-slate-900 disabled:bg-slate-50 disabled:text-slate-500"
+        className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm tabular-nums text-slate-900 disabled:bg-slate-50 disabled:text-slate-600"
       />
-      {hint ? <span className="text-xs text-slate-500">{hint}</span> : null}
+      {hint ? <span className="text-xs text-slate-600">{hint}</span> : null}
     </label>
   );
 }
@@ -41,8 +41,8 @@ export function TextField({ label, value, onChange, hint, placeholder, disabled 
     <label className="flex flex-col gap-1 text-sm">
       <span className="font-medium text-slate-700">{label}</span>
       <input value={value} disabled={disabled} placeholder={placeholder} onChange={(e) => onChange(e.target.value)}
-        className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 disabled:bg-slate-50 disabled:text-slate-500" />
-      {hint ? <span className="text-xs text-slate-500">{hint}</span> : null}
+        className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 disabled:bg-slate-50 disabled:text-slate-600" />
+      {hint ? <span className="text-xs text-slate-600">{hint}</span> : null}
     </label>
   );
 }

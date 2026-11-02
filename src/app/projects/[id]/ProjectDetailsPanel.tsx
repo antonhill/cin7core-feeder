@@ -47,7 +47,7 @@ export function ProjectDetailsPanel({ view, isAdmin, run, working, editable }: {
           ["Target completion", project.target_completion_date ?? "Not set"], ["Status", project.status],
           ["Tax", `${project.tax_rule ?? "—"} (${formatBps(project.tax_rate_bps)})`],
         ].map(([k, v]) => (
-          <div key={k}><dt className="text-xs text-slate-500">{k}</dt><dd className="mt-0.5 font-medium text-slate-900">{v}</dd></div>
+          <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="mt-0.5 font-medium text-slate-900">{v}</dd></div>
         ))}
       </dl>
       {editing && (
@@ -64,7 +64,7 @@ export function ProjectDetailsPanel({ view, isAdmin, run, working, editable }: {
             <Button type="submit" size="sm" disabled={working || !!dateOrder}>Save details</Button>
             <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={working}>Cancel</Button>
           </div>
-          <p className="text-xs text-slate-500">Only these three fields can be changed here. The approved quotation, contract value, tax and billing stages are fixed; use a Variation for any change to them.</p>
+          <p className="text-xs text-slate-600">Only these three fields can be changed here. The approved quotation, contract value, tax and billing stages are fixed; use a Variation for any change to them.</p>
         </form>
       )}
       <Feedback k="details" />

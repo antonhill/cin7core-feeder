@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Alert } from "@/components/ui/Alert";
-import { Badge } from "@/components/ui/Badge";
+import { Status, statusText } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
@@ -69,11 +69,11 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
           <Panel key={v.id}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
-                <PanelTitle>{v.code} – {v.title} <Badge tone={v.status === "APPROVED" ? "success" : "neutral"}>{v.status}</Badge></PanelTitle>
+                <PanelTitle>{v.code} – {v.title} <Status tone={v.status === "APPROVED" ? "success" : "neutral"}>{statusText(v.status)}</Status></PanelTitle>
                 {v.description && <p className="mt-1 text-sm text-slate-600">{v.description}</p>}
               </div>
               <div className="text-right">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Approved value (ex VAT)</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">Approved value (ex VAT)</p>
                 <p className="whitespace-nowrap text-xl font-bold tabular-nums text-slate-900">{formatCents(v.amount_cents)}</p>
               </div>
             </div>
@@ -81,13 +81,13 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
             {!state ? (
               error
                 ? <div className="mt-3"><Alert tone="warning">The billing figures for this variation could not be loaded ({error}). The decision controls below still work.</Alert><div className="mt-2"><Button size="sm" variant="secondary" onClick={() => setVersion((n) => n + 1)}>Try again</Button></div></div>
-                : <div role="status" aria-busy="true" className="mt-3"><p className="text-sm text-slate-500">Loading the billing position…</p><Block className="mt-2 h-12 w-full" /></div>
+                : <div role="status" aria-busy="true" className="mt-3"><p className="text-sm text-slate-600">Loading the billing position…</p><Block className="mt-2 h-12 w-full" /></div>
             ) : scope ? (
               <div>
-              <p className="mt-3 text-xs text-slate-500">Billing position of this variation only, ex VAT</p>
+              <p className="mt-3 text-xs text-slate-600">Billing position of this variation only, ex VAT</p>
               <dl className="mt-1 grid grid-cols-2 gap-x-6 gap-y-2 rounded-lg bg-slate-50 px-4 py-3 text-sm sm:grid-cols-4" aria-label={`${v.code} billing position (ex VAT)`}>
                 {([["Earned", scope.earnedCents], ["Billed / committed", scope.committedCents], ["Claimable now", scope.claimableCents], ["Remaining", scope.remainingCents]] as const).map(([k, n]) => (
-                  <div key={k}><dt className="text-xs text-slate-500">{k}</dt><dd className="font-semibold tabular-nums text-slate-900">{formatCents(n)}</dd></div>
+                  <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="font-semibold tabular-nums text-slate-900">{formatCents(n)}</dd></div>
                 ))}
               </dl>
               </div>
@@ -113,12 +113,12 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
                       <Button disabled={working || legacy} onClick={() => act(() => startVariationBillingAction(projectId, v.id, (prods[v.id] ?? []).map((p) => ({ sku: p.sku, description: p.description, quantity: Number(p.quantity) }))), `Started billing for ${v.code}. Create its Cin7 Sale below.`)}>Start variation billing</Button>
                     </div>
                   </div>
-                ) : <span className="text-xs text-slate-500">A manager starts variation billing.</span>}
+                ) : <span className="text-xs text-slate-600">A manager starts variation billing.</span>}
               </div>
             )}
             {state && <details className="mt-4 rounded border border-slate-200 p-3" open={legacy}>
-              <summary className="cursor-pointer text-sm font-medium text-slate-800">Billing schedule</summary>
-            <p className="mt-1 text-xs text-slate-500">Approved value {formatCents(v.amount_cents)} ex VAT. Percentages are applied to this value in whole cents (largest remainder), so the stages always sum to it exactly.</p>
+              <summary className="cursor-pointer py-1.5 text-sm font-medium text-slate-800">Billing schedule</summary>
+            <p className="mt-1 text-xs text-slate-600">Approved value {formatCents(v.amount_cents)} ex VAT. Percentages are applied to this value in whole cents (largest remainder), so the stages always sum to it exactly.</p>
             <div className="mt-3 space-y-2">
               {rows.map((r, i) => (
                 <div key={i} className="flex flex-wrap items-end gap-2">
@@ -141,7 +141,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
                   )}
                 </div>
               )}
-              {v.status === "APPROVED" && billingId && <p className="text-xs text-slate-500">Billing has started. The schedule can no longer be amended once the billing project has claims or progress; the database refuses.</p>}
+              {v.status === "APPROVED" && billingId && <p className="text-xs text-slate-600">Billing has started. The schedule can no longer be amended once the billing project has claims or progress; the database refuses.</p>}
             </div>
             </details>}
           </Panel>

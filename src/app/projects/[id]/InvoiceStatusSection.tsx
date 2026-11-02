@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { ActionFeedback, useKeyedActions } from "@/components/ui/action-feedback";
 import { Alert } from "@/components/ui/Alert";
-import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Status } from "@/components/ui/Status";
+import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { formatSast } from "@/lib/approvals/time";
 import type { PostingRow } from "@/lib/projects/cin7-posting-store";
@@ -56,16 +57,16 @@ export function InvoiceStatusSection({ view, postings, projectId, isManager }: {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="font-medium text-slate-900">Invoices in Cin7</p>
-          <p className="text-xs text-slate-500">&ldquo;Recorded&rdquo; is what Toolbox saw when the invoice was created or last reconciled. It is not live. Verify reads Cin7 once and compares; nothing is changed or saved.</p>
+          <p className="text-xs text-slate-600">&ldquo;Recorded&rdquo; is what Toolbox saw when the invoice was created or last reconciled. It is not live. Verify reads Cin7 once and compares; nothing is changed or saved.</p>
         </div>
         {isManager
           ? <Button size="sm" variant="secondary" onClick={verify} loading={acts.isPending("verify")} disabled={acts.anyPending}>Verify invoice statuses</Button>
-          : <span className="text-xs text-slate-500">An owner or admin can verify these against Cin7.</span>}
+          : <span className="text-xs text-slate-600">An owner or admin can verify these against Cin7.</span>}
       </div>
       <ActionFeedback state={acts.stateOf("verify")} />
       {rows.length > 0 && <div className="mt-3 overflow-x-auto">
         <table className="w-full min-w-[34rem] text-left">
-          <thead><tr className="text-xs text-slate-500"><th scope="col" className="py-1 pr-3 font-medium">Claim</th><th scope="col" className="py-1 pr-3 font-medium">Invoice</th><th scope="col" className="py-1 pr-3 font-medium">Recorded in Toolbox</th><th scope="col" className="py-1 font-medium">Cin7 now</th></tr></thead>
+          <thead><tr className="text-xs text-slate-600"><th scope="col" className="py-1 pr-3 font-medium">Claim</th><th scope="col" className="py-1 pr-3 font-medium">Invoice</th><th scope="col" className="py-1 pr-3 font-medium">Recorded in Toolbox</th><th scope="col" className="py-1 font-medium">Cin7 now</th></tr></thead>
           <tbody>
             {rows.map((p) => {
               const v = byPosting.get(p.id);
@@ -73,14 +74,14 @@ export function InvoiceStatusSection({ view, postings, projectId, isManager }: {
                 <tr key={p.id} className="border-t border-slate-100 align-top">
                   <td className="py-2 pr-3 font-medium text-slate-900">{claimNo(p.claim_id)}</td>
                   <td className="py-2 pr-3 font-mono text-xs">{p.cin7_invoice_number}</td>
-                  <td className="py-2 pr-3">{statusLabel(p.cin7_status ? p.cin7_status.toUpperCase() : null)}{p.posting_state === "RECONCILED" && <span className="ml-1 text-xs text-slate-500">· reconciled</span>}</td>
+                  <td className="py-2 pr-3">{statusLabel(p.cin7_status ? p.cin7_status.toUpperCase() : null)}{p.posting_state === "RECONCILED" && <span className="ml-1 text-xs text-slate-600">· reconciled</span>}</td>
                   <td className="py-2" data-testid={`now-${p.cin7_invoice_number}`}>
                     {v ? (
                       <span className="inline-flex flex-wrap items-center gap-2">
                         <span className="font-medium text-slate-900">{statusLabel(v.currentStatus)}</span>
-                        <Badge tone={OUTCOME[v.outcome].tone}>{OUTCOME[v.outcome].text}</Badge>
+                        <Status tone={OUTCOME[v.outcome].tone}>{OUTCOME[v.outcome].text}</Status>
                       </span>
-                    ) : <span className="text-slate-500">Not verified</span>}
+                    ) : <span className="text-slate-600">Not verified</span>}
                   </td>
                 </tr>
               );
@@ -88,7 +89,7 @@ export function InvoiceStatusSection({ view, postings, projectId, isManager }: {
           </tbody>
         </table>
       </div>}
-      {current && <p className="mt-2 text-xs text-slate-500" data-testid="verified-at">Verified against Cin7 {current.saleNumber ? `Sales Order ${current.saleNumber} ` : ""}at {formatSast(current.verifiedAt)}.</p>}
+      {current && <p className="mt-2 text-xs text-slate-600" data-testid="verified-at">Verified against Cin7 {current.saleNumber ? `Sales Order ${current.saleNumber} ` : ""}at {formatSast(current.verifiedAt)}.</p>}
       {verified && !current && <p className="mt-2 text-xs text-amber-700" data-testid="verified-stale">The invoices changed since the last verification, so it is no longer shown. Verify again.</p>}
       {unresolved > 0 && (
         <div className="mt-2"><Alert tone="warning">{unresolved} invoice posting{unresolved === 1 ? " is" : "s are"} still unresolved (pending or outcome uncertain). An invoice may already exist in Cin7 for {unresolved === 1 ? "it" : "them"}: reconcile the claim before posting again.</Alert></div>

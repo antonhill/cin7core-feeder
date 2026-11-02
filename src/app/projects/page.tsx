@@ -6,7 +6,7 @@ import { useEffect, useState, useTransition } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
-import { Badge } from "@/components/ui/Badge";
+import { Status, statusText } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Panel } from "@/components/ui/Panel";
@@ -47,7 +47,7 @@ export default function ProjectsPage() {
 
   return (
     <main className={pageContainerClass("data")}>
-      <ModuleHeader module={PROJECTS_MODULE}>
+      <ModuleHeader variant="workspace" module={PROJECTS_MODULE}>
         Proof of concept — billing against an agreed contract value by approved stage completion. Local only: nothing on this
         screen creates or changes anything in Cin7.
       </ModuleHeader>
@@ -61,7 +61,7 @@ export default function ProjectsPage() {
       <P0ProjectPanel />
 
       <div className="mt-6 flex items-center justify-between">
-        <p className="text-sm text-slate-500">{projects ? `${projects.length} project${projects.length === 1 ? "" : "s"}` : isLoading ? "Loading…" : ""}</p>
+        <p className="text-sm text-slate-600">{projects ? `${projects.length} project${projects.length === 1 ? "" : "s"}` : isLoading ? "Loading…" : ""}</p>
         {canAdmin === true && (
           <Button variant="secondary" size="sm" onClick={seed} loading={isSeeding}>
             Create golden fixture project
@@ -113,7 +113,7 @@ export default function ProjectsPage() {
                   <TD align="right" className="tabular-nums whitespace-nowrap font-semibold text-indigo-700">{formatCents(p.commercial.claimableCents)}</TD>
                   <TD align="right" className="tabular-nums whitespace-nowrap">{formatCents(p.commercial.remainingCents)}</TD>
                   <TD>
-                    <Badge tone={p.project.status === "ACTIVE" ? "success" : "neutral"}>{p.project.status}</Badge>
+                    <Status tone={p.project.status === "ACTIVE" ? "success" : "neutral"}>{statusText(p.project.status)}</Status>
                   </TD>
                 </TR>
               ))}

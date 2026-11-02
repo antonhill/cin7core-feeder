@@ -3,12 +3,13 @@
 import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
 import { ActionFeedback, useKeyedActions, type Reconciled } from "@/components/ui/action-feedback";
-import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Status, statusText } from "@/components/ui/Status";
+import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
@@ -61,8 +62,8 @@ const TABS: { value: Tab; label: string }[] = [
 ];
 
 const CLAIM_TONE: Record<string, BadgeTone> = {
-  DRAFT: "neutral", READY_FOR_APPROVAL: "info", APPROVED: "primary", CIN7_PENDING: "warning", CIN7_CREATED: "success",
-  RECONCILED: "success", FAILED_UNCERTAIN: "danger", FAILED_CONFIRMED_NO_WRITE: "neutral", CANCELLED_BEFORE_WRITE: "neutral",
+  DRAFT: "neutral", READY_FOR_APPROVAL: "info", APPROVED: "primary", CIN7_PENDING: "warning", CIN7_CREATED: "primary",
+  RECONCILED: "primary", FAILED_UNCERTAIN: "danger", FAILED_CONFIRMED_NO_WRITE: "neutral", CANCELLED_BEFORE_WRITE: "neutral",
 };
 
 /** Claim statuses that mean "approved, and possibly already posted": the claim has been through approval. */
@@ -100,13 +101,13 @@ function PctCell({ bps, tone }: { bps: number; tone: BarTone }) {
 function Kpi({ label, value, hint, accent = false }: { label: string; value: string; hint?: string; accent?: boolean }) {
   return (
     <div
-      className={`rounded-2xl border p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_12px_28px_-18px_rgba(15,23,42,0.25)] ${
+      className={`rounded-xl border p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_12px_28px_-18px_rgba(15,23,42,0.25)] ${
         accent ? "border-indigo-200 bg-gradient-to-br from-indigo-50 to-white" : "border-slate-200 bg-white"
       }`}
     >
-      <p className={`text-[11px] font-semibold uppercase tracking-wider ${accent ? "text-indigo-700" : "text-slate-500"}`}>{label}</p>
+      <p className={`text-xs font-semibold uppercase tracking-wider ${accent ? "text-indigo-700" : "text-slate-600"}`}>{label}</p>
       <p className={`mt-2 whitespace-nowrap text-2xl font-bold tabular-nums tracking-tight ${accent ? "text-indigo-900" : "text-slate-900"}`}>{value}</p>
-      {hint && <p className="mt-1 text-xs leading-snug text-slate-500">{hint}</p>}
+      {hint && <p className="mt-1 text-xs leading-snug text-slate-600">{hint}</p>}
     </div>
   );
 }
@@ -117,9 +118,9 @@ function ContractBar({ contract, committed, claimable }: { contract: number; com
   const committedPct = share(committed);
   const claimablePct = Math.min(share(claimable), 100 - committedPct);
   return (
-    <div className="flex h-3 w-full overflow-hidden rounded-full bg-white/15" role="img" aria-label="Contract value split into invoiced / committed, claimable now and not yet approved for billing">
-      <div className="h-full bg-emerald-400" style={{ width: `${committedPct}%` }} />
-      <div className="h-full bg-amber-300" style={{ width: `${claimablePct}%` }} />
+    <div className="flex h-3 w-full overflow-hidden rounded-full bg-slate-200" role="img" aria-label="Contract value split into invoiced / committed, claimable now and not yet approved for billing">
+      <div className="h-full bg-emerald-600" style={{ width: `${committedPct}%` }} />
+      <div className="h-full bg-amber-500" style={{ width: `${claimablePct}%` }} />
     </div>
   );
 }
@@ -128,8 +129,8 @@ function LegendDot({ className, label, value }: { className: string; label: stri
   return (
     <div className="flex items-center gap-2.5">
       <span className={`h-2.5 w-2.5 rounded-full ${className}`} aria-hidden />
-      <span className="text-sm text-indigo-100">{label}</span>
-      <span className="text-sm font-semibold tabular-nums text-white">{value}</span>
+      <span className="text-sm text-slate-600">{label}</span>
+      <span className="text-sm font-semibold tabular-nums text-slate-900">{value}</span>
     </div>
   );
 }
@@ -177,6 +178,10 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- load is re-created every render; it only needs to re-run when the project id changes
   useEffect(load, [id]);
+  // On a phone the section strip scrolls sideways: keep the selected section in view (block "nearest" never moves the page vertically).
+  const tabsRef = useRef<HTMLElement>(null);
+  const hasView = view !== null;
+  useEffect(() => { tabsRef.current?.querySelector<HTMLElement>('[aria-current="page"]')?.scrollIntoView?.({ block: "nearest", inline: "nearest" }); }, [tab, hasView]);
 
   // Commercial / Claims: the Sale-creation record and the invoice-posting state arrive together (ONE round trip instead of three) every time the tab is opened. It is
   // deliberately NOT kept while the user is on another tab: the panels change this state themselves (create a Sale, post an invoice) and a remounted panel must never
@@ -255,10 +260,10 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
 
   if (!view) {
     return embedded ? (
-      <div className="mt-4">{error ? <Alert tone="danger">{error}</Alert> : <p className="text-sm text-slate-500">{isLoading ? "Loading the variation billing workspace…" : ""}</p>}</div>
+      <div className="mt-4">{error ? <Alert tone="danger">{error}</Alert> : <p className="text-sm text-slate-600">{isLoading ? "Loading the variation billing workspace…" : ""}</p>}</div>
     ) : (
       <main className={pageContainerClass("data")}>
-        <ModuleHeader module={PROJECTS_MODULE}>{isLoading ? "Loading project…" : "Project"}</ModuleHeader>
+        <ModuleHeader variant="workspace" module={PROJECTS_MODULE}>{isLoading ? "Loading project…" : "Project"}</ModuleHeader>
         {error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <WorkspaceSkeleton />}
       </main>
     );
@@ -271,8 +276,8 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
     <ProjectFeedbackProvider value={acts.stateOf}>
     <Shell className={embedded ? "mt-2" : pageContainerClass("data")}>
       {!embedded && (
-        <ModuleHeader module={PROJECTS_MODULE}>
-          <Link href="/projects" className="text-indigo-700 hover:underline">← All projects</Link>
+        <ModuleHeader variant="workspace" module={PROJECTS_MODULE}>
+          <Link href="/projects" className="inline-flex min-h-6 items-center text-indigo-700 hover:underline">← All projects</Link>
           {" · "}
           {project.project_reference} — {project.name}
         </ModuleHeader>
@@ -292,7 +297,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
         <div className="mt-6"><Alert tone="danger">Stage values do not reconcile to the contract value — claiming is blocked.</Alert></div>
       )}
 
-      <nav className="mt-6 inline-flex max-w-full gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1 shadow-sm" aria-label="Project sections">
+      <nav ref={tabsRef} className="mt-5 inline-flex max-w-full gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1" aria-label="Project sections">
         {TABS.filter((t) => !(embedded && (t.value === "variations" || t.value === "deliveries" || t.value === "physical" || t.value === "procurement" || t.value === "profitability" || t.value === "components")) && (t.value !== "profitability" || perm === "admin") && (!NEWQUIP_ONLY_TABS.includes(t.value) || newquip)).map((t) => {
           const count = t.value === "stages" ? view.stages.length : t.value === "claims" ? view.claims.length : t.value === "variations" ? view.variations.length : null;
           return (
@@ -300,13 +305,13 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               key={t.value}
               onClick={() => goTab(t.value)}
               aria-current={tab === t.value ? "page" : undefined}
-              className={`flex items-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                tab === t.value ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+              className={`flex min-h-10 items-center gap-2 whitespace-nowrap rounded-lg px-3.5 py-2 text-sm font-medium transition-colors ${
+                tab === t.value ? "bg-indigo-700 text-white" : "text-slate-700 hover:bg-slate-100 hover:text-slate-900"
               }`}
             >
               {t.label}
               {count !== null && (
-                <span className={`rounded-full px-1.5 text-xs tabular-nums ${tab === t.value ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"}`}>{count}</span>
+                <span className={`rounded-full px-1.5 text-xs tabular-nums ${tab === t.value ? "bg-white/20 text-white" : "bg-slate-100 text-slate-600"}`}>{count}</span>
               )}
             </button>
           );
@@ -315,27 +320,27 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
 
       {tab === "overview" && (
         <div className="mt-6 space-y-6">
-          <section className="overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-950 via-indigo-900 to-indigo-700 p-7 text-white shadow-[0_20px_40px_-24px_rgba(49,46,129,0.7)]">
+          <section className="rounded-xl border border-slate-200 bg-white p-5 md:p-6">
             <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-md bg-white/10 px-2 py-0.5 font-mono text-xs text-indigo-100">{project.project_reference}</span>
-                  <span className="rounded-md bg-emerald-400/20 px-2 py-0.5 text-xs font-semibold text-emerald-200">{project.status}</span>
+                  <span className="rounded-md bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-700">{project.project_reference}</span>
+                  <Status tone={project.status === "ACTIVE" ? "success" : "neutral"}>{statusText(project.status)}</Status>
                 </div>
-                <h2 className="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">{project.name}</h2>
-                <p className="mt-1 text-indigo-200">{project.customer_name}</p>
+                <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-900">{project.name}</h2>
+                <p className="mt-1 text-slate-600">{project.customer_name}</p>
               </div>
               <div className="lg:text-right">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-indigo-200">Revised contract value (ex VAT)</p>
-                <p className="mt-1 whitespace-nowrap text-4xl font-bold tabular-nums tracking-tight sm:text-5xl">{formatCents(c.revisedContractCents)}</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">Revised contract value (ex VAT)</p>
+                <p className="mt-1 whitespace-nowrap text-3xl font-semibold tabular-nums tracking-tight text-slate-900">{formatCents(c.revisedContractCents)}</p>
               </div>
             </div>
-            <div className="mt-7">
+            <div className="mt-5">
               <ContractBar contract={c.revisedContractCents} committed={c.committedCents} claimable={c.claimableCents} />
               <div className="mt-4 flex flex-wrap gap-x-8 gap-y-2">
-                <LegendDot className="bg-emerald-400" label="Invoiced / committed" value={formatCents(c.committedCents)} />
-                <LegendDot className="bg-amber-300" label="Claimable now" value={formatCents(c.claimableCents)} />
-                <LegendDot className="bg-white/25" label="Not yet approved for billing" value={formatCents(Math.max(0, c.revisedContractCents - c.committedCents - c.claimableCents))} />
+                <LegendDot className="bg-emerald-600" label="Invoiced / committed" value={formatCents(c.committedCents)} />
+                <LegendDot className="bg-amber-500" label="Claimable now" value={formatCents(c.claimableCents)} />
+                <LegendDot className="bg-slate-200" label="Not yet approved for billing" value={formatCents(Math.max(0, c.revisedContractCents - c.committedCents - c.claimableCents))} />
               </div>
             </div>
           </section>
@@ -368,7 +373,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               { tone: "indigo" as const, title: "Commercial approval", text: "What a manager has approved for billing. Only this drives a claim." },
               { tone: "emerald" as const, title: "Billed / committed", text: "What claims already hold, including approved and uncertain claims." },
             ].map((x) => (
-              <div key={x.title} className="flex gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div key={x.title} className="flex gap-3 rounded-xl border border-slate-200 bg-white p-4">
                 <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${BAR_FILL[x.tone]}`} aria-hidden />
                 <div>
                   <p className={`text-sm font-semibold ${BAR_TEXT[x.tone]}`}>{x.title}</p>
@@ -381,18 +386,18 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             Three different things, deliberately not one &ldquo;% complete&rdquo;. Only commercial approval drives a claim.
           </p>
 
-          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_14px_30px_-20px_rgba(15,23,42,0.3)]">
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_14px_30px_-20px_rgba(15,23,42,0.3)]">
             <table className="w-full min-w-[1180px] border-separate border-spacing-0 text-sm">
               <thead>
-                <tr className="text-[11px] font-semibold uppercase tracking-wider">
+                <tr className="text-xs font-semibold uppercase tracking-wider">
                   <th className="sticky left-0 z-10 bg-white" />
-                  <th colSpan={2} className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-right text-slate-500">Contract</th>
+                  <th colSpan={2} className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-right text-slate-600">Contract</th>
                   <th className="border-b border-sky-100 bg-sky-50 px-3 py-2 text-right text-sky-700">Physical</th>
                   <th colSpan={2} className="border-b border-indigo-100 bg-indigo-50 px-3 py-2 text-right text-indigo-700">Commercial</th>
                   <th colSpan={2} className="border-b border-emerald-100 bg-emerald-50 px-3 py-2 text-right text-emerald-700">Billed</th>
-                  <th colSpan={2} className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-right text-slate-500">Position</th>
+                  <th colSpan={2} className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-right text-slate-600">Position</th>
                 </tr>
-                <tr className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
+                <tr className="text-xs font-semibold uppercase tracking-wider text-slate-600">
                   <th className="sticky left-0 z-10 border-b-2 border-slate-300 bg-white px-3 py-3 text-left">Stage</th>
                   <th className="leading-tight border-b-2 border-slate-300 bg-slate-50 px-3 py-3 text-right">Value</th>
                   <th className="leading-tight border-b-2 border-slate-300 bg-slate-50 px-3 py-3 text-right">% of contract</th>
@@ -410,10 +415,10 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                   <tr key={s.id} className="group transition-colors hover:bg-indigo-50/40">
                     <td className="sticky left-0 z-10 min-w-[190px] border-b border-slate-100 bg-white px-3 py-3.5 font-medium text-slate-900 group-hover:bg-indigo-50/40">
                       {s.name}
-                      {s.belowCommitted && <span className="ml-2 align-middle"><Badge tone="warning">approval below billed</Badge></span>}
+                      {s.belowCommitted && <span className="ml-2 align-middle"><Status tone="warning">approval below billed</Status></span>}
                     </td>
                     <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3.5 text-right tabular-nums">{formatCents(s.valueCents)}</td>
-                    <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3.5 text-right tabular-nums text-slate-500">{formatBps(s.shareBps)}</td>
+                    <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3.5 text-right tabular-nums text-slate-600">{formatBps(s.shareBps)}</td>
                     <td className="whitespace-nowrap border-b border-slate-100 bg-sky-50/30 px-3 py-3.5"><PctCell bps={s.reportedBps} tone="sky" /></td>
                     <td className="whitespace-nowrap border-b border-slate-100 bg-indigo-50/30 px-3 py-3.5"><PctCell bps={s.approvedBps} tone="indigo" /></td>
                     <td className="whitespace-nowrap border-b border-slate-100 bg-indigo-50/30 px-3 py-3.5 text-right tabular-nums">{formatCents(s.earnedCents)}</td>
@@ -421,9 +426,9 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                     <td className="whitespace-nowrap border-b border-slate-100 bg-emerald-50/30 px-3 py-3.5"><PctCell bps={s.committedBps} tone="emerald" /></td>
                     <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3.5 text-right">
                       {s.claimableCents > 0 ? (
-                        <span className="inline-block rounded-lg bg-indigo-600 px-2.5 py-1 text-sm font-semibold tabular-nums text-white shadow-sm">{formatCents(s.claimableCents)}</span>
+                        <span className="inline-block rounded-lg bg-indigo-600 px-2.5 py-1 text-sm font-semibold tabular-nums text-white">{formatCents(s.claimableCents)}</span>
                       ) : (
-                        <span className="tabular-nums text-slate-400">{formatCents(s.claimableCents)}</span>
+                        <span className="tabular-nums text-slate-600">{formatCents(s.claimableCents)}</span>
                       )}
                     </td>
                     <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3.5 text-right tabular-nums">{formatCents(s.remainingCents)}</td>
@@ -446,7 +451,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               </tfoot>
             </table>
           </div>
-          <p className="text-xs text-slate-500">Scroll the table sideways on narrow screens — the stage name stays in view.</p>
+          <p className="text-xs text-slate-600">Scroll the table sideways on narrow screens — the stage name stays in view.</p>
 
           <h2 className="text-sm font-semibold text-slate-700">Update progress by stage</h2>
           <div className="grid gap-4 xl:grid-cols-2">
@@ -467,7 +472,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
 
       {tab === "components" && (
         <div className="mt-6 space-y-4">
-          <div className="flex items-start gap-3 rounded-2xl border border-sky-200 bg-sky-50/70 p-4">
+          <div className="flex items-start gap-3 rounded-xl border border-sky-200 bg-sky-50/70 p-4">
             <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-sky-500" aria-hidden />
             <p className="text-sm text-sky-900">
               <span className="font-semibold">Scope allocation is for visibility and later cost control.</span> It never determines the amount of a progress claim — the Schedule of Values does.
@@ -475,7 +480,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
           </div>
           <div className="flex items-baseline justify-between">
             <h2 className="text-base font-semibold text-slate-900">Components / scope</h2>
-            <p className="text-xs text-slate-500">{view.allocations.length} line{view.allocations.length === 1 ? "" : "s"}</p>
+            <p className="text-xs text-slate-600">{view.allocations.length} line{view.allocations.length === 1 ? "" : "s"}</p>
           </div>
           <Table>
             <THead><tr><TH>SKU / description</TH><TH align="right">Qty</TH><TH align="right">Sales value</TH><TH align="right">Estimated cost</TH><TH>Allocated stage</TH></tr></THead>
@@ -493,7 +498,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                     <TD align="right" className="tabular-nums whitespace-nowrap font-medium">{formatCents(a.sales_value_cents)}</TD>
                     <TD align="right" className="tabular-nums whitespace-nowrap text-slate-600">{a.estimated_cost_cents === null ? "—" : formatCents(a.estimated_cost_cents)}</TD>
                     <TD className="whitespace-nowrap">
-                      {stageName ? <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">{stageName}</span> : <span className="text-slate-400">Unallocated</span>}
+                      {stageName ? <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">{stageName}</span> : <span className="text-slate-600">Unallocated</span>}
                     </TD>
                   </TR>
                 );
@@ -521,10 +526,10 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
           <div>
             <div className="mb-2 flex items-baseline justify-between">
               <h2 className="text-base font-semibold text-slate-900">Claims and invoices</h2>
-              <p className="flex items-center gap-3 text-xs text-slate-500">{view.claims.length} claim{view.claims.length === 1 ? "" : "s"}<a href={`#new-claim-${id}`} className="font-medium text-indigo-700 hover:underline">Create a progress claim</a></p>
+              <p className="flex items-center gap-3 text-xs text-slate-600">{view.claims.length} claim{view.claims.length === 1 ? "" : "s"}<a href={`#new-claim-${id}`} className="inline-flex min-h-6 items-center font-medium text-indigo-700 hover:underline">Create a progress claim</a></p>
             </div>
-            {view.claims.length === 0 && <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No claims yet.</p>}
-            {view.claims.length > 0 && <div className="hidden grid-cols-[minmax(8rem,1fr)_16.5rem_11rem_minmax(14rem,1.3fr)] gap-x-4 px-4 pb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500 lg:grid" aria-hidden>
+            {view.claims.length === 0 && <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-600">No claims yet.</p>}
+            {view.claims.length > 0 && <div className="hidden grid-cols-[minmax(8rem,1fr)_16.5rem_11rem_minmax(14rem,1.3fr)] gap-x-4 px-4 pb-1 text-xs font-semibold uppercase tracking-wider text-slate-600 lg:grid" aria-hidden>
               <span>Claim</span><span className="text-right">Amount</span><span>Approval</span><span>Cin7 invoice (as last recorded)</span>
             </div>}
             <div className="space-y-2">
@@ -532,43 +537,44 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                 const plan = claimActionPlan(cl, perm === "admin" ? "admin" : perm === "member" ? "member" : "none");
                 const claimKey = `claim:${cl.id}`;
                 return (
-                  <article key={cl.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                  <article key={cl.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
                     <div className="grid gap-x-4 gap-y-2 lg:grid-cols-[minmax(8rem,1fr)_16.5rem_11rem_minmax(14rem,1.3fr)] lg:items-start">
                       <div>
                         <h3 className="text-base font-semibold text-slate-900">{cl.claim_number}</h3>
-                        <p className="text-xs text-slate-500">{cl.claim_date}{cl.supersedes_claim_id ? ` · supersedes ${view.claims.find((x) => x.id === cl.supersedes_claim_id)?.claim_number ?? "an earlier draft"}` : ""}</p>
+                        <p className="text-xs text-slate-600">{cl.claim_date}{cl.supersedes_claim_id ? ` · supersedes ${view.claims.find((x) => x.id === cl.supersedes_claim_id)?.claim_number ?? "an earlier draft"}` : ""}</p>
                       </div>
                       <div className="lg:text-right">
-                        <span className="sr-only">Amount: </span><span aria-hidden className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500 lg:hidden">Amount</span>
+                        <span className="sr-only">Amount: </span><span aria-hidden className="mb-0.5 block text-xs font-semibold uppercase tracking-wider text-slate-600 lg:hidden">Amount</span>
                         <p className="whitespace-nowrap text-lg font-bold tabular-nums text-slate-900">{formatCents(cl.total_cents)}</p>
-                        <p className="whitespace-nowrap text-xs tabular-nums text-slate-500">{formatCents(cl.subtotal_cents)} ex VAT + {formatCents(cl.tax_cents)} VAT</p>
+                        <p className="whitespace-nowrap text-xs tabular-nums text-slate-600">{formatCents(cl.subtotal_cents)} ex VAT + {formatCents(cl.tax_cents)} VAT</p>
                       </div>
                       <div>
-                        <span className="sr-only">Approval: </span><span aria-hidden className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500 lg:hidden">Approval</span>
-                        <Badge tone={CLAIM_TONE[cl.status] ?? "neutral"}>{cl.status.replace(/_/g, " ")}</Badge>
-                        <p className="mt-1 text-xs">{cl.reserves ? <span className="font-medium text-indigo-700">{cl.status === "FAILED_UNCERTAIN" ? "Stays reserved (outcome uncertain)" : "Reserves value"}</span> : <span className="text-slate-500">No reservation</span>}</p>
+                        <span className="sr-only">Approval: </span><span aria-hidden className="mb-0.5 block text-xs font-semibold uppercase tracking-wider text-slate-600 lg:hidden">Approval</span>
+                        <Status tone={CLAIM_TONE[cl.status] ?? "neutral"}>{statusText(cl.status)}</Status>
+                        <p className="mt-1 text-xs">{cl.reserves ? <span className="font-medium text-indigo-700">{cl.status === "FAILED_UNCERTAIN" ? "Stays reserved (outcome uncertain)" : "Reserves value"}</span> : <span className="text-slate-600">No reservation</span>}</p>
                       </div>
                       <div>
-                        <span className="sr-only">Cin7 invoice: </span><span aria-hidden className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-500 lg:hidden">Cin7 invoice (as last recorded)</span>
-                        <Badge tone={cl.cin7Status.tone}>{cl.cin7Status.label}</Badge>
-                        {cl.cin7Status.invoiceNumber && <span className="ml-1 text-xs text-slate-600">{cl.cin7Status.invoiceNumber}{cl.cin7Status.reconciled ? " · reconciled" : ""}</span>}
+                        <span className="sr-only">Cin7 invoice: </span><span aria-hidden className="mb-0.5 block text-xs font-semibold uppercase tracking-wider text-slate-600 lg:hidden">Cin7 invoice (as last recorded)</span>
+                        <Status tone={cl.cin7Status.tone}>{cl.cin7Status.label}</Status>
+                        {cl.cin7Status.invoiceNumber && <span className="ml-1.5 font-mono text-xs text-slate-700">{cl.cin7Status.invoiceNumber}</span>}
+                        {cl.cin7Status.invoiceNumber && cl.cin7Status.reconciled && <span className="ml-1.5"><Status tone="neutral">Reconciled</Status></span>}
                       </div>
                     </div>
                     <p className="mt-2 border-t border-slate-100 pt-2 text-sm text-slate-700"><span className="font-medium text-slate-900">Next: </span>{claimNextStep({ status: cl.status, cin7Kind: cl.cin7Status.kind, stageRole: cl.approval?.stageRole, canApproveHere: plan.approveHere, canAct: perm !== "loading" })}</p>
-                    {cl.cin7Status.detail && !["DRAFT_CREATED", "AUTHORISED"].includes(cl.cin7Status.kind) && <p className="mt-2 text-xs text-slate-500">{cl.cin7Status.detail}</p>}
+                    {cl.cin7Status.detail && !["DRAFT_CREATED", "AUTHORISED"].includes(cl.cin7Status.kind) && <p className="mt-2 text-xs text-slate-600">{cl.cin7Status.detail}</p>}
                     <div className="mt-2">
                       <div className="flex flex-wrap items-center gap-1">
                             {plan.submit && <Button size="sm" variant="secondary" onClick={() => run(() => submitClaimForApprovalAction(id, cl.id), "Claim submitted for approval.", claimKey, { success: (v) => `${cl.claim_number} submitted for approval.${statusNote(v, cl.id)}`, confirm: (v) => ["READY_FOR_APPROVAL", ...APPROVED_OR_LATER].includes(claimStatus(v, cl.id) ?? "") })} loading={acts.isPending(claimKey)} disabled={isWorking}>Submit</Button>}
                             {plan.openInApprovals && cl.approval && <Link href={`/approvals/${cl.approval.requestId}`} className="inline-flex h-8 items-center rounded-md border border-indigo-200 bg-indigo-50 px-3 text-xs font-medium text-indigo-800 hover:bg-indigo-100">Open in Approvals</Link>}
                             {plan.approveHere && <Button size="sm" onClick={() => run(() => approveClaimAction(id, cl.id), "Claim approved — value reserved. Nothing was sent to Cin7.", claimKey, { success: (v) => `${cl.claim_number} approved — value reserved. Nothing was sent to Cin7.${statusNote(v, cl.id)}`, confirm: (v) => APPROVED_OR_LATER.includes(claimStatus(v, cl.id) ?? ""), exclusive: true })} loading={acts.isPending(claimKey)} disabled={isWorking}>Approve</Button>}
-                            {plan.waitingText && <span className="self-center text-xs text-slate-500">{plan.waitingText}</span>}
+                            {plan.waitingText && <span className="self-center text-xs text-slate-600">{plan.waitingText}</span>}
                             {plan.recalculate && <Button size="sm" variant="secondary" onClick={() => run(() => recalculateStaleDraftAction(id, cl.id), "Recalculated: a new draft was created and the old one superseded.", claimKey, { confirm: (v) => v.claims.some((x) => x.supersedes_claim_id === cl.id) })} disabled={isWorking}>Recalculate</Button>}
                             {plan.cancel && <Button size="sm" variant="ghost" onClick={() => run(() => cancelDraftClaimAction(id, cl.id), cl.status === "READY_FOR_APPROVAL" ? "Claim withdrawn." : "Claim cancelled.", claimKey, { confirm: (v) => claimStatus(v, cl.id) === "CANCELLED_BEFORE_WRITE", exclusive: true })} disabled={isWorking}>{plan.cancelLabel}</Button>}
                           </div>
                       <Feedback k={claimKey} errorAction={cl.approval && SOD_REFUSAL.test(acts.stateOf(claimKey).kind === "error" ? (acts.stateOf(claimKey) as { message: string }).message : "") ? <Link href={`/approvals/${cl.approval.requestId}`} className="font-medium underline">Open this claim in Approvals to decide it with a written override</Link> : undefined} />
                     </div>
                     <details className="mt-2 text-xs">
-                      <summary className="cursor-pointer text-slate-600">Approval history</summary>
+                      <summary className="cursor-pointer py-1.5 text-slate-600">Approval history</summary>
                       <div className="mt-1"><ApprovalHistory docType="CLAIM" docId={cl.id} label="Approval history" /></div>
                     </details>
                   </article>
@@ -582,8 +588,8 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               <Cin7PostingPanel key={commercialNow.projectId} view={view} run={run} working={isWorking} boot={commercialNow.posting} />
             </>
           ) : (
-            <div role="status" aria-live="polite" aria-busy="true" data-testid="commercial-loading" className="min-h-40 rounded-2xl border border-slate-200 bg-white p-5">
-              <p className="text-sm text-slate-500">Loading the Cin7 Sale and invoice status…</p>
+            <div role="status" aria-live="polite" aria-busy="true" data-testid="commercial-loading" className="min-h-40 rounded-xl border border-slate-200 bg-white p-5">
+              <p className="text-sm text-slate-600">Loading the Cin7 Sale and invoice status…</p>
               <Block className="mt-4 h-24 w-full" />
             </div>
           )}
@@ -592,17 +598,17 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <PanelTitle>Create progress claim</PanelTitle>
-                <p className="mt-1 text-sm text-slate-500">Preview first. Creating a claim saves a local draft only — it does not create anything in Cin7.</p>
+                <p className="mt-1 text-sm text-slate-600">Preview first. Creating a claim saves a local draft only — it does not create anything in Cin7.</p>
               </div>
               <span className="whitespace-nowrap rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">Not sent to Cin7</span>
             </div>
             <fieldset className="mt-4 rounded-lg border border-slate-200 p-3">
-              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Billing stages to include</legend>
+              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-600">Billing stages to include</legend>
               <div className="space-y-1">
                 {view.stages.map((s) => {
                   const ok = s.claimableCents > 0;
                   return (
-                    <label key={s.id} className={`flex items-center gap-3 text-sm ${ok ? "text-slate-800" : "text-slate-400"}`}>
+                    <label key={s.id} className={`flex items-center gap-3 text-sm ${ok ? "text-slate-800" : "text-slate-600"}`}>
                       <input type="checkbox" disabled={!ok} checked={chosen.includes(s.id)} onChange={(e) => { setChosen((cur) => (e.target.checked ? [...cur, s.id] : cur.filter((x) => x !== s.id))); if (!e.target.checked) setAmounts((m) => { const n = { ...m }; delete n[s.id]; return n; }); setPreview(null); setPreviewError(null); }} />
                       <span className="flex-1">{s.name}</span>
                       {ok && chosen.includes(s.id) && (
@@ -614,7 +620,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                   );
                 })}
               </div>
-              {chosen.length === 0 && <p className="mt-2 text-xs text-slate-500">Tick the stage(s) this claim covers, for example only the deposit. To claim less than the full amount, enter it beside the stage; leave it blank to claim everything claimable.</p>}
+              {chosen.length === 0 && <p className="mt-2 text-xs text-slate-600">Tick the stage(s) this claim covers, for example only the deposit. To claim less than the full amount, enter it beside the stage; leave it blank to claim everything claimable.</p>}
             </fieldset>
             <div className="mt-4 flex flex-wrap gap-2">
               <Button variant="secondary" size="sm" onClick={doPreview} loading={isWorking} disabled={chosen.length === 0 || (!!preview && pvState === "CURRENT")}>{!preview ? "Preview claim" : pvState === "STALE" ? "Refresh preview" : "Preview is up to date"}</Button>
@@ -627,18 +633,18 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             {preview && pvState === "STALE" && <div className="mt-3"><Alert tone="warning">This preview is out of date: the project changed after it was calculated. Refresh the preview before saving a draft.</Alert></div>}
             {preview && (
               <div className="mt-5 space-y-4">
-                <p className="text-sm font-medium text-slate-700">Claim {preview.claimNumber} <span className="font-normal text-slate-500">· preview only, nothing saved yet</span></p>
+                <p className="text-sm font-medium text-slate-700">Claim {preview.claimNumber} <span className="font-normal text-slate-600">· preview only, nothing saved yet</span></p>
                 <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-white p-5">
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-indigo-700">Currently claimable (ex VAT)</p>
+                  <div className="rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-white p-5">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-indigo-700">Currently claimable (ex VAT)</p>
                     <p className="mt-2 whitespace-nowrap text-3xl font-bold tabular-nums tracking-tight text-indigo-900">{formatCents(preview.calc.subtotalCents)}</p>
                   </div>
-                  <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">VAT ({formatBps(preview.taxRateBps)})</p>
+                  <div className="rounded-xl border border-slate-200 bg-white p-5">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">VAT ({formatBps(preview.taxRateBps)})</p>
                     <p className="mt-2 whitespace-nowrap text-2xl font-bold tabular-nums tracking-tight text-slate-900">{formatCents(preview.calc.taxCents)}</p>
                   </div>
-                  <div className="rounded-2xl border border-slate-200 bg-white p-5">
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Total (inc VAT)</p>
+                  <div className="rounded-xl border border-slate-200 bg-white p-5">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">Total (inc VAT)</p>
                     <p className="mt-2 whitespace-nowrap text-2xl font-bold tabular-nums tracking-tight text-slate-900">{formatCents(preview.calc.totalCents)}</p>
                   </div>
                 </div>
@@ -743,7 +749,7 @@ function ProgressForm({
         ] as const).map(([label, bps, tone]) => (
           <div key={label}>
             <div className="flex items-baseline justify-between gap-2">
-              <span className="truncate text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</span>
+              <span className="truncate text-xs font-medium uppercase tracking-wide text-slate-600">{label}</span>
               <span className={`text-sm font-semibold tabular-nums ${BAR_TEXT[tone]}`}>{formatBps(bps)}</span>
             </div>
             <Meter bps={bps} tone={tone} className="mt-1.5 w-full" />
@@ -756,14 +762,14 @@ function ProgressForm({
           <div className="space-y-2 rounded-md border border-sky-200 bg-sky-50/40 p-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-sky-800">Report physical progress</p>
             <Input label={`Physical completion (%) — now ${formatBps(stage.reportedBps)}`} value={reported} onChange={(e) => setReported(e.target.value)} inputMode="decimal" />
-            <p className="text-xs text-slate-500">Informational. Does not change commercial approval and never creates or changes a claim.</p>
+            <p className="text-xs text-slate-600">Informational. Does not change commercial approval and never creates or changes a claim.</p>
             <Button size="sm" variant="secondary" disabled={disabled || reported === currentReported} onClick={() => { setFieldErr({}); void finish(onPhysical(reported, comment)); }}>Record physical progress</Button>
           </div>
           {perm === "admin" ? (
             <div className="space-y-2 rounded-md border border-indigo-200 bg-indigo-50/40 p-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-indigo-800">Approve commercial progress (owner/admin)</p>
               <Input label={`Approved commercial completion (%) — now ${formatBps(stage.approvedBps)}, physical ${formatBps(stage.reportedBps)}`} value={approved} onChange={(e) => { setApproved(e.target.value); setFieldErr((f) => ({ ...f, approved: undefined })); }} error={fieldErr.approved} inputMode="decimal" />
-              <p className="text-xs text-slate-500">This is the only completion that drives a claim. Recording it creates no claim and sends nothing to Cin7.</p>
+              <p className="text-xs text-slate-600">This is the only completion that drives a claim. Recording it creates no claim and sends nothing to Cin7.</p>
               <Button size="sm" disabled={disabled} onClick={submitCommercial}>Approve commercial progress</Button>
             </div>
           ) : perm === "member" ? (
@@ -774,7 +780,7 @@ function ProgressForm({
       <Feedback k={`stage:${stage.id}`} />
       {stage.history.length > 0 && (
         <details className="mt-3 text-xs text-slate-600">
-          <summary className="cursor-pointer">Progress history ({stage.history.length})</summary>
+          <summary className="cursor-pointer py-1.5">Progress history ({stage.history.length})</summary>
           <ul className="mt-2 space-y-1">
             {stage.history.map((h) => (
               <li key={h.id}>

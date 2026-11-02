@@ -58,7 +58,7 @@ export function P0ProjectPanel() {
         <PanelTitle>Prepare a disposable P0 project</PanelTitle>
         <Button variant="secondary" size="sm" onClick={() => setOpen(!open)}>{open ? "Close" : "Open"}</Button>
       </div>
-      <p className="mt-1 text-sm text-slate-500">A separate acceptance-test project from existing Cin7 products with free stock. Toolbox only: it creates nothing in Cin7 and changes no existing quotation or project.</p>
+      <p className="mt-1 text-sm text-slate-600">A separate acceptance-test project from existing Cin7 products with free stock. Toolbox only: it creates nothing in Cin7 and changes no existing quotation or project.</p>
       {open && (
         <div className="mt-4 space-y-4">
           <div className="grid gap-3 md:grid-cols-3">
@@ -93,7 +93,7 @@ export function P0ProjectPanel() {
                       {found.products.map((p) => (
                         <TR key={p.sku}>
                           <TD className="font-mono">{p.sku}</TD><TD>{p.name}</TD><TD align="right" className="tabular-nums">{p.available}</TD>
-                          <TD className="text-xs text-slate-500">synced {new Date(p.syncedAt).toLocaleDateString()}</TD>
+                          <TD className="text-xs text-slate-600">synced {new Date(p.syncedAt).toLocaleDateString()}</TD>
                           <TD><Button size="sm" variant="secondary" disabled={chosen.length >= P0_MAX_PRODUCTS || chosen.some((c) => c.sku === p.sku)} onClick={() => setChosen([...chosen, { sku: p.sku, name: p.name, quantity: "2" }])}>Select</Button></TD>
                         </TR>
                       ))}
@@ -111,7 +111,7 @@ export function P0ProjectPanel() {
                     <Button size="sm" variant="secondary" onClick={() => setChosen(chosen.filter((_, j) => j !== i))}>Remove</Button>
                   </div>
                 ))}
-                <p className="text-xs text-slate-500">Products are carried at R0 (quantity only). Free stock is re-checked live in Cin7 when you create the project.</p>
+                <p className="text-xs text-slate-600">Products are carried at R0 (quantity only). Free stock is re-checked live in Cin7 when you create the project.</p>
               </div>
             )}
           </div>

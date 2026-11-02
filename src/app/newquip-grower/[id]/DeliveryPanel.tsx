@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
-import { Badge } from "@/components/ui/Badge";
+import { Status, statusText } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { formatSast } from "@/lib/approvals/time";
@@ -45,7 +45,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
     try { const r = await fn(); if (r.ok) { setNote(done); await reload(); } else setErr(r.error ?? "Failed."); } finally { setBusy(false); }
   };
 
-  if (!docs || !d) return <Panel><PanelTitle>{section === "quotation" ? "Issue and send the quotation" : "Customer response"}</PanelTitle><p className="mt-2 text-sm text-slate-500">{err ?? "Loading…"}</p></Panel>;
+  if (!docs || !d) return <Panel><PanelTitle>{section === "quotation" ? "Issue and send the quotation" : "Customer response"}</PanelTitle><p className="mt-2 text-sm text-slate-600">{err ?? "Loading…"}</p></Panel>;
   if (!docs.available || !d.available) return <Panel><PanelTitle>Customer quotation</PanelTitle><Alert tone="info">Sending a quotation to the customer becomes available once the database update for customer quotations (migration 0115) has been applied.</Alert></Panel>;
   const latest = docs.documents[0];
   const split = (s: string) => s.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
@@ -53,8 +53,8 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
   const statusTone = d.status === "CUSTOMER_ACCEPTED" ? "success" : d.status === "CUSTOMER_DECLINED" || d.status === "CHANGES_REQUESTED" ? "warning" : "neutral";
   return (
     <Panel>
-      <div className="flex items-center gap-2"><PanelTitle>{section === "quotation" ? "Issue and send the quotation" : "Customer response"}</PanelTitle><Badge tone={statusTone}>{d.statusLabel}</Badge></div>
-      <p className="mt-1 text-xs text-slate-500">Manager approval lets the quotation be issued. It is not the customer&apos;s acceptance: a Project for a new quotation needs the customer&apos;s recorded acceptance.</p>
+      <div className="flex items-center gap-2"><PanelTitle>{section === "quotation" ? "Issue and send the quotation" : "Customer response"}</PanelTitle><Status tone={statusTone}>{d.statusLabel}</Status></div>
+      <p className="mt-1 text-xs text-slate-600">Manager approval lets the quotation be issued. It is not the customer&apos;s acceptance: a Project for a new quotation needs the customer&apos;s recorded acceptance.</p>
       {err && <Alert tone="danger">{err}</Alert>}
       {note && <Alert tone="success">{note}</Alert>}
 
@@ -73,7 +73,7 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
       )}
       {docs.canIssue && !d.accepted && (
         <div className="mt-3 space-y-2">
-          {!d.requiresAcceptance ? null : <p className="text-xs text-slate-500">The billing schedule you choose here is printed on the quotation and is the one the Project will use once the customer accepts.</p>}
+          {!d.requiresAcceptance ? null : <p className="text-xs text-slate-600">The billing schedule you choose here is printed on the quotation and is the one the Project will use once the customer accepts.</p>}
           {!latest && <ScheduleChooser contractCents={contractCents} onChange={setChoice} />}
           <Button type="button" variant="secondary" loading={busy} disabled={!latest && !resolveScheduleChoice(choice).ok} onClick={() => void run(() => issueQuoteDocumentAction(quoteId, choice), latest ? "Checked: the PDF is current (a new version is created only if an input changed)." : "Quotation PDF generated.")}>
             {latest ? "Re-check / issue a new version if inputs changed" : "Generate customer quotation PDF"}
@@ -101,13 +101,13 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
             return r.ok && r.data ? { ok: true } : r;
           }, "Send recorded. See the history below for the outcome.")}>{resendOf ? "Send again" : "Send quotation to customer"}</Button>
         </div>
-      ) : <p className="mt-2 text-sm text-slate-500">{d.status === "CUSTOMER_ACCEPTED" ? "The customer has accepted; nothing further to send." : "Issue the quotation PDF first. Only a Rep can send it."}</p>}
+      ) : <p className="mt-2 text-sm text-slate-600">{d.status === "CUSTOMER_ACCEPTED" ? "The customer has accepted; nothing further to send." : "Issue the quotation PDF first. Only a Rep can send it."}</p>}
       {d.sends.length > 0 && (
         <ul className="mt-3 divide-y rounded-md border border-slate-200 text-sm" data-testid="send-history">
           {d.sends.map((s) => (
             <li key={s.id} className="space-y-1 p-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span><Badge tone={s.status === "ACCEPTED" ? "success" : s.status === "FAILED" ? "danger" : "warning"}>{s.status}</Badge> {SEND_LABEL[s.status]} · {formatSast(s.at)} · by {s.sentBy}</span>
+                <span><Status tone={s.status === "ACCEPTED" ? "success" : s.status === "FAILED" ? "danger" : "warning"}>{statusText(s.status)}</Status> {SEND_LABEL[s.status]} · {formatSast(s.at)} · by {s.sentBy}</span>
                 <span className="flex gap-2">
                   {s.status === "FAILED" && d.canSend && <Button type="button" variant="secondary" loading={busy} onClick={() => void run(() => retryQuoteSendAction(quoteId, s.id), "Retry recorded.")}>Retry</Button>}
                   {s.status === "ACCEPTED" && d.canSend && <Button type="button" variant="secondary" onClick={() => { setResendOf(s.id); setKey(newKey()); setReviewed(false); }}>Send again…</Button>}
