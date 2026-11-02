@@ -1,6 +1,6 @@
 # NewQuip: production-mode runtime verification of the changed server-action modules
 
-Scope: `src/app/approvals/actions.ts` and `src/app/projects/variation-billing-actions.ts` (both `"use server"`), as built by `next build` and served by `next start` (Next.js 16.4.3), head `e18c8a4`+. Local fixtures only: no hosted Supabase, no Cin7, no Xero, no email, no writes.
+Scope: `src/app/approvals/actions.ts` and `src/app/projects/variation-billing-actions.ts` (both `"use server"`), as built by `next build` and served by `next start` (Next.js 16.4.3), head `a2dd772`. Local fixtures only: no hosted Supabase, no Cin7, no Xero, no email, no writes.
 
 ## Method
 
@@ -12,7 +12,7 @@ Scope: `src/app/approvals/actions.ts` and `src/app/projects/variation-billing-ac
 
 | Area | Observed in the production server |
 |---|---|
-| Module load | every exported action of both modules that the build registers answers with a handled `{ok, ...}` (no 500, no module-load failure): 13 approvals + 6 variation-billing exports minus the two below |
+| Module load | every exported action of both modules that the build registers answers with a handled `{ok, ...}` (no 500, no module-load failure): 17 of the 19 exported actions (13 approvals + 6 variation-billing; the other two are listed under Limits) |
 | Not signed in | 307 to `/login` (middleware) |
 | Module not allowed | projects: 307 to `/?blocked=%2Fprojects` (middleware gate); approvals: `{ok:false, error:"You don't have access to this feature."}` |
 | Not an owner/admin | start billing: "Only an org owner or admin can start variation billing."; amend schedule: "...can amend a variation billing schedule."; approval settings: "Only a manager can change approval settings." |
@@ -26,4 +26,4 @@ Scope: `src/app/approvals/actions.ts` and `src/app/projects/variation-billing-ac
 - Fixture data and a fixture identity, not the hosted database, real RLS, a real Supabase session or MFA. It proves the built modules load and respond correctly in a production server; it does not replace authenticated UAT on the Preview.
 - `submitDocumentForApprovalAction` and `markNotificationReadAction` are exported but referenced by nothing, and are absent from this build's server-reference manifest, so they cannot be invoked over HTTP. They are covered by unit tests only (this predates this wave).
 - Negative controls run: adding `export const X = 1` to `variation-billing-actions.ts` makes `next build` itself FAIL in this Next version ("Only async functions are allowed to be exported in a 'use server' file"); a type-only re-export (`export type { T } from`) builds and runs fine here because it is erased. The earlier production outages predate this Next version's build-time check; keep the rule, and keep running a request check after touching an actions file.
-- The harness scripts are not committed (scratch tooling); the method above is enough to rebuild them.
+- The harness scripts are not committed (scratch tooling), so a reviewer cannot re-run the counts without rebuilding them from the method above. It was last run on the build of the head named at the top.
