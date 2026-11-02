@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
-import { QUOTES_MODULE } from "@/app/module-nav";
+import { SOLUTION_BUILDER_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
 import type { BadgeTone } from "@/components/ui/Badge";
@@ -41,7 +41,7 @@ export default function NewquipGrowerPage() {
 
   return (
     <main className={pageContainerClass("data")}>
-      <ModuleHeader variant="workspace" module={QUOTES_MODULE}>NewQuip Agri Supplies — Grower House quotes</ModuleHeader>
+      <ModuleHeader variant="workspace" module={SOLUTION_BUILDER_MODULE}>NewQuip Agri Supplies — Grower House quotes</ModuleHeader>
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-3xl text-sm text-slate-600">
           Grower House Template v1 → configuration → estimator review → quote → manager approval → accepted baseline → Project.

@@ -1,5 +1,6 @@
 "use client";
 
+import { DisabledReason } from "@/components/ApprovalDisabledReason";
 import { useEffect, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
@@ -59,6 +60,13 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
     if (c) { picked = { name: c.name!, email: c.email, origin: "Cin7 contact" }; input = { source: "CIN7_CONTACT", contactIndex: c.i }; }
   }
   const blocked = !v.available ? null : !s ? "Select the Cin7 customer and quotation contact in Step 1 (Customer & site) first." : null;
+  const sendWhy = loading ? "Sending is in progress. Please wait."
+    : !canAct ? "Only a Rep can record the price confirmation and send the quote to the Estimator."
+    : !ready ? "The quote must be READY before the amount can be confirmed (see the readiness items)."
+    : !amountLabel ? "The quote total is not available yet, so there is no amount to confirm."
+    : v.available && !s ? "Select the Cin7 customer and quotation contact in Step 1 (Customer & site) first."
+    : !input ? "Choose a confirmation contact above (for an alternative contact enter a name and a reason)."
+    : undefined;
   const radio = "flex cursor-pointer items-start gap-2 rounded-md border p-2 text-sm";
 
   return (
@@ -100,8 +108,9 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
         <p>Pre-approval amount confirmed: <b>{amountLabel ? `${amountLabel} ex VAT` : "not available yet"}</b></p>
         <p>Confirmation contact: <b>{picked ? `${picked.name}${picked.email ? ` <${picked.email}>` : ""}` : "—"}</b>{picked && <span className="text-slate-600"> · {picked.origin}</span>}</p>
         <div className="mt-2">
-          <Button loading={loading} disabled={!canAct || !ready || !amountLabel || !input || (v.available && !s)} onClick={() => input && onConfirm(input)}>Record pre-approval price confirmation &amp; send to Estimator</Button>
+          <Button className="h-auto! max-w-full whitespace-normal! py-2 text-left" loading={loading} aria-describedby={sendWhy ? "send-estimator-why" : undefined} disabled={!canAct || !ready || !amountLabel || !input || (v.available && !s)} onClick={() => input && onConfirm(input)}>Record pre-approval price confirmation &amp; send to Estimator</Button>
         </div>
+        {!recorded && <div className="mt-1"><DisabledReason id="send-estimator-why">{sendWhy}</DisabledReason></div>}
         {!ready && <p className="mt-1 text-xs text-amber-700">The quote must be READY before the amount can be confirmed.</p>}
         {choice === "default" && !quotationContact && s && <p className="mt-1 text-xs text-amber-700">No quotation contact is chosen yet: choose one in Step 1, or pick a contact above.</p>}
       </div>

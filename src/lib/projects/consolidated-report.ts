@@ -6,6 +6,7 @@
 //   * REMAINING CONTRACT VALUE = revised contract - everything invoiced in Cin7 (what is still to be billed in total);
 //   * CLAIMABLE NOW           = what the approved progress currently allows to be claimed (a subset of the remaining value).
 // Invoiced = Cin7 invoices that exist (posting CREATED or RECONCILED), ex VAT. Unknown stays unknown, never zero.
+import { formatZarCents } from "../format-money";
 
 export interface ReportClaim { claimNumber: string; status: string; subtotalCents: number; totalCents: number; invoiceNumber: string | null }
 export interface ReportInvoice { invoiceNumber: string | null; amountExVatCents: number; totalCents: number; state: string }
@@ -51,7 +52,7 @@ export function buildConsolidatedCommercial(scopes: readonly ReportScopeInput[])
 
   const lines: ConsolidatedScopeLine[] = unique.map((s) => {
     const invoicedCents = s.invoices.reduce((n, i) => n + i.amountExVatCents, 0);
-    if (invoicedCents > s.contractCents) warnings.push(`${s.label}: invoiced ${(invoicedCents / 100).toFixed(2)} exceeds its contract ${(s.contractCents / 100).toFixed(2)}.`);
+    if (invoicedCents > s.contractCents) warnings.push(`${s.label}: invoiced ${formatZarCents(invoicedCents)} exceeds its contract ${formatZarCents(s.contractCents)}.`);
     if (!s.billingStarted && s.scope === "VARIATION") warnings.push(`${s.label}: approved but billing has not started, so it is in the contract value but not yet invoiceable.`);
     return {
       scope: s.scope, label: s.label, projectId: s.projectId, contractCents: s.contractCents, invoicedCents, invoiceNumbers: s.invoices.map((i) => i.invoiceNumber ?? "(number pending)"),

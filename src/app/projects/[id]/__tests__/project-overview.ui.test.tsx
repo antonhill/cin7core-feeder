@@ -88,11 +88,33 @@ describe("Executive overview - populated", () => {
     expect(onOpenTab).toHaveBeenCalledWith("claims");
   });
 
+  it("D4 F-08: each Needs-attention row stacks chip, text and link below sm (and only lays them out in a row from sm up)", async () => {
+    renderIt();
+    await screen.findByTestId("overview");
+    const rows = within(screen.getByTestId("exceptions")).getAllByRole("listitem");
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) { expect(r.className).toContain("flex-col"); expect(r.className).toContain("sm:flex-row"); }
+  });
+
   it("reloads when the project changes (refreshKey)", async () => {
     const { rerender } = renderIt({ refreshKey: "k1" });
     await screen.findByTestId("overview");
     rerender(<ProjectOverview projectId="p-base" refreshKey="k2" onOpenTab={vi.fn()} />);
     await waitFor(() => expect(overviewAction).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("Executive overview - D4 F-11 contract group", () => {
+  beforeEach(() => { overviewAction.mockResolvedValue(dataOf()); });
+  it("standing alone it still shows the contract group; with the summary above (contractShownAbove) it does not repeat it", async () => {
+    const { unmount } = renderIt();
+    await screen.findByTestId("overview");
+    for (const id of ["original", "variations", "revised"]) expect(screen.getByTestId(`kpi-${id}`)).toBeTruthy();
+    unmount();
+    render(<ProjectOverview contractShownAbove projectId="p-base" refreshKey="k1" onOpenTab={vi.fn() as never} />);
+    await screen.findByTestId("overview");
+    for (const id of ["original", "variations", "revised"]) expect(screen.queryByTestId(`kpi-${id}`)).toBeNull();
+    expect(screen.getByTestId("kpi-billed").textContent).toContain(formatCents(R(10_572_000)));
   });
 });
 

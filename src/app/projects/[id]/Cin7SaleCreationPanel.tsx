@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import type { Reconciled } from "@/components/ui/action-feedback";
 import { Feedback, type RunFn } from "./feedback-context";
+import { DisabledReason } from "./DisabledReason";
 import { Status, statusText } from "@/components/ui/Status";
 import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -26,6 +27,7 @@ import { getCin7ReferenceOptionsAction, type Cin7ReferenceOptions, createCin7Sal
 const TONE: Record<string, BadgeTone> = { PENDING: "warning", CREATED: "warning", RECONCILED: "success", FAILED_CONFIRMED_NO_WRITE: "warning", FAILED_UNCERTAIN: "danger" };
 
 export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: ProjectView; run: RunFn; working: boolean; boot: Cin7SaleCreationStatus | null }) {
+  const uid = useId(); // ids are unique per mounted workspace: several can be on one page (embedded per variation, hidden-but-mounted)
   const projectId = view.project.id;
   const [st, setSt] = useState<Cin7SaleCreationStatus | null>(boot); // the initial record arrives with the tab (one round trip for the whole Commercial tab)
   // A disposable P0 project already knows its customer and location (entered when it was prepared); everything else stays explicit.
@@ -96,6 +98,19 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
     });
   const rereading = checking || uncertain;
   const canCreate = gates.isManager && gates.writesEnabled && !working && !rereading && !creation && st.blockers.length === 0 && customer.trim() && location.trim() && account.trim() && taxRule.trim() && confirmed;
+  // Why Create is disabled, in the order a person would fix it. Only facts the viewer already has (the gates and the form they are filling in); a non-manager is told only that a manager
+  // is needed, never the blockers that a manager would see.
+  const createReasons: string[] = [];
+  if (!gates.isManager) createReasons.push("Only a manager can create the Cin7 Sales Order.");
+  else {
+    if (!gates.writesEnabled) createReasons.push("Cin7 writes are switched off for this organisation.");
+    if (working) createReasons.push("Another action is in progress.");
+    if (rereading) createReasons.push("The Cin7 status is being re-read.");
+    if (st.blockers.length > 0) createReasons.push(`${st.blockers.length === 1 ? "A scope item is" : `${st.blockers.length} scope items are`} not resolved yet (see above).`);
+    const missing = [["customer name", customer], ["location", location], ["revenue account", account], ["tax rule", taxRule]].filter(([, v]) => !v.trim()).map(([k]) => k);
+    if (missing.length > 0) createReasons.push(`Enter the Cin7 ${missing.join(", ")}.`);
+    if (!confirmed) createReasons.push("Tick the confirmation above.");
+  }
   const unresolved = st.scopeItems.filter((i) => i.mapping.status === "UNMAPPED" && !i.resolution);
 
   return (
@@ -169,8 +184,9 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
             {creation.cin7_sale_number && <span>Cin7 {creation.cin7_sale_number}</span>}</div>
           {creation.last_error_message && <Alert tone={creation.creation_state === "FAILED_UNCERTAIN" ? "danger" : "warning"}>{creation.last_error_message}</Alert>}
           {creation.creation_state !== "RECONCILED" && creation.creation_state !== "FAILED_CONFIRMED_NO_WRITE" && (
-            <Button size="sm" variant="secondary" disabled={working || !gates.isManager} onClick={() => after(() => reconcileCin7SaleCreationAction(projectId), "sale:reconcile")}>Reconcile with Cin7 (read-only)</Button>
+            <Button size="sm" variant="secondary" disabled={working || !gates.isManager} aria-describedby={working || !gates.isManager ? `${uid}-sale-reconcile-reason` : undefined} onClick={() => after(() => reconcileCin7SaleCreationAction(projectId), "sale:reconcile")}>Reconcile with Cin7 (read-only)</Button>
           )}
+          {creation.creation_state !== "RECONCILED" && creation.creation_state !== "FAILED_CONFIRMED_NO_WRITE" && (working || !gates.isManager) && <DisabledReason id={`${uid}-sale-reconcile-reason`}>{!gates.isManager ? "Only a manager can reconcile the Sales Order with Cin7." : "Reconcile is disabled while another action is in progress."}</DisabledReason>}
           <Feedback k="sale:reconcile" />
           <Feedback k="sale:create" />{/* the Create form is gone once a record exists, so a "recorded" message about it must show here */}
           {creation.creation_state === "FAILED_UNCERTAIN" && <p className="text-xs text-slate-600">Do not retry. Reconcile first; if a Sale exists but is incomplete, complete or void it in Cin7. An administrator can use the recovery option on the Cin7 Core panel only if the existing Sale is verifiably this project&apos;s.</p>}
@@ -218,9 +234,9 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
             )}
           </details>
           <label className="flex items-start gap-2 text-sm text-slate-800"><input type="checkbox" className="mt-1" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} /> <span>I confirm I want to create one Cin7 Sales Order for this project. This creates a real order in the connected Cin7 instance, and only one can ever be created for a project.</span></label>
-          {!gates.writesEnabled && <p className="text-xs text-slate-600">Cin7 writes are switched off on this deployment; the button stays disabled.</p>}
           {rereading && <Alert tone="warning">{checking ? "Checking the current Cin7 status. Create stays disabled until the record has been re-read." : "The outcome of the last request could not be confirmed and the status could not be re-read. Reload the page. Create stays disabled until the status has been read."}</Alert>}
-          <Button disabled={!canCreate} onClick={() => after(() => createCin7SaleAction(projectId, { confirmation: CREATE_CONFIRMATION_TEXT, customerName: customer, location, revenueAccount: account, cin7TaxRule: taxRule }), "sale:create")}>Create Sales Order in Cin7</Button>
+          <Button disabled={!canCreate} aria-describedby={!canCreate && createReasons.length > 0 ? `${uid}-sale-create-reason` : undefined} onClick={() => after(() => createCin7SaleAction(projectId, { confirmation: CREATE_CONFIRMATION_TEXT, customerName: customer, location, revenueAccount: account, cin7TaxRule: taxRule }), "sale:create")}>Create Sales Order in Cin7</Button>
+          {!canCreate && createReasons.length > 0 && <DisabledReason id={`${uid}-sale-create-reason`}>Create is disabled: {createReasons.join(" ")}</DisabledReason>}
           <Feedback k="sale:create" />
         </div>
       )}

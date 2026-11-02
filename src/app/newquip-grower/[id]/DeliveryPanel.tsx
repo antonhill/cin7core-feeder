@@ -10,6 +10,7 @@ import { formatSast } from "@/lib/approvals/time";
 import { getQuoteDocumentsAction, issueQuoteDocumentAction, type QuoteDocumentsView } from "../document-actions";
 import { getQuoteDeliveryAction, retryQuoteSendAction, sendQuoteToCustomerAction, type DeliveryView } from "../delivery-actions";
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
+import { DisabledReason } from "@/components/ApprovalDisabledReason";
 import { ScheduleChooser } from "./ScheduleChooser";
 
 // The customer-facing half of an APPROVED quotation: issue the PDF, review it, send it (Rep), then record the customer's response. Manager approval authorises issue;
@@ -50,6 +51,12 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
   const latest = docs.documents[0];
   const split = (s: string) => s.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
   const altNeeded = d.policy.production ? [...split(to), ...split(cc)].filter((a) => !d.contactEmails.includes(a.toLowerCase())) : [];
+  const sendWhy = busy ? "Another action is in progress. Please wait."
+    : !reviewed ? "Tick the box confirming you opened the PDF and the recipients are right."
+    : split(to).length === 0 ? "Enter at least one recipient in To."
+    : altNeeded.length > 0 && altReason.trim().length < 5 ? "Give a reason (at least 5 characters) for using an address that is not a Cin7 contact."
+    : !!resendOf && resendReason.trim().length < 3 ? "Give a reason (at least 3 characters) for sending again."
+    : undefined;
   const statusTone = d.status === "CUSTOMER_ACCEPTED" ? "success" : d.status === "CUSTOMER_DECLINED" || d.status === "CHANGES_REQUESTED" ? "warning" : "neutral";
   return (
     <Panel>
@@ -95,11 +102,12 @@ export function DeliveryPanel({ quoteId, contractCents, onGate, section }: { quo
           {resendOf && <label className="flex flex-col gap-1 text-sm"><span className="font-medium text-slate-700">Reason for sending again</span><input className={`${inputCls} w-full`} value={resendReason} onChange={(e) => setResendReason(e.target.value)} /></label>}
           {altNeeded.length > 0 && <label className="flex flex-col gap-1 text-sm"><span className="font-medium text-amber-800">{altNeeded.join(", ")} {altNeeded.length === 1 ? "is" : "are"} not a Cin7 contact of this customer. Reason for approving {altNeeded.length === 1 ? "this address" : "these addresses"} (audited)</span><input className={`${inputCls} w-full`} value={altReason} onChange={(e) => setAltReason(e.target.value)} /></label>}
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} /> I have opened and reviewed the PDF, and these are the right recipients.</label>
-          <Button type="button" loading={busy} disabled={!reviewed || split(to).length === 0 || (altNeeded.length > 0 && altReason.trim().length < 5) || (!!resendOf && resendReason.trim().length < 3)} onClick={() => void run(async () => {
+          <Button type="button" loading={busy} aria-describedby={sendWhy ? "send-customer-why" : undefined} disabled={!reviewed || split(to).length === 0 || (altNeeded.length > 0 && altReason.trim().length < 5) || (!!resendOf && resendReason.trim().length < 3)} onClick={() => void run(async () => {
             const r = await sendQuoteToCustomerAction(quoteId, { documentId: latest.id, to: split(to), cc: split(cc), message, idempotencyKey: key, alternativeReason: altNeeded.length ? altReason : undefined, resendOfId: resendOf ?? undefined, resendReason: resendOf ? resendReason : undefined });
             if (r.ok && r.data) { setKey(newKey()); setResendOf(null); setResendReason(""); setReviewed(false); }
             return r.ok && r.data ? { ok: true } : r;
           }, "Send recorded. See the history below for the outcome.")}>{resendOf ? "Send again" : "Send quotation to customer"}</Button>
+          <DisabledReason id="send-customer-why">{sendWhy}</DisabledReason>
         </div>
       ) : <p className="mt-2 text-sm text-slate-600">{d.status === "CUSTOMER_ACCEPTED" ? "The customer has accepted; nothing further to send." : "Issue the quotation PDF first. Only a Rep can send it."}</p>}
       {d.sends.length > 0 && (

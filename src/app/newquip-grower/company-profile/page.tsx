@@ -4,7 +4,7 @@ import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
-import { QUOTES_MODULE } from "@/app/module-nav";
+import { SOLUTION_BUILDER_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
@@ -37,7 +37,7 @@ export default function CompanyProfilePage() {
   };
   return (
     <main className={`${pageContainerClass("form", "compact")} space-y-4`}>
-      <ModuleHeader variant="workspace" module={QUOTES_MODULE}>Company details and quotation terms</ModuleHeader>
+      <ModuleHeader variant="workspace" module={SOLUTION_BUILDER_MODULE}>Company details and quotation terms</ModuleHeader>
       <Link href="/newquip-grower" className="text-sm text-indigo-700 hover:underline">Back to quotes</Link>
       {err && <Alert tone="danger">{err}</Alert>}
       {ok && <Alert tone="success">{ok}</Alert>}

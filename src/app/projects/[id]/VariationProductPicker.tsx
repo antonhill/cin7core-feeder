@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
@@ -22,6 +22,7 @@ export function VariationProductPicker({ picked, onChange, disabled, quantityLab
   /** Optional per-line note, e.g. the converted quantity. */
   extra?: (p: PickedProduct) => string | null;
 }) {
+  const uid = useId();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CatalogueProduct[] | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -40,8 +41,9 @@ export function VariationProductPicker({ picked, onChange, disabled, quantityLab
     <div className="space-y-3">
       <div className="flex flex-wrap items-end gap-2">
         <Input label="Search Cin7 products (SKU or description)" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !busy) void search(); }} />
-        <Button size="sm" variant="secondary" disabled={busy || disabled || query.trim().length < 2} onClick={search}>{busy ? "Searching…" : "Search"}</Button>
+        <Button size="sm" variant="secondary" disabled={busy || disabled || query.trim().length < 2} aria-describedby={`${uid}-why`} onClick={search}>{busy ? "Searching…" : "Search"}</Button>
       </div>
+      <p id={`${uid}-why`} className="text-xs text-slate-600">{disabled ? "Another action is in progress." : busy ? "" : query.trim().length < 2 ? "Type at least 2 characters to search." : ""}</p>
       {error && <Alert tone="danger">{error}</Alert>}
       {note && results && <p className="text-xs text-slate-600">{note}</p>}
       {results && results.length > 0 && (
@@ -52,7 +54,11 @@ export function VariationProductPicker({ picked, onChange, disabled, quantityLab
               <Status tone={p.stocked ? "neutral" : "warning"}>{p.type}</Status>
               {!p.active && <Status tone="danger">inactive</Status>}
               <span className="text-xs text-slate-600">stock {p.available === null ? "?" : p.available}</span>
-              <Button size="sm" variant="secondary" className="ml-auto" disabled={disabled || !p.stocked || !p.active || picked.some((x) => x.sku === p.sku)} onClick={() => add(p)}>{picked.some((x) => x.sku === p.sku) ? "Added" : "Add"}</Button>
+              {(() => { const why = disabled ? "Another action is in progress." : !p.stocked ? "Cannot be added: not a stocked product." : !p.active ? "Cannot be added: inactive in Cin7." : null; return (
+                <>
+                  {why && <span id={`${uid}-${p.sku}-why`} className="ml-auto text-xs text-slate-700">{why}</span>}
+                  <Button size="sm" variant="secondary" className={why ? "" : "ml-auto"} disabled={disabled || !p.stocked || !p.active || picked.some((x) => x.sku === p.sku)} aria-describedby={why ? `${uid}-${p.sku}-why` : undefined} onClick={() => add(p)}>{picked.some((x) => x.sku === p.sku) ? "Added" : "Add"}</Button>
+                </>); })()}
             </li>
           ))}
         </ul>

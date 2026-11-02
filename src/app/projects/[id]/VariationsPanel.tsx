@@ -1,15 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Status, statusText } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { DisabledReason } from "./DisabledReason";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { NEGATIVE_VARIATION_UNSUPPORTED, isNegativeAmountInput } from "@/lib/projects/variations";
 import { ConsolidatedReportPanel } from "./ConsolidatedReportPanel";
-import { VariationBillingPanel } from "./VariationBillingPanel";
+import { BUSY, VariationBillingPanel } from "./VariationBillingPanel";
+import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { approveVariationAction, raiseVariationAction, rejectVariationAction, repriceVariationAction, submitVariationForApprovalAction } from "../actions";
 
@@ -27,29 +29,52 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
   const [estCost, setEstCost] = useState("");
   const [reason, setReason] = useState<Record<string, string>>({});
   const [price, setPrice] = useState<Record<string, string>>({});
+  const uid = useId();
+  const raiseWhy = working ? BUSY : !title.trim() && !amount.trim() ? "Enter a title and a price to raise a draft." : !title.trim() ? "Enter a title to raise a draft." : !amount.trim() ? "Enter a price to raise a draft." : undefined;
+
+  // Unsaved-work guard. Dirty = a form that is currently available differs from its empty/saved starting value: the raise form (project ACTIVE) has any typed field,
+  // a DRAFT variation's re-price differs from its current price, or (managers) a DRAFT variation has a typed reject reason. Cancelling, clearing, or a successful
+  // raise / re-price / reject returns each to its starting value and releases the guard; decided variations and read-only states never guard.
+  const raiseDirty = view.project.status === "ACTIVE" && [title, description, amount, estCost].some((x) => x.trim() !== "");
+  const draftVariations = view.variations.filter((v) => v.status === "DRAFT");
+  const repriceDirty = draftVariations.some((v) => { const p = (price[v.id] ?? "").trim(); return p !== "" && p !== (v.amount_cents / 100).toString(); });
+  const rejectDirty = isAdmin && draftVariations.some((v) => (reason[v.id] ?? "").trim() !== "");
+  useUnsavedGuard(raiseDirty || repriceDirty || rejectDirty);
 
   /** The decision controls (or who decided and why) shown INSIDE each variation's record. */
-  const decisionOf = (v: ProjectView["variations"][number]) => (
+  const decisionOf = (v: ProjectView["variations"][number]) => {
+    const rid = `${v.id}-reprice-why`, bid = `${v.id}-busy`, xid = `${v.id}-reject-why`;
+    const noPrice = !(price[v.id] ?? "").trim(), noReason = !(reason[v.id] ?? "").trim();
+    return (
     <div>
-                      {v.status === "DRAFT" ? (
+      {v.status === "DRAFT" ? (
+        <div className="space-y-2">
         <div className="flex flex-wrap items-end gap-2">
           <Input label="Re-price (R)" value={price[v.id] ?? ""} onChange={(e) => setPrice({ ...price, [v.id]: e.target.value })} placeholder={(v.amount_cents / 100).toString()} />
-          <Button size="sm" variant="secondary" disabled={working || !(price[v.id] ?? "").trim()} onClick={() => run(() => repriceVariationAction(projectId, v.id, price[v.id]), `Re-priced ${v.code}.`)}>Re-price</Button>
-          <Button size="sm" variant="secondary" disabled={working} onClick={() => run(() => submitVariationForApprovalAction(projectId, v.id), `Submitted ${v.code} for manager approval. It cannot be edited while it is pending.`)}>Submit for approval</Button>
+          <Button size="sm" variant="secondary" disabled={working || noPrice} aria-describedby={working ? bid : noPrice ? rid : undefined} onClick={async () => { if (await run(() => repriceVariationAction(projectId, v.id, price[v.id]), `Re-priced ${v.code}.`)) setPrice((m) => ({ ...m, [v.id]: "" })); }}>Re-price</Button>
+          <Button size="sm" variant="secondary" disabled={working} aria-describedby={working ? bid : undefined} onClick={() => run(() => submitVariationForApprovalAction(projectId, v.id), `Submitted ${v.code} for manager approval. It cannot be edited while it is pending.`)}>Submit for approval</Button>
           {isAdmin ? (
             <>
-              <Button size="sm" disabled={working} onClick={() => run(() => approveVariationAction(projectId, v.id), `Approved ${v.code}. The revised contract value now includes it; the original is unchanged.`)}>Approve</Button>
+              <Button size="sm" disabled={working} aria-describedby={working ? bid : undefined} onClick={() => run(() => approveVariationAction(projectId, v.id), `Approved ${v.code}. The revised contract value now includes it; the original is unchanged.`)}>Approve</Button>
               <Input label="Reject reason" value={reason[v.id] ?? ""} onChange={(e) => setReason({ ...reason, [v.id]: e.target.value })} />
-              <Button size="sm" variant="destructive" disabled={working || !(reason[v.id] ?? "").trim()} onClick={() => run(() => rejectVariationAction(projectId, v.id, reason[v.id]), `Rejected ${v.code}.`)}>Reject</Button>
+              <Button size="sm" variant="destructive" disabled={working || noReason} aria-describedby={working ? bid : noReason ? xid : undefined} onClick={async () => { if (await run(() => rejectVariationAction(projectId, v.id, reason[v.id]), `Rejected ${v.code}.`)) setReason((m) => ({ ...m, [v.id]: "" })); }}>Reject</Button>
             </>
-          ) : <span className="text-xs text-slate-600">Manager approval required</span>}
+          ) : <span className="text-sm text-slate-600">Manager approval required</span>}
+        </div>
+        {working ? <p id={bid} className="text-sm text-slate-700">{BUSY}</p> : (
+          <>
+            {noPrice && <p id={rid} className="text-sm text-slate-700">Enter a new price to re-price.</p>}
+            {isAdmin && noReason && <p id={xid} className="text-sm text-slate-700">Enter a reason to reject.</p>}
+          </>
+        )}
         </div>
       ) : (
         <span className="text-xs text-slate-600">{v.decided_by_email} · {v.decision_reason ?? "approved"}</span>
       )}
       <div className="mt-1"><ApprovalHistory docType="VARIATION" docId={v.id} label="Approval history" /></div>
     </div>
-  );
+    );
+  };
   const rejected = view.variations.filter((v) => v.status === "REJECTED");
 
   return (
@@ -88,8 +113,9 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
             <Input label="Scope / description" value={description} onChange={(e) => setDescription(e.target.value)} />
             <Input label="Price (R, ex VAT)" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="480000" />
             {isAdmin ? <Input label="Est. cost (R, internal)" value={estCost} onChange={(e) => setEstCost(e.target.value)} placeholder="optional" /> : <span />}
-            <Button disabled={working || !title.trim() || !amount.trim()} onClick={async () => { if (await run(() => raiseVariationAction(projectId, title, description, amount, estCost), "Variation raised as a DRAFT — the contract value is unchanged until a manager approves it.")) { setTitle(""); setDescription(""); setAmount(""); setEstCost(""); } }}>Raise draft</Button>
+            <Button disabled={working || !title.trim() || !amount.trim()} aria-describedby={raiseWhy ? `${uid}-raise-why` : undefined} onClick={async () => { if (await run(() => raiseVariationAction(projectId, title, description, amount, estCost), "Variation raised as a DRAFT — the contract value is unchanged until a manager approves it.")) { setTitle(""); setDescription(""); setAmount(""); setEstCost(""); } }}>Raise draft</Button>
           </div>
+          {raiseWhy && <DisabledReason id={`${uid}-raise-why`} className="mt-2">{raiseWhy}</DisabledReason>}
           {isNegativeAmountInput(amount) && <div className="mt-3"><Alert tone="warning">{NEGATIVE_VARIATION_UNSUPPORTED}</Alert></div>}
         </details>
       )}

@@ -1,6 +1,7 @@
 // Phase H: commercial approvals. Pure rules + the real orchestration (quote / claim / variation stores, the approval store) over an in-memory database
 // whose approval_* functions mirror migration 0110 line for line. The REAL SQL (state machine, append-only history, grants, RLS) is verified by
 // supabase/tests/0110_newquip_commercial_approvals.test.sql against Postgres; these tests prove the application drives it correctly.
+import { formatZarCents } from "@/lib/format-money";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
 import { goldenFixtureBaseline } from "@/lib/projects/baseline";
@@ -202,6 +203,13 @@ describe("notification content", () => {
     expect(n.recipient).toBe("mgr@a");
     for (const part of ["C02", "Acme", "PRJ-1", "R 950", "pm@a", "mgr@a", "29 Oct 2026, 10:32 SAST", "Required action", "https://t.example/approvals/req-1"]) expect(n.body).toContain(part);
     expect(n.body).not.toMatch(/token|password|secret/i);
+  });
+  it("D4 correction: the plain-text email amount is the original toLocaleString text, not the in-app formatter's non-breaking-space output", () => {
+    const row = { id: "req-1", doc_type: "CLAIM", doc_ref: "C02", revision: 1, customer_name: "Acme", project_ref: "PRJ-1", amount_cents: 123456789, prepared_by_email: "pm@a", assigned_to_email: "mgr@a", submitted_at: "2026-10-29T08:32:00Z", due_at: null } as ApprovalRequestRow;
+    const n = buildNotification("SUBMITTED", row, "mgr@a", { baseUrl: "https://t.example/" });
+    const original = `R ${(123456789 / 100).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    expect(n.body).toContain(original);
+    expect(n.body).not.toContain(formatZarCents(123456789));
   });
 });
 

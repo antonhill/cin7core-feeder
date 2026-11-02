@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
+import { DisabledReason } from "@/components/ApprovalDisabledReason";
 import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
@@ -16,6 +17,8 @@ export function ProductMappingPicker({ label, value, onChange, disabled }: { lab
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const uid = useId();
+  const searchWhy = busy ? "Searching - please wait." : query.trim().length < 2 ? "Type at least 2 characters to search." : undefined;
   const search = async () => {
     setBusy(true); setError(null);
     const r = await searchCin7CatalogueForMappingAction(query);
@@ -31,7 +34,8 @@ export function ProductMappingPicker({ label, value, onChange, disabled }: { lab
       {!disabled && (
         <div className="flex flex-wrap items-end gap-2">
           <Input label={`Search Cin7 for ${label} (SKU or description)`} value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !busy) void search(); }} />
-          <Button size="sm" variant="secondary" disabled={busy || query.trim().length < 2} onClick={search}>{busy ? "Searching…" : "Search"}</Button>
+          <Button size="sm" variant="secondary" disabled={busy || query.trim().length < 2} aria-describedby={searchWhy ? `${uid}-search-why` : undefined} onClick={search}>{busy ? "Searching…" : "Search"}</Button>
+          <DisabledReason id={`${uid}-search-why`}>{searchWhy}</DisabledReason>
         </div>
       )}
       {error && <Alert tone="danger">{error}</Alert>}

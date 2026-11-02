@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
@@ -12,6 +12,8 @@ import {
   selectSupplierAction, setManualCostEstimateAction, type QuoteCostView,
 } from "../cost-actions";
 import { fmtCents } from "../fields";
+import { DisabledReason } from "@/components/ApprovalDisabledReason";
+import { formatMicroAmount } from "@/lib/format-money";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { latestOnly } from "@/newquip/grower/preview-draft";
 import type { SupplierOption } from "@/lib/projects/supplier-price";
@@ -34,7 +36,7 @@ export interface CostPanelBodyProps {
   onConfirmUnit?: (reason: string) => void; onAcceptIncomplete?: (reason: string) => void;
 }
 
-const price = (micro: number | null, cur: string | null) => (micro === null ? "-" : `${cur ?? "?"} ${(micro / 1_000_000).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`);
+const price = (micro: number | null, cur: string | null) => (micro === null ? "-" : formatMicroAmount(micro, cur));
 const key = (o: SupplierOption) => `${o.supplierId ?? ""}|${o.supplierName ?? ""}`;
 const ISSUE: Record<string, string> = { NEEDS_CHOICE: "Choose a supplier", PREFERRED_INVALID: "Preferred supplier has no usable price", NO_USABLE_PRICE: "No usable supplier price" };
 
@@ -88,26 +90,31 @@ function FxForm({ v, busy, onRecordFx }: { v: QuoteCostView; busy: boolean; onRe
 
 function Declarations({ v, busy, onConfirmUnit, onAcceptIncomplete }: { v: QuoteCostView; busy: boolean; onConfirmUnit?: CostPanelBodyProps["onConfirmUnit"]; onAcceptIncomplete?: CostPanelBodyProps["onAcceptIncomplete"] }) {
   const [unitReason, setUnitReason] = useState(""); const [exception, setException] = useState("");
+  const uid = useId();
+  const unitWhy = busy ? "Another action is in progress." : unitReason.trim().length < 10 ? "Explain how you know (at least 10 characters) to enable this." : undefined;
+  const exceptionWhy = busy ? "Another action is in progress." : exception.trim().length < 10 ? "Enter the exception reason (at least 10 characters) to enable this." : undefined;
   return (
     <div className="mt-3 grid gap-3 text-xs md:grid-cols-2">
-      <div className="rounded border border-slate-200 p-2">
+      <div className="min-w-0 rounded border border-slate-200 p-2">
         <div className="font-medium">Unit of measure</div>
         {v.unitBasis ? <div className="text-slate-700">Confirmed per stock unit by {v.unitBasis.confirmedBy} ({formatSast(v.unitBasis.confirmedAt)}): {v.unitBasis.reason}</div> : (
           <>
             <div className="text-amber-700">Cin7 does not say which unit a supplier price is for. Until someone confirms the prices are per stock unit, they are unusable.</div>
             {onConfirmUnit && !v.frozen && (
-              <div className="mt-1 flex items-end gap-2"><div className="flex-1"><Input label="How do you know? (required)" value={unitReason} onChange={(e) => setUnitReason(e.target.value)} /></div><Button size="sm" variant="secondary" disabled={busy || unitReason.trim().length < 10} onClick={() => onConfirmUnit(unitReason)}>Confirm per stock unit</Button></div>
+              <><div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end"><div className="min-w-0 flex-1"><Input label="How do you know? (required)" value={unitReason} onChange={(e) => setUnitReason(e.target.value)} /></div><Button size="sm" variant="secondary" disabled={busy || unitReason.trim().length < 10} aria-describedby={unitWhy ? `${uid}-unit-why` : undefined} onClick={() => onConfirmUnit(unitReason)}>Confirm per stock unit</Button></div>
+              <DisabledReason id={`${uid}-unit-why`}>{unitWhy}</DisabledReason></>
             )}
           </>
         )}
       </div>
-      <div className="rounded border border-slate-200 p-2">
+      <div className="min-w-0 rounded border border-slate-200 p-2">
         <div className="font-medium">Incomplete estimate</div>
         {v.incompleteAccepted ? <div className="text-slate-700">Exception accepted by {v.incompleteAccepted.by} ({formatSast(v.incompleteAccepted.at)}): {v.incompleteAccepted.reason}</div> : (
           <>
             <div className="text-slate-600">Approval is refused while a captured estimate is incomplete, unless an authorised exception is recorded.</div>
             {onAcceptIncomplete && !v.frozen && (
-              <div className="mt-1 flex items-end gap-2"><div className="flex-1"><Input label="Exception reason (required)" value={exception} onChange={(e) => setException(e.target.value)} /></div><Button size="sm" variant="secondary" disabled={busy || exception.trim().length < 10} onClick={() => onAcceptIncomplete(exception)}>Record exception</Button></div>
+              <><div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end"><div className="min-w-0 flex-1"><Input label="Exception reason (required)" value={exception} onChange={(e) => setException(e.target.value)} /></div><Button size="sm" variant="secondary" disabled={busy || exception.trim().length < 10} aria-describedby={exceptionWhy ? `${uid}-exception-why` : undefined} onClick={() => onAcceptIncomplete(exception)}>Record exception</Button></div>
+              <DisabledReason id={`${uid}-exception-why`}>{exceptionWhy}</DisabledReason></>
             )}
           </>
         )}
@@ -166,8 +173,8 @@ export function CostPanelBody(p: CostPanelBodyProps) {
                     <td className="pr-3 text-right tabular-nums">{l.quantity}</td>
                     <td className="pr-3 text-xs">{l.supplier ?? "-"}{so?.selection ? <div className="text-slate-600">{so.selection.method === "AUTO_SINGLE" ? "automatic (only supplier)" : so.selection.method === "PREFERRED" ? "preferred supplier" : `chosen by estimator${so.selection.reason ? `: ${so.selection.reason}` : ""}`}</div> : null}{!so && l.basis ? <div className="text-slate-600">{l.basis.selectionMethod === "AUTO_SINGLE" ? "automatic (only supplier)" : l.basis.selectionMethod === "PREFERRED" ? "preferred supplier" : "chosen by estimator"}</div> : null}</td>
                     <td className="pr-3 text-right text-xs tabular-nums">{l.basis ? <>{price(l.basis.originalPriceMicro, l.basis.currency)}{l.basis.fx && <div className="text-slate-600">x {l.basis.fx.rate}</div>}</> : so?.selection ? (() => { const o = so.options.find((x) => key(x) === `${so.selection!.supplierId ?? ""}|${so.selection!.supplierName ?? ""}`); return o ? <>{price(o.priceMicro, o.currency)}{o.fx && <div className="text-slate-600">x {o.fx.rate}</div>}</> : "-"; })() : "-"}</td>
-                    <td className="pr-3 text-right tabular-nums">{l.unitCostCents === null ? <Status tone="danger">Missing cost</Status> : fmtCents(l.unitCostCents)}</td>
-                    <td className="pr-3 text-right tabular-nums">{l.totalCostCents === null ? "-" : fmtCents(l.totalCostCents)}</td>
+                    <td className="whitespace-nowrap pr-3 text-right tabular-nums">{l.unitCostCents === null ? <Status tone="danger">Missing cost</Status> : fmtCents(l.unitCostCents)}</td>
+                    <td className="whitespace-nowrap pr-3 text-right tabular-nums">{l.totalCostCents === null ? "-" : fmtCents(l.totalCostCents)}</td>
                     <td className="pr-3 text-xs">{l.status === "LATEST" ? "Cin7 supplier price" : l.status === "MANUAL" ? <span title={l.reason ?? ""}>Manual estimate: {l.reason}</span> : <span className="text-amber-700">{(l.issue && ISSUE[l.issue]) ?? "No cost"}{so?.message ? ` - ${so.message}` : ""}</span>}{l.retrievedAt ? <div className="text-slate-600">read {formatSast(l.retrievedAt)}</div> : null}</td>
                     <td>{v.canCapture && (l.status === "MISSING" || l.status === "MANUAL") && (l.status === "MANUAL"
                       ? <Button size="sm" variant="secondary" disabled={busy} onClick={() => p.onClearManual(l.sku)}>Remove</Button>

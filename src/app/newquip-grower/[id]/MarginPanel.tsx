@@ -18,9 +18,9 @@ import { fmtCents, NumField, TextField } from "../fields";
 const pct = (n: number | null) => (n === null ? "-" : `${n.toFixed(2)}%`);
 const Cells = ({ m }: { m: MarginFigures }) => (
   <>
-    <td className="py-2 pr-3 text-right tabular-nums">{fmtCents(m.sellingCents)}</td>
-    <td className="py-2 pr-3 text-right tabular-nums">{fmtCents(m.costCents)}</td>
-    <td className="py-2 pr-3 text-right tabular-nums">{fmtCents(m.gpCents)}</td>
+    <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums">{fmtCents(m.sellingCents)}</td>
+    <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums">{fmtCents(m.costCents)}</td>
+    <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums">{fmtCents(m.gpCents)}</td>
     <td className="py-2 pr-3 text-right tabular-nums">{pct(m.marginPct)}</td>
     <td className="py-2 text-right tabular-nums">{pct(m.markupPct)}</td>
   </>
@@ -65,8 +65,8 @@ export function MarginPanel({ budget, draft, final, frozen, editable, edit }: {
               <Head first="Project" />
               <tbody>
                 <tr className="font-semibold"><td className="py-2 pr-3">Costed scope</td><Cells m={sheet.project} /></tr>
-                <tr className="text-slate-600"><td className="py-2 pr-3">Services without a cost (delivery, installation) - selling value only</td><td className="py-2 pr-3 text-right tabular-nums">{fmtCents(sheet.project.uncostedChargesCents)}</td><td colSpan={4} /></tr>
-                <tr className="border-t font-semibold"><td className="py-2 pr-3">Contract total (ex VAT)</td><td className="py-2 pr-3 text-right tabular-nums">{fmtCents(sheet.project.contractSellingCents)}</td><td colSpan={4} /></tr>
+                <tr className="text-slate-600"><td className="py-2 pr-3">Services without a cost (delivery, installation) - selling value only</td><td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums">{fmtCents(sheet.project.uncostedChargesCents)}</td><td colSpan={4} /></tr>
+                <tr className="border-t font-semibold"><td className="py-2 pr-3">Contract total (ex VAT)</td><td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums">{fmtCents(sheet.project.contractSellingCents)}</td><td colSpan={4} /></tr>
               </tbody>
             </table>
           </div>

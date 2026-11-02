@@ -1,5 +1,6 @@
 "use client";
 
+import { exceptionLabel } from "@/lib/projects/exception-labels";
 import { useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
@@ -8,6 +9,7 @@ import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import type { MarginFigures } from "@/lib/projects/margin-figures";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
+import { statusText } from "@/components/ui/Status";
 import { COST_CATEGORIES, COST_CATEGORY_LABEL } from "@/lib/projects/project-costs";
 import type { CostingReport } from "@/lib/projects/costing-report";
 import { addCostEntryAction, getCostingReportAction, getCostLedgerAction, getProfitabilityAction, markCostIncurredAction, voidCostEntryAction, type CostLedgerResult, type ProfitabilityActionResult } from "../profitability-actions";
@@ -71,7 +73,7 @@ export function ProfitabilityPanel({ view }: { view: ProjectView }) {
               </dl>
               <p className="mt-1 text-xs text-slate-600">{r.actual.costBasisNote}</p>
             </div>
-            {r.exceptions.length > 0 && <div className="space-y-1"><p className="font-medium text-slate-800">Exceptions</p>{r.exceptions.map((e, i) => <Alert key={i} tone="warning">{e.code}: {e.message}</Alert>)}</div>}
+            {r.exceptions.length > 0 && <div className="space-y-1"><p className="font-medium text-slate-800">Exceptions</p>{r.exceptions.map((e, i) => <Alert key={i} tone="warning">{exceptionLabel(e.code)}: {e.message}</Alert>)}</div>}
           </div>
         )}
       </Panel>
@@ -107,7 +109,7 @@ function CostLedger({ projectId }: { projectId: string }) {
             {d.entries.map((e) => (
               <li key={e.id} className={`flex flex-wrap items-end gap-2 ${e.voided_at ? "text-slate-600 line-through" : ""}`}>
                 <span className="min-w-56">{COST_CATEGORY_LABEL[e.category]}: {e.description}{e.supplier ? ` (${e.supplier})` : ""}{e.reference ? ` [${e.reference}]` : ""}</span>
-                <span className="tabular-nums">{formatCents(e.amount_cents)}</span><span className="text-xs">{e.state}{e.incurred_on ? ` ${e.incurred_on}` : ""}{e.in_cin7_valuation ? " · in Cin7 valuation (excluded)" : ""}</span>
+                <span className="tabular-nums">{formatCents(e.amount_cents)}</span><span className="text-xs">{statusText(e.state)}{e.incurred_on ? ` ${e.incurred_on}` : ""}{e.in_cin7_valuation ? " · in Cin7 valuation (excluded)" : ""}</span>
                 {!e.voided_at && e.state === "COMMITTED" && <Button size="sm" variant="secondary" disabled={busy} onClick={() => act(() => markCostIncurredAction(projectId, e.id), "Marked incurred.")}>Mark incurred</Button>}
                 {!e.voided_at && (<><Input label="Void reason" hideLabel value={why[e.id] ?? ""} placeholder="Void reason" onChange={(ev) => setWhy({ ...why, [e.id]: ev.target.value })} /><Button size="sm" variant="secondary" disabled={busy || !(why[e.id] ?? "").trim()} onClick={() => act(() => voidCostEntryAction(projectId, e.id, why[e.id]), "Voided.")}>Void</Button></>)}
               </li>

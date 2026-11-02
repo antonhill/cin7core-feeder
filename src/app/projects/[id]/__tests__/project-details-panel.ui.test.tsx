@@ -34,6 +34,11 @@ describe("Project details (UAT-029)", () => {
     expect(screen.getAllByText("Not set").length).toBe(3);
     expect(screen.getByRole("button", { name: "Edit details" })).toBeTruthy();
   });
+  it("D4 F-04: the Status shows words (Active), never the raw code (ACTIVE)", () => {
+    render(<Host v={view({ status: "ACTIVE" })} />);
+    const dd = screen.getByText("Status").nextElementSibling as HTMLElement;
+    expect(dd.textContent).toBe("Active");
+  });
   it("a non-administrator cannot edit: no Edit action and no user list is requested", () => {
     render(<Host v={view()} isAdmin={false} />);
     expect(screen.queryByRole("button", { name: "Edit details" })).toBeNull();
@@ -119,5 +124,20 @@ describe("Project details: unsaved-change protection", () => {
     await screen.findByText(/Refused\./);
     expect((screen.getByLabelText("Start date") as HTMLInputElement).value).toBe("2026-12-01");
     expect(unload()).toBe(true);
+  });
+  it("D4 F-12: Save details is disabled until something changes, and says so; a bad date order says why", async () => {
+    render(<Host v={view({ project_manager: "boss@x.co.za", start_date: "2026-11-02" })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
+    await screen.findByLabelText("Project manager");
+    const save = screen.getByRole("button", { name: "Save details" }) as HTMLButtonElement;
+    const why = () => (save.getAttribute("aria-describedby") ?? "").split(" ").map((id) => document.getElementById(id)?.textContent ?? "").join("");
+    expect(save.disabled).toBe(true);
+    expect(why()).toMatch(/nothing has changed yet/);
+    fireEvent.change(screen.getByLabelText("Target completion"), { target: { value: "2026-10-01" } });
+    expect(save.disabled).toBe(true);
+    expect(why()).toMatch(/cannot be before the start date/);
+    fireEvent.change(screen.getByLabelText("Target completion"), { target: { value: "2027-01-01" } });
+    expect(save.disabled).toBe(false);
+    expect(why()).toBe("");
   });
 });

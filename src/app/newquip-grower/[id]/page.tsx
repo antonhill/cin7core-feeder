@@ -3,11 +3,11 @@
 import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useId } from "react";
 import { ActionFeedback, useKeyedActions } from "@/components/ui/action-feedback";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { ModuleHeader } from "@/app/ModuleHeader";
-import { QUOTES_MODULE } from "@/app/module-nav";
+import { SOLUTION_BUILDER_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
 import type { BadgeTone } from "@/components/ui/Badge";
@@ -38,6 +38,7 @@ import { blankExclusions, createRecalcLoop } from "@/newquip/grower/preview-draf
 import { previewCostOverrides } from "@/newquip/quote/margin";
 import { ProductMappingPicker } from "./ProductMappingPicker";
 import { fmtCents, fmtZar, NumField, TextField } from "../fields";
+import { formatZar } from "@/lib/format-money";
 import { MarginPanel } from "./MarginPanel";
 import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
@@ -52,6 +53,7 @@ import { getQuoteDeliveryAction } from "../delivery-actions";
 import { ScopePanel } from "./ScopePanel";
 import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
+import { DisabledReason } from "@/components/ApprovalDisabledReason";
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
 
 // NewQuip Grower quote editor, in six stages: 1 Configuration → 2 Costing & Estimator Review → 3 Manager Approval → 4 Customer Quotation → 5 Customer Acceptance → 6 Project Handover.
@@ -69,7 +71,7 @@ const CAT_TONE: Record<ReadinessCategory, BadgeTone> = {
   autoCalculated: "success", suggestedDefault: "info", estimatorInputs: "neutral", overrides: "warning", warnings: "warning",
   missingMappings: "danger", supplierQuoteRequired: "danger", pricingExceptions: "warning",
 };
-const PIG_SIZE_LABEL: Record<PenningPigSize, string> = { SMALL: "Small — R1,300 / rm", MEDIUM: "Medium — R1,500 / rm", LARGE: "Large — R2,200 / rm" };
+const PIG_SIZE_LABEL: Record<PenningPigSize, string> = { SMALL: `Small — ${formatZar(1300)} / rm`, MEDIUM: `Medium — ${formatZar(1500)} / rm`, LARGE: `Large — ${formatZar(2200)} / rm` };
 const OPTIONAL_LABELS: Record<OptionalItemKey, string> = {
   controller: "Thomas-CL1 controller", silo_weighing: "Silo weighing", control_panel: "Control panel", emergency_windows: "Emergency windows",
   pad_cooling: "Pad cooling", cone_fans: "Cone fans", manure_plug: "Manure plugs",
@@ -79,6 +81,7 @@ const CHARGE_HELP: Record<ChargeKey, string> = {
   installation: "From the teams' service reports — days × daily rate.",
   concrete_slat_delivery: "Truck price ÷ slat weight, by distance.",
 };
+
 
 export default function QuoteEditorPage() {
   const { id } = useParams<{ id: string }>();
@@ -97,6 +100,7 @@ export default function QuoteEditorPage() {
   const [scheduleChoice, setScheduleChoice] = useState<ScheduleChoice | undefined>(undefined);
   const [gate, setGate] = useState<DeliveryGate>({ requires: false, accepted: false, status: null, hasDocument: false });
   const search = useSearchParams();
+  const uid = useId();
   // The commercial status is read in a second request. Until it has been read once the stages that depend on it show "Loading" (never a guess from the empty defaults above).
   const [gateReady, setGateReady] = useState(false);
   const [gateError, setGateError] = useState<string | null>(null);
@@ -152,7 +156,7 @@ export default function QuoteEditorPage() {
   if (!view || !draft || !ev) {
     return (
       <main className={pageContainerClass("wide")}>
-        <ModuleHeader variant="workspace" module={QUOTES_MODULE}>Grower quote</ModuleHeader>
+        <ModuleHeader variant="workspace" module={SOLUTION_BUILDER_MODULE}>Grower quote</ModuleHeader>
         {error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <div role="status" aria-live="polite" aria-busy="true" data-testid="quote-loading"><p className="mt-6 text-sm text-slate-600">Loading the quotation…</p><Skeleton className="mt-4 h-14 w-full max-w-4xl" /><Skeleton className="mt-4 h-96 w-full" /></div>}
       </main>
     );
@@ -164,6 +168,18 @@ export default function QuoteEditorPage() {
   const editable = !final && (roles.has("rep") || roles.has("estimator"));
   const budget = ev.budget;
   const rd = ev.readiness;
+  // Why each important button is disabled, in words (presentation only; the server re-checks every action).
+  const saveWhy = isWorking ? "Another action is in progress. Please wait."
+    : !editable ? (final ? "The accepted quote is read-only." : "Only a Rep or Estimator can edit and save this quotation.")
+    : blankExclusionKeys.length > 0 ? "Give every excluded item a reason or remove it before saving."
+    : incompleteOverrides ? "Finish or remove the incomplete cost override before saving."
+    : !dirty ? "Nothing to save: there are no unsaved changes." : undefined;
+  const signoffWhy = isWorking ? "Another action is in progress. Please wait." : !roles.has("estimator") ? "Only an Estimator can sign off this quote." : rd.state !== "READY" ? "The quote must be READY (no outstanding readiness items) before it can be signed off." : undefined;
+  // "Manager: final approval" is described by whichever of the existing messages currently applies (each is already on the page, so nothing is duplicated). Role/process wording only.
+  const approveSignoffMissing = q?.state === "ESTIMATOR_REVIEW" && !q.estimator_signoff_hash;
+  const approveSignoffStale = q?.state === "ESTIMATOR_REVIEW" && !!q.estimator_signoff_hash && q.estimator_signoff_hash !== q.draft_hash;
+  const approveDescribedBy = [isWorking && `${uid}-approve-busy`, !roles.has("manager") && `${uid}-approve-role`, approveSignoffMissing && `${uid}-approve-signoff`, approveSignoffStale && `${uid}-approve-stale`, dirty && `${uid}-approve-dirty`].filter(Boolean).join(" ") || undefined;
+  const returnWhy = isWorking ? "Another action is in progress. Please wait." : !returnReason.trim() ? "Enter the reason for returning it to enable this." : undefined;
   const totalCents = budget && !budget.incomplete ? Math.round(budget.totals.subtotalExTax * 100) : null;
 
   // One-click demonstration quotation: replaces the inputs of THIS editable draft only (not saved, nothing created, approved or sent).
@@ -244,8 +260,8 @@ export default function QuoteEditorPage() {
 
   return (
     <main className={pageContainerClass("wide")}>
-      <ModuleHeader variant="workspace" module={QUOTES_MODULE}>
-        <Link href="/newquip-grower" className="text-indigo-700 hover:underline">← Grower quotes</Link> · {q.quote_ref} <span className="text-slate-600">rev {q.revision}</span>
+      <ModuleHeader variant="workspace" module={SOLUTION_BUILDER_MODULE}>
+        <Link href="/newquip-grower" className="text-indigo-700 hover:underline">← Solution Builder quotes</Link> · {q.quote_ref} <span className="text-slate-600">rev {q.revision}</span>
       </ModuleHeader>
 
       <p className="mt-4 text-sm text-slate-700">
@@ -276,12 +292,12 @@ export default function QuoteEditorPage() {
       {stage <= 2 && (
         <>
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Button onClick={save} loading={acts.isPending("save")} disabled={isWorking || !editable || !dirty || incompleteOverrides || blankExclusionKeys.length > 0}>Save draft</Button>
+            <Button onClick={save} loading={acts.isPending("save")} aria-describedby={saveWhy ? "save-why" : undefined} disabled={isWorking || !editable || !dirty || incompleteOverrides || blankExclusionKeys.length > 0}>Save draft</Button>
             {dirty && <Status tone="warning">Unsaved changes</Status>}
             {editable && !confirmDemo && <Button variant="secondary" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load Demo Defaults</Button>}
-            {!editable && <span className="text-sm text-slate-700">{final ? "Read-only: accepted quote." : "You do not have permission to edit."}</span>}
+            {!editable && <span id="save-why" className="text-sm text-slate-700">{final ? "Read-only: accepted quote." : "You do not have permission to edit: only a Rep or Estimator can edit and save this quotation."}</span>}
           </div>
-          <div className="mt-2"><ActionFeedback state={acts.stateOf("save")} /></div>
+          <div className="mt-2 space-y-1">{editable && <DisabledReason id="save-why">{saveWhy}</DisabledReason>}<ActionFeedback state={acts.stateOf("save")} /></div>
           <div className="mt-2 space-y-2">
           {dirty && <p className="max-w-4xl text-sm text-slate-700" data-testid="unsaved-note">{recalculating ? "Recalculating… " : ""}The prices, costs, margins and totals are a live preview of your edits and nothing is saved until you press Save draft. Sign-off and approval use the SAVED draft.</p>}
           {previewFailure && <p className="max-w-4xl text-sm text-red-700">The live recalculation failed ({previewFailure}); the figures shown may be out of date. Edit again or reload.</p>}
@@ -456,7 +472,7 @@ export default function QuoteEditorPage() {
                               onChange={(sku) => edit((d) => { if (sku) d.estimator.confirmedMappings[l.itemKey] = sku; else delete d.estimator.confirmedMappings[l.itemKey]; })} />
                           </div>
                         ) : mapControl === "waiting_for_estimator" && !b?.sku ? <span className="text-amber-800">Awaiting an Estimator to choose the Cin7 product.</span> : b?.sku ?? (b?.pricedBy === "penning_rate" ? "Pig-size / running-metre basis" : b?.pricedBy === "estimator_input" ? "Estimator-priced system" : b?.pricedBy === "estimator_resolution" ? "Estimator-resolved" : "—")}</td>
-                        <td className="py-3 pr-3 text-right tabular-nums">{b?.revenueExTax != null ? fmtZar(b.revenueExTax) : "—"}</td>
+                        <td className="whitespace-nowrap py-3 pr-3 text-right tabular-nums">{b?.revenueExTax != null ? fmtZar(b.revenueExTax) : "—"}</td>
                         <td className="py-3 text-xs">{b ? (b.status === "priced" ? <span className="text-emerald-800"><span aria-hidden>✓ </span>Priced</span> : b.status === "not_selected" ? "" : <span className="text-amber-800">{b.reason}</span>) : ""}</td>
                       </tr>
                     );
@@ -575,9 +591,9 @@ export default function QuoteEditorPage() {
                 {dirty && <Status tone="warning">{recalculating ? "Recalculating - figures below are not yet current" : "Unsaved - live preview"}</Status>}
               </div>
               <dl className="mt-3 grid max-w-xl grid-cols-2 gap-y-1 text-sm" aria-busy={recalculating}>
-                <dt className="text-slate-600">Subtotal (ex VAT)</dt><dd className="text-right tabular-nums">{fmtZar(budget.totals.subtotalExTax)}</dd>
-                <dt className="text-slate-600">VAT 15%</dt><dd className="text-right tabular-nums">{fmtZar(budget.totals.taxTotal)}</dd>
-                <dt className="font-semibold text-slate-900">Total</dt><dd className="text-right font-semibold tabular-nums">{fmtZar(budget.totals.totalIncTax)}</dd>
+                <dt className="text-slate-600">Subtotal (ex VAT)</dt><dd className="whitespace-nowrap text-right tabular-nums">{fmtZar(budget.totals.subtotalExTax)}</dd>
+                <dt className="text-slate-600">VAT 15%</dt><dd className="whitespace-nowrap text-right tabular-nums">{fmtZar(budget.totals.taxTotal)}</dd>
+                <dt className="font-semibold text-slate-900">Total</dt><dd className="whitespace-nowrap text-right font-semibold tabular-nums">{fmtZar(budget.totals.totalIncTax)}</dd>
                 {view.viewer.canViewCommercials && <><dt className="text-slate-600">Estimated cost · GP (managers)</dt><dd className="text-right tabular-nums">{fmtZar(budget.totals.estimatedCost)} · {budget.totals.overallMarginPct == null ? "N/A" : `${budget.totals.overallMarginPct.toFixed(1)}%`}</dd></>}
               </dl>
               <p className="mt-2 text-xs text-slate-600">{budget.pricingBasis}. {budget.state === "complete" ? "Every required line is priced." : "Incomplete: the total is partial until every blocker is resolved."}</p>
@@ -618,16 +634,17 @@ export default function QuoteEditorPage() {
                 <>
                   {q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash
                     ? <Status tone="success">Estimator sign-off complete - {q.estimator_signoff_by_email ?? "estimator"}{q.estimator_signoff_at ? `, ${formatSast(q.estimator_signoff_at)}` : ""}</Status>
-                    : <Button loading={isWorking} disabled={!roles.has("estimator") || rd.state !== "READY"} onClick={() => act(() => signOffGrowerQuoteAction(id), "Estimator sign-off recorded for this exact content.", "signoff", (v) => !!v.quote.estimator_signoff_hash && v.quote.estimator_signoff_hash === v.quote.draft_hash)}>Estimator: I double-checked this quote</Button>}
+                    : <Button loading={isWorking} aria-describedby={signoffWhy ? "signoff-why" : undefined} disabled={!roles.has("estimator") || rd.state !== "READY"} onClick={() => act(() => signOffGrowerQuoteAction(id), "Estimator sign-off recorded for this exact content.", "signoff", (v) => !!v.quote.estimator_signoff_hash && v.quote.estimator_signoff_hash === v.quote.draft_hash)}>Estimator: I double-checked this quote</Button>}
                   {roles.has("estimator") && (<>
                   <TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} />
-                  <Button variant="secondary" loading={isWorking} disabled={!returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "signoff", (v) => v.quote.state === "REP_DRAFT")}>Return to rep</Button>
+                  <Button variant="secondary" loading={isWorking} aria-describedby={returnWhy ? "return-rep-why" : undefined} disabled={!returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "signoff", (v) => v.quote.state === "REP_DRAFT")}>Return to rep</Button>
                   </>)}
                   {!roles.has("estimator") && <span className="text-xs text-slate-600">With the Estimator for review. Only an Estimator can sign off or return it here.</span>}
                 </>
               )}
               {final && <Status tone="success">Signed off and approved</Status>}
             </div>
+            {q.state === "ESTIMATOR_REVIEW" && !(q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash) && <div className="mt-2 space-y-1"><DisabledReason id="signoff-why">{signoffWhy}</DisabledReason>{roles.has("estimator") && <DisabledReason id="return-rep-why">{returnWhy}</DisabledReason>}</div>}
             <ActionFeedback state={acts.stateOf("send")} />
             <ActionFeedback state={acts.stateOf("signoff")} />
           </Panel>
@@ -650,24 +667,26 @@ export default function QuoteEditorPage() {
             <p className="mt-1 text-xs text-slate-600">Final internal commercial approval. The Rep sees the outcome here and by notification; only a Manager can decide.</p>
             {handoffFacts}
 
-            {q.state === "ESTIMATOR_REVIEW" && !q.estimator_signoff_hash && <Alert tone="info">Waiting for the Estimator&apos;s sign-off before the Manager can decide.</Alert>}
-            {q.state === "ESTIMATOR_REVIEW" && !!q.estimator_signoff_hash && q.estimator_signoff_hash !== q.draft_hash && <Alert tone="warning">The Estimator&apos;s sign-off no longer matches the current quotation. It must be given again before the Manager can decide.</Alert>}
-            {q.state === "ESTIMATOR_REVIEW" && dirty && <Alert tone="warning" >You have unsaved edits. Save or discard your edits first: approval applies to the saved quotation.</Alert>}
+            {approveSignoffMissing && <div id={`${uid}-approve-signoff`}><Alert tone="info">Waiting for the Estimator&apos;s sign-off before the Manager can decide.</Alert></div>}
+            {approveSignoffStale && <div id={`${uid}-approve-stale`}><Alert tone="warning">The Estimator&apos;s sign-off no longer matches the current quotation. It must be given again before the Manager can decide.</Alert></div>}
+            {q.state === "ESTIMATOR_REVIEW" && dirty && <div id={`${uid}-approve-dirty`}><Alert tone="warning" >You have unsaved edits. Save or discard your edits first: approval applies to the saved quotation.</Alert></div>}
             <div className="mt-5 space-y-3 border-t border-slate-100 pt-5">
               {q.state === "ESTIMATOR_REVIEW" && (
                 <>
                   {roles.has("manager") && <div className="max-w-xl"><TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} hint="Required only when you return the quotation instead of approving it." /></div>}
                   <div className="flex flex-wrap items-center gap-3">
-                    <Button variant="primary" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty}
+                    <Button variant="primary" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty} aria-describedby={approveDescribedBy}
                       onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")}>Manager: final approval</Button>
                     {roles.has("manager") && (<>
-                      <Button variant="secondary" disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "approve", (v) => v.quote.state === "REP_DRAFT")}>Return to rep (reject)</Button>
+                      <Button variant="secondary" aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "approve", (v) => v.quote.state === "REP_DRAFT")}>Return to rep (reject)</Button>
                       {q.estimator_signoff_hash && (
-                        <Button variant="secondary" disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToEstimatorAction(id, returnReason), "Returned to the estimator. Their sign-off is withdrawn and must be given again; the quote and its history are kept.", "approve", (v) => !v.quote.estimator_signoff_hash)}>Manager: return to estimator</Button>
+                        <Button variant="secondary" aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToEstimatorAction(id, returnReason), "Returned to the estimator. Their sign-off is withdrawn and must be given again; the quote and its history are kept.", "approve", (v) => !v.quote.estimator_signoff_hash)}>Manager: return to estimator</Button>
                       )}
                     </>)}
                   </div>
-                  {!roles.has("manager") && <p className="text-sm text-slate-700">Final approval needs the manager role (org owner/admin).</p>}
+                  {isWorking && <DisabledReason id={`${uid}-approve-busy`}>Another action is in progress. Please wait.</DisabledReason>}
+                  {roles.has("manager") && <DisabledReason id="return-mgr-why">{returnWhy ? `Return buttons: ${returnWhy.charAt(0).toLowerCase()}${returnWhy.slice(1)}` : undefined}</DisabledReason>}
+                  {!roles.has("manager") && <p id={`${uid}-approve-role`} className="text-sm text-slate-700">Final approval needs the manager role (org owner/admin).</p>}
                 </>
               )}
               {q.state === "REP_DRAFT" && <p className="text-sm text-slate-700">This quotation is with the Rep ({q.revision > 1 ? "returned as a new revision" : "not yet sent for review"}).</p>}
@@ -710,9 +729,9 @@ export default function QuoteEditorPage() {
                   ))}
                 </tbody>
                 <tfoot>
-                  <tr><td className="pt-3 text-right text-slate-600">Subtotal</td><td className="pt-3 text-right tabular-nums">{fmtZar(summary.subtotalExVat)}</td></tr>
-                  <tr><td className="text-right text-slate-600">VAT 15%</td><td className="text-right tabular-nums">{fmtZar(summary.vat)}</td></tr>
-                  <tr><td className="pt-1 text-right font-semibold text-slate-900">Total</td><td className="pt-1 text-right text-lg font-bold tabular-nums">{fmtZar(summary.totalIncVat)}</td></tr>
+                  <tr><td className="pt-3 text-right text-slate-600">Subtotal</td><td className="whitespace-nowrap pt-3 text-right tabular-nums">{fmtZar(summary.subtotalExVat)}</td></tr>
+                  <tr><td className="text-right text-slate-600">VAT 15%</td><td className="whitespace-nowrap text-right tabular-nums">{fmtZar(summary.vat)}</td></tr>
+                  <tr><td className="pt-1 text-right font-semibold text-slate-900">Total</td><td className="whitespace-nowrap pt-1 text-right text-lg font-bold tabular-nums">{fmtZar(summary.totalIncVat)}</td></tr>
                 </tfoot>
               </table>
               {draft.estimator.assumptions.trim() && <p className="mt-4 text-xs text-slate-600"><strong>Assumptions:</strong> {draft.estimator.assumptions}</p>}
@@ -763,7 +782,7 @@ export default function QuoteEditorPage() {
                   <>
                   {gate.requires ? <p className="mb-2 text-sm text-slate-600">The Project will use the billing schedule printed on the quotation the customer accepted.</p> : <ScheduleChooser contractCents={q.accepted_baseline.contractCents} onChange={setScheduleChoice} />}
                   <p className="mb-2"><BuildStamp /></p>
-                  {!roles.has("manager") ? <Alert tone="info">A Manager creates the Project from the accepted quotation after verifying the customer&apos;s acceptance. You will be able to open it from here once it exists.</Alert> : <Button loading={acts.isPending("handover")} disabled={isWorking || (!gate.requires && !resolveScheduleChoice(scheduleChoice).ok)} onClick={() => void acts.run("handover", async () => {
+                  {!roles.has("manager") ? <Alert tone="info">A Manager creates the Project from the accepted quotation after verifying the customer&apos;s acceptance. You will be able to open it from here once it exists.</Alert> : <Button loading={acts.isPending("handover")} aria-describedby={isWorking || (!gate.requires && !resolveScheduleChoice(scheduleChoice).ok) ? "handover-why" : undefined} disabled={isWorking || (!gate.requires && !resolveScheduleChoice(scheduleChoice).ok)} onClick={() => void acts.run("handover", async () => {
                     const r = await createProjectFromGrowerQuoteAction(id, scheduleChoice);
                     if (!r.ok) return r;
                     setError(null);
@@ -777,6 +796,7 @@ export default function QuoteEditorPage() {
                     reconcile: async () => { const v = await getGrowerQuoteAction(id); if (!v.ok || !v.data) return "unknown"; if (v.data.quote.project_id) { adopt(v.data); return "done"; } return "not_done"; },
                     doneAfterReconcile: "The Project exists (the response was lost, but it was created).",
                   })}>Create Project from accepted quote</Button>}
+                  {roles.has("manager") && <DisabledReason id="handover-why">{isWorking ? "Another action is in progress. Please wait." : !gate.requires && !resolveScheduleChoice(scheduleChoice).ok ? "Fix the billing schedule above (the stages must add up to the contract value) before creating the Project." : undefined}</DisabledReason>}
                   <ActionFeedback state={acts.stateOf("handover")} />
                   </>
                 )}

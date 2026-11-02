@@ -160,31 +160,35 @@ describe("what a Project fires when it opens", () => {
     expect(slot.className).toMatch(/min-h-/);
   });
 
-  it("opening Variations: the first billed variation opens on its claims and invoices in one read, with no repeated permission read and no Cin7 read", async () => {
+  it("opening Variations (D4F): no billing workspace is expanded until asked, so the tab costs only the billing read; opening one then costs one project read and one Commercial read, with no repeated permission read and no Cin7 read", async () => {
     h.responses.getProjectAction = (id: string) => proj(id === "vp1" ? variationProject() : view({}, [approvedVariation]));
     render(<ProjectWorkspace id="p1" />);
     fireEvent.click(await screen.findByRole("button", { name: /^Variations/ }));
-    await screen.findByText(/V001 billing: progress, claims, Cin7 Sale and invoices/);
-    await screen.findByText("Invoices in Cin7"); // the variation's invoices are on screen: nothing to expand, nothing to click
+    await screen.findByRole("button", { name: "Open billing workspace" });
     await settled();
-    report("Variations tab, one billed variation");
+    report("Variations tab, one billed variation, collapsed");
+    expect(names()).toEqual(["getProjectAction", "getProjectOverviewDataAction", "getVariationBillingAction"]);
+    expect(screen.queryByText("Invoices in Cin7")).toBeNull(); // nothing mounted, nothing read
+    fireEvent.click(screen.getByRole("button", { name: "Open billing workspace" }));
+    await screen.findByText("Invoices in Cin7");
+    await settled();
     expect(names()).toEqual(["getProjectAction", "getProjectOverviewDataAction", "getVariationBillingAction", "getProjectAction", "getCommercialBootAction"]);
     expect(count("getViewerPermissionsAction")).toBe(0);
     expect(h.calls.filter((c) => CIN7_READS.includes(c))).toEqual([]);
   });
 
-  it("a second billed variation opens on request only, and then costs one read", async () => {
+  it("every billed variation opens on request only, and each costs one read", async () => {
     const second = { ...approvedVariation, id: "v2", code: "V002", title: "More" };
     h.responses.getVariationBillingAction = { ok: true, data: { ...billing.data, schedules: { v1: [{ name: "Variation", bps: 10_000 }], v2: [{ name: "Variation", bps: 10_000 }] }, billingProjectByVariation: { v1: "vp1", v2: "vp2" } } };
     h.responses.getProjectAction = (id: string) => proj(id === "vp1" ? variationProject() : id === "vp2" ? view({ id: "vp2", billing_scope: "VARIATION", parent_project_id: "p1", project_reference: "PRJ-X-V002" }) : view({}, [approvedVariation, second]));
     render(<ProjectWorkspace id="p1" />);
     fireEvent.click(await screen.findByRole("button", { name: /^Variations/ }));
-    await screen.findByText("Invoices in Cin7");
+    await screen.findAllByRole("button", { name: "Open billing workspace" });
     await settled();
     const before = h.calls.length;
-    expect(screen.getAllByRole("button", { name: "Open billing workspace" }).length).toBe(1); // V002 is closed
-    fireEvent.click(screen.getByRole("button", { name: "Open billing workspace" }));
-    await waitFor(() => expect(count("getProjectAction")).toBe(3));
+    expect(screen.getAllByRole("button", { name: "Open billing workspace" }).length).toBe(2); // both closed
+    fireEvent.click(screen.getAllByRole("button", { name: "Open billing workspace" })[1]);
+    await waitFor(() => expect(count("getProjectAction")).toBe(2));
     await settled();
     expect(h.calls.slice(before)).toEqual(["getProjectAction", "getCommercialBootAction"]);
   });

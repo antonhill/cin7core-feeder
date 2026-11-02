@@ -41,6 +41,8 @@ describe("Invoices in Cin7 (UAT-028)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Verify invoice statuses" }));
     expect(await screen.findByText(/Reading the Sales Order from Cin7/)).toBeTruthy();
     expect((screen.getByRole("button", { name: /Verify invoice statuses/ }) as HTMLButtonElement).disabled).toBe(true);
+    const vb = screen.getByRole("button", { name: /Verify invoice statuses/ });
+    expect(document.getElementById(vb.getAttribute("aria-describedby")!)!.textContent).toMatch(/disabled while the Cin7 read is in progress/); // D4 F-12
     await act(async () => d.resolve(result()));
     const now34 = await screen.findByTestId("now-INV-00034");
     expect(now34.textContent).toContain("Authorised");

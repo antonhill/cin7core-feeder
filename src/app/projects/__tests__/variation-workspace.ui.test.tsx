@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ProjectWorkspace } from "../[id]/ProjectWorkspace";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 
@@ -35,16 +35,16 @@ const view = (variations: unknown[], over: Record<string, unknown> = {}): Projec
 const variation = (id: string, code: string, status: string, over: Record<string, unknown> = {}) => ({ id, code, title: `${code} title`, description: `${code} scope`, status, amount_cents: 500_000_00, raised_by_email: "est@x.co.za", priced_by_email: null, decided_by_email: status === "DRAFT" ? null : "boss@x.co.za", decision_reason: status === "REJECTED" ? "too dear" : null, ...over });
 const money = (n: number) => formatCents(n);
 const scope = (projectId: string, code: string) => ({ projectId, scope: "VARIATION", variationCode: code, contractCents: 500_000_00, earnedCents: 100_000_00, committedCents: 500_000_00, claimableCents: 25_000_00, remainingCents: 375_000_00 });
-const billing = (billed: Record<string, string>, sales: Record<string, string | null> = {}, lookupFailed = false) => ({ ok: true, data: {
+const billing = (billed: Record<string, string>, sales: Record<string, string | null> = {}, lookupFailed = false, recon: Record<string, unknown> = {}, reconFailed = false) => ({ ok: true, data: {
   consolidated: { scopes: [{ projectId: "p1", scope: "BASE", variationCode: null, contractCents: 900_000_00, earnedCents: 0, committedCents: 0, claimableCents: 0, remainingCents: 900_000_00 }, ...Object.entries(billed).map(([vid, pid]) => scope(pid, vid.toUpperCase()))], totals: { contractCents: 1, earnedCents: 1, committedCents: 1, claimableCents: 1, remainingCents: 1 }, unbilledApprovedVariations: [], closureBlockers: [] },
-  schedules: Object.fromEntries(["v1", "v2", "v3"].map((k) => [k, [{ name: "Variation", bps: 10_000 }]])), billingProjectByVariation: billed, saleNumberByVariation: sales, saleLookupFailed: lookupFailed } });
+  schedules: Object.fromEntries(["v1", "v2", "v3"].map((k) => [k, [{ name: "Variation", bps: 10_000 }]])), billingProjectByVariation: billed, saleNumberByVariation: sales, saleLookupFailed: lookupFailed, reconciliationByVariation: recon, reconciliationLookupFailed: reconFailed } });
 const posting = { ok: true, data: { gates, link: { id: "l", cin7_sale_number: "SO-00028", cin7_sale_id: "s", link_status: "LINKED", created_at: "2026-11-01T00:00:00Z", last_reconciled_at: null }, linkOrigin: "AUTOMATIC", postings: [{ id: "po1", claim_id: "c1", posting_state: "RECONCILED", cin7_invoice_number: "INV-00038", cin7_task_id: null, cin7_status: "DRAFT", completed_at: null, reconciled_at: "2026-11-01T10:00:00Z" }] } };
 const commercialBoot = { ok: true, data: { creation: { gates, creation: null, linked: true, scopeItems: [], saleLines: [], blockers: [], excluded: [] }, posting: posting.data } };
 
-function setup(variations: unknown[], billed: Record<string, string>, viewer = { canApprove: true, newquip: true }, sales: Record<string, string | null> = {}, lookupFailed = false) {
+function setup(variations: unknown[], billed: Record<string, string>, viewer = { canApprove: true, newquip: true }, sales: Record<string, string | null> = {}, lookupFailed = false, recon: Record<string, unknown> = {}, reconFailed = false) {
   const vp = (id: string) => view([], { id, billing_scope: "VARIATION", parent_project_id: "p1", project_reference: `PRJ-X-${id}` });
   h.responses.getProjectAction = (id: string) => ({ ok: true, data: id === "p1" ? view(variations) : vp(id), viewer });
-  h.responses.getVariationBillingAction = billing(billed, sales, lookupFailed);
+  h.responses.getVariationBillingAction = billing(billed, sales, lookupFailed, recon, reconFailed);
   h.responses.getCommercialBootAction = commercialBoot;
   h.responses.getCin7PostingStatusAction = posting;
 }
@@ -52,14 +52,15 @@ beforeEach(() => { for (const k of Object.keys(h.responses)) delete h.responses[
 const called = (name: string) => h.calls.filter(([n]) => n === name);
 afterEach(() => cleanup());
 async function openVariations() { render(<ProjectWorkspace id="p1" />); fireEvent.click(await screen.findByRole("button", { name: /^Variations/ })); }
+const openWs = async (code: string) => { const rec = await record(code); fireEvent.click(within(rec).getByRole("button", { name: "Open billing workspace" })); return rec; };
 const record = async (code: string) => (await screen.findByText(new RegExp(`^${code} – `))).closest("[class*='p-6']") as HTMLElement;
 
 describe("Variation workspace (P3)", () => {
   it("a billed variation is ONE record: approval, value, billing position, Cin7 Sale and invoices - with nothing to expand to find the invoice", async () => {
     setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" });
     await openVariations();
-    const rec = await record("V001");
-    expect(await within(rec).findByText("Invoices in Cin7")).toBeTruthy();         // the invoice list is already there
+    const rec = await openWs("V001");
+    expect(await within(rec).findByText("Invoices in Cin7")).toBeTruthy();         // the invoice list is there once the workspace is asked for
     expect(within(rec).getByText("INV-00038")).toBeTruthy();
     expect(rec.textContent).toContain("SO-00028");                                 // the linked Sale
     expect(rec.textContent).toContain("Approved");
@@ -93,6 +94,17 @@ describe("Variation workspace (P3)", () => {
     expect(await within(member).findByText("Manager approval required")).toBeTruthy();
     expect(within(member).queryByRole("button", { name: /^Approve/ })).toBeNull();
   });
+  it("D4 F-09: a DRAFT or REJECTED variation's value is labelled Proposed, never Approved; an APPROVED one keeps Approved (same amount)", async () => {
+    setup([variation("v1", "V001", "DRAFT"), variation("v2", "V002", "APPROVED"), variation("v3", "V003", "REJECTED")], { v2: "vp1" });
+    await openVariations();
+    const draft = await record("V001");
+    expect(draft.textContent).toContain("Proposed value (ex VAT)");
+    expect(draft.textContent).not.toContain("Approved value");
+    expect(draft.textContent).toContain(money(500_000_00));
+    const approved = await record("V002");
+    expect(approved.textContent).toContain("Approved value (ex VAT)");
+    expect(approved.textContent).not.toContain("Proposed value");
+  });
   it("a decided variation says who decided and why, and a rejected one is listed apart", async () => {
     setup([variation("v1", "V001", "APPROVED"), variation("v2", "V002", "REJECTED")], {});
     await openVariations();
@@ -109,11 +121,11 @@ describe("Variation workspace (P3)", () => {
     expect(await within(rec).findByText("Billing has not started for this variation.")).toBeTruthy();
     expect(within(rec).getByRole("button", { name: "Start variation billing" }).closest("details")).toBeNull();
   });
-  it("the first billed variation is open, a second opens on request; the contract position by scope appears ONCE", async () => {
+  it("no billing workspace is open by default, each opens on request; the contract position by scope appears ONCE", async () => {
     setup([variation("v1", "V001", "APPROVED"), variation("v2", "V002", "APPROVED")], { v1: "vp1", v2: "vp2" });
     await openVariations();
-    await within(await record("V001")).findByText("Invoices in Cin7");
-    expect(within(await record("V002")).queryByText("Invoices in Cin7")).toBeNull();
+    await record("V001");
+    expect(screen.queryByText("Invoices in Cin7")).toBeNull();
     const open = within(await record("V002")).getByRole("button", { name: "Open billing workspace" });
     expect(open.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(open);
@@ -123,7 +135,7 @@ describe("Variation workspace (P3)", () => {
   it("the duplicated summaries are folded away: the consolidated report and the Cin7 planning placeholder are collapsed and honestly labelled", async () => {
     setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" });
     await openVariations();
-    await screen.findByText("Invoices in Cin7");
+    await record("V001");
     const planning = screen.getByText(/Cin7 planning view \(placeholder references, nothing is sent\)/).closest("details") as HTMLDetailsElement;
     const report = screen.getByText(/Consolidated report: invoices by scope/).closest("details") as HTMLDetailsElement;
     expect(planning.open).toBe(false);
@@ -133,7 +145,7 @@ describe("Variation workspace (P3)", () => {
   it("Raise a variation is collapsed once variations exist and open when there are none", async () => {
     setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" });
     await openVariations();
-    await screen.findByText("Invoices in Cin7");
+    await record("V001");
     expect((screen.getByText("Raise a variation").closest("details") as HTMLDetailsElement).open).toBe(false);
     cleanup();
     setup([], {});
@@ -194,8 +206,7 @@ describe("Variation workspace (P3)", () => {
   it("hiding a billing workspace keeps it mounted (an action in flight in it is not lost) and showing it again reads nothing", async () => {
     setup([variation("v1", "V001", "APPROVED"), variation("v2", "V002", "APPROVED")], { v1: "vp1", v2: "vp2" });
     await openVariations();
-    const rec2 = await record("V002");
-    fireEvent.click(within(rec2).getByRole("button", { name: "Open billing workspace" }));
+    const rec2 = await openWs("V002");
     await within(rec2).findByText("Invoices in Cin7");
     const reads = called("getProjectAction").length;
     fireEvent.click(within(rec2).getByRole("button", { name: "Hide billing workspace" }));
@@ -246,6 +257,160 @@ describe("Variation workspace (P3)", () => {
     expect(await screen.findByText(/could not be refreshed \(db down\)/)).toBeTruthy();
     expect(within(rec).queryByText("Loading the billing position…")).toBeNull(); // the record is still there
     expect(await within(rec).findByRole("button", { name: /^Approve/ })).toBeTruthy();
+  });
+
+  describe("D4F: compact variations", () => {
+    const deferred = <T,>() => { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; };
+    it("each variation is ONE compact summary: identity, scope tag, approval state, value, Sale number, billed/committed, claimable, reconciliation, and the open control - with no workspace mounted", async () => {
+      setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" }, undefined, { v1: "SO-00028" }, false, { v1: { invoices: 2, reconciled: 1, awaiting: 1, mismatched: 0, uncertain: 0, inProgress: 0 } });
+      await openVariations();
+      const rec = await record("V001");
+      await waitFor(() => expect(rec.textContent).toContain("SO-00028"));
+      expect(within(rec).getByTestId("recon-v1").textContent).toMatch(/1 of 2 Cin7 invoices reconciled; 1 awaiting reconciliation/);
+      expect(rec.textContent).toContain("V001 – V001 title");
+      expect(within(rec).getByText("Variation").closest("[data-tone]")).toBeTruthy();
+      expect(rec.textContent).toContain("Approved");
+      expect(rec.textContent).toContain(money(500_000_00));
+      const pos = within(rec).getByLabelText("V001 billing position (ex VAT)");
+      expect(pos.textContent).toContain("Billed / committed" + money(500_000_00));
+      expect(pos.textContent).toContain("Claimable now" + money(25_000_00));
+      expect(pos.textContent).not.toMatch(/Reconciliation/); // moved out of the figures grid into its own, real, line
+      const btn = within(rec).getByRole("button", { name: "Open billing workspace" });
+      expect(btn.getAttribute("aria-expanded")).toBe("false");
+      expect(btn.getAttribute("aria-controls")).toBe("ws-v1");
+      expect(document.getElementById("ws-v1")).toBeNull();
+      expect(screen.getAllByRole("button", { name: /Commercial \/ Claims/ }).length).toBe(1);
+    });
+    it("only ONE workspace is expanded at a time: opening another collapses the previous (kept mounted, hidden)", async () => {
+      setup([variation("v1", "V001", "APPROVED"), variation("v2", "V002", "APPROVED")], { v1: "vp1", v2: "vp2" });
+      await openVariations();
+      const r1 = await openWs("V001");
+      await within(r1).findByText("Invoices in Cin7");
+      const r2 = await openWs("V002");
+      await within(r2).findByText("Invoices in Cin7");
+      expect(within(r1).getByRole("button", { name: "Open billing workspace" }).getAttribute("aria-expanded")).toBe("false");
+      expect(within(r2).getByRole("button", { name: "Hide billing workspace" }).getAttribute("aria-expanded")).toBe("true");
+      expect(document.getElementById("ws-v1")!.className).toMatch(/hidden/);
+      expect(document.getElementById("ws-v2")!.className).not.toMatch(/hidden/);
+    });
+    it("collapsing a workspace while an action in it is pending does not lose its feedback (UAT-025)", async () => {
+      setup([variation("v1", "V001", "APPROVED"), variation("v2", "V002", "APPROVED")], { v1: "vp1", v2: "vp2" });
+      h.responses.getCommercialBootAction = { ok: true, data: { creation: { gates: { ...gates, writesEnabled: true }, creation: { id: "cr1", creation_state: "CREATED", cin7_sale_number: "SO-00028", last_error_message: null, last_error_code: null }, linked: false, scopeItems: [], saleLines: [], blockers: [], excluded: [] }, posting: posting.data } };
+      const d = deferred<{ ok: boolean; data: unknown }>();
+      h.responses.reconcileCin7SaleCreationAction = () => d.promise;
+      await openVariations();
+      const r1 = await openWs("V001");
+      fireEvent.click(await within(r1).findByRole("button", { name: /Reconcile with Cin7/ }));
+      await within(r1).findByText(/Working/);
+      fireEvent.click(within(await record("V002")).getByRole("button", { name: "Open billing workspace" })); // collapses V001 while its action is pending
+      const ws1 = document.getElementById("ws-v1") as HTMLElement;
+      expect(ws1.className).toMatch(/hidden/);
+      expect(within(ws1).getByText(/Working/)).toBeTruthy();                 // still mounted, still pending
+      await act(async () => d.resolve({ ok: true, data: { message: "Reconciled: SO-00028 matches the plan and is now linked." } }));
+      expect(within(ws1).getByText(/Reconciled: SO-00028 matches the plan/)).toBeTruthy(); // the outcome arrived in the collapsed workspace
+      fireEvent.click(within(r1).getByRole("button", { name: "Open billing workspace" }));
+      expect(within(document.getElementById("ws-v1") as HTMLElement).getByText(/Reconciled: SO-00028 matches the plan/)).toBeTruthy(); // and is there when it is reopened
+    });
+    it("Hide returns to the compact summary (aria-expanded false) and the control is a real button reachable by keyboard", async () => {
+      setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" });
+      await openVariations();
+      const rec = await openWs("V001");
+      const hide = within(rec).getByRole("button", { name: "Hide billing workspace" });
+      expect(hide.tagName).toBe("BUTTON");
+      expect(hide.getAttribute("aria-expanded")).toBe("true");
+      fireEvent.click(hide);
+      expect(within(rec).getByRole("button", { name: "Open billing workspace" }).getAttribute("aria-expanded")).toBe("false");
+    });
+    const describedBy = (b: HTMLElement) => (b.getAttribute("aria-describedby") ?? "").split(" ").map((id) => document.getElementById(id)?.textContent ?? "").join(" ");
+    it("F-12: Start variation billing says why it is disabled for a legacy variation with no schedule", async () => {
+      setup([variation("v1", "V001", "APPROVED")], {});
+      h.responses.getVariationBillingAction = { ok: true, data: { ...billing({}).data, schedules: {}, billingProjectByVariation: {} } };
+      await openVariations();
+      const rec = await record("V001");
+      const start = await within(rec).findByRole("button", { name: "Start variation billing" }) as HTMLButtonElement;
+      expect(start.disabled).toBe(true);
+      expect(describedBy(start)).toMatch(/Set the billing schedule first \(this variation was approved before schedules existed\)/);
+      expect(rec.textContent).toContain("Set the billing schedule first"); // visible text, not a title
+    });
+    it("F-12: Approve, Reject and Re-price say why they are disabled: another action in progress, or the missing input", async () => {
+      setup([variation("v1", "V001", "DRAFT")], {});
+      const d = deferred<{ ok: boolean }>();
+      h.responses.approveVariationAction = () => d.promise;
+      await openVariations();
+      const rec = await record("V001");
+      const reject = within(rec).getByRole("button", { name: /Reject/ });
+      const reprice = within(rec).getByRole("button", { name: /Re-price/ });
+      expect(describedBy(reject)).toMatch(/Enter a reason to reject/);
+      expect(describedBy(reprice)).toMatch(/Enter a new price/);
+      fireEvent.click(within(rec).getByRole("button", { name: /^Approve/ }));
+      await waitFor(() => expect((within(rec).getByRole("button", { name: /^Approve/ }) as HTMLButtonElement).disabled).toBe(true));
+      for (const name of [/^Approve/, /Reject/, /Re-price/, /Submit/]) expect(describedBy(within(rec).getByRole("button", { name }))).toBe("Another action is in progress.");
+      await act(async () => d.resolve({ ok: false }));
+    });
+    it("F-12: Amend schedule says why it is disabled (reason, then total)", async () => {
+      setup([variation("v1", "V001", "APPROVED")], {});
+      await openVariations();
+      const rec = await record("V001");
+      (await within(rec).findByText("Billing schedule")).closest("details")!.open = true;
+      const amend = within(rec).getByRole("button", { name: "Amend schedule" }) as HTMLButtonElement;
+      expect(amend.disabled).toBe(true);
+      expect(describedBy(amend)).toBe("Enter a reason to amend.");
+      fireEvent.change(within(rec).getByLabelText("Reason for amendment"), { target: { value: "client asked" } });
+      expect(amend.disabled).toBe(false);
+      fireEvent.change(within(rec).getByLabelText("%"), { target: { value: "60" } });
+      expect(amend.disabled).toBe(true);
+      expect(describedBy(amend)).toBe("Total must be exactly 100% to amend the schedule.");
+    });
+  });
+
+  describe("D4 correction: Cin7 reconciliation on the compact summary", () => {
+    const R = (invoices: number, reconciled: number, awaiting: number, uncertain = 0, inProgress = 0, mismatched = 0) => ({ invoices, reconciled, awaiting, mismatched, uncertain, inProgress });
+    const recon = async (sum: Record<string, unknown>, failed = false, id = "V001") => {
+      setup([variation("v1", id, "APPROVED")], { v1: "vp1" }, undefined, { v1: "SO-1" }, false, sum, failed);
+      await openVariations();
+      const rec = await record(id);
+      await waitFor(() => expect(within(rec).getByTestId("recon-v1")).toBeTruthy());
+      return within(rec).getByTestId("recon-v1").textContent!;
+    };
+    it("says nothing is to be reconciled when the variation has no Cin7 invoice yet", async () => { expect(await recon({ v1: R(0, 0, 0) })).toMatch(/no Cin7 invoice yet, nothing to reconcile/); });
+    it("counts reconciled against awaiting, from the recorded state", async () => { expect(await recon({ v1: R(3, 2, 1) })).toMatch(/2 of 3 Cin7 invoices reconciled; 1 awaiting reconciliation/); });
+    it("says when every invoice is reconciled, singular and plural", async () => {
+      expect(await recon({ v1: R(1, 1, 0) })).toMatch(/the Cin7 invoice is reconciled/);
+    });
+    it("flags an uncertain outcome", async () => { expect(await recon({ v1: R(1, 1, 0, 2) })).toMatch(/2 postings have an uncertain outcome and must be reconciled/); });
+    it("an uncertain posting with no confirmed invoice never says 'nothing to reconcile'", async () => {
+      const t = await recon({ v1: R(0, 0, 0, 1) });
+      expect(t).toMatch(/no confirmed Cin7 invoice yet; 1 posting has an uncertain outcome and must be reconciled/);
+      expect(t).not.toMatch(/nothing to reconcile/);
+    });
+    it("a posting still being sent is 'still being sent', not uncertain, and also blocks 'nothing to reconcile'", async () => {
+      const t = await recon({ v1: R(0, 0, 0, 0, 1) });
+      expect(t).toMatch(/1 posting is still being sent/);
+      expect(t).not.toMatch(/uncertain|nothing to reconcile/);
+    });
+    it("a recorded amount mismatch is shown, not folded into 'awaiting'", async () => { expect(await recon({ v1: R(2, 1, 0, 0, 0, 1) })).toMatch(/1 of 2 Cin7 invoices reconciled; 1 with a recorded amount mismatch/); });
+    it("a failed read says unavailable, never 'nothing to reconcile'", async () => {
+      const t = await recon({}, true);
+      expect(t).toMatch(/unavailable \(could not be loaded\)/);
+      expect(t).not.toMatch(/nothing to reconcile/);
+    });
+    it("is kept apart from claim approval in its own wording, and is not shown before billing starts", async () => {
+      expect(await recon({ v1: R(1, 0, 1) })).toMatch(/separate from approving a claim to invoice/);
+    });
+    it("shows no reconciliation line when billing has not started (there is no billing project to read)", async () => {
+      setup([variation("v1", "V001", "APPROVED")], {});
+      await openVariations();
+      const rec = await record("V001");
+      await waitFor(() => expect(rec.textContent).toMatch(/billing not started/));
+      expect(within(rec).queryByTestId("recon-v1")).toBeNull();
+    });
+    it("puts each variation's own state on its own record", async () => {
+      setup([variation("v1", "V001", "APPROVED"), variation("v2", "V002", "APPROVED")], { v1: "vp1", v2: "vp2" }, undefined, {}, false, { v1: R(1, 1, 0), v2: R(2, 0, 2) });
+      await openVariations();
+      const r1 = await record("V001"); const r2 = await record("V002");
+      await waitFor(() => expect(within(r1).getByTestId("recon-v1").textContent).toMatch(/the Cin7 invoice is reconciled/));
+      expect(within(r2).getByTestId("recon-v2").textContent).toMatch(/0 of 2 Cin7 invoices reconciled; 2 awaiting/);
+    });
   });
 
   describe("D3-A: scope and Cin7 Sale identification", () => {

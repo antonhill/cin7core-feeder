@@ -1,6 +1,8 @@
 "use client";
 
+import { formatMicroAmount } from "@/lib/format-money";
 import { useState } from "react";
+import { formatZarCents } from "@/lib/format-money";
 import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
@@ -12,9 +14,9 @@ import { getProcurementTargetsAction, type ProcurementResult } from "../procurem
 
 // PROCUREMENT / COST TARGETS: what the buyer needs to know before negotiating. "Allowed" is the cost the approved quotation's estimate carried and is FROZEN;
 // "Today" is Cin7's latest cost read just now; "Actual" is only what Cin7 has recognised on invoiced lines. They are never merged, and a "?" is an unknown, not zero.
-const rand = (c: number | null) => (c === null ? "?" : `R ${(c / 100).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
+const rand = (c: number | null) => (c === null ? "?" : formatZarCents(c));
 const q = (n: number | null) => (n === null ? "?" : String(n));
-const orig = (micro: number | null, cur: string | null) => (micro === null ? "?" : `${cur ?? "?"} ${(micro / 1_000_000).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`);
+const orig = (micro: number | null, cur: string | null) => (micro === null ? "?" : formatMicroAmount(micro, cur));
 const optKey = (id: string | null, name: string | null) => `${id ?? ""}|${name ?? ""}`;
 
 /** Planning only: compare today's suppliers (each in its own currency and in rand) against the approved target. Nothing here edits the approved baseline or buys anything. */

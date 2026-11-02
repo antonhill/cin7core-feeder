@@ -9,6 +9,7 @@
 //  * Estimated margins are the frozen quote/variation estimates, independent of Cin7's zero-priced physical lines.
 
 import { marginFigures, type MarginFigures } from "./margin-figures";
+import { formatZarCents } from "../format-money";
 
 export interface ScopeInput {
   scope: "BASE" | "VARIATION";
@@ -92,11 +93,11 @@ export function buildProfitability(scopes: readonly ScopeInput[], asOfIso: strin
 
   for (const s of scopes) {
     if (s.committedCents > s.contractCents) exceptions.push({ code: "OVER_BILLED", scope: s.label, message: `${s.label}: ${s.committedCents} cents claimed against a contract of ${s.contractCents}.` });
-    if (s.unpostedApprovedCents > 0) exceptions.push({ code: "UNPOSTED_APPROVED_CLAIM", scope: s.label, message: `${s.label}: approved claims worth ${(s.unpostedApprovedCents / 100).toFixed(2)} are not yet invoiced in Cin7.` });
+    if (s.unpostedApprovedCents > 0) exceptions.push({ code: "UNPOSTED_APPROVED_CLAIM", scope: s.label, message: `${s.label}: approved claims worth ${formatZarCents(s.unpostedApprovedCents)} are not yet invoiced in Cin7.` });
     if (s.mismatchedPostings > 0) exceptions.push({ code: "POSTING_MISMATCH", scope: s.label, message: `${s.label}: ${s.mismatchedPostings} Cin7 invoice(s) differ from the approved claim.` });
     if (!s.saleNumber) exceptions.push({ code: "NO_LINKED_SALE", scope: s.label, message: `${s.label} has no linked Cin7 Sale.` });
     if (s.estimatedCostCents === null) exceptions.push({ code: "COST_UNKNOWN", scope: s.label, message: `${s.label} has no estimated cost, so its margin is withheld.` });
-    if (s.saleNumber && s.cogsCents === 0 && (s.invoiceLineCostCents ?? 0) > 0) exceptions.push({ code: "COGS_ZERO_BUT_LINES_COSTED", scope: s.label, message: `${s.label}: Cin7 has recognised R0 cost, but its invoice lines carry ${((s.invoiceLineCostCents as number) / 100).toFixed(2)} of average cost. R0 recognised cost is not evidence that the goods are free; the actual margin is withheld until Cin7 recognises the cost.` });
+    if (s.saleNumber && s.cogsCents === 0 && (s.invoiceLineCostCents ?? 0) > 0) exceptions.push({ code: "COGS_ZERO_BUT_LINES_COSTED", scope: s.label, message: `${s.label}: Cin7 has recognised R0 cost, but its invoice lines carry ${formatZarCents(s.invoiceLineCostCents as number)} of average cost. R0 recognised cost is not evidence that the goods are free; the actual margin is withheld until Cin7 recognises the cost.` });
     if (s.saleNumber && s.invoiceLineCostCents === null) exceptions.push({ code: "LINE_COST_UNKNOWN", scope: s.label, message: `${s.label}: an invoice line has no readable average cost, so the line-level cost is unknown (not zero).` });
     if (s.saleNumber && s.cogsCents === null) exceptions.push({ code: "COGS_NOT_READ", scope: s.label, message: `Cost recognised in Cin7 for ${s.label} was not read.` });
   }

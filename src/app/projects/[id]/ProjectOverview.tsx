@@ -43,15 +43,31 @@ function KpiFigure({ k }: { k: Kpi }) {
 
 // Same figure, same words as the workspace summary above for the contract figures. "Billed / committed" and "Remaining commercial value" here deliberately differ from
 // that summary's "Invoiced / committed" and "Remaining to bill / commit": these span the original project AND its variation billing scopes, that summary is the one project.
+// The group title says so in words. When the workspace summary directly above already shows the Contract group (`contractShownAbove`) it is not repeated here.
+const CONTRACT_KPI_IDS = ["original", "variations", "revised"];
 const KPI_GROUPS: { title: string; ids: string[] }[] = [
-  { title: "Contract", ids: ["original", "variations", "revised"] },
+  { title: "Contract", ids: CONTRACT_KPI_IDS },
   { title: "Estimated cost and margin", ids: ["cost", "gp"] },
-  { title: "Billing", ids: ["billed", "remaining", "outstanding"] },
+  { title: "Billing: original contract and variations", ids: ["billed", "remaining", "outstanding"] },
 ];
 
 /** The headline figures as one surface with logical groups (contract / cost / billing) rather than a wall of equal tiles. Cost and margin only exist for administrators. */
-function KpiGroups({ kpis }: { kpis: Kpi[] }) {
-  const groups = KPI_GROUPS.map((g) => ({ ...g, items: g.ids.map((id) => kpis.find((k) => k.id === id)).filter((k): k is Kpi => !!k) })).filter((g) => g.items.length > 0);
+function KpiGroups({ kpis, contractShownAbove }: { kpis: Kpi[]; contractShownAbove: boolean }) {
+  const groups = KPI_GROUPS.filter((g) => !(contractShownAbove && g.ids === CONTRACT_KPI_IDS)).map((g) => ({ ...g, items: g.ids.map((id) => kpis.find((k) => k.id === id)).filter((k): k is Kpi => !!k) })).filter((g) => g.items.length > 0);
+  // Standing alone (three groups) each group is a column of figures. With the contract group left to the summary above, the two remaining groups sit side by side and their
+  // figures run across, so the summary is one short band rather than a tall column.
+  if (contractShownAbove) {
+    return (
+      <div className="flex flex-wrap gap-x-10 gap-y-4 rounded-xl border border-slate-200 bg-white px-5 py-4">
+        {groups.map((g) => (
+          <div key={g.title} className="min-w-0 basis-full lg:basis-0" style={{ flexGrow: g.items.length }}>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600">{g.title}</h3>
+            <dl className="mt-1 grid gap-x-6 sm:grid-cols-[repeat(auto-fit,minmax(11rem,1fr))]">{g.items.map((k) => <KpiFigure key={k.id} k={k} />)}</dl>
+          </div>
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="grid gap-x-8 gap-y-4 rounded-xl border border-slate-200 bg-white px-5 py-4 lg:grid-cols-[repeat(auto-fit,minmax(16rem,1fr))]">
       {groups.map((g) => (
@@ -88,7 +104,7 @@ function Section({ id, title, subtitle, children }: { id: string; title: string;
   );
 }
 
-export function ProjectOverview({ projectId, refreshKey, onOpenTab }: { projectId: string; refreshKey: string; onOpenTab: (tab: OverviewTab) => void }) {
+export function ProjectOverview({ projectId, refreshKey, onOpenTab, contractShownAbove = false }: { projectId: string; refreshKey: string; onOpenTab: (tab: OverviewTab) => void; contractShownAbove?: boolean }) {
   const [res, setRes] = useState<OverviewDataResult | null>(null);
   // A Cin7 fulfilment read belongs to the project state it was made against: when the commercial data changes (refreshKey) it is no longer current, so it is
   // dropped back to "not read" rather than left beside newer commercial figures it may disagree with.
@@ -149,7 +165,7 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab }: { projectI
         ) : (
           <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white" data-testid="exceptions">
             {o.exceptions.map((e) => (
-              <li key={e.id} className="flex flex-wrap items-start gap-x-4 gap-y-1 px-4 py-3">
+              <li key={e.id} className="flex flex-col items-start gap-1.5 px-4 py-3 sm:flex-row sm:flex-wrap sm:gap-x-4 sm:gap-y-1">
                 <span className="mt-0.5"><Status tone={SEVERITY_TONE[e.severity]}>{SEVERITY_LABEL[e.severity]}</Status></span>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-slate-900">{e.title} <span className="font-normal text-slate-600">· {e.area}</span></p>
@@ -162,8 +178,8 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab }: { projectI
         )}
       </Section>
 
-      <Section id="ov-summary" title="Executive summary" subtitle="All commercial amounts are ex VAT.">
-        <KpiGroups kpis={o.kpis} />
+      <Section id="ov-summary" title="Executive summary" subtitle={contractShownAbove ? "Original contract, approved variations and revised contract are in the project summary above. Billing here covers the original project and its variations. All amounts are ex VAT." : "All commercial amounts are ex VAT."}>
+        <KpiGroups kpis={o.kpis} contractShownAbove={contractShownAbove} />
         {!o.costVisible && <p className="text-xs text-slate-600" data-testid="cost-hidden">Cost and margin are shown to organisation owners and administrators only.</p>}
       </Section>
 

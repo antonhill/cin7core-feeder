@@ -1,5 +1,6 @@
 "use client";
 
+import { exceptionLabel } from "@/lib/projects/exception-labels";
 import { useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { ScopeTag } from "@/components/ui/Status";
@@ -36,7 +37,7 @@ export function PhysicalPanel({ view }: { view: ProjectView }) {
               <span className="text-sm text-slate-600">{sec.linked ? `Cin7 Sale ${sec.saleNumber ?? ""}` : "No Cin7 Sale linked yet - quantities from Cin7 are unknown"} · as of {new Date(sec.asOf).toLocaleString()}</span>
             </div>
             {sec.scopeBlockers.length > 0 && <div className="mt-2"><Alert tone="warning">Unmapped scope (not yet orderable): {sec.scopeBlockers.join(" | ")}</Alert></div>}
-            {sec.exceptions.length > 0 && <div className="mt-2 space-y-1">{sec.exceptions.map((e, i) => <Alert key={i} tone="warning">{e.code}: {e.message}</Alert>)}</div>}
+            {sec.exceptions.length > 0 && <div className="mt-2 space-y-1">{sec.exceptions.map((e, i) => <Alert key={i} tone="warning">{exceptionLabel(e.code)}: {e.message}</Alert>)}</div>}
             {sec.rows.length === 0 ? <p className="mt-2 text-sm text-slate-600">No physical products in this scope.</p> : (
               <div className="mt-2 overflow-x-auto">
                 <Table>

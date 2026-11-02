@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
+import { DisabledReason } from "./DisabledReason";
 import { Status, statusText } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -23,6 +24,7 @@ const q = (n: number | null) => (n === null ? "?" : String(n));
 /** `section` chooses which part of this logistics/commercial pair is shown: the delivery plan (Deliveries tab) or the milestone evidence (Commercial / Claims tab). */
 export type AllocationSection = "deliveries" | "milestones" | "both";
 export function DeliveryAllocationPanel({ view, section = "both" }: { view: ProjectView; section?: AllocationSection }) {
+  const uid = useId(); // ids are unique per mounted workspace: several can be on one page (embedded per variation, hidden-but-mounted)
   const projectId = view.project.id;
   const [data, setData] = useState<Loaded | null>(null);
   const [msg, setMsg] = useState<{ tone: "danger" | "success"; text: string } | null>(null);
@@ -112,7 +114,9 @@ export function DeliveryAllocationPanel({ view, section = "both" }: { view: Proj
           <Input label="What was confirmed" value={note} onChange={(e) => setNote(e.target.value)} />
           <Input label="Evidence reference (POD, certificate…)" value={evidence} onChange={(e) => setEvidence(e.target.value)} />
         </div>
-        <div className="mt-3"><Button disabled={busy || !stageId || !note.trim()} onClick={() => run(() => confirmMilestoneAction(projectId, stageId, note, evidence || undefined), "Milestone confirmation recorded.").then(() => { setNote(""); setEvidence(""); })}>Record confirmation</Button></div>
+        <div className="mt-3"><Button disabled={busy || !stageId || !note.trim()} aria-describedby={busy || !stageId || !note.trim() ? `${uid}-milestone-confirm-reason` : undefined} onClick={() => run(() => confirmMilestoneAction(projectId, stageId, note, evidence || undefined), "Milestone confirmation recorded.").then(() => { setNote(""); setEvidence(""); })}>Record confirmation</Button>
+          {(busy || !stageId || !note.trim()) && <DisabledReason id={`${uid}-milestone-confirm-reason`} className="mt-1">{busy ? "Record confirmation is disabled while another action is in progress." : `Record confirmation is disabled until you ${[!stageId && "choose a milestone", !note.trim() && "say what was confirmed"].filter(Boolean).join(" and ")}. The evidence reference is optional.`}</DisabledReason>}
+        </div>
       </Panel>}
     </div>
   );

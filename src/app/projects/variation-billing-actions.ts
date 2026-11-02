@@ -12,7 +12,8 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { assertNewquipOrg } from "@/lib/projects/newquip-gate";
 import type { ConsolidatedCommercial } from "@/lib/projects/consolidated-report";
-import { amendVariationSchedule, createVariationBillingProject, loadConsolidatedCommercial, listVariationStages, loadConsolidatedProject, loadSaleNumbersByProject, saleNumbersByVariation, saveDraftSchedule, type ConsolidatedProject } from "@/lib/projects/variation-billing-store";
+import { amendVariationSchedule, createVariationBillingProject, loadConsolidatedCommercial, listVariationStages, loadConsolidatedProject, loadReconciliationByProject, reconciliationByVariation, loadSaleNumbersByProject, saleNumbersByVariation, saveDraftSchedule, type ConsolidatedProject } from "@/lib/projects/variation-billing-store";
+import type { ReconciliationSummary } from "@/lib/projects/variation-billing-store";
 import { resolveVariationProducts, searchCatalogue, type CatalogueResult } from "@/lib/projects/catalogue-search";
 import { callerIsOrgAdmin } from "@/lib/projects/scope-access";
 import { scheduleFromPercents } from "@/lib/projects/variation-schedule";
@@ -30,6 +31,10 @@ export interface VariationBillingState {
   saleNumberByVariation: Record<string, string | null>;
   /** True when the Sale-number lookup itself failed: the panel must then say the number is unavailable, never that no Sale exists. */
   saleLookupFailed?: boolean;
+  /** variation id -> the reconciliation state recorded against ITS OWN billing project's Cin7 invoices (read-only; separate from claim approval). Absent when billing has not started. */
+  reconciliationByVariation: Record<string, ReconciliationSummary>;
+  /** True when that read failed: the panel must say the state is unavailable, never "nothing to reconcile". */
+  reconciliationLookupFailed?: boolean;
 }
 export interface SchedulePercentRow { name: string; percent: string }
 
@@ -60,7 +65,16 @@ export async function getVariationBillingAction(projectId: string): Promise<Vari
       saleLookupFailed = true;
       console.error("variation billing: Cin7 Sale number lookup failed", message(e));
     }
-    return { ok: true, data: { consolidated: { ...consolidated, closureBlockers: admin ? consolidated.closureBlockers : [] }, schedules, billingProjectByVariation, saleNumberByVariation, saleLookupFailed } };
+    // Same rule for the reconciliation state: a failed read must not break the page or pose as "nothing to reconcile".
+    let reconciliation: VariationBillingState["reconciliationByVariation"] = {};
+    let reconciliationLookupFailed = false;
+    try {
+      reconciliation = reconciliationByVariation(billingProjectByVariation, await loadReconciliationByProject(db, orgId, Object.values(billingProjectByVariation)));
+    } catch (e) {
+      reconciliationLookupFailed = true;
+      console.error("variation billing: invoice reconciliation lookup failed", message(e));
+    }
+    return { ok: true, data: { consolidated: { ...consolidated, closureBlockers: admin ? consolidated.closureBlockers : [] }, schedules, billingProjectByVariation, saleNumberByVariation, saleLookupFailed, reconciliationByVariation: reconciliation, reconciliationLookupFailed } };
   } catch (e) {
     return { ok: false, error: message(e) };
   }

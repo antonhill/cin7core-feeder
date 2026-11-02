@@ -228,6 +228,22 @@ describe("UAT-025 rendered page: Save draft reports beside its button", () => {
   }, 30000);
 });
 
+describe("unsaved quotation protection", () => {
+  const unload = () => { const e = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
+  it("an untouched quotation is not guarded; an edit is; Save releases it", async () => {
+    serialQueue(150);
+    await open();
+    expect(unload()).toBe(false);
+    fireEvent.click(box(/Exclude CCM feeder/i));
+    expect(unload()).toBe(true);
+    fireEvent.change(screen.getAllByPlaceholderText("Reason (required)")[0], { target: { value: "Customer supplies their own feeders" } });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Save draft" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(screen.queryByText("Unsaved changes")).toBeNull(), { timeout: 8000 });
+    expect(unload()).toBe(false);
+  }, 30000);
+});
+
 describe("D3-C Solution Builder: visible selected / excluded states and a stable price summary", () => {
   afterEach(() => { (globalThis as { __STAGE?: string }).__STAGE = undefined; });
   it("the price summary shows the quote total and, with a response to an edit, says the figures are a preview of unsaved edits", async () => {
@@ -344,19 +360,4 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
       cleanup();
     }, 30000);
   });
-});
-describe("unsaved quotation protection", () => {
-  const unload = () => { const e = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
-  it("an untouched quotation is not guarded; an edit is; Save releases it", async () => {
-    serialQueue(150);
-    await open();
-    expect(unload()).toBe(false);
-    fireEvent.click(box(/Exclude CCM feeder/i));
-    expect(unload()).toBe(true);
-    fireEvent.change(screen.getAllByPlaceholderText("Reason (required)")[0], { target: { value: "Customer supplies their own feeders" } });
-    await waitFor(() => expect((screen.getByRole("button", { name: "Save draft" }) as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
-    await waitFor(() => expect(screen.queryByText("Unsaved changes")).toBeNull(), { timeout: 8000 });
-    expect(unload()).toBe(false);
-  }, 30000);
 });

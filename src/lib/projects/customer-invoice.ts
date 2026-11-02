@@ -5,6 +5,7 @@
 // changes nothing: it is the single source of truth for whatever template (Cin7's, or a PDF) presents the invoice.
 //
 // Nothing here can leak internal data: it takes no cost, margin, SKU or quantity input at all.
+import { formatZarCents } from "../format-money";
 
 export interface CustomerInvoiceInput {
   companyName: string;
@@ -55,7 +56,7 @@ export interface Reconciliation { ok: boolean; differences: string[] }
 /** The customer document must equal the Cin7 invoice exactly (ex VAT, VAT and gross). Any difference is reported; nothing is "close enough". */
 export function reconcileCustomerInvoice(summary: CustomerInvoiceSummary, cin7: Cin7InvoiceTotals): Reconciliation {
   const d: string[] = [];
-  const chk = (label: string, a: number, b: number) => { if (a !== b) d.push(`${label}: customer document ${(a / 100).toFixed(2)} vs Cin7 ${(b / 100).toFixed(2)}`); };
+  const chk = (label: string, a: number, b: number) => { if (a !== b) d.push(`${label}: customer document ${formatZarCents(a)} vs Cin7 ${formatZarCents(b)}`); };
   chk("Ex VAT", summary.subtotalCents, cin7.subtotalCents);
   chk("VAT", summary.vatCents, cin7.taxCents);
   chk("Total", summary.totalCents, cin7.totalCents);
