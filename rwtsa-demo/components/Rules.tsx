@@ -18,7 +18,7 @@ export function RulesPanel({ rules }: { rules: readonly UnresolvedRule[] }) {
   return (
     <Panel>
       <PanelTitle>Unresolved commercial rules (reconciliation is not complete)</PanelTitle>
-      <p className="mt-1 text-sm text-slate-600">The workbook does not establish these rules, so nothing has been assumed. Each affected output is withheld until the rule is resolved.</p>
+      <p className="mt-1 text-sm text-slate-600">The workbook does not establish these rules, so no policy is assumed. Each affected output is either withheld until the rule is resolved, or (where the rule says so) shown under a labelled assumption.</p>
       <ul data-testid="rules" className="mt-3 space-y-3">
         {rules.map((r) => (
           <li key={r.id}>

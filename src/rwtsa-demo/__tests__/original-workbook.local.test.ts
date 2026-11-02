@@ -4,6 +4,8 @@ import { readWorkbookFile } from "@/rwtsa-demo/workbook/read";
 import ExcelJS from "exceljs";
 import { runCosting } from "@/rwtsa-demo/engine/bom-costing";
 import { runFxExposure } from "@/rwtsa-demo/engine/fx-exposure";
+import { runRedFlag } from "@/rwtsa-demo/engine";
+import { REV2_SIZE_CURVE } from "@/rwtsa-demo/engine/size-curve";
 import { buildDataset } from "@/rwtsa-demo/workbook/build-dataset";
 
 /**
@@ -103,5 +105,56 @@ describe.skipIf(!FILE)("the original RWTSA workbook loads directly (local only)"
     expect(r.totals.confirmedOpenUsdCents).toBeNull();
     // moving the as-at date never changes the exposure
     expect(runFxExposure(built.dataset!, { asOf: "2027-06-30" }).totals.potentialUsdCents).toBe(r.totals.potentialUsdCents);
+  });
+
+  it("Scenario A core: six- and twelve-month averages reconcile to the workbook's own references; stale history is reported; the Rev2 curve allocates exactly", async () => {
+    const read = await readWorkbookFile(FILE as string);
+    const built = buildDataset(read, { provenance: "local-workbook", source: { label: "local-test" } });
+    const d = built.dataset!;
+    const r = runRedFlag(d, { historyAnchor: "last-available", overdueOnWater: "exclude", sizeCurve: { kind: "explicit", weights: REV2_SIZE_CURVE } });
+    // history: every SKU's six- and twelve-month average agrees with the workbook's own reference columns
+    expect(r.comparison.compared6).toBe(d.tables.items.length);
+    expect(r.comparison.matched6).toBe(r.comparison.compared6);
+    expect(r.comparison.compared12).toBe(d.tables.items.length);
+    expect(r.comparison.matched12).toBe(r.comparison.compared12);
+    // independent recomputation of the six-month average from the raw SalesHistory sheet
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(FILE as string);
+    const ws = wb.getWorksheet("SalesHistory")!;
+    const head = (ws.getRow(1).values as unknown[]).slice(1).map((v) => String(v ?? ""));
+    const monthCols = head.map((h, i) => ({ h, c: i + 1 })).filter((x) => /^\d{4}-\d{2}$/.test(x.h));
+    const last6 = monthCols.slice(-6);
+    expect(last6[last6.length - 1].h).toBe(r.window.windowEnd);
+    for (let i = 2; i <= Math.min(ws.rowCount, 12); i++) {
+      const sku = String(ws.getRow(i).getCell(1).value);
+      const avg = last6.reduce((t, x) => t + Number(ws.getRow(i).getCell(x.c).value), 0) / 6;
+      expect(r.skus.find((x) => x.sku === sku)!.monthlyForecast, sku).toBeCloseTo(avg, 9);
+    }
+    // stale history: reported, nothing invented
+    expect(r.window.staleMonths).toBeGreaterThan(0);
+    expect(r.window.staleWarning).not.toBeNull();
+    expect(r.window.months.every((m) => m <= (r.window.lastHistoryMonth as string))).toBe(true);
+    // Rev2 curve: style-level lines split exactly, and the Items minimum levels reproduce the curve for every style with all sizes
+    const sa = r.inbound.sizeAllocation;
+    expect(sa.reconciles).toBe(true);
+    expect(sa.unitsAllocated).toBe(sa.unitsIn);
+    const byStyle = new Map<string, typeof d.tables.items>();
+    for (const it of d.tables.items) byStyle.set(it.styleCode, [...(byStyle.get(it.styleCode) ?? []), it]);
+    let full = 0;
+    let reproduced = 0;
+    for (const items of byStyle.values()) {
+      if (items.length !== 8) continue;
+      full += 1;
+      const total = items.reduce((t, i) => t + (i.minLevel ?? 0), 0);
+      if (items.every((i) => Math.abs((100 * (i.minLevel ?? 0)) / total - REV2_SIZE_CURVE[i.size]) <= 1)) reproduced += 1;
+    }
+    expect(full).toBeGreaterThan(0);
+    expect(reproduced).toBe(full);
+    // overdue: kept apart; excluded from usable inbound under the conservative treatment; nothing double counted
+    const ex = runRedFlag(d, { historyAnchor: "last-available", overdueOnWater: "exclude", sizeCurve: { kind: "explicit", weights: REV2_SIZE_CURVE } });
+    const wk = runRedFlag(d, { historyAnchor: "last-available", overdueOnWater: "week-1", sizeCurve: { kind: "explicit", weights: REV2_SIZE_CURVE } });
+    expect(ex.inbound.overdueOnWaterUnits).toBe(wk.inbound.overdueOnWaterUnits);
+    expect(ex.skus.reduce((t, s) => t + s.inboundTotal, 0)).toBeLessThanOrEqual(wk.skus.reduce((t, s) => t + s.inboundTotal, 0));
+    expect(ex.skus.map((s) => s.available)).toEqual(wk.skus.map((s) => s.available));
   });
 });

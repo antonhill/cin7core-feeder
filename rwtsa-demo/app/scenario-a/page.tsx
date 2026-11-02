@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export default async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const query = await searchParams;
   const state = await getDemoState();
-  const settings = parseSettings(query, { suppliedCurve: suppliedCurveFor(state), requireChoices: provenanceOf(state) === "LOCAL WORKBOOK" });
+  const settings = parseSettings(query, { suppliedCurve: suppliedCurveFor(state), local: provenanceOf(state) === "LOCAL WORKBOOK" });
   const saved = readExclusions(state);
   const done = typeof query.done === "string" ? query.done : null;
   return <RedFlagPageView model={redFlagModel(state, settings, saved.exclusions, saved.error)} outcome={isOutcome(done) ? done : null} />;

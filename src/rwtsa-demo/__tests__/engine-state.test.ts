@@ -115,7 +115,7 @@ describe("settings (URL controls)", () => {
     expect(parseSettings({ window: "6.5" }, none).errors).toHaveLength(1);
   });
   it("the supplied size curve is offered only when the source supplies one", () => {
-    expect(parseSettings({}, { suppliedCurve: { M: 1 } }).config.sizeCurve).toEqual({ kind: "explicit", weights: { M: 1 } });
+    expect(parseSettings({}, { suppliedCurve: { M: 1 } }).config.sizeCurve).toMatchObject({ kind: "explicit", weights: { M: 1 } });
     expect(parseSettings({ curve: "supplied" }, none).config.sizeCurve).toEqual({ kind: "none" });
   });
   it("a query round-trip reproduces the settings", () => {

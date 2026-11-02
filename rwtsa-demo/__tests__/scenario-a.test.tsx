@@ -91,7 +91,7 @@ describe("indicators, table and chart", () => {
   it("shows the eleven required columns", async () => {
     synthetic();
     const t = text(await page());
-    for (const c of ["SKU", "Style", "Size", "Available", "Inbound", "Weekly forecast", "First breach", "Shortfall", "Months of cover", "Anomaly", "Proposed order"]) expect(t, c).toContain(c);
+    for (const c of ["SKU", "Style", "Size", "Available", "Inbound", "Weekly forecast", "First breach", "Shortfall", "Cover: opening (months)", "Cover incl. inbound (months)", "Anomaly", "Proposed order"]) expect(t, c).toContain(c);
   });
   it("lists all 24 SKUs, then 3 styles in the style view, and the proposed totals reconcile", async () => {
     synthetic();
@@ -160,7 +160,8 @@ describe("indicators, table and chart", () => {
     const on = text(await page());
     const off = text(await page({ overdue: "exclude" }));
     expect(on).toContain("assumed to arrive in week 1");
-    expect(off).toContain("Overdue shipments still marked on the water are excluded");
+    expect(off).toContain("not an established customer policy");
+    expect(off).toContain("NOT counted as received");
   });
   it("invalid controls are reported and replaced by defaults without echoing the input", async () => {
     synthetic();

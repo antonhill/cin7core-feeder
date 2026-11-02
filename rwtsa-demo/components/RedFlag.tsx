@@ -9,6 +9,7 @@ import type { ChartSeries, RedFlagModel } from "@/rwtsa-demo/state/red-flag-mode
 import { settingsQuery } from "@/rwtsa-demo/state/red-flag-settings";
 import { ProvenanceBadge, ReadinessBadge } from "./Badges";
 import { RulesBadge, RulesPanel } from "./Rules";
+import { ScenarioACorePanels } from "./ScenarioACore";
 
 const n0 = (v: number): string => Math.round(v).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 const n1 = (v: number): string => (Math.round(v * 10) / 10).toFixed(1);
@@ -220,23 +221,22 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
               <label className="flex flex-col gap-1">
                 Sales history vs stock date
                 <select name="anchor" defaultValue={s.values.anchor} className={field}>
-                  {!s.chosen.anchor && <option value="">Not chosen (results withheld)</option>}
                   <option value="last">Assume: use the last months on file</option>
                   <option value="strict">Strict: require months to the stock date</option>
                 </select>
               </label>
               <label className="flex flex-col gap-1">
-                Overdue shipment on the water
+                Overdue shipment on the water (demonstration assumption)
                 <select name="overdue" defaultValue={s.values.overdue} className={field}>
-                  {!s.chosen.overdue && <option value="">Not chosen (results withheld)</option>}
+                  <option value="exclude">Do not count it as received (conservative)</option>
                   <option value="week1">Assume it arrives in week 1</option>
-                  <option value="exclude">Do not count it</option>
                 </select>
               </label>
               <label className="flex flex-col gap-1">
                 Size curve for style-level POs
                 <select name="curve" defaultValue={s.values.curve} className={field}>
                   <option value="none">None (leave unallocated)</option>
+                  <option value="rev2">Rev2 size curve (documented)</option>
                   <option value="demand">In proportion to demand (assumption)</option>
                   {model.provenance === "SYNTHETIC" && <option value="supplied">Supplied (synthetic)</option>}
                 </select>
@@ -274,15 +274,9 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
             </form>
           </Panel>
 
-          {model.withheld.results ? (
-            <Panel>
-              <PanelTitle>Results withheld</PanelTitle>
-              <p data-testid="results-withheld" className="mt-2 text-sm text-slate-700">
-                Results are withheld because a rule above has not been resolved. Choose the history and overdue-shipment treatments in the controls and recalculate. Nothing has been assumed in the meantime.
-              </p>
-            </Panel>
-          ) : (
+          {(
           <>
+          <ScenarioACorePanels model={model} />
           <div data-testid="indicators" className="grid grid-cols-2 gap-3 md:grid-cols-5">
             <Indicator label="Projected shortage SKUs" testid="ind-shortage" value={String(r.summary.shortageSkus)} hint={`of ${r.summary.skuCount} SKUs`} />
             <Indicator label="First projected breach" testid="ind-first" value={r.summary.firstBreachWeek === null ? "None" : `Week ${r.summary.firstBreachWeek}`} hint={`of ${r.config.horizonWeeks}`} />
@@ -307,7 +301,8 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
                     <TH align="right">Weekly forecast</TH>
                     <TH align="right">First breach</TH>
                     <TH align="right">Shortfall</TH>
-                    <TH align="right">Months of cover</TH>
+                    <TH align="right">Cover: opening (months)</TH>
+                    <TH align="right">Cover incl. inbound (months)</TH>
                     <TH>Anomaly</TH>
                     <TH align="right">Proposed order</TH>
                   </TR>
@@ -353,6 +348,10 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
                       </TD>
                       <TD align="right" numeric>
                         {row.monthsOfCover === null ? "n/a" : n1(row.monthsOfCover)}
+                      </TD>
+                      <TD align="right" numeric>
+                        <span data-testid="cover-inbound" data-units={row.coverInboundUnits} />
+                        {row.monthsOfCoverWithInbound === null ? "n/a" : n1(row.monthsOfCoverWithInbound)}
                       </TD>
                       <TD>
                         <span data-anomaly={row.anomalyKind}>{row.anomaly}</span>
