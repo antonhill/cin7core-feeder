@@ -175,17 +175,21 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   // eslint-disable-next-line react-hooks/exhaustive-deps -- load is re-created every render; it only needs to re-run when the project id changes
   useEffect(load, [id]);
 
-  // Commercial / Claims: the Sale-creation record and the invoice-posting state arrive together (one round trip) the first time the tab is opened, and are kept while
-  // the user moves between tabs. The panels re-read their own state after every action, so this is only the initial display.
-  const [commercial, setCommercial] = useState<{ creation: Cin7SaleCreationStatus | null; posting: Cin7PostingStatus | null } | null>(null);
+  // Commercial / Claims: the Sale-creation record and the invoice-posting state arrive together (ONE round trip instead of three) every time the tab is opened. It is
+  // deliberately NOT kept while the user is on another tab: the panels change this state themselves (create a Sale, post an invoice) and a remounted panel must never
+  // start from an older, more permissive picture. It is also tied to the project it was read for, so it can never be shown for another one.
+  const [commercial, setCommercial] = useState<{ projectId: string; creation: Cin7SaleCreationStatus | null; posting: Cin7PostingStatus | null } | null>(null);
+  const commercialNow = tab === "claims" && commercial?.projectId === id ? commercial : null;
+  /** Every tab change goes through here so that leaving Commercial / Claims drops its cached state. */
+  const goTab = (t: Tab) => { if (t !== "claims") setCommercial(null); setTab(t); };
   useEffect(() => {
-    if (tab !== "claims" || commercial) return;
+    if (tab !== "claims" || commercialNow) return;
     let live = true;
     getCommercialBootAction(id)
-      .then((b) => { if (live) setCommercial({ creation: b.ok && b.data ? b.data.creation : null, posting: b.ok && b.data ? b.data.posting : null }); })
-      .catch(() => { if (live) setCommercial({ creation: null, posting: null }); });
+      .then((b) => { if (live) setCommercial({ projectId: id, creation: b.ok && b.data ? b.data.creation : null, posting: b.ok && b.data ? b.data.posting : null }); })
+      .catch(() => { if (live) setCommercial({ projectId: id, creation: null, posting: null }); });
     return () => { live = false; };
-  }, [tab, id, commercial]);
+  }, [tab, id, commercialNow]);
 
   /** Re-reads the authoritative project state (not a transition: callers await it). A failed read keeps the view on screen. */
   async function reloadView(): Promise<ProjectView | null> {
@@ -291,7 +295,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
           return (
             <button
               key={t.value}
-              onClick={() => setTab(t.value)}
+              onClick={() => goTab(t.value)}
               aria-current={tab === t.value ? "page" : undefined}
               className={`flex items-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
                 tab === t.value ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
@@ -333,7 +337,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             </div>
           </section>
 
-          {!embedded && newquip && view.project.billing_scope !== "VARIATION" && <ProjectOverview projectId={id} refreshKey={previewKey(view)} onOpenTab={(t) => { setTab(t); window.scrollTo({ top: 0, behavior: "smooth" }); }} />}
+          {!embedded && newquip && view.project.billing_scope !== "VARIATION" && <ProjectOverview projectId={id} refreshKey={previewKey(view)} onOpenTab={(t) => { goTab(t); window.scrollTo({ top: 0, behavior: "smooth" }); }} />}
 
           <div>
             <h2 className="mb-3 text-sm font-semibold text-slate-700">Commercial position (ex VAT)</h2>
@@ -524,10 +528,10 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
       {tab === "claims" && (
         <div className="mt-6 space-y-6">
           <OpeningCommitmentsPanel key={`${view.openingCommitments.length}-${view.claims.length}`} view={view} isAdmin={perm === "admin"} run={run} working={isWorking} />
-          {commercial ? (
+          {commercialNow ? (
             <>
-              <Cin7SaleCreationPanel view={view} run={run} working={isWorking} boot={commercial.creation} />
-              <Cin7PostingPanel view={view} run={run} working={isWorking} boot={commercial.posting} />
+              <Cin7SaleCreationPanel key={commercialNow.projectId} view={view} run={run} working={isWorking} boot={commercialNow.creation} />
+              <Cin7PostingPanel key={commercialNow.projectId} view={view} run={run} working={isWorking} boot={commercialNow.posting} />
             </>
           ) : (
             <div role="status" aria-live="polite" aria-busy="true" data-testid="commercial-loading" className="min-h-40 rounded-2xl border border-slate-200 bg-white p-5">

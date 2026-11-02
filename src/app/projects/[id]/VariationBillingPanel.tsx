@@ -123,7 +123,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working }: { view: P
                   isAdmin ? (
                     <details className="rounded border border-slate-200 p-3" open>
                       <summary className="cursor-pointer text-sm font-medium text-slate-800">{v.code} billing workspace - progress, claims, Cin7 Sale and invoices (works here, inside the original project)</summary>
-                      <ProjectWorkspace id={billingId} embedded />
+                      <ProjectWorkspace key={billingId} id={billingId} embedded />
                     </details>
                   ) : <span className="text-sm text-slate-600">Billing for {v.code} is active; a manager operates it.</span>
                 ) : isAdmin ? (

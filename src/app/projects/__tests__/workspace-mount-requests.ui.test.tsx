@@ -103,19 +103,39 @@ describe("what a Project fires when it opens", () => {
     expect(names()).toEqual(["getProjectAction", "getProjectOverviewDataAction", "getCommercialBootAction", "getDeliveryRegisterAction"]);
   });
 
-  it("leaving Commercial / Claims and coming back does not read it all again", async () => {
+  it("coming back to Commercial / Claims shows the Sale and invoice state as the server holds it NOW, never the state from the earlier visit", async () => {
     h.responses.getProjectAction = proj(view());
+    h.responses.getCin7SaleCreationStatusAction = unlinkedSale; // first visit: no Sale yet, so the Create form is offered
     render(<ProjectWorkspace id="p1" />);
     fireEvent.click(await screen.findByRole("button", { name: /Commercial \/ Claims/ }));
+    await screen.findByText("Create the Cin7 Sales Order");
     await settled();
+    // meanwhile (an action on this tab) a Sale was created and verified
+    h.responses.getCin7SaleCreationStatusAction = { ok: true, data: { ...unlinkedSale.data, creation: { id: "cr1", creation_state: "RECONCILED", cin7_sale_number: "SO-00031", last_error_message: null, last_error_code: null }, linked: true } };
     fireEvent.click(screen.getByRole("button", { name: /^Stages/ }));
     await settled();
     const before = count("getCommercialBootAction");
     fireEvent.click(screen.getByRole("button", { name: /Commercial \/ Claims/ }));
+    expect(screen.queryByText("Create the Cin7 Sales Order")).toBeNull(); // not the old picture, not even for a moment
+    await screen.findByText(/SO-00031/);
     await settled();
-    report("back to Commercial / Claims");
-    expect(count("getCommercialBootAction")).toBe(before);
-    expect(screen.queryByTestId("commercial-loading")).toBeNull(); // the Sale and invoice panels are on screen straight away
+    expect(count("getCommercialBootAction")).toBe(before + 1);
+    expect(screen.queryByRole("button", { name: "Create Sales Order in Cin7" })).toBeNull();
+  });
+
+  it("another project never inherits the Sale and invoice state read for the previous one", async () => {
+    h.responses.getProjectAction = (id: string) => proj(view({ id }));
+    h.responses.getCin7SaleCreationStatusAction = linkedSale;
+    const { rerender } = render(<ProjectWorkspace id="p1" />); // deliberately NOT keyed: the workspace itself must not leak
+    fireEvent.click(await screen.findByRole("button", { name: /Commercial \/ Claims/ }));
+    await settled();
+    const before = count("getCommercialBootAction");
+    h.responses.getCin7SaleCreationStatusAction = unlinkedSale;
+    rerender(<ProjectWorkspace id="p2" />);
+    await settled();
+    fireEvent.click(await screen.findByRole("button", { name: /Commercial \/ Claims/ }));
+    await screen.findByText("Create the Cin7 Sales Order"); // p2's own state
+    expect(count("getCommercialBootAction")).toBeGreaterThan(before);
   });
 
   it("the Create-Sale form still gets the Cin7 location and account lists, once, when it is actually shown", async () => {
