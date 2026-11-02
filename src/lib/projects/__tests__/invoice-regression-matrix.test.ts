@@ -100,7 +100,7 @@ describe("3. incorrect VAT (the INV-00021 shape)", () => {
     port.echo = () => ({ kind: "created", invoiceNumber: "INV-100", taskId: "t1", status: "DRAFT", totalBeforeTax: 950_000, tax: 30, total: 950_030 });
     port.stored = (req) => ({ invoiceNumber: "INV-100", taskId: "t1", memo: req.memo, status: "DRAFT", subtotalCents: R(950_000), taxCents: 3000, totalCents: R(950_000) + 3000 });
     const r = await post();
-    expect(r.message).toMatch(/VAT R30\.00 vs approved R142500\.00/);
+    expect(r.message).toMatch(/VAT R\u00A030,00 vs approved R\u00A0142\u00A0500,00/);
     expect(row()).toMatchObject({ posting_state: "CREATED", last_error_code: "AMOUNT_MISMATCH" });
     expect((await rec()).state).toBe("CREATED");
   });

@@ -200,7 +200,7 @@ describe("notification content", () => {
   it("includes reference, customer, project, type, amount, approver, SAST time, action and a plain link; no token", () => {
     const n = buildNotification("SUBMITTED", { id: "req-1", doc_type: "CLAIM", doc_ref: "C02", revision: 1, customer_name: "Acme", project_ref: "PRJ-1", amount_cents: R(950000), prepared_by_email: "pm@a", assigned_to_email: "mgr@a", submitted_at: "2026-10-29T08:32:00Z", due_at: null } as ApprovalRequestRow, "MGR@a", { baseUrl: "https://t.example/" });
     expect(n.recipient).toBe("mgr@a");
-    for (const part of ["C02", "Acme", "PRJ-1", "R 950", "pm@a", "mgr@a", "29 Oct 2026, 10:32 SAST", "Required action", "https://t.example/approvals/req-1"]) expect(n.body).toContain(part);
+    for (const part of ["C02", "Acme", "PRJ-1", "R\u00A0950", "pm@a", "mgr@a", "29 Oct 2026, 10:32 SAST", "Required action", "https://t.example/approvals/req-1"]) expect(n.body).toContain(part);
     expect(n.body).not.toMatch(/token|password|secret/i);
   });
 });

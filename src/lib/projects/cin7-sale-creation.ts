@@ -3,6 +3,7 @@
 // stage schedule; no figure is recalculated from progress, cost or stock.
 import { createHash } from "node:crypto";
 import { fulfilmentActivity, type ReadBackFulfilment } from "./cin7-fulfilment-readback";
+import { formatZarCents } from "../format-money";
 
 export const CREATE_CONFIRMATION_TEXT = "Create a Cin7 Advanced Sale for this project";
 export const STALE_CREATION_PENDING_MS = 5 * 60 * 1000;
@@ -118,7 +119,7 @@ export interface SaleReadBack {
   fulfilments?: ReadBackFulfilment[];
 }
 
-const rand = (c: number) => `R${(c / 100).toFixed(2)}`;
+const rand = (c: number) => formatZarCents(c);
 
 /** Differences between the planned Sale and the Sale Cin7 holds. Empty = it read back exactly as planned. A missing/unreadable value is a difference. */
 export function verifyCreatedSale(plan: CreationPlan, s: SaleReadBack): string[] {
