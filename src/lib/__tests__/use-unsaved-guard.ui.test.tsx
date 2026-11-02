@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import Link from "next/link";
 import { useUnsavedGuard } from "../use-unsaved-guard";
@@ -98,5 +98,64 @@ describe("useUnsavedGuard", () => {
     expect(unload().defaultPrevented).toBe(true);
     rerender(<Host dirty={false} second={false} />);
     expect(unload().defaultPrevented).toBe(false);
+  });
+
+  describe("Back/Forward via the Navigation API (Chromium only)", () => {
+    type H = (e: { navigationType: string; cancelable: boolean; hashChange: boolean; preventDefault(): void }) => void;
+    let handlers: Set<H>;
+    beforeEach(() => {
+      handlers = new Set();
+      (window as unknown as { navigation: unknown }).navigation = { addEventListener: (_t: string, h: H) => handlers.add(h), removeEventListener: (_t: string, h: H) => handlers.delete(h) };
+    });
+    afterEach(() => { delete (window as unknown as { navigation?: unknown }).navigation; });
+    const fire = (navigationType: string, o: { cancelable?: boolean; hashChange?: boolean } = {}) => {
+      const e = { navigationType, cancelable: o.cancelable ?? true, hashChange: o.hashChange ?? false, prevented: false, preventDefault() { this.prevented = true; } };
+      handlers.forEach((h) => h(e));
+      return e;
+    };
+    it("dirty: a declined Back is cancelled, an accepted one is let through", () => {
+      const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+      render(<Host dirty />);
+      expect(fire("traverse").prevented).toBe(true);
+      expect(fire("traverse").prevented).toBe(false);
+      expect(confirm).toHaveBeenCalledTimes(2);
+    });
+    it("push, replace and reload are NEVER cancelled or prompted here (cancelling a router push desyncs the App Router URL from the screen)", () => {
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+      render(<Host dirty />);
+      for (const t of ["push", "replace", "reload"]) expect(fire(t).prevented).toBe(false);
+      expect(confirm).not.toHaveBeenCalled();
+    });
+    it("a traversal the browser says is not cancelable, or a hash-only one, is left alone with no prompt", () => {
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+      render(<Host dirty />);
+      expect(fire("traverse", { cancelable: false }).prevented).toBe(false);
+      expect(fire("traverse", { hashChange: true }).prevented).toBe(false);
+      expect(confirm).not.toHaveBeenCalled();
+    });
+    it("clean: no listener at all; and it is removed on save and on unmount", () => {
+      const { rerender, unmount } = render(<Host dirty={false} />);
+      expect(handlers.size).toBe(0);
+      rerender(<Host dirty />);
+      expect(handlers.size).toBe(1);
+      rerender(<Host dirty={false} />);
+      expect(handlers.size).toBe(0);
+      rerender(<Host dirty />);
+      unmount();
+      expect(handlers.size).toBe(0);
+    });
+    it("two dirty guards share ONE navigate listener and ONE prompt", () => {
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+      render(<Host dirty second />);
+      expect(handlers.size).toBe(1);
+      fire("traverse");
+      expect(confirm).toHaveBeenCalledTimes(1);
+    });
+  });
+  it("without a Navigation API (Firefox/Safari today) the other layers still work and nothing throws", () => {
+    expect((window as unknown as { navigation?: unknown }).navigation).toBeUndefined();
+    const { unmount } = render(<Host dirty />);
+    expect(unload().defaultPrevented).toBe(true);
+    unmount();
   });
 });
