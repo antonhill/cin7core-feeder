@@ -10,7 +10,7 @@ import { emptyDraft } from "./draft";
 // "POC MANUAL PRICE OVERRIDE" values that quote used (each with its original reason).
 //
 // Loading is a PURE REPLACEMENT of the draft's inputs with these constants, so repeating it can never duplicate anything. It touches
-// nothing but the draft held in the editor: it does not save, approve, freeze, create a project or call Cin7. Audited internal cost
+// nothing but the draft held in the editor (and it keeps the customer selected on the quotation): it does not save, approve, freeze, create a project or call Cin7. Audited internal cost
 // overrides (not part of the demonstration) are preserved.
 export const DEMO_DEFAULTS_SOURCE = "Demonstration quote NQ-Q-0001 (Test Customer / Test Farm 1), recovered from its saved draft.";
 
@@ -56,7 +56,7 @@ const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.str
 export function demoDifferences(current: QuoteDraft): string[] {
   const d = DEMO_DEFAULTS;
   const out: string[] = [];
-  if (current.customerName.trim() !== d.customerName || current.siteName.trim() !== d.siteName) out.push("Customer and site");
+  if (current.siteName.trim() !== d.siteName) out.push("Site"); // the customer is never part of the demo (see applyDemoDefaults)
   if (current.quoteType !== d.quoteType) out.push("Pricing basis");
   const { estimatorQuantities: q1, quantityOverrides: o1, quantityOverrideReasons: r1, exclusions: x1, ...room1 } = current.config;
   const { estimatorQuantities: q2, quantityOverrides: o2, quantityOverrideReasons: r2, exclusions: x2, ...room2 } = d.config;
@@ -74,7 +74,8 @@ export function demoDifferences(current: QuoteDraft): string[] {
 /** True when the draft holds anything beyond a blank one, i.e. loading the demo would REPLACE someone's entries (a confirmation is needed). */
 export function hasEntries(current: QuoteDraft): boolean {
   const blank = emptyDraft();
-  return !same({ ...current, estimator: { ...current.estimator, costOverrides: undefined } }, { ...blank, estimator: { ...blank.estimator, costOverrides: undefined } });
+  // The selected customer is kept by the demo load, so it never counts as an entry that would be replaced.
+  return !same({ ...current, customerName: "", estimator: { ...current.estimator, costOverrides: undefined } }, { ...blank, customerName: "", estimator: { ...blank.estimator, costOverrides: undefined } });
 }
 
 export interface DemoLoad {
@@ -89,6 +90,8 @@ export function applyDemoDefaults(current: QuoteDraft): DemoLoad {
   const demo = structuredClone(DEMO_DEFAULTS) as QuoteDraft;
   const draft: QuoteDraft = {
     ...demo,
+    // The customer the Rep selected is NOT part of the demonstration: it is kept exactly as it is (blank stays blank).
+    customerName: current.customerName,
     estimator: { ...demo.estimator, ...(current.estimator.costOverrides ? { costOverrides: structuredClone(current.estimator.costOverrides) } : {}) },
   };
   return { draft, replaced };

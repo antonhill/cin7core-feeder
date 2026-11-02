@@ -31,6 +31,9 @@ jobs:
       # vars set — no Cin7/Supabase secrets are read at build time, only at
       # request time inside Server Actions/routes.
       - run: npm run build
+      # The separately deployed PUBLIC customer portal (portal/): build it and assert it serves only the response page and the PDF route, with no internal middleware or markers.
+      - name: Build and verify the public customer portal
+        run: cd portal && npx next build && cd .. && node scripts/verify-portal-build.mjs
 
   dependency-audit:
     name: Dependency vulnerability scan

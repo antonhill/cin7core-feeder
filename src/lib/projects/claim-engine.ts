@@ -44,6 +44,8 @@ export type ProjectInvariantCode =
   | "CLAIM_EXCEEDS_CONTRACT"
   | "UNKNOWN_STAGE"
   | "NOTHING_TO_CLAIM"
+  | "INVALID_PARTIAL_AMOUNT"
+  | "PARTIAL_EXCEEDS_CLAIMABLE"
   | "INVALID_TAX_RATE"
   | "MISSING_COMMERCIAL_DATA"
   | "BASELINE_MUTATED"
@@ -297,6 +299,8 @@ export interface StageClaimLine {
   /** Billed-to-date as bps of stage value (round half-up) — for "from 50% to 65%" presentation. */
   previouslyBilledBps: Bps;
   currentClaimCents: Cents;
+  /** True when the user claimed LESS than the currently claimable maximum for this stage (the rest stays claimable later). */
+  partial: boolean;
   taxCents: Cents;
   remainingUnbilledCents: Cents; // stage value - (previously billed + current)
 }
@@ -318,8 +322,15 @@ export interface ClaimInput {
   priorClaims: PriorClaim[];
   /** Tax rate in bps (15% = 1500). Tax is rounded half-up PER LINE, matching how Cin7 takes a per-line Tax figure. */
   taxRateBps: Bps;
-  /** Restrict the claim to these stages; default = every stage with a positive current claim. */
+  /** Restrict the claim to these stages (a stage with nothing to claim is skipped here, which is how staleness is detected; callers that create a claim check the selection was honoured); omitted = every stage with a positive current claim (engine default only: the actions require an explicit choice). */
   selectedStageIds?: string[];
+  /**
+   * Partial claim: stage id -> the amount (cents, ex VAT) to claim, which must be a positive integer below or equal to what is currently claimable
+   * (earned - previously billed/reserved). Only selected stages may carry one. Equal to the maximum = an ordinary full claim.
+   */
+  partialAmountsCents?: Record<string, Cents>;
+  /** Recalculation only: cap a requested partial amount at what is now claimable instead of refusing. */
+  clampPartials?: boolean;
 }
 
 /** Per-stage maths: earned = value x approved; current = earned - previously billed. */
@@ -361,6 +372,14 @@ export function computeProgressClaim(input: ClaimInput): ProgressClaimCalc {
   const selected = input.selectedStageIds ? new Set(input.selectedStageIds) : null;
   if (selected) for (const id of selected) if (!stageById.has(id)) throw new ProjectInvariantError("UNKNOWN_STAGE", `Selected stage "${id}" does not exist.`);
 
+  const partials = input.partialAmountsCents ?? {};
+  for (const [id, amount] of Object.entries(partials)) {
+    if (!stageById.has(id)) throw new ProjectInvariantError("UNKNOWN_STAGE", `A partial amount references unknown stage "${id}".`);
+    if (!selected || !selected.has(id)) throw new ProjectInvariantError("INVALID_PARTIAL_AMOUNT", "A partial amount can only be set on a stage that is selected for this claim.");
+    if (!Number.isInteger(amount) || amount <= 0) throw new ProjectInvariantError("INVALID_PARTIAL_AMOUNT", "A partial claim amount must be a positive whole number of cents.");
+    assertCents(amount, "Partial claim amount");
+  }
+
   const billed = priorBilledByStage(priorClaims);
   for (const id of billed.keys()) if (!stageById.has(id)) throw new ProjectInvariantError("UNKNOWN_STAGE", `A prior claim references unknown stage "${id}".`);
 
@@ -390,8 +409,17 @@ export function computeProgressClaim(input: ClaimInput): ProgressClaimCalc {
     const p = progressById.get(stage.id);
     // A stage with no recorded approved completion has earned nothing new; prior billing still stands.
     const approvedBps = p?.approvedBps ?? 0;
-    const { earnedToDateCents, currentClaimCents } = computeStageClaim(stage.valueCents, approvedBps, prior);
-    if (currentClaimCents === 0) continue;
+    const { earnedToDateCents, currentClaimCents: claimableCents } = computeStageClaim(stage.valueCents, approvedBps, prior);
+    if (claimableCents === 0) continue;
+    let currentClaimCents = claimableCents;
+    let isPartial = false;
+    const requested = partials[stage.id];
+    if (requested !== undefined) {
+      if (requested > claimableCents && !input.clampPartials) {
+        throw new ProjectInvariantError("PARTIAL_EXCEEDS_CLAIMABLE", `The amount for "${stage.name}" is more than the ${claimableCents} cents currently claimable (earned to date less everything already billed or reserved).`);
+      }
+      if (requested < claimableCents) { currentClaimCents = requested; isPartial = true; }
+    }
     const lineTax = applyBps(currentClaimCents, taxRateBps);
     if (prior + currentClaimCents > stage.valueCents) {
       throw new ProjectInvariantError("CLAIM_EXCEEDS_STAGE_VALUE", `Cumulative claims for "${stage.name}" would exceed its stage value.`);
@@ -406,6 +434,7 @@ export function computeProgressClaim(input: ClaimInput): ProgressClaimCalc {
       previouslyBilledCents: prior,
       previouslyBilledBps: Math.floor((prior * BPS_FULL * 2 + stage.valueCents) / (stage.valueCents * 2)),
       currentClaimCents,
+      partial: isPartial,
       taxCents: lineTax,
       remainingUnbilledCents: stage.valueCents - prior - currentClaimCents,
     });

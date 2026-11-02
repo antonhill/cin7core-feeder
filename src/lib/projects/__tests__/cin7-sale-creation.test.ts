@@ -5,6 +5,7 @@ import { createProjectFromBaseline } from "../project-store";
 import { createSaleForProject, loadCreation, reconcileSaleCreation, type SaleCreateOutcome, type SaleCreationPort } from "../cin7-sale-creation-store";
 import { CREATE_CONFIRMATION_TEXT, buildCreationPlan, externalIdFor, verifyCreatedSale, type CreationPlan, type SaleReadBack } from "../cin7-sale-creation";
 import type { WriteGates } from "../cin7-posting-store";
+import { readBackFulfilments } from "../cin7-fulfilment-readback";
 
 const ORG = "org-a";
 const ON: WriteGates = { writesEnabled: true, orgEnabled: true, isManager: true };
@@ -310,5 +311,74 @@ describe("variation billing project", () => {
     expect(db.rows("project_cin7_sale_creations").find((c) => c.project_id === pid)).toMatchObject({ sale_role: "VARIATION", external_id: "NEWQUIP-PROJECTS-SALE:PRJ-NQ-Q-0001-V001" });
     expect(db.rows("project_cin7_sale_links").find((l) => l.project_id === pid)).toMatchObject({ sale_role: "VARIATION" });
     expect(port.creates[0].charges.reduce((n, c) => n + c.taxAmount, 0)).toBe(72_000);
+  });
+});
+
+describe("UAT-027: commercial-only variation Sale with Cin7's empty fulfilment container", () => {
+  const EMPTY = [{ FulfillmentNumber: 1, FulFilmentStatus: "FULFILLED", LinkedInvoiceNumber: "", Pick: { Status: "AUTHORISED", Lines: [] }, Pack: { Status: "AUTHORISED", Lines: [] }, Ship: { Status: "AUTHORISED", Lines: [] } }];
+  const withFulfilments = (raw: unknown) => (r: SaleReadBack): SaleReadBack => { const f = readBackFulfilments(raw); return { ...r, fulfilmentCount: f.length, fulfilments: f }; };
+  let pid: string;
+  const createVariation = () => createSaleForProject(db as never, port, ON, "mgr@x", { ...baseInput(), projectId: pid });
+  const variationRow = () => db.rows("project_cin7_sale_creations").find((c) => c.project_id === pid) as Record<string, unknown> | undefined;
+  beforeEach(() => {
+    pid = "id-variation-27";
+    db.rows("projects").push({ id: pid, org_id: ORG, project_reference: "PRJ-NQ-Q-0017-V001", status: "ACTIVE", tax_rule: "Standard Rate Sales", tax_rate_bps: 1500, original_contract_cents: 50_000_000, billing_scope: "VARIATION" });
+    db.rows("project_stages").push({ id: "st-v27", org_id: ORG, project_id: pid, sort_order: 1, name: "Variation", value_cents: 50_000_000 });
+  });
+
+  it("a Sale that reads back with the empty container is verified and linked on creation", async () => {
+    port.tamper = withFulfilments(EMPTY);
+    expect(await createVariation()).toMatchObject({ state: "RECONCILED", linked: true });
+    expect(db.rows("project_cin7_sale_links").find((l) => l.project_id === pid)).toMatchObject({ sale_role: "VARIATION" });
+    expect(port.creates).toHaveLength(1);
+  });
+
+  it("the SO-00028 recovery: refused while the fulfilment shows stock activity, then Reconcile links the SAME Sale without creating another", async () => {
+    port.tamper = withFulfilments([{ ...EMPTY[0], Pick: { Status: "AUTHORISED", Lines: [{ SKU: "NQ2886", Quantity: 1 }] } }]);
+    const first = await createVariation();
+    expect(first).toMatchObject({ state: "CREATED", linked: false });
+    expect(first.message).toMatch(/picked stock/);
+    expect(variationRow()).toMatchObject({ creation_state: "CREATED", last_error_code: "VERIFICATION_FAILED" });
+    expect(db.rows("project_cin7_sale_links").filter((l) => l.project_id === pid)).toHaveLength(0);
+
+    // the Sale in Cin7 is (re)read as the empty container: Reconcile verifies it against the plan and links it
+    const saleId = String(variationRow()!.cin7_sale_id);
+    port.sales.set(saleId, withFulfilments(EMPTY)(port.sales.get(saleId)!));
+    const rec = await reconcileSaleCreation(db as never, port, { isManager: true }, "mgr@x", { orgId: ORG, projectId: pid });
+    expect(rec).toMatchObject({ state: "RECONCILED", linked: true });
+    expect(db.rows("project_cin7_sale_links").find((l) => l.project_id === pid)).toMatchObject({ cin7_sale_id: saleId });
+    expect(port.creates).toHaveLength(1); // no second Sale
+  });
+
+  it("duplicate-Sale protection is intact: a replay after the fix still cannot create another Sale", async () => {
+    port.tamper = withFulfilments(EMPTY);
+    await createVariation();
+    expect(await createVariation()).toMatchObject({ alreadyCreated: true, state: "RECONCILED" });
+    expect(port.creates).toHaveLength(1);
+  });
+
+  it("a CREATED-but-unlinked row is never re-created, even though verification now passes: only Reconcile may link it", async () => {
+    port.tamper = withFulfilments([{ ...EMPTY[0], Ship: { Status: "AUTHORISED", Lines: [{ IsShipped: true }] } }]);
+    await createVariation();
+    expect((await createVariation()).alreadyCreated).toBe(true);
+    expect(port.creates).toHaveLength(1);
+  });
+
+  it("the live SO-00028 shape (Ship also carries ShippingAddress and ShippingNotes): Reconcile links the same Sale, creating nothing", async () => {
+    port.tamper = withFulfilments([{ ...EMPTY[0], Pick: { Status: "AUTHORISED", Lines: [{ SKU: "NQ2886", Quantity: 1 }] } }]);
+    await createVariation(); // created, refused (stock activity), unlinked
+    const saleId = String(variationRow()!.cin7_sale_id);
+    const live = [{ ...EMPTY[0], Ship: { Status: "AUTHORISED", RequireBy: null, ShippingAddress: { DisplayAddressLine1: "Test Farm 1", City: "Brits" }, ShippingNotes: "Leave at gate", Lines: [] } }];
+    port.sales.set(saleId, withFulfilments(live)(port.sales.get(saleId)!));
+    expect(await reconcileSaleCreation(db as never, port, { isManager: true }, "mgr@x", { orgId: ORG, projectId: pid })).toMatchObject({ state: "RECONCILED", linked: true });
+    expect(db.rows("project_cin7_sale_links").filter((l) => l.project_id === pid)).toHaveLength(1);
+    expect(port.creates).toHaveLength(1);
+  });
+  it("Reconcile still refuses a Sale with real shipments", async () => {
+    port.tamper = withFulfilments([{ ...EMPTY[0], Ship: { Status: "AUTHORISED", Lines: [{ IsShipped: true, ShipmentDate: "2026-11-01" }] } }]);
+    await createVariation();
+    const rec = await reconcileSaleCreation(db as never, port, { isManager: true }, "mgr@x", { orgId: ORG, projectId: pid });
+    expect(rec).toMatchObject({ state: "CREATED", linked: false });
+    expect(db.rows("project_cin7_sale_links").filter((l) => l.project_id === pid)).toHaveLength(0);
   });
 });

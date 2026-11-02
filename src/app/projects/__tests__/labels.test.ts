@@ -5,7 +5,7 @@ import { join } from "node:path";
 // Terminology guard: "remaining" is contract − invoiced/committed, NOT contract − earned. The label must say so,
 // everywhere the metric appears, and the three progress concepts must stay separate in the UI.
 const read = (rel: string) => readFileSync(join(__dirname, "..", rel), "utf8");
-const detail = read("[id]/page.tsx");
+const detail = read("[id]/ProjectWorkspace.tsx");
 const list = read("page.tsx");
 
 describe("Projects terminology", () => {

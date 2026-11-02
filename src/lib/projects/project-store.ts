@@ -18,6 +18,8 @@ import {
 import { freezeClaimSnapshot, hashClaimSnapshot } from "./claim-snapshot";
 import type { ApprovedCommercialBaseline } from "./baseline";
 import type { VariationRow } from "./variations";
+import type { ClaimPostingRow } from "./claim-cin7-status";
+import { assertSelectionHonoured } from "./claim-selection";
 import { openingAsPriorClaim, type OpeningCommitmentRow } from "./opening-commitments";
 import {
   buildProjectView,
@@ -42,7 +44,7 @@ export async function loadProjectView(db: Db, orgId: string, projectId: string):
   const { data: project, error } = await db.from("projects").select("*").eq("org_id", orgId).eq("id", projectId).maybeSingle();
   if (error) fail(`load project: ${error.message}`);
   if (!project) return null; // includes "belongs to another org"
-  const [stages, events, claims, claimLines, allocations, links, variations, opening] = await Promise.all([
+  const [stages, events, claims, claimLines, allocations, links, variations, opening, postings, pendingApprovals] = await Promise.all([
     db.from("project_stages").select("*").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_progress_events").select("*").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_claims").select("*").eq("org_id", orgId).eq("project_id", projectId),
@@ -51,6 +53,8 @@ export async function loadProjectView(db: Db, orgId: string, projectId: string):
     db.from("project_cin7_links").select("claim_id, cin7_invoice_number, cin7_status, reconciled_at").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_variations").select("*").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_opening_commitments").select("*").eq("org_id", orgId).eq("project_id", projectId),
+    db.from("project_claim_cin7_postings").select("claim_id, posting_state, cin7_invoice_number, cin7_status, reconciled_at, last_error_message").eq("org_id", orgId).eq("project_id", projectId),
+    db.from("approval_requests").select("id, doc_id, stage, stage_role, assigned_to_email").eq("org_id", orgId).eq("project_id", projectId).eq("doc_type", "CLAIM").eq("status", "PENDING"),
   ]);
   return buildProjectView({
     project: project as ProjectRow,
@@ -60,6 +64,10 @@ export async function loadProjectView(db: Db, orgId: string, projectId: string):
     claimLines: must(claimLines, "load claim lines") as ClaimLineRow[],
     allocations: must(allocations, "load allocations") as AllocationRow[],
     links: must(links, "load links") as Cin7LinkRow[],
+    // Fail closed: if the posting rows cannot be read, the screen errors rather than showing "Not posted" for a claim that has an invoice.
+    postings: must(postings, "load Cin7 postings") as ClaimPostingRow[],
+    // Deploy-order safety (migration 0110): without the approvals table a submitted claim simply has no "Open in Approvals" link.
+    approvals: pendingApprovals.error && /does not exist|schema cache/i.test(pendingApprovals.error.message) ? [] : (must(pendingApprovals, "load pending claim approvals") as Array<{ id: string; doc_id: string; stage: string | null; stage_role: string | null; assigned_to_email: string | null }>).map((a) => ({ claimId: a.doc_id, requestId: a.id, stage: a.stage, stageRole: a.stage_role, assignedToEmail: a.assigned_to_email })),
     // Deploy-order safety: until migration 0102 is applied the table does not exist, and no variation can exist either — so a
     // missing table reads as "no variations" rather than breaking every project screen. Any OTHER error still fails closed.
     variations: variations.error && /does not exist|schema cache/i.test(variations.error.message) ? [] : (must(variations, "load variations") as VariationRow[]),
@@ -248,7 +256,7 @@ export async function setOpeningCommitments(
 }
 
 /** PURE-READ: calculates a claim. Writes nothing and touches nothing outside the local DB. */
-export async function previewClaim(db: Db, orgId: string, projectId: string, selectedStageIds?: string[], excludeClaimId?: string): Promise<ClaimPreview> {
+export async function previewClaim(db: Db, orgId: string, projectId: string, selectedStageIds?: string[], excludeClaimId?: string, partial?: { amountsCents?: Record<string, number>; clamp?: boolean }): Promise<ClaimPreview> {
   const view = await loadProjectView(db, orgId, projectId);
   if (!view) fail("Project not found.");
   if (view.project.status !== "ACTIVE") fail("Only an ACTIVE project can be claimed against.");
@@ -275,6 +283,8 @@ export async function previewClaim(db: Db, orgId: string, projectId: string, sel
     priorClaims,
     taxRateBps: view.project.tax_rate_bps, // resolved tax input stored on the project, never hard-coded here
     selectedStageIds,
+    ...(partial?.amountsCents && Object.keys(partial.amountsCents).length ? { partialAmountsCents: partial.amountsCents } : {}),
+    ...(partial?.clamp ? { clampPartials: true } : {}),
   });
   const snapshotHash = hashClaimSnapshot(freezeClaimSnapshot(calc, view.project.tax_rate_bps));
   const nextSeq = (view.claims.reduce((m, c) => Math.max(m, c.claim_seq), 0)) + 1;
@@ -290,9 +300,16 @@ export function claimIdempotencyKey(projectId: string, seq: number, snapshotHash
 
 /** Persists a DRAFT claim (reserves nothing). Re-submitting the same preview returns the existing draft. */
 export async function createClaimDraft(
-  db: Db, orgId: string, email: string, projectId: string, selectedStageIds?: string[], supersedesClaimId?: string,
+  db: Db, orgId: string, email: string, projectId: string, selectedStageIds?: string[], supersedesClaimId?: string, partial?: { amountsCents?: Record<string, number>; clamp?: boolean },
 ): Promise<{ claimId: string; duplicate: boolean }> {
-  const p = await previewClaim(db, orgId, projectId, selectedStageIds);
+  const p = await previewClaim(db, orgId, projectId, selectedStageIds, undefined, partial);
+  if (p.calc.lines.some((l) => l.partial)) {
+    // Fail BEFORE any row is written if the database does not have migration 0120 yet (otherwise an empty DRAFT claim would be left behind).
+    const probe = await db.from("project_claim_lines").select("partial").limit(1);
+    if (probe.error) fail("Partial claims need database migration 0120, which has not been applied yet. Nothing was saved. Claim the full amount, or ask for the migration to be applied.");
+  }
+  // New selections must be honoured exactly. A recalculation (supersedesClaimId) keeps its earlier behaviour: a stage that has since gone to zero drops out.
+  if (selectedStageIds && !supersedesClaimId) assertSelectionHonoured(selectedStageIds, p.calc.lines);
 
   // Same content already sitting as an open draft -> idempotent no-op.
   const open = (await db.from("project_claims").select("id, snapshot_hash, baseline_hash, status").eq("org_id", orgId).eq("project_id", projectId).in("status", ["DRAFT", "READY_FOR_APPROVAL"]));
@@ -322,6 +339,8 @@ export async function createClaimDraft(
     stage_value_cents: l.stageValueCents, approved_bps: l.approvedBps, reported_bps: l.reportedBps,
     earned_to_date_cents: l.earnedToDateCents, previously_committed_cents: l.previouslyBilledCents,
     current_claim_cents: l.currentClaimCents, tax_cents: l.taxCents,
+    // Only a partial line names the column, so a full claim still inserts on a database that has not received migration 0120.
+    ...(l.partial ? { partial: true } : {}),
   }));
   const li = await db.from("project_claim_lines").insert(lines);
   if (li.error) fail(`create claim lines: ${li.error.message}`);
@@ -332,6 +351,18 @@ export async function submitClaimForApproval(db: Db, orgId: string, projectId: s
   const r = await db.from("project_claims").update({ status: "READY_FOR_APPROVAL" }).eq("org_id", orgId).eq("project_id", projectId).eq("id", claimId).eq("status", "DRAFT").select("id");
   if (r.error) fail(r.error.message);
   if (!r.data || r.data.length === 0) fail("Claim is not a DRAFT in this project.");
+}
+
+/** The stages a claim covers and, for partial lines, the amounts requested. Tolerates a database without migration 0120 (no `partial` column = no partial lines). */
+async function claimLineRequests(db: Db, orgId: string, claimId: string): Promise<{ stageIds: string[]; partials: Record<string, number> }> {
+  const r = await db.from("project_claim_lines").select("stage_id, current_claim_cents, partial").eq("org_id", orgId).eq("claim_id", claimId);
+  let rows: Array<{ stage_id: string; current_claim_cents: number; partial?: boolean }>;
+  if (r.error && /partial/i.test(r.error.message) && /does not exist|schema cache|column/i.test(r.error.message)) {
+    rows = must(await db.from("project_claim_lines").select("stage_id, current_claim_cents").eq("org_id", orgId).eq("claim_id", claimId), "load claim lines") as typeof rows;
+  } else rows = must(r, "load claim lines") as typeof rows;
+  const partials: Record<string, number> = {};
+  for (const l of rows) if (l.partial) partials[l.stage_id] = Number(l.current_claim_cents);
+  return { stageIds: rows.map((l) => l.stage_id), partials };
 }
 
 /**
@@ -345,8 +376,17 @@ export async function approveClaim(db: Db, orgId: string, approverEmail: string,
   const claim = c.data as { status: string; snapshot_hash: string; baseline_hash: string } | null;
   if (!claim) fail("Claim not found.");
   if (claim.status !== "READY_FOR_APPROVAL") fail("Only a claim that is READY_FOR_APPROVAL can be approved.");
-  const lines = must(await db.from("project_claim_lines").select("stage_id").eq("org_id", orgId).eq("claim_id", claimId), "load claim lines") as { stage_id: string }[];
-  const fresh = await previewClaim(db, orgId, projectId, lines.map((l) => l.stage_id), claimId);
+  const req = await claimLineRequests(db, orgId, claimId);
+  let fresh: ClaimPreview;
+  try {
+    fresh = await previewClaim(db, orgId, projectId, req.stageIds, claimId, { amountsCents: req.partials });
+  } catch (e) {
+    // A partial amount that is no longer claimable means the inputs moved since drafting: stale, exactly like a changed full claim.
+    if (e instanceof ProjectInvariantError && e.code === "PARTIAL_EXCEEDS_CLAIMABLE") {
+      throw new ProjectInvariantError("STALE_DRAFT", "This draft is stale: progress or prior claims have changed since it was drafted. Recalculate it explicitly; it will be superseded by a freshly calculated draft.");
+    }
+    throw e;
+  }
   // STALE = any input capable of changing THIS claim's financial result has moved: the claimed stages'
   // approved completion / value / prior commitments / tax rate (snapshot hash), or the commercial baseline
   // — customer, currency, contract, tax, schedule (baseline hash). Progress on UNRELATED stages is in
@@ -360,6 +400,13 @@ export async function approveClaim(db: Db, orgId: string, approverEmail: string,
     .eq("org_id", orgId).eq("project_id", projectId).eq("id", claimId).eq("status", "READY_FOR_APPROVAL").select("id");
   if (r.error) fail(r.error.message);
   if (!r.data || r.data.length === 0) fail("Claim could not be approved (state changed).");
+}
+
+/** A manager returns a READY_FOR_APPROVAL claim to DRAFT for correction (the database allows exactly this transition). Reserves nothing, writes nothing to Cin7. */
+export async function returnClaimToDraft(db: Db, orgId: string, projectId: string, claimId: string): Promise<void> {
+  const r = await db.from("project_claims").update({ status: "DRAFT" }).eq("org_id", orgId).eq("project_id", projectId).eq("id", claimId).eq("status", "READY_FOR_APPROVAL").select("id");
+  if (r.error) fail(r.error.message);
+  if (!r.data || r.data.length === 0) fail("The claim is no longer waiting for approval.");
 }
 
 export async function cancelDraftClaim(db: Db, orgId: string, projectId: string, claimId: string): Promise<void> {
@@ -414,20 +461,23 @@ export async function recalculateStaleDraft(
   if (c.error) fail(c.error.message);
   const old = c.data as { status: string; snapshot_hash: string; baseline_hash: string } | null;
   if (!old) fail("Claim not found.");
-  if (old.status !== "DRAFT" && old.status !== "READY_FOR_APPROVAL") fail("Only a DRAFT or READY_FOR_APPROVAL claim can be recalculated.");
-  const lines = must(await db.from("project_claim_lines").select("stage_id").eq("org_id", orgId).eq("claim_id", claimId), "load claim lines") as { stage_id: string }[];
-  const stageIds = lines.map((l) => l.stage_id);
+  // A SUBMITTED claim's amount must not change under its approver: it has to be returned to draft through the approval process first.
+  if (old.status !== "DRAFT") fail(old.status === "READY_FOR_APPROVAL" ? "A submitted claim cannot be recalculated. Ask the approver to return it to draft first." : "Only a DRAFT claim can be recalculated.");
+  const req = await claimLineRequests(db, orgId, claimId);
+  const stageIds = req.stageIds;
+  // A partial amount is kept, but capped at what is claimable now (it never silently becomes a bigger claim than the user chose).
+  const keep = { amountsCents: req.partials, clamp: true };
 
-  const fresh = await previewClaim(db, orgId, projectId, stageIds, claimId);
+  const fresh = await previewClaim(db, orgId, projectId, stageIds, claimId, keep);
   if (fresh.snapshotHash === old.snapshot_hash && fresh.baselineHash === old.baseline_hash) {
     throw new ProjectInvariantError("STALE_DRAFT", "This draft is not stale — it already matches current project state.");
   }
   // 1) new draft first (so a failure leaves the original draft intact), 2) then supersede the old one.
-  const created = await createClaimDraft(db, orgId, email, projectId, stageIds, claimId);
+  const created = await createClaimDraft(db, orgId, email, projectId, stageIds, claimId, keep);
   const cancel = await db.from("project_claims").update({
     status: "CANCELLED_BEFORE_WRITE",
     no_write_evidence: { method: "NEVER_SENT", checkedAt: new Date().toISOString(), detail: `Superseded by recalculated draft ${created.claimId}; no Cin7 call was ever made.` },
-  }).eq("org_id", orgId).eq("project_id", projectId).eq("id", claimId).in("status", ["DRAFT", "READY_FOR_APPROVAL"]).select("id");
+  }).eq("org_id", orgId).eq("project_id", projectId).eq("id", claimId).eq("status", "DRAFT").select("id");
   if (cancel.error) fail(cancel.error.message);
   if (!cancel.data || cancel.data.length === 0) fail("The stale draft could not be superseded (state changed).");
   return { newClaimId: created.claimId, supersededClaimId: claimId };

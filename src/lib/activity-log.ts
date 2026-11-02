@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { redactSecrets } from "@/lib/audit-safety";
 
 /** Who performed a write action — "system" covers the scheduled cron sync and any other non-interactive trigger, which has no session user. */
 export type ActivityActor = { userId: string; email: string | null } | "system";
@@ -30,7 +31,7 @@ export async function logActivity(db: SupabaseClient, input: LogActivityInput): 
     actor_email: actorEmail,
     action: input.action,
     summary: input.summary,
-    detail: input.detail ?? null,
+    detail: input.detail ? redactSecrets(input.detail) : null,
   });
   if (error) console.error(`logActivity failed (${input.action}):`, error.message);
 }

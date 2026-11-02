@@ -125,16 +125,16 @@ describe("viewer permissions are display-only", () => {
 describe("tenant is derived from the session, never from a caller argument", () => {
   it("every store call receives the session org id", async () => {
     await actions.getProjectAction("p-from-another-org");
-    await actions.previewClaimAction("p-from-another-org");
-    await actions.createClaimDraftAction("p-from-another-org");
+    await actions.previewClaimAction("p-from-another-org", ["s1"]);
+    await actions.createClaimDraftAction("p-from-another-org", ["s1"]);
     expect(vi.mocked(store.loadProjectView).mock.calls[0][1]).toBe("org-session");
     expect(vi.mocked(store.previewClaim).mock.calls[0][1]).toBe("org-session");
     expect(vi.mocked(store.createClaimDraft).mock.calls[0][1]).toBe("org-session");
   });
   it("action signatures carry no org id parameter (arity = project/claim ids + stage selection only)", () => {
     expect(actions.getProjectAction.length).toBe(1);
-    expect(actions.previewClaimAction.length).toBe(2); // projectId, selectedStageIds?
-    expect(actions.createClaimDraftAction.length).toBe(2);
+    expect(actions.previewClaimAction.length).toBe(3); // projectId, selectedStageIds?, partialRands?
+    expect(actions.createClaimDraftAction.length).toBe(3);
     expect(actions.approveClaimAction.length).toBe(2); // projectId, claimId
   });
 });

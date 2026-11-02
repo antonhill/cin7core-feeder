@@ -68,6 +68,25 @@ export function validateCostOverride(o: CostOverride): string | null {
   return null;
 }
 
+/**
+ * UI preview of overrides that are still being typed. An override that is incomplete (no reason yet, or no amount) is NOT applied to the
+ * live sheet and is reported as a per-line message instead, so the inputs stay on screen and the entered values are kept. Who/when are
+ * stamped by the server at Save, so a placeholder stands in for them here. Saving is still validated by stampCostOverrides.
+ */
+/** Draft marker for "a reason was typed but no amount yet". Never a valid cost: preview and Save both reject it. */
+export const NO_AMOUNT_YET = -1;
+
+export function previewCostOverrides(raw: Partial<Record<string, CostOverride>> | undefined): { usable: Partial<Record<GrowerItemKey, CostOverride>>; errors: Record<string, string> } {
+  const usable: Partial<Record<GrowerItemKey, CostOverride>> = {};
+  const errors: Record<string, string> = {};
+  for (const [k, o] of Object.entries(raw ?? {})) {
+    if (!o) continue;
+    const err = o.lineCostCents === NO_AMOUNT_YET ? "Enter the line cost for this override." : validateCostOverride({ ...o, by: o.by || "pending", at: o.at || "pending" });
+    if (err) errors[k] = err; else usable[k as GrowerItemKey] = o;
+  }
+  return { usable, errors };
+}
+
 // ── the sheet ───────────────────────────────────────────────────────────────
 
 export interface MarginLine extends MarginFigures {
@@ -186,11 +205,27 @@ export function stampCostOverrides<D extends { estimator: { costOverrides?: Over
   return next;
 }
 
+/** The captured physical costs are written only by the server's capture actions: whatever a saved draft carries is replaced with the stored ones. */
+export function keepServerOwnedCosts<D extends { estimator: { physicalCosts?: unknown } }>(draft: D, prior: unknown): D {
+  const next = structuredClone(draft);
+  if (prior && typeof prior === "object" && Object.keys(prior as object).length) next.estimator.physicalCosts = structuredClone(prior); else delete next.estimator.physicalCosts;
+  return next;
+}
+
+/** The cost-basis declarations (unit basis, accepted exception) are likewise written only by the server's cost actions. */
+export function keepServerOwnedCostBasis<D extends { estimator: { costBasis?: unknown } }>(draft: D, prior: unknown): D {
+  const next = structuredClone(draft);
+  if (prior && typeof prior === "object" && Object.keys(prior as object).length) next.estimator.costBasis = structuredClone(prior); else delete next.estimator.costBasis;
+  return next;
+}
+
 /** Removes every internal financial from a quote record for a viewer who may not see cost: the frozen margin sheet and the cost overrides. */
-export function redactInternalFinancials<Q extends { draft: { estimator: { costOverrides?: unknown } }; accepted_baseline: { internalMargin?: unknown } | null }>(quote: Q, canViewCommercials: boolean): Q {
+export function redactInternalFinancials<Q extends { draft: { estimator: { costOverrides?: unknown; physicalCosts?: unknown; costBasis?: unknown } }; accepted_baseline: { internalMargin?: unknown; physicalCostEstimate?: unknown; estimator?: { physicalCosts?: unknown; costOverrides?: unknown; costBasis?: unknown } } | null }>(quote: Q, canViewCommercials: boolean): Q {
   if (canViewCommercials) return quote;
   const q = structuredClone(quote);
   delete q.draft.estimator.costOverrides;
-  if (q.accepted_baseline) delete q.accepted_baseline.internalMargin;
+  delete q.draft.estimator.physicalCosts;
+  delete q.draft.estimator.costBasis;
+  if (q.accepted_baseline) { delete q.accepted_baseline.internalMargin; delete q.accepted_baseline.physicalCostEstimate; if (q.accepted_baseline.estimator) { delete q.accepted_baseline.estimator.physicalCosts; delete q.accepted_baseline.estimator.costOverrides; delete q.accepted_baseline.estimator.costBasis; } }
   return q;
 }

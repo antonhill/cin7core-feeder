@@ -12,6 +12,7 @@ import * as cin7Actions from "../cin7-actions";
 import * as physicalActions from "../physical-actions";
 import * as billingActions from "../variation-billing-actions";
 import { NEWQUIP_POC_ORG_IDS } from "@/newquip/access";
+const REC = { saleId: "x", customerName: "c", location: "l", revenueAccount: "200", cin7TaxRule: "t", reason: "a reason that is long enough" };
 
 const ORG = NEWQUIP_POC_ORG_IDS[0];
 let db: FakeDb;
@@ -58,7 +59,7 @@ describe("ordinary users", () => {
     ["cancelDraft", () => actions.cancelDraftClaimAction(scope, "c")],
     ["recalculateStale", () => actions.recalculateStaleDraftAction(scope, "c")],
     ["cin7 status", () => cin7Actions.getCin7PostingStatusAction(scope)],
-    ["cin7 link", () => cin7Actions.linkCin7SaleAction(scope, "x", "200")],
+    ["cin7 link", () => cin7Actions.recoverLinkCin7SaleAction(scope, REC)],
     ["cin7 post", () => cin7Actions.postClaimToCin7Action(scope, "c", "x")],
     ["cin7 reconcile", () => cin7Actions.reconcileClaimPostingAction(scope, "c")],
     ["sale creation status", () => cin7Actions.getCin7SaleCreationStatusAction(scope)],

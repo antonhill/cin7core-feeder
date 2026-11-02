@@ -17,7 +17,7 @@ export const QUOTE_STATE_LABEL: Record<QuoteState, string> = {
   MANAGER_APPROVED_FINAL: "Manager approved — final",
 };
 
-export type QuoteAction = "SEND_TO_ESTIMATOR" | "RETURN_TO_REP" | "ESTIMATOR_SIGN_OFF" | "MANAGER_APPROVE";
+export type QuoteAction = "SEND_TO_ESTIMATOR" | "RETURN_TO_REP" | "ESTIMATOR_SIGN_OFF" | "MANAGER_APPROVE" | "RETURN_TO_ESTIMATOR";
 
 const TABLE: Record<QuoteAction, { from: QuoteState; to: QuoteState; roles: readonly QuoteRole[] }> = {
   SEND_TO_ESTIMATOR: { from: "REP_DRAFT", to: "ESTIMATOR_REVIEW", roles: ["rep"] },
@@ -25,6 +25,8 @@ const TABLE: Record<QuoteAction, { from: QuoteState; to: QuoteState; roles: read
   // Sign-off does not change state: it records that the estimator double-checked THIS exact content.
   ESTIMATOR_SIGN_OFF: { from: "ESTIMATOR_REVIEW", to: "ESTIMATOR_REVIEW", roles: ["estimator"] },
   MANAGER_APPROVE: { from: "ESTIMATOR_REVIEW", to: "MANAGER_APPROVED_FINAL", roles: ["manager"] },
+  // A manager sends a signed-off quotation back to the ESTIMATOR: the state is unchanged, the sign-off is withdrawn and must be given again on the current content.
+  RETURN_TO_ESTIMATOR: { from: "ESTIMATOR_REVIEW", to: "ESTIMATOR_REVIEW", roles: ["manager"] },
 };
 
 export type TransitionResult = { ok: true; to: QuoteState } | { ok: false; error: string };

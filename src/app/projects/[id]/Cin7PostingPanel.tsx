@@ -2,13 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
+import { Feedback, type RunFn } from "./feedback-context";
+import type { Reconciled } from "@/components/ui/action-feedback";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { POST_CONFIRMATION_TEXT, canReconcile, canSend, memoFor, type PostingDisplayState } from "@/lib/projects/cin7-posting";
+import { clearSelection, populateEligible, selectAllEligible, selectionToQuantities, toggleLine, visibleLines } from "@/lib/projects/invoice-selection";
 import type { PreparedInvoice } from "@/lib/projects/invoice-proposal-store";
-import { getCin7PostingStatusAction, linkCin7SaleAction, getInvoiceProposalAction, postClaimToCin7Action, reconcileClaimPostingAction, type Cin7PostingStatus } from "../cin7-actions";
+import { getCin7PostingStatusAction, recoverLinkCin7SaleAction, getInvoiceProposalAction, postClaimToCin7Action, reconcileClaimPostingAction, type Cin7PostingStatus } from "../cin7-actions";
 
 // Cin7 Core: link the Project to ONE Advanced Sale, then post each APPROVED claim as ONE invoice. Everything here is display + intent:
 // the server re-checks the rollout flag, the org, the manager role, the claim state and the confirmation on every call.
@@ -17,35 +20,72 @@ const TONE: Record<PostingDisplayState, BadgeTone> = { NOT_SENT: "neutral", PEND
 const LABEL: Record<PostingDisplayState, string> = {
   NOT_SENT: "NOT SENT", PENDING: "PENDING", CREATED: "CREATED IN CIN7", RECONCILED: "RECONCILED", FAILED_CONFIRMED_NO_WRITE: "FAILED — NO INVOICE CREATED", FAILED_UNCERTAIN: "OUTCOME UNCERTAIN",
 };
-type Run = (fn: () => Promise<{ ok: boolean; error?: string }>, done?: string) => Promise<boolean>;
 
-export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; run: Run; working: boolean }) {
+export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; run: RunFn; working: boolean }) {
   const projectId = view.project.id;
   const [st, setSt] = useState<Cin7PostingStatus | null>(null);
-  const [note, setNote] = useState<string | null>(null);
-  const [saleId, setSaleId] = useState("");
-  const [account, setAccount] = useState("");
+  // Administrative recovery only (collapsed, admin-only): never part of the normal flow.
+  const [rec, setRec] = useState({ saleId: "", customerName: view.project.customer_name ?? "", location: "", revenueAccount: "", cin7TaxRule: "Standard Rate Sales", reason: "" });
   const [confirming, setConfirming] = useState<string | null>(null);
+  // After a request whose outcome was lost, an invoice may exist in Cin7: nothing may be re-submitted until the posting state has been RE-READ.
+  const [checking, setChecking] = useState(false);
+  const [uncertain, setUncertain] = useState(false); // the last re-read failed: stay blocked
   // Proposed invoice per claim (prepared automatically when the manager opens the claim for posting; "Populate Products from Project" refreshes it).
   const [prep, setPrep] = useState<Record<string, { busy: boolean; error?: string; data?: PreparedInvoice }>>({});
   const [qty, setQty] = useState<Record<string, Record<string, string>>>({});
   const [early, setEarly] = useState<Record<string, string>>({});
+  const [picked, setPicked] = useState<Record<string, string[]>>({});
+  const [onlySelected, setOnlySelected] = useState<Record<string, boolean>>({});
+  const selOf = (claimId: string) => ({ selected: new Set(picked[claimId] ?? []), qty: qty[claimId] ?? {} });
+  const applySel = (claimId: string, s: { selected: ReadonlySet<string>; qty: Readonly<Record<string, string>> }) => { setPicked((m) => ({ ...m, [claimId]: [...s.selected] })); setQty((q) => ({ ...q, [claimId]: { ...s.qty } })); };
   const populate = async (claimId: string) => {
     setPrep((p) => ({ ...p, [claimId]: { busy: true } }));
     const r = await getInvoiceProposalAction(projectId, claimId);
     setPrep((p) => ({ ...p, [claimId]: r.ok && r.data ? { busy: false, data: r.data } : { busy: false, error: r.error ?? "Could not prepare the invoice" } }));
-    if (r.ok && r.data) setQty((q) => ({ ...q, [claimId]: Object.fromEntries(r.data!.proposal.lines.map((l) => [l.sku, String(l.proposed)])) }));
+    if (r.ok && r.data) applySel(claimId, selectAllEligible(r.data.proposal.lines));
   };
 
   const load = useCallback(() => { getCin7PostingStatusAction(projectId).then((r) => r.ok && r.data && setSt(r.data)); }, [projectId]);
+  /** Re-reads the posting state for the actions below. Null when the read failed (the outcome is then unknown). */
+  const reload = async (): Promise<Cin7PostingStatus | null> => {
+    try {
+      const r = await getCin7PostingStatusAction(projectId);
+      if (r.ok && r.data) { setSt(r.data); setUncertain(false); return r.data; }
+    } catch { /* treated as a failed read */ }
+    return null;
+  };
   useEffect(load, [load, view.claims.length, view.claims.map((c) => c.status).join()]);
 
   if (!st || !st.gates.orgEnabled) return null; // the Cin7 posting capability is rolled out per organization
   const { gates, link, postings } = st;
   const approved = view.claims.filter((c) => c.status === "APPROVED");
   const stateOf = (claimId: string): PostingDisplayState => (postings.find((p) => p.claim_id === claimId)?.posting_state ?? "NOT_SENT") as PostingDisplayState;
-  const after = (fn: () => Promise<{ ok: boolean; error?: string; data?: unknown }>) =>
-    run(async () => { const r = await fn(); if (r.ok) setNote((r.data as { message?: string } | undefined)?.message ?? null); load(); return r; });
+  // The result's own message (e.g. the posting or reconcile outcome) is the success text, shown beside the control that ran it (key) - never at the top of the page.
+  const rereading = checking || uncertain;
+  const after = (fn: () => Promise<{ ok: boolean; error?: string; data?: unknown }>, key: string, claimId?: string) =>
+    run(async () => {
+      setChecking(true);
+      const r = await fn(); // a throw (lost response) leaves `checking` on: the reconcile below owns the re-read and releases it
+      await reload();
+      setChecking(false);
+      return r;
+    }, undefined, key, {
+      success: (_v, res) => (res.data as { message?: string } | undefined)?.message ?? "Done.",
+      exclusive: true, cin7: true,
+      doneAfterReconcile: "The invoice request was recorded (its response was lost). Its state is shown on the claim.",
+      reconcile: async (): Promise<Reconciled> => {
+        const s2 = await reload();
+        setUncertain(s2 === null); // a failed read keeps posting blocked
+        setChecking(false);
+        if (!s2) return "unreadable";
+        if (!claimId) return "unknown";
+        const row = s2.postings.find((p) => p.claim_id === claimId);
+        if (row) setConfirming(null); // a posting record exists: show it, not the form
+        if (!row) return "not_done";
+        if (row.posting_state === "CREATED" || row.posting_state === "RECONCILED") return "done";
+        return row.posting_state === "FAILED_CONFIRMED_NO_WRITE" ? "not_done" : "unknown"; // PENDING / FAILED_UNCERTAIN: the claim shows it; never "recorded"
+      },
+    });
 
   return (
     <Panel>
@@ -53,25 +93,33 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
         <PanelTitle>Cin7 Core</PanelTitle>
         <Badge tone={gates.writesEnabled ? "warning" : "neutral"} dot>{gates.writesEnabled ? "Cin7 writes ENABLED" : "Cin7 writes OFF"}</Badge>
       </div>
-      <p className="mt-1 text-sm text-slate-500">One Project → one linked Cin7 Advanced Sale → one invoice per approved claim. Posting creates a DRAFT commercial invoice with no stock lines (no fulfilment, stock or COGS).</p>
-      {note && <div className="mt-3"><Alert tone="info">{note}</Alert></div>}
+      <p className="mt-1 text-sm text-slate-500">Each Project has one Cin7 Sales Order, and each approved claim becomes one draft invoice on it. Posting never ships goods or moves stock.</p>
 
       <div className="mt-4 rounded-lg border border-slate-200 p-4 text-sm">
-        <p className="font-medium text-slate-900">Linked Sale</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="font-medium text-slate-900">Cin7 Sales Order</p>
+          {link && <Badge tone="success" dot>{link.cin7_sale_number ? `${link.cin7_sale_number} · ` : ""}{st.linkOrigin === "ADMIN_RECOVERY" ? "Linked by administrator recovery" : "Linked and verified"}</Badge>}
+        </div>
         {link ? (
           <dl className="mt-2 grid gap-x-8 gap-y-1 sm:grid-cols-4">
-            {[["Sale", link.cin7_sale_number ?? "—"], ["SaleID", link.cin7_sale_id], ["Linked", new Date(link.created_at).toLocaleDateString("en-ZA")], ["Last reconciled", link.last_reconciled_at ? new Date(link.last_reconciled_at).toLocaleString("en-ZA") : "—"]].map(([k, v]) => (
-              <div key={k}><dt className="text-xs text-slate-500">{k}</dt><dd className="break-all font-medium text-slate-900">{v}</dd></div>
+            {[["Sales Order", link.cin7_sale_number ?? "—"], ["Link status", link.link_status === "LINKED" ? "Linked" : link.link_status], ["Linked", new Date(link.created_at).toLocaleDateString("en-ZA")], ["Last reconciled", link.last_reconciled_at ? new Date(link.last_reconciled_at).toLocaleString("en-ZA") : "—"]].map(([k, v]) => (
+              <div key={k}><dt className="text-xs text-slate-500">{k}</dt><dd className="font-medium text-slate-900">{v}</dd></div>
             ))}
           </dl>
-        ) : gates.isManager ? (
-          <div className="mt-2 flex flex-wrap items-end gap-3">
-            <label className="flex min-w-[300px] flex-1 flex-col gap-1"><span className="text-xs text-slate-600">Cin7 SaleID (from the sale&apos;s URL)</span><input value={saleId} onChange={(e) => setSaleId(e.target.value)} className="h-9 rounded-md border border-slate-300 px-3 font-mono text-xs" /></label>
-            <label className="flex w-40 flex-col gap-1"><span className="text-xs text-slate-600">Revenue account code</span><input value={account} onChange={(e) => setAccount(e.target.value)} placeholder="e.g. 200" className="h-9 rounded-md border border-slate-300 px-3" /></label>
-            <Button size="sm" loading={working} disabled={!saleId.trim() || !account.trim()} onClick={() => after(() => linkCin7SaleAction(projectId, saleId, account))}>Link Cin7 Sale (read-only check)</Button>
-            <p className="w-full text-xs text-slate-500">Reads the sale once to verify it is an AUTHORISED Advanced Sale. The link is permanent. Nothing is written to Cin7.</p>
-          </div>
-        ) : <p className="mt-1 text-slate-600">Not linked. A manager must link the Cin7 Sale first.</p>}
+        ) : <p className="mt-1 text-slate-600">No Cin7 Sales Order yet. Use <strong>Create the Cin7 Sales Order</strong> above: products and charges come from the approved quotation, and the order is checked and linked automatically.</p>}
+        {!link && gates.isManager && (
+          <details className="mt-3 rounded border border-amber-200 bg-amber-50/40 p-3">
+            <summary className="cursor-pointer text-xs font-medium text-amber-800">Advanced / administrative recovery (administrators only): attach an existing Cin7 Sale</summary>
+            <p className="mt-2 text-xs text-slate-600">Only for a Sale the automatic creation could not finish linking. It reads the Sale live and links it ONLY if it is this project&apos;s own Sale (ExternalID, customer, products and totals all match the project). Another project&apos;s Sale, or any mismatch, is refused. A reason is required and the attempt is audited. Nothing is written to Cin7.</p>
+            <div className="mt-2 grid gap-2 md:grid-cols-3">
+              {([["saleId", "Cin7 SaleID"], ["customerName", "Cin7 customer name"], ["location", "Cin7 location"], ["revenueAccount", "Revenue account code"], ["cin7TaxRule", "Cin7 tax rule name"]] as const).map(([k, label]) => (
+                <label key={k} className="flex flex-col gap-1"><span className="text-xs text-slate-600">{label}</span><input value={rec[k]} onChange={(e) => setRec({ ...rec, [k]: e.target.value })} className="h-9 rounded-md border border-slate-300 px-3 text-sm" /></label>
+              ))}
+              <label className="flex flex-col gap-1 md:col-span-3"><span className="text-xs text-slate-600">Reason for recovery (required, audited)</span><input value={rec.reason} onChange={(e) => setRec({ ...rec, reason: e.target.value })} className="h-9 rounded-md border border-slate-300 px-3 text-sm" /></label>
+            </div>
+            <div className="mt-2"><Button size="sm" variant="secondary" loading={working} disabled={Object.values(rec).some((v) => !v.trim())} onClick={() => after(() => recoverLinkCin7SaleAction(projectId, rec), "post:recover")}>Verify and link this Sale</Button><Feedback k="post:recover" /></div>
+          </details>
+        )}
       </div>
 
       <div className="mt-4 space-y-3">
@@ -99,12 +147,13 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
 
               <div className="mt-3 flex flex-wrap gap-2">
                 {canSend(state) && gates.isManager && link && (
-                  <Button size="sm" variant="secondary" disabled={working || !gates.writesEnabled} onClick={() => { const open = confirming === c.id; setConfirming(open ? null : c.id); if (!open) void populate(c.id); }}>{state === "NOT_SENT" ? "Prepare and post claim to Cin7" : "Retry (confirmed no invoice)"}</Button>
+                  <Button size="sm" variant="secondary" disabled={working || rereading || !gates.writesEnabled} onClick={() => { const open = confirming === c.id; setConfirming(open ? null : c.id); if (!open) void populate(c.id); }}>{state === "NOT_SENT" ? "Prepare and post claim to Cin7" : "Retry (confirmed no invoice)"}</Button>
                 )}
-                {canReconcile(state) && gates.isManager && <Button size="sm" variant="secondary" loading={working} onClick={() => after(() => reconcileClaimPostingAction(projectId, c.id))}>Reconcile with Cin7 (read-only)</Button>}
+                {canReconcile(state) && gates.isManager && <Button size="sm" variant="secondary" loading={working} onClick={() => after(() => reconcileClaimPostingAction(projectId, c.id), `post:${c.id}`, c.id)}>Reconcile with Cin7 (read-only)</Button>}
                 {canSend(state) && !gates.writesEnabled && <span className="self-center text-xs text-slate-500">Cin7 writes are switched off.</span>}
                 {!gates.isManager && <span className="self-center text-xs text-slate-500">Only a manager can post to Cin7.</span>}
               </div>
+              <Feedback k={`post:${c.id}`} />
 
               {confirming === c.id && link && (
                 <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-4">
@@ -128,13 +177,22 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
                         </div>
                         <div>
                           <p className="font-medium text-slate-900">Physical product lines (always R0; quantity only)</p>
+                          {pp.lines.length > 1 && (
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                              <Button size="sm" variant="secondary" disabled={working} onClick={() => applySel(c.id, selectAllEligible(pp.lines))}>Select all eligible</Button>
+                              <Button size="sm" variant="secondary" disabled={working} onClick={() => applySel(c.id, populateEligible(pp.lines, selOf(c.id)))}>Populate eligible quantities</Button>
+                              <Button size="sm" variant="ghost" disabled={working} onClick={() => applySel(c.id, clearSelection(pp.lines))}>Clear selection</Button>
+                              <label className="flex items-center gap-1"><input type="checkbox" checked={!!onlySelected[c.id]} onChange={(e) => setOnlySelected((m) => ({ ...m, [c.id]: e.target.checked }))} /> Show selected only</label>
+                              <span className="text-slate-600">{selOf(c.id).selected.size} of {pp.lines.length} selected</span>
+                            </div>
+                          )}
                           {pp.lines.length === 0 ? <p className="text-slate-600">The Cin7 Sale has no product lines.</p> : (
                             <table className="mt-1 min-w-full text-xs">
                               <thead><tr className="text-left text-slate-500"><th className="pr-3">SKU</th><th className="pr-3 text-right">Ordered</th><th className="pr-3 text-right">Invoiced</th><th className="pr-3 text-right">Shipped</th><th className="pr-3 text-right">Remaining</th><th className="pr-3 text-right">Eligible</th><th className="pr-3">Invoice qty</th><th>Why</th></tr></thead>
-                              <tbody>{pp.lines.map((l) => (
-                                <tr key={l.sku} className="align-top"><td className="pr-3 font-mono">{l.sku}</td>
+                              <tbody>{visibleLines(pp.lines, selOf(c.id), !!onlySelected[c.id]).map((l) => (
+                                <tr key={l.sku} className="align-top"><td className="pr-3 font-mono"><label className="flex items-center gap-1"><input type="checkbox" aria-label={`Select ${l.sku}`} disabled={l.status === "UNKNOWN" || l.status === "EXCLUDED"} checked={(picked[c.id] ?? []).includes(l.sku)} onChange={(e) => applySel(c.id, toggleLine(pp.lines, selOf(c.id), l.sku, e.target.checked))} />{l.sku}</label></td>
                                   {[l.ordered, l.invoiced, l.shipped, l.remainingToInvoice, l.eligible].map((v, i) => <td key={i} className="pr-3 text-right tabular-nums">{v === null ? "?" : v}</td>)}
-                                  <td className="pr-3"><input aria-label={`Invoice quantity for ${l.sku}`} className="h-7 w-20 rounded border border-slate-300 px-2 tabular-nums" value={qty[c.id]?.[l.sku] ?? "0"} disabled={l.status === "UNKNOWN"} onChange={(e) => setQty((q) => ({ ...q, [c.id]: { ...(q[c.id] ?? {}), [l.sku]: e.target.value } }))} /></td>
+                                  <td className="pr-3"><input aria-label={`Invoice quantity for ${l.sku}`} className="h-7 w-20 rounded border border-slate-300 px-2 tabular-nums" value={qty[c.id]?.[l.sku] ?? "0"} disabled={l.status === "UNKNOWN"} onChange={(e) => { const cur = selOf(c.id); const sel = new Set(cur.selected); if (Number(e.target.value) > 0) sel.add(l.sku); else sel.delete(l.sku); applySel(c.id, { selected: sel, qty: { ...cur.qty, [l.sku]: e.target.value } }); }} /></td>
                                   <td className="text-slate-600">{l.reasons.join(" ") || (l.status === "PROPOSED" ? "Dispatched and not yet invoiced." : "")}</td></tr>
                               ))}</tbody>
                             </table>
@@ -155,8 +213,11 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
                       <div key={k}><dt className="text-xs text-amber-800">{k}</dt><dd className="break-all font-medium text-slate-900">{v}</dd></div>
                     ))}
                   </dl>
+                  <div className="mt-3">
+                    {rereading && <Alert tone="warning">{checking ? "Checking the current Cin7 status. Posting stays disabled until it has been re-read." : "The outcome of the last request could not be confirmed and the status could not be re-read. Reload the page. Posting stays disabled until the status has been read."}</Alert>}
+                  </div>
                   <div className="mt-3 flex gap-2">
-                    <Button loading={working} onClick={() => after(() => postClaimToCin7Action(projectId, c.id, POST_CONFIRMATION_TEXT, { lines: Object.entries(qty[c.id] ?? {}).map(([sku, q]) => ({ sku, quantity: Number(q) })).filter((x) => Number.isFinite(x.quantity) && x.quantity > 0), earlyReason: early[c.id] })).then(() => setConfirming(null))}>{POST_CONFIRMATION_TEXT}</Button>
+                    <Button loading={working} disabled={!prep[c.id]?.data || rereading} onClick={() => after(() => postClaimToCin7Action(projectId, c.id, POST_CONFIRMATION_TEXT, { lines: selectionToQuantities(prep[c.id]?.data?.proposal.lines ?? [], selOf(c.id)), earlyReason: early[c.id] }), `post:${c.id}`, c.id).then((ok) => { if (ok) setConfirming(null); })}>{POST_CONFIRMATION_TEXT}</Button>
                     <Button variant="ghost" onClick={() => setConfirming(null)}>Cancel</Button>
                   </div>
                 </div>

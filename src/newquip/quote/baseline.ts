@@ -8,7 +8,8 @@ import type { PriceSourceDescriptor, QuoteType } from "../grower/pricing-source"
 import type { GrowerConfigurationInput } from "../grower/types";
 import { buildMarginSheet, type MarginSheet } from "./margin";
 import { buildPhysicalScope } from "./physical-scope";
-import type { ScopeItem } from "@/lib/projects/product-scope";
+import { applyMappingLibrary, effectiveScope, type LibraryMapping, type ScopeItem } from "@/lib/projects/product-scope";
+import { buildCostEstimate, type CostEstimate } from "@/lib/projects/latest-cost";
 
 // THE ACCEPTED BASELINE — the immutable commercial snapshot a manager's final approval creates, and the only thing a Project is
 // built from. It records everything needed to explain the contract later WITHOUT re-running any rule or re-reading any price:
@@ -45,7 +46,7 @@ export interface AcceptedBaseline {
   selectedProducts: { itemKey: string; sku: string | null; variant: string | null }[];
   overrides: { itemKey: string; quantityPerRoom: number | null; defaultQuantityPerRoom: number | null; reason: string | null }[];
   exclusions: { itemKey: string; reason: string }[];
-  priceResolutions: { itemKey: string; unitPriceExVat: number; reason: string }[];
+  priceResolutions: { itemKey: string; unitPriceExVat: number; reason: string; /** Server-stamped provenance (who/when), sealed with the baseline. */ by?: string; at?: string }[];
   pricing: { source: PriceSourceDescriptor; quoteType: QuoteType; basis: string };
   commercial: {
     lines: BaselineCommercialLine[];
@@ -75,6 +76,8 @@ export interface AcceptedBaseline {
   physicalScope?: ScopeItem[];
   /** INTERNAL ONLY. Frozen with the baseline so later price or cost changes cannot rewrite the agreed margin. Absent on baselines sealed before margins existed. */
   internalMargin?: MarginSheet;
+  /** INTERNAL. The physical-SKU cost estimate (Cin7 latest cost / audited manual estimates) frozen at approval. Absent when no costs were captured. Never changes afterwards. */
+  physicalCostEstimate?: CostEstimate & { costBasis?: { unitBasis?: unknown; incompleteAccepted?: { reason: string; by: string; at: string } } };
   /** Total contract value, ex VAT, integer cents. */
   contractCents: number;
 }
@@ -107,6 +110,20 @@ export interface BaselineInput {
   approvals: AcceptedBaseline["approvals"];
   /** The same draft evaluated with cost VISIBLE, used only for the internal margin sheet. Defaults to `evaluation`. Its selling figures must equal the evaluation's. */
   marginEvaluation?: QuoteEvaluation;
+  /** ACTIVE reusable package mappings at approval time. Applied to unmapped scope items and frozen (with their versions) into the sealed baseline. */
+  mappingLibrary?: ReadonlyMap<string, LibraryMapping>;
+}
+
+type Budget = NonNullable<QuoteEvaluation["budget"]>;
+/** The priced commercial lines of an evaluated budget, exactly as they are sealed (also used for the pre-approval scope view, so both always agree). */
+export function commercialLinesOf(b: Budget): BaselineCommercialLine[] {
+  return b.lines
+    .filter((l) => l.status === "priced")
+    .map((l) => ({
+      itemKey: l.itemKey, label: l.label, sku: l.sku, quantity: l.quantity ?? 0, unitPriceExVat: l.unitPrice, revenueCents: cents(l.revenueExTax ?? 0),
+      pricedBy: l.pricedBy, note: l.reason,
+      ...(l.components ? { components: l.components.map((c) => ({ sku: c.sku, description: c.description, quantity: c.quantity, unitPriceExVat: c.unitPrice, revenueCents: c.revenueExTax == null ? null : cents(c.revenueExTax), status: c.status })) } : {}),
+    }));
 }
 
 /** Builds the sealed baseline. Throws unless the evaluated quote is READY — an incomplete quote can never be frozen. */
@@ -118,14 +135,19 @@ export function buildAcceptedBaseline(i: BaselineInput): { baseline: AcceptedBas
   if (!marginBudget || Math.round(marginBudget.totals.subtotalExTax * 100) !== Math.round(b.totals.subtotalExTax * 100)) throw new Error("The margin evaluation does not match the quote being frozen.");
   const subtotalCents = cents(b.totals.subtotalExTax);
 
-  const lines: BaselineCommercialLine[] = b.lines
-    .filter((l) => l.status === "priced")
-    .map((l) => ({
-      itemKey: l.itemKey, label: l.label, sku: l.sku, quantity: l.quantity ?? 0, unitPriceExVat: l.unitPrice, revenueCents: cents(l.revenueExTax ?? 0),
-      pricedBy: l.pricedBy, note: l.reason,
-      ...(l.components ? { components: l.components.map((c) => ({ sku: c.sku, description: c.description, quantity: c.quantity, unitPriceExVat: c.unitPrice, revenueCents: c.revenueExTax == null ? null : cents(c.revenueExTax), status: c.status })) } : {}),
-    }));
+  const lines = commercialLinesOf(b);
 
+  const physicalScope = i.mappingLibrary && i.mappingLibrary.size ? applyMappingLibrary(buildPhysicalScope(lines), i.mappingLibrary, i.approvals.managerApprovedAt) : buildPhysicalScope(lines);
+  const captured = draft.estimator.physicalCosts;
+  const eff = captured && Object.keys(captured).length ? effectiveScope(physicalScope) : null;
+  const builtEstimate = eff ? buildCostEstimate(eff.lines.map((l) => ({ sku: l.sku, description: l.description, quantity: l.quantity })), captured!, eff.blockers.length ? eff.blockers : []) : undefined;
+  // Once costing has been started an INCOMPLETE snapshot cannot be frozen, unless an authorised user recorded an explicit, reasoned exception (frozen with it).
+  const accepted = draft.estimator.costBasis?.incompleteAccepted;
+  if (builtEstimate?.incomplete && !accepted) {
+    const parts = [builtEstimate.missingSkus.length ? `${builtEstimate.missingSkus.length} SKU(s) have no supplier cost selected (${builtEstimate.missingSkus.slice(0, 5).join(", ")}${builtEstimate.missingSkus.length > 5 ? ", ..." : ""})` : "", builtEstimate.unresolvedPackages.length ? `${builtEstimate.unresolvedPackages.length} package(s) are not mapped to Cin7 SKUs` : ""].filter(Boolean);
+    throw new Error(`The cost estimate is incomplete: ${parts.join(" and ")}. Resolve each (select a supplier, enter an audited manual estimate, map the package) or record an authorised exception before approving.`);
+  }
+  const physicalCostEstimate = builtEstimate ? { ...builtEstimate, ...(draft.estimator.costBasis ? { costBasis: structuredClone(draft.estimator.costBasis) } : {}) } : undefined;
   const baseline: AcceptedBaseline = {
     schemaVersion: 1,
     quote: { ref: i.quoteRef, revision: i.revision, customerName: draft.customerName.trim(), siteName: draft.siteName.trim(), quoteType: draft.quoteType },
@@ -144,7 +166,7 @@ export function buildAcceptedBaseline(i: BaselineInput): { baseline: AcceptedBas
     selectedProducts: lines.map((l) => ({ itemKey: l.itemKey, sku: l.sku, variant: l.itemKey === "feeder" ? (draft.config.feederVariant ?? "STANDARD") : null })),
     overrides: ev.calc.lines.filter((l) => l.overrideState === "manual_override").map((l) => ({ itemKey: l.itemKey, quantityPerRoom: l.quantityPerRoom, defaultQuantityPerRoom: l.defaultQuantityPerRoom, reason: l.overrideReason })),
     exclusions: ev.calc.lines.filter((l) => l.exclusionReason).map((l) => ({ itemKey: l.itemKey, reason: l.exclusionReason! })),
-    priceResolutions: Object.entries(draft.estimator.priceResolutions).filter(([k]) => b.lines.some((l) => l.itemKey === k && l.pricedBy === "estimator_resolution")).map(([itemKey, r]) => ({ itemKey, unitPriceExVat: r!.unitPriceExVat, reason: r!.reason })),
+    priceResolutions: Object.entries(draft.estimator.priceResolutions).filter(([k]) => b.lines.some((l) => l.itemKey === k && l.pricedBy === "estimator_resolution")).map(([itemKey, r]) => ({ itemKey, unitPriceExVat: r!.unitPriceExVat, reason: r!.reason, ...(r!.by ? { by: r!.by } : {}), ...(r!.at ? { at: r!.at } : {}) })),
     pricing: { source: b.priceSource, quoteType: b.quoteType, basis: b.pricingBasis },
     commercial: {
       lines,
@@ -156,8 +178,9 @@ export function buildAcceptedBaseline(i: BaselineInput): { baseline: AcceptedBas
     },
     assumptions: draft.estimator.assumptions,
     approvals: i.approvals,
-    physicalScope: buildPhysicalScope(lines),
+    physicalScope,
     internalMargin: buildMarginSheet(marginBudget, draft.estimator.costOverrides ?? {}),
+    ...(physicalCostEstimate ? { physicalCostEstimate } : {}),
     contractCents: subtotalCents,
   };
   return { baseline: deepFreeze(baseline), hash: hashOf(baseline) };

@@ -27,6 +27,12 @@ export type GrowerItemKey =
   | "cone_fans"
   | "manure_plug";
 
+/** Runtime list of every item key. A confirmed product mapping may only be stored under one of these. */
+export const GROWER_ITEM_KEYS: readonly GrowerItemKey[] = [
+  "bulk_tank", "flex_auger", "feeder", "feed_saver_mat", "cup_drinker", "concrete_slat", "penning_package", "led_light", "pvc_door",
+  "controller", "silo_weighing", "control_panel", "emergency_windows", "pad_cooling", "cone_fans", "manure_plug",
+];
+
 export type OptionalItemKey =
   | "controller"
   | "silo_weighing"
@@ -35,6 +41,10 @@ export type OptionalItemKey =
   | "pad_cooling"
   | "cone_fans"
   | "manure_plug";
+
+/** Runtime list of the optional additional elements (GROWER-OPT-001..007). They have no recommended SKU: the estimator maps each to a Cin7 product. */
+export const OPTIONAL_ITEM_KEYS: readonly OptionalItemKey[] = ["controller", "silo_weighing", "control_panel", "emergency_windows", "pad_cooling", "cone_fans", "manure_plug"];
+export const isOptionalItemKey = (k: string): k is OptionalItemKey => (OPTIONAL_ITEM_KEYS as readonly string[]).includes(k);
 
 export type FeederType = "CCM" | "CAWI";
 export type DrinkerType = "CUP_NEW" | "PIGBITE";
