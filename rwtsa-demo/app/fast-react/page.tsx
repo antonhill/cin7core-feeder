@@ -10,6 +10,6 @@ export default async function Page({ searchParams }: { searchParams: Promise<Rec
   const state = await getDemoState();
   const { exchange, error } = readExchange(state);
   const sp = await searchParams;
-  const done = typeof sp.done === "string" && sp.done in FORM_MESSAGES ? (sp.done as FormOutcome) : null;
+  const done = typeof sp.done === "string" && Object.hasOwn(FORM_MESSAGES, sp.done) ? (sp.done as FormOutcome) : null;
   return <FastReactPageView model={fastReactModel(state, exchange, error, new Date())} done={done === null ? null : { code: done, text: FORM_MESSAGES[done] }} />;
 }

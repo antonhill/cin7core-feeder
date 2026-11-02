@@ -193,7 +193,7 @@ export function buildSampleReturn(orders: readonly ReturnOrderRef[], now: Date):
       shift(p.status === "COMPLETE" ? 0 : 21),
       p.status,
       String(done),
-      `${day}T06:00:00Z`,
+      `${day}T00:00:00Z`,
     ];
   });
   const r = renderTable(RETURN_CODES, rows, "tab", "standard");

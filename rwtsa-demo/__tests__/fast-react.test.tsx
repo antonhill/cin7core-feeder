@@ -227,6 +227,15 @@ describe("request safety", () => {
   });
 });
 
+describe("?done= parameter", () => {
+  it("ignores prototype keys instead of crashing", async () => {
+    for (const k of ["__proto__", "constructor", "toString", "nope"]) expect(text(await page({ done: k }))).toContain("Fast React exchange");
+  });
+  it("the rejected-file message says what to check", async () => {
+    expect(text(await page({ done: "return-rejected" }))).toMatch(/Check the exact SPK\.\* header/);
+  });
+});
+
 describe("no data, no substitution", () => {
   it("shows an empty state and offers nothing when no data source is loaded", async () => {
     vi.stubEnv("RWTSA_SOURCE", "");

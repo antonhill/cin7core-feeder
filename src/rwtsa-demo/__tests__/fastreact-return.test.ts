@@ -119,8 +119,10 @@ describe("row validation and planning", () => {
     expect(only([row({ "SPK.UPDATED": "2026-11-05T08:00:00" })]).outcome).toBe("REJECTED"); // must be UTC with Z
     expect(only([row({ "SPK.DELIVERY": "31/12/2026" })]).outcome).toBe("REJECTED");
   });
-  it("rejects a timestamp more than a day in the future", () => {
-    expect(only([row({ "SPK.UPDATED": "2026-11-07T00:00:00Z" })]).reasons.join(" ")).toMatch(/future/i);
+  it("rejects a timestamp more than five minutes in the future", () => {
+    expect(only([row({ "SPK.UPDATED": "2026-11-05T12:10:00Z" })]).reasons.join(" ")).toMatch(/future/i);
+    expect(only([row({ "SPK.UPDATED": "2026-11-05T12:03:00Z" })]).outcome).toBe("NEW");
+    expect(only([row({ "SPK.QTYDONE": "2147483648" })]).outcome).toBe("REJECTED");
   });
   it("rejects invalid quantities and quantities above the ordered quantity", () => {
     for (const q of ["-1", "1.5", "abc", "", "1e3"]) expect(only([row({ "SPK.QTYDONE": q })]).outcome, q).toBe("REJECTED");

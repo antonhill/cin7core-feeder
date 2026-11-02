@@ -104,7 +104,7 @@ export interface ReturnPlan {
 }
 
 const TS = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$/;
-const DAY_MS = 86_400_000;
+const FUTURE_TOLERANCE_MS = 5 * 60_000;
 
 function parseTimestamp(s: string): number | null {
   const m = TS.exec(s);
@@ -181,7 +181,7 @@ function validateRow(values: Readonly<Record<string, string>>, orders: ReadonlyM
   const qRaw = v("SPK.QTYDONE");
   let qty = Number.NaN;
   if (qRaw !== "") {
-    if (!/^\d{1,9}$/.test(qRaw)) reasons.push("SPK.QTYDONE must be a whole number, zero or more.");
+    if (!/^\d{1,9}$/.test(qRaw) || Number(qRaw) > 2_147_483_647) reasons.push("SPK.QTYDONE must be a whole number, zero or more.");
     else qty = Number(qRaw);
   }
   if (ref && Number.isFinite(qty)) {
@@ -193,7 +193,7 @@ function validateRow(values: Readonly<Record<string, string>>, orders: ReadonlyM
   if (ts !== "") {
     const ms = parseTimestamp(ts);
     if (ms === null) reasons.push("SPK.UPDATED is not a UTC timestamp (YYYY-MM-DDTHH:MM:SSZ).");
-    else if (ms > now.getTime() + DAY_MS) reasons.push("SPK.UPDATED is in the future.");
+    else if (ms > now.getTime() + FUTURE_TOLERANCE_MS) reasons.push("SPK.UPDATED is in the future.");
   }
   if (reasons.length > 0 || !ref) return { record: null, orderNo: ref?.orderNo ?? null, reasons, warnings };
   return {

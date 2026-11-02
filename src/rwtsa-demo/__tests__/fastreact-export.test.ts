@@ -292,6 +292,15 @@ describe("production update file", () => {
     expect(file(buildExport(SOURCE, SUPP, { ...OPT, updates: [upd({ qty: -1 })] }), "UPDATE").status).toBe("FAILED");
     expect(file(buildExport(SOURCE, SUPP, { ...OPT, updates: [upd({ qty: 2.5 })] }), "UPDATE").status).toBe("FAILED");
   });
+  it("fails, rather than silently dropping, an optional column supplied for only some rows", () => {
+    const r = buildExport(SOURCE, SUPP, { ...OPT, updates: [upd({ section: "SEW" }), upd({ order: "PO-2" })] });
+    expect(file(r, "UPDATE").status).toBe("FAILED");
+    expect(file(r, "UPDATE").issues.some((i) => i.kind === "inconsistent" && i.field === "U.SECT")).toBe(true);
+  });
+  it("rejects a quantity beyond a 32-bit integer", () => {
+    expect(file(buildExport(withOrder({ qty: 2_147_483_648 }), SUPP, OPT), "ORDERS").status).toBe("FAILED");
+    expect(file(buildExport(SOURCE, SUPP, { ...OPT, updates: [upd({ qty: 1e21 })] }), "UPDATE").status).toBe("FAILED");
+  });
   it("rejects a duplicate update row for the same order and date", () => {
     const r = buildExport(SOURCE, SUPP, { ...OPT, updates: [upd(), upd()] });
     expect(file(r, "UPDATE").issues.some((i) => i.kind === "duplicate")).toBe(true);

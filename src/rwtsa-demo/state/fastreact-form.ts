@@ -30,7 +30,7 @@ export const FORM_MESSAGES: Readonly<Record<FormOutcome, string>> = {
   "options-saved": "Export options saved locally.",
   "invalid-options": "Nothing was saved: an export option or selected order is not valid.",
   "return-previewed": "The return file was validated. Review the preview; nothing has been applied yet.",
-  "return-rejected": "The return file was refused (see the reasons); nothing was stored.",
+  "return-rejected": "The return file was refused and nothing was stored. Check the exact SPK.* header, UTC timestamps (YYYY-MM-DDTHH:MM:SSZ), and the 256 KB / 2000 row limits.",
   "return-applied": "Applied to local demonstration state only. Nothing was sent to Cin7, Fast React or Xero.",
   "return-nothing-to-apply": "Nothing to apply: every row was a duplicate, stale, conflicting or rejected. Local state is unchanged.",
   "return-discarded": "The pending return file was discarded.",

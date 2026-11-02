@@ -384,7 +384,7 @@ export function buildExport(source: ExchangeSource | null, supplement: Supplemen
       oc.add("invalid", "O^DD:1", "The delivery date is not a real calendar date.", o.orderNo);
       ok = false;
     }
-    if (!Number.isInteger(o.qty) || o.qty <= 0) {
+    if (!Number.isInteger(o.qty) || o.qty <= 0 || o.qty > 2_147_483_647) {
       oc.add("invalid", "O^DQ:1", "The quantity must be a whole number above zero.", o.orderNo);
       ok = false;
     }
@@ -429,7 +429,11 @@ export function buildExport(source: ExchangeSource | null, supplement: Supplemen
     const uc = new Collector();
     const seen = new Set<string>();
     const rows = options.updates.map((u) => ({ ...u }));
-    const optional = (k: "section" | "line" | "complete") => rows.every((r) => r[k] !== undefined);
+    const optional = (k: "section" | "line" | "complete") => {
+      const n = rows.filter((r) => r[k] !== undefined).length;
+      if (n > 0 && n < rows.length) uc.add("inconsistent", k === "section" ? "U.SECT" : k === "line" ? "U.LINE" : "U.COMPLETE", "Supplied for some update rows but not all; it is not dropped silently.", null);
+      return n === rows.length;
+    };
     const withSect = optional("section");
     const withLine = optional("line");
     const withComp = optional("complete");
@@ -437,7 +441,7 @@ export function buildExport(source: ExchangeSource | null, supplement: Supplemen
       uc.text("UPDATE", "U.ORDER", u.order, u.order, true);
       if (!orderCodes.has(up(u.order))) uc.add("reference", "U.ORDER", "The update is for an order that is not in the exported ORDERS file.", u.order);
       if (parseIsoDate(u.date) === null) uc.add("invalid", "U.DATE", "The update date is not a real calendar date.", u.order);
-      if (!Number.isInteger(u.qty) || u.qty < 0) uc.add("invalid", "U.QTY", "The quantity must be a whole number, zero or more.", u.order);
+      if (!Number.isInteger(u.qty) || u.qty < 0 || u.qty > 2_147_483_647) uc.add("invalid", "U.QTY", "The quantity must be a whole number, zero or more.", u.order);
       if (u.section !== undefined) uc.text("UPDATE", "U.SECT", u.section, u.order, false);
       if (u.line !== undefined) uc.text("UPDATE", "U.LINE", u.line, u.order, false);
       if (u.complete !== undefined && u.complete !== 0 && u.complete !== 1) uc.add("invalid", "U.COMPLETE", "Complete must be 0 or 1.", u.order);
