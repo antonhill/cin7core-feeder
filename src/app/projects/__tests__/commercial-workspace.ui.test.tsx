@@ -102,18 +102,31 @@ describe("Commercial / Claims workspace (P2)", () => {
       expect(a.textContent).toContain(c.cin7Status.label);
       if (c.cin7Status.invoiceNumber) {
         expect(a.textContent).toContain(c.cin7Status.invoiceNumber);
-        // reconciliation is its own chip, separate from the Cin7 invoice status chip beside it
-        expect(within(a).getByText("Reconciled")).toBeTruthy();
-        const rec = within(a).getByText("Reconciled").closest("[data-tone]")!;
-        const inv = within(a).getByText(c.cin7Status.label).closest("[data-tone]")!;
-        expect(rec).not.toBe(inv);
-        expect(inv.contains(rec) || rec.contains(inv)).toBe(false);
-        expect(rec.getAttribute("data-tone")).toBe("neutral"); // reconciliation is a record-keeping fact: green is not spent on it
+        // reconciliation is its own plain-text line (not a second chip), separate from the Cin7 invoice status chip
+        const rec = within(a).queryByText(/Reconciled with Cin7/);
+        expect(!!rec).toBe(c.cin7Status.reconciled);
+        if (rec) expect(rec.closest("[data-tone]")).toBeNull(); // green and chips are not spent on a record-keeping fact
       }
     }
     // no figure was lost or altered by the redesign: the sum of the claim totals on screen equals the sum in the data
     const shown = articles.map((a) => a.textContent!).join(" ");
     expect(CLAIMS.every((c) => shown.includes(formatCents(c.total_cents)))).toBe(true);
+  });
+  it("marks and counts the claims awaiting this user's action, and no others", async () => {
+    await openCommercial();
+    const marked = [...document.querySelectorAll("article[data-needs-action]")].map((x) => x.textContent!);
+    expect(marked.length).toBe(2); // PRJ-X-C03 (approve here) and PRJ-X-C04 (draft: submit)
+    expect(marked.some((t) => t.includes("PRJ-X-C03"))).toBe(true);
+    expect(marked.some((t) => t.includes("PRJ-X-C04"))).toBe(true);
+    expect(screen.getByText("2 need your action")).toBeTruthy();
+    const done = [...document.querySelectorAll("article")].filter((x) => x.textContent!.includes("PRJ-X-C01") || x.textContent!.includes("PRJ-X-C02"));
+    expect(done.every((x) => !x.hasAttribute("data-needs-action") && !x.textContent!.includes("Needs your action"))).toBe(true);
+  });
+  it("marks no claim for a viewer who can act on none (needs-action follows the same plan as the buttons)", async () => {
+    await openCommercial();
+    const marked = document.querySelectorAll("article[data-needs-action]").length;
+    const withActionButtons = [...document.querySelectorAll("article")].filter((x) => [...x.querySelectorAll("button")].some((b) => /^(Submit|Approve|Recalculate)$/.test(b.textContent ?? ""))).length;
+    expect(marked).toBe(withActionButtons); // a marked claim always has its action beside it, and an actionable claim is always marked
   });
   it("keeps the actions beside the claim they act on (a manager approves a claim from its own record)", async () => {
     await openCommercial();

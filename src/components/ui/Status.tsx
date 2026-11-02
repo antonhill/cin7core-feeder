@@ -30,8 +30,17 @@ export function ScopeTag({ scope }: { scope: "BASE" | "VARIATION" | string }) {
   return scope === "VARIATION" ? <Status tone="primary">Variation</Status> : <Status tone="neutral">Base</Status>;
 }
 
+/** Codes whose sentence-cased form reads as machine output; the business wording is stated, not derived. */
+const WORDING: Record<string, string> = {
+  FAILED_CONFIRMED_NO_WRITE: "Failed, nothing written",
+  FAILED_UNCERTAIN: "Outcome uncertain",
+  CANCELLED_BEFORE_WRITE: "Cancelled",
+  CIN7_PENDING: "Awaiting Cin7 result",
+};
+
 /** Sentence-case wording for a stored status or state code, e.g. READY_FOR_APPROVAL -> "Ready for approval", CIN7_CREATED -> "Cin7 created". */
 export function statusText(code: string): string {
+  if (Object.hasOwn(WORDING, code)) return WORDING[code];
   const s = code.replace(/_/g, " ").toLowerCase().replace(/\bcin7\b/g, "Cin7").replace(/\bvat\b/g, "VAT");
   return s.charAt(0).toUpperCase() + s.slice(1);
 }

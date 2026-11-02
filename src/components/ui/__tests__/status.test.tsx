@@ -56,7 +56,10 @@ describe("Status", () => {
     expect(statusText("READY_FOR_APPROVAL")).toBe("Ready for approval");
     expect(statusText("CIN7_CREATED")).toBe("Cin7 created");
     expect(statusText("ACTIVE")).toBe("Active");
-    expect(statusText("FAILED_CONFIRMED_NO_WRITE")).toBe("Failed confirmed no write");
+    expect(statusText("FAILED_CONFIRMED_NO_WRITE")).toBe("Failed, nothing written");
+    expect(statusText("FAILED_UNCERTAIN")).toBe("Outcome uncertain");
+    expect(statusText("CANCELLED_BEFORE_WRITE")).toBe("Cancelled");
+    expect(statusText("CIN7_PENDING")).toBe("Awaiting Cin7 result");
   });
 });
 

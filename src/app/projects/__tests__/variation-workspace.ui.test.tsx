@@ -35,16 +35,16 @@ const view = (variations: unknown[], over: Record<string, unknown> = {}): Projec
 const variation = (id: string, code: string, status: string, over: Record<string, unknown> = {}) => ({ id, code, title: `${code} title`, description: `${code} scope`, status, amount_cents: 500_000_00, raised_by_email: "est@x.co.za", priced_by_email: null, decided_by_email: status === "DRAFT" ? null : "boss@x.co.za", decision_reason: status === "REJECTED" ? "too dear" : null, ...over });
 const money = (n: number) => formatCents(n);
 const scope = (projectId: string, code: string) => ({ projectId, scope: "VARIATION", variationCode: code, contractCents: 500_000_00, earnedCents: 100_000_00, committedCents: 500_000_00, claimableCents: 25_000_00, remainingCents: 375_000_00 });
-const billing = (billed: Record<string, string>) => ({ ok: true, data: {
+const billing = (billed: Record<string, string>, sales: Record<string, string | null> = {}, lookupFailed = false) => ({ ok: true, data: {
   consolidated: { scopes: [{ projectId: "p1", scope: "BASE", variationCode: null, contractCents: 900_000_00, earnedCents: 0, committedCents: 0, claimableCents: 0, remainingCents: 900_000_00 }, ...Object.entries(billed).map(([vid, pid]) => scope(pid, vid.toUpperCase()))], totals: { contractCents: 1, earnedCents: 1, committedCents: 1, claimableCents: 1, remainingCents: 1 }, unbilledApprovedVariations: [], closureBlockers: [] },
-  schedules: Object.fromEntries(["v1", "v2", "v3"].map((k) => [k, [{ name: "Variation", bps: 10_000 }]])), billingProjectByVariation: billed } });
+  schedules: Object.fromEntries(["v1", "v2", "v3"].map((k) => [k, [{ name: "Variation", bps: 10_000 }]])), billingProjectByVariation: billed, saleNumberByVariation: sales, saleLookupFailed: lookupFailed } });
 const posting = { ok: true, data: { gates, link: { id: "l", cin7_sale_number: "SO-00028", cin7_sale_id: "s", link_status: "LINKED", created_at: "2026-11-01T00:00:00Z", last_reconciled_at: null }, linkOrigin: "AUTOMATIC", postings: [{ id: "po1", claim_id: "c1", posting_state: "RECONCILED", cin7_invoice_number: "INV-00038", cin7_task_id: null, cin7_status: "DRAFT", completed_at: null, reconciled_at: "2026-11-01T10:00:00Z" }] } };
 const commercialBoot = { ok: true, data: { creation: { gates, creation: null, linked: true, scopeItems: [], saleLines: [], blockers: [], excluded: [] }, posting: posting.data } };
 
-function setup(variations: unknown[], billed: Record<string, string>, viewer = { canApprove: true, newquip: true }) {
+function setup(variations: unknown[], billed: Record<string, string>, viewer = { canApprove: true, newquip: true }, sales: Record<string, string | null> = {}, lookupFailed = false) {
   const vp = (id: string) => view([], { id, billing_scope: "VARIATION", parent_project_id: "p1", project_reference: `PRJ-X-${id}` });
   h.responses.getProjectAction = (id: string) => ({ ok: true, data: id === "p1" ? view(variations) : vp(id), viewer });
-  h.responses.getVariationBillingAction = billing(billed);
+  h.responses.getVariationBillingAction = billing(billed, sales, lookupFailed);
   h.responses.getCommercialBootAction = commercialBoot;
   h.responses.getCin7PostingStatusAction = posting;
 }
@@ -246,5 +246,54 @@ describe("Variation workspace (P3)", () => {
     expect(await screen.findByText(/could not be refreshed \(db down\)/)).toBeTruthy();
     expect(within(rec).queryByText("Loading the billing position…")).toBeNull(); // the record is still there
     expect(await within(rec).findByRole("button", { name: /^Approve/ })).toBeTruthy();
+  });
+
+  describe("D3-A: scope and Cin7 Sale identification", () => {
+    it("shows the stored Cin7 Sale number on the variation record, with the Variation scope tag, without opening the workspace", async () => {
+      setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" }, undefined, { v1: "SO-00028" });
+      await openVariations();
+      const rec = await record("V001");
+      await waitFor(() => expect(within(rec).getByText("SO-00028")).toBeTruthy());
+      expect(within(rec).getByText("Variation").closest("[data-tone]")?.getAttribute("data-tone")).toBe("primary");
+    });
+    it("puts each variation's own number on its own record", async () => {
+      setup([variation("v1", "V001", "APPROVED"), variation("v2", "V002", "APPROVED")], { v1: "vp1", v2: "vp2" }, undefined, { v1: "SO-00111", v2: "SO-00222" });
+      await openVariations();
+      const r1 = await record("V001"); const r2 = await record("V002");
+      await waitFor(() => expect(r1.textContent).toContain("SO-00111"));
+      await waitFor(() => expect(r2.textContent).toContain("SO-00222"));
+      expect(r1.textContent).not.toContain("SO-00222");
+      expect(r2.textContent).not.toContain("SO-00111");
+    });
+    it("says so plainly when billing started but no Sale is linked, and when billing has not started: no number is invented", async () => {
+      setup([variation("v1", "V001", "APPROVED"), variation("v2", "V002", "APPROVED")], { v1: "vp1" });
+      await openVariations();
+      const r1 = await record("V001");
+      await waitFor(() => expect(within(r1).getByText("not created yet")).toBeTruthy());
+      const r2 = await record("V002");
+      expect(within(r2).getByText("billing not started")).toBeTruthy();
+      expect(within(r1).getByText("not created yet").parentElement!.textContent).not.toMatch(/SO-\d/);
+    });
+    it("a failed Sale lookup says the number is unavailable, never 'not created yet'", async () => {
+      setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" }, undefined, {}, true);
+      await openVariations();
+      const rec = await record("V001");
+      await waitFor(() => expect(within(rec).getByText(/number unavailable/)).toBeTruthy());
+      expect(within(rec).queryByText("not created yet")).toBeNull();
+    });
+    it("a link with no stored number says so, and does not claim there is no Sale", async () => {
+      setup([variation("v1", "V001", "APPROVED")], { v1: "vp1" }, undefined, { v1: null });
+      await openVariations();
+      const rec = await record("V001");
+      await waitFor(() => expect(within(rec).getByText("linked, number not recorded")).toBeTruthy());
+      expect(within(rec).queryByText("not created yet")).toBeNull();
+    });
+    it("shows no Sale line for a variation that is not approved", async () => {
+      setup([variation("v3", "V003", "DRAFT")], {});
+      await openVariations();
+      const rec = await record("V003");
+      await waitFor(() => expect(rec.textContent).toContain("Counts for nothing"));
+      expect(rec.textContent).not.toContain("Cin7 Sale:");
+    });
   });
 });
