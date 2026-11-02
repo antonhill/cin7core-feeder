@@ -278,6 +278,8 @@ export function extractTable(tab: TabName, grid: readonly GridRow[]): LayoutResu
       return null;
     };
     const kindOf = (label: string): RoutingCostKind | null => {
+      // A total, price or check row that merely mentions a kind word is not a build-up line.
+      if (/^(total|selling|gross|net|sub-?total)\b|\b(total|price|check|incl\.?|including)\b/i.test(label)) return null;
       if (/\boverhead\b/i.test(label)) return "overhead";
       if (/\befficiency\b/i.test(label)) return "efficiency";
       if (/\bmargin\b/i.test(label)) return "margin";

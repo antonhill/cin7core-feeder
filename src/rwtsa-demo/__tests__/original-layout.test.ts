@@ -478,6 +478,16 @@ describe("Routing_SMV cost build-up extraction", () => {
     expect(r.dataset!.routingCosts!.lines.map((l) => l.kind)).toEqual(["labour", "margin"]);
     expect(codes(r, "routing_cost_label_unrecognised")).toEqual([expect.objectContaining({ severity: "warning", count: 2, rows: [13, 15] })]);
   });
+  it("a total, price or check row that merely mentions a kind word is not loaded and cannot displace the real line", async () => {
+    const r = await load((wb) => {
+      const ws = wb.getWorksheet("Routing_SMV")!;
+      ws.getCell("B13").value = "Total labour + overhead";
+      ws.getCell("B14").value = "Selling price (incl. margin)";
+    });
+    const kinds = r.dataset!.routingCosts!.lines.map((l) => l.kind);
+    expect(kinds).toEqual(["labour", "margin"]);
+    expect(codes(r, "routing_cost_label_unrecognised")).toEqual([expect.objectContaining({ count: 2, rows: [13, 14] })]);
+  });
   it("without a 'Cost build-up' heading no row is loaded as a cost line (ordinary report totals are not transactions)", async () => {
     const r = await load((wb) => void (wb.getWorksheet("Routing_SMV")!.getCell("B11").value = "Notes:"));
     expect(r.dataset!.routingCosts?.lines ?? []).toEqual([]);

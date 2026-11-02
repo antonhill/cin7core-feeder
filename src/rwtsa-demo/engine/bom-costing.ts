@@ -323,7 +323,7 @@ export function runCosting(ds: RwtsaDataset, config: CostingConfig): CostingResu
       if (!pctOk && pctModel) for (const w of pctWhy) missing.push(w.startsWith("percentage scale") ? "percentage scale (overhead and efficiency need it)" : w);
 
       const total = missing.length === 0 ? lines.reduce((a, l) => a + l.cents, 0) : null;
-      const baseMissing = missing.filter((m) => !/percentage scale|overhead|efficiency/.test(m));
+      const baseMissing = missing.filter((m) => !(m.startsWith("percentage scale") || /^(overhead|efficiency) (\(blank in Routing_SMV\)|value out of range)/.test(m)));
       const baseBom = baseMissing.length === 0 && ops.length > 0 ? lines.filter((l) => l.category !== "efficiency" && l.category !== "overhead").reduce((a, l) => a + l.cents, 0) : null;
       // Routing cost build-up (separate lines stated under the routing table): a conditional analysis, never the product cost.
       const stated = (ds.routingCosts?.lines ?? []).filter((l) => l.styleCode === styleCode);

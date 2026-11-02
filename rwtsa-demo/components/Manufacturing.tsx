@@ -227,7 +227,7 @@ export function ManufacturingPageView({ model }: { model: MfgModel }) {
               <label className="flex flex-col gap-1">
                 Routing build-up amounts read as (conditional analysis only)
                 <select name="units" defaultValue={s.values.units} className={field}>
-                  <option value="per-garment">Rand per garment, as stated</option>
+                  <option value="per-garment">Rand per garment (default reading)</option>
                   <option value="per-smv-minute">Rand per SMV minute (x total SMV)</option>
                 </select>
               </label>
@@ -509,7 +509,7 @@ export function ManufacturingPageView({ model }: { model: MfgModel }) {
             <Panel>
               <PanelTitle>Routing cost build-up as stated in the workbook (conditional analysis, not a costing policy)</PanelTitle>
               <p data-testid="buildup-note" className="mt-1 text-sm text-slate-700">
-                These are rand amounts, never percentages. Their unit is NOT confirmed: the sheet labels one line per minute, yet the lines sit beside a per-garment labour amount. The reading below ({sizeSel.buildUp.units === "per-garment" ? "rand per garment, as stated" : `rand per SMV minute x total SMV ${sizeSel.buildUp.totalSmv}`}) is a conditional analysis chosen on this page. Margin is shown beside and is never added to cost. The base BOM cost and reference selling price above are unchanged.
+                These are rand amounts, never percentages. Their unit is NOT confirmed: the sheet labels one line per minute, yet the lines sit beside a per-garment labour amount. The reading below ({sizeSel.buildUp.units === "per-garment" ? "rand per garment, as stated" : `rand per SMV minute x total SMV ${sizeSel.buildUp.totalSmv}`}) is a conditional analysis; it is the default reading unless you changed it, and the sheet does not confirm it. Margin is shown beside and is never added to cost. The base BOM cost and reference selling price above are unchanged.
               </p>
               <div className="mt-3 overflow-x-auto">
                 <Table>
@@ -558,8 +558,8 @@ export function ManufacturingPageView({ model }: { model: MfgModel }) {
               </PanelTitle>
               <div className="mt-3 grid gap-4 md:grid-cols-4">
                 <Indicator label="Base BOM cost" testid="sel-base" value={money(sizeSel.baseBomCents)} hint="materials, trims, print, packaging and labour (SMV x cost per minute); excludes overhead, efficiency and margin" />
-                <Indicator label="Calculated cost" testid="sel-total" value={money(totalCents)} hint={sizeSel.status === "complete" ? "complete" : "incomplete: withheld"} />
-                <Indicator label="Selling price" testid="sel-selling" value={money(sizeSel.sellingCents)} hint={`cost x ${c.config.markup}`} />
+                <Indicator label="Calculated cost" testid="sel-total" value={money(totalCents)} hint={sizeSel.status !== "complete" ? "incomplete: withheld" : sizeSel.efficiencyAllowanceCents === null && sizeSel.overheadCents === null ? "base basis: excludes overhead, efficiency and margin" : "complete"} />
+                <Indicator label="Selling price" testid="sel-selling" value={money(sizeSel.sellingCents)} hint={sizeSel.efficiencyAllowanceCents === null && sizeSel.overheadCents === null ? `base cost x ${c.config.markup}; not a fully loaded price` : `cost x ${c.config.markup}`} />
                 <Indicator label="Reference cost" testid="sel-reference" value={money(sizeSel.referenceCents)} hint="Items.standardCost" />
               </div>
               {totalCents !== null && totalCents > 0 && (

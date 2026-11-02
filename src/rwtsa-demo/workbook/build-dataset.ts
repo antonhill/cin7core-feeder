@@ -212,15 +212,25 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
   }
 
   // Routing_SMV cost build-up: the sheet's own reported totals must agree with its operations. Value-free: only the check names.
+  let routingCostsOut = read.routingCosts;
   if (read.routingCosts) {
-    const rc = read.routingCosts;
-    const smv = routing.reduce((t, r) => t + r.smv, 0);
-    const direct = routing.reduce((t, r) => t + r.smv * r.costPerMinute, 0);
+    // Lines are attributed to the style named in the sheet title; when the title gives none, only a routing with exactly one style can adopt them.
+    const styles = [...new Set(routing.map((r) => r.styleCode))];
+    const adopt = (code: string) => (code !== "" ? code : styles.length === 1 ? styles[0] : "");
+    const lines = read.routingCosts.lines.map((l) => ({ ...l, styleCode: adopt(l.styleCode) }));
+    const unattributed = lines.filter((l) => l.styleCode === "");
+    if (unattributed.length > 0) findings.push(finding({ severity: "warning", code: "routing_cost_label_unrecognised", tab: "Routing_SMV", field: "styleCode", count: unattributed.length, rows: unattributed.map((l) => l.sourceRow) }));
+    routingCostsOut = { ...read.routingCosts, lines: lines.filter((l) => l.styleCode !== "") };
+    // The sheet's own reported totals must agree with its operations (per style). Value-free: only the check names.
+    const rc = routingCostsOut;
+    const mine = routing.filter((r) => rc.lines.length > 0 && r.styleCode === rc.lines[0].styleCode);
+    const smv = mine.reduce((t, r) => t + r.smv, 0);
+    const direct = mine.reduce((t, r) => t + r.smv * r.costPerMinute, 0);
     const bad: string[] = [];
-    if (rc.reportedTotalSmv !== null && routing.length > 0 && Math.abs(rc.reportedTotalSmv - smv) > 0.005) bad.push("total_smv");
-    if (rc.reportedDirectCmt !== null && routing.length > 0 && Math.abs(rc.reportedDirectCmt - direct) > 0.005) bad.push("direct_cmt");
+    if (rc.reportedTotalSmv !== null && mine.length > 0 && Math.abs(rc.reportedTotalSmv - smv) > 0.005) bad.push("total_smv");
+    if (rc.reportedDirectCmt !== null && mine.length > 0 && Math.abs(rc.reportedDirectCmt - direct) > 0.005) bad.push("direct_cmt");
     const labour = rc.lines.find((l) => l.kind === "labour");
-    if (labour && routing.length > 0 && Math.abs(labour.amount - direct) > 0.005) bad.push("labour_line");
+    if (labour && mine.length > 0 && Math.abs(labour.amount - direct) > 0.005) bad.push("labour_line");
     if (bad.length > 0) findings.push(finding({ severity: "warning", code: "routing_cost_mismatch", tab: "Routing_SMV", fields: bad, count: bad.length }));
   }
 
@@ -253,7 +263,7 @@ export function buildDataset(read: ReadResult, opts: BuildOptions): BuildResult 
     tables,
     reconciliation: reconcile(tables, months),
     layout: layoutOut,
-    ...(read.routingCosts ? { routingCosts: read.routingCosts } : {}),
+    ...(routingCostsOut && routingCostsOut.lines.length + (routingCostsOut.reportedTotalSmv !== null ? 1 : 0) > 0 ? { routingCosts: routingCostsOut } : {}),
     readiness,
     findings,
   };
