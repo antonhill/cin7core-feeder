@@ -23,16 +23,43 @@ const SEVERITY_TONE: Record<ExceptionItem["severity"], BadgeTone> = { critical: 
 const SEVERITY_LABEL: Record<ExceptionItem["severity"], string> = { critical: "Act now", attention: "Needs attention", info: "For information" };
 const CIN7_TONE: Record<string, BadgeTone> = { NOT_POSTED: "neutral", POSTING: "warning", DRAFT_CREATED: "info", AUTHORISED: "success", CREATED_OTHER: "info", FAILED: "danger", UNCERTAIN: "danger" };
 
-function KpiCard({ k }: { k: Kpi }) {
+/** One headline figure. Plain text on the group's surface (no tile of its own); a flagged figure also says so in words, never by colour alone. */
+function KpiFigure({ k }: { k: Kpi }) {
   return (
-    <div className={`rounded-xl border p-4 ${k.tone === "accent" ? "border-indigo-200 bg-indigo-50" : k.tone === "warning" ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"}`} data-testid={`kpi-${k.id}`}>
-      <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">{k.label}</p>
-      <p className="mt-1.5 whitespace-nowrap text-xl font-bold tabular-nums text-slate-900">
+    <div className="min-w-0 py-2" data-testid={`kpi-${k.id}`}>
+      <dt className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-semibold text-slate-700">
+        {k.label}
+        {k.tone === "warning" && <Status tone="warning">Check</Status>}
+      </dt>
+      <dd className={`mt-1 whitespace-nowrap tabular-nums text-slate-900 ${k.tone === "accent" ? "text-xl font-bold" : "text-lg font-semibold"}`}>
         {k.cents === null ? "Unknown" : formatCents(k.cents)}
-        {k.percent !== undefined && k.percent !== null && <span className="ml-2 text-sm font-semibold text-slate-600">{k.percent.toFixed(2)}%</span>}
-        {k.count !== undefined && <span className="ml-2 text-sm font-semibold text-slate-600">{k.count} claim{k.count === 1 ? "" : "s"}</span>}
-      </p>
-      <p className="mt-1 text-xs leading-snug text-slate-600">{k.unknown ?? k.hint}</p>
+        {k.percent !== undefined && k.percent !== null && <span className="ml-2 text-sm font-semibold text-slate-700">{k.percent.toFixed(2)}%</span>}
+        {k.count !== undefined && <span className="ml-2 text-sm font-semibold text-slate-700">{k.count} claim{k.count === 1 ? "" : "s"}</span>}
+      </dd>
+      <dd className="mt-0.5 text-xs leading-snug text-slate-600">{k.unknown ?? k.hint}</dd>
+    </div>
+  );
+}
+
+// Same figure, same words as the workspace summary above for the contract figures. "Billed / committed" and "Remaining commercial value" here deliberately differ from
+// that summary's "Invoiced / committed" and "Remaining to bill / commit": these span the original project AND its variation billing scopes, that summary is the one project.
+const KPI_GROUPS: { title: string; ids: string[] }[] = [
+  { title: "Contract", ids: ["original", "variations", "revised"] },
+  { title: "Estimated cost and margin", ids: ["cost", "gp"] },
+  { title: "Billing", ids: ["billed", "remaining", "outstanding"] },
+];
+
+/** The headline figures as one surface with logical groups (contract / cost / billing) rather than a wall of equal tiles. Cost and margin only exist for administrators. */
+function KpiGroups({ kpis }: { kpis: Kpi[] }) {
+  const groups = KPI_GROUPS.map((g) => ({ ...g, items: g.ids.map((id) => kpis.find((k) => k.id === id)).filter((k): k is Kpi => !!k) })).filter((g) => g.items.length > 0);
+  return (
+    <div className="grid gap-x-8 gap-y-4 rounded-xl border border-slate-200 bg-white px-5 py-4 lg:grid-cols-[repeat(auto-fit,minmax(16rem,1fr))]">
+      {groups.map((g) => (
+        <div key={g.title} className="min-w-0">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600">{g.title}</h3>
+          <dl className="mt-1 divide-y divide-slate-100">{g.items.map((k) => <KpiFigure key={k.id} k={k} />)}</dl>
+        </div>
+      ))}
     </div>
   );
 }
@@ -116,11 +143,6 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab }: { projectI
 
   return (
     <div className="space-y-8" data-testid="overview">
-      <Section id="ov-summary" title="Executive summary" subtitle="All commercial amounts are ex VAT.">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">{o.kpis.map((k) => <KpiCard key={k.id} k={k} />)}</div>
-        {!o.costVisible && <p className="text-xs text-slate-600" data-testid="cost-hidden">Cost and margin are shown to organisation owners and administrators only.</p>}
-      </Section>
-
       <Section id="ov-attention" title="Needs attention" subtitle="Each item opens the workflow that resolves it.">
         {o.exceptions.length === 0 ? (
           <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900" data-testid="no-exceptions">Nothing needs attention right now.</p>
@@ -140,27 +162,32 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab }: { projectI
         )}
       </Section>
 
+      <Section id="ov-summary" title="Executive summary" subtitle="All commercial amounts are ex VAT.">
+        <KpiGroups kpis={o.kpis} />
+        {!o.costVisible && <p className="text-xs text-slate-600" data-testid="cost-hidden">Cost and margin are shown to organisation owners and administrators only.</p>}
+      </Section>
+
       <Section id="ov-commercial" title="Commercial progress" subtitle="Three different measures: site progress reported by the team, progress approved for billing, and what is billed or committed.">
         {o.milestones.map((g) => (
           <div key={g.projectId} className="space-y-1">
             <p className="text-xs font-semibold text-slate-600">{g.label}</p>
             {g.rows.length === 0 ? <p className="text-sm text-slate-600">No billing milestones yet.</p> : (
               <Table>
-                <THead><TR><TH>Milestone</TH><TH align="right">Contract value</TH><TH align="right">Site progress (reported)</TH><TH align="right">Approved for billing</TH><TH align="right">Earned</TH><TH align="right">Billed / committed</TH><TH align="right">Remaining</TH><TH align="right">Claimable now</TH></TR></THead>
+                <THead><TR><TH>Milestone</TH><TH align="right" className="border-l border-slate-200">Site progress (reported)</TH><TH align="right">Approved for billing</TH><TH align="right" className="border-l border-slate-200">Contract value</TH><TH align="right">Earned</TH><TH align="right">Billed / committed</TH><TH align="right">Remaining</TH><TH align="right">Claimable now</TH></TR></THead>
                 <TBody>
                   {g.rows.map((r) => (
                     <TR key={r.id}>
-                      <TD>{r.name}</TD>
-                      <TD align="right">{formatCents(r.valueCents)}</TD>
-                      <TD align="right"><Meter bps={r.reportedBps} fill="bg-sky-500" label="Reported on site; informational only" /></TD>
+                      <TD><span className="font-medium text-slate-900">{r.name}</span></TD>
+                      <TD align="right" className="border-l border-slate-200"><Meter bps={r.reportedBps} fill="bg-sky-500" label="Reported on site; informational only" /></TD>
                       <TD align="right"><Meter bps={r.approvedBps} fill="bg-indigo-500" label="Approved by a manager for billing" /></TD>
-                      <TD align="right">{formatCents(r.earnedCents)}</TD>
-                      <TD align="right"><span className="flex flex-col items-end"><span>{formatCents(r.committedCents)}</span><Meter bps={bpsOf(r.committedCents, r.valueCents)} fill="bg-emerald-500" label="Share of the milestone billed or committed" /></span></TD>
-                      <TD align="right">{formatCents(r.remainingCents)}</TD>
-                      <TD align="right"><strong>{formatCents(r.claimableCents)}</strong></TD>
+                      <TD align="right" numeric className="border-l border-slate-200">{formatCents(r.valueCents)}</TD>
+                      <TD align="right" numeric>{formatCents(r.earnedCents)}</TD>
+                      <TD align="right"><span className="flex flex-col items-end"><span className="tabular-nums">{formatCents(r.committedCents)}</span><Meter bps={bpsOf(r.committedCents, r.valueCents)} fill="bg-emerald-500" label="Share of the milestone billed or committed" /></span></TD>
+                      <TD align="right" numeric>{formatCents(r.remainingCents)}</TD>
+                      <TD align="right" numeric><strong>{formatCents(r.claimableCents)}</strong></TD>
                     </TR>
                   ))}
-                  <TR><TD><strong>Total</strong></TD><TD align="right"><strong>{formatCents(g.totals.valueCents)}</strong></TD><TD /><TD /><TD align="right"><strong>{formatCents(g.totals.earnedCents)}</strong></TD><TD align="right"><strong>{formatCents(g.totals.committedCents)}</strong></TD><TD align="right"><strong>{formatCents(g.totals.remainingCents)}</strong></TD><TD align="right"><strong>{formatCents(g.totals.claimableCents)}</strong></TD></TR>
+                  <TR className="bg-slate-50"><TD><strong>Total</strong></TD><TD className="border-l border-slate-200" /><TD /><TD align="right" className="border-l border-slate-200"><strong>{formatCents(g.totals.valueCents)}</strong></TD><TD align="right"><strong>{formatCents(g.totals.earnedCents)}</strong></TD><TD align="right"><strong>{formatCents(g.totals.committedCents)}</strong></TD><TD align="right"><strong>{formatCents(g.totals.remainingCents)}</strong></TD><TD align="right"><strong>{formatCents(g.totals.claimableCents)}</strong></TD></TR>
                 </TBody>
               </Table>
             )}

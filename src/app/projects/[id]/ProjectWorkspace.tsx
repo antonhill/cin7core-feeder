@@ -3,6 +3,7 @@
 import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { PROJECTS_MODULE } from "@/app/module-nav";
@@ -98,16 +99,22 @@ function PctCell({ bps, tone }: { bps: number; tone: BarTone }) {
   );
 }
 
-function Kpi({ label, value, hint, accent = false }: { label: string; value: string; hint?: string; accent?: boolean }) {
+function FigureGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div
-      className={`rounded-xl border p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_12px_28px_-18px_rgba(15,23,42,0.25)] ${
-        accent ? "border-indigo-200 bg-gradient-to-br from-indigo-50 to-white" : "border-slate-200 bg-white"
-      }`}
-    >
-      <p className={`text-xs font-semibold uppercase tracking-wider ${accent ? "text-indigo-700" : "text-slate-600"}`}>{label}</p>
-      <p className={`mt-2 whitespace-nowrap text-2xl font-bold tabular-nums tracking-tight ${accent ? "text-indigo-900" : "text-slate-900"}`}>{value}</p>
-      {hint && <p className="mt-1 text-xs leading-snug text-slate-600">{hint}</p>}
+    <div>
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600">{title}</h3>
+      <dl className="mt-2 grid grid-cols-1 gap-y-3 sm:grid-cols-3 sm:gap-x-4">{children}</dl>
+    </div>
+  );
+}
+
+/** One figure in a hero group: labels sit on one baseline and values align, with the primary (revised contract) figure set heavier rather than in a bigger tile. */
+function Figure({ label, value, hint, primary = false }: { label: string; value: string; hint?: string; primary?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-xs text-slate-600">{label}</dt>
+      <dd className={`mt-1 whitespace-nowrap tabular-nums tracking-tight text-slate-900 ${primary ? "text-xl font-bold" : "text-lg font-semibold"}`}>{value}</dd>
+      {hint && <dd className="mt-0.5 text-xs leading-snug text-slate-600">{hint}</dd>}
     </div>
   );
 }
@@ -129,7 +136,7 @@ function LegendDot({ className, label, value }: { className: string; label: stri
   return (
     <div className="flex items-center gap-2.5">
       <span className={`h-2.5 w-2.5 rounded-full ${className}`} aria-hidden />
-      <span className="text-sm text-slate-600">{label}</span>
+      <span className="text-sm text-slate-700">{label}</span>
       <span className="text-sm font-semibold tabular-nums text-slate-900">{value}</span>
     </div>
   );
@@ -158,6 +165,9 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   const [isWorkingT, startWorking] = useTransition();
   const acts = useKeyedActions();
   const isWorking = isWorkingT || acts.anyPending;
+  // A claim being assembled (stages ticked) is unsaved input until a draft is saved or the selection is cleared; saving resets the selection (see the Save button).
+  // Guarded only while the Claims tab, which holds the form, is the active tab.
+  useUnsavedGuard(tab === "claims" && chosen.length > 0);
 
   // Display only: every mutating action re-checks the owner/admin role on the server.
   // LOADING until known, so privileged controls (and the non-admin explanation) never flash; any failure => MEMBER (fail closed).
@@ -187,6 +197,13 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   // deliberately NOT kept while the user is on another tab: the panels change this state themselves (create a Sale, post an invoice) and a remounted panel must never
   // start from an older, more permissive picture. It is also tied to the project it was read for, so it can never be shown for another one.
   const [commercial, setCommercial] = useState<{ projectId: string; creation: Cin7SaleCreationStatus | null; posting: Cin7PostingStatus | null } | null>(null);
+  // Claims awaiting THIS user's action (submit, approve here, recalculate) are marked and counted, never re-ordered: a card that moves when its own action
+  // completes would carry the result message away from the button that was just pressed (UAT-025).
+  const claimRows = (view?.claims ?? []).map((cl) => {
+    const plan = claimActionPlan(cl, perm === "admin" ? "admin" : perm === "member" ? "member" : "none");
+    return { cl, plan, needsYou: plan.submit || plan.approveHere || plan.recalculate };
+  });
+  const needsYouCount = claimRows.filter((r) => r.needsYou).length;
   const commercialNow = tab === "claims" && commercial?.projectId === id ? commercial : null;
   /** Every tab change goes through here so that leaving Commercial / Claims drops its cached state. */
   const goTab = (t: Tab) => { if (t !== "claims") setCommercial(null); setTab(t); };
@@ -320,46 +337,39 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
 
       {tab === "overview" && (
         <div className="mt-6 space-y-6">
-          <section className="rounded-xl border border-slate-200 bg-white p-5 md:p-6">
-            <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-md bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-700">{project.project_reference}</span>
-                  <Status tone={project.status === "ACTIVE" ? "success" : "neutral"}>{statusText(project.status)}</Status>
-                </div>
-                <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-900">{project.name}</h2>
-                <p className="mt-1 text-slate-600">{project.customer_name}</p>
-              </div>
-              <div className="lg:text-right">
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">Revised contract value (ex VAT)</p>
-                <p className="mt-1 whitespace-nowrap text-3xl font-semibold tabular-nums tracking-tight text-slate-900">{formatCents(c.revisedContractCents)}</p>
-              </div>
+          <section aria-label="Project and financial summary" className="rounded-xl border border-slate-200 bg-white p-5 md:p-6">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-md bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-700">{project.project_reference}</span>
+              <Status tone={project.status === "ACTIVE" ? "success" : "neutral"}>{statusText(project.status)}</Status>
             </div>
-            <div className="mt-5">
+            <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-900">{project.name}</h2>
+            <p className="mt-1 text-slate-700">{project.customer_name}</p>
+
+            <div className="mt-6 grid gap-x-10 gap-y-6 border-t border-slate-200 pt-5 xl:grid-cols-2">
+              <FigureGroup title="Contract (ex VAT)">
+                <Figure label="Original contract" value={formatCents(c.originalContractCents)} />
+                <Figure label="Approved variations" value={formatCents(c.approvedVariationsCents)} />
+                <Figure label="Revised contract value" value={formatCents(c.revisedContractCents)} primary />
+              </FigureGroup>
+              <FigureGroup title="Billing (ex VAT)">
+                <Figure label="Invoiced / committed" value={formatCents(c.committedCents)} />
+                <Figure label="Claimable now" value={formatCents(c.claimableCents)} />
+                <Figure label="Remaining to bill / commit" value={formatCents(c.remainingCents)} hint="Contract value − invoiced / committed (not − earned)" />
+              </FigureGroup>
+            </div>
+
+            <div className="mt-6">
               <ContractBar contract={c.revisedContractCents} committed={c.committedCents} claimable={c.claimableCents} />
-              <div className="mt-4 flex flex-wrap gap-x-8 gap-y-2">
+              <div className="mt-3 flex flex-wrap gap-x-8 gap-y-2">
                 <LegendDot className="bg-emerald-600" label="Invoiced / committed" value={formatCents(c.committedCents)} />
                 <LegendDot className="bg-amber-500" label="Claimable now" value={formatCents(c.claimableCents)} />
-                <LegendDot className="bg-slate-200" label="Not yet approved for billing" value={formatCents(Math.max(0, c.revisedContractCents - c.committedCents - c.claimableCents))} />
+                <LegendDot className="bg-slate-300" label="Not yet approved for billing" value={formatCents(Math.max(0, c.revisedContractCents - c.committedCents - c.claimableCents))} />
               </div>
+              <p className="mt-3 text-xs text-slate-600">Approved completion {formatBps(c.approvedCompletionBps)} · Earned to date {formatCents(c.earnedCents)} (stage value × approved completion). Claimable = earned − invoiced / committed; remaining = contract − invoiced / committed.</p>
             </div>
           </section>
 
           {!embedded && newquip && view.project.billing_scope !== "VARIATION" && <ProjectOverview projectId={id} refreshKey={previewKey(view)} onOpenTab={(t) => { goTab(t); window.scrollTo({ top: 0, behavior: "smooth" }); }} />}
-
-          <div>
-            <h2 className="mb-3 text-sm font-semibold text-slate-700">Commercial position (ex VAT)</h2>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <Kpi label="Original contract value" value={formatCents(c.originalContractCents)} />
-              <Kpi label="Approved variations" value={formatCents(c.approvedVariationsCents)} hint="Approved variations only" />
-              <Kpi label="Revised contract value" value={formatCents(c.revisedContractCents)} />
-              <Kpi label="Approved completion" value={formatBps(c.approvedCompletionBps)} hint="Earned ÷ contract" />
-              <Kpi label="Earned / certified to date" value={formatCents(c.earnedCents)} hint="Stage value × APPROVED completion" />
-              <Kpi label="Invoiced / committed" value={formatCents(c.committedCents)} hint="Approved, sent or uncertain claims" />
-              <Kpi label="Currently claimable" value={formatCents(c.claimableCents)} hint="Earned − invoiced / committed" accent />
-              <Kpi label="Remaining to bill / commit" value={formatCents(c.remainingCents)} hint="Contract value − invoiced / committed (not − earned)" />
-            </div>
-          </div>
 
           <ProjectDetailsPanel view={view} isAdmin={perm === "admin"} run={run} working={isWorking} editable={!embedded && view.project.billing_scope !== "VARIATION"} />
         </div>
@@ -526,21 +536,21 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
           <div>
             <div className="mb-2 flex items-baseline justify-between">
               <h2 className="text-base font-semibold text-slate-900">Claims and invoices</h2>
-              <p className="flex items-center gap-3 text-xs text-slate-600">{view.claims.length} claim{view.claims.length === 1 ? "" : "s"}<a href={`#new-claim-${id}`} className="inline-flex min-h-6 items-center font-medium text-indigo-700 hover:underline">Create a progress claim</a></p>
+              <p className="flex items-center gap-3 text-xs text-slate-600">{needsYouCount > 0 && <span className="font-semibold text-indigo-800">{needsYouCount} need{needsYouCount === 1 ? "s" : ""} your action</span>}{view.claims.length} claim{view.claims.length === 1 ? "" : "s"}<a href={`#new-claim-${id}`} className="inline-flex min-h-6 items-center font-medium text-indigo-700 hover:underline">Create a progress claim</a></p>
             </div>
             {view.claims.length === 0 && <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-600">No claims yet.</p>}
             {view.claims.length > 0 && <div className="hidden grid-cols-[minmax(8rem,1fr)_16.5rem_11rem_minmax(14rem,1.3fr)] gap-x-4 px-4 pb-1 text-xs font-semibold uppercase tracking-wider text-slate-600 lg:grid" aria-hidden>
               <span>Claim</span><span className="text-right">Amount</span><span>Approval</span><span>Cin7 invoice (as last recorded)</span>
             </div>}
             <div className="space-y-2">
-              {view.claims.map((cl) => {
-                const plan = claimActionPlan(cl, perm === "admin" ? "admin" : perm === "member" ? "member" : "none");
+              {claimRows.map(({ cl, plan, needsYou }) => {
                 const claimKey = `claim:${cl.id}`;
                 return (
-                  <article key={cl.id} className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+                  <article key={cl.id} className={`rounded-xl border bg-white px-4 py-3 ${needsYou ? "border-indigo-300 border-l-4 border-l-indigo-600" : "border-slate-200"}`} data-needs-action={needsYou || undefined}>
                     <div className="grid gap-x-4 gap-y-2 lg:grid-cols-[minmax(8rem,1fr)_16.5rem_11rem_minmax(14rem,1.3fr)] lg:items-start">
                       <div>
                         <h3 className="text-base font-semibold text-slate-900">{cl.claim_number}</h3>
+                        {needsYou && <p className="text-xs font-semibold text-indigo-800">Needs your action</p>}
                         <p className="text-xs text-slate-600">{cl.claim_date}{cl.supersedes_claim_id ? ` · supersedes ${view.claims.find((x) => x.id === cl.supersedes_claim_id)?.claim_number ?? "an earlier draft"}` : ""}</p>
                       </div>
                       <div className="lg:text-right">
@@ -551,13 +561,13 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                       <div>
                         <span className="sr-only">Approval: </span><span aria-hidden className="mb-0.5 block text-xs font-semibold uppercase tracking-wider text-slate-600 lg:hidden">Approval</span>
                         <Status tone={CLAIM_TONE[cl.status] ?? "neutral"}>{statusText(cl.status)}</Status>
-                        <p className="mt-1 text-xs">{cl.reserves ? <span className="font-medium text-indigo-700">{cl.status === "FAILED_UNCERTAIN" ? "Stays reserved (outcome uncertain)" : "Reserves value"}</span> : <span className="text-slate-600">No reservation</span>}</p>
+                        {cl.reserves && <p className="mt-1 text-xs font-medium text-indigo-800">{cl.status === "FAILED_UNCERTAIN" ? "Stays reserved (outcome uncertain)" : "Reserves value"}</p>}
                       </div>
                       <div>
                         <span className="sr-only">Cin7 invoice: </span><span aria-hidden className="mb-0.5 block text-xs font-semibold uppercase tracking-wider text-slate-600 lg:hidden">Cin7 invoice (as last recorded)</span>
                         <Status tone={cl.cin7Status.tone}>{cl.cin7Status.label}</Status>
                         {cl.cin7Status.invoiceNumber && <span className="ml-1.5 font-mono text-xs text-slate-700">{cl.cin7Status.invoiceNumber}</span>}
-                        {cl.cin7Status.invoiceNumber && cl.cin7Status.reconciled && <span className="ml-1.5"><Status tone="neutral">Reconciled</Status></span>}
+                        {cl.cin7Status.invoiceNumber && cl.cin7Status.reconciled && <p className="mt-1 text-xs font-medium text-slate-700"><span aria-hidden>✓</span> Reconciled with Cin7</p>}
                       </div>
                     </div>
                     <p className="mt-2 border-t border-slate-100 pt-2 text-sm text-slate-700"><span className="font-medium text-slate-900">Next: </span>{claimNextStep({ status: cl.status, cin7Kind: cl.cin7Status.kind, stageRole: cl.approval?.stageRole, canApproveHere: plan.approveHere, canAct: perm !== "loading" })}</p>
@@ -625,7 +635,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             <div className="mt-4 flex flex-wrap gap-2">
               <Button variant="secondary" size="sm" onClick={doPreview} loading={isWorking} disabled={chosen.length === 0 || (!!preview && pvState === "CURRENT")}>{!preview ? "Preview claim" : pvState === "STALE" ? "Refresh preview" : "Preview is up to date"}</Button>
               {preview && (
-                <Button size="sm" onClick={() => { const claimsBefore = view.claims.length; return run(() => createClaimDraftAction(id, previewedIds, previewedAmounts), "Draft claim saved locally.", "claim:new", { confirm: (v) => v.claims.length > claimsBefore }); }} loading={acts.isPending("claim:new")} disabled={isWorking || pvState === "STALE"}>Save as draft claim</Button>
+                <Button size="sm" onClick={async () => { const claimsBefore = view.claims.length; const saved = await run(() => createClaimDraftAction(id, previewedIds, previewedAmounts), "Draft claim saved locally.", "claim:new", { confirm: (v) => v.claims.length > claimsBefore }); if (saved) { setChosen([]); setAmounts({}); setPreview(null); setPreviewedIds([]); setPreviewedAmounts({}); } }} loading={acts.isPending("claim:new")} disabled={isWorking || pvState === "STALE"}>Save as draft claim</Button>
               )}
             </div>
             <Feedback k="claim:new" />

@@ -87,3 +87,37 @@ describe("Project details (UAT-029)", () => {
     expect(await screen.findByText("offline")).toBeTruthy();
   });
 });
+
+describe("Project details: unsaved-change protection", () => {
+  const unload = () => { const e = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
+  it("guards only once an edit differs from the saved record; Cancel and a successful save release it", async () => {
+    render(<Host v={view({ project_manager: "boss@x.co.za" })} />);
+    expect(unload()).toBe(false); // read-only
+    fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
+    await screen.findByLabelText("Start date");
+    expect(unload()).toBe(false); // open but untouched
+    fireEvent.change(screen.getByLabelText("Start date"), { target: { value: "2026-12-01" } });
+    expect(unload()).toBe(true);
+    fireEvent.change(screen.getByLabelText("Start date"), { target: { value: "" } });
+    expect(unload()).toBe(false); // back to the saved value
+    fireEvent.change(screen.getByLabelText("Start date"), { target: { value: "2026-12-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(unload()).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
+    fireEvent.change(await screen.findByLabelText("Start date"), { target: { value: "2026-12-01" } });
+    expect(unload()).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Save details" }));
+    await screen.findByText("Project details saved.");
+    expect(unload()).toBe(false);
+  });
+  it("a refused save keeps the entered values and keeps the guard on", async () => {
+    vi.mocked(actions.updateProjectDetailsAction).mockResolvedValue({ ok: false, error: "Refused." } as never);
+    render(<Host v={view()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit details" }));
+    fireEvent.change(await screen.findByLabelText("Start date"), { target: { value: "2026-12-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save details" }));
+    await screen.findByText(/Refused\./);
+    expect((screen.getByLabelText("Start date") as HTMLInputElement).value).toBe("2026-12-01");
+    expect(unload()).toBe(true);
+  });
+});
