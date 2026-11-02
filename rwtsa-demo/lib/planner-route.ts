@@ -41,7 +41,7 @@ export async function handlePlannerPost(request: Request): Promise<Response> {
     expires: str("expires"),
     untilRemoved: str("untilRemoved") === "1",
     quantity: str("quantity"),
-    calculated: str("calculated"),
+    calculated: null,
     capacity: str("capacity"),
     leadTime: str("leadTime"),
     completionWeek: str("completionWeek"),

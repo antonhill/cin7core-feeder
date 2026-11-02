@@ -297,3 +297,47 @@ describe("safeguards", () => {
     expect(text(await A({ view: "sku" }))).not.toContain("set by the planner on this page");
   });
 });
+
+describe("review hardening", () => {
+  const SKU = "SYN-VEST-A-M";
+  it("a forged 'calculated' value in the request is ignored", async () => {
+    local();
+    await act(SKU, "classify", [["value", "ordinary"]]);
+    expect(await act(SKU, "override-set", [["quantity", "5"], ["reason", "x"], ["calculated", "999999"]])).toBe("override-set");
+    const saved = JSON.parse(readFileSync(join(stateDirOf(), plannerFiles()[0]), "utf8"));
+    expect(saved.orderOverrides[0].calculatedAtOverride).toBeNull();
+    expect(text(await sel(SKU))).not.toMatch(/calculation has changed since/);
+  });
+  it("overrides show beside the calculated proposal in the table and in the planner-adjusted total", async () => {
+    local();
+    await act(SKU, "classify", [["value", "ordinary"]]);
+    const base = Number(indicator(await sel(SKU), "ind-adjusted")?.replace(/[^0-9]/g, ""));
+    await act(SKU, "override-set", [["quantity", "12345"], ["reason", "x"]]);
+    const m = await sel(SKU);
+    expect(/data-testid="adjusted-cell" data-value="12345"/.test(m)).toBe(true);
+    expect(Number(indicator(m, "ind-adjusted")?.replace(/[^0-9]/g, ""))).not.toBe(base);
+    expect(text(m)).toContain("planner-adjusted 12,345");
+  });
+  it("a saved override held while the SKU is not ordinary stays visible and reversible", async () => {
+    local();
+    await act(SKU, "classify", [["value", "ordinary"]]);
+    await act(SKU, "override-set", [["quantity", "77"], ["reason", "MOQ"]]);
+    await act(SKU, "classify", [["value", "tender"]]);
+    const held = await sel(SKU);
+    expect(held).toContain('data-testid="held-override"');
+    expect(text(held)).toContain("A saved override of 77 is on hold");
+    expect(await act(SKU, "override-reverse")).toBe("override-reversed");
+    expect(await sel(SKU)).not.toContain('data-testid="held-override"');
+  });
+  it("tender stock-out risk is reported in the indicators and kept when filtering to shortages", async () => {
+    local();
+    await act(SKU, "classify", [["value", "tender"]]);
+    const m = await A({ view: "sku", only: "shortage" });
+    expect(text(m)).toMatch(/\d+ at projected stock-out risk/);
+  });
+  it("the local-make note says it is not matched to the week of the first shortage", async () => {
+    local();
+    await act(SKU, "classify", [["value", "ordinary"]]);
+    expect(text(await sel(SKU))).toContain("local make is not matched to the week of the first shortage");
+  });
+});

@@ -232,7 +232,7 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
     const weekDate = (w: number) => shiftDays(cfg.stockDate, 7 * w);
     const ovActive = (w: number) => ov !== null && ov.effectiveFrom <= weekDate(w) && (ov.expires === null || weekDate(w) <= ov.expires);
     const minAt = (w: number): number | null => (ovActive(w) && ov !== null ? ov.replacement : minLevel);
-    const anyMin = minLevel !== null || (ov !== null && Array.from({ length: H + 1 }, (_, w) => w).some(ovActive));
+    const anyMin = minLevel !== null || (ov !== null && Array.from({ length: H }, (_, i) => i + 1).some(ovActive));
     // A tender SKU has no standing minimum, and none is invented: its projected risk is a stock-out (balance below zero).
     const evaluable = tender ? true : anyMin;
     const inboundWeeks = weeksBy.get(it.sku) as number[];

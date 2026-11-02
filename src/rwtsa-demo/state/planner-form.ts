@@ -115,7 +115,8 @@ export function applyPlannerForm(dir: string, sourceLabel: string, dataset: Rwts
         if (reason === "") return "planner-reason";
         // An override cannot bypass eligibility: only an ORDINARY SKU (classified by the planner or the workbook) can carry one.
         if (effectiveClassification(dataset, loadPlanner(dir, sourceLabel), sku) !== "ordinary") return "planner-not-eligible";
-        const calc = form.calculated === null || form.calculated === "" ? null : int(form.calculated);
+        // The calculated figure at the time is NOT taken from the request (it could be forged); no staleness is recorded.
+        const calc = null;
         updatePlanner(dir, sourceLabel, (s) => ({ ...s, orderOverrides: [...s.orderOverrides.filter((o) => o.sku !== sku), { sku, quantity, calculatedAtOverride: calc, reason, at }] }));
         return "override-set";
       }

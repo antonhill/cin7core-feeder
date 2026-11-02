@@ -205,3 +205,25 @@ describe("DP-14: local make offset", () => {
     expect(again.inboundTotal).toBe(s.inboundTotal);
   });
 });
+
+describe("review hardening", () => {
+  it("tender stock-out risk is visible at SKU level and style level, never in the standing shortfall", () => {
+    const r = run([{ sku: "T", style: "ST", tender: true, jhb: 0, sales: flat(40) }, { sku: "O", style: "ST", tender: false, minLevel: 0, jhb: 1000, sales: flat(10) }]);
+    expect(r.skus.find((s) => s.sku === "T")!.shortfall).toBeGreaterThan(0);
+    expect(r.styles[0].tenderStockoutSkus).toBe(1);
+    expect(r.styles[0].shortfall).toBe(0);
+    expect(r.styles[0].firstBreachWeek).toBeNull();
+    expect(r.summary.tenderStockoutSkus).toBe(1);
+  });
+  it("the style minimum is the sum of effective minimums and excludes tender SKUs", () => {
+    const r = run([{ sku: "T", style: "ST", tender: true, minLevel: 500, jhb: 900, sales: flat(10) }, { sku: "O", style: "ST", tender: false, minLevel: 20, jhb: 900, sales: flat(10) }], { planner: { classification: {}, minOverrides: { O: { replacement: 70, effectiveFrom: STOCK, expires: null } } } });
+    expect(r.styles[0].minLevel).toBe(70);
+  });
+  it("an override active only at week 0 gives no floor in any projected week, so the SKU is not evaluable", () => {
+    const sku: SkuSpec = { sku: "A", tender: false, minLevel: null, jhb: 10, sales: flat(40) };
+    const s = only(run([sku], { planner: { classification: {}, minOverrides: { A: { replacement: 500, effectiveFrom: "2026-01-01", expires: STOCK } } } }));
+    expect(s.minOverrideWeeks).toBe(0);
+    expect(s.limitation).toMatch(/No minimum stock level/);
+    expect(s.proposalCalculated).toBeNull();
+  });
+});

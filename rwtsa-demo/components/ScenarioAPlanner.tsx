@@ -97,7 +97,7 @@ export function ScenarioAPlanner({ model, returnTo }: { model: RedFlagModel; ret
                 <>
                   <p>Calculated: <span data-testid="order-calculated" data-value={sel.planner.calculated ?? ""}>{sel.planner.calculated === null ? "cannot be calculated" : sel.planner.classification === "tender" ? "0 (tender: none)" : n0(sel.planner.calculated)}</span></p>
                   <p>Planner-adjusted: <span data-testid="order-adjusted" data-value={sel.planner.adjusted ?? ""}>{sel.planner.override ? n0(sel.planner.override.quantity) : "none: the calculated proposal stands"}</span></p>
-                  {sel.planner.override && <p className="text-xs text-slate-700">Override reason: {sel.planner.override.reason}{sel.planner.override.stale ? ` (the calculation has changed since: it was ${sel.planner.override.calculatedAtOverride})` : ""}</p>}
+                  {sel.planner.override && <p className="text-xs text-slate-700">Override reason: {sel.planner.override.reason}</p>}
                 </>
               )}
             </div>
@@ -105,7 +105,6 @@ export function ScenarioAPlanner({ model, returnTo }: { model: RedFlagModel; ret
               <>
                 <form method="post" action="/api/planner" className="mt-2 flex flex-wrap items-end gap-2">
                   <Hidden sku={sel.sku} returnTo={returnTo} action="override-set" />
-                  <input type="hidden" name="calculated" value={sel.planner.calculated ?? ""} />
                   <label className="flex flex-col gap-1 text-xs">Override quantity<input name="quantity" required inputMode="numeric" className={`${field} w-24`} /></label>
                   <label className="flex flex-col gap-1 text-xs">Reason (required)<input name="reason" required maxLength={500} className={`${field} w-44`} /></label>
                   <button type="submit" className={btn}>Override quantity</button>
@@ -118,7 +117,16 @@ export function ScenarioAPlanner({ model, returnTo }: { model: RedFlagModel; ret
                 )}
               </>
             ) : (
-              <p data-testid="override-ineligible" className="mt-2 text-xs text-slate-600">An order override needs an ordinary replenishment SKU: a tender or unclassified SKU cannot be overridden into an order.</p>
+              <>
+                <p data-testid="override-ineligible" className="mt-2 text-xs text-slate-600">An order override needs an ordinary replenishment SKU: a tender or unclassified SKU cannot be overridden into an order.</p>
+                {sel.planner.heldOverride && (
+                  <form method="post" action="/api/planner" className="mt-1" data-testid="held-override">
+                    <Hidden sku={sel.sku} returnTo={returnTo} action="override-reverse" />
+                    <p className="text-xs text-amber-800">A saved override of {n0(sel.planner.heldOverride.quantity)} is on hold while this SKU is not ordinary (reason: {sel.planner.heldOverride.reason}). It returns if the SKU becomes ordinary again.</p>
+                    <button type="submit" className={btn}>Reverse held override</button>
+                  </form>
+                )}
+              </>
             )}
 
             <p className="mt-4 text-sm font-semibold text-slate-900">Local 7th Wave make (DP-14)</p>
@@ -133,7 +141,7 @@ export function ScenarioAPlanner({ model, returnTo }: { model: RedFlagModel; ret
                   <li>Residual import requirement: <span data-testid="make-residual">{n0(sel.planner.localMake.residualImport as number)}</span></li>
                 </ul>
               )}
-              <p className="mt-1 text-xs text-slate-600">Local make is not received stock and is never added to Available or inbound; it only reduces the requirement left after the imports already counted.</p>
+              <p className="mt-1 text-xs text-slate-600">Local make is not received stock and is never added to Available or inbound; it only reduces the requirement left after the imports already counted. The gross shortage is the calculated requirement (before any planner override) over the whole horizon: local make is not matched to the week of the first shortage.</p>
             </div>
             {sel.planner.classification === "ordinary" && (
               <>

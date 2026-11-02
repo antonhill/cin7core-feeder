@@ -47,6 +47,8 @@ export interface PlannerRow {
   readonly override: { readonly quantity: number; readonly reason: string; readonly calculatedAtOverride: number | null; readonly stale: boolean } | null;
   /** The planner-adjusted quantity (the override when present, else the calculated proposal). Null when withheld. */
   readonly adjusted: number | null;
+  /** A saved override that is not applying because the SKU is not ordinary now. It stays reversible. */
+  readonly heldOverride: { readonly quantity: number; readonly reason: string } | null;
   readonly localMake: LocalMakeResult;
 }
 
@@ -109,6 +111,8 @@ export interface RedFlagModel {
   readonly withheld: { readonly proposedOrders: boolean; readonly unclassifiedSkus: number };
   readonly plannerState: PlannerState;
   readonly plannerError: string | null;
+  /** Sum of planner-adjusted quantities over ordinary SKUs (the override where one applies, else the calculated proposal). */
+  readonly adjustedProposedTotal: number;
   readonly eligibility: readonly EligibilityRow[];
   readonly horizons: readonly HorizonRow[];
 }
@@ -162,6 +166,7 @@ function plannerRowOf(s: SkuResult, state: DemoState & { kind: "validated" }, pl
     formula: s.proposalFormula,
     override: overrideApplies ? { quantity: (oo as { quantity: number }).quantity, reason: (oo as { reason: string }).reason, calculatedAtOverride: (oo as { calculatedAtOverride: number | null }).calculatedAtOverride, stale: (oo as { calculatedAtOverride: number | null }).calculatedAtOverride !== null && (oo as { calculatedAtOverride: number | null }).calculatedAtOverride !== calculated } : null,
     adjusted,
+    heldOverride: oo !== null && !ordinary ? { quantity: oo.quantity, reason: oo.reason } : null,
     localMake: localMakeOffset({ gross: calculated, source: item?.source ?? null, eligible: ordinary, entry, horizonWeeks: result.config.horizonWeeks }),
   };
 }
@@ -201,6 +206,7 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
     plannerError,
     rules: [] as UnresolvedRule[],
     withheld: { proposedOrders: false, unclassifiedSkus: 0 },
+    adjustedProposedTotal: 0,
     eligibility: [] as EligibilityRow[],
     horizons: [] as HorizonRow[],
   };
@@ -242,17 +248,17 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
   let rows: ResultRow[];
   if (settings.view === "sku") {
     rows = result.skus
-      .filter((s) => styleOk(s.styleCode) && (!shortOnly || (!s.tenderExempt && s.shortfall > 0)))
+      .filter((s) => styleOk(s.styleCode) && (!shortOnly || s.shortfall > 0))
       .map((s) => {
         const a = skuAnomalyText(s, result);
         return { key: s.sku, sku: s.sku, style: s.styleCode, size: s.size, tenderExempt: s.tenderExempt, available: s.available, inbound: s.inboundTotal, weeklyForecast: s.weeklyForecast, firstBreachWeek: s.firstBreachWeek, shortfall: s.shortfall, monthsOfCover: s.monthsOfCover, monthsOfCoverWithInbound: s.monthsOfCoverWithInbound, coverInboundUnits: s.coverInboundUnits, netRequirement: s.netRequirement, anomaly: a.text, anomalyKind: a.kind, proposedOrder: s.proposedOrder, limitation: s.limitation, proposalWithheld: s.classification === "unclassified", planner: plannerRowOf(s, state, planner, result) };
       });
   } else {
     rows = result.styles
-      .filter((st) => styleOk(st.styleCode) && (!shortOnly || st.shortageSkus > 0))
+      .filter((st) => styleOk(st.styleCode) && (!shortOnly || st.shortageSkus > 0 || st.tenderStockoutSkus > 0))
       .map((st) => {
         const a = styleAnomalyText(st);
-        const limit = st.skusWithoutForecast > 0 ? `${st.skusWithoutForecast} SKU(s) have no forecast and are left out of cover and shortage.` : null;
+        const limit = [st.skusWithoutForecast > 0 ? `${st.skusWithoutForecast} SKU(s) have no forecast and are left out of cover and shortage.` : null, st.tenderStockoutSkus > 0 ? `${st.tenderStockoutSkus} tender SKU(s) at projected stock-out risk (not in the standing shortfall above; see the SKU view).` : null].filter(Boolean).join(" ") || null;
         return { key: st.styleCode, sku: null, style: st.styleCode, size: null, tenderExempt: st.tenderExemptSkus === st.skuCount, available: st.available, inbound: st.inboundTotal, weeklyForecast: st.weeklyForecast, firstBreachWeek: st.firstBreachWeek, shortfall: st.shortfall, monthsOfCover: st.monthsOfCover, monthsOfCoverWithInbound: st.monthsOfCoverWithInbound, coverInboundUnits: st.inboundTotal, netRequirement: st.netRequirement, anomaly: a.text, anomalyKind: a.kind, proposedOrder: st.proposedOrder, limitation: limit, proposalWithheld: result.skus.some((k) => k.styleCode === st.styleCode && k.classification === "unclassified"), planner: null };
       });
   }
@@ -262,7 +268,7 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
   if (selected) {
     if (settings.view === "sku") {
       const s = result.skus.find((x) => x.sku === selected.key) as SkuResult;
-      chart = { key: s.sku, title: `${s.sku} (${s.styleCode}, ${s.size})`, opening: s.available, balances: s.balances, minLevel: s.tenderExempt ? 0 : s.effectiveMin, firstBreachWeek: s.firstBreachWeek, horizon: result.config.horizonWeeks, note: s.balances.length === 0 ? (s.limitation ?? "Cannot be projected.") : null };
+      chart = { key: s.sku, title: `${s.sku} (${s.styleCode}, ${s.size})`, opening: s.available, balances: s.balances, minLevel: s.tenderExempt ? 0 : s.effectiveMin, firstBreachWeek: s.firstBreachWeek, horizon: result.config.horizonWeeks, note: s.minOverride && s.minOverrideWeeks > 0 && s.minOverrideWeeks < result.config.horizonWeeks ? "A temporary minimum is in force for only part of the horizon: the line shows the minimum at the stock date; the shortfall uses the minimum of each week." : s.balances.length === 0 ? (s.limitation ?? "Cannot be projected.") : null };
     } else {
       const st = result.styles.find((x) => x.styleCode === selected.key) as StyleResult;
       chart = { key: st.styleCode, title: `${st.styleCode} (sum of its SKUs)`, opening: st.projectedOpening, balances: st.balances, minLevel: st.minLevel, firstBreachWeek: st.firstBreachWeek, horizon: result.config.horizonWeeks, note: "Style balance is the sum of its SKU balances; sizes are not netted for ordering." };
@@ -301,5 +307,11 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
     }
   }
 
-  return { ...base, structure, engine: "AVAILABLE", engineNote: null, basis, result, rows, chart, styles: styleNames, rules, withheld, eligibility, horizons };
+  const adjustedProposedTotal = result.skus.reduce((a, k) => {
+    if (k.classification !== "ordinary") return a;
+    const o = planner.orderOverrides.find((x) => x.sku === k.sku);
+    return a + (o ? o.quantity : (k.proposalCalculated ?? 0));
+  }, 0);
+
+  return { ...base, structure, engine: "AVAILABLE", engineNote: null, basis, result, rows, chart, styles: styleNames, rules, withheld, adjustedProposedTotal, eligibility, horizons };
 }

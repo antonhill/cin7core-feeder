@@ -33,7 +33,7 @@ export function rollUpStyles(skus: readonly SkuResult[], anomalies: readonly Ano
       inboundTotal: m.reduce((a, s) => a + s.inboundTotal, 0),
       monthlyForecast: m.reduce((a, s) => a + (s.monthlyForecast ?? 0), 0),
       weeklyForecast: m.reduce((a, s) => a + (s.weeklyForecast ?? 0), 0),
-      minLevel: withBalances.reduce((a, s) => a + (s.minLevel ?? 0), 0),
+      minLevel: withBalances.reduce((a, s) => a + (s.tenderExempt ? 0 : (s.effectiveMin ?? 0)), 0),
       balances,
       firstBreachWeek: breaches.length === 0 ? null : Math.min(...breaches),
       shortfall: m.filter((s) => !s.tenderExempt).reduce((a, s) => a + s.shortfall, 0),
@@ -44,6 +44,7 @@ export function rollUpStyles(skus: readonly SkuResult[], anomalies: readonly Ano
       shortageSkus: m.filter((s) => !s.tenderExempt && s.shortfall > 0).length,
       skusWithoutForecast: m.filter((s) => s.forecast.status === "insufficient").length,
       tenderExemptSkus: m.filter((s) => s.tenderExempt).length,
+      tenderStockoutSkus: m.filter((s) => s.tenderExempt && s.shortfall > 0).length,
       anomaliesToReview: mine.filter((a) => a.inWindow && !a.excluded).length,
       anomaliesExcluded: mine.filter((a) => a.excluded).length,
     };

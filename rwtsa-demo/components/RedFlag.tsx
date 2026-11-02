@@ -286,12 +286,13 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
           {(
           <>
           <ScenarioACorePanels model={model} />
-          <div data-testid="indicators" className="grid grid-cols-2 gap-3 md:grid-cols-5">
+          <div data-testid="indicators" className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
             <Indicator label="Projected shortage SKUs" testid="ind-shortage" value={String(r.summary.shortageSkus)} hint={`of ${r.summary.skuCount} SKUs`} />
             <Indicator label="First projected breach" testid="ind-first" value={r.summary.firstBreachWeek === null ? "None" : `Week ${r.summary.firstBreachWeek}`} hint={`of ${r.config.horizonWeeks}`} />
-            <Indicator label="Total projected shortfall" testid="ind-shortfall" value={`${n0(r.summary.totalShortfall)} units`} hint={model.withheld.proposedOrders ? "proposed orders withheld" : `proposed ${n0(r.summary.totalProposedOrder)} units`} />
+            <Indicator label="Total projected shortfall" testid="ind-shortfall" value={`${n0(r.summary.totalShortfall)} units`} hint={model.withheld.proposedOrders ? "proposed orders withheld for unclassified SKUs" : `proposed ${n0(r.summary.totalProposedOrder)} units`} />
+            <Indicator label="Proposed (planner-adjusted)" testid="ind-adjusted" value={`${n0(model.adjustedProposedTotal)} units`} hint="ordinary SKUs: overrides where saved, else calculated" />
             <Indicator label="Anomalies to review" testid="ind-anomalies" value={String(r.summary.anomaliesToReview)} hint={`${r.summary.anomaliesExcluded} excluded`} />
-            <Indicator label="Tender-exempt SKUs" testid="ind-tender" value={String(r.summary.tenderExemptSkus)} hint="not auto-ordered" />
+            <Indicator label="Tender-exempt SKUs" testid="ind-tender" value={String(r.summary.tenderExemptSkus)} hint={`not auto-ordered; ${r.summary.tenderStockoutSkus} at projected stock-out risk`} />
           </div>
 
           <Panel>
@@ -369,6 +370,7 @@ export function RedFlagPageView({ model, outcome }: { model: RedFlagModel; outco
                       <TD align="right" numeric>
                         <span data-testid="proposed-cell" data-state={row.proposalWithheld ? "withheld" : "value"} />
                         {row.proposalWithheld ? "Withheld" : row.tenderExempt ? "0 (tender)" : row.proposedOrder > 0 ? n0(row.proposedOrder) : dash}
+                        {!row.proposalWithheld && row.planner?.override && <div className="text-xs text-amber-800" data-testid="adjusted-cell" data-value={row.planner.override.quantity}>planner-adjusted {n0(row.planner.override.quantity)}</div>}
                       </TD>
                     </TR>
                   ))}

@@ -175,6 +175,8 @@ export interface StyleResult {
   readonly shortageSkus: number;
   readonly skusWithoutForecast: number;
   readonly tenderExemptSkus: number;
+  /** Tender SKUs whose projected balance falls below zero. Their risk is shown, but is not part of the style's standing shortfall. */
+  readonly tenderStockoutSkus: number;
   readonly anomaliesToReview: number;
   readonly anomaliesExcluded: number;
 }
