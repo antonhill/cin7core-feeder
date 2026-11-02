@@ -259,4 +259,15 @@ describe("review hardening", () => {
     const s1 = run(ds([{ sku: "A-M", minLevel: 0, jhb: 50, sales: flat(100) }]), { committedDue: { "A-M": { 3: 40, 20: 999 } } }).skus[0];
     expect((s1.netRequirement as number) - (s0.netRequirement as number)).toBe(40); // the week-20 commitment is beyond the 13-week horizon
   });
+  it("an overdue on-water line that matches no SKU or style is reported as unmatched, not as an overdue shipment", () => {
+    const r = run(ds(style3, [{ poNo: "P", sku: "NOPE", qty: 25, etaStores: "2026-10-01", status: "On the water" }]), { sizeCurve: { kind: "none" } });
+    expect(r.inbound.unmatchedUnits).toBe(25);
+    expect(r.inbound.overdueOnWaterUnits).toBe(0);
+  });
+  it("size labels are matched to the curve ignoring case and surrounding spaces", () => {
+    const odd = [{ sku: "ST-m", style: "ST", size: " m ", minLevel: 0, sales: flat(10) } as SkuSpec, { sku: "ST-L", style: "ST", size: "L", minLevel: 0, sales: flat(10) } as SkuSpec];
+    const r = run(ds(odd, [{ poNo: "P", style: "ST", qty: 44, etaStores: "2026-11-20", status: "On order" }]), { sizeCurve: { kind: "explicit", weights: REV2_SIZE_CURVE } });
+    expect(r.limitations.join(" ")).not.toMatch(/not in the applied size curve/);
+    expect(r.skus.map((x) => x.inboundTotal)).toEqual([20, 24]);
+  });
 });

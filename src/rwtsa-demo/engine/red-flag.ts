@@ -120,8 +120,9 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
       continue;
     }
 
-    // Overdue on-water units are counted from the line itself, before any size split, so an unsplit style-level line is never missed.
-    if (cls === "on-water" && etaWeek(cfg.stockDate, po.etaStores) <= 0) overdueOnWaterUnits += po.qty;
+    // Overdue on-water units are counted for every line that belongs to a known SKU or style, including a style-level line that cannot be split to
+    // sizes. A line that matches nothing is reported as unmatched and is not an overdue shipment of anything we hold.
+    const overdueLine = cls === "on-water" && etaWeek(cfg.stockDate, po.etaStores) <= 0;
 
     // Which SKUs does this line belong to?
     let parts: [string, number][] | null;
@@ -140,9 +141,10 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
       }
       let weights: [string, number][];
       if (cfg.sizeCurve.kind === "explicit") {
-        const curve = cfg.sizeCurve.weights;
-        for (const m of members) if (curve[m.size] === undefined) sizesNotInCurve.add(m.size);
-        weights = members.map((m) => [m.sku, curve[m.size] ?? 0]);
+        const norm = (z: string) => z.trim().toUpperCase();
+        const curve = new Map(Object.entries(cfg.sizeCurve.weights).map(([k, v]) => [norm(k), v]));
+        for (const m of members) if (!curve.has(norm(m.size))) sizesNotInCurve.add(m.size);
+        weights = members.map((m) => [m.sku, curve.get(norm(m.size)) ?? 0]);
       } else if (cfg.sizeCurve.kind === "demand-proportional") {
         weights = members.map((m) => [m.sku, monthly.get(m.sku) ?? 0]);
         usedDemandCurve = true;
@@ -152,6 +154,7 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
       parts = weights.length === 0 ? null : allocateUnits(po.qty, weights);
       if (parts === null) {
         inbound.unallocatedStyleUnits += po.qty;
+        if (overdueLine) overdueOnWaterUnits += po.qty;
         continue;
       }
       unitsIn += po.qty;
@@ -159,6 +162,7 @@ export function runRedFlag(ds: RwtsaDataset, input: RedFlagConfigInput = {}, exc
       allocLines.push({ styleCode: po.styleCode as string, poNo: po.poNo, qty: po.qty, parts: parts.map(([sku, units]) => ({ sku, size: (itemBySku.get(sku) as { size: string }).size, units })) });
     }
 
+    if (overdueLine) overdueOnWaterUnits += po.qty;
     if (cls === "on-water") for (const [sku, u] of parts) onWaterPoBySku.set(sku, (onWaterPoBySku.get(sku) ?? 0) + u);
 
     let week = etaWeek(cfg.stockDate, po.etaStores);
