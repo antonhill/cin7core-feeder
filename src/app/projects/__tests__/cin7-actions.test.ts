@@ -191,7 +191,10 @@ describe("verifyInvoiceStatusesAction (UAT-028): read-only, manager only, one Sa
     expect(createInvoice).not.toHaveBeenCalled();
     expect(r.data!.invoices.map((i) => [i.invoiceNumber, i.recordedStatus, i.currentStatus, i.outcome])).toEqual([["INV-34", "DRAFT", "AUTHORISED", "CHANGED"], ["INV-35", "DRAFT", "AUTHORISED", "CHANGED"], ["INV-37", "AUTHORISED", "AUTHORISED", "SAME"]]);
     expect(Number.isNaN(Date.parse(r.data!.verifiedAt))).toBe(false);
-    for (const fn of [store.linkCin7Sale, store.postClaimToCin7, store.reconcileClaimPosting]) expect(fn).not.toHaveBeenCalled(); // the posting record is never touched
+    for (const fn of [store.linkCin7Sale, store.postClaimToCin7, store.reconcileClaimPosting, saleStore.createSaleForProject, saleStore.reconcileSaleCreation]) expect(fn).not.toHaveBeenCalled(); // the posting record is never touched
+    expect((await import("@/lib/activity-log")).logActivity).not.toHaveBeenCalled(); // not even an audit write: a read leaves no trace in the data
+    const db = vi.mocked((await import("@/supabase/server")).createServiceRoleClient).mock.results.map((x) => x.value as Record<string, unknown>);
+    for (const d of db) expect(Object.keys(d)).toEqual(["__db"]); // the database client the action used has no query surface at all in this test, so any direct read or write would have thrown
   });
   it("re-establishes module access and the billing-scope guard first; a refusal reads nothing", async () => {
     const scope = await import("@/lib/projects/scope-access");

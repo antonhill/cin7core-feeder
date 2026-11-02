@@ -19,21 +19,27 @@ const OUTCOME: Record<VerifyOutcome, { tone: BadgeTone; text: string }> = {
   SAME: { tone: "success", text: "Matches" },
   CHANGED: { tone: "warning", text: "Changed in Cin7" },
   NOT_IN_SALE: { tone: "danger", text: "Not found on the Sale" },
+  AMBIGUOUS: { tone: "danger", text: "More than one invoice with this number" },
   IDENTITY_MISMATCH: { tone: "danger", text: "Different Cin7 invoice" },
   STATUS_UNREADABLE: { tone: "warning", text: "Status not given" },
 };
 
 export function InvoiceStatusSection({ view, postings, projectId, isManager }: { view: ProjectView; postings: ReadonlyArray<PostingRow>; projectId: string; isManager: boolean }) {
   const acts = useKeyedActions();
-  const [verified, setVerified] = useState<InvoiceVerification | null>(null);
+  const [verified, setVerified] = useState<{ result: InvoiceVerification; signature: string } | null>(null);
   const rows = postings.filter((p) => (p.posting_state === "CREATED" || p.posting_state === "RECONCILED") && !!p.cin7_invoice_number);
-  if (rows.length === 0) return null;
+  const unresolved = postings.filter((p) => p.posting_state === "PENDING" || p.posting_state === "FAILED_UNCERTAIN").length;
+  if (rows.length === 0 && unresolved === 0) return null;
+  // A verification describes the postings as they were when Cin7 was read. If any posting has changed since (a reconcile, a new invoice), it is no longer shown as current.
+  const signature = postings.map((p) => `${p.id}:${p.posting_state}:${p.cin7_status ?? ""}:${p.cin7_invoice_number ?? ""}:${p.completed_at ?? ""}:${p.reconciled_at ?? ""}`).join("|");
+  const current = verified && verified.signature === signature ? verified.result : null;
   const claimNo = (claimId: string) => view.claims.find((c) => c.id === claimId)?.claim_number ?? "—";
-  const byPosting = new Map((verified?.invoices ?? []).map((i) => [i.postingId, i]));
+  const byPosting = new Map((current?.invoices ?? []).map((i) => [i.postingId, i]));
 
   const verify = () => void acts.run("verify", async () => {
+    const readFor = signature; // what the postings looked like when this read was asked for
     const r = await verifyInvoiceStatusesAction(projectId);
-    if (r.ok && r.data) setVerified(r.data);
+    if (r.ok && r.data) setVerified({ result: r.data, signature: readFor });
     return r;
   }, {
     pending: "Reading the Sales Order from Cin7…",
@@ -56,9 +62,9 @@ export function InvoiceStatusSection({ view, postings, projectId, isManager }: {
           : <span className="text-xs text-slate-500">An owner or admin can verify these against Cin7.</span>}
       </div>
       <ActionFeedback state={acts.stateOf("verify")} />
-      <div className="mt-3 overflow-x-auto">
+      {rows.length > 0 && <div className="mt-3 overflow-x-auto">
         <table className="w-full min-w-[34rem] text-left">
-          <thead><tr className="text-xs text-slate-500"><th className="py-1 pr-3 font-medium">Claim</th><th className="py-1 pr-3 font-medium">Invoice</th><th className="py-1 pr-3 font-medium">Recorded in Toolbox</th><th className="py-1 font-medium">Cin7 now</th></tr></thead>
+          <thead><tr className="text-xs text-slate-500"><th scope="col" className="py-1 pr-3 font-medium">Claim</th><th scope="col" className="py-1 pr-3 font-medium">Invoice</th><th scope="col" className="py-1 pr-3 font-medium">Recorded in Toolbox</th><th scope="col" className="py-1 font-medium">Cin7 now</th></tr></thead>
           <tbody>
             {rows.map((p) => {
               const v = byPosting.get(p.id);
@@ -80,10 +86,14 @@ export function InvoiceStatusSection({ view, postings, projectId, isManager }: {
             })}
           </tbody>
         </table>
-      </div>
-      {verified && <p className="mt-2 text-xs text-slate-500" data-testid="verified-at">Verified against Cin7 {verified.saleNumber ? `Sales Order ${verified.saleNumber} ` : ""}at {formatSast(verified.verifiedAt)}.</p>}
-      {verified && verified.unaccounted.length > 0 && (
-        <div className="mt-2"><Alert tone="info">The Sales Order also has {verified.unaccounted.length} invoice{verified.unaccounted.length === 1 ? "" : "s"} that Toolbox did not create ({verified.unaccounted.map((u) => u.invoiceNumber ?? "unnumbered").join(", ")}). They are shown for information only.</Alert></div>
+      </div>}
+      {current && <p className="mt-2 text-xs text-slate-500" data-testid="verified-at">Verified against Cin7 {current.saleNumber ? `Sales Order ${current.saleNumber} ` : ""}at {formatSast(current.verifiedAt)}.</p>}
+      {verified && !current && <p className="mt-2 text-xs text-amber-700" data-testid="verified-stale">The invoices changed since the last verification, so it is no longer shown. Verify again.</p>}
+      {unresolved > 0 && (
+        <div className="mt-2"><Alert tone="warning">{unresolved} invoice posting{unresolved === 1 ? " is" : "s are"} still unresolved (pending or outcome uncertain). An invoice may already exist in Cin7 for {unresolved === 1 ? "it" : "them"}: reconcile the claim before posting again.</Alert></div>
+      )}
+      {current && current.unaccounted.length > 0 && (
+        <div className="mt-2"><Alert tone={current.unresolvedPostings > 0 ? "warning" : "info"}>The Sales Order also has {current.unaccounted.length} invoice{current.unaccounted.length === 1 ? "" : "s"} not matched to a recorded posting ({current.unaccounted.map((u) => u.invoiceNumber ?? "unnumbered").join(", ")}).{current.unresolvedPostings > 0 ? " Because a posting is unresolved, one of these may be its invoice: reconcile that claim, do not post it again." : " For example an invoice raised by hand in Cin7. Information only."}</Alert></div>
       )}
     </section>
   );

@@ -16,7 +16,7 @@ const result = (over: Record<string, unknown> = {}) => ({ ok: true, data: {
   invoices: [
     { postingId: "po-INV-00034", claimId: "cl-34", invoiceNumber: "INV-00034", recordedStatus: "DRAFT", currentStatus: "AUTHORISED", outcome: "CHANGED" },
     { postingId: "po-INV-00037", claimId: "cl-37", invoiceNumber: "INV-00037", recordedStatus: "AUTHORISED", currentStatus: "AUTHORISED", outcome: "SAME" },
-  ], unaccounted: [], ...over } });
+  ], unaccounted: [], unresolvedPostings: 0, ...over } });
 const deferred = <T,>() => { let resolve!: (v: T) => void; const promise = new Promise<T>((r) => { resolve = r; }); return { promise, resolve }; };
 
 beforeEach(() => { vi.mocked(c7.verifyInvoiceStatusesAction).mockResolvedValue(result() as never); });
@@ -85,8 +85,39 @@ describe("Invoices in Cin7 (UAT-028)", () => {
     vi.mocked(c7.verifyInvoiceStatusesAction).mockResolvedValue(result({ unaccounted: [{ invoiceNumber: "INV-00099", status: "AUTHORISED" }] }) as never);
     mount();
     fireEvent.click(screen.getByRole("button", { name: "Verify invoice statuses" }));
-    expect(await screen.findByText(/did not create \(INV-00099\)/)).toBeTruthy();
+    expect(await screen.findByText(/not matched to a recorded posting \(INV-00099\)/)).toBeTruthy();
+    expect(screen.getByText(/raised by hand in Cin7/)).toBeTruthy();
+    expect(screen.queryByText(/did not create/)).toBeNull(); // provenance is never claimed
   });
+  it("when a posting is still unresolved, an unmatched invoice is NOT described as foreign: the owner is told to reconcile, not to post again", async () => {
+    vi.mocked(c7.verifyInvoiceStatusesAction).mockResolvedValue(result({ unaccounted: [{ invoiceNumber: "INV-00099", status: "DRAFT" }], unresolvedPostings: 1 }) as never);
+    mount({ postings: [...POSTINGS, posting("", "cl-34", "DRAFT", { posting_state: "FAILED_UNCERTAIN", cin7_invoice_number: null } as never)] });
+    fireEvent.click(screen.getByRole("button", { name: "Verify invoice statuses" }));
+    expect(await screen.findByText(/one of these may be its invoice: reconcile that claim, do not post it again/)).toBeTruthy();
+    expect(screen.queryByText(/raised by hand/)).toBeNull();
+  });
+  it("an unresolved posting is flagged even before anything is verified, and the section shows with no checkable invoice at all", () => {
+    mount({ postings: [posting("", "cl-34", "DRAFT", { posting_state: "PENDING", cin7_invoice_number: null } as never)] });
+    expect(screen.getByText(/still unresolved \(pending or outcome uncertain\)/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Verify invoice statuses" })).toBeTruthy();
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+  it("a verification is no longer shown as current once the postings change (a reconcile, a new invoice)", async () => {
+    const { rerender } = mount();
+    fireEvent.click(screen.getByRole("button", { name: "Verify invoice statuses" }));
+    await screen.findByTestId("verified-at");
+    rerender(<InvoiceStatusSection view={view} postings={[posting("INV-00034", "cl-34", "AUTHORISED"), POSTINGS[1]]} projectId="p1" isManager />);
+    expect(screen.queryByTestId("verified-at")).toBeNull();
+    expect(screen.getAllByText("Not verified").length).toBe(2);
+    expect(screen.getByTestId("verified-stale").textContent).toMatch(/Verify again/);
+  });
+  it("two invoices with the same number are shown as such, not as 'not found'", async () => {
+    vi.mocked(c7.verifyInvoiceStatusesAction).mockResolvedValue(result({ invoices: [{ postingId: "po-INV-00034", claimId: "cl-34", invoiceNumber: "INV-00034", recordedStatus: "DRAFT", currentStatus: null, outcome: "AMBIGUOUS" }] }) as never);
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Verify invoice statuses" }));
+    expect((await screen.findByTestId("now-INV-00034")).textContent).toContain("More than one invoice with this number");
+  });
+  it("the table headers are column headers", () => { mount(); expect(screen.getAllByRole("columnheader").length).toBe(4); });
   it("a non-manager sees the recorded statuses but no Verify action", () => {
     mount({ isManager: false });
     expect(screen.queryByRole("button", { name: /Verify invoice statuses/ })).toBeNull();

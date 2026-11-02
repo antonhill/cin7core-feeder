@@ -8,6 +8,7 @@ export type VerifyOutcome =
   | "SAME"              // Cin7 reports the same status that was recorded
   | "CHANGED"           // Cin7 reports a different status (e.g. recorded Draft, now Authorised)
   | "NOT_IN_SALE"       // no invoice with this number on the Sale: it may have been voided or removed in Cin7
+  | "AMBIGUOUS"         // more than one invoice on the Sale carries this number: never guessed
   | "IDENTITY_MISMATCH" // the number matches but the Cin7 task id differs from the one recorded: not trusted
   | "STATUS_UNREADABLE"; // the invoice is there but Cin7 gave no status
 
@@ -18,8 +19,13 @@ export interface VerifiedInvoice {
 export interface InvoiceVerification {
   verifiedAt: string; saleId: string; saleNumber: string | null;
   invoices: VerifiedInvoice[];
-  /** Invoices on the Sale that no Toolbox posting accounts for (for example one raised by hand in Cin7). Information only. */
+  /**
+   * Invoices on the Sale that are not matched to a recorded posting. That may be an invoice raised by hand in Cin7 - or an invoice Toolbox DID create whose posting is still
+   * unresolved (see `unresolvedPostings`). The wording must never claim which.
+   */
   unaccounted: Array<{ invoiceNumber: string | null; status: string | null }>;
+  /** Postings still PENDING or OUTCOME UNCERTAIN: their invoice may or may not exist in Cin7; the claim must be reconciled before anything is posted again. */
+  unresolvedPostings: number;
 }
 
 const norm = (s: string | null | undefined): string | null => { const t = (s ?? "").trim().toUpperCase(); return t === "" ? null : t; };
@@ -36,7 +42,8 @@ export function verifyInvoiceStatuses(input: { saleId: string; postings: Readonl
     const found = sale.invoices.filter((i) => (i.invoiceNumber ?? "").trim() === number);
     const recorded = norm(p.cin7_status);
     const base = { postingId: p.id, claimId: p.claim_id, invoiceNumber: number, recordedStatus: recorded };
-    if (found.length !== 1) { invoices.push({ ...base, currentStatus: null, outcome: "NOT_IN_SALE" }); continue; } // none, or ambiguous: never guessed
+    if (found.length === 0) { invoices.push({ ...base, currentStatus: null, outcome: "NOT_IN_SALE" }); continue; }
+    if (found.length > 1) { found.forEach((f) => used.add(f)); invoices.push({ ...base, currentStatus: null, outcome: "AMBIGUOUS" }); continue; } // never guessed
     const inv = found[0];
     used.add(inv);
     if (p.cin7_task_id && inv.taskId && p.cin7_task_id !== inv.taskId) { invoices.push({ ...base, currentStatus: norm(inv.status), outcome: "IDENTITY_MISMATCH" }); continue; }
@@ -47,6 +54,7 @@ export function verifyInvoiceStatuses(input: { saleId: string; postings: Readonl
     verifiedAt: now.toISOString(), saleId, saleNumber: sale.saleNumber,
     invoices,
     unaccounted: sale.invoices.filter((i) => !used.has(i)).map((i) => ({ invoiceNumber: i.invoiceNumber, status: norm(i.status) })),
+    unresolvedPostings: postings.filter((p) => p.posting_state === "PENDING" || p.posting_state === "FAILED_UNCERTAIN").length,
   };
 }
 

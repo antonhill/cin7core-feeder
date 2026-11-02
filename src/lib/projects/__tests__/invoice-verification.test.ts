@@ -38,9 +38,17 @@ describe("verifyInvoiceStatuses (UAT-028)", () => {
     expect(r.invoices[0]).toMatchObject({ outcome: "NOT_IN_SALE", currentStatus: null });
     expect(r.unaccounted).toEqual([{ invoiceNumber: "INV-1", status: "DRAFT" }]);
   });
-  it("two invoices with the same number are ambiguous and are not guessed", () => {
-    expect(run([posting("INV-1", "DRAFT")], sale([inv("INV-1", "DRAFT"), inv("INV-1", "AUTHORISED", { taskId: "other" })])).invoices[0].outcome).toBe("NOT_IN_SALE");
+  it("two invoices with the same number are AMBIGUOUS (not 'not found'), no status is taken from either, and neither is listed as unaccounted", () => {
+    const r = run([posting("INV-1", "DRAFT")], sale([inv("INV-1", "DRAFT"), inv("INV-1", "AUTHORISED", { taskId: "other" })]));
+    expect(r.invoices[0]).toMatchObject({ outcome: "AMBIGUOUS", currentStatus: null });
+    expect(r.unaccounted).toEqual([]);
   });
+  it("a posting that is still PENDING or OUTCOME UNCERTAIN is counted, so an invoice it may have created is never presented as foreign", () => {
+    const r = run([posting(null, null, { posting_state: "FAILED_UNCERTAIN" }), posting("INV-2", "DRAFT", { posting_state: "PENDING" }), posting("INV-1", "DRAFT")], sale([inv("INV-1", "DRAFT"), inv("INV-2", "DRAFT")]));
+    expect(r.unresolvedPostings).toBe(2);
+    expect(r.unaccounted.map((u) => u.invoiceNumber)).toEqual(["INV-2"]); // present on the Sale but its posting is unresolved: reported, with the count above
+  });
+  it("no unresolved postings means a count of zero", () => { expect(run([posting("INV-1", "DRAFT")], sale([inv("INV-1", "DRAFT")])).unresolvedPostings).toBe(0); });
   it("the same number with a different Cin7 task id is an identity mismatch and is not trusted", () => {
     expect(run([posting("INV-1", "DRAFT", { cin7_task_id: "t-recorded" })], sale([inv("INV-1", "AUTHORISED", { taskId: "t-other" })])).invoices[0].outcome).toBe("IDENTITY_MISMATCH");
   });
