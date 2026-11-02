@@ -44,7 +44,6 @@ const indicator = (m: string, id: string) => {
   return r ? decode(r[1]).trim() : null;
 };
 const ruleIds = (m: string) => [...m.matchAll(/data-testid="rule-row" data-id="([^"]*)"/g)].map((x) => x[1]);
-const badge = (m: string) => /data-testid="rules-badge"[^>]*>(?:<[^>]*>)*([^<]*)</.exec(m)?.[1]?.trim() ?? null;
 
 
 const states = (m: string) => Object.fromEntries([...m.matchAll(/data-testid="eligibility-row" data-id="([^"]*)" data-state="([^"]*)"/g)].map((x) => [x[1], x[2]]));

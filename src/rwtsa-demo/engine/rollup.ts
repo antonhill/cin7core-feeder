@@ -23,7 +23,7 @@ export function rollUpStyles(skus: readonly SkuResult[], anomalies: readonly Ano
     const forecastable = m.filter((s) => s.monthlyForecast !== null && s.available !== null);
     const num = forecastable.reduce((a, s) => a + (s.available as number), 0);
     const den = forecastable.reduce((a, s) => a + (s.monthlyForecast as number), 0);
-    const breaches = m.filter((s) => s.firstBreachWeek !== null).map((s) => s.firstBreachWeek as number);
+    const breaches = m.filter((s) => s.firstBreachWeek !== null && !s.tenderExempt).map((s) => s.firstBreachWeek as number);
     const mine = anomalies.filter((a) => a.styleCode === styleCode);
     return {
       styleCode,
@@ -36,7 +36,7 @@ export function rollUpStyles(skus: readonly SkuResult[], anomalies: readonly Ano
       minLevel: withBalances.reduce((a, s) => a + (s.minLevel ?? 0), 0),
       balances,
       firstBreachWeek: breaches.length === 0 ? null : Math.min(...breaches),
-      shortfall: m.reduce((a, s) => a + s.shortfall, 0),
+      shortfall: m.filter((s) => !s.tenderExempt).reduce((a, s) => a + s.shortfall, 0),
       proposedOrder: m.reduce((a, s) => a + s.proposedOrder, 0),
       monthsOfCover: den > 0 ? Math.max(0, num / den) : null,
       monthsOfCoverWithInbound: den > 0 ? Math.max(0, (num + forecastable.reduce((a, s) => a + s.coverInboundUnits, 0)) / den) : null,

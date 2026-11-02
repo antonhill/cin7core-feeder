@@ -19,7 +19,7 @@ export interface RedFlagSettings {
   /** True when the viewer explicitly set the control; false when the labelled default applies. Neither blocks any result. */
   readonly chosen: { readonly anchor: boolean; readonly overdue: boolean };
   /** Raw, validated control values for redisplay and for building links. */
-  readonly values: Readonly<Record<"view" | "window" | "horizon" | "anchor" | "overdue" | "curve" | "mult" | "floor", string>>;
+  readonly values: Readonly<Record<"view" | "window" | "horizon" | "anchor" | "overdue" | "curve" | "mult" | "floor" | "formula", string>>;
   readonly errors: readonly string[];
 }
 
@@ -76,6 +76,7 @@ export function parseSettings(q: RawQuery, opts: SettingsOptions): RedFlagSettin
   const floor = num("floor", 0, d.anomaly.floor, "Anomaly floor");
   const defaultCurve: CurveChoice = opts.suppliedCurve ? "supplied" : opts.local ? "rev2" : "none";
   const curve = pick<CurveChoice>("curve", opts.suppliedCurve ? ["none", "demand", "rev2", "supplied"] : ["none", "demand", "rev2"], defaultCurve, "Size curve");
+  const formula = pick("formula", ["minimum-shortfall", "net-requirement"] as const, "minimum-shortfall", "Replenishment formula");
   const style = one(q, "style");
   const sel = one(q, "sel");
 
@@ -88,6 +89,7 @@ export function parseSettings(q: RawQuery, opts: SettingsOptions): RedFlagSettin
       overdueOnWater: overdue === "exclude" ? "exclude" : "week-1",
       anomaly: { multiple: mult, floor },
       sizeCurve,
+      replenishmentFormula: formula,
     },
     view,
     style: style && style !== "" ? style : null,
@@ -95,7 +97,7 @@ export function parseSettings(q: RawQuery, opts: SettingsOptions): RedFlagSettin
     sel: sel && sel !== "" ? sel : null,
     curve,
     chosen,
-    values: { view, window: String(win), horizon, anchor, overdue, curve, mult: String(mult), floor: String(floor) },
+    values: { view, window: String(win), horizon, anchor, overdue, curve, mult: String(mult), floor: String(floor), formula },
     errors,
   };
 }

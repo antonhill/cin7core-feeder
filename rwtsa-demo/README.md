@@ -104,6 +104,16 @@ saved, and it neither reads nor writes Cin7 Core or Xero (the page lists which f
   count / value comparison for the chart.
 - **Real-workbook readiness is UNVERIFIED**: no authorised local workbook was available. Unconfirmed: the status vocabulary, whether quotes carry a product (or several), the date meaning, and the currency.
 
+## Scenario A planner decisions (DP-14, DP-15, DP-16, DP-19)
+
+Plain forms on `/scenario-a` (SKU view, select a SKU) save planner decisions to a local file **outside the repository** (`RWTSA_STATE_DIR`, default `~/.rwtsa-demo`, `planner-<hash>.json`, one per data source, atomic, owner-only). They never change the workbook and never create or authorise a purchase order.
+
+- **Classification (DP-16):** ordinary replenishment, tender / customer-order-only, or unclassified; the page shows the source (workbook marker, planner, or none). Tender SKUs keep demand history and a projected stock-out risk (below zero; no standing minimum is assumed) but get no standing proposal. An unclassified SKU keeps its demand and projected shortfall; only its proposal is withheld.
+- **Temporary minimum (DP-19):** reason, replacement, effective date and an expiry date or an explicit "until I remove it". The workbook's original minimum is shown beside the effective one and is never overwritten. The override applies in each projection week whose closing date falls inside its dates.
+- **Order override (DP-15):** only for an ordinary SKU; needs a whole-number quantity and a reason; calculated and planner-adjusted quantities are shown side by side; reversible. The calculated proposal follows the formula chosen in the controls (approved minimum-shortfall rule, or the RFP DP-13 net requirement).
+- **Local make (DP-14):** NOT EVALUATED until the planner enters quantity, capacity, lead time and completion week, which are always labelled a demonstration assumption. Import-only SKUs (Items.Source) are BLOCKED; a completion earlier than the lead time is BLOCKED; completion after the horizon is not counted; the offset is capped by capacity and by the requirement. Local make is never received stock and never enters Available, balances or inbound, so it cannot be counted twice.
+- **Shortfall label:** the per-SKU column is "Projected inventory shortfall": a forecast inventory risk, not a purchase order recommendation.
+
 ## Unresolved commercial rules (local workbook only)
 
 For a **local** workbook the demo never picks a business rule the workbook does not establish. Each open rule is listed by name on the scenario page (`RULES: n OPEN`, separate from STRUCTURE, READY and ENGINE) with what it withholds and how it is resolved:
@@ -112,7 +122,7 @@ For a **local** workbook the demo never picks a business rule the workbook does 
 |---|---|---|---|
 | Overdue shipments on the water | A | nothing: shown under a labelled demonstration assumption (not counted as received; excluded from usable inbound by default, switchable) | owner decision |
 | Sales history ends before the stock month | A | nothing: forecast on the latest observed months with a stale-history warning | owner decision |
-| Tender SKU classification (no SKU-level marker) | A | proposed order quantities | owner decision |
+| Tender SKU classification (no SKU-level marker) | A | proposed order quantities for the SKUs the planner has not yet classified | a choice on the page: the planner classifies each SKU |
 | Overhead, efficiency allowance and margin (units and inclusion) | B | fully loaded product cost and any price derived from it; the base BOM cost and reference price are shown | owner decision |
 | Paid or open status of each payment (no paid column) | C | confirmed open exposure (potential exposure is shown, labelled) | owner decision: supply the status per payment |
 

@@ -361,8 +361,11 @@ describe("20 Tender products", () => {
     const t = sku(r, "T1");
     expect(t.tenderExempt).toBe(true);
     expect(t.proposedOrder).toBe(0);
-    expect(t.firstBreachWeek).toBeNull();
-    expect(t.shortfall).toBe(0);
+    expect(t.proposalCalculated).toBe(0);
+    // projected inventory RISK continues: with no stock and demand, the SKU runs out in week 1 (a stock-out is below ZERO, not below an invented minimum)
+    expect(t.firstBreachWeek).toBe(1);
+    expect(t.shortfall).toBeGreaterThan(0);
+    expect(r.summary.tenderStockoutSkus).toBe(1);
     expect(t.limitation).toBeNull(); // missing min level is expected for a tender SKU, not a data gap
     expect(r.summary.tenderExemptSkus).toBe(1);
     expect(r.summary.shortageSkus).toBe(1); // only S1
@@ -375,8 +378,9 @@ describe("20 Tender products", () => {
     expect(t.balances).toHaveLength(13);
   });
   it("a tender SKU with a minimum level set still never proposes an order", () => {
-    const t = sku(run([{ ...tender, minLevel: 50 }]), "T1");
+    const t = sku(run([{ ...tender, minLevel: 50, jhb: 1000 }]), "T1");
     expect(t.proposedOrder).toBe(0);
+    // the workbook minimum is NOT silently used as a standing minimum for a tender SKU: well stocked means no risk
     expect(t.shortfall).toBe(0);
     expect(t.firstBreachWeek).toBeNull();
   });

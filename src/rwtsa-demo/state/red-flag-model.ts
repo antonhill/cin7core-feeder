@@ -2,6 +2,8 @@ import { SYNTHETIC_SIZE_CURVE } from "@/rwtsa-demo/fixtures/synthetic";
 import { runRedFlag, type Exclusion, type RedFlagResult, type SkuResult, type StyleResult } from "@/rwtsa-demo/engine";
 import { bannerOf, isScenarioReady, provenanceOf, reasonsFor, type Banner, type DemoState, type ProvenanceLabel, type ReadinessLabel } from "@/rwtsa-demo/state/demo-state";
 import type { RedFlagSettings } from "@/rwtsa-demo/state/red-flag-settings";
+import { localMakeOffset, type LocalMakeEntry, type LocalMakeResult } from "@/rwtsa-demo/engine/local-make";
+import { EMPTY_PLANNER, type PlannerState } from "@/rwtsa-demo/state/planner-store";
 import { historyGapRule, overdueRule, rulesApply, tenderRule, type UnresolvedRule } from "@/rwtsa-demo/state/rules";
 
 /** The size curve supplied with the SYNTHETIC source only. A local workbook has none until one is supplied. */
@@ -23,13 +25,35 @@ export interface EligibilityRow {
 /** DP-13 shown for both horizons: the approved minimum-shortfall proposal and the RFP net requirement are DIFFERENT formulas. */
 export interface HorizonRow {
   readonly key: string;
+  /** The proposal depends on a SKU that is not yet classified: its quantities are withheld, also from the markup. */
+  readonly withheld: boolean;
   readonly label: string;
   readonly tender: boolean;
   readonly h13: { readonly shortfall: number; readonly proposed: number; readonly net: number | null };
   readonly h26: { readonly shortfall: number; readonly proposed: number; readonly net: number | null };
 }
 
+/** What the planner has decided for one SKU, beside what the engine calculated. Present on SKU rows only. */
+export interface PlannerRow {
+  readonly classification: "ordinary" | "tender" | "unclassified";
+  readonly classificationSource: "planner" | "workbook" | "none";
+  readonly classificationReason: string | null;
+  readonly originalMin: number | null;
+  readonly effectiveMin: number | null;
+  readonly minOverride: { readonly replacement: number; readonly effectiveFrom: string; readonly expires: string | null; readonly reason: string; readonly activeWeeks: number } | null;
+  /** The proposal by the selected formula (tender 0; null when it cannot be calculated). Never populated for an unclassified SKU. */
+  readonly calculated: number | null;
+  readonly formula: "minimum-shortfall" | "net-requirement";
+  readonly override: { readonly quantity: number; readonly reason: string; readonly calculatedAtOverride: number | null; readonly stale: boolean } | null;
+  /** The planner-adjusted quantity (the override when present, else the calculated proposal). Null when withheld. */
+  readonly adjusted: number | null;
+  readonly localMake: LocalMakeResult;
+}
+
 export interface ResultRow {
+  /** The proposal for this row is withheld (an unclassified SKU, or a style containing one). */
+  readonly proposalWithheld: boolean;
+  readonly planner: PlannerRow | null;
   readonly monthsOfCoverWithInbound: number | null;
   readonly coverInboundUnits: number;
   readonly netRequirement: number | null;
@@ -82,7 +106,9 @@ export interface RedFlagModel {
   /** Commercial rules the workbook does not establish (local workbook only). */
   readonly rules: readonly UnresolvedRule[];
   /** What those rules withhold. Results are never withheld wholesale: only the proposed order quantities, and only while tender classification is unresolved. */
-  readonly withheld: { readonly proposedOrders: boolean };
+  readonly withheld: { readonly proposedOrders: boolean; readonly unclassifiedSkus: number };
+  readonly plannerState: PlannerState;
+  readonly plannerError: string | null;
   readonly eligibility: readonly EligibilityRow[];
   readonly horizons: readonly HorizonRow[];
 }
@@ -101,6 +127,45 @@ function styleAnomalyText(st: StyleResult): { text: string; kind: "none" | "revi
   return { text: "-", kind: "none" };
 }
 
+/** The engine configuration: the page settings plus the planner's classifications and temporary minimums. Never the workbook's own values overwritten. */
+function engineConfig(settings: RedFlagSettings, planner: PlannerState) {
+  return {
+    ...settings.config,
+    planner: {
+      classification: Object.fromEntries(planner.classification.map((c) => [c.sku, c.value])),
+      minOverrides: Object.fromEntries(planner.minOverrides.map((o) => [o.sku, { replacement: o.replacement, effectiveFrom: o.effectiveFrom, expires: o.expires }])),
+    },
+  };
+}
+
+/** The planner's decisions for one SKU beside the engine's calculation. */
+function plannerRowOf(s: SkuResult, state: DemoState & { kind: "validated" }, planner: PlannerState, result: RedFlagResult): PlannerRow {
+  const item = (state.dataset as NonNullable<typeof state.dataset>).tables.items.find((i) => i.sku === s.sku);
+  const cls = planner.classification.find((c) => c.sku === s.sku) ?? null;
+  const mo = planner.minOverrides.find((o) => o.sku === s.sku) ?? null;
+  const oo = planner.orderOverrides.find((o) => o.sku === s.sku) ?? null;
+  const lm = planner.localMake.find((o) => o.sku === s.sku) ?? null;
+  const ordinary = s.classification === "ordinary";
+  const calculated = s.classification === "unclassified" ? null : s.proposalCalculated;
+  // An override applies only to an ORDINARY SKU: it can never bypass eligibility.
+  const overrideApplies = oo !== null && ordinary;
+  const adjusted = s.classification === "unclassified" ? null : overrideApplies ? (oo as { quantity: number }).quantity : calculated;
+  const entry: LocalMakeEntry | null = lm ? { quantity: lm.quantity, capacityUnits: lm.capacityUnits, leadTimeWeeks: lm.leadTimeWeeks, completionWeek: lm.completionWeek } : null;
+  return {
+    classification: s.classification,
+    classificationSource: s.classificationSource,
+    classificationReason: cls?.reason ?? null,
+    originalMin: s.minLevel,
+    effectiveMin: s.effectiveMin,
+    minOverride: mo ? { replacement: mo.replacement, effectiveFrom: mo.effectiveFrom, expires: mo.expires, reason: mo.reason, activeWeeks: s.minOverrideWeeks } : null,
+    calculated,
+    formula: s.proposalFormula,
+    override: overrideApplies ? { quantity: (oo as { quantity: number }).quantity, reason: (oo as { reason: string }).reason, calculatedAtOverride: (oo as { calculatedAtOverride: number | null }).calculatedAtOverride, stale: (oo as { calculatedAtOverride: number | null }).calculatedAtOverride !== null && (oo as { calculatedAtOverride: number | null }).calculatedAtOverride !== calculated } : null,
+    adjusted,
+    localMake: localMakeOffset({ gross: calculated, source: item?.source ?? null, eligible: ordinary, entry, horizonWeeks: result.config.horizonWeeks }),
+  };
+}
+
 function eligibilityOf(r: RedFlagResult, tenderOpen: boolean): EligibilityRow[] {
   const noStock = r.skus.filter((s) => s.available === null).length;
   const noForecast = r.summary.skusWithoutForecast;
@@ -116,11 +181,11 @@ function eligibilityOf(r: RedFlagResult, tenderOpen: boolean): EligibilityRow[] 
     { id: "projection", label: "Future stock projection", state: proj, note: projNote || "complete" },
     { id: "first-shortage", label: "First shortage week", state: proj, note: projNote || "complete" },
     { id: "shortfall", label: "Shortfall quantity", state: proj, note: projNote || "complete" },
-    { id: "proposed-orders", label: "Proposed replenishment orders", state: tenderOpen ? "withheld" : proj, note: tenderOpen ? "withheld until tender classification is resolved (owner decision); no SKU-level tender marker is in the source" : "a suggestion, not an authorised purchase order" },
+    { id: "proposed-orders", label: "Proposed replenishment orders", state: tenderOpen ? (r.summary.unclassifiedSkus === r.skus.length ? "withheld" : "assumption") : proj, note: tenderOpen ? `withheld for ${r.summary.unclassifiedSkus} unclassified SKU(s) until the planner classifies each as ordinary or tender-only` : "a suggestion, not an authorised purchase order" },
   ];
 }
 
-export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclusions: readonly Exclusion[], stateError: string | null = null): RedFlagModel {
+export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclusions: readonly Exclusion[], stateError: string | null = null, planner: PlannerState = EMPTY_PLANNER, plannerError: string | null = null): RedFlagModel {
   const ready = isScenarioReady(state, "A");
   const base = {
     provenance: provenanceOf(state),
@@ -132,8 +197,10 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
     styles: [] as string[],
     exclusions,
     stateError,
+    plannerState: planner,
+    plannerError,
     rules: [] as UnresolvedRule[],
-    withheld: { proposedOrders: false },
+    withheld: { proposedOrders: false, unclassifiedSkus: 0 },
     eligibility: [] as EligibilityRow[],
     horizons: [] as HorizonRow[],
   };
@@ -141,13 +208,16 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
   if (stateError !== null && state.kind === "validated") {
     return { ...base, structure, engine: "UNAVAILABLE", engineNote: "The saved exclusions could not be read, so no figures are shown: they could include distorted, unreviewed demand.", basis: "NONE", result: null, rows: [], chart: null };
   }
+  if (plannerError !== null && state.kind === "validated") {
+    return { ...base, structure, engine: "UNAVAILABLE", engineNote: "The saved planner decisions could not be read, so no figures are shown: they may carry tender classifications, minimums or overrides that change the result.", basis: "NONE", result: null, rows: [], chart: null };
+  }
   if (state.kind !== "validated" || state.dataset === null) {
     return { ...base, structure, engine: "UNAVAILABLE", engineNote: "No validated dataset is available: the engine has nothing to calculate from. No other data was substituted.", basis: "NONE", result: null, rows: [], chart: null };
   }
 
   let result: RedFlagResult;
   try {
-    result = runRedFlag(state.dataset, settings.config, exclusions);
+    result = runRedFlag(state.dataset, engineConfig(settings, planner), exclusions);
   } catch (e) {
     const message = e instanceof Error && /^(An exclusion|Exclusion|Invalid)/.test(e.message) ? e.message : "The engine could not run with these inputs.";
     return { ...base, structure, engine: "UNAVAILABLE", engineNote: message, basis: "NONE", result: null, rows: [], chart: null };
@@ -160,10 +230,10 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
   if (rulesApply(state)) {
     if (result.inbound.overdueOnWaterUnits > 0) rules.push(overdueRule(result.inbound.overdueOnWaterUnits));
     if (result.window.gapMonths.length > 0) rules.push(historyGapRule(result.window.lastHistoryMonth, result.window.gapMonths));
-    if (state.dataset.tables.items.length > 0 && state.dataset.tables.items.some((i) => i.isTender === null)) rules.push(tenderRule());
+    if (result.summary.unclassifiedSkus > 0) rules.push(tenderRule(result.summary.unclassifiedSkus));
   }
   const tenderOpen = rules.some((r) => r.id === "tender-classification");
-  const withheld = { proposedOrders: tenderOpen };
+  const withheld = { proposedOrders: tenderOpen, unclassifiedSkus: result.summary.unclassifiedSkus };
   const eligibility = eligibilityOf(result, tenderOpen);
   const styleNames = [...new Set(result.skus.map((s) => s.styleCode))].sort();
   const shortOnly = settings.shortageOnly;
@@ -175,7 +245,7 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
       .filter((s) => styleOk(s.styleCode) && (!shortOnly || (!s.tenderExempt && s.shortfall > 0)))
       .map((s) => {
         const a = skuAnomalyText(s, result);
-        return { key: s.sku, sku: s.sku, style: s.styleCode, size: s.size, tenderExempt: s.tenderExempt, available: s.available, inbound: s.inboundTotal, weeklyForecast: s.weeklyForecast, firstBreachWeek: s.firstBreachWeek, shortfall: s.shortfall, monthsOfCover: s.monthsOfCover, monthsOfCoverWithInbound: s.monthsOfCoverWithInbound, coverInboundUnits: s.coverInboundUnits, netRequirement: s.netRequirement, anomaly: a.text, anomalyKind: a.kind, proposedOrder: s.proposedOrder, limitation: s.limitation };
+        return { key: s.sku, sku: s.sku, style: s.styleCode, size: s.size, tenderExempt: s.tenderExempt, available: s.available, inbound: s.inboundTotal, weeklyForecast: s.weeklyForecast, firstBreachWeek: s.firstBreachWeek, shortfall: s.shortfall, monthsOfCover: s.monthsOfCover, monthsOfCoverWithInbound: s.monthsOfCoverWithInbound, coverInboundUnits: s.coverInboundUnits, netRequirement: s.netRequirement, anomaly: a.text, anomalyKind: a.kind, proposedOrder: s.proposedOrder, limitation: s.limitation, proposalWithheld: s.classification === "unclassified", planner: plannerRowOf(s, state, planner, result) };
       });
   } else {
     rows = result.styles
@@ -183,7 +253,7 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
       .map((st) => {
         const a = styleAnomalyText(st);
         const limit = st.skusWithoutForecast > 0 ? `${st.skusWithoutForecast} SKU(s) have no forecast and are left out of cover and shortage.` : null;
-        return { key: st.styleCode, sku: null, style: st.styleCode, size: null, tenderExempt: st.tenderExemptSkus === st.skuCount, available: st.available, inbound: st.inboundTotal, weeklyForecast: st.weeklyForecast, firstBreachWeek: st.firstBreachWeek, shortfall: st.shortfall, monthsOfCover: st.monthsOfCover, monthsOfCoverWithInbound: st.monthsOfCoverWithInbound, coverInboundUnits: st.inboundTotal, netRequirement: st.netRequirement, anomaly: a.text, anomalyKind: a.kind, proposedOrder: st.proposedOrder, limitation: limit };
+        return { key: st.styleCode, sku: null, style: st.styleCode, size: null, tenderExempt: st.tenderExemptSkus === st.skuCount, available: st.available, inbound: st.inboundTotal, weeklyForecast: st.weeklyForecast, firstBreachWeek: st.firstBreachWeek, shortfall: st.shortfall, monthsOfCover: st.monthsOfCover, monthsOfCoverWithInbound: st.monthsOfCoverWithInbound, coverInboundUnits: st.inboundTotal, netRequirement: st.netRequirement, anomaly: a.text, anomalyKind: a.kind, proposedOrder: st.proposedOrder, limitation: limit, proposalWithheld: result.skus.some((k) => k.styleCode === st.styleCode && k.classification === "unclassified"), planner: null };
       });
   }
 
@@ -192,7 +262,7 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
   if (selected) {
     if (settings.view === "sku") {
       const s = result.skus.find((x) => x.sku === selected.key) as SkuResult;
-      chart = { key: s.sku, title: `${s.sku} (${s.styleCode}, ${s.size})`, opening: s.available, balances: s.balances, minLevel: s.minLevel, firstBreachWeek: s.firstBreachWeek, horizon: result.config.horizonWeeks, note: s.balances.length === 0 ? (s.limitation ?? "Cannot be projected.") : null };
+      chart = { key: s.sku, title: `${s.sku} (${s.styleCode}, ${s.size})`, opening: s.available, balances: s.balances, minLevel: s.tenderExempt ? 0 : s.effectiveMin, firstBreachWeek: s.firstBreachWeek, horizon: result.config.horizonWeeks, note: s.balances.length === 0 ? (s.limitation ?? "Cannot be projected.") : null };
     } else {
       const st = result.styles.find((x) => x.styleCode === selected.key) as StyleResult;
       chart = { key: st.styleCode, title: `${st.styleCode} (sum of its SKUs)`, opening: st.projectedOpening, balances: st.balances, minLevel: st.minLevel, firstBreachWeek: st.firstBreachWeek, horizon: result.config.horizonWeeks, note: "Style balance is the sum of its SKU balances; sizes are not netted for ordering." };
@@ -209,7 +279,7 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
   const other = (h: 13 | 26): RedFlagResult | null => {
     if (h === result.config.horizonWeeks) return result;
     try {
-      return runRedFlag(state.dataset as NonNullable<typeof state.dataset>, { ...settings.config, horizonWeeks: h }, exclusions);
+      return runRedFlag(state.dataset as NonNullable<typeof state.dataset>, { ...engineConfig(settings, planner), horizonWeeks: h }, exclusions);
     } catch {
       return null;
     }
@@ -221,12 +291,12 @@ export function redFlagModel(state: DemoState, settings: RedFlagSettings, exclus
     if (settings.view === "sku") {
       for (const s of r13.skus.filter((x) => styleOk(x.styleCode))) {
         const t = r26.skus.find((x) => x.sku === s.sku) as SkuResult;
-        horizons.push({ key: s.sku, label: `${s.sku} (${s.size})`, tender: s.tenderExempt, h13: { shortfall: s.shortfall, proposed: s.proposedOrder, net: s.netRequirement }, h26: { shortfall: t.shortfall, proposed: t.proposedOrder, net: t.netRequirement } });
+        horizons.push({ key: s.sku, label: `${s.sku} (${s.size})`, withheld: s.classification === "unclassified", tender: s.tenderExempt, h13: { shortfall: s.shortfall, proposed: s.proposedOrder, net: s.netRequirement }, h26: { shortfall: t.shortfall, proposed: t.proposedOrder, net: t.netRequirement } });
       }
     } else {
       for (const s of r13.styles.filter((x) => styleOk(x.styleCode))) {
         const t = r26.styles.find((x) => x.styleCode === s.styleCode) as StyleResult;
-        horizons.push({ key: s.styleCode, label: s.styleCode, tender: s.tenderExemptSkus === s.skuCount, h13: { shortfall: s.shortfall, proposed: s.proposedOrder, net: s.netRequirement }, h26: { shortfall: t.shortfall, proposed: t.proposedOrder, net: t.netRequirement } });
+        horizons.push({ key: s.styleCode, label: s.styleCode, withheld: r13.skus.some((k) => k.styleCode === s.styleCode && k.classification === "unclassified"), tender: s.tenderExemptSkus === s.skuCount, h13: { shortfall: s.shortfall, proposed: s.proposedOrder, net: s.netRequirement }, h26: { shortfall: t.shortfall, proposed: t.proposedOrder, net: t.netRequirement } });
       }
     }
   }

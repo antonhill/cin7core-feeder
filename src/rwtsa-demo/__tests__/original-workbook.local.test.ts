@@ -6,6 +6,9 @@ import { runCosting } from "@/rwtsa-demo/engine/bom-costing";
 import { runFxExposure } from "@/rwtsa-demo/engine/fx-exposure";
 import { runRedFlag } from "@/rwtsa-demo/engine";
 import { REV2_SIZE_CURVE } from "@/rwtsa-demo/engine/size-curve";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { localMakeOffset } from "@/rwtsa-demo/engine/local-make";
 import { buildDataset } from "@/rwtsa-demo/workbook/build-dataset";
 
 /**
@@ -156,5 +159,38 @@ describe.skipIf(!FILE)("the original RWTSA workbook loads directly (local only)"
     expect(ex.inbound.overdueOnWaterUnits).toBe(wk.inbound.overdueOnWaterUnits);
     expect(ex.skus.reduce((t, s) => t + s.inboundTotal, 0)).toBeLessThanOrEqual(wk.skus.reduce((t, s) => t + s.inboundTotal, 0));
     expect(ex.skus.map((s) => s.available)).toEqual(wk.skus.map((s) => s.available));
+  });
+
+  it("Scenario A planner: the workbook has no tender marker, so SKUs are unclassified; planner decisions change the result and never the workbook", async () => {
+    const hash = () => createHash("sha256").update(readFileSync(FILE as string)).digest("hex");
+    const before = hash();
+    const read = await readWorkbookFile(FILE as string);
+    const d = buildDataset(read, { provenance: "local-workbook", source: { label: "local-test" } }).dataset!;
+    const base = runRedFlag(d, { historyAnchor: "last-available", overdueOnWater: "exclude" });
+    expect(base.summary.unclassifiedSkus).toBe(d.tables.items.length);
+    expect(base.skus.every((s) => s.proposedOrder === 0 && s.classification === "unclassified")).toBe(true);
+    // projected risk is calculated for every SKU even though no proposal can be
+    expect(base.skus.some((s) => s.shortfall > 0)).toBe(true);
+    // classify everything as ordinary: proposals appear, demand and shortfall are unchanged
+    const cls = Object.fromEntries(d.tables.items.map((i) => [i.sku, "ordinary" as const]));
+    const ord = runRedFlag(d, { historyAnchor: "last-available", overdueOnWater: "exclude", planner: { classification: cls, minOverrides: {} } });
+    expect(ord.summary.unclassifiedSkus).toBe(0);
+    expect(ord.skus.map((s) => s.shortfall)).toEqual(base.skus.map((s) => s.shortfall));
+    expect(ord.skus.map((s) => s.monthlyForecast)).toEqual(base.skus.map((s) => s.monthlyForecast));
+    expect(ord.skus.some((s) => s.proposedOrder > 0)).toBe(true);
+    // temporary minimum: the original is untouched, the shortfall moves, removing it restores the result
+    const target = ord.skus.find((s) => s.minLevel !== null)!;
+    const raised = runRedFlag(d, { historyAnchor: "last-available", overdueOnWater: "exclude", planner: { classification: cls, minOverrides: { [target.sku]: { replacement: (target.minLevel as number) * 10 + 1000, effectiveFrom: "2026-10-31", expires: null } } } });
+    const t2 = raised.skus.find((s) => s.sku === target.sku)!;
+    expect(t2.minLevel).toBe(target.minLevel);
+    expect(t2.shortfall).toBeGreaterThan(target.shortfall);
+    expect(d.tables.items.find((i) => i.sku === target.sku)!.minLevel).toBe(target.minLevel);
+    // local make: the workbook supplies no local-production data; Items.Source decides whether it can apply
+    const entry = { quantity: 10, capacityUnits: 10, leadTimeWeeks: 1, completionWeek: 2 };
+    const imp = d.tables.items.find((i) => /^import$/i.test(i.source ?? ""));
+    const both = d.tables.items.find((i) => /^(both|local)$/i.test(i.source ?? ""));
+    if (imp) expect(localMakeOffset({ gross: 100, source: imp.source, eligible: true, entry, horizonWeeks: 13 }).status).toBe("BLOCKED");
+    if (both) expect(localMakeOffset({ gross: 100, source: both.source, eligible: true, entry: null, horizonWeeks: 13 }).status).toBe("NOT EVALUATED");
+    expect(hash()).toBe(before);
   });
 });

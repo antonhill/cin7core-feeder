@@ -28,6 +28,13 @@ export function weekOfDate(stockDate: string, date: string): number {
   return Math.ceil(daysBetween(stockDate, date) / 7);
 }
 
+/** `iso` plus `n` days (UTC). */
+export function shiftDays(iso: string, n: number): string {
+  const t = parseIsoDate(iso);
+  if (t === null) throw new Error("shiftDays: invalid ISO date");
+  return new Date(t + n * MS_PER_DAY).toISOString().slice(0, 10);
+}
+
 export function monthOf(isoDate: string): string {
   return isoDate.slice(0, 7);
 }

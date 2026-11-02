@@ -130,14 +130,14 @@ export function ScenarioACorePanels({ model }: { model: RedFlagModel }) {
               {model.horizons.map((h) => (
                 <TR key={h.key}>
                   <TD>
-                    <span data-testid="horizon-row" data-key={h.key} data-a13={model.withheld.proposedOrders ? "" : h.h13.proposed} data-n13={model.withheld.proposedOrders ? "" : (h.h13.net ?? "")} data-a26={model.withheld.proposedOrders ? "" : h.h26.proposed} data-n26={model.withheld.proposedOrders ? "" : (h.h26.net ?? "")} />
+                    <span data-testid="horizon-row" data-key={h.key} data-a13={h.withheld ? "" : h.h13.proposed} data-n13={h.withheld ? "" : (h.h13.net ?? "")} data-a26={h.withheld ? "" : h.h26.proposed} data-n26={h.withheld ? "" : (h.h26.net ?? "")} />
                     {h.label}
                     {h.tender && <span className="ml-1 text-xs text-slate-500">(tender)</span>}
                   </TD>
-                  <TD align="right" numeric>{model.withheld.proposedOrders ? "Withheld" : h.h13.proposed > 0 ? n0(h.h13.proposed) : dash}</TD>
-                  <TD align="right" numeric>{model.withheld.proposedOrders ? "Withheld" : h.h13.net === null ? "n/a" : h.h13.net > 0 ? n0(h.h13.net) : dash}</TD>
-                  <TD align="right" numeric>{model.withheld.proposedOrders ? "Withheld" : h.h26.proposed > 0 ? n0(h.h26.proposed) : dash}</TD>
-                  <TD align="right" numeric>{model.withheld.proposedOrders ? "Withheld" : h.h26.net === null ? "n/a" : h.h26.net > 0 ? n0(h.h26.net) : dash}</TD>
+                  <TD align="right" numeric>{h.withheld ? "Withheld" : h.h13.proposed > 0 ? n0(h.h13.proposed) : dash}</TD>
+                  <TD align="right" numeric>{h.withheld ? "Withheld" : h.h13.net === null ? "n/a" : h.h13.net > 0 ? n0(h.h13.net) : dash}</TD>
+                  <TD align="right" numeric>{h.withheld ? "Withheld" : h.h26.proposed > 0 ? n0(h.h26.proposed) : dash}</TD>
+                  <TD align="right" numeric>{h.withheld ? "Withheld" : h.h26.net === null ? "n/a" : h.h26.net > 0 ? n0(h.h26.net) : dash}</TD>
                 </TR>
               ))}
             </TBody>
