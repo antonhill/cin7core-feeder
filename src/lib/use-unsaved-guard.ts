@@ -15,26 +15,45 @@ export const UNSAVED_MESSAGE = "You have unsaved changes. If you leave now they 
 export function useUnsavedGuard(dirty: boolean, message: string = UNSAVED_MESSAGE): void {
   useEffect(() => {
     if (!dirty) return;
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = ""; // legacy browsers need a value to show the prompt
-    };
-    const onClick = (e: MouseEvent) => {
-      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-      const a = e.target instanceof Element ? e.target.closest("a[href]") : null;
-      if (!a || (a.getAttribute("target") && a.getAttribute("target") !== "_self") || a.hasAttribute("download")) return;
-      const href = a.getAttribute("href") ?? "";
-      if (href.startsWith("#") || /^(mailto|tel|javascript):/i.test(href)) return;
-      let url: URL;
-      try { url = new URL(href, window.location.href); } catch { return; }
-      if (url.origin === window.location.origin && url.pathname === window.location.pathname && url.search === window.location.search) return; // same page
-      if (!window.confirm(message)) { e.preventDefault(); e.stopPropagation(); }
-    };
+    const entry = { message };
+    acquire(entry);
+    return () => release(entry);
+  }, [dirty, message]);
+}
+
+// One shared pair of listeners for the whole page, however many guards are dirty: any active guard prompts once, never once per guard.
+const active = new Set<{ message: string }>();
+
+function onBeforeUnload(e: BeforeUnloadEvent) {
+  e.preventDefault();
+  e.returnValue = ""; // legacy browsers need a value to show the prompt
+}
+
+function onClick(e: MouseEvent) {
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const a = e.target instanceof Element ? e.target.closest("a[href]") : null;
+  if (!a || (a.getAttribute("target") && a.getAttribute("target") !== "_self") || a.hasAttribute("download")) return;
+  const href = a.getAttribute("href") ?? "";
+  if (href.startsWith("#") || /^(mailto|tel|javascript):/i.test(href)) return;
+  let url: URL;
+  try { url = new URL(href, window.location.href); } catch { return; }
+  if (url.origin === window.location.origin && url.pathname === window.location.pathname && url.search === window.location.search) return; // same page
+  const [first] = active;
+  if (first && !window.confirm(first.message)) { e.preventDefault(); e.stopPropagation(); }
+}
+
+function acquire(entry: { message: string }) {
+  if (active.size === 0) {
     window.addEventListener("beforeunload", onBeforeUnload);
     document.addEventListener("click", onClick, true);
-    return () => {
-      window.removeEventListener("beforeunload", onBeforeUnload);
-      document.removeEventListener("click", onClick, true);
-    };
-  }, [dirty, message]);
+  }
+  active.add(entry);
+}
+
+function release(entry: { message: string }) {
+  active.delete(entry);
+  if (active.size === 0) {
+    window.removeEventListener("beforeunload", onBeforeUnload);
+    document.removeEventListener("click", onClick, true);
+  }
 }

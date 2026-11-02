@@ -103,17 +103,18 @@ function FigureGroup({ title, children }: { title: string; children: React.React
   return (
     <div>
       <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600">{title}</h3>
-      <dl className="mt-2 grid grid-cols-3 gap-x-4">{children}</dl>
+      <dl className="mt-2 grid grid-cols-1 gap-y-3 sm:grid-cols-3 sm:gap-x-4">{children}</dl>
     </div>
   );
 }
 
 /** One figure in a hero group: labels sit on one baseline and values align, with the primary (revised contract) figure set heavier rather than in a bigger tile. */
-function Figure({ label, value, primary = false }: { label: string; value: string; primary?: boolean }) {
+function Figure({ label, value, hint, primary = false }: { label: string; value: string; hint?: string; primary?: boolean }) {
   return (
     <div className="min-w-0">
       <dt className="text-xs text-slate-600">{label}</dt>
       <dd className={`mt-1 whitespace-nowrap tabular-nums tracking-tight text-slate-900 ${primary ? "text-xl font-bold" : "text-lg font-semibold"}`}>{value}</dd>
+      {hint && <dd className="mt-0.5 text-xs leading-snug text-slate-600">{hint}</dd>}
     </div>
   );
 }
@@ -164,12 +165,9 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   const [isWorkingT, startWorking] = useTransition();
   const acts = useKeyedActions();
   const isWorking = isWorkingT || acts.anyPending;
-  // A claim being assembled is unsaved input until a draft is saved. Saving adds a claim to the project, so the form counts as clean once the claim count has
-  // grown past what it was when the selection began; an empty selection (re)sets that baseline.
-  const claimCount = view?.claims.length ?? 0;
-  const [claimBase, setClaimBase] = useState(claimCount);
-  if (chosen.length === 0 && claimBase !== claimCount) setClaimBase(claimCount);
-  useUnsavedGuard(chosen.length > 0 && claimCount <= claimBase);
+  // A claim being assembled (stages ticked) is unsaved input until a draft is saved or the selection is cleared; saving resets the selection (see the Save button).
+  // Guarded only while the Claims tab, which holds the form, is the active tab.
+  useUnsavedGuard(tab === "claims" && chosen.length > 0);
 
   // Display only: every mutating action re-checks the owner/admin role on the server.
   // LOADING until known, so privileged controls (and the non-admin explanation) never flash; any failure => MEMBER (fail closed).
@@ -340,7 +338,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-900">{project.name}</h2>
             <p className="mt-1 text-slate-700">{project.customer_name}</p>
 
-            <div className="mt-6 grid gap-x-10 gap-y-6 border-t border-slate-200 pt-5 lg:grid-cols-2">
+            <div className="mt-6 grid gap-x-10 gap-y-6 border-t border-slate-200 pt-5 xl:grid-cols-2">
               <FigureGroup title="Contract (ex VAT)">
                 <Figure label="Original contract" value={formatCents(c.originalContractCents)} />
                 <Figure label="Approved variations" value={formatCents(c.approvedVariationsCents)} />
@@ -349,7 +347,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               <FigureGroup title="Billing (ex VAT)">
                 <Figure label="Invoiced / committed" value={formatCents(c.committedCents)} />
                 <Figure label="Claimable now" value={formatCents(c.claimableCents)} />
-                <Figure label="Remaining to bill / commit" value={formatCents(c.remainingCents)} />
+                <Figure label="Remaining to bill / commit" value={formatCents(c.remainingCents)} hint="Contract value − invoiced / committed (not − earned)" />
               </FigureGroup>
             </div>
 
@@ -630,7 +628,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             <div className="mt-4 flex flex-wrap gap-2">
               <Button variant="secondary" size="sm" onClick={doPreview} loading={isWorking} disabled={chosen.length === 0 || (!!preview && pvState === "CURRENT")}>{!preview ? "Preview claim" : pvState === "STALE" ? "Refresh preview" : "Preview is up to date"}</Button>
               {preview && (
-                <Button size="sm" onClick={() => { const claimsBefore = view.claims.length; return run(() => createClaimDraftAction(id, previewedIds, previewedAmounts), "Draft claim saved locally.", "claim:new", { confirm: (v) => v.claims.length > claimsBefore }); }} loading={acts.isPending("claim:new")} disabled={isWorking || pvState === "STALE"}>Save as draft claim</Button>
+                <Button size="sm" onClick={async () => { const claimsBefore = view.claims.length; const saved = await run(() => createClaimDraftAction(id, previewedIds, previewedAmounts), "Draft claim saved locally.", "claim:new", { confirm: (v) => v.claims.length > claimsBefore }); if (saved) { setChosen([]); setAmounts({}); setPreview(null); setPreviewedIds([]); setPreviewedAmounts({}); } }} loading={acts.isPending("claim:new")} disabled={isWorking || pvState === "STALE"}>Save as draft claim</Button>
               )}
             </div>
             <Feedback k="claim:new" />

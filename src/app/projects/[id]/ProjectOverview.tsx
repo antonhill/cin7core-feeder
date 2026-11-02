@@ -41,6 +41,8 @@ function KpiFigure({ k }: { k: Kpi }) {
   );
 }
 
+// Same figure, same words as the workspace summary above for the contract figures. "Billed / committed" and "Remaining commercial value" here deliberately differ from
+// that summary's "Invoiced / committed" and "Remaining to bill / commit": these span the original project AND its variation billing scopes, that summary is the one project.
 const KPI_GROUPS: { title: string; ids: string[] }[] = [
   { title: "Contract", ids: ["original", "variations", "revised"] },
   { title: "Estimated cost and margin", ids: ["cost", "gp"] },
@@ -51,7 +53,7 @@ const KPI_GROUPS: { title: string; ids: string[] }[] = [
 function KpiGroups({ kpis }: { kpis: Kpi[] }) {
   const groups = KPI_GROUPS.map((g) => ({ ...g, items: g.ids.map((id) => kpis.find((k) => k.id === id)).filter((k): k is Kpi => !!k) })).filter((g) => g.items.length > 0);
   return (
-    <div className="grid gap-x-8 gap-y-4 rounded-xl border border-slate-200 bg-white px-5 py-4 lg:grid-cols-[repeat(auto-fit,minmax(16rem,1fr))] lg:divide-x lg:divide-slate-200 [&>*+*]:lg:pl-8">
+    <div className="grid gap-x-8 gap-y-4 rounded-xl border border-slate-200 bg-white px-5 py-4 lg:grid-cols-[repeat(auto-fit,minmax(16rem,1fr))]">
       {groups.map((g) => (
         <div key={g.title} className="min-w-0">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600">{g.title}</h3>

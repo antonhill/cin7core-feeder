@@ -189,4 +189,25 @@ describe("unsaved claim protection", () => {
     fireEvent.click(box); // selection cleared again
     expect(unload()).toBe(false);
   });
+  it("saving a draft clears the selection (guard released); ticking stages for the NEXT claim is guarded again; another tab is never guarded", async () => {
+    Object.assign(h.responses, {
+      previewClaimAction: { ok: true, data: { claimNumber: "PRJ-X-C05", taxRateBps: 1500, calc: { subtotalCents: 100, taxCents: 15, totalCents: 115, lines: [] } } },
+      createClaimDraftAction: { ok: true, data: null },
+    });
+    await openCommercial();
+    const box = () => within(document.getElementById("new-claim-p1")!).getAllByRole("checkbox")[0] as HTMLInputElement;
+    fireEvent.click(box());
+    expect(unload()).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Preview claim" }));
+    const save = await screen.findByRole("button", { name: "Save as draft claim" });
+    await waitFor(() => expect((save as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(save);
+    await screen.findByText("Draft claim saved locally.");
+    await waitFor(() => expect(box().checked).toBe(false));
+    expect(unload()).toBe(false);
+    fireEvent.click(box());
+    expect(unload()).toBe(true); // a second claim in the same session is protected too
+    fireEvent.click(screen.getByRole("button", { name: /^Overview/ }));
+    expect(unload()).toBe(false); // the form is not on this tab
+  });
 });

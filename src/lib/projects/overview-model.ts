@@ -234,7 +234,7 @@ export function buildProjectOverview(i: OverviewInput): ProjectOverview {
   const kpis: Kpi[] = [
     { id: "original", label: "Original contract", cents: c.originalContractCents, hint: "Ex VAT", tone: "default" },
     { id: "variations", label: "Approved variations", cents: c.approvedVariationsCents, hint: "Approved variations only", tone: "default" },
-    { id: "revised", label: "Revised contract", cents: c.revisedContractCents, hint: "Original + approved variations", tone: "accent" },
+    { id: "revised", label: "Revised contract value", cents: c.revisedContractCents, hint: "Original + approved variations", tone: "accent" },
   ];
   if (costVisible) {
     const e = i.estimates;
