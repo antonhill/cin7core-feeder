@@ -255,3 +255,16 @@ export async function loadConsolidatedCommercial(db: Db, orgId: string, projectI
   }
   return buildConsolidatedCommercial(inputs);
 }
+
+/**
+ * The Cin7 Sale number already stored against each given billing project (project_cin7_sale_links.cin7_sale_number). READ ONLY: no Cin7 call, no write.
+ * Org-scoped, and only the projects asked for are read. A project with no link, or a link with no stored number, is simply absent: a number is never inferred.
+ */
+export async function loadSaleNumbersByProject(db: Db, orgId: string, projectIds: readonly string[]): Promise<Record<string, string>> {
+  if (projectIds.length === 0) return {};
+  const r = await db.from("project_cin7_sale_links").select("project_id, cin7_sale_number").eq("org_id", orgId).in("project_id", [...projectIds]);
+  if (r.error) fail(`load Cin7 Sale numbers: ${r.error.message}`);
+  const out: Record<string, string> = {};
+  for (const row of (r.data ?? []) as Array<{ project_id: string; cin7_sale_number: string | null }>) if (row.cin7_sale_number) out[row.project_id] = row.cin7_sale_number;
+  return out;
+}

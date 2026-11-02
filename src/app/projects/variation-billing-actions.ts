@@ -12,7 +12,7 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { PROJECTS_MODULE } from "@/app/module-nav";
 import { assertNewquipOrg } from "@/lib/projects/newquip-gate";
 import type { ConsolidatedCommercial } from "@/lib/projects/consolidated-report";
-import { amendVariationSchedule, createVariationBillingProject, loadConsolidatedCommercial, listVariationStages, loadConsolidatedProject, saveDraftSchedule, type ConsolidatedProject } from "@/lib/projects/variation-billing-store";
+import { amendVariationSchedule, createVariationBillingProject, loadConsolidatedCommercial, listVariationStages, loadConsolidatedProject, loadSaleNumbersByProject, saveDraftSchedule, type ConsolidatedProject } from "@/lib/projects/variation-billing-store";
 import { resolveVariationProducts, searchCatalogue, type CatalogueResult } from "@/lib/projects/catalogue-search";
 import { callerIsOrgAdmin } from "@/lib/projects/scope-access";
 import { scheduleFromPercents } from "@/lib/projects/variation-schedule";
@@ -26,6 +26,8 @@ export interface VariationBillingState {
   consolidated: ConsolidatedProject;
   schedules: Record<string, Array<{ name: string; bps: number }>>;
   billingProjectByVariation: Record<string, string>;
+  /** variation id -> the Cin7 Sale number already stored for its billing project; absent when none is linked. Read from stored links only. */
+  saleNumberByVariation: Record<string, string>;
 }
 export interface SchedulePercentRow { name: string; percent: string }
 
@@ -46,7 +48,10 @@ export async function getVariationBillingAction(projectId: string): Promise<Vari
       const vid = consolidated.base.variations.find((v) => v.code === s.variationCode)?.id;
       if (s.scope === "VARIATION" && vid) billingProjectByVariation[vid] = s.projectId;
     }
-    return { ok: true, data: { consolidated: { ...consolidated, closureBlockers: admin ? consolidated.closureBlockers : [] }, schedules, billingProjectByVariation } };
+    const numbers = await loadSaleNumbersByProject(db, orgId, Object.values(billingProjectByVariation));
+    const saleNumberByVariation: Record<string, string> = {};
+    for (const [vid, pid] of Object.entries(billingProjectByVariation)) if (numbers[pid]) saleNumberByVariation[vid] = numbers[pid];
+    return { ok: true, data: { consolidated: { ...consolidated, closureBlockers: admin ? consolidated.closureBlockers : [] }, schedules, billingProjectByVariation, saleNumberByVariation } };
   } catch (e) {
     return { ok: false, error: message(e) };
   }

@@ -71,6 +71,12 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
               <div className="min-w-0">
                 <PanelTitle><span className="inline-flex flex-wrap items-center gap-2">{v.code} – {v.title} <ScopeTag scope="VARIATION" /><Status tone={v.status === "APPROVED" ? "success" : "neutral"}>{statusText(v.status)}</Status></span></PanelTitle>
                 {v.description && <p className="mt-1 text-sm text-slate-600">{v.description}</p>}
+                {state && v.status === "APPROVED" && (
+                  <p className="mt-1 text-sm text-slate-700">
+                    <span className="text-slate-600">Cin7 Sale: </span>
+                    {state.saleNumberByVariation?.[v.id] ? <span className="font-mono font-medium text-slate-900">{state.saleNumberByVariation?.[v.id]}</span> : <span className="text-slate-600">{billingId ? "not created yet" : "billing not started"}</span>}
+                  </p>
+                )}
               </div>
               <div className="text-right">
                 <p className="text-xs font-semibold uppercase tracking-wider text-slate-600">Approved value (ex VAT)</p>
@@ -83,9 +89,9 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
                 ? <div className="mt-3"><Alert tone="warning">The billing figures for this variation could not be loaded ({error}). The decision controls below still work.</Alert><div className="mt-2"><Button size="sm" variant="secondary" onClick={() => setVersion((n) => n + 1)}>Try again</Button></div></div>
                 : <div role="status" aria-busy="true" className="mt-3"><p className="text-sm text-slate-600">Loading the billing position…</p><Block className="mt-2 h-12 w-full" /></div>
             ) : scope ? (
-              <div>
-              <p className="mt-3 text-xs text-slate-600">Billing position of this variation only, ex VAT</p>
-              <dl className="mt-1 grid grid-cols-2 gap-x-6 gap-y-2 rounded-lg bg-slate-50 px-4 py-3 text-sm sm:grid-cols-4" aria-label={`${v.code} billing position (ex VAT)`}>
+              <div className="mt-3 border-t border-slate-200 pt-3">
+              <p className="text-xs text-slate-600">Billing position of this variation only, ex VAT</p>
+              <dl className="mt-1 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4" aria-label={`${v.code} billing position (ex VAT)`}>
                 {([["Earned", scope.earnedCents], ["Billed / committed", scope.committedCents], ["Claimable now", scope.claimableCents], ["Remaining", scope.remainingCents]] as const).map(([k, n]) => (
                   <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="font-semibold tabular-nums text-slate-900">{formatCents(n)}</dd></div>
                 ))}
@@ -116,7 +122,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
                 ) : <span className="text-xs text-slate-600">A manager starts variation billing.</span>}
               </div>
             )}
-            {state && <details className="mt-4 rounded border border-slate-200 p-3" open={legacy}>
+            {state && <details className="mt-4 border-t border-slate-200 pt-1" open={legacy}>
               <summary className="cursor-pointer py-1.5 text-sm font-medium text-slate-800">Billing schedule</summary>
             <p className="mt-1 text-xs text-slate-600">Approved value {formatCents(v.amount_cents)} ex VAT. Percentages are applied to this value in whole cents (largest remainder), so the stages always sum to it exactly.</p>
             <div className="mt-3 space-y-2">
