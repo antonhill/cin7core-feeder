@@ -8,9 +8,14 @@ export const UNSAVED_MESSAGE = "You have unsaved changes. If you leave now they 
  * Warns before the user loses meaningful unsaved input. The guard exists ONLY while `dirty` is true: when it turns false (saved, cancelled, reset) or the component
  * unmounts, every listener is removed, so read-only pages and finished workflows are never interrupted.
  *
- * Covers: closing or reloading the tab and following an address-bar/back-forward unload (`beforeunload`, which browsers show as their own generic prompt), and a
- * plain click on an in-app link (the App Router has no navigation-blocking API, so a capture-phase click listener asks first). It does NOT cover the browser Back
- * button within the app or programmatic router.push calls, which cannot be intercepted reliably in the App Router.
+ * Covers (see docs/newquip-unsaved-work-protection.md for the browser evidence):
+ *  - closing/reloading the tab or typing another address (`beforeunload`, the browser's own generic prompt);
+ *  - a plain click on an in-app link (capture-phase click listener + window.confirm; a declined click never reaches the router, so history and the screen stay intact);
+ *  - the browser Back/Forward button, ONLY where the Navigation API exists (Chromium): a same-document `traverse` navigate event is cancelled when declined. Cancelling
+ *    is done for `traverse` ONLY. Cancelling `push`/`replace` navigate events is deliberately NOT done: the browser keeps the old URL but the App Router has already
+ *    rendered the new page, leaving the URL and screen out of step (demonstrated in a real browser). The browser itself limits a page to one cancelled Back per user
+ *    gesture, so a second Back press leaves unprompted: it can never trap the user. Browsers without the API simply do not get this layer (never a history hack).
+ * It does NOT cover programmatic router.push/replace (no safe hook exists in the App Router).
  */
 export function useUnsavedGuard(dirty: boolean, message: string = UNSAVED_MESSAGE): void {
   useEffect(() => {
@@ -42,10 +47,23 @@ function onClick(e: MouseEvent) {
   if (first && !window.confirm(first.message)) { e.preventDefault(); e.stopPropagation(); }
 }
 
+// Minimal structural typing of the part of the Navigation API we use (not in every TypeScript DOM lib).
+interface NavigateEventLike { navigationType: string; cancelable: boolean; hashChange: boolean; preventDefault(): void }
+interface NavigationLike { addEventListener(t: "navigate", l: (e: NavigateEventLike) => void): void; removeEventListener(t: "navigate", l: (e: NavigateEventLike) => void): void }
+const navigationApi = (): NavigationLike | null => (typeof window !== "undefined" && (window as unknown as { navigation?: NavigationLike }).navigation) || null;
+
+/** Back/Forward: ask, and cancel the traversal if declined. Only `traverse`, only when the browser says it may be cancelled; everything else is left to the other layers. */
+function onNavigate(e: NavigateEventLike) {
+  if (e.navigationType !== "traverse" || !e.cancelable || e.hashChange) return;
+  const [first] = active;
+  if (first && !window.confirm(first.message)) e.preventDefault();
+}
+
 function acquire(entry: { message: string }) {
   if (active.size === 0) {
     window.addEventListener("beforeunload", onBeforeUnload);
     document.addEventListener("click", onClick, true);
+    navigationApi()?.addEventListener("navigate", onNavigate);
   }
   active.add(entry);
 }
@@ -55,5 +73,6 @@ function release(entry: { message: string }) {
   if (active.size === 0) {
     window.removeEventListener("beforeunload", onBeforeUnload);
     document.removeEventListener("click", onClick, true);
+    navigationApi()?.removeEventListener("navigate", onNavigate);
   }
 }
