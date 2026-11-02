@@ -46,8 +46,8 @@ function ExposureChart({ buckets }: { buckets: readonly { key: string; usdCents:
   const y = (v: number) => m.t + (1 - v / max) * (H - m.t - m.b);
   return (
     <figure data-testid="exposure-chart" className="m-0">
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="USD exposure by due date, covered by an FEC and uncovered" className="h-auto w-full max-w-3xl">
-        <title>USD exposure by due date</title>
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="USD potential exposure by due date, covered by an FEC and uncovered" className="h-auto w-full max-w-3xl">
+        <title>USD potential exposure by due date</title>
         {[0, 0.5, 1].map((f) => (
           <g key={f}>
             <line x1={m.l} x2={W - m.r} y1={y(f * max)} y2={y(f * max)} stroke="#e2e8f0" />
@@ -173,12 +173,12 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                 </li>
               ))}
             </ul>
-            {(r.shipments.some((sh) => sh.warnings.length > 0) || (!model.exposureWithheld && x.warnings.length > 0)) && (
+            {(r.shipments.some((sh) => sh.warnings.length > 0) || x.warnings.length > 0) && (
               <>
                 <p className="mt-3 text-sm font-medium text-slate-800">Warnings on these results</p>
                 <ul data-testid="warnings" className="mt-1 list-disc space-y-1 pl-5 text-sm text-slate-700">
                   {r.shipments.flatMap((sh) => sh.warnings.map((w) => <li key={`${sh.shipmentRef}|${w}`}>{`${sh.shipmentRef}: ${w}`}</li>))}
-                  {!model.exposureWithheld && x.warnings.map((w) => (
+                  {x.warnings.map((w) => (
                     <li key={w}>{w}</li>
                   ))}
                 </ul>
@@ -212,15 +212,6 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                 Exposure as-at date
                 <input name="asof" type="date" defaultValue={s.values.asof} className={field} />
               </label>
-              {model.provenance === "LOCAL WORKBOOK" && (
-                <label className="flex flex-col gap-1">
-                  Paid / open status (no paid column in the workbook)
-                  <select name="exposure" defaultValue={s.values.exposure} className={field}>
-                    <option value="">Not chosen (exposure withheld)</option>
-                    <option value="due">Treat payments due on or after the as-at date as open</option>
-                  </select>
-                </label>
-              )}
               <label className="flex flex-col gap-1">
                 Exposure buckets
                 <select name="bucket" defaultValue={s.values.bucket} className={field}>
@@ -237,12 +228,13 @@ export function LandedPageView({ model }: { model: LandedModel }) {
             </form>
           </Panel>
 
-          <div data-testid="indicators" className="grid grid-cols-2 gap-3 md:grid-cols-5">
+          <div data-testid="indicators" className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
             <Indicator label="Shipments" testid="ind-shipments" value={String(r.shipments.length)} hint={`${r.lines.length} lines`} />
             <Indicator label="Landed cost (actual)" testid="ind-landed" value={money(r.totals.landedActualCents)} hint={r.totals.complete ? "all lines complete" : "complete lines only"} />
             <Indicator label="FX variance" testid="ind-variance" value={signed(r.totals.fxVarianceCents)} hint={`actual minus estimate (planning FX)${r.totals.complete ? "" : "; complete lines only"}`} />
             <Indicator label="Incomplete lines" testid="ind-incomplete" value={String(incomplete)} hint="inputs missing, nothing invented" />
-            <Indicator label="Open USD exposure" testid="ind-exposure" value={model.exposureWithheld ? "Withheld" : money(x.totals.openUsdCents, "$")} hint={model.exposureWithheld ? "paid / open status unresolved" : `uncovered ${money(x.totals.uncoveredUsdCents, "$")}`} />
+            <Indicator label="Potential USD exposure" testid="ind-potential" value={money(x.totals.potentialUsdCents, "$")} hint={`not confirmed paid; ${x.totals.counts.unknown} payment(s) settlement unknown; uncovered ${money(x.totals.potentialUncoveredUsdCents, "$")}`} />
+            <Indicator label="Confirmed open USD" testid="ind-confirmed-open" value={x.totals.confirmedOpenUsdCents === null ? "Not established" : money(x.totals.confirmedOpenUsdCents, "$")} hint={x.totals.confirmedOpenUsdCents === null ? "no payment has explicit open evidence" : `${x.totals.counts.open} payment(s) with explicit open status`} />
           </div>
 
           <Panel>
@@ -485,22 +477,14 @@ export function LandedPageView({ model }: { model: LandedModel }) {
             </div>
           </Panel>
 
-          {model.exposureWithheld ? (
-            <Panel>
-              <PanelTitle>USD exposure by due date (read-only)</PanelTitle>
-              <p data-testid="exposure-withheld" className="mt-2 text-sm text-slate-700">
-                Withheld: the workbook has no paid-status column, so which payments are still open is not known. Choose the basis in the controls to see the exposure; nothing has been assumed.
-              </p>
-            </Panel>
-          ) : (
           <Panel>
-            <PanelTitle>USD exposure by due date (read-only)</PanelTitle>
-            <p className="mt-1 text-sm text-slate-600">
-              {model.provenance === "LOCAL WORKBOOK" ? "Basis chosen on this page: " : ""}Payments due on or after {x.asOf}. Not a forward-contract register; nothing is recorded. The workbook has no paid flag.
+            <PanelTitle>USD payment schedule and exposure by due date (read-only)</PanelTitle>
+            <p className="mt-1 text-sm text-slate-600" data-testid="exposure-basis">
+              Three tiers are kept apart. Scheduled: every payment as the terms were set ({money(x.totals.scheduledUsdCents, "$")}). Potential exposure: every payment not confirmed paid ({money(x.totals.potentialUsdCents, "$")}). Confirmed open: only payments with explicit open evidence ({x.totals.confirmedOpenUsdCents === null ? "not established" : money(x.totals.confirmedOpenUsdCents, "$")}). Confirmed paid: {money(x.totals.paidUsdCents, "$")}. A due date before {x.asOf} is not evidence of payment. Not a forward-contract register; nothing is recorded.
             </p>
             {x.buckets.length === 0 ? (
               <p className="mt-3 text-sm text-slate-700" data-testid="no-exposure">
-                No open USD payments on or after the as-at date.
+                No payments outside the confirmed-paid set.
               </p>
             ) : (
               <div className="mt-3">
@@ -511,7 +495,8 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                       <TR>
                         <TH>Due ({x.bucket})</TH>
                         <TH align="right">Payments</TH>
-                        <TH align="right">USD</TH>
+                        <TH align="right">Potential USD</TH>
+                        <TH align="right">of which confirmed open</TH>
                         <TH align="right">Covered by FEC</TH>
                         <TH align="right">Uncovered</TH>
                       </TR>
@@ -530,6 +515,9 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                             {money(b.usdCents, "$")}
                           </TD>
                           <TD align="right" numeric>
+                            {money(b.confirmedOpenUsdCents, "$")}
+                          </TD>
+                          <TD align="right" numeric>
                             {money(b.coveredUsdCents, "$")}
                           </TD>
                           <TD align="right" numeric>
@@ -543,8 +531,6 @@ export function LandedPageView({ model }: { model: LandedModel }) {
               </div>
             )}
           </Panel>
-
-          )}
 
           <Panel>
             <PanelTitle>Planning, FEC and customs FX compared, per payment</PanelTitle>
@@ -569,7 +555,7 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                   {x.rows.map((p) => (
                     <TR key={`${p.poNo}|${p.dueDate}|${p.usdCents}`}>
                       <TD>
-                        <span data-testid="payment-row" data-po={p.poNo} {...(model.exposureWithheld ? {} : { "data-open": String(p.open) })} />
+                        <span data-testid="payment-row" data-po={p.poNo} data-settlement={p.settlement} data-basis={p.settlementBasis} data-past-due={String(p.pastDue)} />
                         {p.poNo}
                         {p.deposit && (
                           <div>
@@ -579,7 +565,9 @@ export function LandedPageView({ model }: { model: LandedModel }) {
                       </TD>
                       <TD>
                         {p.dueDate}
-                        {!model.exposureWithheld && !p.open && <div className="text-xs text-amber-700">before as-at date; paid status unknown</div>}
+                        <div className={p.settlement === "unknown" ? "text-xs text-amber-700" : "text-xs text-slate-600"} data-testid="settlement-label">
+                          {p.settlement === "paid" ? (p.settlementBasis === "deposit-rev2" ? "paid at shipment (Rev2 deposit)" : "paid (explicit)") : p.settlement === "open" ? "open (explicit)" : p.pastDue ? "past due; settlement not evidenced" : "settlement not evidenced"}
+                        </div>
                       </TD>
                       <TD align="right" numeric>
                         {money(p.usdCents, "$")}

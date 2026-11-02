@@ -153,25 +153,29 @@ describe("controls", () => {
 });
 
 describe("USD exposure by due date and FX comparison", () => {
-  it("counts payments due on or after the as-at date (the earlier two are listed, not counted)", async () => {
+  it("shows POTENTIAL exposure (every payment not confirmed paid), keeps overdue rows in it, and never calls it confirmed", async () => {
     synthetic();
     const m = await page();
     const t = text(m);
-    expect(indicator(m, "ind-exposure")).toBe("$13,950.00"); // 4,050 + 3,150 + 6,750
-    expect(t).toContain("before as-at date; paid status unknown");
+    // 5 payments: the zero-term deposit is paid at shipment under the Rev2 rule; the other four (5,400 overdue + 4,050 + 3,150 + 6,750) have no settlement evidence
+    expect(indicator(m, "ind-potential")).toBe("$19,350.00");
+    expect(indicator(m, "ind-confirmed-open")).toBe("Not established");
+    expect(t).toContain("past due; settlement not evidenced");
+    expect(t).toContain("A due date before 2026-10-31 is not evidence of payment");
     expect(t).toContain("Not a forward-contract register");
   });
-  it("buckets by month; covered (FEC) and uncovered add up", async () => {
+  it("buckets by month with the overdue rows in their own first bucket; covered (FEC) and uncovered add up", async () => {
     synthetic();
     const m = await page();
     const bars = [...m.matchAll(/data-testid="exposure-bar" data-key="([^"]*)" data-covered="(\d+)" data-uncovered="(\d+)"/g)].map((x) => [x[1], Number(x[2]), Number(x[3])]);
-    expect(bars).toEqual([["2026-11", 405000, 0], ["2026-12", 0, 315000], ["2027-01", 0, 675000]]);
+    expect(bars).toEqual([["Overdue (due before as-at)", 540000, 0], ["2026-11", 405000, 0], ["2026-12", 0, 315000], ["2027-01", 0, 675000]]);
     const w = await page({ bucket: "week" });
-    expect([...w.matchAll(/data-testid="exposure-bar" data-key="([^"]*)"/g)].map((x) => x[1])).toEqual(["week 3", "week 6", "week 12"]);
+    expect([...w.matchAll(/data-testid="exposure-bar" data-key="([^"]*)"/g)].map((x) => x[1])).toEqual(["Overdue (due before as-at)", "week 3", "week 6", "week 12"]);
   });
-  it("the as-at date changes what is open", async () => {
+  it("the as-at date moves payments between overdue and not yet due but never changes the potential exposure", async () => {
     synthetic();
-    expect(indicator(await page({ asof: "2026-12-15" }), "ind-exposure")).toBe("$6,750.00");
+    expect(indicator(await page({ asof: "2026-12-15" }), "ind-potential")).toBe("$19,350.00");
+    expect(indicator(await page({ asof: "2026-01-15" }), "ind-potential")).toBe("$19,350.00");
   });
   it("compares planning, FEC and customs per payment and withholds what it cannot match", async () => {
     synthetic();

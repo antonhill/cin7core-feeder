@@ -24,6 +24,10 @@ export interface PaySpec {
   locked?: number | null;
   zar?: number | null;
   deposit?: boolean | null;
+  terms?: number | null;
+  status?: string | null;
+  paidDate?: string | null;
+  remark?: string | null;
 }
 export interface PoSpec2 {
   po: string;
@@ -45,8 +49,9 @@ export function landedDataset(lines: LineSpec[], pays: PaySpec[] = [], pos: PoSp
     freightAllocatedZar: l.freightAllocated ?? null,
   }));
   const paymentsFec: PaymentFecRow[] = pays.map((p) => ({
-    poNo: p.po, supplier: "SYN", shipmentDate: null, termsDays: null, dueDate: p.due, usdAmount: p.usd,
+    poNo: p.po, supplier: "SYN", shipmentDate: null, termsDays: p.terms ?? null, dueDate: p.due, usdAmount: p.usd,
     fecRef: p.fec ?? null, lockedRate: p.locked ?? null, zarValue: p.zar ?? null, isDeposit: p.deposit ?? null,
+    paymentStatus: p.status ?? null, paidDate: p.paidDate ?? null, remark: p.remark ?? null,
   }));
   const importPos: ImportPoRow[] = pos.map((p) => ({
     poNo: p.po, supplier: "SYN", country: null, currency: null, incoterm: null, sku: null, styleCode: "ST", qty: 1, unitPriceUsd: 1,

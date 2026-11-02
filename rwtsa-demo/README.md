@@ -63,8 +63,8 @@ saved, and it neither reads nor writes Cin7 Core or Xero (the page lists which f
   with the rate columns named. Duty is the workbook's ZAR amount, or an on-screen duty rate on customs value (an assumption, labelled).
 - Missing inputs are named and leave the figure blank (a missing FOB, FX, duty or freight is never replaced by zero); an incomplete shipment's total is withheld.
 - Seven reconciliation checks are shown, including allocated freight = shipment freight, lines = shipments = grand total, and the workbook's own freight allocation versus the CBM split.
-- USD exposure by due date (month or week) counts payments due on or after the as-at date (default 2026-10-31) and splits them into covered by an FEC (reference and locked rate) and uncovered.
-  The workbook has no paid flag, so earlier payments are listed separately. Planning / FEC / customs ZAR values are compared per payment through ImportPOs; where a PO is not in exactly one
+- USD exposure by due date (month or week) keeps three tiers apart: scheduled (every payment), potential (every payment not confirmed paid, split into covered by an FEC and uncovered) and confirmed open (only explicit open evidence; "not established" when there is none, never zero).
+  A due date before the as-at date (default 2026-10-31) is NOT evidence of payment: overdue payments stay in the exposure in their own bucket. Paid needs a payment status, a paid date, or the Rev2 deposit rule (a deposit payable at shipment, 0 days). The workbook has no paid column. Planning / FEC / customs ZAR values are compared per payment through ImportPOs; where a PO is not in exactly one
   shipment with one rate, the comparison is withheld. This is not an FEC register.
 - Unconfirmed until the real workbook is inspected: that `fobUsd` is the line total, that customs value equals FOB at customs FX, what the duty column holds, and the PO-to-shipment link.
 
@@ -113,7 +113,7 @@ For a **local** workbook the demo never picks a business rule the workbook does 
 | Sales history ends before the stock month | A | all results | a choice in the controls |
 | Tender SKU classification (no SKU-level marker) | A | proposed order quantities | owner decision |
 | Overhead, efficiency allowance and margin | B | product cost totals and selling prices | owner decision |
-| Paid or open USD exposure (no paid column) | C | open / covered / uncovered exposure | a choice in the controls |
+| Paid or open status of each payment (no paid column) | C | confirmed open exposure (potential exposure is shown, labelled) | owner decision: supply the status per payment |
 
 The synthetic source declares its own conventions and has no open rules. The validation page shows the sheet layout and row accounting for the loaded workbook.
 

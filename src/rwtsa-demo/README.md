@@ -170,7 +170,7 @@ The advisor's workbook is not uniformly tabular, and `workbook/layouts.ts` reads
 - **Merged note rows** (nothing in the first column, one repeated text) and the **ReadMe** sheet are recognised, counted and not parsed.
 - **Row accounting**: for every tab, title + header + data + notes + explained exclusions + trailing summary + trailing notes = non-empty sheet rows, and parsed rows = data rows + rows added by size lists. The validation page shows it; findings carry counts and row numbers only.
 
-Not decided here (open commercial rules, shown by name and withheld): tender classification, overdue on-water treatment, sales-history gap treatment, overhead / efficiency / margin in product cost, and paid-or-open USD exposure.
+Not decided here (open commercial rules, shown by name and withheld): tender classification, overdue on-water treatment, sales-history gap treatment, overhead / efficiency / margin in product cost, and the paid-or-open status of each payment (confirmed open USD exposure is withheld; potential exposure is shown, labelled).
 
 Run `RWTSA_WORKBOOK_PATH=<file outside git> npx vitest run src/rwtsa-demo/__tests__/original-workbook.local.test.ts` to check a protected workbook locally. The test is skipped when the variable is unset and prints nothing from the file.
 

@@ -10,9 +10,7 @@ export interface LandedSettings {
   readonly issuesOnly: boolean;
   readonly asOf: string;
   readonly bucket: ExposureBucket;
-  /** "due": the viewer has chosen to treat payments due on or after the as-at date as open. Null = not chosen. */
-  readonly exposureBasis: "due" | null;
-  readonly values: Readonly<Record<"duty" | "asof" | "bucket" | "exposure", string>>;
+  readonly values: Readonly<Record<"duty" | "asof" | "bucket", string>>;
   readonly errors: readonly string[];
 }
 
@@ -42,12 +40,6 @@ export function parseLandedSettings(q: RawQuery): LandedSettings {
     if (b === "month" || b === "week") bucket = b;
     else errors.push("Bucket: month or week; the default was used.");
   }
-  let exposureBasis: "due" | null = null;
-  const e = one(q, "exposure");
-  if (e !== undefined && e !== "") {
-    if (e === "due") exposureBasis = "due";
-    else errors.push("Exposure basis: unsupported value, so the exposure stays withheld.");
-  }
   const ship = one(q, "ship");
   return {
     dutyRatePct: duty,
@@ -55,8 +47,7 @@ export function parseLandedSettings(q: RawQuery): LandedSettings {
     issuesOnly: one(q, "issues") === "1",
     asOf,
     bucket,
-    exposureBasis,
-    values: { duty: duty === null ? "" : String(duty), asof: asOf, bucket, exposure: exposureBasis ?? "" },
+    values: { duty: duty === null ? "" : String(duty), asof: asOf, bucket },
     errors,
   };
 }

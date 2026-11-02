@@ -152,6 +152,10 @@ export const PAYMENTS_FEC_FIELDS = defineFields([
   { key: "lockedRate", headers: ["Locked rate", "FEC rate", "FEC locked rate"], kind: "num", required: false, critical: "C", negativeIsError: true },
   { key: "zarValue", headers: ["ZAR value", "Amount ZAR", "ZAR", "ZAR value @ FEC"], kind: "num", required: false, negativeIsError: true },
   { key: "isDeposit", headers: ["Deposit", "Is deposit"], kind: "bool", required: false },
+  // Settlement evidence. None of these is required and none is ever inferred: a payment with no evidence is "settlement unknown".
+  { key: "paymentStatus", headers: ["Payment status", "Paid status", "Settlement status"], kind: "str", required: false },
+  { key: "paidDate", headers: ["Paid date", "Date paid", "Settled date"], kind: "date", required: false },
+  { key: "remark", headers: ["Remark", "Remarks"], kind: "str", required: false },
 ] as const);
 export type PaymentFecRow = RowOf<typeof PAYMENTS_FEC_FIELDS>;
 
