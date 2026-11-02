@@ -31,7 +31,7 @@ Deliberately NOT done: cancelling `push`/`replace` navigate events. Demonstrated
 - 12 hour TTL, 200k character cap, versioned, shape-validated, every storage access try/caught.
 - Written 400 ms after the last edit while dirty; cleared when the editor returns to clean (Save, reload from server, discard). Restore is explicit (a banner with "Restore my edits" / "Discard"), never automatic.
 - Only the form value is stored (the quotation draft the editor already holds). No tokens, no passwords.
-- Residual risk: the quotation draft includes cost overrides when the user may see commercials; they sit in that tab's sessionStorage until the tab closes, the draft is saved/discarded, or 12 hours pass. `clearAllDrafts()` exists for a sign-out hook but is NOT wired (sign-out is outside this change); recommend wiring it in the sign-out action's client handler.
+- Residual risk: the quotation draft includes cost overrides when the user may see commercials; they sit in that tab's sessionStorage until the tab closes, the draft is saved/discarded, or 12 hours pass. `clearAllDrafts()` is now called when the user signs out (see Sign-out below), so the draft does not outlive the session in that tab.
 
 ## Browser evidence (Chrome, real `next build && next start`, driven by playwright-core)
 
@@ -67,26 +67,29 @@ A throwaway two-route lab app (not committed) using the repo's Next version and 
 | Project Details edit form | yes | yes | yes | no | no |
 | Partial claim selection (ProjectWorkspace, claims tab) | yes | yes | yes | no | no |
 | Approval reason / override (approvals/[id]) | yes | yes | yes | no | no |
-| Variation raise / re-price / reject (VariationsPanel) | NOT WIRED | not wired | not wired | no | no |
-| Variation billing schedule editor (VariationBillingPanel) | NOT WIRED | not wired | not wired | no | no |
-| Approvals admin settings | NOT WIRED | not wired | not wired | no | no |
+| Variation raise / re-price / reject (VariationsPanel) | yes (jsdom only) | yes (jsdom only) | yes by the same hook (not exercised for this form) | no | no |
+| Variation billing schedule editor + amend reason (VariationBillingPanel) | yes (jsdom only) | yes (jsdom only) | yes by the same hook (not exercised for this form) | no | no |
+| Approvals admin settings | yes (jsdom only) | yes (jsdom only) | yes by the same hook (not exercised for this form) | no | no |
+
+Evidence levels: the hook's tab-close, link-click and Back/Forward behaviour is browser-demonstrated (table above, a lab app using the shipped hook). The three rows added by the wiring workstream are covered by jsdom tests only: they assert the `beforeunload` guard is on when the form differs from its saved/initial value and off when clean, reverted, cancelled, saved, or read-only. Those forms were not driven in a real browser (they need an authenticated session and data). The in-app link-click column for those rows is the same shared hook, not separately asserted in their tests.
+
+What is dirty, per form (a guard exists only while true):
+
+- VariationsPanel: the raise form (project ACTIVE) has any typed field; a DRAFT variation's re-price differs from its current price; a manager has typed a reject reason on a DRAFT variation. A successful raise, re-price or reject clears the field. Decided variations and non-managers' reject (absent) never guard.
+- VariationBillingPanel: an editable schedule's rows differ from the saved schedule (reverting, Remove last, or a successful save which reloads the schedule releases it); or an amendment reason is typed on a non-DRAFT variation (a successful amend clears it). Locked schedules (billing started, or a non-manager on an approved variation) never guard.
+- Approvals settings: manager on the settings tab and the four fields differ from the values last loaded from the server; a successful save reloads them.
 
 Back/Forward protection comes automatically with the existing wiring; no per-form change was needed. Firefox and Safari get layers 1 and 2 only.
 
-## Wiring still needed (variations workstream owns those files)
+## Sign-out clears drafts
 
-In each component, one line once the dirty condition is known (`import { useUnsavedGuard } from "@/lib/use-unsaved-guard"`):
+`signOutAction` is unchanged (a server action). The Sign out forms (`NewquipShell`, `AppNav`, and the MFA challenge page's "Sign out instead") carry `onSubmit={wipeDrafts}` (`src/lib/form-draft-signout.ts`, which calls `clearAllDrafts(defaultDraftStorage())`). It runs before the action, removes every `nq-draft:v1:` key from this tab's sessionStorage and leaves other keys alone. Tested in jsdom for `NewquipShell` (drafts removed on submit, kept without a submit); the `AppNav` and MFA forms use the same one-line handler and are not separately tested. Not covered: signing out in another tab (that tab's sessionStorage is separate), a session that simply expires, or closing the tab (sessionStorage then goes anyway).
 
-- `VariationsPanel.tsx`: `useUnsavedGuard(<raise form open with any field changed> || <re-price form open with changed lines> || <reject form open with a typed reason>)`.
-- `VariationBillingPanel.tsx`: `useUnsavedGuard(<schedule editor open && rows differ from the saved schedule>)`.
-- Approvals admin settings: `useUnsavedGuard(<form value differs from the loaded settings>)`.
-
-Dirty must mean "differs from the saved record" so Cancel and a successful save release the guard. Draft persistence can be added to any of them with `useFormDraft` (needs a server `base` such as an updated_at/hash).
+Draft persistence can still be added to the other forms with `useFormDraft` (needs a server `base` such as an updated_at/hash).
 
 ## Recommendations
 
 1. Keep this layered approach; do not add a popstate/sentinel Back blocker or cancel push/replace navigate events.
-2. Wire the three remaining forms above.
-3. Wire `clearAllDrafts()` into sign-out.
+2. (Done: the remaining forms and sign-out are wired; jsdom-tested only.)
 4. Where a form's main risk is a programmatic `router.push` (e.g. "Save and go"), make sure the code saves first or confirms inline before calling it; the platform offers no safe interception.
 5. Run the lab scenarios with a physical Back button, Firefox and Safari before claiming more than the table states.
