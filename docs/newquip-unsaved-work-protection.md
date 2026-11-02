@@ -63,23 +63,27 @@ A throwaway two-route lab app (not committed) using the repo's Next version and 
 
 | Form | Tab close/reload | In-app link click | Back/Forward (Chromium) | router.push | Draft restore |
 |---|---|---|---|---|---|
-| Quotation configuration (newquip-grower/[id]) | yes | yes | yes | no | yes |
-| Project Details edit form | yes | yes | yes | no | no |
-| Partial claim selection (ProjectWorkspace, claims tab) | yes | yes | yes | no | no |
-| Approval reason / override (approvals/[id]) | yes | yes | yes | no | no |
-| Variation raise / re-price / reject (VariationsPanel) | yes (jsdom only) | yes (jsdom only) | yes by the same hook (not exercised for this form) | no | no |
-| Variation billing schedule editor + amend reason (VariationBillingPanel) | yes (jsdom only) | yes (jsdom only) | yes by the same hook (not exercised for this form) | no | no |
-| Approvals admin settings | yes (jsdom only) | yes (jsdom only) | yes by the same hook (not exercised for this form) | no | no |
+| Quotation configuration (newquip-grower/[id]) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | no | yes (jsdom/unit only; not run in a browser) |
+| Project Details edit form | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | no | no |
+| Partial claim selection (ProjectWorkspace, claims tab) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | no | no |
+| Approval reason / override (approvals/[id]) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | by the shared hook, lab-verified (form itself not run in a browser) | no | no |
+| Variation raise / re-price / reject (VariationsPanel) | yes (jsdom only) | yes (jsdom only) | by the shared hook, lab-verified (form itself not run in a browser) | no | no |
+| Variation billing schedule editor + amend reason (VariationBillingPanel) | yes (jsdom only) | yes (jsdom only) | by the shared hook, lab-verified (form itself not run in a browser) | no | no |
+| Approvals admin settings | yes (jsdom only) | yes (jsdom only) | by the shared hook, lab-verified (form itself not run in a browser) | no | no |
 
 Evidence levels: the hook's tab-close, link-click and Back/Forward behaviour is browser-demonstrated (table above, a lab app using the shipped hook). The three rows added by the wiring workstream are covered by jsdom tests only: they assert the `beforeunload` guard is on when the form differs from its saved/initial value and off when clean, reverted, cancelled, saved, or read-only. Those forms were not driven in a real browser (they need an authenticated session and data). The in-app link-click column for those rows is the same shared hook, not separately asserted in their tests.
 
 What is dirty, per form (a guard exists only while true):
 
 - VariationsPanel: the raise form (project ACTIVE) has any typed field; a DRAFT variation's re-price differs from its current price; a manager has typed a reject reason on a DRAFT variation. A successful raise, re-price or reject clears the field. Decided variations and non-managers' reject (absent) never guard.
-- VariationBillingPanel: an editable schedule's rows differ from the saved schedule (reverting, Remove last, or a successful save which reloads the schedule releases it); or an amendment reason is typed on a non-DRAFT variation (a successful amend clears it). Locked schedules (billing started, or a non-manager on an approved variation) never guard.
+- VariationBillingPanel: an editable schedule's rows differ from the saved schedule, compared normalised (trimmed names, numeric percents; so "50.0" equals a saved "50"). A successful save or amend discards the typed rows (reverting, Remove last, or a successful save which reloads the schedule releases it); or an amendment reason is typed on a non-DRAFT variation (a successful amend clears it). Locked schedules (billing started, or a non-manager on an approved variation) never guard.
 - Approvals settings: manager on the settings tab and the four fields differ from the values last loaded from the server; a successful save reloads them.
 
 Back/Forward protection comes automatically with the existing wiring; no per-form change was needed. Firefox and Safari get layers 1 and 2 only.
+
+## Restore offer is withdrawn
+
+The quotation editor's "Restore my edits" offer (`useFormDraft.restorable`) is withdrawn as soon as the form becomes dirty or the server version (`base`) changes, so it cannot overwrite newer saved work. jsdom-tested in `use-form-draft.ui.test.tsx`.
 
 ## Sign-out clears drafts
 

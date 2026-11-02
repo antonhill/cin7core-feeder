@@ -1,5 +1,4 @@
-
-import { formatZarCents } from "../format-money";// Projects - the CONSOLIDATED COMMERCIAL REPORT of an original project across its BASE scope and every approved variation (pure, generic).
+// Projects - the CONSOLIDATED COMMERCIAL REPORT of an original project across its BASE scope and every approved variation (pure, generic).
 //
 // Each billing scope is counted ONCE: the original project is the BASE scope, and each variation is counted from the variation record (its approved
 // amount) and its own billing project (its claims and Cin7 invoices). The internal billing projects are never added on top of their variations.
@@ -7,6 +6,7 @@ import { formatZarCents } from "../format-money";// Projects - the CONSOLIDATED 
 //   * REMAINING CONTRACT VALUE = revised contract - everything invoiced in Cin7 (what is still to be billed in total);
 //   * CLAIMABLE NOW           = what the approved progress currently allows to be claimed (a subset of the remaining value).
 // Invoiced = Cin7 invoices that exist (posting CREATED or RECONCILED), ex VAT. Unknown stays unknown, never zero.
+import { formatZarCents } from "../format-money";
 
 export interface ReportClaim { claimNumber: string; status: string; subtotalCents: number; totalCents: number; invoiceNumber: string | null }
 export interface ReportInvoice { invoiceNumber: string | null; amountExVatCents: number; totalCents: number; state: string }

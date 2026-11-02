@@ -1,11 +1,11 @@
-
-import { formatZarCents } from "../format-money";// Projects - the CUSTOMER-FACING view of a progress invoice (pure, generic). The Cin7 invoice keeps everything (R0 physical SKU lines + the
+// Projects - the CUSTOMER-FACING view of a progress invoice (pure, generic). The Cin7 invoice keeps everything (R0 physical SKU lines + the
 // commercial milestone charges) because Cin7 is the system of record for fulfilment and stock. The customer should only see the commercial
 // picture: who/what/when, the milestone being billed, the ex-VAT amount, VAT and total. This module derives that from the SAME approved claim and
 // posting figures that went to Cin7, never from a second calculation, and proves the two reconcile to the cent. It generates no document and
 // changes nothing: it is the single source of truth for whatever template (Cin7's, or a PDF) presents the invoice.
 //
 // Nothing here can leak internal data: it takes no cost, margin, SKU or quantity input at all.
+import { formatZarCents } from "../format-money";
 
 export interface CustomerInvoiceInput {
   companyName: string;

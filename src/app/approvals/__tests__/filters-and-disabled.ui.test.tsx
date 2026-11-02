@@ -115,10 +115,20 @@ describe("F-10 Approvals filters", () => {
     expect(filterQueue(rows, f, "x", "2026-11-02T00:00:00Z").map((r) => r.id)).toEqual(["1"]);
   });
 
-  it("an empty result under filters points at Clear filters", async () => {
+  it("an empty DEFAULT view does not point at a Clear filters button that is hidden there; it says how to see completed approvals", async () => {
     vi.mocked(actions.getApprovalsDashboardAction).mockResolvedValue({ ok: true, data: dash({ rows: [] }) } as never);
     render(<ApprovalsPage />);
+    await screen.findByText("No pending approvals. Set Status to Any status to see completed ones.");
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+    expect(screen.queryByText(/Use Clear filters/)).toBeNull();
+  });
+  it("an empty result under changed filters points at Clear filters, which is then visible", async () => {
+    vi.mocked(actions.getApprovalsDashboardAction).mockResolvedValue({ ok: true, data: dash({ rows: [] }) } as never);
+    render(<ApprovalsPage />);
+    await screen.findByText(/No pending approvals/);
+    fireEvent.change(screen.getByLabelText("Status"), { target: { value: "APPROVED" } });
     await screen.findByText(/Nothing matches these filters/);
+    expect(screen.getByRole("button", { name: "Clear filters" })).toBeTruthy();
   });
 });
 
