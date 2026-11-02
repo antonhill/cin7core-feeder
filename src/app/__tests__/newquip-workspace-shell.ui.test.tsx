@@ -101,6 +101,37 @@ describe("AppShell keeps the Toolbox shell everywhere else", () => {
   });
 });
 
+describe("AppShell workspace edge cases", () => {
+  it("shows exactly the three NewQuip links to a super-admin (no Admin link) and keeps them for impersonation", () => {
+    renderAt("/projects", { isSuperAdmin: true });
+    expect(within(screen.getByRole("navigation", { name: "NewQuip" })).getAllByRole("link").map((a) => a.textContent)).toEqual(["Solution Builder", "Projects", "Approvals"]);
+  });
+  it("keeps the Toolbox shell when every NewQuip module is hidden, and when there is no organisation", () => {
+    renderAt("/projects", { disabledModules: ["/quotes", "/projects"] });
+    expect(screen.queryByTestId("newquip-workspace")).toBeNull();
+    cleanup();
+    renderAt("/projects", { orgId: null });
+    expect(screen.queryByTestId("newquip-workspace")).toBeNull();
+  });
+  it("does not remount the shell or the page when moving between NewQuip areas", () => {
+    h.pathname = "/projects";
+    const ui = () => <AppShell nav={nav()}><div data-testid="page">page</div></AppShell>;
+    const { rerender } = render(ui());
+    const shell = screen.getByTestId("newquip-workspace");
+    const page = screen.getByTestId("page");
+    h.pathname = "/approvals";
+    rerender(ui());
+    expect(screen.getByTestId("newquip-workspace")).toBe(shell);
+    expect(screen.getByTestId("page")).toBe(page);
+    expect(screen.getByRole("link", { name: "Approvals" }).getAttribute("aria-current")).toBe("page");
+  });
+  it("sign out is a form submit, and the content target is focusable for the skip link", () => {
+    renderAt("/projects");
+    expect(screen.getByRole("button", { name: "Sign out" }).getAttribute("type")).toBe("submit");
+    expect(document.getElementById("newquip-content")?.getAttribute("tabindex")).toBe("-1");
+  });
+});
+
 describe("pageContainerClass", () => {
   it("gives operational data pages up to 1920px and keeps forms at a reading width", () => {
     expect(pageContainerClass("data")).toContain("max-w-[1920px]");

@@ -74,7 +74,7 @@ export function NewquipShell({
           </div>
         </div>
       </header>
-      <div id="newquip-content" className="flex min-h-0 flex-1 flex-col">
+      <div id="newquip-content" tabIndex={-1} className="flex min-h-0 flex-1 flex-col focus:outline-none">
         {children}
       </div>
     </div>

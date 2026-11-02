@@ -1,5 +1,6 @@
 "use client";
 
+import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
@@ -35,7 +36,7 @@ export default function CompanyProfilePage() {
     if (r.ok && r.data) { setView(r.data); setOk(`Saved as version ${r.data.version}.`); } else setErr(r.error ?? "Could not save.");
   };
   return (
-    <main className="mx-auto max-w-4xl space-y-4 p-4">
+    <main className={`${pageContainerClass("form", "compact")} space-y-4`}>
       <ModuleHeader module={QUOTES_MODULE}>Company details and quotation terms</ModuleHeader>
       <Link href="/newquip-grower" className="text-sm text-indigo-700 hover:underline">Back to quotes</Link>
       {err && <Alert tone="danger">{err}</Alert>}
