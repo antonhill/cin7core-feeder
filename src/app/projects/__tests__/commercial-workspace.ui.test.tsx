@@ -102,13 +102,10 @@ describe("Commercial / Claims workspace (P2)", () => {
       expect(a.textContent).toContain(c.cin7Status.label);
       if (c.cin7Status.invoiceNumber) {
         expect(a.textContent).toContain(c.cin7Status.invoiceNumber);
-        // reconciliation is its own chip, separate from the Cin7 invoice status chip beside it
-        expect(within(a).getByText("Reconciled")).toBeTruthy();
-        const rec = within(a).getByText("Reconciled").closest("[data-tone]")!;
-        const inv = within(a).getByText(c.cin7Status.label).closest("[data-tone]")!;
-        expect(rec).not.toBe(inv);
-        expect(inv.contains(rec) || rec.contains(inv)).toBe(false);
-        expect(rec.getAttribute("data-tone")).toBe("neutral"); // reconciliation is a record-keeping fact: green is not spent on it
+        // reconciliation is its own plain-text line (not a second chip), separate from the Cin7 invoice status chip
+        const rec = within(a).queryByText(/Reconciled with Cin7/);
+        expect(!!rec).toBe(c.cin7Status.reconciled);
+        if (rec) expect(rec.closest("[data-tone]")).toBeNull(); // green and chips are not spent on a record-keeping fact
       }
     }
     // no figure was lost or altered by the redesign: the sum of the claim totals on screen equals the sum in the data

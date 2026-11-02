@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Alert } from "@/components/ui/Alert";
-import { Status, statusText } from "@/components/ui/Status";
+import { ScopeTag, Status, statusText } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
@@ -69,7 +69,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
           <Panel key={v.id}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
-                <PanelTitle>{v.code} – {v.title} <Status tone={v.status === "APPROVED" ? "success" : "neutral"}>{statusText(v.status)}</Status></PanelTitle>
+                <PanelTitle><span className="inline-flex flex-wrap items-center gap-2">{v.code} – {v.title} <ScopeTag scope="VARIATION" /><Status tone={v.status === "APPROVED" ? "success" : "neutral"}>{statusText(v.status)}</Status></span></PanelTitle>
                 {v.description && <p className="mt-1 text-sm text-slate-600">{v.description}</p>}
               </div>
               <div className="text-right">
