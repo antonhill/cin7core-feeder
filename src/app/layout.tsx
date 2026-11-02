@@ -70,8 +70,9 @@ export default async function RootLayout({
     >
       <body className="flex h-full min-h-screen flex-col md:flex-row">
         {(() => {
+          // `relative` makes this scroll container the containing block for every absolutely positioned descendant (sr-only labels, icons, tooltips). Without it they are positioned against the page, escape this container's clip and extend the DOCUMENT's scrollable height, leaving a blank band of several screens under the content.
           const content = (
-            <div className="flex flex-1 flex-col overflow-x-hidden overflow-y-auto">
+            <div className="relative flex flex-1 flex-col overflow-x-hidden overflow-y-auto">
               <DemoModeBar orgId={orgId} email={email} />
               {isImpersonating && (
                 <div className="flex flex-wrap items-center justify-between gap-2 bg-warning px-4 py-2 text-sm font-semibold text-white print:hidden">
