@@ -44,7 +44,7 @@ export interface PlannerRow {
   /** The proposal by the selected formula (tender 0; null when it cannot be calculated). Never populated for an unclassified SKU. */
   readonly calculated: number | null;
   readonly formula: "minimum-shortfall" | "net-requirement";
-  readonly override: { readonly quantity: number; readonly reason: string; readonly calculatedAtOverride: number | null; readonly stale: boolean } | null;
+  readonly override: { readonly quantity: number; readonly reason: string; readonly savedAt: string } | null;
   /** The planner-adjusted quantity (the override when present, else the calculated proposal). Null when withheld. */
   readonly adjusted: number | null;
   /** A saved override that is not applying because the SKU is not ordinary now. It stays reversible. */
@@ -164,7 +164,7 @@ function plannerRowOf(s: SkuResult, state: DemoState & { kind: "validated" }, pl
     minOverride: mo ? { replacement: mo.replacement, effectiveFrom: mo.effectiveFrom, expires: mo.expires, reason: mo.reason, activeWeeks: s.minOverrideWeeks } : null,
     calculated,
     formula: s.proposalFormula,
-    override: overrideApplies ? { quantity: (oo as { quantity: number }).quantity, reason: (oo as { reason: string }).reason, calculatedAtOverride: (oo as { calculatedAtOverride: number | null }).calculatedAtOverride, stale: (oo as { calculatedAtOverride: number | null }).calculatedAtOverride !== null && (oo as { calculatedAtOverride: number | null }).calculatedAtOverride !== calculated } : null,
+    override: overrideApplies ? { quantity: (oo as { quantity: number }).quantity, reason: (oo as { reason: string }).reason, savedAt: (oo as { at: string }).at.slice(0, 10) } : null,
     adjusted,
     heldOverride: oo !== null && !ordinary ? { quantity: oo.quantity, reason: oo.reason } : null,
     localMake: localMakeOffset({ gross: calculated, source: item?.source ?? null, eligible: ordinary, entry, horizonWeeks: result.config.horizonWeeks }),

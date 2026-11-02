@@ -97,7 +97,7 @@ export function ScenarioAPlanner({ model, returnTo }: { model: RedFlagModel; ret
                 <>
                   <p>Calculated: <span data-testid="order-calculated" data-value={sel.planner.calculated ?? ""}>{sel.planner.calculated === null ? "cannot be calculated" : sel.planner.classification === "tender" ? "0 (tender: none)" : n0(sel.planner.calculated)}</span></p>
                   <p>Planner-adjusted: <span data-testid="order-adjusted" data-value={sel.planner.adjusted ?? ""}>{sel.planner.override ? n0(sel.planner.override.quantity) : "none: the calculated proposal stands"}</span></p>
-                  {sel.planner.override && <p className="text-xs text-slate-700">Override reason: {sel.planner.override.reason}</p>}
+                  {sel.planner.override && <p className="text-xs text-slate-700">Override reason: {sel.planner.override.reason}. Saved {sel.planner.override.savedAt}; the calculation is not re-checked against it, so review it when the data or settings change.</p>}
                 </>
               )}
             </div>

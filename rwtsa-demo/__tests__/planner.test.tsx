@@ -306,7 +306,7 @@ describe("review hardening", () => {
     expect(await act(SKU, "override-set", [["quantity", "5"], ["reason", "x"], ["calculated", "999999"]])).toBe("override-set");
     const saved = JSON.parse(readFileSync(join(stateDirOf(), plannerFiles()[0]), "utf8"));
     expect(saved.orderOverrides[0].calculatedAtOverride).toBeNull();
-    expect(text(await sel(SKU))).not.toMatch(/calculation has changed since/);
+    expect(text(await sel(SKU))).toMatch(/Saved \d{4}-\d{2}-\d{2}; the calculation is not re-checked/);
   });
   it("overrides show beside the calculated proposal in the table and in the planner-adjusted total", async () => {
     local();
@@ -329,11 +329,14 @@ describe("review hardening", () => {
     expect(await act(SKU, "override-reverse")).toBe("override-reversed");
     expect(await sel(SKU)).not.toContain('data-testid="held-override"');
   });
-  it("tender stock-out risk is reported in the indicators and kept when filtering to shortages", async () => {
+  it("tender stock-out risk is counted, kept under the shortage filter, and noted on the style row", async () => {
     local();
-    await act(SKU, "classify", [["value", "tender"]]);
+    for (const k of skus(await A({ view: "sku" }))) await act(k, "classify", [["value", "tender"]]);
     const m = await A({ view: "sku", only: "shortage" });
-    expect(text(m)).toMatch(/\d+ at projected stock-out risk/);
+    expect(text(m)).toMatch(/[1-9]\d* at projected stock-out risk/);
+    expect(skus(m).length).toBeGreaterThan(0); // tender SKUs at risk stay in the filtered table
+    const st = await A({ view: "style", only: "shortage" });
+    expect(text(st)).toMatch(/[1-9]\d* tender SKU\(s\) at projected stock-out risk/);
   });
   it("the local-make note says it is not matched to the week of the first shortage", async () => {
     local();
