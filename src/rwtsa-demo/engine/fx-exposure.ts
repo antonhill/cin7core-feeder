@@ -126,7 +126,8 @@ function classify(p: PaymentFecRow, asOf: string): Classified {
   const depositEvidence = p.isDeposit === true || (typeof p.remark === "string" && DEPOSIT_REMARK.test(p.remark));
   // Rev2: the deposit was paid AT SHIPMENT. So the payment must be due on the shipment date itself (0 days, same day).
   const atShipment = p.termsDays === 0 && p.shipmentDate !== null && p.shipmentDate !== undefined && p.shipmentDate === p.dueDate && daysBetween(asOf, p.shipmentDate) <= 0; // not yet shipped at the as-at date: cannot have been paid at shipment
-  if (depositEvidence && atShipment) return { settlement: "paid", basis: "deposit-rev2", unrecognised, conflict: false };
+  // An unrecognised status text means someone recorded something we do not understand: not a basis for paid.
+  if (depositEvidence && atShipment && status === "") return { settlement: "paid", basis: "deposit-rev2", unrecognised, conflict: false };
   return { settlement: "unknown", basis: "none", unrecognised, conflict: false };
 }
 
@@ -156,6 +157,7 @@ export function runFxExposure(ds: RwtsaDataset, config: ExposureConfig = {}): Ex
   const warnings: string[] = [];
   let unrecognisedCount = 0;
   let conflictCount = 0;
+  let paidLaterCount = 0;
   const rows: PaymentExposure[] = ds.tables.paymentsFec.map((p) => {
     const usd = toCents(p.usdAmount);
     const covered = p.fecRef !== null && p.fecRef !== "" && p.lockedRate !== null;
@@ -165,6 +167,7 @@ export function runFxExposure(ds: RwtsaDataset, config: ExposureConfig = {}): Ex
     const cls = classify(p, asOf);
     if (cls.unrecognised) unrecognisedCount++;
     if (cls.conflict) conflictCount++;
+    if (cls.basis === "paid-after-as-at") paidLaterCount++;
 
     let shipmentRef: string | null = null;
     let planning: number | null = null;
@@ -258,7 +261,8 @@ export function runFxExposure(ds: RwtsaDataset, config: ExposureConfig = {}): Ex
   const rev2 = rows.filter((r) => r.settlementBasis === "deposit-rev2");
   if (rev2.length > 0) warnings.push(`${rev2.length} deposit payment(s) worth USD ${fromCents(sum(rev2)).toFixed(2)} are treated as paid at shipment under the RWTSA Rev2 clarification (29 Oct 2026): flagged or remarked as a deposit and due on the shipment date (0 days).`);
   if (unrecognisedCount > 0) warnings.push(`${unrecognisedCount} payment(s) have an unrecognised payment status; settlement is unknown for them.`);
-  if (conflictCount > 0) warnings.push(`${conflictCount} payment(s) have an open status that conflicts with a paid date; settlement is unknown for them.`);
+  if (conflictCount > 0) warnings.push(`${conflictCount} payment(s) have an open status that conflicts with a paid date on or before the as-at date; settlement is unknown for them.`);
+  if (paidLaterCount > 0) warnings.push(`${paidLaterCount} payment(s) have a paid date after the as-at date: they were still open at the as-at date and are counted as confirmed open.`);
   const diffs = rows.filter((r) => r.zarReportedDiffCents !== null && r.zarReportedDiffCents !== 0).length;
   if (diffs > 0) warnings.push(`The workbook's ZAR value differs from USD x locked rate on ${diffs} payment(s).`);
   const lockedNoRef = rows.filter((r) => r.lockedRate !== null && !r.covered).length;

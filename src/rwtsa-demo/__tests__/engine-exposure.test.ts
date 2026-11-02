@@ -113,6 +113,11 @@ describe("USD exposure by due date: settlement is never assumed", () => {
     expect(later.rows.map((x) => x.settlement)).toEqual(["paid", "paid", "paid"]);
     expect(later.totals.confirmedOpenUsdCents).toBeNull();
   });
+  it("status Paid with a paid date after the as-at date is open at that date, with a warning; a deposit with an unrecognised status is not paid", () => {
+    const r = run([{ po: "P", due: "2026-09-01", usd: 1, status: "Paid", paidDate: "2026-11-15" }, { po: "D", due: "2026-08-22", shipped: "2026-08-22", usd: 1, terms: 0, deposit: true, status: "chasing" }]);
+    expect(r.rows.map((x) => [x.settlement, x.settlementBasis])).toEqual([["open", "paid-after-as-at"], ["unknown", "none"]]);
+    expect(r.warnings.join(" ")).toMatch(/paid date after the as-at date/);
+  });
   it("a deposit whose shipment is AFTER the as-at date cannot have been paid at shipment yet", () => {
     const r = run([{ po: "F", due: "2027-01-15", shipped: "2027-01-15", usd: 5, terms: 0, deposit: true }], { asOf: "2026-10-31" });
     expect(r.rows[0].settlement).toBe("unknown");
