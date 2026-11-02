@@ -56,6 +56,21 @@ describe("VariationsPanel unsaved guard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Raise draft" }));
     await waitFor(() => expect(unload()).toBe(false));
   });
+  it("Raise draft says why it is disabled (what is missing, or that another action is running) and clears when ready", async () => {
+    const desc = (el: HTMLElement) => (el.getAttribute("aria-describedby") ?? "").split(" ").filter(Boolean).map((i) => document.getElementById(i)?.textContent ?? "").join(" ");
+    await panel(view([]));
+    const btn = () => screen.getByRole("button", { name: "Raise draft" }) as HTMLButtonElement;
+    expect(btn().disabled).toBe(true);
+    expect(desc(btn())).toMatch(/Enter a title and a price/);
+    type(/^Title/, "V1");
+    expect(desc(btn())).toMatch(/Enter a price/);
+    type(/^Price/, "100");
+    expect(btn().disabled).toBe(false);
+    expect(btn().getAttribute("aria-describedby")).toBeNull();
+    cleanup();
+    render(<VariationsPanel view={view([])} isAdmin run={okRun} working />);
+    expect(desc(btn())).toMatch(/another action/i);
+  });
   it("raise form is not available (so never guards) on a non-ACTIVE project", async () => {
     await panel(view([], "CLOSED"));
     expect(screen.queryByLabelText(/^Title/)).toBeNull();

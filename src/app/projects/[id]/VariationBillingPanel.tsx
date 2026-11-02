@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Alert } from "@/components/ui/Alert";
 import { ScopeTag, Status, statusText } from "@/components/ui/Status";
@@ -55,7 +55,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
   type Phase = { st: "reloading" | "unrefreshed"; gen: number };
   const phaseRef = useRef<Record<string, Phase>>({});
   const [phase, setPhaseState] = useState<Record<string, Phase>>({});
-  const setPhase = (next: Record<string, Phase>) => { phaseRef.current = next; setPhaseState(next); };
+  const setPhase = useCallback((next: Record<string, Phase>) => { phaseRef.current = next; setPhaseState(next); }, []);
   const [openId, setOpenId] = useState<string | null>(null); // the ONE variation whose detailed workspace is expanded; nothing is expanded until asked
   const [everOpened, setEverOpened] = useState<Record<string, boolean>>({}); // a hidden workspace stays mounted so an action in flight in it is never lost
   const variationKey = view.variations.map((v) => `${v.id}:${v.status}`).join(",");
@@ -81,7 +81,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
         if (dropIds.length) setEdit((m) => Object.fromEntries(Object.entries(m).filter(([k]) => !dropIds.includes(k))));
       });
     return () => { live = false; };
-  }, [projectId, variationKey, version, view.variations.length]);
+  }, [projectId, variationKey, version, view.variations.length, setPhase]);
 
   const act = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: string, savedId?: string): Promise<boolean> => {
     const ok = await run(fn, done);

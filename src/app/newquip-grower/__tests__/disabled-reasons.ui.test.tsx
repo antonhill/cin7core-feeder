@@ -123,4 +123,23 @@ describe("F-12 Solution Builder disabled controls say why", () => {
     expect(ret.disabled).toBe(false);
     expect(ret.getAttribute("aria-describedby")).toBeNull();
   }, 30000);
+
+  it("Manager: final approval is described by whichever message applies (role, missing sign-off) and is never silent", async () => {
+    await open("3", ["MANAGER"], "ESTIMATOR_REVIEW", "Return to rep — reason");
+    const approve = screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement;
+    expect(approve.disabled).toBe(true);
+    expect(described(approve)).toMatch(/Waiting for the Estimator/);
+    cleanup();
+    await open("3", ["REP"], "ESTIMATOR_REVIEW", "Final approval needs the manager role (org owner/admin).");
+    const approve2 = screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement;
+    expect(described(approve2)).toMatch(/needs the manager role/);
+  }, 60000);
+
+  it("Stage 1 pig-size options use the shared money format (R 1 300,00 / rm), not hard-coded R1,300", async () => {
+    await open("1", ["REP"], undefined, "Selections");
+    const labels = Array.from(document.querySelectorAll("option")).map((o) => o.textContent ?? "").filter((t) => /\/ rm/.test(t));
+    expect(labels.length).toBe(3);
+    expect(labels[0]).toBe("Small — R\u00A01\u00A0300,00 / rm");
+    expect(labels.join("")).not.toMatch(/R1,/);
+  }, 30000);
 });

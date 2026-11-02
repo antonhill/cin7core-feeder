@@ -46,3 +46,18 @@ export function formatZar(rands: number | null | undefined, placeholder = "\u201
   const cents = BigInt(w) * B100 + BigInt(f.slice(0, 2)) + (f.charCodeAt(2) >= 53 ? B1 : B0);
   return render(rands < 0, cents);
 }
+
+const BMICRO = BigInt(1_000_000);
+
+/**
+ * Micro-units (1e-6 of the currency; supplier unit costs) -> "R 1 234,56", or "USD 12,5" style for a foreign currency: the same separators as everywhere else, never ICU.
+ * Two decimals minimum, up to six when the price really has them (a unit cost of 0,0042 must not read R 0,00). Display only.
+ */
+export function formatMicroAmount(micro: number | null | undefined, currency: string | null | undefined, placeholder = "—"): string {
+  if (micro == null || !Number.isFinite(micro)) return placeholder;
+  const abs = BigInt(Math.round(Math.abs(micro)));
+  const whole = (abs / BMICRO).toString().replace(/\B(?=(\d{3})+(?!\d))/g, NBSP);
+  const frac = (abs % BMICRO).toString().padStart(6, "0").replace(/0+$/, "").padEnd(2, "0");
+  const cur = currency == null ? "?" : currency === "ZAR" ? "R" : currency;
+  return `${micro < 0 && abs !== B0 ? "-" : ""}${cur}${NBSP}${whole},${frac}`;
+}

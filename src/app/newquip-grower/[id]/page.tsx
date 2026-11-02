@@ -3,7 +3,7 @@
 import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useId } from "react";
 import { ActionFeedback, useKeyedActions } from "@/components/ui/action-feedback";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { ModuleHeader } from "@/app/ModuleHeader";
@@ -38,6 +38,7 @@ import { blankExclusions, createRecalcLoop } from "@/newquip/grower/preview-draf
 import { previewCostOverrides } from "@/newquip/quote/margin";
 import { ProductMappingPicker } from "./ProductMappingPicker";
 import { fmtCents, fmtZar, NumField, TextField } from "../fields";
+import { formatZar } from "@/lib/format-money";
 import { MarginPanel } from "./MarginPanel";
 import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
@@ -71,7 +72,7 @@ const CAT_TONE: Record<ReadinessCategory, BadgeTone> = {
   autoCalculated: "success", suggestedDefault: "info", estimatorInputs: "neutral", overrides: "warning", warnings: "warning",
   missingMappings: "danger", supplierQuoteRequired: "danger", pricingExceptions: "warning",
 };
-const PIG_SIZE_LABEL: Record<PenningPigSize, string> = { SMALL: "Small — R1,300 / rm", MEDIUM: "Medium — R1,500 / rm", LARGE: "Large — R2,200 / rm" };
+const PIG_SIZE_LABEL: Record<PenningPigSize, string> = { SMALL: `Small — ${formatZar(1300)} / rm`, MEDIUM: `Medium — ${formatZar(1500)} / rm`, LARGE: `Large — ${formatZar(2200)} / rm` };
 const OPTIONAL_LABELS: Record<OptionalItemKey, string> = {
   controller: "Thomas-CL1 controller", silo_weighing: "Silo weighing", control_panel: "Control panel", emergency_windows: "Emergency windows",
   pad_cooling: "Pad cooling", cone_fans: "Cone fans", manure_plug: "Manure plugs",
@@ -103,6 +104,7 @@ export default function QuoteEditorPage() {
   const [scheduleChoice, setScheduleChoice] = useState<ScheduleChoice | undefined>(undefined);
   const [gate, setGate] = useState<DeliveryGate>({ requires: false, accepted: false, status: null, hasDocument: false });
   const search = useSearchParams();
+  const uid = useId();
   // The commercial status is read in a second request. Until it has been read once the stages that depend on it show "Loading" (never a guess from the empty defaults above).
   const [gateReady, setGateReady] = useState(false);
   const [gateError, setGateError] = useState<string | null>(null);
@@ -177,6 +179,10 @@ export default function QuoteEditorPage() {
     : incompleteOverrides ? "Finish or remove the incomplete cost override before saving."
     : !dirty ? "Nothing to save: there are no unsaved changes." : undefined;
   const signoffWhy = isWorking ? "Another action is in progress. Please wait." : !roles.has("estimator") ? "Only an Estimator can sign off this quote." : rd.state !== "READY" ? "The quote must be READY (no outstanding readiness items) before it can be signed off." : undefined;
+  // "Manager: final approval" is described by whichever of the existing messages currently applies (each is already on the page, so nothing is duplicated). Role/process wording only.
+  const approveSignoffMissing = q?.state === "ESTIMATOR_REVIEW" && !q.estimator_signoff_hash;
+  const approveSignoffStale = q?.state === "ESTIMATOR_REVIEW" && !!q.estimator_signoff_hash && q.estimator_signoff_hash !== q.draft_hash;
+  const approveDescribedBy = [isWorking && `${uid}-approve-busy`, !roles.has("manager") && `${uid}-approve-role`, approveSignoffMissing && `${uid}-approve-signoff`, approveSignoffStale && `${uid}-approve-stale`, dirty && `${uid}-approve-dirty`].filter(Boolean).join(" ") || undefined;
   const returnWhy = isWorking ? "Another action is in progress. Please wait." : !returnReason.trim() ? "Enter the reason for returning it to enable this." : undefined;
   const totalCents = budget && !budget.incomplete ? Math.round(budget.totals.subtotalExTax * 100) : null;
 
@@ -675,15 +681,15 @@ export default function QuoteEditorPage() {
             <p className="mt-1 text-xs text-slate-600">Final internal commercial approval. The Rep sees the outcome here and by notification; only a Manager can decide.</p>
             {handoffFacts}
 
-            {q.state === "ESTIMATOR_REVIEW" && !q.estimator_signoff_hash && <Alert tone="info">Waiting for the Estimator&apos;s sign-off before the Manager can decide.</Alert>}
-            {q.state === "ESTIMATOR_REVIEW" && !!q.estimator_signoff_hash && q.estimator_signoff_hash !== q.draft_hash && <Alert tone="warning">The Estimator&apos;s sign-off no longer matches the current quotation. It must be given again before the Manager can decide.</Alert>}
-            {q.state === "ESTIMATOR_REVIEW" && dirty && <Alert tone="warning" >You have unsaved edits. Save or discard your edits first: approval applies to the saved quotation.</Alert>}
+            {approveSignoffMissing && <div id={`${uid}-approve-signoff`}><Alert tone="info">Waiting for the Estimator&apos;s sign-off before the Manager can decide.</Alert></div>}
+            {approveSignoffStale && <div id={`${uid}-approve-stale`}><Alert tone="warning">The Estimator&apos;s sign-off no longer matches the current quotation. It must be given again before the Manager can decide.</Alert></div>}
+            {q.state === "ESTIMATOR_REVIEW" && dirty && <div id={`${uid}-approve-dirty`}><Alert tone="warning" >You have unsaved edits. Save or discard your edits first: approval applies to the saved quotation.</Alert></div>}
             <div className="mt-5 space-y-3 border-t border-slate-100 pt-5">
               {q.state === "ESTIMATOR_REVIEW" && (
                 <>
                   {roles.has("manager") && <div className="max-w-xl"><TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} hint="Required only when you return the quotation instead of approving it." /></div>}
                   <div className="flex flex-wrap items-center gap-3">
-                    <Button variant="primary" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty}
+                    <Button variant="primary" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty} aria-describedby={approveDescribedBy}
                       onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")}>Manager: final approval</Button>
                     {roles.has("manager") && (<>
                       <Button variant="secondary" aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "approve", (v) => v.quote.state === "REP_DRAFT")}>Return to rep (reject)</Button>
@@ -692,8 +698,9 @@ export default function QuoteEditorPage() {
                       )}
                     </>)}
                   </div>
+                  {isWorking && <DisabledReason id={`${uid}-approve-busy`}>Another action is in progress. Please wait.</DisabledReason>}
                   {roles.has("manager") && <DisabledReason id="return-mgr-why">{returnWhy ? `Return buttons: ${returnWhy.charAt(0).toLowerCase()}${returnWhy.slice(1)}` : undefined}</DisabledReason>}
-                  {!roles.has("manager") && <p className="text-sm text-slate-700">Final approval needs the manager role (org owner/admin).</p>}
+                  {!roles.has("manager") && <p id={`${uid}-approve-role`} className="text-sm text-slate-700">Final approval needs the manager role (org owner/admin).</p>}
                 </>
               )}
               {q.state === "REP_DRAFT" && <p className="text-sm text-slate-700">This quotation is with the Rep ({q.revision > 1 ? "returned as a new revision" : "not yet sent for review"}).</p>}

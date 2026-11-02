@@ -1,5 +1,6 @@
 "use client";
 
+import { exceptionLabel } from "@/lib/projects/exception-labels";
 import { useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
@@ -72,7 +73,7 @@ export function ProfitabilityPanel({ view }: { view: ProjectView }) {
               </dl>
               <p className="mt-1 text-xs text-slate-600">{r.actual.costBasisNote}</p>
             </div>
-            {r.exceptions.length > 0 && <div className="space-y-1"><p className="font-medium text-slate-800">Exceptions</p>{r.exceptions.map((e, i) => <Alert key={i} tone="warning">{e.code}: {e.message}</Alert>)}</div>}
+            {r.exceptions.length > 0 && <div className="space-y-1"><p className="font-medium text-slate-800">Exceptions</p>{r.exceptions.map((e, i) => <Alert key={i} tone="warning">{exceptionLabel(e.code)}: {e.message}</Alert>)}</div>}
           </div>
         )}
       </Panel>

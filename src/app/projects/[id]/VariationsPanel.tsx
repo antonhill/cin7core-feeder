@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Status, statusText } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { DisabledReason } from "./DisabledReason";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
 import { NEGATIVE_VARIATION_UNSUPPORTED, isNegativeAmountInput } from "@/lib/projects/variations";
@@ -28,6 +29,8 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
   const [estCost, setEstCost] = useState("");
   const [reason, setReason] = useState<Record<string, string>>({});
   const [price, setPrice] = useState<Record<string, string>>({});
+  const uid = useId();
+  const raiseWhy = working ? BUSY : !title.trim() && !amount.trim() ? "Enter a title and a price to raise a draft." : !title.trim() ? "Enter a title to raise a draft." : !amount.trim() ? "Enter a price to raise a draft." : undefined;
 
   // Unsaved-work guard. Dirty = a form that is currently available differs from its empty/saved starting value: the raise form (project ACTIVE) has any typed field,
   // a DRAFT variation's re-price differs from its current price, or (managers) a DRAFT variation has a typed reject reason. Cancelling, clearing, or a successful
@@ -110,8 +113,9 @@ export function VariationsPanel({ view, isAdmin, run, working }: { view: Project
             <Input label="Scope / description" value={description} onChange={(e) => setDescription(e.target.value)} />
             <Input label="Price (R, ex VAT)" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="480000" />
             {isAdmin ? <Input label="Est. cost (R, internal)" value={estCost} onChange={(e) => setEstCost(e.target.value)} placeholder="optional" /> : <span />}
-            <Button disabled={working || !title.trim() || !amount.trim()} onClick={async () => { if (await run(() => raiseVariationAction(projectId, title, description, amount, estCost), "Variation raised as a DRAFT — the contract value is unchanged until a manager approves it.")) { setTitle(""); setDescription(""); setAmount(""); setEstCost(""); } }}>Raise draft</Button>
+            <Button disabled={working || !title.trim() || !amount.trim()} aria-describedby={raiseWhy ? `${uid}-raise-why` : undefined} onClick={async () => { if (await run(() => raiseVariationAction(projectId, title, description, amount, estCost), "Variation raised as a DRAFT — the contract value is unchanged until a manager approves it.")) { setTitle(""); setDescription(""); setAmount(""); setEstCost(""); } }}>Raise draft</Button>
           </div>
+          {raiseWhy && <DisabledReason id={`${uid}-raise-why`} className="mt-2">{raiseWhy}</DisabledReason>}
           {isNegativeAmountInput(amount) && <div className="mt-3"><Alert tone="warning">{NEGATIVE_VARIATION_UNSUPPORTED}</Alert></div>}
         </details>
       )}
