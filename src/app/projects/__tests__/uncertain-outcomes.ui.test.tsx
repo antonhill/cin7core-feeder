@@ -6,6 +6,12 @@ import * as actions from "../actions";
 import * as c7 from "../cin7-actions";
 import { POST_CONFIRMATION_TEXT } from "@/lib/projects/cin7-posting";
 import type { ProjectView } from "@/lib/projects/project-view";
+// getProjectAction returns the viewer's display permissions together with the project (one round trip); the Commercial tab reads its Sale + posting state in one call.
+let viewer = { canApprove: true, newquip: false };
+beforeEach(() => {
+  viewer = { canApprove: true, newquip: false };
+  vi.mocked(c7.getCommercialBootAction).mockImplementation((async (id: string) => ({ ok: true, data: { creation: (await c7.getCin7SaleCreationStatusAction(id)).data ?? null, posting: (await c7.getCin7PostingStatusAction(id)).data ?? null } })) as never);
+});
 
 // Review findings P1 / P2a on the REAL Project workspace with the REAL Cin7 Sale-creation and Cin7 posting panels (only unrelated panels are stubbed).
 // A lost response to a Cin7 write must NEVER leave a live "do it again" control: a Sale / invoice may already exist. The panel re-reads its record,
@@ -14,11 +20,11 @@ import type { ProjectView } from "@/lib/projects/project-view";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn(), push: vi.fn() }) }));
 vi.mock("@/components/ApprovalHistory", () => ({ ApprovalHistory: () => null }));
 vi.mock("../actions", () => ({
-  getProjectAction: vi.fn(), getViewerPermissionsAction: vi.fn(), approveClaimAction: vi.fn(), submitClaimForApprovalAction: vi.fn(), cancelDraftClaimAction: vi.fn(),
+  getProjectAction: vi.fn(), approveClaimAction: vi.fn(), submitClaimForApprovalAction: vi.fn(), cancelDraftClaimAction: vi.fn(),
   createClaimDraftAction: vi.fn(), previewClaimAction: vi.fn(), recalculateStaleDraftAction: vi.fn(), recordProgressAction: vi.fn(),
 }));
 vi.mock("../cin7-actions", () => ({
-  getCin7ReferenceOptionsAction: vi.fn(), createCin7SaleAction: vi.fn(), getPackageMappingAction: vi.fn(), getCin7SaleCreationStatusAction: vi.fn(),
+  getCommercialBootAction: vi.fn(), getCin7ReferenceOptionsAction: vi.fn(), createCin7SaleAction: vi.fn(), getPackageMappingAction: vi.fn(), getCin7SaleCreationStatusAction: vi.fn(),
   reconcileCin7SaleCreationAction: vi.fn(), resolveScopeItemAction: vi.fn(), runP0ChecklistAction: vi.fn(),
   getCin7PostingStatusAction: vi.fn(), recoverLinkCin7SaleAction: vi.fn(), getInvoiceProposalAction: vi.fn(), postClaimToCin7Action: vi.fn(), reconcileClaimPostingAction: vi.fn(),
 }));
@@ -52,7 +58,7 @@ const btn = (name: RegExp | string) => screen.getByRole("button", { name }) as H
 const feedback = (kind: string) => document.querySelector(`[data-testid="action-feedback"][data-kind="${kind}"]`) as HTMLElement | null;
 
 beforeEach(() => {
-  vi.mocked(actions.getViewerPermissionsAction).mockResolvedValue({ ok: true, data: { canApprove: true, newquip: false } } as never);
+  viewer = { canApprove: true, newquip: false };
   vi.mocked(c7.getCin7ReferenceOptionsAction).mockResolvedValue({ ok: false, error: "n/a" } as never);
   vi.mocked(c7.getCin7PostingStatusAction).mockResolvedValue({ ok: false, error: "n/a" } as never);
   vi.mocked(c7.getCin7SaleCreationStatusAction).mockResolvedValue({ ok: false, error: "n/a" } as never);
@@ -61,7 +67,7 @@ afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe("P1: Cin7 Sale creation after a lost response", () => {
   beforeEach(() => {
-    vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: view([]) } as never);
+    vi.mocked(actions.getProjectAction).mockImplementation((async () => ({ ok: true, data: view([]), viewer })) as never);
     vi.mocked(c7.getCin7SaleCreationStatusAction).mockResolvedValue(saleStatus() as never);
   });
   async function readyToCreate() {
@@ -135,7 +141,7 @@ describe("P1: Cin7 Sale creation after a lost response", () => {
 
 describe("P2a: Cin7 posting after a lost response", () => {
   beforeEach(() => {
-    vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: view([claim("APPROVED")]) } as never);
+    vi.mocked(actions.getProjectAction).mockImplementation((async () => ({ ok: true, data: view([claim("APPROVED")]), viewer })) as never);
     vi.mocked(c7.getCin7PostingStatusAction).mockResolvedValue(postStatus() as never);
     vi.mocked(c7.getInvoiceProposalAction).mockResolvedValue(prepared as never);
   });

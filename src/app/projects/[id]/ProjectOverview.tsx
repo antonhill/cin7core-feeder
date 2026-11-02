@@ -5,6 +5,7 @@
 // unread value is shown as "Not read yet" or "Unknown" - never as zero.
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { OverviewSkeleton } from "./LoadingSkeletons";
 import { Alert } from "@/components/ui/Alert";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -98,7 +99,7 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab }: { projectI
     }
   }, [res, phys]);
 
-  if (res === null) return <p role="status" className="text-sm text-slate-500" data-testid="overview-loading">Loading the executive overview…</p>;
+  if (res === null) return <OverviewSkeleton />;
   if (!res.ok || overview === null || overview instanceof Error) {
     return (
       <div className="space-y-3" data-testid="overview-error">

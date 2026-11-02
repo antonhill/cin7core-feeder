@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { APPROVALS_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
@@ -38,7 +39,7 @@ export default function ApprovalDetailPage() {
   const load = useCallback(() => { getApprovalDetailAction(id).then((r) => { if (r.ok && r.data) { setD((cur) => (cur && cur.request.status !== "PENDING" && r.data!.request.status === "PENDING" ? cur : r.data!)); setError(null); } else setError(r.error ?? "Could not load this approval."); }); }, [id]);
   useEffect(load, [load]);
 
-  if (!d) return <main className="mx-auto w-full max-w-[1200px] px-6 py-12"><ModuleHeader module={APPROVALS_MODULE}>Approval</ModuleHeader>{error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <p className="mt-6 text-sm text-slate-500">Loading…</p>}</main>;
+  if (!d) return <main className="mx-auto w-full max-w-[1200px] px-6 py-12"><ModuleHeader module={APPROVALS_MODULE}>Approval</ModuleHeader>{error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <div role="status" aria-live="polite" aria-busy="true" data-testid="approval-loading"><p className="mt-6 text-sm text-slate-500">Loading the approval…</p><Skeleton className="mt-4 h-40 w-full" /><Skeleton className="mt-4 h-64 w-full" /></div>}</main>;
   const r = d.request;
   const now = new Date().toISOString();
   const late = r.status === "PENDING" && isOverdue(r.due_at, now);

@@ -5,6 +5,12 @@ import { ProjectWorkspace } from "../[id]/ProjectWorkspace";
 import * as actions from "../actions";
 import type { ProjectView } from "@/lib/projects/project-view";
 
+// getProjectAction returns the viewer's display permissions together with the project (one round trip); the Commercial tab reads its Sale + posting state in one call.
+let viewer = { canApprove: true, newquip: false };
+beforeEach(() => {
+  viewer = { canApprove: true, newquip: false };
+});
+
 // UAT-025 / UAT-023 on the real Project screen: a claim near the BOTTOM of a long page must show what happened beside its own buttons.
 // (jsdom has no layout, so "in the viewport" is asserted structurally: the message lives inside the claim card that holds the clicked button,
 // has the right ARIA role, and the old page-top banner area stays empty.)
@@ -12,9 +18,10 @@ import type { ProjectView } from "@/lib/projects/project-view";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn(), push: vi.fn() }) }));
 vi.mock("@/components/ApprovalHistory", () => ({ ApprovalHistory: () => null }));
 vi.mock("../actions", () => ({
-  getProjectAction: vi.fn(), getViewerPermissionsAction: vi.fn(), approveClaimAction: vi.fn(), submitClaimForApprovalAction: vi.fn(), cancelDraftClaimAction: vi.fn(),
+  getProjectAction: vi.fn(), approveClaimAction: vi.fn(), submitClaimForApprovalAction: vi.fn(), cancelDraftClaimAction: vi.fn(),
   createClaimDraftAction: vi.fn(), previewClaimAction: vi.fn(), recalculateStaleDraftAction: vi.fn(), recordProgressAction: vi.fn(),
 }));
+vi.mock("../cin7-actions", () => ({ getCommercialBootAction: vi.fn(() => Promise.resolve({ creation: { ok: false }, posting: { ok: false } })) }));
 // The sibling panels have their own tests and their own server-action modules; here the claim cards and stage forms under test are real.
 vi.mock("../[id]/Cin7SaleCreationPanel", () => ({ Cin7SaleCreationPanel: () => null }));
 vi.mock("../[id]/Cin7PostingPanel", () => ({ Cin7PostingPanel: () => null }));
@@ -51,8 +58,8 @@ async function openClaims() {
 }
 
 beforeEach(() => {
-  vi.mocked(actions.getViewerPermissionsAction).mockResolvedValue({ ok: true, data: { canApprove: true, newquip: false } } as never);
-  vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: view("READY_FOR_APPROVAL") } as never);
+  viewer = { canApprove: true, newquip: false };
+  vi.mocked(actions.getProjectAction).mockImplementation((async () => ({ ok: true, data: view("READY_FOR_APPROVAL"), viewer })) as never);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); });
 
@@ -61,7 +68,7 @@ describe("claim approval near the bottom of a long Project page", () => {
     const card = await openClaims();
     const d = deferred<{ ok: boolean }>();
     vi.mocked(actions.approveClaimAction).mockReturnValue(d.promise as never);
-    vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: view("APPROVED") } as never);
+    vi.mocked(actions.getProjectAction).mockImplementation((async () => ({ ok: true, data: view("APPROVED"), viewer })) as never);
 
     fireEvent.click(within(card).getByRole("button", { name: "Approve" }));
     const pending = await within(card).findByText(/Working/);
@@ -106,7 +113,7 @@ describe("claim approval near the bottom of a long Project page", () => {
     const card = await openClaims();
     vi.mocked(actions.approveClaimAction).mockRejectedValue(new Error("network down"));
     // 1. the decision DID land
-    vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: view("APPROVED") } as never);
+    vi.mocked(actions.getProjectAction).mockImplementation((async () => ({ ok: true, data: view("APPROVED"), viewer })) as never);
     fireEvent.click(within(card).getByRole("button", { name: "Approve" }));
     const done = await within(card).findByText(/lost, but the current status shows it was recorded/i);
     expect(done.closest("[role=status]")).not.toBeNull();
@@ -115,7 +122,7 @@ describe("claim approval near the bottom of a long Project page", () => {
   it("a lost response where the re-read shows NOT approved: told it did not complete and may be retried", async () => {
     const card = await openClaims();
     vi.mocked(actions.approveClaimAction).mockRejectedValue(new Error("timeout"));
-    vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: view("READY_FOR_APPROVAL") } as never);
+    vi.mocked(actions.getProjectAction).mockImplementation((async () => ({ ok: true, data: view("READY_FOR_APPROVAL"), viewer })) as never);
     fireEvent.click(within(card).getByRole("button", { name: "Approve" }));
     const alert = await within(card).findByRole("alert");
     expect(alert.textContent).toMatch(/did not complete and nothing was changed\. You can try again/);
@@ -133,7 +140,7 @@ describe("claim approval near the bottom of a long Project page", () => {
 
 describe("authorisation is unchanged by the feedback work", () => {
   it("the Approve button is still offered only to administrators (the server decides everything else)", async () => {
-    vi.mocked(actions.getViewerPermissionsAction).mockResolvedValue({ ok: true, data: { canApprove: false, newquip: false } } as never);
+    viewer = { canApprove: false, newquip: false };
     const card = await openClaims();
     expect(within(card).queryByRole("button", { name: "Approve" })).toBeNull();
     expect(actions.approveClaimAction).not.toHaveBeenCalled();
@@ -197,7 +204,7 @@ describe("stage progress updates (commercial approval)", () => {
 const claimOf = (id: string, status: string, over: Record<string, unknown> = {}) => ({ ...claim(status), id, claim_number: `PRJ-X-${id}`, approval: status === "READY_FOR_APPROVAL" ? { requestId: `req-${id}`, stageRole: "MANAGER" } : null, ...over });
 const viewWith = (claims: unknown[], stageOver: Record<string, unknown> = {}): ProjectView => ({ ...view("DRAFT"), claims, stages: [{ ...stage(1), ...stageOver }, stage(2)] } as unknown as ProjectView);
 async function openClaimsOf(claims: unknown[]) {
-  vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: viewWith(claims) } as never);
+  vi.mocked(actions.getProjectAction).mockImplementation((async () => ({ ok: true, data: viewWith(claims), viewer })) as never);
   render(<ProjectWorkspace id="p1" />);
   fireEvent.click(await screen.findByRole("button", { name: /Commercial \/ Claims/ }));
   return await waitFor(() => { const a = document.querySelectorAll("article"); expect(a.length).toBe(claims.length); return Array.from(a) as HTMLElement[]; });
@@ -230,7 +237,7 @@ describe("P2b: the wording says what the re-read actually showed", () => {
   it("Withdraw: a successful re-read showing the claim cancelled is reported as recorded", async () => {
     const [card] = await openClaimsOf([claimOf("cA", "READY_FOR_APPROVAL")]);
     vi.mocked(actions.cancelDraftClaimAction).mockRejectedValue(new Error("lost"));
-    vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: viewWith([claimOf("cA", "CANCELLED_BEFORE_WRITE")]) } as never);
+    vi.mocked(actions.getProjectAction).mockImplementation((async () => ({ ok: true, data: viewWith([claimOf("cA", "CANCELLED_BEFORE_WRITE")]), viewer })) as never);
     fireEvent.click(within(card).getByRole("button", { name: "Withdraw claim" }));
     const ok = await within(card).findByText(/Claim withdrawn\.[\s\S]*recorded/);
     expect(ok.closest("[role=status]")).not.toBeNull();
@@ -238,7 +245,7 @@ describe("P2b: the wording says what the re-read actually showed", () => {
   it("Recalculate: a re-read showing the superseding draft is reported as recorded; showing none is 'did not complete'", async () => {
     const [card] = await openClaimsOf([claimOf("cA", "DRAFT")]);
     vi.mocked(actions.recalculateStaleDraftAction).mockRejectedValue(new Error("lost"));
-    vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: viewWith([claimOf("cA", "CANCELLED_BEFORE_WRITE"), claimOf("cB", "DRAFT", { supersedes_claim_id: "cA" })]) } as never);
+    vi.mocked(actions.getProjectAction).mockImplementation((async () => ({ ok: true, data: viewWith([claimOf("cA", "CANCELLED_BEFORE_WRITE"), claimOf("cB", "DRAFT", { supersedes_claim_id: "cA" })]), viewer })) as never);
     fireEvent.click(within(card).getByRole("button", { name: "Recalculate" }));
     expect((await screen.findByText(/Recalculated[\s\S]*recorded/)).closest("[role=status]")).not.toBeNull();
   });
@@ -252,7 +259,7 @@ describe("P2b: the wording says what the re-read actually showed", () => {
 
 describe("P3c: a lost response on a stage-progress save is checked against the stage", () => {
   async function stageForm() {
-    vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: viewWith([]) } as never);
+    vi.mocked(actions.getProjectAction).mockImplementation((async () => ({ ok: true, data: viewWith([]), viewer })) as never);
     render(<ProjectWorkspace id="p1" />);
     fireEvent.click(await screen.findByRole("button", { name: /^Stages/ }));
     fireEvent.click((await screen.findAllByRole("button", { name: "Update progress" }))[0]);
@@ -262,7 +269,7 @@ describe("P3c: a lost response on a stage-progress save is checked against the s
   it("the re-read shows the stage now approved at 40%: reported as recorded", async () => {
     await stageForm();
     vi.mocked(actions.recordProgressAction).mockRejectedValue(new Error("Failed to fetch"));
-    vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: viewWith([], { approvedBps: 4000 }) } as never);
+    vi.mocked(actions.getProjectAction).mockImplementation((async () => ({ ok: true, data: viewWith([], { approvedBps: 4000 }), viewer })) as never);
     fireEvent.click(screen.getByRole("button", { name: "Approve commercial progress" }));
     const ok = await screen.findByText(/Commercial approval recorded for Stage 1[\s\S]*recorded/);
     expect(ok.closest("[role=status]")).not.toBeNull();
@@ -280,7 +287,7 @@ describe("P3c: a lost response on a stage-progress save is checked against the s
     await stageForm();
     vi.mocked(actions.recordProgressAction).mockRejectedValue(new Error("Failed to fetch"));
     fireEvent.change(screen.getByLabelText(/Physical completion/), { target: { value: "25" } });
-    vi.mocked(actions.getProjectAction).mockResolvedValue({ ok: true, data: viewWith([], { reportedBps: 2500 }) } as never);
+    vi.mocked(actions.getProjectAction).mockImplementation((async () => ({ ok: true, data: viewWith([], { reportedBps: 2500 }), viewer })) as never);
     fireEvent.click(screen.getByRole("button", { name: "Record physical progress" }));
     expect(await screen.findByText(/Physical progress recorded for Stage 1[\s\S]*recorded/)).toBeTruthy();
   });

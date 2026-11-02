@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Feedback, type RunFn } from "./feedback-context";
 import type { Reconciled } from "@/components/ui/action-feedback";
@@ -21,9 +21,9 @@ const LABEL: Record<PostingDisplayState, string> = {
   NOT_SENT: "NOT SENT", PENDING: "PENDING", CREATED: "CREATED IN CIN7", RECONCILED: "RECONCILED", FAILED_CONFIRMED_NO_WRITE: "FAILED — NO INVOICE CREATED", FAILED_UNCERTAIN: "OUTCOME UNCERTAIN",
 };
 
-export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; run: RunFn; working: boolean }) {
+export function Cin7PostingPanel({ view, run, working, boot }: { view: ProjectView; run: RunFn; working: boolean; boot: Cin7PostingStatus | null }) {
   const projectId = view.project.id;
-  const [st, setSt] = useState<Cin7PostingStatus | null>(null);
+  const [st, setSt] = useState<Cin7PostingStatus | null>(boot); // the initial state arrives with the tab (one round trip for the whole Commercial tab)
   // Administrative recovery only (collapsed, admin-only): never part of the normal flow.
   const [rec, setRec] = useState({ saleId: "", customerName: view.project.customer_name ?? "", location: "", revenueAccount: "", cin7TaxRule: "Standard Rate Sales", reason: "" });
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -54,7 +54,10 @@ export function Cin7PostingPanel({ view, run, working }: { view: ProjectView; ru
     } catch { /* treated as a failed read */ }
     return null;
   };
-  useEffect(load, [load, view.claims.length, view.claims.map((c) => c.status).join()]);
+  // The first run is the tab's own initial display; every later change to the claims re-reads the state.
+  const initial = useRef(true);
+  const claimsKey = view.claims.map((c) => c.status).join();
+  useEffect(() => { if (initial.current) { initial.current = false; if (boot) return; } load(); }, [load, boot, view.claims.length, claimsKey]);
 
   if (!st || !st.gates.orgEnabled) return null; // the Cin7 posting capability is rolled out per organization
   const { gates, link, postings } = st;

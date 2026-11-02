@@ -60,14 +60,21 @@ export interface Cin7PostingStatus {
   postings: PostingRow[];
 }
 
+type Db = ReturnType<typeof createServiceRoleClient>;
+
+/** The posting state of a project (read-only). `gates` is computed once by the caller. */
+async function postingStatusOf(db: Db, orgId: string, projectId: string, gates: WriteGates): Promise<Cin7PostingStatus> {
+  const link = await loadSaleLink(db, orgId, projectId).catch(() => null); // deploy-order safety until migration 0104 exists
+  const snap = ((link as { sale_snapshot?: { recovery?: unknown } } | null)?.sale_snapshot) ?? {};
+  return { gates, link, linkOrigin: link ? (snap.recovery ? "ADMIN_RECOVERY" : "AUTOMATIC") : null, postings: await listPostings(db, orgId, projectId) };
+}
+
 export async function getCin7PostingStatusAction(projectId: string): Promise<Cin7ActionResult<Cin7PostingStatus>> {
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
-    await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
-    const db = createServiceRoleClient();
-    const link = await loadSaleLink(db, orgId, projectId).catch(() => null); // deploy-order safety until migration 0104 exists
-    const snap = ((link as { sale_snapshot?: { recovery?: unknown } } | null)?.sale_snapshot) ?? {};
-    return { ok: true, data: { gates: await gatesFor(orgId), link, linkOrigin: link ? (snap.recovery ? "ADMIN_RECOVERY" : "AUTOMATIC") : null, postings: await listPostings(db, orgId, projectId) } };
+    const gates = await gatesFor(orgId);
+    await guardBillingScope(createServiceRoleClient(), orgId, projectId, gates.isManager);
+    return { ok: true, data: await postingStatusOf(createServiceRoleClient(), orgId, projectId, gates) };
   } catch (e) {
     return { ok: false, error: message(e) };
   }
@@ -176,17 +183,44 @@ export interface Cin7SaleCreationStatus {
   excluded: Array<{ id: string; description: string; reason: string }>;
 }
 
+/** The creation state and the Sale lines derived from the project's approved product scope (read-only). `gates` is computed once by the caller. */
+async function creationStatusOf(db: Db, orgId: string, projectId: string, gates: WriteGates): Promise<Cin7SaleCreationStatus> {
+  const { items, effective } = await loadProjectScope(db, orgId, projectId);
+  const [creation, link] = await Promise.all([loadCreation(db, orgId, projectId), loadSaleLink(db, orgId, projectId).catch(() => null)]);
+  return {
+    gates, creation, linked: link !== null,
+    scopeItems: items, saleLines: effective.lines.map((l) => ({ sku: l.sku, quantity: l.quantity, description: l.description })), blockers: effective.blockers, excluded: effective.excluded,
+  };
+}
+
 /** Read-only: the creation state and the Sale lines derived from the project's approved product scope. */
 export async function getCin7SaleCreationStatusAction(projectId: string): Promise<Cin7ActionResult<Cin7SaleCreationStatus>> {
   try {
     const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
-    await guardBillingScope(createServiceRoleClient(), orgId, projectId, (await gatesFor(orgId)).isManager);
+    const gates = await gatesFor(orgId);
+    await guardBillingScope(createServiceRoleClient(), orgId, projectId, gates.isManager);
+    return { ok: true, data: await creationStatusOf(createServiceRoleClient(), orgId, projectId, gates) };
+  } catch (e) {
+    return { ok: false, error: message(e) };
+  }
+}
+
+/**
+ * PERF: the Commercial / Claims tab needs the Sale-creation record and the invoice-posting state together, and the browser runs a client's server actions one at
+ * a time. This is ONE guarded read: it checks module access and billing scope once, then reads both in parallel with the same helpers the two single actions use.
+ * Read-only. Each part fails on its own (null) so one cannot hide the other.
+ */
+export async function getCommercialBootAction(projectId: string): Promise<Cin7ActionResult<{ creation: Cin7SaleCreationStatus | null; posting: Cin7PostingStatus | null }>> {
+  try {
+    const { orgId } = await requireModuleAccess(PROJECTS_MODULE.href);
+    const gates = await gatesFor(orgId);
     const db = createServiceRoleClient();
-    const { items, effective } = await loadProjectScope(db, orgId, projectId);
-    return { ok: true, data: {
-      gates: await gatesFor(orgId), creation: await loadCreation(db, orgId, projectId), linked: (await loadSaleLink(db, orgId, projectId).catch(() => null)) !== null,
-      scopeItems: items, saleLines: effective.lines.map((l) => ({ sku: l.sku, quantity: l.quantity, description: l.description })), blockers: effective.blockers, excluded: effective.excluded,
-    } };
+    await guardBillingScope(db, orgId, projectId, gates.isManager);
+    const [creation, posting] = await Promise.all([
+      creationStatusOf(db, orgId, projectId, gates).catch(() => null),
+      postingStatusOf(db, orgId, projectId, gates).catch(() => null),
+    ]);
+    return { ok: true, data: { creation, posting } };
   } catch (e) {
     return { ok: false, error: message(e) };
   }

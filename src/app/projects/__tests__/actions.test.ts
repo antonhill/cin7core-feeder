@@ -114,6 +114,21 @@ describe("viewer permissions are display-only", () => {
     vi.mocked(requireOrgAdmin).mockRejectedValue(new Error(NOT_ADMIN));
     expect(await actions.getViewerPermissionsAction()).toEqual({ ok: true, data: { canApprove: false, newquip: false } });
   });
+  it("getProjectAction returns the SAME display permissions as getViewerPermissionsAction, with the project (one round trip), and none when it fails", async () => {
+    vi.mocked(store.loadProjectView).mockResolvedValue({ project: { id: "p1" }, variations: [], claims: [], stages: [] } as never);
+    for (const [session, admin] of [[SESSION, true], [SESSION, false], [NQ_SESSION, true], [NQ_SESSION, false]] as const) {
+      vi.mocked(requireModuleAccess).mockResolvedValue(session as never);
+      if (admin) vi.mocked(requireOrgAdmin).mockResolvedValue(session as never); else vi.mocked(requireOrgAdmin).mockRejectedValue(new Error(NOT_ADMIN));
+      const together = await actions.getProjectAction("p1");
+      const alone = await actions.getViewerPermissionsAction();
+      expect(together.ok).toBe(true);
+      expect(together.viewer).toEqual(alone.data);
+    }
+    vi.mocked(requireModuleAccess).mockRejectedValue(new Error(MODULE_DENIED));
+    const denied = await actions.getProjectAction("p1");
+    expect(denied.ok).toBe(false);
+    expect(denied.viewer).toBeUndefined(); // no answer -> the page treats the viewer as a plain member
+  });
   it("hiding the controls does not relax the server: a non-admin still cannot approve", async () => {
     vi.mocked(requireOrgAdmin).mockRejectedValue(new Error(NOT_ADMIN));
     expect((await actions.approveClaimAction("p1", "c1")).ok).toBe(false);

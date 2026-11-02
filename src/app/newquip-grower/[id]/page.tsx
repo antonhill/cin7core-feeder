@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ActionFeedback, useKeyedActions } from "@/components/ui/action-feedback";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { ModuleHeader } from "@/app/ModuleHeader";
 import { QUOTES_MODULE } from "@/app/module-nav";
 import { Alert } from "@/components/ui/Alert";
@@ -147,7 +148,7 @@ export default function QuoteEditorPage() {
     return (
       <main className="mx-auto w-full max-w-[1480px] px-6 py-12">
         <ModuleHeader module={QUOTES_MODULE}>Grower quote</ModuleHeader>
-        {error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <p className="mt-6 text-sm text-slate-500">Loading…</p>}
+        {error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <div role="status" aria-live="polite" aria-busy="true" data-testid="quote-loading"><p className="mt-6 text-sm text-slate-500">Loading the quotation…</p><Skeleton className="mt-4 h-14 w-full max-w-4xl" /><Skeleton className="mt-4 h-96 w-full" /></div>}
       </main>
     );
   }
