@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildFrom, codes } from "@/rwtsa-demo/__tests__/helpers";
+import { runFxExposure } from "@/rwtsa-demo/engine/fx-exposure";
 import { ORIGINAL_SHAPED, originalShapedBuffer } from "@/rwtsa-demo/fixtures/original-shaped";
 import { runCosting } from "@/rwtsa-demo/engine/bom-costing";
 import { runLandedCost } from "@/rwtsa-demo/engine/landed-cost";
@@ -31,7 +32,7 @@ describe("the original-shaped workbook loads directly", () => {
     const r = await load();
     const n = r.parsedRowCounts;
     expect(TAB_NAMES.every((t) => (n[t as TabName] ?? 0) > 0)).toBe(true);
-    expect(n).toMatchObject({ Items: 10, SalesHistory: 10, Stock: 10, ImportPOs: 4, Routing_SMV: 3, ProductionOrders: 2, LandedCost: 2, Payments_FEC: 3, Customers: 3, Quotes: 4 });
+    expect(n).toMatchObject({ Items: 10, SalesHistory: 10, Stock: 10, ImportPOs: 4, Routing_SMV: 3, ProductionOrders: 2, LandedCost: 2, Payments_FEC: 5, Customers: 3, Quotes: 4 });
     expect(codes(r, "unknown_tab")).toEqual([]);
     expect(codes(r, "supplementary_sheet")).toHaveLength(1);
     expect(codes(r, "supplementary_sheet")[0]).toMatchObject({ severity: "info", count: 1 });
@@ -184,8 +185,8 @@ describe("cell normalisation", () => {
   });
   it("reads Date cells for due dates and shipment dates", async () => {
     const pay = (await load()).dataset!.tables.paymentsFec;
-    expect(pay.map((p) => p.dueDate)).toEqual(["2026-11-15", "2026-11-30", "2026-09-30"]);
-    expect(pay.map((p) => p.shipmentDate)).toEqual(["2026-10-16", "2026-10-31", "2026-08-31"]);
+    expect(pay.map((p) => p.dueDate)).toEqual(["2026-11-15", "2026-11-30", "2026-09-30", "2026-08-20", "2026-08-04"]);
+    expect(pay.map((p) => p.shipmentDate)).toEqual(["2026-10-16", "2026-10-31", "2026-08-31", "2026-08-20", "2026-08-04"]);
   });
 });
 
@@ -311,7 +312,7 @@ describe("every sheet row is accounted for", () => {
     expect(L.Routing_SMV).toMatchObject({ titleRows: 2, dataRows: 3, trailingSummaryRows: 5, trailingNoteRows: 1 });
     expect(L.ProductionOrders).toMatchObject({ titleRows: 1, dataRows: 2, trailingNoteRows: 1 });
     expect(L.LandedCost).toMatchObject({ titleRows: 2, dataRows: 2 });
-    expect(L.Payments_FEC).toMatchObject({ titleRows: 1, dataRows: 3 });
+    expect(L.Payments_FEC).toMatchObject({ titleRows: 1, dataRows: 5 });
   });
   it("lists the note and trailing rows as value-free info findings with row numbers", async () => {
     const r = await load();
@@ -431,5 +432,27 @@ describe("confidentiality of the layout findings and accounting", () => {
     const out = JSON.stringify({ f: r.findings, l: r.layout });
     expect(out).not.toContain(S);
     expect(r.findings.length).toBeGreaterThan(0);
+  });
+});
+
+describe("original-shaped Payments_FEC: settlement is evidenced or unknown, never inferred from a past due date", () => {
+  it("the Remark column is read; a zero-term deposit is paid under the Rev2 rule; a zero-term non-deposit and a 30-day 'deposit' stay unknown", async () => {
+    const b = await load();
+    expect(b.ok).toBe(true);
+    const r = runFxExposure(b.dataset!, { asOf: "2026-10-31" });
+    const by = Object.fromEntries(r.rows.map((x) => [`${x.poNo}|${x.usdCents}`, [x.settlement, x.settlementBasis]]));
+    expect(by["PO-SYN-3|60000"]).toEqual(["paid", "deposit-rev2"]);
+    expect(by["SYN-QC|11000"]).toEqual(["unknown", "none"]);
+    expect(by["PO-SYN-1|50000"]).toEqual(["unknown", "none"]); // remarked "deposit" but on 30-day terms: not evidence of settlement
+    expect(r.totals.paidUsdCents).toBe(60000);
+    expect(r.totals.potentialUsdCents).toBe(r.totals.scheduledUsdCents - 60000);
+    expect(r.totals.confirmedOpenUsdCents).toBeNull();
+  });
+  it("an all-overdue schedule (every due date before the as-at date) still shows the full potential exposure", async () => {
+    const b = await load();
+    const r = runFxExposure(b.dataset!, { asOf: "2027-06-30" });
+    expect(r.rows.every((x) => x.pastDue)).toBe(true);
+    expect(r.totals.potentialUsdCents).toBeGreaterThan(0);
+    expect(r.totals.potentialUsdCents).toBe(runFxExposure(b.dataset!, { asOf: "2026-10-31" }).totals.potentialUsdCents);
   });
 });

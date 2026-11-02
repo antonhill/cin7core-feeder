@@ -185,40 +185,42 @@ describe("Scenario B: overhead, efficiency and margin", () => {
   });
 });
 
-describe("Scenario C: paid or open exposure", () => {
-  it("withholds the open USD exposure until the exposure basis is chosen, and says why", async () => {
+describe("Scenario C: payment settlement", () => {
+  it("shows potential exposure, labelled, and states that confirmed open exposure is not established, and why", async () => {
     local();
     const m = await C();
     expect(ruleIds(m)).toEqual(["payment-status"]);
-    expect(indicator(m, "ind-exposure")).toBe("Withheld");
-    expect(text(m)).toMatch(/no paid-status column/i);
-    expect(m).not.toContain('data-testid="bucket-row"');
+    expect(indicator(m, "ind-potential")).not.toBe("Withheld");
+    expect(indicator(m, "ind-potential")).not.toBeNull();
+    expect(indicator(m, "ind-confirmed-open")).toBe("Not established");
+    expect(text(m)).toMatch(/no settlement evidence/i);
+    expect(text(m)).toMatch(/not evidence of payment/i);
     expect(badge(m)).toBe("RULES: 1 OPEN");
   });
-  it("choosing 'due on or after the as-at date is open' shows the exposure, labelled as a chosen basis", async () => {
+  it("there is no control that treats overdue payments as settled, and the old query value does nothing", async () => {
     local();
     const m = await C({ exposure: "due" });
-    expect(ruleIds(m)).toEqual([]);
-    expect(indicator(m, "ind-exposure")).not.toBe("Withheld");
-    expect(text(m)).toContain("Basis chosen on this page");
+    expect(m).not.toContain('name="exposure"');
+    expect(text(m)).not.toMatch(/Treat payments due on or after/i);
+    expect(indicator(m, "ind-potential")).toBe(indicator(await C(), "ind-potential"));
+    expect(ruleIds(m)).toEqual(["payment-status"]);
   });
-  it("while withheld, nothing says which payments are open: no open flag, no paid-status note, no 'fall due before' warning", async () => {
+  it("every payment row says what is known: settlement evidence, never an inferred paid or open flag", async () => {
     local();
     const m = await C();
-    expect(m).not.toContain("data-open=");
-    expect(text(m)).not.toMatch(/fall due before|before as-at date|paid status unknown/i);
-    const chosen = await C({ exposure: "due" });
-    expect(chosen).toContain("data-open=");
+    const rows = [...m.matchAll(/data-testid="payment-row"[^>]*data-settlement="([^"]*)" data-basis="([^"]*)"/g)].map((x) => [x[1], x[2]]);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every(([st, basis]) => (st === "unknown" && basis === "none") || (st === "paid" && basis === "deposit-rev2"))).toBe(true);
   });
   it("landed cost itself is unaffected by the exposure rule", async () => {
     local();
     expect(indicator(await C(), "ind-landed")).not.toBeNull();
   });
-  it("SYNTHETIC data shows exposure without a rule", async () => {
+  it("SYNTHETIC data has no open rule and the same truthful labels", async () => {
     synthetic();
     const m = await C();
     expect(ruleIds(m)).toEqual([]);
-    expect(indicator(m, "ind-exposure")).not.toBe("Withheld");
+    expect(indicator(m, "ind-confirmed-open")).toBe("Not established");
   });
 });
 

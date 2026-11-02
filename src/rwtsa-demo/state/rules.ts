@@ -59,10 +59,10 @@ export const overheadRule = (): UnresolvedRule => ({
   how: "owner",
 });
 
-export const paymentRule = (): UnresolvedRule => ({
+export const paymentRule = (unknown: number): UnresolvedRule => ({
   id: "payment-status",
-  title: "Paid or open USD exposure",
-  detail: "The workbook has no paid-status column, so which payments are still open is not known. Choose to treat payments due on or after the as-at date as open, or leave the exposure withheld.",
-  withholds: "Open, covered and uncovered USD exposure",
-  how: "choose",
+  title: "Payment settlement status",
+  detail: `${unknown} payment(s) have no settlement evidence: the workbook has no paid-status or paid-date column, and a due date in the past is not evidence of payment. The only documented settlement is the Rev2 deposit paid at shipment. The USD figure shown is POTENTIAL exposure (every payment not confirmed paid); confirmed open exposure cannot be established until the paid / open status of each payment is supplied.`,
+  withholds: "Confirmed open (verified outstanding) USD exposure; the potential exposure is shown, labelled as potential",
+  how: "owner",
 });
