@@ -1,5 +1,6 @@
 "use client";
 
+import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ModuleHeader } from "@/app/ModuleHeader";
@@ -60,7 +61,7 @@ export default function ProjectTemplatesPage() {
   const canManage = !!data?.canManage;
 
   return (
-    <main className="mx-auto w-full max-w-[1200px] px-6 py-8">
+    <main className={pageContainerClass("form", "compact")}>
       <ModuleHeader module={QUOTES_MODULE}>Project templates</ModuleHeader>
       <p className="mt-2 text-sm text-slate-600">Reusable billing milestones for new projects. Percentages must total exactly 100%. A project keeps its own copy of the stages it was created with: editing or retiring a template never changes an existing project or an approved quotation.</p>
       <div className="mt-2"><Link className="text-sm text-slate-700 underline" href="/newquip-grower">Back to Solution Builder</Link></div>

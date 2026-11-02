@@ -1,3 +1,4 @@
+import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ModuleHeader } from "@/app/ModuleHeader";
@@ -20,7 +21,7 @@ export default async function GrowerTemplatePage() {
   }
   const sections = growerTemplateSections();
   return (
-    <main className="mx-auto w-full max-w-[1480px] px-6 py-12">
+    <main className={pageContainerClass("wide")}>
       <ModuleHeader module={QUOTES_MODULE}>
         <Link href="/newquip-grower" className="text-indigo-700 hover:underline">← Grower quotes</Link> · Template detail
       </ModuleHeader>

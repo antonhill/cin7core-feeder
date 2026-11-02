@@ -1,5 +1,6 @@
 "use client";
 
+import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
@@ -38,7 +39,7 @@ export default function NewquipGrowerPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-[1480px] px-6 py-12">
+    <main className={pageContainerClass("data")}>
       <ModuleHeader module={QUOTES_MODULE}>NewQuip Agri Supplies — Grower House quotes</ModuleHeader>
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-3xl text-sm text-slate-600">

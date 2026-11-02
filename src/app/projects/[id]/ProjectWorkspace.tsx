@@ -1,5 +1,6 @@
 "use client";
 
+import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
@@ -256,7 +257,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
     return embedded ? (
       <div className="mt-4">{error ? <Alert tone="danger">{error}</Alert> : <p className="text-sm text-slate-500">{isLoading ? "Loading the variation billing workspace…" : ""}</p>}</div>
     ) : (
-      <main className="mx-auto w-full max-w-[1480px] px-6 py-12">
+      <main className={pageContainerClass("data")}>
         <ModuleHeader module={PROJECTS_MODULE}>{isLoading ? "Loading project…" : "Project"}</ModuleHeader>
         {error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <WorkspaceSkeleton />}
       </main>
@@ -268,7 +269,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   const Shell = embedded ? "div" : "main";
   return (
     <ProjectFeedbackProvider value={acts.stateOf}>
-    <Shell className={embedded ? "mt-2" : "mx-auto w-full max-w-[1480px] px-6 py-12"}>
+    <Shell className={embedded ? "mt-2" : pageContainerClass("data")}>
       {!embedded && (
         <ModuleHeader module={PROJECTS_MODULE}>
           <Link href="/projects" className="text-indigo-700 hover:underline">← All projects</Link>
