@@ -89,7 +89,7 @@ describe("F-12 Solution Builder disabled controls say why", () => {
   it("Save draft: a viewer who cannot edit is told so (and the explanation names no one)", async () => {
     // UX-006i2: Stage 2 has no Save bar for a viewer who cannot edit there (a Manager only inspects it), so the explanation is checked where Save lives for everyone: Stage 1.
     await open("1", ["MANAGER"], undefined, "Equipment selections");
-    const save = screen.getByRole("button", { name: "Save draft" }) as HTMLButtonElement;
+    const save = (await screen.findByRole("button", { name: "Save draft" }, { timeout: 8000 })) as HTMLButtonElement; // i1: the Stage 1 toolbar shows once the customer details have settled
     expect(save.disabled).toBe(true);
     expect(described(save)).toMatch(/only a Rep or Estimator can edit and save/);
   }, 30000);

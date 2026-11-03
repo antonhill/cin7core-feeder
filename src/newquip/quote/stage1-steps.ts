@@ -57,6 +57,8 @@ export interface Stage1Input {
   roomValues?: Partial<Record<string, number | null | undefined>>;
   /** Optional: when given, Rep-owned quantities/charges/exclusions and Estimator-owned mappings/prices are listed (and the Equipment step reflects the Rep's part). */
   work?: Stage1WorkFacts;
+  /** A Rep changed a product-affecting control (the feeder variant) whose saved product choice only an Estimator may change: the step is not complete until that is resolved or undone. */
+  productChangePending?: boolean;
 }
 
 export interface Stage1Issue { message: string; stepId: Stage1ContentStepId }
@@ -141,7 +143,8 @@ export function deriveStage1Steps(input: Stage1Input): Stage1Derived {
 
   const owned = input.work ? ownedWork(input.work) : { rep: [], estimator: [] };
   let equipment: { status: StepStatus; note?: string };
-  if (equipmentIssues.length > 0) equipment = { status: "attention", note: friendly(equipmentIssues[0]) };
+  if (input.productChangePending) equipment = { status: "attention", note: "A product change needs the Estimator to confirm it (or undo the change)" };
+  else if (equipmentIssues.length > 0) equipment = { status: "attention", note: friendly(equipmentIssues[0]) };
   else if (pigSizeMissing) equipment = { status: "incomplete", note: "Choose the penning pig size" };
   else if (owned.rep.length > 0) equipment = { status: "attention", note: owned.rep[0] + (owned.rep.length > 1 ? ` (+${owned.rep.length - 1} more)` : "") };
   else equipment = { status: "complete" };
@@ -156,6 +159,7 @@ export function deriveStage1Steps(input: Stage1Input): Stage1Derived {
     ...(pigSizeMissing && equipmentIssues.length === 0 ? [{ message: "Choose the penning pig size", owner: "Rep" as const, stepId: "equipment" as const }] : []),
     ...owned.rep.map((message) => ({ message, owner: "Rep" as const, stepId: "equipment" as const })),
     ...owned.estimator.map((message) => ({ message, owner: "Estimator" as const })),
+    ...(input.productChangePending ? [{ message: "Estimator product choice needed: CCM feeder (the feeder variant was changed)", owner: "Estimator" as const }] : []),
   ];
 
   const mk = (id: Stage1ContentStepId, s: { status: StepStatus; note?: string }) => ({ id, label: STAGE1_STEP_LABEL[id], status: s.status, ...(s.note ? { note: s.note } : {}) });

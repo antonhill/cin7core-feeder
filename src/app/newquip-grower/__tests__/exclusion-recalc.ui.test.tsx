@@ -127,7 +127,7 @@ async function open(stage = "1") {
   (globalThis as { __QID?: string }).__QID = id;
   const { default: Page } = await import("../[id]/page");
   render(createElement(Page));
-  await waitFor(() => expect(screen.getByLabelText(/Exclude CCM feeder/i)).toBeTruthy(), { timeout: 5000 });
+  await waitFor(() => expect(stage === "2" ? screen.getByText("Product mappings") : screen.getByLabelText(/Exclude CCM feeder/i)).toBeTruthy(), { timeout: 5000 });
   return id;
 }
 
@@ -190,10 +190,11 @@ describe("UAT-003 rendered page: the Exclude checkbox recalculates without Save"
 // UAT-025 on the quotation page: the result of Save draft is shown directly under the Save row (not in a banner at the top of a long page), a failure keeps the edits,
 // and a double-click saves once.
 describe("UAT-025 rendered page: Save draft reports beside its button", () => {
+  // UX-006i2: the exclusions are Stage 1 (the Rep's) and Stage 1's Save row now sits in the step toolbar, apart from the feedback. The "result right under the Save row" rule is therefore proven where that
+  // layout still holds: Stage 2 (the Estimator's own edit, a manual price reason), through the same saveRow / ActionFeedback.
   async function editReady() {
-    await open();
-    fireEvent.click(box(/Exclude CCM feeder/i));
-    fireEvent.change(screen.getAllByPlaceholderText("Reason (required)")[0], { target: { value: "Customer supplies their own feeders" } });
+    await open("2");
+    fireEvent.change(screen.getAllByLabelText("Reason", { selector: "input" })[0], { target: { value: "Supplier quote dated today" } });
     await waitFor(() => expect((screen.getByRole("button", { name: "Save draft" }) as HTMLButtonElement).disabled).toBe(false), { timeout: 8000 });
     return screen.getByRole("button", { name: "Save draft" }) as HTMLButtonElement;
   }
@@ -219,7 +220,7 @@ describe("UAT-025 rendered page: Save draft reports beside its button", () => {
     expect(bad.textContent).toMatch(/changed by someone else/);
     expect(bad.parentElement!.previousElementSibling).toBe(save.parentElement);
     expect(screen.getByText("Unsaved changes")).toBeTruthy(); // still dirty: nothing was lost
-    expect((screen.getAllByPlaceholderText("Reason (required)")[0] as HTMLInputElement).value).toBe("Customer supplies their own feeders");
+    expect((screen.getAllByLabelText("Reason", { selector: "input" })[0] as HTMLInputElement).value).toBe("Supplier quote dated today");
   }, 30000);
 
   it("a double-click on Save draft saves once", async () => {
