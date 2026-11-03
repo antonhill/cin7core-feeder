@@ -159,11 +159,16 @@ describe("locks unlock only when the earlier steps are complete (and say why)", 
     await open({ view: snapshotView(true), draftOver: { siteName: "" }, step: "2" });
     expect(current()).toBe("site");
     const next = screen.getByRole("button", { name: "Next: Equipment & options" }) as HTMLButtonElement;
-    expect(next.disabled).toBe(true);
+    expect(next.getAttribute("aria-disabled")).toBe("true");
     expect(screen.getByTestId("next-blocked").textContent).toContain("step 2 (Site & measurements)");
     expect(next.getAttribute("aria-describedby")).toBe("next-why");
+    // Trying to go on is the signal: the step's problems now show at the fields (D3), and the viewer has not moved.
+    expect(screen.queryAllByTestId("field-error").length).toBe(0);
+    fireEvent.click(next);
+    expect(current()).toBe("site");
+    expect(within(screen.getByLabelText(/^Site \/ project name/).closest("label")!).getByTestId("field-error").textContent).toBe("Site / project name is required.");
     fireEvent.change(screen.getByLabelText(/^Site \/ project name/), { target: { value: "Farm 1" } });
-    await waitFor(() => expect((screen.getByRole("button", { name: "Next: Equipment & options" }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Next: Equipment & options" }).getAttribute("aria-disabled")).toBeNull());
     expect(submitSpy).not.toHaveBeenCalled();
   }, 30000);
 

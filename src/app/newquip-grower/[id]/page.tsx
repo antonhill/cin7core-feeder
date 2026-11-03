@@ -741,7 +741,8 @@ export default function QuoteEditorPage() {
             {stepNo > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStepId(STAGE1_STEP_IDS[stepNo - 2])}>Back</Button> : <span />}
             {nextStep1 && nextStep1Locked && (
               <div className="flex max-w-xl flex-col items-end gap-1">
-                <Button type="button" className="min-h-11" disabled={nextStep1Locked.access === "locked"} aria-describedby={nextStep1Locked.access === "locked" ? "next-why" : undefined} onClick={() => goStepId(nextStep1)}>Next: {STAGE1_STEP_LABEL[nextStep1]}</Button>
+                {/* aria-disabled (not `disabled`) so that TRYING to go on is a signal: it marks this step's fields as touched and their problems appear at the fields. Nothing else happens. */}
+                <Button type="button" className={`min-h-11 ${nextStep1Locked.access === "locked" ? "opacity-50" : ""}`} aria-disabled={nextStep1Locked.access === "locked" || undefined} aria-describedby={nextStep1Locked.access === "locked" ? "next-why" : undefined} onClick={() => { if (nextStep1Locked.access === "locked") { if (stepId === "site" || stepId === "equipment") touch(...STEP_FIELD_KEYS[stepId]); return; } goStepId(nextStep1); }}>Next: {STAGE1_STEP_LABEL[nextStep1]}</Button>
                 {nextStep1Locked.access === "locked" && <p id="next-why" className="text-right text-sm text-amber-900" data-testid="next-blocked">{nextStep1Locked.blockedBy.join(" ")}</p>}
               </div>
             )}
