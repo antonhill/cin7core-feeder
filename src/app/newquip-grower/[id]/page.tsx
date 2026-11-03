@@ -300,7 +300,7 @@ export default function QuoteEditorPage() {
   const step2Cur = step2No >= 1 && step2No <= step2Ids.length ? step2No : 1; // a ?step= beyond this viewer's steps (a Rep has three) falls back to the first, as for Stage 1
   const step2Id = step2Ids[step2Cur - 1];
   const stage2 = deriveStage2Steps({
-    canViewCommercials: canCommercials, roles: { rep: roles.has("rep"), estimator: roles.has("estimator"), manager: roles.has("manager") }, revision: q.revision, state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", calcValid: ev.calc.valid, lines: ev.calc.lines,
+    canViewCommercials: canCommercials, editable, roles: { rep: roles.has("rep"), estimator: roles.has("estimator"), manager: roles.has("manager") }, revision: q.revision, state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", calcValid: ev.calc.valid, lines: ev.calc.lines,
     readiness: { state: rd.state, reasons: rd.reasons, missingMappings: rd.counts.missingMappings },
     budget: budget ? { incomplete: budget.incomplete, estimatedCost: budget.totals.estimatedCost, marginPct: budget.totals.overallMarginPct, lines: budget.lines, charges: budget.charges } : null,
     blankExclusionCount: blankExclusionKeys.length, incompleteCostOverrideCount: Object.keys(previewCostOverrides(draft.estimator.costOverrides).errors).length,
