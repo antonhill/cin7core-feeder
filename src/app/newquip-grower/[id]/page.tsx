@@ -48,7 +48,7 @@ import { nextIncompleteStepId, parseStepParam } from "@/components/ui/step-rail-
 import { customerFactsSettled, deriveStage1Steps, fieldErrors, ownedWork, STEP_FIELD_KEYS, NO_CUSTOMER_FACTS, STAGE1_STEP_IDS, STAGE1_STEP_LABEL, type Stage1CustomerFacts, type Stage1StepId } from "@/newquip/quote/stage1-steps";
 import { currentStepId, deriveWizard, isPermitted, resolveEntryStep, toRailSteps } from "@/newquip/quote/wizard-contract";
 import { costAckKey, deriveStage2Steps, type Stage2Input } from "@/newquip/quote/stage2-steps";
-import { deriveFinalReviewChecklist, deriveStage2Wizard, deriveStage3Wizard, estimatorWork, finalReviewBlockText, STAGE2_WIZARD_IDS, STAGE2_WIZARD_LABEL, type Stage2WizardId } from "@/newquip/quote/stage23-wizard";
+import { commercialReadiness, confirmedAmountChange, deriveFinalReviewChecklist, deriveStage2Wizard, deriveStage3Wizard, estimatorWork, finalReviewBlockText, STAGE2_WIZARD_IDS, STAGE2_WIZARD_LABEL, type Stage2WizardId } from "@/newquip/quote/stage23-wizard";
 import { Disclosure, EstimatorResult, FinalReviewChecklist, OwnerTag, RepSubmittedSummary } from "./Stage23Panels";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { DeliveryPanel, type DeliveryGate } from "./DeliveryPanel";
@@ -285,8 +285,9 @@ export default function QuoteEditorPage() {
   const marginNote = marginIncomplete ? `project margin not available: ${marginInfo!.missing} line${marginInfo!.missing === 1 ? " has" : "s have"} no cost` : null;
   // "Manager: final approval" is described by whichever of the existing messages currently applies (each is already on the page, so nothing is duplicated). Role/process wording only.
   const approveSignoffMissing = q?.state === "ESTIMATOR_REVIEW" && !q.estimator_signoff_hash;
+  const approveNotReady = q.state === "ESTIMATOR_REVIEW" && rd.state !== "READY";
   const approveSignoffStale = q?.state === "ESTIMATOR_REVIEW" && !!q.estimator_signoff_hash && q.estimator_signoff_hash !== q.draft_hash;
-  const approveDescribedBy = [isWorking && `${uid}-approve-busy`, !roles.has("manager") && `${uid}-approve-role`, approveSignoffMissing && `${uid}-approve-signoff`, approveSignoffStale && `${uid}-approve-stale`, dirty && `${uid}-approve-dirty`].filter(Boolean).join(" ") || undefined;
+  const approveDescribedBy = [isWorking && `${uid}-approve-busy`, !roles.has("manager") && `${uid}-approve-role`, approveNotReady && `${uid}-approve-notready`, approveSignoffMissing && `${uid}-approve-signoff`, approveSignoffStale && `${uid}-approve-stale`, dirty && `${uid}-approve-dirty`].filter(Boolean).join(" ") || undefined;
   const returnWhy = isWorking ? "Another action is in progress. Please wait." : !returnReason.trim() ? "Enter the reason for returning it to enable this." : undefined;
   // The same rounding the server uses for the saved total (quote-store totalCents), so the Stage 3 checklist compares like with like; unsaved edits are covered by its own row.
   const totalCents = budget && !budget.incomplete ? Math.round(budget.totals.subtotalExTax * 100) : null;
@@ -476,13 +477,16 @@ export default function QuoteEditorPage() {
   const costNeedsMark = canAckCost && !dirty && !costAcknowledged; // the one action is offered only when it can actually take effect
   const ACK_EXPLAIN = "This records that you have looked at the costing and margin for this version. It is not the Estimator sign-off.";
   const work2 = estimatorWork(budget?.lines ?? null, workFacts.blankPriceReasonCount);
+  const commercial = view.viewer.canViewCommercials && budget ? commercialReadiness({ lines: budget.lines, blankPriceReasonCount: workFacts.blankPriceReasonCount, costMissingLines: marginIncomplete ? marginInfo!.missing : 0 }) : null;
+  const amountChange = confirmedAmountChange(q.customer_confirmed_cents, totalCents);
   const mappingOpen = work2.all; // the CURRENT open Estimator items by kind (never stale after the mappings are confirmed)
   // UX policy (no server change): while the review CAN be marked (commercial Estimator, in review, costing in "Review needed", no unsaved edits), signing off waits for the session mark. Returning to the Rep never does.
   const signoffNeedsReview = canAckCost && !costAcknowledged;
   const signoffWhy2 = signoffWhy ?? (signoffNeedsReview ? "Mark the costing reviewed first (Final review)." : undefined);
   const wizard2 = deriveStage2Wizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, roles: { rep: roles.has("rep"), estimator: isEstimator, manager: roles.has("manager") }, canViewCommercials: canCommercials, signoff: s2Base.signoff,
     dirty, calcValid: ev.calc.valid, readiness: { state: rd.state, reasons: rd.reasons }, mappingOpen, repOpenCount: stage1.open.filter((o) => o.owner === "Rep").length, cost: costBase ? { status: costBase.status, note: costBase.note } : null,
-    costAcknowledged, confirmedCents: q.customer_confirmed_cents, totalCents, costMissingLines: marginIncomplete ? marginInfo!.missing : 0 });
+    costAcknowledged, confirmedCents: q.customer_confirmed_cents, totalCents, costMissingLines: marginIncomplete ? marginInfo!.missing : 0,
+    mappingSummary: [work2.map.length > 0 && `${work2.map.length} line${work2.map.length === 1 ? "" : "s"} unmapped`, work2.price.length > 0 && `${work2.price.length} supplier quote${work2.price.length === 1 ? "" : "s"} required`, work2.reason.length > 0 && work2.reason[0]].filter(Boolean).join(" · ") || undefined });
   const railSteps2 = toRailSteps(wizard2.steps); // steps hidden from this viewer (the cost steps without cost visibility) are not on the rail
   const visible2 = railSteps2.map((x) => x.id);
   const railSteps2View = railSteps2.map((x) => (x.id === "signoff" && signoffNeedsReview && !x.locked ? { ...x, note: "Sign-off waits for the final review mark; Return is open" } : x));
@@ -525,6 +529,14 @@ export default function QuoteEditorPage() {
   const costOverrideRows = canCommercials ? Object.entries(draft.estimator.costOverrides ?? {}).map(([k, o]) => ({ label: lineByKey.get(k as GrowerItemKey)?.label ?? k, costCents: o.lineCostCents, reason: o.reason, by: o.by })) : null;
   // The three biggest lines by selling value, so an implausible line is noticeable (display only, no check). Only for a viewer with cost visibility.
   const largestLines = (budget?.lines ?? []).filter((b) => b.revenueExTax != null && b.revenueExTax > 0).sort((a, b) => (b.revenueExTax ?? 0) - (a.revenueExTax ?? 0)).slice(0, 3).map((b) => ({ label: b.label, amount: b.revenueExTax as number }));
+  const confirmSourceBacked = () => edit((d) => {
+    for (const l of ev.calc.lines) {
+      if (l.basis === "not_selected") continue;
+      const sku = expectedSkuFor(l.itemKey, d.config.feederVariant);
+      if (sku && l.itemKey !== "pvc_door") d.estimator.confirmedMappings[l.itemKey] = sku;
+      if (packageFor(l.itemKey) && !packageFor(l.itemKey)!.estimatorPriced && !d.estimator.confirmedPackages.includes(l.itemKey)) d.estimator.confirmedPackages.push(l.itemKey);
+    }
+  });
   const repSummary = (
     <RepSubmittedSummary draft={draft} submitted={q.state !== "REP_DRAFT"} revision={q.revision} floorAreaM2={ev.calc.derived.floorAreaM2} totalCents={q.state === "REP_DRAFT" ? totalCents : (q.customer_confirmed_cents ?? totalCents)} quantities={repQuantities}
       confirmed={{ cents: q.customer_confirmed_cents, by: q.customer_confirmed_by, at: q.customer_confirmed_at }} />
@@ -585,8 +597,9 @@ export default function QuoteEditorPage() {
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs uppercase tracking-wide text-slate-700">Calculation</span>
-            <Status tone={stage === 1 ? (rd.state === "READY" ? "success" : "neutral") : READY_TONE[rd.state]}>{stage === 1 ? (rd.state === "READY" ? "Complete" : "In progress") : READINESS_LABEL[rd.state]}</Status>
+            <Status tone={commercial && !commercial.complete && rd.state === "READY" ? "warning" : stage === 1 ? (rd.state === "READY" ? "success" : "neutral") : READY_TONE[rd.state]}>{commercial && !commercial.complete && rd.state === "READY" ? "Indicative: not commercially ready" : stage === 1 ? (rd.state === "READY" ? "Complete" : "In progress") : READINESS_LABEL[rd.state]}</Status>
             {previewFailure ? <Status tone="danger">Recalculation failed - figures are out of date</Status> : dirty && <Status tone="warning">Preview of unsaved edits</Status>}
+            {commercial && !commercial.complete && <span data-testid="commercial-chip"><Status tone="warning">{commercial.headline}</Status></span>}
           </div>
           <dl className="flex flex-wrap items-end gap-x-8 gap-y-1">
             <div><dt className="text-xs uppercase tracking-wide text-slate-700">Quote total (ex VAT)</dt><dd className={`whitespace-nowrap text-xl font-bold tabular-nums ${previewFailure ? "text-slate-700 line-through decoration-1" : "text-slate-900"}`}>{totalCents == null ? "—" : fmtCents(totalCents)}{staleCue && <span className="ml-2 text-sm font-semibold no-underline" data-testid="summary-stale">{staleCue}</span>}</dd></div>
@@ -646,12 +659,13 @@ export default function QuoteEditorPage() {
             <span role="status" aria-live="polite" className="text-slate-800" data-testid="stage2-status-line">{wizard2.statusLine}</span>
             <OwnerTag role={wizard2.nextOwner} />
           </div>
-          {wizard2.steps.find((x) => x.id === "mapping")!.access === "edit" && q.state === "REP_DRAFT" && mappingOpen.length > 0 && (
-            <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" role="status" data-testid="rep-waiting-banner">
-              <p className="font-semibold">Needed from you before the Rep can submit</p>
-              <ul className="mt-1 list-disc space-y-0.5 pl-5">{mappingOpen.map((m) => <li key={m}>{m}</li>)}</ul>
-              <p className="mt-1">The Rep cannot submit until these are done. Steps 2 to 4 open once the Rep has submitted.</p>
-            </div>
+          {amountChange.changed && q.state === "ESTIMATOR_REVIEW" && <div className="mt-3"><Alert tone="warning"><span data-testid="total-changed">{amountChange.text}</span></Alert></div>}
+          {wizard2.steps.find((x) => x.id === "mapping")!.access === "edit" && q.state !== "MANAGER_APPROVED_FINAL" && mappingOpen.length > 0 && (
+            <details open className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" data-testid="rep-waiting-banner">
+              <summary className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-2 font-semibold"><span>{q.state === "REP_DRAFT" ? "Needed from you before the Rep can submit" : "Yours to resolve: the Rep has already submitted"}</span><span className="font-normal">· {mappingOpen.length} item{mappingOpen.length === 1 ? "" : "s"}</span></summary>
+              <ul className="mt-1 list-disc space-y-0.5 pl-5 lg:columns-2">{mappingOpen.map((m) => <li key={m} className="break-inside-avoid">{m}</li>)}</ul>
+              <p className="mt-1" data-testid="waiting-explain">{q.state === "REP_DRAFT" ? "The Rep cannot submit until these are done. Steps 2 to 4 open once the Rep has submitted." : "These are Estimator items by design. Sign-off stays disabled until they are resolved and the review is marked."}</p>
+            </details>
           )}
           {repSummary}
           {req2No !== null && req2No > visible2.length && <p className="mt-3 text-sm text-slate-800" data-testid="step-unavailable">That step is not available to you, so the first step is shown.</p>}
@@ -672,7 +686,7 @@ export default function QuoteEditorPage() {
       {(stage === 1 || (stage === 2 && (s2Edit || dirty))) && (
         <>
           {stage === 2 && saveRow("mt-4")}
-          <div className="mt-2 space-y-1">{editable && <div className={stage === 1 && !dirty ? "sr-only" : ""}><DisabledReason id="save-why">{saveWhy}</DisabledReason></div>}<ActionFeedback state={acts.stateOf("save")} /></div>
+          <div className="mt-2 space-y-1">{editable && <div className={!dirty ? "sr-only" : ""}><DisabledReason id="save-why">{saveWhy}</DisabledReason></div>}<ActionFeedback state={acts.stateOf("save")} /></div>
           <div className="mt-2 space-y-2">
           {dirty && <p className="max-w-4xl text-sm text-slate-700" data-testid="unsaved-note">{recalculating ? "Recalculating… " : ""}{view.viewer.canViewCommercials ? "The prices, costs, margins and totals" : "The quantities, prices and totals"} are a live preview of your edits and nothing is saved until you press Save draft. Sign-off and approval use the SAVED draft.</p>}
           {stage === 1 && (productChangePending || mapRefused) && <p className="max-w-4xl text-sm font-medium text-amber-900" data-testid="product-change-refused">{PRODUCT_CHANGE_SHORT}</p>}
@@ -878,13 +892,23 @@ export default function QuoteEditorPage() {
           {/* Hidden steps stay mounted (hidden + inert): the requests and timers started on mount are the same whichever step is shown. A LOCKED step stays mounted too; show-all lists it as heading + reason. */}
           <StepPanel railId="s2" stepId="mapping" number={visible2.indexOf("mapping") + 1} title={STAGE2_WIZARD_LABEL.mapping} current={step2Id === "mapping"} showAll={showAllSteps} locked={lockedFor2("mapping")} className="space-y-6">
             {editWarning && <Alert tone="warning"><span data-testid="edit-clears-signoff">{editWarning}</span></Alert>}
+            {s2Edit && (
+              <div className="flex flex-wrap items-center gap-3" data-testid="step1-first-action">
+                <Button variant="secondary" className="min-h-11" onClick={confirmSourceBacked}>Confirm source-backed mappings</Button>
+                <span className="text-xs text-slate-700">Confirms the recommended product for every line the price list names. Anything it cannot confirm stays listed above.</span>
+              </div>
+            )}
             <Panel>
               <div className="flex flex-wrap items-center gap-3">
                 <PanelTitle>Quote readiness</PanelTitle>
                 <Status tone={READY_TONE[rd.state]}>{READINESS_LABEL[rd.state]}</Status>
+                {rd.reasons.length > 0 && <span className="text-xs text-slate-700">{rd.reasons.length} open item{rd.reasons.length === 1 ? "" : "s"}</span>}
               </div>
               {rd.reasons.length > 0 && (
-                <ul className="mt-3 list-disc space-y-0.5 pl-5 text-sm text-red-700">{rd.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
+                <details className="mt-1" open={mappingOpen.length === 0}>
+                  <summary className="inline-flex min-h-11 cursor-pointer items-center text-sm font-semibold text-indigo-700">Why it is not READY</summary>
+                  <ul className="list-disc space-y-0.5 pl-5 text-sm text-red-700">{rd.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
+                </details>
               )}
               <details className="mt-3">
                 <summary className="inline-flex min-h-11 cursor-pointer items-center text-sm font-semibold text-indigo-700">Readiness details</summary>
@@ -923,14 +947,6 @@ export default function QuoteEditorPage() {
             <Panel>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <PanelTitle>Product mappings</PanelTitle>
-                <Button variant="secondary" size="sm" className="min-h-11" onClick={() => edit((d) => {
-                  for (const l of ev.calc.lines) {
-                    if (l.basis === "not_selected") continue;
-                    const sku = expectedSkuFor(l.itemKey, d.config.feederVariant);
-                    if (sku && l.itemKey !== "pvc_door") d.estimator.confirmedMappings[l.itemKey] = sku;
-                    if (packageFor(l.itemKey) && !packageFor(l.itemKey)!.estimatorPriced && !d.estimator.confirmedPackages.includes(l.itemKey)) d.estimator.confirmedPackages.push(l.itemKey);
-                  }
-                })}>Confirm source-backed mappings</Button>
               </div>
               <p className="mt-2 text-xs text-slate-600">Source-backed SKUs are recommendations until you confirm them. A historic surrogate (e.g. FERAX for FORTIS 1.2) is never substituted.</p>
               <ul className="mt-3 space-y-2 text-sm">
@@ -1010,9 +1026,7 @@ export default function QuoteEditorPage() {
             <Panel>
               <PanelTitle>Final review</PanelTitle>
               <p className="mt-1 text-sm text-slate-700">One look at what the sign-off depends on, then mark the review done.</p>
-              <FinalReviewChecklist items={finalChecklist} />
-              {isEstimator && q.state === "ESTIMATOR_REVIEW" && <p className="mt-3 text-xs text-slate-700" data-testid="session-only-note">&ldquo;Mark reviewed&rdquo; is kept on this screen for this session only: it is not saved, and after a reload you mark it again. Signing off needs it in the same session, so repeat it after a reload. Returning the quote to the Rep never does.</p>}
-              <div className="mt-4 border-t border-slate-100 pt-4" data-testid="cost-ack">
+              <div className="mt-3" data-testid="cost-ack">
                 {costNeedsMark && (
                   <>
                     <p id="cost-ack-explain" className="text-sm text-slate-800">{ACK_EXPLAIN}</p>
@@ -1028,6 +1042,14 @@ export default function QuoteEditorPage() {
                   </div>
                 )}
               </div>
+              {commercial && !commercial.complete && (
+                <details open className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" data-testid="not-commercially-ready">
+                  <summary className="flex min-h-11 cursor-pointer items-center font-semibold">{commercial.headline}</summary>
+                  <ul className="mt-1 list-disc space-y-0.5 pl-5">{commercial.items.map((x) => <li key={x.text}><b>{x.owner}:</b> {x.text}</li>)}</ul>
+                </details>
+              )}
+              <FinalReviewChecklist items={finalChecklist} />
+              {isEstimator && q.state === "ESTIMATOR_REVIEW" && <p className="mt-3 text-xs text-slate-700" data-testid="session-only-note">&ldquo;Mark reviewed&rdquo; is kept on this screen for this session only: it is not saved, and after a reload you mark it again. Signing off needs it in the same session, so repeat it after a reload. Returning the quote to the Rep never does.</p>}
             </Panel>
           </StepPanel>
         )}
@@ -1037,7 +1059,6 @@ export default function QuoteEditorPage() {
             <PanelTitle>Sign off or return</PanelTitle>
             <p className="mt-1 text-xs text-slate-600">The Estimator signs off for the Manager or returns the quote to the Rep. This is not the customer&apos;s formal acceptance, which comes after Manager approval.</p>
             {handoffFacts}
-            {q.state !== "REP_DRAFT" && q.customer_confirmed_cents != null && !final && totalCents != null && totalCents !== q.customer_confirmed_cents && <Alert tone="warning">The quote total ({fmtCents(totalCents)}) no longer equals the confirmed amount ({fmtCents(q.customer_confirmed_cents)}). Return it to the Rep to reconfirm with the customer before it can be approved.</Alert>}
             {editWarning && <div className="mt-3"><Alert tone="warning"><span data-testid="edit-clears-signoff-signoff">{editWarning}</span></Alert></div>}
             <div className="mt-5 space-y-4 border-t border-slate-100 pt-5">
               {q.state === "REP_DRAFT" && <p className="text-sm text-slate-800" data-testid="signoff-waiting">Not submitted yet: the Estimator signs off or returns it after the Rep has submitted.</p>}
@@ -1109,6 +1130,7 @@ export default function QuoteEditorPage() {
             <span role="status" aria-live="polite" className="text-slate-800" data-testid="stage3-status-line">{wizard3.statusLine}</span>
             <OwnerTag role={wizard3.nextOwner} />
           </div>
+          {commercial && !commercial.complete && <Alert tone="warning"><span data-testid="s3-commercial">{commercial.headline}</span></Alert>}
           {repSummary}
           <EstimatorResult signedOffBy={q.estimator_signoff_by_email} signedOffAt={q.estimator_signoff_at} signoffCurrent={s2Base.signoff === "current"} totalCents={totalCents} confirmedCents={q.customer_confirmed_cents}
             costing={canCommercials && budget ? { estimatedCost: budget.totals.estimatedCost, marginPct: budget.totals.overallMarginPct } : null} priceExceptions={priceExceptions} costOverrides={costOverrideRows} showPriceDetail={canCommercials}
@@ -1118,6 +1140,7 @@ export default function QuoteEditorPage() {
             <p className="mt-1 text-xs text-slate-600">Final internal commercial approval. The Rep sees the outcome here and by notification; only a Manager can decide.</p>
             {q.state === "ESTIMATOR_REVIEW" && <ApprovalChecklist items={approvalChecklist} onGoStage={goStage} />}
 
+            {approveNotReady && <div id={`${uid}-approve-notready`}><Alert tone="danger"><span data-testid="approve-not-ready">Approval is disabled: the quotation is not ready. {rd.reasons[0] ?? "Open items remain."}{rd.reasons.length > 1 ? ` (+${rd.reasons.length - 1} more)` : ""}{commercial && !commercial.complete ? ` ${commercial.headline}.` : ""} Return it to the Estimator to resolve them.</span></Alert></div>}
             {approveSignoffMissing && <div id={`${uid}-approve-signoff`}><Alert tone="info">Waiting for the Estimator&apos;s sign-off before the Manager can decide.</Alert></div>}
             {approveSignoffStale && <div id={`${uid}-approve-stale`}><Alert tone="warning">The Estimator&apos;s sign-off no longer matches the current quotation. It must be given again before the Manager can decide.</Alert></div>}
             {q.state === "ESTIMATOR_REVIEW" && dirty && <div id={`${uid}-approve-dirty`}><Alert tone="warning" >You have unsaved edits. Save or discard your edits first: approval applies to the saved quotation.</Alert></div>}
@@ -1126,7 +1149,7 @@ export default function QuoteEditorPage() {
                 <>
                   {roles.has("manager") && <div className="max-w-xl"><TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} hint="Required only when you return the quotation instead of approving it. Say what must be corrected; it is recorded in the Approval history." /></div>}
                   <div className="flex flex-wrap items-center gap-3">
-                    <Button variant="primary" className="min-h-11" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty} aria-describedby={approveDescribedBy}
+                    <Button variant="primary" className="min-h-11" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty || approveNotReady} aria-describedby={approveDescribedBy}
                       onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")}>Manager: final approval</Button>
                     {roles.has("manager") && (<>
                       <Button variant="secondary" className="min-h-11" aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "approve", (v) => v.quote.state === "REP_DRAFT")}>Return to rep (reject)</Button>

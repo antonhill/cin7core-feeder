@@ -1,4 +1,5 @@
 import type { StepStatus } from "@/components/ui/step-rail-model";
+import { formatZarCents } from "@/lib/format-money";
 import type { Wizard, WizardRole, WizardStep } from "./wizard-contract";
 
 // STAGE 2 (ESTIMATOR REVIEW) AND STAGE 3 (MANAGER APPROVAL) ON THE WIZARD CONTRACT (pure). Same step shape as Stage 1 (wizard-contract.ts: {id,label,owner,status,access,blockedBy,blockKind}),
@@ -42,6 +43,8 @@ export interface Stage2WizardInput {
   totalCents: number | null;
   /** Costed lines with no cost (cost-visible viewers only; 0 or absent = the project cost is complete). */
   costMissingLines?: number;
+  /** Optional one-line summary of the open Estimator items by kind ("3 lines unmapped · 2 supplier quotes required"), used as the mapping step note. */
+  mappingSummary?: string;
 }
 
 export type Stage2WizardStep = WizardStep<Stage2WizardId>;
@@ -96,7 +99,7 @@ export function deriveStage2Wizard(i: Stage2WizardInput): StageWizard<Stage2Wiza
   const signedCurrent = inReview && i.signoff === "current" && !i.dirty;
 
   const mapping: { status: StepStatus; note?: string } = !i.calcValid ? { status: "incomplete", note: "Waiting for the Rep's configuration" }
-    : i.mappingOpen.length > 0 ? { status: canEdit ? "attention" : "incomplete", note: `${i.mappingOpen[0]}${i.mappingOpen.length > 1 ? ` (+${i.mappingOpen.length - 1} more)` : ""}` }
+    : i.mappingOpen.length > 0 ? { status: canEdit ? "attention" : "incomplete", note: i.mappingSummary ?? `${i.mappingOpen[0]}${i.mappingOpen.length > 1 ? ` (+${i.mappingOpen.length - 1} more)` : ""}` }
     : { status: "complete" };
 
   const costNeeds = i.cost?.status === "attention" ? i.cost.note : undefined;
@@ -105,7 +108,8 @@ export function deriveStage2Wizard(i: Stage2WizardInput): StageWizard<Stage2Wiza
     : i.cost.status === "attention" ? { status: canEdit ? "attention" : "incomplete", note: costNeeds }
     : i.cost.status === "complete" ? { status: "complete" }
     // The figures are looked at here and the review is recorded in Final review: before the mark the label says "To review"; after it, "Reviewed" (counted with the Final review, never a check).
-    : inReview && i.costAcknowledged && !i.dirty && i.cost.status === "review" ? { status: "review", counted: true, statusLabel: "Reviewed", note: "Reviewed in Final review (session only, not saved)" }
+    : inReview && i.costAcknowledged && !i.dirty && i.cost.status === "review" ? { status: "review", counted: true, statusLabel: "Reviewed", note: `Reviewed in Final review (session only, not saved)${(i.costMissingLines ?? 0) > 0 ? `; ${n1(i.costMissingLines!, "line still has", "lines still have")} no cost` : ""}` }
+    : (i.costMissingLines ?? 0) > 0 ? { status: canEdit ? "attention" : "incomplete", note: `${n1(i.costMissingLines!, "line has", "lines have")} no cost` }
     : { status: i.cost.status, ...(i.cost.status === "review" ? { statusLabel: "To review in Final review" } : {}), ...(i.cost.note ? { note: i.cost.note } : {}) };
 
   const blockers = deriveFinalReviewChecklist(i).filter((x) => x.id !== "saved" && !x.met);
@@ -218,4 +222,32 @@ export function estimatorWork(lines: ReadonlyArray<{ label: string; status: stri
   }
   if (blankPriceReasonCount > 0) reason.push(`${blankPriceReasonCount} manual price${blankPriceReasonCount === 1 ? " needs" : "s need"} a reason`);
   return { map, price, reason, all: [...map, ...price, ...reason] };
+}
+
+export interface CommercialReadiness {
+  /** Every Estimator-owned item is resolved and the project costs are complete. */
+  complete: boolean;
+  unmapped: number; quotesRequired: number; noCost: number; reasonsOpen: number;
+  /** "Not commercially ready: 3 lines unmapped · 2 supplier quotes required · 7 lines have no cost" (null when complete). */
+  headline: string | null;
+  /** The exact open list with the owner of each. */
+  items: Array<{ owner: "Estimator"; text: string }>;
+}
+const n1 = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+/**
+ * Commercial readiness for a viewer with cost visibility, from facts the page already holds (the budget's lines, the blank-reason count and the margin sheet's missing-cost count). It is a PRESENTATION of
+ * what is still unresolved: an incomplete estimate is never shown as ready, and its amounts are "indicative". It decides nothing and gates nothing by itself.
+ */
+export function commercialReadiness(i: { lines: ReadonlyArray<{ label: string; status: string }> | null; blankPriceReasonCount: number; costMissingLines: number }): CommercialReadiness {
+  const w = estimatorWork(i.lines, i.blankPriceReasonCount);
+  const unmapped = w.map.length; const quotesRequired = w.price.length; const noCost = i.costMissingLines; const reasonsOpen = i.blankPriceReasonCount;
+  const parts = [unmapped > 0 && `${n1(unmapped, "line", "lines")} unmapped`, quotesRequired > 0 && `${n1(quotesRequired, "supplier quote", "supplier quotes")} required`, noCost > 0 && `${n1(noCost, "line has", "lines have")} no cost`, reasonsOpen > 0 && `${n1(reasonsOpen, "manual price needs", "manual prices need")} a reason`].filter(Boolean) as string[];
+  const items = [...w.all.map((text) => ({ owner: "Estimator" as const, text })), ...(noCost > 0 ? [{ owner: "Estimator" as const, text: `${n1(noCost, "line has", "lines have")} no cost: capture it from Cin7 or enter a manual estimate (step 2)` }] : [])];
+  return { complete: parts.length === 0, unmapped, quotesRequired, noCost, reasonsOpen, headline: parts.length ? `Not commercially ready: ${parts.join(" \u00B7 ")} (amounts are indicative)` : null, items };
+}
+
+/** The quotation total moved away from what the customer confirmed: the Rep must reconfirm (the server refuses approval otherwise). Null text when they agree or nothing was confirmed. */
+export function confirmedAmountChange(confirmedCents: number | null, totalCents: number | null): { changed: boolean; text: string | null } {
+  if (confirmedCents == null || totalCents == null || confirmedCents === totalCents) return { changed: false, text: null };
+  return { changed: true, text: `The total changed from what the customer confirmed (${formatZarCents(confirmedCents)} -> ${formatZarCents(totalCents)}). Return to the Rep to reconfirm.` };
 }

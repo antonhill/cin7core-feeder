@@ -314,3 +314,37 @@ describe("UX-006i2 round 2: the quote list's Stage column agrees with 'Waiting o
     expect(stageLabelOf({ state: "REP_DRAFT", signed_off: true })).toBe(QUOTE_STATE_LABEL.REP_DRAFT);
   });
 });
+
+import { commercialReadiness, confirmedAmountChange } from "../stage23-wizard";
+describe("UX-006 corrections: commercial readiness and the confirmed-amount change (pure)", () => {
+  const lines = [{ label: "Feeder", status: "unmapped" }, { label: "Slats", status: "package_unconfirmed" }, { label: "Door", status: "supplier_quote_required" }, { label: "Light", status: "not_in_price_source" }, { label: "Tank", status: "priced" }];
+  it("counts what is unresolved by kind, names the owner of each item, and says the amounts are indicative", () => {
+    const c = commercialReadiness({ lines, blankPriceReasonCount: 1, costMissingLines: 7 });
+    expect(c).toMatchObject({ complete: false, unmapped: 2, quotesRequired: 2, noCost: 7, reasonsOpen: 1 });
+    expect(c.headline).toBe("Not commercially ready: 2 lines unmapped · 2 supplier quotes required · 7 lines have no cost · 1 manual price needs a reason (amounts are indicative)");
+    expect(c.items.every((x) => x.owner === "Estimator")).toBe(true);
+    expect(c.items.map((x) => x.text)).toContain("7 lines have no cost: capture it from Cin7 or enter a manual estimate (step 2)");
+    expect(c.items.some((x) => x.text === "Enter a manual quotation price for Door")).toBe(true);
+  });
+  it("is complete only when nothing is open, with no headline", () => {
+    expect(commercialReadiness({ lines: [{ label: "Tank", status: "priced" }], blankPriceReasonCount: 0, costMissingLines: 0 })).toMatchObject({ complete: true, headline: null, items: [] });
+    expect(commercialReadiness({ lines: null, blankPriceReasonCount: 0, costMissingLines: 1 }).complete).toBe(false);
+    expect(commercialReadiness({ lines: [{ label: "Feeder", status: "unmapped" }], blankPriceReasonCount: 0, costMissingLines: 0 }).headline).toMatch(/1 line unmapped/);
+  });
+  it("confirmedAmountChange: silent when equal or nothing was confirmed; otherwise says from what to what and that the Rep reconfirms", () => {
+    expect(confirmedAmountChange(1000, 1000)).toEqual({ changed: false, text: null });
+    expect(confirmedAmountChange(null, 1000).changed).toBe(false);
+    expect(confirmedAmountChange(1000, null).changed).toBe(false);
+    const c = confirmedAmountChange(100000, 125050);
+    expect(c.changed).toBe(true);
+    expect(c.text).toMatch(/^The total changed from what the customer confirmed \(R.*1.*000,00 -> R.*1.*250,50\)\. Return to the Rep to reconfirm\.$/);
+  });
+  it("Costs needs attention with the number of lines with no cost, and Mapping uses the by-kind summary as its note", () => {
+    const w = s2({ costMissingLines: 7, mappingOpen: ["x"], mappingSummary: "2 lines unmapped · 1 supplier quote required" });
+    expect(step(w, "costs")).toMatchObject({ status: "attention", note: "7 lines have no cost" });
+    expect(step(w, "mapping").note).toBe("2 lines unmapped · 1 supplier quote required");
+    expect(step(s2({ costMissingLines: 7, roles: MANAGER }), "costs").status).toBe("incomplete");
+    expect(step(s2({ costMissingLines: 7, costAcknowledged: true }), "costs")).toMatchObject({ counted: true });
+    expect(step(s2({ costMissingLines: 7, costAcknowledged: true }), "costs").note).toMatch(/7 lines still have no cost/);
+  });
+});

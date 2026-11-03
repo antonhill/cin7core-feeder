@@ -354,7 +354,9 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
     it("current sign-off but unsaved edits: says to save or discard first, and approval is disabled until then", async () => {
       await openAsManager("current");
       expect(screen.queryByText(/Save or discard your edits first/)).toBeNull();
-      expect(approve().disabled).toBe(false);
+      // UX-006 corrections: the UI now mirrors checkApproval (it requires READY). This fixture's quotation is not READY, so Approve is disabled from the start, with the reason; the unsaved-edits rule below is unchanged.
+      expect(approve().disabled).toBe(true);
+      expect(screen.getByTestId("approve-not-ready").textContent).toMatch(/Approval is disabled: the quotation is not ready/);
       const nav = (n: number) => fireEvent.click(document.querySelector(`[data-stage="${n}"]`) as HTMLElement);
       nav(1);
       fireEvent.click(await screen.findByLabelText(/Silo weighing/)); // an unsaved edit

@@ -490,7 +490,7 @@ describe("UX-006i2 Stage 2: Sign-off or return (only the actions valid for the a
   }, 60000);
 
   it("the 'total no longer equals the confirmed amount' alert is never shown to a Rep draft nor when nothing was confirmed; it shows in Estimator review when the amounts differ", async () => {
-    const alertText = /no longer equals the confirmed amount/;
+    const alertText = /The total changed from what the customer confirmed \(.+ -> .+\)\. Return to the Rep to reconfirm\./; // UX-006 corrections: one banner at the top of Stage 2 (the sign-off step no longer repeats it)
     await open({ row: { customer_confirmed_cents: 100 } });
     expect(document.body.textContent).not.toMatch(alertText);
     cleanup();
@@ -602,10 +602,10 @@ describe("UX-006i2 Stage 2: navigation (Back only to permitted steps; no navigat
     expect(shown("signoff")).toBe(true);
   }, 90000);
 
-  it("Next incomplete step leads only into the Estimator's own open work: Final review from Mapping (the costing is looked at, not a separate task); nothing for a Rep; nothing while the quote is a Rep draft with no blockers", async () => {
+  it("Next incomplete step leads only into the Estimator's own open work: Costs while the project costs are incomplete (this fixture: lines with no cost need attention), Final review once they are not; nothing for a Rep; nothing while the quote is a Rep draft with no blockers", async () => {
     await open({ roles: ["ESTIMATOR"], commercials: true, step: "1", ...SUBMITTED });
     fireEvent.click(screen.getByRole("button", { name: "Next incomplete step" }));
-    expect(shown("final")).toBe(true);
+    expect(shown("costs")).toBe(true);
     cleanup();
     await open({ roles: ["REP"], ...SUBMITTED });
     expect(screen.queryByRole("button", { name: "Next incomplete step" })).toBeNull();
@@ -803,7 +803,8 @@ describe("UX-006i2 review fixes: wording that is true to the current state (revi
 
   it("Costs reads 'To review in Final review' until the review is marked, then 'Reviewed' (counted with Final review); the mark is stated as SESSION-ONLY (confirmation and a note on the step); nothing is saved", async () => {
     await open({ roles: ["ESTIMATOR"], commercials: true, step: "3", ...SUBMITTED });
-    expect(status("costs")).toBe("To review in Final review");
+    expect(status("costs")).toBe("Needs attention"); // UX-006 corrections: lines with no cost make Costs need attention (it was "To review in Final review" while costs looked complete)
+    expect(rail().querySelector('[data-step="costs"]')!.textContent).toMatch(/\d+ lines? (has|have) no cost/);
     expect(screen.getByTestId("session-only-note").textContent).toMatch(/this session only: it is not saved, and after a reload you mark it again/);
     fireEvent.click(screen.getByRole("button", { name: /Mark reviewed/ }));
     expect(status("costs")).toBe("Reviewed");
@@ -895,4 +896,70 @@ describe("UX-006i2 round 2: sign-off waits for the review mark, one margin story
     await open({ roles: ["REP"], ...SUBMITTED });
     expect(document.body.textContent).not.toMatch(/margin/i);
   }, 30000);
+});
+
+describe("UX-006 corrections: incompleteness is visible, the Estimator's items are theirs, first action near the top", () => {
+  it("the header says 'Not commercially ready' with the counts (cost viewers) and never a plain green Ready for an incomplete estimate; the Rep sees none of it", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED });
+    const chip = screen.getByTestId("commercial-chip").textContent!;
+    expect(chip).toMatch(/^.?Not commercially ready: .*\d+ lines? (has|have) no cost.*\(amounts are indicative\)$/);
+    expect(within(screen.getByTestId("quote-summary-bar")).getByText("Indicative: not commercially ready")).toBeTruthy(); // the calculation chip is not "Ready for review"
+    expect(within(screen.getByTestId("quote-summary-bar")).queryByText(/READY FOR REVIEW/i)).toBeNull();
+    cleanup();
+    await open({ roles: ["REP"], ...SUBMITTED });
+    expect(screen.queryByTestId("commercial-chip")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/commercially ready|indicative/i);
+  }, 60000);
+
+  it("a SUBMITTED quotation with open Estimator items: Stage 2 opens at step 1, says they are the Estimator's by design, and keeps sign-off disabled with the reason; Return stays available", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED, draftOver: UNMAPPED });
+    expect(current()).toBe("mapping");
+    const banner = screen.getByTestId("rep-waiting-banner");
+    expect(banner.textContent).toContain("Yours to resolve: the Rep has already submitted");
+    expect(screen.getByTestId("waiting-explain").textContent).toMatch(/Estimator items by design.*Sign-off stays disabled/);
+    expect(status("mapping")).toBe("Needs attention");
+    expect(rail().querySelector('[data-step="mapping"]')!.textContent).toMatch(/\d+ lines? unmapped/);
+    fireEvent.click(rail().querySelector('[data-step="signoff"]')!);
+    expect((screen.getByRole("button", { name: "Sign off for Manager approval" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(document.getElementById("signoff-why")!.textContent).toMatch(/must be READY/);
+    fireEvent.change(screen.getByLabelText(/Return to rep — reason/), { target: { value: "Reconfirm" } });
+    expect((screen.getByRole("button", { name: "Return to rep" }) as HTMLButtonElement).disabled).toBe(false);
+  }, 60000);
+
+  it("Final review lists exactly what is open, with its owner, under 'Not commercially ready'", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "3", ...SUBMITTED });
+    const d = screen.getByTestId("not-commercially-ready");
+    expect(d.textContent).toMatch(/Not commercially ready: .*no cost/);
+    expect(within(d).getAllByRole("listitem").every((li) => li.textContent!.startsWith("Estimator:"))).toBe(true);
+    expect(d.textContent).toMatch(/lines? (has|have) no cost: capture it from Cin7 or enter a manual estimate/);
+  }, 60000);
+
+  it("when the total differs from what the customer confirmed, ONE banner says so with both amounts, on Stage 2; Return stays available", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, state: "ESTIMATOR_REVIEW", row: { customer_confirmed_cents: 100, customer_confirmed_by: "A", customer_confirmed_at: "2026-11-02T08:00:00Z" } });
+    expect(screen.getAllByTestId("total-changed").length).toBe(1);
+    expect(screen.getByTestId("total-changed").textContent).toMatch(/The total changed from what the customer confirmed \(R.*1,00 -> R.*\)\. Return to the Rep to reconfirm\./);
+    fireEvent.click(rail().querySelector('[data-step="signoff"]')!);
+    fireEvent.change(screen.getByLabelText(/Return to rep — reason/), { target: { value: "Reconfirm the price" } });
+    expect((screen.getByRole("button", { name: "Return to rep" }) as HTMLButtonElement).disabled).toBe(false);
+  }, 60000);
+
+  it("the first action of step 1 (Confirm source-backed mappings) comes BEFORE the readiness list and the line table, and exists once", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, draftOver: UNMAPPED });
+    const first = screen.getByTestId("step1-first-action");
+    expect(screen.getAllByRole("button", { name: "Confirm source-backed mappings" }).length).toBe(1);
+    const p = panel("mapping")!;
+    expect(first.compareDocumentPosition(p.querySelector("table")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(first.compareDocumentPosition(screen.getByText("Quote readiness")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByTestId("rep-waiting-banner").hasAttribute("open")).toBe(true); // the list is open when it is the primary task, as a counted disclosure
+    expect(screen.getByTestId("rep-waiting-banner").querySelector("summary")!.textContent).toMatch(/· \d+ items?/);
+  }, 60000);
+
+  it("touch targets: the Costs-step buttons, the shared inputs and the approval-history summary carry 44px size classes (class contract)", async () => {
+    const fs = await import("node:fs");
+    const cost = fs.readFileSync(`${__dirname}/../[id]/CostPanel.tsx`, "utf8");
+    expect(cost.match(/<Button size="sm"(?! className="min-h-11")/g)).toBeNull();
+    expect(fs.readFileSync(`${__dirname}/../fields.tsx`, "utf8").match(/h-9 min-h-11/g)!.length).toBe(2);
+    expect(fs.readFileSync(`${__dirname}/../../../components/ui/Input.tsx`, "utf8")).toContain("h-9 min-h-11");
+    expect(fs.readFileSync(`${__dirname}/../../../components/ApprovalHistory.tsx`, "utf8")).toContain("inline-flex min-h-11");
+  });
 });

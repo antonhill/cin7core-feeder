@@ -30,7 +30,7 @@ export function NumField({ label, value, onChange, unit, hint, placeholder, disa
       <input
         value={text} disabled={disabled} placeholder={placeholder} inputMode="decimal" aria-label={ariaLabel} aria-invalid={error ? true : undefined} aria-describedby={error ? errId : undefined} onBlur={onBlur}
         onChange={(e) => { setText(e.target.value); onChange(parse(e.target.value)); }}
-        className={`h-9 rounded-md border bg-white px-3 text-sm tabular-nums text-slate-900 disabled:bg-slate-50 disabled:text-slate-600 ${error ? "border-red-600" : "border-slate-300"}`}
+        className={`h-9 min-h-11 rounded-md border bg-white px-3 text-sm tabular-nums text-slate-900 disabled:bg-slate-50 disabled:text-slate-600 ${error ? "border-red-600" : "border-slate-300"}`}
       />
       {error ? <span id={errId} className="text-xs font-medium text-red-700" data-testid="field-error">{error}</span> : null}
       {hint ? <span className="text-xs text-slate-600">{hint}</span> : null}
@@ -46,7 +46,7 @@ export function TextField({ label, value, onChange, hint, placeholder, disabled,
     <label className="flex flex-col gap-1 text-sm">
       <span className="font-medium text-slate-700">{label}</span>
       <input value={value} disabled={disabled} placeholder={placeholder} aria-label={ariaLabel} aria-invalid={error ? true : undefined} aria-describedby={error ? errId : undefined} onBlur={onBlur} onChange={(e) => onChange(e.target.value)}
-        className={`h-9 rounded-md border bg-white px-3 text-sm text-slate-900 disabled:bg-slate-50 disabled:text-slate-600 ${error ? "border-red-600" : "border-slate-300"}`} />
+        className={`h-9 min-h-11 rounded-md border bg-white px-3 text-sm text-slate-900 disabled:bg-slate-50 disabled:text-slate-600 ${error ? "border-red-600" : "border-slate-300"}`} />
       {error ? <span id={errId} className="text-xs font-medium text-red-700" data-testid="field-error">{error}</span> : null}
       {hint ? <span className="text-xs text-slate-600">{hint}</span> : null}
     </label>

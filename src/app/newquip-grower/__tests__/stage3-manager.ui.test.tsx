@@ -298,3 +298,23 @@ describe("UX-006i2 review fixes: the Manager workspace", () => {
     const b = render(createElement(BuildStamp)); expect(b.container.textContent).toBe("Page build: abc1234"); expect(b.container.innerHTML).not.toMatch(/build local/);
   });
 });
+
+describe("UX-006 corrections: Approve mirrors the server rule and shows what is unresolved", () => {
+  it("a signed-off quotation that is NOT READY (unmapped lines): Approve is DISABLED with the reason and the exact counts; Return buttons stay available", async () => {
+    const UN = { estimator: { ...draft.estimator, confirmedMappings: {}, confirmedPackages: [], priceResolutions: {} } };
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED, draftOver: UN });
+    expect(approve().disabled).toBe(true);
+    expect(screen.getByTestId("approve-not-ready").textContent).toMatch(/Approval is disabled: the quotation is not ready\..*Not commercially ready: .*unmapped/);
+    expect(approve().getAttribute("aria-describedby")).toMatch(/approve-notready/);
+    expect(screen.getByTestId("s3-commercial").textContent).toMatch(/Not commercially ready/);
+    fireEvent.change(screen.getByLabelText(/Return to rep — reason/), { target: { value: "Resolve the mappings" } });
+    expect((screen.getByRole("button", { name: "Manager: return to estimator" }) as HTMLButtonElement).disabled).toBe(false);
+  }, 60000);
+  it("a READY quotation with incomplete project costs still shows the incompleteness (header and workspace) and Approve follows the server rule (READY + sign-off), until the server exposes cost completeness", async () => {
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED });
+    expect(screen.queryByTestId("approve-not-ready")).toBeNull();
+    expect(approve().disabled).toBe(false);
+    expect(screen.getByTestId("s3-commercial").textContent).toMatch(/lines? (has|have) no cost/);
+    expect(screen.getByTestId("commercial-chip")).toBeTruthy();
+  }, 60000);
+});
