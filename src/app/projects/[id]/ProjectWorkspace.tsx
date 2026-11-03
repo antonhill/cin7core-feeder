@@ -314,11 +314,11 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
       <ActionFeedback state={acts.stateOf("page")} floating />
       {c.uncertainClaimBlocking && (
         <div className="mt-6">
-          <Alert tone="warning">A claim has an uncertain Cin7 outcome. Its value stays reserved and billing of its stages is blocked until it is reconciled.</Alert>
+          <Alert tone="warning">A claim has an uncertain Cin7 outcome. Its value stays reserved and billing of its stages is blocked until it is reconciled.</Alert>{tab !== "claims" && <button type="button" className="mt-1 inline-flex min-h-11 items-center text-sm font-medium text-indigo-700 underline" onClick={() => goTab("claims")}>Open the Commercial / Claims tab</button>}
         </div>
       )}
       {!c.scheduleBalanced && (
-        <div className="mt-6"><Alert tone="danger">Stage values do not reconcile to the contract value — claiming is blocked.</Alert></div>
+        <div className="mt-6"><Alert tone="danger">Stage values do not reconcile to the contract value — claiming is blocked.</Alert>{tab !== "stages" && <button type="button" className="mt-1 inline-flex min-h-11 items-center text-sm font-medium text-indigo-700 underline" onClick={() => goTab("stages")}>Open the Stages tab</button>}</div>
       )}
 
       <nav ref={tabsRef} className="mt-5 inline-flex max-w-full gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1" aria-label="Project sections">
