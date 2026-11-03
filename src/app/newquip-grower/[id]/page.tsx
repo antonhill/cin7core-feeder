@@ -1214,6 +1214,14 @@ export default function QuoteEditorPage() {
       {/* ───────────── 6 · PROJECT HANDOVER ───────────── */}
       {stage === 6 && !hold(6) && (
         <div className="mt-6 space-y-6">
+          {final && q.accepted_baseline && (
+            <p className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm text-slate-900" data-testid="stage6-next">
+              {q.project_id ? "Project created. Next: run billing and fulfilment in the Project."
+                : !roles.has("manager") ? "Next: the Manager creates the Project from the accepted quotation."
+                : gate.requires && !gate.accepted ? "Next: the customer's verified acceptance (Stage 5) is needed before you can create the Project."
+                : "Next: create the Project from the accepted quotation (the button below)."}
+            </p>
+          )}
           {!final || !q.accepted_baseline ? <Alert tone="info">Project handover opens once the quotation is approved{gate.requires ? " and the customer has accepted the issued quotation" : ""}. The full Projects module is not duplicated here.</Alert> : (
                       <Panel>
               <PanelTitle>Accepted commercial baseline (frozen)</PanelTitle>
