@@ -28,6 +28,16 @@ describe("step-rail-model (pure)", () => {
 });
 
 describe("StepRail a11y and behaviour", () => {
+  it("the compact summary names how many steps need attention (only when any), and a Review step shows its text without a check", () => {
+    render(<StepRail id="t" ariaLabel="S" steps={steps} currentId="a" onSelect={vi.fn()} />);
+    expect(screen.getByTestId("step-rail-toggle").textContent).toContain("Step 1 of 4 · Alpha · 1 complete · 1 need attention");
+    cleanup();
+    const ok: RailStep[] = [{ id: "a", label: "Alpha", status: "complete" }, { id: "r", label: "Rho", status: "review" }];
+    render(<StepRail id="t" ariaLabel="S" steps={ok} currentId="a" onSelect={vi.fn()} />);
+    expect(screen.getByTestId("step-rail-toggle").textContent).not.toContain("attention");
+    expect(screen.getByTestId("step-status-r").textContent).toBe("Review needed");
+    expect(document.querySelector('[data-step="r"]')!.textContent).not.toContain("✓");
+  });
   const view = (current = "b", onSelect = vi.fn()) => render(<StepRail id="t" ariaLabel="Test steps" steps={steps} currentId={current} onSelect={onSelect} />);
   it("is an ordered list of buttons with aria-current=step on the current one only, and status shown as text", () => {
     view();
@@ -137,7 +147,7 @@ describe("useShowAllSteps (per-viewer convenience)", () => {
 
 describe("presentation/derivation modules import no server action or store", () => {
   const files = [
-    "src/components/ui/StepRail.tsx", "src/components/ui/step-rail-model.ts", "src/components/ui/use-show-all-steps.ts", "src/newquip/quote/stage1-steps.ts", "src/app/newquip-grower/[id]/Stage1Review.tsx",
+    "src/components/ui/StepRail.tsx", "src/components/ui/step-rail-model.ts", "src/components/ui/use-show-all-steps.ts", "src/newquip/quote/stage1-steps.ts", "src/newquip/quote/stage2-steps.ts", "src/app/newquip-grower/[id]/Stage1Review.tsx",
   ];
   it.each(files)("%s", (f) => {
     const src = readFileSync(`${process.cwd()}/${f}`, "utf8");
@@ -200,13 +210,26 @@ describe("StepRail groups", () => {
   });
   it("mobile summary shows per-group counts and the attention count", () => {
     view();
-    expect(screen.getByTestId("step-rail-toggle").textContent).toContain("Step 3 of 4 · Check lines · Rep preparation 2 of 2 · Estimator review 0 of 2 · 1 need attention");
+    expect(screen.getByTestId("step-rail-toggle").textContent).toContain("Step 3 of 4 · Check lines · Rep preparation 2 of 2 complete · Estimator review 0 of 2 complete · 1 need attention");
+  });
+  it("a step with counted:true counts as done in the totals and is skipped by next-incomplete, but keeps its own status label and draws no check", () => {
+    const ss: RailStep[] = [{ id: "a", label: "A", status: "review", counted: true, group: "g" }, { id: "b", label: "B", status: "incomplete", group: "g" }];
+    render(<StepRail id="t" ariaLabel="x" steps={ss} currentId="b" onSelect={vi.fn()} groups={[{ id: "g", label: "G" }]} />);
+    expect(screen.getByTestId("step-group-count-g").textContent).toBe("1 of 2 complete");
+    expect(screen.getByTestId("step-status-a").textContent).toBe("Review needed");
+    expect(document.querySelector('[data-step="a"]')!.textContent).not.toContain("✓");
+    expect(nextIncompleteStepId(ss, "b")).toBeNull();
+  });
+  it("a step's statusLabel overrides the visible status text only; the status value and other steps are unchanged", () => {
+    const ss: RailStep[] = [{ id: "a", label: "A", status: "review", counted: true, statusLabel: "Reviewed" }, { id: "b", label: "B", status: "review" }];
+    render(<StepRail id="t" ariaLabel="x" steps={ss} currentId="a" onSelect={vi.fn()} />);
+    expect(screen.getByTestId("step-status-a").textContent).toBe("Reviewed");
+    expect(screen.getByTestId("step-status-b").textContent).toBe("Review needed");
   });
   it("without groups nothing changes: no group regions, and the summary keeps its old form", () => {
     render(<StepRail id="t" ariaLabel="x" steps={steps} currentId="b" onSelect={vi.fn()} />);
     expect(screen.queryByRole("group")).toBeNull();
-    expect(screen.getByTestId("step-rail-toggle").textContent).toContain("Step 2 of 4 · Bravo · 1 complete");
-    expect(screen.getByTestId("step-rail-toggle").textContent).not.toContain("need attention");
+    expect(screen.getByTestId("step-rail-toggle").textContent).toContain("Step 2 of 4 · Bravo · 1 complete · 1 need attention"); // UX-006b: the attention count is part of the compact summary
   });
 });
 

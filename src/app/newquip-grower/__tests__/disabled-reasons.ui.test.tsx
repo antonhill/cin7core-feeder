@@ -60,7 +60,7 @@ async function storedQuote() {
   await saveDraft(db as never, ORG, member, id, draft);
   return id;
 }
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 async function open(stage = "2", roles: Array<"REP" | "ESTIMATOR" | "MANAGER"> = ["REP", "ESTIMATOR"], state?: string, wait = "Customer-driven exclusions") {
   (globalThis as { __STAGE?: string }).__STAGE = stage;
   asRoles(...roles);
@@ -68,6 +68,7 @@ async function open(stage = "2", roles: Array<"REP" | "ESTIMATOR" | "MANAGER"> =
   const id = await storedQuote();
   if (state) for (const row of db.rows("newquip_quotes") as Array<Record<string, unknown>>) if (row.id === id) row.state = state;
   (globalThis as { __QID?: string }).__QID = id;
+  vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "nq-builder-show-all" ? "1" : null), setItem: () => undefined }); // these checks look across the whole stage: "Show all steps" (UX-006b)
   const { default: Page } = await import("../[id]/page");
   render(createElement(Page));
   await waitFor(() => expect(screen.getByText(wait)).toBeTruthy(), { timeout: 5000 });

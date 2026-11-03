@@ -8,9 +8,9 @@ import { STEP_STATUS_LABEL, completeCount, groupCounts, stepHeadingId, type Rail
 // Cards in a row are EQUAL height (the row grows to the tallest card; no text is ever clamped): icon top-left at a fixed size, the title at the same top offset, the note
 // under it and the status pinned to the bottom of the card. With `groups` each group is a labelled block with its own count and status line.
 
-const TEXT_TONE: Record<StepStatus, string> = { complete: "text-emerald-800", attention: "text-amber-900", incomplete: "text-slate-700", unavailable: "text-slate-600" };
+const TEXT_TONE: Record<StepStatus, string> = { complete: "text-emerald-800", attention: "text-amber-900", incomplete: "text-slate-700", review: "text-slate-800", unavailable: "text-slate-600" };
 const BADGE_TONE: Record<StepStatus, string> = {
-  complete: "border-emerald-700 bg-emerald-700 text-white", attention: "border-amber-600 bg-amber-50 text-amber-900", incomplete: "border-slate-400 bg-white text-slate-700", unavailable: "border-slate-300 bg-slate-50 text-slate-600",
+  complete: "border-emerald-700 bg-emerald-700 text-white", attention: "border-amber-600 bg-amber-50 text-amber-900", incomplete: "border-slate-400 bg-white text-slate-700", review: "border-indigo-500 bg-indigo-50 text-indigo-900", unavailable: "border-slate-300 bg-slate-50 text-slate-600",
 };
 const GROUP_TONE: Record<RailGroupTone, string> = { complete: "bg-emerald-50 text-emerald-800", attention: "bg-amber-50 text-amber-900", incomplete: "bg-slate-100 text-slate-700", neutral: "bg-slate-100 text-slate-700" };
 const GROUP_MARK: Record<RailGroupTone, string> = { complete: "✓", attention: "!", incomplete: "•", neutral: "•" };
@@ -25,7 +25,7 @@ function Card({ step, number, current, onPick, tall }: { step: RailStep; number:
         <span className="flex min-h-full min-w-0 flex-1 flex-col self-stretch">
           <span className="pt-1 text-sm font-semibold leading-5 text-slate-900">{step.label}</span>
           {step.note && <span className="mt-0.5 text-xs text-slate-700">{step.note}</span>}
-          <span className={`mt-auto pt-1 text-xs font-semibold ${TEXT_TONE[step.status]}`} data-testid={`step-status-${step.id}`}>{STEP_STATUS_LABEL[step.status]}</span>
+          <span className={`mt-auto pt-1 text-xs font-semibold ${TEXT_TONE[step.status]}`} data-testid={`step-status-${step.id}`}>{step.statusLabel ?? STEP_STATUS_LABEL[step.status]}</span>
         </span>
       </button>
     </li>
@@ -44,8 +44,8 @@ export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, g
   const attention = steps.filter((s) => s.status === "attention").length;
   const counts = groups ? groupCounts(steps, groups) : null;
   const summary = counts
-    ? `Step ${at + 1} of ${steps.length} · ${cur?.label ?? ""} · ${counts.map((c) => `${c.label} ${c.done} of ${c.total}`).join(" · ")}${attention > 0 ? ` · ${attention} need attention` : ""}`
-    : `Step ${at + 1} of ${steps.length} · ${cur?.label ?? ""} · ${done} complete`;
+    ? `Step ${at + 1} of ${steps.length} · ${cur?.label ?? ""} · ${counts.map((c) => `${c.label} ${c.done} of ${c.total} complete`).join(" · ")}${attention > 0 ? ` · ${attention} need attention` : ""}`
+    : `Step ${at + 1} of ${steps.length} · ${cur?.label ?? ""} · ${done} complete${attention > 0 ? ` · ${attention} need attention` : ""}`;
   const pick = (stepId: string) => () => { onSelect(stepId); setOpen(false); };
   // Inside a group: one column below 701px, a wrapping grid of equal-height rows at 701-900px (groups stack full width), one equal-height row of shrinkable cards from 901px.
   const groupListCls = "flex flex-col gap-2 min-[701px]:grid min-[701px]:grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] min-[901px]:flex min-[901px]:flex-row";
