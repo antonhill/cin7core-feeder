@@ -55,7 +55,7 @@ export function Stage1Review({ awaiting, draft, floorAreaM2, totalLabel, derived
   return (
     <Panel className="col-span-full">
       <PanelTitle>Review configuration</PanelTitle>
-      <p className="mt-1 text-sm text-slate-700">Read-only summary of this draft. Use Edit to change a part.</p>
+      <p className="mt-1 text-sm text-slate-700 max-sm:hidden">Read-only summary of this draft. Use Edit to change a part.</p>
       <ul className="mt-3 flex flex-wrap gap-2" aria-label="Completion of the steps" data-testid="stage1-review-chips">
         {STAGE1_STEP_IDS.filter((id) => id === "customer" || id === "site" || id === "equipment").map((id, n) => {
           const st = stepOf(id)!;

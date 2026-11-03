@@ -47,19 +47,18 @@ export function RepSubmittedSummary({ draft, submitted, revision, floorAreaM2, t
     : null;
   const room = cfg.lengthM && cfg.widthM ? `${cfg.lengthM} m × ${cfg.widthM} m${floorAreaM2 == null ? "" : ` (${Math.round(floorAreaM2 * 1000) / 1000} m²)`} · ${cfg.rooms || 0} rooms` : "—";
   return (
-    <section aria-label={submitted ? "Submitted by the Rep" : "From the Rep (not submitted yet)"} data-testid="rep-summary" className="mt-3 rounded-lg border border-slate-200 bg-white px-4 py-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-base font-semibold text-slate-900">{submitted ? "Submitted by the Rep" : "From the Rep (not submitted yet)"}</h2>
-        <span className="text-xs text-slate-700">Read-only · revision {revision}</span>
-      </div>
-      <dl className="mt-1 flex flex-wrap gap-x-6 gap-y-1 text-sm">
-        <div className="flex gap-1.5"><dt className="text-slate-700">Customer</dt><dd className="break-words font-medium text-slate-900">{draft.customerName.trim() || "—"}</dd></div>
-        <div className="flex gap-1.5"><dt className="text-slate-700">Site</dt><dd className="break-words font-medium text-slate-900">{draft.siteName.trim() || "—"}</dd></div>
-        <div className="flex gap-1.5"><dt className="text-slate-700">{submitted ? "Submitted total (ex VAT)" : "Quote total (ex VAT)"}</dt><dd className="font-medium tabular-nums text-slate-900" data-testid="rep-summary-total">{totalCents == null ? "—" : fmtCents(totalCents)}</dd></div>
-        <div className="flex gap-1.5"><dt className="text-slate-700">Customer price confirmation</dt><dd className="font-medium text-slate-900" data-testid="rep-summary-confirmation">{conf ?? <span className="text-slate-700">Not recorded yet</span>}</dd></div>
-      </dl>
-      <details className="mt-1" data-testid="rep-summary-detail">
-        <summary className="inline-flex min-h-11 cursor-pointer items-center text-sm font-semibold text-indigo-700">Show the submitted detail</summary>
+    <section aria-label={submitted ? "Submitted by the Rep" : "From the Rep (not submitted yet)"} data-testid="rep-summary" className="mt-2 rounded-lg border border-slate-200 bg-white px-3">
+      {/* ONE line (it wraps on a phone) with the headline facts; the full detail opens from the same line. Read-only. */}
+      <details data-testid="rep-summary-detail">
+        <summary className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-4 gap-y-0.5 py-1 text-sm">
+          <span className="font-semibold text-slate-900">{submitted ? "Submitted by the Rep" : "From the Rep (not submitted yet)"}</span>
+          <span><span className="text-slate-700">Customer </span><span className="break-words font-medium text-slate-900">{draft.customerName.trim() || "—"}</span></span>
+          <span><span className="text-slate-700">Site </span><span className="break-words font-medium text-slate-900">{draft.siteName.trim() || "—"}</span></span>
+          <span><span className="text-slate-700">{submitted ? "Submitted total (ex VAT) " : "Quote total (ex VAT) "}</span><span className="font-medium tabular-nums text-slate-900" data-testid="rep-summary-total">{totalCents == null ? "—" : fmtCents(totalCents)}</span></span>
+          <span className="max-sm:hidden"><span className="text-slate-700">Customer price confirmation </span><span className="font-medium text-slate-900" data-testid="rep-summary-confirmation">{conf ?? <span className="text-slate-700">Not recorded yet</span>}</span></span>
+          <span className="text-xs text-slate-700"><span className="max-sm:hidden">Read-only · revision {revision} · </span><span className="font-semibold text-indigo-700">Details</span></span>
+        </summary>
+        <p className="mt-1 text-sm text-slate-800 sm:hidden">Customer price confirmation: {conf ?? "not recorded yet"}</p>
         <div className="mt-2 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <div><h3 className="text-sm font-semibold text-slate-900">Site &amp; measurements</h3>
             <p className="mt-1 text-sm text-slate-800">{QUOTE_TYPE_LABEL[draft.quoteType]} pricing · {room}</p>

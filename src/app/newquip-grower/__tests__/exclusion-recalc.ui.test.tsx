@@ -59,7 +59,7 @@ async function storedQuote() {
   await saveDraft(db as never, ORG, member, id, draft);
   return id;
 }
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); try { window.localStorage.clear(); } catch { /* the "Show all steps" preference must not leak between tests */ } });
 
 import * as ca from "../customer-actions";
 import * as da from "../delivery-actions";
@@ -207,7 +207,9 @@ describe("UAT-025 rendered page: Save draft reports beside its button", () => {
     const ok = region("success")!;
     expect(ok.textContent).toMatch(/Draft saved/);
     expect(ok.getAttribute("role")).toBe("status");
-    expect(ok.parentElement!.previousElementSibling).toBe(save.parentElement); // directly under the row that holds the Save button
+    // UX-006 acceptance directive: Save now sits in the compact toolbar row beside Show all steps / Next incomplete (one row, not a separate block), so "directly under the row" is kept as: the result follows the Save button immediately in the page, before any step content.
+    expect(save.compareDocumentPosition(ok) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(ok.compareDocumentPosition(document.querySelector("[data-step-panel]")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   }, 30000);
 
   it("failure: an alert under the Save row with the server's reason, and the unsaved edits are untouched", async () => {
@@ -218,7 +220,8 @@ describe("UAT-025 rendered page: Save draft reports beside its button", () => {
     const bad = region("error")!;
     expect(bad.getAttribute("role")).toBe("alert");
     expect(bad.textContent).toMatch(/changed by someone else/);
-    expect(bad.parentElement!.previousElementSibling).toBe(save.parentElement);
+    expect(save.compareDocumentPosition(bad) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // follows the Save button immediately (toolbar row), before the step content
+    expect(bad.compareDocumentPosition(document.querySelector("[data-step-panel]")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByText("Unsaved changes")).toBeTruthy(); // still dirty: nothing was lost
     expect((screen.getAllByLabelText("Reason", { selector: "input" })[0] as HTMLInputElement).value).toBe("Supplier quote dated today");
   }, 30000);
@@ -238,6 +241,8 @@ describe("unsaved quotation protection", () => {
   it("an untouched quotation is not guarded; an edit is; Save releases it", async () => {
     serialQueue(150);
     await open();
+    await waitFor(() => expect(screen.getByText("All changes saved")).toBeTruthy(), { timeout: 8000 }); // let the page settle first (a slow CI runner reads the customer details after the first paint)
+    await sleep(300);
     expect(unload()).toBe(false);
     fireEvent.click(box(/Exclude CCM feeder/i));
     expect(unload()).toBe(true);
