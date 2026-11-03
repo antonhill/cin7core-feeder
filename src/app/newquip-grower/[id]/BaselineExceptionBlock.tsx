@@ -20,7 +20,7 @@ function ItemList({ items }: { items: BaselineExceptionView["items"] }) {
   );
 }
 
-export function BaselineExceptionBlock({ view, revision, draftHash, canDecide, blockedWhy, pending, onApprove }: {
+type BlockProps = {
   view: BaselineExceptionView;
   /** The saved quotation version being approved: the exception is bound to it and refused if it has changed. */
   revision: number;
@@ -31,7 +31,14 @@ export function BaselineExceptionBlock({ view, revision, draftHash, canDecide, b
   blockedWhy?: string;
   pending: boolean;
   onApprove: (request: BaselineExceptionRequest) => void;
-}) {
+};
+
+/** Keyed by the quotation version: a reason typed or a box ticked for one version can never be submitted against another (state is reset when the version changes). */
+export function BaselineExceptionBlock(props: BlockProps) {
+  return <BlockInner key={`${props.draftHash}:${props.revision}`} {...props} />;
+}
+
+function BlockInner({ view, revision, draftHash, canDecide, blockedWhy, pending, onApprove }: BlockProps) {
   const uid = useId();
   const [reason, setReason] = useState("");
   const [accepted, setAccepted] = useState(false);
@@ -43,8 +50,10 @@ export function BaselineExceptionBlock({ view, revision, draftHash, canDecide, b
       <h3 id={`${uid}-h`} className="text-sm font-semibold">Approval exception required</h3>
       <p className="mt-1 text-sm">These Estimator-priced systems have no Cin7 SKU mapping, so the baseline cannot be frozen as complete. You can approve with a recorded exception that covers only these items:</p>
       <div className="mt-2 text-sm"><ItemList items={view.items} /></div>
+      {view.costException && <p className="mt-2 text-xs">The Estimator also recorded a cost exception ({view.costException.by}, {formatSast(view.costException.at)}): &ldquo;{view.costException.reason}&rdquo;. It covers supplier costs only; it does not cover these unmapped systems.</p>}
       <p className="mt-2 text-xs">Nothing else is waived: costing, the confirmed amount and the Estimator&apos;s sign-off are still required. The exception is recorded with your name, the time and this quotation version (revision {revision}); any later change to the quotation voids it.</p>
       <label htmlFor={`${uid}-reason`} className="mt-3 block text-sm font-medium">Reason for the exception</label>
+      <p className="text-xs">Visible to the Rep in the frozen baseline: do not include costs or margins.</p>
       <textarea id={`${uid}-reason`} value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={1000} aria-describedby={why ? `${uid}-why` : undefined}
         className="mt-1 w-full max-w-xl rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900" />
       <div className="mt-2"><Checkbox label="I accept this exception for the items listed above" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} /></div>

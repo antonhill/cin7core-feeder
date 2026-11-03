@@ -8,7 +8,7 @@ import { buildCostEstimate, type CostEstimate } from "@/lib/projects/latest-cost
 // The baseline freeze (`buildAcceptedBaseline`) refuses a costed quotation whose physical scope still has packages not mapped to Cin7 SKUs. Systems the Estimator prices
 // by design (the M75 price, penning by the running metre, an Estimator price resolution) legitimately have no Cin7 SKU, so without this exception they could only be
 // approved by waiving every cost problem. This exception waives EXACTLY those items and nothing else:
-//   - not an unmapped product that has no Estimator price, a package still to be confirmed, an item missing from the price source, a supplier quote still required;
+//   - not an unmapped product (including one the Estimator merely typed a price for), a package still to be confirmed, an item missing from the price source, a supplier quote still required;
 //   - not a missing supplier cost, not READY, not costing completeness, not the confirmed amount, not the Estimator's sign-off.
 // It is bound to the exact quotation version (revision + draft hash) it was recorded against, and is sealed into the accepted baseline (`exceptions[]`).
 // Everything here is pure; the Manager role check and the persistence are in the store / action.
@@ -17,13 +17,16 @@ export const BASELINE_EXCEPTION_KIND = "ESTIMATOR_PRICED_WITHOUT_CIN7_SKU";
 export const BASELINE_EXCEPTION_TITLE = "Accepted incomplete: Estimator-priced systems without Cin7 SKU mapping";
 export const BASELINE_EXCEPTION_MIN_REASON = 10;
 
-/** The only pricing routes that are "Estimator-priced by design". */
-export const BY_DESIGN_PRICED_BY = ["estimator_input", "penning_rate", "estimator_resolution"] as const satisfies readonly PricedBy[];
+/**
+ * The only pricing routes that are "Estimator-priced by design": the M75 price the Estimator enters, and penning priced per running metre. `estimator_resolution` is
+ * deliberately NOT here: an Estimator can type a unit price on ANY blocking line (for example an unmapped or mismatched catalogue product), so a resolved price says nothing
+ * about whether a Cin7 SKU should exist. Such a line keeps blocking the freeze until it is mapped.
+ */
+export const BY_DESIGN_PRICED_BY = ["estimator_input", "penning_rate"] as const satisfies readonly PricedBy[];
 export type ByDesignPricedBy = (typeof BY_DESIGN_PRICED_BY)[number];
 export const PRICED_BY_LABEL: Record<ByDesignPricedBy, string> = {
   estimator_input: "priced by the Estimator (entered price)",
   penning_rate: "priced per running metre (penning rate)",
-  estimator_resolution: "priced by an Estimator price resolution",
 };
 const isByDesign = (p: PricedBy | null): p is ByDesignPricedBy => p != null && (BY_DESIGN_PRICED_BY as readonly string[]).includes(p);
 
@@ -60,7 +63,7 @@ const UNMAPPED_SUFFIX = ":UNMAPPED";
 
 /**
  * The scope items that are Estimator-priced BY DESIGN and unmapped: a whole line (not "remaining components" of a partly mapped package) with no resolution, whose
- * commercial line was priced via estimator_input / penning_rate / estimator_resolution. `blocker` is the exact text `effectiveScope` reports for it.
+ * commercial line was priced via estimator_input / penning_rate. `blocker` is the exact text `effectiveScope` reports for it.
  */
 export function estimatorPricedUnmapped(lines: readonly BaselineCommercialLine[], scope: readonly ScopeItem[]): Array<{ item: BaselineExceptionItem; blocker: string }> {
   const out: Array<{ item: BaselineExceptionItem; blocker: string }> = [];
@@ -77,28 +80,33 @@ export function estimatorPricedUnmapped(lines: readonly BaselineCommercialLine[]
 export interface BaselineMappingGate {
   /** The cost estimate exactly as it is frozen (still honestly incomplete). Undefined: costing was never started, so the freeze rule does not apply. */
   estimate: CostEstimate | undefined;
-  /** Would the freeze refuse WITHOUT this exception (and without the Estimator's cost exception)? */
+  /** Would the freeze refuse WITHOUT a Manager baseline exception? */
   blocked: boolean;
-  /** Estimator-priced unmapped items an exception could cover. */
+  /** Estimator-priced unmapped items a Manager exception could cover. */
   items: BaselineExceptionItem[];
-  /** Unresolved packages left once those are waived (these an exception can never cover), and the number of SKUs with no supplier cost. */
+  /** Unresolved packages left once those are waived (these a Manager exception can never cover), and the SKUs with no supplier cost that are NOT waived by the Estimator's cost exception. */
   remainingPackages: string[];
   missingSkus: string[];
-  /** TRUE when the exception is required AND is sufficient: waiving the listed items clears every reason the freeze would refuse. */
+  /** TRUE when a Manager exception is required AND sufficient: waiving the listed items clears every reason the freeze would refuse. */
   required: boolean;
 }
 
-/** The single source of truth for the freeze rule and for the exception: used by `buildAcceptedBaseline`, the approval check and the Manager workspace. */
+/**
+ * The single source of truth for the freeze rule and for the exception: used by `buildAcceptedBaseline`, the approval check and the Manager workspace.
+ *
+ * The Estimator's cost exception (`costExceptionAccepted`) waives COST reasons only, i.e. SKUs with no supplier cost. It never waives an unmapped package: an Estimator-priced
+ * system without a Cin7 SKU always needs the Manager's recorded exception, and any other unmapped package keeps blocking.
+ */
 export function baselineMappingGate(i: { lines: readonly BaselineCommercialLine[]; scope: readonly ScopeItem[]; physicalCosts: Parameters<typeof buildCostEstimate>[1] | undefined; costExceptionAccepted: boolean }): BaselineMappingGate {
   const captured = i.physicalCosts;
   const eff = captured && Object.keys(captured).length ? effectiveScope(i.scope) : null;
   const estimate = eff ? buildCostEstimate(eff.lines.map((l) => ({ sku: l.sku, description: l.description, quantity: l.quantity })), captured!, eff.blockers.length ? eff.blockers : []) : undefined;
-  const blocked = !!estimate?.incomplete && !i.costExceptionAccepted;
   const waivable = estimate ? estimatorPricedUnmapped(i.lines, i.scope) : [];
-  const remaining = [...(estimate?.unresolvedPackages ?? [])];
-  for (const w of waivable) { const at = remaining.indexOf(w.blocker); if (at >= 0) remaining.splice(at, 1); }
   const covered = waivable.filter((w) => (estimate?.unresolvedPackages ?? []).includes(w.blocker));
-  const missingSkus = estimate?.missingSkus ?? [];
+  const remaining = [...(estimate?.unresolvedPackages ?? [])];
+  for (const w of covered) { const at = remaining.indexOf(w.blocker); if (at >= 0) remaining.splice(at, 1); }
+  const missingSkus = i.costExceptionAccepted ? [] : (estimate?.missingSkus ?? []);
+  const blocked = !!estimate && (covered.length > 0 || remaining.length > 0 || missingSkus.length > 0);
   return {
     estimate, blocked, items: covered.map((w) => w.item), remainingPackages: remaining, missingSkus,
     required: blocked && covered.length > 0 && remaining.length === 0 && missingSkus.length === 0,
@@ -123,14 +131,17 @@ export function exceptionDecisionText(e: Pick<BaselineException, "unresolved" | 
 
 /** What the Manager workspace (and the Estimator's read-only note) shows. Pure; no cost value. */
 export interface BaselineExceptionView {
+  /** The Estimator's recorded cost exception, shown read-only for context (null when there is none). It waives cost reasons only. */
+  costException?: { reason: string; by: string; at: string } | null;
   /** An exception is needed to approve and is sufficient. */
   baselineExceptionRequired: boolean;
   items: BaselineExceptionItem[];
   /** Reasons an exception can NOT cover (so approval stays blocked even with one). */
   otherBlockers: string[];
 }
-export function baselineExceptionView(g: Pick<BaselineMappingGate, "required" | "items" | "blocked" | "remainingPackages" | "missingSkus">): BaselineExceptionView {
+export function baselineExceptionView(g: Pick<BaselineMappingGate, "required" | "items" | "blocked" | "remainingPackages" | "missingSkus">, costException?: { reason: string; by: string; at: string } | null): BaselineExceptionView {
   return {
+    costException: costException ?? null,
     baselineExceptionRequired: g.required,
     items: g.blocked ? g.items : [],
     otherBlockers: g.blocked ? [...g.remainingPackages, ...(g.missingSkus.length ? [`${g.missingSkus.length} SKU(s) have no supplier cost selected`] : [])] : [],

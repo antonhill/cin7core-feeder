@@ -52,6 +52,32 @@ describe("Stage 3 Manager: the approval exception block", () => {
   });
 });
 
+describe("version keyed state, hint and the Estimator's cost exception", () => {
+  it("a reason and acceptance entered for one version are cleared when the version changes (cannot submit against a new hash)", () => {
+    const onApprove = vi.fn();
+    const props = { view: view(), revision: 3, draftHash: "h1", canDecide: true, pending: false, onApprove };
+    const { rerender } = render(<BaselineExceptionBlock {...props} />);
+    fireEvent.change(screen.getByLabelText("Reason for the exception"), { target: { value: "Library mapping follows the PO" } });
+    fireEvent.click(screen.getByLabelText(/I accept this exception/));
+    expect(btn().disabled).toBe(false);
+    rerender(<BaselineExceptionBlock {...props} draftHash="h2" />);
+    expect((screen.getByLabelText("Reason for the exception") as HTMLTextAreaElement).value).toBe("");
+    expect((screen.getByLabelText(/I accept this exception/) as HTMLInputElement).checked).toBe(false);
+    expect(btn().disabled).toBe(true);
+    rerender(<BaselineExceptionBlock {...props} draftHash="h2" revision={4} />);
+    expect(btn().disabled).toBe(true);
+    expect(onApprove).not.toHaveBeenCalled();
+  });
+  it("warns that the reason is visible to the Rep", () => {
+    mount();
+    expect(screen.getByText("Visible to the Rep in the frozen baseline: do not include costs or margins.")).toBeTruthy();
+  });
+  it("shows the Estimator's cost exception read-only, saying it covers costs only", () => {
+    mount({ view: view({ costException: { reason: "Supplier choice follows the PO", by: "est@a", at: "2026-11-01T08:00:00.000Z" } }) });
+    expect(screen.getByText(/Supplier choice follows the PO/).textContent).toMatch(/est@a.*covers supplier costs only/);
+  });
+});
+
 describe("Stage 2 Estimator note and the frozen baseline", () => {
   it("the Estimator sees a read-only note that the Manager will be asked, only when it applies", () => {
     const { rerender } = render(<BaselineExceptionNote view={view()} />);
