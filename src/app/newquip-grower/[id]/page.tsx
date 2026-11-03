@@ -14,16 +14,14 @@ import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
-import { GROWER_RULES, CCM_FEEDER_CAPACITY_PIGS, PIGS_PER_DRINKER } from "@/newquip/grower/rules";
+import { CCM_FEEDER_CAPACITY_PIGS } from "@/newquip/grower/rules";
 import { buildCustomerSummary } from "@/newquip/grower/customer-summary";
 import { READINESS_LABEL, type ReadinessCategory, type ReadinessState } from "@/newquip/grower/readiness";
-import { CHARGE_LABEL, expectedSkuFor, type BridgeLine, type ChargeKey } from "@/newquip/grower/quote-bridge";
+import { expectedSkuFor } from "@/newquip/grower/quote-bridge";
 import { packageFor, manualSelectionSkusFor } from "@/newquip/grower/commercial";
 import { ROOMS_HELP, VENTILATION_SCOPE_STATUS } from "@/newquip/grower/open-items";
-import { valueKindOf, VALUE_KIND_LABEL, type ValueKind } from "@/newquip/grower/bom-view";
 import { QUOTE_TYPE_LABEL, type QuoteType } from "@/newquip/grower/pricing-source";
-import { TOPIGS_GROWER_INPUT } from "@/newquip/grower/fixture";
-import { DEMO_DEFAULTS_SOURCE, applyDemoDefaults, hasEntries } from "@/newquip/grower/demo-defaults";
+import { DEMO_DEFAULTS_SOURCE, RECOMMENDED_CONFIG_FILLS, SAMPLE_MEASUREMENTS_FILLS, applyDemoDefaults, applyMeasurementsSample, applyRecommendedConfiguration, hasEntries, hasEquipmentEntries, hasMeasurementEntries } from "@/newquip/grower/demo-defaults";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import type { QuoteEvaluation } from "@/newquip/grower/evaluate";
 import type { GrowerItemKey, OptionalItemKey, PenningPigSize } from "@/newquip/grower/types";
@@ -33,11 +31,10 @@ import {
 } from "../actions";
 import { formatSast } from "@/lib/approvals/time";
 import { isOptionalItemKey } from "@/newquip/grower/types";
-import { mappingControlFor } from "@/newquip/grower/mapping-access";
 import { blankExclusions, createRecalcLoop } from "@/newquip/grower/preview-draft";
 import { previewCostOverrides } from "@/newquip/quote/margin";
-import { ProductMappingPicker } from "./ProductMappingPicker";
 import { fmtCents, fmtZar, NumField, TextField } from "../fields";
+import { ChargesSection, ExclusionsSection, LineDecisionsTable } from "./RepConfigSections";
 import { formatZar } from "@/lib/format-money";
 import { MarginPanel } from "./MarginPanel";
 import { BuildStamp } from "@/components/BuildStamp";
@@ -48,8 +45,11 @@ import { Stage1Review } from "./Stage1Review";
 import { StepRail, StepPanel } from "@/components/ui/StepRail";
 import { useShowAllSteps } from "@/components/ui/use-show-all-steps";
 import { nextIncompleteStepId, parseStepParam } from "@/components/ui/step-rail-model";
-import { deriveStage1Steps, NO_CUSTOMER_FACTS, STAGE1_STEP_IDS, STAGE1_STEP_LABEL, type Stage1CustomerFacts, type Stage1StepId } from "@/newquip/quote/stage1-steps";
-import { costAckKey, deriveStage2Steps, nextCandidates, type Stage2Input, stage2StepIds, STAGE2_STEP_LABEL, type Stage2StepId } from "@/newquip/quote/stage2-steps";
+import { customerFactsSettled, deriveStage1Steps, NO_CUSTOMER_FACTS, STAGE1_STEP_IDS, STAGE1_STEP_LABEL, type Stage1CustomerFacts, type Stage1StepId } from "@/newquip/quote/stage1-steps";
+import { currentStepId, deriveWizard, isPermitted, resolveEntryStep, toRailSteps } from "@/newquip/quote/wizard-contract";
+import { costAckKey, deriveStage2Steps, type Stage2Input } from "@/newquip/quote/stage2-steps";
+import { deriveFinalReviewChecklist, deriveStage2Wizard, deriveStage3Wizard, estimatorItemText, finalReviewBlockText, STAGE2_WIZARD_IDS, STAGE2_WIZARD_LABEL, type Stage2WizardId } from "@/newquip/quote/stage23-wizard";
+import { EstimatorResult, FinalReviewChecklist, OwnerTag, RepSubmittedSummary } from "./Stage23Panels";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { DeliveryPanel, type DeliveryGate } from "./DeliveryPanel";
 import { ApprovalChecklist, AcceptanceStatusBanner, HandoverChecklist } from "./Stage36Guidance";
@@ -73,7 +73,6 @@ import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/bill
 // editable DRAFT; every number shown comes from the server's evaluateDraft(), and approval re-evaluates on the server again.
 
 const READY_TONE: Record<ReadinessState, BadgeTone> = { DRAFT: "neutral", BLOCKED: "danger", READY: "success" };
-const KIND_TONE: Record<ValueKind, BadgeTone> = { auto_calculated: "success", default_suggested: "info", estimator_input_required: "warning", estimator_input: "neutral" };
 const CAT_LABEL: Record<ReadinessCategory, string> = {
   autoCalculated: "Auto-calculated", suggestedDefault: "Suggested / default", estimatorInputs: "Estimator inputs", overrides: "Overrides",
   warnings: "Warnings", missingMappings: "Missing product mappings", supplierQuoteRequired: "Supplier quote required", pricingExceptions: "Pricing exceptions",
@@ -87,12 +86,16 @@ const OPTIONAL_LABELS: Record<OptionalItemKey, string> = {
   controller: "Thomas-CL1 controller", silo_weighing: "Silo weighing", control_panel: "Control panel", emergency_windows: "Emergency windows",
   pad_cooling: "Pad cooling", cone_fans: "Cone fans", manure_plug: "Manure plugs",
 };
-const CHARGE_HELP: Record<ChargeKey, string> = {
-  delivery: "From the courier invoice — truck size × truck price; distance affects it.",
-  installation: "From the teams' service reports — days × daily rate.",
-  concrete_slat_delivery: "Truck price ÷ slat weight, by distance.",
-};
-
+/** The existing replace-confirmation pattern for the contextual samples: says what is replaced and that nothing is saved. */
+function SampleConfirm({ what, onYes, onNo }: { what: string; onYes: () => void; onNo: () => void }) {
+  return (
+    <div role="alert" className="mt-3 flex max-w-4xl flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900" data-testid="sample-confirm">
+      <span>This replaces {what} you have already entered in this draft. Nothing is saved until you press Save draft.</span>
+      <Button size="sm" className="min-h-11" onClick={onYes}>Replace values</Button>
+      <Button size="sm" variant="secondary" className="min-h-11" onClick={onNo}>Cancel</Button>
+    </div>
+  );
+}
 
 export default function QuoteEditorPage() {
   const { id } = useParams<{ id: string }>();
@@ -129,9 +132,19 @@ export default function QuoteEditorPage() {
   }, []);
   const applyGate = useCallback((g: DeliveryGate) => { noteGateSig(`${g.status}|${g.hasDocument}|${g.linkState}`); setGate(g); }, [noteGateSig]);
   // Stage 1 steps: navigation and guidance only (completion is derived from data, never from a visit). The customer facts are lifted from the CustomerPanel that already loads them.
-  const [stepNo, setStepNo] = useState<number>(() => (parseStage(search.get("stage")) === 2 || parseStage(search.get("stage")) === 4 ? 1 : parseStepParam(search.get("step"), STAGE1_STEP_IDS.length)));
-  // Stage 2 has its own step number but SHARES the "Show all steps" preference (one setting for the builder, one storage key).
-  const [step2No, setStep2No] = useState<number>(() => (parseStage(search.get("stage")) === 2 ? parseStepParam(search.get("step"), 5) : 1));
+  // The wizard (wizard-contract.ts) decides which Stage 1 step is open. `reqStep` is what the viewer asked for (the address bar's ?step= at load, then their own navigation); the ENTRY step is resolved ONCE,
+  // after the customer facts have settled, and latched (`entry`) so nothing moves the viewer afterwards. A requested step that is not permitted (locked) is clamped.
+  const [reqStep, setReqStep] = useState<Stage1StepId | null>(() => { const st = parseStage(search.get("stage")); const raw = search.get("step"); return st === 2 || st === 4 || raw == null ? null : STAGE1_STEP_IDS[parseStepParam(raw, STAGE1_STEP_IDS.length) - 1]; });
+  const [entry, setEntry] = useState<Stage1StepId | null>(null);
+  const [urlSync, setUrlSync] = useState<Stage1StepId | null>(null);
+  // Safety net: if the customer details never report (a hung request), the wizard stops waiting after 10 s instead of showing its loading shell forever.
+  const [factsGiveUp, setFactsGiveUp] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setFactsGiveUp(true), 10000); return () => clearTimeout(t); }, []);
+  useEffect(() => { if (!urlSync) return; try { const u = new URL(window.location.href); u.searchParams.set("step", String(STAGE1_STEP_IDS.indexOf(urlSync) + 1)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } }, [urlSync]);
+  // Stage 2 (the Estimator's wizard) SHARES the "Show all steps" preference (one setting for the builder, one storage key). `req2No` is what the viewer asked for: the address bar's ?step= at load (a 1-based
+  // number among the steps THIS viewer has), then their own navigation. The entry step is resolved ONCE (`entry2`) and latched, as for Stage 1.
+  const [req2No, setReq2No] = useState<number | null>(() => (parseStage(search.get("stage")) === 2 && search.get("step") != null ? parseStepParam(search.get("step"), 99) : null));
+  const [entry2, setEntry2] = useState<Stage2WizardId | null>(null);
   // Stage 4 (Customer Quotation) has two steps, with the same shared preference.
   const [step4No, setStep4No] = useState<number>(() => (parseStage(search.get("stage")) === 4 ? parseStepParam(search.get("step"), STAGE4_STEP_IDS.length) : 1));
   // "Mark reviewed & continue" on Cost & margin: a CLIENT-LOCAL acknowledgement, never stored and never a sign-off. It holds a key built from the version it was given on; any change makes it stale.
@@ -144,6 +157,9 @@ export default function QuoteEditorPage() {
   const [error, setError] = useState<string | null>(null);
   const [confirmDemo, setConfirmDemo] = useState(false);
   const [demoLoaded, setDemoLoaded] = useState<string[] | null>(null);
+  // Contextual samples (UX-006i1): which sample is waiting for the viewer to confirm replacing values, and the last one loaded (announced once).
+  const [confirmSample, setConfirmSample] = useState<"measurements" | "recommended" | null>(null);
+  const [sampleNote, setSampleNote] = useState<string | null>(null);
   // UAT-025: every action reports beside its own control (never in a banner above a long page) and ignores a second click while it is in flight.
   const acts = useKeyedActions();
   const isWorking = acts.anyPending;
@@ -198,14 +214,14 @@ export default function QuoteEditorPage() {
     return () => clearTimeout(t);
   }, [draft, dirty, loop]);
 
-  // A ?step= beyond this viewer's steps (a Rep has three) is shown as step 1 (everything reads the clamped step) and dropped from the address bar once the viewer is known.
+  // A ?step= beyond this viewer's steps (a viewer without cost visibility has two) is shown as the entry step and dropped from the address bar once the viewer is known.
   const viewerCommercials = view?.viewer.canViewCommercials;
   useEffect(() => {
-    if (viewerCommercials === undefined) return;
-    const count = stage2StepIds(viewerCommercials).length;
-    if (step2No >= 1 && step2No <= count) return;
+    if (viewerCommercials === undefined || req2No === null) return;
+    const count = viewerCommercials ? STAGE2_WIZARD_IDS.length : 2;
+    if (req2No >= 1 && req2No <= count) return;
     try { const u = new URL(window.location.href); if (u.searchParams.get("stage") === "2" && u.searchParams.has("step")) { u.search = new URLSearchParams([...u.searchParams].filter(([k]) => k !== "step")).toString(); window.history.replaceState(null, "", u.toString()); } } catch { /* the address bar is a convenience */ }
-  }, [viewerCommercials, step2No]);
+  }, [viewerCommercials, req2No]);
 
   if (!view || !draft || !ev) {
     return (
@@ -242,6 +258,13 @@ export default function QuoteEditorPage() {
     const r = applyDemoDefaults(draft!);
     setDraft(r.draft); setDirty(true); setConfirmDemo(false); setDemoLoaded(r.replaced); setError(null);
   }
+  // Contextual samples fill ONE step of this draft (unsaved) and never call a server action but the page's own live preview. The active step is untouched (nothing here changes `reqStep`).
+  function runSample(kind: "measurements" | "recommended") {
+    const r = kind === "measurements" ? applyMeasurementsSample(draft!) : applyRecommendedConfiguration(draft!);
+    setDraft(r.draft); setDirty(true); setConfirmSample(null); setError(null);
+    setSampleNote(kind === "measurements" ? (r.replaced ? "Sample measurements loaded into this draft." : "The measurements already matched the sample; nothing changed.") : (r.replaced ? "Recommended configuration loaded into this draft." : "The configuration already matched the recommendation; nothing changed."));
+  }
+  const askSample = (kind: "measurements" | "recommended") => ((kind === "measurements" ? hasMeasurementEntries(draft!) : hasEquipmentEntries(draft!)) ? setConfirmSample(kind) : runSample(kind));
   // The server already rewrote the customer name (and, from estimator review, returned the quotation to the Rep). Reload the quotation; unsaved local edits are kept.
   const onCustomerChanged = (name: string) => {
     void getGrowerQuoteAction(id).then((r) => {
@@ -256,14 +279,14 @@ export default function QuoteEditorPage() {
    * Runs one quotation action (saving unsaved edits first) under `key`. `confirm` says, from a fresh read, whether the action took effect: after a lost
    * response the page checks that BEFORE suggesting a retry (and adopts the server's state if it did).
    */
-  function act(fn: () => Promise<{ ok: boolean; error?: string; data?: QuoteView }>, done: string, key = "page", confirm?: (v: QuoteView) => boolean) {
+  function act(fn: () => Promise<{ ok: boolean; error?: string; data?: QuoteView }>, done: string, key = "page", confirm?: (v: QuoteView) => boolean, pin?: StageId) {
     void acts.run(key, async () => {
       if (dirty && !final) {
         const s = await saveGrowerDraftAction(id, draft!);
         if (!s.ok) return { ok: false, error: s.error ?? "Could not save" } as { ok: boolean; error?: string; data?: QuoteView };
       }
       const r = await fn();
-      if (r.ok && r.data) adopt(r.data, true);
+      if (r.ok && r.data) { adopt(r.data, true); if (pin) setPicked(pin); }
       return r;
     }, {
       pending: "Working… please wait",
@@ -271,7 +294,7 @@ export default function QuoteEditorPage() {
       reconcile: async () => {
         const v = await getGrowerQuoteAction(id);
         if (!v.ok || !v.data || !confirm) return "unknown";
-        if (confirm(v.data)) { adopt(v.data, true); return "done"; }
+        if (confirm(v.data)) { adopt(v.data, true); if (pin) setPicked(pin); return "done"; }
         return "not_done";
       },
     });
@@ -288,7 +311,6 @@ export default function QuoteEditorPage() {
 
   const cfg = draft.config;
   const lineByKey = new Map(ev.calc.lines.map((l) => [l.itemKey, l]));
-  const bridgeByKey = new Map<string, BridgeLine>((budget?.lines ?? []).map((b) => [b.itemKey, b]));
   const summary = budget ? buildCustomerSummary(budget) : null;
   const stages = computeStages({
     state: q.state, revision: q.revision, ready: rd.state === "READY", customerSelected: !!draft.customerName.trim(), confirmed: q.customer_confirmed_cents != null,
@@ -314,25 +336,40 @@ export default function QuoteEditorPage() {
   const stage: StageId = picked ?? landing ?? here;
   const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); const at = n === 1 ? stepNo : n === 2 ? step2Cur : n === 4 ? step4No : 1; const sp = new URLSearchParams([...u.searchParams].filter(([k]) => k !== "step" && k !== "stage")); sp.set("stage", String(n)); if (at > 1) sp.set("step", String(at)); u.search = sp.toString(); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
 
-  const stage1 = deriveStage1Steps({ customerName: draft.customerName, siteName: draft.siteName, penningPigSize: cfg.penningPigSize, calcIssues: ev.calc.issues, readinessReasons: rd.reasons, customer: customerFacts, roomValues: { lengthM: cfg.lengthM, widthM: cfg.widthM, rooms: cfg.rooms, totalPens: cfg.totalPens, pigsPerRoom: cfg.pigsPerRoom } });
-  const stepId = STAGE1_STEP_IDS[stepNo - 1];
-  const goStepNo = (n: number) => {
-    const next = Math.min(Math.max(n, 1), STAGE1_STEP_IDS.length);
-    setStepNo(next);
-    try { const u = new URL(window.location.href); u.searchParams.set("step", String(next)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ }
+  // ── Stage 1: the Rep's wizard. The page only feeds data in; wizard-contract.ts decides statuses, locks, who owns what and where the wizard opens. ──
+  const blankPriceReasonCount = Object.values(draft.estimator.priceResolutions).filter((r) => r && !r.reason.trim()).length;
+  const stage1 = deriveStage1Steps({ customerName: draft.customerName, siteName: draft.siteName, penningPigSize: cfg.penningPigSize, calcIssues: ev.calc.issues, readinessReasons: rd.reasons, customer: customerFacts, roomValues: { lengthM: cfg.lengthM, widthM: cfg.widthM, rooms: cfg.rooms, totalPens: cfg.totalPens, pigsPerRoom: cfg.pigsPerRoom },
+    work: { lines: ev.calc.lines, budgetLines: budget?.lines ?? null, charges: budget?.charges ?? null, blankExclusionCount: blankExclusionKeys.length, blankPriceReasonCount } });
+  const wizard = deriveWizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, stage1Status: stages[0].status, roles: { rep: roles.has("rep"), estimator: roles.has("estimator"), manager: roles.has("manager") }, canViewCommercials: view.viewer.canViewCommercials, stage1, customer: customerFacts, readiness: { state: rd.state }, totalAvailable: totalCents != null && totalCents > 0 });
+  // Resolve the entry step ONCE, after the customer facts have settled (read, failed or unavailable), and latch it: no later change of the facts can move the viewer (React's render-phase initialisation, as for `landing`).
+  const factsSettled = customerFactsSettled(customerFacts) || factsGiveUp;
+  if (stage === 1 && factsSettled && entry === null) setEntry(resolveEntryStep(wizard, reqStep));
+  const stepId = currentStepId(wizard.steps, (reqStep ?? entry ?? wizard.entryStepId));
+  const stepNo = STAGE1_STEP_IDS.indexOf(stepId) + 1;
+  const stage1Edit = wizard.steps.find((x) => x.id === stepId)?.access === "edit" || (q.state === "REP_DRAFT" && roles.has("rep"));
+  const stepAccess = (id: Stage1StepId) => wizard.steps.find((x) => x.id === id)!;
+  const lockedFor = (id: Stage1StepId): string[] | undefined => (stepAccess(id).access === "locked" ? stepAccess(id).blockedBy : undefined);
+  const writeStepParam = (id: Stage1StepId) => { try { const u = new URL(window.location.href); u.searchParams.set("step", String(STAGE1_STEP_IDS.indexOf(id) + 1)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
+  // A requested step that is not permitted (a locked step in ?step=, or one that locked after an edit upstream) is clamped to the permitted step; the address bar follows (see urlSync). The viewer
+  // is never moved to a LATER step by this: the request is replaced by where they actually are.
+  if (stage === 1 && entry !== null && reqStep !== null && reqStep !== stepId) { setReqStep(stepId); setUrlSync(stepId); }
+  const goStepId = (id: Stage1StepId) => {
+    if (!isPermitted(stepAccess(id))) return; // a locked step is not selectable (the rail also refuses it)
+    setReqStep(id); writeStepParam(id);
   };
-  const goStep = (id: string) => goStepNo(STAGE1_STEP_IDS.indexOf(id as Stage1StepId) + 1);
-  const nextOpen = nextIncompleteStepId(stage1.steps, stepId);
-  // Guided: each step is its own grid and a single panel spans the full width. Show all: the step sections are `contents`, so every panel joins the fieldset's one grid
-  // and Room inputs | Selections sit side by side again (xl:order-* puts the two headings above their panels at xl only; below xl the one-column source order keeps each heading right before its own panel). A hidden step is never `contents` (hidden wins via !important).
-  const stepPanelCls = showAllSteps ? "contents" : "col-span-full grid min-w-0 items-start gap-6 xl:grid-cols-2";
-  const wide = showAllSteps ? "" : "col-span-full";
+  const goStep = (id: string) => goStepId(id as Stage1StepId);
+  const railSteps1 = toRailSteps(wizard.steps);
+  const nextOpen = nextIncompleteStepId(railSteps1, stepId, (x) => stepAccess(x.id as Stage1StepId).access === "edit");
+  const nextStep1 = STAGE1_STEP_IDS[stepNo] ?? null; // the step after this one (null on the last)
+  const nextStep1Locked = nextStep1 ? stepAccess(nextStep1) : null;
+  const stepPanelCls = "col-span-full grid min-w-0 items-start gap-6 [&>*]:min-w-0";
+  const gated1 = stage === 1 && !factsSettled; // the small loading shell shows meanwhile; the panels stay mounted (hidden) so the customer facts can load
 
-  // Stage 2 steps: the same navigation and guidance (never a gate). Statuses come from data already loaded here: the readiness result, the budget, the draft's own validation and the stage gates.
+  // ── Stage 2: the Estimator's wizard. Statuses come from data already loaded here (the readiness result, the budget, the draft's own validation and the quotation's own records); stage23-wizard.ts decides
+  // the owner, access, locks and entry step. The Rep's submitted information is a read-only summary above the steps. ──
   const canCommercials = view.viewer.canViewCommercials;
-  const step2Ids = stage2StepIds(canCommercials);
-  const step2Cur = step2No >= 1 && step2No <= step2Ids.length ? step2No : 1; // a ?step= beyond this viewer's steps (a Rep has three) falls back to the first, as for Stage 1
-  const step2Id = step2Ids[step2Cur - 1];
+  const isEstimator = roles.has("estimator");
+  const s2Edit = isEstimator && !final; // the ONLY Stage 2 editor (the server re-checks every action)
   // The key names the exact version and costing it was given on (quote, revision, content hash, last update and the live cost and margin). It is never rendered or put in an attribute.
   const costKey = budget ? costAckKey({ quoteId: q.id, revision: q.revision, draftHash: q.draft_hash, updatedAt: q.updated_at, estimatedCost: budget.totals.estimatedCost, marginPct: budget.totals.overallMarginPct }) : null;
   const s2Base: Omit<Stage2Input, "costAcknowledged"> = {
@@ -344,46 +381,62 @@ export default function QuoteEditorPage() {
     totalAvailable: totalCents != null, confirmedRecorded: q.customer_confirmed_cents != null,
     dirty, signoff: !q.estimator_signoff_hash ? "none" : q.estimator_signoff_hash === q.draft_hash ? "current" : "stale",
   };
+  // The data-derived costing status (no acknowledgement). "Review needed" = the figures are complete and can be reviewed; the Cin7 cost-capture state lives in the Cost panel and is not read here.
+  const costBase = canCommercials ? deriveStage2Steps({ ...s2Base, costAcknowledged: false }).steps.find((x) => x.id === "cost") : undefined;
   // Any unsaved edit clears the acknowledgement (reverting does not restore it: safe), and so does a save or any change to the costing. The cost and margin in the key are belt-and-braces
-  // beside the revision, content hash and update time. It is offered only while the Cost step is genuinely in the "Review needed" state (not while the costing needs attention).
-  const costReviewable = deriveStage2Steps({ ...s2Base, costAcknowledged: false }).steps.find((x) => x.id === "cost")?.status === "review";
-  const isEstimatorOrManager = roles.has("estimator") || roles.has("manager");
-  const isObserver = canCommercials && !isEstimatorOrManager; // can see the costing (e.g. an Administrator) but holds no quote role: nothing for them to mark
-  const canAckCost = canCommercials && q.state === "ESTIMATOR_REVIEW" && isEstimatorOrManager && costKey != null && costReviewable;
+  // beside the revision, content hash and update time. It is offered only to the Estimator, only in Estimator review, and only while the costing is genuinely in the "Review needed" state.
+  const canAckCost = canCommercials && q.state === "ESTIMATOR_REVIEW" && isEstimator && costKey != null && costBase?.status === "review";
   const costAcknowledged = canAckCost && costAck === costKey && !dirty;
   const costNeedsMark = canAckCost && !dirty && !costAcknowledged; // the one action is offered only when it can actually take effect
-  const onCostUnmarked = costNeedsMark && step2Id === "cost";
-  const onCostMarked = costAcknowledged && step2Id === "cost";
   const ACK_EXPLAIN = "This records that you have looked at the costing and margin for this version. It is not the Estimator sign-off.";
+  const mappingOpen = stage1.open.filter((o) => o.owner === "Estimator").map((o) => estimatorItemText(o.message));
+  const wizard2 = deriveStage2Wizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, roles: { rep: roles.has("rep"), estimator: isEstimator, manager: roles.has("manager") }, canViewCommercials: canCommercials, signoff: s2Base.signoff,
+    dirty, calcValid: ev.calc.valid, readiness: { state: rd.state, reasons: rd.reasons }, mappingOpen, repOpenCount: stage1.open.filter((o) => o.owner === "Rep").length, cost: costBase ? { status: costBase.status, note: costBase.note } : null,
+    costAcknowledged, confirmedCents: q.customer_confirmed_cents, totalCents });
+  const railSteps2 = toRailSteps(wizard2.steps); // steps hidden from this viewer (the cost steps without cost visibility) are not on the rail
+  const visible2 = railSteps2.map((x) => x.id);
+  const req2Id = req2No !== null ? visible2[req2No - 1] ?? null : null;
+  // Resolve the entry step ONCE (the quotation and its evaluation are loaded by now) and latch it: no later save, recalculation or edit moves the viewer.
+  if (stage === 2 && entry2 === null) setEntry2(resolveEntryStep(wizard2, req2Id));
+  const step2Id = currentStepId(wizard2.steps, req2Id ?? entry2 ?? wizard2.entryStepId);
+  const step2Cur = visible2.indexOf(step2Id) + 1;
+  const step2Access = (id: Stage2WizardId) => wizard2.steps.find((x) => x.id === id)!;
+  const lockedFor2 = (id: Stage2WizardId): string[] | undefined => (step2Access(id).access === "locked" ? step2Access(id).blockedBy : undefined);
+  const write2Step = (n: number) => { try { const u = new URL(window.location.href); u.searchParams.set("stage", "2"); u.searchParams.set("step", String(n)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
+  // A request for a step that is not permitted (locked, or one that locked after a change) is replaced by where the viewer actually is; the viewer is never moved to a LATER step by this.
+  if (stage === 2 && entry2 !== null && req2No !== null && req2No <= visible2.length && req2Id !== step2Id) { setReq2No(step2Cur); write2Step(step2Cur); }
+  const goStep2Id = (id: Stage2WizardId) => {
+    if (!isPermitted(step2Access(id))) return; // a locked step is not selectable (the rail also refuses it)
+    setAckFor(null);
+    const n = visible2.indexOf(id) + 1;
+    setReq2No(n); write2Step(n);
+  };
+  const goStep2 = (id: string) => goStep2Id(id as Stage2WizardId);
+  const next2Open = nextIncompleteStepId(railSteps2, step2Id, (x) => step2Access(x.id as Stage2WizardId).access === "edit" && x.status !== "review"); // only this viewer's own work, never another role's; the costing is looked at, and acknowledged in Final review
+  const finalChecklist = deriveFinalReviewChecklist({ mappingOpen, readiness: { state: rd.state, reasons: rd.reasons }, cost: costBase ? { status: costBase.status, note: costBase.note } : null, confirmedCents: q.customer_confirmed_cents, totalCents, dirty, calcValid: ev.calc.valid });
+  const finalBlockText = finalReviewBlockText({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", isEstimator, canViewCommercials: canCommercials, costStatus: costBase?.status ?? null, costNote: costBase?.note, dirty });
+  const finalStepDone = final || step2Access("final").status === "complete" || step2Access("final").counted === true;
+  const finalBlocked = canCommercials && !costNeedsMark && !costAcknowledged && !finalStepDone && finalBlockText != null; // nothing can be recorded: say why instead of offering an ineffective action
   const markReviewed = () => {
     setCostAck(costKey);
-    if (showAllSteps) setTimeout(() => document.getElementById("cost-ack-done")?.focus(), 0); else goStep2("signoff"); // step mode: the Sign-off heading takes focus; show-all: the "marked reviewed" text does
+    if (showAllSteps) setTimeout(() => document.getElementById("cost-ack-done")?.focus(), 0); else goStep2Id("signoff"); // step mode: the Sign-off heading takes focus; show-all: the "marked reviewed" text does
     setAckFor(costKey);
   };
   // The announcement is derived from the resulting state, never from the click: it is spoken only while the acknowledgement actually holds.
-  const ackMsg = costAcknowledged && ackFor === costKey ? "Cost & margin marked reviewed. This is not a sign-off." : "";
-  const stage2 = deriveStage2Steps({ ...s2Base, costAcknowledged });
-  // On Cost & margin there is no ineffective "Next": when the review cannot be recorded (not in Estimator review, costing needing attention, cost unavailable) the bar says why and offers Back only.
-  const costStepNow = stage2.steps.find((x) => x.id === "cost");
-  const costDone = q.state === "MANAGER_APPROVED_FINAL" || costStepNow?.status === "complete" || costStepNow?.counted === true;
-  const costBlockedNow = canCommercials && !costNeedsMark && !costAcknowledged && !costDone; // nothing can be recorded: say why instead of offering an ineffective action
-  const costBlocked = costBlockedNow && step2Id === "cost";
-  const costBlockedText = isObserver ? "You can view the costing and margin but only the Estimator or a Manager can mark it reviewed."
-    : q.state !== "ESTIMATOR_REVIEW" ? "Marking the costing reviewed is available once the quote is in Estimator review."
-    : costStepNow?.status === "attention" ? `Resolve the costing items above before marking reviewed. ${costStepNow.note ?? ""}`.trim()
-    : dirty ? "Save or discard your unsaved edits before marking the costing reviewed."
-    : `The costing cannot be marked reviewed yet. ${costStepNow?.note ?? ""}`.trim();
-  const groupTone = { success: "complete", warning: "attention", danger: "attention", info: "incomplete", neutral: "neutral" } as const;
-  const stage2Groups = stage2.groups.map((g) => ({ id: g.id, label: g.label, owner: g.id === "rep" ? "Rep" : "Estimator", statusText: `Workflow: ${g.statusLine}`, tone: groupTone[g.tone] }));
-  const signoffOutstandingForYou = q.state === "ESTIMATOR_REVIEW" && (roles.has("estimator") || roles.has("manager")) && stage2.steps.find((x) => x.id === "signoff")?.status !== "complete";
-  const goStep2No = (n: number) => {
-    setAckFor(null);
-    const next = Math.min(Math.max(n, 1), step2Ids.length);
-    setStep2No(next); // the address bar gets stage and step together, so a reload lands on the same step
-    try { const u = new URL(window.location.href); u.searchParams.set("stage", "2"); u.searchParams.set("step", String(next)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ }
-  };
-  const goStep2 = (id: string) => goStep2No(step2Ids.indexOf(id as Stage2StepId) + 1);
-  const next2Open = nextIncompleteStepId(nextCandidates(stage2, step2Id), step2Id); // only this viewer's own work, never another role's
+  const ackMsg = costAcknowledged && ackFor === costKey ? "Final review marked as reviewed. This is not a sign-off." : "";
+  const signedNow = q.state === "ESTIMATOR_REVIEW" && s2Base.signoff === "current";
+  // Editing an earlier step during Estimator review is allowed by the server and withdraws a current sign-off: say so where the Estimator edits.
+  const editWarning = s2Edit && q.state === "ESTIMATOR_REVIEW" && (signedNow || costAcknowledged)
+    ? (signedNow ? (dirty ? "Unsaved edits: saving them withdraws your sign-off. You will have to mark the final review and sign off again." : "Your sign-off is current. Changing anything in this step and saving withdraws it; you would then mark the final review and sign off again.")
+      : "Changing anything in this step clears your 'marked reviewed': you review the final step again.") : null;
+  const repQuantities = ev.calc.lines.filter((l) => l.basis !== "not_selected" && !l.exclusionReason && l.projectQuantity != null).map((l) => ({ label: l.label.split(" (")[0], qty: l.projectQuantity as number }));
+  const priceExceptions = (budget?.lines ?? []).filter((b) => b.pricedBy === "estimator_resolution").map((b) => { const r = draft.estimator.priceResolutions[b.itemKey as GrowerItemKey]; return { label: b.label, unitPrice: r?.unitPriceExVat ?? 0, reason: r?.reason ?? "", by: r?.by, at: r?.at }; });
+  const costOverrideRows = canCommercials ? Object.entries(draft.estimator.costOverrides ?? {}).map(([k, o]) => ({ label: lineByKey.get(k as GrowerItemKey)?.label ?? k, costCents: o.lineCostCents, reason: o.reason, by: o.by })) : null;
+  const repSummary = (
+    <RepSubmittedSummary draft={draft} submitted={q.state !== "REP_DRAFT"} revision={q.revision} floorAreaM2={ev.calc.derived.floorAreaM2} totalCents={q.state === "REP_DRAFT" ? totalCents : (q.customer_confirmed_cents ?? totalCents)} quantities={repQuantities}
+      confirmed={{ cents: q.customer_confirmed_cents, by: q.customer_confirmed_by, at: q.customer_confirmed_at }} />
+  );
+  const wizard3 = deriveStage3Wizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, roles: { rep: roles.has("rep"), estimator: isEstimator, manager: roles.has("manager") }, signoff: s2Base.signoff, dirty });
 
   // Stage 4 steps: guidance only. Statuses come from the issued-document and sent records the page already reads (never from a visit); the Issue and Send actions keep their own gates.
   const stage4 = deriveStage4Steps({ hasDocument: gate.hasDocument, commercial: gate.status });
@@ -452,42 +505,63 @@ export default function QuoteEditorPage() {
 
       <StageNav stages={stages} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state }} />
 
+      {gated1 && <p role="status" aria-live="polite" className="mt-4 text-sm text-slate-700" data-testid="stage1-shell">Preparing your quotation steps…</p>}
       {stage === 1 && (
-        <StepRail id="s1" ariaLabel="Configuration steps" steps={stage1.steps} currentId={stepId} onSelect={goStep}
-          actions={(
-            <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
-              <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAllSteps} onChange={(e) => setShowAllSteps(e.target.checked)} /> Show all steps</label>
-              {nextOpen
-                ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep(nextOpen)}>Next incomplete step</Button>
-                : <span className="text-sm text-slate-700" data-testid="all-steps-complete">Every step is complete.</span>}
+        <div hidden={gated1} inert={gated1}>
+          {wizard.returned && (
+            <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" role="status" data-testid="returned-banner">
+              <p className="font-semibold">Returned to the Rep (revision {q.revision})</p>
+              <p className="mt-1">The Estimator or Manager sent this quotation back for corrections. Make them in the steps below, then submit it to the Estimator again. Returned by the Estimator/Manager - see Approval history for the reason.</p>
+              <div className="mt-2"><ApprovalHistory docType="QUOTE" docId={id} label="Show the return reason (Approval history)" /></div>
             </div>
-          )} />
+          )}
+          <StepRail id="s1" ariaLabel="Configuration steps" steps={railSteps1} currentId={stepId} onSelect={goStep}
+            actions={(
+              <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+                <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAllSteps} onChange={(e) => setShowAllSteps(e.target.checked)} /> Show all steps</label>
+                {nextOpen
+                  ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep(nextOpen)}>Next incomplete step</Button>
+                  : (wizard.submitted || wizard.steps.filter((x) => x.access === "edit").every((x) => x.status === "complete")) ? <span className="text-sm text-slate-700" data-testid="all-steps-complete">{wizard.submitted ? "Rep preparation complete - next: Estimator." : "Every step you can act on is complete."}</span> : null}
+              </div>
+            )} />
+        </div>
       )}
 
-      {stage === 2 && step2No > step2Ids.length && <p className="mt-3 text-sm text-slate-800" data-testid="step-unavailable">That step is not available to you, so the first step is shown.</p>}
       {stage === 2 && (
-        <StepRail id="s2" ariaLabel="Costing and review steps" steps={stage2.steps} currentId={step2Id} onSelect={goStep2} groups={stage2Groups}
-          actions={(
-            <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
-              <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAllSteps} onChange={(e) => setShowAllSteps(e.target.checked)} /> Show all steps</label>
-              {next2Open
-                ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2(next2Open)}>Next incomplete step</Button>
-                : <span className="text-sm text-slate-700" data-testid="all-steps-complete">{signoffOutstandingForYou ? "Next: sign off or return the quotation." : "Nothing is left for you in this stage."}</span>}
+        <>
+          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm" data-testid="stage2-owner">
+            <span className="font-semibold text-slate-900">Stage 2 is the Estimator&apos;s review.</span>
+            <span role="status" aria-live="polite" className="text-slate-800" data-testid="stage2-status-line">{wizard2.statusLine}</span>
+            <OwnerTag role={wizard2.nextOwner} />
+          </div>
+          {wizard2.steps.find((x) => x.id === "mapping")!.access === "edit" && q.state === "REP_DRAFT" && mappingOpen.length > 0 && (
+            <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" role="status" data-testid="rep-waiting-banner">
+              <p className="font-semibold">Needed from you before the Rep can submit</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-5">{mappingOpen.map((m) => <li key={m}>{m}</li>)}</ul>
+              <p className="mt-1">The Rep cannot submit until these are resolved. The remaining steps open once the Rep has submitted.</p>
             </div>
-          )} />
+          )}
+          {repSummary}
+          {req2No !== null && req2No > visible2.length && <p className="mt-3 text-sm text-slate-800" data-testid="step-unavailable">That step is not available to you, so the first step is shown.</p>}
+          <StepRail id="s2" ariaLabel="Costing and review steps" steps={railSteps2} currentId={step2Id} onSelect={goStep2}
+            actions={(
+              <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+                <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAllSteps} onChange={(e) => setShowAllSteps(e.target.checked)} /> Show all steps</label>
+                {next2Open
+                  ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2(next2Open)}>Next incomplete step</Button>
+                  : <span className="text-sm text-slate-700" data-testid="all-steps-complete">{signedNow ? "Signed off. Next: Manager approval (Stage 3)." : q.state === "ESTIMATOR_REVIEW" && isEstimator ? "Next: sign off or return the quotation." : q.state === "REP_DRAFT" && isEstimator ? (mappingOpen.length > 0 ? "Next: choose the products listed above, then save." : "Nothing is left for you until the Rep submits.") : "Nothing is left for you in this stage."}</span>}
+              </div>
+            )} />
+        </>
       )}
 
       {stage === 2 && canCommercials && <div role="status" aria-live="polite" data-testid="cost-ack-live">{ackMsg && <p className="mt-3 text-sm text-slate-800" data-testid="cost-ack-status">{ackMsg}</p>}</div>}
-      {stage === 2 && !showAllSteps && onCostUnmarked && (
-        <p className="mt-3 text-sm text-slate-800" data-testid="cost-ack-pointer">Review the costing below, then use Mark reviewed &amp; continue. <button type="button" className="font-semibold text-indigo-700 underline" onClick={() => document.getElementById("cost-ack-btn")?.focus()}>Go to the button</button></p>
-      )}
-      {stage === 2 && <div role="status" data-testid="next-role-live">{q.state === "ESTIMATOR_REVIEW" && stage2.groups.find((x) => x.id === "estimator")?.statusLine === "Signed off" && <p className="mt-3 text-sm font-semibold text-slate-900" data-testid="next-manager-cue">Next: Manager approval (Stage 3).</p>}</div>}
-      {stage <= 2 && (
+      {stage === 2 && <div role="status" data-testid="next-role-live">{signedNow && <p className="mt-3 text-sm font-semibold text-slate-900" data-testid="next-manager-cue">Next: Manager approval (Stage 3).</p>}</div>}
+      {(stage === 1 || (stage === 2 && (s2Edit || dirty))) && (
         <>
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Button onClick={save} loading={acts.isPending("save")} aria-describedby={saveWhy ? "save-why" : undefined} disabled={isWorking || !editable || !dirty || incompleteOverrides || blankExclusionKeys.length > 0}>Save draft</Button>
+            <Button className="min-h-11" onClick={save} loading={acts.isPending("save")} aria-describedby={saveWhy ? "save-why" : undefined} disabled={isWorking || !editable || !dirty || incompleteOverrides || blankExclusionKeys.length > 0}>Save draft</Button>
             <span role="status" aria-live="polite" data-testid="save-state">{dirty ? <Status tone="warning">Unsaved changes</Status> : editable ? <Status tone="success">All changes saved</Status> : null}</span>
-            {editable && !confirmDemo && <Button variant="secondary" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load Demo Defaults</Button>}
             {!editable && <span id="save-why" className="text-sm text-slate-700">{final ? "Read-only: accepted quote." : "You do not have permission to edit: only a Rep or Estimator can edit and save this quotation."}</span>}
           </div>
           <div className="mt-2 space-y-1">{editable && <DisabledReason id="save-why">{saveWhy}</DisabledReason>}<ActionFeedback state={acts.stateOf("save")} /></div>
@@ -496,69 +570,71 @@ export default function QuoteEditorPage() {
           {previewFailure && <p className="max-w-4xl text-sm text-red-700">The live recalculation failed ({previewFailure}); the figures shown may be out of date. Edit again or reload.</p>}
           {incompleteOverrides && <p className="max-w-4xl text-sm text-amber-800">Complete or clear the highlighted cost overrides (a reason and an amount) before saving.</p>}
           {blankExclusionKeys.length > 0 && <p className="max-w-4xl text-sm text-amber-800">Enter a reason for each ticked exclusion before saving (the preview already applies it).</p>}
-          {editable && confirmDemo && (
-            <div className="flex max-w-4xl flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              <span>This replaces the values in this draft with the demonstration quotation (nothing is saved until you press Save draft). The customer you selected is kept.</span>
-              <Button size="sm" onClick={loadDemo}>Replace with demo</Button>
-              <Button size="sm" variant="secondary" onClick={() => setConfirmDemo(false)}>Cancel</Button>
-            </div>
-          )}
           </div>
         </>
       )}
-      {demoLoaded && stage <= 2 && (
-        <div className="mt-3">
-          <Alert tone={rd.state === "READY" ? "success" : "warning"}>
-            Demo defaults loaded into this draft ({DEMO_DEFAULTS_SOURCE}) {demoLoaded.length ? `Replaced: ${demoLoaded.join(", ")}.` : "The draft already matched the demonstration; nothing changed."}{" "}
-            Status: {READINESS_LABEL[rd.state]}.{rd.reasons.length ? ` Open: ${rd.reasons.join("; ")}.` : ""}
-            {rd.counts.supplierQuoteRequired + rd.counts.missingMappings + rd.counts.pricingExceptions > 0 ? ` Unresolved: ${rd.counts.supplierQuoteRequired} supplier-quote-required, ${rd.counts.missingMappings} unmapped, ${rd.counts.pricingExceptions} pricing exceptions (listed below).` : " No supplier-quote-required, unmapped or pricing-exception items remain."}
-            {" "}Prices marked MANUAL QUOTATION PRICE are the demonstration quote&apos;s own estimator values. Not saved, approved, frozen or sent anywhere.
-          </Alert>
-        </div>
+      {sampleNote && stage === 1 && <p role="status" aria-live="polite" className="mt-2 text-sm text-slate-800" data-testid="sample-note">{sampleNote}</p>}
+      {view.viewer.previewTools && editable && stage <= 2 && (
+        <details className="mt-3 max-w-4xl rounded-lg border border-dashed border-slate-400 p-3 text-sm" data-testid="preview-tools">
+          <summary className="inline-flex min-h-11 cursor-pointer items-center font-semibold text-slate-800">Testing utility (Preview only)</summary>
+          <p className="mt-2 text-slate-700">Replaces the inputs of this draft (the selected customer is kept) with the demonstration quotation. It is not saved, and it never submits, approves, signs off, creates a Project or writes to Cin7. It exists on Preview deployments only.</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {!confirmDemo && <Button variant="secondary" className="min-h-11" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load whole demonstration quote</Button>}
+            {confirmDemo && (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
+                <span>This replaces the values in this draft with the demonstration quotation (nothing is saved until you press Save draft). The customer you selected is kept.</span>
+                <Button size="sm" className="min-h-11" onClick={loadDemo}>Replace with demo</Button>
+                <Button size="sm" variant="secondary" className="min-h-11" onClick={() => setConfirmDemo(false)}>Cancel</Button>
+              </div>
+            )}
+          </div>
+          {demoLoaded && (
+            <div className="mt-3">
+              <Alert tone={rd.state === "READY" ? "success" : "warning"}>
+                Demo defaults loaded into this draft ({DEMO_DEFAULTS_SOURCE}) {demoLoaded.length ? `Replaced: ${demoLoaded.join(", ")}.` : "The draft already matched the demonstration; nothing changed."}{" "}
+                Status: {READINESS_LABEL[rd.state]}.{rd.reasons.length ? ` Open: ${rd.reasons.join("; ")}.` : ""}
+                {" "}Prices marked MANUAL QUOTATION PRICE are the demonstration quote&apos;s own estimator values. Not saved, approved, frozen or sent anywhere.
+              </Alert>
+            </div>
+          )}
+        </details>
       )}
 
-      {/* ───────────── 1 · CONFIGURATION ───────────── */}
+      {/* ───────────── 1 · CONFIGURATION (the Rep's five-step wizard) ───────────── */}
       {stage === 1 && (
-        <>
-        <fieldset disabled={!editable} className="mt-4 grid min-w-0 items-start gap-6 border-0 p-0 xl:grid-cols-2" data-testid="stage1-layout">
-          {/* Hidden steps stay mounted (hidden + inert), so the requests made on mount are the same whichever step is shown. */}
-          <StepPanel railId="s1" stepId="customer" number={1} title={STAGE1_STEP_LABEL.customer} current={stepId === "customer"} showAll={showAllSteps} className={stepPanelCls}>
-            <Panel className="xl:col-span-2">
-              <PanelTitle>Customer & quotation contact</PanelTitle>
-              <p className="mt-2 text-xs text-slate-600">Choosing a Cin7 customer or contact below is saved at once. The customer name field is saved with Save draft. The quotation contact is chosen in this step.</p>
-              <div className="mt-4 grid gap-4 md:grid-cols-3">
-                <TextField label="Customer" value={draft.customerName} onChange={(v) => edit((d) => { d.customerName = v; })} />
-              </div>
-              <CustomerPanel quoteId={id} editable={editable} onPicked={onCustomerChanged} onFacts={onCustomerFacts} />
+        <div hidden={gated1} inert={gated1}>
+        <fieldset disabled={!stage1Edit} className="mt-4 min-w-0 border-0 p-0" data-testid="stage1-layout">
+          {/* Hidden steps stay mounted (hidden + inert), so the requests made on mount are the same whichever step is shown. A LOCKED step stays mounted too; show-all lists it as heading + reason. */}
+          <StepPanel railId="s1" stepId="customer" number={1} title={STAGE1_STEP_LABEL.customer} current={stepId === "customer"} showAll={showAllSteps} locked={lockedFor("customer")} className={stepPanelCls}>
+            <Panel>
+              <PanelTitle>Customer &amp; quotation contact</PanelTitle>
+              <p className="mt-1 text-sm text-slate-700">Search Cin7 for the customer, then choose who the quotation goes to. Choosing is saved at once.</p>
+              {customerFacts.loaded && !customerFacts.available && (
+                <div className="mt-4 grid gap-4 md:grid-cols-3"><TextField label="Customer" value={draft.customerName} onChange={(v) => edit((d) => { d.customerName = v; })} hint="Typed name, used only because Cin7 customer lookup is not available yet." /></div>
+              )}
+              <CustomerPanel quoteId={id} editable={stage1Edit} onPicked={onCustomerChanged} onFacts={onCustomerFacts} />
             </Panel>
           </StepPanel>
 
-          <StepPanel railId="s1" stepId="site" number={2} title={STAGE1_STEP_LABEL.site} current={stepId === "site"} showAll={showAllSteps} className={stepPanelCls}>
-            <Panel className="col-span-full">
-              <PanelTitle>Site name & pricing basis</PanelTitle>
-              <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <StepPanel railId="s1" stepId="site" number={2} title={STAGE1_STEP_LABEL.site} current={stepId === "site"} showAll={showAllSteps} locked={lockedFor("site")} className={`${stepPanelCls} xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]`}>
+            <Panel>
+              <PanelTitle>Site &amp; pricing basis</PanelTitle>
+              <div className="mt-4 grid gap-4">
                 <TextField label="Site / project name" value={draft.siteName} onChange={(v) => edit((d) => { d.siteName = v; })} />
                 <Select label="Pricing basis" value={draft.quoteType} onChange={(e) => edit((d) => { d.quoteType = e.target.value as QuoteType; })}>
                   <option value="project">Project — landed cost + 20%</option>
                   <option value="day_to_day">Day-to-day — workbook Retail ex VAT</option>
                 </Select>
               </div>
-              <p className="mt-4 text-sm text-slate-800" data-testid="step2-contact-status">
-                Quotation contact: {customerFacts.contactName ? <strong>{customerFacts.contactName}</strong> : <span className="text-amber-900">{customerFacts.loaded && customerFacts.available ? "not chosen yet" : "not read yet"}</span>}
-                {" "}{/* A link, not a button: navigation must keep working for a viewer who cannot edit (the fieldset disables buttons). A "#" href is an in-page link the unsaved guard ignores. */}
-                <a href="#s1-customer-heading" onClick={(e) => { e.preventDefault(); goStep("customer"); }} className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Choose the contact in step 1</a>
-              </p>
-              <p className="mt-2 text-xs text-slate-600">The site name and pricing basis are saved with Save draft.</p>
             </Panel>
-          </StepPanel>
-
-          <StepPanel railId="s1" stepId="room" number={3} title={STAGE1_STEP_LABEL.room} current={stepId === "room"} showAll={showAllSteps} className={stepPanelCls} headingClassName={showAllSteps ? "xl:order-1" : undefined}>
-            <Panel className={showAllSteps ? "xl:order-3" : wide}>
+            <Panel>
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <PanelTitle>Room inputs — describe ONE room</PanelTitle>
-                <Button variant="secondary" size="sm" onClick={() => edit((d) => { d.config = { ...structuredClone(TOPIGS_GROWER_INPUT), feederVariant: "STANDARD", exclusions: {}, estimatorQuantities: {}, quantityOverrides: {}, quantityOverrideReasons: {} }; })}>Load Topigs sample inputs</Button>
+                <PanelTitle>Room measurements — describe ONE room</PanelTitle>
+                {stage1Edit && <Button variant="secondary" size="sm" className="min-h-11" onClick={() => askSample("measurements")}>Load sample measurements</Button>}
               </div>
-              <p className="mt-2 text-xs text-slate-600">{ROOMS_HELP}</p>
+              <p className="mt-1 text-sm text-slate-700">{ROOMS_HELP}</p>
+              {stage1Edit && <p className="mt-1 text-xs text-slate-600">“Load sample measurements” fills {SAMPLE_MEASUREMENTS_FILLS}. Nothing is saved until you press Save draft.</p>}
+              {confirmSample === "measurements" && <SampleConfirm what="the room measurements" onYes={() => runSample("measurements")} onNo={() => setConfirmSample(null)} />}
               <div className="mt-4 grid gap-4 sm:grid-cols-3">
                 <NumField label="Length" unit="m" value={cfg.lengthM || null} onChange={(v) => edit((d) => { d.config.lengthM = num(v); })} />
                 <NumField label="Width" unit="m" value={cfg.widthM || null} onChange={(v) => edit((d) => { d.config.widthM = num(v); })} />
@@ -574,9 +650,16 @@ export default function QuoteEditorPage() {
             </Panel>
           </StepPanel>
 
-          <StepPanel railId="s1" stepId="equipment" number={4} title={STAGE1_STEP_LABEL.equipment} current={stepId === "equipment"} showAll={showAllSteps} className={stepPanelCls} headingClassName={showAllSteps ? "xl:order-2" : undefined}>
-            <Panel className={showAllSteps ? "xl:order-4" : wide}>
-              <PanelTitle>Selections</PanelTitle>
+          <StepPanel railId="s1" stepId="equipment" number={3} title={STAGE1_STEP_LABEL.equipment} current={stepId === "equipment"} showAll={showAllSteps} locked={lockedFor("equipment")} className={stepPanelCls}>
+            <div className="col-span-full flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-slate-700">Choose the system and options, then enter the quantities and charges. Items only an Estimator can map are shown, not editable.</p>
+              {stage1Edit && <Button variant="secondary" size="sm" className="min-h-11" onClick={() => askSample("recommended")}>Load recommended configuration</Button>}
+            </div>
+            {stage1Edit && <p className="col-span-full -mt-4 text-xs text-slate-600">“Load recommended configuration” fills {RECOMMENDED_CONFIG_FILLS}. Nothing is saved until you press Save draft.</p>}
+            {confirmSample === "recommended" && <div className="col-span-full"><SampleConfirm what="the equipment selections, quantities and overrides" onYes={() => runSample("recommended")} onNo={() => setConfirmSample(null)} /></div>}
+            <div className="col-span-full grid min-w-0 items-start gap-6 xl:grid-cols-2">
+            <Panel>
+              <PanelTitle>Equipment selections</PanelTitle>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <Select label="CCM feeder variant" helperText={`One feeder, two variants. Capacity ${CCM_FEEDER_CAPACITY_PIGS} pigs per feeder.`} value={cfg.feederVariant ?? "STANDARD"} onChange={(e) => edit((d) => { d.config.feederVariant = e.target.value as "STANDARD" | "WINDOW"; delete d.estimator.confirmedMappings.feeder; })}>
                   <option value="STANDARD">Standard — PNQ082</option>
@@ -587,50 +670,99 @@ export default function QuoteEditorPage() {
                   {(Object.keys(PIG_SIZE_LABEL) as PenningPigSize[]).map((k) => <option key={k} value={k}>{PIG_SIZE_LABEL[k]}</option>)}
                 </Select>
                 <NumField label="Penning running metres" unit="per room" value={cfg.penningRunningMetresPerRoom} onChange={(v) => edit((d) => { d.config.penningRunningMetresPerRoom = v; })} hint="Running metres, not m²" />
-                <NumField label="Slatted floor area (context only)" unit="m², one room" value={cfg.slattedFloorAreaM2} onChange={(v) => edit((d) => { d.config.slattedFloorAreaM2 = v; })} hint="Never converted to a slat quantity — the rep enters the quantity" />
+                <NumField label="Slatted floor area (context only)" unit="m², one room" value={cfg.slattedFloorAreaM2} onChange={(v) => edit((d) => { d.config.slattedFloorAreaM2 = v; })} hint="Never converted to a slat quantity — you enter the quantity below" />
               </div>
             </Panel>
 
-            <Panel className={`xl:col-span-2${showAllSteps ? " xl:order-5" : ""}`}>
-              <PanelTitle>Ventilation — optional inside Grower</PanelTitle>
-              <p className="mt-2 max-w-4xl text-sm text-amber-800">{VENTILATION_SCOPE_STATUS}. AS.03 is not yet ingested: no fan, cooling or controller rule is invented — once selected, the estimator enters the quantity after engineering review.</p>
-              <ul className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            <Panel>
+              <PanelTitle>Optional equipment</PanelTitle>
+              <p className="mt-1 text-sm text-slate-700">Tick what the customer wants included. {VENTILATION_SCOPE_STATUS}: no fan, cooling or controller rule is invented, so you enter the quantity below once an item is included.</p>
+              <ul className="mt-3 grid gap-2 sm:grid-cols-2">
                 {(Object.keys(OPTIONAL_LABELS) as OptionalItemKey[]).map((k) => {
                   const on = cfg.optionalEquipment[k];
                   return (
                     <li key={k}>
                       <label className={`flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm ${on ? "border-indigo-600 bg-indigo-50 text-slate-900" : "border-slate-300 bg-white text-slate-700"}`}>
-                        <span className="flex items-center gap-2"><input type="checkbox" checked={on} onChange={(e) => edit((d) => { d.config.optionalEquipment[k] = e.target.checked; })} /> {OPTIONAL_LABELS[k]}</span>
-                        <span className={`text-xs font-semibold ${on ? "text-indigo-800" : "text-slate-600"}`} aria-hidden>{on ? "✓ Included" : "Not included"}</span>
+                        <span className="flex items-center gap-2"><input type="checkbox" className="size-6" checked={on} onChange={(e) => edit((d) => { d.config.optionalEquipment[k] = e.target.checked; })} /> {OPTIONAL_LABELS[k]}</span>
+                        <span className={`text-xs font-semibold ${on ? "text-indigo-800" : "text-slate-600"}`} data-testid={`optional-state-${k}`}>{on ? "✓ Included" : "Not included"}</span>
                       </label>
                     </li>
                   );
                 })}
               </ul>
             </Panel>
+            </div>
+
+            <Panel className="col-span-full">
+              <PanelTitle>Quantities (per room × {cfg.rooms || 0} rooms)</PanelTitle>
+              <p className="mt-1 text-sm text-slate-700">Enter the quantity for each item the system needs you to confirm. Product choices and manual quotation prices belong to the Estimator.</p>
+              {ev.calc.valid || ev.calc.lines.length > 0
+                ? <LineDecisionsTable draft={draft} ev={ev} edit={edit} roles={roles} editable={stage1Edit} mode="rep" quantitiesEditable />
+                : <p className="mt-3 text-sm text-amber-900">Finish the room measurements in step 2 to see the quantities.</p>}
+            </Panel>
+
+            <Panel className="col-span-full">
+              <PanelTitle>Charges &amp; assumptions</PanelTitle>
+              <ChargesSection draft={draft} edit={edit} />
+            </Panel>
+
+            <Panel className="col-span-full">
+              <PanelTitle>Exclusions</PanelTitle>
+              <ExclusionsSection draft={draft} ev={ev} edit={edit} />
+            </Panel>
           </StepPanel>
         </fieldset>
 
-        {/* Step 5 is read-only and outside the form fieldset, so its navigation works for every role. */}
-        <StepPanel railId="s1" stepId="review" number={5} title={STAGE1_STEP_LABEL.review} current={stepId === "review"} showAll={showAllSteps} className="mt-6 grid min-w-0 gap-6">
-          <Stage1Review draft={draft} floorAreaM2={ev.calc.derived.floorAreaM2} totalLabel={totalCents == null ? "—" : fmtCents(totalCents)} derived={stage1} onGoStep={goStep} onContinue={() => goStage(2)} />
+        {/* Steps 4 and 5 are outside the form fieldset, so their navigation works for every role. */}
+        <StepPanel railId="s1" stepId="review" number={4} title={STAGE1_STEP_LABEL.review} current={stepId === "review"} showAll={showAllSteps} locked={lockedFor("review")} className="mt-6 grid min-w-0 gap-6">
+          <Stage1Review draft={draft} floorAreaM2={ev.calc.derived.floorAreaM2} totalLabel={totalCents == null ? "—" : fmtCents(totalCents)} derived={stage1} steps={wizard.steps} customer={customerFacts} canEdit={q.state === "REP_DRAFT" && roles.has("rep")}
+            quantities={ev.calc.lines.filter((l) => l.basis !== "not_selected" && !l.exclusionReason && l.projectQuantity != null).map((l) => ({ label: l.label.split(" (")[0], qty: l.projectQuantity as number }))} onGoStep={goStep} />
+        </StepPanel>
+
+        <StepPanel railId="s1" stepId="submit" number={5} title={STAGE1_STEP_LABEL.submit} current={stepId === "submit"} showAll={showAllSteps} locked={lockedFor("submit")} className="mt-6 grid min-w-0 gap-6">
+          <Panel>
+            <PanelTitle>Submit to Estimator</PanelTitle>
+            {wizard.submitted ? (
+              <div className="mt-2 space-y-3" data-testid="rep-complete">
+                <p className="text-sm font-semibold text-emerald-900"><span aria-hidden>✓ </span>Rep preparation complete - next: {wizard.nextOwner}</p>
+                <p className="text-sm text-slate-800" data-testid="submit-state">{final ? "Submitted and approved." : "Submitted: the quote is with the Estimator for review."}</p>
+                {q.customer_confirmed_cents != null && <ConfirmationPanel quoteId={id} amountLabel={fmtCents(q.customer_confirmed_cents)} canAct={false} ready loading={false} refreshKey={`${q.revision}:${q.state}:${q.updated_at}`} recorded onConfirm={() => undefined} />}
+                <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStage(final ? 3 : 2)}>{final ? "Open Manager approval" : "Open Estimator review"}</Button>
+              </div>
+            ) : (
+              <div className="mt-2">
+                <p className="text-sm text-slate-700">Final step for the Rep. The Estimator reviews the costing next.</p>
+                <div className="mt-3">
+                  <ConfirmationPanel quoteId={id} amountLabel={totalCents == null ? null : fmtCents(totalCents)} canAct={roles.has("rep") && q.state === "REP_DRAFT"} ready={rd.state === "READY"} loading={isWorking} refreshKey={`${q.revision}:${q.state}:${q.updated_at}`} recorded={false}
+                    onConfirm={(c) => act(() => sendGrowerQuoteToEstimatorAction(id, totalCents!, c), "Submitted to the Estimator: the customer's price confirmation is recorded and the Estimator has been notified.", "send", (v) => v.quote.state === "ESTIMATOR_REVIEW", 1)} />
+                </div>
+              </div>
+            )}
+            <ActionFeedback state={acts.stateOf("send")} />
+          </Panel>
         </StepPanel>
 
         {!showAllSteps && (
-          <div className="mt-6 flex items-center justify-between gap-3" data-testid="step-buttons">
-            {stepNo > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStepNo(stepNo - 1)}>Back</Button> : <span />}
-            {stepNo < STAGE1_STEP_IDS.length ? <Button type="button" className="min-h-11" onClick={() => goStepNo(stepNo + 1)}>Next</Button> : <span />}
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3" data-testid="step-buttons">
+            {stepNo > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStepId(STAGE1_STEP_IDS[stepNo - 2])}>Back</Button> : <span />}
+            {nextStep1 && nextStep1Locked && (
+              <div className="flex max-w-xl flex-col items-end gap-1">
+                <Button type="button" className="min-h-11" disabled={nextStep1Locked.access === "locked"} aria-describedby={nextStep1Locked.access === "locked" ? "next-why" : undefined} onClick={() => goStepId(nextStep1)}>Next: {STAGE1_STEP_LABEL[nextStep1]}</Button>
+                {nextStep1Locked.access === "locked" && <p id="next-why" className="text-right text-sm text-amber-900" data-testid="next-blocked">{nextStep1Locked.blockedBy.join(" ")}</p>}
+              </div>
+            )}
           </div>
         )}
-        </>
+        </div>
       )}
 
       {/* ───────────── 2 · ESTIMATOR REVIEW ───────────── */}
       {stage === 2 && (
         <>
-        <fieldset disabled={!editable} className="mt-4 min-w-0 space-y-6 border-0 p-0">
-          {/* Hidden steps stay mounted (hidden + inert): the requests and timers started on mount are the same whichever step is shown. */}
-          <StepPanel railId="s2" stepId="lines" number={1} title={STAGE2_STEP_LABEL.lines} current={step2Id === "lines"} showAll={showAllSteps} className="space-y-6">
+        <fieldset disabled={!s2Edit} className="mt-4 min-w-0 space-y-6 border-0 p-0">
+          {/* Hidden steps stay mounted (hidden + inert): the requests and timers started on mount are the same whichever step is shown. A LOCKED step stays mounted too; show-all lists it as heading + reason. */}
+          <StepPanel railId="s2" stepId="mapping" number={visible2.indexOf("mapping") + 1} title={STAGE2_WIZARD_LABEL.mapping} current={step2Id === "mapping"} showAll={showAllSteps} locked={lockedFor2("mapping")} className="space-y-6">
+            {editWarning && <Alert tone="warning"><span data-testid="edit-clears-signoff">{editWarning}</span></Alert>}
             <Panel>
               <div className="flex flex-wrap items-center gap-3">
                 <PanelTitle>Quote readiness</PanelTitle>
@@ -639,139 +771,71 @@ export default function QuoteEditorPage() {
               {rd.reasons.length > 0 && (
                 <ul className="mt-3 list-disc space-y-0.5 pl-5 text-sm text-red-700">{rd.reasons.map((r) => <li key={r}>{r}</li>)}</ul>
               )}
-              <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-                {(Object.keys(CAT_LABEL) as ReadinessCategory[]).map((c) => (
-                  <details key={c} className="rounded-lg border border-slate-200 p-3 open:col-span-2 md:open:col-span-2">
-                    <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
-                      <span className="text-xs font-medium text-slate-600">{CAT_LABEL[c]}</span>
-                      <Status tone={rd.counts[c] > 0 ? CAT_TONE[c] : "neutral"}>{rd.counts[c]}</Status>
-                    </summary>
-                    {rd.items[c].length === 0 ? <p className="mt-2 text-xs text-slate-600">None.</p> : (
-                      <ul className="mt-2 space-y-1 text-xs text-slate-700">{rd.items[c].map((i, n) => <li key={n}><span className="font-medium">{i.label}</span> — {i.detail}</li>)}</ul>
-                    )}
-                  </details>
-                ))}
-              </div>
-              <p className="mt-3 text-xs text-slate-600">Manual-by-design items (feeder / drinker / slat quantities, M75, doors, tank, ventilation scope) only block the quote until the estimator supplies them.</p>
+              <details className="mt-3">
+                <summary className="inline-flex min-h-11 cursor-pointer items-center text-sm font-semibold text-indigo-700">Readiness details</summary>
+                <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-4">
+                  {(Object.keys(CAT_LABEL) as ReadinessCategory[]).map((c) => (
+                    <details key={c} className="rounded-lg border border-slate-200 p-3 open:col-span-2 md:open:col-span-2">
+                      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-slate-600">{CAT_LABEL[c]}</span>
+                        <Status tone={rd.counts[c] > 0 ? CAT_TONE[c] : "neutral"}>{rd.counts[c]}</Status>
+                      </summary>
+                      {rd.items[c].length === 0 ? <p className="mt-2 text-xs text-slate-600">None.</p> : (
+                        <ul className="mt-2 space-y-1 text-xs text-slate-700">{rd.items[c].map((i, n) => <li key={n}><span className="font-medium">{i.label}</span> — {i.detail}</li>)}</ul>
+                      )}
+                    </details>
+                  ))}
+                </div>
+                <p className="mt-3 text-xs text-slate-600">Manual-by-design items (feeder / drinker / slat quantities, M75, doors, tank, ventilation scope) only block the quote until the estimator supplies them.</p>
+              </details>
             </Panel>
 
             <Panel>
               <PanelTitle>Line decisions (per room × {cfg.rooms || 0} rooms)</PanelTitle>
-              <div className="mt-4 overflow-x-auto">
-                <table className="w-full min-w-[1080px] text-left text-sm" aria-label="Line decisions">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-600">
-                      <th className="py-2 pr-3">Item</th><th className="py-2 pr-3">Basis</th><th className="py-2 pr-3">Quantity per room</th><th className="py-2 pr-3 text-right">Project qty</th>
-                      <th className="py-2 pr-3">Product</th><th className="py-2 pr-3 text-right">Line total (ex VAT)</th><th className="py-2">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ev.calc.lines.map((l) => {
-                      const rule = GROWER_RULES.find((r) => r.itemKey === l.itemKey)!;
-                      const b = bridgeByKey.get(l.itemKey);
-                      const kind = valueKindOf(l);
-                      const k = l.itemKey as GrowerItemKey;
-                      const optionalOff = l.basis === "not_selected" && !l.exclusionReason;
-                      const mapControl = mappingControlFor(l.itemKey, l.basis, roles, editable);
-                      return (
-                        <tr key={l.itemKey} className={`border-b border-slate-100 align-top ${l.exclusionReason ? "bg-amber-50" : optionalOff ? "bg-slate-50" : ""}`}>
-                          <td className="py-3 pr-3"><div className="font-medium text-slate-900">{l.label}</div><div className="font-mono text-xs text-slate-600">{l.ruleId}</div>
-                            {l.exclusionReason && <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-amber-900"><Status tone="warning">Excluded</Status>{l.exclusionReason}</div>}
-                            {optionalOff && <div className="mt-1"><Status tone="neutral">Not selected</Status></div>}</td>
-                          <td className="py-3 pr-3"><Status tone={l.overrideState === "manual_override" ? "warning" : KIND_TONE[kind]}>{l.overrideState === "manual_override" ? "OVERRIDE" : VALUE_KIND_LABEL[kind]}</Status>
-                            <div className="mt-1 text-xs text-slate-600">{rule.treatment.replace(/_/g, " ")}</div></td>
-                          <td className="py-3 pr-3 min-w-[230px]">
-                            {rule.estimatorEntry && l.basis !== "not_selected" && (
-                              <NumField label="" value={cfg.estimatorQuantities?.[k] ?? null} onChange={(v) => edit((d) => { d.config.estimatorQuantities = { ...d.config.estimatorQuantities }; if (v == null) delete d.config.estimatorQuantities[k]; else d.config.estimatorQuantities[k] = v; })}
-                                hint={l.itemKey === "feeder" ? `Capacity ${CCM_FEEDER_CAPACITY_PIGS} pigs/feeder · ${cfg.pigsPerRoom} pigs/room. You confirm the number.` : l.itemKey === "cup_drinker" ? `Suggested ${l.suggestedQuantityPerRoom ?? "—"} (${cfg.pigsPerRoom} ÷ ${PIGS_PER_DRINKER}, unrounded). You confirm the number.` : l.itemKey === "flex_auger" ? "Number of M75 systems per room (client preference)" : "Estimator input"} />
-                            )}
-                            {l.itemKey === "penning_package" && <span className="text-slate-700">{l.quantityPerRoom == null ? <span className="text-amber-700">{l.inputRequired ?? "Enter on the Configuration tab"}</span> : `${l.quantityPerRoom} rm`}</span>}
-                            {!rule.estimatorEntry && rule.defaultCompute && (
-                              <div className="space-y-1">
-                                <div className="text-xs text-slate-600">Default <strong>{l.defaultQuantityPerRoom ?? "—"}</strong>{l.itemKey === "led_light" ? " = ceil(area ÷ 25)" : " = 1 per feeder"}</div>
-                                <NumField label="" placeholder="Override (blank = default)" value={cfg.quantityOverrides?.[k] ?? null} onChange={(v) => edit((d) => { d.config.quantityOverrides = { ...d.config.quantityOverrides }; if (v == null) delete d.config.quantityOverrides[k]; else d.config.quantityOverrides[k] = v; })} />
-                                {cfg.quantityOverrides?.[k] != null && (
-                                  <TextField label="" placeholder="Reason for the override (required)" value={cfg.quantityOverrideReasons?.[k] ?? ""} onChange={(v) => edit((d) => { d.config.quantityOverrideReasons = { ...d.config.quantityOverrideReasons, [k]: v }; })} />
-                                )}
-                              </div>
-                            )}
-                            {l.basis === "not_selected" && !l.exclusionReason && <span className="text-xs text-slate-700">Optional equipment is not included. Tick it on the Configuration stage to add it.</span>}
-                          </td>
-                          <td className="py-3 pr-3 text-right tabular-nums">{l.projectQuantity ?? "—"}</td>
-                          <td className="py-3 pr-3 text-xs text-slate-700">{mapControl === "chooser" ? (
-                            <div className="min-w-[280px]" data-testid={`mapping-chooser-${l.itemKey}`}>
-                              <ProductMappingPicker label={l.label} value={draft.estimator.confirmedMappings[l.itemKey]}
-                                onChange={(sku) => edit((d) => { if (sku) d.estimator.confirmedMappings[l.itemKey] = sku; else delete d.estimator.confirmedMappings[l.itemKey]; })} />
-                            </div>
-                          ) : mapControl === "waiting_for_estimator" && !b?.sku ? <span className="text-amber-800">Awaiting an Estimator to choose the Cin7 product.</span> : b?.sku ?? (b?.pricedBy === "penning_rate" ? "Pig-size / running-metre basis" : b?.pricedBy === "estimator_input" ? "Estimator-priced system" : b?.pricedBy === "estimator_resolution" ? "Estimator-resolved" : "—")}</td>
-                          <td className="whitespace-nowrap py-3 pr-3 text-right tabular-nums">{b?.revenueExTax != null ? fmtZar(b.revenueExTax) : "—"}</td>
-                          <td className="py-3 text-xs">{b ? (b.status === "priced" ? <span className="text-emerald-800"><span aria-hidden>✓ </span>Priced</span> : b.status === "not_selected" ? "" : <span className="text-amber-800">{b.reason}</span>) : ""}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <p className="mt-2 text-sm text-slate-700" data-testid="rep-owned-note">Quantities are the Rep&apos;s (read-only here). You choose the Cin7 product for each line. To change a quantity, return the quotation to the Rep.</p>
+              <LineDecisionsTable draft={draft} ev={ev} edit={edit} roles={roles} editable={s2Edit} mode="estimator" quantitiesEditable={false} />
             </Panel>
 
-              <Panel>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <PanelTitle>Product mappings</PanelTitle>
-                  <Button variant="secondary" size="sm" onClick={() => edit((d) => {
-                    for (const l of ev.calc.lines) {
-                      if (l.basis === "not_selected") continue;
-                      const sku = expectedSkuFor(l.itemKey, d.config.feederVariant);
-                      if (sku && l.itemKey !== "pvc_door") d.estimator.confirmedMappings[l.itemKey] = sku;
-                      if (packageFor(l.itemKey) && !packageFor(l.itemKey)!.estimatorPriced && !d.estimator.confirmedPackages.includes(l.itemKey)) d.estimator.confirmedPackages.push(l.itemKey);
-                    }
-                  })}>Confirm source-backed mappings</Button>
-                </div>
-                <p className="mt-2 text-xs text-slate-600">Source-backed SKUs are recommendations until you confirm them. A historic surrogate (e.g. FERAX for FORTIS 1.2) is never substituted.</p>
-                <ul className="mt-3 space-y-2 text-sm">
-                  {ev.calc.lines.filter((l) => l.basis !== "not_selected").map((l) => {
-                    const exp = expectedSkuFor(l.itemKey, cfg.feederVariant);
-                    const pkg = packageFor(l.itemKey);
-                    const confirmed = draft.estimator.confirmedMappings[l.itemKey];
-                    const door = l.itemKey === "pvc_door";
-                    if (l.itemKey === "penning_package" || pkg?.estimatorPriced) return null;
-                    return (
-                      <li key={l.itemKey} className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
-                        <span className="text-slate-700">{l.label}</span>
-                        {door ? (
-                          <select aria-label="Door product" value={confirmed ?? ""} onChange={(e) => edit((d) => { if (e.target.value) d.estimator.confirmedMappings.pvc_door = e.target.value; else delete d.estimator.confirmedMappings.pvc_door; })} className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm">
-                            <option value="">Select door product…</option>
-                            {manualSelectionSkusFor("pvc_door").map((s) => <option key={s} value={s}>{s}</option>)}
-                          </select>
-                        ) : isOptionalItemKey(l.itemKey) ? (
-                          confirmed ? <Status tone="success">Mapped to {confirmed}</Status> : <Status tone="warning">Not chosen - choose the product in the Line decisions table above</Status>
-                        ) : pkg ? (
-                          <Status tone={draft.estimator.confirmedPackages.includes(l.itemKey) ? "success" : "warning"}>{draft.estimator.confirmedPackages.includes(l.itemKey) ? "Package confirmed" : "Package unconfirmed"}</Status>
-                        ) : (
-                          <Status tone={confirmed && confirmed === exp ? "success" : "warning"}>{confirmed && confirmed === exp ? `Confirmed ${confirmed}` : `Recommended ${exp ?? "—"}`}</Status>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </Panel>
-
-            {!view.viewer.canViewCommercials && scopePanel}
-          </StepPanel>
-
-          <StepPanel railId="s2" stepId="charges" number={2} title={STAGE2_STEP_LABEL.charges} current={step2Id === "charges"} showAll={showAllSteps} className="space-y-6">
-              <Panel>
-                <PanelTitle>Commercial inputs (ex VAT)</PanelTitle>
-                <div className="mt-4 grid gap-4 md:grid-cols-2">
-                  {(["delivery", "installation", "concrete_slat_delivery"] as ChargeKey[]).map((c) => (
-                    <NumField key={c} label={CHARGE_LABEL[c]} unit="R" hint={CHARGE_HELP[c]} value={draft.estimator.charges[c] ?? null} onChange={(v) => edit((d) => { d.estimator.charges = { ...d.estimator.charges, [c]: v }; })} />
-                  ))}
-                  <NumField label="M75 system price" unit="R per system" hint="Estimator input by design. NQ3132 is N/A — supplier quote required; it is not priced separately." value={draft.estimator.unitPrices.flex_auger ?? null} onChange={(v) => edit((d) => { d.estimator.unitPrices = { ...d.estimator.unitPrices, flex_auger: v }; })} />
-                </div>
-                <label className="mt-4 flex max-w-3xl flex-col gap-1 text-sm">
-                  <span className="font-medium text-slate-700">Assumptions (frozen with the quote)</span>
-                  <textarea value={draft.estimator.assumptions} onChange={(e) => edit((d) => { d.estimator.assumptions = e.target.value; })} rows={3} className="rounded-md border border-slate-300 p-2 text-sm" />
-                </label>
-              </Panel>
+            <Panel>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <PanelTitle>Product mappings</PanelTitle>
+                <Button variant="secondary" size="sm" className="min-h-11" onClick={() => edit((d) => {
+                  for (const l of ev.calc.lines) {
+                    if (l.basis === "not_selected") continue;
+                    const sku = expectedSkuFor(l.itemKey, d.config.feederVariant);
+                    if (sku && l.itemKey !== "pvc_door") d.estimator.confirmedMappings[l.itemKey] = sku;
+                    if (packageFor(l.itemKey) && !packageFor(l.itemKey)!.estimatorPriced && !d.estimator.confirmedPackages.includes(l.itemKey)) d.estimator.confirmedPackages.push(l.itemKey);
+                  }
+                })}>Confirm source-backed mappings</Button>
+              </div>
+              <p className="mt-2 text-xs text-slate-600">Source-backed SKUs are recommendations until you confirm them. A historic surrogate (e.g. FERAX for FORTIS 1.2) is never substituted.</p>
+              <ul className="mt-3 space-y-2 text-sm">
+                {ev.calc.lines.filter((l) => l.basis !== "not_selected").map((l) => {
+                  const exp = expectedSkuFor(l.itemKey, cfg.feederVariant);
+                  const pkg = packageFor(l.itemKey);
+                  const confirmed = draft.estimator.confirmedMappings[l.itemKey];
+                  const door = l.itemKey === "pvc_door";
+                  if (l.itemKey === "penning_package" || pkg?.estimatorPriced) return null;
+                  return (
+                    <li key={l.itemKey} className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                      <span className="text-slate-700">{l.label}</span>
+                      {door ? (
+                        <select aria-label="Door product" value={confirmed ?? ""} onChange={(e) => edit((d) => { if (e.target.value) d.estimator.confirmedMappings.pvc_door = e.target.value; else delete d.estimator.confirmedMappings.pvc_door; })} className="h-11 rounded-md border border-slate-300 bg-white px-2 text-sm">
+                          <option value="">Select door product…</option>
+                          {manualSelectionSkusFor("pvc_door").map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      ) : isOptionalItemKey(l.itemKey) ? (
+                        confirmed ? <Status tone="success">Mapped to {confirmed}</Status> : <Status tone="warning">Not chosen - choose the product in the Line decisions table above</Status>
+                      ) : pkg ? (
+                        <Status tone={draft.estimator.confirmedPackages.includes(l.itemKey) ? "success" : "warning"}>{draft.estimator.confirmedPackages.includes(l.itemKey) ? "Package confirmed" : "Package unconfirmed"}</Status>
+                      ) : (
+                        <Status tone={confirmed && confirmed === exp ? "success" : "warning"}>{confirmed && confirmed === exp ? `Confirmed ${confirmed}` : `Recommended ${exp ?? "—"}`}</Status>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </Panel>
 
             {(budget?.lines ?? []).some((b) => ["unmapped", "not_in_price_source", "supplier_quote_required", "package_unconfirmed", "package_incomplete"].includes(b.status) || b.pricedBy === "estimator_resolution") && (
               <Panel>
@@ -794,148 +858,129 @@ export default function QuoteEditorPage() {
               </Panel>
             )}
 
-            <Panel>
-              <PanelTitle>Customer-driven exclusions</PanelTitle>
-              <p className="mt-2 text-xs text-slate-600">Everything in the template is required by default. Exclude a section only at the customer&apos;s request, with a reason that stays visible and is frozen in the baseline.</p>
-              <ul className="mt-3 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-                {ev.calc.lines.filter((l) => !GROWER_RULES.find((r) => r.itemKey === l.itemKey)!.optionalKey).map((l) => {
-                  const k = l.itemKey as GrowerItemKey;
-                  const on = cfg.exclusions?.[k] !== undefined;
-                  return (
-                    <li key={l.itemKey} className={`rounded-md border px-3 py-2 text-sm ${on ? "border-amber-400 bg-amber-50" : "border-slate-200 bg-white"}`}>
-                      <div className="flex items-center justify-between gap-3">
-                        <label className="flex items-center gap-2 text-slate-800"><input type="checkbox" checked={on} onChange={(e) => edit((d) => { d.config.exclusions = { ...d.config.exclusions }; if (e.target.checked) d.config.exclusions[k] = ""; else delete d.config.exclusions[k]; })} /> Exclude {l.label.split(" (")[0]}</label>
-                        <span className={`text-xs font-semibold ${on ? "text-amber-900" : "text-slate-600"}`} aria-hidden>{on ? "! Excluded" : "Included"}</span>
-                      </div>
-                      {on && <div className="mt-2"><TextField label="" placeholder="Reason (required)" value={cfg.exclusions?.[k] ?? ""} onChange={(v) => edit((d) => { d.config.exclusions = { ...d.config.exclusions, [k]: v }; })} hint={(cfg.exclusions?.[k] ?? "").trim() ? undefined : "A reason is required before this can be saved."} /></div>}
-                    </li>
-                  );
-                })}
-              </ul>
-            </Panel>
-
-            {!view.viewer.canViewCommercials && totalsPanel}
+            {!canCommercials && scopePanel}
+            {!canCommercials && totalsPanel}
           </StepPanel>
 
+          {canCommercials && (
+            <StepPanel railId="s2" stepId="costs" number={visible2.indexOf("costs") + 1} title={STAGE2_WIZARD_LABEL.costs} current={step2Id === "costs"} showAll={showAllSteps} locked={lockedFor2("costs")} className="space-y-6">
+              {editWarning && <Alert tone="warning"><span data-testid="edit-clears-signoff-costs">{editWarning}</span></Alert>}
+              {scopePanel}
+              {/* Right under the physical scope, where the estimator resolves the SKUs: capture the latest Cin7 costs for a draft quotation. */}
+              {final ? <CostPanel quoteId={id} /> : <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? previewedFor : null} />}
+              {totalsPanel}
+              {budget && (
+                <div aria-busy={recalculating}><MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={s2Edit} edit={edit} /></div>
+              )}
+              {!final && <Alert tone="info">SKU mapping and the Cin7 latest-supplier-price capture work on the frozen physical scope, so they open for the Estimator once the quotation is approved. Until then the estimator review above, the margin sheet and the readiness items are the costing evidence.</Alert>}
+            </StepPanel>
+          )}
         </fieldset>
 
-        <StepPanel railId="s2" stepId="submit" number={step2Ids.indexOf("submit") + 1} title={STAGE2_STEP_LABEL.submit} current={step2Id === "submit"} showAll={showAllSteps} className="mt-6 space-y-6">
-          <Panel>
-            <PanelTitle>Submit to Estimator</PanelTitle>
-            <p className="mt-1 text-xs text-slate-600">The Rep records the pre-approval price confirmation with the customer and submits the quote to the Estimator. This is not the customer&apos;s formal acceptance, which comes after Manager approval.</p>
-            {q.state !== "REP_DRAFT" && q.customer_confirmed_cents != null && (
-              <div className="mt-3 space-y-2">
-                <ConfirmationPanel quoteId={id} amountLabel={fmtCents(q.customer_confirmed_cents)} canAct={false} ready loading={false} refreshKey={`${q.revision}:${q.state}:${q.updated_at}`} recorded onConfirm={() => undefined} />
-              </div>
-            )}
-            <div className="mt-5 flex flex-wrap items-end gap-3 border-t border-slate-100 pt-5">
-              {q.state === "REP_DRAFT" && (
-                <>
-                  <div className="w-full">
-                    <ConfirmationPanel quoteId={id} amountLabel={totalCents == null ? null : fmtCents(totalCents)} canAct={roles.has("rep")} ready={rd.state === "READY"} loading={isWorking} refreshKey={`${q.revision}:${q.state}:${q.updated_at}`} recorded={false}
-                      onConfirm={(c) => act(() => sendGrowerQuoteToEstimatorAction(id, totalCents!, c), "Pre-approval price confirmation recorded and sent to the estimator.", "send", (v) => v.quote.state === "ESTIMATOR_REVIEW")} />
-                  </div>
-                </>
-              )}
-              {q.state !== "REP_DRAFT" && <p className="text-sm text-slate-700" data-testid="submit-state">{final ? "Submitted and approved." : "Submitted: the quote is with the Estimator."}</p>}
-            </div>
-            <ActionFeedback state={acts.stateOf("send")} />
-          </Panel>
-        </StepPanel>
-
-        {view.viewer.canViewCommercials && (
-          <fieldset disabled={!editable} className="mt-6 min-w-0 space-y-6 border-0 p-0">
-              <StepPanel railId="s2" stepId="cost" number={step2Ids.indexOf("cost") + 1} title={STAGE2_STEP_LABEL.cost} current={step2Id === "cost"} showAll={showAllSteps} className="space-y-6">
-                {scopePanel}
-                {/* Right under the physical scope, where the estimator resolves the SKUs: capture the latest Cin7 costs for a draft quotation. */}
-                {!final && <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? previewedFor : null} />}
-                {totalsPanel}
-                {budget && view.viewer.canViewCommercials && (
-                  <div aria-busy={recalculating}><MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={editable} edit={edit} /></div>
+        {canCommercials && (
+          <StepPanel railId="s2" stepId="final" number={visible2.indexOf("final") + 1} title={STAGE2_WIZARD_LABEL.final} current={step2Id === "final"} showAll={showAllSteps} locked={lockedFor2("final")} className="mt-6 space-y-6">
+            <Panel>
+              <PanelTitle>Final review</PanelTitle>
+              <p className="mt-1 text-sm text-slate-700">One look at what the sign-off depends on, then mark the review done.</p>
+              <FinalReviewChecklist items={finalChecklist} />
+              <div className="mt-4 border-t border-slate-100 pt-4" data-testid="cost-ack">
+                {costNeedsMark && (
+                  <>
+                    <p id="cost-ack-explain" className="text-sm text-slate-800">{ACK_EXPLAIN}</p>
+                    <Button type="button" id="cost-ack-btn" aria-describedby="cost-ack-explain" className="mt-3 min-h-11" onClick={markReviewed}>Mark reviewed &amp; continue</Button>
+                  </>
                 )}
-              </StepPanel>
-          </fieldset>
+                {costAcknowledged && <p id="cost-ack-done" tabIndex={-1} className="text-sm font-semibold text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-indigo-600" data-testid="cost-ack-done">You marked the final review done for this version. It is not saved and it is not a sign-off.</p>}
+                {finalStepDone && !costAcknowledged && <p className="text-sm font-semibold text-emerald-900" data-testid="final-reviewed"><span aria-hidden>✓ </span>{final ? "Reviewed and approved." : "Reviewed: the Estimator sign-off is current."}</p>}
+                {finalBlocked && (
+                  <div className="space-y-2">
+                    <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" data-testid="cost-ack-blocked">{finalBlockText}</p>
+                    {isEstimator && q.state === "ESTIMATOR_REVIEW" && <p className="text-sm text-slate-800">If it has to go back instead, use <button type="button" className="inline-flex min-h-11 items-center font-semibold text-indigo-700 underline" onClick={() => goStep2Id("signoff")}>Sign-off or return</button> to return it to the Rep.</p>}
+                  </div>
+                )}
+              </div>
+            </Panel>
+          </StepPanel>
         )}
 
-
-        {showAllSteps && canCommercials && (costNeedsMark || costAcknowledged) && (
-          <div className="mt-4 max-w-3xl rounded-lg border border-indigo-200 bg-indigo-50 p-4" data-testid="cost-ack">
-            <p id="cost-ack-explain-all" className="text-sm text-slate-800">{ACK_EXPLAIN}</p>
-            {costAcknowledged
-              ? <p id="cost-ack-done" tabIndex={-1} className="mt-2 text-sm font-semibold text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-indigo-600" data-testid="cost-ack-done">You marked the costing reviewed for this version.</p>
-              : <Button type="button" aria-describedby="cost-ack-explain-all" className="mt-3 min-h-11" onClick={markReviewed}>Mark reviewed &amp; continue</Button>}
-          </div>
-        )}
-        {showAllSteps && costBlockedNow && (
-          <p role="status" className="mt-4 max-w-3xl rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900" data-testid="cost-ack-blocked">{costBlockedText}</p>
-        )}
-
-        <StepPanel railId="s2" stepId="signoff" number={step2Ids.indexOf("signoff") + 1} title={STAGE2_STEP_LABEL.signoff} current={step2Id === "signoff"} showAll={showAllSteps} className="mt-6 space-y-6">
+        <StepPanel railId="s2" stepId="signoff" number={visible2.indexOf("signoff") + 1} title={STAGE2_WIZARD_LABEL.signoff} current={step2Id === "signoff"} showAll={showAllSteps} locked={lockedFor2("signoff")} className="mt-6 space-y-6">
           <Panel>
-            <PanelTitle>Estimator review and handoff</PanelTitle>
-            <p className="mt-1 text-xs text-slate-600">The Estimator signs off or returns the quote to the Rep. This is not the customer&apos;s formal acceptance, which comes after Manager approval.</p>
+            <PanelTitle>Sign off or return</PanelTitle>
+            <p className="mt-1 text-xs text-slate-600">The Estimator signs off for the Manager or returns the quote to the Rep. This is not the customer&apos;s formal acceptance, which comes after Manager approval.</p>
             {handoffFacts}
-                {q.state !== "REP_DRAFT" && q.customer_confirmed_cents != null && !final && totalCents != null && totalCents !== q.customer_confirmed_cents && <Alert tone="warning">The quote total ({fmtCents(totalCents)}) no longer equals the confirmed amount ({fmtCents(q.customer_confirmed_cents)}). Return it to the Rep to reconfirm with the customer before it can be approved.</Alert>}
-            <div className="mt-5 flex flex-wrap items-end gap-3 border-t border-slate-100 pt-5">
-              {q.state === "ESTIMATOR_REVIEW" && (
-                <>
-                  {q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash
-                    ? <span className="flex min-w-0 flex-wrap items-center gap-2"><Status tone="success">Estimator sign-off complete</Status><span className="min-w-0 break-words text-sm text-slate-700">{q.estimator_signoff_by_email ?? "estimator"}{q.estimator_signoff_at ? `, ${formatSast(q.estimator_signoff_at)}` : ""}</span></span>
-                    : <Button loading={isWorking} aria-describedby={signoffWhy ? "signoff-why" : undefined} disabled={!roles.has("estimator") || rd.state !== "READY"} onClick={() => act(() => signOffGrowerQuoteAction(id), "Estimator sign-off recorded for this exact content.", "signoff", (v) => !!v.quote.estimator_signoff_hash && v.quote.estimator_signoff_hash === v.quote.draft_hash)}>Estimator: I double-checked this quote</Button>}
-                  {roles.has("estimator") && (<>
-                  <TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} />
-                  <Button variant="secondary" loading={isWorking} aria-describedby={returnWhy ? "return-rep-why" : undefined} disabled={!returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "signoff", (v) => v.quote.state === "REP_DRAFT")}>Return to rep</Button>
-                  </>)}
-                  {!roles.has("estimator") && <span className="text-xs text-slate-600">With the Estimator for review. Only an Estimator can sign off or return it here.</span>}
-                </>
-              )}
+            {q.state !== "REP_DRAFT" && q.customer_confirmed_cents != null && !final && totalCents != null && totalCents !== q.customer_confirmed_cents && <Alert tone="warning">The quote total ({fmtCents(totalCents)}) no longer equals the confirmed amount ({fmtCents(q.customer_confirmed_cents)}). Return it to the Rep to reconfirm with the customer before it can be approved.</Alert>}
+            {editWarning && <div className="mt-3"><Alert tone="warning"><span data-testid="edit-clears-signoff-signoff">{editWarning}</span></Alert></div>}
+            <div className="mt-5 space-y-4 border-t border-slate-100 pt-5">
+              {q.state === "REP_DRAFT" && <p className="text-sm text-slate-800" data-testid="signoff-waiting">Not submitted yet: the Estimator signs off or returns it after the Rep has submitted.</p>}
               {final && <Status tone="success">Signed off and approved</Status>}
+              {q.state === "ESTIMATOR_REVIEW" && (q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash ? (
+                <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3" role="status" data-testid="signoff-success">
+                  <span className="flex min-w-0 flex-wrap items-center gap-2"><Status tone="success">Estimator sign-off complete</Status><span className="min-w-0 break-words text-sm text-slate-800">{q.estimator_signoff_by_email ?? "estimator"}{q.estimator_signoff_at ? `, ${formatSast(q.estimator_signoff_at)}` : ""}</span></span>
+                  <p className="mt-2 text-sm text-slate-900" data-testid="signoff-next-owner">Next responsible role: <b>Manager</b>. The Manager approves or returns it in Stage 3.</p>
+                  <Button type="button" className="mt-3 min-h-11" onClick={() => goStage(3)}>Open Manager approval (Stage 3)</Button>
+                </div>
+              ) : (
+                <>
+                  {isEstimator ? (
+                    <div>
+                      <Button loading={isWorking} className="min-h-11" aria-describedby={signoffWhy ? "signoff-why" : undefined} disabled={!roles.has("estimator") || rd.state !== "READY"} onClick={() => act(() => signOffGrowerQuoteAction(id), "Estimator sign-off recorded for this exact content.", "signoff", (v) => !!v.quote.estimator_signoff_hash && v.quote.estimator_signoff_hash === v.quote.draft_hash)}>Estimator: I double-checked this quote</Button>
+                      <div className="mt-1"><DisabledReason id="signoff-why">{signoffWhy}</DisabledReason></div>
+                    </div>
+                  ) : <p className="text-sm text-slate-700" data-testid="signoff-not-yours">{wizard2.statusLine} Only an Estimator can sign off or return it here.</p>}
+                  {isEstimator && (
+                    <section className="rounded-lg border border-slate-200 p-4" aria-label="Return to the Rep" data-testid="return-section">
+                      <h3 className="text-sm font-semibold text-slate-900">Or return it to the Rep</h3>
+                      <p className="mt-1 text-sm text-slate-800" data-testid="return-next-owner">Next responsible role: <b>Rep</b>. The quotation comes back as a new revision and the Rep submits it again once the correction is made.</p>
+                      <div className="mt-3 max-w-2xl"><TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} hint="Say what the Rep must correct. It is recorded in the Approval history, where the Rep reads it." /></div>
+                      <div className="mt-3">
+                        <Button variant="secondary" className="min-h-11" loading={isWorking} aria-describedby={returnWhy ? "return-rep-why" : undefined} disabled={!returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "signoff", (v) => v.quote.state === "REP_DRAFT")}>Return to rep</Button>
+                      </div>
+                      <div className="mt-1"><DisabledReason id="return-rep-why">{returnWhy}</DisabledReason></div>
+                    </section>
+                  )}
+                </>
+              ))}
             </div>
-            {q.state === "ESTIMATOR_REVIEW" && !(q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash) && <div className="mt-2 space-y-1"><DisabledReason id="signoff-why">{signoffWhy}</DisabledReason>{roles.has("estimator") && <DisabledReason id="return-rep-why">{returnWhy}</DisabledReason>}</div>}
             <ActionFeedback state={acts.stateOf("signoff")} />
           </Panel>
-          {final ? (
-            <>
-              {final && <ScopePanel quoteId={id} draft={draft} />}
-              {final && view.viewer.canViewCommercials && <CostPanel quoteId={id} />}
-            </>
-          ) : (
-            <Alert tone="info">SKU mapping and the Cin7 latest-supplier-price capture work on the frozen physical scope, so they open for the Estimator once the quotation is approved. Until then the estimator review above, the margin sheet and the readiness items are the costing evidence.</Alert>
-          )}
         </StepPanel>
 
         {!showAllSteps && (
-          <div className="sticky bottom-0 z-10 -mx-4 mt-6 flex flex-wrap items-end justify-between gap-3 border-t border-slate-200 bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:-mx-6 md:px-6" data-testid="step-buttons">
-            {step2Cur > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2No(step2Cur - 1)}>Back</Button> : <span />}
-            {onCostUnmarked ? (
-              // The ONLY way forward from Cost & margin while the review is outstanding: it records the review (client-local), then moves on. The rail and Back still navigate and record nothing.
-              <div className="flex max-w-xl flex-col items-end gap-2" data-testid="cost-ack">
-                <p id="cost-ack-explain" className="text-right text-sm text-slate-800">{ACK_EXPLAIN}</p>
-                <Button type="button" id="cost-ack-btn" aria-describedby="cost-ack-explain" className="min-h-11" onClick={markReviewed}>Mark reviewed &amp; continue</Button>
+        <div className="sticky bottom-0 z-10 -mx-4 mt-6 flex flex-wrap items-end justify-between gap-3 border-t border-slate-200 bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:-mx-6 md:px-6" data-testid="step-buttons">
+          {step2Cur > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2Id(visible2[step2Cur - 2])}>Back</Button> : <span />}
+          {(() => {
+            const nextId = visible2[step2Cur];
+            if (!nextId) return <span />;
+            const nx = step2Access(nextId);
+            if (nx.access === "locked") return (
+              <div className="flex max-w-xl flex-col items-end gap-1">
+                <Button type="button" className="min-h-11" disabled aria-describedby="next-why">Next: {STAGE2_WIZARD_LABEL[nextId]}</Button>
+                <p id="next-why" className="text-right text-sm text-amber-900" data-testid="next-blocked">{nx.blockedBy.join(" ")}</p>
               </div>
-            ) : costBlocked ? (
-              <div className="flex max-w-xl flex-col items-end gap-2">
-                <p role="status" className="text-right text-sm text-amber-900" data-testid="cost-ack-blocked">{costBlockedText}</p>
-                {isObserver && step2Cur < step2Ids.length && <Button type="button" className="min-h-11" onClick={() => goStep2No(step2Cur + 1)}>Next: Sign-off or return</Button>}
-              </div>
-            ) : step2Cur < step2Ids.length ? (
-              <div className="flex flex-col items-end gap-2">
-                {onCostMarked && <p id="cost-ack-done" tabIndex={-1} className="mt-2 text-sm font-semibold text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-indigo-600" data-testid="cost-ack-done">You marked the costing reviewed for this version.</p>}
-                <Button type="button" className="min-h-11" onClick={() => goStep2No(step2Cur + 1)}>{onCostMarked ? "Next: Sign-off or return" : "Next"}</Button>
-              </div>
-            ) : <span />}
-          </div>
+            );
+            // On Final review there is NO plain Next for the Estimator until the review is marked: "Mark reviewed & continue" (in the panel) is the only way forward. A viewer who cannot mark it just navigates.
+            if (step2Id === "final" && (costNeedsMark || (finalBlocked && isEstimator))) return <span />;
+            return <Button type="button" className="min-h-11" onClick={() => goStep2Id(nextId)}>Next: {STAGE2_WIZARD_LABEL[nextId]}</Button>;
+          })()}
+        </div>
         )}
         </>
       )}
 
-      {/* ───────────── 3 · MANAGER APPROVAL ───────────── */}
+      {/* ───────────── 3 · MANAGER APPROVAL (a read-only signed-off workspace and the Manager's decision; nothing editable) ───────────── */}
       {stage === 3 && (
-        <div className="mt-6 space-y-6">
+        <div className="mt-6 space-y-6" data-testid="stage3-workspace">
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm" data-testid="stage3-owner">
+            <span className="font-semibold text-slate-900">Stage 3 is the Manager&apos;s decision.</span>
+            <span role="status" aria-live="polite" className="text-slate-800" data-testid="stage3-status-line">{wizard3.statusLine}</span>
+            <OwnerTag role={wizard3.nextOwner} />
+          </div>
+          {repSummary}
+          <EstimatorResult signedOffBy={q.estimator_signoff_by_email} signedOffAt={q.estimator_signoff_at} signoffCurrent={s2Base.signoff === "current"} totalCents={totalCents} confirmedCents={q.customer_confirmed_cents}
+            costing={canCommercials && budget ? { estimatedCost: budget.totals.estimatedCost, marginPct: budget.totals.overallMarginPct } : null} priceExceptions={priceExceptions} costOverrides={costOverrideRows} />
           <Panel>
             <PanelTitle>Manager approval</PanelTitle>
             <p className="mt-1 text-xs text-slate-600">Final internal commercial approval. The Rep sees the outcome here and by notification; only a Manager can decide.</p>
-            {handoffFacts}
             {q.state === "ESTIMATOR_REVIEW" && <ApprovalChecklist items={approvalChecklist} onGoStage={goStage} />}
 
             {approveSignoffMissing && <div id={`${uid}-approve-signoff`}><Alert tone="info">Waiting for the Estimator&apos;s sign-off before the Manager can decide.</Alert></div>}
@@ -944,17 +989,18 @@ export default function QuoteEditorPage() {
             <div className="mt-5 space-y-3 border-t border-slate-100 pt-5">
               {q.state === "ESTIMATOR_REVIEW" && (
                 <>
-                  {roles.has("manager") && <div className="max-w-xl"><TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} hint="Required only when you return the quotation instead of approving it." /></div>}
+                  {roles.has("manager") && <div className="max-w-xl"><TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} hint="Required only when you return the quotation instead of approving it. Say what must be corrected; it is recorded in the Approval history." /></div>}
                   <div className="flex flex-wrap items-center gap-3">
-                    <Button variant="primary" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty} aria-describedby={approveDescribedBy}
+                    <Button variant="primary" className="min-h-11" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty} aria-describedby={approveDescribedBy}
                       onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")}>Manager: final approval</Button>
                     {roles.has("manager") && (<>
-                      <Button variant="secondary" aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "approve", (v) => v.quote.state === "REP_DRAFT")}>Return to rep (reject)</Button>
+                      <Button variant="secondary" className="min-h-11" aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "approve", (v) => v.quote.state === "REP_DRAFT")}>Return to rep (reject)</Button>
                       {q.estimator_signoff_hash && (
-                        <Button variant="secondary" aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToEstimatorAction(id, returnReason), "Returned to the estimator. Their sign-off is withdrawn and must be given again; the quote and its history are kept.", "approve", (v) => !v.quote.estimator_signoff_hash)}>Manager: return to estimator</Button>
+                        <Button variant="secondary" className="min-h-11" aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToEstimatorAction(id, returnReason), "Returned to the estimator. Their sign-off is withdrawn and must be given again; the quote and its history are kept.", "approve", (v) => !v.quote.estimator_signoff_hash)}>Manager: return to estimator</Button>
                       )}
                     </>)}
                   </div>
+                  {roles.has("manager") && <p className="text-xs text-slate-700" data-testid="return-owners">Return to rep: the Rep corrects it (new revision), then submits it again. Return to estimator: the Estimator&apos;s sign-off is withdrawn and they review again.</p>}
                   {isWorking && <DisabledReason id={`${uid}-approve-busy`}>Another action is in progress. Please wait.</DisabledReason>}
                   {roles.has("manager") && <DisabledReason id="return-mgr-why">{returnWhy ? `Return buttons: ${returnWhy.charAt(0).toLowerCase()}${returnWhy.slice(1)}` : undefined}</DisabledReason>}
                   {!roles.has("manager") && <p id={`${uid}-approve-role`} className="text-sm text-slate-700">Final approval needs the manager role (org owner/admin).</p>}
