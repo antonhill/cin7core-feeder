@@ -388,6 +388,13 @@ describe("Variation workspace (P3)", () => {
       expect(t).toMatch(/1 posting is still being sent/);
       expect(t).not.toMatch(/uncertain|nothing to reconcile/);
     });
+    it("states Commercial billing with the same derivation as the Overview: complete only when the approved amount is billed and every invoice reconciled", async () => {
+      const done = { ...R(1, 1, 0), retryable: 0, postingExVatCents: 500_000_00 };
+      expect(await recon({ v1: done })).toMatch(/the Cin7 invoice is reconciled; Commercial billing: Complete/);
+    });
+    it("a mismatch names Commercial billing: Needs attention", async () => { expect(await recon({ v1: { ...R(1, 0, 0, 0, 0, 1), postingExVatCents: 500_000_00 } })).toMatch(/recorded amount mismatch; Commercial billing: Needs attention/); });
+    it("awaiting reconciliation is Commercial billing: In progress", async () => { expect(await recon({ v1: { ...R(1, 0, 1), postingExVatCents: 500_000_00 } })).toMatch(/awaiting reconciliation; Commercial billing: In progress/); });
+    it("approved value that no posting accounts for needs attention", async () => { expect(await recon({ v1: { ...R(1, 1, 0), postingExVatCents: 100_000_00 } })).toMatch(/Commercial billing: Needs attention/); });
     it("a recorded amount mismatch is shown, not folded into 'awaiting'", async () => { expect(await recon({ v1: R(2, 1, 0, 0, 0, 1) })).toMatch(/1 of 2 Cin7 invoices reconciled; 1 with a recorded amount mismatch/); });
     it("a failed read says unavailable, never 'nothing to reconcile'", async () => {
       const t = await recon({}, true);

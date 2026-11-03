@@ -53,7 +53,7 @@ export async function loadProjectView(db: Db, orgId: string, projectId: string):
     db.from("project_cin7_links").select("claim_id, cin7_invoice_number, cin7_status, reconciled_at").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_variations").select("*").eq("org_id", orgId).eq("project_id", projectId),
     db.from("project_opening_commitments").select("*").eq("org_id", orgId).eq("project_id", projectId),
-    db.from("project_claim_cin7_postings").select("claim_id, posting_state, cin7_invoice_number, cin7_status, reconciled_at, completed_at, last_error_message").eq("org_id", orgId).eq("project_id", projectId),
+    db.from("project_claim_cin7_postings").select("claim_id, posting_state, cin7_invoice_number, cin7_status, reconciled_at, completed_at, last_error_message, last_error_code, requested_at").eq("org_id", orgId).eq("project_id", projectId),
     db.from("approval_requests").select("id, doc_id, stage, stage_role, assigned_to_email").eq("org_id", orgId).eq("project_id", projectId).eq("doc_type", "CLAIM").eq("status", "PENDING"),
   ]);
   return buildProjectView({
