@@ -23,15 +23,15 @@ afterEach(() => cleanup());
 const journeyFor = (i = demoInput()) => buildJourney({ scopes: i.scopes, physical: buildProjectOverview(i).physical });
 
 describe("JourneyMap - in the Overview", () => {
-  it("renders at the top of the Overview, above 'Needs attention', with setup and three lanes", async () => {
+  it("renders BELOW the 'Needs attention' list (which stays at the top), with setup and three lanes", async () => {
     render(<ProjectOverview projectId="p-base" refreshKey="k" onOpenTab={vi.fn()} />);
     const ov = await screen.findByTestId("overview");
     const journey = within(ov).getByTestId("journey");
-    expect(ov.firstElementChild).toBe(journey);
+    expect(ov.firstElementChild?.querySelector("#ov-attention")).toBeTruthy();
     expect(within(journey).getByRole("heading", { name: "Project journey" })).toBeTruthy();
     for (const t of ["Commercial", "Physical", "Variations"]) expect(within(journey).getByRole("heading", { name: t })).toBeTruthy();
     expect(within(journey).getByTestId("journey-setup")).toBeTruthy();
-    expect(journey.compareDocumentPosition(screen.getByRole("heading", { name: "Needs attention" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Needs attention" }).compareDocumentPosition(journey) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("adds NO request: one overview read on mount, no Cin7 read, and a click on a journey link makes none either", async () => {
@@ -40,7 +40,7 @@ describe("JourneyMap - in the Overview", () => {
     await screen.findByTestId("journey");
     expect(overviewAction).toHaveBeenCalledTimes(1);
     expect(physicalAction).not.toHaveBeenCalled();
-    fireEvent.click(within(screen.getByTestId("journey-physical-fulfilment")).getByRole("button", { name: "Open Products & Stock" }));
+    fireEvent.click(within(screen.getByTestId("journey-physical-fulfilment")).getByRole("button", { name: "Open Products & Stock: Fulfilment" }));
     expect(open).toHaveBeenCalledWith("physical");
     expect(overviewAction).toHaveBeenCalledTimes(1);
     expect(physicalAction).not.toHaveBeenCalled();
@@ -85,9 +85,11 @@ describe("JourneyMap - presentation and accessibility", () => {
     expect(links.length).toBeGreaterThan(5);
     for (const b of links) {
       expect(b.textContent).toMatch(/^(Open|Start) /);
+      expect(b.getAttribute("aria-label")).toMatch(/^(Open|Start) .+: .+/);
       expect(b.className).toContain("min-h-11");
+      expect(b.className).toContain("min-w-11");
     }
-    fireEvent.click(within(screen.getByTestId("journey-commercial-claims")).getByRole("button", { name: "Open Claims" }));
+    fireEvent.click(within(screen.getByTestId("journey-commercial-claims")).getByRole("button", { name: "Open Claims: Progress claims" }));
     expect(onOpen).toHaveBeenCalledWith("claims");
   });
 
@@ -95,19 +97,19 @@ describe("JourneyMap - presentation and accessibility", () => {
     renderJourney();
     for (const id of ["commercial", "physical", "variations"]) {
       const lane = screen.getByTestId(`journey-lane-${id}`);
-      const btn = within(lane).getByRole("button", { name: new RegExp(`Show ${id}`, "i") });
+      const btn = within(lane).getByRole("button", { name: new RegExp(`^${id} stations`, "i") });
       expect(btn.getAttribute("aria-expanded")).toBe("false");
       const body = screen.getByTestId(`journey-body-${id}`);
       expect(btn.getAttribute("aria-controls")).toBe(body.id);
       expect(body.className).toContain("max-[700px]:hidden");
       fireEvent.click(btn);
       expect(btn.getAttribute("aria-expanded")).toBe("true");
-      expect(btn.textContent).toMatch(/^Hide /);
+      expect(btn.textContent).toMatch(new RegExp(`^${id} stations`, "i")); // the label never changes with state; aria-expanded carries it
       expect(body.className).not.toContain("max-[700px]:hidden");
       fireEvent.keyDown(btn, { key: "Enter" });
     }
     // the button is mobile-only so it never appears on a wide screen
-    expect(within(screen.getByTestId("journey-lane-commercial")).getByRole("button", { name: /Hide Commercial/ }).className).toContain("min-[701px]:hidden");
+    expect(within(screen.getByTestId("journey-lane-commercial")).getByRole("button", { name: /^Commercial stations/ }).className).toContain("min-[701px]:hidden");
   });
 
   it("the lane summary line carries the counts (attention, in progress, not read yet) even when collapsed", () => {
@@ -116,7 +118,7 @@ describe("JourneyMap - presentation and accessibility", () => {
     i.scopes = [scope({ project: bp, stages: [stage("s1", 1, "All", R(1000))], claims: [claim("c1", 1, "FAILED_UNCERTAIN", R(100))], postings: [posting("c1", "FAILED_UNCERTAIN", null, null, false)], variations: [approvedVariation(R(10))] })];
     renderJourney(i);
     expect(screen.getByTestId("journey-summary-commercial").textContent).toMatch(/\d+ needs? attention/);
-    expect(screen.getByTestId("journey-summary-physical").textContent).toContain("3 not read yet");
+    expect(screen.getByTestId("journey-summary-physical").textContent).toContain("2 not read yet");
     expect(screen.getByTestId("journey-summary-variations").textContent).toMatch(/needs? attention/);
   });
 
@@ -126,8 +128,33 @@ describe("JourneyMap - presentation and accessibility", () => {
     renderJourney(i);
     const v = screen.getByTestId("journey-variation-V001");
     expect(v.getAttribute("data-status")).toBe("needs_attention");
-    fireEvent.click(within(v).getByRole("button", { name: "Start V001 billing" }));
+    fireEvent.click(within(v).getByRole("button", { name: "Start V001 billing: V001 Extra" }));
     expect(onOpen).toHaveBeenCalledWith("variations");
+  });
+
+  it("on a phone the key and Setup sit behind one disclosure (collapsed by default), and a one-line total says how many need attention", () => {
+    renderJourney();
+    const btn = screen.getByRole("button", { name: /^Key and setup/ });
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+    const group = screen.getByTestId("journey-setup-group");
+    expect(btn.getAttribute("aria-controls")).toBe(group.id);
+    expect(group.className).toContain("max-[700px]:hidden");
+    expect(group.contains(screen.getByTestId("journey-key"))).toBe(true);
+    fireEvent.click(btn);
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+    expect(group.className).not.toContain("max-[700px]:hidden");
+    expect(screen.getByTestId("journey-total").textContent).toMatch(/attention|No station/);
+  });
+
+  it("a soft Blocked station keeps the word Blocked in the milder tone, and a rejected variation reads 'Rejected'", () => {
+    const i = demoInput();
+    const bp = project({ id: "b3", project_reference: "P", original_contract_cents: R(1000) });
+    i.scopes = [scope({ project: bp, stages: [stage("s1", 1, "All", R(1000))], claims: [claim("c1", 1, "APPROVED", R(500))], saleNumber: null, variations: [{ ...approvedVariation(R(10)), status: "REJECTED" }] })];
+    renderJourney(i);
+    const post = screen.getByTestId("journey-commercial-posting");
+    expect(post.textContent).toContain("Blocked");
+    expect(post.querySelector("[data-tone]")?.getAttribute("data-tone")).toBe("warning");
+    expect(screen.getByTestId("journey-variation-V001").textContent).toContain("Rejected");
   });
 
   it("states there is no completion state in one footnote line", () => {

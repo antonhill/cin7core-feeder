@@ -166,7 +166,6 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab, contractShow
 
   return (
     <div className="space-y-8" data-testid="overview">
-      {journey && <JourneyMap journey={journey} onOpenTab={onOpenTab} />}
       <Section id="ov-attention" title="Needs attention" subtitle="Each item opens the workflow that resolves it.">
         {o.exceptions.length === 0 ? (
           <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900" data-testid="no-exceptions">Nothing needs attention right now.</p>
@@ -185,6 +184,8 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab, contractShow
           </ul>
         )}
       </Section>
+
+      {journey && <JourneyMap journey={journey} onOpenTab={onOpenTab} />}
 
       <Section id="ov-summary" title="Executive summary" subtitle={contractShownAbove ? "Original contract, approved variations and revised contract are in the project summary above. Billing here covers the original project and its variations. All amounts are ex VAT." : "All commercial amounts are ex VAT."}>
         <KpiGroups kpis={o.kpis} contractShownAbove={contractShownAbove} />

@@ -124,6 +124,46 @@ describe("Project Journey - Commercial lane", () => {
   });
 });
 
+describe("Project Journey - review fixes", () => {
+  const fullyBilled = () => ({ events: [progress("s1", 10000, 10000)], claims: [claim("c1", 1, "RECONCILED", R(1000))], postings: [posting("c1", "RECONCILED", "INV-1", "AUTHORISED", true)] });
+  it("BASE progress claims is Completed when the original contract is fully billed and reconciled, even with an approved variation that has no billing scope yet", () => {
+    const j = journeyOf([base({ ...fullyBilled(), variations: [variation("V001", "APPROVED")] })]);
+    expect(st(j, "commercial-claims").status).toBe("completed");
+    expect(st(j, "commercial-stages").status).toBe("completed");
+    expect(st(j, "variation-V001").status).toBe("needs_attention");
+  });
+  it("posting copy separates retryable from uncertain, in both lanes, and never says 'failed'", () => {
+    const retry = journeyOf([base({ claims: [claim("c1", 1, "APPROVED", R(500))], postings: [posting("c1", "FAILED_CONFIRMED_NO_WRITE", null, null, false)] })]);
+    expect(st(retry, "commercial-posting").detail).toBe("1 invoice not created in Cin7 (can be retried).");
+    const unc = journeyOf([base({ claims: [claim("c1", 1, "APPROVED", R(500))], postings: [posting("c1", "FAILED_UNCERTAIN", null, null, false)] })]);
+    expect(st(unc, "commercial-posting").detail).toBe("1 invoice with an uncertain outcome: check Cin7 before doing anything.");
+    const vs = [variation("V001", "APPROVED")];
+    const v = journeyOf([base({ variations: vs }), varScope("V001", { claims: [claim("vc1", 1, "APPROVED", R(500))], postings: [posting("vc1", "FAILED_CONFIRMED_NO_WRITE", null, null, false)] })]);
+    expect(st(v, "variation-V001").detail).toBe("1 invoice not created in Cin7 (can be retried).");
+    expect(JSON.stringify([retry, unc, v]).toLowerCase()).not.toContain("failed");
+  });
+  it("an uncertain claim has the same status (Blocked) in the Commercial lane and for a variation", () => {
+    const vs = [variation("V001", "APPROVED")];
+    const j = journeyOf([base({ variations: vs, claims: [claim("c1", 1, "FAILED_UNCERTAIN", R(100))] }), varScope("V001", { claims: [claim("vc1", 1, "FAILED_UNCERTAIN", R(100))] })]);
+    expect(st(j, "commercial-claims").status).toBe("blocked");
+    expect(st(j, "variation-V001").status).toBe("blocked");
+  });
+  it("Deliveries mentions cancelled deliveries and does not subtract them twice (total already excludes them)", () => {
+    const d = (deliveries: Parameters<typeof physOf>[1]) => st(journeyOf([base()], physOf({ state: "not_loaded" }, deliveries)), "physical-deliveries");
+    const allCancelled = d({ total: 0, dispatched: 0, inProgress: 0, cancelled: 2, latestActivityAt: null });
+    expect(allCancelled).toMatchObject({ status: "not_started", detail: "No live deliveries; 2 cancelled." });
+    expect(d({ total: 2, dispatched: 2, inProgress: 0, cancelled: 1, latestActivityAt: null })).toMatchObject({ status: "completed", detail: "All 2 deliveries dispatched (1 cancelled)." });
+    expect(d({ total: 3, dispatched: 1, inProgress: 2, cancelled: 1, latestActivityAt: null })).toMatchObject({ status: "in_progress", detail: "1 of 3 dispatched (1 cancelled)." });
+  });
+  it("Procurement with no physical products is Not started; a locked opening-commitments station reads 'Locked'; Post to Cin7 with no Sale is a soft Blocked", () => {
+    const none = journeyOf([base()], physOf({ state: "loaded", asOf: null, sections: [physSection([])] }));
+    expect(st(none, "physical-procurement").status).toBe("not_started");
+    expect(st(journeyOf([base({ claims: [claim("c1", 1, "DRAFT", R(100))] })]), "setup-opening").statusLabel).toBe("Locked");
+    const blocked = st(journeyOf([base({ claims: [claim("c1", 1, "APPROVED", R(500))], sale: null })]), "commercial-posting");
+    expect(blocked).toMatchObject({ status: "blocked", soft: true });
+  });
+});
+
 describe("Project Journey - Physical lane (unknown is never zero)", () => {
   it("nothing read: Fulfilment, Procurement and Milestone confirmations are unknown, with links to the tab that reads them", () => {
     const j = journeyOf([base()]);
@@ -133,7 +173,8 @@ describe("Project Journey - Physical lane (unknown is never zero)", () => {
       expect(st(j, id).detail).not.toMatch(/\b0\b/);
     }
     expect(st(j, "physical-milestones").detail).toMatch(/does not release claimable value/);
-    expect(j.lanes[1].summary.unknown).toBe(3);
+    expect(j.lanes[1].summary.unknown).toBe(2); // Milestone confirmations is permanently unknown here and is not counted
+    expect(st(j, "physical-milestones").permanentUnknown).toBe(true);
   });
   it("a failed read is unknown, not 'nothing to ship'", () => {
     const j = journeyOf([base()], physOf({ state: "error", error: "boom" }));
@@ -184,7 +225,7 @@ describe("Project Journey - Variations lane", () => {
     expect(st(j, "variation-V001").status).toBe("not_started");
     expect(st(j, "variation-V002")).toMatchObject({ status: "needs_attention", link: { tab: "variations", label: "Start V002 billing" } });
     expect(st(j, "variation-V002").detail).toMatch(/no billing project/);
-    expect(st(j, "variation-V003").status).toBe("completed");
+    expect(st(j, "variation-V003")).toMatchObject({ status: "not_started", statusLabel: "Rejected" });
   });
   it("a billing project open with no claims is in progress; fully reconciled is completed; uncertain/unbalanced is attention", () => {
     const vs = [variation("V001", "APPROVED")];
@@ -193,7 +234,7 @@ describe("Project Journey - Variations lane", () => {
     expect(st(journeyOf([base({ variations: vs }), done]), "variation-V001").status).toBe("completed");
     const uncertain = varScope("V001", { claims: [claim("vc1", 1, "FAILED_UNCERTAIN", R(500))] });
     const u = st(journeyOf([base({ variations: vs }), uncertain]), "variation-V001");
-    expect(u.status).toBe("needs_attention");
+    expect(u.status).toBe("blocked"); // same state, same status as the Commercial lane
     expect(u.needs[0]).toMatch(/uncertain claim resolved/);
   });
   it("BASE vs VARIATION isolation: a variation's claims never move a base station, and base claims never move a variation station", () => {
@@ -207,7 +248,7 @@ describe("Project Journey - Variations lane", () => {
     expect(st(journeyOf([noisyBase, varScope("V001")]), "variation-V001")).toEqual(st(quiet, "variation-V001"));
     // two variations: only the matching code's scope is read
     const two = journeyOf([base({ variations: [variation("V001", "APPROVED"), variation("V002", "APPROVED")] }), noisyVar]);
-    expect(st(two, "variation-V001").status).toBe("needs_attention");
+    expect(st(two, "variation-V001").status).toBe("blocked");
     expect(st(two, "variation-V002").status).toBe("needs_attention");
     expect(st(two, "variation-V002").detail).toMatch(/no billing project/);
   });
@@ -219,7 +260,7 @@ describe("Project Journey - lane summaries and missing base", () => {
     const s = j.lanes[0].summary;
     expect(s.attention).toBeGreaterThanOrEqual(1);
     expect(s.unknown).toBe(1); // the Sale: no link and nothing to say whether an attempt is in flight
-    expect(j.lanes[1].summary).toEqual({ attention: 0, inProgress: 1, unknown: 3 });
+    expect(j.lanes[1].summary).toEqual({ attention: 0, inProgress: 1, unknown: 2 });
   });
   it("without a BASE scope every setup and commercial station is unknown (never a made-up status) and the variations lane is empty", () => {
     const j = journeyOf([]);
