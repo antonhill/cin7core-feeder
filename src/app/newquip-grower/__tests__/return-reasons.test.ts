@@ -182,7 +182,7 @@ describe("D5: a quotation returned to the Rep carries its reason", () => {
   it("the reason is kept BEFORE the state changes: when it cannot be written, nothing changes", async () => {
     await as("rep"); await send(); await as("estimator");
     const real = db.from.bind(db);
-    (db as any).from = (t: string) => (t === "activity_log" ? { insert: async () => ({ error: { message: "disk full" } }) } : real(t)); // eslint-disable-line @typescript-eslint/no-explicit-any
+    (db as any).from = (t: string) => (t === "activity_log" ? { insert: () => ({ select: () => ({ single: async () => ({ data: null, error: { message: "disk full" } }) }) }) } : real(t)); // eslint-disable-line @typescript-eslint/no-explicit-any
     const r = await grower.returnGrowerQuoteToRepAction("q1", "Gate width is wrong");
     (db as any).from = real; // eslint-disable-line @typescript-eslint/no-explicit-any
     expect(r.ok).toBe(false); expect(r.error).toMatch(/reason could not be recorded/);
@@ -213,5 +213,61 @@ describe("D5: LEGACY paths (before the roles / staged approvals migration) store
     expect((await grower.returnGrowerQuoteToRepAction("q1", "Legacy with approvals")).error).toBeUndefined();
     expect(await info("rep")).toMatchObject({ reason: "Legacy with approvals", byEmail: EMAIL[U.est], byRole: "estimator", source: "RECORD" });
     expect(db.rows("approval_requests").filter((r) => r.status === "RETURNED")).toEqual([]);
+  });
+});
+
+describe("D5 review fixes", () => {
+  const editDraft = async () => { const d = structuredClone(quote().draft) as Record<string, any>; d.estimator.charges.delivery += 1000; return grower.saveGrowerDraftAction("q1", d as never); }; // eslint-disable-line @typescript-eslint/no-explicit-any
+  const toEstimator = async () => { await as("rep"); await send(); await as("estimator"); await grower.signOffGrowerQuoteAction("q1"); await as("manager"); expect((await grower.returnGrowerQuoteToEstimatorAction("q1", "Re-check the supplier price")).error).toBeUndefined(); };
+
+  it("P2-a: Estimator re-signs off, then edits again: the OLD Manager return does not resurface", async () => {
+    await toEstimator();
+    expect(await info("estimator")).toMatchObject({ destination: "ESTIMATOR" });
+    await as("estimator"); expect((await grower.signOffGrowerQuoteAction("q1")).error).toBeUndefined();
+    expect((await editDraft()).error).toBeUndefined();
+    expect(quote().estimator_signoff_hash).toBeNull();
+    expect(await info("estimator")).toBeNull(); expect(await info("manager")).toBeNull();
+  });
+
+  it("P2-a: an Estimator edit WITHOUT re-signing keeps the Manager return visible", async () => {
+    await toEstimator();
+    await as("estimator"); expect((await editDraft()).error).toBeUndefined();
+    expect(await info("estimator")).toMatchObject({ reason: "Re-check the supplier price" });
+  });
+
+  it("P2-a/P3: a returnToEstimator whose update affects 0 rows is voided; a later edit shows no banner", async () => {
+    await as("rep"); await send(); await as("estimator"); await grower.signOffGrowerQuoteAction("q1"); await as("manager");
+    const real = db.from.bind(db);
+    let failed = false;
+    (db as any).from = (t: string) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+      const b = real(t);
+      if (t !== "newquip_quotes" || failed) return b;
+      return new Proxy(b, { get: (o, k) => (k === "update" ? () => { failed = true; const chain: any = new Proxy({}, { get: (_x, m) => (m === "select" ? async () => ({ data: [], error: null }) : () => chain) }); return chain; } : (o as any)[k]) }); // eslint-disable-line @typescript-eslint/no-explicit-any
+    };
+    const r = await grower.returnGrowerQuoteToEstimatorAction("q1", "Will not apply");
+    (db as any).from = real; // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(r.ok).toBe(false); expect(failed).toBe(true);
+    expect(acts().filter((x) => x.action === "newquip.quote_return_voided")).toHaveLength(1);
+    await as("estimator"); expect((await editDraft()).error).toBeUndefined();
+    expect(await info("estimator")).toBeNull();
+  });
+
+  it("P2-b: a Rep sees only a neutral line for a Manager -> Estimator return; Estimator and Manager see the reason", async () => {
+    await toEstimator();
+    expect(await info("rep")).toEqual({ kind: "RETURN", reason: "With the Estimator for review.", byEmail: null, byRole: null, at: expect.any(String), destination: "ESTIMATOR", source: "RECORD" });
+    expect(JSON.stringify(await info("rep"))).not.toMatch(/supplier price|manager@/);
+    for (const slot of ["estimator", "manager"]) expect(await info(slot)).toMatchObject({ reason: "Re-check the supplier price", byEmail: EMAIL[U.mgr], byRole: "manager" });
+  });
+
+  it("P2-b: a Rep still sees a customer-change return with its reason and previous total", async () => {
+    await as("rep"); await send();
+    await customer.selectQuoteCustomerAction("q1", "Wynplaas", true);
+    expect(await info("rep")).toMatchObject({ kind: "CUSTOMER_CHANGED", previousCents: total, byEmail: EMAIL[U.rep] });
+  });
+
+  it("P3: a pre-record RETURNED approval row to the Estimator never shows as 'returned to you'", async () => {
+    await toEstimator();
+    db.rows("activity_log").length = 0; // as if returned before records existed
+    expect(await info("estimator")).toBeNull();
   });
 });

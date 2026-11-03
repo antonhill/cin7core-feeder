@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  candidateFromActivity, candidateFromApproval, latestReturnInfo, returnRoleOf, CONFIRMATION_WITHDRAWN_ACTION, NEUTRAL_REASON, RETURN_RECORD_ACTION,
+  candidateFromActivity, candidateFromApproval, latestReturnInfo, returnInfoForViewer, returnRoleOf, CONFIRMATION_WITHDRAWN_ACTION, NEUTRAL_REASON, RETURN_RECORD_ACTION,
   type ReturnCandidate,
 } from "../return-info";
 
@@ -46,13 +46,32 @@ describe("latestReturnInfo: which return explains where the quotation is NOW", (
     expect(latestReturnInfo(rep, [ap])).toMatchObject({ source: "APPROVAL", destination: "REP", byRole: "estimator", reason: "Gate width is wrong" });
     expect(latestReturnInfo(rep, [ap, rec()])?.source).toBe("RECORD");
     expect(candidateFromApproval({ status: "APPROVED", decision_reason: "x", decided_by_email: "a", decided_at: "t" })).toBeNull();
-    expect(candidateFromApproval({ status: "RETURNED", decision_reason: "x", decided_by_email: "a", decided_at: "2026-11-03T08:00:00Z", return_destination: "ESTIMATOR", stage: "MANAGER" })).toMatchObject({ destination: "ESTIMATOR", byRole: "manager" });
+    // a pre-record row returned to the ESTIMATOR cannot be tied to a sign-off, so it is never a candidate
+    expect(candidateFromApproval({ status: "RETURNED", decision_reason: "x", decided_by_email: "a", decided_at: "2026-11-03T08:00:00Z", return_destination: "ESTIMATOR", stage: "MANAGER" })).toBeNull();
   });
   it("malformed or foreign rows are never candidates", () => {
     expect(candidateFromActivity(row({ kind: "RETURN", destination: "REP", reason: "  " }))).toBeNull();
     expect(candidateFromActivity(row({ kind: "NOPE", destination: "REP", reason: "x" }))).toBeNull();
     expect(candidateFromActivity({ action: "newquip.quote_created", detail: { quoteId: "q" }, created_at: "t" })).toBeNull();
     expect(candidateFromActivity({ action: RETURN_RECORD_ACTION, detail: null, created_at: "t" })).toBeNull();
+  });
+  it("a sign-off AFTER a return to the Estimator ends it; one before it does not", () => {
+    const toEst = rec({ destination: "ESTIMATOR", byRole: "manager", revision: 1, at: "2026-11-03T08:00:00.000Z" });
+    const q = { state: "ESTIMATOR_REVIEW", revision: 1, estimator_signoff_hash: null };
+    expect(latestReturnInfo(q, { candidates: [toEst], signoffAts: ["2026-11-03T07:00:00.000Z"] })).not.toBeNull();
+    expect(latestReturnInfo(q, { candidates: [toEst], signoffAts: ["2026-11-03T07:00:00.000Z", "2026-11-03T08:30:00.000Z"] })).toBeNull();
+  });
+  it("a voided record never shows", () => {
+    expect(latestReturnInfo(rep, { candidates: [rec({ id: "r1" })], voidedIds: ["r1"] })).toBeNull();
+    expect(latestReturnInfo(rep, { candidates: [rec({ id: "r1" })], voidedIds: ["r2"] })).not.toBeNull();
+  });
+  it("returnInfoForViewer: a Rep gets a neutral line for an Estimator-destination return, everything else is untouched", () => {
+    const est = latestReturnInfo({ state: "ESTIMATOR_REVIEW", revision: 1, estimator_signoff_hash: null }, [rec({ destination: "ESTIMATOR", revision: 1, byRole: "manager", byEmail: "m@nq", reason: "secret supplier detail" })])!;
+    expect(returnInfoForViewer(est, false)).toEqual({ kind: "RETURN", reason: "With the Estimator for review.", byEmail: null, byRole: null, at: est.at, destination: "ESTIMATOR", source: "RECORD" });
+    expect(returnInfoForViewer(est, true)).toEqual(est);
+    const toRep = latestReturnInfo(rep, [rec()])!;
+    expect(returnInfoForViewer(toRep, false)).toEqual(toRep);
+    expect(returnInfoForViewer(null, false)).toBeNull();
   });
   it("returnRoleOf: a stage role wins; otherwise Manager outranks Estimator outranks Rep", () => {
     expect(returnRoleOf(new Set(["rep", "estimator", "manager"]), "estimator")).toBe("estimator");
