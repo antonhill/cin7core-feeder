@@ -152,15 +152,18 @@ export default function QuoteEditorPage() {
   // A RETURNED quotation (Rep draft, revision > 1): read the existing approval history ONCE, lazily and without blocking anything, to show the latest return reason inline. Unavailable or slow = the
   // banner keeps its fixed text. (No new action; the same read the Approval history disclosure makes.)
   const [returnInfo, setReturnInfo] = useState<{ by: string; at: string; reason: string } | null>(null);
+  // "none" = the history was read and holds no RETURN with a reason (the request was withdrawn / superseded instead, e.g. an Estimator price edit changed the total); "unavailable" = it could not be read.
+  const [returnRead, setReturnRead] = useState<"pending" | "none" | "unavailable">("pending");
   const returnedLoaded = view?.quote.state === "REP_DRAFT" && (view?.quote.revision ?? 1) > 1;
   useEffect(() => {
     if (!returnedLoaded) return;
     let live = true;
     void getDocumentApprovalAction("QUOTE", id).then((r) => {
-      if (!live || !r.ok || !r.data?.available) return;
+      if (!live) return;
+      if (!r.ok || !r.data?.available) { setReturnRead("unavailable"); return; }
       const ev1 = [...r.data.history].reverse().find((e) => (e.action === "RETURN" || e.to_status === "RETURNED") && !!e.reason?.trim());
-      if (ev1) setReturnInfo({ by: ev1.actor_name ?? ev1.actor_email, at: ev1.created_at, reason: ev1.reason!.trim() });
-    }).catch(() => undefined);
+      if (ev1) setReturnInfo({ by: ev1.actor_name ?? ev1.actor_email, at: ev1.created_at, reason: ev1.reason!.trim() }); else setReturnRead("none");
+    }).catch(() => { if (live) setReturnRead("unavailable"); });
     return () => { live = false; };
   }, [id, returnedLoaded]);
   // Stage 2 has its own step number but SHARES the "Show all steps" preference (one setting for the builder, one storage key).
@@ -584,13 +587,22 @@ export default function QuoteEditorPage() {
           {wizard.returned && (
             <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" role="status" data-testid="returned-banner">
               <p className="font-semibold">Returned to the Rep (revision {q.revision})</p>
-              {returnInfo
-                ? <p className="mt-1" data-testid="return-reason">Returned by {returnInfo.by} on {formatSast(returnInfo.at)}: &ldquo;{returnInfo.reason}&rdquo;</p>
-                : <p className="mt-1">The Estimator or Manager sent this quotation back for corrections. Returned by the Estimator/Manager - see Approval history for the reason.</p>}
-              {effectInfo?.confirmationCleared && effectInfo.previousCents != null && effectInfo.newCents != null && (
+              {effectInfo?.confirmationCleared && effectInfo.previousCents != null && effectInfo.newCents != null ? (
                 <p className="mt-1 font-medium" data-testid="return-amount-change">The total changed from {fmtCents(effectInfo.previousCents)} to {fmtCents(effectInfo.newCents)}; the customer&apos;s confirmation was withdrawn: reconfirm the new amount with the customer and submit again.{effectInfo.approvalSyncError ? ` The approval request could not be updated: ${effectInfo.approvalSyncError}` : ""}</p>
+              ) : returnInfo ? (
+                <>
+                  <p className="mt-1" data-testid="return-reason">Returned by {returnInfo.by} on {formatSast(returnInfo.at)}: &ldquo;{returnInfo.reason}&rdquo;</p>
+                  <p className="mt-1">Fix what the Estimator described, then submit again.</p>
+                </>
+              ) : returnRead === "none" && q.customer_confirmed_cents == null ? (
+                // Nothing was described: the approval request was withdrawn / superseded because the total changed after the Estimator's review. Only already-loaded state is used.
+                <p className="mt-1 font-medium" data-testid="return-withdrawn">The total changed after the Estimator&apos;s review, so the customer&apos;s confirmation was withdrawn. Reconfirm the current amount ({totalCents == null ? "not available yet" : fmtCents(totalCents)}) with the customer, then submit again (step 5).</p>
+              ) : (
+                <>
+                  <p className="mt-1">The Estimator or Manager sent this quotation back for corrections. Returned by the Estimator/Manager - see Approval history for the reason.</p>
+                  <p className="mt-1">Fix what the Estimator described, then submit again.</p>
+                </>
               )}
-              <p className="mt-1">Fix what the Estimator described, then submit again.</p>
               <div className="mt-2"><ApprovalHistory docType="QUOTE" docId={id} label="Show the full approval history" /></div>
             </div>
           )}
