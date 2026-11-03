@@ -3,7 +3,7 @@
 import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useState, useId } from "react";
+import { useEffect, useRef, useState, useId } from "react";
 import { ActionFeedback, useKeyedActions } from "@/components/ui/action-feedback";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { ModuleHeader } from "@/app/ModuleHeader";
@@ -111,6 +111,10 @@ export default function QuoteEditorPage() {
   const [gateError, setGateError] = useState<string | null>(null);
   const [gateTry, setGateTry] = useState(0);
   const [picked, setPicked] = useState<StageId | null>(() => parseStage(search.get("stage")));
+  // Where the user landed. The viewed stage is `picked ?? landing ?? here`: once the quote has loaded the view stays where the user is, so recalculating readiness (Load Demo
+  // Defaults, any edit that makes the quote READY) can never move it. Only an authoritative workflow change (state, revision, project link, delivery status) clears it.
+  const [landing, setLanding] = useState<StageId | null>(null);
+  const gateSig = useRef<string | null>(null);
   // Stage 1 steps: navigation and guidance only (completion is derived from data, never from a visit). The customer facts are lifted from the CustomerPanel that already loads them.
   const [stepNo, setStepNo] = useState<number>(() => parseStepParam(search.get("step"), STAGE1_STEP_IDS.length));
   const [showAllSteps, setShowAllSteps] = useShowAllSteps("nq-builder-show-all");
@@ -130,6 +134,8 @@ export default function QuoteEditorPage() {
   }));
 
   function adopt(v: QuoteView) {
+    // A changed workflow state / revision / project link is a real transition: let the view follow the quotation to its new current stage (a draft or readiness change never does).
+    if (view && (v.quote.state !== view.quote.state || v.quote.revision !== view.quote.revision || v.quote.project_id !== view.quote.project_id)) { setPicked(null); setLanding(null); }
     setView(v);
     setDraft(v.quote.draft);
     setEv(v.evaluation);
@@ -150,6 +156,9 @@ export default function QuoteEditorPage() {
       if (!live) return;
       if (!r.ok) { setGateError(r.error ?? "The quotation's delivery status could not be loaded."); return; }
       setGateError(null);
+      const sig = r.data?.available ? `${r.data.status}|${r.data.latestDocumentId != null}|${r.data.links.state}` : "unavailable";
+      if (gateSig.current !== null && gateSig.current !== sig) { setPicked(null); setLanding(null); } // issued / sent / answered: a real transition
+      gateSig.current = sig;
       if (r.data?.available) setGate({ requires: r.data.requiresAcceptance, accepted: r.data.accepted, status: r.data.status, hasDocument: r.data.latestDocumentId != null, linkState: r.data.links.state });
       setGateReady(true); // read (an unavailable feature before migration 0115 is a legitimate, settled answer)
     }).catch(() => { if (live) setGateError("The quotation's delivery status could not be loaded."); });
@@ -265,7 +274,8 @@ export default function QuoteEditorPage() {
     </dl>
   );
   const here = currentStage(stages);
-  const stage: StageId = picked ?? here;
+  if (landing === null && !loadingStages) setLanding(here); // once, when the current stage is first known (React's render-phase initialisation)
+  const stage: StageId = picked ?? landing ?? here;
   const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); u.searchParams.set("stage", String(n)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
 
   const stage1 = deriveStage1Steps({ customerName: draft.customerName, siteName: draft.siteName, penningPigSize: cfg.penningPigSize, calcIssues: ev.calc.issues, readinessReasons: rd.reasons, customer: customerFacts, roomValues: { lengthM: cfg.lengthM, widthM: cfg.widthM, rooms: cfg.rooms, totalPens: cfg.totalPens, pigsPerRoom: cfg.pigsPerRoom } });
