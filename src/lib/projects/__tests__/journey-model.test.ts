@@ -207,7 +207,7 @@ describe("Project Journey - Physical lane (unknown is never zero)", () => {
     const unreadable = journeyOf([base()], load([physRow("A", { ordered: 10, shipped: null, remaining: null, shortfall: null, available: null })]));
     expect(st(unreadable, "physical-fulfilment").status).toBe("in_progress");
     expect(st(unreadable, "physical-fulfilment").detail).toMatch(/could not be read/);
-    expect(st(unreadable, "physical-procurement").status).toBe("in_progress"); // a shortfall cannot be ruled out
+    expect(st(unreadable, "physical-procurement").status).toBe("in_progress"); // a shortfall cannot be ruled ou
     const none = journeyOf([base()], load([physRow("A", { ordered: 10, shipped: 0, remaining: 10, shortfall: 0 })]));
     expect(st(none, "physical-fulfilment").status).toBe("not_started");
     expect(st(journeyOf([base()], load([])), "physical-fulfilment").status).toBe("not_started");
@@ -267,7 +267,7 @@ describe("Project Journey - lane summaries and missing base", () => {
     const j = journeyOf([base({ claims: [claim("c1", 1, "FAILED_UNCERTAIN", R(100))], sale: null })]);
     const s = j.lanes[0].summary;
     expect(s.attention).toBeGreaterThanOrEqual(1);
-    expect(s.unknown).toBe(1); // the Sale: no link and nothing to say whether an attempt is in flight
+    expect(s.unknown).toBe(1); // the Sale: no link and nothing to say whether an attempt is in fligh
     expect(j.lanes[1].summary).toEqual({ attention: 0, inProgress: 1, unknown: 2 });
   });
   it("without a BASE scope every setup and commercial station is unknown (never a made-up status) and the variations lane is empty", () => {
@@ -366,7 +366,7 @@ describe("Project Journey - commercial billing follows postings (owner-shaped)",
     expect(failed).toMatchObject({ unknown: true, statusLabel: "Could not verify" });
     const onlyOne = verifyAll(); delete onlyOne.verifiedByClaimId.c3;
     expect(st(buildJourney({ scopes: owner(), physical: NOT_READ, verification: onlyOne }), "commercial-authorisation").status).not.toBe("completed");
-    const missing = verifyAll(); missing.verifiedByClaimId.c1 = ref("c1", "INV-1", null, "SAME"); 
+    const missing = verifyAll(); missing.verifiedByClaimId.c1 = ref("c1", "INV-1", null, "SAME");
     expect(st(buildJourney({ scopes: owner(), physical: NOT_READ, verification: missing }), "commercial-authorisation").status).not.toBe("completed");
   });
   it("a verification that lists only the VARIATION's claim never completes BASE authorisation, and vice versa", () => {
