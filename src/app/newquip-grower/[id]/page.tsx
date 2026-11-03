@@ -628,12 +628,12 @@ export default function QuoteEditorPage() {
             <span className="text-xs uppercase tracking-wide text-slate-700">Calculation</span>
             <Status tone={commercial && !commercial.complete && rd.state === "READY" ? "warning" : stage === 1 ? (repReady ? "success" : "neutral") : READY_TONE[rd.state]}>{commercial && !commercial.complete && rd.state === "READY" ? "Indicative: not commercially ready" : stage === 1 ? (repReady ? "Complete" : "In progress") : READINESS_LABEL[rd.state]}</Status>
             {previewFailure ? <Status tone="danger">Recalculation failed - figures are out of date</Status> : dirty && <Status tone="warning">Preview of unsaved edits</Status>}
-            {commercial && !commercial.complete && <span data-testid="commercial-chip"><Status tone="warning">{commercial.headline}</Status></span>}
+            {commercial && !commercial.complete && stage !== 2 && <span data-testid="commercial-chip"><Status tone="warning">{commercial.headline}</Status></span>}
           </div>
           <dl className="flex flex-wrap items-end gap-x-8 gap-y-1">
             <div><dt className="text-xs uppercase tracking-wide text-slate-700" data-testid="total-caption">{awaitingLines > 0 ? `Indicative total (${awaitingLines} line${awaitingLines === 1 ? "" : "s"} await the Estimator)` : totalIndicative ? "Indicative total (ex VAT)" : "Quote total (ex VAT)"}</dt><dd className={`whitespace-nowrap text-xl font-bold tabular-nums ${previewFailure ? "text-slate-700 line-through decoration-1" : "text-slate-900"}`}>{totalCents == null ? "—" : fmtCents(totalCents)}{staleCue && <span className="ml-2 text-sm font-semibold no-underline" data-testid="summary-stale">{staleCue}</span>}</dd></div>
-            {budget && !budget.incomplete && <div><dt className="text-xs uppercase tracking-wide text-slate-700">Total (inc VAT)</dt><dd className="whitespace-nowrap text-lg font-semibold tabular-nums text-slate-900">{fmtZar(budget.totals.totalIncTax)}</dd></div>}
-            {budget && view.viewer.canViewCommercials && stage < 4 && <div><dt className="text-xs uppercase tracking-wide text-slate-700">{marginLabel}</dt><dd className="whitespace-nowrap text-lg font-semibold tabular-nums text-slate-900">{budget.totals.overallMarginPct == null ? "N/A" : `${budget.totals.overallMarginPct.toFixed(1)}%`}{marginNote && <span className="block whitespace-normal text-xs font-normal text-amber-800" data-testid="summary-margin-note">{marginNote}</span>}</dd></div>}
+            {budget && !budget.incomplete && <div className="max-sm:hidden"><dt className="text-xs uppercase tracking-wide text-slate-700">Total (inc VAT)</dt><dd className="whitespace-nowrap text-lg font-semibold tabular-nums text-slate-900">{fmtZar(budget.totals.totalIncTax)}</dd></div>}
+            {budget && view.viewer.canViewCommercials && stage < 4 && <div><dt className="text-xs uppercase tracking-wide text-slate-700">{marginLabel}</dt><dd className="whitespace-nowrap text-lg font-semibold tabular-nums text-slate-900">{budget.totals.overallMarginPct == null ? "N/A" : `${budget.totals.overallMarginPct.toFixed(1)}%`}{marginNote && <span className="block whitespace-normal text-xs font-normal text-amber-800 max-sm:hidden" data-testid="summary-margin-note">{marginNote}</span>}</dd></div>}
           </dl>
         </div>
       </div>
@@ -680,11 +680,12 @@ export default function QuoteEditorPage() {
             <span className="font-semibold text-slate-900">Stage 2 is the Estimator&apos;s review.</span>
             <span role="status" aria-live="polite" className="text-slate-800" data-testid="stage2-status-line">{wizard2.statusLine}</span>
             <OwnerTag role={wizard2.nextOwner} />
+            {commercial && !commercial.complete && <span data-testid="commercial-chip" className="max-w-full [&>span]:whitespace-normal"><Status tone="warning">{commercial.headline}</Status></span>}
           </div>
           {amountChange.changed && q.state === "ESTIMATOR_REVIEW" && <div className="mt-2"><Alert tone="warning"><span data-testid="total-changed">{amountChange.text}</span></Alert></div>}
           {repSummary}
           {req2No !== null && req2No > visible2.length && <p className="mt-3 text-sm text-slate-800" data-testid="step-unavailable">That step is not available to you, so the first step is shown.</p>}
-          <StepRail dense id="s2" ariaLabel="Costing and review steps" steps={railSteps2View} currentId={step2Id} onSelect={goStep2}
+          <StepRail dense oneLineNotes id="s2" ariaLabel="Costing and review steps" steps={railSteps2View} currentId={step2Id} onSelect={goStep2}
             actions={(
               <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
                 <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAllSteps} onChange={(e) => setShowAllSteps(e.target.checked)} /> Show all steps</label>
@@ -1036,13 +1037,12 @@ export default function QuoteEditorPage() {
           <StepPanel railId="s2" stepId="final" number={visible2.indexOf("final") + 1} title={STAGE2_WIZARD_LABEL.final} current={step2Id === "final"} showAll={showAllSteps} locked={lockedFor2("final")} className="mt-6 space-y-6">
             <Panel>
               <PanelTitle>Final review</PanelTitle>
-              <p className="mt-1 text-sm text-slate-700">One look at what the sign-off depends on, then mark the review done.</p>
               <div className="mt-3" data-testid="cost-ack">
                 {costNeedsMark && (
-                  <>
-                    <p id="cost-ack-explain" className="text-sm text-slate-800">{ACK_EXPLAIN}</p>
-                    <Button type="button" id="cost-ack-btn" aria-describedby="cost-ack-explain" className="mt-3 min-h-11" onClick={markReviewed}>Mark reviewed &amp; continue</Button>
-                  </>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <Button type="button" id="cost-ack-btn" aria-describedby="cost-ack-explain" className="min-h-11" onClick={markReviewed}>Mark reviewed &amp; continue</Button>
+                    <p id="cost-ack-explain" className="min-w-0 flex-1 text-sm text-slate-800">{ACK_EXPLAIN}</p>
+                  </div>
                 )}
                 {costAcknowledged && <p id="cost-ack-done" tabIndex={-1} className="text-sm font-semibold text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-indigo-600" data-testid="cost-ack-done">Marked reviewed for this session (not saved - repeat after a reload before signing off). It is not a sign-off.</p>}
                 {finalStepDone && !costAcknowledged && <p className="text-sm font-semibold text-emerald-900" data-testid="final-reviewed"><span aria-hidden>✓ </span>{final ? "Reviewed and approved." : "Reviewed: the Estimator sign-off is current."}</p>}

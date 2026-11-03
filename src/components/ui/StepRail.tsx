@@ -15,7 +15,7 @@ const BADGE_TONE: Record<StepStatus, string> = {
 const GROUP_TONE: Record<RailGroupTone, string> = { complete: "bg-emerald-50 text-emerald-800", attention: "bg-amber-50 text-amber-900", incomplete: "bg-slate-100 text-slate-700", neutral: "bg-slate-100 text-slate-700" };
 const GROUP_MARK: Record<RailGroupTone, string> = { complete: "✓", attention: "!", incomplete: "•", neutral: "•" };
 
-function Card({ railId, step, number, current, onPick, tall, dense = false }: { railId: string; step: RailStep; number: number; current: boolean; onPick: () => void; tall: boolean; /** Compact card: tighter padding, the status sits beside the title, no pinned bottom row. Same fields, same a11y. */ dense?: boolean }) {
+function Card({ railId, step, number, current, onPick, tall, dense = false, oneLine = false }: { /** One-line notes (ellipsis; the full text is the tooltip and stays in the DOM). */ oneLine?: boolean; railId: string; step: RailStep; number: number; current: boolean; onPick: () => void; tall: boolean; /** Compact card: tighter padding, the status sits beside the title, no pinned bottom row. Same fields, same a11y. */ dense?: boolean }) {
   // Cards may shrink (min-w-0) so nothing clips: the rail is a wrapping grid of equal columns from 701px (equal height within a row); `tall` = a card inside a group, a flex item from 901px.
   // A LOCKED step (wizard contract) stays focusable (aria-disabled, not `disabled`) so a screen reader reaches it and hears why; it is not selectable and shows its reasons as visible text.
   const locked = step.locked === true;
@@ -28,7 +28,7 @@ function Card({ railId, step, number, current, onPick, tall, dense = false }: { 
         <span aria-hidden className={`flex size-7 shrink-0 items-center justify-center rounded-full border text-sm font-bold ${locked ? BADGE_TONE.unavailable : BADGE_TONE[step.status]}`}>{step.status === "complete" && !locked ? "✓" : number}</span>
         <span className="flex min-h-full min-w-0 flex-1 flex-col self-stretch">
           <span className={`${dense ? "" : "pt-1"} text-sm font-semibold leading-5 ${locked ? "text-slate-700" : "text-slate-900"}`}>{step.label}</span>
-          {step.note && !locked && <span className="mt-0.5 text-xs text-slate-700">{step.note}</span>}
+          {step.note && !locked && <span className={`mt-0.5 text-xs text-slate-700 ${oneLine ? "truncate" : ""}`} title={oneLine ? step.note : undefined}>{step.note}</span>}
           {locked && reasons.length > 0 && <span id={blockedId} className="mt-0.5 text-xs text-slate-800" data-testid={`step-blocked-${step.id}`}>{reasons.join(" ")}</span>}
           <span className={`${dense ? "order-2" : "mt-auto pt-1"} text-xs font-semibold ${locked ? "text-slate-700" : TEXT_TONE[step.status]}`} data-testid={`step-status-${step.id}`}>{locked ? "Locked" : step.statusLabel ?? STEP_STATUS_LABEL[step.status]}</span>
         </span>
@@ -37,7 +37,8 @@ function Card({ railId, step, number, current, onPick, tall, dense = false }: { 
   );
 }
 
-export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, groups, dense = false }: {
+export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, groups, dense = false, oneLineNotes = false }: {
+  /** Notes on one line each (Stage 2): the rail must not push the first control below the fold. */ oneLineNotes?: boolean;
   /** Compact cards (Stage 1): used where the rail must not push the first field below the fold. */ dense?: boolean;
   id: string; steps: RailStep[]; currentId: string; onSelect: (stepId: string) => void; ariaLabel: string; actions?: React.ReactNode;
   /** Optional: render the steps as labelled blocks (a step's `group` names its block). Without it the rail is one list, exactly as before. */
@@ -66,7 +67,7 @@ export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, g
       </button>
       {!groups ? (
         <ol id={`${id}-list`} className={`${open ? "" : "max-[700px]:hidden"} mt-2 flex flex-col gap-2 min-[701px]:mt-0 min-[701px]:grid min-[701px]:grid-cols-[repeat(auto-fit,minmax(11rem,1fr))]`}>
-          {steps.map((s, i) => <Card key={s.id} railId={id} step={s} number={i + 1} current={s.id === currentId} onPick={pick(s.id)} tall={false} dense={dense} />)}
+          {steps.map((s, i) => <Card key={s.id} railId={id} step={s} number={i + 1} current={s.id === currentId} onPick={pick(s.id)} tall={false} dense={dense} oneLine={oneLineNotes} />)}
         </ol>
       ) : (
         <div id={`${id}-list`} style={{ gridTemplateColumns: [...groups.map((g) => `minmax(0,${Math.max(steps.filter((s) => s.group === g.id).length, 1)}fr)`), ...(ungrouped.length ? [`minmax(0,${ungrouped.length}fr)`] : [])].join(" ") }}
