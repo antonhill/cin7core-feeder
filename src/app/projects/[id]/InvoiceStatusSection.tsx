@@ -63,7 +63,7 @@ export function InvoiceStatusSection({ view, postings, projectId, isManager }: {
           <p className="text-xs text-slate-600">&ldquo;Recorded&rdquo; is what Toolbox saw when the invoice was created or last reconciled. It is not live. Verify reads Cin7 once and compares; nothing is changed or saved.</p>
         </div>
         {isManager
-          ? <Button size="sm" variant="secondary" onClick={verify} loading={acts.isPending("verify")} disabled={acts.anyPending} aria-describedby={acts.anyPending ? `${uid}-verify-reason` : undefined}>Verify invoice statuses</Button>
+          ? <Button size="sm" variant="secondary" className="min-h-11" onClick={verify} loading={acts.isPending("verify")} disabled={acts.anyPending} aria-describedby={acts.anyPending ? `${uid}-verify-reason` : undefined}>Verify invoice statuses</Button>
           : <span className="text-xs text-slate-600">An owner or admin can verify these against Cin7.</span>}
       </div>
       {isManager && acts.anyPending && <DisabledReason id={`${uid}-verify-reason`} className="mt-1">Verify is disabled while the Cin7 read is in progress.</DisabledReason>}
