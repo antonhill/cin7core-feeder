@@ -212,6 +212,8 @@ function ReviewTab({ onSaved }: { onSaved: () => void }) {
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [finalizing, startFinalizing] = useTransition();
   const [finaliseError, setFinaliseError] = useState<string | null>(null);
+  // A rejected save (e.g. a score outside 0-10) is shown inline; it must not replace the whole KPI table.
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [incomplete, setIncomplete] = useState<IncompleteKpi[]>([]);
 
   function load() {
@@ -232,12 +234,10 @@ function ReviewTab({ onSaved }: { onSaved: () => void }) {
     const parsed = score.trim() === "" ? null : Number(score);
     const res = await saveMetricResultAction(detail!.reviewId, metricDefinitionId, { score: parsed, comment: comment || null, owner: owner || null });
     setSavingKey(null);
+    setSaveError(res.ok ? null : (res.error ?? "Unknown error"));
     // A newly saved score clears that KPI from the "incomplete" list without waiting for another finalise attempt.
     if (res.ok && parsed !== null) setIncomplete((list) => list.filter((k) => k.metricDefinitionId !== metricDefinitionId));
-    if (!res.ok) {
-      setError(res.error ?? "Unknown error");
-      return;
-    }
+    if (!res.ok) return;
     load();
   }
 
@@ -266,6 +266,7 @@ function ReviewTab({ onSaved }: { onSaved: () => void }) {
 
   return (
     <div className="flex flex-col gap-4">
+      {saveError && <Alert tone="danger">{saveError}</Alert>}
       {finaliseError && (
         <Alert tone="danger">
           <p className="font-medium">{finaliseError}</p>
