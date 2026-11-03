@@ -18,13 +18,15 @@ import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
 import { claimActionPlan } from "@/lib/projects/claim-actions";
 import { percentToBps } from "@/lib/projects/claim-engine";
 import { previewKey, previewState } from "@/lib/projects/preview-staleness";
-import { claimNextStep } from "@/lib/projects/claim-next-step";
+import { viewPostingsSignature } from "@/lib/projects/invoice-authorisation";
 import { formatBps, formatCents, type ProjectView, type StageView } from "@/lib/projects/project-view";
 import { VariationsPanel } from "./VariationsPanel";
 import { OpeningCommitmentsPanel } from "./OpeningCommitmentsPanel";
 import { DeliveryAllocationPanel } from "./DeliveryAllocationPanel";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
 import { Cin7PostingPanel } from "./Cin7PostingPanel";
+import { ClaimInvoiceStatus, ClaimNextStepText } from "./ClaimInvoiceStatus";
+import { InvoiceVerificationProvider } from "./invoice-verification-context";
 import { ProjectDetailsPanel } from "./ProjectDetailsPanel";
 import { CommercialSummary } from "./CommercialSummary";
 import { Cin7SaleCreationPanel } from "./Cin7SaleCreationPanel";
@@ -295,6 +297,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   const Shell = embedded ? "div" : "main";
   return (
     <ProjectFeedbackProvider value={acts.stateOf}>
+    <InvoiceVerificationProvider signature={viewPostingsSignature(view.claims)}>
     <Shell className={embedded ? "mt-2" : pageContainerClass("data")}>
       {!embedded && (
         <ModuleHeader variant="workspace" module={PROJECTS_MODULE}>
@@ -570,12 +573,10 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                       </div>
                       <div>
                         <span className="sr-only">Cin7 invoice: </span><span aria-hidden className="mb-0.5 block text-xs font-semibold uppercase tracking-wider text-slate-600 lg:hidden">Cin7 invoice (as last recorded)</span>
-                        <Status tone={cl.cin7Status.tone}>{cl.cin7Status.label}</Status>
-                        {cl.cin7Status.invoiceNumber && <span className="ml-1.5 font-mono text-xs text-slate-700">{cl.cin7Status.invoiceNumber}</span>}
-                        {cl.cin7Status.invoiceNumber && cl.cin7Status.reconciled && <p className="mt-1 text-xs font-medium text-slate-700"><span aria-hidden>✓</span> Reconciled with Cin7</p>}
+                        <ClaimInvoiceStatus claimId={cl.id} cin7Status={cl.cin7Status} />
                       </div>
                     </div>
-                    <p className="mt-2 border-t border-slate-100 pt-2 text-sm text-slate-700"><span className="font-medium text-slate-900">Next: </span>{claimNextStep({ status: cl.status, cin7Kind: cl.cin7Status.kind, stageRole: cl.approval?.stageRole, canApproveHere: plan.approveHere, canAct: perm !== "loading" })}</p>
+                    <p className="mt-2 border-t border-slate-100 pt-2 text-sm text-slate-700"><span className="font-medium text-slate-900">Next: </span><ClaimNextStepText claimId={cl.id} cin7Status={cl.cin7Status} status={cl.status} stageRole={cl.approval?.stageRole} canApproveHere={plan.approveHere} canAct={perm !== "loading"} /></p>
                     {cl.cin7Status.detail && !["DRAFT_CREATED", "AUTHORISED"].includes(cl.cin7Status.kind) && <p className="mt-2 text-xs text-slate-600">{cl.cin7Status.detail}</p>}
                     <div className="mt-2">
                       {/* Every disabled claim button below is disabled for ONE reason that can be seen from here: another action is running. (Approval by another role has its own text, plan.waitingText.) */}
@@ -695,6 +696,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
         </div>
       )}
     </Shell>
+    </InvoiceVerificationProvider>
     </ProjectFeedbackProvider>
   );
 }

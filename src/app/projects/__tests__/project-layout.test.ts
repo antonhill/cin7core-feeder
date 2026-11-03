@@ -33,9 +33,9 @@ describe("UAT-021 project operations layout", () => {
 describe("UAT-015 claim history cards", () => {
   it("each claim shows reference, approval state, amount, Cin7 status, next step and the existing action plan; approval history stays available", () => {
     expect(ws).toMatch(/<article key=\{cl\.id\}/);
-    expect(ws).toMatch(/claimNextStep\(/);
+    expect(ws).toMatch(/<ClaimNextStepText /); // UX-006g1: the line is built by claimNextStep inside, with the invoice verification state
     expect(ws).toMatch(/claimActionPlan\(cl,/);
-    expect(ws).toMatch(/cl\.cin7Status\.label/);
+    expect(ws).toMatch(/<ClaimInvoiceStatus claimId=\{cl\.id\} cin7Status=\{cl\.cin7Status\}/); // renders the label, or recorded-vs-verified lines (UX-006g1)
     expect(ws).toMatch(/<ApprovalHistory docType="CLAIM"/);
   });
   it("is responsive (one stacked record per claim whose columns line up only on wide screens) rather than a wide table", () => {

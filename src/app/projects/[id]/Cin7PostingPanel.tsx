@@ -14,6 +14,7 @@ import { clearSelection, populateEligible, selectAllEligible, selectionToQuantit
 import type { PreparedInvoice } from "@/lib/projects/invoice-proposal-store";
 import { DisabledReason } from "./DisabledReason";
 import { InvoiceStatusSection } from "./InvoiceStatusSection";
+import { PostingInvoiceLines } from "./ClaimInvoiceStatus";
 import { getCin7PostingStatusAction, recoverLinkCin7SaleAction, getInvoiceProposalAction, postClaimToCin7Action, reconcileClaimPostingAction, type Cin7PostingStatus } from "../cin7-actions";
 
 // Cin7 Core: link the Project to ONE Advanced Sale, then post each APPROVED claim as ONE invoice. Everything here is display + intent:
@@ -148,9 +149,7 @@ export function Cin7PostingPanel({ view, run, working, boot }: { view: ProjectVi
                   <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="whitespace-nowrap font-medium tabular-nums text-slate-900">{v}</dd></div>
                 ))}
               </dl>
-              {(state === "CREATED" || state === "RECONCILED") && p && (
-                <p className="mt-2 text-slate-700">Created in Cin7: invoice <strong>{p.cin7_invoice_number}</strong> ({p.cin7_status}) · {p.completed_at ? new Date(p.completed_at).toLocaleString("en-ZA") : ""} · {state === "RECONCILED" ? "reconciled" : "not yet reconciled"}</p>
-              )}
+              {(state === "CREATED" || state === "RECONCILED") && p && <div className="mt-2"><PostingInvoiceLines posting={p} /></div>}
               {p?.last_error_message && <div className="mt-2"><Alert tone={state === "FAILED_UNCERTAIN" || p.last_error_code === "AMOUNT_MISMATCH" ? "danger" : "warning"}>{p.last_error_message}</Alert></div>}
               {state === "FAILED_UNCERTAIN" && <div className="mt-2"><Alert tone="danger">The request outcome is uncertain. Do not retry until Cin7 has been reconciled.</Alert></div>}
 
