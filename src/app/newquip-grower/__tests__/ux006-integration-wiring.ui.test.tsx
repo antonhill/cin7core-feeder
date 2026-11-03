@@ -24,6 +24,16 @@ describe("D5 UI: the return notice", () => {
   it("Estimator/Manager see a Manager return to the Estimator with the reason; nothing for a return to the Rep or none", () => {
     const { rerender } = render(<EstimatorReturnNotice info={info({ destination: "ESTIMATOR", byRole: "manager", byEmail: "mgr@nq", reason: "Re-check the supplier price" })} fmt={fmt} />);
     expect(screen.getByTestId("estimator-return-reason").textContent).toMatch(/mgr@nq \(manager\).*Re-check the supplier price/);
+    // compact form: a <details> with ONE summary line (headline + truncated reason); who/when/reason stay in the DOM and the full text shows once opened
+    const box = screen.getByTestId("estimator-return-notice");
+    expect(box.tagName).toBe("DETAILS");
+    expect((box as HTMLDetailsElement).open).toBe(false);
+    expect(box.querySelector("summary")!.textContent).toMatch(/Returned to the Estimator.*mgr@nq \(manager\) on .*Re-check the supplier price.*Details/);
+    expect(box.querySelector("summary")!.className).toMatch(/min-h-11/);
+    expect(box.textContent).toMatch(/Review it again and sign off, or return it to the Rep\./); // the action line is in the opened body
+    (box as HTMLDetailsElement).open = true;
+    expect((box as HTMLDetailsElement).open).toBe(true);
+    expect(screen.getByTestId("estimator-return-reason").textContent).toMatch(/Returned by mgr@nq \(manager\) on .*Re-check the supplier price/);
     rerender(<EstimatorReturnNotice info={info()} fmt={fmt} />);
     expect(screen.queryByTestId("estimator-return-notice")).toBeNull();
     rerender(<EstimatorReturnNotice info={null} fmt={fmt} />);

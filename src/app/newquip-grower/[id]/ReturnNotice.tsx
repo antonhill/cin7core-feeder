@@ -18,15 +18,21 @@ export function returnNoticeText(info: ReturnInfo, fmt: (cents: number) => strin
   return { headline: "Returned to the Rep", detail: `Returned by ${who ?? "the Estimator/Manager"} on ${formatSast(info.at)}: “${info.reason}”`, action: "Fix what the Estimator described, then submit again." };
 }
 
-/** Estimator / Manager view of a Manager return to the Estimator. */
+/**
+ * Estimator / Manager view of a Manager return to the Estimator. ONE line (the reason is truncated, the full text opens in place), so the step's first control stays above the fold; the
+ * headline, the reason and the action keep their text and test ids.
+ */
 export function EstimatorReturnNotice({ info, fmt }: { info: ReturnInfo | null; fmt: (cents: number) => string }) {
   if (!info || info.destination !== "ESTIMATOR") return null;
   const t = returnNoticeText(info, fmt);
   return (
-    <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" role="status" data-testid="estimator-return-notice">
-      <p className="font-semibold">{t.headline}</p>
-      {t.detail && <p className="mt-1" data-testid="estimator-return-reason">{t.detail}</p>}
-      {t.action && <p className="mt-1">{t.action}</p>}
-    </div>
+    <details className="group mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 text-sm text-amber-950" data-testid="estimator-return-notice">
+      <summary className="flex min-h-11 cursor-pointer items-center gap-x-2 py-1 group-open:items-start">
+        <span className="shrink-0 font-semibold">{t.headline}</span>
+        {t.detail && <span className="min-w-0 flex-1 truncate group-open:overflow-visible group-open:whitespace-normal" data-testid="estimator-return-reason">{t.detail}</span>}
+        <span className="shrink-0 text-xs font-semibold text-indigo-700">Details</span>
+      </summary>
+      {t.action && <p className="pb-2">{t.action}</p>}
+    </details>
   );
 }
