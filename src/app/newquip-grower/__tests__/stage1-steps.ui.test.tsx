@@ -212,4 +212,30 @@ describe("UX-006a Stage 1 step rail", () => {
     expect(panel("equipment").className).toBe("contents");
     expect(panel("room").querySelector("section")!.className).toContain("order-3");
   }, 30000);
+
+  it("with a DIRTY draft the step-2 'Choose the contact' link changes step with no leave-page confirm; a real link still prompts", async () => {
+    await open({}, snapshotView(true), ["REP", "ESTIMATOR"], "2");
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.change(screen.getByLabelText(/^Site \/ project name/), { target: { value: "Changed farm" } });
+    await waitFor(() => expect(screen.getByText("Unsaved changes")).toBeTruthy());
+    fireEvent.click(screen.getByRole("link", { name: "Choose the contact in step 1" }));
+    expect(confirm).not.toHaveBeenCalled();
+    expect(panel("customer").hasAttribute("hidden")).toBe(false);
+    const real = document.querySelector('a[href="/newquip-grower"]') as HTMLAnchorElement; // the header's real link
+    fireEvent.click(real);
+    expect(confirm).toHaveBeenCalledTimes(1); // the guard is not weakened for real links
+  }, 30000);
+
+  it("show-all ordering is xl-only: no un-prefixed order-* class, so below xl each heading stays right before its own panel", async () => {
+    await open({}, snapshotView(true), ["REP"], "1");
+    fireEvent.click(screen.getByLabelText("Show all steps"));
+    const orders = [...document.querySelectorAll('[data-step-panel="room"], [data-step-panel="equipment"]')].flatMap((e) => [...e.querySelectorAll("h2, section")]).flatMap((e) => e.className.split(/\s+/).filter((c) => /(^|:)order-/.test(c)));
+    expect(orders.length).toBeGreaterThanOrEqual(5);
+    for (const c of orders) expect(c).toMatch(/^xl:order-\d$/);
+    // source order = h3, Room, h4, Selections, Ventilation, i.e. heading then its own panel
+    const seq = [...document.querySelectorAll('[data-step-panel="room"], [data-step-panel="equipment"]')].flatMap((e) => [...e.children]).map((e) => e.tagName + ":" + (e.textContent ?? "").slice(0, 8));
+    expect(seq[0].startsWith("H2")).toBe(true);
+    expect(seq[1].startsWith("SECTION")).toBe(true);
+    expect(seq[2].startsWith("H2")).toBe(true);
+  }, 30000);
 });
