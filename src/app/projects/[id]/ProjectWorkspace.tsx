@@ -19,6 +19,7 @@ import { claimActionPlan } from "@/lib/projects/claim-actions";
 import { percentToBps } from "@/lib/projects/claim-engine";
 import { previewKey, previewState } from "@/lib/projects/preview-staleness";
 import { claimNextStep } from "@/lib/projects/claim-next-step";
+import { ClaimStepper, NothingClaimableHint } from "./ClaimStepper";
 import { formatBps, formatCents, type ProjectView, type StageView } from "@/lib/projects/project-view";
 import { VariationsPanel } from "./VariationsPanel";
 import { OpeningCommitmentsPanel } from "./OpeningCommitmentsPanel";
@@ -165,6 +166,8 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   const [amounts, setAmounts] = useState<Record<string, string>>({});
   const [previewedAmounts, setPreviewedAmounts] = useState<Record<string, string>>({});
   const [previewShownKey, setPreviewShownKey] = useState<string | null>(null);
+  // Claim ids that existed when this form last saved a draft: the first claim not in it is the draft this form created (drives the stepper only).
+  const [savedBaseline, setSavedBaseline] = useState<string[] | null>(null);
   const [isLoading, startLoading] = useTransition();
   const [isWorkingT, startWorking] = useTransition();
   const acts = useKeyedActions();
@@ -619,6 +622,8 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
               </div>
               <span className="whitespace-nowrap rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">Not sent to Cin7</span>
             </div>
+            <ClaimStepper chosenCount={chosen.length} preview={preview ? pvState : "NONE"} savedClaimStatus={chosen.length === 0 && !preview && savedBaseline ? (view.claims.find((x) => !savedBaseline.includes(x.id))?.status ?? null) : null} />
+            <NothingClaimableHint stages={view.stages} scheduleBalanced={c.scheduleBalanced} uncertainClaimBlocking={c.uncertainClaimBlocking} isAdmin={perm === "admin"} onOpenTab={(t) => { goTab(t); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
             <fieldset className="mt-4 rounded-lg border border-slate-200 p-3">
               <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-600">Billing stages to include</legend>
               <div className="space-y-1">
@@ -641,7 +646,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             </fieldset>
             <div className="mt-4 flex flex-wrap gap-2">
               <Button variant="secondary" size="sm" onClick={doPreview} loading={isWorking} disabled={chosen.length === 0 || (!!preview && pvState === "CURRENT")} aria-describedby={chosen.length === 0 || isWorking || (preview && pvState === "CURRENT") ? `${uid}-preview-reason` : undefined}>{!preview ? "Preview claim" : pvState === "STALE" ? "Refresh preview" : "Preview is up to date"}</Button>
-              <Button size="sm" onClick={async () => { const claimsBefore = view.claims.length; const saved = await run(() => createClaimDraftAction(id, previewedIds, previewedAmounts), "Draft claim saved locally.", "claim:new", { confirm: (v) => v.claims.length > claimsBefore }); if (saved) { setChosen([]); setAmounts({}); setPreview(null); setPreviewedIds([]); setPreviewedAmounts({}); } }} loading={acts.isPending("claim:new")} disabled={!preview || isWorking || pvState === "STALE"} aria-describedby={!preview || pvState === "STALE" || isWorking ? `${uid}-save-draft-reason` : undefined}>Save as draft claim</Button>
+              <Button size="sm" onClick={async () => { const claimsBefore = view.claims.length; const idsBefore = view.claims.map((x) => x.id); const saved = await run(() => createClaimDraftAction(id, previewedIds, previewedAmounts), "Draft claim saved locally.", "claim:new", { confirm: (v) => v.claims.length > claimsBefore }); if (saved) { setSavedBaseline(idsBefore); setChosen([]); setAmounts({}); setPreview(null); setPreviewedIds([]); setPreviewedAmounts({}); } }} loading={acts.isPending("claim:new")} disabled={!preview || isWorking || pvState === "STALE"} aria-describedby={!preview || pvState === "STALE" || isWorking ? `${uid}-save-draft-reason` : undefined}>Save as draft claim</Button>
             </div>
             {/* Why each of the two buttons above is (or is not) available - always visible, and wired to the buttons with aria-describedby. */}
             {(chosen.length === 0 || isWorking || (preview && pvState === "CURRENT")) && <DisabledReason id={`${uid}-preview-reason`} className="mt-2">{chosen.length === 0 ? "Preview claim is disabled until you tick at least one billing stage above." : isWorking ? "Preview claim is disabled while another action is in progress." : "The preview is up to date. Change the stages or amounts to preview again."}</DisabledReason>}
@@ -723,6 +728,8 @@ function ProgressForm({
   // Validation shown BESIDE the field that needs fixing (and keeping everything typed so far).
   const [fieldErr, setFieldErr] = useState<{ approved?: string; comment?: string }>({});
   const [open, setOpen] = useState(false);
+  // Unsaved-work guard: dirty = the open form holds a typed comment or a percentage differing from the saved one. A successful save closes the form and releases it.
+  useUnsavedGuard(open && (comment.trim() !== "" || reported !== currentReported || approved !== currentApproved));
 
   // Inputs restart from the latest saved values every time the form is opened (after a save, or if someone else changed the stage).
   function toggle() {
