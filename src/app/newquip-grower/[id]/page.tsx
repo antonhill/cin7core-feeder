@@ -3,7 +3,7 @@
 import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useState, useId } from "react";
+import { useEffect, useRef, useState, useId } from "react";
 import { ActionFeedback, useKeyedActions } from "@/components/ui/action-feedback";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { ModuleHeader } from "@/app/ModuleHeader";
@@ -117,12 +117,18 @@ export default function QuoteEditorPage() {
   const [gateError, setGateError] = useState<string | null>(null);
   const [gateTry, setGateTry] = useState(0);
   const [picked, setPicked] = useState<StageId | null>(() => parseStage(search.get("stage")));
+  // Where the user landed. The viewed stage is `picked ?? landing ?? here`: once the quote has loaded the view stays where the user is, so recalculating readiness (Load Demo
+  // Defaults, any edit that makes the quote READY) can never move it. Only an authoritative workflow change (state, revision, project link, delivery status) clears it.
+  const [landing, setLanding] = useState<StageId | null>(null);
+  const gateSig = useRef<string | null>(null);
   // Stage 1 steps: navigation and guidance only (completion is derived from data, never from a visit). The customer facts are lifted from the CustomerPanel that already loads them.
   const [stepNo, setStepNo] = useState<number>(() => (parseStage(search.get("stage")) === 2 || parseStage(search.get("stage")) === 4 ? 1 : parseStepParam(search.get("step"), STAGE1_STEP_IDS.length)));
   // Stage 2 has its own step number but SHARES the "Show all steps" preference (one setting for the builder, one storage key).
   const [step2No, setStep2No] = useState<number>(() => (parseStage(search.get("stage")) === 2 ? parseStepParam(search.get("step"), 5) : 1));
   // Stage 4 (Customer Quotation) has two steps, with the same shared preference.
   const [step4No, setStep4No] = useState<number>(() => (parseStage(search.get("stage")) === 4 ? parseStepParam(search.get("step"), STAGE4_STEP_IDS.length) : 1));
+  // "Mark reviewed & continue" on Cost & margin: a CLIENT-LOCAL acknowledgement, never stored and never a sign-off. It holds a key built from the version it was given on; any change makes it stale.
+  const [costAck, setCostAck] = useState<string | null>(null);
   const [showAllSteps, setShowAllSteps] = useShowAllSteps("nq-builder-show-all");
   const [customerFacts, setCustomerFacts] = useState<Stage1CustomerFacts>(NO_CUSTOMER_FACTS);
   const onCustomerFacts = (f: Stage1CustomerFacts) => setCustomerFacts((p) => (p.loaded === f.loaded && p.available === f.available && p.hasSnapshot === f.hasSnapshot && p.hasContact === f.hasContact && p.contactName === f.contactName && p.loadError === f.loadError ? p : f));
@@ -140,6 +146,8 @@ export default function QuoteEditorPage() {
   }));
 
   function adopt(v: QuoteView) {
+    // A changed workflow state / revision / project link is a real transition: let the view follow the quotation to its new current stage (a draft or readiness change never does).
+    if (view && (v.quote.state !== view.quote.state || v.quote.revision !== view.quote.revision || v.quote.project_id !== view.quote.project_id)) { setPicked(null); setLanding(null); }
     setView(v);
     setDraft(v.quote.draft);
     setEv(v.evaluation);
@@ -160,6 +168,9 @@ export default function QuoteEditorPage() {
       if (!live) return;
       if (!r.ok) { setGateError(r.error ?? "The quotation's delivery status could not be loaded."); return; }
       setGateError(null);
+      const sig = r.data?.available ? `${r.data.status}|${r.data.latestDocumentId != null}|${r.data.links.state}` : "unavailable";
+      if (gateSig.current !== null && gateSig.current !== sig) { setPicked(null); setLanding(null); } // issued / sent / answered: a real transition
+      gateSig.current = sig;
       if (r.data?.available) setGate({ requires: r.data.requiresAcceptance, accepted: r.data.accepted, status: r.data.status, hasDocument: r.data.latestDocumentId != null, linkState: r.data.links.state });
       setGateReady(true); // read (an unavailable feature before migration 0115 is a legitimate, settled answer)
     }).catch(() => { if (live) setGateError("The quotation's delivery status could not be loaded."); });
@@ -285,8 +296,10 @@ export default function QuoteEditorPage() {
     </dl>
   );
   const here = currentStage(stages);
-  const stage: StageId = picked ?? here;
+  if (landing === null && !loadingStages) setLanding(here); // once, when the current stage is first known (React's render-phase initialisation)
+  const stage: StageId = picked ?? landing ?? here;
   const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); const at = n === 1 ? stepNo : n === 2 ? step2Cur : n === 4 ? step4No : 1; const sp = new URLSearchParams([...u.searchParams].filter(([k]) => k !== "step" && k !== "stage")); sp.set("stage", String(n)); if (at > 1) sp.set("step", String(at)); u.search = sp.toString(); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
+
   const stage1 = deriveStage1Steps({ customerName: draft.customerName, siteName: draft.siteName, penningPigSize: cfg.penningPigSize, calcIssues: ev.calc.issues, readinessReasons: rd.reasons, customer: customerFacts, roomValues: { lengthM: cfg.lengthM, widthM: cfg.widthM, rooms: cfg.rooms, totalPens: cfg.totalPens, pigsPerRoom: cfg.pigsPerRoom } });
   const stepId = STAGE1_STEP_IDS[stepNo - 1];
   const goStepNo = (n: number) => {
@@ -306,6 +319,12 @@ export default function QuoteEditorPage() {
   const step2Ids = stage2StepIds(canCommercials);
   const step2Cur = step2No >= 1 && step2No <= step2Ids.length ? step2No : 1; // a ?step= beyond this viewer's steps (a Rep has three) falls back to the first, as for Stage 1
   const step2Id = step2Ids[step2Cur - 1];
+  // The key names the exact version and costing it was given on (quote, revision, content hash, last update and the live cost and margin). It is never rendered or put in an attribute.
+  const costKey = budget ? [q.id, q.revision, q.draft_hash, q.updated_at, budget.totals.estimatedCost, budget.totals.overallMarginPct].join("|") : null;
+  const costAcknowledged = costKey != null && costAck === costKey && !dirty;
+  const canAckCost = canCommercials && q.state === "ESTIMATOR_REVIEW" && (roles.has("estimator") || roles.has("manager")) && costKey != null;
+  const onCostUnmarked = canAckCost && step2Id === "cost" && !costAcknowledged;
+  const onCostMarked = canAckCost && step2Id === "cost" && costAcknowledged;
   const stage2 = deriveStage2Steps({
     canViewCommercials: canCommercials, editable, roles: { rep: roles.has("rep"), estimator: roles.has("estimator"), manager: roles.has("manager") }, revision: q.revision, state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", calcValid: ev.calc.valid, lines: ev.calc.lines,
     readiness: { state: rd.state, reasons: rd.reasons, missingMappings: rd.counts.missingMappings },
@@ -313,7 +332,7 @@ export default function QuoteEditorPage() {
     blankExclusionCount: blankExclusionKeys.length, incompleteCostOverrideCount: Object.keys(previewCostOverrides(draft.estimator.costOverrides).errors).length,
     blankPriceReasonCount: Object.values(draft.estimator.priceResolutions).filter((r) => r && !r.reason.trim()).length,
     totalAvailable: totalCents != null, confirmedRecorded: q.customer_confirmed_cents != null,
-    dirty, signoff: !q.estimator_signoff_hash ? "none" : q.estimator_signoff_hash === q.draft_hash ? "current" : "stale",
+    costAcknowledged, dirty, signoff: !q.estimator_signoff_hash ? "none" : q.estimator_signoff_hash === q.draft_hash ? "current" : "stale",
   });
   const groupTone = { success: "complete", warning: "attention", danger: "attention", info: "incomplete", neutral: "neutral" } as const;
   const stage2Groups = stage2.groups.map((g) => ({ id: g.id, label: g.label, owner: g.id === "rep" ? "Rep" : "Estimator", statusText: `Workflow: ${g.statusLine}`, tone: groupTone[g.tone] }));
@@ -404,6 +423,7 @@ export default function QuoteEditorPage() {
           )} />
       )}
 
+      {stage === 2 && step2No > step2Ids.length && <p role="status" className="mt-3 text-sm text-slate-800" data-testid="step-unavailable">That step is not available to you, so the first step is shown.</p>}
       {stage === 2 && (
         <StepRail id="s2" ariaLabel="Costing and review steps" steps={stage2.steps} currentId={step2Id} onSelect={goStep2} groups={stage2Groups}
           actions={(
@@ -416,6 +436,15 @@ export default function QuoteEditorPage() {
           )} />
       )}
 
+      {stage === 2 && canAckCost && (showAllSteps || step2Id === "cost") && (
+        <div className="mt-4 max-w-3xl rounded-lg border border-indigo-200 bg-indigo-50 p-4" data-testid="cost-ack">
+          <p className="text-sm text-slate-800">This records that you have looked at the costing and margin for this version. It is not the Estimator sign-off.</p>
+          {costAcknowledged
+            ? <p className="mt-2 text-sm font-semibold text-slate-900" data-testid="cost-ack-done">You marked the costing reviewed for this version.</p>
+            : <Button type="button" className="mt-3 min-h-11" onClick={() => { setCostAck(costKey); if (!showAllSteps) goStep2("signoff"); }}>Mark reviewed &amp; continue</Button>}
+        </div>
+      )}
+      {stage === 2 && canAckCost && costAcknowledged && <p role="status" className="mt-3 text-sm text-slate-800" data-testid="cost-ack-status">Cost &amp; margin marked reviewed - this is not a sign-off.</p>}
       {stage <= 2 && (
         <>
           <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -791,6 +820,7 @@ export default function QuoteEditorPage() {
           </fieldset>
         )}
 
+
         <StepPanel railId="s2" stepId="signoff" number={step2Ids.indexOf("signoff") + 1} title={STAGE2_STEP_LABEL.signoff} current={step2Id === "signoff"} showAll={showAllSteps} className="mt-6 space-y-6">
           <Panel>
             <PanelTitle>Estimator review and handoff</PanelTitle>
@@ -828,7 +858,7 @@ export default function QuoteEditorPage() {
         {!showAllSteps && (
           <div className="mt-6 flex items-center justify-between gap-3" data-testid="step-buttons">
             {step2Cur > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2No(step2Cur - 1)}>Back</Button> : <span />}
-            {step2Cur < step2Ids.length ? <Button type="button" className="min-h-11" onClick={() => goStep2No(step2Cur + 1)}>Next</Button> : <span />}
+            {step2Cur < step2Ids.length ? <Button type="button" variant={onCostUnmarked ? "secondary" : "primary"} className="min-h-11" onClick={() => goStep2No(step2Cur + 1)}>{onCostUnmarked ? "Next without marking reviewed" : onCostMarked ? "Next: Sign-off or return" : "Next"}</Button> : <span />}
           </div>
         )}
         </>

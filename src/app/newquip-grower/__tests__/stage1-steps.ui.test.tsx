@@ -12,6 +12,7 @@ import { emptyDraft } from "@/newquip/grower/draft";
 import { rolesFor } from "@/newquip/quote/roles";
 import * as ca from "../customer-actions";
 import * as da from "../delivery-actions";
+import * as actions from "../actions";
 
 // UX-006a, rendered through the REAL page (Stage 1): the step rail, Back / Next, ?step=, Show all steps, Next incomplete step, the Review step, and the save-state chip.
 // The customer panel's own read is stubbed (the FakeDb has no customer tables) so the lifted facts can be controlled; nothing else is mocked.
@@ -240,4 +241,62 @@ describe("UX-006a Stage 1 step rail", () => {
     expect(seq[1].startsWith("SECTION")).toBe(true);
     expect(seq[2].startsWith("H2")).toBe(true);
   }, 30000);
+});
+
+// UAT defect 3: Load Demo Defaults (or any edit that makes the quote READY) must never move the wizard. The viewed stage is pinned to where the user landed; only a real
+// workflow transition moves it.
+describe("UX-006a the view stays put when the draft changes (Load Demo Defaults)", () => {
+  const blank = { siteName: "", config: base.config };
+  const FORBIDDEN = Object.keys(actions).filter((k) => typeof (actions as Record<string, unknown>)[k] === "function" && !["previewGrowerDraftAction", "getGrowerQuoteAction"].includes(k));
+  async function openBlank(step: string | undefined, over: Record<string, unknown> = blank, showAll = false) {
+    g.__STAGE = ""; // no ?stage= in the address: the stage is the derived "you are here"
+    if (showAll) vi.stubGlobal("localStorage", { getItem: () => "1", setItem: () => undefined });
+    await open(over, snapshotView(true), ["REP", "ESTIMATOR"], step);
+    g.__STAGE = "";
+  }
+  const spies = () => FORBIDDEN.map((k) => vi.spyOn(actions as never, k as never));
+  const loadDemo = async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Load Demo Defaults" }));
+    const replace = screen.queryByRole("button", { name: "Replace with demo" });
+    if (replace) fireEvent.click(replace);
+    await waitFor(() => expect(screen.getByText(/Demo defaults loaded into this draft/)).toBeTruthy());
+    await waitFor(() => expect(within(screen.getByTestId("quote-summary-bar")).getByText("READY FOR REVIEW / QUOTE")).toBeTruthy(), { timeout: 10000 }); // the live preview made it READY
+  };
+  const stillStage1 = () => { expect(screen.getByTestId("stage1-layout")).toBeTruthy(); expect(screen.queryByText("Estimator review and handoff")).toBeNull(); };
+
+  it("on Stage 1 step 3: the demo load makes the quote READY (it used to jump to Stage 2) yet stage, step and rail stay; no server action runs except the preview", async () => {
+    await openBlank("3");
+    expect(panel("room").hasAttribute("hidden")).toBe(false);
+    const forbidden = spies();
+    const preview = vi.spyOn(actions, "previewGrowerDraftAction");
+    await loadDemo();
+    stillStage1();
+    expect(panel("room").hasAttribute("hidden")).toBe(false);
+    expect(panel("customer").hasAttribute("hidden")).toBe(true);
+    expect(preview).toHaveBeenCalled();
+    for (const f of forbidden) expect(f).not.toHaveBeenCalled(); // no save / send / sign-off / approve / project create
+  }, 60000);
+
+  it("on step 4 and in show-all the position and the show-all preference are kept", async () => {
+    await openBlank("4");
+    await loadDemo();
+    stillStage1();
+    expect(panel("equipment").hasAttribute("hidden")).toBe(false);
+    expect(panel("room").hasAttribute("hidden")).toBe(true);
+    cleanup();
+    await openBlank("1", blank, true);
+    await loadDemo();
+    stillStage1();
+    for (const id of ["customer", "site", "room", "equipment", "review"]) expect(panel(id).hasAttribute("hidden")).toBe(false);
+  }, 60000);
+
+  it("a step with validation errors only changes its status when the demo fills it in; an unsaved edited draft (confirm path) behaves the same", async () => {
+    await openBlank("3", { siteName: "", config: { ...goodConfig, lengthM: 0, widthM: 0 } });
+    await waitFor(() => expect(status("room")).toBe("Not complete"));
+    await act(async () => { fireEvent.change(screen.getByLabelText(/^Total pens/), { target: { value: "21" } }); }); // now an UNSAVED draft
+    await loadDemo(); // asks to replace, then loads
+    stillStage1();
+    expect(panel("room").hasAttribute("hidden")).toBe(false);
+    await waitFor(() => expect(status("room")).toBe("Complete"));
+  }, 60000);
 });
