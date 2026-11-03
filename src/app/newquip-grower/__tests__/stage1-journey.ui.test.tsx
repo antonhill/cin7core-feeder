@@ -818,3 +818,47 @@ describe("second review: chrome, saving rules, up-front note, step 3 disclosure"
     await waitFor(() => expect(document.activeElement?.tagName).toBe("H2"));
   }, 30000);
 });
+
+// ── Regression e2e findings ──
+describe("regression: customer search state and the second 'Load recommended configuration'", () => {
+  it("D-1: reopening 'Change customer' starts with an empty search, no stale 'No customers found', and closing/cancelling resets it", async () => {
+    await open({ view: snapshotView(true), step: "1" });
+    vi.spyOn(ca, "searchQuoteCustomersForQuoteAction").mockResolvedValue({ ok: true, data: [] } as never);
+    fireEvent.click(screen.getByRole("button", { name: "Change customer" }));
+    fireEvent.change(screen.getByLabelText(/Search by name/), { target: { value: "Fixture" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search Cin7 customers" }));
+    expect((await screen.findByTestId("no-customer-results")).textContent).toContain("No customers found for “Fixture”.");
+    fireEvent.click(screen.getByRole("button", { name: "Keep current customer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Change customer" }));
+    expect((screen.getByLabelText(/Search by name/) as HTMLInputElement).value).toBe("");
+    expect(screen.queryByTestId("no-customer-results")).toBeNull();
+    expect(screen.getByTestId("search-min")).toBeTruthy();
+  }, 30000);
+
+  it("D-2: pressing 'Load recommended configuration' again over edited quantities asks Replace / Cancel; Cancel keeps the values; the step is preserved", async () => {
+    await open({ view: snapshotView(true), step: "3", draftOver: { config: { ...goodConfig, penningPigSize: null } } });
+    fireEvent.click(screen.getByRole("button", { name: "Load recommended configuration" }));
+    fireEvent.click(screen.getByRole("button", { name: "Replace values" })); // the fixture already holds some equipment values (running metres), so the first load asks too
+    const qty = screen.getByLabelText("Quantity per room for CCM feeder (incl. monoflo drinking nipples)") as HTMLInputElement;
+    expect(qty.value).toBe("18");
+    await act(async () => { fireEvent.change(qty, { target: { value: "7" } }); });
+    fireEvent.click(screen.getByRole("button", { name: "Load recommended configuration" }));
+    expect(screen.getByTestId("sample-confirm")).toBeTruthy();
+    expect(current()).toBe("equipment");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(qty.value).toBe("7");
+    fireEvent.click(screen.getByRole("button", { name: "Load recommended configuration" }));
+    fireEvent.click(screen.getByRole("button", { name: "Replace values" }));
+    expect((screen.getByLabelText("Quantity per room for CCM feeder (incl. monoflo drinking nipples)") as HTMLInputElement).value).toBe("18");
+    expect(current()).toBe("equipment");
+  }, 30000);
+
+  it("the toolbar does not overflow at 390px (static class contract: every toolbar child may wrap or shrink)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(`${__dirname}/../[id]/page.tsx`, "utf8");
+    expect(src).toContain('<div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">'); // the toolbar wraps
+    expect(src).toContain('flex flex-wrap items-center gap-3 ${cls}'); // the save row wraps
+    const sections = readFileSync(`${__dirname}/../[id]/RepConfigSections.tsx`, "utf8");
+    expect(sections).toContain("min-w-0 max-w-full"); // the collapsible chip and table wrapper cannot widen the page
+  });
+});

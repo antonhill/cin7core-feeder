@@ -126,7 +126,8 @@ export function applyRecommendedConfiguration(current: QuoteDraft): { draft: Quo
 }
 /** True when the equipment part of the draft already holds entries that the recommended configuration would replace (a confirmation is needed). */
 export function hasEquipmentEntries(current: QuoteDraft): boolean {
-  const blank = emptyDraft().config as unknown as Record<string, unknown>;
-  const demo = DEMO_DEFAULTS.config as unknown as Record<string, unknown>;
-  return EQUIPMENT_KEYS.some((k) => { const cur = (current.config as unknown as Record<string, unknown>)[k]; return !same(cur, blank[k]) && !same(cur, demo[k]); });
+  // The WHOLE equipment section is compared: it differs from blank (something is entered) AND from the recommendation (so something would be replaced, including values edited or cleared since the load).
+  const pick = (c: unknown) => Object.fromEntries(EQUIPMENT_KEYS.map((k) => [k, (c as Record<string, unknown>)[k]]));
+  const cur = pick(current.config);
+  return !same(cur, pick(emptyDraft().config)) && !same(cur, pick(DEMO_DEFAULTS.config));
 }
