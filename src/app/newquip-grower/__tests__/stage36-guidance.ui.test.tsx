@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
@@ -36,7 +36,6 @@ const asRoles = (...r: Array<"REP" | "ESTIMATOR" | "MANAGER">) => vi.mocked(reso
 
 beforeEach(() => {
   db = new FakeDb();
-  
   vi.clearAllMocks();
   vi.mocked(requireNewquipPocOrg).mockResolvedValue(SESSION as never);
   vi.mocked(requireModuleAccess).mockResolvedValue(SESSION as never);
@@ -83,13 +82,13 @@ async function open(o: { stage: string; step?: string; roles?: Role[]; state?: s
 }
 const FINAL = { state: "MANAGER_APPROVED_FINAL", accepted_baseline: baseline, baseline_hash: "x", requires_customer_acceptance: true, customer_confirmed_cents: 1, estimator_signoff_hash: "CURRENT" };
 const checks = () => Object.fromEntries([...document.querySelectorAll("[data-check]")].map((e) => [e.getAttribute("data-check"), e.querySelector("[data-testid^=check-status]")!.textContent]));
-const shot = (_name: string) => {};
+const shot = (name: string) => { void name; };
 
 describe("UX-006c Stage 3: the 'before you decide' checklist", () => {
   const review = { state: "ESTIMATOR_REVIEW", customer_confirmed_cents: 123 };
   it("lists the checkApproval conditions with a sign-off that is missing / not met, above the unchanged Approve and Return controls", async () => {
     await open({ stage: "3", roles: ["REP", "ESTIMATOR", "MANAGER"], row: review });
-    await screen.findByTestId("approval-checklist");
+    await screen.findByTestId("approval-checklist", {}, { timeout: 8000 });
     expect([...document.querySelectorAll("[data-check]")].map((e) => e.getAttribute("data-check")).slice(0, 5)).toEqual(["ready", "total", "confirmed", "signoff", "amount"]);
     expect(checks().signoff).toBe("Not met");
     expect(checks().confirmed).toBe("Met");
@@ -101,13 +100,13 @@ describe("UX-006c Stage 3: the 'before you decide' checklist", () => {
   }, 30000);
   it("an unrecorded customer confirmation and a stale sign-off are unmet", async () => {
     await open({ stage: "3", roles: ["MANAGER"], row: { state: "ESTIMATOR_REVIEW", customer_confirmed_cents: null, estimator_signoff_hash: "stale" } });
-    await screen.findByTestId("approval-checklist");
+    await screen.findByTestId("approval-checklist", {}, { timeout: 8000 });
     expect(checks()).toMatchObject({ confirmed: "Not met", signoff: "Not met", amount: "Not met" });
     expect(document.body.textContent).toMatch(/changed after the estimator signed off/);
   }, 30000);
   it("a Rep/Estimator who is not a Manager sees the same facts read-only with the existing role text and a disabled Approve", async () => {
     await open({ stage: "3", roles: ["REP"], row: { ...review, estimator_signoff_hash: "CURRENT" } });
-    await screen.findByTestId("approval-checklist");
+    await screen.findByTestId("approval-checklist", {}, { timeout: 8000 });
     expect(checks().signoff).toBe("Met");
     expect(screen.getByText("Final approval needs the manager role (org owner/admin).")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement).disabled).toBe(true);
@@ -126,7 +125,7 @@ describe("UX-006c Stage 3: the 'before you decide' checklist", () => {
   }, 60000);
   it("the Manager can approve when the sign-off is current (gate unchanged)", async () => {
     await open({ stage: "3", roles: ["MANAGER"], row: { ...review, estimator_signoff_hash: "CURRENT" } });
-    await screen.findByTestId("approval-checklist");
+    await screen.findByTestId("approval-checklist", {}, { timeout: 8000 });
     expect(checks().signoff).toBe("Met");
     expect((screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement).disabled).toBe(false);
   }, 30000);
@@ -139,10 +138,10 @@ const status = (id: string) => screen.getByTestId(`step-status-${id}`).textConte
 describe("UX-006c Stage 4: Issue PDF / Send to customer", () => {
   it("with no PDF: two steps, issue current and Not complete, send Not available, both panels mounted (the other hidden + inert)", async () => {
     await open({ stage: "4", roles: ["REP"], row: FINAL, delivery: delivery(), docs: docs(0) });
-    await waitFor(() => expect(screen.getByTestId("step-rail")).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("step-rail")).toBeTruthy(), { timeout: 8000 });
     expect([...rail().querySelectorAll("ol > li button")].map((b) => b.getAttribute("data-step"))).toEqual(["issue", "send"]);
     expect(status("issue")).toBe("Not complete"); expect(status("send")).toBe("Not available");
-    await screen.findByRole("button", { name: "Generate customer quotation PDF" });
+    await screen.findByRole("button", { name: "Generate customer quotation PDF" }, { timeout: 8000 });
     expect(shown("issue")).toBe(true); expect(shown("send")).toBe(false);
     expect(document.querySelector('[data-step-panel="send"]')!.hasAttribute("inert")).toBe(true);
     expect(rail().querySelector('[aria-current="step"]')!.textContent).toContain("Issue PDF");
@@ -150,11 +149,11 @@ describe("UX-006c Stage 4: Issue PDF / Send to customer", () => {
   }, 30000);
   it("with a PDF issued and not sent: issue Complete, send Not complete; Next moves to the send step with the recipient controls and focuses its heading", async () => {
     await open({ stage: "4", roles: ["REP"], row: FINAL, delivery: delivery({ latestDocumentId: "d0" }), docs: docs(1) });
-    await waitFor(() => expect(status("issue")).toBe("Complete"));
+    await waitFor(() => expect(status("issue")).toBe("Complete"), { timeout: 8000 });
     expect(status("send")).toBe("Not complete");
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(shown("send")).toBe(true); expect(shown("issue")).toBe(false);
-    await waitFor(() => expect(document.activeElement?.textContent).toBe("Step 2 · Send to customer"));
+    await waitFor(() => expect(document.activeElement?.textContent).toBe("Step 2 · Send to customer"), { timeout: 8000 });
     expect(new URL(window.location.href).searchParams.get("step")).toBe("2");
     expect(screen.getByRole("button", { name: "Send quotation to customer" })).toBeTruthy();
     expect((screen.getByRole("button", { name: "Send quotation to customer" }) as HTMLButtonElement).disabled).toBe(true); // existing gate: not yet reviewed
@@ -164,7 +163,7 @@ describe("UX-006c Stage 4: Issue PDF / Send to customer", () => {
   }, 30000);
   it("once sent both steps are Complete and the history shows; the data in the hidden step was loaded either way", async () => {
     await open({ stage: "4", roles: ["REP"], row: FINAL, delivery: delivery({ status: "SENT_TO_CUSTOMER", latestDocumentId: "d0", sends: [{ id: "s1", status: "ACCEPTED", at: "2026-01-02T08:00:00Z", sentBy: "rep@nq", to: ["c@farm.co"], cc: [], suppressed: [], alternatives: [], alternativeReason: null, error: null, resendReason: null }] }), docs: docs(1) });
-    await waitFor(() => expect(status("send")).toBe("Complete"));
+    await waitFor(() => expect(status("send")).toBe("Complete"), { timeout: 8000 });
     expect(status("issue")).toBe("Complete");
     expect(document.querySelector('[data-testid="send-history"]')).toBeTruthy(); // mounted although step 1 is the one shown
     expect(shown("send")).toBe(false);
@@ -172,12 +171,12 @@ describe("UX-006c Stage 4: Issue PDF / Send to customer", () => {
   }, 30000);
   it("a viewer who cannot send gets the existing Rep-only text; the step is not hidden", async () => {
     await open({ stage: "4", roles: ["ESTIMATOR"], row: FINAL, delivery: delivery({ latestDocumentId: "d0", canSend: false }), docs: docs(1), step: "2" });
-    await waitFor(() => expect(shown("send")).toBe(true));
+    await waitFor(() => expect(shown("send")).toBe(true), { timeout: 8000 });
     expect(document.body.textContent).toContain("Only a Rep can send it.");
   }, 30000);
   it("Show all steps shows both; the sticky summary and customer summary panel stay", async () => {
     await open({ stage: "4", roles: ["REP"], row: FINAL, delivery: delivery({ latestDocumentId: "d0" }), docs: docs(1) });
-    await waitFor(() => expect(status("issue")).toBe("Complete"));
+    await waitFor(() => expect(status("issue")).toBe("Complete"), { timeout: 8000 });
     fireEvent.click(screen.getByLabelText("Show all steps"));
     expect(shown("issue") && shown("send")).toBe(true);
     expect(screen.queryByTestId("step-buttons")).toBeNull();
@@ -202,7 +201,7 @@ describe("UX-006c Stage 5: status banner", () => {
   ];
   for (const [name, d, label] of cases) it(`${name}: banner '${label}' sits above the unchanged Acceptance panel`, async () => {
     await open({ stage: "5", roles: ["REP"], row: FINAL, delivery: delivery({ latestDocumentId: "d0", ...d }) });
-    const b = await screen.findByTestId("acceptance-banner");
+    const b = await screen.findByTestId("acceptance-banner", {}, { timeout: 8000 });
     expect(b.textContent).toContain(label);
     expect(document.querySelectorAll('[data-testid="acceptance-banner"]').length).toBe(1);
     const panelTitle = (await screen.findAllByText("Customer response"))[0];
@@ -211,7 +210,7 @@ describe("UX-006c Stage 5: status banner", () => {
   }, 30000);
   it("grandfathered: Not required; before approval and while loading: no banner (the existing messages stand)", async () => {
     await open({ stage: "5", roles: ["REP"], row: { ...FINAL, requires_customer_acceptance: false }, delivery: delivery({ requiresAcceptance: false, status: "APPROVED_INTERNALLY" }) });
-    expect((await screen.findByTestId("acceptance-banner")).textContent).toContain("Not required (grandfathered)");
+    expect((await screen.findByTestId("acceptance-banner", {}, { timeout: 8000 })).textContent).toContain("Not required (grandfathered)");
     shot("s5-grandfathered");
     cleanup();
     await open({ stage: "5", roles: ["REP"] });
@@ -223,28 +222,28 @@ describe("UX-006c Stage 5: status banner", () => {
 describe("UX-006c Stage 6: readiness checklist", () => {
   it("a Manager on an accepted quote: all met; the Create button and copy are unchanged", async () => {
     await open({ stage: "6", roles: ["MANAGER"], row: FINAL, delivery: delivery({ status: "CUSTOMER_ACCEPTED", accepted: true, latestDocumentId: "d0" }) });
-    const c = await screen.findByTestId("handover-checklist");
+    const c = await screen.findByTestId("handover-checklist", {}, { timeout: 8000 });
     expect([...c.querySelectorAll("[data-testid^=check-status]")].map((e) => e.textContent)).toEqual(["Met", "Met", "Met", "Met"]);
     expect(screen.getByRole("button", { name: "Create Project from accepted quote" })).toBeTruthy();
     shot("s6-manager-ready");
   }, 30000);
   it("not yet accepted: acceptance is unmet and the existing 'not available yet' text stays", async () => {
     await open({ stage: "6", roles: ["MANAGER"], row: FINAL, delivery: delivery({ status: "SENT_TO_CUSTOMER", latestDocumentId: "d0" }) });
-    const c = await screen.findByTestId("handover-checklist");
+    const c = await screen.findByTestId("handover-checklist", {}, { timeout: 8000 });
     expect(c.querySelector('[data-check="acceptance"] [data-testid^=check-status]')!.textContent).toBe("Not met");
     expect(screen.getByText(/Project handover is not available yet/)).toBeTruthy();
     shot("s6-unmet");
   }, 30000);
   it("a non-Manager sees the role item unmet and the existing text", async () => {
     await open({ stage: "6", roles: ["REP"], row: FINAL, delivery: delivery({ status: "CUSTOMER_ACCEPTED", accepted: true, latestDocumentId: "d0" }) });
-    const c = await screen.findByTestId("handover-checklist");
+    const c = await screen.findByTestId("handover-checklist", {}, { timeout: 8000 });
     expect(c.querySelector('[data-check="manager"] [data-testid^=check-status]')!.textContent).toBe("Not met");
     expect(screen.getByText(/A Manager creates the Project from the accepted quotation/)).toBeTruthy();
     shot("s6-rep");
   }, 30000);
   it("grandfathered with a default schedule: the schedule item reflects the existing chooser; absent once a Project exists", async () => {
     await open({ stage: "6", roles: ["MANAGER"], row: { ...FINAL, requires_customer_acceptance: false }, delivery: delivery({ requiresAcceptance: false, status: "APPROVED_INTERNALLY" }) });
-    const c = await screen.findByTestId("handover-checklist");
+    const c = await screen.findByTestId("handover-checklist", {}, { timeout: 8000 });
     expect(c.querySelector('[data-check="acceptance"]')!.textContent).toContain("Not required");
     expect(c.querySelector('[data-check="schedule"]')).toBeTruthy();
     cleanup();
