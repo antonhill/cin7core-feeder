@@ -62,10 +62,11 @@ describe("Claim stepper", () => {
     expect(steps()).toEqual(["done", "next", "todo", "todo"]);
     fireEvent.click(screen.getByRole("button", { name: "Preview claim" }));
     await waitFor(() => expect(steps()).toEqual(["done", "done", "next", "todo"]), { timeout: 8000 });
+    await waitFor(() => expect((screen.getByRole("button", { name: "Save as draft claim" }) as HTMLButtonElement).disabled).toBe(false)); // a click while the preview is still settling would be ignored
     fireEvent.click(screen.getByRole("button", { name: "Save as draft claim" }));
     await waitFor(() => expect(steps()).toEqual(["done", "done", "done", "next"]), { timeout: 8000 });
     expect(stepper().textContent).toContain("Use Submit on the draft above");
-  });
+  }, 20000);
   it("visiting a step never completes it: an untouched form stays at step 1 after the tab is revisited", async () => {
     setup(() => view([stage({ claimableCents: 10_000_00, approvedBps: 10000 })]));
     await openTab(/Commercial \/ Claims/);
