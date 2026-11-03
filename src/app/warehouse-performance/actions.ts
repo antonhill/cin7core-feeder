@@ -5,7 +5,8 @@ import { createServiceRoleClient } from "@/supabase/server";
 import { requireModuleAccess } from "@/lib/authorization";
 import { requireOrgAdmin } from "@/lib/require-org-admin";
 import { WAREHOUSE_PERFORMANCE_MODULE } from "@/app/module-nav";
-import { getEnabledOrgScorecard, getOrCreateDraftReview, getReview, listActions, listMetricResults, listReviews, normaliseReviewPeriod, type ActionRow, type MetricResultRow, type ReviewRow } from "@/scorecard/queries";
+import { countScoredResultsByReview, getEnabledOrgScorecard, getOrCreateDraftReview, getReview, listActions, listMetricResults, listReviewEvents, listReviews, normaliseReviewPeriod, type ActionRow, type MetricResultRow, type ReviewRow } from "@/scorecard/queries";
+import { findIncompleteKpis, isValidScore, type IncompleteKpi } from "@/scorecard/completeness";
 import { computeHeadlineResults, computeOverallScore, deriveStatus } from "@/scorecard/scoring";
 import { buildScorecardSnapshot } from "@/scorecard/snapshot";
 import type { ActionStatus, HeadlineResult, MetricDefinition, MetricResult, ScoreStatus, SectionDefinition } from "@/scorecard/types";
@@ -94,7 +95,8 @@ export async function getWarehousePerformanceDashboardAction(): Promise<ActionRe
     const overall = currentReview.status === "final" ? currentReview.overall_score : computeOverallScore(headlineResults);
 
     const reviews = await listReviews(db, orgId, scorecard.scorecardDefinitionId, 3);
-    const previousFinal = reviews.find((r) => r.id !== currentReview.id && r.status === "final") ?? null;
+    // A final review with no score (the invalid November 2026 shape) is not a usable comparison.
+    const previousFinal = reviews.find((r) => r.id !== currentReview.id && r.status === "final" && r.overall_score !== null) ?? null;
 
     // ONE call for the whole queue panel (the four KPI queues + the shipment-unclear
     // count): the queue view is evaluated once instead of once per RPC, which is what
@@ -217,7 +219,8 @@ export async function saveMetricResultAction(
     const { orgId, userId } = await requireModuleAccess(WAREHOUSE_PERFORMANCE_MODULE.href);
     await requireOrgAdmin("complete a Warehouse Performance review");
 
-    if (input.score !== null && input.score !== undefined && (input.score < 0 || input.score > 10)) return { ok: false, error: "Score must be between 0 and 10." };
+    // null = Not Scored (allowed while drafting). Anything else must be a real number in 0-10: NaN passes a plain range comparison, so it is rejected explicitly.
+    if (input.score !== null && input.score !== undefined && !isValidScore(input.score)) return { ok: false, error: "Score must be a number between 0 and 10." };
 
     const db = createServiceRoleClient();
 
@@ -248,12 +251,35 @@ export async function saveMetricResultAction(
 }
 
 /**
- * Finalises a review: computes headline + overall scores from its current
- * results, snapshots the live scorecard definition, and flips status to
- * 'final'. Irreversible from here — the DB triggers in 0092 then block any
- * further mutation of this review or its results (brief §11).
+ * Deployment-order guard. This code calls database functions added by migration
+ * 0121. If it is ever deployed before that migration is applied, PostgREST answers
+ * PGRST202 ("could not find the function"); say so plainly instead of surfacing a
+ * raw error. Nothing has been written when this happens (the call never ran), so
+ * failing closed here is safe — the review simply cannot be finalised/reopened
+ * until the migration is applied.
  */
-export async function finalizeReviewAction(reviewId: string): Promise<ActionResult<{ overallScore: number | null }>> {
+function rpcFailureMessage(error: { code?: string; message: string }): string {
+  if (error.code === "PGRST202" || /could not find the function/i.test(error.message)) {
+    return "Warehouse Performance database update 0121 has not been applied yet, so this action is unavailable. No changes were made.";
+  }
+  return error.message;
+}
+
+export interface FinalizeResultData {
+  overallScore: number | null;
+  /** Present when finalisation was refused: every KPI still needing a valid score. */
+  incomplete?: IncompleteKpi[];
+}
+
+/**
+ * Finalises a review. Refused unless EVERY active KPI carries a valid score
+ * (0 is valid, null/missing/NaN/out-of-range is not) and the Warehouse Health
+ * Score recomputes to a real number. The checks run here on the server and are
+ * re-enforced inside the scorecard_finalise_review database function, which
+ * also takes the row lock, so a rejected or concurrent request can never leave
+ * a Final review without a score.
+ */
+export async function finalizeReviewAction(reviewId: string): Promise<ActionResult<FinalizeResultData>> {
   try {
     const { orgId, userId } = await requireModuleAccess(WAREHOUSE_PERFORMANCE_MODULE.href);
     await requireOrgAdmin("finalise a Warehouse Performance review");
@@ -269,16 +295,29 @@ export async function finalizeReviewAction(reviewId: string): Promise<ActionResu
     }
 
     const results = await listMetricResults(db, reviewId);
-    const headlineResults = computeHeadlines(scorecard.sections, scorecard.metrics, results);
-    const overallScore = computeOverallScore(headlineResults);
+
+    const incomplete = findIncompleteKpis(scorecard.sections, scorecard.metrics, results);
+    if (incomplete.length > 0) {
+      return {
+        ok: false,
+        error: `Cannot finalise: ${incomplete.length} KPI${incomplete.length === 1 ? " is" : "s are"} missing a valid score.`,
+        data: { overallScore: null, incomplete },
+      };
+    }
+
+    const overallScore = computeOverallScore(computeHeadlines(scorecard.sections, scorecard.metrics, results));
+    if (overallScore === null) return { ok: false, error: "Cannot finalise: the Warehouse Health Score could not be calculated." };
+
     const snapshot = buildScorecardSnapshot(scorecard.scorecardDefinitionId, scorecard.scorecardName, scorecard.sections, scorecard.metrics);
 
-    const { error } = await db
-      .from("scorecard_reviews")
-      .update({ status: "final", overall_score: overallScore, definition_snapshot: snapshot, finalised_by: userId, finalised_at: new Date().toISOString() })
-      .eq("id", reviewId)
-      .eq("organization_id", orgId);
-    if (error) throw new Error(error.message);
+    const { error } = await db.rpc("scorecard_finalise_review", {
+      p_review_id: reviewId,
+      p_org_id: orgId,
+      p_actor: userId,
+      p_overall_score: overallScore,
+      p_snapshot: snapshot,
+    });
+    if (error) return { ok: false, error: rpcFailureMessage(error) };
 
     return { ok: true, data: { overallScore } };
   } catch (e) {
@@ -286,21 +325,109 @@ export async function finalizeReviewAction(reviewId: string): Promise<ActionResu
   }
 }
 
+/**
+ * Reverses a finalisation (Final -> Draft) so the warehouse team can correct and
+ * resubmit. Owner/admin only, with a mandatory reason. Entered KPI values are
+ * untouched; the original finalisation (who/when/score) is preserved in the
+ * append-only scorecard_review_events trail. The whole transition happens inside
+ * scorecard_reverse_finalisation under a row lock, so a repeated or concurrent
+ * request sees the review already Draft and is refused instead of corrupting state.
+ */
+export async function reverseFinalisationAction(reviewId: string, reason: string): Promise<ActionResult<null>> {
+  try {
+    const { orgId, userId } = await requireModuleAccess(WAREHOUSE_PERFORMANCE_MODULE.href);
+    await requireOrgAdmin("undo the finalisation of a Warehouse Performance review");
+
+    const trimmed = (reason ?? "").trim();
+    if (trimmed.length < 5) return { ok: false, error: "A reason of at least 5 characters is required to undo a finalisation." };
+    if (trimmed.length > 1000) return { ok: false, error: "The reason must be 1000 characters or fewer." };
+
+    const db = createServiceRoleClient();
+    const review = await getReview(db, reviewId, orgId);
+    if (!review) return { ok: false, error: "Review not found." };
+    if (review.status !== "final") return { ok: false, error: "This review is not finalised, so there is nothing to undo." };
+
+    const { error } = await db.rpc("scorecard_reverse_finalisation", { p_review_id: reviewId, p_org_id: orgId, p_actor: userId, p_reason: trimmed });
+    if (error) return { ok: false, error: rpcFailureMessage(error) };
+    return { ok: true, data: null };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
+  }
+}
+
+/**
+ * How trustworthy a history row is:
+ *   draft         — still being worked on (never shown as a score).
+ *   valid         — Final, scored, every KPI scored.
+ *   legacy        — Final with a score but some KPIs unscored: finalised before the
+ *                   all-KPIs-mandatory rule. Kept as-is, never rewritten, but flagged.
+ *   invalid       — Final with NO score: must not be presented as a result.
+ */
+export type ReviewIntegrity = "draft" | "valid" | "legacy" | "invalid";
+
 export interface ReviewHistoryEntry {
   reviewId: string;
   reviewPeriod: string;
   status: "draft" | "final";
   overallScore: number | null;
+  scoredKpis: number;
+  totalKpis: number;
+  integrity: ReviewIntegrity;
+  finalisedAt: string | null;
+  /** Times this review has been reopened (audit trail). */
+  reopenedCount: number;
+  lastReversal: { at: string; reason: string | null } | null;
 }
 
-export async function listReviewHistoryAction(): Promise<ActionResult<ReviewHistoryEntry[]>> {
+export interface ReviewHistoryData {
+  entries: ReviewHistoryEntry[];
+  /** Whether the viewer may undo a finalisation (owner/admin). Server re-checks on the action itself. */
+  canReverse: boolean;
+}
+
+export async function listReviewHistoryAction(): Promise<ActionResult<ReviewHistoryData>> {
   try {
     const { orgId } = await requireModuleAccess(WAREHOUSE_PERFORMANCE_MODULE.href);
     const db = createServiceRoleClient();
     const scorecard = await getEnabledOrgScorecard(db, orgId);
     if (!scorecard) return { ok: false, error: "Warehouse Performance is not configured for your organization." };
     const reviews = await listReviews(db, orgId, scorecard.scorecardDefinitionId, 13);
-    return { ok: true, data: reviews.map((r: ReviewRow) => ({ reviewId: r.id, reviewPeriod: r.review_period, status: r.status, overallScore: r.overall_score })) };
+    const ids = reviews.map((r) => r.id);
+    // The audit trail is a nice-to-have on this screen: if migration 0121 is not applied yet (code deployed first), the History tab must still render.
+    const [scoredCounts, events] = await Promise.all([countScoredResultsByReview(db, ids), listReviewEvents(db, ids).catch(() => [] as Awaited<ReturnType<typeof listReviewEvents>>)]);
+    const totalKpis = scorecard.metrics.length;
+
+    let canReverse = false;
+    try {
+      await requireOrgAdmin("undo the finalisation of a Warehouse Performance review");
+      canReverse = true;
+    } catch {
+      canReverse = false;
+    }
+
+    const entries = reviews.map((r: ReviewRow): ReviewHistoryEntry => {
+      const scoredKpis = scoredCounts.get(r.id) ?? 0;
+      const reversals = events.filter((e) => e.review_id === r.id && e.event_type === "finalisation_reversed");
+      const lastReversal = reversals.length > 0 ? reversals[reversals.length - 1] : null;
+      let integrity: ReviewIntegrity;
+      if (r.status === "draft") integrity = "draft";
+      else if (r.overall_score === null) integrity = "invalid";
+      else if (scoredKpis < totalKpis) integrity = "legacy";
+      else integrity = "valid";
+      return {
+        reviewId: r.id,
+        reviewPeriod: r.review_period,
+        status: r.status,
+        overallScore: r.overall_score,
+        scoredKpis,
+        totalKpis,
+        integrity,
+        finalisedAt: r.finalised_at,
+        reopenedCount: reversals.length,
+        lastReversal: lastReversal ? { at: lastReversal.occurred_at, reason: lastReversal.reason } : null,
+      };
+    });
+    return { ok: true, data: { entries, canReverse } };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Unknown error" };
   }

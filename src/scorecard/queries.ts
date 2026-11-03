@@ -231,3 +231,39 @@ export async function listActions(db: Db, orgId: string, statusFilter?: ActionSt
   if (error) throw new Error(error.message);
   return (data ?? []) as ActionRow[];
 }
+
+/** Count of VALID-scored KPI results per review, in one query. A review with no rows is simply absent from the map (0 scored). */
+export async function countScoredResultsByReview(db: Db, reviewIds: string[]): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (reviewIds.length === 0) return counts;
+  const { data, error } = await db.from("scorecard_metric_results").select("review_id, score").in("review_id", reviewIds).not("score", "is", null);
+  if (error) throw new Error(error.message);
+  for (const row of (data ?? []) as { review_id: string; score: number }[]) {
+    counts.set(row.review_id, (counts.get(row.review_id) ?? 0) + 1);
+  }
+  return counts;
+}
+
+export interface ReviewEventRow {
+  id: string;
+  review_id: string;
+  event_type: "finalised" | "finalisation_reversed";
+  previous_status: string | null;
+  new_status: string;
+  actor_user_id: string | null;
+  reason: string | null;
+  overall_score: number | null;
+  occurred_at: string;
+}
+
+/** The append-only audit trail for the given reviews, oldest first. */
+export async function listReviewEvents(db: Db, reviewIds: string[]): Promise<ReviewEventRow[]> {
+  if (reviewIds.length === 0) return [];
+  const { data, error } = await db
+    .from("scorecard_review_events")
+    .select("id, review_id, event_type, previous_status, new_status, actor_user_id, reason, overall_score, occurred_at")
+    .in("review_id", reviewIds)
+    .order("occurred_at", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ReviewEventRow[];
+}

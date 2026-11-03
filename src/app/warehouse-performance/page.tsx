@@ -12,6 +12,7 @@ import {
   getReviewDetailAction,
   saveMetricResultAction,
   finalizeReviewAction,
+  reverseFinalisationAction,
   listReviewHistoryAction,
   listBottleneckOrdersAction,
   listCorrectiveActionsAction,
@@ -19,11 +20,13 @@ import {
   completeCorrectiveActionAction,
   type DashboardSummary,
   type ReviewDetail,
+  type ReviewHistoryData,
   type ReviewHistoryEntry,
   type BottleneckOrderRow,
   type CorrectiveActionRow,
 } from "./actions";
 import type { ScoreStatus } from "@/scorecard/types";
+import type { IncompleteKpi } from "@/scorecard/completeness";
 
 const STATUS_LABEL: Record<ScoreStatus, string> = {
   strong: "Strong",
@@ -208,6 +211,10 @@ function ReviewTab({ onSaved }: { onSaved: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [finalizing, startFinalizing] = useTransition();
+  const [finaliseError, setFinaliseError] = useState<string | null>(null);
+  // A rejected save (e.g. a score outside 0-10) is shown inline; it must not replace the whole KPI table.
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [incomplete, setIncomplete] = useState<IncompleteKpi[]>([]);
 
   function load() {
     getReviewDetailAction().then((res) => {
@@ -227,21 +234,27 @@ function ReviewTab({ onSaved }: { onSaved: () => void }) {
     const parsed = score.trim() === "" ? null : Number(score);
     const res = await saveMetricResultAction(detail!.reviewId, metricDefinitionId, { score: parsed, comment: comment || null, owner: owner || null });
     setSavingKey(null);
-    if (!res.ok) {
-      setError(res.error ?? "Unknown error");
-      return;
-    }
+    setSaveError(res.ok ? null : (res.error ?? "Unknown error"));
+    // A newly saved score clears that KPI from the "incomplete" list without waiting for another finalise attempt.
+    if (res.ok && parsed !== null) setIncomplete((list) => list.filter((k) => k.metricDefinitionId !== metricDefinitionId));
+    if (!res.ok) return;
     load();
   }
 
   function handleFinalize() {
     if (!detail) return;
     startFinalizing(async () => {
+      setFinaliseError(null);
       const res = await finalizeReviewAction(detail.reviewId);
       if (!res.ok) {
-        setError(res.error ?? "Unknown error");
+        // Keep the KPI table on screen: a refused finalisation is not a page-level failure.
+        setFinaliseError(res.error ?? "Unknown error");
+        setIncomplete(res.data?.incomplete ?? []);
         return;
       }
+      // Clear the refusal banner explicitly on success (do not rely on the transition-scoped reset above flushing first).
+      setFinaliseError(null);
+      setIncomplete([]);
       load();
       onSaved();
     });
@@ -250,10 +263,32 @@ function ReviewTab({ onSaved }: { onSaved: () => void }) {
   if (error) return <Alert tone="danger">{error}</Alert>;
   if (!detail) return <p className="text-sm text-slate-500">Loading…</p>;
 
+  const scoredCount = detail.metrics.filter((m) => m.score !== null).length;
+  const flaggedIds = new Set(incomplete.map((k) => k.metricDefinitionId));
+
   return (
     <div className="flex flex-col gap-4">
+      {saveError && <Alert tone="danger">{saveError}</Alert>}
+      {finaliseError && (
+        <Alert tone="danger">
+          <p className="font-medium">{finaliseError}</p>
+          {incomplete.length > 0 && (
+            <ul className="mt-2 list-disc pl-5 text-sm">
+              {incomplete.map((k) => (
+                <li key={k.metricDefinitionId}>
+                  <a href={`#kpi-${k.metricDefinitionId}`} className="underline">
+                    {k.sectionName} — {k.metricName}
+                  </a>{" "}
+                  <span className="text-xs">({k.reason === "invalid" ? "invalid score" : "no score entered"})</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Alert>
+      )}
       <div className="flex items-center justify-between">
         <p className="text-sm text-slate-600">
+          {detail.status === "draft" && <span className="mr-2 text-xs text-slate-500">{scoredCount} of {detail.metrics.length} KPIs scored ·</span>}
           {detail.reviewPeriod.slice(0, 7)} · <Badge tone={detail.status === "final" ? "success" : "neutral"}>{detail.status === "final" ? "Final" : "Draft"}</Badge>
         </p>
         {detail.status === "draft" && (
@@ -278,7 +313,7 @@ function ReviewTab({ onSaved }: { onSaved: () => void }) {
           </thead>
           <tbody>
             {detail.metrics.map((m) => (
-              <MetricRow key={m.metricDefinitionId} metric={m} readOnly={detail.status === "final"} saving={savingKey === m.metricDefinitionId} onSave={handleSave} />
+              <MetricRow key={m.metricDefinitionId} metric={m} readOnly={detail.status === "final"} saving={savingKey === m.metricDefinitionId} flagged={flaggedIds.has(m.metricDefinitionId)} onSave={handleSave} />
             ))}
           </tbody>
         </table>
@@ -291,11 +326,14 @@ function MetricRow({
   metric,
   readOnly,
   saving,
+  flagged,
   onSave,
 }: {
   metric: ReviewDetail["metrics"][number];
   readOnly: boolean;
   saving: boolean;
+  /** True when finalisation was refused because this KPI lacks a valid score. */
+  flagged: boolean;
   onSave: (metricDefinitionId: string, score: string, comment: string, owner: string) => void;
 }) {
   const [score, setScore] = useState(metric.score?.toString() ?? "");
@@ -303,7 +341,7 @@ function MetricRow({
   const [owner, setOwner] = useState(metric.owner ?? "");
 
   return (
-    <tr className="border-t border-slate-100 align-top">
+    <tr id={`kpi-${metric.metricDefinitionId}`} className={`border-t border-slate-100 align-top scroll-mt-24 ${flagged ? "bg-red-50" : ""}`}>
       <td className="px-3 py-2">
         <p className="font-medium text-slate-900">{metric.name}</p>
         <p className="text-xs text-slate-400">{metric.category}</p>
@@ -576,47 +614,119 @@ function ActionsTab() {
   );
 }
 
-function HistoryTab() {
-  const [history, setHistory] = useState<ReviewHistoryEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+const INTEGRITY_BADGE: Record<ReviewHistoryEntry["integrity"], { tone: BadgeTone; label: string }> = {
+  draft: { tone: "neutral", label: "Draft" },
+  valid: { tone: "success", label: "Final" },
+  legacy: { tone: "warning", label: "Final · legacy (some KPIs unscored)" },
+  invalid: { tone: "danger", label: "Final · INVALID — no score" },
+};
 
-  useEffect(() => {
+function HistoryTab() {
+  const [history, setHistory] = useState<ReviewHistoryData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [undoingId, setUndoingId] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  const [undoError, setUndoError] = useState<string | null>(null);
+  const [working, startWorking] = useTransition();
+
+  function load() {
     listReviewHistoryAction().then((res) => {
       if (!res.ok) {
         setError(res.error ?? "Unknown error");
         return;
       }
-      setHistory(res.data ?? []);
+      setHistory(res.data ?? { entries: [], canReverse: false });
     });
-  }, []);
+  }
+
+  useEffect(load, []);
+
+  function confirmUndo(reviewId: string) {
+    startWorking(async () => {
+      setUndoError(null);
+      const res = await reverseFinalisationAction(reviewId, reason);
+      if (!res.ok) {
+        setUndoError(res.error ?? "Unknown error");
+        return;
+      }
+      setUndoingId(null);
+      setReason("");
+      load();
+    });
+  }
 
   if (error) return <Alert tone="danger">{error}</Alert>;
   if (!history) return <p className="text-sm text-slate-500">Loading…</p>;
 
-  const maxScore = Math.max(1, ...history.map((h) => h.overallScore ?? 0));
+  const maxScore = Math.max(1, ...history.entries.map((h) => h.overallScore ?? 0));
 
   return (
     <Panel>
       <PanelTitle>Monthly Warehouse Health Score</PanelTitle>
-      <div className="mt-4 flex flex-col gap-2">
-        {history
+      <div className="mt-4 flex flex-col gap-3">
+        {history.entries
           .slice()
           .reverse()
-          .map((h) => (
-            <div key={h.reviewId} className="flex items-center gap-3">
-              <span className="w-16 shrink-0 text-xs text-slate-500">{h.reviewPeriod.slice(0, 7)}</span>
-              <div className="h-4 flex-1 rounded bg-slate-100">
-                {h.overallScore !== null && (
-                  <div className="h-4 rounded bg-primary" style={{ width: `${(h.overallScore / maxScore) * 100}%` }} />
+          .map((h) => {
+            const badge = INTEGRITY_BADGE[h.integrity];
+            return (
+              <div key={h.reviewId} className="flex flex-col gap-1">
+                <div className="flex items-center gap-3">
+                  <span className="w-16 shrink-0 text-xs text-slate-500">{h.reviewPeriod.slice(0, 7)}</span>
+                  <div className={`h-4 flex-1 rounded ${h.integrity === "invalid" ? "border border-dashed border-red-400 bg-red-50" : "bg-slate-100"}`}>
+                    {h.overallScore !== null && h.status === "final" && (
+                      <div className="h-4 rounded bg-primary" style={{ width: `${(h.overallScore / maxScore) * 100}%` }} />
+                    )}
+                  </div>
+                  <span className="w-16 shrink-0 text-right text-xs tabular-nums text-slate-600">
+                    {h.status === "final" && h.overallScore === null ? <span className="text-red-600">No score</span> : h.status === "draft" ? "—" : <ScoreText score={h.overallScore} />}
+                  </span>
+                  <Badge tone={badge.tone}>{badge.label}</Badge>
+                  {h.integrity === "draft" && h.scoredKpis < h.totalKpis && <Badge tone="warning">Incomplete · {h.scoredKpis}/{h.totalKpis}</Badge>}
+                  {history.canReverse && h.status === "final" && (
+                    <Button size="sm" variant="secondary" onClick={() => { setUndoingId(h.reviewId); setReason(""); setUndoError(null); }}>
+                      Undo Finalisation
+                    </Button>
+                  )}
+                </div>
+                {h.lastReversal && (
+                  <p className="ml-16 text-xs text-slate-500">
+                    Reopened {h.reopenedCount}× · last {h.lastReversal.at.slice(0, 10)}
+                    {h.lastReversal.reason ? ` — “${h.lastReversal.reason}”` : ""}
+                  </p>
+                )}
+                {undoingId === h.reviewId && (
+                  <div className="ml-16 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">
+                    <p className="font-medium text-slate-900">Undo the finalisation of {h.reviewPeriod.slice(0, 7)}?</p>
+                    <p className="mt-1 text-xs text-slate-600">
+                      The review returns to Draft so it can be corrected and resubmitted. All entered KPI values are kept and the original finalisation stays in the audit trail.
+                    </p>
+                    <label className="mt-2 block text-xs font-medium text-slate-700" htmlFor={`undo-reason-${h.reviewId}`}>
+                      Reason (required)
+                    </label>
+                    <textarea
+                      id={`undo-reason-${h.reviewId}`}
+                      value={reason}
+                      onChange={(e) => setReason(e.target.value)}
+                      maxLength={1000}
+                      rows={2}
+                      className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                    />
+                    {undoError && <p className="mt-1 text-xs text-red-600">{undoError}</p>}
+                    <div className="mt-2 flex gap-2">
+                      <Button size="sm" loading={working} disabled={reason.trim().length < 5} onClick={() => confirmUndo(h.reviewId)}>
+                        Confirm undo
+                      </Button>
+                      <Button size="sm" variant="secondary" onClick={() => setUndoingId(null)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
                 )}
               </div>
-              <span className="w-16 shrink-0 text-right text-xs tabular-nums text-slate-600">
-                <ScoreText score={h.overallScore} />
-              </span>
-              <Badge tone={h.status === "final" ? "success" : "neutral"}>{h.status === "final" ? "Final" : "Draft"}</Badge>
-            </div>
-          ))}
-        {history.length === 0 && <p className="text-sm text-slate-500">No reviews yet.</p>}
+            );
+          })}
+        {history.entries.length === 0 && <p className="text-sm text-slate-500">No reviews yet.</p>}
       </div>
     </Panel>
   );

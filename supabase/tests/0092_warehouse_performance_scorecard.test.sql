@@ -138,7 +138,9 @@ begin
   -- Finalising requires the snapshot + finalised_at (the CHECK constraint) —
   -- confirm the constraint itself blocks a status flip with no snapshot.
   begin
-    update scorecard_reviews set status = 'final' where id = review_id;
+    -- (overall_score is supplied so that ONLY the snapshot constraint is under test; migration 0121 separately
+    -- requires a score for any final review — see 0121's own test.)
+    update scorecard_reviews set status = 'final', overall_score = 9 where id = review_id;
     raise exception 'expected finalising without a snapshot/finalised_at to be rejected by the CHECK constraint, but it succeeded';
   exception when others then
     if sqlerrm not like '%scorecard_reviews_final_has_snapshot%' then raise; end if;
