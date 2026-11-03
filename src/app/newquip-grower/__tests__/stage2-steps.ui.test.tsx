@@ -283,7 +283,7 @@ describe("UX-006b Stage 2: Mark reviewed & continue (client-local cost acknowled
     expect(shown("signoff")).toBe(true);
     expect(status("cost")).toBe("Reviewed");
     expect(rail().querySelector('[data-step="cost"]')!.textContent).not.toContain("✓");
-    expect(rail().querySelector('[data-step="cost"]')!.textContent).toContain("You marked this reviewed - this is not a sign-off");
+    expect(rail().querySelector('[data-step="cost"]')!.textContent).toContain("You marked this reviewed - this is not a sign-off; it is not saved");
     expect(gcount("estimator")).toBe("1 of 2 complete");
     expect(gstatus("estimator")).toBe("Workflow: Awaiting your review");
     expect(status("signoff")).toBe("Not complete");
@@ -299,7 +299,6 @@ describe("UX-006b Stage 2: Mark reviewed & continue (client-local cost acknowled
     await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
     const bar = screen.getByTestId("step-buttons");
     expect(within(bar).getByText(/It is not the Estimator sign-off\./)).toBeTruthy(); // the sentence sits with the button
-    expect(within(bar).getByRole("button", { name: "Next without marking reviewed" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /Mark reviewed/ }).length).toBe(1); // ONE button, no duplicate at the top
     expect(bar.contains(ackBtn())).toBe(true);
     const live = screen.getByTestId("cost-ack-live"); // the live region exists EMPTY first so the announcement is reliable
@@ -380,13 +379,121 @@ describe("UX-006b Stage 2: Mark reviewed & continue (client-local cost acknowled
     expect(screen.getByTestId("next-manager-cue")).toBeTruthy();
   }, 90000);
 
-  it("the plain Next on Cost & margin is pure navigation: it moves on without marking anything reviewed", async () => {
+  it("OWNER FAILURE (on 7377e04 clicking the secondary Next left 'Review needed' and 0 of 2): there is now exactly ONE way to advance from Cost & margin, and it records the review", async () => {
     await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
-    fireEvent.click(screen.getByRole("button", { name: "Next without marking reviewed" }));
-    expect(shown("signoff")).toBe(true);
-    expect(status("cost")).toBe("Review needed");
-    expect(gcount("estimator")).toBe("0 of 2 complete");
+    expect(screen.queryByRole("button", { name: /without marking reviewed/ })).toBeNull(); // no second way to advance
+    const bar = screen.getByTestId("step-buttons");
+    expect(within(bar).queryByRole("button", { name: /^Next/ })).toBeNull();
+    expect(status("cost")).toBe("Review needed"); expect(gcount("estimator")).toBe("0 of 2 complete");
+    fireEvent.click(ackBtn());
+    expect(shown("signoff")).toBe(true); // Step 5 active
+    expect(status("cost")).toBe("Reviewed"); expect(gcount("estimator")).toBe("1 of 2 complete");
+    expect(document.activeElement?.textContent).toBe("Step 5 · Sign-off or return");
+  }, 60000);
+
+  it("no plain Next exists on the Cost & margin step in any state where nothing is recorded: Rep draft, costing needing attention; only Back and the reason are shown", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4" }); // still a Rep draft
+    let bar = screen.getByTestId("step-buttons");
+    expect(within(bar).queryByRole("button", { name: /Next|Mark reviewed/ })).toBeNull();
+    expect(within(bar).getByRole("button", { name: "Back" })).toBeTruthy();
+    expect(bar.textContent).toContain("Marking the costing reviewed is available once the quote is in Estimator review.");
+    cleanup();
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    const reason = within(panel("cost") as HTMLElement).getAllByLabelText("Reason")[0] as HTMLInputElement;
+    await act(async () => { fireEvent.change(reason, { target: { value: "Supplier quote" } }); });
+    await waitFor(() => expect(status("cost")).toBe("Needs attention"));
+    bar = screen.getByTestId("step-buttons");
+    expect(within(bar).queryByRole("button", { name: /Next|Mark reviewed/ })).toBeNull();
+    expect(bar.textContent).toContain("Resolve the costing items above before marking reviewed.");
+    expect(bar.textContent).toMatch(/cost override is incomplete/); // the existing reason is reused
+    fireEvent.click(within(rail()).getByRole("button", { name: /Sign-off or return/ })); // direct navigation stays and records nothing
+    expect(shown("signoff")).toBe(true); expect(status("cost")).toBe("Needs attention");
+  }, 90000);
+
+  const SHOWALL = () => vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "nq-builder-show-all" ? "1" : null), setItem: () => undefined });
+  const dirtyIt = async () => { await act(async () => { fireEvent.click(within(panel("charges") as HTMLElement).getByLabelText(/Exclude Feed saver mat/, { selector: "input" })); }); };
+
+  it("Show all steps: with unsaved edits the box offers no button and explains why (and nothing is announced); plain Next is absent in the guided dirty state too", async () => {
+    SHOWALL();
+    await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED });
+    expect(screen.getByRole("button", { name: /Mark reviewed/ })).toBeTruthy();
+    await dirtyIt();
+    expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull();
+    const why = screen.getByTestId("cost-ack-blocked");
+    expect(why.textContent).toContain("Save or discard your unsaved edits before marking the costing reviewed.");
+    expect(why.getAttribute("role")).toBe("status");
+    expect(screen.getByTestId("cost-ack-live").textContent).toBe("");
+    cleanup(); vi.unstubAllGlobals();
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    await dirtyIt();
+    const bar = screen.getByTestId("step-buttons");
+    expect(within(bar).queryByRole("button", { name: /Next|Mark reviewed/ })).toBeNull(); // no plain Next when dirty
+  }, 90000);
+
+  it("Show all steps: attention and 'not in Estimator review' are explained in the same words as step mode, with no button", async () => {
+    SHOWALL();
+    await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED });
+    await act(async () => { fireEvent.change(within(panel("cost") as HTMLElement).getAllByLabelText("Reason")[0], { target: { value: "Supplier quote" } }); });
+    await waitFor(() => expect(status("cost")).toBe("Needs attention"));
+    expect(screen.getByTestId("cost-ack-blocked").textContent).toContain("Resolve the costing items above before marking reviewed.");
+    expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull();
+    cleanup();
+    await open({ roles: ["ESTIMATOR"], commercials: true });
+    expect(screen.getByTestId("cost-ack-blocked").textContent).toBe("Marking the costing reviewed is available once the quote is in Estimator review.");
+  }, 90000);
+
+  it("the announcement is derived from the resulting state: after marking it is spoken; an edit that un-acknowledges removes it (never a false 'marked reviewed')", async () => {
+    SHOWALL();
+    await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED });
+    fireEvent.click(ackBtn());
+    expect(screen.getByTestId("cost-ack-live").textContent).toContain("marked reviewed");
+    await dirtyIt();
+    expect(screen.getByTestId("cost-ack-live").textContent).toBe("");
+  }, 60000);
+
+  it("the primary button is described by its explanation (aria-describedby)", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    const d = ackBtn().getAttribute("aria-describedby")!;
+    expect(document.getElementById(d)!.textContent).toContain("It is not the Estimator sign-off.");
   }, 30000);
+
+  it("OBSERVER (can see the costing, holds no quote role - e.g. an Administrator): sees the step and the figures, is told only the Estimator or a Manager can mark it, can move on with a plain Next that records nothing, and has no server action", async () => {
+    const q = serialQueue(0);
+    await open({ roles: [], commercials: true, step: "4", ...SUBMITTED });
+    await sleep(1200);
+    const before = q.log.filter((l) => l.startsWith("start ")).length;
+    expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull();
+    expect(screen.queryByTestId("cost-ack")).toBeNull();
+    const bar = screen.getByTestId("step-buttons");
+    expect(bar.textContent).toContain("You can view the costing and margin but only the Estimator or a Manager can mark it reviewed.");
+    expect(within(bar).queryByRole("button", { name: /without marking/ })).toBeNull();
+    fireEvent.click(within(bar).getByRole("button", { name: "Next: Sign-off or return" }));
+    expect(shown("signoff")).toBe(true);
+    expect(status("cost")).toBe("Review needed"); // nothing recorded
+    expect(gcount("estimator")).toBe("0 of 2 complete");
+    await act(async () => { await sleep(150); });
+    expect(q.log.filter((l) => l.startsWith("start ")).length).toBe(before);
+    const so = within(panel("signoff") as HTMLElement).getByRole("button", { name: /Estimator: I double-checked/ }) as HTMLButtonElement;
+    expect(so.disabled).toBe(true); // read-only for them, with the existing reason
+    expect(document.getElementById("signoff-why")!.textContent).toMatch(/Only an Estimator can sign off/);
+  }, 90000);
+
+  it("FINAL: a commercial viewer gets the plain Next on Cost & margin (nothing to mark), and the read-only Manager sees the single action only while it applies", async () => {
+    await open({ roles: ["MANAGER"], commercials: true, state: "MANAGER_APPROVED_FINAL", step: "4" });
+    const bar = screen.getByTestId("step-buttons");
+    expect(within(bar).getByRole("button", { name: "Next" })).toBeTruthy();
+    expect(within(bar).queryByRole("button", { name: /Mark reviewed/ })).toBeNull();
+  }, 30000);
+
+  it("the acknowledgement persists across navigation within the session (ack, go to step 3 and back: still Reviewed) and shows 'it is not saved'", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    fireEvent.click(ackBtn());
+    fireEvent.click(rail().querySelector('[data-step="submit"]')!);
+    fireEvent.click(rail().querySelector('[data-step="cost"]')!);
+    expect(status("cost")).toBe("Reviewed"); expect(gcount("estimator")).toBe("1 of 2 complete");
+    expect(rail().querySelector('[data-step="cost"]')!.textContent).toContain("You marked this reviewed - this is not a sign-off; it is not saved");
+    expect(within(screen.getByTestId("step-buttons")).getByRole("button", { name: "Next: Sign-off or return" })).toBeTruthy(); // plain Next only after marking
+  }, 60000);
 
   it("a Rep and a non-commercial viewer see the ordinary Next (never the relabelled one) and no status line", async () => {
     await open({ roles: ["REP"], step: "2", ...SUBMITTED });
@@ -401,6 +508,9 @@ describe("UX-006b Stage 2: Mark reviewed & continue (client-local cost acknowled
     const box = within(panel("charges") as HTMLElement).getByLabelText(/Exclude Feed saver mat/, { selector: "input" }) as HTMLInputElement;
     await act(async () => { fireEvent.click(box); });
     expect(status("cost")).toBe("Review needed"); // unsaved edit
+    fireEvent.click(rail().querySelector('[data-step="cost"]')!);
+    expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull(); // no ineffective continuation while edits are unsaved
+    expect(screen.getByTestId("step-buttons").textContent).toContain("Save or discard your unsaved edits before marking the costing reviewed.");
     await act(async () => { fireEvent.change((within(panel("charges") as HTMLElement).getAllByPlaceholderText("Reason (required)") as HTMLInputElement[]).find((i) => i.value === "")!, { target: { value: "Customer supplies it" } }); });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save draft" })); });
     await waitFor(() => expect(screen.getByText("All changes saved")).toBeTruthy(), { timeout: 8000 });
