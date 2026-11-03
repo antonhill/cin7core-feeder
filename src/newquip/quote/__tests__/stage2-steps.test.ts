@@ -6,7 +6,7 @@ const ok: Stage2Input = {
   canViewCommercials: true, state: "REP_DRAFT", calcValid: true, lines: [line(), line()],
   readiness: { state: "READY", reasons: [], missingMappings: 0 },
   budget: { incomplete: false, estimatedCost: 1000, marginPct: 25, lines: [{ status: "priced" }], charges: [{ label: "Delivery", status: "entered" }] },
-  blankExclusionCount: 0, incompleteCostOverrideCount: 0, blankPriceReasonCount: 0, totalAvailable: true, confirmedRecorded: false, signoff: "none",
+  blankExclusionCount: 0, incompleteCostOverrideCount: 0, blankPriceReasonCount: 0, totalAvailable: true, confirmedRecorded: false, signoff: "none", dirty: false,
 };
 const by = (i: Stage2Input) => Object.fromEntries(deriveStage2Steps(i).map((s) => [s.id, s.status]));
 const note = (i: Stage2Input, id: string) => deriveStage2Steps(i).find((s) => s.id === id)?.note;
@@ -43,8 +43,10 @@ describe("deriveStage2Steps (UX-006b): statuses come from loaded data only", () 
     expect(note({ ...ok, budget: { ...ok.budget!, lines: [{ status: "supplier_quote_required" }] } }, "charges")).toBe("1 line needs a price");
     expect(note({ ...ok, budget: { ...ok.budget!, charges: [{ label: "Delivery", status: "required" }] } }, "charges")).toBe("1 charge not entered");
   });
-  it("cost: complete only with a complete estimate and a margin; partial, no margin or an incomplete override needs attention; unknown is stated", () => {
-    expect(by(ok).cost).toBe("complete");
+  it("cost: a complete estimate on a draft is only Review (Cin7 cost capture is not known here), Complete once frozen; partial, no margin or an incomplete override needs attention", () => {
+    expect(by(ok).cost).toBe("review");
+    expect(note(ok, "cost")).toBe("Cin7 cost capture is checked in the Cost panel");
+    expect(by({ ...ok, state: "MANAGER_APPROVED_FINAL" }).cost).toBe("complete");
     expect(by({ ...ok, budget: { ...ok.budget!, incomplete: true } }).cost).toBe("attention");
     expect(by({ ...ok, budget: { ...ok.budget!, marginPct: null } }).cost).toBe("attention");
     expect(note({ ...ok, incompleteCostOverrideCount: 1 }, "cost")).toBe("1 cost override is incomplete");
@@ -62,6 +64,12 @@ describe("deriveStage2Steps (UX-006b): statuses come from loaded data only", () 
     expect(by({ ...er, signoff: "stale" }).handoff).toBe("attention");
     expect(by({ ...er, signoff: "none" }).handoff).toBe("incomplete");
     expect(by({ ...er, signoff: "none", readiness: { state: "BLOCKED", reasons: ["x"], missingMappings: 0 } }).handoff).toBe("attention");
+  });
+  it("handoff: a current sign-off with unsaved edits needs attention (saving would make it stale)", () => {
+    const er = { ...ok, state: "ESTIMATOR_REVIEW" as const, signoff: "current" as const };
+    expect(by({ ...er, dirty: true }).handoff).toBe("attention");
+    expect(note({ ...er, dirty: true }, "handoff")).toBe("Unsaved edits: saving makes the sign-off stale");
+    expect(by(er).handoff).toBe("complete");
   });
   it("handoff, approved: Complete", () => { expect(by({ ...ok, state: "MANAGER_APPROVED_FINAL" }).handoff).toBe("complete"); });
 });

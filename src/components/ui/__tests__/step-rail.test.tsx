@@ -28,6 +28,16 @@ describe("step-rail-model (pure)", () => {
 });
 
 describe("StepRail a11y and behaviour", () => {
+  it("the compact summary names how many steps need attention (only when any), and a Review step shows its text without a check", () => {
+    render(<StepRail id="t" ariaLabel="S" steps={steps} currentId="a" onSelect={vi.fn()} />);
+    expect(screen.getByTestId("step-rail-toggle").textContent).toContain("Step 1 of 4 · Alpha · 1 complete · 1 need attention");
+    cleanup();
+    const ok: RailStep[] = [{ id: "a", label: "Alpha", status: "complete" }, { id: "r", label: "Rho", status: "review" }];
+    render(<StepRail id="t" ariaLabel="S" steps={ok} currentId="a" onSelect={vi.fn()} />);
+    expect(screen.getByTestId("step-rail-toggle").textContent).not.toContain("attention");
+    expect(screen.getByTestId("step-status-r").textContent).toBe("Review");
+    expect(document.querySelector('[data-step="r"]')!.textContent).not.toContain("✓");
+  });
   const view = (current = "b", onSelect = vi.fn()) => render(<StepRail id="t" ariaLabel="Test steps" steps={steps} currentId={current} onSelect={onSelect} />);
   it("is an ordered list of buttons with aria-current=step on the current one only, and status shown as text", () => {
     view();

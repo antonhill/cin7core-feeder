@@ -37,6 +37,8 @@ export interface Stage2Input {
   totalAvailable: boolean;
   confirmedRecorded: boolean;
   signoff: "none" | "current" | "stale";
+  /** The page has unsaved edits (saving them would make a current sign-off stale). */
+  dirty: boolean;
 }
 
 type Result = { status: StepStatus; note?: string };
@@ -78,12 +80,15 @@ export function deriveStage2Steps(i: Stage2Input): Array<RailStep & { id: Stage2
   else if (i.incompleteCostOverrideCount > 0) cost = { status: "attention", note: plural(i.incompleteCostOverrideCount, "cost override is incomplete", "cost overrides are incomplete") };
   else if (i.budget.incomplete) cost = { status: "attention", note: "The estimate is partial until every blocker is resolved" };
   else if (i.budget.marginPct == null) cost = { status: "attention", note: "The margin is not available" };
-  else cost = { status: "complete", ...(i.state === "MANAGER_APPROVED_FINAL" ? {} : { note: "Workbook basis. Cin7 cost capture is checked in its own panel" }) };
+  else if (i.state === "MANAGER_APPROVED_FINAL") cost = { status: "complete" };
+  // The Cin7 cost-capture state lives inside the Cost panel and is not read here, so a green check would claim more than is known: a neutral Review.
+  else cost = { status: "review", note: "Cin7 cost capture is checked in the Cost panel" };
 
   let handoff: Result;
   if (i.state === "MANAGER_APPROVED_FINAL") handoff = { status: "complete", note: "Approved" };
   else if (i.state === "ESTIMATOR_REVIEW") {
-    if (i.signoff === "current") handoff = { status: "complete", note: "Estimator sign-off is current" };
+    if (i.signoff === "current" && i.dirty) handoff = { status: "attention", note: "Unsaved edits: saving makes the sign-off stale" };
+    else if (i.signoff === "current") handoff = { status: "complete", note: "Estimator sign-off is current" };
     else if (i.signoff === "stale") handoff = { status: "attention", note: "The sign-off no longer matches the quotation" };
     else if (i.readiness.state !== "READY") handoff = { status: "attention", note: "The quote must be READY before it can be signed off" };
     else handoff = { status: "incomplete", note: "Awaiting the Estimator's sign-off" };

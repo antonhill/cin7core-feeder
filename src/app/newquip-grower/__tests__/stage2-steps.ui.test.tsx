@@ -166,6 +166,24 @@ describe("UX-006b Stage 2 steps: navigation", () => {
     expect(shown("lines")).toBe(true);
   }, 60000);
 
+  it("a Rep opening ?step=4 sees step 1 and Back/Next, the step state and the address bar agree (no jump to Handoff)", async () => {
+    window.history.replaceState(null, "", "/newquip-grower/x?stage=2&step=4");
+    await open({ step: "4" });
+    expect(shown("lines")).toBe(true);
+    await waitFor(() => expect(new URL(window.location.href).searchParams.has("step")).toBe(false));
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(shown("charges")).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(shown("lines")).toBe(true);
+  }, 30000);
+
+  it("?stage=2&step=3 does not also move Stage 1's step", async () => {
+    await open({ roles: ["REP", "ESTIMATOR"], commercials: true, step: "3" });
+    fireEvent.click(document.querySelector('[data-stage="1"]')!);
+    expect(document.querySelector('[data-step-panel="customer"]')!.hasAttribute("hidden")).toBe(false);
+  }, 30000);
+
   it("Show all steps reveals every step, is remembered under the SAME key as Stage 1, and is restored; storage that throws still renders", async () => {
     const data: Record<string, string> = {};
     vi.stubGlobal("localStorage", { getItem: (k: string) => data[k] ?? null, setItem: (k: string, v: string) => { data[k] = v; } });
@@ -270,7 +288,7 @@ describe("UX-006b Stage 2 steps: statuses come from data, never from a visit", (
     await open({ roles: ["MANAGER"], commercials: true });
     fireEvent.click(within(rail()).getByRole("button", { name: /Cost & margin/ }));
     expect(shown("cost")).toBe(true);
-    expect(["Complete", "Needs attention", "Not complete"]).toContain(status("cost"));
+    expect(["Review", "Needs attention", "Not complete"]).toContain(status("cost")); // never a green Complete on a draft
   }, 30000);
 });
 
