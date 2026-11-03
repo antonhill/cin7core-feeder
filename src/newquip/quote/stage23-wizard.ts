@@ -43,6 +43,9 @@ export interface Stage2WizardInput {
   totalCents: number | null;
   /** Costed lines with no cost (cost-visible viewers only; 0 or absent = the project cost is complete). */
   costMissingLines?: number;
+  /** The SERVER's costing verdict (QuoteView.costing, cost-entitled callers only): when not complete the Costs step needs attention with its reason and sign-off is refused. */
+  costingIncomplete?: boolean;
+  costingReason?: string | null;
   /** Optional one-line summary of the open Estimator items by kind ("3 lines unmapped · 2 supplier quotes required"), used as the mapping step note. */
   mappingSummary?: string;
 }
@@ -58,7 +61,7 @@ export interface StageWizard<I extends string> extends Omit<Wizard<I>, "nextOwne
 export interface FinalReviewItem { id: "mapping" | "ready" | "costing" | "amount" | "saved"; label: string; met: boolean; detail: string | null }
 
 /** The compact readiness checklist of the Final review step. Facts only; the buttons keep their own gates. */
-export function deriveFinalReviewChecklist(i: Pick<Stage2WizardInput, "mappingOpen" | "readiness" | "cost" | "confirmedCents" | "totalCents" | "dirty" | "calcValid" | "costMissingLines">): FinalReviewItem[] {
+export function deriveFinalReviewChecklist(i: Pick<Stage2WizardInput, "mappingOpen" | "readiness" | "cost" | "confirmedCents" | "totalCents" | "dirty" | "calcValid" | "costMissingLines" | "costingIncomplete" | "costingReason">): FinalReviewItem[] {
   const items: FinalReviewItem[] = [
     { id: "mapping", label: "Product lines are mapped and priced", met: i.calcValid && i.mappingOpen.length === 0, detail: !i.calcValid ? "The Rep's configuration is not complete yet." : i.mappingOpen.length === 0 ? null : `${i.mappingOpen[0]}${i.mappingOpen.length > 1 ? ` (+${i.mappingOpen.length - 1} more)` : ""}. Step 1.` },
     { id: "ready", label: "The quotation is READY", met: i.readiness.state === "READY", detail: i.readiness.state === "READY" ? null : (i.readiness.reasons[0] ?? "The quote must be READY (nothing outstanding) before it can be signed off.") },
@@ -67,7 +70,7 @@ export function deriveFinalReviewChecklist(i: Pick<Stage2WizardInput, "mappingOp
     const ok = i.cost.status === "review" || i.cost.status === "complete";
     const missing = i.costMissingLines ?? 0;
     // ONE margin story: with incomplete project costs the check says so (attention), never "Met".
-    if (missing > 0) items.push({ id: "costing", label: `Costing figures: incomplete (${missing} line${missing === 1 ? " has" : "s have"} no cost)`, met: false, detail: "The margin shown is indicative (price-list basis); project margin is not available. You may still sign off: the Manager will see margin as unknown." });
+    if (missing > 0 || i.costingIncomplete) items.push({ id: "costing", label: missing > 0 ? `Costing figures: incomplete (${missing} line${missing === 1 ? " has" : "s have"} no cost)` : "Costing figures: incomplete", met: false, detail: `${i.costingReason ?? "Supplier costs are unresolved."} The margin shown is indicative (price-list basis). Sign-off and approval need costing complete.` });
     else items.push({ id: "costing", label: "Costing figures are available", met: ok, detail: ok ? "Check the Cin7 cost capture in step 2: it may still show incomplete, so review with care." : (i.cost.note ?? "The costing needs attention.") });
   }
   const both = i.confirmedCents != null && i.totalCents != null;
@@ -109,7 +112,7 @@ export function deriveStage2Wizard(i: Stage2WizardInput): StageWizard<Stage2Wiza
     : i.cost.status === "complete" ? { status: "complete" }
     // The figures are looked at here and the review is recorded in Final review: before the mark the label says "To review"; after it, "Reviewed" (counted with the Final review, never a check).
     : inReview && i.costAcknowledged && !i.dirty && i.cost.status === "review" ? { status: "review", counted: true, statusLabel: "Reviewed", note: `Reviewed in Final review (session only, not saved)${(i.costMissingLines ?? 0) > 0 ? `; ${n1(i.costMissingLines!, "line still has", "lines still have")} no cost` : ""}` }
-    : (i.costMissingLines ?? 0) > 0 ? { status: canEdit ? "attention" : "incomplete", note: `${n1(i.costMissingLines!, "line has", "lines have")} no cost` }
+    : (i.costMissingLines ?? 0) > 0 || i.costingIncomplete ? { status: canEdit ? "attention" : "incomplete", note: (i.costMissingLines ?? 0) > 0 ? `${n1(i.costMissingLines!, "line has", "lines have")} no cost` : (i.costingReason ?? "Costing is incomplete") }
     : { status: i.cost.status, ...(i.cost.status === "review" ? { statusLabel: "To review in Final review" } : {}), ...(i.cost.note ? { note: i.cost.note } : {}) };
 
   const blockers = deriveFinalReviewChecklist(i).filter((x) => x.id !== "saved" && !x.met);
@@ -157,7 +160,7 @@ export function deriveStage2Wizard(i: Stage2WizardInput): StageWizard<Stage2Wiza
   if (final) { nextOwner = null; statusLine = "Approved. Nothing is left in Stage 2."; }
   else if (repDraft) {
     if (needsEstimatorFirst) { nextOwner = "Estimator"; statusLine = estimator ? "The Rep is waiting on your mapping." : "The Rep is waiting on the Estimator's mapping. Next responsible role: Estimator."; }
-    else { nextOwner = "Rep"; statusLine = i.roles.rep && !estimator && !i.roles.manager ? "Complete the Stage 1 submission. Next responsible role: Rep." : returned ? `Returned to the Rep (revision ${i.revision}). Next responsible role: Rep.` : "The Rep has not submitted yet. Next responsible role: Rep."; }
+    else { nextOwner = "Rep"; statusLine = i.roles.rep && !estimator && !i.roles.manager ? "Complete the Stage 1 submission. Next responsible role: Rep." : returned ? `Returned to the Rep (revision ${i.revision}). Next responsible role: Rep: reconfirm the amount with the customer, then submit again.` : "The Rep has not submitted yet. Next responsible role: Rep."; }
   } else if (i.signoff === "current" && !i.dirty) { nextOwner = "Manager"; statusLine = "Signed off by the Estimator. Next responsible role: Manager (Stage 3)."; }
   else { nextOwner = "Estimator"; statusLine = estimator ? "Your review: check the lines and costing, then sign off or return it. Next responsible role: Estimator." : "Submitted by the Rep. Next responsible role: Estimator."; }
 
@@ -192,7 +195,7 @@ export function deriveStage3Wizard(i: Stage3WizardInput): StageWizard<Stage3Wiza
     : { id: "decision", label: STAGE3_WIZARD_LABEL.decision, owner: "Manager", status: final ? "complete" : "incomplete", access: !final && manager ? "edit" : "readonly", blockedBy: [], note: decisionNote };
   const nextOwner: WizardRole | null = final ? "Rep" : repDraft ? "Rep" : signed ? "Manager" : "Estimator";
   const statusLine = final ? "Approved. Next: Rep issues and sends the customer quotation (Stage 4)."
-    : repDraft ? (i.revision > 1 ? `Returned to the Rep (revision ${i.revision}). Next responsible role: Rep.` : "The Rep has not submitted yet. Next responsible role: Rep.")
+    : repDraft ? (i.revision > 1 ? `Returned to the Rep (revision ${i.revision}). Next responsible role: Rep: reconfirm the amount with the customer, then submit again.` : "The Rep has not submitted yet. Next responsible role: Rep.")
     : signed ? (manager ? "Signed off by the Estimator. Your decision: approve, or return it. Next responsible role: Manager." : "Signed off by the Estimator. Next responsible role: Manager.")
     : i.signoff === "stale" ? "The Estimator's sign-off is out of date. Next responsible role: Estimator."
     : "Not signed off yet. Next responsible role: Estimator.";
@@ -238,11 +241,11 @@ const n1 = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : man
  * Commercial readiness for a viewer with cost visibility, from facts the page already holds (the budget's lines, the blank-reason count and the margin sheet's missing-cost count). It is a PRESENTATION of
  * what is still unresolved: an incomplete estimate is never shown as ready, and its amounts are "indicative". It decides nothing and gates nothing by itself.
  */
-export function commercialReadiness(i: { lines: ReadonlyArray<{ label: string; status: string }> | null; blankPriceReasonCount: number; costMissingLines: number }): CommercialReadiness {
+export function commercialReadiness(i: { lines: ReadonlyArray<{ label: string; status: string }> | null; blankPriceReasonCount: number; costMissingLines: number; /** The server says costing is incomplete (QuoteView.costing) even if no single line count explains it. */ costingIncomplete?: boolean; costingReason?: string | null }): CommercialReadiness {
   const w = estimatorWork(i.lines, i.blankPriceReasonCount);
   const unmapped = w.map.length; const quotesRequired = w.price.length; const noCost = i.costMissingLines; const reasonsOpen = i.blankPriceReasonCount;
-  const parts = [unmapped > 0 && `${n1(unmapped, "line", "lines")} unmapped`, quotesRequired > 0 && `${n1(quotesRequired, "supplier quote", "supplier quotes")} required`, noCost > 0 && `${n1(noCost, "line has", "lines have")} no cost`, reasonsOpen > 0 && `${n1(reasonsOpen, "manual price needs", "manual prices need")} a reason`].filter(Boolean) as string[];
-  const items = [...w.all.map((text) => ({ owner: "Estimator" as const, text })), ...(noCost > 0 ? [{ owner: "Estimator" as const, text: `${n1(noCost, "line has", "lines have")} no cost: capture it from Cin7 or enter a manual estimate (step 2)` }] : [])];
+  const parts = [unmapped > 0 && `${n1(unmapped, "line", "lines")} unmapped`, quotesRequired > 0 && `${n1(quotesRequired, "supplier quote", "supplier quotes")} required`, noCost > 0 ? `${n1(noCost, "line has", "lines have")} no cost` : !!i.costingIncomplete && "costing incomplete", reasonsOpen > 0 && `${n1(reasonsOpen, "manual price needs", "manual prices need")} a reason`].filter(Boolean) as string[];
+  const items = [...w.all.map((text) => ({ owner: "Estimator" as const, text })), ...(noCost > 0 ? [{ owner: "Estimator" as const, text: `${n1(noCost, "line has", "lines have")} no cost: capture it from Cin7 or enter a manual estimate (step 2)` }] : i.costingIncomplete ? [{ owner: "Estimator" as const, text: `Costing is incomplete: ${i.costingReason ?? "supplier costs are unresolved"} (step 2)` }] : [])];
   return { complete: parts.length === 0, unmapped, quotesRequired, noCost, reasonsOpen, headline: parts.length ? `Not commercially ready: ${parts.join(" \u00B7 ")} (amounts are indicative)` : null, items };
 }
 

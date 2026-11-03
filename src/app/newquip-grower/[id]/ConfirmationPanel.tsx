@@ -16,7 +16,8 @@ import type { ConfirmationInput } from "@/lib/newquip-quotes/confirmation-contac
 
 const inputCls = "h-11 rounded-md border border-slate-300 bg-white px-2 text-sm";
 
-export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading, refreshKey, recorded, onConfirm }: {
+export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading, refreshKey, recorded, onConfirm, indicativeLines = 0 }: {
+  /** > 0: the total is INDICATIVE while this many lines await the Estimator (the Rep confirms the current figure). */ indicativeLines?: number;
   quoteId: string; amountLabel: string | null; canAct: boolean; ready: boolean; loading: boolean; refreshKey: string; recorded: boolean; onConfirm: (c: ConfirmationInput) => void;
 }) {
   const [v, setV] = useState<QuoteCustomerView | null>(null);
@@ -116,12 +117,12 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
         </details>
       )}
       <div className="border-t border-slate-100 pt-3 text-sm">
-        <p>Quote total confirmed (ex VAT): <b>{amountLabel ?? "not available yet"}</b></p>
+        <p>{indicativeLines > 0 ? "Indicative total confirmed (ex VAT)" : "Quote total confirmed (ex VAT)"}: <b>{amountLabel ?? "not available yet"}</b></p>
         <p className="mt-1 text-xs text-slate-700" data-testid="submit-effects">Submitting records the customer&apos;s price confirmation above, notifies the Estimator and moves the quotation to Estimator review. Any unsaved edits are saved first. This is not an approval and not the customer&apos;s formal acceptance, which comes after Manager approval.</p>
         {picked && amountLabel && (
           <label htmlFor={ackId} className="mt-3 flex min-h-11 cursor-pointer items-start gap-2 rounded-md border border-slate-300 p-2 text-sm text-slate-900" data-testid="confirm-ack">
             <input id={ackId} type="checkbox" className="mt-0.5 size-6 shrink-0" checked={ackFor === ackKey} disabled={!canAct || loading || !ready} onChange={(e) => setAckFor(e.target.checked ? ackKey : null)} />
-            <span>I confirm that <b>{picked.name}</b> has confirmed the quotation total of <b>{amountLabel}</b> ex VAT.</span>
+            <span>I confirm that <b>{picked.name}</b> has confirmed the {indicativeLines > 0 ? "indicative " : ""}quotation total of <b>{amountLabel}</b> ex VAT.</span>
           </label>
         )}
         <div className="mt-3">

@@ -10,6 +10,7 @@ import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
+import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
 import { buildAcceptedBaseline, baselineMatchesHash, commercialLinesOf } from "@/newquip/quote/baseline";
 import { buildPhysicalScope } from "@/newquip/quote/physical-scope";
 import { applyMappingLibrary, effectiveScope, scopeFromSnapshot, type LibraryMapping, type ScopeItem } from "../product-scope";
@@ -22,7 +23,7 @@ import { createSaleForProject } from "../cin7-sale-creation-store";
 vi.mock("server-only", () => ({}));
 
 const ctx = (withholdCost: boolean) => ({ priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost });
-const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
+const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
 const ev = evaluateDraft(draft, ctx(true));
 const AT = "2026-10-29T08:00:00Z";
 const APPROVALS = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: AT };

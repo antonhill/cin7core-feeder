@@ -86,8 +86,9 @@ describe("GATE 1 — quote workflow to a frozen baseline and a Project", () => {
     const moved = tenMillionDraft();
     moved.estimator.charges = { ...moved.estimator.charges, installation: 500_000 };
     await saveDraft(db as never, ORG, rep, id, moved);
-    await estimatorSignOff(db as never, ORG, rep, "est@nq", id, ctx);
-    expect(await err(managerApprove(db as never, ORG, mgr, "m@nq", id, ctx))).toMatch(/total changed since the customer confirmed/);
+    // UX-006: the Estimator learns of the changed amount at SIGN-OFF (not the Manager at approval); the approval check itself is covered by checkApproval tests.
+    expect(await err(estimatorSignOff(db as never, ORG, rep, "est@nq", id, ctx))).toBe("The amount changed since the customer confirmed it. Return it to the Rep to reconfirm.");
+    expect(await err(managerApprove(db as never, ORG, mgr, "m@nq", id, ctx))).toMatch(/has not signed off/);
     // return to the rep → new revision, confirmation cleared
     await returnToRep(db as never, ORG, mgr, id, "Re-confirm with the customer");
     const q = (await loadQuote(db as never, ORG, id))!;

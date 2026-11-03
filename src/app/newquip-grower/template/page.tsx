@@ -8,7 +8,7 @@ import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { requireNewquipPocOrg } from "@/newquip/require-newquip-poc-org";
 import { GROWER_RULESET_VERSION } from "@/newquip/grower/final-feedback";
 import { growerTemplateSections, TEMPLATE_HEADER, TREATMENT_LABEL } from "@/newquip/grower/template";
-import { POC_ITEM_REGISTER } from "@/newquip/grower/open-items";
+import { pocItemRegisterFor } from "@/newquip/grower/open-items";
 import { authoriseActor } from "../actor";
 
 // Grower House Template v1 — READ-ONLY detail. Derived from the live rule table, so it cannot drift from what the engine does.
@@ -20,9 +20,9 @@ export default async function GrowerTemplatePage() {
   } catch {
     redirect("/");
   }
-  // Only a viewer who may see cost reads the pricing formula; a Rep reads the neutral quotation-type description (the register is otherwise unchanged).
+  // Only a viewer who may see cost reads the pricing formula of item 1 (the same role/cost helper the other NewQuip pages use); everyone else reads the neutral statement.
   const canSeeCost = await authoriseActor().then((a) => a.canSeeCost).catch(() => false);
-  const register = POC_ITEM_REGISTER.map((i) => (i.n === 1 && !canSeeCost ? { ...i, treatment: "Project quotations use project pricing; day-to-day quotations use the standard price list basis." } : i));
+  const register = pocItemRegisterFor(canSeeCost);
   const sections = growerTemplateSections();
   return (
     <main className={pageContainerClass("wide")}>

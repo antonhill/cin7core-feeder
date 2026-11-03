@@ -258,7 +258,7 @@ describe("deriveStage3Wizard: role x state matrix", () => {
       expect(step3(w, "decision")).toMatchObject({ access: "locked", blockKind: "server", blockedBy: [NOT_SUBMITTED_REASON] });
       expect(w.nextOwner).toBe("Rep");
     }
-    expect(s3({ state: "REP_DRAFT", revision: 2, signoff: "none" }).statusLine).toBe("Returned to the Rep (revision 2). Next responsible role: Rep.");
+    expect(s3({ state: "REP_DRAFT", revision: 2, signoff: "none" }).statusLine).toBe("Returned to the Rep (revision 2). Next responsible role: Rep: reconfirm the amount with the customer, then submit again.");
     expect(s3({ state: "REP_DRAFT", revision: 2, signoff: "none" }).returned).toBe(true);
   });
   it("approved: read-only and complete; nothing is next", () => {
@@ -299,7 +299,7 @@ describe("UX-006i2 review fixes (pure)", () => {
     expect(item.label).toBe("Costing figures are available");
     const inc = deriveFinalReviewChecklist({ mappingOpen: [], readiness: { state: "READY", reasons: [] }, cost: costReview, confirmedCents: 1, totalCents: 1, dirty: false, calcValid: true, costMissingLines: 12 }).find((x) => x.id === "costing")!;
     expect(inc).toMatchObject({ label: "Costing figures: incomplete (12 lines have no cost)", met: false });
-    expect(inc.detail).toMatch(/indicative \(price-list basis\).*You may still sign off/);
+    expect(inc.detail).toMatch(/indicative \(price-list basis\).*Sign-off and approval need costing complete/);
     expect(step(s2({ costMissingLines: 12 }), "final").status).toBe("attention"); // never "Met" / quietly fine
     expect(item.detail).toMatch(/Cin7 cost capture.*may still show incomplete/);
   });
@@ -346,5 +346,20 @@ describe("UX-006 corrections: commercial readiness and the confirmed-amount chan
     expect(step(s2({ costMissingLines: 7, roles: MANAGER }), "costs").status).toBe("incomplete");
     expect(step(s2({ costMissingLines: 7, costAcknowledged: true }), "costs")).toMatchObject({ counted: true });
     expect(step(s2({ costMissingLines: 7, costAcknowledged: true }), "costs").note).toMatch(/7 lines still have no cost/);
+  });
+});
+
+import { deriveApprovalChecklist } from "../stage3-approval";
+describe("UX-006 phase 2: the Stage 3 model mirrors the server's costing condition (no stub)", () => {
+  const base = { readinessState: "READY" as const, readinessReasons: [] as string[], totalExVatCents: 100, customerConfirmedCents: 100, signoffHash: "h", currentDraftHash: "h", dirty: false, isManager: true };
+  it("a viewer with cost visibility gets a 'Costing is complete' row that is met/unmet from the server's verdict, with the server's own message", () => {
+    const open = deriveApprovalChecklist({ ...base, costing: { complete: false, reason: "The cost estimate is incomplete: 12 SKU(s) have no supplier cost selected." } }).find((x) => x.id === "costing")!;
+    expect(open.met).toBe(false); expect(open.detail).toMatch(/Costing is incomplete: The cost estimate is incomplete: 12 SKU\(s\).*cannot be approved/);
+    expect(deriveApprovalChecklist({ ...base, costing: { complete: true, reason: null } }).find((x) => x.id === "costing")!.met).toBe(true);
+  });
+  it("without the server's verdict (a Rep) the row is absent and the other conditions are unchanged", () => {
+    const items = deriveApprovalChecklist({ ...base, costing: null });
+    expect(items.some((x) => x.id === "costing")).toBe(false);
+    expect(items.every((x) => x.met)).toBe(true);
   });
 });

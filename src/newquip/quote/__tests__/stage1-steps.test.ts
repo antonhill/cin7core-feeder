@@ -16,7 +16,7 @@ describe("deriveStage1Steps (UX-006a): completion comes from data only", () => {
   it("a typed customer name WITHOUT a Cin7 snapshot is Needs attention, with the handoff note (never complete)", () => {
     const i = { ...ok, customer: { ...full, hasSnapshot: false, hasContact: false, contactName: null } };
     expect(status(i).customer).toBe("attention");
-    expect(note(i, "customer")).toBe("Needed before sending to the Estimator");
+    expect(note(i, "customer")).toBe("Select the Cin7 customer. Needed before sending to the Estimator");
     expect(deriveStage1Steps(i).issues).toEqual([]); // ...but a missing snapshot is a handoff need, not a Stage 1 readiness reason
   });
   it("a snapshot without a chosen contact still needs attention; with the contact it is complete", () => {
@@ -24,7 +24,8 @@ describe("deriveStage1Steps (UX-006a): completion comes from data only", () => {
     expect(status(ok).customer).toBe("complete");
   });
   it("no name at all is Not complete; customer details still loading is never complete", () => {
-    expect(status({ ...ok, customerName: "  ", customer: { ...full, hasSnapshot: false, hasContact: false, contactName: null } }).customer).toBe("incomplete");
+    expect(status({ ...ok, customerName: "  ", customer: { ...NO_CUSTOMER_FACTS, loaded: true, available: false } }).customer).toBe("incomplete"); // the typed name counts only where Cin7 lookup is unavailable
+    expect(status({ ...ok, customerName: "Typed only", customer: { ...full, hasSnapshot: false, hasContact: false, contactName: null } }).customer).toBe("attention"); // a typed name never replaces the Cin7 customer
     expect(status({ ...ok, customerName: "  " }).customer).toBe("complete"); // a selected Cin7 snapshot IS the identity (no stale "choose the customer")
     expect(status({ ...ok, customer: NO_CUSTOMER_FACTS }).customer).toBe("incomplete");
   });
@@ -57,7 +58,7 @@ describe("deriveStage1Steps (UX-006a): completion comes from data only", () => {
     expect(d.stage2Reasons).toEqual(["Feeder: quantity required"]);
   });
   it("missing customer and site produce issues pointing at their own steps", () => {
-    const d = deriveStage1Steps({ ...ok, customerName: "", siteName: "", customer: { ...full, hasSnapshot: false, hasContact: false, contactName: null } });
+    const d = deriveStage1Steps({ ...ok, customerName: "", siteName: "", customer: { ...NO_CUSTOMER_FACTS, loaded: true, available: false } });
     expect(d.issues.map((i) => i.stepId)).toEqual(["customer", "site"]);
   });
   it("blank room fields are Not complete (not Needs attention) and use human labels; a real invalid value is Needs attention", () => {

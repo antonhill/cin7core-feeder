@@ -19,7 +19,7 @@ const OBSERVER: Roles = { rep: false, estimator: false, manager: false }; // an 
 function wiz(over: Partial<WizardInput> & { s1?: Partial<Stage1Input>; ready?: boolean } = {}) {
   const { s1, ready = true, ...rest } = over;
   const stage1 = deriveStage1Steps({ ...okInput, work: noWork, ...s1 });
-  return deriveWizard({ state: "REP_DRAFT", revision: 1, stage1Status: "IN_PROGRESS", roles: REP, canViewCommercials: false, stage1, customer: (s1?.customer ?? full), readiness: { state: ready ? "READY" : "BLOCKED" }, totalAvailable: true, ...rest });
+  return deriveWizard({ state: "REP_DRAFT", revision: 1, stage1Status: "IN_PROGRESS", roles: REP, canViewCommercials: false, stage1, customer: (s1?.customer ?? full), repReady: ready, estimatorOpen: stage1.open.filter((o) => o.owner === "Estimator").length, totalAvailable: true, ...rest });
 }
 const by = (w: ReturnType<typeof wiz>, id: WizardStepId) => w.steps.find((s) => s.id === id)!;
 const access = (w: ReturnType<typeof wiz>) => w.steps.map((s) => s.access);
@@ -67,18 +67,17 @@ describe("deriveWizard: the Rep on a Rep draft", () => {
     expect(by(failed, "site").blockedBy[0]).toContain("could not be read; reload the page");
   });
 
-  it("Submit has REAL (server) gates: no snapshot / no contact / not READY / no total lock it, with reasons naming the role; policy locks come first", () => {
-    const blocked = wiz({ ready: false, s1: { work: { ...noWork, budgetLines: [{ label: "Cup drinker", status: "unmapped", reason: "r" }, { label: "Door", status: "supplier_quote_required", reason: "r" }] } } });
-    const submit = by(blocked, "submit");
-    expect(submit.access).toBe("locked");
-    expect(submit.blockKind).toBe("server");
-    expect(submit.blockedBy).toEqual(["Estimator: product choice needed: Cup drinker (+1 more). The quotation can be submitted once the Estimator has done this."]);
-    expect(by(blocked, "review").access).toBe("edit"); // the Rep can still review and see who owes what
-    expect(blocked.entryStepId).toBe("review"); // everything the Rep can act on is complete; the last step they can open
+  it("Submit's REAL (server) gates are the Rep-owned ones: snapshot / contact / REP_CONFIGURATION_READY / an amount. Estimator-owned open items NEVER lock it (S1a)", () => {
+    const est = wiz({ ready: true, s1: { work: { ...noWork, budgetLines: [{ label: "Cup drinker", status: "unmapped", reason: "r" }, { label: "Door", status: "supplier_quote_required", reason: "r" }] } } });
+    expect(by(est, "submit").access).toBe("edit"); // the Rep can submit with the Estimator's items open
+    expect(by(est, "review").note).toBe("2 items waiting on the Estimator");
+    expect(est.entryStepId).toBe("submit");
     const noTotal = wiz({ totalAvailable: false });
-    expect(by(noTotal, "submit").blockedBy).toEqual(["The quotation total is not available yet."]);
-    const notReadyNoOwner = wiz({ ready: false });
-    expect(by(notReadyNoOwner, "submit").blockedBy[0]).toContain("must be complete");
+    expect(by(noTotal, "submit")).toMatchObject({ access: "locked", blockKind: "server", blockedBy: ["There is no commercial amount for the customer to confirm."] });
+    const nothingPriced = wiz({ totalAvailable: false, s1: { work: { ...noWork, budgetLines: [{ label: "Cup drinker", status: "unmapped", reason: "r" }] } } });
+    expect(by(nothingPriced, "submit").blockedBy[0]).toMatch(/^No amount can be confirmed yet: nothing is priced and the remaining items are for the Estimator\. Enter the delivery \/ installation charges/);
+    const notRepReady = wiz({ ready: false });
+    expect(by(notRepReady, "submit").blockedBy[0]).toContain("Rep: finish the items still listed in Review");
   });
 
   it("Estimator-owned open work does NOT block the Rep's own steps and is carried as a note on Review", () => {

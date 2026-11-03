@@ -6,7 +6,7 @@ import { checkApproval } from "./workflow";
 // The inputs are the page's live figures (readiness, and the total in cents rounded exactly as the server rounds the saved quotation: Math.round(subtotalExTax * 100)); the server judges the SAVED
 // quotation, so an unsaved edit is called out by its own "No unsaved edits" row.
 
-export type ApprovalCheckId = "ready" | "total" | "confirmed" | "signoff" | "amount" | "manager" | "saved";
+export type ApprovalCheckId = "ready" | "costing" | "total" | "confirmed" | "signoff" | "amount" | "manager" | "saved";
 export interface ApprovalCheckItem {
   id: ApprovalCheckId;
   label: string;
@@ -29,6 +29,8 @@ export interface ApprovalChecklistInput {
   dirty: boolean;
   /** The viewer has the Manager role (the Approve button needs it too; the server enforces it). */
   isManager: boolean;
+  /** The SERVER's costing verdict (QuoteView.costing). Present only for a caller with cost visibility; absent (a Rep) means it is not judged here. */
+  costing?: { complete: boolean; reason: string | null } | null;
   /** The page already shows the sign-off explanation (its existing Alert, also Approve's aria-describedby target) right below: the row then points to it instead of repeating it. */
   signoffExplainedBelow?: boolean;
 }
@@ -40,12 +42,13 @@ export function deriveApprovalChecklist(i: ApprovalChecklistInput): ApprovalChec
   const readiness = { state: i.readinessState, reasons: [...i.readinessReasons] } as Parameters<typeof checkApproval>[0]["readiness"];
   const ready = { state: "READY", reasons: [] } as unknown as Parameters<typeof checkApproval>[0]["readiness"];
   const one = (id: ApprovalCheckId, label: string, over: Partial<Parameters<typeof checkApproval>[0]>, fixStage: 1 | 2 | null): ApprovalCheckItem => {
-    const r = checkApproval({ readiness: ready, totalExVatCents: 1, customerConfirmedCents: 1, signoffHash: NEUTRAL, currentDraftHash: NEUTRAL, ...over });
+    const r = checkApproval({ readiness: ready, totalExVatCents: 1, customerConfirmedCents: 1, signoffHash: NEUTRAL, currentDraftHash: NEUTRAL, costing: { complete: true, reasons: [] }, ...over });  // neutral: only the condition under test is real
     return { id, label, met: r.ok, detail: r.ok ? null : r.error, fixStage };
   };
   const totalOk = i.totalExVatCents != null && i.totalExVatCents > 0;
   const items: ApprovalCheckItem[] = [
     one("ready", "The quote is READY", { readiness }, 2),
+    ...(i.costing ? [one("costing", "Costing is complete", { costing: { complete: i.costing.complete, reasons: i.costing.reason ? [i.costing.reason] : [] } }, 2)] : []),
     one("total", "The quote has a contract value", { totalExVatCents: i.totalExVatCents, customerConfirmedCents: i.totalExVatCents }, 2),
     one("confirmed", "The customer's confirmation is recorded", { customerConfirmedCents: i.customerConfirmedCents == null ? null : 1 }, 2),
     // The sign-off must be the Estimator's on THIS content: both the "never signed" and the "stale" messages come from checkApproval.

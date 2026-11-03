@@ -110,6 +110,8 @@ export interface EstimatorResultProps {
   marginUnknown: boolean;
   /** Costed lines with no cost when the PROJECT margin is incomplete (null = complete or not shown). */
   missingCostLines: number | null;
+  /** Lines the Estimator prices by design (no supplier cost): they keep the margin indicative but are not "missing cost". */
+  estimatorPricedLines?: number;
   /** The three largest lines by selling value (cost-visible viewers only), so an implausible line is noticeable. */
   largestLines: ReadonlyArray<{ label: string; amount: number }> | null;
 }
@@ -124,8 +126,8 @@ export function EstimatorResult(p: EstimatorResultProps) {
         <div><dt className="text-xs text-slate-700">Signed off by</dt><dd className="font-medium text-slate-900" data-testid="result-signoff">{p.signedOffBy ? `${p.signedOffBy}${p.signedOffAt ? `, ${formatSast(p.signedOffAt)}` : ""}${p.signoffCurrent ? "" : " (out of date)"}` : <span className="text-slate-700">Not signed off yet</span>}</dd></div>
         <div><dt className="text-xs text-slate-700">Quote total (ex VAT)</dt><dd className="font-medium tabular-nums text-slate-900">{p.totalCents == null ? "—" : fmtCents(p.totalCents)}</dd></div>
         <div><dt className="text-xs text-slate-700">Customer-confirmed amount</dt><dd className="font-medium tabular-nums text-slate-900">{p.confirmedCents == null ? "—" : fmtCents(p.confirmedCents)} {p.confirmedCents != null && p.totalCents != null && <Status tone={match ? "success" : "danger"}>{match ? "Matches the total" : "Does not match the total"}</Status>}</dd></div>
-        {p.marginUnknown && <div className="md:col-span-2 xl:col-span-4"><Status tone="warning">Margin: incomplete or unknown</Status> <span className="text-sm text-slate-800" data-testid="margin-flag">{p.missingCostLines ? `${p.missingCostLines} costed line${p.missingCostLines === 1 ? " has" : "s have"} no cost, so project margin is not available; the percentage shown is indicative (price-list basis). ` : "Some costs are missing, so the margin cannot be relied on. "}Look at the lines below before deciding.</span></div>}
-        {p.costing && <div><dt className="text-xs text-slate-700">{p.missingCostLines ? "Estimated cost · indicative margin (price-list basis)" : "Estimated cost · gross margin"}</dt><dd className="font-medium tabular-nums text-slate-900" data-testid="result-costing">{fmtZar(p.costing.estimatedCost)} · {p.costing.marginPct == null ? "N/A" : `${p.costing.marginPct.toFixed(1)}%`}</dd></div>}
+        {p.marginUnknown && <div className="md:col-span-2 xl:col-span-4"><Status tone="warning">Margin: incomplete or unknown</Status> <span className="text-sm text-slate-800" data-testid="margin-flag">{p.missingCostLines ? `${p.missingCostLines} costed line${p.missingCostLines === 1 ? " has" : "s have"} no cost, so project margin is not available; the percentage shown is indicative (price-list basis). ` : (p.estimatorPricedLines ?? 0) > 0 ? `${p.estimatorPricedLines} line${p.estimatorPricedLines === 1 ? " is" : "s are"} Estimator-priced (no supplier cost by design), so the margin shown is indicative (price-list basis). ` : "Some costs are missing, so the margin cannot be relied on. "}Look at the lines below before deciding.</span></div>}
+        {p.costing && <div><dt className="text-xs text-slate-700">{p.missingCostLines || p.marginUnknown ? "Estimated cost · indicative margin (price-list basis)" : "Estimated cost · gross margin"}</dt><dd className="font-medium tabular-nums text-slate-900" data-testid="result-costing">{fmtZar(p.costing.estimatedCost)} · {p.costing.marginPct == null ? "N/A" : `${p.costing.marginPct.toFixed(1)}%`}</dd></div>}
       </dl>
       <div className="mt-4" data-testid="result-exceptions">
         <h3 className="text-sm font-semibold text-slate-900">Pricing exceptions</h3>
