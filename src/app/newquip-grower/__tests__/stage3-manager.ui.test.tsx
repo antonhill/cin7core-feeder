@@ -99,6 +99,8 @@ async function open(o: { stage?: string; roles?: Role[]; commercials?: boolean; 
 }
 
 const SIGNED = { state: "ESTIMATOR_REVIEW", row: { customer_confirmed_cents: 1000000000, customer_confirmed_by: "A Customer <a@c.co>", customer_confirmed_at: "2026-11-02T08:00:00Z", handoff_by_email: "rep@nq", estimator_signoff_by_email: "e@nq", estimator_signoff_at: "2026-11-03T08:00:00Z", __useDraftHash: true } };
+// An authorised incomplete-cost exception (the server waives the COST part of costing-complete): approval is then not refused for costs.
+const COSTED = { estimator: { ...draft.estimator, costBasis: { incompleteAccepted: { reason: "Test exception", by: "e@nq", at: "2026-11-02T08:00:00Z" } } } };
 const UNSIGNED = { state: "ESTIMATOR_REVIEW", row: { customer_confirmed_cents: 1000000000, customer_confirmed_by: "A Customer <a@c.co>", customer_confirmed_at: "2026-11-02T08:00:00Z", handoff_by_email: "rep@nq" } };
 const ws = () => screen.getByTestId("stage3-workspace");
 const viewedStage = () => document.querySelector('[data-testid="stage-nav"] [aria-current="step"]')!.getAttribute("data-stage");
@@ -136,7 +138,7 @@ describe("UX-006i2 Stage 3: the Manager's signed-off workspace", () => {
   }, 60000);
 
   it("Approve is enabled only with a current sign-off; Return buttons need a reason; the checklist (checkApproval's own conditions) is unchanged and shown once", async () => {
-    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED });
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED , draftOver: COSTED });
     expect(approve().disabled).toBe(false);
     expect(screen.getAllByTestId("approval-checklist").length).toBe(1);
     const toRep = screen.getByRole("button", { name: "Return to rep (reject)" }) as HTMLButtonElement;
@@ -171,7 +173,7 @@ describe("UX-006i2 Stage 3: the Manager's signed-off workspace", () => {
 
   it("Manager approval calls the approve action once and the view moves on", async () => {
     vi.spyOn(da, "getQuoteDeliveryAction").mockResolvedValue({ ok: true, data: { available: false } } as never);
-    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED });
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED , draftOver: COSTED });
     const id = g.__QID!;
     const spy = vi.spyOn(actions, "approveGrowerQuoteAction").mockImplementation((async () => { patchRow(id, () => ({ state: "MANAGER_APPROVED_FINAL", approved_by_email: "m@nq" })); return actions.getGrowerQuoteAction(id); }) as never);
     await waitFor(() => expect(approve().disabled).toBe(false), { timeout: 8000 });
@@ -255,7 +257,7 @@ describe("UX-006i2 review fixes: the Manager workspace", () => {
   }, 60000);
 
   it("a cost viewer sees the three largest lines (so an implausible line is noticeable); a Rep does not; nothing blocks", async () => {
-    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED });
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED , draftOver: COSTED });
     const lines = within(screen.getByTestId("largest-lines")).getAllByRole("listitem");
     expect(lines.length).toBe(3);
     const amount = (li: HTMLElement) => Number(li.querySelector("b")!.textContent!.replace(/[^\d,]/g, "").replace(",", "."));
@@ -297,4 +299,33 @@ describe("UX-006i2 review fixes: the Manager workspace", () => {
     vi.stubEnv("NEXT_PUBLIC_BUILD_SHA", "abc1234");
     const b = render(createElement(BuildStamp)); expect(b.container.textContent).toBe("Page build: abc1234"); expect(b.container.innerHTML).not.toMatch(/build local/);
   });
+});
+
+describe("UX-006 corrections: Approve mirrors the server rule and shows what is unresolved", () => {
+  it("a signed-off quotation that is NOT READY (unmapped lines): Approve is DISABLED with the reason and the exact counts; Return buttons stay available", async () => {
+    const UN = { estimator: { ...draft.estimator, confirmedMappings: {}, confirmedPackages: [], priceResolutions: {} } };
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED, draftOver: UN });
+    expect(approve().disabled).toBe(true);
+    expect(screen.getByTestId("approve-not-ready").textContent).toMatch(/Approval is disabled: the quotation is not ready\..*Not commercially ready: .*unmapped/);
+    expect(approve().getAttribute("aria-describedby")).toMatch(/approve-notready/);
+    expect(screen.getByTestId("s3-commercial").textContent).toMatch(/Not commercially ready/);
+    fireEvent.change(screen.getByLabelText(/Return to rep — reason/), { target: { value: "Resolve the mappings" } });
+    expect((screen.getByRole("button", { name: "Manager: return to estimator" }) as HTMLButtonElement).disabled).toBe(false);
+  }, 60000);
+  it("SERVER costing incomplete (QuoteView.costing): Approve is DISABLED with the server's reason and the incompleteness is shown; with an authorised cost exception (costing complete) Approve is enabled", async () => {
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED });
+    expect(approve().disabled).toBe(true);
+    expect(screen.getByTestId("approve-not-ready").textContent).toMatch(/Approval is disabled: costing is incomplete\. .*SKU\(s\) have no supplier cost/);
+    expect(approve().getAttribute("aria-describedby")).toMatch(/approve-notready/);
+    expect(screen.getByTestId("s3-commercial").textContent).toMatch(/costing incomplete|no cost/);
+    expect(screen.getByTestId("commercial-chip")).toBeTruthy();
+    const row = within(screen.getByTestId("approval-checklist")).getByText("Costing is complete").closest("li")!;
+    expect(row.querySelector("[data-testid^=check-status]")!.textContent).toBe("Not met"); // the pure Stage 3 model mirrors the server (checkApproval's costing condition)
+    cleanup();
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, ...SIGNED, draftOver: COSTED });
+    expect(approve().disabled).toBe(false);
+    expect(screen.queryByTestId("approve-not-ready")).toBeNull();
+    const ok = within(screen.getByTestId("approval-checklist")).getByText("Costing is complete").closest("li")!;
+    expect(ok.querySelector("[data-testid^=check-status]")!.textContent).toBe("Met");
+  }, 90000);
 });

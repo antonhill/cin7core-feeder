@@ -66,21 +66,21 @@ const customerView = (over: Record<string, unknown> = {}): any => ({ available: 
 const contactRow = (name: string, email: string) => ({ name: { state: "present", value: name }, email: { state: "present", value: email } });
 const snapshotView = (contact: boolean, over: Record<string, unknown> = {}): any => customerView({ snapshot: { cin7CustomerId: "c-123", name: { state: "present", value: "Acme Pigs (Pty) Ltd" }, tradingName: { state: "present", value: "Acme Pigs" }, billingAddress: null, vatNumber: { state: "missing" }, currency: { state: "missing" }, paymentTerm: { state: "missing" }, contacts: [contactRow("Sean", "s@x.co"), contactRow("Thandi", "t@x.co")], chosenContact: contact ? { name: "Sean", email: "s@x.co", source: "CIN7_CONTACT", phone: null } : null }, snapshotId: "s1", seq: 7, issues: [], selectedContactIndex: contact ? 0 : null, ...over });
 
-interface Opts { draftOver?: Record<string, unknown>; view?: any; roles?: Role[]; commercials?: boolean; step?: string; stage?: string; row?: Record<string, unknown>; customerDelay?: Promise<void>; waitSettled?: boolean }
+interface Opts { draftOver?: Record<string, unknown>; view?: any; roles?: Role[]; commercials?: boolean; step?: string; stage?: string; row?: Record<string, unknown>; customerDelay?: Promise<void>; waitSettled?: boolean; deliveryOk?: boolean }
 async function open(o: Opts = {}) {
   asRoles(...(o.roles ?? ["REP", "ESTIMATOR"]));
   vi.mocked(canSeeCosts).mockResolvedValue(o.commercials ?? false);
   const spy = vi.spyOn(ca, "getQuoteCustomerAction");
   if (o.customerDelay) spy.mockImplementation((async () => { await o.customerDelay; return { ok: true, data: o.view ?? customerView() }; }) as never);
   else spy.mockResolvedValue({ ok: true, data: o.view ?? customerView() } as never);
-  vi.spyOn(da, "getQuoteDeliveryAction").mockResolvedValue({ ok: false, error: "n/a" } as never);
+  vi.spyOn(da, "getQuoteDeliveryAction").mockResolvedValue((o.deliveryOk ? { ok: true, data: { available: false } } : { ok: false, error: "n/a" }) as never);
   const { id } = await createQuote(db as never, ORG, "rep@nq");
   await saveDraft(db as never, ORG, member, id, { ...base, customerName: "Acme Pigs", siteName: "Farm 1", config: goodConfig, ...o.draftOver } as any);
   for (const row of db.rows("newquip_quotes") as Array<Record<string, unknown>>) if (row.id === id && o.row) Object.assign(row, o.row);
   g.__QID = id; g.__STEP = o.step; g.__STAGE = o.stage;
   const { default: Page } = await import("../[id]/page");
   render(createElement(Page));
-  await waitFor(() => expect(screen.getByTestId("step-rail")).toBeTruthy(), { timeout: 5000 });
+  await waitFor(() => expect(screen.getByTestId(o.stage === "6" ? "stage-nav" : "step-rail")).toBeTruthy(), { timeout: 5000 });
   if (o.waitSettled !== false && !o.customerDelay) await waitFor(() => expect(screen.queryByTestId("stage1-shell")).toBeNull(), { timeout: 5000 });
   return id;
 }
@@ -181,8 +181,7 @@ describe("locks unlock only when the earlier steps are complete (and say why)", 
     expect(rows.length).toBeGreaterThan(0);
     expect(rows[0].textContent).toMatch(/^Estimator product choice needed: /);
     expect(status("review")).not.toBe("Locked"); // Estimator-owned work does not block the Rep from reviewing
-    expect(status("submit")).toBe("Locked");
-    expect(screen.getByTestId("step-blocked-submit").textContent).toMatch(/^Estimator: product choice needed/);
+    expect(status("submit")).not.toBe("Locked"); // S1a: the Rep submits with the Estimator's items open
   }, 30000);
 
   it("Review lists the missing information WITH its owner (Rep items link to the step; Estimator items are text only)", async () => {
@@ -192,10 +191,10 @@ describe("locks unlock only when the earlier steps are complete (and say why)", 
     expect(tags).toContain("Estimator");
     // Estimator-owned items are GROUPED (one row, owner named once) with an expandable list, and there is nothing for the Rep to click.
     expect(within(issues).getAllByTestId("est-mappings-group").length).toBe(1);
-    expect(within(issues).getByTestId("est-mappings-group").textContent).toMatch(/The Estimator must confirm \d+ product choices?\./);
-    expect(within(issues).getAllByText(/nothing for you to do for them/).length).toBe(1);
+    expect(within(issues).getByTestId("est-mappings-group").textContent).toMatch(/Awaiting the Estimator: \d+ product choices?, \d+ prices?\./);
+    expect(within(issues).getAllByText(/They do not stop you submitting/).length).toBe(1);
     expect(within(issues).queryByRole("button", { name: /Estimator mapping|Go to step/ })).toBeNull();
-    expect(screen.getByTestId("review-next").textContent).toMatch(/^Everything you can do is complete\. Waiting on the Estimator for \d+ items? - nothing for you to do yet\./);
+    expect(screen.getByTestId("review-next").textContent).toMatch(/^Everything you can do is complete - submit to the Estimator \(step 5\)\. \d+ items? will be resolved by the Estimator afterwards\./);
     expect(within(screen.getByTestId("stage1-review-chips")).getAllByRole("listitem").length).toBe(3);
   }, 30000);
 });
@@ -484,8 +483,8 @@ describe("P1-1: the landing stage and entry step are role-aware (no ?stage=)", (
   it("a Rep whose own steps are done but who waits on Estimator mappings lands on Stage 1 and is told nothing is left for them", async () => {
     await open({ view: snapshotView(true), draftOver: noMapDraft(), stage: "" });
     expect(viewing()).toBe("1");
-    expect(document.querySelector('[data-stage="1"]')!.textContent).toContain("Waiting on the Estimator");
-    expect(screen.getByTestId("next-action").textContent).toMatch(/nothing for you to do yet/);
+        expect(screen.getByTestId("next-action").textContent).toMatch(/will be resolved by the Estimator after you submit/);
+    expect(document.querySelector('[data-stage="1"]')!.textContent).toContain("Ready to submit");
   }, 30000);
 
   it("an Estimator-only viewer on a Rep draft with Estimator-owned mapping lands on Stage 2; without such work as before (Stage 1)", async () => {
@@ -870,4 +869,164 @@ describe("regression: customer search state and the second 'Load recommended con
     const sections = readFileSync(`${__dirname}/../[id]/RepConfigSections.tsx`, "utf8");
     expect(sections).toContain("min-w-0 max-w-full"); // the collapsible chip and table wrapper cannot widen the page
   });
+});
+
+// ── Corrections round, phase 1 ──
+const LEAK = /landed|mark-?up|\b20%|\bROE\b|Freight/i;
+const BASELINE = { contractCents: 1000000, internalMargin: null, template: { name: "Grower", version: "1", rulesetVersion: "1" }, quote: { revision: 1 }, pricing: { source: { label: "test" }, basis: "Landed cost (Cost × ROE × Freight) + 20% markup", quoteType: "project" }, overrides: [], exclusions: [], priceResolutions: [] };
+
+describe("D-4: a Rep never reads the cost basis or markup", () => {
+  it("no 'landed', 'markup', '20%', 'ROE' or 'Freight' anywhere on the Rep's Stage 1 (all steps shown) or Stage 2", async () => {
+    vi.stubGlobal("localStorage", { getItem: () => "1", setItem: () => undefined });
+    await open({ view: snapshotView(true), draftOver: { ...readyDraft, quoteType: "project" }, roles: ["REP"] });
+    expect((document.body.textContent ?? "").match(new RegExp(".{40}(" + LEAK.source + ").{40}", "i"))?.[0] ?? "").toBe("");
+    const opts = [...document.querySelectorAll('select option')].map((o) => o.textContent);
+    expect(opts).toContain("Project pricing");
+    expect(opts).toContain("Standard price list basis");
+    cleanup();
+    await open({ view: snapshotView(true), draftOver: { ...readyDraft, quoteType: "project" }, roles: ["REP"], stage: "2" });
+    expect(document.body.textContent).not.toMatch(LEAK);
+  }, 60000);
+
+  it("the accepted-baseline summary (Stage 6) shows a Rep the quotation type only; a cost-visible Manager keeps the detailed basis", async () => {
+    const final = { state: "MANAGER_APPROVED_FINAL", requires_customer_acceptance: false, customer_confirmed_cents: 1, accepted_baseline: BASELINE };
+    await open({ view: snapshotView(true), draftOver: { ...readyDraft, quoteType: "project" }, roles: ["REP"], stage: "6", row: final, deliveryOk: true });
+    await screen.findByText("Accepted commercial baseline (frozen)");
+    expect(document.body.textContent).not.toMatch(LEAK);
+    expect(document.body.textContent).toContain("Pricing basisProject pricing");
+    cleanup();
+    await open({ view: snapshotView(true), draftOver: { ...readyDraft, quoteType: "project" }, roles: ["MANAGER"], commercials: true, stage: "6", row: final, deliveryOk: true });
+    await screen.findByText("Accepted commercial baseline (frozen)");
+    expect(document.body.textContent).toMatch(/Landed cost \(Cost × ROE × Freight\) \+ 20% markup/);
+  }, 60000);
+
+  it("the neutral labels name the type without any basis", async () => {
+    const { QUOTE_TYPE_NEUTRAL } = await import("@/newquip/grower/pricing-source");
+    expect(Object.values(QUOTE_TYPE_NEUTRAL).join(" ")).not.toMatch(LEAK);
+  });
+});
+
+describe("touch targets on the primary journey are class-contracted at 44px", () => {
+  it("Stage 1 form controls, the shell nav, the quote list and the small disclosure links", async () => {
+    const { readFileSync } = await import("node:fs");
+    const rd = (f: string) => readFileSync(`${__dirname}/../${f}`, "utf8");
+    const page = rd("[id]/page.tsx");
+    expect(page).toContain("[&_input:not([type=checkbox]):not([type=radio])]:min-h-11 [&_select]:min-h-11 [&_textarea]:min-h-11"); // additive, Stage 1 form only
+    expect(page).toContain('data-testid="provenance"');
+    expect(page).toMatch(/provenance[\s\S]{0,200}min-h-11/);
+    expect(rd("../NewquipShell.tsx")).not.toContain("md:min-h-9");
+    expect(rd("page.tsx")).not.toContain("h-9 items-center");
+    expect(rd("[id]/Stage1Review.tsx")).toContain("inline-flex min-h-11 cursor-pointer items-center");
+    expect(rd("[id]/CustomerPanel.tsx")).toContain('inline-flex min-h-11 cursor-pointer items-center font-medium text-slate-700">Details');
+    expect(rd("fields.tsx")).toContain("h-9"); // the shared inputs are NOT changed for the Project / claims / billing screens
+  });
+  it("the step rail is dense on Stage 1 (compact cards), and the stage indicator is one box", async () => {
+    await open({ view: snapshotView(true), step: "2" });
+    const card = document.querySelector('[data-step="site"]')!;
+    expect(card.className).toContain("p-2");
+    const nav = screen.getByTestId("stage-nav");
+    expect(nav.className).toContain("rounded-lg border");
+    expect(nav.querySelector('[data-testid="next-action"]')!.className).toContain("max-sm:hidden");
+  }, 30000);
+});
+
+// ── Phase 2: Rep handoff (S1a) and customer integrity (S1b) wired into Stage 1 ──
+import { renderToStaticMarkup } from "react-dom/server";
+describe("S1a: the Rep submits with Estimator-owned items open (indicative total)", () => {
+  it("Review shows 'Awaiting the Estimator: N product choices, N prices' informationally; Submit is not locked; the indicative total, the plain note and the tick are shown; the action gets the indicative amount", async () => {
+    const send = vi.spyOn(actions, "sendGrowerQuoteToEstimatorAction").mockImplementation((async (qid: string) => actions.getGrowerQuoteAction(qid)) as never);
+    await open({ view: snapshotView(true), draftOver: noMapDraft(), step: "5" });
+    expect(status("submit")).not.toBe("Locked");
+    expect(current()).toBe("submit");
+    const caption = screen.getByTestId("total-caption").textContent ?? "";
+    expect(caption).toMatch(/^Indicative total \(\d+ lines? await the Estimator\)$/);
+    const bar = screen.getByTestId("quote-summary-bar");
+    expect(bar.textContent).toMatch(/R\s?[\d\s]+,\d\d/); // an amount IS shown although the budget is incomplete
+    const sub = panel("submit") as HTMLElement;
+    const n = Number(caption.match(/\((\d+)/)![1]);
+    expect(within(sub).getByTestId("indicative-note").textContent).toBe(`This total is indicative while ${n} lines await the Estimator. If the Estimator's pricing changes it, the quotation returns to you to reconfirm the amount with the customer.`);
+    const btn = (await within(sub).findByRole("button", { name: "Submit to Estimator" })) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    fireEvent.click(within(sub).getByLabelText(/has confirmed the indicative quotation total of R/));
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    fireEvent.click(btn);
+    await waitFor(() => expect(send).toHaveBeenCalled());
+    expect(send.mock.calls[0][1]).toBeGreaterThan(0); // the indicative total in cents (server figure), not null
+    // Review: informational, never a blocker
+    fireEvent.click(screen.getByRole("button", { name: /Review configuration/ }));
+  }, 60000);
+
+  it("Review groups the awaiting items as counts", async () => {
+    await open({ view: snapshotView(true), draftOver: noMapDraft(), step: "4" });
+    expect(screen.getByTestId("est-mappings-group").textContent).toMatch(/Awaiting the Estimator: \d+ product choices?, \d+ prices?\./);
+    expect(document.body.textContent).not.toMatch(/nothing for you to do yet/);
+  }, 30000);
+});
+
+describe("S1b: customer identity", () => {
+  it("with Cin7 lookup available a typed name is NOT the identity: a legacy quotation without a snapshot shows 'Select the Cin7 customer' (needs attention), no typed field, later steps locked", async () => {
+    await open({ view: customerView(), draftOver: { customerName: "Typed Name Ltd" }, stage: "" });
+    expect(screen.queryByRole("textbox", { name: /^Customer\b/, hidden: true })).toBeNull();
+    expect(status("customer")).toBe("Needs attention");
+    expect(within(screen.getByTestId("step-rail")).getByText(/Select the Cin7 customer/)).toBeTruthy();
+    expect(status("site")).toBe("Locked");
+    expect(document.querySelector('[data-stage="1"]')!.textContent).not.toContain("Complete");
+  }, 30000);
+
+  it("the typed fallback still exists where Cin7 lookup is unavailable", async () => {
+    await open({ view: customerView({ available: false }), draftOver: { customerName: "Typed Name Ltd" }, step: "1" });
+    expect(screen.getByRole("textbox", { name: /^Customer\b/, hidden: true })).toBeTruthy();
+    expect(status("customer")).toBe("Complete");
+  }, 30000);
+});
+
+describe("S1b: changing the contact", () => {
+  it("when it would withdraw the customer's confirmation the Rep is told first and must confirm; confirming passes confirmWithdrawal=true and the effect is shown; Cancel calls nothing", async () => {
+    const view = snapshotView(true, { contactChangeWithdrawsConfirmation: true, confirmationRecorded: true });
+    await open({ view, step: "1" });
+    const choose = vi.spyOn(ca, "chooseQuoteContactAction").mockResolvedValue({ ok: true, data: { ...snapshotView(true), effect: { confirmationCleared: true, signoffCleared: false, returnedToRep: true } } } as never);
+    fireEvent.click(screen.getByRole("button", { name: /Thandi/ }));
+    expect(screen.getByTestId("contact-withdraw-warning").textContent).toBe("Changing the contact withdraws the customer's confirmation (and returns the quotation to you if the Estimator is reviewing it)");
+    expect(choose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByTestId("contact-withdraw-warning")).toBeNull();
+    expect(choose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /Thandi/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Change contact" }));
+    await waitFor(() => expect(choose).toHaveBeenCalledTimes(1));
+    expect(choose.mock.calls[0][2]).toBe(true);
+    expect((await screen.findByTestId("confirmation-effect")).textContent).toBe("The customer's price confirmation was withdrawn; the quotation was returned to you as a new revision. Reconfirm the amount with the customer, then submit again.");
+  }, 30000);
+
+  it("without a recorded confirmation there is no warning and the action is not asked to withdraw anything", async () => {
+    await open({ view: snapshotView(true), step: "1" });
+    const choose = vi.spyOn(ca, "chooseQuoteContactAction").mockResolvedValue({ ok: true, data: snapshotView(true) } as never);
+    fireEvent.click(screen.getByRole("button", { name: /Thandi/ }));
+    expect(screen.queryByTestId("contact-withdraw-warning")).toBeNull();
+    await waitFor(() => expect(choose).toHaveBeenCalled());
+    expect(choose.mock.calls[0][2]).toBe(false);
+  }, 30000);
+
+  it("a returned quotation explains an Estimator price change from the save's confirmationEffect (previous -> new, withdrawn, reconfirm)", async () => {
+    await open({ view: snapshotView(true), draftOver: { siteName: "" }, row: { revision: 2 } });
+    const real = actions.saveGrowerDraftAction;
+    vi.spyOn(actions, "saveGrowerDraftAction").mockImplementation((async (qid: string, d: never) => { const r: any = await real(qid, d); return { ...r, data: { ...r.data, confirmationEffect: { confirmationCleared: true, signoffCleared: false, returnedToRep: true, previousCents: 1000000, newCents: 1250000 } } }; }) as never);
+    fireEvent.change(screen.getByLabelText(/^Site \/ project name/), { target: { value: "Farm 2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    const t = await screen.findByTestId("return-amount-change");
+    expect(t.textContent).toMatch(/^The total changed from R\s?10\s?000,00 to R\s?12\s?500,00; the customer's confirmation was withdrawn: reconfirm the new amount with the customer and submit again\./);
+  }, 30000);
+});
+
+describe("template page (Rep-visible) and the cost-basis wording", () => {
+  it("renders no landed-cost / markup / 20% / ROE / Freight wording for a Rep; a cost-visible viewer still reads the register as written", async () => {
+    const Page = (await import("../template/page")).default;
+    vi.mocked(canSeeCosts).mockResolvedValue(false);
+    const rep = renderToStaticMarkup(await Page());
+    expect(rep).toContain("Project pricing");
+    // (the register legitimately mentions delivery "freight" elsewhere, so the scan names the cost-basis wording itself)
+    expect((rep.match(/.{30}(landed cost|mark-?up|\b20%|\bROE\b).{30}/i) ?? [""])[0]).toBe("");
+    vi.mocked(canSeeCosts).mockResolvedValue(true);
+    expect(renderToStaticMarkup(await Page())).toMatch(/landed cost/i);
+  }, 30000);
 });

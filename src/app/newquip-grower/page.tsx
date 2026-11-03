@@ -48,10 +48,10 @@ export default function NewquipGrowerPage() {
           Quotes are kept in the Toolbox only — <strong>nothing is sent to Cin7 or Xero</strong>.
         </p>
         <div className="flex gap-2">
-          <Link href="/newquip-grower/project-templates" className="inline-flex h-9 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Project templates</Link>
-          <Link href="/newquip-grower/company-profile" className="inline-flex h-9 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Company details</Link>
-          <Link href="/newquip-grower/template" className="inline-flex h-9 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Template detail</Link>
-          <Button onClick={create} loading={isWorking}>New Grower quote</Button>
+          <Link href="/newquip-grower/project-templates" className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Project templates</Link>
+          <Link href="/newquip-grower/company-profile" className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Company details</Link>
+          <Link href="/newquip-grower/template" className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Template detail</Link>
+          <Button className="min-h-11" onClick={create} loading={isWorking}>New Grower quote</Button>
         </div>
       </div>
       {error && <div className="mt-6"><Alert tone="danger">{error}</Alert></div>}
@@ -68,13 +68,13 @@ export default function NewquipGrowerPage() {
               <TBody>
                 {rows.map((q) => (
                   <TR key={q.id}>
-                    <TD><Link className="font-medium text-indigo-700 hover:underline" href={`/newquip-grower/${q.id}`}>{q.quote_ref}</Link> <span className="text-xs text-slate-600">rev {q.revision}</span></TD>
+                    <TD><Link className="inline-flex min-h-11 items-center font-medium text-indigo-700 hover:underline" href={`/newquip-grower/${q.id}`}>{q.quote_ref}</Link> <span className="text-xs text-slate-600">rev {q.revision}</span></TD>
                     <TD>{q.customer_name || "—"}</TD>
                     <TD>{q.site_name || "—"}</TD>
                     <TD><Status tone={STATE_TONE[q.state]}>{stageLabelOf(q)}</Status></TD>
                     <TD className="text-sm text-slate-800" data-testid="waiting-on">{waitingOn(q)}</TD>
                     <TD align="right" className="tabular-nums whitespace-nowrap">{fmtCents(q.contract_cents)}</TD>
-                    <TD>{q.project_id ? <Link className="text-indigo-700 hover:underline" href={`/projects/${q.project_id}`}>Open project</Link> : "—"}</TD>
+                    <TD>{q.project_id ? <Link className="inline-flex min-h-11 items-center text-indigo-700 hover:underline" href={`/projects/${q.project_id}`}>Open project</Link> : "—"}</TD>
                   </TR>
                 ))}
               </TBody>

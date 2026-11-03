@@ -84,7 +84,7 @@ function FxForm({ v, busy, onRecordFx }: { v: QuoteCostView; busy: boolean; onRe
           <Input label="Rate" value={f.rate} inputMode="decimal" onChange={(e) => setF({ ...f, rate: e.target.value })} />
           <Input label="Source (provider, fixing or quote)" value={f.source} onChange={(e) => setF({ ...f, source: e.target.value })} />
           <Input label="Effective (date and time)" type="datetime-local" className={DATETIME_FOCUS} value={f.asOf} onChange={(e) => setF({ ...f, asOf: e.target.value })} />
-          <Button size="sm" disabled={busy || !f.rate || f.source.trim().length < 3 || !f.asOf} onClick={() => onRecordFx(f.currency, f.rate, f.source, new Date(f.asOf).toISOString())}>Record rate</Button>
+          <Button size="sm" className="min-h-11" disabled={busy || !f.rate || f.source.trim().length < 3 || !f.asOf} onClick={() => onRecordFx(f.currency, f.rate, f.source, new Date(f.asOf).toISOString())}>Record rate</Button>
         </div>
       )}
       <div className="mt-1 text-slate-600">A rate older than {v.maxRateAgeHours} hours is refused as stale. The rate used by a quotation is frozen into its estimate at approval.</div>
@@ -122,7 +122,7 @@ function Declarations({ v, busy, onConfirmUnit, onAcceptIncomplete }: { v: Quote
         {us.legacySkus.length > 0 && <div className="mt-1 text-amber-700" data-testid="uom-legacy">This cost snapshot was captured before unit information was tracked, so the unit of these prices cannot be established ({us.legacySkus.join(", ")}). Capture the latest Cin7 costs again to apply the current rule. Capturing again replaces the recorded costs; nothing is captured automatically.</div>}
         {!v.unitBasis && (us.exceptions.length > 0 || us.legacySkus.length > 0) && us.perStockUnit > 0 && <details className="mt-1 text-slate-600"><summary className="flex min-h-11 cursor-pointer items-center">{us.perStockUnit} other supplier price{us.perStockUnit === 1 ? " is" : "s are"} per stock unit</summary><div>{PER_STOCK_UNIT}</div></details>}
         {!v.unitBasis && us.confirmableSkus.length > 0 && onConfirmUnit && !v.frozen && (
-          <><div className="mt-1 text-slate-700" data-testid="uom-confirm-scope">Confirming per stock unit unblocks: {us.confirmableSkus.join(", ")}.</div><div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end"><div className="min-w-0 max-w-2xl flex-1"><Input label="How do you know? (required)" value={unitReason} onChange={(e) => setUnitReason(e.target.value)} /></div><Button size="sm" variant="secondary" disabled={busy || unitReason.trim().length < 10} aria-describedby={unitWhy ? `${uid}-unit-why` : undefined} onClick={() => onConfirmUnit(unitReason)}>Confirm per stock unit</Button></div>
+          <><div className="mt-1 text-slate-700" data-testid="uom-confirm-scope">Confirming per stock unit unblocks: {us.confirmableSkus.join(", ")}.</div><div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end"><div className="min-w-0 max-w-2xl flex-1"><Input label="How do you know? (required)" value={unitReason} onChange={(e) => setUnitReason(e.target.value)} /></div><Button size="sm" className="min-h-11" variant="secondary" disabled={busy || unitReason.trim().length < 10} aria-describedby={unitWhy ? `${uid}-unit-why` : undefined} onClick={() => onConfirmUnit(unitReason)}>Confirm per stock unit</Button></div>
           <DisabledReason id={`${uid}-unit-why`}>{unitWhy}</DisabledReason></>
         )}
       </div>
@@ -132,7 +132,7 @@ function Declarations({ v, busy, onConfirmUnit, onAcceptIncomplete }: { v: Quote
           <>
             <div className="text-slate-600">Approval is refused while a captured estimate is incomplete, unless an authorised exception is recorded.</div>
             {onAcceptIncomplete && !v.frozen && (
-              <><div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end"><div className="min-w-0 max-w-2xl flex-1"><Input label="Exception reason (required)" value={exception} onChange={(e) => setException(e.target.value)} /></div><Button size="sm" variant="secondary" disabled={busy || exception.trim().length < 10} aria-describedby={exceptionWhy ? `${uid}-exception-why` : undefined} onClick={() => onAcceptIncomplete(exception)}>Record exception</Button></div>
+              <><div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end"><div className="min-w-0 max-w-2xl flex-1"><Input label="Exception reason (required)" value={exception} onChange={(e) => setException(e.target.value)} /></div><Button size="sm" className="min-h-11" variant="secondary" disabled={busy || exception.trim().length < 10} aria-describedby={exceptionWhy ? `${uid}-exception-why` : undefined} onClick={() => onAcceptIncomplete(exception)}>Record exception</Button></div>
               <DisabledReason id={`${uid}-exception-why`}>{exceptionWhy}</DisabledReason></>
             )}
           </>
@@ -159,19 +159,19 @@ export function CostPanelBody(p: CostPanelBodyProps) {
       {error && (
         <div className="mt-2 space-y-2">
           <Alert tone="danger">{friendlyCin7Error(error)}</Alert>
-          <Button size="sm" variant="secondary" disabled={busy} onClick={p.onRetry}>Try again</Button>
+          <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={p.onRetry}>Try again</Button>
         </div>
       )}
       {note && <div className="mt-2"><Alert tone="success">{note}</Alert></div>}
       {stale && (
-        <div className="mt-2 flex flex-wrap items-center gap-2"><Alert tone="warning">An exchange rate or declaration has changed since these costs were captured.</Alert>{p.onRecalculate && <Button size="sm" variant="secondary" disabled={busy} onClick={p.onRecalculate}>Recalculate with current rates</Button>}</div>
+        <div className="mt-2 flex flex-wrap items-center gap-2"><Alert tone="warning">An exchange rate or declaration has changed since these costs were captured.</Alert>{p.onRecalculate && <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={p.onRecalculate}>Recalculate with current rates</Button>}</div>
       )}
       {v?.canCapture && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <Button size="sm" disabled={busy || noSkus} loading={busy} onClick={() => p.onCapture(false)}>Capture latest costs from Cin7</Button>
+          <Button size="sm" className="min-h-11" disabled={busy || noSkus} loading={busy} onClick={() => p.onCapture(false)}>Capture latest costs from Cin7</Button>
           {noSkus && <span className="text-xs text-amber-700">No physical SKUs yet: map the packages to Cin7 SKUs in the physical scope first, then capture.</span>}
           {!noSkus && <span className="text-xs text-slate-600">Reads Cin7 only (no writes). Your supplier selections and manual estimates are kept. Changing the costs withdraws the estimator&apos;s sign-off until it is given again.</span>}
-          {!noSkus && <Button size="sm" variant="secondary" disabled={busy} onClick={() => { if (typeof window === "undefined" || window.confirm("Re-read Cin7 AND discard every supplier selection you made? Manual estimates are kept.")) p.onCapture(true); }}>Capture and replace my selections</Button>}
+          {!noSkus && <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={() => { if (typeof window === "undefined" || window.confirm("Re-read Cin7 AND discard every supplier selection you made? Manual estimates are kept.")) p.onCapture(true); }}>Capture and replace my selections</Button>}
         </div>
       )}
       {v && !v.frozen && <FxForm v={v} busy={busy} onRecordFx={p.onRecordFx} />}
@@ -196,8 +196,8 @@ export function CostPanelBody(p: CostPanelBodyProps) {
                     <td className="whitespace-nowrap pr-3 text-right tabular-nums">{l.totalCostCents === null ? "-" : fmtCents(l.totalCostCents)}</td>
                     <td className="pr-3 text-xs">{l.status === "LATEST" ? "Cin7 supplier price" : l.status === "MANUAL" ? <span title={l.reason ?? ""}>Manual estimate: {l.reason}</span> : <span className="text-amber-700">{(l.issue && ISSUE[l.issue]) ?? "No cost"}{so?.message ? ` - ${so.message}` : ""}</span>}{l.retrievedAt ? <div className="text-slate-600">read {formatSast(l.retrievedAt)}</div> : null}</td>
                     <td>{v.canCapture && (l.status === "MISSING" || l.status === "MANUAL") && (l.status === "MANUAL"
-                      ? <Button size="sm" variant="secondary" disabled={busy} onClick={() => p.onClearManual(l.sku)}>Remove</Button>
-                      : <Button size="sm" variant="secondary" disabled={busy} onClick={() => p.onStartManual(l.sku)}>Add manual estimate</Button>)}</td>
+                      ? <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={() => p.onClearManual(l.sku)}>Remove</Button>
+                      : <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={() => p.onStartManual(l.sku)}>Add manual estimate</Button>)}</td>
                   </tr>
                 );
               })}
@@ -210,7 +210,7 @@ export function CostPanelBody(p: CostPanelBodyProps) {
           <div className="text-sm font-medium">{manual.sku}</div>
           <Input label="Unit cost (R)" value={manual.rand} inputMode="decimal" onChange={(ev) => p.onManualChange({ ...manual, rand: ev.target.value })} />
           <Input label="Reason (required)" value={manual.reason} onChange={(ev) => p.onManualChange({ ...manual, reason: ev.target.value })} />
-          <Button size="sm" disabled={busy || !/^\d+(\.\d{1,2})?$/.test(manual.rand.trim()) || manual.reason.trim().length < 5} onClick={p.onSaveManual}>Save</Button>
+          <Button size="sm" className="min-h-11" disabled={busy || !/^\d+(\.\d{1,2})?$/.test(manual.rand.trim()) || manual.reason.trim().length < 5} onClick={p.onSaveManual}>Save</Button>
         </div>
       )}
       {e && (

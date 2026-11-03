@@ -6,6 +6,7 @@ import { Spinner } from "@/app/Spinner";
 import { Status } from "@/components/ui/Status";
 import { Button } from "@/components/ui/Button";
 import { formatSast } from "@/lib/approvals/time";
+import type { ContactChoice } from "@/lib/newquip-quotes/customer-snapshot";
 import { chooseQuoteContactAction, clearQuoteCustomerAction, getQuoteCustomerAction, refreshQuoteCustomerAction, searchQuoteCustomersForQuoteAction, selectQuoteCustomerAction, type QuoteCustomerView, type RefreshPreview } from "../customer-actions";
 import type { CustomerHit } from "@/lib/newquip-customers/cin7-customer-read";
 import { fieldValue, isValidEmail, type Field } from "@/lib/newquip-quotes/customer-snapshot";
@@ -14,10 +15,16 @@ import type { Stage1CustomerFacts } from "@/newquip/quote/stage1-steps";
 // Cin7 customer lookup, quotation contact and the customer-details snapshot. Cin7 stays the master: nothing here is ever written to Cin7. A field Cin7 did not supply is
 // shown as "not in Cin7", never as a blank. The server re-checks the Rep role and the organisation on every action.
 
+/** One concise line for what a change did to the customer's confirmation (the server's effect). */
+function effectText(e: { confirmationCleared: boolean; signoffCleared: boolean; returnedToRep: boolean; approvalSyncError?: string }): string {
+  const parts = [e.confirmationCleared ? "The customer's price confirmation was withdrawn" : "", e.returnedToRep ? "the quotation was returned to you as a new revision" : "", e.signoffCleared ? "the Estimator's sign-off was withdrawn" : ""].filter(Boolean);
+  const base = parts.length ? `${parts.join("; ")}. Reconfirm the amount with the customer, then submit again.` : "";
+  return `${base}${e.approvalSyncError ? ` The approval request could not be updated: ${e.approvalSyncError}` : ""}`.trim();
+}
 const show = (f: Field | undefined): string => (!f || f.state === "missing" ? "not in Cin7" : f.state === "empty" ? "blank in Cin7" : f.value);
 const inputCls = "h-11 rounded-md border border-slate-300 bg-white px-2 text-sm";
 
-export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteId: string; editable: boolean; onPicked: (customerName: string) => void; onFacts?: (facts: Stage1CustomerFacts) => void }) {
+export function CustomerPanel({ quoteId, editable, onPicked, onFacts, onQuoteChanged }: { quoteId: string; editable: boolean; onPicked: (customerName: string) => void; onFacts?: (facts: Stage1CustomerFacts) => void; /** A contact change withdrew the confirmation / returned the quotation: the page re-reads the quotation. */ onQuoteChanged?: () => void }) {
   const [v, setV] = useState<QuoteCustomerView | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // What the server is doing right now (null = idle). Every button that waits on the server shows it: a click is never silent.
@@ -34,6 +41,9 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
   const [pending, setPending] = useState<{ kind: "replace"; name: string } | { kind: "clear" } | null>(null);
   const [fix, setFix] = useState<{ index: number; email: string; reason: string } | null>(null);
   const [adding, setAdding] = useState(false);
+  // A contact change that would withdraw the customer's confirmation is stated BEFORE it happens and needs an explicit confirm (passed to the server as confirmWithdrawal).
+  const [pendingContact, setPendingContact] = useState<{ choice: ContactChoice; label: string } | null>(null);
+  const [effectNote, setEffectNote] = useState<string | null>(null);
 
   // The Stage 1 step rail reads what this panel already loaded (no extra request): the snapshot and whether a contact is chosen.
   const factsRef = useRef(onFacts);
@@ -53,8 +63,8 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
   }, [quoteId]);
 
   const run = async (fn: () => Promise<{ ok: boolean; error?: string; data?: QuoteCustomerView }>, what = "Saving…") => {
-    setLabel(what); setErr(null); setNotice(null);
-    try { const r = await fn(); if (r.ok && r.data) { setV(r.data); setDiff(null); } else setErr(r.error ?? "Failed."); } catch { setErr("Something went wrong. Please try again."); } finally { setLabel(null); setPicking(null); }
+    setLabel(what); setErr(null); setNotice(null); setEffectNote(null);
+    try { const r = await fn(); if (r.ok && r.data) { setV(r.data); setDiff(null); const e = r.data.effect; if (e && (e.confirmationCleared || e.signoffCleared || e.returnedToRep || e.approvalSyncError)) { setEffectNote(effectText(e)); onQuoteChanged?.(); } } else setErr(r.error ?? "Failed."); } catch { setErr("Something went wrong. Please try again."); } finally { setLabel(null); setPicking(null); }
   };
   // The search panel always opens and closes EMPTY: no stale query, results or "no customers found" message.
   const resetSearch = () => { setQ(""); setHits([]); setSearched(null); };
@@ -62,6 +72,12 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
     setErr(null); setLabel("Searching Cin7 customers…"); setHits([]); setSearched(null);
     try { const r = await searchQuoteCustomersForQuoteAction(q); if (r.ok) { setHits(r.data ?? []); setSearched(q.trim()); } else setErr(r.error ?? "Search failed."); }
     catch { setErr("Search failed. Please try again."); } finally { setLabel(null); }
+  };
+  // Choosing a contact: when that would withdraw the customer's confirmation, state it first and ask (the server refuses without confirmWithdrawal).
+  const doChoose = (choice: ContactChoice, then: () => void, confirmWithdrawal: boolean, picking_?: string) => { if (picking_) setPicking(picking_); setNotice(null); void run(async () => { const r = await chooseQuoteContactAction(quoteId, choice, confirmWithdrawal); if (r.ok) then(); return r; }, "Saving the quotation contact…"); };
+  const chooseContact = (choice: ContactChoice, label: string, then: () => void, picking_?: string) => {
+    if (v?.contactChangeWithdrawsConfirmation) { setPendingContact({ choice, label }); return; }
+    doChoose(choice, then, false, picking_);
   };
   const finishPick = (name: string, confirmReplace: boolean) => { setPicking(name); return run(async () => {
     const r = await selectQuoteCustomerAction(quoteId, name, confirmReplace);
@@ -79,7 +95,7 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
     setLabel(apply ? "Applying the Cin7 changes…" : "Checking Cin7 for changes…"); setErr(null);
     try {
       const r = await refreshQuoteCustomerAction(quoteId, apply);
-      if (r.ok && r.data) { setDiff(r.data.preview); setV(r.data.view); } else setErr(r.error ?? "Refresh failed.");
+      if (r.ok && r.data) { setDiff(r.data.preview); setV(r.data.view); const e = r.data.view.effect; if (apply && e && (e.confirmationCleared || e.signoffCleared || e.returnedToRep || e.approvalSyncError)) { setEffectNote(effectText(e)); onQuoteChanged?.(); } } else setErr(r.error ?? "Refresh failed.");
     } catch { setErr("Refresh failed. Please try again."); } finally { setLabel(null); }
   };
 
@@ -173,7 +189,7 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
                 </Button>
               ) : (
                 <Button key={i} type="button" variant="secondary" className={cls} aria-pressed={on} disabled={busy} loading={picking === `contact-${i}`}
-                  onClick={() => { setPicking(`contact-${i}`); setNotice(null); void run(async () => { const r = await chooseQuoteContactAction(quoteId, { source: "CIN7_CONTACT", contactIndex: i }); if (r.ok) setNotice(`Contact set to ${show(c.name)}.`); return r; }, "Saving the quotation contact…"); }}>
+                  onClick={() => { if (on) return; chooseContact({ source: "CIN7_CONTACT", contactIndex: i }, show(c.name), () => setNotice(`Contact set to ${show(c.name)}.`), `contact-${i}`); }}>
                   {on && "✓ Selected · "}{show(c.name)} · {show(c.email)}
                 </Button>
               );
@@ -183,11 +199,22 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
             </Button>
             {s.contacts.length === 0 && <span className="self-center text-sm text-slate-600">Cin7 holds no contacts for this customer; add a quotation-only contact.</span>}
           </div>
+          {pendingContact && (
+            <Alert tone="warning">
+              <p className="font-medium" data-testid="contact-withdraw-warning">Changing the contact withdraws the customer&apos;s confirmation (and returns the quotation to you if the Estimator is reviewing it)</p>
+              <p className="mt-1 text-sm">The new contact ({pendingContact.label}) must confirm the amount again before you submit.</p>
+              <div className="mt-2 flex gap-2">
+                <Button type="button" className="min-h-11" disabled={busy} onClick={() => { const pc = pendingContact; setPendingContact(null); doChoose(pc.choice, () => { setFix(null); setAdding(false); }, true); }}>Change contact</Button>
+                <Button type="button" variant="secondary" className="min-h-11" disabled={busy} onClick={() => setPendingContact(null)}>Cancel</Button>
+              </div>
+            </Alert>
+          )}
+          {effectNote && <p role="status" className="text-sm font-medium text-amber-900" data-testid="confirmation-effect">{effectNote}</p>}
           {fix && (
             <div className="flex flex-wrap items-end gap-2 rounded-md border border-amber-300 bg-amber-50 p-2" data-testid="email-fix">
               <input className={inputCls} aria-label="Corrected email" placeholder="Corrected email" value={fix.email} onChange={(e) => setFix({ ...fix, email: e.target.value })} />
               <input className={inputCls} aria-label="Reason for the correction" placeholder="Reason (e.g. typo in Cin7)" value={fix.reason} onChange={(e) => setFix({ ...fix, reason: e.target.value })} />
-              <Button type="button" className="min-h-11" disabled={busy} onClick={() => void run(async () => { const r = await chooseQuoteContactAction(quoteId, { source: "CIN7_CONTACT", contactIndex: fix.index, email: fix.email, correctionReason: fix.reason }); if (r.ok) setFix(null); return r; })}>Use corrected email</Button>
+              <Button type="button" className="min-h-11" disabled={busy} onClick={() => chooseContact({ source: "CIN7_CONTACT", contactIndex: fix.index, email: fix.email, correctionReason: fix.reason }, fix.email, () => setFix(null))}>Use corrected email</Button>
               <Button type="button" className="min-h-11" variant="secondary" disabled={busy} onClick={() => setFix(null)}>Cancel</Button>
               <p className="w-full text-xs text-slate-600">Used on this quotation only and recorded with your reason. The Cin7 contact is not changed.</p>
             </div>
@@ -199,7 +226,7 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
               <input className={inputCls} aria-label="Contact name" placeholder="Contact name" value={entered.name} onChange={(e) => setEntered({ ...entered, name: e.target.value })} />
               <input className={inputCls} aria-label="Delivery email" placeholder="Delivery email" value={entered.email} onChange={(e) => setEntered({ ...entered, email: e.target.value })} />
               <input className={inputCls} aria-label="Phone (optional)" placeholder="Phone (optional)" value={entered.phone} onChange={(e) => setEntered({ ...entered, phone: e.target.value })} />
-              <Button type="button" className="min-h-11" disabled={busy} onClick={() => void run(async () => { const r = await chooseQuoteContactAction(quoteId, { source: "ENTERED", ...entered }); if (r.ok) { setAdding(false); setEntered({ name: "", email: "", phone: "" }); } return r; })}>Use this contact</Button>
+              <Button type="button" className="min-h-11" disabled={busy} onClick={() => chooseContact({ source: "ENTERED", ...entered }, entered.name || "the quotation-only contact", () => { setAdding(false); setEntered({ name: "", email: "", phone: "" }); })}>Use this contact</Button>
               </div>
               <p className="text-xs text-slate-600">For a person who is not in Cin7: recorded in the audit trail and used on this quotation only; it is not written to Cin7.</p>
             </fieldset>
@@ -209,7 +236,7 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
       )}
       {s && (
         <details className="rounded-md border border-slate-200 p-2 text-sm" data-testid="customer-details">
-          <summary className="cursor-pointer font-medium text-slate-700">Details (Cin7 reference, address, history)</summary>
+          <summary className="inline-flex min-h-11 cursor-pointer items-center font-medium text-slate-700">Details (Cin7 reference, address, history)</summary>
           <dl className="mt-2 grid gap-x-6 gap-y-1 md:grid-cols-2">
             <dt className="text-slate-600">Cin7 customer ID</dt><dd className="break-all">{s.cin7CustomerId}</dd>
             <dt className="text-slate-600">Customer snapshot</dt><dd>#{v.seq}</dd>
@@ -222,6 +249,7 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
               {diff && diff.changes.length > 0 && !diff.applied && <Button type="button" className="min-h-11" disabled={busy} onClick={() => void preview(true)}>Apply {diff.changes.length} change{diff.changes.length === 1 ? "" : "s"}</Button>}
             </div>
           )}
+          {diff && diff.withdrawsConfirmation && !diff.applied && <p className="mt-2 text-sm font-medium text-amber-900" data-testid="refresh-withdraws">Applying these changes withdraws the customer&apos;s confirmation (and returns the quotation to you if the Estimator is reviewing it).</p>}
           {diff && (diff.changes.length === 0
             ? <p className="mt-2 text-sm text-emerald-700">The snapshot matches Cin7.</p>
             : <ul className="mt-2 list-disc pl-5 text-sm">{diff.changes.map((c) => <li key={c.field}><b>{c.field}</b>: {c.before} → {c.after}{diff.applied ? " (applied)" : ""}</li>)}</ul>)}

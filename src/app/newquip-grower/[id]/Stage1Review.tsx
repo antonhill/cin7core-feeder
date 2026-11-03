@@ -3,7 +3,7 @@
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { STEP_STATUS_LABEL } from "@/components/ui/step-rail-model";
-import { QUOTE_TYPE_LABEL } from "@/newquip/grower/pricing-source";
+import { QUOTE_TYPE_NEUTRAL } from "@/newquip/grower/pricing-source";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { STAGE1_STEP_IDS, STAGE1_STEP_LABEL, type Stage1CustomerFacts, type Stage1Derived, type Stage1StepId } from "@/newquip/quote/stage1-steps";
 import type { WizardStep } from "@/newquip/quote/wizard-contract";
@@ -15,8 +15,9 @@ const OPTIONAL_NAMES: Record<string, string> = {
 };
 const CHIP: Record<string, string> = { complete: "border-emerald-600 bg-emerald-50 text-emerald-900", attention: "border-amber-500 bg-amber-50 text-amber-900", incomplete: "border-slate-300 bg-white text-slate-700", review: "border-indigo-400 bg-indigo-50 text-indigo-900", unavailable: "border-slate-300 bg-slate-50 text-slate-700" };
 
-export function Stage1Review({ draft, floorAreaM2, totalLabel, derived, steps, customer, quantities, canEdit, onGoStep }: {
+export function Stage1Review({ awaiting, draft, floorAreaM2, totalLabel, derived, steps, customer, quantities, canEdit, onGoStep }: {
   draft: QuoteDraft; floorAreaM2: number | null; totalLabel: string; derived: Stage1Derived; steps: readonly WizardStep[]; customer: Stage1CustomerFacts;
+  /** What is awaiting the Estimator (informational: never a Rep blocker). */ awaiting: { choices: number; prices: number; lines: number };
   /** Calculated project quantities (selected lines only). */
   quantities: ReadonlyArray<{ label: string; qty: number }>; canEdit: boolean; onGoStep: (stepId: Stage1StepId) => void;
 }) {
@@ -33,7 +34,7 @@ export function Stage1Review({ draft, floorAreaM2, totalLabel, derived, steps, c
   const cards: Array<{ id: Stage1StepId; rows: Array<[string, string]> }> = [
     { id: "customer", rows: [["Customer", customer.customerTitle ?? (draft.customerName.trim() || "—")], ["Quotation contact", customer.contactName ?? "not chosen"], ["Quotation sent to", customer.contactEmail ?? "—"]] },
     { id: "site", rows: [
-      ["Site / project", draft.siteName.trim() || "—"], ["Pricing basis", QUOTE_TYPE_LABEL[draft.quoteType]],
+      ["Site / project", draft.siteName.trim() || "—"], ["Pricing basis", QUOTE_TYPE_NEUTRAL[draft.quoteType]],
       ["Room", cfg.lengthM && cfg.widthM ? `${cfg.lengthM} m × ${cfg.widthM} m${floorAreaM2 == null ? "" : ` (${Math.round(floorAreaM2 * 1000) / 1000} m²)`} · ${cfg.rooms || 0} rooms` : "—"],
       ["Pens and pigs (per room)", `${cfg.totalPens || 0} pens (${cfg.hospitalPens || 0} hospital) · ${cfg.pigsPerRoom || 0} pigs`],
     ] },
@@ -49,7 +50,7 @@ export function Stage1Review({ draft, floorAreaM2, totalLabel, derived, steps, c
   const estMaps = est.filter((o) => o.message.startsWith("Estimator product choice needed:"));
   const estOther = est.filter((o) => !o.message.startsWith("Estimator product choice needed:"));
   const nextLine = rep.length > 0 ? `Next: finish ${rep.length} item${rep.length === 1 ? "" : "s"} listed below.`
-    : est.length > 0 ? `Everything you can do is complete. Waiting on the Estimator for ${est.length} item${est.length === 1 ? "" : "s"} - nothing for you to do yet.`
+    : est.length > 0 ? `Everything you can do is complete - submit to the Estimator (step 5). ${awaiting.lines || est.length} item${(awaiting.lines || est.length) === 1 ? "" : "s"} will be resolved by the Estimator afterwards.`
     : "Everything you can do is complete - submit to the Estimator (step 5).";
   return (
     <Panel className="col-span-full">
@@ -97,9 +98,9 @@ export function Stage1Review({ draft, floorAreaM2, totalLabel, derived, steps, c
                   <li className="text-sm" data-testid="est-mappings-group">
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                       <span className="rounded-md border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-xs font-semibold text-slate-800" data-testid="owner-tag">Estimator</span>
-                      <span className="text-slate-900">The Estimator must confirm {estMaps.length} product choice{estMaps.length === 1 ? "" : "s"}.</span>
+                      <span className="text-slate-900">Awaiting the Estimator: {awaiting.choices} product choice{awaiting.choices === 1 ? "" : "s"}, {awaiting.prices} price{awaiting.prices === 1 ? "" : "s"}.</span>
                     </div>
-                    <details className="mt-1 pl-1 text-xs text-slate-700"><summary className="min-h-6 cursor-pointer">Show the {estMaps.length === 1 ? "item" : "list"}</summary>
+                    <details className="mt-1 pl-1 text-xs text-slate-700"><summary className="inline-flex min-h-11 cursor-pointer items-center">Show the {estMaps.length === 1 ? "item" : "list"}</summary>
                       <ul className="mt-1 list-disc pl-5">{estMaps.map((i) => <li key={i.message}>{i.message.replace(/^Estimator product choice needed: /, "")}</li>)}</ul></details>
                   </li>
                 )}
@@ -110,7 +111,7 @@ export function Stage1Review({ draft, floorAreaM2, totalLabel, derived, steps, c
                   </li>
                 ))}
               </ul>
-              {est.length > 0 && <p className="mt-2 text-xs text-slate-700" data-testid="est-owner-note">The Estimator resolves these in Stage 2; there is nothing for you to do for them.</p>}
+              {est.length > 0 && <p className="mt-2 text-xs text-slate-700" data-testid="est-owner-note">The Estimator resolves these after you submit (Stage 2). They do not stop you submitting.</p>}
             </>
           )}
         {derived.stage2Reasons.length > 0 && est.length === 0 && <p className="mt-3 text-sm text-slate-700">Also open in the readiness check: {derived.stage2Reasons.join("; ")}</p>}

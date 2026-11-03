@@ -17,7 +17,7 @@ export function ApprovalHistory({ docType, docId, label = "Approval history" }: 
   };
   return (
     <details className="text-sm" onToggle={(e) => { if ((e.target as HTMLDetailsElement).open && (state === null || (typeof state === "string" && state !== "loading"))) load(); }}>
-      <summary className="cursor-pointer text-slate-700">{label}</summary>
+      <summary className="inline-flex min-h-11 cursor-pointer items-center text-slate-700">{label}</summary>
       <div className="mt-2">
         {state === "loading" && <p role="status" className="text-slate-700">Loading the approval history…</p>}
         {typeof state === "string" && state !== "loading" && <p role="alert" className="text-red-700">{state}</p>}

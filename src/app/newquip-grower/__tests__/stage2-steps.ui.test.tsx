@@ -110,6 +110,8 @@ const SHOWALL = () => vi.stubGlobal("localStorage", { getItem: (k: string) => (k
 // A quotation the Rep has submitted: the price confirmation is recorded (contact + time + amount) and the state is ESTIMATOR_REVIEW.
 const SUBMITTED = { state: "ESTIMATOR_REVIEW", row: { customer_confirmed_cents: 1000000000, customer_confirmed_by: "A Customer <a@c.co>", customer_confirmed_at: "2026-11-02T08:00:00Z", handoff_by_email: "rep@nq" } };
 // Estimator-owned blockers on a Rep draft: no product mappings and no manual prices yet.
+// An authorised, recorded incomplete-cost exception (the server's own waiver of the COST part of estimatorCostingComplete): costing is then complete, so sign-off / approval are not refused for costs.
+const COSTED = { estimator: { ...draft.estimator, costBasis: { incompleteAccepted: { reason: "Test exception", by: "e@nq", at: "2026-11-02T08:00:00Z" } } } };
 const UNMAPPED = { estimator: { ...draft.estimator, confirmedMappings: {}, confirmedPackages: [], priceResolutions: {} } };
 
 describe("UX-006i2 Stage 2 is the Estimator's: who has which steps", () => {
@@ -322,7 +324,7 @@ describe("UX-006i2 Stage 2: Final review - Mark reviewed & continue (client-loca
 
   it("the checklist is compact and the ONE primary action is 'Mark reviewed & continue': marking moves progress 1 -> 3 (one review, counted on Costs and Final review), moves focus to the Sign-off heading, announces it, and sends NOTHING to the server", async () => {
     const q = serialQueue(0);
-    await open({ roles: ["ESTIMATOR"], commercials: true, step: "3", ...SUBMITTED });
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "3", ...SUBMITTED , draftOver: COSTED });
     await sleep(1200);
     const before = started(q);
     expect(current()).toBe("final");
@@ -470,7 +472,7 @@ describe("UX-006i2 Stage 2: Sign-off or return (only the actions valid for the a
   }, 60000);
 
   it("sign-off: inline success naming the Manager as the next owner, with an obvious next-stage action; the editor STAYS on Stage 2", async () => {
-    await open({ roles: ["ESTIMATOR"], commercials: true, step: "3", ...SUBMITTED });
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "3", ...SUBMITTED , draftOver: COSTED });
     const id = g.__QID!;
     fireEvent.click(screen.getByRole("button", { name: /Mark reviewed/ })); // sign-off waits for the review mark (UX policy); this lands on step 4
     const patchRow = (patch: (r: Record<string, unknown>) => Record<string, unknown>) => { const arr = db.rows("newquip_quotes") as Array<Record<string, unknown>>; const i = arr.findIndex((r) => r.id === id); arr[i] = { ...arr[i], ...patch(arr[i]) }; };
@@ -490,7 +492,7 @@ describe("UX-006i2 Stage 2: Sign-off or return (only the actions valid for the a
   }, 60000);
 
   it("the 'total no longer equals the confirmed amount' alert is never shown to a Rep draft nor when nothing was confirmed; it shows in Estimator review when the amounts differ", async () => {
-    const alertText = /no longer equals the confirmed amount/;
+    const alertText = /The total changed from what the customer confirmed \(.+ -> .+\)\. Return to the Rep to reconfirm\./; // UX-006 corrections: one banner at the top of Stage 2 (the sign-off step no longer repeats it)
     await open({ row: { customer_confirmed_cents: 100 } });
     expect(document.body.textContent).not.toMatch(alertText);
     cleanup();
@@ -602,10 +604,10 @@ describe("UX-006i2 Stage 2: navigation (Back only to permitted steps; no navigat
     expect(shown("signoff")).toBe(true);
   }, 90000);
 
-  it("Next incomplete step leads only into the Estimator's own open work: Final review from Mapping (the costing is looked at, not a separate task); nothing for a Rep; nothing while the quote is a Rep draft with no blockers", async () => {
+  it("Next incomplete step leads only into the Estimator's own open work: Costs while the project costs are incomplete (this fixture: lines with no cost need attention), Final review once they are not; nothing for a Rep; nothing while the quote is a Rep draft with no blockers", async () => {
     await open({ roles: ["ESTIMATOR"], commercials: true, step: "1", ...SUBMITTED });
     fireEvent.click(screen.getByRole("button", { name: "Next incomplete step" }));
-    expect(shown("final")).toBe(true);
+    expect(shown("costs")).toBe(true);
     cleanup();
     await open({ roles: ["REP"], ...SUBMITTED });
     expect(screen.queryByRole("button", { name: "Next incomplete step" })).toBeNull();
@@ -710,7 +712,7 @@ describe("UX-006i2 Stage 2: the view follows real workflow transitions and nothi
 
   it("Manager approval moves the view on (a real workflow change clears the pin): to the customer quotation stage", async () => {
     vi.spyOn(da, "getQuoteDeliveryAction").mockResolvedValue({ ok: true, data: { available: false } } as never);
-    await open({ stage: "3", roles: ["MANAGER"], commercials: true, state: "ESTIMATOR_REVIEW", row: { ...SUB.row, __useDraftHash: true, requires_customer_acceptance: true } });
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, state: "ESTIMATOR_REVIEW", row: { ...SUB.row, __useDraftHash: true, requires_customer_acceptance: true } , draftOver: COSTED });
     const id = g.__QID!;
     vi.spyOn(actions, "approveGrowerQuoteAction").mockImplementation((async () => { patchRow(id, () => ({ state: "MANAGER_APPROVED_FINAL", approved_by_email: "m@nq" })); return reread(id); }) as never);
     const approve = await waitFor(() => { const b = screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement; expect(b.disabled).toBe(false); return b; }, { timeout: 8000 });
@@ -803,7 +805,8 @@ describe("UX-006i2 review fixes: wording that is true to the current state (revi
 
   it("Costs reads 'To review in Final review' until the review is marked, then 'Reviewed' (counted with Final review); the mark is stated as SESSION-ONLY (confirmation and a note on the step); nothing is saved", async () => {
     await open({ roles: ["ESTIMATOR"], commercials: true, step: "3", ...SUBMITTED });
-    expect(status("costs")).toBe("To review in Final review");
+    expect(status("costs")).toBe("Needs attention"); // UX-006 corrections: lines with no cost make Costs need attention (it was "To review in Final review" while costs looked complete)
+    expect(rail().querySelector('[data-step="costs"]')!.textContent).toMatch(/incomplete|no cost/); // the server's costing reason (SKUs with no supplier cost) or the count of lines with no cost
     expect(screen.getByTestId("session-only-note").textContent).toMatch(/this session only: it is not saved, and after a reload you mark it again/);
     fireEvent.click(screen.getByRole("button", { name: /Mark reviewed/ }));
     expect(status("costs")).toBe("Reviewed");
@@ -811,7 +814,7 @@ describe("UX-006i2 review fixes: wording that is true to the current state (revi
     expect(screen.getByTestId("cost-ack-live").textContent).toBe("Final review marked as reviewed for this session. This is not a sign-off.");
     fireEvent.click(rail().querySelector('[data-step="final"]')!);
     expect(screen.getByTestId("cost-ack-done").textContent).toContain("Marked reviewed for this session (not saved - repeat after a reload before signing off)");
-    expect(screen.getByTestId("final-review-checklist").textContent).toMatch(/Costing figures: incomplete \(\d+ lines? (has|have) no cost\)/); // ONE margin story: attention, never "Met", while project costs are incomplete
+    expect(screen.getByTestId("final-review-checklist").textContent).toMatch(/Costing figures: incomplete/); // ONE margin story: attention, never "Met", while project costs are incomplete
     expect(screen.getByTestId("final-check-costing").textContent).toBe("Not met");
   }, 60000);
 
@@ -849,7 +852,7 @@ describe("UX-006i2 review fixes: wording that is true to the current state (revi
 describe("UX-006i2 round 2: sign-off waits for the review mark, one margin story, labels", () => {
   const signBtn = () => screen.getByRole("button", { name: "Sign off for Manager approval" }) as HTMLButtonElement;
   it("Sign off is visible but DISABLED with the visible reason until the review is marked; Return to the Rep is never gated; marking enables it", async () => {
-    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED , draftOver: COSTED });
     expect(signBtn().disabled).toBe(true);
     expect(document.getElementById("signoff-why")!.textContent).toBe("Mark the costing reviewed first (Final review).");
     expect(signBtn().getAttribute("aria-describedby")).toBe("signoff-why");
@@ -870,20 +873,32 @@ describe("UX-006i2 round 2: sign-off waits for the review mark, one margin story
     expect(status("signoff")).not.toBe("Locked");
   }, 60000);
 
-  it("with incomplete project costs the sign-off step says what the Manager will see, next to the button, and does NOT block", async () => {
+  it("with incomplete COSTING (the server's verdict) the sign-off is refused up front: the costing reason is listed beside the disabled button, even after the review is marked", async () => {
     await open({ roles: ["ESTIMATOR"], commercials: true, step: "3", ...SUBMITTED });
     fireEvent.click(screen.getByRole("button", { name: /Mark reviewed/ }));
-    expect(screen.getByTestId("signoff-costs-consequence").textContent).toMatch(/^Costs are incomplete for \d+ lines?\. If you sign off, the Manager will see margin as unknown\.$/);
-    expect(signBtn().disabled).toBe(false);
-    expect(signBtn().parentElement!.contains(screen.getByTestId("signoff-costs-consequence"))).toBe(true); // adjacent to the button
+    expect(signBtn().disabled).toBe(true);
+    const list = screen.getByTestId("signoff-blockers");
+    expect(list.textContent).toMatch(/^Costing is incomplete: .*Complete it \(or record an authorised incomplete-cost exception\) before signing off\.$/);
+    expect(within(list).getAllByRole("listitem").length).toBe(1); // the review mark is done: only the server's reason remains
+    expect(signBtn().getAttribute("aria-describedby")).toBe("signoff-why");
+    expect(screen.queryByTestId("signoff-costs-consequence")).toBeNull();
+  }, 60000);
+
+  it("every sign-off refusal is listed up front, in the server's order: READY, costing, amount = total, then the review mark", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", state: "ESTIMATOR_REVIEW", row: { customer_confirmed_cents: 100, customer_confirmed_by: "A", customer_confirmed_at: "2026-11-02T08:00:00Z" } });
+    const items = within(screen.getByTestId("signoff-blockers")).getAllByRole("listitem").map((l) => l.textContent!);
+    expect(items[0]).toMatch(/^Costing is incomplete:/);
+    expect(items[1]).toMatch(/^The total changed from what the customer confirmed \(.* -> .*\)\. Return to the Rep to reconfirm\.$/);
+    expect(items[2]).toBe("Mark the costing reviewed first (Final review).");
+    expect(signBtn().disabled).toBe(true);
   }, 60000);
 
   it("ONE margin story: the summary bar, the totals and the Final review all say 'indicative (price-list basis)' with the number of lines with no cost; the margin detail and cost capture disclosures open on their own", async () => {
     await open({ roles: ["ESTIMATOR"], commercials: true, step: "2", ...SUBMITTED });
     const bar = screen.getByTestId("quote-summary-bar");
     expect(within(bar).getByText("Indicative margin (price-list basis)")).toBeTruthy();
-    expect(screen.getByTestId("summary-margin-note").textContent).toMatch(/project margin not available: \d+ lines? (has|have) no cost/);
-    expect(screen.getByTestId("totals-margin-note").textContent).toMatch(/project margin not available/);
+    expect(screen.getByTestId("summary-margin-note").textContent).toMatch(/project margin not available: \d+ lines? (has|have) no cost|margin is indicative: \d+ lines? (is|are) Estimator-priced \(no supplier cost by design\)/);
+    expect(screen.getByTestId("totals-margin-note").textContent).toMatch(/project margin not available|margin is indicative/);
     expect(panel("costs")!.textContent).toContain("Estimated cost · indicative margin (price-list basis)");
     expect(screen.getByTestId("disc-margin").hasAttribute("open")).toBe(true);
     expect(screen.getByTestId("disc-cost-capture").hasAttribute("open")).toBe(true);
@@ -895,4 +910,98 @@ describe("UX-006i2 round 2: sign-off waits for the review mark, one margin story
     await open({ roles: ["REP"], ...SUBMITTED });
     expect(document.body.textContent).not.toMatch(/margin/i);
   }, 30000);
+});
+
+describe("UX-006 corrections: incompleteness is visible, the Estimator's items are theirs, first action near the top", () => {
+  it("the header says 'Not commercially ready' with the counts (cost viewers) and never a plain green Ready for an incomplete estimate; the Rep sees none of it", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED });
+    const chip = screen.getByTestId("commercial-chip").textContent!;
+    expect(chip).toMatch(/^.?Not commercially ready: .*(no cost|costing incomplete).*\(amounts are indicative\)$/);
+    expect(within(screen.getByTestId("quote-summary-bar")).getByText("Indicative: not commercially ready")).toBeTruthy(); // the calculation chip is not "Ready for review"
+    expect(within(screen.getByTestId("quote-summary-bar")).queryByText(/READY FOR REVIEW/i)).toBeNull();
+    cleanup();
+    await open({ roles: ["REP"], ...SUBMITTED });
+    expect(screen.queryByTestId("commercial-chip")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/commercially ready|indicative/i);
+  }, 60000);
+
+  it("a SUBMITTED quotation with open Estimator items: Stage 2 opens at step 1, says they are the Estimator's by design, and keeps sign-off disabled with the reason; Return stays available", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED, draftOver: UNMAPPED });
+    expect(current()).toBe("mapping");
+    const banner = screen.getByTestId("rep-waiting-banner");
+    expect(banner.textContent).toContain("Yours to resolve: the Rep has already submitted");
+    expect(screen.getByTestId("waiting-explain").textContent).toMatch(/Estimator items by design.*Sign-off stays disabled/);
+    expect(status("mapping")).toBe("Needs attention");
+    expect(rail().querySelector('[data-step="mapping"]')!.textContent).toMatch(/\d+ lines? unmapped/);
+    fireEvent.click(rail().querySelector('[data-step="signoff"]')!);
+    expect((screen.getByRole("button", { name: "Sign off for Manager approval" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(document.getElementById("signoff-why")!.textContent).toMatch(/must be READY/);
+    fireEvent.change(screen.getByLabelText(/Return to rep — reason/), { target: { value: "Reconfirm" } });
+    expect((screen.getByRole("button", { name: "Return to rep" }) as HTMLButtonElement).disabled).toBe(false);
+  }, 60000);
+
+  it("Final review lists exactly what is open, with its owner, under 'Not commercially ready'", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "3", ...SUBMITTED });
+    const d = screen.getByTestId("not-commercially-ready");
+    expect(d.textContent).toMatch(/Not commercially ready: .*(no cost|costing incomplete)/);
+    expect(within(d).getAllByRole("listitem").every((li) => li.textContent!.startsWith("Estimator:"))).toBe(true);
+    expect(d.textContent).toMatch(/lines? (has|have) no cost: capture it from Cin7 or enter a manual estimate|Costing is incomplete: .* \(step 2\)/);
+  }, 60000);
+
+  it("when the total differs from what the customer confirmed, ONE banner says so with both amounts, on Stage 2; Return stays available", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, state: "ESTIMATOR_REVIEW", row: { customer_confirmed_cents: 100, customer_confirmed_by: "A", customer_confirmed_at: "2026-11-02T08:00:00Z" } });
+    expect(screen.getAllByTestId("total-changed").length).toBe(1);
+    expect(screen.getByTestId("total-changed").textContent).toMatch(/The total changed from what the customer confirmed \(R.*1,00 -> R.*\)\. Return to the Rep to reconfirm\./);
+    fireEvent.click(rail().querySelector('[data-step="signoff"]')!);
+    fireEvent.change(screen.getByLabelText(/Return to rep — reason/), { target: { value: "Reconfirm the price" } });
+    expect((screen.getByRole("button", { name: "Return to rep" }) as HTMLButtonElement).disabled).toBe(false);
+  }, 60000);
+
+  it("the first action of step 1 (Confirm source-backed mappings) comes BEFORE the readiness list and the line table, and exists once", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, draftOver: UNMAPPED });
+    const first = screen.getByTestId("step1-first-action");
+    expect(screen.getAllByRole("button", { name: "Confirm source-backed mappings" }).length).toBe(1);
+    const p = panel("mapping")!;
+    expect(first.compareDocumentPosition(p.querySelector("table")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(first.compareDocumentPosition(screen.getByText("Quote readiness")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByTestId("rep-waiting-banner").hasAttribute("open")).toBe(true); // the list is open when it is the primary task, as a counted disclosure
+    expect(screen.getByTestId("rep-waiting-banner").querySelector("summary")!.textContent).toMatch(/· \d+ items?/);
+  }, 60000);
+
+  it("touch targets: the Costs-step buttons, the shared inputs and the approval-history summary carry 44px size classes (class contract)", async () => {
+    const fs = await import("node:fs");
+    const cost = fs.readFileSync(`${__dirname}/../[id]/CostPanel.tsx`, "utf8");
+    expect(cost.match(/<Button size="sm"(?! className="min-h-11")/g)).toBeNull();
+    expect(fs.readFileSync(`${__dirname}/../fields.tsx`, "utf8").match(/h-9 min-h-11/g)!.length).toBe(2);
+    expect(fs.readFileSync(`${__dirname}/../../../components/ui/Input.tsx`, "utf8")).toContain("h-9 min-h-11");
+    expect(fs.readFileSync(`${__dirname}/../../../components/ApprovalHistory.tsx`, "utf8")).toContain("inline-flex min-h-11");
+  });
+});
+
+describe("UX-006 corrections phase 2: server facts wired (costing, Estimator-priced lines, returned by amount change)", () => {
+  it("Estimator-priced-by-design lines are shown as such (no supplier cost by design), are NOT counted as missing cost, and keep the margin indicative", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "2", ...SUBMITTED });
+    const note = screen.getByTestId("est-priced-note").textContent!;
+    expect(note).toMatch(/^Estimator-priced \(no supplier cost by design\): .+\. They keep the margin indicative; they are not missing costs\.$/);
+    const chip = screen.getByTestId("commercial-chip").textContent!;
+    expect(chip).not.toMatch(/\d+ lines? (has|have) no cost/); // exempt lines are not "no cost"
+    expect(chip).toMatch(/costing incomplete/); // the SERVER's verdict (SKUs without a supplier cost) is what makes it incomplete
+    expect(screen.getByTestId("summary-margin-note").textContent).toMatch(/Estimator-priced \(no supplier cost by design\)/);
+  }, 60000);
+
+  it("a Rep with Estimator items still open (submitted by design): the Estimator lands on mappings; readiness lists the Estimator's items separately from the Rep's", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED, draftOver: UNMAPPED });
+    expect(current()).toBe("mapping");
+    expect(screen.getByTestId("rep-waiting-banner").textContent).toContain("Yours to resolve: the Rep has already submitted");
+    expect(screen.getByTestId("reasons-estimator").querySelectorAll("li").length).toBeGreaterThan(0);
+  }, 60000);
+
+  it("returned for a changed amount (REP_DRAFT, revision 2): the Estimator and the Manager are told the Rep reconfirms the amount", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, row: { revision: 2 } });
+    expect(screen.getByTestId("stage2-status-line").textContent).toBe("Returned to the Rep (revision 2). Next responsible role: Rep: reconfirm the amount with the customer, then submit again.");
+    expect(screen.getByTestId("next-owner").textContent).toBe("Rep");
+    cleanup();
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, row: { revision: 2 } });
+    expect(screen.getByTestId("stage3-status-line").textContent).toMatch(/Next responsible role: Rep: reconfirm the amount/);
+  }, 60000);
 });

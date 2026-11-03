@@ -6,6 +6,7 @@ import { GROWER_RULES, CCM_FEEDER_CAPACITY_PIGS, PIGS_PER_DRINKER } from "@/newq
 import { CHARGE_LABEL, type BridgeLine, type ChargeKey } from "@/newquip/grower/quote-bridge";
 import { valueKindOf, VALUE_KIND_LABEL, type ValueKind } from "@/newquip/grower/bom-view";
 import { mappingControlFor } from "@/newquip/grower/mapping-access";
+import { neutralPriceText } from "@/newquip/grower/pricing-source";
 import { ESTIMATOR_LINE_STATUSES } from "@/newquip/quote/stage1-steps";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import type { QuoteEvaluation } from "@/newquip/grower/evaluate";
@@ -20,6 +21,7 @@ import { fmtZar, NumField, TextField } from "../fields";
 
 type Edit = (fn: (d: QuoteDraft) => void) => void;
 const KIND_TONE: Record<ValueKind, BadgeTone> = { auto_calculated: "success", default_suggested: "info", estimator_input_required: "warning", estimator_input: "neutral" };
+const neutralReason = neutralPriceText;
 /** What the REP reads on a row: the quantities are theirs to enter, so "estimator input required" becomes "Quantity needed". Estimator-owned wording stays only where the Estimator owns the work (the Product column). */
 const repKindLabel = (k: ValueKind, notSelected: boolean): string => (notSelected ? "NOT INCLUDED" : k === "estimator_input_required" ? "QUANTITY NEEDED" : k === "estimator_input" ? "QUANTITY ENTERED" : VALUE_KIND_LABEL[k]);
 const repTreatment = (t: string): string => (t === "estimator_input" ? "you enter the quantity" : t.replace(/_/g, " "));
@@ -94,7 +96,7 @@ export function LineDecisionsTable({ draft, ev, edit, roles, editable, mode, qua
                   </div>
                 ) : mapControl === "waiting_for_estimator" && !b?.sku ? <span className="text-amber-800">Awaiting an Estimator to choose the Cin7 product.</span> : b?.sku ?? (b?.pricedBy === "penning_rate" ? "Pig-size / running-metre basis" : b?.pricedBy === "estimator_input" ? "Estimator-priced system" : b?.pricedBy === "estimator_resolution" ? "Estimator-resolved" : "—")}</td>
                 {!rep && <td className="whitespace-nowrap py-3 pr-3 text-right tabular-nums">{b?.revenueExTax != null ? fmtZar(b.revenueExTax) : "—"}</td>}
-                <td className="py-3 text-xs">{b ? (b.status === "priced" ? <span className="text-emerald-800"><span aria-hidden>✓ </span>Priced</span> : b.status === "not_selected" ? "" : <span className="text-amber-800">{rep ? b.reason.replace(/^Estimator input required — /, "Quantity needed: ") : b.reason}</span>) : ""}</td>
+                <td className="py-3 text-xs">{b ? (b.status === "priced" ? <span className="text-emerald-800"><span aria-hidden>✓ </span>Priced</span> : b.status === "not_selected" ? "" : <span className="text-amber-800">{rep ? neutralReason(b.reason).replace(/^Estimator input required — /, "Quantity needed: ") : neutralReason(b.reason)}</span>) : ""}</td>
               </tr>
             );
           })}

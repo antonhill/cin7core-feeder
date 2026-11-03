@@ -15,7 +15,7 @@ const BADGE_TONE: Record<StepStatus, string> = {
 const GROUP_TONE: Record<RailGroupTone, string> = { complete: "bg-emerald-50 text-emerald-800", attention: "bg-amber-50 text-amber-900", incomplete: "bg-slate-100 text-slate-700", neutral: "bg-slate-100 text-slate-700" };
 const GROUP_MARK: Record<RailGroupTone, string> = { complete: "✓", attention: "!", incomplete: "•", neutral: "•" };
 
-function Card({ railId, step, number, current, onPick, tall }: { railId: string; step: RailStep; number: number; current: boolean; onPick: () => void; tall: boolean }) {
+function Card({ railId, step, number, current, onPick, tall, dense = false }: { railId: string; step: RailStep; number: number; current: boolean; onPick: () => void; tall: boolean; /** Compact card: tighter padding, the status sits beside the title, no pinned bottom row. Same fields, same a11y. */ dense?: boolean }) {
   // Cards may shrink (min-w-0) so nothing clips: the rail is a wrapping grid of equal columns from 701px (equal height within a row); `tall` = a card inside a group, a flex item from 901px.
   // A LOCKED step (wizard contract) stays focusable (aria-disabled, not `disabled`) so a screen reader reaches it and hears why; it is not selectable and shows its reasons as visible text.
   const locked = step.locked === true;
@@ -24,20 +24,21 @@ function Card({ railId, step, number, current, onPick, tall }: { railId: string;
   return (
     <li className={`flex ${tall ? "min-w-0 min-[901px]:flex-1" : "min-w-0"}`}>
       <button type="button" onClick={locked ? undefined : onPick} aria-current={current ? "step" : undefined} data-step={step.id} aria-disabled={locked || undefined} data-locked={locked || undefined} aria-describedby={locked && reasons.length > 0 ? blockedId : undefined}
-        className={`flex min-h-11 w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors ${tall ? "min-[701px]:min-h-28" : ""} ${current ? "border-indigo-600 bg-indigo-50 ring-2 ring-indigo-600" : locked ? "cursor-not-allowed border-slate-200 bg-slate-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}>
+        className={`flex min-h-11 w-full items-start rounded-lg border text-left transition-colors ${dense ? "gap-2 p-2" : "gap-3 p-3"} ${tall ? "min-[701px]:min-h-28" : ""} ${current ? "border-indigo-600 bg-indigo-50 ring-2 ring-indigo-600" : locked ? "cursor-not-allowed border-slate-200 bg-slate-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}>
         <span aria-hidden className={`flex size-7 shrink-0 items-center justify-center rounded-full border text-sm font-bold ${locked ? BADGE_TONE.unavailable : BADGE_TONE[step.status]}`}>{step.status === "complete" && !locked ? "✓" : number}</span>
         <span className="flex min-h-full min-w-0 flex-1 flex-col self-stretch">
-          <span className={`pt-1 text-sm font-semibold leading-5 ${locked ? "text-slate-700" : "text-slate-900"}`}>{step.label}</span>
+          <span className={`${dense ? "" : "pt-1"} text-sm font-semibold leading-5 ${locked ? "text-slate-700" : "text-slate-900"}`}>{step.label}</span>
           {step.note && !locked && <span className="mt-0.5 text-xs text-slate-700">{step.note}</span>}
           {locked && reasons.length > 0 && <span id={blockedId} className="mt-0.5 text-xs text-slate-800" data-testid={`step-blocked-${step.id}`}>{reasons.join(" ")}</span>}
-          <span className={`mt-auto pt-1 text-xs font-semibold ${locked ? "text-slate-700" : TEXT_TONE[step.status]}`} data-testid={`step-status-${step.id}`}>{locked ? "Locked" : step.statusLabel ?? (step.optional && step.status === "incomplete" ? "Optional" : STEP_STATUS_LABEL[step.status])}</span>
+          <span className={`${dense ? "order-2" : "mt-auto pt-1"} text-xs font-semibold ${locked ? "text-slate-700" : TEXT_TONE[step.status]}`} data-testid={`step-status-${step.id}`}>{locked ? "Locked" : step.statusLabel ?? (step.optional && step.status === "incomplete" ? "Optional" : STEP_STATUS_LABEL[step.status])}</span>
         </span>
       </button>
     </li>
   );
 }
 
-export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, groups }: {
+export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, groups, dense = false }: {
+  /** Compact cards (Stage 1): used where the rail must not push the first field below the fold. */ dense?: boolean;
   id: string; steps: RailStep[]; currentId: string; onSelect: (stepId: string) => void; ariaLabel: string; actions?: React.ReactNode;
   /** Optional: render the steps as labelled blocks (a step's `group` names its block). Without it the rail is one list, exactly as before. */
   groups?: RailGroup[];
@@ -65,7 +66,7 @@ export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, g
       </button>
       {!groups ? (
         <ol id={`${id}-list`} className={`${open ? "" : "max-[700px]:hidden"} mt-2 flex flex-col gap-2 min-[701px]:mt-0 min-[701px]:grid min-[701px]:grid-cols-[repeat(auto-fit,minmax(11rem,1fr))]`}>
-          {steps.map((s, i) => <Card key={s.id} railId={id} step={s} number={i + 1} current={s.id === currentId} onPick={pick(s.id)} tall={false} />)}
+          {steps.map((s, i) => <Card key={s.id} railId={id} step={s} number={i + 1} current={s.id === currentId} onPick={pick(s.id)} tall={false} dense={dense} />)}
         </ol>
       ) : (
         <div id={`${id}-list`} style={{ gridTemplateColumns: [...groups.map((g) => `minmax(0,${Math.max(steps.filter((s) => s.group === g.id).length, 1)}fr)`), ...(ungrouped.length ? [`minmax(0,${ungrouped.length}fr)`] : [])].join(" ") }}

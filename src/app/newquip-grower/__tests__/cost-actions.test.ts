@@ -332,10 +332,10 @@ describe("approval: an incomplete snapshot is refused unless an authorised excep
     expect(quote().state).toBe("MANAGER_APPROVED_FINAL");
     expect(quote().accepted_baseline.physicalCostEstimate).toMatchObject({ incomplete: true, costBasis: { incompleteAccepted: { reason: expect.stringContaining("director"), by: "u@nq" } } });
   });
-  it("a quotation whose costing was never started keeps the existing behaviour (approval is not blocked)", async () => {
-    signed(); await approve();
-    expect(quote().state).toBe("MANAGER_APPROVED_FINAL");
-    expect(quote().accepted_baseline.physicalCostEstimate).toBeUndefined();
+  it("UX-006 correction: a quotation whose costing was never started is NOT approvable (supplier costs unresolved) until costed or an authorised exception is recorded", async () => {
+    signed();
+    await expect(approve()).rejects.toThrow(/Costing is incomplete/);
+    expect(quote().state).toBe("ESTIMATOR_REVIEW");
   });
 });
 

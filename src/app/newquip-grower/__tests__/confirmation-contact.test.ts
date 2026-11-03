@@ -4,6 +4,7 @@ import { seedGoldenCatalogue } from "@/newquip/grower/__tests__/golden-catalogue
 import { installStaged } from "@/lib/approvals/__tests__/staged-emulator";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
+import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { createWorkbookPriceSource } from "@/newquip/grower/workbook-price-source";
 import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
@@ -36,7 +37,7 @@ import { readCin7Customer } from "@/lib/newquip-customers/cin7-customer-read";
 const NQ = "e1aea782-d095-47ad-90fb-4fa65c9bf855";
 const U = { owner: "u-owner", rep: "u-rep", est: "u-est", mgr: "u-mgr" };
 const EMAIL: Record<string, string> = { "u-owner": DEMO_OWNER_EMAIL, "u-rep": "rep@sparkconsulting.co.za", "u-est": "estimator@sparkconsulting.co.za", "u-mgr": "manager@sparkconsulting.co.za" };
-const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
+const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
 const total = Math.round(evaluateDraft(draft, { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true }).budget!.totals.subtotalExTax * 100);
 const quote = () => db.rows("newquip_quotes")[0] as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const acts = () => (db.rows("activity_log") as Array<Record<string, any>>); // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -173,9 +174,12 @@ describe("pre-approval price confirmation contact", () => {
     expect((await customer.getQuoteCustomerAction("q1")).data!.confirmationContact).toBeNull();
     // defence in depth: if a stale confirmation were somehow still on an in-review quote, the Manager still cannot approve it
     Object.assign(quote(), { state: "ESTIMATOR_REVIEW", customer_confirmed_cents: total });
-    await as("estimator"); expect((await grower.signOffGrowerQuoteAction("q1")).error).toBeUndefined();
+    // Integration of S1a + S1b: S1a's sign-off also refuses a stale amount (a second line of defence), so the sign-off is refused here ...
+    await as("estimator"); expect((await grower.signOffGrowerQuoteAction("q1")).error).toBe("The amount changed since the customer confirmed it. Return it to the Rep to reconfirm.");
+    // ... and approval stays refused even if a sign-off were somehow present on a stale confirmation.
+    Object.assign(quote(), { estimator_signoff_hash: quote().draft_hash, estimator_signoff_by_email: "e@nq" });
     await as("manager");
-    expect((await grower.approveGrowerQuoteAction("q1")).error).toMatch(/total changed since the customer confirmed/);
+    expect((await grower.approveGrowerQuoteAction("q1")).error).toMatch(/total changed since the customer confirmed|Costing is incomplete/);
     expect(quote().state).toBe("ESTIMATOR_REVIEW");
   });
 

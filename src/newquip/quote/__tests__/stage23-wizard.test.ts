@@ -258,7 +258,7 @@ describe("deriveStage3Wizard: role x state matrix", () => {
       expect(step3(w, "decision")).toMatchObject({ access: "locked", blockKind: "server", blockedBy: [NOT_SUBMITTED_REASON] });
       expect(w.nextOwner).toBe("Rep");
     }
-    expect(s3({ state: "REP_DRAFT", revision: 2, signoff: "none" }).statusLine).toBe("Returned to the Rep (revision 2). Next responsible role: Rep.");
+    expect(s3({ state: "REP_DRAFT", revision: 2, signoff: "none" }).statusLine).toBe("Returned to the Rep (revision 2). Next responsible role: Rep: reconfirm the amount with the customer, then submit again.");
     expect(s3({ state: "REP_DRAFT", revision: 2, signoff: "none" }).returned).toBe(true);
   });
   it("approved: read-only and complete; nothing is next", () => {
@@ -299,7 +299,7 @@ describe("UX-006i2 review fixes (pure)", () => {
     expect(item.label).toBe("Costing figures are available");
     const inc = deriveFinalReviewChecklist({ mappingOpen: [], readiness: { state: "READY", reasons: [] }, cost: costReview, confirmedCents: 1, totalCents: 1, dirty: false, calcValid: true, costMissingLines: 12 }).find((x) => x.id === "costing")!;
     expect(inc).toMatchObject({ label: "Costing figures: incomplete (12 lines have no cost)", met: false });
-    expect(inc.detail).toMatch(/indicative \(price-list basis\).*You may still sign off/);
+    expect(inc.detail).toMatch(/indicative \(price-list basis\).*Sign-off and approval need costing complete/);
     expect(step(s2({ costMissingLines: 12 }), "final").status).toBe("attention"); // never "Met" / quietly fine
     expect(item.detail).toMatch(/Cin7 cost capture.*may still show incomplete/);
   });
@@ -312,5 +312,54 @@ describe("UX-006i2 round 2: the quote list's Stage column agrees with 'Waiting o
     expect(waitingOn({ state: "ESTIMATOR_REVIEW", revision: 1, signed_off: true })).toBe("Manager: approval");
     expect(stageLabelOf({ state: "ESTIMATOR_REVIEW", signed_off: false })).toBe(QUOTE_STATE_LABEL.ESTIMATOR_REVIEW);
     expect(stageLabelOf({ state: "REP_DRAFT", signed_off: true })).toBe(QUOTE_STATE_LABEL.REP_DRAFT);
+  });
+});
+
+import { commercialReadiness, confirmedAmountChange } from "../stage23-wizard";
+describe("UX-006 corrections: commercial readiness and the confirmed-amount change (pure)", () => {
+  const lines = [{ label: "Feeder", status: "unmapped" }, { label: "Slats", status: "package_unconfirmed" }, { label: "Door", status: "supplier_quote_required" }, { label: "Light", status: "not_in_price_source" }, { label: "Tank", status: "priced" }];
+  it("counts what is unresolved by kind, names the owner of each item, and says the amounts are indicative", () => {
+    const c = commercialReadiness({ lines, blankPriceReasonCount: 1, costMissingLines: 7 });
+    expect(c).toMatchObject({ complete: false, unmapped: 2, quotesRequired: 2, noCost: 7, reasonsOpen: 1 });
+    expect(c.headline).toBe("Not commercially ready: 2 lines unmapped · 2 supplier quotes required · 7 lines have no cost · 1 manual price needs a reason (amounts are indicative)");
+    expect(c.items.every((x) => x.owner === "Estimator")).toBe(true);
+    expect(c.items.map((x) => x.text)).toContain("7 lines have no cost: capture it from Cin7 or enter a manual estimate (step 2)");
+    expect(c.items.some((x) => x.text === "Enter a manual quotation price for Door")).toBe(true);
+  });
+  it("is complete only when nothing is open, with no headline", () => {
+    expect(commercialReadiness({ lines: [{ label: "Tank", status: "priced" }], blankPriceReasonCount: 0, costMissingLines: 0 })).toMatchObject({ complete: true, headline: null, items: [] });
+    expect(commercialReadiness({ lines: null, blankPriceReasonCount: 0, costMissingLines: 1 }).complete).toBe(false);
+    expect(commercialReadiness({ lines: [{ label: "Feeder", status: "unmapped" }], blankPriceReasonCount: 0, costMissingLines: 0 }).headline).toMatch(/1 line unmapped/);
+  });
+  it("confirmedAmountChange: silent when equal or nothing was confirmed; otherwise says from what to what and that the Rep reconfirms", () => {
+    expect(confirmedAmountChange(1000, 1000)).toEqual({ changed: false, text: null });
+    expect(confirmedAmountChange(null, 1000).changed).toBe(false);
+    expect(confirmedAmountChange(1000, null).changed).toBe(false);
+    const c = confirmedAmountChange(100000, 125050);
+    expect(c.changed).toBe(true);
+    expect(c.text).toMatch(/^The total changed from what the customer confirmed \(R.*1.*000,00 -> R.*1.*250,50\)\. Return to the Rep to reconfirm\.$/);
+  });
+  it("Costs needs attention with the number of lines with no cost, and Mapping uses the by-kind summary as its note", () => {
+    const w = s2({ costMissingLines: 7, mappingOpen: ["x"], mappingSummary: "2 lines unmapped · 1 supplier quote required" });
+    expect(step(w, "costs")).toMatchObject({ status: "attention", note: "7 lines have no cost" });
+    expect(step(w, "mapping").note).toBe("2 lines unmapped · 1 supplier quote required");
+    expect(step(s2({ costMissingLines: 7, roles: MANAGER }), "costs").status).toBe("incomplete");
+    expect(step(s2({ costMissingLines: 7, costAcknowledged: true }), "costs")).toMatchObject({ counted: true });
+    expect(step(s2({ costMissingLines: 7, costAcknowledged: true }), "costs").note).toMatch(/7 lines still have no cost/);
+  });
+});
+
+import { deriveApprovalChecklist } from "../stage3-approval";
+describe("UX-006 phase 2: the Stage 3 model mirrors the server's costing condition (no stub)", () => {
+  const base = { readinessState: "READY" as const, readinessReasons: [] as string[], totalExVatCents: 100, customerConfirmedCents: 100, signoffHash: "h", currentDraftHash: "h", dirty: false, isManager: true };
+  it("a viewer with cost visibility gets a 'Costing is complete' row that is met/unmet from the server's verdict, with the server's own message", () => {
+    const open = deriveApprovalChecklist({ ...base, costing: { complete: false, reason: "The cost estimate is incomplete: 12 SKU(s) have no supplier cost selected." } }).find((x) => x.id === "costing")!;
+    expect(open.met).toBe(false); expect(open.detail).toMatch(/Costing is incomplete: The cost estimate is incomplete: 12 SKU\(s\).*cannot be approved/);
+    expect(deriveApprovalChecklist({ ...base, costing: { complete: true, reason: null } }).find((x) => x.id === "costing")!.met).toBe(true);
+  });
+  it("without the server's verdict (a Rep) the row is absent and the other conditions are unchanged", () => {
+    const items = deriveApprovalChecklist({ ...base, costing: null });
+    expect(items.some((x) => x.id === "costing")).toBe(false);
+    expect(items.every((x) => x.met)).toBe(true);
   });
 });
