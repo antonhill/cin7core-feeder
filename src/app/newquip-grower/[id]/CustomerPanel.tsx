@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Spinner } from "@/app/Spinner";
 import { Status } from "@/components/ui/Status";
@@ -9,6 +9,7 @@ import { formatSast } from "@/lib/approvals/time";
 import { chooseQuoteContactAction, clearQuoteCustomerAction, getQuoteCustomerAction, refreshQuoteCustomerAction, searchQuoteCustomersForQuoteAction, selectQuoteCustomerAction, type QuoteCustomerView, type RefreshPreview } from "../customer-actions";
 import type { CustomerHit } from "@/lib/newquip-customers/cin7-customer-read";
 import { fieldValue, isValidEmail, type Field } from "@/lib/newquip-quotes/customer-snapshot";
+import type { Stage1CustomerFacts } from "@/newquip/quote/stage1-steps";
 
 // Cin7 customer lookup, quotation contact and the customer-details snapshot. Cin7 stays the master: nothing here is ever written to Cin7. A field Cin7 did not supply is
 // shown as "not in Cin7", never as a blank. The server re-checks the Rep role and the organisation on every action.
@@ -16,7 +17,7 @@ import { fieldValue, isValidEmail, type Field } from "@/lib/newquip-quotes/custo
 const show = (f: Field | undefined): string => (!f || f.state === "missing" ? "not in Cin7" : f.state === "empty" ? "blank in Cin7" : f.value);
 const inputCls = "h-9 rounded-md border border-slate-300 bg-white px-2 text-sm";
 
-export function CustomerPanel({ quoteId, editable, onPicked }: { quoteId: string; editable: boolean; onPicked: (customerName: string) => void }) {
+export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteId: string; editable: boolean; onPicked: (customerName: string) => void; onFacts?: (facts: Stage1CustomerFacts) => void }) {
   const [v, setV] = useState<QuoteCustomerView | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // What the server is doing right now (null = idle). Every button that waits on the server shows it: a click is never silent.
@@ -32,6 +33,14 @@ export function CustomerPanel({ quoteId, editable, onPicked }: { quoteId: string
   const [changing, setChanging] = useState(false);
   const [pending, setPending] = useState<{ kind: "replace"; name: string } | { kind: "clear" } | null>(null);
   const [fix, setFix] = useState<{ index: number; email: string; reason: string } | null>(null);
+
+  // The Stage 1 step rail reads what this panel already loaded (no extra request): the snapshot and whether a contact is chosen.
+  const factsRef = useRef(onFacts);
+  useEffect(() => { factsRef.current = onFacts; });
+  useEffect(() => {
+    if (!v) return;
+    factsRef.current?.({ loaded: true, available: v.available, hasSnapshot: !!v.snapshot, hasContact: !!v.snapshot?.chosenContact || !!v.confirmationContact, contactName: v.snapshot?.chosenContact?.name ?? v.confirmationContact?.name ?? null });
+  }, [v]);
 
   useEffect(() => {
     let live = true;

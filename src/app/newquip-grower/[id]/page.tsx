@@ -44,6 +44,11 @@ import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
 import { CostPanel } from "./CostPanel";
 import { CustomerPanel } from "./CustomerPanel";
+import { Stage1Review } from "./Stage1Review";
+import { StepRail, StepPanel } from "@/components/ui/StepRail";
+import { useShowAllSteps } from "@/components/ui/use-show-all-steps";
+import { nextIncompleteStepId, parseStepParam } from "@/components/ui/step-rail-model";
+import { deriveStage1Steps, NO_CUSTOMER_FACTS, STAGE1_STEP_IDS, STAGE1_STEP_LABEL, type Stage1CustomerFacts, type Stage1StepId } from "@/newquip/quote/stage1-steps";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { DeliveryPanel, type DeliveryGate } from "./DeliveryPanel";
 import { StageNav } from "./StageNav";
@@ -106,6 +111,11 @@ export default function QuoteEditorPage() {
   const [gateError, setGateError] = useState<string | null>(null);
   const [gateTry, setGateTry] = useState(0);
   const [picked, setPicked] = useState<StageId | null>(() => parseStage(search.get("stage")));
+  // Stage 1 steps: navigation and guidance only (completion is derived from data, never from a visit). The customer facts are lifted from the CustomerPanel that already loads them.
+  const [stepNo, setStepNo] = useState<number>(() => parseStepParam(search.get("step"), STAGE1_STEP_IDS.length));
+  const [showAllSteps, setShowAllSteps] = useShowAllSteps("nq-builder-show-all");
+  const [customerFacts, setCustomerFacts] = useState<Stage1CustomerFacts>(NO_CUSTOMER_FACTS);
+  const onCustomerFacts = (f: Stage1CustomerFacts) => setCustomerFacts((p) => (p.loaded === f.loaded && p.available === f.available && p.hasSnapshot === f.hasSnapshot && p.hasContact === f.hasContact && p.contactName === f.contactName ? p : f));
   const [error, setError] = useState<string | null>(null);
   const [confirmDemo, setConfirmDemo] = useState(false);
   const [demoLoaded, setDemoLoaded] = useState<string[] | null>(null);
@@ -258,6 +268,17 @@ export default function QuoteEditorPage() {
   const stage: StageId = picked ?? here;
   const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); u.searchParams.set("stage", String(n)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
 
+  const stage1 = deriveStage1Steps({ customerName: draft.customerName, siteName: draft.siteName, penningPigSize: cfg.penningPigSize, calcIssues: ev.calc.issues, readinessReasons: rd.reasons, customer: customerFacts });
+  const stepId = STAGE1_STEP_IDS[stepNo - 1];
+  const goStepNo = (n: number) => {
+    const next = Math.min(Math.max(n, 1), STAGE1_STEP_IDS.length);
+    setStepNo(next);
+    try { const u = new URL(window.location.href); u.searchParams.set("step", String(next)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ }
+  };
+  const goStep = (id: string) => goStepNo(STAGE1_STEP_IDS.indexOf(id as Stage1StepId) + 1);
+  const nextOpen = nextIncompleteStepId(stage1.steps, stepId);
+  const stepPanelCls = "col-span-full grid min-w-0 items-start gap-6 xl:grid-cols-2";
+
   return (
     <main className={pageContainerClass("data")}>
       <ModuleHeader variant="workspace" module={SOLUTION_BUILDER_MODULE}>
@@ -289,11 +310,23 @@ export default function QuoteEditorPage() {
 
       <StageNav stages={stages} current={here} viewing={stage} onSelect={goStage} />
 
+      {stage === 1 && (
+        <StepRail id="s1" ariaLabel="Configuration steps" steps={stage1.steps} currentId={stepId} onSelect={goStep}
+          actions={(
+            <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+              <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAllSteps} onChange={(e) => setShowAllSteps(e.target.checked)} /> Show all steps</label>
+              {nextOpen
+                ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep(nextOpen)}>Next incomplete step</Button>
+                : <span className="text-sm text-slate-700" data-testid="all-steps-complete">Every step is complete.</span>}
+            </div>
+          )} />
+      )}
+
       {stage <= 2 && (
         <>
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button onClick={save} loading={acts.isPending("save")} aria-describedby={saveWhy ? "save-why" : undefined} disabled={isWorking || !editable || !dirty || incompleteOverrides || blankExclusionKeys.length > 0}>Save draft</Button>
-            {dirty && <Status tone="warning">Unsaved changes</Status>}
+            <span role="status" aria-live="polite" data-testid="save-state">{dirty ? <Status tone="warning">Unsaved changes</Status> : <Status tone="success">All changes saved</Status>}</span>
             {editable && !confirmDemo && <Button variant="secondary" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load Demo Defaults</Button>}
             {!editable && <span id="save-why" className="text-sm text-slate-700">{final ? "Read-only: accepted quote." : "You do not have permission to edit: only a Rep or Estimator can edit and save this quotation."}</span>}
           </div>
@@ -326,74 +359,109 @@ export default function QuoteEditorPage() {
 
       {/* ───────────── 1 · CONFIGURATION ───────────── */}
       {stage === 1 && (
+        <>
         <fieldset disabled={!editable} className="mt-4 grid min-w-0 items-start gap-6 border-0 p-0 xl:grid-cols-2" data-testid="stage1-layout">
-          <Panel className="xl:col-span-2">
-            <PanelTitle>Customer & site</PanelTitle>
-            <div className="mt-4 grid gap-4 md:grid-cols-3">
-              <TextField label="Customer" value={draft.customerName} onChange={(v) => edit((d) => { d.customerName = v; })} />
-              <TextField label="Site / project name" value={draft.siteName} onChange={(v) => edit((d) => { d.siteName = v; })} />
-              <Select label="Pricing basis" value={draft.quoteType} onChange={(e) => edit((d) => { d.quoteType = e.target.value as QuoteType; })}>
-                <option value="project">Project — landed cost + 20%</option>
-                <option value="day_to_day">Day-to-day — workbook Retail ex VAT</option>
-              </Select>
-            </div>
-            <CustomerPanel quoteId={id} editable={editable} onPicked={onCustomerChanged} />
-          </Panel>
+          {/* Hidden steps stay mounted (hidden + inert), so the requests made on mount are the same whichever step is shown. */}
+          <StepPanel railId="s1" stepId="customer" number={1} title={STAGE1_STEP_LABEL.customer} current={stepId === "customer"} showAll={showAllSteps} className={stepPanelCls}>
+            <Panel className="xl:col-span-2">
+              <PanelTitle>Customer & quotation contact</PanelTitle>
+              <p className="mt-2 text-xs text-slate-600">Choosing a Cin7 customer or contact below is saved at once. The customer name field is saved with Save draft. The quotation contact is chosen in this step.</p>
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <TextField label="Customer" value={draft.customerName} onChange={(v) => edit((d) => { d.customerName = v; })} />
+              </div>
+              <CustomerPanel quoteId={id} editable={editable} onPicked={onCustomerChanged} onFacts={onCustomerFacts} />
+            </Panel>
+          </StepPanel>
 
-          <Panel>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <PanelTitle>Room inputs — describe ONE room</PanelTitle>
-              <Button variant="secondary" size="sm" onClick={() => edit((d) => { d.config = { ...structuredClone(TOPIGS_GROWER_INPUT), feederVariant: "STANDARD", exclusions: {}, estimatorQuantities: {}, quantityOverrides: {}, quantityOverrideReasons: {} }; })}>Load Topigs sample inputs</Button>
-            </div>
-            <p className="mt-2 text-xs text-slate-600">{ROOMS_HELP}</p>
-            <div className="mt-4 grid gap-4 sm:grid-cols-3">
-              <NumField label="Length" unit="m" value={cfg.lengthM || null} onChange={(v) => edit((d) => { d.config.lengthM = num(v); })} />
-              <NumField label="Width" unit="m" value={cfg.widthM || null} onChange={(v) => edit((d) => { d.config.widthM = num(v); })} />
-              <NumField label="Number of rooms" value={cfg.rooms || null} onChange={(v) => edit((d) => { d.config.rooms = num(v); })} hint="Multiplies every per-room quantity" />
-              <NumField label="Total pens" unit="per room" value={cfg.totalPens || null} onChange={(v) => edit((d) => { d.config.totalPens = num(v); })} />
-              <NumField label="Hospital pens" unit="per room" value={cfg.hospitalPens} onChange={(v) => edit((d) => { d.config.hospitalPens = num(v); })} />
-              <NumField label="Pigs per room" value={cfg.pigsPerRoom || null} onChange={(v) => edit((d) => { d.config.pigsPerRoom = num(v); })} hint="±600 is per room" />
-            </div>
-            <p className="mt-3 text-sm text-slate-600">
-              Room floor area: <strong className="tabular-nums">{ev.calc.derived.floorAreaM2 == null ? "—" : `${Math.round(ev.calc.derived.floorAreaM2 * 1000) / 1000} m²`}</strong>
-              {" "}· minimum lights per room = ceil(area ÷ 25) = <strong>{lineByKey.get("led_light")?.defaultQuantityPerRoom ?? "—"}</strong>
-            </p>
-          </Panel>
+          <StepPanel railId="s1" stepId="site" number={2} title={STAGE1_STEP_LABEL.site} current={stepId === "site"} showAll={showAllSteps} className={stepPanelCls}>
+            <Panel>
+              <PanelTitle>Site name & pricing basis</PanelTitle>
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <TextField label="Site / project name" value={draft.siteName} onChange={(v) => edit((d) => { d.siteName = v; })} />
+                <Select label="Pricing basis" value={draft.quoteType} onChange={(e) => edit((d) => { d.quoteType = e.target.value as QuoteType; })}>
+                  <option value="project">Project — landed cost + 20%</option>
+                  <option value="day_to_day">Day-to-day — workbook Retail ex VAT</option>
+                </Select>
+              </div>
+              <p className="mt-4 text-sm text-slate-800" data-testid="step2-contact-status">
+                Quotation contact: {customerFacts.contactName ? <strong>{customerFacts.contactName}</strong> : <span className="text-amber-900">{customerFacts.loaded && customerFacts.available ? "not chosen yet" : "not read yet"}</span>}
+                {" "}<Button type="button" size="sm" variant="secondary" className="min-h-11" onClick={() => goStep("customer")}>Choose the contact in step 1</Button>
+              </p>
+              <p className="mt-2 text-xs text-slate-600">The site name and pricing basis are saved with Save draft.</p>
+            </Panel>
+          </StepPanel>
 
-          <Panel>
-            <PanelTitle>Selections</PanelTitle>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <Select label="CCM feeder variant" helperText={`One feeder, two variants. Capacity ${CCM_FEEDER_CAPACITY_PIGS} pigs per feeder.`} value={cfg.feederVariant ?? "STANDARD"} onChange={(e) => edit((d) => { d.config.feederVariant = e.target.value as "STANDARD" | "WINDOW"; delete d.estimator.confirmedMappings.feeder; })}>
-                <option value="STANDARD">Standard — PNQ082</option>
-                <option value="WINDOW">With window — PNQ082-WINDOW</option>
-              </Select>
-              <Select label="Penning pig size" value={cfg.penningPigSize ?? ""} onChange={(e) => edit((d) => { d.config.penningPigSize = (e.target.value || null) as PenningPigSize | null; })}>
-                <option value="">Select…</option>
-                {(Object.keys(PIG_SIZE_LABEL) as PenningPigSize[]).map((k) => <option key={k} value={k}>{PIG_SIZE_LABEL[k]}</option>)}
-              </Select>
-              <NumField label="Penning running metres" unit="per room" value={cfg.penningRunningMetresPerRoom} onChange={(v) => edit((d) => { d.config.penningRunningMetresPerRoom = v; })} hint="Running metres, not m²" />
-              <NumField label="Slatted floor area (context only)" unit="m², one room" value={cfg.slattedFloorAreaM2} onChange={(v) => edit((d) => { d.config.slattedFloorAreaM2 = v; })} hint="Never converted to a slat quantity — the rep enters the quantity" />
-            </div>
-          </Panel>
+          <StepPanel railId="s1" stepId="room" number={3} title={STAGE1_STEP_LABEL.room} current={stepId === "room"} showAll={showAllSteps} className={stepPanelCls}>
+            <Panel>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <PanelTitle>Room inputs — describe ONE room</PanelTitle>
+                <Button variant="secondary" size="sm" onClick={() => edit((d) => { d.config = { ...structuredClone(TOPIGS_GROWER_INPUT), feederVariant: "STANDARD", exclusions: {}, estimatorQuantities: {}, quantityOverrides: {}, quantityOverrideReasons: {} }; })}>Load Topigs sample inputs</Button>
+              </div>
+              <p className="mt-2 text-xs text-slate-600">{ROOMS_HELP}</p>
+              <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                <NumField label="Length" unit="m" value={cfg.lengthM || null} onChange={(v) => edit((d) => { d.config.lengthM = num(v); })} />
+                <NumField label="Width" unit="m" value={cfg.widthM || null} onChange={(v) => edit((d) => { d.config.widthM = num(v); })} />
+                <NumField label="Number of rooms" value={cfg.rooms || null} onChange={(v) => edit((d) => { d.config.rooms = num(v); })} hint="Multiplies every per-room quantity" />
+                <NumField label="Total pens" unit="per room" value={cfg.totalPens || null} onChange={(v) => edit((d) => { d.config.totalPens = num(v); })} />
+                <NumField label="Hospital pens" unit="per room" value={cfg.hospitalPens} onChange={(v) => edit((d) => { d.config.hospitalPens = num(v); })} />
+                <NumField label="Pigs per room" value={cfg.pigsPerRoom || null} onChange={(v) => edit((d) => { d.config.pigsPerRoom = num(v); })} hint="±600 is per room" />
+              </div>
+              <p className="mt-3 text-sm text-slate-600">
+                Room floor area: <strong className="tabular-nums">{ev.calc.derived.floorAreaM2 == null ? "—" : `${Math.round(ev.calc.derived.floorAreaM2 * 1000) / 1000} m²`}</strong>
+                {" "}· minimum lights per room = ceil(area ÷ 25) = <strong>{lineByKey.get("led_light")?.defaultQuantityPerRoom ?? "—"}</strong>
+              </p>
+            </Panel>
+          </StepPanel>
 
-          <Panel className="xl:col-span-2">
-            <PanelTitle>Ventilation — optional inside Grower</PanelTitle>
-            <p className="mt-2 max-w-4xl text-sm text-amber-800">{VENTILATION_SCOPE_STATUS}. AS.03 is not yet ingested: no fan, cooling or controller rule is invented — once selected, the estimator enters the quantity after engineering review.</p>
-            <ul className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              {(Object.keys(OPTIONAL_LABELS) as OptionalItemKey[]).map((k) => {
-                const on = cfg.optionalEquipment[k];
-                return (
-                  <li key={k}>
-                    <label className={`flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm ${on ? "border-indigo-600 bg-indigo-50 text-slate-900" : "border-slate-300 bg-white text-slate-700"}`}>
-                      <span className="flex items-center gap-2"><input type="checkbox" checked={on} onChange={(e) => edit((d) => { d.config.optionalEquipment[k] = e.target.checked; })} /> {OPTIONAL_LABELS[k]}</span>
-                      <span className={`text-xs font-semibold ${on ? "text-indigo-800" : "text-slate-600"}`} aria-hidden>{on ? "✓ Included" : "Not included"}</span>
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
-          </Panel>
+          <StepPanel railId="s1" stepId="equipment" number={4} title={STAGE1_STEP_LABEL.equipment} current={stepId === "equipment"} showAll={showAllSteps} className={stepPanelCls}>
+            <Panel>
+              <PanelTitle>Selections</PanelTitle>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <Select label="CCM feeder variant" helperText={`One feeder, two variants. Capacity ${CCM_FEEDER_CAPACITY_PIGS} pigs per feeder.`} value={cfg.feederVariant ?? "STANDARD"} onChange={(e) => edit((d) => { d.config.feederVariant = e.target.value as "STANDARD" | "WINDOW"; delete d.estimator.confirmedMappings.feeder; })}>
+                  <option value="STANDARD">Standard — PNQ082</option>
+                  <option value="WINDOW">With window — PNQ082-WINDOW</option>
+                </Select>
+                <Select label="Penning pig size" value={cfg.penningPigSize ?? ""} onChange={(e) => edit((d) => { d.config.penningPigSize = (e.target.value || null) as PenningPigSize | null; })}>
+                  <option value="">Select…</option>
+                  {(Object.keys(PIG_SIZE_LABEL) as PenningPigSize[]).map((k) => <option key={k} value={k}>{PIG_SIZE_LABEL[k]}</option>)}
+                </Select>
+                <NumField label="Penning running metres" unit="per room" value={cfg.penningRunningMetresPerRoom} onChange={(v) => edit((d) => { d.config.penningRunningMetresPerRoom = v; })} hint="Running metres, not m²" />
+                <NumField label="Slatted floor area (context only)" unit="m², one room" value={cfg.slattedFloorAreaM2} onChange={(v) => edit((d) => { d.config.slattedFloorAreaM2 = v; })} hint="Never converted to a slat quantity — the rep enters the quantity" />
+              </div>
+            </Panel>
+
+            <Panel className="xl:col-span-2">
+              <PanelTitle>Ventilation — optional inside Grower</PanelTitle>
+              <p className="mt-2 max-w-4xl text-sm text-amber-800">{VENTILATION_SCOPE_STATUS}. AS.03 is not yet ingested: no fan, cooling or controller rule is invented — once selected, the estimator enters the quantity after engineering review.</p>
+              <ul className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                {(Object.keys(OPTIONAL_LABELS) as OptionalItemKey[]).map((k) => {
+                  const on = cfg.optionalEquipment[k];
+                  return (
+                    <li key={k}>
+                      <label className={`flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm ${on ? "border-indigo-600 bg-indigo-50 text-slate-900" : "border-slate-300 bg-white text-slate-700"}`}>
+                        <span className="flex items-center gap-2"><input type="checkbox" checked={on} onChange={(e) => edit((d) => { d.config.optionalEquipment[k] = e.target.checked; })} /> {OPTIONAL_LABELS[k]}</span>
+                        <span className={`text-xs font-semibold ${on ? "text-indigo-800" : "text-slate-600"}`} aria-hidden>{on ? "✓ Included" : "Not included"}</span>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Panel>
+          </StepPanel>
         </fieldset>
+
+        {/* Step 5 is read-only and outside the form fieldset, so its navigation works for every role. */}
+        <StepPanel railId="s1" stepId="review" number={5} title={STAGE1_STEP_LABEL.review} current={stepId === "review"} showAll={showAllSteps} className="mt-6 grid min-w-0 gap-6">
+          <Stage1Review draft={draft} floorAreaM2={ev.calc.derived.floorAreaM2} totalLabel={totalCents == null ? "—" : fmtCents(totalCents)} derived={stage1} onGoStep={goStep} onContinue={() => goStage(2)} />
+        </StepPanel>
+
+        {!showAllSteps && (
+          <div className="mt-6 flex items-center justify-between gap-3" data-testid="step-buttons">
+            {stepNo > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStepNo(stepNo - 1)}>Back</Button> : <span />}
+            {stepNo < STAGE1_STEP_IDS.length ? <Button type="button" className="min-h-11" onClick={() => goStepNo(stepNo + 1)}>Next</Button> : <span />}
+          </div>
+        )}
+        </>
       )}
 
       {/* ───────────── 2 · ESTIMATOR REVIEW ───────────── */}
