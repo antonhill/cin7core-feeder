@@ -341,7 +341,7 @@ export default function QuoteEditorPage() {
   const costReviewable = deriveStage2Steps({ ...s2Base, costAcknowledged: false }).steps.find((x) => x.id === "cost")?.status === "review";
   const canAckCost = canCommercials && q.state === "ESTIMATOR_REVIEW" && (roles.has("estimator") || roles.has("manager")) && costKey != null && costReviewable;
   const costAcknowledged = canAckCost && costAck === costKey && !dirty;
-  const onCostUnmarked = canAckCost && step2Id === "cost" && !costAcknowledged;
+  const onCostUnmarked = canAckCost && step2Id === "cost" && !costAcknowledged && !dirty;
   const onCostMarked = canAckCost && step2Id === "cost" && costAcknowledged;
   const ACK_EXPLAIN = "This records that you have looked at the costing and margin for this version. It is not the Estimator sign-off.";
   const markReviewed = () => {
@@ -350,6 +350,14 @@ export default function QuoteEditorPage() {
     setAckMsg("Cost & margin marked reviewed. This is not a sign-off.");
   };
   const stage2 = deriveStage2Steps({ ...s2Base, costAcknowledged });
+  // On Cost & margin there is no ineffective "Next": when the review cannot be recorded (not in Estimator review, costing needing attention, cost unavailable) the bar says why and offers Back only.
+  const costStepNow = stage2.steps.find((x) => x.id === "cost");
+  const costDone = q.state === "MANAGER_APPROVED_FINAL" || costStepNow?.status === "complete" || costStepNow?.counted === true;
+  const costBlocked = canCommercials && step2Id === "cost" && !onCostUnmarked && !onCostMarked && !costDone;
+  const costBlockedText = q.state !== "ESTIMATOR_REVIEW" ? "Marking the costing reviewed is available once the quote is in Estimator review."
+    : costStepNow?.status === "attention" ? `Resolve the costing items above before marking reviewed. ${costStepNow.note ?? ""}`.trim()
+    : dirty ? "Save or discard your unsaved edits before marking the costing reviewed."
+    : `The costing cannot be marked reviewed yet. ${costStepNow?.note ?? ""}`.trim();
   const groupTone = { success: "complete", warning: "attention", danger: "attention", info: "incomplete", neutral: "neutral" } as const;
   const stage2Groups = stage2.groups.map((g) => ({ id: g.id, label: g.label, owner: g.id === "rep" ? "Rep" : "Estimator", statusText: `Workflow: ${g.statusLine}`, tone: groupTone[g.tone] }));
   const signoffOutstandingForYou = q.state === "ESTIMATOR_REVIEW" && (roles.has("estimator") || roles.has("manager")) && stage2.steps.find((x) => x.id === "signoff")?.status !== "complete";
@@ -865,13 +873,13 @@ export default function QuoteEditorPage() {
           <div className="sticky bottom-0 z-10 -mx-4 mt-6 flex flex-wrap items-end justify-between gap-3 border-t border-slate-200 bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:-mx-6 md:px-6" data-testid="step-buttons">
             {step2Cur > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2No(step2Cur - 1)}>Back</Button> : <span />}
             {onCostUnmarked ? (
+              // The ONLY way forward from Cost & margin while the review is outstanding: it records the review (client-local), then moves on. The rail and Back still navigate and record nothing.
               <div className="flex max-w-xl flex-col items-end gap-2" data-testid="cost-ack">
                 <p className="text-right text-sm text-slate-800">{ACK_EXPLAIN}</p>
-                <div className="flex flex-wrap justify-end gap-2">
-                  <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2No(step2Cur + 1)}>Next without marking reviewed</Button>
-                  <Button type="button" id="cost-ack-btn" className="min-h-11" onClick={markReviewed}>Mark reviewed &amp; continue</Button>
-                </div>
+                <Button type="button" id="cost-ack-btn" className="min-h-11" onClick={markReviewed}>Mark reviewed &amp; continue</Button>
               </div>
+            ) : costBlocked ? (
+              <p className="max-w-xl text-right text-sm text-amber-900" data-testid="cost-ack-blocked">{costBlockedText}</p>
             ) : step2Cur < step2Ids.length ? (
               <div className="flex flex-col items-end gap-2">
                 {onCostMarked && <p id="cost-ack-done" tabIndex={-1} className="mt-2 text-sm font-semibold text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-indigo-600" data-testid="cost-ack-done">You marked the costing reviewed for this version.</p>}

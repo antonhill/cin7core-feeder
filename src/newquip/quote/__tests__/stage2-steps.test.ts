@@ -186,7 +186,7 @@ describe("Stage 2 steps and groups (UX-006b)", () => {
   it("a client-local cost acknowledgement (Estimator/Manager, Estimator review, commercial, no unsaved edits): Reviewed + counted, count moves, the group line does NOT claim a sign-off, next-incomplete goes to sign-off", () => {
     const acked = { ...sub, roles: EST, costAcknowledged: true };
     const x = d(acked);
-    expect(x.steps.find((q) => q.id === "cost")).toMatchObject({ status: "review", counted: true, statusLabel: "Reviewed", note: "You marked this reviewed - this is not a sign-off" });
+    expect(x.steps.find((q) => q.id === "cost")).toMatchObject({ status: "review", counted: true, statusLabel: "Reviewed", note: "You marked this reviewed - this is not a sign-off; it is not saved" });
     expect([x.groups[1].progress, x.groups[1].statusLine]).toEqual(["1 of 2 complete", "Awaiting your review"]);
     expect(by(acked).signoff).toBe("incomplete"); // the formal sign-off is untouched
     expect(nextIncompleteStepId(nextCandidates(x, "lines"), "lines")).toBe("signoff");
