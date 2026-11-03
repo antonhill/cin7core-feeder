@@ -797,9 +797,10 @@ describe("UX-006i2 review fixes: wording that is true to the current state (revi
 
   it("the stage line is consistent for an Estimator on a Rep draft: 'your mapping is needed', never 'Starts once the quote is READY'", async () => {
     await open({ roles: ["ESTIMATOR"], commercials: true, draftOver: UNMAPPED });
-    const next = screen.getByTestId("next-action").textContent!;
-    expect(next).not.toMatch(/Starts once the quote is READY/);
-    expect(next).toMatch(/Estimator: map the products and enter the manual prices/);
+    // UX-006 acceptance directive: Stage 2 shows its own owner line instead of the nav's next-action row (the same fact once), so the consistency is checked on the whole page and the chip.
+    expect(screen.queryByTestId("next-action")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/Starts once the quote is READY/);
+    expect(screen.getByTestId("stage2-status-line").textContent).toBe("The Rep is waiting on your mapping.");
     expect(document.querySelector('[data-stage="2"]')!.textContent).toContain("Your mapping is needed");
   }, 30000);
 

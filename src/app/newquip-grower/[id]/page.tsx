@@ -642,7 +642,7 @@ export default function QuoteEditorPage() {
       <ActionFeedback state={acts.stateOf("page")} floating />
       {final && <div className="mt-4"><Alert tone="info">This quote is the manager-approved final. Its accepted baseline is frozen; any change after acceptance must be a Variation on the Project.</Alert></div>}
 
-      <StageNav compact={stage <= 2} stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }} />
+      <StageNav compact={stage <= 2} hideNext={stage === 2} stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }} />
 
       {gated1 && <p role="status" aria-live="polite" className="mt-4 text-sm text-slate-700" data-testid="stage1-shell">Preparing your quotation steps…</p>}
       {stage === 1 && (
@@ -676,28 +676,22 @@ export default function QuoteEditorPage() {
 
       {stage === 2 && (
         <>
-          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm" data-testid="stage2-owner">
+          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm" data-testid="stage2-owner">
             <span className="font-semibold text-slate-900">Stage 2 is the Estimator&apos;s review.</span>
             <span role="status" aria-live="polite" className="text-slate-800" data-testid="stage2-status-line">{wizard2.statusLine}</span>
             <OwnerTag role={wizard2.nextOwner} />
           </div>
-          {amountChange.changed && q.state === "ESTIMATOR_REVIEW" && <div className="mt-3"><Alert tone="warning"><span data-testid="total-changed">{amountChange.text}</span></Alert></div>}
-          {wizard2.steps.find((x) => x.id === "mapping")!.access === "edit" && q.state !== "MANAGER_APPROVED_FINAL" && mappingOpen.length > 0 && (
-            <details open className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" data-testid="rep-waiting-banner">
-              <summary className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-2 font-semibold"><span>{q.state === "REP_DRAFT" ? "Needed from you before the Rep can submit" : "Yours to resolve: the Rep has already submitted"}</span><span className="font-normal">· {mappingOpen.length} item{mappingOpen.length === 1 ? "" : "s"}</span></summary>
-              <ul className="mt-1 list-disc space-y-0.5 pl-5 lg:columns-2">{mappingOpen.map((m) => <li key={m} className="break-inside-avoid">{m}</li>)}</ul>
-              <p className="mt-1" data-testid="waiting-explain">{q.state === "REP_DRAFT" ? "The Rep cannot submit until these are done. Steps 2 to 4 open once the Rep has submitted." : "These are Estimator items by design. Sign-off stays disabled until they are resolved and the review is marked."}</p>
-            </details>
-          )}
+          {amountChange.changed && q.state === "ESTIMATOR_REVIEW" && <div className="mt-2"><Alert tone="warning"><span data-testid="total-changed">{amountChange.text}</span></Alert></div>}
           {repSummary}
           {req2No !== null && req2No > visible2.length && <p className="mt-3 text-sm text-slate-800" data-testid="step-unavailable">That step is not available to you, so the first step is shown.</p>}
-          <StepRail id="s2" ariaLabel="Costing and review steps" steps={railSteps2View} currentId={step2Id} onSelect={goStep2}
+          <StepRail dense id="s2" ariaLabel="Costing and review steps" steps={railSteps2View} currentId={step2Id} onSelect={goStep2}
             actions={(
-              <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
                 <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAllSteps} onChange={(e) => setShowAllSteps(e.target.checked)} /> Show all steps</label>
                 {next2Open
                   ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2(next2Open)}>Next incomplete step</Button>
                   : <span className="text-sm text-slate-700" data-testid="all-steps-complete">{signedNow ? "Signed off. Next: Manager approval (Stage 3)." : q.state === "ESTIMATOR_REVIEW" && isEstimator ? "Next: sign off or return the quotation." : q.state === "REP_DRAFT" && isEstimator ? (mappingOpen.length > 0 ? "Next: choose the products listed above, then save." : "Nothing is left for you until the Rep submits.") : "Nothing is left for you in this stage."}</span>}
+                {(s2Edit || dirty) && saveRow("")}
               </div>
             )} />
         </>
@@ -707,7 +701,6 @@ export default function QuoteEditorPage() {
       {stage === 2 && <div role="status" data-testid="next-role-live">{signedNow && <p className="mt-3 text-sm font-semibold text-slate-900" data-testid="next-manager-cue">Next: Manager approval (Stage 3).</p>}</div>}
       {(stage === 1 || (stage === 2 && (s2Edit || dirty))) && (
         <>
-          {stage === 2 && saveRow("mt-4")}
           <div className="mt-2 space-y-1">{editable && <div className={!dirty ? "sr-only" : ""}><DisabledReason id="save-why">{saveWhy}</DisabledReason></div>}<ActionFeedback state={acts.stateOf("save")} /></div>
           <div className="mt-2 space-y-2">
           {dirty && <p className="max-w-4xl text-sm text-slate-700" data-testid="unsaved-note">{recalculating ? "Recalculating… " : ""}{view.viewer.canViewCommercials ? "The prices, costs, margins and totals" : "The quantities, prices and totals"} are a live preview of your edits and nothing is saved until you press Save draft. Sign-off and approval use the SAVED draft.</p>}
@@ -719,31 +712,6 @@ export default function QuoteEditorPage() {
         </>
       )}
       {sampleNote && stage === 1 && <p role="status" aria-live="polite" className="mt-2 text-sm text-slate-800" data-testid="sample-note">{sampleNote}</p>}
-      {view.viewer.previewTools && editable && stage <= 2 && (
-        <details className="mt-3 max-w-4xl rounded-lg border border-dashed border-slate-400 p-3 text-sm" data-testid="preview-tools">
-          <summary className="inline-flex min-h-11 cursor-pointer items-center font-semibold text-slate-800">Testing utility (Preview only)</summary>
-          <p className="mt-2 text-slate-700">Replaces the inputs of this draft (the selected customer is kept) with the demonstration quotation. It is not saved, and it never submits, approves, signs off, creates a Project or writes to Cin7. It exists on Preview deployments only.</p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {!confirmDemo && <Button variant="secondary" className="min-h-11" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load whole demonstration quote</Button>}
-            {confirmDemo && (
-              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
-                <span>This replaces the values in this draft with the demonstration quotation (nothing is saved until you press Save draft). The customer you selected is kept.</span>
-                <Button size="sm" className="min-h-11" onClick={loadDemo}>Replace with demo</Button>
-                <Button size="sm" variant="secondary" className="min-h-11" onClick={() => setConfirmDemo(false)}>Cancel</Button>
-              </div>
-            )}
-          </div>
-          {demoLoaded && (
-            <div className="mt-3">
-              <Alert tone={rd.state === "READY" ? "success" : "warning"}>
-                Demo defaults loaded into this draft ({DEMO_DEFAULTS_SOURCE}) {demoLoaded.length ? `Replaced: ${demoLoaded.join(", ")}.` : "The draft already matched the demonstration; nothing changed."}{" "}
-                Status: {READINESS_LABEL[rd.state]}.{rd.reasons.length ? ` Open: ${rd.reasons.join("; ")}.` : ""}
-                {" "}Prices marked MANUAL QUOTATION PRICE are the demonstration quote&apos;s own estimator values. Not saved, approved, frozen or sent anywhere.
-              </Alert>
-            </div>
-          )}
-        </details>
-      )}
 
       {/* ───────────── 1 · CONFIGURATION (the Rep's five-step wizard) ───────────── */}
       {stage === 1 && (
@@ -932,6 +900,13 @@ export default function QuoteEditorPage() {
                 <span className="text-xs text-slate-700">Confirms the recommended product for every line the price list names. Anything it cannot confirm stays listed above.</span>
               </div>
             )}
+            {wizard2.steps.find((x) => x.id === "mapping")!.access === "edit" && q.state !== "MANAGER_APPROVED_FINAL" && mappingOpen.length > 0 && (
+              <details open className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" data-testid="rep-waiting-banner">
+                <summary className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-2 font-semibold"><span>{q.state === "REP_DRAFT" ? "Needed from you before the Rep can submit" : "Yours to resolve: the Rep has already submitted"}</span><span className="font-normal">· {mappingOpen.length} item{mappingOpen.length === 1 ? "" : "s"}</span></summary>
+                <ul className="mt-1 list-disc space-y-0.5 pl-5 lg:columns-2">{mappingOpen.map((m) => <li key={m} className="break-inside-avoid">{m}</li>)}</ul>
+                <p className="mt-1" data-testid="waiting-explain">{q.state === "REP_DRAFT" ? "The Rep cannot submit until these are done. Steps 2 to 4 open once the Rep has submitted." : "These are Estimator items by design. Sign-off stays disabled until they are resolved and the review is marked."}</p>
+              </details>
+            )}
             <Panel>
               <div className="flex flex-wrap items-center gap-3">
                 <PanelTitle>Quote readiness</PanelTitle>
@@ -1040,13 +1015,13 @@ export default function QuoteEditorPage() {
           {canCommercials && (
             <StepPanel railId="s2" stepId="costs" number={visible2.indexOf("costs") + 1} title={STAGE2_WIZARD_LABEL.costs} current={step2Id === "costs"} showAll={showAllSteps} locked={lockedFor2("costs")} className="space-y-6">
               {editWarning && <Alert tone="warning"><span data-testid="edit-clears-signoff-costs">{editWarning}</span></Alert>}
+              <Disclosure testId="disc-cost-capture" title="Cin7 cost capture and FX rates" summary={costingIncomplete ? (marginInfo && marginInfo.missing > 0 ? `Costs are incomplete for ${marginInfo.missing} line${marginInfo.missing === 1 ? "" : "s"}: capture or enter them here` : `Costing is incomplete: ${costingReason ?? "supplier costs are unresolved"}`) : "Latest supplier prices from Cin7, exchange rates and exceptions"} attention={costingIncomplete}>
+                {final ? <CostPanel quoteId={id} /> : <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? previewedFor : null} />}
+              </Disclosure>
               {marginInfo && marginInfo.exempt.length > 0 && <p className="text-sm text-slate-800" data-testid="est-priced-note">Estimator-priced (no supplier cost by design): {marginInfo.exempt.join("; ")}. They keep the margin indicative; they are not missing costs.</p>}
               {totalsPanel}
               {/* The detail sits in labelled disclosures (closed unless something needs attention); they stay mounted, so nothing is requested differently. */}
               <Disclosure testId="disc-scope" title="Physical scope" summary="What will be supplied and installed, line by line (read-only evidence)">{scopePanel}</Disclosure>
-              <Disclosure testId="disc-cost-capture" title="Cin7 cost capture and FX rates" summary={costingIncomplete ? (marginInfo && marginInfo.missing > 0 ? `Costs are incomplete for ${marginInfo.missing} line${marginInfo.missing === 1 ? "" : "s"}: capture or enter them here` : `Costing is incomplete: ${costingReason ?? "supplier costs are unresolved"}`) : "Latest supplier prices from Cin7, exchange rates and exceptions"} attention={costingIncomplete}>
-                {final ? <CostPanel quoteId={id} /> : <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? previewedFor : null} />}
-              </Disclosure>
               {budget && (
                 <Disclosure testId="disc-margin" title="Margin detail" summary={marginIncomplete ? `${marginLabel}: ${marginNote}` : "Product, package, section and project margins (price-list basis)"} attention={marginIncomplete || incompleteOverrides}>
                   <div aria-busy={recalculating}><MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={s2Edit} edit={edit} /></div>
@@ -1344,6 +1319,31 @@ export default function QuoteEditorPage() {
       <details className="mt-6 text-xs text-slate-600" data-testid="provenance"><summary className="inline-flex min-h-11 cursor-pointer items-center font-medium text-slate-700">Price source &amp; provenance</summary>
         <p className="mt-1">Grower House Template v1 · {view.viewer.canViewCommercials ? QUOTE_TYPE_LABEL[draft.quoteType] : QUOTE_TYPE_NEUTRAL[draft.quoteType]} · {budget?.priceSource.label ?? "NewQuip Master workbook – POC controlled snapshot"}</p>
         {budget && <p className="mt-1">{budget.priceSource.notice} Provenance: {budget.priceSource.provenance}</p>}</details>
+      {view.viewer.previewTools && editable && stage <= 2 && (
+        <details className="mt-8 max-w-4xl rounded-lg border border-dashed border-slate-400 px-3 py-1 text-sm" data-testid="preview-tools">
+          <summary className="inline-flex min-h-11 cursor-pointer items-center font-semibold text-slate-800">Testing utility (Preview only)</summary>
+          <p className="mt-2 text-slate-700">Replaces the inputs of this draft (the selected customer is kept) with the demonstration quotation. It is not saved, and it never submits, approves, signs off, creates a Project or writes to Cin7. It exists on Preview deployments only.</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {!confirmDemo && <Button variant="secondary" className="min-h-11" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load whole demonstration quote</Button>}
+            {confirmDemo && (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
+                <span>This replaces the values in this draft with the demonstration quotation (nothing is saved until you press Save draft). The customer you selected is kept.</span>
+                <Button size="sm" className="min-h-11" onClick={loadDemo}>Replace with demo</Button>
+                <Button size="sm" variant="secondary" className="min-h-11" onClick={() => setConfirmDemo(false)}>Cancel</Button>
+              </div>
+            )}
+          </div>
+          {demoLoaded && (
+            <div className="mt-3">
+              <Alert tone={rd.state === "READY" ? "success" : "warning"}>
+                Demo defaults loaded into this draft ({DEMO_DEFAULTS_SOURCE}) {demoLoaded.length ? `Replaced: ${demoLoaded.join(", ")}.` : "The draft already matched the demonstration; nothing changed."}{" "}
+                Status: {READINESS_LABEL[rd.state]}.{rd.reasons.length ? ` Open: ${rd.reasons.join("; ")}.` : ""}
+                {" "}Prices marked MANUAL QUOTATION PRICE are the demonstration quote&apos;s own estimator values. Not saved, approved, frozen or sent anywhere.
+              </Alert>
+            </div>
+          )}
+        </details>
+      )}
     </main>
   );
 }

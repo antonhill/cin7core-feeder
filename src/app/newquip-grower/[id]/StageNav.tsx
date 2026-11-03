@@ -11,7 +11,8 @@ import { navPresentation, type NavViewer } from "@/newquip/quote/stage-nav-model
 const TONE: Record<StageStatus, BadgeTone> = { LOADING: "neutral", COMPLETE: "success", IN_PROGRESS: "info", AWAITING_ACTION: "warning", RETURNED: "danger", NOT_STARTED: "neutral", NOT_AVAILABLE: "neutral", NOT_REQUIRED: "neutral" };
 
 // At 700px and below the six cards collapse to a disclosure "Stage n of 6 · name" that lists all six with their status (every stage stays reachable).
-export function StageNav({ stages, current, viewing, onSelect, previewable = [], viewer, compact = false }: {
+export function StageNav({ stages, current, viewing, onSelect, previewable = [], viewer, compact = false, hideNext = false }: {
+  /** Hide the one-line next-action row (the page shows the same fact in its own bar, e.g. Stage 2's owner line). */ hideNext?: boolean;
   /** Inside a step-based stage the six cards collapse to the one-line indicator at every width (expandable); the list stays in the DOM. */ compact?: boolean; stages: StageView[]; current: StageId; viewing: StageId; onSelect: (id: StageId) => void; /** Unavailable stages the page can show read-only (labelled "Preview only"). */ previewable?: readonly StageId[]; /** The viewer's roles and the quote state, for viewer-relative wording of the status chip only. */ viewer?: NavViewer }) {
   const [open, setOpen] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
@@ -44,7 +45,7 @@ export function StageNav({ stages, current, viewing, onSelect, previewable = [],
           })}
         </ol>
       </nav>
-      {cur && (() => { const p = navPresentation(cur, previewable.includes(cur.id), viewer); return (
+      {cur && !hideNext && (() => { const p = navPresentation(cur, previewable.includes(cur.id), viewer); return (
         <p className={compact ? "border-t border-slate-100 px-3 py-1 text-xs text-slate-700 max-sm:hidden" : "rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700"} data-testid="next-action">
           <span className="font-semibold text-slate-900">Stage {cur.id} · {cur.label}:</span> {p.summary}{p.next ? <> <span className="font-semibold text-indigo-700">Next: {p.next}</span></> : null}
         </p>

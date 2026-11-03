@@ -207,7 +207,9 @@ describe("UAT-025 rendered page: Save draft reports beside its button", () => {
     const ok = region("success")!;
     expect(ok.textContent).toMatch(/Draft saved/);
     expect(ok.getAttribute("role")).toBe("status");
-    expect(ok.parentElement!.previousElementSibling).toBe(save.parentElement); // directly under the row that holds the Save button
+    // UX-006 acceptance directive: Save now sits in the compact toolbar row beside Show all steps / Next incomplete (one row, not a separate block), so "directly under the row" is kept as: the result follows the Save button immediately in the page, before any step content.
+    expect(save.compareDocumentPosition(ok) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(ok.compareDocumentPosition(document.querySelector("[data-step-panel]")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   }, 30000);
 
   it("failure: an alert under the Save row with the server's reason, and the unsaved edits are untouched", async () => {
@@ -218,7 +220,8 @@ describe("UAT-025 rendered page: Save draft reports beside its button", () => {
     const bad = region("error")!;
     expect(bad.getAttribute("role")).toBe("alert");
     expect(bad.textContent).toMatch(/changed by someone else/);
-    expect(bad.parentElement!.previousElementSibling).toBe(save.parentElement);
+    expect(save.compareDocumentPosition(bad) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // follows the Save button immediately (toolbar row), before the step content
+    expect(bad.compareDocumentPosition(document.querySelector("[data-step-panel]")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByText("Unsaved changes")).toBeTruthy(); // still dirty: nothing was lost
     expect((screen.getAllByLabelText("Reason", { selector: "input" })[0] as HTMLInputElement).value).toBe("Supplier quote dated today");
   }, 30000);
