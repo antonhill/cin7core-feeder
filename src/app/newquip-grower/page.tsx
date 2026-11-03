@@ -12,7 +12,7 @@ import type { BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/Table";
-import { QUOTE_STATE_LABEL, type QuoteState } from "@/newquip/quote/workflow";
+import { QUOTE_STATE_LABEL, waitingOn, type QuoteState } from "@/newquip/quote/workflow";
 import { createGrowerQuoteAction, listGrowerQuotesAction } from "./actions";
 import { fmtCents } from "./fields";
 
@@ -64,7 +64,7 @@ export default function NewquipGrowerPage() {
         ) : (
           <div className="mt-4 overflow-x-auto">
             <Table>
-              <THead><TR><TH>Quote</TH><TH>Customer</TH><TH>Site</TH><TH>Stage</TH><TH align="right">Contract (ex VAT)</TH><TH>Project</TH></TR></THead>
+              <THead><TR><TH>Quote</TH><TH>Customer</TH><TH>Site</TH><TH>Stage</TH><TH>Waiting on / next</TH><TH align="right">Contract (ex VAT)</TH><TH>Project</TH></TR></THead>
               <TBody>
                 {rows.map((q) => (
                   <TR key={q.id}>
@@ -72,6 +72,7 @@ export default function NewquipGrowerPage() {
                     <TD>{q.customer_name || "—"}</TD>
                     <TD>{q.site_name || "—"}</TD>
                     <TD><Status tone={STATE_TONE[q.state]}>{QUOTE_STATE_LABEL[q.state]}</Status></TD>
+                    <TD className="text-sm text-slate-800" data-testid="waiting-on">{waitingOn(q)}</TD>
                     <TD align="right" className="tabular-nums whitespace-nowrap">{fmtCents(q.contract_cents)}</TD>
                     <TD>{q.project_id ? <Link className="text-indigo-700 hover:underline" href={`/projects/${q.project_id}`}>Open project</Link> : "—"}</TD>
                   </TR>

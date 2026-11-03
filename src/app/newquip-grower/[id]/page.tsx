@@ -62,6 +62,7 @@ import { getQuoteDeliveryAction } from "../delivery-actions";
 import { ScopePanel } from "./ScopePanel";
 import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { ApprovalHistory } from "@/components/ApprovalHistory";
+import { getDocumentApprovalAction } from "@/app/approvals/actions";
 import { DisabledReason } from "@/components/ApprovalDisabledReason";
 import { resolveScheduleChoice, type ScheduleChoice } from "@/newquip/quote/billing-schedule";
 
@@ -139,6 +140,20 @@ export default function QuoteEditorPage() {
   const [factsGiveUp, setFactsGiveUp] = useState(false);
   useEffect(() => { const t = setTimeout(() => setFactsGiveUp(true), 10000); return () => clearTimeout(t); }, []);
   useEffect(() => { if (!urlSync) return; try { const u = new URL(window.location.href); u.searchParams.set("step", String(STAGE1_STEP_IDS.indexOf(urlSync) + 1)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } }, [urlSync]);
+  // A RETURNED quotation (Rep draft, revision > 1): read the existing approval history ONCE, lazily and without blocking anything, to show the latest return reason inline. Unavailable or slow = the
+  // banner keeps its fixed text. (No new action; the same read the Approval history disclosure makes.)
+  const [returnInfo, setReturnInfo] = useState<{ by: string; at: string; reason: string } | null>(null);
+  const returnedLoaded = view?.quote.state === "REP_DRAFT" && (view?.quote.revision ?? 1) > 1;
+  useEffect(() => {
+    if (!returnedLoaded) return;
+    let live = true;
+    void getDocumentApprovalAction("QUOTE", id).then((r) => {
+      if (!live || !r.ok || !r.data?.available) return;
+      const ev1 = [...r.data.history].reverse().find((e) => (e.action === "RETURN" || e.to_status === "RETURNED") && !!e.reason?.trim());
+      if (ev1) setReturnInfo({ by: ev1.actor_name ?? ev1.actor_email, at: ev1.created_at, reason: ev1.reason!.trim() });
+    }).catch(() => undefined);
+    return () => { live = false; };
+  }, [id, returnedLoaded]);
   // Stage 2 has its own step number but SHARES the "Show all steps" preference (one setting for the builder, one storage key).
   const [step2No, setStep2No] = useState<number>(() => (parseStage(search.get("stage")) === 2 ? parseStepParam(search.get("step"), 5) : 1));
   // Stage 4 (Customer Quotation) has two steps, with the same shared preference.
@@ -261,7 +276,7 @@ export default function QuoteEditorPage() {
   function runSample(kind: "measurements" | "recommended") {
     const r = kind === "measurements" ? applyMeasurementsSample(draft!) : applyRecommendedConfiguration(draft!);
     setDraft(r.draft); setDirty(true); setConfirmSample(null); setError(null);
-    setSampleNote(kind === "measurements" ? (r.replaced ? "Sample measurements loaded into this draft." : "The measurements already matched the sample; nothing changed.") : (r.replaced ? "Recommended configuration loaded into this draft." : "The configuration already matched the recommendation; nothing changed."));
+    setSampleNote(kind === "measurements" ? (r.replaced ? "Sample measurements loaded into this draft." : "The measurements already matched the sample; nothing changed.") : (r.replaced ? "Recommended configuration loaded: selections, optional equipment, quantities and overrides were replaced and exclusions cleared; measurements, charges, product choices and prices were kept." : "The configuration already matched the recommendation; nothing changed."));
   }
   const askSample = (kind: "measurements" | "recommended") => ((kind === "measurements" ? hasMeasurementEntries(draft!) : hasEquipmentEntries(draft!)) ? setConfirmSample(kind) : runSample(kind));
   // The server already rewrote the customer name (and, from estimator review, returned the quotation to the Rep). Reload the quotation; unsaved local edits are kept.
@@ -493,7 +508,7 @@ export default function QuoteEditorPage() {
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs uppercase tracking-wide text-slate-700">Calculation</span>
-            <Status tone={READY_TONE[rd.state]}>{READINESS_LABEL[rd.state]}</Status>
+            <Status tone={stage === 1 ? (rd.state === "READY" ? "success" : "neutral") : READY_TONE[rd.state]}>{stage === 1 ? (rd.state === "READY" ? "Complete" : "In progress") : READINESS_LABEL[rd.state]}</Status>
             {previewFailure ? <Status tone="danger">Recalculation failed - figures are out of date</Status> : dirty && <Status tone="warning">Preview of unsaved edits</Status>}
           </div>
           <dl className="flex flex-wrap items-end gap-x-8 gap-y-1">
@@ -509,7 +524,7 @@ export default function QuoteEditorPage() {
       {final && <div className="mt-4"><Alert tone="info">This quote is the manager-approved final. Its accepted baseline is frozen; any change after acceptance must be a Variation on the Project.</Alert></div>}
       {budget && <p className="mt-3 text-xs text-slate-600">{budget.priceSource.notice} Provenance: {budget.priceSource.provenance}</p>}
 
-      <StageNav stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state }} />
+      <StageNav compact={stage <= 2} stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state }} />
 
       {gated1 && <p role="status" aria-live="polite" className="mt-4 text-sm text-slate-700" data-testid="stage1-shell">Preparing your quotation steps…</p>}
       {stage === 1 && (
@@ -517,10 +532,15 @@ export default function QuoteEditorPage() {
           {wizard.returned && (
             <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950" role="status" data-testid="returned-banner">
               <p className="font-semibold">Returned to the Rep (revision {q.revision})</p>
-              <p className="mt-1">The Estimator or Manager sent this quotation back for corrections. Make them in the steps below, then submit it to the Estimator again. Returned by the Estimator/Manager - see Approval history for the reason.</p>
-              <div className="mt-2"><ApprovalHistory docType="QUOTE" docId={id} label="Show the return reason (Approval history)" /></div>
+              {returnInfo
+                ? <p className="mt-1" data-testid="return-reason">Returned by {returnInfo.by} on {formatSast(returnInfo.at)}: &ldquo;{returnInfo.reason}&rdquo;</p>
+                : <p className="mt-1">The Estimator or Manager sent this quotation back for corrections. Returned by the Estimator/Manager - see Approval history for the reason.</p>}
+              <p className="mt-1">Fix what the Estimator described, then submit again.</p>
+              <div className="mt-2"><ApprovalHistory docType="QUOTE" docId={id} label="Show the full approval history" /></div>
             </div>
           )}
+          <div className="mt-3 text-sm text-slate-700" data-testid="estimator-note">Some products must be mapped and priced by an Estimator before this quotation can be submitted - you can finish your part first; we will show exactly what is waiting on them.{" "}
+            <details className="inline"><summary className="inline min-h-6 cursor-pointer font-medium text-indigo-700 underline">Why?</summary><span className="ml-1">Which Cin7 product each item is, and any manual price, are chosen by an Estimator, not by the Rep. Review (step 4) lists what is waiting on them and how many.</span></details></div>
           <StepRail id="s1" ariaLabel="Configuration steps" steps={railSteps1} currentId={stepId} onSelect={goStep}
             actions={(
               <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
@@ -688,16 +708,17 @@ export default function QuoteEditorPage() {
             </div>
 
             <Panel className="col-span-full">
+              <PanelTitle>Charges &amp; assumptions</PanelTitle>
+              <p className="mt-1 text-sm text-slate-700">Enter the amounts for this quotation (ex VAT). Each says who usually supplies it.</p>
+              <ChargesSection draft={draft} edit={edit} />
+            </Panel>
+
+            <Panel className="col-span-full">
               <PanelTitle>Quantities (per room × {cfg.rooms || 0} rooms)</PanelTitle>
               <p className="mt-1 text-sm text-slate-700">Enter the quantity for each item the system needs you to confirm. Product choices and manual quotation prices belong to the Estimator.</p>
               {ev.calc.valid || ev.calc.lines.length > 0
                 ? <LineDecisionsTable draft={draft} ev={ev} edit={edit} roles={roles} editable={stage1Edit} mode="rep" quantitiesEditable />
                 : <p className="mt-3 text-sm text-amber-900">Finish the room measurements in step 2 to see the quantities.</p>}
-            </Panel>
-
-            <Panel className="col-span-full">
-              <PanelTitle>Charges &amp; assumptions</PanelTitle>
-              <ChargesSection draft={draft} edit={edit} />
             </Panel>
 
             <Panel className="col-span-full">

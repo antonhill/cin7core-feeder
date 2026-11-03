@@ -39,7 +39,7 @@ describe("deriveWizard: the Rep on a Rep draft", () => {
     const w = wiz({ s1: { customerName: "", siteName: "", penningPigSize: null, customer: { ...full, hasSnapshot: false, hasContact: false, contactName: null }, calcIssues: [{ field: "lengthM", code: "not_positive", message: "lengthM must be greater than zero." }] } });
     expect(w.entryStepId).toBe("customer");
     expect(access(w)).toEqual(["edit", "locked", "locked", "locked", "locked"]);
-    expect(by(w, "site").blockedBy).toEqual(["Rep: choose the Cin7 customer and the quotation contact in step 1 (Customer & contact) first."]);
+    expect(by(w, "site").blockedBy).toEqual(["Rep: choose the Cin7 customer in step 1 (Customer & contact) first."]);
     expect(by(w, "site").blockKind).toBe("policy");
     expect(by(w, "equipment").blockedBy[0]).toContain("step 1");
     // a locked step never makes the permitted ones unreachable
@@ -72,13 +72,13 @@ describe("deriveWizard: the Rep on a Rep draft", () => {
     const submit = by(blocked, "submit");
     expect(submit.access).toBe("locked");
     expect(submit.blockKind).toBe("server");
-    expect(submit.blockedBy).toEqual(["Estimator: mapping needed: Cup drinker (+1 more). The quotation must be READY before it can be submitted."]);
+    expect(submit.blockedBy).toEqual(["Estimator: product choice needed: Cup drinker (+1 more). The quotation can be submitted once the Estimator has done this."]);
     expect(by(blocked, "review").access).toBe("edit"); // the Rep can still review and see who owes what
     expect(blocked.entryStepId).toBe("review"); // everything the Rep can act on is complete; the last step they can open
     const noTotal = wiz({ totalAvailable: false });
     expect(by(noTotal, "submit").blockedBy).toEqual(["The quotation total is not available yet."]);
     const notReadyNoOwner = wiz({ ready: false });
-    expect(by(notReadyNoOwner, "submit").blockedBy[0]).toContain("must be READY");
+    expect(by(notReadyNoOwner, "submit").blockedBy[0]).toContain("must be complete");
   });
 
   it("Estimator-owned open work does NOT block the Rep's own steps and is carried as a note on Review", () => {

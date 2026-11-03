@@ -13,6 +13,7 @@ import { rolesFor } from "@/newquip/quote/roles";
 import * as ca from "../customer-actions";
 import * as da from "../delivery-actions";
 import * as actions from "../actions";
+import * as aa from "@/app/approvals/actions";
 
 // UX-006i1, through the REAL page (Stage 1, the Rep's five-step wizard): initial screen, one customer / one contact, locks with their reasons, the entry step resolved once after the
 // customer facts settle, no jump on save / samples / recalculation, the owner-named rows, contextual samples, show-all, and the read-only views of the other roles.
@@ -101,7 +102,7 @@ describe("initial screen of a fresh Rep draft", () => {
       expect(document.querySelector(`[data-step="${id}"]`)!.getAttribute("aria-disabled")).toBe("true");
       expect(shown(id), id).toBe(false);
     }
-    expect(screen.getByTestId("step-blocked-site").textContent).toBe("Rep: choose the Cin7 customer and the quotation contact in step 1 (Customer & contact) first.");
+    expect(screen.getByTestId("step-blocked-site").textContent).toBe("Rep: choose the Cin7 customer in step 1 (Customer & contact) first.");
     expect(screen.getByLabelText(/^Length/)).toBeTruthy(); // locked content is still mounted
     expect(document.body.textContent).not.toMatch(/Estimated cost|Internal margins|GP \(managers\)/);
   }, 30000);
@@ -178,10 +179,10 @@ describe("locks unlock only when the earlier steps are complete (and say why)", 
     expect(document.querySelector('[data-testid^="mapping-chooser-"]')).toBeNull();
     const rows = screen.getAllByTestId(/^owner-row-/);
     expect(rows.length).toBeGreaterThan(0);
-    expect(rows[0].textContent).toMatch(/^Estimator mapping needed: /);
+    expect(rows[0].textContent).toMatch(/^Estimator product choice needed: /);
     expect(status("review")).not.toBe("Locked"); // Estimator-owned work does not block the Rep from reviewing
     expect(status("submit")).toBe("Locked");
-    expect(screen.getByTestId("step-blocked-submit").textContent).toMatch(/^Estimator: mapping needed/);
+    expect(screen.getByTestId("step-blocked-submit").textContent).toMatch(/^Estimator: product choice needed/);
   }, 30000);
 
   it("Review lists the missing information WITH its owner (Rep items link to the step; Estimator items are text only)", async () => {
@@ -191,7 +192,7 @@ describe("locks unlock only when the earlier steps are complete (and say why)", 
     expect(tags).toContain("Estimator");
     // Estimator-owned items are GROUPED (one row, owner named once) with an expandable list, and there is nothing for the Rep to click.
     expect(within(issues).getAllByTestId("est-mappings-group").length).toBe(1);
-    expect(within(issues).getByTestId("est-mappings-group").textContent).toMatch(/The Estimator must confirm \d+ product mappings?\./);
+    expect(within(issues).getByTestId("est-mappings-group").textContent).toMatch(/The Estimator must confirm \d+ product choices?\./);
     expect(within(issues).getAllByText(/nothing for you to do for them/).length).toBe(1);
     expect(within(issues).queryByRole("button", { name: /Estimator mapping|Go to step/ })).toBeNull();
     expect(screen.getByTestId("review-next").textContent).toMatch(/^Everything you can do is complete\. Waiting on the Estimator for \d+ items? - nothing for you to do yet\./);
@@ -240,7 +241,7 @@ describe("the entry step is resolved ONCE, after the customer facts settle", () 
     const banner = screen.getByTestId("returned-banner");
     expect(banner.textContent).toContain("Returned to the Rep (revision 2)");
     expect(banner.textContent).toContain("Returned by the Estimator/Manager - see Approval history");
-    expect(within(banner).getByText("Show the return reason (Approval history)")).toBeTruthy();
+    expect(within(banner).getByText("Show the full approval history")).toBeTruthy();
     expect(current()).toBe("site");
     cleanup();
     await open({ view: snapshotView(true) });
@@ -288,7 +289,7 @@ describe("nothing resets or jumps", () => {
     await open({ view: snapshotView(true), step: "3" });
     const forbidden = FORBIDDEN().map((k) => vi.spyOn(actions as never, k as never));
     const preview = vi.spyOn(actions, "previewGrowerDraftAction");
-    expect(screen.getByText(/fills the system selections, optional equipment, per-room quantities and quantity overrides/)).toBeTruthy();
+    expect(screen.getByText(/REPLACES every quantity you entered, the quantity overrides and their reasons/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Penning pig size"), { target: { value: "LARGE" } }); // an entry the recommendation would replace
     fireEvent.click(screen.getByRole("button", { name: "Load recommended configuration" }));
     expect(screen.getByTestId("sample-confirm")).toBeTruthy();
@@ -604,5 +605,116 @@ describe("P2 fixes", () => {
     expect(d.textContent).toMatch(/does not change who the quotation is sent to/);
     expect(d.textContent).toContain("Another Cin7 contact:"); // functionality kept, inside the disclosure only
     expect(within(sub).getAllByRole("radio", { hidden: true }).every((r) => d.contains(r))).toBe(true);
+  }, 30000);
+});
+
+// ── Fresh independent UX review (level 2) ──
+describe("review findings: say it up front, charges first, explicit confirmation, inline return reason", () => {
+  it("P0: the first screen says up front that an Estimator maps and prices some products (with a collapsible Why?), without inventing any data", async () => {
+    await open({ view: customerView(), step: "1" });
+    const note = screen.getByTestId("estimator-note");
+    expect(note.textContent).toContain("Some products must be mapped and priced by an Estimator before this quotation can be submitted - you can finish your part first; we will show exactly what is waiting on them.");
+    expect(within(note).getByText("Why?")).toBeTruthy();
+    expect((note.querySelector("details") as HTMLDetailsElement).open).toBe(false);
+  }, 30000);
+
+  it("P1: Charges & assumptions come BEFORE the long quantities table, say who supplies each value, the M75 price is not labelled 'estimator input', and the charge inputs have distinct names", async () => {
+    await open({ view: snapshotView(true), draftOver: readyDraft, step: "3" });
+    const eq = panel("equipment") as HTMLElement;
+    const titles = [...eq.querySelectorAll("h2 ~ * [class*=uppercase], h2 ~ div [class*=uppercase]")].map((e) => e.textContent ?? "");
+    const text = eq.textContent ?? "";
+    expect(text.indexOf("Charges & assumptions")).toBeGreaterThan(-1);
+    expect(text.indexOf("Charges & assumptions")).toBeLessThan(text.indexOf("Quantities (per room"));
+    expect(titles.length).toBeGreaterThan(0);
+    expect(text).toMatch(/Usually supplied by the courier or haulier quote/);
+    expect(text).toContain("M75 system price (per system)");
+    expect(text).not.toMatch(/Estimator input by design|Entered by hand by design/);
+    expect(within(eq).getByLabelText("Delivery charge (R ex VAT)")).toBeTruthy();
+    expect(within(eq).getByLabelText("Installation charge (R ex VAT)")).toBeTruthy();
+  }, 30000);
+
+  it("P1: Submit needs an explicit tick 'I confirm that <contact> has confirmed the quotation total of <amount> ex VAT'; choosing someone else resets it; the action is not called before the tick", async () => {
+    const send = vi.spyOn(actions, "sendGrowerQuoteToEstimatorAction");
+    await open({ view: snapshotView(true), draftOver: readyDraft, step: "5" });
+    const sub = panel("submit") as HTMLElement;
+    const btn = (await within(sub).findByRole("button", { name: "Submit to Estimator" })) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(document.getElementById("send-estimator-why")!.textContent).toBe("Tick the confirmation above to enable Submit to Estimator.");
+    const tick = within(sub).getByLabelText(/I confirm that Sean has confirmed the quotation total of R.*ex VAT/) as HTMLInputElement;
+    expect(within(sub).getByTestId("confirm-ack").textContent).toMatch(/R\s?[\d\s]+,\d\d/); // the shared money format
+    fireEvent.click(tick);
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    // a different confirmer clears the tick
+    const alt = within(sub).getByTestId("alt-confirmer") as HTMLDetailsElement;
+    alt.open = true;
+    fireEvent.click(within(sub).getByLabelText(/Another Cin7 contact: Thandi/));
+    await waitFor(() => expect((within(sub).getByLabelText(/I confirm that Thandi has confirmed/) as HTMLInputElement).checked).toBe(false));
+    expect(btn.disabled).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+  }, 30000);
+
+  it("P1: a returned quotation shows the latest return reason, who and when INLINE (no click), with a plain next action; entry stays at the first incomplete step", async () => {
+    vi.spyOn(aa, "getDocumentApprovalAction").mockResolvedValue({ ok: true, data: { available: true, latest: null, history: [
+      { id: "e1", action: "SUBMIT", to_status: "PENDING", reason: null, actor_email: "rep@nq", actor_name: null, created_at: "2026-11-01T08:00:00Z" },
+      { id: "e2", action: "RETURN", to_status: "RETURNED", reason: "Delivery cost is wrong; check the haulier quote", actor_email: "est@nq", actor_name: "Esther Estimator", created_at: "2026-11-02T09:30:00Z" },
+    ] } } as never);
+    await open({ view: snapshotView(true), draftOver: { siteName: "" }, row: { revision: 2 } });
+    const reason = await screen.findByTestId("return-reason");
+    expect(reason.textContent).toContain("Returned by Esther Estimator");
+    expect(reason.textContent).toContain("Delivery cost is wrong; check the haulier quote");
+    expect(screen.getByTestId("returned-banner").textContent).toContain("Fix what the Estimator described, then submit again.");
+    expect(current()).toBe("site");
+  }, 30000);
+
+  it("P1: when the approval history is unavailable the banner keeps its fixed text", async () => {
+    vi.spyOn(aa, "getDocumentApprovalAction").mockResolvedValue({ ok: false, error: "x" } as never);
+    await open({ view: snapshotView(true), draftOver: { siteName: "" }, row: { revision: 2 } });
+    expect(screen.queryByTestId("return-reason")).toBeNull();
+    expect(screen.getByTestId("returned-banner").textContent).toContain("Returned by the Estimator/Manager - see Approval history");
+  }, 30000);
+
+  it("P1: customer search says 'Type at least 2 characters to search' and 'No customers found for <query>'", async () => {
+    await open({ view: customerView(), step: "1" });
+    expect(screen.getByTestId("search-min").textContent).toBe("Type at least 2 characters to search.");
+    vi.spyOn(ca, "searchQuoteCustomersForQuoteAction").mockResolvedValue({ ok: true, data: [] } as never);
+    fireEvent.change(screen.getByLabelText(/Search by name/), { target: { value: "zzz" } });
+    expect(screen.queryByTestId("search-min")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Search Cin7 customers" }));
+    expect((await screen.findByTestId("no-customer-results")).textContent).toContain("No customers found for “zzz”.");
+  }, 30000);
+});
+
+describe("review findings P2", () => {
+  it("the lock reason is derived from CURRENT state: with a snapshot selected but no contact it asks for the contact, never 'choose the customer'; a blank draft name does not make a selected customer 'missing'", async () => {
+    await open({ view: snapshotView(false), draftOver: { customerName: "" } });
+    expect(screen.getByTestId("step-blocked-site").textContent).toBe("Rep: choose the quotation contact in step 1 (Customer & contact) first.");
+    cleanup();
+    await open({ view: snapshotView(true), draftOver: { customerName: "" } });
+    expect(status("site")).not.toBe("Locked");
+  }, 60000);
+
+  it("the calculation badge reads 'In progress' (neutral), not 'BLOCKED', on an unfinished Stage 1 draft", async () => {
+    await open({ view: snapshotView(true), step: "2" });
+    const bar = screen.getByTestId("quote-summary-bar");
+    expect(within(bar).getByText("In progress")).toBeTruthy();
+    expect(bar.textContent).not.toMatch(/BLOCKED|DRAFT/);
+  }, 30000);
+
+  it("inside a step the six stage cards collapse to one line, expandable; the cards stay in the DOM", async () => {
+    await open({ view: snapshotView(true), step: "2" });
+    const toggle = screen.getByTestId("stage-nav-toggle");
+    expect(toggle.textContent).toContain("Stage 1 of 6 · Configuration");
+    expect(toggle.textContent).toContain("Show all stages");
+    expect(document.getElementById("stage-nav-list")!.className).toContain("hidden");
+    fireEvent.click(toggle);
+    expect(document.getElementById("stage-nav-list")!.className).not.toMatch(/(^|\s)hidden/);
+    expect(document.querySelectorAll("[data-stage]").length).toBe(6);
+  }, 30000);
+
+  it("'Load recommended configuration' states precisely what it replaces and keeps", async () => {
+    await open({ view: snapshotView(true), step: "3" });
+    const t = screen.getByText(/Load recommended configuration” fills/).textContent ?? "";
+    expect(t).toMatch(/REPLACES every quantity you entered, the quantity overrides and their reasons/);
+    expect(t).toMatch(/keeps the site, room measurements, charges, M75 price, assumptions, product choices and manual prices/);
   }, 30000);
 });

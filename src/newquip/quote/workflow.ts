@@ -77,3 +77,10 @@ export function checkApproval(i: {
   if (i.customerConfirmedCents !== i.totalExVatCents) return fail("The total changed since the customer confirmed it. Return it to the rep to reconfirm with the customer.");
   return { ok: true };
 }
+
+/** The "Waiting on / Next" cue of the quote list, from fields the list already loads (state, revision, whether the Estimator's sign-off is current). Presentation only. */
+export function waitingOn(q: { state: QuoteState; revision: number; signed_off: boolean }): string {
+  if (q.state === "MANAGER_APPROVED_FINAL") return "Approved";
+  if (q.state === "ESTIMATOR_REVIEW") return q.signed_off ? "Manager: approval" : "Estimator: review & sign-off";
+  return q.revision > 1 ? `Rep: returned (revision ${q.revision}) - make the corrections` : `Rep: preparing (revision ${q.revision})`;
+}

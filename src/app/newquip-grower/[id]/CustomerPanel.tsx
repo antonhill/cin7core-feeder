@@ -123,7 +123,8 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
           {changing && <Button type="button" className="min-h-11" variant="secondary" disabled={busy} onClick={() => { setChanging(false); setHits([]); }}>Keep current customer</Button>}
         </div>
       )}
-      {showSearch && !pending && searched !== null && hits.length === 0 && <p className="text-sm text-slate-600" data-testid="no-customer-results">No Cin7 customers matched “{searched}”. Try part of the name, a contact name or an email.</p>}
+      {showSearch && !pending && q.trim().length < 2 && <p className="text-sm text-slate-700" data-testid="search-min">Type at least 2 characters to search.</p>}
+      {showSearch && !pending && searched !== null && hits.length === 0 && <p className="text-sm text-slate-600" data-testid="no-customer-results">No customers found for “{searched}”. Try part of the name, a contact name or an email.</p>}
       {showSearch && !pending && hits.length > 0 && (
         <ul className="divide-y rounded-md border border-slate-200 text-sm">
           {hits.map((h) => (
