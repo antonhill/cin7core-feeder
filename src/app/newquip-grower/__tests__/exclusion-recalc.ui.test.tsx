@@ -59,7 +59,7 @@ async function storedQuote() {
   await saveDraft(db as never, ORG, member, id, draft);
   return id;
 }
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); try { window.localStorage.clear(); } catch { /* the "Show all steps" preference must not leak between tests */ } });
 
 import * as ca from "../customer-actions";
 import * as da from "../delivery-actions";
@@ -241,6 +241,8 @@ describe("unsaved quotation protection", () => {
   it("an untouched quotation is not guarded; an edit is; Save releases it", async () => {
     serialQueue(150);
     await open();
+    await waitFor(() => expect(screen.getByText("All changes saved")).toBeTruthy(), { timeout: 8000 }); // let the page settle first (a slow CI runner reads the customer details after the first paint)
+    await sleep(300);
     expect(unload()).toBe(false);
     fireEvent.click(box(/Exclude CCM feeder/i));
     expect(unload()).toBe(true);
