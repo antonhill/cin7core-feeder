@@ -153,6 +153,14 @@ export function CostPanelBody(p: CostPanelBodyProps) {
         <PanelTitle>Cin7 latest cost - capture and margin (physical SKUs)</PanelTitle>
         {v && (v.frozen ? <Status tone="info">Frozen with the approval</Status> : <Status tone="neutral">Draft</Status>)}
       </div>
+      {v?.canCapture && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Button size="sm" className="min-h-11" disabled={busy || noSkus} loading={busy} onClick={() => p.onCapture(false)}>Capture latest costs from Cin7</Button>
+          {noSkus && <span className="text-xs text-amber-700">No physical SKUs yet: map the packages to Cin7 SKUs in the physical scope first, then capture.</span>}
+          {!noSkus && <span className="text-xs text-slate-600">Reads Cin7 only (no writes). Your supplier selections and manual estimates are kept. Changing the costs withdraws the estimator&apos;s sign-off until it is given again.</span>}
+          {!noSkus && <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={() => { if (typeof window === "undefined" || window.confirm("Re-read Cin7 AND discard every supplier selection you made? Manual estimates are kept.")) p.onCapture(true); }}>Capture and replace my selections</Button>}
+        </div>
+      )}
       {p.unsaved && <div className="mt-2"><Alert tone="warning">Unsaved changes. This estimate is a live preview of your edits (nothing is saved). Capturing or selecting supplier prices works on the SAVED draft: save first.</Alert></div>}
       <p className="mt-1 text-xs text-slate-600">Internal. Latest Supplier Price from Cin7 for every supplier, in rand. This is separate from the workbook-basis margin above; the two are not combined. {v?.note ?? ""} A missing cost is never treated as zero, FixedCost and AverageCost are never substituted, and a manual estimate is always labelled as one.</p>
       {p.loading && !v && !error && <p className="mt-2 text-sm text-slate-600">Loading the cost estimate…</p>}
@@ -165,14 +173,6 @@ export function CostPanelBody(p: CostPanelBodyProps) {
       {note && <div className="mt-2"><Alert tone="success">{note}</Alert></div>}
       {stale && (
         <div className="mt-2 flex flex-wrap items-center gap-2"><Alert tone="warning">An exchange rate or declaration has changed since these costs were captured.</Alert>{p.onRecalculate && <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={p.onRecalculate}>Recalculate with current rates</Button>}</div>
-      )}
-      {v?.canCapture && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <Button size="sm" className="min-h-11" disabled={busy || noSkus} loading={busy} onClick={() => p.onCapture(false)}>Capture latest costs from Cin7</Button>
-          {noSkus && <span className="text-xs text-amber-700">No physical SKUs yet: map the packages to Cin7 SKUs in the physical scope first, then capture.</span>}
-          {!noSkus && <span className="text-xs text-slate-600">Reads Cin7 only (no writes). Your supplier selections and manual estimates are kept. Changing the costs withdraws the estimator&apos;s sign-off until it is given again.</span>}
-          {!noSkus && <Button size="sm" className="min-h-11" variant="secondary" disabled={busy} onClick={() => { if (typeof window === "undefined" || window.confirm("Re-read Cin7 AND discard every supplier selection you made? Manual estimates are kept.")) p.onCapture(true); }}>Capture and replace my selections</Button>}
-        </div>
       )}
       {v && !v.frozen && <FxForm v={v} busy={busy} onRecordFx={p.onRecordFx} />}
       {v && <Declarations v={v} busy={busy} onConfirmUnit={p.onConfirmUnit} onAcceptIncomplete={p.onAcceptIncomplete} />}

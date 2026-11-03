@@ -1051,3 +1051,22 @@ describe("UX-006 acceptance directive: the Estimator's current work is immediate
     expect(btn.parentElement!.textContent).toContain("It is not the Estimator sign-off.");
   }, 60000);
 });
+
+describe("UX-006 integrated-copy findings: primary actions before explanatory text (order contract)", () => {
+  it("sign-off: the Sign off button and the Return reason come BEFORE the handoff facts and the explanation", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    const btn = screen.getByRole("button", { name: "Sign off for Manager approval" });
+    const facts = within(panel("signoff") as HTMLElement).getByText("Sent to estimator by");
+    expect(btn.compareDocumentPosition(facts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByLabelText(/Return to rep — reason/).compareDocumentPosition(facts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(panel("signoff")!.textContent).toContain("This is not the customer's formal acceptance"); // the explanation is still there, below
+  }, 60000);
+
+  it("Costs: 'Capture latest costs from Cin7' is the first thing in the cost panel, before its explanatory paragraph (source order)", async () => {
+    const src = (await import("node:fs")).readFileSync(`${__dirname}/../[id]/CostPanel.tsx`, "utf8");
+    const body = src.slice(src.indexOf("export function CostPanelBody"));
+    expect(body.indexOf("Capture latest costs from Cin7")).toBeGreaterThan(0);
+    expect(body.indexOf("Capture latest costs from Cin7")).toBeLessThan(body.indexOf("Internal. Latest Supplier Price from Cin7"));
+    expect(body.indexOf("Capture latest costs from Cin7")).toBeLessThan(body.indexOf("<FxForm"));
+  });
+});
