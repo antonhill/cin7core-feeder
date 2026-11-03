@@ -205,14 +205,14 @@ describe("UX-006b Stage 2 steps: navigation", () => {
     expect(shown("cost")).toBe(true);
   }, 30000);
 
-  it("the rail is an ordered list with aria-current and a live announcement", async () => {
+  it("the rail is an ordered list; the current step has aria-current and moving focuses its heading", async () => {
     await open();
     expect(rail().querySelector("ol")).toBeTruthy();
-    expect(screen.getByTestId("step-rail-live").textContent).toBe("Step 1 of 3: Lines & mappings");
+    expect(rail().querySelectorAll('[aria-current="step"]').length).toBe(1);
     fireEvent.click(within(rail()).getByRole("button", { name: /Handoff/ }));
-    expect(screen.getByTestId("step-rail-live").textContent).toBe("Step 3 of 3: Handoff");
+    expect(rail().querySelector('[aria-current="step"]')!.textContent).toContain("Handoff");
+    expect(document.activeElement?.textContent).toBe("Step 3 · Handoff");
   }, 30000);
-});
 
 describe("UX-006b Stage 2 steps: statuses come from data, never from a visit", () => {
   it("an excluded item with no reason makes the charges step Needs attention (live); giving the reason clears it; visiting alone changes nothing", async () => {
