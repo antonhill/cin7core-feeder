@@ -96,7 +96,8 @@ describe("D4 corrections on the Solution Builder quote page", () => {
     const rows = ["Confirm per stock unit", "Record exception"].map((n) => screen.queryByRole("button", { name: n })?.parentElement).filter(Boolean) as HTMLElement[];
     expect(rows.length).toBeGreaterThan(0);
     for (const r of rows) { expect(r.className).toContain("flex-col"); expect(r.className).toContain("sm:flex-row"); expect(r.firstElementChild!.className).toContain("min-w-0"); expect(r.parentElement!.className).toContain("min-w-0"); }
-    const confirm = screen.getByRole("button", { name: /Record pre-approval price confirmation/ });
-    expect(confirm.className).toContain("whitespace-normal!"); // a long label wraps instead of pushing the page sideways
+    // UX-006i1: the Rep's "Submit to Estimator" moved to Stage 1 step 5 (a short label, 44px high); Stage 2 only points at it while the quotation is a Rep draft.
+    expect(screen.queryByRole("button", { name: /Record pre-approval price confirmation/ })).toBeNull();
+    expect(screen.getByTestId("submit-pointer")).toBeTruthy();
   }, 30000);
 });

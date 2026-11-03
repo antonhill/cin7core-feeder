@@ -1,5 +1,6 @@
 import type { QuoteDraft } from "./draft";
 import { emptyDraft } from "./draft";
+import { TOPIGS_GROWER_INPUT } from "./fixture";
 
 // DEMO DEFAULTS - the NewQuip demonstration quotation, loadable into the CURRENT editable draft with one click.
 //
@@ -95,4 +96,37 @@ export function applyDemoDefaults(current: QuoteDraft): DemoLoad {
     estimator: { ...demo.estimator, ...(current.estimator.costOverrides ? { costOverrides: structuredClone(current.estimator.costOverrides) } : {}) },
   };
   return { draft, replaced };
+}
+
+// ── CONTEXTUAL SAMPLES (UX-006i1) ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// The global whole-quote loader is now a Preview-only testing utility. These two fill ONE step of the draft held in the editor and nothing else: they never save, submit, approve, sign off or
+// call any server action (the page's live recalculation previews the result as for any edit). Pure; the input is not modified; applying twice equals applying once.
+
+const ROOM_KEYS = ["lengthM", "widthM", "rooms", "totalPens", "hospitalPens", "pigsPerRoom"] as const;
+/** What "Load sample measurements" fills: the six room measurements of the Topigs sample. The site name, pricing basis, equipment, quantities and prices are untouched. */
+export const SAMPLE_MEASUREMENTS_FILLS = "length, width, number of rooms, total and hospital pens and pigs per room (Topigs sample)";
+export function applyMeasurementsSample(current: QuoteDraft): { draft: QuoteDraft; replaced: boolean } {
+  const config = { ...current.config };
+  for (const k of ROOM_KEYS) (config as Record<string, unknown>)[k] = TOPIGS_GROWER_INPUT[k];
+  return { draft: { ...current, config }, replaced: ROOM_KEYS.some((k) => !same(current.config[k], TOPIGS_GROWER_INPUT[k])) };
+}
+/** True when any room measurement already holds a value that the sample would replace. */
+export function hasMeasurementEntries(current: QuoteDraft): boolean {
+  const blank = emptyDraft().config;
+  return ROOM_KEYS.some((k) => !same(current.config[k], blank[k]) && !same(current.config[k], TOPIGS_GROWER_INPUT[k]));
+}
+
+const EQUIPMENT_KEYS = ["selectedFeederType", "selectedDrinkerType", "selectedFlooringType", "selectedPenningType", "selectedLightingType", "slattedFloorAreaM2", "penningPigSize", "penningRunningMetresPerRoom", "feederVariant", "optionalEquipment", "estimatorQuantities", "quantityOverrides", "quantityOverrideReasons", "exclusions"] as const;
+/** What "Load recommended configuration" fills: the CONFIG part of the demonstration quote. Charges, the M75 price, assumptions, product mappings and manual prices (Estimator-owned) are NOT touched. */
+export const RECOMMENDED_CONFIG_FILLS = "the system selections, optional equipment, per-room quantities and quantity overrides (the customer exclusions are cleared). It does not change the room measurements, charges, prices or product mappings";
+export function applyRecommendedConfiguration(current: QuoteDraft): { draft: QuoteDraft; replaced: boolean } {
+  const config = { ...current.config };
+  for (const k of EQUIPMENT_KEYS) (config as Record<string, unknown>)[k] = structuredClone((DEMO_DEFAULTS.config as unknown as Record<string, unknown>)[k]);
+  return { draft: { ...current, config }, replaced: EQUIPMENT_KEYS.some((k) => !same((current.config as unknown as Record<string, unknown>)[k], (DEMO_DEFAULTS.config as unknown as Record<string, unknown>)[k])) };
+}
+/** True when the equipment part of the draft already holds entries that the recommended configuration would replace (a confirmation is needed). */
+export function hasEquipmentEntries(current: QuoteDraft): boolean {
+  const blank = emptyDraft().config as unknown as Record<string, unknown>;
+  const demo = DEMO_DEFAULTS.config as unknown as Record<string, unknown>;
+  return EQUIPMENT_KEYS.some((k) => { const cur = (current.config as unknown as Record<string, unknown>)[k]; return !same(cur, blank[k]) && !same(cur, demo[k]); });
 }

@@ -33,15 +33,18 @@ describe("who is offered the Cin7 product chooser", () => {
 });
 
 describe("the page wires the chooser into the Line decisions row", () => {
+  // UX-006i1: the table moved to the shared RepConfigSections (mode "estimator" keeps the chooser; mode "rep" never renders one); the page renders it before the Product mappings panel.
   const src = readFileSync(new URL("../../../app/newquip-grower/[id]/page.tsx", import.meta.url), "utf8");
+  const sections = readFileSync(new URL("../../../app/newquip-grower/[id]/RepConfigSections.tsx", import.meta.url), "utf8");
   it("the Line decisions table renders the chooser through mappingControlFor, before the Product mappings panel", () => {
     const table = src.indexOf("Line decisions (per room");
+    const use = src.indexOf('<LineDecisionsTable draft={draft} ev={ev} edit={edit} roles={roles} editable={editable} mode="estimator"');
     const panel = src.indexOf("<PanelTitle>Product mappings</PanelTitle>");
-    const chooser = src.indexOf("<ProductMappingPicker");
     expect(table).toBeGreaterThan(0);
-    expect(chooser).toBeGreaterThan(table);
-    expect(chooser).toBeLessThan(panel);
-    expect(src).toContain("mappingControlFor(l.itemKey, l.basis, roles, editable)");
-    expect((src.match(/<ProductMappingPicker/g) ?? []).length).toBe(1);
+    expect(use).toBeGreaterThan(table);
+    expect(use).toBeLessThan(panel);
+    expect(sections).toContain("mappingControlFor(l.itemKey, l.basis, roles, editable)");
+    expect((sections.match(/<ProductMappingPicker/g) ?? []).length).toBe(1);
+    expect(sections).toMatch(/\) : mapControl === "chooser" \? \(/); // only the estimator-mode branch renders the chooser; the rep-mode branch is read-only
   });
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { STEP_STATUS_LABEL, completeCount, groupCounts, stepHeadingId, type RailGroup, type RailGroupTone, type RailStep, type StepStatus } from "./step-rail-model";
+import { STEP_STATUS_LABEL, completeCount, groupCounts, stepBlockedId, stepHeadingId, type RailGroup, type RailGroupTone, type RailStep, type StepStatus } from "./step-rail-model";
 
 // The step rail: an ordered list with one button per step (a number, or a check once the step is complete from DATA), its label and its status as TEXT. Presentation only.
 // From 701px the cards sit in a grid of equal columns that wraps to more rows instead of scrolling or clipping; at 700px and below it collapses to a disclosure "Step n of N · name · k complete" that lists the steps.
@@ -15,17 +15,22 @@ const BADGE_TONE: Record<StepStatus, string> = {
 const GROUP_TONE: Record<RailGroupTone, string> = { complete: "bg-emerald-50 text-emerald-800", attention: "bg-amber-50 text-amber-900", incomplete: "bg-slate-100 text-slate-700", neutral: "bg-slate-100 text-slate-700" };
 const GROUP_MARK: Record<RailGroupTone, string> = { complete: "✓", attention: "!", incomplete: "•", neutral: "•" };
 
-function Card({ step, number, current, onPick, tall }: { step: RailStep; number: number; current: boolean; onPick: () => void; tall: boolean }) {
+function Card({ railId, step, number, current, onPick, tall }: { railId: string; step: RailStep; number: number; current: boolean; onPick: () => void; tall: boolean }) {
   // Cards may shrink (min-w-0) so nothing clips: the rail is a wrapping grid of equal columns from 701px (equal height within a row); `tall` = a card inside a group, a flex item from 901px.
+  // A LOCKED step (wizard contract) stays focusable (aria-disabled, not `disabled`) so a screen reader reaches it and hears why; it is not selectable and shows its reasons as visible text.
+  const locked = step.locked === true;
+  const reasons = locked ? (step.blockedBy ?? []) : [];
+  const blockedId = stepBlockedId(railId, step.id);
   return (
     <li className={`flex ${tall ? "min-w-0 min-[901px]:flex-1" : "min-w-0"}`}>
-      <button type="button" onClick={onPick} aria-current={current ? "step" : undefined} data-step={step.id}
-        className={`flex min-h-11 w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors ${tall ? "min-[701px]:min-h-28" : ""} ${current ? "border-indigo-600 bg-indigo-50 ring-2 ring-indigo-600" : "border-slate-200 bg-white hover:bg-slate-50"}`}>
-        <span aria-hidden className={`flex size-7 shrink-0 items-center justify-center rounded-full border text-sm font-bold ${BADGE_TONE[step.status]}`}>{step.status === "complete" ? "✓" : number}</span>
+      <button type="button" onClick={locked ? undefined : onPick} aria-current={current ? "step" : undefined} data-step={step.id} aria-disabled={locked || undefined} data-locked={locked || undefined} aria-describedby={locked && reasons.length > 0 ? blockedId : undefined}
+        className={`flex min-h-11 w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors ${tall ? "min-[701px]:min-h-28" : ""} ${current ? "border-indigo-600 bg-indigo-50 ring-2 ring-indigo-600" : locked ? "cursor-not-allowed border-slate-200 bg-slate-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}>
+        <span aria-hidden className={`flex size-7 shrink-0 items-center justify-center rounded-full border text-sm font-bold ${locked ? BADGE_TONE.unavailable : BADGE_TONE[step.status]}`}>{step.status === "complete" && !locked ? "✓" : number}</span>
         <span className="flex min-h-full min-w-0 flex-1 flex-col self-stretch">
-          <span className="pt-1 text-sm font-semibold leading-5 text-slate-900">{step.label}</span>
-          {step.note && <span className="mt-0.5 text-xs text-slate-700">{step.note}</span>}
-          <span className={`mt-auto pt-1 text-xs font-semibold ${TEXT_TONE[step.status]}`} data-testid={`step-status-${step.id}`}>{step.statusLabel ?? STEP_STATUS_LABEL[step.status]}</span>
+          <span className={`pt-1 text-sm font-semibold leading-5 ${locked ? "text-slate-700" : "text-slate-900"}`}>{step.label}</span>
+          {step.note && !locked && <span className="mt-0.5 text-xs text-slate-700">{step.note}</span>}
+          {locked && reasons.length > 0 && <span id={blockedId} className="mt-0.5 text-xs text-slate-800" data-testid={`step-blocked-${step.id}`}>{reasons.join(" ")}</span>}
+          <span className={`mt-auto pt-1 text-xs font-semibold ${locked ? "text-slate-700" : TEXT_TONE[step.status]}`} data-testid={`step-status-${step.id}`}>{locked ? "Locked" : step.statusLabel ?? STEP_STATUS_LABEL[step.status]}</span>
         </span>
       </button>
     </li>
@@ -60,7 +65,7 @@ export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, g
       </button>
       {!groups ? (
         <ol id={`${id}-list`} className={`${open ? "" : "max-[700px]:hidden"} mt-2 flex flex-col gap-2 min-[701px]:mt-0 min-[701px]:grid min-[701px]:grid-cols-[repeat(auto-fit,minmax(11rem,1fr))]`}>
-          {steps.map((s, i) => <Card key={s.id} step={s} number={i + 1} current={s.id === currentId} onPick={pick(s.id)} tall={false} />)}
+          {steps.map((s, i) => <Card key={s.id} railId={id} step={s} number={i + 1} current={s.id === currentId} onPick={pick(s.id)} tall={false} />)}
         </ol>
       ) : (
         <div id={`${id}-list`} style={{ gridTemplateColumns: [...groups.map((g) => `minmax(0,${Math.max(steps.filter((s) => s.group === g.id).length, 1)}fr)`), ...(ungrouped.length ? [`minmax(0,${ungrouped.length}fr)`] : [])].join(" ") }}
@@ -78,12 +83,12 @@ export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, g
                   {g.statusText && <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-semibold ${GROUP_TONE[tone]}`} data-tone={tone} data-testid={`step-group-status-${g.id}`}><span aria-hidden>{GROUP_MARK[tone]}</span>{g.statusText}</span>}
                 </div>
                 <ol aria-labelledby={`${id}-${g.id}-label`} className={groupListCls}>
-                  {own.map((s) => <Card key={s.id} step={s} number={numberOf(s)} current={s.id === currentId} onPick={pick(s.id)} tall />)}
+                  {own.map((s) => <Card key={s.id} railId={id} step={s} number={numberOf(s)} current={s.id === currentId} onPick={pick(s.id)} tall />)}
                 </ol>
               </div>
             );
           })}
-          {ungrouped.length > 0 && <ol className={`${groupListCls} min-[901px]:row-span-2`}>{ungrouped.map((s) => <Card key={s.id} step={s} number={numberOf(s)} current={s.id === currentId} onPick={pick(s.id)} tall />)}</ol>}
+          {ungrouped.length > 0 && <ol className={`${groupListCls} min-[901px]:row-span-2`}>{ungrouped.map((s) => <Card key={s.id} railId={id} step={s} number={numberOf(s)} current={s.id === currentId} onPick={pick(s.id)} tall />)}</ol>}
         </div>
       )}
       {/* No live region: the current step is announced by aria-current and by the focus move to its heading. */}
@@ -96,10 +101,11 @@ export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, g
  * One step's content. A step that is not shown stays MOUNTED (so its requests and state are untouched) but is `hidden` and `inert`; with "show all" every step is shown.
  * When this step becomes the current one its heading takes focus.
  */
-export function StepPanel({ railId, stepId, number, title, current, showAll, className = "", headingClassName = "col-span-full", children }: {
-  railId: string; stepId: string; number: number; title: string; current: boolean; showAll: boolean; className?: string; /** Layout classes of the heading (default: a full-width row of a grid parent). */ headingClassName?: string; children: React.ReactNode;
+export function StepPanel({ railId, stepId, number, title, current, showAll, locked, className = "", headingClassName = "col-span-full", children }: {
+  railId: string; stepId: string; number: number; title: string; current: boolean; showAll: boolean; /** Wizard contract: the step is locked. Its content stays mounted but hidden and inert, and (in show-all) only the heading and the reasons are shown. */ locked?: string[]; className?: string; /** Layout classes of the heading (default: a full-width row of a grid parent). */ headingClassName?: string; children: React.ReactNode;
 }) {
-  const hidden = !current && !showAll;
+  const isLocked = locked !== undefined;
+  const sectionHidden = isLocked ? !showAll : !current && !showAll;
   const heading = useRef<HTMLHeadingElement>(null);
   const was = useRef(current);
   useEffect(() => {
@@ -107,9 +113,10 @@ export function StepPanel({ railId, stepId, number, title, current, showAll, cla
     was.current = current;
   }, [current]);
   return (
-    <section hidden={hidden} inert={hidden} aria-labelledby={stepHeadingId(railId, stepId)} data-step-panel={stepId} className={className}>
+    <section hidden={sectionHidden} inert={sectionHidden} aria-labelledby={stepHeadingId(railId, stepId)} data-step-panel={stepId} data-step-locked={isLocked || undefined} className={isLocked ? "col-span-full" : className}>
       <h2 id={stepHeadingId(railId, stepId)} ref={heading} tabIndex={-1} className={`${headingClassName} text-lg font-semibold text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-indigo-600`}>Step {number} · {title}</h2>
-      {children}
+      {isLocked && <p className="mt-1 text-sm text-slate-800" data-testid={`panel-blocked-${stepId}`}><strong>Locked.</strong> {locked.join(" ")}</p>}
+      {isLocked ? <div hidden inert>{children}</div> : children}
     </section>
   );
 }

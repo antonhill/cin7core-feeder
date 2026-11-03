@@ -49,15 +49,15 @@ export function computeStages(i: StageInput): StageView[] {
 
   // 1 Configuration
   const s1 = inReview || final ? v(1, "COMPLETE", "Configured and handed to review.")
-    : returned ? v(1, "RETURNED", "Returned to the Rep (new revision).", "Rep: make any requested changes, then reconfirm the amount in Stage 2.")
+    : returned ? v(1, "RETURNED", "Returned to the Rep (new revision).", "Rep: make any requested changes, then reconfirm the amount and submit it to the Estimator again (Stage 1, step 5).")
     : i.ready && i.customerSelected ? v(1, "COMPLETE", "Complete: the quote is READY.")
     : v(1, "IN_PROGRESS", i.customerSelected ? "Complete the configuration until the quote is READY." : "Select the customer and complete the configuration.", i.customerSelected ? "Rep: resolve the readiness items." : "Rep: select the Cin7 customer.");
 
   // 2 Costing & Estimator Review
   const s2 = final ? v(2, "COMPLETE", "Signed off by the Estimator.")
     : inReview ? (i.signedOff ? v(2, "COMPLETE", "Signed off by the Estimator.") : v(2, "AWAITING_ACTION", "With the Estimator for review.", "Estimator: review the costing and sign off, or return to the Rep."))
-    : returned && i.ready && i.customerSelected ? v(2, "AWAITING_ACTION", "Returned: reconfirm the amount with the customer.", "Rep: record the pre-approval price confirmation and send to the Estimator.")
-    : i.ready && i.customerSelected ? v(2, "AWAITING_ACTION", "Ready to send to the Estimator.", "Rep: record the pre-approval price confirmation and send to the Estimator.")
+    : returned && i.ready && i.customerSelected ? v(2, "AWAITING_ACTION", "Returned: reconfirm the amount with the customer.", "Rep: submit to the Estimator, recording the pre-approval price confirmation (Stage 1, step 5).")
+    : i.ready && i.customerSelected ? v(2, "AWAITING_ACTION", "Ready to send to the Estimator.", "Rep: submit to the Estimator, recording the pre-approval price confirmation (Stage 1, step 5).")
     : v(2, "NOT_STARTED", "Starts once the quote is READY.");
 
   // 3 Manager Approval

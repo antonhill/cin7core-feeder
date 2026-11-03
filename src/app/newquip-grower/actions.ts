@@ -92,7 +92,7 @@ function errMsg(e: unknown): string {
 export interface QuoteView {
   quote: QuoteRecord;
   evaluation: QuoteEvaluation;
-  viewer: { roles: QuoteRole[]; canViewCommercials: boolean };
+  viewer: { roles: QuoteRole[]; canViewCommercials: boolean; /** SERVER-derived: true only on a Vercel Preview deployment (VERCEL_ENV === "preview"); never true in Production. Gates the whole-quote testing utility. */ previewTools: boolean };
 }
 
 function view(quote: QuoteRecord, a: Actor): QuoteView {
@@ -100,7 +100,7 @@ function view(quote: QuoteRecord, a: Actor): QuoteView {
   return {
     quote: redactInternalFinancials(quote, canViewCommercials),
     evaluation: evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)),
-    viewer: { roles: [...a.roles], canViewCommercials },
+    viewer: { roles: [...a.roles], canViewCommercials, previewTools: process.env.VERCEL_ENV === "preview" },
   };
 }
 
