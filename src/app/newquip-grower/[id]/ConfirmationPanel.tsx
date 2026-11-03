@@ -81,22 +81,23 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
       </div>
       {s && (
         <details className="rounded-md border border-slate-200 p-2 text-sm" data-testid="alt-confirmer" open={choice !== "default" ? true : undefined}>
-          <summary className="min-h-6 cursor-pointer font-medium text-slate-700">Someone else confirmed the price</summary>
+          <summary className="min-h-6 cursor-pointer font-medium text-slate-700">Price confirmed by someone other than the quotation contact (optional)</summary>
+          <p className="mt-2 text-xs text-slate-600">Use this only if a different person at the customer confirmed the price. It records who confirmed; it does not change who the quotation is sent to (the contact from step 1).</p>
           <fieldset className="mt-2 space-y-2" disabled={!canAct || loading}>
             <legend className="sr-only">Who confirmed the price</legend>
             <label className={`${radio} ${choice === "default" ? "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-500" : "border-slate-300"}`}>
               <input type="radio" className="size-6" name="confirm-contact" checked={choice === "default"} onChange={() => setChoice("default")} />
-              <span>Quotation contact (default): {quotationContact ? <b>{quotationContact.name} &lt;{quotationContact.email}&gt;</b> : <i>not chosen in step 1</i>}</span>
+              <span>The quotation contact (default): {quotationContact ? <b>{quotationContact.name} &lt;{quotationContact.email}&gt;</b> : <i>not chosen in step 1</i>}</span>
             </label>
             {cin7Contacts.map((c) => (
               <label key={c.i} className={`${radio} ${choice === c.i ? "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-500" : "border-slate-300"}`}>
                 <input type="radio" className="size-6" name="confirm-contact" checked={choice === c.i} onChange={() => setChoice(c.i)} />
-                <span>Cin7 contact: <b>{c.name}</b>{c.email ? ` <${c.email}>` : " (no email)"}</span>
+                <span>Another Cin7 contact: <b>{c.name}</b>{c.email ? ` <${c.email}>` : " (no email)"}</span>
               </label>
             ))}
             <label className={`${radio} ${choice === "alt" ? "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-500" : "border-slate-300"}`}>
               <input type="radio" className="size-6" name="confirm-contact" checked={choice === "alt"} onChange={() => setChoice("alt")} />
-              <span>Someone not listed (alternative contact)</span>
+              <span>Someone not listed in Cin7</span>
             </label>
             {choice === "alt" && (
               <div className="flex flex-wrap items-end gap-2 pl-6">

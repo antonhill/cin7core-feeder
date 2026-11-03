@@ -45,7 +45,7 @@ import { Stage1Review } from "./Stage1Review";
 import { StepRail, StepPanel } from "@/components/ui/StepRail";
 import { useShowAllSteps } from "@/components/ui/use-show-all-steps";
 import { nextIncompleteStepId, parseStepParam } from "@/components/ui/step-rail-model";
-import { customerFactsSettled, deriveStage1Steps, NO_CUSTOMER_FACTS, STAGE1_STEP_IDS, STAGE1_STEP_LABEL, type Stage1CustomerFacts, type Stage1StepId } from "@/newquip/quote/stage1-steps";
+import { customerFactsSettled, deriveStage1Steps, fieldErrors, ownedWork, STEP_FIELD_KEYS, NO_CUSTOMER_FACTS, STAGE1_STEP_IDS, STAGE1_STEP_LABEL, type Stage1CustomerFacts, type Stage1StepId } from "@/newquip/quote/stage1-steps";
 import { currentStepId, deriveWizard, isPermitted, resolveEntryStep, toRailSteps } from "@/newquip/quote/wizard-contract";
 import { costAckKey, deriveStage2Steps, type Stage2Input } from "@/newquip/quote/stage2-steps";
 import { deriveFinalReviewChecklist, deriveStage2Wizard, deriveStage3Wizard, estimatorItemText, finalReviewBlockText, STAGE2_WIZARD_IDS, STAGE2_WIZARD_LABEL, type Stage2WizardId } from "@/newquip/quote/stage23-wizard";
@@ -160,6 +160,9 @@ export default function QuoteEditorPage() {
   // Contextual samples (UX-006i1): which sample is waiting for the viewer to confirm replacing values, and the last one loaded (announced once).
   const [confirmSample, setConfirmSample] = useState<"measurements" | "recommended" | null>(null);
   const [sampleNote, setSampleNote] = useState<string | null>(null);
+  // Inline validation is shown only for a field the viewer has touched (blurred) or whose step they have left: a fresh blank form does not shout.
+  const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
+  const touch = (...keys: string[]) => setTouched((p) => (keys.every((k) => p.has(k)) ? p : new Set([...p, ...keys])));
   // UAT-025: every action reports beside its own control (never in a banner above a long page) and ignores a second click while it is in flight.
   const acts = useKeyedActions();
   const isWorking = acts.anyPending;
@@ -300,13 +303,15 @@ export default function QuoteEditorPage() {
     });
   }
   function save() {
+    const hadSignoff = !!view!.quote.estimator_signoff_hash; // only then did the save withdraw anything
+    setSampleNote(null);
     void acts.run("save", async () => {
       const r = await saveGrowerDraftAction(id, draft!);
       if (!r.ok || !r.data) return { ok: false, error: r.error ?? "Could not save" };
       setError(null);
       adopt(r.data);
       return r;
-    }, { pending: "Saving the draft…", success: "Draft saved. Any estimator sign-off made on earlier content no longer applies." });
+    }, { pending: "Saving the draft…", success: hadSignoff ? "Draft saved. The Estimator sign-off made on earlier content no longer applies." : "Draft saved." });
   }
 
   const cfg = draft.config;
@@ -331,15 +336,32 @@ export default function QuoteEditorPage() {
       ].map(([k, v]) => <div key={k}><dt className="text-xs text-slate-700">{k}</dt><dd className="mt-0.5 font-medium text-slate-900">{v}</dd></div>)}
     </dl>
   );
-  const here = currentStage(stages);
+  // computeStages marks Stage 1 COMPLETE once the quote is READY, but for the REP the next action is still Stage 1 step 5 (Submit). So the LANDING stage is role-aware (presentation only; computeStages
+  // is untouched): a Rep on a Rep draft lands on Stage 1; an Estimator-only viewer lands on Stage 2 when the Rep's draft is waiting on Estimator-owned mapping; everyone else as before.
+  const workFacts = { lines: ev.calc.lines, budgetLines: budget?.lines ?? null, charges: budget?.charges ?? null, blankExclusionCount: blankExclusionKeys.length, blankPriceReasonCount: Object.values(draft.estimator.priceResolutions).filter((r) => r && !r.reason.trim()).length };
+  const owned = ownedWork(workFacts);
+  const stageNow = currentStage(stages);
+  const here: StageId = q.state === "REP_DRAFT" && roles.has("rep") ? 1 : q.state === "REP_DRAFT" && roles.has("estimator") && !roles.has("rep") && owned.estimator.length > 0 ? 2 : stageNow;
   if (landing === null && !loadingStages) setLanding(here); // once, when the current stage is first known (React's render-phase initialisation)
   const stage: StageId = picked ?? landing ?? here;
   const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); const at = n === 1 ? stepNo : n === 2 ? step2Cur : n === 4 ? step4No : 1; const sp = new URLSearchParams([...u.searchParams].filter(([k]) => k !== "step" && k !== "stage")); sp.set("stage", String(n)); if (at > 1) sp.set("step", String(at)); u.search = sp.toString(); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
 
   // ── Stage 1: the Rep's wizard. The page only feeds data in; wizard-contract.ts decides statuses, locks, who owns what and where the wizard opens. ──
-  const blankPriceReasonCount = Object.values(draft.estimator.priceResolutions).filter((r) => r && !r.reason.trim()).length;
   const stage1 = deriveStage1Steps({ customerName: draft.customerName, siteName: draft.siteName, penningPigSize: cfg.penningPigSize, calcIssues: ev.calc.issues, readinessReasons: rd.reasons, customer: customerFacts, roomValues: { lengthM: cfg.lengthM, widthM: cfg.widthM, rooms: cfg.rooms, totalPens: cfg.totalPens, pigsPerRoom: cfg.pigsPerRoom },
-    work: { lines: ev.calc.lines, budgetLines: budget?.lines ?? null, charges: budget?.charges ?? null, blankExclusionCount: blankExclusionKeys.length, blankPriceReasonCount } });
+    work: workFacts });
+  // The Rep's Stage 1 card and next-action line say what the REP does next (never "Complete" before the submission). Presentation only: computeStages and every gate are unchanged.
+  const repWaiting = q.state === "REP_DRAFT" && roles.has("rep");
+  const repItems = stage1.open.filter((o) => o.owner === "Rep");
+  const estItems = stage1.open.filter((o) => o.owner === "Estimator");
+  const stagesView = stages.map((x) => {
+    if (!repWaiting || x.id !== 1 || x.status === "RETURNED" || x.status === "LOADING") return x;
+    if (repItems.length > 0) return x;
+    if (estItems.length > 0) return { ...x, statusLabel: "Waiting on the Estimator", summary: `Everything you can do is complete. Waiting on the Estimator for ${estItems.length} item${estItems.length === 1 ? "" : "s"} - nothing for you to do yet.`, next: null };
+    if (rd.state === "READY") return { ...x, summary: "Everything you can do is complete.", next: "Rep: submit to the Estimator (Stage 1, step 5)." };
+    return x;
+  });
+  const fe = fieldErrors({ siteName: draft.siteName, penningPigSize: cfg.penningPigSize, calcIssues: ev.calc.issues });
+  const err = (k: string) => (touched.has(k) ? fe[k] : undefined);
   const wizard = deriveWizard({ state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", revision: q.revision, stage1Status: stages[0].status, roles: { rep: roles.has("rep"), estimator: roles.has("estimator"), manager: roles.has("manager") }, canViewCommercials: view.viewer.canViewCommercials, stage1, customer: customerFacts, readiness: { state: rd.state }, totalAvailable: totalCents != null && totalCents > 0 });
   // Resolve the entry step ONCE, after the customer facts have settled (read, failed or unavailable), and latch it: no later change of the facts can move the viewer (React's render-phase initialisation, as for `landing`).
   const factsSettled = customerFactsSettled(customerFacts) || factsGiveUp;
@@ -355,6 +377,8 @@ export default function QuoteEditorPage() {
   if (stage === 1 && entry !== null && reqStep !== null && reqStep !== stepId) { setReqStep(stepId); setUrlSync(stepId); }
   const goStepId = (id: Stage1StepId) => {
     if (!isPermitted(stepAccess(id))) return; // a locked step is not selectable (the rail also refuses it)
+    setSampleNote(null);
+    if (id !== stepId && (stepId === "site" || stepId === "equipment")) touch(...STEP_FIELD_KEYS[stepId]); // leaving a step is "trying to proceed": its problems now show at the field
     setReqStep(id); writeStepParam(id);
   };
   const goStep = (id: string) => goStepId(id as Stage1StepId);
@@ -476,7 +500,7 @@ export default function QuoteEditorPage() {
   return (
     <main className={pageContainerClass("data")}>
       <ModuleHeader variant="workspace" module={SOLUTION_BUILDER_MODULE}>
-        <Link href="/newquip-grower" className="text-indigo-700 hover:underline">← Solution Builder quotes</Link> · {q.quote_ref} <span className="text-slate-600">rev {q.revision}</span>
+        <Link href="/newquip-grower" className="inline-flex min-h-11 items-center text-indigo-700 hover:underline">← Solution Builder quotes</Link> · {q.quote_ref} <span className="text-slate-600">rev {q.revision}</span>
       </ModuleHeader>
 
       <p className="mt-4 text-sm text-slate-700">
@@ -503,7 +527,7 @@ export default function QuoteEditorPage() {
       {final && <div className="mt-4"><Alert tone="info">This quote is the manager-approved final. Its accepted baseline is frozen; any change after acceptance must be a Variation on the Project.</Alert></div>}
       {budget && <p className="mt-3 text-xs text-slate-600">{budget.priceSource.notice} Provenance: {budget.priceSource.provenance}</p>}
 
-      <StageNav stages={stages} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state }} />
+      <StageNav stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state }} />
 
       {gated1 && <p role="status" aria-live="polite" className="mt-4 text-sm text-slate-700" data-testid="stage1-shell">Preparing your quotation steps…</p>}
       {stage === 1 && (
@@ -566,7 +590,7 @@ export default function QuoteEditorPage() {
           </div>
           <div className="mt-2 space-y-1">{editable && <DisabledReason id="save-why">{saveWhy}</DisabledReason>}<ActionFeedback state={acts.stateOf("save")} /></div>
           <div className="mt-2 space-y-2">
-          {dirty && <p className="max-w-4xl text-sm text-slate-700" data-testid="unsaved-note">{recalculating ? "Recalculating… " : ""}The prices, costs, margins and totals are a live preview of your edits and nothing is saved until you press Save draft. Sign-off and approval use the SAVED draft.</p>}
+          {dirty && <p className="max-w-4xl text-sm text-slate-700" data-testid="unsaved-note">{recalculating ? "Recalculating… " : ""}{view.viewer.canViewCommercials ? "The prices, costs, margins and totals" : "The quantities, prices and totals"} are a live preview of your edits and nothing is saved until you press Save draft. Sign-off and approval use the SAVED draft.</p>}
           {previewFailure && <p className="max-w-4xl text-sm text-red-700">The live recalculation failed ({previewFailure}); the figures shown may be out of date. Edit again or reload.</p>}
           {incompleteOverrides && <p className="max-w-4xl text-sm text-amber-800">Complete or clear the highlighted cost overrides (a reason and an amount) before saving.</p>}
           {blankExclusionKeys.length > 0 && <p className="max-w-4xl text-sm text-amber-800">Enter a reason for each ticked exclusion before saving (the preview already applies it).</p>}
@@ -620,7 +644,7 @@ export default function QuoteEditorPage() {
             <Panel>
               <PanelTitle>Site &amp; pricing basis</PanelTitle>
               <div className="mt-4 grid gap-4">
-                <TextField label="Site / project name" value={draft.siteName} onChange={(v) => edit((d) => { d.siteName = v; })} />
+                <TextField label="Site / project name" error={err("siteName")} onBlur={() => touch("siteName")} value={draft.siteName} onChange={(v) => edit((d) => { d.siteName = v; })} />
                 <Select label="Pricing basis" value={draft.quoteType} onChange={(e) => edit((d) => { d.quoteType = e.target.value as QuoteType; })}>
                   <option value="project">Project — landed cost + 20%</option>
                   <option value="day_to_day">Day-to-day — workbook Retail ex VAT</option>
@@ -636,12 +660,12 @@ export default function QuoteEditorPage() {
               {stage1Edit && <p className="mt-1 text-xs text-slate-600">“Load sample measurements” fills {SAMPLE_MEASUREMENTS_FILLS}. Nothing is saved until you press Save draft.</p>}
               {confirmSample === "measurements" && <SampleConfirm what="the room measurements" onYes={() => runSample("measurements")} onNo={() => setConfirmSample(null)} />}
               <div className="mt-4 grid gap-4 sm:grid-cols-3">
-                <NumField label="Length" unit="m" value={cfg.lengthM || null} onChange={(v) => edit((d) => { d.config.lengthM = num(v); })} />
-                <NumField label="Width" unit="m" value={cfg.widthM || null} onChange={(v) => edit((d) => { d.config.widthM = num(v); })} />
-                <NumField label="Number of rooms" value={cfg.rooms || null} onChange={(v) => edit((d) => { d.config.rooms = num(v); })} hint="Multiplies every per-room quantity" />
-                <NumField label="Total pens" unit="per room" value={cfg.totalPens || null} onChange={(v) => edit((d) => { d.config.totalPens = num(v); })} />
-                <NumField label="Hospital pens" unit="per room" value={cfg.hospitalPens} onChange={(v) => edit((d) => { d.config.hospitalPens = num(v); })} />
-                <NumField label="Pigs per room" value={cfg.pigsPerRoom || null} onChange={(v) => edit((d) => { d.config.pigsPerRoom = num(v); })} hint="±600 is per room" />
+                <NumField label="Length" error={err("lengthM")} onBlur={() => touch("lengthM")} unit="m" value={cfg.lengthM || null} onChange={(v) => edit((d) => { d.config.lengthM = num(v); })} />
+                <NumField label="Width" error={err("widthM")} onBlur={() => touch("widthM")} unit="m" value={cfg.widthM || null} onChange={(v) => edit((d) => { d.config.widthM = num(v); })} />
+                <NumField label="Number of rooms" error={err("rooms")} onBlur={() => touch("rooms")} value={cfg.rooms || null} onChange={(v) => edit((d) => { d.config.rooms = num(v); })} hint="Multiplies every per-room quantity" />
+                <NumField label="Total pens" error={err("totalPens")} onBlur={() => touch("totalPens")} unit="per room" value={cfg.totalPens || null} onChange={(v) => edit((d) => { d.config.totalPens = num(v); })} />
+                <NumField label="Hospital pens" error={err("hospitalPens")} onBlur={() => touch("hospitalPens")} unit="per room" value={cfg.hospitalPens} onChange={(v) => edit((d) => { d.config.hospitalPens = num(v); })} />
+                <NumField label="Pigs per room" error={err("pigsPerRoom")} onBlur={() => touch("pigsPerRoom")} value={cfg.pigsPerRoom || null} onChange={(v) => edit((d) => { d.config.pigsPerRoom = num(v); })} hint="±600 is per room" />
               </div>
               <p className="mt-3 text-sm text-slate-600">
                 Room floor area: <strong className="tabular-nums">{ev.calc.derived.floorAreaM2 == null ? "—" : `${Math.round(ev.calc.derived.floorAreaM2 * 1000) / 1000} m²`}</strong>
@@ -661,16 +685,16 @@ export default function QuoteEditorPage() {
             <Panel>
               <PanelTitle>Equipment selections</PanelTitle>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <Select label="CCM feeder variant" helperText={`One feeder, two variants. Capacity ${CCM_FEEDER_CAPACITY_PIGS} pigs per feeder.`} value={cfg.feederVariant ?? "STANDARD"} onChange={(e) => edit((d) => { d.config.feederVariant = e.target.value as "STANDARD" | "WINDOW"; delete d.estimator.confirmedMappings.feeder; })}>
+                <Select label="CCM feeder variant" error={err("feederVariant")} helperText={`One feeder, two variants. Capacity ${CCM_FEEDER_CAPACITY_PIGS} pigs per feeder.`} value={cfg.feederVariant ?? "STANDARD"} onChange={(e) => edit((d) => { d.config.feederVariant = e.target.value as "STANDARD" | "WINDOW"; delete d.estimator.confirmedMappings.feeder; })}>
                   <option value="STANDARD">Standard — PNQ082</option>
                   <option value="WINDOW">With window — PNQ082-WINDOW</option>
                 </Select>
-                <Select label="Penning pig size" value={cfg.penningPigSize ?? ""} onChange={(e) => edit((d) => { d.config.penningPigSize = (e.target.value || null) as PenningPigSize | null; })}>
+                <Select label="Penning pig size" error={err("penningPigSize")} onBlur={() => touch("penningPigSize")} value={cfg.penningPigSize ?? ""} onChange={(e) => edit((d) => { d.config.penningPigSize = (e.target.value || null) as PenningPigSize | null; })}>
                   <option value="">Select…</option>
                   {(Object.keys(PIG_SIZE_LABEL) as PenningPigSize[]).map((k) => <option key={k} value={k}>{PIG_SIZE_LABEL[k]}</option>)}
                 </Select>
-                <NumField label="Penning running metres" unit="per room" value={cfg.penningRunningMetresPerRoom} onChange={(v) => edit((d) => { d.config.penningRunningMetresPerRoom = v; })} hint="Running metres, not m²" />
-                <NumField label="Slatted floor area (context only)" unit="m², one room" value={cfg.slattedFloorAreaM2} onChange={(v) => edit((d) => { d.config.slattedFloorAreaM2 = v; })} hint="Never converted to a slat quantity — you enter the quantity below" />
+                <NumField label="Penning running metres" error={err("penningRunningMetresPerRoom")} onBlur={() => touch("penningRunningMetresPerRoom")} unit="per room" value={cfg.penningRunningMetresPerRoom} onChange={(v) => edit((d) => { d.config.penningRunningMetresPerRoom = v; })} hint="Running metres, not m²" />
+                <NumField label="Slatted floor area (context only)" error={err("slattedFloorAreaM2")} onBlur={() => touch("slattedFloorAreaM2")} unit="m², one room" value={cfg.slattedFloorAreaM2} onChange={(v) => edit((d) => { d.config.slattedFloorAreaM2 = v; })} hint="Never converted to a slat quantity — you enter the quantity below" />
               </div>
             </Panel>
 
@@ -747,7 +771,8 @@ export default function QuoteEditorPage() {
             {stepNo > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStepId(STAGE1_STEP_IDS[stepNo - 2])}>Back</Button> : <span />}
             {nextStep1 && nextStep1Locked && (
               <div className="flex max-w-xl flex-col items-end gap-1">
-                <Button type="button" className="min-h-11" disabled={nextStep1Locked.access === "locked"} aria-describedby={nextStep1Locked.access === "locked" ? "next-why" : undefined} onClick={() => goStepId(nextStep1)}>Next: {STAGE1_STEP_LABEL[nextStep1]}</Button>
+                {/* aria-disabled (not `disabled`) so that TRYING to go on is a signal: it marks this step's fields as touched and their problems appear at the fields. Nothing else happens. */}
+                <Button type="button" className={`min-h-11 ${nextStep1Locked.access === "locked" ? "opacity-50" : ""}`} aria-disabled={nextStep1Locked.access === "locked" || undefined} aria-describedby={nextStep1Locked.access === "locked" ? "next-why" : undefined} onClick={() => { if (nextStep1Locked.access === "locked") { if (stepId === "site" || stepId === "equipment") touch(...STEP_FIELD_KEYS[stepId]); return; } goStepId(nextStep1); }}>Next: {STAGE1_STEP_LABEL[nextStep1]}</Button>
                 {nextStep1Locked.access === "locked" && <p id="next-why" className="text-right text-sm text-amber-900" data-testid="next-blocked">{nextStep1Locked.blockedBy.join(" ")}</p>}
               </div>
             )}
@@ -1003,7 +1028,7 @@ export default function QuoteEditorPage() {
                   {roles.has("manager") && <p className="text-xs text-slate-700" data-testid="return-owners">Return to rep: the Rep corrects it (new revision), then submits it again. Return to estimator: the Estimator&apos;s sign-off is withdrawn and they review again.</p>}
                   {isWorking && <DisabledReason id={`${uid}-approve-busy`}>Another action is in progress. Please wait.</DisabledReason>}
                   {roles.has("manager") && <DisabledReason id="return-mgr-why">{returnWhy ? `Return buttons: ${returnWhy.charAt(0).toLowerCase()}${returnWhy.slice(1)}` : undefined}</DisabledReason>}
-                  {!roles.has("manager") && <p id={`${uid}-approve-role`} className="text-sm text-slate-700">Final approval needs the manager role (org owner/admin).</p>}
+                  {!roles.has("manager") && <p id={`${uid}-approve-role`} className="text-sm text-slate-700">Final approval needs the Manager role.</p>}
                 </>
               )}
               {q.state === "REP_DRAFT" && <p className="text-sm text-slate-700">This quotation is with the Rep ({q.revision > 1 ? "returned as a new revision" : "not yet sent for review"}).</p>}
