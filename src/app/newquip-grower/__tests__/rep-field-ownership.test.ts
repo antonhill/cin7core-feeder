@@ -140,14 +140,27 @@ describe("a Rep response carries no margin or cost-derived key", () => {
       for (const n of NEVER_PRESENT) expect(k.has(n), `Rep response has ${n}`).toBe(false);
       for (const n of ZERO_OR_NULL) for (const v of k.get(n) ?? []) expect(v === null || v === 0, `${n}=${String(v)}`).toBe(true);
     }
-    const m = /.{60}landed.{40}/i.exec(JSON.stringify(rep.data)); expect(m?.[0]).toBeUndefined();
+    for (const data of [rep.data, prev.data]) {
+      const m = /.{0,60}(landed|mark-?up|20%|\bROE\b|freight).{0,40}/i.exec(JSON.stringify(data)); expect(m?.[0]).toBeUndefined();
+    }
 
     asRoles("REP", "ESTIMATOR", "MANAGER");
     vi.mocked(canSeeCosts).mockResolvedValue(true);
+    expect(JSON.stringify((await actions.getGrowerQuoteAction(id)).data)).toMatch(/landed/i); // positive control: cost-entitled output is unchanged
     const mgr = keysOf((await actions.getGrowerQuoteAction(id)).data);
     expect(mgr.has("marginRevenueExTax")).toBe(true);
     expect(mgr.has("costedLineCount")).toBe(true);
     expect((mgr.get("costedLineCount") ?? []).some((v) => typeof v === "number" && v > 0)).toBe(true);
     expect((mgr.get("estimatedCost") ?? []).some((v) => typeof v === "number" && v > 0)).toBe(true);
+  });
+});
+
+describe("neutral wording for callers without cost visibility", () => {
+  it("replaces the known cost-basis phrasings and leaves everything else alone", async () => {
+    const { neutraliseCostWording: n } = await import("@/newquip/quote/margin");
+    expect(n("Landed cost (Cost × ROE × Freight) + 20% markup")).toBe("Project pricing");
+    expect(n("Day-to-day: workbook Retail Price ex VAT. Project: landed cost (Cost × ROE × Freight) + 20%.")).toBe("Standard price list basis.");
+    expect(n("N/A — supplier quote required: the workbook landed cost for ABC is zero. It is never quoted at R0.")).toBe("N/A — supplier quote required: the price list price for ABC is zero. It is never quoted at R0.");
+    expect(n("Assumes 20% deposit")).toBe("Assumes 20% deposit");
   });
 });
