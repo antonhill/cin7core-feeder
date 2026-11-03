@@ -18,7 +18,7 @@ describe("UX-006c Stage 3 checklist (derived from checkApproval)", () => {
     const items = deriveApprovalChecklist(ok);
     expect(items.map((x) => x.id)).toEqual(["ready", "total", "confirmed", "signoff", "amount", "manager"]);
     expect(approvalChecklistMet(items)).toBe(true);
-    expect(checkApproval({ readiness: { state: "READY", reasons: [] } as never, totalExVatCents: 1_000_000, customerConfirmedCents: 1_000_000, signoffHash: "h1", currentDraftHash: "h1" }).ok).toBe(true);
+    expect(checkApproval({ readiness: { state: "READY", reasons: [] } as never, totalExVatCents: 1_000_000, customerConfirmedCents: 1_000_000, signoffHash: "h1", currentDraftHash: "h1", costing: { complete: true, reasons: [] } }).ok).toBe(true);
   });
   it("each condition goes unmet on its own and carries checkApproval's own message", () => {
     expect(met({ readinessState: "BLOCKED" })).toMatchObject({ ready: false, total: true, confirmed: true, signoff: true, amount: true });

@@ -507,13 +507,13 @@ describe("UX-006b Stage 2: Mark reviewed & continue (client-local cost acknowled
     await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
     fireEvent.click(ackBtn());
     expect(status("cost")).toBe("Reviewed");
-    const box = within(panel("charges") as HTMLElement).getByLabelText(/Exclude Feed saver mat/, { selector: "input" }) as HTMLInputElement;
-    await act(async () => { fireEvent.click(box); });
+    // UX-006 S1b: an edit that changes the TOTAL now withdraws the customer's confirmation and returns the quotation to the Rep, so this test edits a text-only field (the assumptions) to keep proving that the acknowledgement is bound to the version.
+    const note = within(panel("charges") as HTMLElement).getByLabelText(/Assumptions/) as HTMLTextAreaElement;
+    await act(async () => { fireEvent.change(note, { target: { value: "Reviewed assumptions text" } }); });
     expect(status("cost")).toBe("Review needed"); // unsaved edit
     fireEvent.click(rail().querySelector('[data-step="cost"]')!);
     expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull(); // no ineffective continuation while edits are unsaved
     expect(screen.getByTestId("step-buttons").textContent).toContain("Save or discard your unsaved edits before marking the costing reviewed.");
-    await act(async () => { fireEvent.change((within(panel("charges") as HTMLElement).getAllByPlaceholderText("Reason (required)") as HTMLInputElement[]).find((i) => i.value === "")!, { target: { value: "Customer supplies it" } }); });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save draft" })); });
     await waitFor(() => expect(screen.getByText("All changes saved")).toBeTruthy(), { timeout: 8000 });
     expect(status("cost")).toBe("Review needed"); // the saved version (hash / revision / updated_at / totals) is a different one

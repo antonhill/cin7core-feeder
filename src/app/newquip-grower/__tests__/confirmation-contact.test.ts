@@ -174,9 +174,12 @@ describe("pre-approval price confirmation contact", () => {
     expect((await customer.getQuoteCustomerAction("q1")).data!.confirmationContact).toBeNull();
     // defence in depth: if a stale confirmation were somehow still on an in-review quote, the Manager still cannot approve it
     Object.assign(quote(), { state: "ESTIMATOR_REVIEW", customer_confirmed_cents: total });
-    await as("estimator"); expect((await grower.signOffGrowerQuoteAction("q1")).error).toBeUndefined();
+    // Integration of S1a + S1b: S1a's sign-off also refuses a stale amount (a second line of defence), so the sign-off is refused here ...
+    await as("estimator"); expect((await grower.signOffGrowerQuoteAction("q1")).error).toBe("The amount changed since the customer confirmed it. Return it to the Rep to reconfirm.");
+    // ... and approval stays refused even if a sign-off were somehow present on a stale confirmation.
+    Object.assign(quote(), { estimator_signoff_hash: quote().draft_hash, estimator_signoff_by_email: "e@nq" });
     await as("manager");
-    expect((await grower.approveGrowerQuoteAction("q1")).error).toMatch(/total changed since the customer confirmed/);
+    expect((await grower.approveGrowerQuoteAction("q1")).error).toMatch(/total changed since the customer confirmed|Costing is incomplete/);
     expect(quote().state).toBe("ESTIMATOR_REVIEW");
   });
 
