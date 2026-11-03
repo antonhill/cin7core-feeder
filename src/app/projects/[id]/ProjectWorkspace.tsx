@@ -548,7 +548,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
             </div>
             {view.claims.length === 0 && <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-600">No claims yet.</p>}
             {view.claims.length > 0 && <div className="hidden grid-cols-[minmax(8rem,1fr)_16.5rem_11rem_minmax(14rem,1.3fr)] gap-x-4 px-4 pb-1 text-xs font-semibold uppercase tracking-wider text-slate-600 lg:grid" aria-hidden>
-              <span>Claim</span><span className="text-right">Amount</span><span>Approval</span><span>Cin7 invoice (as last recorded)</span>
+              <span>Claim</span><span className="text-right">Amount</span><span>Approval</span><span>Cin7 invoice</span>
             </div>}
             <div className="space-y-2">
               {claimRows.map(({ cl, plan, needsYou }) => {
@@ -572,7 +572,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
                         {cl.reserves && <p className="mt-1 text-xs font-medium text-indigo-800">{cl.status === "FAILED_UNCERTAIN" ? "Stays reserved (outcome uncertain)" : "Reserves value"}</p>}
                       </div>
                       <div>
-                        <span className="sr-only">Cin7 invoice: </span><span aria-hidden className="mb-0.5 block text-xs font-semibold uppercase tracking-wider text-slate-600 lg:hidden">Cin7 invoice (as last recorded)</span>
+                        <span className="sr-only">Cin7 invoice: </span><span aria-hidden className="mb-0.5 block text-xs font-semibold uppercase tracking-wider text-slate-600 lg:hidden">Cin7 invoice</span>
                         <ClaimInvoiceStatus claimId={cl.id} cin7Status={cl.cin7Status} />
                       </div>
                     </div>
