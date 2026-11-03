@@ -282,9 +282,9 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
         </div>)}
       {panel("confirm",
         <div className="mt-4 space-y-3">
-          <label className="flex items-start gap-2 text-sm text-slate-800"><input type="checkbox" className="mt-1" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} /> <span>I confirm I want to create one Cin7 Sales Order for this project. This creates a real order in the connected Cin7 instance, and only one can ever be created for a project.</span></label>
+          <label className="flex items-start gap-2 text-sm text-slate-800"><input type="checkbox" className="mt-1 size-6 shrink-0" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} /> <span>I confirm I want to create one Cin7 Sales Order for this project. This creates a real order in the connected Cin7 instance, and only one can ever be created for a project.</span></label>
           {rereading && <Alert tone="warning">{checking ? "Checking the current Cin7 status. Create stays disabled until the record has been re-read." : "The outcome of the last request could not be confirmed and the status could not be re-read. Reload the page. Create stays disabled until the status has been read."}</Alert>}
-          <Button disabled={!canCreate} aria-describedby={!canCreate && createReasons.length > 0 ? `${uid}-sale-create-reason` : undefined} onClick={() => after(() => createCin7SaleAction(projectId, { confirmation: CREATE_CONFIRMATION_TEXT, customerName: customer, location, revenueAccount: account, cin7TaxRule: taxRule }), "sale:create")}>Create Sales Order in Cin7</Button>
+          <Button className="min-h-11" disabled={!canCreate} aria-describedby={!canCreate && createReasons.length > 0 ? `${uid}-sale-create-reason` : undefined} onClick={() => after(() => createCin7SaleAction(projectId, { confirmation: CREATE_CONFIRMATION_TEXT, customerName: customer, location, revenueAccount: account, cin7TaxRule: taxRule }), "sale:create")}>Create Sales Order in Cin7</Button>
           {!canCreate && createReasons.length > 0 && <DisabledReason id={`${uid}-sale-create-reason`}>Create is disabled: {createReasons.join(" ")}</DisabledReason>}
           {gates.isManager && (
             <ul className="space-y-0.5 text-sm" aria-label="What Create needs" data-testid="sale-requirements">
