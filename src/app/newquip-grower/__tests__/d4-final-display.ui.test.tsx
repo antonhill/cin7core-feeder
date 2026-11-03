@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { CostPanelBody, type CostPanelBodyProps } from "../[id]/CostPanel";
 import { ProductMappingPicker } from "../[id]/ProductMappingPicker";
+import { normaliseOption } from "@/lib/projects/supplier-price";
 import { formatMicroAmount, NBSP } from "@/lib/format-money";
 
 // D4 final-audit display stragglers: C (disabled Builder controls give a visible, linked reason) and A (supplier unit costs use the shared money formatter).
@@ -23,7 +24,7 @@ describe("C: Search (product mapping picker)", () => {
 });
 
 const body = (over: Partial<CostPanelBodyProps> = {}): CostPanelBodyProps => ({
-  v: { frozen: false, estimate: null, skuOptions: {}, unitBasis: null, incompleteAccepted: null, canCapture: false, note: "", fx: {}, fxAvailable: true } as never,
+  v: { frozen: false, estimate: null, skuOptions: { "A-1": { options: [normaliseOption({ supplierId: "s1", supplierName: "Acme", cost: 5, currency: "ZAR", lastSupplied: null, stockUnit: "Each", statedUnitFields: ["PackSize"] }, { fx: {}, nowIso: "2026-11-03T00:00:00Z", maxRateAgeHours: 72, unitBasis: null })] } }, unitBasis: null, incompleteAccepted: null, canCapture: false, note: "", fx: {}, fxAvailable: true } as never,
   loading: false, error: null, note: null, busy: false, manual: null, onCapture: vi.fn(), onRetry: vi.fn(), onClearManual: vi.fn(), onStartManual: vi.fn(), onManualChange: vi.fn(), onSaveManual: vi.fn(),
   onConfirmUnit: vi.fn(), onAcceptIncomplete: vi.fn(), ...over,
 });
