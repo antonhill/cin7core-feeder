@@ -49,7 +49,7 @@ import { StepRail, StepPanel } from "@/components/ui/StepRail";
 import { useShowAllSteps } from "@/components/ui/use-show-all-steps";
 import { nextIncompleteStepId, parseStepParam } from "@/components/ui/step-rail-model";
 import { deriveStage1Steps, NO_CUSTOMER_FACTS, STAGE1_STEP_IDS, STAGE1_STEP_LABEL, type Stage1CustomerFacts, type Stage1StepId } from "@/newquip/quote/stage1-steps";
-import { deriveStage2Steps, stage2StepIds, STAGE2_STEP_LABEL, type Stage2StepId } from "@/newquip/quote/stage2-steps";
+import { deriveStage2Steps, nextCandidates, stage2StepIds, STAGE2_STEP_LABEL, type Stage2StepId } from "@/newquip/quote/stage2-steps";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { DeliveryPanel, type DeliveryGate } from "./DeliveryPanel";
 import { ApprovalChecklist, AcceptanceStatusBanner, HandoverChecklist } from "./Stage36Guidance";
@@ -120,7 +120,7 @@ export default function QuoteEditorPage() {
   // Stage 1 steps: navigation and guidance only (completion is derived from data, never from a visit). The customer facts are lifted from the CustomerPanel that already loads them.
   const [stepNo, setStepNo] = useState<number>(() => (parseStage(search.get("stage")) === 2 || parseStage(search.get("stage")) === 4 ? 1 : parseStepParam(search.get("step"), STAGE1_STEP_IDS.length)));
   // Stage 2 has its own step number but SHARES the "Show all steps" preference (one setting for the builder, one storage key).
-  const [step2No, setStep2No] = useState<number>(() => (parseStage(search.get("stage")) === 2 ? parseStepParam(search.get("step"), 4) : 1));
+  const [step2No, setStep2No] = useState<number>(() => (parseStage(search.get("stage")) === 2 ? parseStepParam(search.get("step"), 5) : 1));
   // Stage 4 (Customer Quotation) has two steps, with the same shared preference.
   const [step4No, setStep4No] = useState<number>(() => (parseStage(search.get("stage")) === 4 ? parseStepParam(search.get("step"), STAGE4_STEP_IDS.length) : 1));
   const [showAllSteps, setShowAllSteps] = useShowAllSteps("nq-builder-show-all");
@@ -307,7 +307,7 @@ export default function QuoteEditorPage() {
   const step2Cur = step2No >= 1 && step2No <= step2Ids.length ? step2No : 1; // a ?step= beyond this viewer's steps (a Rep has three) falls back to the first, as for Stage 1
   const step2Id = step2Ids[step2Cur - 1];
   const stage2 = deriveStage2Steps({
-    canViewCommercials: canCommercials, state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", calcValid: ev.calc.valid, lines: ev.calc.lines,
+    canViewCommercials: canCommercials, roles: { rep: roles.has("rep"), estimator: roles.has("estimator"), manager: roles.has("manager") }, revision: q.revision, state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", calcValid: ev.calc.valid, lines: ev.calc.lines,
     readiness: { state: rd.state, reasons: rd.reasons, missingMappings: rd.counts.missingMappings },
     budget: budget ? { incomplete: budget.incomplete, estimatedCost: budget.totals.estimatedCost, marginPct: budget.totals.overallMarginPct, lines: budget.lines, charges: budget.charges } : null,
     blankExclusionCount: blankExclusionKeys.length, incompleteCostOverrideCount: Object.keys(previewCostOverrides(draft.estimator.costOverrides).errors).length,
@@ -315,13 +315,15 @@ export default function QuoteEditorPage() {
     totalAvailable: totalCents != null, confirmedRecorded: q.customer_confirmed_cents != null,
     dirty, signoff: !q.estimator_signoff_hash ? "none" : q.estimator_signoff_hash === q.draft_hash ? "current" : "stale",
   });
+  const groupTone = { success: "complete", warning: "attention", danger: "attention", info: "incomplete", neutral: "neutral" } as const;
+  const stage2Groups = stage2.groups.map((g) => ({ id: g.id, label: g.label, owner: g.id === "rep" ? "Rep" : "Estimator", statusText: `Workflow: ${g.statusLine}`, tone: groupTone[g.tone] }));
   const goStep2No = (n: number) => {
     const next = Math.min(Math.max(n, 1), step2Ids.length);
     setStep2No(next); // the address bar gets stage and step together, so a reload lands on the same step
     try { const u = new URL(window.location.href); u.searchParams.set("stage", "2"); u.searchParams.set("step", String(next)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ }
   };
   const goStep2 = (id: string) => goStep2No(step2Ids.indexOf(id as Stage2StepId) + 1);
-  const next2Open = nextIncompleteStepId(stage2, step2Id);
+  const next2Open = nextIncompleteStepId(nextCandidates(stage2, step2Id), step2Id); // only this viewer's own work, never another role's
 
   // Stage 4 steps: guidance only. Statuses come from the issued-document and sent records the page already reads (never from a visit); the Issue and Send actions keep their own gates.
   const stage4 = deriveStage4Steps({ hasDocument: gate.hasDocument, commercial: gate.status });
@@ -371,6 +373,7 @@ export default function QuoteEditorPage() {
       <div className="top-0 z-10 mt-3 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm md:sticky" data-testid="quote-summary-bar" aria-busy={recalculating}>
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
           <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs uppercase tracking-wide text-slate-700">Calculation</span>
             <Status tone={READY_TONE[rd.state]}>{READINESS_LABEL[rd.state]}</Status>
             {previewFailure ? <Status tone="danger">Recalculation failed - figures are out of date</Status> : dirty && <Status tone="warning">Preview of unsaved edits</Status>}
           </div>
@@ -387,7 +390,7 @@ export default function QuoteEditorPage() {
       {final && <div className="mt-4"><Alert tone="info">This quote is the manager-approved final. Its accepted baseline is frozen; any change after acceptance must be a Variation on the Project.</Alert></div>}
       {budget && <p className="mt-3 text-xs text-slate-600">{budget.priceSource.notice} Provenance: {budget.priceSource.provenance}</p>}
 
-      <StageNav stages={stages} current={here} viewing={stage} onSelect={goStage} previewable={previewable} />
+      <StageNav stages={stages} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state }} />
 
       {stage === 1 && (
         <StepRail id="s1" ariaLabel="Configuration steps" steps={stage1.steps} currentId={stepId} onSelect={goStep}
@@ -402,13 +405,13 @@ export default function QuoteEditorPage() {
       )}
 
       {stage === 2 && (
-        <StepRail id="s2" ariaLabel="Costing and review steps" steps={stage2} currentId={step2Id} onSelect={goStep2}
+        <StepRail id="s2" ariaLabel="Costing and review steps" steps={stage2.steps} currentId={step2Id} onSelect={goStep2} groups={stage2Groups}
           actions={(
             <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
               <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAllSteps} onChange={(e) => setShowAllSteps(e.target.checked)} /> Show all steps</label>
               {next2Open
                 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2(next2Open)}>Next incomplete step</Button>
-                : <span className="text-sm text-slate-700" data-testid="all-steps-complete">Every step is complete.</span>}
+                : <span className="text-sm text-slate-700" data-testid="all-steps-complete">Nothing is left for you in this stage.</span>}
             </div>
           )} />
       )}
@@ -748,32 +751,17 @@ export default function QuoteEditorPage() {
             {!view.viewer.canViewCommercials && totalsPanel}
           </StepPanel>
 
-          {view.viewer.canViewCommercials && (
-            <StepPanel railId="s2" stepId="cost" number={3} title={STAGE2_STEP_LABEL.cost} current={step2Id === "cost"} showAll={showAllSteps} className="space-y-6">
-              {scopePanel}
-              {/* Right under the physical scope, where the estimator resolves the SKUs: capture the latest Cin7 costs for a draft quotation. */}
-              {!final && <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? previewedFor : null} />}
-              {totalsPanel}
-              {budget && view.viewer.canViewCommercials && (
-                <div aria-busy={recalculating}><MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={editable} edit={edit} /></div>
-              )}
-            </StepPanel>
-          )}
         </fieldset>
 
-        <StepPanel railId="s2" stepId="handoff" number={step2Ids.indexOf("handoff") + 1} title={STAGE2_STEP_LABEL.handoff} current={step2Id === "handoff"} showAll={showAllSteps} className="mt-6 space-y-6">
+        <StepPanel railId="s2" stepId="submit" number={step2Ids.indexOf("submit") + 1} title={STAGE2_STEP_LABEL.submit} current={step2Id === "submit"} showAll={showAllSteps} className="mt-6 space-y-6">
           <Panel>
-            <PanelTitle>Estimator review and handoff</PanelTitle>
-            <p className="mt-1 text-xs text-slate-600">The Rep records the pre-approval price confirmation and sends the quote to the Estimator. The Estimator signs off or returns it. This is not the customer&apos;s formal acceptance, which comes after Manager approval.</p>
-            {handoffFacts}
-
+            <PanelTitle>Submit to Estimator</PanelTitle>
+            <p className="mt-1 text-xs text-slate-600">The Rep records the pre-approval price confirmation with the customer and submits the quote to the Estimator. This is not the customer&apos;s formal acceptance, which comes after Manager approval.</p>
             {q.state !== "REP_DRAFT" && q.customer_confirmed_cents != null && (
               <div className="mt-3 space-y-2">
                 <ConfirmationPanel quoteId={id} amountLabel={fmtCents(q.customer_confirmed_cents)} canAct={false} ready loading={false} refreshKey={`${q.revision}:${q.state}:${q.updated_at}`} recorded onConfirm={() => undefined} />
-                {!final && totalCents != null && totalCents !== q.customer_confirmed_cents && <Alert tone="warning">The quote total ({fmtCents(totalCents)}) no longer equals the confirmed amount ({fmtCents(q.customer_confirmed_cents)}). Return it to the Rep to reconfirm with the customer before it can be approved.</Alert>}
               </div>
             )}
-
             <div className="mt-5 flex flex-wrap items-end gap-3 border-t border-slate-100 pt-5">
               {q.state === "REP_DRAFT" && (
                 <>
@@ -783,10 +771,37 @@ export default function QuoteEditorPage() {
                   </div>
                 </>
               )}
+              {q.state !== "REP_DRAFT" && <p className="text-sm text-slate-700" data-testid="submit-state">{final ? "Submitted and approved." : "Submitted: the quote is with the Estimator."}</p>}
+            </div>
+            <ActionFeedback state={acts.stateOf("send")} />
+          </Panel>
+        </StepPanel>
+
+        {view.viewer.canViewCommercials && (
+          <fieldset disabled={!editable} className="mt-6 min-w-0 space-y-6 border-0 p-0">
+              <StepPanel railId="s2" stepId="cost" number={step2Ids.indexOf("cost") + 1} title={STAGE2_STEP_LABEL.cost} current={step2Id === "cost"} showAll={showAllSteps} className="space-y-6">
+                {scopePanel}
+                {/* Right under the physical scope, where the estimator resolves the SKUs: capture the latest Cin7 costs for a draft quotation. */}
+                {!final && <CostPanel quoteId={id} unsaved={dirty} previewDraft={dirty ? previewedFor : null} />}
+                {totalsPanel}
+                {budget && view.viewer.canViewCommercials && (
+                  <div aria-busy={recalculating}><MarginPanel budget={budget} draft={draft} final={final} frozen={q.accepted_baseline?.internalMargin} editable={editable} edit={edit} /></div>
+                )}
+              </StepPanel>
+          </fieldset>
+        )}
+
+        <StepPanel railId="s2" stepId="signoff" number={step2Ids.indexOf("signoff") + 1} title={STAGE2_STEP_LABEL.signoff} current={step2Id === "signoff"} showAll={showAllSteps} className="mt-6 space-y-6">
+          <Panel>
+            <PanelTitle>Estimator review and handoff</PanelTitle>
+            <p className="mt-1 text-xs text-slate-600">The Estimator signs off or returns the quote to the Rep. This is not the customer&apos;s formal acceptance, which comes after Manager approval.</p>
+            {handoffFacts}
+                {q.state !== "REP_DRAFT" && q.customer_confirmed_cents != null && !final && totalCents != null && totalCents !== q.customer_confirmed_cents && <Alert tone="warning">The quote total ({fmtCents(totalCents)}) no longer equals the confirmed amount ({fmtCents(q.customer_confirmed_cents)}). Return it to the Rep to reconfirm with the customer before it can be approved.</Alert>}
+            <div className="mt-5 flex flex-wrap items-end gap-3 border-t border-slate-100 pt-5">
               {q.state === "ESTIMATOR_REVIEW" && (
                 <>
                   {q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash
-                    ? <Status tone="success">Estimator sign-off complete - {q.estimator_signoff_by_email ?? "estimator"}{q.estimator_signoff_at ? `, ${formatSast(q.estimator_signoff_at)}` : ""}</Status>
+                    ? <span className="flex min-w-0 flex-wrap items-center gap-2"><Status tone="success">Estimator sign-off complete</Status><span className="min-w-0 break-words text-sm text-slate-700">{q.estimator_signoff_by_email ?? "estimator"}{q.estimator_signoff_at ? `, ${formatSast(q.estimator_signoff_at)}` : ""}</span></span>
                     : <Button loading={isWorking} aria-describedby={signoffWhy ? "signoff-why" : undefined} disabled={!roles.has("estimator") || rd.state !== "READY"} onClick={() => act(() => signOffGrowerQuoteAction(id), "Estimator sign-off recorded for this exact content.", "signoff", (v) => !!v.quote.estimator_signoff_hash && v.quote.estimator_signoff_hash === v.quote.draft_hash)}>Estimator: I double-checked this quote</Button>}
                   {roles.has("estimator") && (<>
                   <TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} />
@@ -798,7 +813,6 @@ export default function QuoteEditorPage() {
               {final && <Status tone="success">Signed off and approved</Status>}
             </div>
             {q.state === "ESTIMATOR_REVIEW" && !(q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash) && <div className="mt-2 space-y-1"><DisabledReason id="signoff-why">{signoffWhy}</DisabledReason>{roles.has("estimator") && <DisabledReason id="return-rep-why">{returnWhy}</DisabledReason>}</div>}
-            <ActionFeedback state={acts.stateOf("send")} />
             <ActionFeedback state={acts.stateOf("signoff")} />
           </Panel>
           {final ? (
