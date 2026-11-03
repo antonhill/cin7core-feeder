@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { nextIncompleteStepId } from "@/components/ui/step-rail-model";
 import { deriveStage2Steps, nextCandidates, stage2StepIds, type Stage2Input } from "../stage2-steps";
 
 const line = (over: Record<string, unknown> = {}) => ({ basis: "system_calculated", exclusionReason: null, inputRequired: null, overrideState: "none", overrideReason: null, ...over });
@@ -138,19 +139,30 @@ describe("Stage 2 steps and groups (UX-006b)", () => {
   });
 
   // ── what is the viewer's to do ──
-  it("Next incomplete is scoped to the viewer: a Rep never gets Estimator work, even before or after submitting", () => {
+  it("Next incomplete is scoped to the viewer AND to whose turn it is: the Rep's steps only while it is a Rep draft; nothing for the Rep once submitted", () => {
     expect([...d({ roles: REP }).actionable].sort()).toEqual(["charges", "lines", "submit"]);
-    expect([...d({ ...sub, roles: REP }).actionable].sort()).toEqual(["charges", "lines", "submit"]); // they stay navigable, but sign-off/cost are not theirs
-    expect(d({ ...sub, roles: REP }).actionable.has("signoff")).toBe(false);
+    expect(d({ ...sub, roles: REP }).actionable.size).toBe(0); // submitted: nothing for the Rep, even if a Rep step is not Complete
+    expect(d({ ...sub, roles: REP, blankExclusionCount: 1 }).actionable.has("charges")).toBe(false);
   });
-  it("an Estimator's own work is cost and sign-off (after submission); a Manager has oversight of both", () => {
+  it("the Estimator's work (cost, sign-off) is actionable only once the quote is in Estimator review; a Manager follows the same turn order with oversight", () => {
     expect([...d({ ...sub, roles: EST }).actionable].sort()).toEqual(["cost", "signoff"]);
+    expect(d({ roles: EST }).actionable.size).toBe(0); // still a Rep draft: not the Estimator's turn
     expect(d({ ...sub, roles: MGR }).actionable.has("signoff")).toBe(true);
-    expect(d({ roles: EST }).actionable.has("signoff")).toBe(false); // nothing to review before the Rep submits
+    expect(d({ roles: MGR }).actionable.has("lines")).toBe(true);
   });
   it("nextCandidates keeps the current step so the position is known, and drops other roles' steps", () => {
     const x = d({ ...sub, roles: REP });
-    expect(nextCandidates(x, "signoff").map((s) => s.id)).toEqual(["lines", "charges", "submit", "signoff"]);
-    expect(nextCandidates(x, "lines").map((s) => s.id)).toEqual(["lines", "charges", "submit"]);
+    expect(nextCandidates(x, "signoff").map((s) => s.id)).toEqual(["signoff"]);
+    expect(nextCandidates(d({ roles: REP }), "lines").map((s) => s.id)).toEqual(["lines", "charges", "submit"]);
+  });
+  it("after a current sign-off the reviewed Cost step counts as done (no Complete label) so the group count and status agree; with unsaved edits it does not", () => {
+    const signed = { ...sub, roles: EST, signoff: "current" as const };
+    expect(grp(signed, "estimator").progress).toBe("2 of 2 complete");
+    expect(grp(signed, "estimator").statusLine).toBe("Signed off");
+    expect(d(signed).steps.find((x) => x.id === "cost")).toMatchObject({ status: "review", counted: true });
+    expect(by(signed).cost).toBe("review"); // the label stays honest
+    expect(nextIncompleteStepId(nextCandidates(d(signed), "lines"), "lines")).toBeNull(); // nothing left for the Estimator
+    expect(grp({ ...signed, dirty: true }, "estimator").progress).toBe("0 of 2 complete");
+    expect(d({ ...sub, roles: EST }).steps.find((x) => x.id === "cost")!.counted).toBeUndefined(); // not before sign-off
   });
 });

@@ -143,7 +143,9 @@ export function deriveStage2Steps(i: Stage2Input): Stage2Derived {
   // A step in the OTHER role's group is shown for reference only: "Needs attention" is reserved for the viewer's own work (a Manager has oversight of both), so it reads Not complete.
   const owns = (g: Stage2GroupId) => i.roles.manager || (g === "rep" ? i.roles.rep : i.roles.estimator);
   const shown = (id: Stage2StepId): StepStatus => (all[id].status === "attention" && !owns(STAGE2_STEP_GROUP[id]) ? "incomplete" : all[id].status);
-  const steps: Stage2Step[] = stage2StepIds(i.canViewCommercials).map((id) => ({ id, label: STAGE2_STEP_LABEL[id], status: shown(id), group: STAGE2_STEP_GROUP[id], ...(all[id].note ? { note: all[id].note } : {}) }));
+  // Once the Estimator's sign-off on THIS content is current the Review step has been reviewed: it counts as done (no check glyph, the label stays "Review needed").
+  const reviewed = inReview && i.signoff === "current" && !i.dirty;
+  const steps: Stage2Step[] = stage2StepIds(i.canViewCommercials).map((id) => ({ id, label: STAGE2_STEP_LABEL[id], status: shown(id), group: STAGE2_STEP_GROUP[id], ...(id === "cost" && all.cost.status === "review" && reviewed ? { counted: true } : {}), ...(all[id].note ? { note: all[id].note } : {}) }));
 
   // ── group status lines (workflow facts only) ──
   const repPrepDone = lines.status === "complete" && charges.status === "complete" && i.readiness.state === "READY";
@@ -165,14 +167,15 @@ export function deriveStage2Steps(i: Stage2Input): Stage2Derived {
 
   const mkGroup = (id: Stage2GroupId, s: { line: string; tone: GroupTone }): Stage2Group => {
     const own = steps.filter((x) => x.group === id);
-    const complete = own.filter((x) => x.status === "complete").length;
+    const complete = own.filter((x) => x.status === "complete" || x.counted === true).length;
     return { id, label: STAGE2_GROUP_LABEL[id], statusLine: s.line, tone: s.tone, stepIds: own.map((x) => x.id), complete, total: own.length, attention: own.filter((x) => x.status === "attention").length, progress: `${complete} of ${own.length} complete` };
   };
   const groups = [mkGroup("rep", rep), mkGroup("estimator", est)];
 
   // ── what is this viewer's to do ──
   const actionable = new Set<Stage2StepId>();
-  for (const s of steps) if (owns(s.group) && !all[s.id].waiting && !final) actionable.add(s.id);
+  // Only the group whose turn it is: the Rep's steps while the quote is a Rep draft (nothing for the Rep once submitted, except being returned), the Estimator's once it is in Estimator review.
+  for (const s of steps) if (owns(s.group) && !all[s.id].waiting && !final && (s.group === "rep" ? !inReview : inReview)) actionable.add(s.id);
   return { steps, groups, actionable };
 }
 

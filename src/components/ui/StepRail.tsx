@@ -43,7 +43,7 @@ export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, g
   const attention = steps.filter((s) => s.status === "attention").length;
   const counts = groups ? groupCounts(steps, groups) : null;
   const summary = counts
-    ? `Step ${at + 1} of ${steps.length} · ${cur?.label ?? ""} · ${counts.map((c) => `${c.label} ${c.done} of ${c.total}`).join(" · ")}${attention > 0 ? ` · ${attention} need attention` : ""}`
+    ? `Step ${at + 1} of ${steps.length} · ${cur?.label ?? ""} · ${counts.map((c) => `${c.label} ${c.done} of ${c.total} complete`).join(" · ")}${attention > 0 ? ` · ${attention} need attention` : ""}`
     : `Step ${at + 1} of ${steps.length} · ${cur?.label ?? ""} · ${done} complete${attention > 0 ? ` · ${attention} need attention` : ""}`;
   const pick = (stepId: string) => () => { onSelect(stepId); setOpen(false); };
   const listCls = "flex-col gap-2 min-[701px]:flex-row min-[701px]:overflow-x-auto min-[701px]:pb-1";

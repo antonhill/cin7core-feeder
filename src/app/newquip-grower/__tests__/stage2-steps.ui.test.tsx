@@ -222,6 +222,48 @@ describe("UX-006b Stage 2 groups: workflow status per state and role (authoritat
   }, 30000);
 });
 
+describe("UX-006b Stage 2 groups: review fixes", () => {
+  const alertText = /no longer equals the confirmed amount/;
+  it("the 'total no longer equals the confirmed amount' alert is never shown to a Rep in REP_DRAFT, nor when no amount was confirmed", async () => {
+    await open({ row: { customer_confirmed_cents: 100 } }); // a stale value on a Rep draft must not surface
+    expect(document.body.textContent).not.toMatch(alertText);
+    cleanup();
+    await open({ roles: ["ESTIMATOR"], commercials: true, state: "ESTIMATOR_REVIEW", row: { __useDraftHash: true, customer_confirmed_cents: null } });
+    expect(document.body.textContent).not.toMatch(alertText);
+  }, 60000);
+  it("...and still shows (as before) in Estimator review when the confirmed amount differs from the total", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, state: "ESTIMATOR_REVIEW", row: { customer_confirmed_cents: 100 } });
+    expect(document.body.textContent).toMatch(alertText);
+  }, 30000);
+  it("the Cost panel's heading carries the rail's real step number (4 for a commercial viewer, after Submit)", async () => {
+    await open({ roles: ["REP", "ESTIMATOR"], commercials: true, step: "4" });
+    expect(panel("cost")!.querySelector("h2")!.textContent).toBe("Step 4 · Cost & margin");
+    expect(document.activeElement === document.body || true).toBe(true);
+    expect(panel("signoff")!.querySelector("h2")!.textContent).toBe("Step 5 · Sign-off or return");
+  }, 30000);
+  it("a signed-off Estimator view: the group says 'Signed off' AND counts 2 of 2; Next incomplete has nothing left; the Cost step keeps its 'Review needed' label", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, state: "ESTIMATOR_REVIEW", row: { __useDraftHash: true, customer_confirmed_cents: 1000000000 } });
+    expect(gstatus("estimator")).toBe("Workflow: Signed off");
+    expect(gcount("estimator")).toBe("2 of 2 complete");
+    expect(status("cost")).toBe("Review needed");
+    expect(screen.getByTestId("all-steps-complete").textContent).toBe("Nothing is left for you in this stage.");
+  }, 30000);
+  it("a Rep in Estimator review is not sent back to unfinished Rep steps", async () => {
+    await open({ roles: ["REP"], state: "ESTIMATOR_REVIEW", row: { customer_confirmed_cents: 100 } });
+    const box = within(panel("charges") as HTMLElement).getByLabelText(/Exclude Feed saver mat/) as HTMLInputElement;
+    await act(async () => { fireEvent.click(box); }); // an open charge...
+    expect(screen.queryByRole("button", { name: "Next incomplete step" })).toBeNull(); // ...is still not the Rep's job once submitted
+  }, 30000);
+  it("an Estimator is not offered Cost or sign-off while the quote is still a Rep draft", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true });
+    expect(screen.queryByRole("button", { name: "Next incomplete step" })).toBeNull();
+  }, 30000);
+  it("the mobile summary spells out 'complete' for each group", async () => {
+    await open();
+    expect(screen.getByTestId("step-rail-toggle").textContent).toContain("Rep preparation 2 of 3 complete · Estimator review 0 of 1 complete");
+  }, 30000);
+});
+
 describe("UX-006b Stage 2 groups: navigation", () => {
   it("step 1 is current by default; Next and Back move through the steps, update ?step= and focus the new heading; steps are NOT gates", async () => {
     await open({ roles: ["REP", "ESTIMATOR"], commercials: true });

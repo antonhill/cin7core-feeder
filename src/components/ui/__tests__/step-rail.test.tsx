@@ -210,7 +210,15 @@ describe("StepRail groups", () => {
   });
   it("mobile summary shows per-group counts and the attention count", () => {
     view();
-    expect(screen.getByTestId("step-rail-toggle").textContent).toContain("Step 3 of 4 · Check lines · Rep preparation 2 of 2 · Estimator review 0 of 2 · 1 need attention");
+    expect(screen.getByTestId("step-rail-toggle").textContent).toContain("Step 3 of 4 · Check lines · Rep preparation 2 of 2 complete · Estimator review 0 of 2 complete · 1 need attention");
+  });
+  it("a step with counted:true counts as done in the totals and is skipped by next-incomplete, but keeps its own status label and draws no check", () => {
+    const ss: RailStep[] = [{ id: "a", label: "A", status: "review", counted: true, group: "g" }, { id: "b", label: "B", status: "incomplete", group: "g" }];
+    render(<StepRail id="t" ariaLabel="x" steps={ss} currentId="b" onSelect={vi.fn()} groups={[{ id: "g", label: "G" }]} />);
+    expect(screen.getByTestId("step-group-count-g").textContent).toBe("1 of 2 complete");
+    expect(screen.getByTestId("step-status-a").textContent).toBe("Review needed");
+    expect(document.querySelector('[data-step="a"]')!.textContent).not.toContain("✓");
+    expect(nextIncompleteStepId(ss, "b")).toBeNull();
   });
   it("without groups nothing changes: no group regions, and the summary keeps its old form", () => {
     render(<StepRail id="t" ariaLabel="x" steps={steps} currentId="b" onSelect={vi.fn()} />);
