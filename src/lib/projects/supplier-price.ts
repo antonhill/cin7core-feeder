@@ -126,9 +126,9 @@ export function normaliseOption(raw: RawSupplierPrice, env: NormaliseEnv): Suppl
   if (raw.conversionFactor !== undefined && raw.conversionFactor !== null) {
     if (!Number.isFinite(raw.conversionFactor) || raw.conversionFactor <= 0) block("BAD_CONVERSION_FACTOR", "The purchase-unit conversion factor is not a positive number.");
     else { factor = raw.conversionFactor; unitSource = "STATED_FACTOR"; }
-  } else if (pu && su && pu.toLowerCase() !== su.toLowerCase()) block("BAD_CONVERSION_FACTOR", `The price is quoted per "${pu}" but the stock unit is "${su}" and the number of ${su} in one ${pu} is not known.`);
+  } else if (stated && stated.length > 0) block("UOM_UNCONFIRMED", `Cin7 returned unit-related information on this price (${stated.join(", ")}) that this tool cannot interpret, so it is not assumed to be per stock unit.`);
+  else if (pu && su && pu.toLowerCase() !== su.toLowerCase()) block("BAD_CONVERSION_FACTOR", `The price is quoted per "${pu}" but the stock unit is "${su}" and the number of ${su} in one ${pu} is not known.`);
   else if (pu && su) { factor = 1; unitSource = "STATED_SAME_UNIT"; } // same unit stated on both sides
-  else if (stated && stated.length > 0) block("UOM_UNCONFIRMED", `Cin7 returned unit-related information on this price (${stated.join(", ")}) that this tool cannot interpret, so it is not assumed to be per stock unit.`);
   else if (stated && stated.length === 0 && su) { factor = 1; unitSource = "CIN7_SINGLE_STOCK_UOM"; } // no unit of its own: Cin7's one product UOM governs
   else if (env.unitBasis && env.unitBasis.basis === "STOCK_UNIT") { factor = 1; unitSource = "CONFIRMED_BY_USER"; } // explicitly confirmed by an authorised user for this estimate
   else block("UOM_UNCONFIRMED", stated && stated.length === 0 ? "Cin7 did not return the product's stock unit, so the unit of this price cannot be established, and nobody has confirmed it is per stock unit." : "Cin7 does not state which unit this price is for, and nobody has confirmed it is per stock unit.");
@@ -204,9 +204,24 @@ export function rawFromCin7(s: Record<string, unknown>, supplierCurrency: (name:
   };
 }
 
-/** Keys that name a unit, pack or conversion. Deliberately broad: a false hit only keeps a price blocked (safe); a miss could let a pack price through as per-unit. */
-const UNIT_KEY = /unit|uom|pack|carton|case|box|pallet|conver|multipl|factor|quantity.?in|qty.?in/i;
-/** The unit-related fields a Cin7 Suppliers[] record actually carries with a value. Empty = the record states no unit of its own. */
+/** Top-level Suppliers[] keys known (live-confirmed or documented) to carry NO unit information. Anything else with a value is treated as a possible unit statement. */
+const KNOWN_SUPPLIER_KEYS = new Set(["SupplierID", "SupplierName", "Supplier", "ID", "Cost", "FixedCost", "Currency", "LastSupplied", "DropShip", "SupplierInventoryCode", "SupplierProductName", "ProductSupplierOptions"]);
+/** Keys inside ProductSupplierOptions[] known to carry no unit information (reorder / lead-time planning only). */
+const KNOWN_OPTION_KEYS = new Set(["LocationID", "LocationName", "ReorderQuantity", "Lead", "Safety", "MinimumToReorder"]);
+const has = (v: unknown) => v !== null && v !== undefined && v !== "";
+/**
+ * The fields a Cin7 Suppliers[] record carries with a value that are NOT known to be unit-free. Empty = the record states no unit of its own.
+ * An ALLOWLIST on purpose: a new or unrecognised field (a pack size, a bag size, a nested carton quantity) blocks the price rather than slipping through as
+ * per-unit; the cost is only that an unrelated new field also blocks, visibly, by name.
+ */
 export function statedUnitFields(s: Record<string, unknown>): string[] {
-  return Object.keys(s).filter((k) => UNIT_KEY.test(k) && s[k] !== null && s[k] !== undefined && s[k] !== "").sort();
+  const out = new Set<string>();
+  for (const k of Object.keys(s)) if (has(s[k]) && !KNOWN_SUPPLIER_KEYS.has(k)) out.add(k);
+  const opts = s.ProductSupplierOptions;
+  if (opts !== null && opts !== undefined && !Array.isArray(opts)) out.add("ProductSupplierOptions");
+  else for (const o of (opts as unknown[] | undefined) ?? []) {
+    if (o === null || typeof o !== "object" || Array.isArray(o)) { out.add("ProductSupplierOptions"); continue; }
+    for (const [k, v] of Object.entries(o as Record<string, unknown>)) if (has(v) && !KNOWN_OPTION_KEYS.has(k)) out.add(`ProductSupplierOptions.${k}`);
+  }
+  return [...out].sort();
 }

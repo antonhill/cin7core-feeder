@@ -200,6 +200,25 @@ describe("Cin7 single-stock-UOM contract (NQ-Q-0023 UOM_UNCONFIRMED remediation)
     const o = normaliseOption({ ...fresh(), purchaseUnit: "Box", conversionFactor: 10 }, noBasis);
     expect(o).toMatchObject({ status: "USABLE", zarUnitCents: 4_945, unitBasisSource: "STATED_FACTOR" }); // 494.46 / 10 = 49.446 -> 49.45
   });
+  it("reviewer cases: an unrecognised top-level or NESTED field (BagSize, ProductSupplierOptions[].CartonQty) blocks - the check is an allowlist", () => {
+    expect(rawFromCin7({ ...live, BagSize: 25 }, () => null).statedUnitFields).toEqual(["BagSize"]);
+    expect(rawFromCin7({ ...live, ProductSupplierOptions: [{ Lead: 1, CartonQty: 12 }] }, () => null).statedUnitFields).toEqual(["ProductSupplierOptions.CartonQty"]);
+    expect(rawFromCin7({ ...live, ProductSupplierOptions: "x" }, () => null).statedUnitFields).toEqual(["ProductSupplierOptions"]);
+    expect(normaliseOption(fresh({ ...live, BagSize: 25 }), env()).status).toBe("UNUSABLE");
+  });
+  it("reviewer case: purchaseUnit equal to stockUnit does not bypass a stated unit field", () => {
+    const o = normaliseOption({ ...fresh({ ...live, PackSize: 12 }), purchaseUnit: "Item" }, noBasis);
+    expect(o).toMatchObject({ status: "UNUSABLE" }); expect(o.problems[0].code).toBe("UOM_UNCONFIRMED");
+  });
+  it("a USD price through the single-stock-UOM path converts exactly as before, and survives a JSON round-trip of the stored raw", () => {
+    const r = fresh({ ...live, Cost: 45, Currency: "USD" });
+    const o = normaliseOption(r, env({ unitBasis: null }));
+    expect(o).toMatchObject({ status: "USABLE", zarUnitCents: 78_750, unitBasisSource: "CIN7_SINGLE_STOCK_UOM" });
+    const stored = JSON.parse(JSON.stringify(o)).raw as RawSupplierPrice;
+    expect(normaliseOption(stored, env({ unitBasis: null })).zarUnitCents).toBe(78_750); // [] persists
+    const legacy = JSON.parse(JSON.stringify({ ...r, statedUnitFields: undefined })) as RawSupplierPrice;
+    expect(normaliseOption(legacy, env({ unitBasis: null })).problems[0].code).toBe("UOM_UNCONFIRMED");
+  });
   it("the 24 NQ-Q-0023 SKUs: each is a single ZAR supplier with stock unit Item and no unit field -> usable at the exact Cin7 price, auto-selected", () => {
     const prices: Record<string, number> = { "DPL-PVC20X600": 132.36, ERT053: 494.46, HO12011000: 656.2, HO17050750: 213.31, HO21013750: 14000.37, KNQ074: 1039.19, KNQ160: 118.78, KNQ196: 2675.06, KNQBP1010: 99.31, KNQCP005: 145.01, NQ1017: 3.14, NQ1161: 188.05, NQ1227: 269, NQ1380: 169.3, NQ1386: 8.38, NQ2064: 0.46, NQ2066: 2.15, NQ2114: 5400, NQ2784: 27.08, NQ2886: 36, NYNUT: 0.82, PNQ082: 7247.71, QCA00003: 108.36, "SYSH-2750-3": 19444.62 };
     expect(Object.keys(prices)).toHaveLength(24);
