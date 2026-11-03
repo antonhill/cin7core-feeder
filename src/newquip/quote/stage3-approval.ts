@@ -6,7 +6,7 @@ import { checkApproval } from "./workflow";
 // The inputs are the page's live figures (readiness, and the total in cents rounded exactly as the server rounds the saved quotation: Math.round(subtotalExTax * 100)); the server judges the SAVED
 // quotation, so an unsaved edit is called out by its own "No unsaved edits" row.
 
-export type ApprovalCheckId = "ready" | "costing" | "total" | "confirmed" | "signoff" | "amount" | "exception" | "manager" | "saved";
+export type ApprovalCheckId = "ready" | "costing" | "total" | "confirmed" | "signoff" | "amount" | "mapping" | "exception" | "manager" | "saved";
 export interface ApprovalCheckItem {
   id: ApprovalCheckId;
   label: string;
@@ -32,7 +32,7 @@ export interface ApprovalChecklistInput {
   /** The SERVER's costing verdict (QuoteView.costing). Present only for a caller with cost visibility; absent (a Rep) means it is not judged here. */
   costing?: { complete: boolean; reason: string | null } | null;
   /** The SERVER's baseline-exception verdict (QuoteView.baselineException, S3). Present only for a caller with cost visibility. When an exception is REQUIRED (Estimator-priced systems with no Cin7 SKU) plain approval is unavailable: the Manager must use "Approve with recorded exception". */
-  baselineException?: { baselineExceptionRequired: boolean; items: readonly { label: string }[] } | null;
+  baselineException?: { baselineExceptionRequired: boolean; items: readonly { label: string }[]; blocking?: readonly { label: string }[] } | null;
   /** The page already shows the sign-off explanation (its existing Alert, also Approve's aria-describedby target) right below: the row then points to it instead of repeating it. */
   signoffExplainedBelow?: boolean;
 }
@@ -60,6 +60,13 @@ export function deriveApprovalChecklist(i: ApprovalChecklistInput): ApprovalChec
       ? one("amount", "The confirmed amount equals the quote total", { totalExVatCents: i.totalExVatCents, customerConfirmedCents: i.customerConfirmedCents }, 2)
       : { id: "amount", label: "The confirmed amount equals the quote total", met: false, detail: "Needs a contract value and the customer's recorded confirmation first.", fixStage: 2 },
   ];
+  // D-19: unmapped products no exception can cover. They need an active library mapping; until then plain approval AND the exception are unavailable (the server refuses either).
+  if (i.baselineException?.blocking?.length) {
+    const blocking = i.baselineException.blocking.map((x) => x.label).join(", ");
+    const waivable = i.baselineException.items.map((x) => x.label).join(", ");
+    items.push({ id: "mapping", label: "Every product has an active library mapping", met: false, fixStage: null,
+      detail: `Mapping unresolved: ${blocking} - these need an active library mapping; the Manager exception covers only M75 / penning systems.${waivable ? ` ${waivable} could be covered by an exception, but only once the unmapped products above are mapped.` : ""}` });
+  }
   // An exception is a Manager decision, so it is not "fixed" on another stage: the row points at the exception block on this stage.
   if (i.baselineException?.baselineExceptionRequired) {
     const names = i.baselineException.items.map((x) => x.label).join(", ");

@@ -264,8 +264,11 @@ describe("it waives ONLY the listed Estimator-priced systems", () => {
     const v = (await grower.getGrowerQuoteAction("q1")).data!;
     expect(v.baselineException?.baselineExceptionRequired).toBe(false);
     expect(v.baselineException?.otherBlockers.join(" ")).toMatch(/LED/);
+    // D-19: the view NAMES the non-waivable item (labels + pricing route only) so the Manager checklist can show it and disable plain Approve
+    expect(v.baselineException?.blocking).toEqual([{ label: expect.stringMatching(/LED/), pricedBy: "estimator_resolution" }]);
     const before = snapshot();
-    expect((await grower.approveGrowerQuoteAction("q1")).error).toMatch(/3 package\(s\) are not mapped/);
+    // ... and the server refusal names it too, saying an exception cannot cover it
+    expect((await grower.approveGrowerQuoteAction("q1")).error).toMatch(/3 package\(s\) are not mapped to Cin7 SKUs \(.*LED.*\).*need an active library mapping/);
     expect((await grower.approveGrowerQuoteAction("q1", { baselineException: req() })).error).toMatch(/cannot cover everything still unresolved/);
     expect(snapshot()).toBe(before);
   });

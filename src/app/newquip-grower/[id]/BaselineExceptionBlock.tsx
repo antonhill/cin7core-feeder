@@ -93,3 +93,18 @@ export function BaselineExceptionsSummary({ exceptions }: { exceptions: readonly
     </div>
   );
 }
+
+/**
+ * D-19, Stage 2 Final review (Estimator): a VISIBLE, NON-BLOCKING notice. Lines the Estimator only typed a price for (no library mapping) cannot be approved by the Manager, with or without an
+ * exception. Sign-off is not gated by this; it just says what will happen next. Labels only.
+ */
+export function UnmappedTypedPriceNote({ view }: { view: BaselineExceptionView | undefined }) {
+  const typed = (view?.blocking ?? []).filter((b) => b.pricedBy === "estimator_resolution");
+  if (!typed.length) return null;
+  return (
+    <Alert tone="warning">
+      <p className="font-medium" data-testid="typed-price-unmapped">{typed.length} line{typed.length === 1 ? " has" : "s have"} a typed price but no library mapping ({typed.map((b) => b.label).join(", ")}): the Manager cannot approve until {typed.length === 1 ? "it is" : "they are"} mapped.</p>
+      <p className="mt-1 text-xs">Map {typed.length === 1 ? "it" : "them"} in the library. Sign-off is not blocked by this.</p>
+    </Alert>
+  );
+}

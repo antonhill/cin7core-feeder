@@ -10,7 +10,7 @@ import { buildMarginSheet, type MarginSheet } from "./margin";
 import { buildPhysicalScope } from "./physical-scope";
 import { applyMappingLibrary, type LibraryMapping, type ScopeItem } from "@/lib/projects/product-scope";
 import type { CostEstimate } from "@/lib/projects/latest-cost";
-import { baselineMappingGate, incompleteEstimateMessage, validateExceptionReason, BASELINE_EXCEPTION_KIND, BASELINE_EXCEPTION_TITLE, type BaselineException } from "./baseline-exception";
+import { baselineMappingGate, blockerLabel, incompleteEstimateMessage, validateExceptionReason, BASELINE_EXCEPTION_KIND, BASELINE_EXCEPTION_TITLE, type BaselineException } from "./baseline-exception";
 
 // THE ACCEPTED BASELINE — the immutable commercial snapshot a manager's final approval creates, and the only thing a Project is
 // built from. It records everything needed to explain the contract later WITHOUT re-running any rule or re-reading any price:
@@ -156,10 +156,10 @@ export function buildAcceptedBaseline(i: BaselineInput): { baseline: AcceptedBas
   let exceptions: BaselineException[] | undefined;
   if (gate.blocked) {
     const bx = i.baselineException;
-    if (!bx) throw new Error(incompleteEstimateMessage(gate.missingSkus, [...gate.items.map((x) => x.label), ...gate.remainingPackages]));
+    if (!bx) throw new Error(incompleteEstimateMessage(gate.missingSkus, [...gate.items.map((x) => x.label), ...gate.remainingPackages], { packageNames: [...gate.items.map((x) => x.label), ...gate.remainingPackages.map(blockerLabel)], needsMapping: gate.blocking.length > 0 }));
     const bad = validateExceptionReason(bx.reason);
     if (bad) throw new Error(bad);
-    if (!gate.required) throw new Error(incompleteEstimateMessage(gate.missingSkus, gate.remainingPackages));
+    if (!gate.required) throw new Error(incompleteEstimateMessage(gate.missingSkus, gate.remainingPackages, { packageNames: gate.remainingPackages.map(blockerLabel), needsMapping: gate.blocking.length > 0 }));
     exceptions = [{
       kind: BASELINE_EXCEPTION_KIND, title: BASELINE_EXCEPTION_TITLE, unresolved: gate.items, reason: bx.reason.trim(),
       approvedBy: i.approvals.managerApprovedBy, approvedAt: i.approvals.managerApprovedAt, version: { quoteRef: i.quoteRef, revision: i.revision, draftHash: bx.draftHash },

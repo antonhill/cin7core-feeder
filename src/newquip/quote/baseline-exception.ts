@@ -77,6 +77,8 @@ export function estimatorPricedUnmapped(lines: readonly BaselineCommercialLine[]
   return out;
 }
 
+export interface BlockingItem { label: string; pricedBy: PricedBy | null }
+
 export interface BaselineMappingGate {
   /** The cost estimate exactly as it is frozen (still honestly incomplete). Undefined: costing was never started, so the freeze rule does not apply. */
   estimate: CostEstimate | undefined;
@@ -86,6 +88,11 @@ export interface BaselineMappingGate {
   items: BaselineExceptionItem[];
   /** Unresolved packages left once those are waived (these a Manager exception can never cover), and the SKUs with no supplier cost that are NOT waived by the Estimator's cost exception. */
   remainingPackages: string[];
+  /**
+   * D-19: the unmapped products no Manager exception can ever cover (not Estimator-priced by design, e.g. a catalogue product the Estimator only typed a price for). Labels and the pricing
+   * route only. `remainingPackages` may hold more than these (invalid mappings, a double-counted BOM component): those are not "unmapped" and stay in `remainingPackages`.
+   */
+  blocking: BlockingItem[];
   missingSkus: string[];
   /** TRUE when a Manager exception is required AND sufficient: waiving the listed items clears every reason the freeze would refuse. */
   required: boolean;
@@ -107,18 +114,36 @@ export function baselineMappingGate(i: { lines: readonly BaselineCommercialLine[
   const covered = waivable.filter((w) => eff.blockers.includes(w.blocker));
   const remaining = [...eff.blockers];
   for (const w of covered) { const at = remaining.indexOf(w.blocker); if (at >= 0) remaining.splice(at, 1); }
+  // The unmapped lines left in `remaining` (count-aware, same text match as above): these can only be fixed by an active library mapping.
+  const left = [...remaining];
+  const blocking: BlockingItem[] = [];
+  for (const it of i.scope) {
+    if (it.resolution || it.mapping.status !== "UNMAPPED") continue;
+    const at = left.indexOf(`${it.description}: ${it.mapping.reason}`);
+    if (at < 0) continue;
+    left.splice(at, 1);
+    const key = it.id.endsWith(UNMAPPED_SUFFIX) ? it.id.slice(0, -UNMAPPED_SUFFIX.length) : null;
+    blocking.push({ label: it.description, pricedBy: (key && i.lines.find((l) => l.itemKey === key)?.pricedBy) || null });
+  }
   const missingSkus = i.costExceptionAccepted ? [] : (estimate?.missingSkus ?? []);
   const blocked = covered.length > 0 || remaining.length > 0 || missingSkus.length > 0;
   return {
-    estimate, blocked, items: covered.map((w) => w.item), remainingPackages: remaining, missingSkus,
+    estimate, blocked, items: covered.map((w) => w.item), remainingPackages: remaining, blocking, missingSkus,
     required: blocked && covered.length > 0 && remaining.length === 0 && missingSkus.length === 0,
   };
 }
 
 /** The refusal text the freeze has always used, now counting only what an exception could NOT cover. */
-export function incompleteEstimateMessage(missingSkus: readonly string[], packages: readonly string[]): string {
-  const parts = [missingSkus.length ? `${missingSkus.length} SKU(s) have no supplier cost selected (${missingSkus.slice(0, 5).join(", ")}${missingSkus.length > 5 ? ", ..." : ""})` : "", packages.length ? `${packages.length} package(s) are not mapped to Cin7 SKUs` : ""].filter(Boolean);
-  return `The cost estimate is incomplete: ${parts.join(" and ")}. Resolve each (select a supplier, enter an audited manual estimate, map the package) or record an authorised exception before approving.`;
+/** The product name of a blocker text ("<description>: <reason>"). */
+export const blockerLabel = (b: string): string => { const at = b.indexOf(": "); return at > 0 ? b.slice(0, at) : b; };
+
+/** `packageNames` (D-19) NAMES the unmapped packages; `needsMapping` adds that a Manager exception cannot cover them (only the by-design Estimator-priced systems). */
+export function incompleteEstimateMessage(missingSkus: readonly string[], packages: readonly string[], opts?: { packageNames?: readonly string[]; needsMapping?: boolean }): string {
+  const names = opts?.packageNames ?? [];
+  const named = names.length ? ` (${names.slice(0, 5).join(", ")}${names.length > 5 ? ", ..." : ""})` : "";
+  const parts = [missingSkus.length ? `${missingSkus.length} SKU(s) have no supplier cost selected (${missingSkus.slice(0, 5).join(", ")}${missingSkus.length > 5 ? ", ..." : ""})` : "", packages.length ? `${packages.length} package(s) are not mapped to Cin7 SKUs${named}` : ""].filter(Boolean);
+  const mapping = opts?.needsMapping ? " A Manager exception covers only Estimator-priced M75 / penning systems: the unmapped products named above need an active library mapping." : "";
+  return `The cost estimate is incomplete: ${parts.join(" and ")}. Resolve each (select a supplier, enter an audited manual estimate, map the package) or record an authorised exception before approving.${mapping}`;
 }
 
 export function validateExceptionReason(reason: string): string | null {
@@ -138,14 +163,17 @@ export interface BaselineExceptionView {
   /** An exception is needed to approve and is sufficient. */
   baselineExceptionRequired: boolean;
   items: BaselineExceptionItem[];
+  /** D-19: unmapped products no exception can cover (labels + pricing route only, no values). They need an active library mapping; while any exist plain approval AND the exception are unavailable. */
+  blocking?: BlockingItem[];
   /** Reasons an exception can NOT cover (so approval stays blocked even with one). */
   otherBlockers: string[];
 }
-export function baselineExceptionView(g: Pick<BaselineMappingGate, "required" | "items" | "blocked" | "remainingPackages" | "missingSkus">, costException?: { reason: string; by: string; at: string } | null): BaselineExceptionView {
+export function baselineExceptionView(g: Pick<BaselineMappingGate, "required" | "items" | "blocked" | "remainingPackages" | "missingSkus"> & Partial<Pick<BaselineMappingGate, "blocking">>, costException?: { reason: string; by: string; at: string } | null): BaselineExceptionView {
   return {
     costException: costException ?? null,
     baselineExceptionRequired: g.required,
     items: g.blocked ? g.items : [],
+    blocking: g.blocked ? (g.blocking ?? []) : [],
     otherBlockers: g.blocked ? [...g.remainingPackages, ...(g.missingSkus.length ? [`${g.missingSkus.length} SKU(s) have no supplier cost selected`] : [])] : [],
   };
 }

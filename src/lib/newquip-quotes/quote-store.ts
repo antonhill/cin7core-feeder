@@ -81,7 +81,7 @@ export async function costingOf(db: Db, orgId: string, draft: QuoteDraft, ctx: E
  */
 export async function baselineExceptionOf(db: Db, orgId: string, draft: QuoteDraft, ctx: EvaluationContext, asOfIso: string = new Date().toISOString()): Promise<BaselineExceptionView> {
   const b = evaluateDraft(draft, { ...ctx, withholdCost: false }).budget;
-  if (!b) return { baselineExceptionRequired: false, items: [], otherBlockers: [], costException: null };
+  if (!b) return { baselineExceptionRequired: false, items: [], blocking: [], otherBlockers: [], costException: null };
   const library = await listActiveMappings(db, orgId);
   const lines = commercialLinesOf(b);
   const scope = buildPhysicalScope(lines);

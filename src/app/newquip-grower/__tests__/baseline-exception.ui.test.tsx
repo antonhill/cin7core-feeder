@@ -108,3 +108,22 @@ describe("Stage 2 Estimator note and the frozen baseline", () => {
     expect(container.innerHTML).toBe("");
   });
 });
+
+describe("D-19 Stage 2 Estimator: a visible, non-blocking notice for typed-price lines with no library mapping", () => {
+  const withBlocking = (blocking: BaselineExceptionView["blocking"]) => ({ baselineExceptionRequired: false, items: [], otherBlockers: [], blocking }) as BaselineExceptionView;
+  it("names the lines and says the Manager cannot approve until they are mapped; offers no button (sign-off is not gated)", async () => {
+    const { UnmappedTypedPriceNote } = await import("../[id]/BaselineExceptionBlock");
+    render(<UnmappedTypedPriceNote view={withBlocking([{ label: "LED light", pricedBy: "estimator_resolution" }])} />);
+    expect(screen.getByTestId("typed-price-unmapped").textContent).toBe("1 line has a typed price but no library mapping (LED light): the Manager cannot approve until it is mapped.");
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+  });
+  it("plural wording, and nothing for other routes or no blockers", async () => {
+    const { UnmappedTypedPriceNote } = await import("../[id]/BaselineExceptionBlock");
+    const { rerender } = render(<UnmappedTypedPriceNote view={withBlocking([{ label: "A", pricedBy: "estimator_resolution" }, { label: "B", pricedBy: "estimator_resolution" }])} />);
+    expect(screen.getByTestId("typed-price-unmapped").textContent).toMatch(/^2 lines have a typed price but no library mapping \(A, B\): the Manager cannot approve until they are mapped\.$/);
+    rerender(<UnmappedTypedPriceNote view={withBlocking([{ label: "A", pricedBy: null }])} />);
+    expect(screen.queryByTestId("typed-price-unmapped")).toBeNull();
+    rerender(<UnmappedTypedPriceNote view={undefined} />);
+    expect(screen.queryByTestId("typed-price-unmapped")).toBeNull();
+  });
+});

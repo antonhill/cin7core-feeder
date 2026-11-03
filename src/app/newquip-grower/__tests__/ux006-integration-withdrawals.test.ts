@@ -133,4 +133,41 @@ describe("S1b withdrawals record their return (D5 glue)", () => {
     expect(r.ok).toBe(false);
     expect(quote()).toMatchObject({ state: "ESTIMATOR_REVIEW", customer_confirmed_cents: total, revision: 1 });
   });
+
+  // D-21: Manager -> Estimator, read back through the REAL action chain by each viewer.
+  const toEstimator = async () => { await as("rep"); await send({ source: "QUOTATION_CONTACT" }); await as("estimator"); expect((await grower.signOffGrowerQuoteAction("q1")).error).toBeUndefined(); await as("manager"); expect((await grower.returnGrowerQuoteToEstimatorAction("q1", "Re-check the supplier price")).error).toBeUndefined(); };
+  it("D-21: after a Manager return to the Estimator the Estimator and Manager read who/reason; the Rep gets only the neutral line", async () => {
+    await toEstimator();
+    for (const slot of ["estimator", "manager"]) expect(await info(slot)).toMatchObject({ kind: "RETURN", destination: "ESTIMATOR", reason: "Re-check the supplier price", byEmail: EMAIL[U.mgr], byRole: "manager" });
+    expect(await info("rep")).toMatchObject({ destination: "ESTIMATOR", reason: "With the Estimator for review.", byEmail: null, byRole: null });
+    expect(JSON.stringify(await info("rep"))).not.toMatch(/supplier price/);
+  });
+
+  it("D-21/D-20 hardening: when the JSON-path filter on the activity log is rejected, the history is still read (matched in code) instead of silently showing nothing", async () => {
+    await toEstimator();
+    const real = db.from.bind(db);
+    // every builder step is wrapped so the chain survives; the JSON-path eq (and only it) turns the awaited result into an error
+    const wrap = (o: any, bad = false): any => new Proxy(o, { get: (t, k) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+      if (k === "then" && bad) return (res: (v: unknown) => unknown) => res({ data: null, error: { message: "invalid path" } });
+      const v = t[k]; if (typeof v !== "function") return v;
+      return (...a: unknown[]) => { const r = v.apply(t, a); return r && typeof r === "object" ? wrap(r, bad || (k === "eq" && typeof a[0] === "string" && (a[0] as string).includes("->>"))) : r; };
+    } });
+    (db as any).from = (t: string) => (t === "activity_log" ? wrap(real(t)) : real(t)); // eslint-disable-line @typescript-eslint/no-explicit-any
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const got = await info("estimator");
+    (db as any).from = real; // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(got).toMatchObject({ reason: "Re-check the supplier price", destination: "ESTIMATOR" });
+    expect(spy).toHaveBeenCalled(); spy.mockRestore();
+  });
+
+  it("D-20: a Rep who loads the quotation fresh after an Estimator price edit reads previous -> new total (cents from the record)", async () => {
+    await as("rep"); await send({ source: "QUOTATION_CONTACT" });
+    await as("estimator");
+    const d = structuredClone(quote().draft) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    d.estimator.charges.delivery += 100_000;
+    expect((await grower.saveGrowerDraftAction("q1", d as never)).error).toBeUndefined();
+    const ri = await info("rep");
+    expect(ri).toMatchObject({ kind: "AMOUNT_CHANGED", previousCents: total, source: "RECORD" });
+    expect(ri!.newCents).toBeGreaterThan(total);
+  });
 });

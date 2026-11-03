@@ -51,10 +51,19 @@ export async function loadReturnCandidates(db: Db, orgId: string, quoteId: strin
   const candidates: ReturnCandidate[] = [];
   const voidedIds: string[] = [];
   const signoffAts: string[] = [];
-  const act = await db.from("activity_log").select("id, action, actor_email, detail, created_at").eq("org_id", orgId)
-    .in("action", [RETURN_RECORD_ACTION, CONFIRMATION_WITHDRAWN_ACTION, RETURN_VOID_ACTION, SIGNOFF_RECORD_ACTION, SIGNOFF_STEP_ACTION]).eq("detail->>quoteId", quoteId).order("created_at", { ascending: false }).limit(60);
-  if (act.error) throw new Error(`return history: ${act.error.message}`);
-  for (const row of (act.data ?? []) as ActivityRow[]) {
+  const actions = [RETURN_RECORD_ACTION, CONFIRMATION_WITHDRAWN_ACTION, RETURN_VOID_ACTION, SIGNOFF_RECORD_ACTION, SIGNOFF_STEP_ACTION];
+  const base = () => db.from("activity_log").select("id, action, actor_email, detail, created_at").eq("org_id", orgId).in("action", actions);
+  let act = await base().eq("detail->>quoteId", quoteId).order("created_at", { ascending: false }).limit(60);
+  let rows = (act.data ?? []) as ActivityRow[];
+  if (act.error) {
+    // D-20/D-21 hardening: a rejected JSON-path filter must not blank the whole answer (every banner then silently falls back to its generic text). Read the same actions without the path
+    // filter and match the quotation here instead; the failure is logged so it is visible in the server logs.
+    console.error(`[newquip] return history: JSON-path read failed (${act.error.message}); falling back to an unfiltered read`);
+    act = await base().order("created_at", { ascending: false }).limit(500);
+    if (act.error) throw new Error(`return history: ${act.error.message}`);
+    rows = ((act.data ?? []) as ActivityRow[]).filter((r) => r.detail?.quoteId === quoteId);
+  }
+  for (const row of rows) {
     if (row.action === RETURN_VOID_ACTION) { const id = row.detail?.recordId; if (typeof id === "string") voidedIds.push(id); continue; }
     if (row.action === SIGNOFF_RECORD_ACTION || row.action === SIGNOFF_STEP_ACTION) { signoffAts.push(row.created_at); continue; }
     const c = candidateFromActivity(row); if (c) candidates.push(c);
@@ -66,5 +75,5 @@ export async function loadReturnCandidates(db: Db, orgId: string, quoteId: strin
 
 /** The reason the quotation is where it is NOW (see latestReturnInfo), or null. A read failure is not fatal to the page: it yields null. */
 export async function returnInfoOf(db: Db, orgId: string, quote: { id: string; state: string; revision: number; estimator_signoff_hash: string | null }): Promise<ReturnInfo | null> {
-  try { return latestReturnInfo(quote, await loadReturnCandidates(db, orgId, quote.id)); } catch { return null; }
+  try { return latestReturnInfo(quote, await loadReturnCandidates(db, orgId, quote.id)); } catch (e) { console.error(`[newquip] return history unavailable: ${e instanceof Error ? e.message : String(e)}`); return null; }
 }

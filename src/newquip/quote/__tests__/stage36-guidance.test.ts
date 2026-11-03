@@ -145,3 +145,23 @@ describe("UX-006 integration: the baseline-exception row of the Stage 3 checklis
     expect(items.every((x) => x.met)).toBe(false);
   });
 });
+
+describe("D-19: the Stage 3 checklist names unmapped products no exception can cover", () => {
+  const base = { readinessState: "READY" as const, readinessReasons: [], totalExVatCents: 100, customerConfirmedCents: 100, signoffHash: "h", currentDraftHash: "h", dirty: false, isManager: true, costing: { complete: true, reason: null } };
+  it("an UNMET 'Mapping unresolved' row lists the labels and the M75 / penning limit; the exception row is absent (it is not offered)", () => {
+    const items = deriveApprovalChecklist({ ...base, baselineException: { baselineExceptionRequired: false, items: [], blocking: [{ label: "LED light" }] } });
+    const row = items.find((x) => x.id === "mapping")!;
+    expect(row).toMatchObject({ met: false });
+    expect(row.detail).toBe("Mapping unresolved: LED light - these need an active library mapping; the Manager exception covers only M75 / penning systems.");
+    expect(items.some((x) => x.id === "exception")).toBe(false);
+    expect(items.every((x) => x.met)).toBe(false);
+  });
+  it("when BOTH exist, both are listed and the exception is available only once the blocking items are mapped", () => {
+    const row = deriveApprovalChecklist({ ...base, baselineException: { baselineExceptionRequired: false, items: [{ label: "M75 feed distribution system" }], blocking: [{ label: "LED light" }] } }).find((x) => x.id === "mapping")!;
+    expect(row.detail).toMatch(/LED light/);
+    expect(row.detail).toMatch(/M75 feed distribution system could be covered by an exception, but only once the unmapped products above are mapped/);
+  });
+  it("no row when nothing is blocking", () => {
+    expect(deriveApprovalChecklist({ ...base, baselineException: { baselineExceptionRequired: false, items: [], blocking: [] } }).some((x) => x.id === "mapping")).toBe(false);
+  });
+});

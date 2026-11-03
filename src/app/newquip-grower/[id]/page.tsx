@@ -40,7 +40,7 @@ import { MarginPanel } from "./MarginPanel";
 import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
 import { CostPanel } from "./CostPanel";
-import { BaselineExceptionBlock, BaselineExceptionNote, BaselineExceptionsSummary } from "./BaselineExceptionBlock";
+import { BaselineExceptionBlock, BaselineExceptionNote, BaselineExceptionsSummary, UnmappedTypedPriceNote } from "./BaselineExceptionBlock";
 import { CustomerPanel } from "./CustomerPanel";
 import { Stage1Review } from "./Stage1Review";
 import { StepRail, StepPanel } from "@/components/ui/StepRail";
@@ -311,6 +311,7 @@ export default function QuoteEditorPage() {
   const approveSignoffStale = q?.state === "ESTIMATOR_REVIEW" && !!q.estimator_signoff_hash && q.estimator_signoff_hash !== q.draft_hash;
   const approveDescribedBy = [isWorking && `${uid}-approve-busy`, !roles.has("manager") && `${uid}-approve-role`, approveNotReady && `${uid}-approve-notready`, approveSignoffMissing && `${uid}-approve-signoff`, approveSignoffStale && `${uid}-approve-stale`, dirty && `${uid}-approve-dirty`].filter(Boolean).join(" ") || undefined;
   const bxRequired = !!view?.baselineException?.baselineExceptionRequired;
+  const bxBlocking = view?.baselineException?.blocking ?? []; // D-19: unmapped products no exception can cover
   const returnWhy = isWorking ? "Another action is in progress. Please wait." : !returnReason.trim() ? "Enter the reason for returning it to enable this." : undefined;
   // The same rounding the server uses for the saved total (quote-store totalCents), so the Stage 3 checklist compares like with like; unsaved edits are covered by its own row.
   // UX-006 S1a: the amount the Rep confirms is the SERVER's indicative total (subtotalExTax, the same figure quote-store's indicativeTotalCents uses) even while Estimator-owned lines are still open.
@@ -654,6 +655,8 @@ export default function QuoteEditorPage() {
       <StageNav compact={stage <= 2} hideNext={stage === 2} stages={stagesView} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state, estimatorOpen: mappingOpen.length, signedOff: s2Base.signoff === "current" }} />
 
       {view.returnInfo?.destination === "ESTIMATOR" && !view.viewer.canViewCommercials && q.state === "ESTIMATOR_REVIEW" && stage === 1 && <p role="status" className="mt-3 text-sm text-slate-800" data-testid="rep-with-estimator">{returnNoticeText(view.returnInfo, fmtCents).headline}</p>}
+      {/* D-21: the Estimator/Manager see WHY the Manager sent it back on whichever stage they land on (the notice is not tied to Stage 2); off Stage 2 it points to the review. */}
+      {canCommercials && q.state === "ESTIMATOR_REVIEW" && <EstimatorReturnNotice info={view.returnInfo} fmt={fmtCents} onOpenReview={stage === 2 ? undefined : () => goStage(2)} />}
       {gated1 && <p role="status" aria-live="polite" className="mt-4 text-sm text-slate-700" data-testid="stage1-shell">Preparing your quotation steps…</p>}
       {stage === 1 && (
         <div hidden={gated1} inert={gated1}>
@@ -705,7 +708,6 @@ export default function QuoteEditorPage() {
 
       {stage === 2 && (
         <>
-          {canCommercials && q.state === "ESTIMATOR_REVIEW" && <EstimatorReturnNotice info={view.returnInfo} fmt={fmtCents} />}
           <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm" data-testid="stage2-owner">
             <span className="font-semibold text-slate-900">Stage 2 is the Estimator&apos;s review.</span>
             <span role="status" aria-live="polite" className="text-slate-800" data-testid="stage2-status-line">{wizard2.statusLine}</span>
@@ -1090,7 +1092,7 @@ export default function QuoteEditorPage() {
                   <ul className="mt-1 list-disc space-y-0.5 pl-5">{commercial.items.map((x) => <li key={x.text}><b>{x.owner}:</b> {x.text}</li>)}</ul>
                 </details>
               )}
-              {isEstimator && q.state === "ESTIMATOR_REVIEW" && <div className="mt-4" data-testid="bx-note"><BaselineExceptionNote view={view.baselineException} /></div>}
+              {isEstimator && q.state === "ESTIMATOR_REVIEW" && <div className="mt-4" data-testid="bx-note"><BaselineExceptionNote view={view.baselineException} /><UnmappedTypedPriceNote view={view.baselineException} /></div>}
               <FinalReviewChecklist items={finalChecklist} />
               {isEstimator && q.state === "ESTIMATOR_REVIEW" && <p className="mt-3 text-xs text-slate-700" data-testid="session-only-note">&ldquo;Mark reviewed&rdquo; is kept on this screen for this session only: it is not saved, and after a reload you mark it again. Signing off needs it in the same session, so repeat it after a reload. Returning the quote to the Rep never does.</p>}
             </Panel>
@@ -1197,7 +1199,7 @@ export default function QuoteEditorPage() {
                     blockedWhy={!roles.has("manager") ? "Only a Manager can accept this exception." : !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash ? "Waiting for the Estimator's sign-off on the current quotation." : dirty ? "Save or discard your edits first." : isWorking ? "Another action is in progress. Please wait." : undefined}
                     onApprove={(request) => act(() => approveGrowerQuoteAction(id, { baselineException: request }), "Approved with a recorded exception. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")} />}
                   <div className="flex flex-wrap items-center gap-3">
-                    <Button variant={bxRequired ? "secondary" : "primary"} className="min-h-11" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty || approveNotReady || bxRequired} aria-describedby={[approveDescribedBy, bxRequired && `${uid}-approve-bx`].filter(Boolean).join(" ") || undefined}
+                    <Button variant={bxRequired ? "secondary" : "primary"} className="min-h-11" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty || approveNotReady || bxRequired || bxBlocking.length > 0} aria-describedby={[approveDescribedBy, bxRequired && `${uid}-approve-bx`, bxBlocking.length > 0 && `${uid}-approve-map`].filter(Boolean).join(" ") || undefined}
                       onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")}>Manager: final approval</Button>
                     {roles.has("manager") && (<>
                       <Button variant="secondary" className="min-h-11" aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "approve", (v) => v.quote.state === "REP_DRAFT")}>Return to rep (reject)</Button>
@@ -1207,6 +1209,7 @@ export default function QuoteEditorPage() {
                     </>)}
                   </div>
                   {roles.has("manager") && <p className="text-xs text-slate-700" data-testid="return-owners">Return to rep: the Rep corrects it (new revision), then submits it again. Return to estimator: the Estimator&apos;s sign-off is withdrawn and they review again.</p>}
+                  {bxBlocking.length > 0 && <DisabledReason id={`${uid}-approve-map`}>Approval is unavailable: {bxBlocking.map((b) => b.label).join(", ")} {bxBlocking.length === 1 ? "needs" : "need"} an active library mapping. The Manager exception covers only M75 / penning systems{(view?.baselineException?.items.length ?? 0) > 0 ? ", and is offered only once these are mapped" : ""}.</DisabledReason>}
                   {bxRequired && <DisabledReason id={`${uid}-approve-bx`}>Plain approval is unavailable: an approval exception is required (see above). Use &quot;Approve with recorded exception&quot;.</DisabledReason>}
                   {isWorking && <DisabledReason id={`${uid}-approve-busy`}>Another action is in progress. Please wait.</DisabledReason>}
                   {roles.has("manager") && <DisabledReason id="return-mgr-why">{returnWhy ? `Return buttons: ${returnWhy.charAt(0).toLowerCase()}${returnWhy.slice(1)}` : undefined}</DisabledReason>}

@@ -12,7 +12,7 @@ export function returnNoticeText(info: ReturnInfo, fmt: (cents: number) => strin
       : { headline: "With the Estimator for review.", detail: "", action: null };
   }
   if (info.kind === "AMOUNT_CHANGED" && info.previousCents != null && info.newCents != null) {
-    return { headline: "Returned to the Rep", detail: `The total changed from ${fmt(info.previousCents)} to ${fmt(info.newCents)}; the customer’s confirmation was withdrawn: reconfirm the new amount with the customer and submit again.`, action: null };
+    return { headline: "Returned to the Rep", detail: `The total changed from ${fmt(info.previousCents)} to ${fmt(info.newCents)}; the customer’s confirmation was withdrawn. Reconfirm the new amount with the customer and submit again (step 5).`, action: null };
   }
   if (info.kind !== "RETURN") return { headline: "Returned to the Rep", detail: info.reason, action: "Reconfirm with the customer, then submit again." };
   return { headline: "Returned to the Rep", detail: `Returned by ${who ?? "the Estimator/Manager"} on ${formatSast(info.at)}: “${info.reason}”`, action: "Fix what the Estimator described, then submit again." };
@@ -22,7 +22,7 @@ export function returnNoticeText(info: ReturnInfo, fmt: (cents: number) => strin
  * Estimator / Manager view of a Manager return to the Estimator. ONE line (the reason is truncated, the full text opens in place), so the step's first control stays above the fold; the
  * headline, the reason and the action keep their text and test ids.
  */
-export function EstimatorReturnNotice({ info, fmt }: { info: ReturnInfo | null; fmt: (cents: number) => string }) {
+export function EstimatorReturnNotice({ info, fmt, onOpenReview }: { info: ReturnInfo | null; fmt: (cents: number) => string; /** D-21: shown on any stage OTHER than the Estimator review (where they may land): a pointer to it. */ onOpenReview?: () => void }) {
   if (!info || info.destination !== "ESTIMATOR") return null;
   const t = returnNoticeText(info, fmt);
   return (
@@ -33,6 +33,7 @@ export function EstimatorReturnNotice({ info, fmt }: { info: ReturnInfo | null; 
         <span className="shrink-0 text-xs font-semibold text-indigo-700">Details</span>
       </summary>
       {t.action && <p className="pb-2">{t.action}</p>}
+      {onOpenReview && <p className="pb-2"><button type="button" className="inline-flex min-h-11 items-center font-semibold text-indigo-700 underline" onClick={onOpenReview} data-testid="estimator-return-open-review">Open the Estimator review (Stage 2)</button></p>}
     </details>
   );
 }

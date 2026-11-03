@@ -146,3 +146,30 @@ describe("buildAcceptedBaseline", () => {
     expect(validateExceptionReason("x".repeat(1001))).toBeTruthy();
   });
 });
+
+describe("D-19: unmapped products no exception can cover are exposed by name", () => {
+  const gateNoLib = () => baselineMappingGate({ lines, scope: scopeOf(lines, false), physicalCosts: costsFor(lines, false) as never, costExceptionAccepted: false });
+  it("blocking lists the typed-price (estimator_resolution) LED line with its pricing route, never a value; by-design systems stay in items", () => {
+    const g = gateNoLib();
+    expect(g.blocking).toEqual([{ label: expect.stringMatching(/LED light/), pricedBy: "estimator_resolution" }]);
+    expect(g.items.map((i) => i.itemKey).sort()).toEqual(["flex_auger", "penning_package"]);
+    expect(g.required).toBe(false); // an exception is NOT offered while a blocking item exists
+    expect(Object.keys(g.blocking[0]).sort()).toEqual(["label", "pricedBy"]); // labels + route only: no price, cost or quantity
+  });
+  it("nothing blocking when only by-design systems are unmapped, or when everything is mapped", () => {
+    expect(baselineMappingGate({ lines, scope: scopeOf(lines), physicalCosts: costsFor(lines) as never, costExceptionAccepted: false }).blocking).toEqual([]);
+  });
+  it("the view carries blocking (and only while the freeze is blocked)", () => {
+    expect(baselineExceptionView(gateNoLib()).blocking).toEqual([{ label: expect.stringMatching(/LED light/), pricedBy: "estimator_resolution" }]);
+  });
+  it("the freeze refusal NAMES the blocking items and says an exception cannot cover them", () => {
+    const noLib = { ...base, estimator: { ...base.estimator, physicalCosts: costsFor(lines, false) } } as typeof base;
+    let msg = "";
+    try { freeze(noLib, undefined, undefined, undefined, new Map() as never); } catch (e) { msg = (e as Error).message; }
+    expect(msg).toMatch(/package\(s\) are not mapped to Cin7 SKUs \(.*LED light/);
+    expect(msg).toMatch(/need an active library mapping/);
+    let msg2 = "";
+    try { freeze(noLib, undefined, { reason: REASON, draftHash: "h" }, undefined, new Map() as never); } catch (e) { msg2 = (e as Error).message; }
+    expect(msg2).toMatch(/\(.*LED light/); // even when an exception was offered
+  });
+});
