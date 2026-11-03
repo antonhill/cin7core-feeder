@@ -37,6 +37,8 @@ export interface CostPanelBodyProps {
   onConfirmUnit?: (reason: string) => void; onAcceptIncomplete?: (reason: string) => void;
 }
 
+/** A datetime-local keeps focus on its inner segments, so the host never matches :focus-visible and showed only the browser's segment highlight: the ring follows :focus-within instead (same ring as the app-wide rule). */
+export const DATETIME_FOCUS = "focus-within:[outline:2px_solid_var(--focus-ring)] focus-within:[outline-offset:2px]";
 const price = (micro: number | null, cur: string | null) => (micro === null ? "-" : formatMicroAmount(micro, cur));
 const key = (o: SupplierOption) => `${o.supplierId ?? ""}|${o.supplierName ?? ""}`;
 const ISSUE: Record<string, string> = { NEEDS_CHOICE: "Choose a supplier", PREFERRED_INVALID: "Preferred supplier has no usable price", NO_USABLE_PRICE: "No usable supplier price" };
@@ -80,7 +82,7 @@ function FxForm({ v, busy, onRecordFx }: { v: QuoteCostView; busy: boolean; onRe
           <Input label="Currency" value={f.currency} onChange={(e) => setF({ ...f, currency: e.target.value.toUpperCase() })} />
           <Input label="Rate" value={f.rate} inputMode="decimal" onChange={(e) => setF({ ...f, rate: e.target.value })} />
           <Input label="Source (provider, fixing or quote)" value={f.source} onChange={(e) => setF({ ...f, source: e.target.value })} />
-          <Input label="Effective (date and time)" type="datetime-local" value={f.asOf} onChange={(e) => setF({ ...f, asOf: e.target.value })} />
+          <Input label="Effective (date and time)" type="datetime-local" className={DATETIME_FOCUS} value={f.asOf} onChange={(e) => setF({ ...f, asOf: e.target.value })} />
           <Button size="sm" disabled={busy || !f.rate || f.source.trim().length < 3 || !f.asOf} onClick={() => onRecordFx(f.currency, f.rate, f.source, new Date(f.asOf).toISOString())}>Record rate</Button>
         </div>
       )}

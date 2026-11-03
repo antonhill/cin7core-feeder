@@ -236,6 +236,17 @@ describe("UX-006c Stage 5: status banner", () => {
 });
 
 describe("UX-006c Stage 6: readiness checklist", () => {
+  it("UX-006i2: Stage 6 says plainly what is next - for the Manager, the Manager's own button; for a Rep, that the Manager creates it; before acceptance, Stage 5", async () => {
+    await open({ stage: "6", roles: ["MANAGER"], row: FINAL, delivery: delivery({ status: "CUSTOMER_ACCEPTED", accepted: true, latestDocumentId: "d0" }) });
+    expect((await screen.findByTestId("stage6-next", {}, { timeout: 8000 })).textContent).toBe("Next: create the Project from the accepted quotation (the button below).");
+    cleanup();
+    await open({ stage: "6", roles: ["REP"], row: FINAL, delivery: delivery({ status: "CUSTOMER_ACCEPTED", accepted: true, latestDocumentId: "d0" }) });
+    expect((await screen.findByTestId("stage6-next", {}, { timeout: 8000 })).textContent).toBe("Next: the Manager creates the Project from the accepted quotation.");
+    cleanup();
+    await open({ stage: "6", roles: ["MANAGER"], row: FINAL, delivery: delivery({ status: "SENT_TO_CUSTOMER", latestDocumentId: "d0" }) });
+    expect((await screen.findByTestId("stage6-next", {}, { timeout: 8000 })).textContent).toMatch(/acceptance \(Stage 5\) is needed before you can create the Project/);
+  }, 60000);
+
   it("a Manager on an accepted quote: all met; the Create button and copy are unchanged", async () => {
     await open({ stage: "6", roles: ["MANAGER"], row: FINAL, delivery: delivery({ status: "CUSTOMER_ACCEPTED", accepted: true, latestDocumentId: "d0" }) });
     const c = await screen.findByTestId("handover-checklist", {}, { timeout: 8000 });
