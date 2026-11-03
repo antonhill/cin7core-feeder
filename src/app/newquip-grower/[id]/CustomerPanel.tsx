@@ -209,7 +209,7 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
       )}
       {s && (
         <details className="rounded-md border border-slate-200 p-2 text-sm" data-testid="customer-details">
-          <summary className="cursor-pointer font-medium text-slate-700">Details (Cin7 reference, address, history)</summary>
+          <summary className="inline-flex min-h-11 cursor-pointer items-center font-medium text-slate-700">Details (Cin7 reference, address, history)</summary>
           <dl className="mt-2 grid gap-x-6 gap-y-1 md:grid-cols-2">
             <dt className="text-slate-600">Cin7 customer ID</dt><dd className="break-all">{s.cin7CustomerId}</dd>
             <dt className="text-slate-600">Customer snapshot</dt><dd>#{v.seq}</dd>
