@@ -176,7 +176,12 @@ export class FakeDb {
         if (existing) { op = "update"; payload = p; filters.push((r) => r[key] === p[key]); } else { op = "insert"; payload = p; }
         return q;
       },
-      eq: (c: string, v: unknown) => { used.push(c); filters.push((r) => r[c] === v); return q; },
+      // `col->>key` (PostgREST JSON text path) compares the text of that key inside a jsonb column; it is not a column name, so it is not added to `used`.
+      eq: (c: string, v: unknown) => {
+        const m = /^(\w+)->>(\w+)$/.exec(c);
+        if (m) { filters.push((r) => { const j = r[m[1]] as Record<string, unknown> | null; const x = j?.[m[2]]; return x != null && String(x) === String(v); }); return q; }
+        used.push(c); filters.push((r) => r[c] === v); return q;
+      },
       is: (c: string, v: null) => { filters.push((r) => (r[c] ?? null) === v); return q; },
       in: (c: string, v: unknown[]) => { used.push(c); filters.push((r) => v.includes(r[c])); return q; },
       order: (col: string, o?: { ascending?: boolean }) => { used.push(col); orders.push({ col, asc: o?.ascending !== false }); return q; },

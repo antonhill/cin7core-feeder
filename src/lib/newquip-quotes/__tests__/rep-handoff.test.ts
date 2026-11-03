@@ -120,7 +120,7 @@ describe("no commercial approval while mappings, supplier costs or pricing are u
     const d = unmapped();
     const id = await stored(d);
     await send(id, cents(d));
-    await returnToRep(db as never, ORG, member, id, "Customer changed delivery");
+    await returnToRep(db as never, ORG, member, id, "Customer changed delivery", { email: "est@nq", role: "estimator" });
     expect(await loadQuote(db as never, ORG, id)).toMatchObject({ state: "REP_DRAFT", revision: 2, customer_confirmed_cents: null });
     await saveDraft(db as never, ORG, repOnly as never, id, d); // a Rep may edit again
   });
