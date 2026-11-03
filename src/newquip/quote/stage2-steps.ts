@@ -153,7 +153,7 @@ export function deriveStage2Steps(i: Stage2Input): Stage2Derived {
   const reviewed = inReview && i.signoff === "current" && !i.dirty;
   // A client-local acknowledgement by an Estimator/Manager who can see commercials. It only moves the Review step to "Reviewed"; the sign-off is a separate action and the group line never claims it.
   const acknowledged = inReview && i.costAcknowledged && !i.dirty && i.canViewCommercials && (i.roles.estimator || i.roles.manager) && i.signoff !== "current";
-  const steps: Stage2Step[] = stage2StepIds(i.canViewCommercials).map((id) => ({ id, label: STAGE2_STEP_LABEL[id], status: shown(id), group: STAGE2_STEP_GROUP[id], ...(id === "cost" && all.cost.status === "review" && (reviewed || acknowledged) ? { counted: true, statusLabel: "Reviewed" } : {}), ...(id === "cost" && all.cost.status === "review" && acknowledged ? { note: "You marked this reviewed - this is not a sign-off" } : note(id) ? { note: note(id) } : {}) }));
+  const steps: Stage2Step[] = stage2StepIds(i.canViewCommercials).map((id) => ({ id, label: STAGE2_STEP_LABEL[id], status: shown(id), group: STAGE2_STEP_GROUP[id], ...(id === "cost" && all.cost.status === "review" && (reviewed || acknowledged) ? { counted: true, statusLabel: "Reviewed" } : {}), ...(id === "cost" && all.cost.status === "review" && acknowledged ? { note: "You marked this reviewed - this is not a sign-off; it is not saved" } : note(id) ? { note: note(id) } : {}) }));
 
   // ── group status lines (workflow facts only) ──
   const repPrepDone = lines.status === "complete" && charges.status === "complete" && i.readiness.state === "READY";
