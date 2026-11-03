@@ -52,6 +52,15 @@ const ACCOUNT: Record<Who, { userId: string; email: string; tier: "owner" | "mem
   mgr: { userId: "u-mgr", email: "mgr@a", tier: "member", fn: "MANAGER" },
 };
 const EMAILS: Record<string, string> = Object.fromEntries(Object.values(ACCOUNT).map((a) => [a.userId, a.email]));
+/** The viewer payload: roles and canViewCommercials exactly, and NO other key beyond an allowlist (a future non-sensitive flag such as previewTools is tolerated; a cost/margin-bearing key is not). */
+const VIEWER_KEYS = ["roles", "canViewCommercials", "previewTools"];
+function expectViewer(v: object, roles: string[], canViewCommercials: boolean) {
+  const x = v as { roles: string[]; canViewCommercials: boolean; previewTools?: unknown };
+  expect([...x.roles].sort()).toEqual([...roles].sort());
+  expect(x.canViewCommercials).toBe(canViewCommercials);
+  expect(Object.keys(v).filter((k) => !VIEWER_KEYS.includes(k))).toEqual([]);
+  if ("previewTools" in x) expect(typeof x.previewTools).toBe("boolean");
+}
 const priceCtx = { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true };
 const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
 const total = Math.round(evaluateDraft(draft, priceCtx).budget!.totals.subtotalExTax * 100);
@@ -99,15 +108,15 @@ beforeEach(() => { db = world(); vi.clearAllMocks(); });
 describe("the four-account shape resolves to exactly one capability each (real role resolution)", () => {
   const viewer = async (w: Who) => { as(w); return (await actions.getGrowerViewerAction()).data!; };
   it("ADMINISTRATOR-owner has NO quote role at all, yet sees cost (admin tier); Rep: rep only, cost-blind; Estimator and Manager: one role, cost visible", async () => {
-    expect(await viewer("owner")).toEqual({ roles: [], canViewCommercials: true });
-    expect(await viewer("rep")).toEqual({ roles: ["rep"], canViewCommercials: false });
-    expect(await viewer("est")).toEqual({ roles: ["estimator"], canViewCommercials: true });
-    expect(await viewer("mgr")).toEqual({ roles: ["manager"], canViewCommercials: true });
+    expectViewer(await viewer("owner"), [], true);
+    expectViewer(await viewer("rep"), ["rep"], false);
+    expectViewer(await viewer("est"), ["estimator"], true);
+    expectViewer(await viewer("mgr"), ["manager"], true);
   });
   it("strict roles ON changes nothing for these four (every account has an explicit assignment)", async () => {
     db = world({ strict: true });
-    expect(await viewer("owner")).toEqual({ roles: [], canViewCommercials: true });
-    expect(await viewer("rep")).toEqual({ roles: ["rep"], canViewCommercials: false });
+    expectViewer(await viewer("owner"), [], true);
+    expectViewer(await viewer("rep"), ["rep"], false);
     expect((await viewer("mgr")).roles).toEqual(["manager"]);
   });
   it("CONTRAST: an owner/admin with NO assignment holds all three quote roles (why one admin account cannot show the roles separately)", async () => {
@@ -257,7 +266,7 @@ describe("cost and margin are never in the Rep's payload (redaction), and are in
   const payload = async (w: Who) => { as(w); return (await actions.getGrowerQuoteAction("q1")).data!; };
   it("Rep: viewer.canViewCommercials=false, no cost/GP/margin on any line or total, and no internal cost fields anywhere in the quote record", async () => {
     const v = await payload("rep");
-    expect(v.viewer).toEqual({ roles: ["rep"], canViewCommercials: false });
+    expectViewer(v.viewer, ["rep"], false);
     for (const l of v.evaluation.budget!.lines) expect([l.estimatedCost, l.estimatedGP, l.marginPct]).toEqual([null, null, null]);
     // per-component cost inside package lines (quote-bridge.ts redacts components[].estimatedCost): the demo draft is package-bearing, so this is non-empty
     const comps = v.evaluation.budget!.lines.flatMap((l) => (l as { components?: Array<{ estimatedCost: number | null }> }).components ?? []);
