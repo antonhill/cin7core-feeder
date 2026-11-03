@@ -246,7 +246,7 @@ describe("Cin7 single-stock-UOM contract (NQ-Q-0023 UOM_UNCONFIRMED remediation)
   });
   it("reviewer edge cases: odd PurchaseCost / flag / id values block and are reported with their values", () => {
     for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, -269, [269], { a: 1 }, true]) expect(rawFromCin7(liveReal(269, { PurchaseCost: bad }), () => null).statedUnitFields?.length).toBe(1);
-    expect(rawFromCin7(liveReal(269, { IncludeInPricing: "true" }), () => null).statedUnitFields).toEqual(['IncludeInPricing="true" (expected true/false)']);
+    expect(rawFromCin7(liveReal(269, { IncludeInPricing: "true" }), () => null).statedUnitFields).toEqual(["IncludeInPricing=true (expected true/false)"]);
     expect(rawFromCin7(liveReal(269, { ProductID: ["x"] }), () => null).statedUnitFields?.[0]).toContain("expected a GUID string");
     expect(rawFromCin7(liveReal(269, { PurchaseCost: 269.0000004 }), () => null).statedUnitFields).toEqual([]); // within the 5e-7 tolerance
     expect(rawFromCin7(liveReal(269, { PurchaseCost: 269.000001 }), () => null).statedUnitFields?.length).toBe(1);
