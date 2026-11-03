@@ -170,7 +170,7 @@ describe("Commercial / Claims workspace (P2)", () => {
     await openCommercial();
     const a = document.querySelector("article") as HTMLElement;
     const captions = Array.from(a.querySelectorAll("span[aria-hidden]")).filter((e) => e.className.includes("lg:hidden")).map((e) => e.textContent);
-    expect(captions).toEqual(["Amount", "Approval", "Cin7 invoice (as last recorded)"]);
+    expect(captions).toEqual(["Amount", "Approval", "Cin7 invoice"]); // UX-006g1: the cell itself says recorded vs verified, so the caption no longer claims "as last recorded"
     for (const e of a.querySelectorAll("span[aria-hidden].mb-0\\.5")) expect(e.className).toMatch(/lg:hidden/);
   });
   it("the column headings are only shown when there are claims", async () => {
@@ -178,7 +178,7 @@ describe("Commercial / Claims workspace (P2)", () => {
     render(<ProjectWorkspace id="p1" />);
     fireEvent.click(await screen.findByRole("button", { name: /Commercial \/ Claims/ }));
     await screen.findByText("No claims yet.");
-    expect(screen.queryByText("Cin7 invoice (as last recorded)")).toBeNull();
+    expect(screen.queryByText("Cin7 invoice")).toBeNull();
   });
   it("labels each value for assistive technology", async () => {
     await openCommercial();
