@@ -90,7 +90,7 @@ describe("GATE 1 — quote workflow to a frozen baseline and a Project", () => {
     expect(await err(estimatorSignOff(db as never, ORG, rep, "est@nq", id, ctx))).toBe("The amount changed since the customer confirmed it. Return it to the Rep to reconfirm.");
     expect(await err(managerApprove(db as never, ORG, mgr, "m@nq", id, ctx))).toMatch(/has not signed off/);
     // return to the rep → new revision, confirmation cleared
-    await returnToRep(db as never, ORG, mgr, id, "Re-confirm with the customer");
+    await returnToRep(db as never, ORG, mgr, id, "Re-confirm with the customer", { email: "mgr@nq", role: "manager" });
     const q = (await loadQuote(db as never, ORG, id))!;
     expect(q).toMatchObject({ state: "REP_DRAFT", revision: 2, customer_confirmed_cents: null, estimator_signoff_hash: null });
   });
@@ -130,7 +130,7 @@ describe("GATE 1 — quote workflow to a frozen baseline and a Project", () => {
     // editing / re-approving / reopening an accepted quote is refused
     expect(await err(saveDraft(db as never, ORG, rep, id, tenMillionDraft()))).toMatch(/final and cannot be edited.*Variations/);
     expect(await err(managerApprove(db as never, ORG, mgr, "m@nq", id, ctx))).toMatch(/final and cannot be changed/);
-    expect(await err(returnToRep(db as never, ORG, mgr, id, "x"))).toMatch(/final and cannot be changed/);
+    expect(await err(returnToRep(db as never, ORG, mgr, id, "x", { email: "mgr@nq", role: "manager" }))).toMatch(/final and cannot be changed/);
     // a price change after acceptance does not alter the stored snapshot
     const dearer = { priceSource: { ...testPriceSource(), priceFor: () => ({ status: "priced" as const, unitPriceExVat: 999_999, landedCostExVat: 1 }) }, withholdCost: true };
     expect(evaluateDraft(q.draft, dearer).budget!.totals.subtotalExTax).not.toBe(10_000_000);

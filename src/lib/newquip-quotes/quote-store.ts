@@ -17,6 +17,8 @@ import { createProjectFromBaseline } from "@/lib/projects/project-store";
 import { libraryOf, listActiveMappings } from "@/lib/projects/package-mapping-store";
 import { requireAcceptance } from "./acceptance";
 import { latestSnapshot } from "./customer-store";
+import { recordReturn, type ReturnBy } from "./return-store";
+import { NEUTRAL_REASON } from "@/newquip/quote/return-info";
 import { verifyMappings } from "./mapping-check";
 import { mappedSkus } from "@/newquip/grower/mapping-integrity";
 
@@ -131,7 +133,7 @@ export async function saveDraft(db: Db, orgId: string, roles: ReadonlySet<QuoteR
  * quotation goes back to the Rep as a new revision (so the new customer must confirm before it is handed off again). A REP_DRAFT has no confirmation yet.
  */
 export async function applyCustomerChange(
-  db: Db, orgId: string, quoteId: string, customerName: string, previousCustomer: boolean,
+  db: Db, orgId: string, quoteId: string, customerName: string, previousCustomer: boolean, by: ReturnBy,
 ): Promise<{ returnedToRep: boolean; signoffCleared: boolean; confirmationCleared: boolean }> {
   const q = await mustLoad(db, orgId, quoteId);
   if (q.state === "MANAGER_APPROVED_FINAL") fail("The customer details of an approved quotation are immutable. Start a new quotation for a different customer.");
@@ -141,6 +143,8 @@ export async function applyCustomerChange(
   const inReview = q.state === "ESTIMATOR_REVIEW";
   const signoffCleared = q.estimator_signoff_hash != null;
   const confirmationCleared = q.customer_confirmed_cents != null || q.customer_confirmed_by != null;
+  // The quotation goes back to the Rep: keep WHY (kind, actor, previous total) before the state changes. A REP_DRAFT has nothing to return.
+  if (inReview) await recordReturn(db, orgId, by, { quoteId, kind: "CUSTOMER_CHANGED", reason: NEUTRAL_REASON.CUSTOMER_CHANGED, destination: "REP", fromState: q.state, fromRevision: q.revision, toRevision: q.revision + 1, ...(q.customer_confirmed_cents != null ? { previousCents: q.customer_confirmed_cents } : {}) }, "Returned a NewQuip quotation to the Rep: the customer changed (local only)");
   const r = await db.from("newquip_quotes").update({
     draft, draft_hash: hashOf(draft), customer_name: customerName,
     estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null,
@@ -174,11 +178,13 @@ export async function sendToEstimator(
 }
 
 /** Estimator → Rep: a new revision. The customer's confirmation and any sign-off no longer apply. */
-export async function returnToRep(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, quoteId: string, reason: string): Promise<void> {
+export async function returnToRep(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, quoteId: string, reason: string, by: ReturnBy): Promise<void> {
   if (!reason.trim()) fail("A reason is required to return a quote to the rep.");
   const q = await mustLoad(db, orgId, quoteId);
   const auth = authoriseTransition(roles, q.state, "RETURN_TO_REP");
   if (!auth.ok) fail(auth.error);
+  // The reason is kept (activity_log, append-only) BEFORE the state changes: every path - legacy, staged, manager, estimator - ends here.
+  await recordReturn(db, orgId, by, { quoteId, kind: "RETURN", reason: reason.trim(), destination: "REP", fromState: q.state, fromRevision: q.revision, toRevision: q.revision + 1 }, "Returned a NewQuip quotation to the Rep (local only)");
   const r = await db.from("newquip_quotes").update({
     state: auth.to, revision: q.revision + 1, customer_confirmed_cents: null, customer_confirmed_by: null, customer_confirmed_at: null, handoff_by_email: null,
     estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null,
@@ -191,12 +197,13 @@ export async function returnToRep(db: Db, orgId: string, roles: ReadonlySet<Quot
  * Manager -> Estimator. The quotation, its revision, the customer's confirmation and its whole history are kept; ONLY the estimator's sign-off is
  * withdrawn, so it cannot be approved again until an estimator signs off the (possibly corrected) current content.
  */
-export async function returnToEstimator(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, quoteId: string, reason: string): Promise<void> {
+export async function returnToEstimator(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, quoteId: string, reason: string, by: ReturnBy): Promise<void> {
   if (!reason.trim()) fail("A reason is required to return a quote to the estimator.");
   const q = await mustLoad(db, orgId, quoteId);
   const auth = authoriseTransition(roles, q.state, "RETURN_TO_ESTIMATOR");
   if (!auth.ok) fail(auth.error);
   if (!q.estimator_signoff_hash) fail("The estimator has not signed this quote off, so there is nothing to return to the estimator.");
+  await recordReturn(db, orgId, by, { quoteId, kind: "RETURN", reason: reason.trim(), destination: "ESTIMATOR", fromState: q.state, fromRevision: q.revision, toRevision: q.revision }, "Returned a NewQuip quotation to the Estimator (local only)");
   const r = await db.from("newquip_quotes").update({ estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null })
     .eq("org_id", orgId).eq("id", quoteId).eq("state", "ESTIMATOR_REVIEW").eq("draft_hash", q.draft_hash).select("id");
   if (r.error) fail(r.error.message);
