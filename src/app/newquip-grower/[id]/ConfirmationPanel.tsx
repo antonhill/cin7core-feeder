@@ -85,17 +85,17 @@ export function ConfirmationPanel({ quoteId, amountLabel, canAct, ready, loading
           <fieldset className="mt-2 space-y-2" disabled={!canAct || loading}>
             <legend className="sr-only">Who confirmed the price</legend>
             <label className={`${radio} ${choice === "default" ? "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-500" : "border-slate-300"}`}>
-              <input type="radio" name="confirm-contact" checked={choice === "default"} onChange={() => setChoice("default")} />
+              <input type="radio" className="size-6" name="confirm-contact" checked={choice === "default"} onChange={() => setChoice("default")} />
               <span>Quotation contact (default): {quotationContact ? <b>{quotationContact.name} &lt;{quotationContact.email}&gt;</b> : <i>not chosen in step 1</i>}</span>
             </label>
             {cin7Contacts.map((c) => (
               <label key={c.i} className={`${radio} ${choice === c.i ? "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-500" : "border-slate-300"}`}>
-                <input type="radio" name="confirm-contact" checked={choice === c.i} onChange={() => setChoice(c.i)} />
+                <input type="radio" className="size-6" name="confirm-contact" checked={choice === c.i} onChange={() => setChoice(c.i)} />
                 <span>Cin7 contact: <b>{c.name}</b>{c.email ? ` <${c.email}>` : " (no email)"}</span>
               </label>
             ))}
             <label className={`${radio} ${choice === "alt" ? "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-500" : "border-slate-300"}`}>
-              <input type="radio" name="confirm-contact" checked={choice === "alt"} onChange={() => setChoice("alt")} />
+              <input type="radio" className="size-6" name="confirm-contact" checked={choice === "alt"} onChange={() => setChoice("alt")} />
               <span>Someone not listed (alternative contact)</span>
             </label>
             {choice === "alt" && (

@@ -358,7 +358,7 @@ export default function QuoteEditorPage() {
   const nextOpen = nextIncompleteStepId(railSteps1, stepId, (x) => stepAccess(x.id as Stage1StepId).access === "edit");
   const nextStep1 = STAGE1_STEP_IDS[stepNo] ?? null; // the step after this one (null on the last)
   const nextStep1Locked = nextStep1 ? stepAccess(nextStep1) : null;
-  const stepPanelCls = "col-span-full grid min-w-0 items-start gap-6";
+  const stepPanelCls = "col-span-full grid min-w-0 items-start gap-6 [&>*]:min-w-0";
   const gated1 = stage === 1 && !factsSettled; // the small loading shell shows meanwhile; the panels stay mounted (hidden) so the customer facts can load
 
   // Stage 2 steps: the same navigation and guidance (never a gate). Statuses come from data already loaded here: the readiness result, the budget, the draft's own validation and the stage gates.
@@ -503,7 +503,7 @@ export default function QuoteEditorPage() {
                 <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAllSteps} onChange={(e) => setShowAllSteps(e.target.checked)} /> Show all steps</label>
                 {nextOpen
                   ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep(nextOpen)}>Next incomplete step</Button>
-                  : <span className="text-sm text-slate-700" data-testid="all-steps-complete">{wizard.submitted ? "Rep preparation complete - next: Estimator." : "Every step you can act on is complete."}</span>}
+                  : (wizard.submitted || wizard.steps.filter((x) => x.access === "edit").every((x) => x.status === "complete")) ? <span className="text-sm text-slate-700" data-testid="all-steps-complete">{wizard.submitted ? "Rep preparation complete - next: Estimator." : "Every step you can act on is complete."}</span> : null}
               </div>
             )} />
         </div>
@@ -530,7 +530,7 @@ export default function QuoteEditorPage() {
       {stage <= 2 && (
         <>
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Button onClick={save} loading={acts.isPending("save")} aria-describedby={saveWhy ? "save-why" : undefined} disabled={isWorking || !editable || !dirty || incompleteOverrides || blankExclusionKeys.length > 0}>Save draft</Button>
+            <Button className="min-h-11" onClick={save} loading={acts.isPending("save")} aria-describedby={saveWhy ? "save-why" : undefined} disabled={isWorking || !editable || !dirty || incompleteOverrides || blankExclusionKeys.length > 0}>Save draft</Button>
             <span role="status" aria-live="polite" data-testid="save-state">{dirty ? <Status tone="warning">Unsaved changes</Status> : editable ? <Status tone="success">All changes saved</Status> : null}</span>
             {!editable && <span id="save-why" className="text-sm text-slate-700">{final ? "Read-only: accepted quote." : "You do not have permission to edit: only a Rep or Estimator can edit and save this quotation."}</span>}
           </div>
@@ -653,7 +653,7 @@ export default function QuoteEditorPage() {
                   return (
                     <li key={k}>
                       <label className={`flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm ${on ? "border-indigo-600 bg-indigo-50 text-slate-900" : "border-slate-300 bg-white text-slate-700"}`}>
-                        <span className="flex items-center gap-2"><input type="checkbox" className="size-5" checked={on} onChange={(e) => edit((d) => { d.config.optionalEquipment[k] = e.target.checked; })} /> {OPTIONAL_LABELS[k]}</span>
+                        <span className="flex items-center gap-2"><input type="checkbox" className="size-6" checked={on} onChange={(e) => edit((d) => { d.config.optionalEquipment[k] = e.target.checked; })} /> {OPTIONAL_LABELS[k]}</span>
                         <span className={`text-xs font-semibold ${on ? "text-indigo-800" : "text-slate-600"}`} data-testid={`optional-state-${k}`}>{on ? "✓ Included" : "Not included"}</span>
                       </label>
                     </li>

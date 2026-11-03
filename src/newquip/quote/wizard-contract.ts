@@ -128,7 +128,9 @@ export function deriveWizard(i: WizardInput): Wizard {
       const prev = STAGE1_STEP_IDS[j];
       if (status[prev] === "complete") continue;
       const why = prev === "customer" ? (c.loadError ? "the customer details could not be read; reload the page" : "choose the Cin7 customer and the quotation contact") : prev === "site" ? "enter the site name and room measurements" : prev === "equipment" ? "finish the equipment selections and quantities" : "review the configuration";
-      return { ...base, access: "locked", blockedBy: [`Rep: ${why} in step ${j + 1} (${STAGE1_STEP_LABEL[prev]}) first.`], blockKind: "policy" };
+      // The step right after the open one says what to do; later steps only point back at it (shorter, less repetition).
+      const text = j === idx - 1 ? `Rep: ${why} in step ${j + 1} (${STAGE1_STEP_LABEL[prev]}) first.` : `Rep: complete step ${j + 1} (${STAGE1_STEP_LABEL[prev]}) first.`;
+      return { ...base, access: "locked", blockedBy: [text], blockKind: "policy" };
     }
     // SERVER GATES for Submit (real): see above.
     if (id === "submit" && serverBlocks.length > 0) return { ...base, access: "locked", blockedBy: serverBlocks, blockKind: "server" };

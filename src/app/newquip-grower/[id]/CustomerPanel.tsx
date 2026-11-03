@@ -110,8 +110,8 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
             <li>The measurements, equipment, quantities and prices you entered are kept. The earlier customer snapshot stays in the history. Nothing is written to Cin7.</li>
           </ul>
           <div className="mt-2 flex gap-2">
-            <Button type="button" disabled={busy} onClick={confirmPending}>{pending.kind === "replace" ? "Replace customer" : "Clear customer"}</Button>
-            <Button type="button" variant="secondary" disabled={busy} onClick={() => setPending(null)}>Cancel</Button>
+            <Button type="button" className="min-h-11" disabled={busy} onClick={confirmPending}>{pending.kind === "replace" ? "Replace customer" : "Clear customer"}</Button>
+            <Button type="button" className="min-h-11" variant="secondary" disabled={busy} onClick={() => setPending(null)}>Cancel</Button>
           </div>
         </Alert>
       )}
@@ -119,8 +119,8 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
         <div className="flex flex-wrap items-end gap-2">
           <label className="flex flex-col gap-1 text-sm"><span className="font-medium text-slate-700">Search by name, contact or email</span>
             <input className={inputCls} value={q} onChange={(e) => { setQ(e.target.value); setSearched(null); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void search(); } }} /></label>
-          <Button type="button" variant="secondary" onClick={() => void search()} disabled={busy || q.trim().length < 2} loading={label?.startsWith("Searching") ?? false}>{label?.startsWith("Searching") ? "Searching…" : "Search Cin7 customers"}</Button>
-          {changing && <Button type="button" variant="secondary" disabled={busy} onClick={() => { setChanging(false); setHits([]); }}>Keep current customer</Button>}
+          <Button type="button" className="min-h-11" variant="secondary" onClick={() => void search()} disabled={busy || q.trim().length < 2} loading={label?.startsWith("Searching") ?? false}>{label?.startsWith("Searching") ? "Searching…" : "Search Cin7 customers"}</Button>
+          {changing && <Button type="button" className="min-h-11" variant="secondary" disabled={busy} onClick={() => { setChanging(false); setHits([]); }}>Keep current customer</Button>}
         </div>
       )}
       {showSearch && !pending && searched !== null && hits.length === 0 && <p className="text-sm text-slate-600" data-testid="no-customer-results">No Cin7 customers matched “{searched}”. Try part of the name, a contact name or an email.</p>}
@@ -129,7 +129,7 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
           {hits.map((h) => (
             <li key={h.name} className="flex items-center justify-between gap-2 p-2">
               <span><b>{h.name}</b>{h.tradingName ? ` (${h.tradingName})` : ""} · {h.contactName ?? "no contact"} · {h.email ?? "no email"} · {h.currency ?? "no currency"}</span>
-              <Button type="button" variant="secondary" onClick={() => void pick(h.name)} disabled={busy} loading={picking === h.name}>Select</Button>
+              <Button type="button" className="min-h-11" variant="secondary" onClick={() => void pick(h.name)} disabled={busy} loading={picking === h.name}>Select</Button>
             </li>
           ))}
         </ul>
@@ -163,7 +163,7 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
               const em = fieldValue(c.email);
               const bad = !em || !isValidEmail(em);
               const on = v.selectedContactIndex === i;
-              const cls = `min-h-11 ${on ? "ring-2 ring-emerald-500 border-emerald-500 bg-emerald-50" : ""}`;
+              const cls = `h-auto! min-h-11 whitespace-normal! py-2 text-left ${on ? "ring-2 ring-emerald-500 border-emerald-500 bg-emerald-50" : ""}`;
               return bad ? (
                 <Button key={i} type="button" variant="secondary" className={cls} aria-pressed={on} disabled={busy} onClick={() => setFix({ index: i, email: em ?? "", reason: "" })}>
                   {on && "✓ Selected · "}{show(c.name)} · {show(c.email)} — correct email for this quotation
@@ -184,8 +184,8 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
             <div className="flex flex-wrap items-end gap-2 rounded-md border border-amber-300 bg-amber-50 p-2" data-testid="email-fix">
               <input className={inputCls} aria-label="Corrected email" placeholder="Corrected email" value={fix.email} onChange={(e) => setFix({ ...fix, email: e.target.value })} />
               <input className={inputCls} aria-label="Reason for the correction" placeholder="Reason (e.g. typo in Cin7)" value={fix.reason} onChange={(e) => setFix({ ...fix, reason: e.target.value })} />
-              <Button type="button" disabled={busy} onClick={() => void run(async () => { const r = await chooseQuoteContactAction(quoteId, { source: "CIN7_CONTACT", contactIndex: fix.index, email: fix.email, correctionReason: fix.reason }); if (r.ok) setFix(null); return r; })}>Use corrected email</Button>
-              <Button type="button" variant="secondary" disabled={busy} onClick={() => setFix(null)}>Cancel</Button>
+              <Button type="button" className="min-h-11" disabled={busy} onClick={() => void run(async () => { const r = await chooseQuoteContactAction(quoteId, { source: "CIN7_CONTACT", contactIndex: fix.index, email: fix.email, correctionReason: fix.reason }); if (r.ok) setFix(null); return r; })}>Use corrected email</Button>
+              <Button type="button" className="min-h-11" variant="secondary" disabled={busy} onClick={() => setFix(null)}>Cancel</Button>
               <p className="w-full text-xs text-slate-600">Used on this quotation only and recorded with your reason. The Cin7 contact is not changed.</p>
             </div>
           )}
@@ -196,7 +196,7 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
               <input className={inputCls} aria-label="Contact name" placeholder="Contact name" value={entered.name} onChange={(e) => setEntered({ ...entered, name: e.target.value })} />
               <input className={inputCls} aria-label="Delivery email" placeholder="Delivery email" value={entered.email} onChange={(e) => setEntered({ ...entered, email: e.target.value })} />
               <input className={inputCls} aria-label="Phone (optional)" placeholder="Phone (optional)" value={entered.phone} onChange={(e) => setEntered({ ...entered, phone: e.target.value })} />
-              <Button type="button" disabled={busy} onClick={() => void run(async () => { const r = await chooseQuoteContactAction(quoteId, { source: "ENTERED", ...entered }); if (r.ok) { setAdding(false); setEntered({ name: "", email: "", phone: "" }); } return r; })}>Use this contact</Button>
+              <Button type="button" className="min-h-11" disabled={busy} onClick={() => void run(async () => { const r = await chooseQuoteContactAction(quoteId, { source: "ENTERED", ...entered }); if (r.ok) { setAdding(false); setEntered({ name: "", email: "", phone: "" }); } return r; })}>Use this contact</Button>
               </div>
               <p className="text-xs text-slate-600">For a person who is not in Cin7. Validated and audited, used on this quotation only, and never written to Cin7.</p>
             </fieldset>
@@ -215,8 +215,8 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
           {v.history.length > 0 && <p className="mt-2 text-xs text-slate-600">History: {v.history.map((h) => `#${h.seq}${h.cleared ? " cleared" : ""} ${h.by} ${formatSast(h.at)}`).join(" · ")}</p>}
           {v.editable && editable && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button type="button" variant="secondary" disabled={busy} loading={label === "Checking Cin7 for changes…"} onClick={() => void preview(false)}>Check Cin7 for changes</Button>
-              {diff && diff.changes.length > 0 && !diff.applied && <Button type="button" disabled={busy} onClick={() => void preview(true)}>Apply {diff.changes.length} change{diff.changes.length === 1 ? "" : "s"}</Button>}
+              <Button type="button" className="min-h-11" variant="secondary" disabled={busy} loading={label === "Checking Cin7 for changes…"} onClick={() => void preview(false)}>Check Cin7 for changes</Button>
+              {diff && diff.changes.length > 0 && !diff.applied && <Button type="button" className="min-h-11" disabled={busy} onClick={() => void preview(true)}>Apply {diff.changes.length} change{diff.changes.length === 1 ? "" : "s"}</Button>}
             </div>
           )}
           {diff && (diff.changes.length === 0
