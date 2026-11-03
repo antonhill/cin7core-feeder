@@ -66,7 +66,7 @@ const req = (over: Partial<{ reason: string; expectedRevision: number; expectedD
 beforeEach(() => {
   db = new FakeDb(); db.fxApplied = true;
   seedGoldenCatalogue(db as never, ORG);
-  db.rows("newquip_package_mappings").push(ledLibraryMapping(ORG));
+  db.tables.newquip_package_mappings = [ledLibraryMapping(ORG)]; // M75 and penning stay unmapped by design (seedGoldenCatalogue's golden library is replaced)
   db.rows("newquip_quotes").push({ id: "q1", org_id: ORG, quote_ref: "NQ-Q-0009", revision: 3, customer_name: "Test Customer", site_name: "Farm", quote_type: "project", state: "ESTIMATOR_REVIEW", draft: structuredClone(draft), draft_hash: "h1",
     customer_confirmed_cents: total, customer_confirmed_by: "r", customer_confirmed_at: "t", handoff_by_email: "rep@a", created_by_email: "rep@a", estimator_signoff_hash: "h1", estimator_signoff_by_email: "est@a", estimator_signoff_at: "t",
     approved_by_email: null, approved_at: null, accepted_baseline: null, baseline_hash: null, contract_cents: null, project_id: null, created_at: "t", updated_at: "t" });
@@ -139,6 +139,20 @@ describe("a Manager's recorded exception", () => {
     expect(rep.quote.accepted_baseline?.exceptions?.[0].reason).toBe("Mapping follows the PO; the project price basis was agreed");
     expect(JSON.stringify(rep.quote.accepted_baseline?.exceptions)).not.toMatch(/landed cost|ROE/i);
   });
+  it("the cost-basis pricing wording is in the Manager's baseline view only, never in a Rep-visible baseline view", async () => {
+    as(true);
+    quote().draft.quoteType = "project"; quote().quote_type = "project";
+    quote().customer_confirmed_cents = Math.round(evaluateDraft(quote().draft, { ...ctx, withholdCost: true }).budget!.totals.subtotalExTax * 100); // the project total (landed cost basis)
+    const done = await grower.approveGrowerQuoteAction("q1", { baselineException: req() });
+    expect(done.error).toBeUndefined();
+    const manager = (await grower.getGrowerQuoteAction("q1")).data!;
+    expect(manager.quote.accepted_baseline?.pricing.basis).toMatch(/landed cost/i); // cost-visible Manager view: acceptable
+    as(false);
+    const repView = (await grower.getGrowerQuoteAction("q1")).data!;
+    expect(repView.quote.accepted_baseline).toBeTruthy();
+    expect(JSON.stringify(repView)).not.toMatch(/landed cost|ROE|Freight\)|20% mark/i);
+    expect(repView.quote.accepted_baseline?.pricing.basis).not.toMatch(/landed cost/i);
+  });
   it("needs a written reason", async () => {
     as(true);
     const before = snapshot();
@@ -206,13 +220,30 @@ describe("store level: managerApprove re-checks the version itself (the draft ca
 
 describe("it waives ONLY the listed Estimator-priced systems", () => {
   const costException = { reason: "Supplier choice follows the PO", by: "est@a", at: "2026-11-01T08:00:00.000Z" };
-  it("refused when no exception applies (costing was never started and the Estimator recorded the cost exception)", async () => {
+  it("refused when no exception applies (everything is mapped)", async () => {
     as(true);
-    quote().draft.estimator.costBasis = { incompleteAccepted: costException };
-    quote().draft.estimator.physicalCosts = {};
+    db.tables.newquip_package_mappings = ["flex_auger", "penning_package", "led_light"].map((k, n) => ({ ...ledLibraryMapping(ORG), id: `m${n}`, package_key: k }));
+    quote().draft.estimator.costBasis = { incompleteAccepted: costException }; // waives the cost of the SKUs the mappings introduced
     const before = snapshot();
     expect((await grower.approveGrowerQuoteAction("q1", { baselineException: req() })).error).toMatch(/No baseline exception applies/);
     expect(snapshot()).toBe(before);
+  });
+  it("UNCOSTED + the Estimator's cost exception only (no manual costs): plain approve is REFUSED with the Manager-exception message; the exception approve passes and seals", async () => {
+    as(true);
+    quote().draft.estimator.physicalCosts = {};
+    quote().draft.estimator.costBasis = { incompleteAccepted: costException };
+    const v = (await grower.getGrowerQuoteAction("q1")).data!;
+    expect(v.baselineException).toMatchObject({ baselineExceptionRequired: true, costException });
+    expect(v.baselineException?.items.map((i) => i.itemKey).sort()).toEqual(ITEMS);
+    const before = snapshot();
+    expect((await grower.approveGrowerQuoteAction("q1")).error).toMatch(/2 package\(s\) are not mapped to Cin7 SKUs/);
+    expect(snapshot()).toBe(before);
+    expect(quote().state).toBe("ESTIMATOR_REVIEW");
+    expect((await grower.approveGrowerQuoteAction("q1", { baselineException: req() })).error).toBeUndefined();
+    expect(quote().state).toBe("MANAGER_APPROVED_FINAL");
+    expect(quote().accepted_baseline.exceptions).toHaveLength(1);
+    expect(quote().accepted_baseline.exceptions[0].unresolved.map((i: Row) => i.itemKey).sort()).toEqual(ITEMS);
+    expect(acts().some((x) => x.action === "newquip.baseline_exception_accepted")).toBe(true);
   });
   it("the Estimator's cost exception waives COST reasons only: by-design unmapped systems STILL need the Manager's exception", async () => {
     as(true);

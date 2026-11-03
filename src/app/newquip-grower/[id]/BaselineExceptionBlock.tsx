@@ -3,7 +3,6 @@
 import { useId, useState } from "react";
 import { Alert } from "@/components/ui/Alert";
 import { Button } from "@/components/ui/Button";
-import { Checkbox } from "@/components/ui/Checkbox";
 import { BASELINE_EXCEPTION_MIN_REASON, BASELINE_EXCEPTION_TITLE, type BaselineException, type BaselineExceptionRequest, type BaselineExceptionView } from "@/newquip/quote/baseline-exception";
 import { formatSast } from "@/lib/approvals/time";
 
@@ -56,9 +55,9 @@ function BlockInner({ view, revision, draftHash, canDecide, blockedWhy, pending,
       <p className="text-xs">Visible to the Rep in the frozen baseline: do not include costs or margins.</p>
       <textarea id={`${uid}-reason`} value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={1000} aria-describedby={why ? `${uid}-why` : undefined}
         className="mt-1 w-full max-w-xl rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900" />
-      <div className="mt-2"><Checkbox label="I accept this exception for the items listed above" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} /></div>
+      <label className="mt-1 flex min-h-11 cursor-pointer items-center gap-3 text-sm"><input type="checkbox" className="h-5 w-5 shrink-0 rounded border-slate-300" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />I accept this exception for the items listed above</label>
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        <Button variant="primary" loading={pending} disabled={!canDecide || !!why} aria-describedby={why ? `${uid}-why` : undefined}
+        <Button variant="primary" className="min-h-11" loading={pending} disabled={!canDecide || !!why} aria-describedby={why ? `${uid}-why` : undefined}
           onClick={() => onApprove({ reason: reason.trim(), expectedRevision: revision, expectedDraftHash: draftHash })}>Approve with recorded exception</Button>
         {why && <p id={`${uid}-why`} className="text-xs">{why}</p>}
       </div>

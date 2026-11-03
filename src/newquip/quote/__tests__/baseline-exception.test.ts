@@ -69,8 +69,13 @@ describe("the mapping gate", () => {
     const missing = { ...costsFor(lines) }; delete missing[Object.keys(missing)[0]];
     expect(gate({ costs: missing, costEx: true })).toMatchObject({ blocked: true, required: true, missingSkus: [] });
   });
-  it("does not apply when costing was never started", () => {
-    expect(gate({ costs: {} })).toMatchObject({ blocked: false, required: false });
+  it("applies WHETHER OR NOT costing was ever started, and whether or not the Estimator recorded a cost exception", () => {
+    expect(gate({ costs: {} })).toMatchObject({ estimate: undefined, blocked: true, required: true });
+    expect(gate({ costs: {}, costEx: true })).toMatchObject({ estimate: undefined, blocked: true, required: true });
+    expect(gate({ costs: {}, costEx: true }).items.map((i) => i.itemKey).sort()).toEqual(["flex_auger", "penning_package"]);
+  });
+  it("uncosted: a genuinely unmapped package still blocks and the exception is not sufficient", () => {
+    expect(gate({ lib: false, costs: {}, costEx: true })).toMatchObject({ blocked: true, required: false });
   });
   it("the view carries the Estimator's cost exception read-only for context", () => {
     const ex = { reason: "Supplier choice follows the PO", by: "est@a", at: "t" };
@@ -118,9 +123,22 @@ describe("buildAcceptedBaseline", () => {
   });
   it("needs a real reason, and refuses an exception that does not apply", () => {
     expect(() => freeze(costed, undefined, { reason: "short", draftHash: "h" })).toThrow(/written reason/);
-    const notStarted = { ...costed, estimator: { ...costed.estimator, physicalCosts: {} } } as typeof costed;
-    expect(() => freeze(notStarted, undefined, { reason: REASON, draftHash: "h" })).toThrow(/No baseline exception applies/);
-    expect(freeze(notStarted).baseline.exceptions).toBeUndefined();
+    const allMapped = new Map([...LIB, ["flex_auger", { ...LIB.get("led_light")!, packageKey: "flex_auger" }], ["penning_package", { ...LIB.get("led_light")!, packageKey: "penning_package" }]]);
+    const mappedDraft = { ...costed, estimator: { ...costed.estimator, costBasis: { incompleteAccepted: { reason: "r", by: "e", at: "t" } } } } as typeof costed; // cost exception waives the missing costs of the new SKUs
+    expect(() => freeze(mappedDraft, undefined, { reason: REASON, draftHash: "h" }, undefined, allMapped)).toThrow(/No baseline exception applies/);
+    expect(freeze(mappedDraft, undefined, undefined, undefined, allMapped).baseline.exceptions).toBeUndefined();
+  });
+  it("UNCOSTED quotation + Estimator cost exception: plain freeze refused; the Manager exception freezes it and SEALS the record", () => {
+    const uncosted = { ...base, estimator: { ...base.estimator, costBasis: { incompleteAccepted: { reason: "r", by: "e", at: "t" } } } } as typeof base;
+    expect(uncosted.estimator.physicalCosts).toBeUndefined();
+    expect(() => freeze(uncosted)).toThrow(/2 package\(s\) are not mapped to Cin7 SKUs/);
+    const f = freeze(uncosted, undefined, { reason: REASON, draftHash: "h9" });
+    expect(f.baseline.physicalCostEstimate).toBeUndefined(); // nothing was costed, and nothing is invented
+    expect(f.baseline.exceptions).toHaveLength(1);
+    expect(f.baseline.exceptions![0]).toMatchObject({ reason: REASON, approvedBy: "mgr@a", version: { quoteRef: "NQ-Q-1", revision: 2, draftHash: "h9" } });
+    expect(f.baseline.exceptions![0].unresolved.map((u) => u.itemKey).sort()).toEqual(["flex_auger", "penning_package"]);
+    // a genuinely unmapped package is still blocking, even uncosted and with both exceptions
+    expect(() => freeze(uncosted, undefined, { reason: REASON, draftHash: "h9" }, undefined, new Map() as never)).toThrow(/1 package\(s\) are not mapped to Cin7 SKUs/);
   });
   it("validateExceptionReason bounds the text", () => {
     expect(validateExceptionReason("x".repeat(9))).toBeTruthy();

@@ -151,15 +151,15 @@ export function buildAcceptedBaseline(i: BaselineInput): { baseline: AcceptedBas
   const physicalScope = i.mappingLibrary && i.mappingLibrary.size ? applyMappingLibrary(buildPhysicalScope(lines), i.mappingLibrary, i.approvals.managerApprovedAt) : buildPhysicalScope(lines);
   const gate = baselineMappingGate({ lines, scope: physicalScope, physicalCosts: draft.estimator.physicalCosts, costExceptionAccepted: !!draft.estimator.costBasis?.incompleteAccepted });
   const builtEstimate = gate.estimate;
-  // Once costing has been started an INCOMPLETE snapshot cannot be frozen, unless an authorised user recorded an explicit, reasoned exception (frozen with it).
+  // Unmapped packages block the freeze whether or not costing has started; a missing supplier cost blocks once costing has started. Neither can be frozen, unless an authorised user recorded an explicit, reasoned exception (frozen with it).
   // A Manager's baseline exception covers ONLY the Estimator-priced systems without a Cin7 SKU; any other unresolved package or missing supplier cost still refuses.
   let exceptions: BaselineException[] | undefined;
   if (gate.blocked) {
     const bx = i.baselineException;
-    if (!bx) throw new Error(incompleteEstimateMessage(gate.missingSkus, builtEstimate!.unresolvedPackages));
+    if (!bx) throw new Error(incompleteEstimateMessage(gate.missingSkus, [...gate.items.map((x) => x.label), ...gate.remainingPackages]));
     const bad = validateExceptionReason(bx.reason);
     if (bad) throw new Error(bad);
-    if (!gate.required) throw new Error(incompleteEstimateMessage(gate.missingSkus, gate.items.length ? gate.remainingPackages : builtEstimate!.unresolvedPackages));
+    if (!gate.required) throw new Error(incompleteEstimateMessage(gate.missingSkus, gate.remainingPackages));
     exceptions = [{
       kind: BASELINE_EXCEPTION_KIND, title: BASELINE_EXCEPTION_TITLE, unresolved: gate.items, reason: bx.reason.trim(),
       approvedBy: i.approvals.managerApprovedBy, approvedAt: i.approvals.managerApprovedAt, version: { quoteRef: i.quoteRef, revision: i.revision, draftHash: bx.draftHash },
