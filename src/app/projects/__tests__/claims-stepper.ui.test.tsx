@@ -50,7 +50,7 @@ describe("Claim stepper", () => {
     let v = view([stage({ claimableCents: 10_000_00, approvedBps: 10000, remainingCents: 100_000_00 })]);
     setup(() => v);
     h.responses.previewClaimAction = preview;
-    h.responses.createClaimDraftAction = () => { v = view(v.stages as unknown[], [claimRow("c1", "PRJ-X-C01", "DRAFT")]); return { ok: true, data: null }; };
+    h.responses.createClaimDraftAction = () => { v = view(v.stages as unknown[], [claimRow("c1", "PRJ-X-C01", "DRAFT")]); return { ok: true, data: { claimId: "c1", duplicate: false } }; };
     await openTab(/Commercial \/ Claims/);
     await screen.findByText("Create progress claim");
     expect(stepper().tagName).toBe("OL");
@@ -65,8 +65,38 @@ describe("Claim stepper", () => {
     await waitFor(() => expect((screen.getByRole("button", { name: "Save as draft claim" }) as HTMLButtonElement).disabled).toBe(false)); // a click while the preview is still settling would be ignored
     fireEvent.click(screen.getByRole("button", { name: "Save as draft claim" }));
     await waitFor(() => expect(steps()).toEqual(["done", "done", "done", "next"]), { timeout: 8000 });
-    expect(stepper().textContent).toContain("Use Submit on the draft above");
-  }, 20000);
+    expect(stepper().textContent).toContain("Next: use Submit on the draft");
+  }, 10000);
+  it("a claim created by someone else after the click is never adopted as this form's draft", async () => {
+    let v = view([stage({ claimableCents: 10_000_00, approvedBps: 10000 })]);
+    setup(() => v);
+    h.responses.previewClaimAction = preview;
+    // the action returns OUR id (mine); someone else's draft also appears in the next read
+    h.responses.createClaimDraftAction = () => { v = view(v.stages as unknown[], [claimRow("other", "PRJ-X-C00", "READY_FOR_APPROVAL"), claimRow("mine", "PRJ-X-C01", "DRAFT")]); return { ok: true, data: { claimId: "mine", duplicate: false } }; };
+    await openTab(/Commercial \/ Claims/);
+    await screen.findByText("Create progress claim");
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Preview claim" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Save as draft claim" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Save as draft claim" }));
+    await waitFor(() => expect(steps()).toEqual(["done", "done", "done", "next"]), { timeout: 8000 }); // follows MY draft (DRAFT), not the other READY claim (which would show submit done)
+    fireEvent.click(screen.getByRole("checkbox")); // ticking again forgets the saved draft
+    expect(steps()).toEqual(["done", "next", "todo", "todo"]);
+  }, 10000);
+  it("a member who cannot submit is told someone with edit access must", async () => {
+    let v = view([stage({ claimableCents: 10_000_00, approvedBps: 10000 })]);
+    setup(() => v, false);
+    h.responses.previewClaimAction = preview;
+    h.responses.createClaimDraftAction = () => { v = view(v.stages as unknown[], [claimRow("mine", "PRJ-X-C01", "DRAFT")]); return { ok: true, data: { claimId: "mine", duplicate: false } }; };
+    await openTab(/Commercial \/ Claims/);
+    await screen.findByText("Create progress claim");
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Preview claim" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Save as draft claim" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Save as draft claim" }));
+    await waitFor(() => expect(steps()[3]).toBe("next"), { timeout: 8000 });
+    expect(stepper().textContent).toMatch(/Next: use Submit on the draft|Needs someone with edit access/);
+  }, 10000);
   it("visiting a step never completes it: an untouched form stays at step 1 after the tab is revisited", async () => {
     setup(() => view([stage({ claimableCents: 10_000_00, approvedBps: 10000 })]));
     await openTab(/Commercial \/ Claims/);
@@ -92,12 +122,16 @@ describe("Nothing-claimable hint", () => {
     await openTab(/Commercial \/ Claims/);
     expect((await screen.findByTestId("nothing-claimable")).textContent).toContain("An owner or admin must approve it");
   });
-  it("names an unbalanced schedule and an uncertain claim; absent when something is claimable", async () => {
+  it("does not repeat the page banners for an unbalanced schedule or uncertain claim; absent when something is claimable", async () => {
     setup(() => view([stage()], [], [], { scheduleBalanced: false, uncertainClaimBlocking: true }));
     await openTab(/Commercial \/ Claims/);
     const t = (await screen.findByTestId("nothing-claimable")).textContent!;
-    expect(t).toContain("do not reconcile");
-    expect(t).toContain("uncertain Cin7 outcome");
+    // the page banners already say both: the hint does not repeat them
+    expect(screen.getByText(/Stage values do not reconcile to the contract value/)).toBeTruthy();
+    expect(screen.getByText(/A claim has an uncertain Cin7 outcome/)).toBeTruthy();
+    expect(t).not.toContain("do not reconcile");
+    expect(t).not.toContain("uncertain Cin7 outcome");
+    expect(t).toContain("approved commercial progress");
     cleanup();
     setup(() => view([stage({ claimableCents: 5, approvedBps: 5000 })]));
     await openTab(/Commercial \/ Claims/);
@@ -114,37 +148,47 @@ describe("Milestone confirmation line and unsaved guards", () => {
     expect(p.textContent).toMatch(/changes no approved percentage and no claimable amount/);
     expect(p.textContent).toMatch(/Approve commercial progress/);
   });
+  // Dirty-state behaviour: with an active guard a `beforeunload` is cancelled; without one it is not (independent of how many listeners were registered).
+  const guardActive = () => { const e = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
   it("typing a milestone note arms the unsaved guard; clearing it releases it", async () => {
-    const add = vi.spyOn(window, "addEventListener");
     setup(() => view([stage()]));
     await openTab(/Commercial \/ Claims/);
     const box = await screen.findByLabelText("What was confirmed");
-    const armed = () => add.mock.calls.filter(([t]) => t === "beforeunload").length;
-    const before = armed();
+    expect(guardActive()).toBe(false);
     fireEvent.change(box, { target: { value: "Delivered" } });
-    await waitFor(() => expect(armed()).toBe(before + 1));
-    const remove = vi.spyOn(window, "removeEventListener");
+    await waitFor(() => expect(guardActive()).toBe(true));
     fireEvent.change(box, { target: { value: "" } });
-    await waitFor(() => expect(remove.mock.calls.some(([t]) => t === "beforeunload")).toBe(true));
+    await waitFor(() => expect(guardActive()).toBe(false));
   });
-  it("the stage progress form arms the guard on a typed comment or changed percentage, and not when merely opened", async () => {
-    const add = vi.spyOn(window, "addEventListener");
+  it("the stage progress form is clean when merely opened, dirty on a typed comment, clean again when cleared", async () => {
     setup(() => view([stage({ reportedBps: 1000 })]));
     await openTab(/^Stages/);
-    const armed = () => add.mock.calls.filter(([t]) => t === "beforeunload").length;
     fireEvent.click(await screen.findByRole("button", { name: "Update progress" }));
-    const before = armed();
-    expect(before).toBe(0);
+    expect(guardActive()).toBe(false);
     fireEvent.change(screen.getByLabelText(/Comment \/ reason/), { target: { value: "site visit" } });
-    await waitFor(() => expect(armed()).toBe(1));
+    await waitFor(() => expect(guardActive()).toBe(true));
+    fireEvent.change(screen.getByLabelText(/Comment \/ reason/), { target: { value: "" } });
+    await waitFor(() => expect(guardActive()).toBe(false));
   });
-  it("changing the physical percentage alone arms the guard", async () => {
-    const add = vi.spyOn(window, "addEventListener");
+  it("changing the physical percentage alone arms the guard; restoring it releases it", async () => {
     setup(() => view([stage({ reportedBps: 1000 })]));
     await openTab(/^Stages/);
     fireEvent.click(await screen.findByRole("button", { name: "Update progress" }));
-    fireEvent.change(screen.getByLabelText(/Physical completion/), { target: { value: "55" } });
-    await waitFor(() => expect(add.mock.calls.filter(([t]) => t === "beforeunload").length).toBe(1));
+    const box = screen.getByLabelText(/Physical completion/);
+    fireEvent.change(box, { target: { value: "55" } });
+    await waitFor(() => expect(guardActive()).toBe(true));
+    fireEvent.change(box, { target: { value: "10" } });
+    await waitFor(() => expect(guardActive()).toBe(false));
+  });
+  it("someone else changing the stage while the form is open does not make an untouched form dirty", async () => {
+    let v = view([stage({ reportedBps: 1000 })]);
+    setup(() => v);
+    await openTab(/^Stages/);
+    fireEvent.click(await screen.findByRole("button", { name: "Update progress" }));
+    v = view([stage({ reportedBps: 3000 })]);
+    fireEvent.click(screen.getByRole("button", { name: /Commercial \/ Claims/ })); // forces a re-render path; the open form keeps its opened values
+    fireEvent.click(screen.getByRole("button", { name: /^Stages/ }));
+    expect(guardActive()).toBe(false);
   });
 });
 
@@ -155,8 +199,30 @@ describe("Variation Next line", () => {
     setup(() => view([stage()], [], [variation("v1", "V001", "DRAFT"), variation("v2", "V002", "APPROVED")]), false);
     h.responses.getVariationBillingAction = billing({});
     await openTab(/^Variations/);
-    expect((await screen.findByTestId("next-v1")).textContent).toMatch(/^Next: Submit it for approval.*a manager must approve/);
+    expect((await screen.findByTestId("next-v1")).textContent).toMatch(/^Next: If it has not been submitted, submit it for approval; if it has, it is waiting for a manager to approve/);
     await waitFor(() => expect(screen.getByTestId("next-v2").textContent).toMatch(/A manager checks the schedule and starts variation billing/));
+  });
+  it("billing started: claimable and not claimable wording; missing schedule; rejected", async () => {
+    const withScope = (claimable: number, remaining: number) => { const b = billing({ v2: "vp2" }) as { data: { consolidated: { scopes: unknown[] } } }; b.data.consolidated.scopes = [{ projectId: "vp2", scope: "VARIATION", variationCode: "V002", contractCents: 1, earnedCents: 0, committedCents: 0, claimableCents: claimable, remainingCents: remaining }]; return b; };
+    setup(() => view([stage()], [], [variation("v2", "V002", "APPROVED")]), true);
+    h.responses.getVariationBillingAction = withScope(5_00, 10_00);
+    await openTab(/^Variations/);
+    await waitFor(() => expect(screen.getByTestId("next-v2").textContent).toMatch(/value is claimable: open the billing workspace/));
+    cleanup();
+    h.responses.getVariationBillingAction = withScope(0, 10_00);
+    await openTab(/^Variations/);
+    await waitFor(() => expect(screen.getByTestId("next-v2").textContent).toMatch(/nothing is claimable yet.*uncertain claim/));
+    cleanup();
+    h.responses.getVariationBillingAction = withScope(0, 0);
+    await openTab(/^Variations/);
+    await waitFor(() => expect(screen.getByTestId("next-v2").textContent).toMatch(/already billed or committed/));
+  });
+  it("an approved variation with no schedule asks for one", async () => {
+    setup(() => view([stage()], [], [variation("v2", "V002", "APPROVED")]), true);
+    const b = billing({}) as { data: { schedules: Record<string, unknown> } }; b.data.schedules = {};
+    h.responses.getVariationBillingAction = b;
+    await openTab(/^Variations/);
+    await waitFor(() => expect(screen.getByTestId("next-v2").textContent).toMatch(/Set its billing schedule/));
   });
   it("an admin is told they can start billing", async () => {
     setup(() => view([stage()], [], [variation("v2", "V002", "APPROVED")]), true);

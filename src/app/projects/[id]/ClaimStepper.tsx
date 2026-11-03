@@ -27,15 +27,15 @@ export function ClaimStepper(props: ClaimStepperInput) {
 }
 
 /** Says WHY no stage can be claimed yet, and points to the tab that fixes it. Renders nothing when something is claimable. */
-export function NothingClaimableHint({ stages, scheduleBalanced, uncertainClaimBlocking, isAdmin, onOpenTab }: { stages: readonly ClaimableStage[]; scheduleBalanced: boolean; uncertainClaimBlocking: boolean; isAdmin: boolean; onOpenTab: (tab: "stages") => void }) {
-  const reasons = nothingClaimableReasons({ stages, scheduleBalanced, uncertainClaimBlocking, isAdmin });
+export function NothingClaimableHint({ stages, scheduleBalanced, uncertainClaimBlocking, isAdmin, bannersShown, onOpenTab }: { stages: readonly ClaimableStage[]; scheduleBalanced: boolean; uncertainClaimBlocking: boolean; isAdmin: boolean; bannersShown?: boolean; onOpenTab: (tab: "stages") => void }) {
+  const reasons = nothingClaimableReasons({ stages, scheduleBalanced, uncertainClaimBlocking, isAdmin, bannersShown });
   if (!reasons) return null;
   return (
     <div role="note" data-testid="nothing-claimable" className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-800">
       <p className="font-medium text-slate-900">Nothing can be claimed yet</p>
       <ul className="mt-1 list-disc space-y-1 pl-5">
         {reasons.map((r) => (
-          <li key={r.text}>{r.text}{r.tab && <> <button type="button" className="inline-flex min-h-11 items-center font-medium text-indigo-700 underline" onClick={() => onOpenTab(r.tab as "stages")}>Open the Stages tab</button></>}</li>
+          <li key={r.text}>{r.text.split("Approve commercial progress").flatMap((part, k) => (k === 0 ? [part] : [<span key={k} className="font-medium">Approve commercial progress</span>, part]))}{r.tab && <> <button type="button" className="inline-flex min-h-11 items-center font-medium text-indigo-700 underline" onClick={() => onOpenTab(r.tab as "stages")}>Open the Stages tab</button></>}</li>
         ))}
       </ul>
     </div>

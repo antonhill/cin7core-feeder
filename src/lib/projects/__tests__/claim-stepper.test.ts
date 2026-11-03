@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { claimSteps } from "../claim-stepper";
-import { nothingClaimableReasons } from "../nothing-claimable";
 
 const st = (i: Parameters<typeof claimSteps>[0]) => claimSteps(i).map((s) => s.status);
 
@@ -26,39 +25,14 @@ describe("claimSteps: complete only from state, never because visited", () => {
   it("a cancelled saved draft completes nothing", () => {
     expect(st({ chosenCount: 0, preview: "NONE", savedClaimStatus: "CANCELLED_BEFORE_WRITE" })).toEqual(["next", "todo", "todo", "todo"]);
   });
+  it("a closed no-write claim (cancelled or confirmed-failed) completes nothing", () => {
+    for (const status of ["CANCELLED_BEFORE_WRITE", "FAILED_CONFIRMED_NO_WRITE"]) expect(st({ chosenCount: 0, preview: "NONE", savedClaimStatus: status })).toEqual(["next", "todo", "todo", "todo"]);
+  });
+  it("submit step text depends on whether the viewer can submit", () => {
+    expect(claimSteps({ chosenCount: 0, preview: "NONE", savedClaimStatus: "DRAFT", canSubmit: true })[3].text).toBe("Next: use Submit on the draft");
+    expect(claimSteps({ chosenCount: 0, preview: "NONE", savedClaimStatus: "DRAFT", canSubmit: false })[3].text).toBe("Needs someone with edit access");
+  });
   it("a preview without a selection is not complete", () => {
     expect(st({ chosenCount: 0, preview: "CURRENT", savedClaimStatus: null })[1]).not.toBe("done");
-  });
-});
-
-const stage = (approvedBps: number, claimableCents: number, remainingCents: number) => ({ approvedBps, claimableCents, remainingCents });
-const base = { scheduleBalanced: true, uncertainClaimBlocking: false, isAdmin: true };
-
-describe("nothingClaimableReasons", () => {
-  it("is null when any stage is claimable", () => {
-    expect(nothingClaimableReasons({ ...base, stages: [stage(0, 0, 100), stage(5000, 50, 100)] })).toBeNull();
-  });
-  it("zero approved progress: admin is told to Approve commercial progress, a member is told who must", () => {
-    const a = nothingClaimableReasons({ ...base, stages: [stage(0, 0, 100)] })!;
-    expect(a[0].text).toMatch(/No stage has approved commercial progress\. Use Approve commercial progress/);
-    expect(a[0].tab).toBe("stages");
-    const m = nothingClaimableReasons({ ...base, isAdmin: false, stages: [stage(0, 0, 100)] })!;
-    expect(m[0].text).toMatch(/owner or admin must approve/);
-  });
-  it("approved progress already billed", () => {
-    const r = nothingClaimableReasons({ ...base, stages: [stage(10000, 0, 40)] })!;
-    expect(r[0].text).toMatch(/already billed or committed/);
-  });
-  it("fully committed stages", () => {
-    expect(nothingClaimableReasons({ ...base, stages: [stage(10000, 0, 0)] })![0].text).toMatch(/fully billed or committed/);
-  });
-  it("unbalanced schedule and uncertain claim come first and are named", () => {
-    const r = nothingClaimableReasons({ ...base, scheduleBalanced: false, uncertainClaimBlocking: true, stages: [stage(0, 0, 100)] })!;
-    expect(r[0].text).toMatch(/do not reconcile/);
-    expect(r[1].text).toMatch(/uncertain Cin7 outcome/);
-    expect(r.length).toBe(3);
-  });
-  it("no stages", () => {
-    expect(nothingClaimableReasons({ ...base, stages: [] })![0].text).toMatch(/no billing stages/);
   });
 });

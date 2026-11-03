@@ -11,12 +11,16 @@ export type ClaimStepperInput = {
   preview: PreviewState;
   /** The draft claim created by this form since the selection was last cleared (its CURRENT status), or null. */
   savedClaimStatus: string | null;
+  /** The viewer has a Submit button on that draft (claim action plan); false = someone else must submit it. */
+  canSubmit?: boolean;
 };
 
+/** Closed without anything being written: such a draft counts as no claim at all. */
+const CLOSED_NO_WRITE = new Set(["CANCELLED_BEFORE_WRITE", "FAILED_CONFIRMED_NO_WRITE"]);
 const SUBMITTED_OR_LATER = new Set(["READY_FOR_APPROVAL", "APPROVED", "CIN7_PENDING", "CIN7_CREATED", "RECONCILED", "FAILED_UNCERTAIN"]);
 
 export function claimSteps(i: ClaimStepperInput): ClaimStep[] {
-  const saved = i.savedClaimStatus !== null && i.savedClaimStatus !== "CANCELLED_BEFORE_WRITE";
+  const saved = i.savedClaimStatus !== null && !CLOSED_NO_WRITE.has(i.savedClaimStatus);
   const submitted = saved && SUBMITTED_OR_LATER.has(i.savedClaimStatus as string);
   const selected = i.chosenCount > 0 || saved;
   const previewed = saved || (i.preview === "CURRENT" && i.chosenCount > 0);
@@ -33,6 +37,6 @@ export function claimSteps(i: ClaimStepperInput): ClaimStep[] {
     const isStale = key === "preview" && stale;
     const status: ClaimStepStatus = isStale ? "attention" : !nextTaken ? "next" : "todo";
     nextTaken = true;
-    return { key, label, status, text: isStale ? todoText : status === "next" ? (key === "submit" ? "Use Submit on the draft above" : "Next") : todoText };
+    return { key, label, status, text: isStale ? todoText : status === "next" ? (key === "submit" ? (i.canSubmit === false ? "Needs someone with edit access" : "Next: use Submit on the draft") : "Next") : todoText };
   });
 }

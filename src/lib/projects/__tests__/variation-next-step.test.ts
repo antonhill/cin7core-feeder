@@ -6,8 +6,8 @@ const v = (o: Partial<VariationNextInput>): VariationNextInput => ({ status: "AP
 describe("variationNextStep", () => {
   it("draft without a price: price it first", () => expect(variationNextStep(v({ status: "DRAFT", amountCents: 0 }))).toMatch(/Set a price/));
   it("draft: submit; says who must approve", () => {
-    expect(variationNextStep(v({ status: "DRAFT", isAdmin: false }))).toMatch(/Submit it for approval.*a manager must approve/);
-    expect(variationNextStep(v({ status: "DRAFT", isAdmin: true }))).toMatch(/approve or reject it here/);
+    expect(variationNextStep(v({ status: "DRAFT", isAdmin: false }))).toMatch(/If it has not been submitted.*waiting for a manager to approve/);
+    expect(variationNextStep(v({ status: "DRAFT", isAdmin: true }))).toMatch(/waiting for a manager.*approve or reject it here or in Approvals/);
   });
   it("rejected is closed", () => expect(variationNextStep(v({ status: "REJECTED" }))).toMatch(/Closed/));
   it("approved, billing figures not loaded: does not guess", () => expect(variationNextStep(v({ billingLoaded: false }))).toMatch(/still loading/));
@@ -21,8 +21,12 @@ describe("variationNextStep", () => {
   });
   it("billing started: claimable value points to claims; none points to approving commercial progress", () => {
     expect(variationNextStep(v({ billingStarted: true, claimableCents: 5 }))).toMatch(/prepare a claim/);
-    expect(variationNextStep(v({ billingStarted: true, claimableCents: 0 }))).toMatch(/approve commercial progress/);
-    expect(variationNextStep(v({ billingStarted: true, claimableCents: 0, isAdmin: false }))).toMatch(/A manager approves commercial progress/);
+    expect(variationNextStep(v({ billingStarted: true, claimableCents: 0 }))).toMatch(/nothing is claimable yet.*commercial progress is approved/);
+    expect(variationNextStep(v({ billingStarted: true, claimableCents: 0, isAdmin: false }))).toMatch(/A manager checks commercial progress/);
   });
   it("unknown status", () => expect(variationNextStep(v({ status: "???" }))).toMatch(/not recognised/));
+  it("billing started: unknown claimable never claims zero; fully billed is said plainly", () => {
+    expect(variationNextStep(v({ billingStarted: true }))).toMatch(/to see what can be claimed/);
+    expect(variationNextStep(v({ billingStarted: true, claimableCents: 0, remainingCents: 0 }))).toMatch(/already billed or committed/);
+  });
 });

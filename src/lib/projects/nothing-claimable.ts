@@ -2,11 +2,14 @@
 export type ClaimableStage = { approvedBps: number; claimableCents: number; remainingCents: number };
 export type NothingClaimableReason = { text: string; tab?: "stages" };
 
-export function nothingClaimableReasons(i: { stages: readonly ClaimableStage[]; scheduleBalanced: boolean; uncertainClaimBlocking: boolean; isAdmin: boolean }): NothingClaimableReason[] | null {
+export function nothingClaimableReasons(i: { stages: readonly ClaimableStage[]; scheduleBalanced: boolean; uncertainClaimBlocking: boolean; isAdmin: boolean;
+  /** The page already shows banners for an unbalanced schedule / uncertain claim: do not repeat them here. */
+  bannersShown?: boolean;
+}): NothingClaimableReason[] | null {
   if (i.stages.some((s) => s.claimableCents > 0)) return null; // something is claimable: no hint needed
   const out: NothingClaimableReason[] = [];
-  if (!i.scheduleBalanced) out.push({ text: "The stage values do not reconcile to the contract value, so claiming is blocked. Check the stage values.", tab: "stages" });
-  if (i.uncertainClaimBlocking) out.push({ text: "A claim has an uncertain Cin7 outcome and is blocking billing of its stages. Reconcile it in the claims list above." });
+  if (!i.scheduleBalanced && !i.bannersShown) out.push({ text: "The stage values do not reconcile to the contract value, so claiming is blocked. Check the stage values.", tab: "stages" });
+  if (i.uncertainClaimBlocking && !i.bannersShown) out.push({ text: "A claim has an uncertain Cin7 outcome and is blocking billing of its stages. Reconcile it in the claims list above." });
   if (i.stages.length === 0) { out.push({ text: "This project has no billing stages yet." }); return out; }
   const unapproved = i.stages.filter((s) => s.approvedBps === 0 && s.remainingCents > 0).length;
   const spent = i.stages.filter((s) => s.approvedBps > 0 && s.remainingCents > 0).length;
