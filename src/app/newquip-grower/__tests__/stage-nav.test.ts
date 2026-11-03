@@ -18,7 +18,8 @@ describe("six-stage navigation", () => {
   it("shows all six stages in order with their status, highlights the stage being viewed, and states the next action", () => {
     const h = html();
     const labels = ["Configuration", "Costing &amp; Estimator Review", "Manager Approval", "Customer Quotation", "Customer Acceptance", "Project Handover"];
-    let at = -1; for (const l of labels) { const i = h.indexOf(l); expect(i, l).toBeGreaterThan(at); at = i; }
+    const list = h.indexOf('id="stage-nav-list"'); // the narrow-screen disclosure above the list repeats the viewed stage's name, so order is checked within the list
+    let at = list; for (const l of labels) { const i = h.indexOf(l, list); expect(i, l).toBeGreaterThan(at); at = i; }
     for (const n of [1, 2, 3, 4, 5, 6]) expect(h).toContain(`data-stage="${n}"`);
     expect(h).toContain("Complete"); expect(h).toContain("Awaiting action"); expect(h).toContain("Not yet available");
     expect(h.match(/aria-current="step"/g)).toHaveLength(1);

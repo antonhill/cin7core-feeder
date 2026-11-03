@@ -52,6 +52,11 @@ import { deriveStage1Steps, NO_CUSTOMER_FACTS, STAGE1_STEP_IDS, STAGE1_STEP_LABE
 import { deriveStage2Steps, stage2StepIds, STAGE2_STEP_LABEL, type Stage2StepId } from "@/newquip/quote/stage2-steps";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { DeliveryPanel, type DeliveryGate } from "./DeliveryPanel";
+import { ApprovalChecklist, AcceptanceStatusBanner, HandoverChecklist } from "./Stage36Guidance";
+import { deriveApprovalChecklist } from "@/newquip/quote/stage3-approval";
+import { deriveStage4Steps, STAGE4_STEP_IDS, type Stage4StepId } from "@/newquip/quote/stage4-steps";
+import { deriveAcceptanceBanner } from "@/newquip/quote/stage5-banner";
+import { deriveHandoverReadiness } from "@/newquip/quote/stage6-handover";
 import { StageNav } from "./StageNav";
 import { AcceptancePanel } from "./AcceptancePanel";
 import { computeStages, currentStage, parseStage, type CommercialState, type StageId } from "@/newquip/quote/stages";
@@ -116,6 +121,8 @@ export default function QuoteEditorPage() {
   const [stepNo, setStepNo] = useState<number>(() => parseStepParam(search.get("step"), STAGE1_STEP_IDS.length));
   // Stage 2 has its own step number but SHARES the "Show all steps" preference (one setting for the builder, one storage key).
   const [step2No, setStep2No] = useState<number>(() => (parseStage(search.get("stage")) === 2 ? parseStepParam(search.get("step"), 4) : 1));
+  // Stage 4 (Customer Quotation) has two steps, with the same shared preference.
+  const [step4No, setStep4No] = useState<number>(() => (parseStage(search.get("stage")) === 4 ? parseStepParam(search.get("step"), STAGE4_STEP_IDS.length) : 1));
   const [showAllSteps, setShowAllSteps] = useShowAllSteps("nq-builder-show-all");
   const [customerFacts, setCustomerFacts] = useState<Stage1CustomerFacts>(NO_CUSTOMER_FACTS);
   const onCustomerFacts = (f: Stage1CustomerFacts) => setCustomerFacts((p) => (p.loaded === f.loaded && p.available === f.available && p.hasSnapshot === f.hasSnapshot && p.hasContact === f.hasContact && p.contactName === f.contactName && p.loadError === f.loadError ? p : f));
@@ -269,7 +276,7 @@ export default function QuoteEditorPage() {
   );
   const here = currentStage(stages);
   const stage: StageId = picked ?? here;
-  const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); const at = n === 1 ? stepNo : n === 2 ? step2No : 1; const sp = new URLSearchParams([...u.searchParams].filter(([k]) => k !== "step" && k !== "stage")); sp.set("stage", String(n)); if (at > 1) sp.set("step", String(at)); u.search = sp.toString(); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
+  const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); const at = n === 1 ? stepNo : n === 2 ? step2No : n === 4 ? step4No : 1; const sp = new URLSearchParams([...u.searchParams].filter(([k]) => k !== "step" && k !== "stage")); sp.set("stage", String(n)); if (at > 1) sp.set("step", String(at)); u.search = sp.toString(); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
 
   const stage1 = deriveStage1Steps({ customerName: draft.customerName, siteName: draft.siteName, penningPigSize: cfg.penningPigSize, calcIssues: ev.calc.issues, readinessReasons: rd.reasons, customer: customerFacts, roomValues: { lengthM: cfg.lengthM, widthM: cfg.widthM, rooms: cfg.rooms, totalPens: cfg.totalPens, pigsPerRoom: cfg.pigsPerRoom } });
   const stepId = STAGE1_STEP_IDS[stepNo - 1];
@@ -306,6 +313,22 @@ export default function QuoteEditorPage() {
   };
   const goStep2 = (id: string) => goStep2No(step2Ids.indexOf(id as Stage2StepId) + 1);
   const next2Open = nextIncompleteStepId(stage2, step2Id);
+
+  // Stage 4 steps: guidance only. Statuses come from the issued-document and sent records the page already reads (never from a visit); the Issue and Send actions keep their own gates.
+  const stage4 = deriveStage4Steps({ hasDocument: gate.hasDocument, commercial: gate.status });
+  const step4Id: Stage4StepId = STAGE4_STEP_IDS[step4No - 1] ?? "issue";
+  const goStep4No = (n: number) => {
+    const next = Math.min(Math.max(n, 1), STAGE4_STEP_IDS.length);
+    setStep4No(next);
+    try { const u = new URL(window.location.href); u.searchParams.set("step", String(next)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ }
+  };
+  const next4Open = nextIncompleteStepId(stage4, step4Id);
+  // Stage 3 / 5 / 6 guidance, derived from state already held here (the predicates are checkApproval, the stage-5 status and resolveScheduleChoice).
+  const approvalChecklist = deriveApprovalChecklist({ readinessState: rd.state, readinessReasons: rd.reasons, totalExVatCents: totalCents, customerConfirmedCents: q.customer_confirmed_cents, signoffHash: q.estimator_signoff_hash, currentDraftHash: q.draft_hash, dirty });
+  const acceptanceBanner = deriveAcceptanceBanner(stages[4], final ? gate.status : null);
+  const handoverReadiness = deriveHandoverReadiness({ approved: final, acceptanceRequired: gate.requires, accepted: gate.accepted, scheduleOk: resolveScheduleChoice(scheduleChoice).ok, isManager: roles.has("manager") });
+  // A stage that is not yet available can be "Preview only" where the page genuinely shows something read-only: Stage 4's customer summary once the quote is READY.
+  const previewable: StageId[] = !final && summary ? [4] : [];
 
   const totalsPanel = budget && (
     <Panel>
@@ -354,7 +377,7 @@ export default function QuoteEditorPage() {
       {final && <div className="mt-4"><Alert tone="info">This quote is the manager-approved final. Its accepted baseline is frozen; any change after acceptance must be a Variation on the Project.</Alert></div>}
       {budget && <p className="mt-3 text-xs text-slate-600">{budget.priceSource.notice} Provenance: {budget.priceSource.provenance}</p>}
 
-      <StageNav stages={stages} current={here} viewing={stage} onSelect={goStage} />
+      <StageNav stages={stages} current={here} viewing={stage} onSelect={goStage} previewable={previewable} />
 
       {stage === 1 && (
         <StepRail id="s1" ariaLabel="Configuration steps" steps={stage1.steps} currentId={stepId} onSelect={goStep}
@@ -794,6 +817,7 @@ export default function QuoteEditorPage() {
             <PanelTitle>Manager approval</PanelTitle>
             <p className="mt-1 text-xs text-slate-600">Final internal commercial approval. The Rep sees the outcome here and by notification; only a Manager can decide.</p>
             {handoffFacts}
+            {q.state === "ESTIMATOR_REVIEW" && <ApprovalChecklist items={approvalChecklist} onGoStage={goStage} />}
 
             {approveSignoffMissing && <div id={`${uid}-approve-signoff`}><Alert tone="info">Waiting for the Estimator&apos;s sign-off before the Manager can decide.</Alert></div>}
             {approveSignoffStale && <div id={`${uid}-approve-stale`}><Alert tone="warning">The Estimator&apos;s sign-off no longer matches the current quotation. It must be given again before the Manager can decide.</Alert></div>}
@@ -840,7 +864,24 @@ export default function QuoteEditorPage() {
       {stage === 4 && !hold(4) && (
         <div className="mt-6 space-y-6">
           {!final && <Alert tone="info">The customer quotation can be issued only after the Manager has approved. Below is the customer-facing summary as it stands.</Alert>}
-          {final && q.accepted_baseline && <DeliveryPanel quoteId={id} contractCents={q.accepted_baseline.contractCents} onGate={setGate} section="quotation" />}
+          {final && q.accepted_baseline && (
+            <StepRail id="s4" ariaLabel="Customer quotation steps" steps={stage4} currentId={step4Id} onSelect={(sid) => goStep4No(STAGE4_STEP_IDS.indexOf(sid as Stage4StepId) + 1)}
+              actions={(
+                <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+                  <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAllSteps} onChange={(e) => setShowAllSteps(e.target.checked)} /> Show all steps</label>
+                  {next4Open
+                    ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep4No(STAGE4_STEP_IDS.indexOf(next4Open as Stage4StepId) + 1)}>Next incomplete step</Button>
+                    : <span className="text-sm text-slate-700" data-testid="all-steps-complete">Every step is complete.</span>}
+                </div>
+              )} />
+          )}
+          {final && q.accepted_baseline && <DeliveryPanel quoteId={id} contractCents={q.accepted_baseline.contractCents} onGate={setGate} section="quotation" steps={{ current: step4Id, showAll: showAllSteps }} />}
+          {final && q.accepted_baseline && !showAllSteps && (
+            <div className="flex items-center justify-between gap-3" data-testid="step-buttons">
+              {step4No > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep4No(step4No - 1)}>Back</Button> : <span />}
+              {step4No < STAGE4_STEP_IDS.length ? <Button type="button" className="min-h-11" onClick={() => goStep4No(step4No + 1)}>Next</Button> : <span />}
+            </div>
+          )}
         <Panel>
           {!summary ? (
             <Alert tone="warning">The customer summary appears once the quote is complete (READY). Resolve the items on the Estimator review tab.</Alert>
@@ -876,6 +917,7 @@ export default function QuoteEditorPage() {
         <div className="mt-6 space-y-6">
           {!final && <Alert tone="info">Customer acceptance is recorded against the issued, Manager-approved quotation. It becomes available once the quotation has been issued.</Alert>}
           {final && !gate.requires && <Alert tone="info">This quotation was approved before customer acceptance was introduced, so it is grandfathered: a Project does not depend on a recorded acceptance. A response can still be recorded if the customer gives one.</Alert>}
+          {final && acceptanceBanner && <AcceptanceStatusBanner banner={acceptanceBanner} />}
           {final && q.accepted_baseline && <AcceptancePanel quoteId={id} onGate={setGate} />}
         </div>
       )}
@@ -902,6 +944,7 @@ export default function QuoteEditorPage() {
 
               <p className="mt-2 text-xs text-slate-600">Customer: {draft.customerName || "—"} · Cin7 customer reference is taken from the latest customer snapshot when the Project is created. Physical SKU mappings are frozen with the baseline; the Project, its billing stages and the Cin7 Sale are managed in the Projects module.</p>
               <div className="mt-5 border-t border-slate-100 pt-5">
+                {!q.project_id && <HandoverChecklist items={handoverReadiness} />}
                 {q.project_id ? (
                   <Link href={`/projects/${q.project_id}`} className="inline-flex h-9 items-center rounded-md bg-indigo-600 px-4 text-sm font-medium text-white hover:bg-indigo-700">Open the Project</Link>
                 ) : gate.requires && !gate.accepted ? (
