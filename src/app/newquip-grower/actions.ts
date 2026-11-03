@@ -232,6 +232,7 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
     const prior = await loadQuote(db, a.orgId, quoteId);
     // Once the quotation has a Cin7 customer snapshot, the snapshot is the ONLY source of the customer name: a typed or edited name in the submitted draft is replaced by it.
     const snapName = (await customerFeaturesAvailable(db)) ? fieldValue((await latestSnapshot(db, a.orgId, quoteId))?.snapshot.name ?? { state: "missing" }) : null;
+    const priorHash = prior?.draft_hash; // read now (D-12, #195): a store that updates the row it handed out in place must not change what "before" means
     const saved = await saveDraft(db, a.orgId, a.roles, quoteId, await sanitiseSubmittedDraft(a, db, draft, prior?.draft), snapName);
     // Changed content invalidates the estimator's sign-off (saveDraft clears it) and any open approval of the older content: the quote goes back to estimator review.
     // Race repair: if the customer was (re)selected while this save was in flight, the snapshot name wins - write it again from the stored draft.
@@ -243,9 +244,13 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
     const amount = await reconcileConfirmationAmount(db, whoOf(a), quoteId, evaluationContext(true), returnByOf(a));
     // saveDraft already withdrew an existing sign-off for the changed content, so it counts as cleared in the reported effect
     let confirmationEffect: ConfirmationEffectView | undefined = amount ? { ...amount, signoffCleared: amount.signoffCleared || saved.signoffCleared } : undefined;
-    if (!amount && saved.draftHash !== prior?.draft_hash && (await stagedAvailable(db))) {
-      const err = await resyncApprovalsLogged(db, whoOf(a), quoteId, { returnedToRep: false, signoffCleared: true });
-      if (err) confirmationEffect = { confirmationCleared: false, signoffCleared: saved.signoffCleared, returnedToRep: false, approvalSyncError: err };
+    if (!amount && saved.draftHash !== priorHash) {
+      // D-12 (#195): stagedAvailable is INSIDE the catch; the draft is saved, so a failed sync never fails the save. resyncApprovalsLogged still reports a sync failure to the UI.
+      await (async () => {
+        if (!(await stagedAvailable(db))) return;
+        const err = await resyncApprovalsLogged(db, whoOf(a), quoteId, { returnedToRep: false, signoffCleared: true });
+        if (err) confirmationEffect = { confirmationCleared: false, signoffCleared: saved.signoffCleared, returnedToRep: false, approvalSyncError: err };
+      })().catch(() => undefined);
     }
     const q = await loadQuote(db, a.orgId, quoteId);
     return q ? { ok: true, data: { ...(await view(db, q, a)), ...(confirmationEffect ? { confirmationEffect } : {}) } } : { ok: false, error: "Quote not found." };
