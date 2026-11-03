@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-/* eslint-disable @typescript-eslint/no-explicit-any */import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
@@ -61,20 +62,6 @@ vi.mock("../[id]/CustomerPanel", () => ({ CustomerPanel: (p: { onPicked: (n: str
 const base = emptyDraft();
 const goodConfig = { ...base.config, rooms: 12, widthM: 14.43, lengthM: 49.5, totalPens: 20, pigsPerRoom: 600, hospitalPens: 2, feederVariant: "STANDARD", penningPigSize: "SMALL", penningRunningMetresPerRoom: 20 } as any;
 const customerView = (over: Record<string, unknown> = {}): any => ({ available: true, snapshot: null, snapshotId: null, seq: null, issues: ["Select the customer from Cin7."], currency: null, selectedContactIndex: null, confirmationContact: null, editable: true, lockedReason: null, changeReturnsToRep: false, history: [], ...over });
-const snapshotView = (contact: boolean): any => customerView({ snapshot: { cin7CustomerId: "c1", name: { state: "present", value: "Acme" }, tradingName: { state: "missing" }, billingAddress: null, vatNumber: { state: "missing" }, currency: { state: "missing" }, paymentTerm: { state: "missing" }, contacts: [], chosenContact: contact ? { name: "Sean", email: "s@x.co", source: "CIN7_CONTACT", phone: null } : null }, snapshotId: "s1", seq: 1, issues: [] });
-
-async function open(draftOver: Record<string, unknown> = {}, view: any = customerView(), roles: Array<"REP" | "ESTIMATOR" | "MANAGER"> = ["REP", "ESTIMATOR"], step?: string) {
-  asRoles(...roles);
-  vi.spyOn(ca, "getQuoteCustomerAction").mockResolvedValue({ ok: true, data: view } as never);
-  vi.spyOn(da, "getQuoteDeliveryAction").mockResolvedValue({ ok: false, error: "n/a" } as never);
-  const { id } = await createQuote(db as never, ORG, "rep@nq");
-  await saveDraft(db as never, ORG, member, id, { ...base, customerName: "Acme Pigs", siteName: "Farm 1", config: goodConfig, ...draftOver } as any);
-  g.__QID = id; g.__STEP = step;
-  const { default: Page } = await import("../[id]/page");
-  render(createElement(Page));
-  await waitFor(() => expect(screen.getByTestId("step-rail")).toBeTruthy(), { timeout: 5000 });
-}
-
 const viewing = () => document.querySelector('[data-stage][aria-current="step"]')!.getAttribute("data-stage");
 const row = (id: string) => db.rows("newquip_quotes").find((r) => r.id === id) as Record<string, any>;
 async function openQuote(roles: Array<"REP" | "ESTIMATOR" | "MANAGER">, patch: (r: Record<string, any>) => void, draftOver: Record<string, unknown> = {}) {
