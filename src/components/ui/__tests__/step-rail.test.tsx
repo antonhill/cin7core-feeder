@@ -121,7 +121,7 @@ describe("useShowAllSteps (per-viewer convenience)", () => {
 
 describe("presentation/derivation modules import no server action or store", () => {
   const files = [
-    "src/components/ui/StepRail.tsx", "src/components/ui/step-rail-model.ts", "src/components/ui/use-show-all-steps.ts", "src/newquip/quote/stage1-steps.ts", "src/app/newquip-grower/[id]/Stage1Review.tsx",
+    "src/components/ui/StepRail.tsx", "src/components/ui/step-rail-model.ts", "src/components/ui/use-show-all-steps.ts", "src/newquip/quote/stage1-steps.ts", "src/newquip/quote/stage2-steps.ts", "src/app/newquip-grower/[id]/Stage1Review.tsx",
   ];
   it.each(files)("%s", (f) => {
     const src = readFileSync(`${process.cwd()}/${f}`, "utf8");
