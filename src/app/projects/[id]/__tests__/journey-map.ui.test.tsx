@@ -5,6 +5,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectOverview } from "../ProjectOverview";
 import { InvoiceVerificationProvider, useInvoiceVerification } from "../invoice-verification-context";
+import { viewPostingsSignature } from "@/lib/projects/invoice-authorisation";
+import { useState } from "react";
 import type { InvoiceVerification } from "@/lib/projects/invoice-verification";
 import { JourneyMap } from "../JourneyMap";
 import { getProjectOverviewDataAction } from "../../overview-actions";
@@ -88,6 +90,36 @@ describe("JourneyMap - invoice verification context", () => {
     fireEvent.click(screen.getByRole("button", { name: "seed verification" }));
     await waitFor(() => expect(screen.getByTestId("journey-commercial-authorisation").getAttribute("data-status")).toBe("completed"));
     expect(screen.getByTestId("journey-commercial-authorisation").textContent).toContain("Authorised in Cin7 - verified");
+    expect(overviewAction).toHaveBeenCalledTimes(1);
+    expect(physicalAction).not.toHaveBeenCalled();
+  });
+});
+
+describe("JourneyMap - verification forwarded from a variation workspace", () => {
+  it("V001's verification (run in the nested variation workspace) is seen at base level, and is RETAINED after that workspace unmounts while the posting is unchanged", async () => {
+    const vclaim = demoInput().scopes[1].view.claims[0];
+    const sig = viewPostingsSignature([{ id: vclaim.id, cin7Status: vclaim.cin7Status }]);
+    const result: InvoiceVerification = { verifiedAt: "2026-11-02T10:00:00Z", saleId: "s2", saleNumber: "SO-28", unaccounted: [], unresolvedPostings: 0, invoices: [{ postingId: "p", claimId: vclaim.id, invoiceNumber: "INV-V1", recordedStatus: "DRAFT", currentStatus: "AUTHORISED", outcome: "CHANGED" }] };
+    const Child = () => { const api = useInvoiceVerification(); return <button type="button" onClick={() => api.set(result, "child-sig")}>verify variation</button>; };
+    const Harness = () => {
+      const [shown, setShown] = useState(true);
+      return (
+        <InvoiceVerificationProvider signature="base-sig">
+          {shown && <InvoiceVerificationProvider signature="child-sig" claimIds={[vclaim.id]} claimSigs={{ [vclaim.id]: sig }}><Child /></InvoiceVerificationProvider>}
+          <button type="button" onClick={() => setShown(false)}>leave variations tab</button>
+          <ProjectOverview projectId="p-base" refreshKey="k" onOpenTab={vi.fn()} />
+        </InvoiceVerificationProvider>
+      );
+    };
+    render(<Harness />);
+    const v = await screen.findByTestId("journey-variation-V001");
+    expect(v.textContent).toContain("Not verified");
+    fireEvent.click(screen.getByRole("button", { name: "verify variation" }));
+    await waitFor(() => expect(screen.getByTestId("journey-variation-V001").textContent).toContain("Authorised in Cin7 - verified"));
+    expect(screen.getByTestId("journey-commercial-authorisation").textContent).not.toContain("Authorised in Cin7 - verified"); // a variation's verification never completes BASE
+    fireEvent.click(screen.getByRole("button", { name: "leave variations tab" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "verify variation" })).toBeNull());
+    expect(screen.getByTestId("journey-variation-V001").textContent).toContain("Authorised in Cin7 - verified");
     expect(overviewAction).toHaveBeenCalledTimes(1);
     expect(physicalAction).not.toHaveBeenCalled();
   });

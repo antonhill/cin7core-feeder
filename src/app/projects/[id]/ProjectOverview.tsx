@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { OverviewSkeleton } from "./LoadingSkeletons";
 import { JourneyMap } from "./JourneyMap";
 import { useInvoiceVerification } from "./invoice-verification-context";
+import { viewPostingsSignature, type VerifiedRef } from "@/lib/projects/invoice-authorisation";
 import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
 import type { BadgeTone } from "@/components/ui/Badge";
@@ -152,10 +153,17 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab, contractShow
   // The journey reads only what is already loaded: the overview data and the fulfilment read the user may have asked for. It adds no request.
   const journey = useMemo(() => {
     if (!res?.ok || !res.data || !overview || overview instanceof Error) return null;
-    const cv = invoiceVerification.verification;
-    const verifiedByClaimId = Object.fromEntries((cv?.invoices ?? []).map((i) => [i.claimId, { verifiedAt: cv!.verifiedAt, invoice: i }]));
-    try { return buildJourney({ scopes: res.data.scopes, physical: overview.physical, verification: { verifiedByClaimId, readFailed: invoiceVerification.error !== null } }); } catch { return null; }
-  }, [res, overview, invoiceVerification.verification, invoiceVerification.error]);
+    // Every scope's claims, asked of the in-memory context with each claim's own posting signature (so a verification retained from an unmounted variation workspace is used only
+    // while that posting is unchanged). Pure lookups: nothing is read from Cin7 or the database.
+    const verifiedByClaimId: Record<string, VerifiedRef | undefined> = {};
+    const failedClaimIds: string[] = [];
+    for (const sc of res.data.scopes) for (const cl of sc.view.claims) {
+      const ref = invoiceVerification.verifiedFor(cl.id, viewPostingsSignature([{ id: cl.id, cin7Status: cl.cin7Status }]));
+      if (ref) verifiedByClaimId[cl.id] = ref;
+      if (invoiceVerification.errorFor(cl.id) !== null) failedClaimIds.push(cl.id);
+    }
+    try { return buildJourney({ scopes: res.data.scopes, physical: overview.physical, verification: { verifiedByClaimId, failedClaimIds } }); } catch { return null; }
+  }, [res, overview, invoiceVerification]);
 
   if (res === null) return <OverviewSkeleton />;
   if (!res.ok || overview === null || overview instanceof Error) {

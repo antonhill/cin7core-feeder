@@ -385,7 +385,7 @@ export interface JourneyInput {
    * What the manual, read-only "Verify invoice statuses" has verified, as plain data (the caller reads it from the in-memory verification context; this module imports no
    * hook). Absent = nothing verified. A verification only ever says something about the claims it lists; it is never read from the recorded snapshot.
    */
-  verification?: { verifiedByClaimId: Record<string, VerifiedRef | undefined>; readFailed: boolean };
+  verification?: { verifiedByClaimId: Record<string, VerifiedRef | undefined>; /** Claims whose workspace's last Verify failed to read Cin7. */ failedClaimIds: ReadonlyArray<string> };
 }
 
 export const JOURNEY_FOOTNOTE = "There is no project completion or closure state in the Toolbox, so the journey shows progress only and never marks the project as finished.";
@@ -430,8 +430,9 @@ const sentence = (reasons: string[]): string => reasons.map((r, i) => (i === 0 ?
 function invoiceAuthorisationFor(v: ProjectView, verification: JourneyInput["verification"]): { status: JourneyStatus; unknown: boolean; statusLabel?: string; detail: string; total: number } {
   const invoiced = v.claims.filter((c) => INVOICED_KINDS.includes(c.cin7Status.kind) && !!c.cin7Status.invoiceNumber);
   const total = invoiced.length;
+  const failedIds = new Set(verification?.failedClaimIds ?? []);
   if (total === 0) return { status: "not_started", unknown: false, detail: "No invoices posted yet.", total };
-  const rows = invoiced.map((c) => invoiceAuthorisation(c.cin7Status, verification?.verifiedByClaimId[c.id] ?? null, !!verification?.readFailed));
+  const rows = invoiced.map((c) => invoiceAuthorisation(c.cin7Status, verification?.verifiedByClaimId[c.id] ?? null, failedIds.has(c.id)));
   const verified = rows.filter((r) => r.state === "VERIFIED");
   const authorised = verified.filter((r) => isAuthorised(r.verifiedStatus)).length;
   const problems = rows.filter((r) => r.state === "NOT_IN_SALE" || r.state === "AMBIGUOUS" || r.state === "IDENTITY_MISMATCH" || r.state === "STATUS_UNREADABLE").length;
@@ -443,7 +444,7 @@ function invoiceAuthorisationFor(v: ProjectView, verification: JourneyInput["ver
   const recorded = rows.map((r) => r.recorded?.status ?? "no status");
   const counts = [...new Set(recorded)].map((st) => [recorded.filter((x) => x === st).length, st.toLowerCase()] as const).sort((x, y) => y[0] - x[0] || x[1].localeCompare(y[1])).map(([n, st]) => `${n} ${st}`).join(", ");
   const last = rows.map((r) => r.recorded?.at).filter((x): x is string => !!x).sort().pop() ?? null;
-  const failed = !!verification?.readFailed;
+  const failed = invoiced.some((c) => failedIds.has(c.id));
   return { status: "not_started", unknown: true, statusLabel: failed ? "Could not verify" : "Not verified", detail: `${failed ? "The last verification could not read Cin7. " : ""}Last recorded${last ? ` ${formatSast(last)}` : ""}: ${counts} (recorded snapshot, not verified). Verify in Claims.`, total };
 }
 

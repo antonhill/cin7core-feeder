@@ -315,7 +315,7 @@ const ownerVariation = (postings = [posting("vc1", "RECONCILED", "INV-V", "DRAFT
   stages: [stage("vs", 1, "Variation", R(500))], events: [progress("vs", 10000, 10000)], claims: [claim("vc1", 1, "APPROVED", committed)], postings, variationCode: "V001", saleNumber: "SO-2",
 });
 const ref = (claimId: string, invoiceNumber: string, currentStatus: string | null, outcome: "SAME" | "CHANGED" = "CHANGED", at = "2026-11-02T10:00:00Z"): VerifiedRef => ({ verifiedAt: at, invoice: { postingId: `p-${claimId}`, claimId, invoiceNumber, recordedStatus: "DRAFT", currentStatus, outcome } });
-const verifyAll = (status = "AUTHORISED"): { verifiedByClaimId: Record<string, VerifiedRef | undefined>; readFailed: boolean } => ({ verifiedByClaimId: { c1: ref("c1", "INV-1", status), c3: ref("c3", "INV-3", status), c4: ref("c4", "INV-4", status), c5: ref("c5", "INV-5", status), vc1: ref("vc1", "INV-V", status) }, readFailed: false });
+const verifyAll = (status = "AUTHORISED"): { verifiedByClaimId: Record<string, VerifiedRef | undefined>; failedClaimIds: string[] } => ({ verifiedByClaimId: { c1: ref("c1", "INV-1", status), c3: ref("c3", "INV-3", status), c4: ref("c4", "INV-4", status), c5: ref("c5", "INV-5", status), vc1: ref("vc1", "INV-V", status) }, failedClaimIds: [] });
 const oldRule = (v: OverviewScopeInput["view"]) => v.claims.length > 0 && v.claims.every((c) => ["RECONCILED", "FAILED_CONFIRMED_NO_WRITE", "CANCELLED_BEFORE_WRITE"].includes(c.status)) && v.claims.some((c) => c.status === "RECONCILED");
 
 describe("Project Journey - commercial billing follows postings (owner-shaped)", () => {
@@ -362,7 +362,7 @@ describe("Project Journey - commercial billing follows postings (owner-shaped)",
     const mixed = st(buildJourney({ scopes: owner(), physical: NOT_READ, verification: v }), "commercial-authorisation");
     expect(mixed).toMatchObject({ status: "in_progress" });
     expect(mixed.detail).toContain("3 of 4 authorised (verified");
-    const failed = st(buildJourney({ scopes: owner(), physical: NOT_READ, verification: { verifiedByClaimId: {}, readFailed: true } }), "commercial-authorisation");
+    const failed = st(buildJourney({ scopes: owner(), physical: NOT_READ, verification: { verifiedByClaimId: {}, failedClaimIds: ["c1", "c3"] } }), "commercial-authorisation");
     expect(failed).toMatchObject({ unknown: true, statusLabel: "Could not verify" });
     const onlyOne = verifyAll(); delete onlyOne.verifiedByClaimId.c3;
     expect(st(buildJourney({ scopes: owner(), physical: NOT_READ, verification: onlyOne }), "commercial-authorisation").status).not.toBe("completed");
@@ -370,11 +370,11 @@ describe("Project Journey - commercial billing follows postings (owner-shaped)",
     expect(st(buildJourney({ scopes: owner(), physical: NOT_READ, verification: missing }), "commercial-authorisation").status).not.toBe("completed");
   });
   it("a verification that lists only the VARIATION's claim never completes BASE authorisation, and vice versa", () => {
-    const only = { verifiedByClaimId: { vc1: ref("vc1", "INV-V", "AUTHORISED") }, readFailed: false };
+    const only = { verifiedByClaimId: { vc1: ref("vc1", "INV-V", "AUTHORISED") }, failedClaimIds: [] };
     const j = buildJourney({ scopes: owner(), physical: NOT_READ, verification: only });
     expect(st(j, "commercial-authorisation").unknown).toBe(true);
     expect(st(j, "variation-V001").lines?.[0]).toContain("Authorised in Cin7 - verified");
-    const baseOnly = { verifiedByClaimId: Object.fromEntries(Object.entries(verifyAll().verifiedByClaimId).filter(([k]) => k !== "vc1")), readFailed: false };
+    const baseOnly = { verifiedByClaimId: Object.fromEntries(Object.entries(verifyAll().verifiedByClaimId).filter(([k]) => k !== "vc1")), failedClaimIds: [] };
     const j2 = buildJourney({ scopes: owner(), physical: NOT_READ, verification: baseOnly });
     expect(st(j2, "commercial-authorisation").status).toBe("completed");
     expect(st(j2, "variation-V001").lines?.[0]).toMatch(/Not verified/);
