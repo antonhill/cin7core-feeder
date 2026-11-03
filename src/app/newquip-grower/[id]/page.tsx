@@ -49,7 +49,7 @@ import { StepRail, StepPanel } from "@/components/ui/StepRail";
 import { useShowAllSteps } from "@/components/ui/use-show-all-steps";
 import { nextIncompleteStepId, parseStepParam } from "@/components/ui/step-rail-model";
 import { deriveStage1Steps, NO_CUSTOMER_FACTS, STAGE1_STEP_IDS, STAGE1_STEP_LABEL, type Stage1CustomerFacts, type Stage1StepId } from "@/newquip/quote/stage1-steps";
-import { deriveStage2Steps, nextCandidates, type Stage2Input, stage2StepIds, STAGE2_STEP_LABEL, type Stage2StepId } from "@/newquip/quote/stage2-steps";
+import { costAckKey, deriveStage2Steps, nextCandidates, type Stage2Input, stage2StepIds, STAGE2_STEP_LABEL, type Stage2StepId } from "@/newquip/quote/stage2-steps";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { DeliveryPanel, type DeliveryGate } from "./DeliveryPanel";
 import { ApprovalChecklist, AcceptanceStatusBanner, HandoverChecklist } from "./Stage36Guidance";
@@ -136,6 +136,8 @@ export default function QuoteEditorPage() {
   const [step4No, setStep4No] = useState<number>(() => (parseStage(search.get("stage")) === 4 ? parseStepParam(search.get("step"), STAGE4_STEP_IDS.length) : 1));
   // "Mark reviewed & continue" on Cost & margin: a CLIENT-LOCAL acknowledgement, never stored and never a sign-off. It holds a key built from the version it was given on; any change makes it stale.
   const [costAck, setCostAck] = useState<string | null>(null);
+  const [ackMsg, setAckMsg] = useState(""); // the polite announcement; cleared after a few seconds and when the step changes
+  useEffect(() => { if (!ackMsg) return; const t = setTimeout(() => setAckMsg(""), 6000); return () => clearTimeout(t); }, [ackMsg]);
   const [showAllSteps, setShowAllSteps] = useShowAllSteps("nq-builder-show-all");
   const [customerFacts, setCustomerFacts] = useState<Stage1CustomerFacts>(NO_CUSTOMER_FACTS);
   const onCustomerFacts = (f: Stage1CustomerFacts) => setCustomerFacts((p) => (p.loaded === f.loaded && p.available === f.available && p.hasSnapshot === f.hasSnapshot && p.hasContact === f.hasContact && p.contactName === f.contactName && p.loadError === f.loadError ? p : f));
@@ -332,7 +334,7 @@ export default function QuoteEditorPage() {
   const step2Cur = step2No >= 1 && step2No <= step2Ids.length ? step2No : 1; // a ?step= beyond this viewer's steps (a Rep has three) falls back to the first, as for Stage 1
   const step2Id = step2Ids[step2Cur - 1];
   // The key names the exact version and costing it was given on (quote, revision, content hash, last update and the live cost and margin). It is never rendered or put in an attribute.
-  const costKey = budget ? [q.id, q.revision, q.draft_hash, q.updated_at, budget.totals.estimatedCost, budget.totals.overallMarginPct].join("|") : null;
+  const costKey = budget ? costAckKey({ quoteId: q.id, revision: q.revision, draftHash: q.draft_hash, updatedAt: q.updated_at, estimatedCost: budget.totals.estimatedCost, marginPct: budget.totals.overallMarginPct }) : null;
   const s2Base: Omit<Stage2Input, "costAcknowledged"> = {
     canViewCommercials: canCommercials, editable, roles: { rep: roles.has("rep"), estimator: roles.has("estimator"), manager: roles.has("manager") }, revision: q.revision, state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", calcValid: ev.calc.valid, lines: ev.calc.lines,
     readiness: { state: rd.state, reasons: rd.reasons, missingMappings: rd.counts.missingMappings },
@@ -350,12 +352,17 @@ export default function QuoteEditorPage() {
   const onCostUnmarked = canAckCost && step2Id === "cost" && !costAcknowledged;
   const onCostMarked = canAckCost && step2Id === "cost" && costAcknowledged;
   const ACK_EXPLAIN = "This records that you have looked at the costing and margin for this version. It is not the Estimator sign-off.";
-  const markReviewed = () => { setCostAck(costKey); if (!showAllSteps) goStep2("signoff"); };
+  const markReviewed = () => {
+    setCostAck(costKey);
+    if (showAllSteps) setTimeout(() => document.getElementById("cost-ack-done")?.focus(), 0); else goStep2("signoff"); // step mode: the Sign-off heading takes focus; show-all: the "marked reviewed" text does
+    setAckMsg("Cost & margin marked reviewed. This is not a sign-off.");
+  };
   const stage2 = deriveStage2Steps({ ...s2Base, costAcknowledged });
   const groupTone = { success: "complete", warning: "attention", danger: "attention", info: "incomplete", neutral: "neutral" } as const;
   const stage2Groups = stage2.groups.map((g) => ({ id: g.id, label: g.label, owner: g.id === "rep" ? "Rep" : "Estimator", statusText: `Workflow: ${g.statusLine}`, tone: groupTone[g.tone] }));
   const signoffOutstandingForYou = q.state === "ESTIMATOR_REVIEW" && (roles.has("estimator") || roles.has("manager")) && stage2.steps.find((x) => x.id === "signoff")?.status !== "complete";
   const goStep2No = (n: number) => {
+    setAckMsg("");
     const next = Math.min(Math.max(n, 1), step2Ids.length);
     setStep2No(next); // the address bar gets stage and step together, so a reload lands on the same step
     try { const u = new URL(window.location.href); u.searchParams.set("stage", "2"); u.searchParams.set("step", String(next)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ }
@@ -442,7 +449,7 @@ export default function QuoteEditorPage() {
           )} />
       )}
 
-      {stage === 2 && step2No > step2Ids.length && <p role="status" className="mt-3 text-sm text-slate-800" data-testid="step-unavailable">That step is not available to you, so the first step is shown.</p>}
+      {stage === 2 && step2No > step2Ids.length && <p className="mt-3 text-sm text-slate-800" data-testid="step-unavailable">That step is not available to you, so the first step is shown.</p>}
       {stage === 2 && (
         <StepRail id="s2" ariaLabel="Costing and review steps" steps={stage2.steps} currentId={step2Id} onSelect={goStep2} groups={stage2Groups}
           actions={(
@@ -455,7 +462,11 @@ export default function QuoteEditorPage() {
           )} />
       )}
 
-      {stage === 2 && canAckCost && <div role="status" data-testid="cost-ack-live">{costAcknowledged && <p className="mt-3 text-sm text-slate-800" data-testid="cost-ack-status">Cost &amp; margin marked reviewed - this is not a sign-off.</p>}</div>}
+      {stage === 2 && canCommercials && <div role="status" aria-live="polite" data-testid="cost-ack-live">{ackMsg && <p className="mt-3 text-sm text-slate-800" data-testid="cost-ack-status">{ackMsg}</p>}</div>}
+      {stage === 2 && !showAllSteps && onCostUnmarked && (
+        <p className="mt-3 text-sm text-slate-800" data-testid="cost-ack-pointer">Review the costing below, then use Mark reviewed &amp; continue. <button type="button" className="font-semibold text-indigo-700 underline" onClick={() => document.getElementById("cost-ack-btn")?.focus()}>Go to the button</button></p>
+      )}
+      {stage === 2 && <div role="status" data-testid="next-role-live">{q.state === "ESTIMATOR_REVIEW" && stage2.groups.find((x) => x.id === "estimator")?.statusLine === "Signed off" && <p className="mt-3 text-sm font-semibold text-slate-900" data-testid="next-manager-cue">Next: Manager approval (Stage 3).</p>}</div>}
       {stage <= 2 && (
         <>
           <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -836,7 +847,7 @@ export default function QuoteEditorPage() {
           <div className="mt-4 max-w-3xl rounded-lg border border-indigo-200 bg-indigo-50 p-4" data-testid="cost-ack">
             <p className="text-sm text-slate-800">{ACK_EXPLAIN}</p>
             {costAcknowledged
-              ? <p className="mt-2 text-sm font-semibold text-slate-900" data-testid="cost-ack-done">You marked the costing reviewed for this version.</p>
+              ? <p id="cost-ack-done" tabIndex={-1} className="mt-2 text-sm font-semibold text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-indigo-600" data-testid="cost-ack-done">You marked the costing reviewed for this version.</p>
               : <Button type="button" className="mt-3 min-h-11" onClick={markReviewed}>Mark reviewed &amp; continue</Button>}
           </div>
         )}
@@ -876,19 +887,19 @@ export default function QuoteEditorPage() {
         </StepPanel>
 
         {!showAllSteps && (
-          <div className="mt-6 flex flex-wrap items-end justify-between gap-3" data-testid="step-buttons">
+          <div className="sticky bottom-0 z-10 -mx-4 mt-6 flex flex-wrap items-end justify-between gap-3 border-t border-slate-200 bg-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:-mx-6 md:px-6" data-testid="step-buttons">
             {step2Cur > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2No(step2Cur - 1)}>Back</Button> : <span />}
             {onCostUnmarked ? (
               <div className="flex max-w-xl flex-col items-end gap-2" data-testid="cost-ack">
                 <p className="text-right text-sm text-slate-800">{ACK_EXPLAIN}</p>
                 <div className="flex flex-wrap justify-end gap-2">
                   <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep2No(step2Cur + 1)}>Next without marking reviewed</Button>
-                  <Button type="button" className="min-h-11" onClick={markReviewed}>Mark reviewed &amp; continue</Button>
+                  <Button type="button" id="cost-ack-btn" className="min-h-11" onClick={markReviewed}>Mark reviewed &amp; continue</Button>
                 </div>
               </div>
             ) : step2Cur < step2Ids.length ? (
               <div className="flex flex-col items-end gap-2">
-                {onCostMarked && <p className="text-sm font-semibold text-slate-900" data-testid="cost-ack-done">You marked the costing reviewed for this version.</p>}
+                {onCostMarked && <p id="cost-ack-done" tabIndex={-1} className="mt-2 text-sm font-semibold text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-indigo-600" data-testid="cost-ack-done">You marked the costing reviewed for this version.</p>}
                 <Button type="button" className="min-h-11" onClick={() => goStep2No(step2Cur + 1)}>{onCostMarked ? "Next: Sign-off or return" : "Next"}</Button>
               </div>
             ) : <span />}
