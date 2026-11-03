@@ -120,7 +120,7 @@ describe("customer selection and snapshot", () => {
     await actions.chooseQuoteContactAction("q1", { source: "CIN7_CONTACT", contactIndex: 0 });
     vi.mocked(readCin7Customer).mockResolvedValue({ ...RAW, TaxNumber: "777" });
     const p = await actions.refreshQuoteCustomerAction("q1", false);
-    expect(p.data!.preview).toEqual({ changes: [{ field: "VAT number", before: "(missing)", after: "777" }], applied: false });
+    expect(p.data!.preview).toEqual({ changes: [{ field: "VAT number", before: "(missing)", after: "777" }], applied: false, withdrawsConfirmation: false });
     expect(db.rows("newquip_quote_customers")).toHaveLength(2);
     const ap = await actions.refreshQuoteCustomerAction("q1", true);
     expect(ap.data!.preview.applied).toBe(true);
