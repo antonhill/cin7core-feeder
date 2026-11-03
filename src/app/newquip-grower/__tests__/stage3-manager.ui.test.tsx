@@ -29,7 +29,7 @@ const asRoles = (...r: Array<"REP" | "ESTIMATOR" | "MANAGER">) => vi.mocked(reso
 
 beforeEach(() => {
   db = new FakeDb();
-  
+
   vi.clearAllMocks();
   vi.mocked(requireNewquipPocOrg).mockResolvedValue(SESSION as never);
   vi.mocked(requireModuleAccess).mockResolvedValue(SESSION as never);
