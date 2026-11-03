@@ -297,7 +297,7 @@ export function ProjectWorkspace({ id, embedded = false }: { id: string; embedde
   const Shell = embedded ? "div" : "main";
   return (
     <ProjectFeedbackProvider value={acts.stateOf}>
-    <InvoiceVerificationProvider signature={viewPostingsSignature(view.claims)}>
+    <InvoiceVerificationProvider signature={viewPostingsSignature(view.claims)} claimIds={view.claims.map((c) => c.id)} claimSigs={Object.fromEntries(view.claims.map((c) => [c.id, viewPostingsSignature([c])]))}>
     <Shell className={embedded ? "mt-2" : pageContainerClass("data")}>
       {!embedded && (
         <ModuleHeader variant="workspace" module={PROJECTS_MODULE}>

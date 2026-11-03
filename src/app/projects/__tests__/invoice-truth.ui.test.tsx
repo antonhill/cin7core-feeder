@@ -140,6 +140,13 @@ describe("invoice status truth on the Claims card and posting panel", () => {
   });
 });
 
+describe("Verify button target", () => {
+  it("is at least 44px tall (min-h-11)", async () => {
+    await open();
+    expect(screen.getByRole("button", { name: "Verify invoice statuses" }).className).toMatch(/\bmin-h-11\b/);
+  });
+});
+
 describe("InvoiceStatusSection stays read-only", () => {
   const src = (f: string) => readFileSync(join(__dirname, "..", "[id]", f), "utf8");
   it("imports only the verify action; never a posting, reconcile or authorise action", () => {
