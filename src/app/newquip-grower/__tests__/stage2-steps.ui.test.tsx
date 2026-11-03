@@ -364,6 +364,32 @@ describe("UX-006b Stage 2: Load Demo Defaults keeps the viewed step", () => {
       expect(new URL(window.location.href).searchParams.get("stage")).toBe("2");
     }, 30000);
   }
+  for (const [name, step, comm] of [["Lines & mappings", "1", false], ["Charges & prices", "2", false], ["Submit to Estimator", "3", false], ["Cost & margin", "4", true], ["Sign-off or return", "5", true]] as const) {
+    it(`as an Estimator viewing ${name} in Estimator review: Load Demo Defaults stays put and runs ONLY the preview (no save, send, sign-off, return or approve)`, async () => {
+      const q = serialQueue(0);
+      await open({ roles: ["ESTIMATOR"], commercials: comm, step, state: "ESTIMATOR_REVIEW", row: { customer_confirmed_cents: 1000000000 } });
+      await sleep(1200);
+      const which = [...document.querySelectorAll("[data-step-panel]")].find((e) => !e.hasAttribute("hidden"))!.getAttribute("data-step-panel");
+      q.log.length = 0;
+      fireEvent.click(screen.getByRole("button", { name: "Load Demo Defaults" }));
+      const replace = screen.queryByRole("button", { name: "Replace with demo" });
+      if (replace) fireEvent.click(replace);
+      await act(async () => { await sleep(900); });
+      expect(rail().querySelector('[aria-current="step"]')!.getAttribute("data-step")).toBe(which);
+      expect(new URL(window.location.href).searchParams.get("stage")).toBe("2");
+      const ran = q.log.filter((l) => l.startsWith("start ")).map((l) => l.slice(6));
+      expect(ran.filter((n) => /^(save|send|signOff|return|approve|create|post|record)/i.test(n.replace(/Grower|Quote/g, ""))), ran.join(",")).toEqual([]);
+      expect(ran.every((n) => /^(previewGrowerDraftAction|getQuote|getGrowerQuote|getMapping|getQuoteScope|getQuoteCost|getQuoteCustomer|getQuoteDelivery)/.test(n)), ran.join(",")).toBe(true);
+    }, 30000);
+  }
+  it("a ?step= this viewer does not have (a Rep given step=5) says so politely instead of jumping silently; the note is a status and goes once they navigate", async () => {
+    await open({ roles: ["REP"], step: "5" });
+    expect(screen.getByTestId("step-unavailable").textContent).toBe("That step is not available to you, so the first step is shown.");
+    expect(screen.getByTestId("step-unavailable").getAttribute("role")).toBe("status");
+    expect(document.body.textContent).not.toMatch(/Internal margins|Cost & margin/); // the note names no cost data
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.queryByTestId("step-unavailable")).toBeNull();
+  }, 30000);
   it("with Show all steps every step stays visible after Load Demo Defaults", async () => {
     vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "nq-builder-show-all" ? "1" : null), setItem: () => undefined });
     await open({ roles: ["REP"] });

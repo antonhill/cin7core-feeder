@@ -396,6 +396,7 @@ export default function QuoteEditorPage() {
           )} />
       )}
 
+      {stage === 2 && step2No > step2Ids.length && <p role="status" className="mt-3 text-sm text-slate-800" data-testid="step-unavailable">That step is not available to you, so the first step is shown.</p>}
       {stage === 2 && (
         <StepRail id="s2" ariaLabel="Costing and review steps" steps={stage2.steps} currentId={step2Id} onSelect={goStep2} groups={stage2Groups}
           actions={(
