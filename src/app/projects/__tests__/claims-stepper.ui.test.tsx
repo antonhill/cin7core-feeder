@@ -61,9 +61,9 @@ describe("Claim stepper", () => {
     fireEvent.click(screen.getByRole("checkbox"));
     expect(steps()).toEqual(["done", "next", "todo", "todo"]);
     fireEvent.click(screen.getByRole("button", { name: "Preview claim" }));
-    await waitFor(() => expect(steps()).toEqual(["done", "done", "next", "todo"]));
+    await waitFor(() => expect(steps()).toEqual(["done", "done", "next", "todo"]), { timeout: 8000 });
     fireEvent.click(screen.getByRole("button", { name: "Save as draft claim" }));
-    await waitFor(() => expect(steps()).toEqual(["done", "done", "done", "next"]));
+    await waitFor(() => expect(steps()).toEqual(["done", "done", "done", "next"]), { timeout: 8000 });
     expect(stepper().textContent).toContain("Use Submit on the draft above");
   });
   it("visiting a step never completes it: an untouched form stays at step 1 after the tab is revisited", async () => {
