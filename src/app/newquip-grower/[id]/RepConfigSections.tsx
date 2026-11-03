@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Status } from "@/components/ui/Status";
 import { GROWER_RULES, CCM_FEEDER_CAPACITY_PIGS, PIGS_PER_DRINKER } from "@/newquip/grower/rules";
 import { CHARGE_LABEL, type BridgeLine, type ChargeKey } from "@/newquip/grower/quote-bridge";
@@ -40,7 +41,7 @@ export function LineDecisionsTable({ draft, ev, edit, roles, editable, mode, qua
   const bridgeByKey = new Map<string, BridgeLine>((budget?.lines ?? []).map((b) => [b.itemKey, b]));
   const rep = mode === "rep";
   return (
-    <div className="mt-4 overflow-x-auto">
+    <div className="mt-4 max-w-full overflow-x-auto">
       <table className={`w-full text-left text-sm ${rep ? "min-w-[760px]" : "min-w-[1080px]"}`} aria-label={rep ? "Quantities per room" : "Line decisions"}>
         <thead>
           <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-600">
@@ -143,5 +144,23 @@ export function ExclusionsSection({ draft, ev, edit }: { draft: QuoteDraft; ev: 
         })}
       </ul>
     </>
+  );
+}
+
+/**
+ * A collapsible section of a step with a one-line status chip. Closed with its summary when complete, OPEN by default only when it needs attention; the viewer's own toggle always wins.
+ * The content stays mounted either way (a closed <details> keeps its inputs and requests).
+ */
+export function CollapsibleSection({ title, chip, attention, testId, children }: { title: string; chip: string; attention: boolean; testId: string; children: React.ReactNode }) {
+  const [user, setUser] = useState<boolean | null>(null);
+  const open = user ?? attention;
+  return (
+    <details className="min-w-0 max-w-full" open={open} onToggle={(e) => { const o = (e.currentTarget as HTMLDetailsElement).open; if (o !== open) setUser(o); }} data-testid={testId}>
+      <summary className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-sm font-semibold uppercase tracking-wide text-slate-800">{title}</span>
+        <span className={`inline-flex min-w-0 max-w-full items-start gap-1.5 rounded-md px-2 py-0.5 text-xs font-semibold ${attention ? "bg-amber-50 text-amber-900" : "bg-emerald-50 text-emerald-800"}`} data-tone={attention ? "warning" : "success"}><span aria-hidden>{attention ? "!" : "✓"}</span><span className="min-w-0">{chip}</span></span>
+      </summary>
+      {children}
+    </details>
   );
 }

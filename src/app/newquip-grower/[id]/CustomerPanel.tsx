@@ -118,7 +118,7 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
       {showSearch && !pending && (
         <div className="flex flex-wrap items-end gap-2">
           <label className="flex flex-col gap-1 text-sm"><span className="font-medium text-slate-700">Search by name, contact or email</span>
-            <input className={inputCls} value={q} onChange={(e) => { setQ(e.target.value); setSearched(null); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void search(); } }} /></label>
+            <input className={inputCls} value={q} onChange={(e) => { setQ(e.target.value); setSearched(null); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (q.trim().length >= 2 && !busy) void search(); } }} /></label>
           <Button type="button" className="min-h-11" variant="secondary" onClick={() => void search()} disabled={busy || q.trim().length < 2} loading={label?.startsWith("Searching") ?? false}>{label?.startsWith("Searching") ? "Searching…" : "Search Cin7 customers"}</Button>
           {changing && <Button type="button" className="min-h-11" variant="secondary" disabled={busy} onClick={() => { setChanging(false); setHits([]); }}>Keep current customer</Button>}
         </div>

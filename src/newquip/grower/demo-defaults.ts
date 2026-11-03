@@ -118,7 +118,7 @@ export function hasMeasurementEntries(current: QuoteDraft): boolean {
 
 const EQUIPMENT_KEYS = ["selectedFeederType", "selectedDrinkerType", "selectedFlooringType", "selectedPenningType", "selectedLightingType", "slattedFloorAreaM2", "penningPigSize", "penningRunningMetresPerRoom", "feederVariant", "optionalEquipment", "estimatorQuantities", "quantityOverrides", "quantityOverrideReasons", "exclusions"] as const;
 /** What "Load recommended configuration" fills: the CONFIG part of the demonstration quote. Charges, the M75 price, assumptions, product mappings and manual prices (Estimator-owned) are NOT touched. */
-export const RECOMMENDED_CONFIG_FILLS = "the system selections and optional equipment, and REPLACES every quantity you entered, the quantity overrides and their reasons (the customer exclusions are cleared). It keeps the site, room measurements, charges, M75 price, assumptions, product choices and manual prices";
+export const RECOMMENDED_CONFIG_FILLS = "the system selections (including the penning pig size) and optional equipment, and REPLACES every quantity you entered, the quantity overrides and their reasons (the customer exclusions are cleared). It keeps the site, room measurements, charges, M75 price, assumptions, product choices and manual prices";
 export function applyRecommendedConfiguration(current: QuoteDraft): { draft: QuoteDraft; replaced: boolean } {
   const config = { ...current.config };
   for (const k of EQUIPMENT_KEYS) (config as Record<string, unknown>)[k] = structuredClone((DEMO_DEFAULTS.config as unknown as Record<string, unknown>)[k]);

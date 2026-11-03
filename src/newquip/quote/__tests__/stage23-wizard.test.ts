@@ -297,6 +297,20 @@ describe("UX-006i2 review fixes (pure)", () => {
     expect(step(s2({ costAcknowledged: true, dirty: true }), "costs").counted).toBeUndefined();
     const item = deriveFinalReviewChecklist({ mappingOpen: [], readiness: { state: "READY", reasons: [] }, cost: costReview, confirmedCents: 1, totalCents: 1, dirty: false, calcValid: true }).find((x) => x.id === "costing")!;
     expect(item.label).toBe("Costing figures are available");
-    expect(item.detail).toMatch(/margin and the Cin7 cost capture.*may still show incomplete/);
+    const inc = deriveFinalReviewChecklist({ mappingOpen: [], readiness: { state: "READY", reasons: [] }, cost: costReview, confirmedCents: 1, totalCents: 1, dirty: false, calcValid: true, costMissingLines: 12 }).find((x) => x.id === "costing")!;
+    expect(inc).toMatchObject({ label: "Costing figures: incomplete (12 lines have no cost)", met: false });
+    expect(inc.detail).toMatch(/indicative \(price-list basis\).*You may still sign off/);
+    expect(step(s2({ costMissingLines: 12 }), "final").status).toBe("attention"); // never "Met" / quietly fine
+    expect(item.detail).toMatch(/Cin7 cost capture.*may still show incomplete/);
+  });
+});
+
+import { stageLabelOf, QUOTE_STATE_LABEL, waitingOn } from "../workflow";
+describe("UX-006i2 round 2: the quote list's Stage column agrees with 'Waiting on'", () => {
+  it("signed off -> 'Manager approval' (with waitingOn 'Manager: approval'); unsigned review keeps the state label", () => {
+    expect(stageLabelOf({ state: "ESTIMATOR_REVIEW", signed_off: true })).toBe("Manager approval");
+    expect(waitingOn({ state: "ESTIMATOR_REVIEW", revision: 1, signed_off: true })).toBe("Manager: approval");
+    expect(stageLabelOf({ state: "ESTIMATOR_REVIEW", signed_off: false })).toBe(QUOTE_STATE_LABEL.ESTIMATOR_REVIEW);
+    expect(stageLabelOf({ state: "REP_DRAFT", signed_off: true })).toBe(QUOTE_STATE_LABEL.REP_DRAFT);
   });
 });

@@ -108,6 +108,8 @@ export interface EstimatorResultProps {
   showPriceDetail: boolean;
   /** The margin is incomplete or unknown (cost-visible viewers only): a visible flag, never a block. */
   marginUnknown: boolean;
+  /** Costed lines with no cost when the PROJECT margin is incomplete (null = complete or not shown). */
+  missingCostLines: number | null;
   /** The three largest lines by selling value (cost-visible viewers only), so an implausible line is noticeable. */
   largestLines: ReadonlyArray<{ label: string; amount: number }> | null;
 }
@@ -122,8 +124,8 @@ export function EstimatorResult(p: EstimatorResultProps) {
         <div><dt className="text-xs text-slate-700">Signed off by</dt><dd className="font-medium text-slate-900" data-testid="result-signoff">{p.signedOffBy ? `${p.signedOffBy}${p.signedOffAt ? `, ${formatSast(p.signedOffAt)}` : ""}${p.signoffCurrent ? "" : " (out of date)"}` : <span className="text-slate-700">Not signed off yet</span>}</dd></div>
         <div><dt className="text-xs text-slate-700">Quote total (ex VAT)</dt><dd className="font-medium tabular-nums text-slate-900">{p.totalCents == null ? "—" : fmtCents(p.totalCents)}</dd></div>
         <div><dt className="text-xs text-slate-700">Customer-confirmed amount</dt><dd className="font-medium tabular-nums text-slate-900">{p.confirmedCents == null ? "—" : fmtCents(p.confirmedCents)} {p.confirmedCents != null && p.totalCents != null && <Status tone={match ? "success" : "danger"}>{match ? "Matches the total" : "Does not match the total"}</Status>}</dd></div>
-        {p.marginUnknown && <div className="md:col-span-2 xl:col-span-4"><Status tone="warning">Margin: incomplete or unknown</Status> <span className="text-sm text-slate-800" data-testid="margin-flag">Some costs are missing, so the margin cannot be relied on. Look at the lines below before deciding.</span></div>}
-        {p.costing && <div><dt className="text-xs text-slate-700">Estimated cost · gross margin</dt><dd className="font-medium tabular-nums text-slate-900" data-testid="result-costing">{fmtZar(p.costing.estimatedCost)} · {p.costing.marginPct == null ? "N/A" : `${p.costing.marginPct.toFixed(1)}%`}</dd></div>}
+        {p.marginUnknown && <div className="md:col-span-2 xl:col-span-4"><Status tone="warning">Margin: incomplete or unknown</Status> <span className="text-sm text-slate-800" data-testid="margin-flag">{p.missingCostLines ? `${p.missingCostLines} costed line${p.missingCostLines === 1 ? " has" : "s have"} no cost, so project margin is not available; the percentage shown is indicative (price-list basis). ` : "Some costs are missing, so the margin cannot be relied on. "}Look at the lines below before deciding.</span></div>}
+        {p.costing && <div><dt className="text-xs text-slate-700">{p.missingCostLines ? "Estimated cost · indicative margin (price-list basis)" : "Estimated cost · gross margin"}</dt><dd className="font-medium tabular-nums text-slate-900" data-testid="result-costing">{fmtZar(p.costing.estimatedCost)} · {p.costing.marginPct == null ? "N/A" : `${p.costing.marginPct.toFixed(1)}%`}</dd></div>}
       </dl>
       <div className="mt-4" data-testid="result-exceptions">
         <h3 className="text-sm font-semibold text-slate-900">Pricing exceptions</h3>
@@ -143,5 +145,18 @@ export function EstimatorResult(p: EstimatorResultProps) {
         </div>
       )}
     </Panel>
+  );
+}
+
+/** A labelled disclosure with a one-line summary, closed by default unless something in it needs attention. Its content stays MOUNTED when closed (so the requests it makes are unchanged). */
+export function Disclosure({ title, summary, attention = false, testId, children }: { title: string; summary: string; attention?: boolean; testId: string; children: React.ReactNode }) {
+  return (
+    <details className="rounded-lg border border-slate-200 bg-white p-3" open={attention || undefined} data-testid={testId}>
+      <summary className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-sm font-semibold text-slate-900">{title}</span>
+        <span className={`text-xs ${attention ? "font-semibold text-amber-900" : "text-slate-700"}`}>{summary}</span>
+      </summary>
+      <div className="mt-3 space-y-6">{children}</div>
+    </details>
   );
 }

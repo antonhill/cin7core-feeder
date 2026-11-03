@@ -40,6 +40,8 @@ export interface Stage2WizardInput {
   costAcknowledged: boolean;
   confirmedCents: number | null;
   totalCents: number | null;
+  /** Costed lines with no cost (cost-visible viewers only; 0 or absent = the project cost is complete). */
+  costMissingLines?: number;
 }
 
 export type Stage2WizardStep = WizardStep<Stage2WizardId>;
@@ -53,12 +55,18 @@ export interface StageWizard<I extends string> extends Omit<Wizard<I>, "nextOwne
 export interface FinalReviewItem { id: "mapping" | "ready" | "costing" | "amount" | "saved"; label: string; met: boolean; detail: string | null }
 
 /** The compact readiness checklist of the Final review step. Facts only; the buttons keep their own gates. */
-export function deriveFinalReviewChecklist(i: Pick<Stage2WizardInput, "mappingOpen" | "readiness" | "cost" | "confirmedCents" | "totalCents" | "dirty" | "calcValid">): FinalReviewItem[] {
+export function deriveFinalReviewChecklist(i: Pick<Stage2WizardInput, "mappingOpen" | "readiness" | "cost" | "confirmedCents" | "totalCents" | "dirty" | "calcValid" | "costMissingLines">): FinalReviewItem[] {
   const items: FinalReviewItem[] = [
     { id: "mapping", label: "Product lines are mapped and priced", met: i.calcValid && i.mappingOpen.length === 0, detail: !i.calcValid ? "The Rep's configuration is not complete yet." : i.mappingOpen.length === 0 ? null : `${i.mappingOpen[0]}${i.mappingOpen.length > 1 ? ` (+${i.mappingOpen.length - 1} more)` : ""}. Step 1.` },
     { id: "ready", label: "The quotation is READY", met: i.readiness.state === "READY", detail: i.readiness.state === "READY" ? null : (i.readiness.reasons[0] ?? "The quote must be READY (nothing outstanding) before it can be signed off.") },
   ];
-  if (i.cost) items.push({ id: "costing", label: "Costing figures are available", met: i.cost.status === "review" || i.cost.status === "complete", detail: i.cost.status === "review" || i.cost.status === "complete" ? "Check the margin and the Cin7 cost capture in step 2: either may still show incomplete, so review with care." : (i.cost.note ?? "The costing needs attention.") });
+  if (i.cost) {
+    const ok = i.cost.status === "review" || i.cost.status === "complete";
+    const missing = i.costMissingLines ?? 0;
+    // ONE margin story: with incomplete project costs the check says so (attention), never "Met".
+    if (missing > 0) items.push({ id: "costing", label: `Costing figures: incomplete (${missing} line${missing === 1 ? " has" : "s have"} no cost)`, met: false, detail: "The margin shown is indicative (price-list basis); project margin is not available. You may still sign off: the Manager will see margin as unknown." });
+    else items.push({ id: "costing", label: "Costing figures are available", met: ok, detail: ok ? "Check the Cin7 cost capture in step 2: it may still show incomplete, so review with care." : (i.cost.note ?? "The costing needs attention.") });
+  }
   const both = i.confirmedCents != null && i.totalCents != null;
   items.push({ id: "amount", label: "The confirmed amount equals the quote total", met: both && i.confirmedCents === i.totalCents, detail: i.confirmedCents == null ? "No customer price confirmation is recorded." : i.totalCents == null ? "The quote total is not available yet." : i.confirmedCents === i.totalCents ? null : "The total changed after the customer confirmed it. Return it to the Rep to reconfirm." });
   if (i.dirty) items.push({ id: "saved", label: "No unsaved edits", met: false, detail: "Save or discard your edits first: the review applies to the saved quotation." });

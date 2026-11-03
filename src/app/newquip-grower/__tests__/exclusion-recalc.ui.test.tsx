@@ -127,7 +127,7 @@ async function open(stage = "1") {
   (globalThis as { __QID?: string }).__QID = id;
   const { default: Page } = await import("../[id]/page");
   render(createElement(Page));
-  await waitFor(() => expect(screen.getByLabelText(/Exclude CCM feeder/i)).toBeTruthy(), { timeout: 5000 });
+  await waitFor(() => expect(stage === "2" ? screen.getByText("Product mappings") : screen.getByLabelText(/Exclude CCM feeder/i)).toBeTruthy(), { timeout: 5000 });
   return id;
 }
 
@@ -190,10 +190,11 @@ describe("UAT-003 rendered page: the Exclude checkbox recalculates without Save"
 // UAT-025 on the quotation page: the result of Save draft is shown directly under the Save row (not in a banner at the top of a long page), a failure keeps the edits,
 // and a double-click saves once.
 describe("UAT-025 rendered page: Save draft reports beside its button", () => {
+  // UX-006i2: the exclusions are Stage 1 (the Rep's) and Stage 1's Save row now sits in the step toolbar, apart from the feedback. The "result right under the Save row" rule is therefore proven where that
+  // layout still holds: Stage 2 (the Estimator's own edit, a manual price reason), through the same saveRow / ActionFeedback.
   async function editReady() {
-    await open();
-    fireEvent.click(box(/Exclude CCM feeder/i));
-    fireEvent.change(screen.getAllByPlaceholderText("Reason (required)")[0], { target: { value: "Customer supplies their own feeders" } });
+    await open("2");
+    fireEvent.change(screen.getAllByLabelText("Reason", { selector: "input" })[0], { target: { value: "Supplier quote dated today" } });
     await waitFor(() => expect((screen.getByRole("button", { name: "Save draft" }) as HTMLButtonElement).disabled).toBe(false), { timeout: 8000 });
     return screen.getByRole("button", { name: "Save draft" }) as HTMLButtonElement;
   }
@@ -219,7 +220,7 @@ describe("UAT-025 rendered page: Save draft reports beside its button", () => {
     expect(bad.textContent).toMatch(/changed by someone else/);
     expect(bad.parentElement!.previousElementSibling).toBe(save.parentElement);
     expect(screen.getByText("Unsaved changes")).toBeTruthy(); // still dirty: nothing was lost
-    expect((screen.getAllByPlaceholderText("Reason (required)")[0] as HTMLInputElement).value).toBe("Customer supplies their own feeders");
+    expect((screen.getAllByLabelText("Reason", { selector: "input" })[0] as HTMLInputElement).value).toBe("Supplier quote dated today");
   }, 30000);
 
   it("a double-click on Save draft saves once", async () => {
@@ -254,7 +255,7 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
     await open();
     const bar = screen.getByTestId("quote-summary-bar");
     expect(within(bar).getByText("Quote total (ex VAT)")).toBeTruthy();
-    expect(within(bar).getByText("Gross margin")).toBeTruthy(); // the viewer can see commercials
+    expect(within(bar).getByText(/^(Gross|Indicative) margin/)).toBeTruthy(); // the viewer can see commercials (UX-006i2: the label reads "Indicative margin (price-list basis)" while project costs are incomplete, as in this fixture)
     expect(within(bar).queryByText(/unsaved edits/)).toBeNull();
     fireEvent.click(box(/Exclude CCM feeder/i));
     expect(within(bar).getByText("Preview of unsaved edits")).toBeTruthy();
@@ -313,17 +314,17 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
       render(createElement(Page));
       await waitFor(() => expect(screen.getByTestId("quote-summary-bar")).toBeTruthy(), { timeout: 8000 });
       await sleep(300);
-      expect(within(screen.getByTestId("quote-summary-bar")).queryByText("Gross margin")).toBeNull();
+      expect(within(screen.getByTestId("quote-summary-bar")).queryByText(/^(Gross|Indicative) margin/)).toBeNull();
       cleanup();
     }
   }, 60000);
   it("margin is shown on the working stages but hidden on the customer-facing quotation stage", async () => {
     await open();
-    expect(within(screen.getByTestId("quote-summary-bar")).getByText("Gross margin")).toBeTruthy();
+    expect(within(screen.getByTestId("quote-summary-bar")).getByText(/^(Gross|Indicative) margin/)).toBeTruthy();
     cleanup();
     await open("4").catch(() => undefined);
     await waitFor(() => expect(screen.getByTestId("quote-summary-bar")).toBeTruthy(), { timeout: 8000 });
-    expect(within(screen.getByTestId("quote-summary-bar")).queryByText("Gross margin")).toBeNull();
+    expect(within(screen.getByTestId("quote-summary-bar")).queryByText(/^(Gross|Indicative) margin/)).toBeNull();
   }, 30000);
   describe("Manager: why Final approval is disabled", () => {
     async function openAsManager(signoff: "none" | "stale" | "current") {

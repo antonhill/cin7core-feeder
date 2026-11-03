@@ -720,3 +720,103 @@ describe("review findings P2", () => {
     expect(t).toMatch(/keeps the site, room measurements, charges, M75 price, assumptions, product choices and manual prices/);
   }, 30000);
 });
+
+// ── Second independent UX review (level 2) ──
+describe("P0: a Rep changing a product-affecting control (the server refuses; presentation only)", () => {
+  it("warns beside the control, and when Save is refused says what to do at the control and at Save, offers Undo, marks the step Needs attention and names the Estimator in the stage line", async () => {
+    await open({ view: snapshotView(true), draftOver: readyDraft, roles: ["REP"], step: "3" });
+    expect(screen.getAllByText(/Changing this needs an Estimator to confirm the product afterwards\./).length).toBe(2); // beside the feeder variant and beside the optional equipment
+    expect(status("equipment")).toBe("Complete");
+    const sel = screen.getByLabelText(/CCM feeder variant/) as HTMLSelectElement;
+    fireEvent.change(sel, { target: { value: "WINDOW" } });
+    expect(status("equipment")).toBe("Needs attention"); // never 'Complete' with an unsaved product change
+    expect(document.getElementById(sel.getAttribute("aria-describedby")!)!.textContent).toContain("This change needs an Estimator to confirm the new product.");
+    expect(screen.getByTestId("next-action").textContent).toContain("Waiting on the Estimator for 1 product choice");
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" })); // the REAL server action refuses a mapping change by a non-mapper
+    await waitFor(() => expect(screen.getByTestId("product-change-refused")).toBeTruthy(), { timeout: 8000 });
+    expect(screen.getByTestId("product-change-refused").textContent).toContain("Ask the Estimator to open this quotation (Stage 2, step 1)");
+    expect(document.body.textContent).not.toContain("Only an Estimator or Manager can map a product.");
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Undo this change" }));
+    expect(sel.value).toBe("STANDARD");
+    expect(status("equipment")).toBe("Complete");
+    expect(screen.queryByTestId("product-change-refused")).toBeNull();
+  }, 60000);
+
+  it("an Estimator-capable user changing the variant sees no such warning (they may map)", async () => {
+    await open({ view: snapshotView(true), draftOver: readyDraft, roles: ["REP", "ESTIMATOR"], step: "3" });
+    expect(screen.queryByText(/Changing this needs an Estimator/)).toBeNull();
+    fireEvent.change(screen.getByLabelText(/CCM feeder variant/), { target: { value: "WINDOW" } });
+    expect(screen.queryByTestId("product-change-refused")).toBeNull();
+  }, 30000);
+});
+
+describe("second review: chrome, saving rules, up-front note, step 3 disclosure", () => {
+  it("price source / provenance sits in one collapsed disclosure; the save row and show-all share the step toolbar; the saving rule is stated once", async () => {
+    await open({ view: snapshotView(true), step: "2" });
+    const prov = screen.getByTestId("provenance") as HTMLDetailsElement;
+    expect(prov.open).toBe(false);
+    expect(prov.textContent).toContain("Price source & provenance");
+    expect(prov.textContent).toContain("Grower House Template v1");
+    const rail = screen.getByTestId("step-rail");
+    expect(within(rail).getByRole("button", { name: "Save draft" })).toBeTruthy();
+    expect(within(rail).getByLabelText("Show all steps")).toBeTruthy();
+    expect(screen.getAllByTestId("saving-rules").length).toBe(1);
+    expect(screen.getByTestId("saving-rules").textContent).toBe("Customer and contact save as you choose them. Everything else saves when you press Save draft.");
+  }, 30000);
+
+  it("the up-front note also says the customer must confirm the total; the Estimator part goes away once nothing is waiting on the Estimator", async () => {
+    await open({ view: customerView(), step: "1" });
+    expect(screen.getByTestId("estimator-note").textContent).toContain("The customer must also confirm the quotation total with you before you submit (you record this at the last step).");
+    expect(screen.getByTestId("estimator-note").textContent).toContain("mapped and priced by an Estimator");
+    cleanup();
+    await open({ view: snapshotView(true), draftOver: readyDraft, step: "1" });
+    expect(screen.getByTestId("estimator-note").textContent).not.toContain("mapped and priced by an Estimator");
+    expect(screen.getByTestId("estimator-note").textContent).toContain("The customer must also confirm");
+  }, 60000);
+
+  it("the stage line lists the top open items in plain words (max 3 + N more)", async () => {
+    await open({ view: snapshotView(true), step: "3" });
+    const t = screen.getByTestId("next-action").textContent ?? "";
+    expect(t).toMatch(/Still to do: .*enter the (quantity|amount)/);
+    expect(t).not.toMatch(/readiness/i);
+    expect(t).toMatch(/\(\+\d+ more - see Review, step 4\)/);
+  }, 30000);
+
+  it("step 3 sections: Quantities / Charges / Exclusions are collapsible with a status chip, open only when they need attention; the content stays mounted", async () => {
+    await open({ view: snapshotView(true), step: "3" });
+    const q = screen.getByTestId("section-quantities") as HTMLDetailsElement;
+    expect(q.open).toBe(true);
+    expect(q.textContent).toMatch(/\d+ to enter - needs attention/);
+    expect((screen.getByTestId("section-exclusions") as HTMLDetailsElement).open).toBe(false);
+    expect(screen.getByTestId("section-exclusions").textContent).toContain("None excluded");
+    cleanup();
+    await open({ view: snapshotView(true), draftOver: readyDraft, step: "3" });
+    for (const id of ["section-quantities", "section-charges"]) { const d = screen.getByTestId(id) as HTMLDetailsElement; expect(d.open, id).toBe(false); expect(d.textContent, id).toContain("Complete"); }
+    expect(screen.getByTestId("section-quantities").querySelector("table")).not.toBeNull(); // still mounted while closed
+    fireEvent.click(screen.getByTestId("section-quantities").querySelector("summary")!);
+  }, 60000);
+
+  it("'Load recommended configuration' sets the penning pig size and says so", async () => {
+    await open({ view: snapshotView(true), step: "3", draftOver: { config: { ...goodConfig, penningPigSize: null } } });
+    expect(screen.getByText(/Load recommended configuration” fills/).textContent).toContain("including the penning pig size");
+    fireEvent.click(screen.getByRole("button", { name: "Load recommended configuration" }));
+    if (screen.queryByRole("button", { name: "Replace values" })) fireEvent.click(screen.getByRole("button", { name: "Replace values" }));
+    expect((screen.getByLabelText("Penning pig size") as HTMLSelectElement).value).toBe("SMALL");
+  }, 30000);
+
+  it("Enter in the customer search does nothing below 2 characters", async () => {
+    await open({ view: customerView(), step: "1" });
+    const search = vi.spyOn(ca, "searchQuoteCustomersForQuoteAction");
+    const input = screen.getByLabelText(/Search by name/);
+    fireEvent.change(input, { target: { value: "a" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(search).not.toHaveBeenCalled();
+    expect((screen.getByRole("button", { name: "Search Cin7 customers" }) as HTMLButtonElement).disabled).toBe(true);
+  }, 30000);
+
+  it("when the wizard opens with nothing focused, focus moves to the step heading", async () => {
+    await open({ view: snapshotView(true) });
+    await waitFor(() => expect(document.activeElement?.tagName).toBe("H2"));
+  }, 30000);
+});
