@@ -390,7 +390,7 @@ export default function QuoteEditorPage() {
       {final && <div className="mt-4"><Alert tone="info">This quote is the manager-approved final. Its accepted baseline is frozen; any change after acceptance must be a Variation on the Project.</Alert></div>}
       {budget && <p className="mt-3 text-xs text-slate-600">{budget.priceSource.notice} Provenance: {budget.priceSource.provenance}</p>}
 
-      <StageNav stages={stages} current={here} viewing={stage} onSelect={goStage} previewable={previewable} />
+      <StageNav stages={stages} current={here} viewing={stage} onSelect={goStage} previewable={previewable} viewer={{ roles: view.viewer.roles, state: q.state }} />
 
       {stage === 1 && (
         <StepRail id="s1" ariaLabel="Configuration steps" steps={stage1.steps} currentId={stepId} onSelect={goStep}

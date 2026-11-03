@@ -11,7 +11,7 @@ import { navStatusLabel } from "@/newquip/quote/stage-nav-model";
 const TONE: Record<StageStatus, BadgeTone> = { LOADING: "neutral", COMPLETE: "success", IN_PROGRESS: "info", AWAITING_ACTION: "warning", RETURNED: "danger", NOT_STARTED: "neutral", NOT_AVAILABLE: "neutral", NOT_REQUIRED: "neutral" };
 
 // At 700px and below the six cards collapse to a disclosure "Stage n of 6 · name" that lists all six with their status (every stage stays reachable).
-export function StageNav({ stages, current, viewing, onSelect, previewable = [] }: { stages: StageView[]; current: StageId; viewing: StageId; onSelect: (id: StageId) => void; /** Unavailable stages the page can show read-only (labelled "Preview only"). */ previewable?: readonly StageId[] }) {
+export function StageNav({ stages, current, viewing, onSelect, previewable = [], viewer }: { stages: StageView[]; current: StageId; viewing: StageId; onSelect: (id: StageId) => void; /** Unavailable stages the page can show read-only (labelled "Preview only"). */ previewable?: readonly StageId[]; /** The viewer's roles and the quote state, for viewer-relative wording of the status chip only. */ viewer?: { roles: readonly string[]; state: string } }) {
   const [open, setOpen] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
   // Closing the list hides the focused button (display:none), which would drop focus to <body>: move it to the toggle instead (only when the list was open).
@@ -36,7 +36,7 @@ export function StageNav({ stages, current, viewing, onSelect, previewable = [] 
                       (grows, never truncated) and the status chip pinned to the bottom. The row is as tall as its tallest card. */}
                   <span className="block w-full lg:min-h-8 text-xs font-semibold text-slate-600">Stage {s.id}{s.id === current ? " · you are here" : ""}</span>
                   <span className="text-sm font-semibold text-slate-900">{s.label}</span>
-                  <span className="mt-auto pt-1"><Status tone={TONE[s.status]}>{navStatusLabel(s, previewable.includes(s.id))}</Status></span>
+                  <span className="mt-auto pt-1"><Status tone={TONE[s.status]}>{navStatusLabel(s, previewable.includes(s.id), viewer)}</Status></span>
                 </button>
               </li>
             );
