@@ -6,13 +6,16 @@ import "server-only";
 import type { createServiceRoleClient } from "@/supabase/server";
 import { evaluateDraft, type EvaluationContext, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import { emptyDraft, type QuoteDraft } from "@/newquip/grower/draft";
-import { buildAcceptedBaseline, baselineMatchesHash, hashOf, type AcceptedBaseline } from "@/newquip/quote/baseline";
+import { buildAcceptedBaseline, baselineMatchesHash, commercialLinesOf, hashOf, type AcceptedBaseline } from "@/newquip/quote/baseline";
+import { baselineExceptionView, baselineMappingGate, validateExceptionReason, type BaselineExceptionRequest, type BaselineExceptionView } from "@/newquip/quote/baseline-exception";
+import { buildPhysicalScope } from "@/newquip/quote/physical-scope";
+import { applyMappingLibrary } from "@/lib/projects/product-scope";
 import { quoteToProjectBaseline } from "@/newquip/quote/to-project";
 import type { ScheduleStageTemplate } from "@/newquip/quote/billing-schedule";
 import type { ScheduleSource } from "@/newquip/quote/project-template";
 import { authoriseTransition, canEditDraft, checkApproval, checkHandoff, checkSignOff, type QuoteState } from "@/newquip/quote/workflow";
 import { estimatorCostingComplete, type CostingStatus } from "@/newquip/quote/readiness-concepts";
-import type { QuoteRole } from "@/newquip/quote/roles";
+import { hasAny, COMMERCIAL_APPROVAL_ROLES, type QuoteRole } from "@/newquip/quote/roles";
 import { createProjectFromBaseline } from "@/lib/projects/project-store";
 import { libraryOf, listActiveMappings } from "@/lib/projects/package-mapping-store";
 import { requireAcceptance } from "./acceptance";
@@ -68,6 +71,21 @@ const indicativeTotalCents = (ev: QuoteEvaluation): number | null => (ev.budget 
 export async function costingOf(db: Db, orgId: string, draft: QuoteDraft, ctx: EvaluationContext): Promise<CostingStatus> {
   const library = await listActiveMappings(db, orgId);
   return estimatorCostingComplete(draft, evaluateDraft(draft, { ...ctx, withholdCost: false }), library ? libraryOf(library) : undefined);
+}
+
+/**
+ * Does approving this draft need a Manager's baseline exception (Estimator-priced systems with no Cin7 SKU), and which items would it cover? Evaluated with cost VISIBLE
+ * server-side; only item labels and the pricing route leave this function (never a cost, price or margin value).
+ */
+export async function baselineExceptionOf(db: Db, orgId: string, draft: QuoteDraft, ctx: EvaluationContext, asOfIso: string = new Date().toISOString()): Promise<BaselineExceptionView> {
+  const b = evaluateDraft(draft, { ...ctx, withholdCost: false }).budget;
+  if (!b) return { baselineExceptionRequired: false, items: [], otherBlockers: [], costException: null };
+  const library = await listActiveMappings(db, orgId);
+  const lines = commercialLinesOf(b);
+  const scope = buildPhysicalScope(lines);
+  const lib = library ? libraryOf(library) : undefined;
+  const costEx = draft.estimator.costBasis?.incompleteAccepted;
+  return baselineExceptionView(baselineMappingGate({ lines, scope: lib && lib.size ? applyMappingLibrary(scope, lib, asOfIso) : scope, physicalCosts: draft.estimator.physicalCosts, costExceptionAccepted: !!costEx }), costEx ?? null);
 }
 
 // ── reads ───────────────────────────────────────────────────────────────────
@@ -230,10 +248,18 @@ export async function estimatorSignOff(db: Db, orgId: string, roles: ReadonlySet
  * Manager final approval. Re-evaluates the saved draft SERVER-SIDE (no client number is ever trusted), verifies every
  * precondition, builds the sealed baseline and freezes it. Creates nothing in Cin7.
  */
-export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, email: string, quoteId: string, ctx: EvaluationContext, marginCtx?: EvaluationContext): Promise<{ baselineHash: string; contractCents: number }> {
+export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, email: string, quoteId: string, ctx: EvaluationContext, marginCtx?: EvaluationContext, opts: { baselineException?: BaselineExceptionRequest } = {}): Promise<{ baselineHash: string; contractCents: number; exceptionRecorded: boolean }> {
   const q = await mustLoad(db, orgId, quoteId);
   const auth = authoriseTransition(roles, q.state, "MANAGER_APPROVE");
   if (!auth.ok) fail(auth.error);
+  // A baseline exception is a Manager's own decision: re-checked here (before anything is built or written), bound to the exact version they reviewed, and fail-closed on any change.
+  const bx = opts.baselineException;
+  if (bx) {
+    if (!hasAny(roles, COMMERCIAL_APPROVAL_ROLES)) fail("Only a Manager can accept a baseline exception.");
+    const bad = validateExceptionReason(bx.reason);
+    if (bad) fail(bad);
+    if (bx.expectedRevision !== q.revision || bx.expectedDraftHash !== q.draft_hash) fail("The quotation changed after the exception was reviewed. Review the current version and accept the exception again.");
+  }
   const ev = evaluateDraft(q.draft, ctx);
   const chk = checkApproval({ readiness: ev.readiness, totalExVatCents: totalCents(ev), customerConfirmedCents: q.customer_confirmed_cents, signoffHash: q.estimator_signoff_hash, currentDraftHash: q.draft_hash, costing: await costingOf(db, orgId, q.draft, ctx) });
   if (!chk.ok) fail(chk.error);
@@ -243,6 +269,7 @@ export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<Q
   const { baseline, hash } = buildAcceptedBaseline({
     mappingLibrary: library ? libraryOf(library) : undefined,
     quoteRef: q.quote_ref, revision: q.revision, draft: q.draft, evaluation: ev,
+    ...(bx ? { baselineException: { reason: bx.reason, draftHash: q.draft_hash } } : {}),
     // Cost-visible evaluation of the SAME draft, used only for the internal margin sheet frozen with the baseline.
     marginEvaluation: marginCtx ? evaluateDraft(q.draft, marginCtx) : undefined,
     approvals: {
@@ -256,7 +283,7 @@ export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<Q
   }).eq("org_id", orgId).eq("id", quoteId).eq("state", "ESTIMATOR_REVIEW").eq("draft_hash", q.draft_hash).select("id");
   if (r.error) fail(r.error.message);
   if (!r.data || r.data.length === 0) fail("The quote changed during approval; refresh and review it again.");
-  return { baselineHash: hash, contractCents: baseline.contractCents };
+  return { baselineHash: hash, contractCents: baseline.contractCents, exceptionRecorded: !!baseline.exceptions?.length };
 }
 
 // ── Quote → Project ─────────────────────────────────────────────────────────

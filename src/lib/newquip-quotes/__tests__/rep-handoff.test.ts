@@ -7,6 +7,7 @@ import { readyDraft } from "@/newquip/grower/__tests__/golden";
 import { testPriceSource } from "@/newquip/grower/__tests__/test-snapshot";
 import { withCapturedSupplierCosts } from "@/newquip/quote/__tests__/costing-fixture";
 import { rolesFor } from "@/newquip/quote/roles";
+import { ledLibraryMapping, managerExceptionOpts } from "@/newquip/grower/__tests__/baseline-exception-fixture";
 import { createQuote, estimatorSignOff, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator } from "../quote-store";
 
 // UX-006 owner correction, store level (FakeDb): the Rep submits a complete CONFIGURATION without Estimator-owned mappings; nothing is commercially approvable
@@ -32,7 +33,8 @@ async function stored(d: QuoteDraft): Promise<string> {
 }
 const send = (id: string, amount: number, by = "Joe") => sendToEstimator(db as never, ORG, repOnly as never, "rep@nq", id, ctx, { confirmedAmountCents: amount, confirmedBy: by });
 
-beforeEach(() => { db = new FakeDb(); seedGoldenCatalogue(db as never, ORG); });
+// These tests are ABOUT Estimator-priced systems with no Cin7 SKU, so the golden library mappings that seedGoldenCatalogue adds for other fixtures are removed.
+beforeEach(() => { db = new FakeDb(); seedGoldenCatalogue(db as never, ORG); db.tables.newquip_package_mappings = []; });
 
 describe("Rep handoff does not wait for Estimator-owned work", () => {
   it("a Rep submits with mappings / packages unresolved: state moves, the INDICATIVE total is recorded, the audit fields are set", async () => {
@@ -105,7 +107,10 @@ describe("no commercial approval while mappings, supplier costs or pricing are u
     const id2 = await stored(accepted);
     await send(id2, cents(accepted));
     await estimatorSignOff(db as never, ORG, member, "est@nq", id2, ctx);
-    await managerApprove(db as never, ORG, admin, "m@nq", id2, ctx);
+    // ... but the cost exception waives COST reasons only (UX-006 S3): M75 / penning / LED have no Cin7 SKU, so approval needs the LED mapped and the Manager's recorded exception
+    expect(await err(managerApprove(db as never, ORG, admin, "m@nq", id2, ctx))).toMatch(/3 package\(s\) are not mapped to Cin7 SKUs/);
+    db.rows("newquip_package_mappings").push(ledLibraryMapping(ORG));
+    await managerApprove(db as never, ORG, admin, "m@nq", id2, ctx, undefined, managerExceptionOpts(db.rows("newquip_quotes")[1] as never));
     expect((await loadQuote(db as never, ORG, id2))!.state).toBe("MANAGER_APPROVED_FINAL");
   });
   it("the cost-withheld caller learns only the reason text, never a cost or margin value", async () => {
@@ -143,7 +148,11 @@ describe("costing gate: Estimator-priced-by-design lines are resolved pricing, n
     row.draft.estimator.costBasis = { incompleteAccepted: { reason: "Estimator-priced systems have no Cin7 SKU", by: "est@nq", at: "2026-01-01T00:00:00.000Z" } };
     (row as Record<string, unknown>).draft_hash = (await import("@/newquip/quote/baseline")).hashOf(row.draft);
     (row as Record<string, unknown>).estimator_signoff_hash = (row as Record<string, unknown>).draft_hash;
-    await managerApprove(db as never, ORG, admin, "m@nq", id, ctx);
+    // UX-006 S3: the Estimator's cost exception waives COST reasons only, so approval STILL refuses the unmapped packages ...
+    expect(await err(managerApprove(db as never, ORG, admin, "m@nq", id, ctx))).toMatch(/package\(s\) are not mapped to Cin7 SKUs/);
+    // ... until the LED package (a typed price, not a design choice) is mapped and the Manager records the baseline exception for the Estimator-priced systems.
+    db.rows("newquip_package_mappings").push(ledLibraryMapping(ORG));
+    await managerApprove(db as never, ORG, admin, "m@nq", id, ctx, undefined, managerExceptionOpts(row as never));
     expect((await loadQuote(db as never, ORG, id))!.state).toBe("MANAGER_APPROVED_FINAL");
   });
   it("one catalogue SKU without a supplier cost -> sign-off FAILS naming it; approval FAILS too", async () => {

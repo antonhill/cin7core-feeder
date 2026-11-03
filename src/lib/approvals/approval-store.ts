@@ -11,6 +11,7 @@ import type { createServiceRoleClient } from "@/supabase/server";
 import { sendEmail } from "@/lib/email/resend";
 import { applyEmailPolicy, approvalBaseUrl, SUPPRESSED_MARK, type EmailEnv } from "./email-policy";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
+import type { BaselineExceptionRequest } from "@/newquip/quote/baseline-exception";
 import { managerApprove, returnToRep, returnToEstimator, estimatorSignOff, loadQuote } from "@/lib/newquip-quotes/quote-store";
 import { rolesFor } from "@/newquip/quote/roles";
 import { approveClaim, cancelDraftClaim, returnClaimToDraft } from "@/lib/projects/project-store";
@@ -225,7 +226,7 @@ function matchesTarget(action: ApprovalAction, snap: DocSnapshot): boolean {
   return true;
 }
 
-export async function decide(db: Db, ctx: ApprovalCtx, requestId: string, action: ApprovalAction, input: { reason?: string; override?: boolean; destination?: "ESTIMATOR" | "PREPARER" | null; expectedVersion: number; expectedDigest: string }): Promise<ApprovalRequestRow> {
+export async function decide(db: Db, ctx: ApprovalCtx, requestId: string, action: ApprovalAction, input: { reason?: string; override?: boolean; destination?: "ESTIMATOR" | "PREPARER" | null; expectedVersion: number; expectedDigest: string; baselineException?: BaselineExceptionRequest }): Promise<ApprovalRequestRow> {
   const req = await loadRequest(db, ctx.orgId, requestId);
   if (!req) fail("Approval request not found.");
   if (req.stage !== undefined) return decideStaged(db, ctx, req, action, input); // a database with migration 0112 returns the stage on every request
@@ -237,7 +238,7 @@ export async function decide(db: Db, ctx: ApprovalCtx, requestId: string, action
     const snap = await loadSnapshot(db, ctx.orgId, req.doc_type, req.doc_id);
     if (snap.digest !== req.digest) fail("The document has changed since it was submitted, so this submission can no longer be decided. Ask the preparer to resubmit the current revision.");
     if (snap.state === "SUBMITTABLE") {
-      await applyDocumentAction(db, ctx, req, action, reason);
+      await applyDocumentAction(db, ctx, req, action, reason, input.baselineException);
     } else if (!matchesTarget(action, snap)) {
       fail(`The ${req.doc_type.toLowerCase()} is no longer waiting for approval (${snap.stateLabel}).`);
     } // else: already in the target state (a previous attempt changed it but could not record the decision): reconcile below
@@ -254,10 +255,10 @@ export async function decide(db: Db, ctx: ApprovalCtx, requestId: string, action
 }
 
 /** The document's own existing action. Compare-and-set inside each, so a concurrent second manager fails here. */
-async function applyDocumentAction(db: Db, ctx: ApprovalCtx, req: ApprovalRequestRow, action: ApprovalAction, reason: string): Promise<void> {
+async function applyDocumentAction(db: Db, ctx: ApprovalCtx, req: ApprovalRequestRow, action: ApprovalAction, reason: string, baselineException?: BaselineExceptionRequest): Promise<void> {
   const mgrRoles = rolesFor("admin");
   if (req.doc_type === "QUOTE") {
-    if (action === "APPROVE") await managerApprove(db, ctx.orgId, mgrRoles, ctx.email, req.doc_id, evaluationContext(true), evaluationContext(false));
+    if (action === "APPROVE") await managerApprove(db, ctx.orgId, mgrRoles, ctx.email, req.doc_id, evaluationContext(true), evaluationContext(false), baselineException ? { baselineException } : undefined);
     else if (action === "RETURN") await returnToRep(db, ctx.orgId, mgrRoles, req.doc_id, reason);
     else if (action === "REJECT") await returnToRep(db, ctx.orgId, mgrRoles, req.doc_id, `Rejected: ${reason}`); // a quote has no cancelled state: it goes back to the rep, the rejection is recorded
     return;
@@ -460,7 +461,7 @@ export function legacyCtx(orgId: string, userId: string, email: string | null, i
  * A decision made from a document's own screen. The current revision is submitted first when nobody submitted it (recorded as submitted by its
  * preparer), then decided through the same checks as the Approvals dashboard: separation of duties, exact digest, history, notifications.
  */
-export async function decideDocument(db: Db, ctx: ApprovalCtx, docType: ApprovalDocType, docId: string, action: Exclude<ApprovalAction, "WITHDRAW">, input: { reason?: string; override?: boolean; destination?: "ESTIMATOR" | "PREPARER" | null; stage?: ApprovalStage } = {}): Promise<ApprovalRequestRow> {
+export async function decideDocument(db: Db, ctx: ApprovalCtx, docType: ApprovalDocType, docId: string, action: Exclude<ApprovalAction, "WITHDRAW">, input: { reason?: string; override?: boolean; destination?: "ESTIMATOR" | "PREPARER" | null; stage?: ApprovalStage; baselineException?: BaselineExceptionRequest } = {}): Promise<ApprovalRequestRow> {
   let req = await pendingRequestFor(db, ctx.orgId, docType, docId);
   const staged = await stagedAvailable(db);
   if (!req) {
@@ -558,7 +559,7 @@ function matchesStagedTarget(action: ApprovalAction, destination: "ESTIMATOR" | 
 }
 
 /** The document's own existing action for a staged decision (each is a compare-and-set, so a concurrent second decision fails here). */
-async function applyStagedDocumentAction(db: Db, ctx: ApprovalCtx, req: ApprovalRequestRow, action: ApprovalAction, reason: string, destination: "ESTIMATOR" | "PREPARER" | null): Promise<void> {
+async function applyStagedDocumentAction(db: Db, ctx: ApprovalCtx, req: ApprovalRequestRow, action: ApprovalAction, reason: string, destination: "ESTIMATOR" | "PREPARER" | null, baselineException?: BaselineExceptionRequest): Promise<void> {
   if (req.doc_type !== "QUOTE") return applyDocumentAction(db, ctx, req, action, reason);
   const all = rolesFor("admin"); // the engine has already authorised this actor for this stage; the store re-checks state and content
   if ((req.stage ?? "MANAGER") === "ESTIMATOR") {
@@ -567,12 +568,12 @@ async function applyStagedDocumentAction(db: Db, ctx: ApprovalCtx, req: Approval
     else if (action === "REJECT") await returnToRep(db, ctx.orgId, all, req.doc_id, `Rejected: ${reason}`);
     return;
   }
-  if (action === "APPROVE") await managerApprove(db, ctx.orgId, all, ctx.email, req.doc_id, evaluationContext(true), evaluationContext(false));
+  if (action === "APPROVE") await managerApprove(db, ctx.orgId, all, ctx.email, req.doc_id, evaluationContext(true), evaluationContext(false), baselineException ? { baselineException } : undefined);
   else if (action === "RETURN") { if (destination === "ESTIMATOR") await returnToEstimator(db, ctx.orgId, all, req.doc_id, reason); else await returnToRep(db, ctx.orgId, all, req.doc_id, reason); }
   else if (action === "REJECT") await returnToRep(db, ctx.orgId, all, req.doc_id, `Rejected: ${reason}`);
 }
 
-async function decideStaged(db: Db, ctx: ApprovalCtx, req: ApprovalRequestRow, action: ApprovalAction, input: { reason?: string; override?: boolean; destination?: "ESTIMATOR" | "PREPARER" | null; expectedVersion: number; expectedDigest: string }): Promise<ApprovalRequestRow> {
+async function decideStaged(db: Db, ctx: ApprovalCtx, req: ApprovalRequestRow, action: ApprovalAction, input: { reason?: string; override?: boolean; destination?: "ESTIMATOR" | "PREPARER" | null; expectedVersion: number; expectedDigest: string; baselineException?: BaselineExceptionRequest }): Promise<ApprovalRequestRow> {
   const stage = req.stage ?? "MANAGER";
   const roles = await resolveRoles(db, ctx.orgId, ctx.userId, ctx.isManager);
   const sp = stageOf(await loadPolicies(db, ctx.orgId), req.doc_type, stage);
@@ -584,7 +585,7 @@ async function decideStaged(db: Db, ctx: ApprovalCtx, req: ApprovalRequestRow, a
   if (action !== "WITHDRAW") {
     const snap = await loadSnapshot(db, ctx.orgId, req.doc_type, req.doc_id, stage);
     if (snap.digest !== req.digest) fail("The document has changed since it was submitted, so this submission can no longer be decided. Ask the preparer to resubmit the current revision.");
-    if (snap.state === "SUBMITTABLE") await applyStagedDocumentAction(db, ctx, req, action, reason, destination);
+    if (snap.state === "SUBMITTABLE") await applyStagedDocumentAction(db, ctx, req, action, reason, destination, input.baselineException);
     else if (!matchesStagedTarget(action, destination, snap)) fail(`The ${req.doc_type.toLowerCase()} is no longer waiting for ${stage === "ESTIMATOR" ? "estimator review" : "approval"} (${snap.stateLabel}).`);
     // else: already in the target state (a previous attempt changed it but could not record the decision): reconcile below
   }

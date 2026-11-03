@@ -9,6 +9,7 @@ import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { readyDraft } from "@/newquip/grower/__tests__/golden";
 import { testPriceSource } from "@/newquip/grower/__tests__/test-snapshot";
 import { buildAcceptedBaseline } from "@/newquip/quote/baseline";
+import { GOLDEN_LIBRARY } from "@/newquip/grower/__tests__/golden-catalogue";
 import { buildCustomerSnapshot, withChosenContact } from "@/lib/newquip-quotes/customer-snapshot";
 
 // The REAL document / delivery server actions and the download route over an in-memory database and storage. Only session, Demo Mode, roles, storage and the provider are replaced.
@@ -49,7 +50,7 @@ const as = (roles: string[], opts: { email?: string; demo?: boolean; admin?: boo
 beforeEach(async () => {
   db = new FakeDb(); db.deliveryApplied = true; db.portalApplied = true; db.approvalsApplied = true; resetRateLimits(); fwd = "198.51.100.9"; vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://preview.newquip.example"); vi.stubEnv("NEWQUIP_PUBLIC_PORTAL_URL", "https://portal.newquip.example"); vi.stubEnv("NEWQUIP_INTERNAL_APP_URL", "https://preview.newquip.example"); files.clear(); (db as unknown as { storage: unknown }).storage = { from: () => ({ download: async (p: string) => (files.has(p) ? { data: { arrayBuffer: async () => { const b = files.get(p)!; return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); } } } : { error: { message: "not found" } }) }) }; vi.mocked(sendEmail).mockClear(); vi.stubEnv("VERCEL_ENV", "preview");
   const draft = readyDraft(); draft.customerName = "Boerdery (Pty) Ltd";
-  const { baseline, hash } = buildAcceptedBaseline({ quoteRef: "NQ-Q-0009", revision: 1, draft, evaluation: evaluateDraft(draft, { priceSource: testPriceSource(), withholdCost: false }), approvals: { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: "t" } });
+  const { baseline, hash } = buildAcceptedBaseline({ mappingLibrary: GOLDEN_LIBRARY as never, quoteRef: "NQ-Q-0009", revision: 1, draft, evaluation: evaluateDraft(draft, { priceSource: testPriceSource(), withholdCost: false }), approvals: { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: "t" } });
   db.rows("newquip_quotes").push({ id: "11111111-2222-3333-4444-555555555555", org_id: "org-a", quote_ref: "NQ-Q-0009", revision: 1, state: "MANAGER_APPROVED_FINAL", accepted_baseline: baseline, baseline_hash: hash, draft: {}, requires_customer_acceptance: true });
   db.rows("newquip_quote_customers").push({ id: "s1", org_id: "org-a", quote_id: "11111111-2222-3333-4444-555555555555", seq: 1, cin7_customer_id: "c1", snapshot: withChosenContact(buildCustomerSnapshot({ ID: "c1", Name: "Boerdery (Pty) Ltd", Currency: "ZAR", Addresses: [{ Type: "Billing", Line1: "PO Box 1", DefaultForType: true }], Contacts: [{ Name: "Piet", Email: "piet@boerdery.example" }] }, "t"), { source: "CIN7_CONTACT", contactIndex: 0 }), snapshot_hash: "h", captured_by_email: "r" });
 });
