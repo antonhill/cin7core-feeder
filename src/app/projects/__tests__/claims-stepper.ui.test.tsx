@@ -124,11 +124,18 @@ describe("Nothing-claimable hint", () => {
   });
   it("does not repeat the page banners for an unbalanced schedule or uncertain claim; absent when something is claimable", async () => {
     setup(() => view([stage()], [], [], { scheduleBalanced: false, uncertainClaimBlocking: true }));
-    await openTab(/Commercial \/ Claims/);
+    await openTab(/^Commercial \/ Claims/);
     const t = (await screen.findByTestId("nothing-claimable")).textContent!;
     // the page banners already say both: the hint does not repeat them
     expect(screen.getByText(/Stage values do not reconcile to the contract value/)).toBeTruthy();
     expect(screen.getByText(/A claim has an uncertain Cin7 outcome/)).toBeTruthy();
+    // the banners carry the pointer the hint no longer repeats (offered when the viewer is on another tab)
+    fireEvent.click(screen.getByRole("button", { name: /^Stages/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open the Commercial / Claims tab" }));
+    await screen.findByText("Create progress claim");
+    fireEvent.click(screen.getByRole("button", { name: /^Overview/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open the Stages tab" }));
+    await screen.findByText("Update progress by stage");
     expect(t).not.toContain("do not reconcile");
     expect(t).not.toContain("uncertain Cin7 outcome");
     expect(t).toContain("approved commercial progress");
