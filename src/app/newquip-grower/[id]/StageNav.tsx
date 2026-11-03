@@ -32,11 +32,11 @@ export function StageNav({ stages, current, viewing, onSelect, previewable = [] 
               <li key={s.id}>
                 <button type="button" onClick={() => { onSelect(s.id); close(); }} aria-current={on ? "step" : undefined} data-stage={s.id}
                   className={`flex h-full min-h-11 w-full flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors ${on ? "border-indigo-600 bg-indigo-50 ring-2 ring-indigo-600" : "border-slate-200 bg-white hover:bg-slate-50"}${s.status === "NOT_AVAILABLE" && !on ? " border-dashed bg-slate-50" : ""}`}>
-                  <span className="flex w-full items-center justify-between gap-2 text-xs font-semibold text-slate-600">
-                    <span>Stage {s.id}{s.id === current ? " · you are here" : ""}</span>
-                  </span>
+                  {/* Every card has the same three zones: a header of fixed height (room for "Stage n · you are here" on two lines, so the title always starts at the same offset), the title
+                      (grows, never truncated) and the status chip pinned to the bottom. The row is as tall as its tallest card. */}
+                  <span className="block w-full lg:min-h-8 text-xs font-semibold text-slate-600">Stage {s.id}{s.id === current ? " · you are here" : ""}</span>
                   <span className="text-sm font-semibold text-slate-900">{s.label}</span>
-                  <Status tone={TONE[s.status]}>{navStatusLabel(s, previewable.includes(s.id))}</Status>
+                  <span className="mt-auto pt-1"><Status tone={TONE[s.status]}>{navStatusLabel(s, previewable.includes(s.id))}</Status></span>
                 </button>
               </li>
             );

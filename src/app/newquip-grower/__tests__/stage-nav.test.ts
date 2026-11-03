@@ -42,6 +42,16 @@ describe("six-stage navigation", () => {
   });
 });
 
+describe("UX-006c equal-height cards", () => {
+  it("each card pins its status chip to the bottom, keeps a fixed header zone for the title offset and never truncates", () => {
+    const h = html();
+    expect(h.match(/mt-auto/g)).toHaveLength(6);
+    expect(h.match(/lg:min-h-8/g)).toHaveLength(6);
+    for (const cut of ["line-clamp", "truncate", "overflow-hidden", "text-ellipsis"]) expect(h, cut).not.toContain(cut);
+    expect(h).toContain("h-full"); // the card fills its grid cell, so a row is as tall as its tallest card
+  });
+});
+
 describe("REGRESSION: stages must not revert while the persisted commercial status is loading (NQ-Q-0015: issued, accepted online, verified, Project created)", () => {
   // What the database holds for NQ-Q-0015 once everything has happened, as the page sees it.
   const done: Partial<StageInput> = { commercial: "CUSTOMER_ACCEPTED", hasDocument: true, projectLinked: true, linkState: "ACTIVE" };
