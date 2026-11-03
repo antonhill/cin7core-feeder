@@ -58,7 +58,7 @@ export function deriveFinalReviewChecklist(i: Pick<Stage2WizardInput, "mappingOp
     { id: "mapping", label: "Product lines are mapped and priced", met: i.calcValid && i.mappingOpen.length === 0, detail: !i.calcValid ? "The Rep's configuration is not complete yet." : i.mappingOpen.length === 0 ? null : `${i.mappingOpen[0]}${i.mappingOpen.length > 1 ? ` (+${i.mappingOpen.length - 1} more)` : ""}. Step 1.` },
     { id: "ready", label: "The quotation is READY", met: i.readiness.state === "READY", detail: i.readiness.state === "READY" ? null : (i.readiness.reasons[0] ?? "The quote must be READY (nothing outstanding) before it can be signed off.") },
   ];
-  if (i.cost) items.push({ id: "costing", label: "Costing and margin can be reviewed", met: i.cost.status === "review" || i.cost.status === "complete", detail: i.cost.status === "review" || i.cost.status === "complete" ? null : (i.cost.note ?? "The costing needs attention.") });
+  if (i.cost) items.push({ id: "costing", label: "Costing figures are available", met: i.cost.status === "review" || i.cost.status === "complete", detail: i.cost.status === "review" || i.cost.status === "complete" ? "Check the margin and the Cin7 cost capture in step 2: either may still show incomplete, so review with care." : (i.cost.note ?? "The costing needs attention.") });
   const both = i.confirmedCents != null && i.totalCents != null;
   items.push({ id: "amount", label: "The confirmed amount equals the quote total", met: both && i.confirmedCents === i.totalCents, detail: i.confirmedCents == null ? "No customer price confirmation is recorded." : i.totalCents == null ? "The quote total is not available yet." : i.confirmedCents === i.totalCents ? null : "The total changed after the customer confirmed it. Return it to the Rep to reconfirm." });
   if (i.dirty) items.push({ id: "saved", label: "No unsaved edits", met: false, detail: "Save or discard your edits first: the review applies to the saved quotation." });
@@ -92,15 +92,18 @@ export function deriveStage2Wizard(i: Stage2WizardInput): StageWizard<Stage2Wiza
     : { status: "complete" };
 
   const costNeeds = i.cost?.status === "attention" ? i.cost.note : undefined;
-  const costs: { status: StepStatus; note?: string } = !i.cost ? { status: "unavailable" }
+  const costs: { status: StepStatus; note?: string; counted?: boolean; statusLabel?: string } = !i.cost ? { status: "unavailable" }
     : final || signedCurrent ? { status: "complete" }
     : i.cost.status === "attention" ? { status: canEdit ? "attention" : "incomplete", note: costNeeds }
-    : i.cost.status === "complete" ? { status: "complete" } : { status: i.cost.status, ...(i.cost.note ? { note: i.cost.note } : {}) };
+    : i.cost.status === "complete" ? { status: "complete" }
+    // The figures are looked at here and the review is recorded in Final review: before the mark the label says "To review"; after it, "Reviewed" (counted with the Final review, never a check).
+    : inReview && i.costAcknowledged && !i.dirty && i.cost.status === "review" ? { status: "review", counted: true, statusLabel: "Reviewed", note: "Reviewed in Final review (session only, not saved)" }
+    : { status: i.cost.status, ...(i.cost.status === "review" ? { statusLabel: "To review in Final review" } : {}), ...(i.cost.note ? { note: i.cost.note } : {}) };
 
   const blockers = deriveFinalReviewChecklist(i).filter((x) => x.id !== "saved" && !x.met);
   let finalStep: { status: StepStatus; note?: string; counted?: boolean; statusLabel?: string };
   if (final || signedCurrent) finalStep = { status: "complete" };
-  else if (inReview && i.costAcknowledged && !i.dirty) finalStep = { status: "review", counted: true, statusLabel: "Reviewed", note: "You marked this reviewed - this is not a sign-off; it is not saved" };
+  else if (inReview && i.costAcknowledged && !i.dirty) finalStep = { status: "review", counted: true, statusLabel: "Reviewed", note: "Marked reviewed for this session only - not saved and not a sign-off" };
   else if (!repDraft && blockers.length > 0 && canEdit) finalStep = { status: "attention", note: blockers[0].detail ?? blockers[0].label };
   else finalStep = { status: "incomplete", ...(repDraft ? { note: "Waiting for the Rep to submit" } : {}) };
 
@@ -175,8 +178,8 @@ export function deriveStage3Wizard(i: Stage3WizardInput): StageWizard<Stage3Wiza
   const decision: Stage3WizardStep = repDraft
     ? { id: "decision", label: STAGE3_WIZARD_LABEL.decision, owner: "Manager", status: "incomplete", access: "locked", blockedBy: [NOT_SUBMITTED_REASON], blockKind: "server", note: decisionNote }
     : { id: "decision", label: STAGE3_WIZARD_LABEL.decision, owner: "Manager", status: final ? "complete" : "incomplete", access: !final && manager ? "edit" : "readonly", blockedBy: [], note: decisionNote };
-  const nextOwner: WizardRole | null = final ? null : repDraft ? "Rep" : signed ? "Manager" : "Estimator";
-  const statusLine = final ? "Approved. The Manager's decision is recorded."
+  const nextOwner: WizardRole | null = final ? "Rep" : repDraft ? "Rep" : signed ? "Manager" : "Estimator";
+  const statusLine = final ? "Approved. Next: Rep issues and sends the customer quotation (Stage 4)."
     : repDraft ? (i.revision > 1 ? `Returned to the Rep (revision ${i.revision}). Next responsible role: Rep.` : "The Rep has not submitted yet. Next responsible role: Rep.")
     : signed ? (manager ? "Signed off by the Estimator. Your decision: approve, or return it. Next responsible role: Manager." : "Signed off by the Estimator. Next responsible role: Manager.")
     : i.signoff === "stale" ? "The Estimator's sign-off is out of date. Next responsible role: Estimator."
@@ -190,4 +193,21 @@ export function estimatorItemText(message: string): string {
   if (mapping) return `Choose the product for ${mapping[1]}`;
   const rest = message.replace(/^Estimator:?\s*/, "");
   return rest.charAt(0).toUpperCase() + rest.slice(1);
+}
+
+export interface EstimatorWork { map: string[]; price: string[]; reason: string[]; all: string[] }
+/**
+ * The Estimator-owned open items by KIND, from the CURRENT budget lines (so the list is never stale after the mappings are confirmed): a product to choose or confirm, a manual quotation price to enter
+ * (the price source has none), and manual prices that still need a reason. Each line once. Messages are instructions to the Estimator.
+ */
+export function estimatorWork(lines: ReadonlyArray<{ label: string; status: string }> | null, blankPriceReasonCount: number): EstimatorWork {
+  const seen = new Set<string>();
+  const map: string[] = []; const price: string[] = []; const reason: string[] = [];
+  for (const b of lines ?? []) {
+    if (seen.has(b.label)) continue;
+    if (b.status === "unmapped" || b.status === "package_unconfirmed" || b.status === "package_incomplete") { seen.add(b.label); map.push(`Choose or confirm the product for ${b.label}`); }
+    else if (b.status === "not_in_price_source" || b.status === "supplier_quote_required") { seen.add(b.label); price.push(`Enter a manual quotation price for ${b.label}`); }
+  }
+  if (blankPriceReasonCount > 0) reason.push(`${blankPriceReasonCount} manual price${blankPriceReasonCount === 1 ? " needs" : "s need"} a reason`);
+  return { map, price, reason, all: [...map, ...price, ...reason] };
 }

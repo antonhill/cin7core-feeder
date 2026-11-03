@@ -104,6 +104,12 @@ export interface EstimatorResultProps {
   priceExceptions: ReadonlyArray<{ label: string; unitPrice: number; reason: string; by?: string; at?: string }>;
   /** Cost overrides: passed ONLY for a viewer with cost visibility. */
   costOverrides: ReadonlyArray<{ label: string; costCents: number; reason: string; by?: string }> | null;
+  /** Prices and the Estimator's free-text reasons are shown ONLY to a viewer with cost visibility; anyone else sees which lines are manually priced and by whom, nothing more. */
+  showPriceDetail: boolean;
+  /** The margin is incomplete or unknown (cost-visible viewers only): a visible flag, never a block. */
+  marginUnknown: boolean;
+  /** The three largest lines by selling value (cost-visible viewers only), so an implausible line is noticeable. */
+  largestLines: ReadonlyArray<{ label: string; amount: number }> | null;
 }
 
 /** The Estimator's result as the Manager reads it: who signed off and when, the total against the confirmed amount, the costing headline and every exception. */
@@ -116,17 +122,26 @@ export function EstimatorResult(p: EstimatorResultProps) {
         <div><dt className="text-xs text-slate-700">Signed off by</dt><dd className="font-medium text-slate-900" data-testid="result-signoff">{p.signedOffBy ? `${p.signedOffBy}${p.signedOffAt ? `, ${formatSast(p.signedOffAt)}` : ""}${p.signoffCurrent ? "" : " (out of date)"}` : <span className="text-slate-700">Not signed off yet</span>}</dd></div>
         <div><dt className="text-xs text-slate-700">Quote total (ex VAT)</dt><dd className="font-medium tabular-nums text-slate-900">{p.totalCents == null ? "—" : fmtCents(p.totalCents)}</dd></div>
         <div><dt className="text-xs text-slate-700">Customer-confirmed amount</dt><dd className="font-medium tabular-nums text-slate-900">{p.confirmedCents == null ? "—" : fmtCents(p.confirmedCents)} {p.confirmedCents != null && p.totalCents != null && <Status tone={match ? "success" : "danger"}>{match ? "Matches the total" : "Does not match the total"}</Status>}</dd></div>
+        {p.marginUnknown && <div className="md:col-span-2 xl:col-span-4"><Status tone="warning">Margin: incomplete or unknown</Status> <span className="text-sm text-slate-800" data-testid="margin-flag">Some costs are missing, so the margin cannot be relied on. Look at the lines below before deciding.</span></div>}
         {p.costing && <div><dt className="text-xs text-slate-700">Estimated cost · gross margin</dt><dd className="font-medium tabular-nums text-slate-900" data-testid="result-costing">{fmtZar(p.costing.estimatedCost)} · {p.costing.marginPct == null ? "N/A" : `${p.costing.marginPct.toFixed(1)}%`}</dd></div>}
       </dl>
       <div className="mt-4" data-testid="result-exceptions">
         <h3 className="text-sm font-semibold text-slate-900">Pricing exceptions</h3>
         {p.priceExceptions.length === 0 && (!p.costOverrides || p.costOverrides.length === 0) ? <p className="mt-1 text-sm text-slate-800">None: every line is priced from the approved price source.</p> : (
           <ul className="mt-1 space-y-1 text-sm text-slate-800">
-            {p.priceExceptions.map((e) => <li key={`p:${e.label}`}><b>{e.label}</b>: manual quotation price {fmtZar(e.unitPrice)} ex VAT · {e.reason.trim() || "no reason"}{e.by ? ` · ${e.by}` : ""}{e.at ? ` at ${formatSast(e.at)}` : ""}</li>)}
+            {p.priceExceptions.map((e) => p.showPriceDetail
+              ? <li key={`p:${e.label}`}><b>{e.label}</b>: manual quotation price {fmtZar(e.unitPrice)} ex VAT · {e.reason.trim() || "no reason"}{e.by ? ` · ${e.by}` : ""}{e.at ? ` at ${formatSast(e.at)}` : ""}</li>
+              : <li key={`p:${e.label}`}><b>{e.label}</b>: manually priced by the Estimator</li>)}
             {(p.costOverrides ?? []).map((o) => <li key={`c:${o.label}`}><b>{o.label}</b>: cost override {fmtCents(o.costCents)} · {o.reason.trim()}{o.by ? ` · ${o.by}` : ""}</li>)}
           </ul>
         )}
       </div>
+      {p.largestLines && p.largestLines.length > 0 && (
+        <div className="mt-4" data-testid="largest-lines">
+          <h3 className="text-sm font-semibold text-slate-900">Largest lines (ex VAT)</h3>
+          <ol className="mt-1 list-decimal space-y-0.5 pl-5 text-sm text-slate-800">{p.largestLines.map((l) => <li key={l.label}>{l.label}: <b className="tabular-nums">{fmtZar(l.amount)}</b></li>)}</ol>
+        </div>
+      )}
     </Panel>
   );
 }

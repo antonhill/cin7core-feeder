@@ -192,7 +192,7 @@ describe("UX-006i2 Stage 2: an Estimator on a Rep draft (the Rep is waiting on t
     expect(document.body.textContent!.split("The Rep is waiting on your mapping").length - 1).toBe(1); // said once (the status line), not repeated in the banner
     expect(screen.getByTestId("all-steps-complete").textContent).toBe("Next: choose the products listed above, then save.");
     expect(banner.querySelectorAll("li").length).toBeGreaterThan(0);
-    expect(banner.textContent).toMatch(/Choose the product for/);
+    expect(banner.textContent).toMatch(/Choose or confirm the product for/);
     expect(screen.getByTestId("stage2-status-line").textContent).toBe("The Rep is waiting on your mapping.");
     expect(screen.getByTestId("next-owner").textContent).toBe("Estimator");
     for (const id of ["costs", "final", "signoff"]) {
@@ -320,7 +320,7 @@ describe("UX-006i2 Stage 2: Final review - Mark reviewed & continue (client-loca
   // A real change to the draft (an Estimator's reason on a manual quotation price): the content hash and update time change when it is saved.
   const dirtyIt = async () => { await act(async () => { fireEvent.change(within(panel("mapping") as HTMLElement).getAllByLabelText("Reason", { selector: "input" })[0], { target: { value: "Supplier quote dated today" } }); }); };
 
-  it("the checklist is compact and the ONE primary action is 'Mark reviewed & continue': marking moves progress 0 -> 1, moves focus to the Sign-off heading, announces it, and sends NOTHING to the server", async () => {
+  it("the checklist is compact and the ONE primary action is 'Mark reviewed & continue': marking moves progress 1 -> 3 (one review, counted on Costs and Final review), moves focus to the Sign-off heading, announces it, and sends NOTHING to the server", async () => {
     const q = serialQueue(0);
     await open({ roles: ["ESTIMATOR"], commercials: true, step: "3", ...SUBMITTED });
     await sleep(1200);
@@ -337,10 +337,10 @@ describe("UX-006i2 Stage 2: Final review - Mark reviewed & continue (client-loca
     const live = screen.getByTestId("cost-ack-live"); // the live region exists EMPTY first so the announcement is reliable
     expect(live.getAttribute("aria-live")).toBe("polite"); expect(live.textContent).toBe("");
     fireEvent.click(ackBtn());
-    expect(toggle()).toMatch(/· 2 complete/); // 1 -> 2: the final review now counts (progress moved by exactly one)
+    expect(toggle()).toMatch(/· 3 complete/); // 1 -> 3: marking records ONE review, which counts on both steps it covers (Costs and Final review)
     expect(current()).toBe("signoff");
     expect(document.activeElement?.textContent).toBe("Step 4 · Sign-off or return");
-    expect(screen.getByTestId("cost-ack-live").textContent).toBe("Final review marked as reviewed. This is not a sign-off.");
+    expect(screen.getByTestId("cost-ack-live").textContent).toBe("Final review marked as reviewed for this session. This is not a sign-off.");
     expect(screen.getByTestId("cost-ack-live")).toBe(live);
     await act(async () => { await sleep(150); });
     expect(started(q)).toBe(before); // client-local
@@ -348,8 +348,8 @@ describe("UX-006i2 Stage 2: Final review - Mark reviewed & continue (client-loca
     fireEvent.click(rail().querySelector('[data-step="final"]')!);
     expect(status("final")).toBe("Reviewed");
     expect(rail().querySelector('[data-step="final"]')!.textContent).not.toContain("✓");
-    expect(rail().querySelector('[data-step="final"]')!.textContent).toContain("You marked this reviewed - this is not a sign-off; it is not saved");
-    expect(screen.getByTestId("cost-ack-done").textContent).toContain("It is not saved and it is not a sign-off.");
+    expect(rail().querySelector('[data-step="final"]')!.textContent).toContain("Marked reviewed for this session only - not saved and not a sign-off");
+    expect(screen.getByTestId("cost-ack-done").textContent).toContain("not saved - repeat after a reload before signing off). It is not a sign-off.");
     expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull();
     expect(within(screen.getByTestId("step-buttons")).getByRole("button", { name: "Next: Sign-off or return" })).toBeTruthy(); // plain navigation only after marking
     expect(live.textContent).toBe(""); // cleared when the step changed
@@ -563,7 +563,7 @@ describe("UX-006i2 Stage 2: navigation (Back only to permitted steps; no navigat
     expect(screen.getByTestId("step-unavailable").closest("[role=status]")).toBeNull();
     expect(document.body.textContent).not.toMatch(/Internal margins|Cost & margin/);
     await waitFor(() => expect(new URL(window.location.href).searchParams.has("step")).toBe(false));
-    fireEvent.click(screen.getByRole("button", { name: /^Next:/ }));
+    fireEvent.click(within(rail()).getByRole("button", { name: /Sign-off or return/ })); // a Rep has no Next in Stage 2 (P2): navigating is by the rail
     expect(screen.queryByTestId("step-unavailable")).toBeNull();
     cleanup();
     await open({ roles: ["ESTIMATOR"], commercials: true, step: "3", ...SUBMITTED });
@@ -614,7 +614,7 @@ describe("UX-006i2 Stage 2: navigation (Back only to permitted steps; no navigat
 
   it("switching stage keeps the address bar honest: ?step= follows the stage's own step and is dropped when it is the first", async () => {
     await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED });
-    fireEvent.click(within(rail()).getByRole("button", { name: /Final review/ }));
+    fireEvent.click(rail().querySelector('[data-step="final"]')!);
     expect(new URL(window.location.href).searchParams.get("step")).toBe("3");
     fireEvent.click(document.querySelector('[data-stage="3"]')!);
     const u = new URL(window.location.href);
@@ -774,4 +774,66 @@ describe("UX-006i2 Stage 2: the requests made on mount do not depend on which st
     expect(guided).toEqual(all);
     expect(guided).not.toContain("start getQuoteCostEstimateAction");
   }, 60000);
+});
+
+describe("UX-006i2 review fixes: wording that is true to the current state (reviewer findings)", () => {
+  it("the 'needed from you' list is derived from the CURRENT open items by kind: with the products confirmed it asks only for manual prices (no stale 'choose the product'), each line once", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, draftOver: { estimator: { ...draft.estimator, priceResolutions: {} } } });
+    const items = [...screen.getByTestId("rep-waiting-banner").querySelectorAll("li")].map((l) => l.textContent!);
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.every((t) => /^Choose or confirm the product for |^Enter a manual quotation price for |^\d+ manual prices? needs? a reason/.test(t)), items.join(" | ")).toBe(true);
+    expect(items.some((t) => t.startsWith("Enter a manual quotation price for "))).toBe(true); // the price kind is named as such, not as "choose the product"
+    expect(items.filter((t) => t.includes("Feed saver mat")).every((t) => t.startsWith("Enter a manual"))).toBe(true); // a line whose product is confirmed is not asked for again
+    expect(new Set(items).size).toBe(items.length);
+    expect(screen.getByTestId("all-steps-complete").textContent).toBe("Next: choose the products listed above, then save.");
+  }, 30000);
+
+  it("the stage line is consistent for an Estimator on a Rep draft: 'your mapping is needed', never 'Starts once the quote is READY'", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, draftOver: UNMAPPED });
+    const next = screen.getByTestId("next-action").textContent!;
+    expect(next).not.toMatch(/Starts once the quote is READY/);
+    expect(next).toMatch(/Estimator: map the products and enter the manual prices/);
+    expect(document.querySelector('[data-stage="2"]')!.textContent).toContain("Your mapping is needed");
+  }, 30000);
+
+  it("Costs reads 'To review in Final review' until the review is marked, then 'Reviewed' (counted with Final review); the mark is stated as SESSION-ONLY (confirmation and a note on the step); nothing is saved", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "3", ...SUBMITTED });
+    expect(status("costs")).toBe("To review in Final review");
+    expect(screen.getByTestId("session-only-note").textContent).toMatch(/this session only: it is not saved, and after a reload you mark it again/);
+    fireEvent.click(screen.getByRole("button", { name: /Mark reviewed/ }));
+    expect(status("costs")).toBe("Reviewed");
+    expect(rail().querySelector('[data-step="costs"]')!.textContent).toContain("session only");
+    expect(screen.getByTestId("cost-ack-live").textContent).toBe("Final review marked as reviewed for this session. This is not a sign-off.");
+    fireEvent.click(rail().querySelector('[data-step="final"]')!);
+    expect(screen.getByTestId("cost-ack-done").textContent).toContain("Marked reviewed for this session (not saved - repeat after a reload before signing off)");
+    expect(screen.getByTestId("final-review-checklist").textContent).toContain("Costing figures are available");
+    expect(screen.getByTestId("final-review-checklist").textContent).not.toContain("can be reviewed");
+  }, 60000);
+
+  it("a Rep reaching Stage 2 has NO 'Next' that dead-ends: only the way back to their own stage; a Manager or observer inspects with a secondary Next that records nothing", async () => {
+    await open({ roles: ["REP"], ...SUBMITTED });
+    const bar = screen.getByTestId("step-buttons");
+    expect(within(bar).queryByRole("button", { name: /^Next/ })).toBeNull();
+    fireEvent.click(within(bar).getByRole("button", { name: "Return to Stage 1" }));
+    expect(document.querySelector('[data-testid="stage-nav"] [aria-current="step"]')!.getAttribute("data-stage")).toBe("1");
+    cleanup();
+    await open({ roles: ["MANAGER"], commercials: true, ...SUBMITTED });
+    const next = within(screen.getByTestId("step-buttons")).getByRole("button", { name: /^Next:/ });
+    expect(next.className).not.toMatch(/bg-indigo-600/); // not the primary action
+  }, 60000);
+
+  it("the manual-price inputs have UNIQUE accessible names (the line is in the name), and the plain-language term help is present", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "1", ...SUBMITTED });
+    const names = [...panel("mapping")!.querySelectorAll("input[aria-label]")].map((i) => i.getAttribute("aria-label")!).filter((n) => /^Unit price for |^Reason for the manual price of /.test(n));
+    expect(names.length).toBeGreaterThanOrEqual(4);
+    expect(new Set(names).size).toBe(names.length);
+    const help = screen.getByTestId("terms-help").textContent!;
+    for (const term of ["Source-backed:", "Workbook basis:", "Default with override:", "Provisional:"]) expect(help).toContain(term);
+  }, 30000);
+
+  it("the Scope panel's package note names the Estimator or Manager (one consistent owner)", async () => {
+    const src = (await import("node:fs")).readFileSync(`${__dirname}/../[id]/ScopePanel.tsx`, "utf8");
+    expect(src).toContain("An Estimator or Manager can map this package.");
+    expect(src).not.toContain("A manager can map");
+  });
 });
