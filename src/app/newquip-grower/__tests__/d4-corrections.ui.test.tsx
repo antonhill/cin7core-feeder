@@ -61,16 +61,18 @@ async function storedQuote() {
   return id;
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-async function open(stage = "2") {
+async function open(stage = "2", state?: string) {
   (globalThis as { __STAGE?: string }).__STAGE = stage;
   asRoles("REP", "ESTIMATOR");
   vi.mocked(canSeeCosts).mockResolvedValue(true);
   const id = await storedQuote();
+  // UX-006i2: the costing steps open once the Rep has submitted (they are locked on a Rep draft), so the cost-panel checks run on a quotation in Estimator review.
+  if (state) for (const row of db.rows("newquip_quotes") as Array<Record<string, unknown>>) if (row.id === id) row.state = state;
   (globalThis as { __QID?: string }).__QID = id;
   vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "nq-builder-show-all" ? "1" : null), setItem: () => undefined }); // these checks look across the whole stage: "Show all steps" (UX-006b)
   const { default: Page } = await import("../[id]/page");
   render(createElement(Page));
-  await waitFor(() => expect(screen.getByText("Customer-driven exclusions")).toBeTruthy(), { timeout: 5000 });
+  await waitFor(() => expect(screen.getByText("Product mappings")).toBeTruthy(), { timeout: 5000 }); // UX-006i2: the exclusions are the Rep's (Stage 1); "Product mappings" is the Estimator's step 1 panel that marks Stage 2 as loaded
 }
 
 // D4 audit corrections (display only). Class-level checks for the layout fixes; wording checks for the rest.
@@ -91,13 +93,14 @@ describe("D4 corrections on the Solution Builder quote page", () => {
   }, 30000);
 
   it("F-07: the unit / exception declarations stack below sm and their cards may shrink, so a phone does not scroll sideways", async () => {
-    await open();
+    await open("2", "ESTIMATOR_REVIEW");
     await screen.findByText("Unit of measure", {}, { timeout: 8000 });
     const rows = ["Confirm per stock unit", "Record exception"].map((n) => screen.queryByRole("button", { name: n })?.parentElement).filter(Boolean) as HTMLElement[];
     expect(rows.length).toBeGreaterThan(0);
     for (const r of rows) { expect(r.className).toContain("flex-col"); expect(r.className).toContain("sm:flex-row"); expect(r.firstElementChild!.className).toContain("min-w-0"); expect(r.parentElement!.className).toContain("min-w-0"); }
-    // UX-006i1: the Rep's "Submit to Estimator" moved to Stage 1 step 5 (a short label, 44px high); Stage 2 only points at it while the quotation is a Rep draft.
+    // UX-006i1: the Rep's "Submit to Estimator" moved to Stage 1 step 5. UX-006i2: Stage 2 no longer has a Submit step or pointer at all (the Rep's summary replaces it).
     expect(screen.queryByRole("button", { name: /Record pre-approval price confirmation/ })).toBeNull();
-    expect(screen.getByTestId("submit-pointer")).toBeTruthy();
+    expect(screen.queryByTestId("submit-pointer")).toBeNull();
+    expect(screen.getByTestId("rep-summary")).toBeTruthy();
   }, 30000);
 });

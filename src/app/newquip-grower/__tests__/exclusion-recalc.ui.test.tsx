@@ -85,9 +85,11 @@ function serialQueue(ms: number) {
   }
   return { log, spies };
 }
+// UX-006i2: the exclusions are the Rep's, in Stage 1 step 3 (Stage 2 has no Rep controls), and Stage 1 has no Totals panel. The figure under test is the sticky summary bar's quote total
+// (ex VAT): it is the live preview of the draft, the same number the Totals panel showed, without the transient "Recalculating" cue that sits beside it.
 const subtotal = () => {
-  const dt = screen.getByText("Subtotal (ex VAT)");
-  return dt.nextElementSibling!.textContent!;
+  const dd = screen.getByText("Quote total (ex VAT)").nextElementSibling!;
+  return dd.firstChild!.textContent!;
 };
 
 
@@ -107,23 +109,24 @@ const count = (log: string[], entry: string) => log.filter((l) => l === entry).l
  * preview). Wait - by what the queue observed, not by a delay - until both have been answered, then forget them.
  */
 async function settleInitialLoad(log: string[]) {
+  // UX-006i2: Stage 1 mounts neither the Scope nor the Cost panel (they are Stage 2, Estimator-only), so the initial load is the quote and the customer details.
   await waitFor(() => {
-    expect(count(log, "end getQuoteScopeAction")).toBeGreaterThanOrEqual(1);
-    expect(count(log, "end getQuoteCostEstimateAction")).toBeGreaterThanOrEqual(2); // the immediate request and the 800 ms one
+    expect(count(log, "end getQuoteCustomerAction")).toBeGreaterThanOrEqual(1);
+    expect(log.filter((l) => l.startsWith("start ")).length).toBe(log.filter((l) => l.startsWith("end ")).length); // nothing still in flight
   }, { timeout: 8000 });
-  expect(log.filter((l) => l.startsWith("start ")).length).toBe(log.filter((l) => l.startsWith("end ")).length); // nothing still in flight
   log.length = 0;
 }
 import { fmtZar } from "../fields";
 const digits = (t: string) => t.replace(/[^0-9]/g, "");
-async function open() {
+async function open(stage = "1") {
+  (globalThis as { __STAGE?: string }).__STAGE = stage;
   asRoles("REP", "ESTIMATOR");
   vi.mocked(canSeeCosts).mockResolvedValue(true);
   const id = await storedQuote();
   (globalThis as { __QID?: string }).__QID = id;
   const { default: Page } = await import("../[id]/page");
   render(createElement(Page));
-  await waitFor(() => expect(screen.getByText("Customer-driven exclusions")).toBeTruthy(), { timeout: 5000 });
+  await waitFor(() => expect(screen.getByLabelText(/Exclude CCM feeder/i)).toBeTruthy(), { timeout: 5000 });
   return id;
 }
 
@@ -317,8 +320,7 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
     await open();
     expect(within(screen.getByTestId("quote-summary-bar")).getByText("Gross margin")).toBeTruthy();
     cleanup();
-    (globalThis as { __STAGE?: string }).__STAGE = "4";
-    await open().catch(() => undefined);
+    await open("4").catch(() => undefined);
     await waitFor(() => expect(screen.getByTestId("quote-summary-bar")).toBeTruthy(), { timeout: 8000 });
     expect(within(screen.getByTestId("quote-summary-bar")).queryByText("Gross margin")).toBeNull();
   }, 30000);
