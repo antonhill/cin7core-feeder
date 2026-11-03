@@ -1030,3 +1030,41 @@ describe("template page (Rep-visible) and the cost-basis wording", () => {
     expect(renderToStaticMarkup(await Page())).toMatch(/landed cost/i);
   }, 30000);
 });
+
+// ── D-11: a returned quotation whose approval was withdrawn (price edit changed the total) says what happened ──
+describe("D-11: returned banner for the three cases", () => {
+  const history = (events: unknown[]) => vi.spyOn(aa, "getDocumentApprovalAction").mockResolvedValue({ ok: true, data: { available: true, latest: null, history: events } } as never);
+  it("(1) a RETURN with a reason: the existing banner with the reason and 'Fix what the Estimator described'", async () => {
+    history([{ id: "e", action: "RETURN", to_status: "RETURNED", reason: "Check the haulier quote", actor_email: "est@nq", actor_name: null, created_at: "2026-11-02T09:30:00Z" }]);
+    await open({ view: snapshotView(true), draftOver: readyDraft, row: { revision: 2 } });
+    expect((await screen.findByTestId("return-reason")).textContent).toContain("Check the haulier quote");
+    expect(screen.getByTestId("returned-banner").textContent).toContain("Fix what the Estimator described, then submit again.");
+    expect(screen.queryByTestId("return-withdrawn")).toBeNull();
+  }, 30000);
+
+  it("(2) withdrawn WITHOUT a reason (fresh load): says the total changed, shows the current indicative total, points to step 5, and never says 'Fix what the Estimator described'", async () => {
+    history([{ id: "e", action: "WITHDRAW", to_status: "WITHDRAWN", reason: null, actor_email: "sys@nq", actor_name: null, created_at: "2026-11-02T09:30:00Z" }]);
+    await open({ view: snapshotView(true), draftOver: readyDraft, row: { revision: 2, customer_confirmed_cents: null } });
+    const t = (await screen.findByTestId("return-withdrawn")).textContent ?? "";
+    expect(t).toMatch(/^The total changed after the Estimator's review, so the customer's confirmation was withdrawn\. Reconfirm the current amount \(R\s?[\d\s]+,\d\d\) with the customer, then submit again \(step 5\)\.$/);
+    expect(screen.getByTestId("returned-banner").textContent).not.toContain("Fix what the Estimator described");
+    expect(screen.getByTestId("returned-banner").textContent).not.toContain("see Approval history for the reason");
+  }, 30000);
+
+  it("(3) the session-local sentence 'from R x to R y' still wins when the save reported the effect; and an unreadable history keeps the fixed text", async () => {
+    history([]);
+    await open({ view: snapshotView(true), draftOver: { siteName: "" }, row: { revision: 2, customer_confirmed_cents: null } });
+    await screen.findByTestId("return-withdrawn");
+    const real = actions.saveGrowerDraftAction;
+    vi.spyOn(actions, "saveGrowerDraftAction").mockImplementation((async (qid: string, d: never) => { const r: any = await real(qid, d); return { ...r, data: { ...r.data, confirmationEffect: { confirmationCleared: true, signoffCleared: false, returnedToRep: true, previousCents: 1000000, newCents: 1250000 } } }; }) as never);
+    fireEvent.change(screen.getByLabelText(/^Site \/ project name/), { target: { value: "Farm 2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    expect((await screen.findByTestId("return-amount-change")).textContent).toContain("The total changed from");
+    expect(screen.queryByTestId("return-withdrawn")).toBeNull();
+    cleanup();
+    vi.spyOn(aa, "getDocumentApprovalAction").mockResolvedValue({ ok: false, error: "x" } as never);
+    await open({ view: snapshotView(true), draftOver: readyDraft, row: { revision: 2, customer_confirmed_cents: null } });
+    expect(screen.getByTestId("returned-banner").textContent).toContain("see Approval history for the reason");
+    expect(screen.queryByTestId("return-withdrawn")).toBeNull();
+  }, 60000);
+});
