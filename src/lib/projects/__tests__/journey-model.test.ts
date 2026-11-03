@@ -452,4 +452,3 @@ describe("Project Journey - stricter g2 derivation and money format", () => {
     expect(JSON.stringify(j)).not.toMatch(/R\d/); // no "R500" style hand-built amounts
   });
 });
-
