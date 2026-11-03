@@ -13,6 +13,7 @@ import { ProjectWorkspace } from "./ProjectWorkspace";
 import { VariationProductPicker } from "./VariationProductPicker";
 import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
 import { formatCents, type ProjectView } from "@/lib/projects/project-view";
+import { variationNextStep } from "@/lib/projects/variation-next-step";
 import { amendVariationScheduleAction, getVariationBillingAction, saveVariationScheduleAction, startVariationBillingAction, type VariationBillingState } from "../variation-billing-actions";
 
 // Variation BILLING: each approved variation has its own percentage schedule (default one 100% stage) and, once a manager starts billing,
@@ -153,6 +154,7 @@ export function VariationBillingPanel({ view, isAdmin, run, working, renderDecis
               <div className="min-w-0">
                 <PanelTitle><span className="inline-flex flex-wrap items-center gap-2">{v.code} – {v.title} <ScopeTag scope="VARIATION" /><Status tone={v.status === "APPROVED" ? "success" : "neutral"}>{statusText(v.status)}</Status></span></PanelTitle>
                 {v.description && <p className="mt-1 text-sm text-slate-600">{v.description}</p>}
+                <p className="mt-1 text-sm text-slate-700" data-testid={`next-${v.id}`}><span className="font-medium text-slate-900">Next: </span>{variationNextStep({ status: v.status, amountCents: v.amount_cents, isAdmin, billingLoaded: !!state, billingStarted: !!billingId, scheduleMissing: legacy, claimableCents: scope?.claimableCents, remainingCents: scope?.remainingCents })}</p>
                 {state && v.status === "APPROVED" && (
                   <p className="mt-1 text-sm text-slate-700">
                     <span className="text-slate-600">Cin7 Sale: </span>
