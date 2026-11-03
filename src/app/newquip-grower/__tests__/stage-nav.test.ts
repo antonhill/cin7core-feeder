@@ -18,7 +18,8 @@ describe("six-stage navigation", () => {
   it("shows all six stages in order with their status, highlights the stage being viewed, and states the next action", () => {
     const h = html();
     const labels = ["Configuration", "Costing &amp; Estimator Review", "Manager Approval", "Customer Quotation", "Customer Acceptance", "Project Handover"];
-    let at = -1; for (const l of labels) { const i = h.indexOf(l); expect(i, l).toBeGreaterThan(at); at = i; }
+    const list = h.indexOf('id="stage-nav-list"'); // the narrow-screen disclosure above the list repeats the viewed stage's name, so order is checked within the list
+    let at = list; for (const l of labels) { const i = h.indexOf(l, list); expect(i, l).toBeGreaterThan(at); at = i; }
     for (const n of [1, 2, 3, 4, 5, 6]) expect(h).toContain(`data-stage="${n}"`);
     expect(h).toContain("Complete"); expect(h).toContain("Awaiting action"); expect(h).toContain("Not yet available");
     expect(h.match(/aria-current="step"/g)).toHaveLength(1);
@@ -38,6 +39,45 @@ describe("six-stage navigation", () => {
     expect(html({ state: "REP_DRAFT", revision: 2, signedOff: false, commercial: "NOT_APPROVED", confirmed: false })).toContain("Returned");
     const g = html({ requiresAcceptance: false });
     expect(g).toContain("Not required");
+  });
+});
+
+describe("UX-006c viewer-relative Stage 2 chip (presentation only)", () => {
+  const inReview: Partial<StageInput> = { state: "ESTIMATOR_REVIEW", signedOff: false, commercial: "NOT_APPROVED" };
+  const chip = (over: Partial<StageInput>, roles: string[]) => {
+    const stages = computeStages({ ...base, ...over });
+    const out = renderToStaticMarkup(createElement(StageNav, { stages, current: currentStage(stages), viewing: 2, onSelect: () => undefined, viewer: { roles, state: over.state ?? base.state } }));
+    return out.match(/data-stage="2"[\s\S]*?<\/button>/)![0];
+  };
+  it("a Rep who is only a Rep sees 'With the Estimator' when the quote is with the Estimator; the stage's Next line is unchanged", () => {
+    const c = chip(inReview, ["rep"]);
+    expect(c).toContain("With the Estimator"); expect(c).not.toContain("Awaiting action");
+    const stages = computeStages({ ...base, ...inReview });
+    expect(stages[1].status).toBe("AWAITING_ACTION"); expect(stages[1].next).toMatch(/^Estimator: review/);
+  });
+  it("an Estimator (not Manager) sees 'Awaiting your review'; a Manager and a viewer with no roles keep 'Awaiting action'", () => {
+    expect(chip(inReview, ["rep", "estimator"])).toContain("Awaiting your review");
+    expect(chip(inReview, ["rep", "estimator", "manager"])).toContain("Awaiting action");
+    expect(chip(inReview, [])).toContain("Awaiting action");
+  });
+  it("never for a Rep who must act (a draft ready to send, or a returned revision), a signed-off or final quote, or another stage", () => {
+    expect(chip({ state: "REP_DRAFT", commercial: "NOT_APPROVED", signedOff: false }, ["rep"])).toContain("Awaiting action");
+    expect(chip({ state: "REP_DRAFT", revision: 2, commercial: "NOT_APPROVED", signedOff: false }, ["rep"])).toContain("Awaiting action");
+    expect(chip({ ...inReview, signedOff: true }, ["rep"])).toContain("Complete");
+    expect(chip({}, ["rep"])).toContain("Complete");
+    const stages = computeStages({ ...base, ...inReview });
+    const html3 = renderToStaticMarkup(createElement(StageNav, { stages, current: 2, viewing: 2, onSelect: () => undefined, viewer: { roles: ["rep"], state: "ESTIMATOR_REVIEW" } }));
+    expect(html3.match(/>With the Estimator</g)).toHaveLength(1); // the chip only (the banner sentence is the unchanged summary)
+  });
+});
+
+describe("UX-006c equal-height cards", () => {
+  it("each card pins its status chip to the bottom, keeps a fixed header zone for the title offset and never truncates", () => {
+    const h = html();
+    expect(h.match(/mt-auto/g)).toHaveLength(6);
+    expect(h.match(/lg:min-h-8/g)).toHaveLength(6);
+    for (const cut of ["line-clamp", "truncate", "overflow-hidden", "text-ellipsis"]) expect(h, cut).not.toContain(cut);
+    expect(h).toContain("h-full"); // the card fills its grid cell, so a row is as tall as its tallest card
   });
 });
 
