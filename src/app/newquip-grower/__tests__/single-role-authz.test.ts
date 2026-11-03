@@ -22,6 +22,11 @@ import { sendEmail } from "@/lib/email/resend";
 //   rep    : member tier, explicit REP
 //   est    : member tier, explicit ESTIMATOR
 //   mgr    : member tier, explicit MANAGER
+//
+// PATH: these tests run the STAGED approval path (migration 0112 present), which the hosted organisation uses (org_functional_roles exists). On the staged
+// path the stage's own role decides sign-off/approve/return (policy.ts), which is STRICTER than the pure workflow table: RETURN_TO_REP lists estimator AND
+// manager in workflow.ts, but at estimator review a Manager-only account is refused by the staged policy (tested below). The pure table is in
+// four-account-capability.test.ts. Tests tagged [STATE] check the state machine (wrong stage), not role isolation; [ROLE] tests check the caller's role.
 
 let db: FakeDb;
 vi.mock("server-only", () => ({}));
@@ -139,8 +144,8 @@ describe("workflow actions: every cross-role call is refused server-side, with n
   describe("ESTIMATOR_REVIEW, awaiting sign-off (estimator-stage request open)", () => {
     beforeEach(toEstimatorReview);
     it.each(["owner", "rep", "mgr"] as Who[])("%s cannot sign off (Estimator only)", (w) => refused(w, () => actions.signOffGrowerQuoteAction("q1"), /estimator role/));
-    it.each(["owner", "rep", "est", "mgr"] as Who[])("%s cannot give final approval before the sign-off", (w) => refused(w, () => actions.approveGrowerQuoteAction("q1"), /waiting for estimator review, not manager approval/));
-    it.each(["owner", "rep", "est", "mgr"] as Who[])("%s cannot return it to the Estimator (a Manager action, and only from manager review)", (w) => refused(w, () => actions.returnGrowerQuoteToEstimatorAction("q1", "please recheck"), /waiting for estimator review, not manager approval/));
+    it.each(["owner", "rep", "est", "mgr"] as Who[])("[STATE] %s cannot give final approval before the sign-off", (w) => refused(w, () => actions.approveGrowerQuoteAction("q1"), /waiting for estimator review, not manager approval/));
+    it.each(["owner", "rep", "est", "mgr"] as Who[])("[STATE] %s cannot return it to the Estimator at estimator review (only from manager review)", (w) => refused(w, () => actions.returnGrowerQuoteToEstimatorAction("q1", "please recheck"), /waiting for estimator review, not manager approval/));
     it.each(["owner", "rep", "mgr"] as Who[])("%s cannot return it to the Rep at this stage (only the stage's Estimator can)", (w) => refused(w, () => actions.returnGrowerQuoteToRepAction("q1", "needs rework"), /estimator role/));
     it.each(["owner", "mgr"] as Who[])("%s cannot edit the draft in review", (w) => refused(w, () => actions.saveGrowerDraftAction("q1", draft), /do not have permission to edit/));
     it.each(["owner", "est", "mgr"] as Who[])("%s cannot create a project from an unapproved quotation", (w) => refused(w, () => actions.createProjectFromGrowerQuoteAction("q1"), w === "mgr" ? /manager-approved final/ : /Only a Manager can create/));
@@ -151,9 +156,9 @@ describe("workflow actions: every cross-role call is refused server-side, with n
     it.each(["owner", "rep", "est"] as Who[])("%s cannot give final approval (Manager only)", (w) => refused(w, () => actions.approveGrowerQuoteAction("q1"), /manager role/));
     it.each(["owner", "rep", "est"] as Who[])("%s cannot return it to the Estimator (Manager only)", (w) => refused(w, () => actions.returnGrowerQuoteToEstimatorAction("q1", "please recheck"), /manager role/));
     it.each(["owner", "rep", "est"] as Who[])("%s cannot return it to the Rep at manager review (Manager only)", (w) => refused(w, () => actions.returnGrowerQuoteToRepAction("q1", "needs rework"), /manager role/));
-    it.each(["owner", "rep", "est", "mgr"] as Who[])("%s cannot sign off again at manager review (stage mismatch)", (w) => refused(w, () => actions.signOffGrowerQuoteAction("q1"), /waiting for manager approval, not estimator review/));
+    it.each(["owner", "rep", "est", "mgr"] as Who[])("[STATE] %s cannot sign off again at manager review (stage mismatch)", (w) => refused(w, () => actions.signOffGrowerQuoteAction("q1"), /waiting for manager approval, not estimator review/));
     it("the owner (ADMINISTRATOR) cannot approve through the quotation screen even though the Approvals dashboard offers a reasoned override: the action never passes override", async () => {
-      await refused("owner", () => actions.approveGrowerQuoteAction("q1"), /explicit override|manager role/);
+      await refused("owner", () => actions.approveGrowerQuoteAction("q1"), /You do not hold the manager role\. An administrator may approve at this stage only as an explicit override/);
       expect(quote().state).toBe("ESTIMATOR_REVIEW");
     });
   });
@@ -229,6 +234,11 @@ describe("customer, delivery, document and cost actions: single-role refusals (r
     await refusedWrites(w, () => delivery.revokeResponseLinksAction("q1", "reason here"), /permission/);
     await refusedWrites(w, () => documents.issueQuoteDocumentAction("q1"), /permission to issue/);
   });
+  it("Estimator-only and owner cannot withdraw response links; the Manager's role is allowed to (Rep or Manager), so only the role gate is asserted, not an outcome", async () => {
+    as("mgr");
+    const r = await delivery.revokeResponseLinksAction("q1", "reason here");
+    expect(r.error ?? "").not.toMatch(/permission to withdraw/); // Manager passes the role gate (refusal, if any, is a precondition such as no issued document)
+  });
   it.each(["owner", "rep", "est"] as Who[])("%s cannot change the company details (Manager only)", (w) => refusedWrites(w, () => documents.saveCompanyProfileAction({}), /Only a Manager/));
   it("CAPABILITY NOTE: the ADMINISTRATOR-only owner is refused every Rep/Manager document action too (it holds no quote role)", async () => {
     await refusedWrites("owner", () => documents.issueQuoteDocumentAction("q1"), /permission/);
@@ -236,7 +246,7 @@ describe("customer, delivery, document and cost actions: single-role refusals (r
   it("cost capture and the cost estimate: the Rep is refused; Estimator, Manager and the admin-tier owner may read (cost visibility is not a quote role)", async () => {
     as("rep");
     for (const r of [cost.getQuoteCostEstimateAction("q1"), cost.captureLatestCostsAction("q1"), cost.recalculateCostsAction("q1"), cost.recordFxRateAction("USD", "17.5", "SARB", new Date().toISOString())]) expect((await r).error).toMatch(/Costs are internal/);
-    for (const w of ["owner", "est", "mgr"] as Who[]) { as(w); expect((await cost.getQuoteCostEstimateAction("q1")).error ?? "").not.toMatch(/Costs are internal/); }
+    for (const w of ["owner", "est", "mgr"] as Who[]) { as(w); const r = await cost.getQuoteCostEstimateAction("q1"); expect(r.ok).toBe(true); expect(r.data).toHaveProperty("canCapture"); }
   });
 });
 
@@ -249,6 +259,10 @@ describe("cost and margin are never in the Rep's payload (redaction), and are in
     const v = await payload("rep");
     expect(v.viewer).toEqual({ roles: ["rep"], canViewCommercials: false });
     for (const l of v.evaluation.budget!.lines) expect([l.estimatedCost, l.estimatedGP, l.marginPct]).toEqual([null, null, null]);
+    // per-component cost inside package lines (quote-bridge.ts redacts components[].estimatedCost): the demo draft is package-bearing, so this is non-empty
+    const comps = v.evaluation.budget!.lines.flatMap((l) => (l as { components?: Array<{ estimatedCost: number | null }> }).components ?? []);
+    expect(comps.length).toBeGreaterThan(0);
+    expect(comps.every((c) => c.estimatedCost === null)).toBe(true);
     expect(v.evaluation.budget!.totals.estimatedCost).toBe(0);
     expect(v.evaluation.budget!.totals.overallMarginPct ?? null).toBeNull();
     const s = JSON.stringify(v);
@@ -265,12 +279,15 @@ describe("cost and margin are never in the Rep's payload (redaction), and are in
     expect(v.viewer.canViewCommercials).toBe(true);
     expect(v.evaluation.budget!.totals.estimatedCost).toBeGreaterThan(0);
     expect(JSON.stringify(v)).toContain("physicalCostEstimate");
+    // positive control for the Rep component assertion: cost-visible callers DO receive per-component cost
+    const comps = v.evaluation.budget!.lines.flatMap((l) => (l as { components?: Array<{ estimatedCost: number | null }> }).components ?? []);
+    expect(comps.some((c) => c.estimatedCost !== null)).toBe(true);
   });
   it("a client-supplied cost cannot be forged by a Rep: costs stay server-owned on save", async () => {
     as("rep");
     const forged = { ...draft, estimator: { ...draft.estimator, costOverrides: { X: { unitCostCents: 1 } } } } as never;
     expect((await actions.saveGrowerDraftAction("q1", forged)).ok).toBe(true);
-    expect(JSON.stringify(quote().draft.estimator.costOverrides)).not.toContain('"unitCostCents":1}');
+    expect(quote().draft.estimator.costOverrides).toEqual(costly.costOverrides); // the stored (prior) value is kept, the forged one is dropped
   });
 });
 

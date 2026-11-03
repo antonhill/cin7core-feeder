@@ -9,6 +9,8 @@ vi.mock("server-only", () => ({}));
 import { canSeeCosts, resolveRoles } from "../role-store";
 
 // UX-006h: the capability of the four NewQuip POC accounts (each ONE explicit functional role), derived from the pure role functions and the real role store.
+// NOTE: the PURE workflow table (workflow.ts) lists RETURN_TO_REP for estimator AND manager; the STAGED policy (policy.ts, used on the hosted org) is stricter and lets only the
+// stage's own role return (a Manager-only account is refused at estimator review). Both are asserted: the table here, the staged policy below and in single-role-authz.test.ts.
 // This is the single source of the UAT capability matrix in docs/newquip-uat-multirole-procedure.md.
 
 const ORG = "org";
