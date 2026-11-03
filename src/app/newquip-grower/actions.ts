@@ -10,6 +10,7 @@ import { evaluateDraft, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import { blankExclusions, previewDraftOf } from "@/newquip/grower/preview-draft";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { stampPriceResolutions } from "@/newquip/quote/price-resolution";
+import { keepEstimatorOwnedFields } from "@/newquip/quote/draft-ownership";
 import { changedMappings, mappingsChanged, normaliseMappings } from "@/newquip/grower/mapping-integrity";
 import { verifyMappings } from "@/lib/newquip-quotes/mapping-check";
 import { searchCatalogue, type CatalogueResult } from "@/lib/projects/catalogue-search";
@@ -20,7 +21,7 @@ import { demoAuditDetail, resolveActing, type DemoInfo } from "@/lib/demo-mode/c
 import { evaluationContext } from "@/lib/newquip-quotes/context";
 import { confirmationLabel, resolveConfirmationContact, type ConfirmationInput } from "@/lib/newquip-quotes/confirmation-contact";
 import { appendSnapshot, customerFeaturesAvailable, latestSnapshot } from "@/lib/newquip-quotes/customer-store";
-import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
+import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactEvaluationFinancials, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
 import { approvalsAvailable, decideDocument, legacyCtx, resyncQuoteApprovals, stagedAvailable, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
 import type { ScheduleChoice } from "@/newquip/quote/billing-schedule";
 import { resolveProjectSchedule } from "@/lib/newquip-quotes/schedule-resolve";
@@ -99,7 +100,7 @@ function view(quote: QuoteRecord, a: Actor): QuoteView {
   const canViewCommercials = a.canSeeCost;
   return {
     quote: redactInternalFinancials(quote, canViewCommercials),
-    evaluation: evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)),
+    evaluation: redactEvaluationFinancials(evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)), canViewCommercials),
     viewer: { roles: [...a.roles], canViewCommercials, previewTools: process.env.VERCEL_ENV === "preview" },
   };
 }
@@ -138,7 +139,9 @@ async function sanitiseSubmittedDraft(a: Actor, db: ReturnType<typeof createServ
   await verifyMappings(db, a.orgId, changedMappings(prior?.estimator.confirmedMappings, d.estimator.confirmedMappings), d.config.feederVariant);
   const nowIso = new Date().toISOString();
   d = { ...d, estimator: { ...d.estimator, priceResolutions: stampPriceResolutions(d.estimator.priceResolutions, prior?.estimator.priceResolutions, a.roles, a.email, nowIso) as QuoteDraft["estimator"]["priceResolutions"] } };
-  return keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(d, prior?.estimator.costOverrides, a.canSeeCost, a.email, nowIso), prior?.estimator.physicalCosts), prior?.estimator.costBasis);
+  const stamped = keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(d, prior?.estimator.costOverrides, a.canSeeCost, a.email, nowIso), prior?.estimator.physicalCosts), prior?.estimator.costBasis);
+  // Last line of defence (field ownership): a caller without Estimator / Manager authority can never change an Estimator-owned field, whatever the checks above did.
+  return keepEstimatorOwnedFields(stamped, prior, a.roles);
 }
 
 export async function createGrowerQuoteAction(draft?: QuoteDraft): Promise<GrowerActionResult<{ id: string; quoteRef: string }>> {
@@ -170,7 +173,7 @@ export async function previewGrowerDraftAction(draft: QuoteDraft): Promise<Growe
   try {
     const a = await authorise();
     // Read-only live preview: the same engine as Save, with a ticked-but-unexplained exclusion applied so the click shows its effect. Nothing is stored.
-    return { ok: true, data: evaluateDraft(previewDraftOf(draft), evaluationContext(!a.canSeeCost)) };
+    return { ok: true, data: redactEvaluationFinancials(evaluateDraft(previewDraftOf(draft), evaluationContext(!a.canSeeCost)), a.canSeeCost) };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }

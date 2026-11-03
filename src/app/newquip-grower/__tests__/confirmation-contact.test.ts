@@ -4,6 +4,7 @@ import { seedGoldenCatalogue } from "@/newquip/grower/__tests__/golden-catalogue
 import { installStaged } from "@/lib/approvals/__tests__/staged-emulator";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
+import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { createWorkbookPriceSource } from "@/newquip/grower/workbook-price-source";
 import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
@@ -36,7 +37,7 @@ import { readCin7Customer } from "@/lib/newquip-customers/cin7-customer-read";
 const NQ = "e1aea782-d095-47ad-90fb-4fa65c9bf855";
 const U = { owner: "u-owner", rep: "u-rep", est: "u-est", mgr: "u-mgr" };
 const EMAIL: Record<string, string> = { "u-owner": DEMO_OWNER_EMAIL, "u-rep": "rep@sparkconsulting.co.za", "u-est": "estimator@sparkconsulting.co.za", "u-mgr": "manager@sparkconsulting.co.za" };
-const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
+const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
 const total = Math.round(evaluateDraft(draft, { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true }).budget!.totals.subtotalExTax * 100);
 const quote = () => db.rows("newquip_quotes")[0] as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const acts = () => (db.rows("activity_log") as Array<Record<string, any>>); // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -161,16 +162,14 @@ describe("pre-approval price confirmation contact", () => {
     expect(quote()).toMatchObject({ state: "REP_DRAFT", estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null, customer_confirmed_cents: null });
   });
 
-  it("changing the commercial amount requires reconfirmation: the Manager cannot approve a total the customer did not confirm", async () => {
+  it("changing the commercial amount requires reconfirmation: the Estimator learns it at sign-off, so the Manager never sees a total the customer did not confirm", async () => {
     await as("rep"); await send({ source: "QUOTATION_CONTACT" });
     await as("estimator");
     const d = structuredClone(quote().draft) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
     d.estimator.charges.delivery += 100_000;
     expect((await grower.saveGrowerDraftAction("q1", d as never)).error).toBeUndefined();
-    expect((await grower.signOffGrowerQuoteAction("q1")).error).toBeUndefined();
-    await as("manager");
-    expect((await grower.approveGrowerQuoteAction("q1")).error).toMatch(/total changed since the customer confirmed/);
-    expect(quote().state).toBe("ESTIMATOR_REVIEW");
+    expect((await grower.signOffGrowerQuoteAction("q1")).error).toBe("The amount changed since the customer confirmed it. Return it to the Rep to reconfirm.");
+    expect(quote()).toMatchObject({ state: "ESTIMATOR_REVIEW", estimator_signoff_hash: null });
     // the Rep must reconfirm: the Manager returns it -> new revision with no confirmation -> confirm again at the new amount
     expect((await grower.returnGrowerQuoteToRepAction("q1", "amount changed")).error).toBeUndefined();
     expect(quote()).toMatchObject({ state: "REP_DRAFT", customer_confirmed_cents: null, revision: 2 });
