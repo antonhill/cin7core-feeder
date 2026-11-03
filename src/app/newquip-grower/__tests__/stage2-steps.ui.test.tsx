@@ -178,6 +178,14 @@ describe("UX-006b Stage 2 steps: navigation", () => {
     expect(shown("lines")).toBe(true);
   }, 30000);
 
+  it("moving between steps writes stage=2 together with step, so a reload with no ?stage= still lands on the step", async () => {
+    window.history.replaceState(null, "", "/newquip-grower/x");
+    await open({ roles: ["REP", "ESTIMATOR"], commercials: true });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    const q = new URL(window.location.href).searchParams;
+    expect(q.get("stage")).toBe("2"); expect(q.get("step")).toBe("2");
+  }, 30000);
+
   it("?stage=2&step=3 does not also move Stage 1's step", async () => {
     await open({ roles: ["REP", "ESTIMATOR"], commercials: true, step: "3" });
     fireEvent.click(document.querySelector('[data-stage="1"]')!);
@@ -288,7 +296,7 @@ describe("UX-006b Stage 2 steps: statuses come from data, never from a visit", (
     await open({ roles: ["MANAGER"], commercials: true });
     fireEvent.click(within(rail()).getByRole("button", { name: /Cost & margin/ }));
     expect(shown("cost")).toBe(true);
-    expect(["Review", "Needs attention", "Not complete"]).toContain(status("cost")); // never a green Complete on a draft
+    expect(["Review needed", "Needs attention", "Not complete"]).toContain(status("cost")); // never a green Complete on a draft
   }, 30000);
 });
 

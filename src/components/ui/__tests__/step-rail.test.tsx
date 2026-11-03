@@ -35,7 +35,7 @@ describe("StepRail a11y and behaviour", () => {
     const ok: RailStep[] = [{ id: "a", label: "Alpha", status: "complete" }, { id: "r", label: "Rho", status: "review" }];
     render(<StepRail id="t" ariaLabel="S" steps={ok} currentId="a" onSelect={vi.fn()} />);
     expect(screen.getByTestId("step-rail-toggle").textContent).not.toContain("attention");
-    expect(screen.getByTestId("step-status-r").textContent).toBe("Review");
+    expect(screen.getByTestId("step-status-r").textContent).toBe("Review needed");
     expect(document.querySelector('[data-step="r"]')!.textContent).not.toContain("✓");
   });
   const view = (current = "b", onSelect = vi.fn()) => render(<StepRail id="t" ariaLabel="Test steps" steps={steps} currentId={current} onSelect={onSelect} />);

@@ -209,6 +209,7 @@ export default function QuoteEditorPage() {
   const approveSignoffStale = q?.state === "ESTIMATOR_REVIEW" && !!q.estimator_signoff_hash && q.estimator_signoff_hash !== q.draft_hash;
   const approveDescribedBy = [isWorking && `${uid}-approve-busy`, !roles.has("manager") && `${uid}-approve-role`, approveSignoffMissing && `${uid}-approve-signoff`, approveSignoffStale && `${uid}-approve-stale`, dirty && `${uid}-approve-dirty`].filter(Boolean).join(" ") || undefined;
   const returnWhy = isWorking ? "Another action is in progress. Please wait." : !returnReason.trim() ? "Enter the reason for returning it to enable this." : undefined;
+  // The same rounding the server uses for the saved total (quote-store totalCents), so the Stage 3 checklist compares like with like; unsaved edits are covered by its own row.
   const totalCents = budget && !budget.incomplete ? Math.round(budget.totals.subtotalExTax * 100) : null;
 
   // One-click demonstration quotation: replaces the inputs of THIS editable draft only (not saved, nothing created, approved or sent).
@@ -296,7 +297,7 @@ export default function QuoteEditorPage() {
   const goStep = (id: string) => goStepNo(STAGE1_STEP_IDS.indexOf(id as Stage1StepId) + 1);
   const nextOpen = nextIncompleteStepId(stage1.steps, stepId);
   // Guided: each step is its own grid and a single panel spans the full width. Show all: the step sections are `contents`, so every panel joins the fieldset's one grid
-  // and Room inputs | Selections sit side by side again (order-* keeps the headings above their panels). A hidden step is never `contents` (hidden wins via !important).
+  // and Room inputs | Selections sit side by side again (xl:order-* puts the two headings above their panels at xl only; below xl the one-column source order keeps each heading right before its own panel). A hidden step is never `contents` (hidden wins via !important).
   const stepPanelCls = showAllSteps ? "contents" : "col-span-full grid min-w-0 items-start gap-6 xl:grid-cols-2";
   const wide = showAllSteps ? "" : "col-span-full";
 
@@ -316,8 +317,8 @@ export default function QuoteEditorPage() {
   });
   const goStep2No = (n: number) => {
     const next = Math.min(Math.max(n, 1), step2Ids.length);
-    setStep2No(next);
-    try { const u = new URL(window.location.href); u.searchParams.set("step", String(next)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ }
+    setStep2No(next); // the address bar gets stage and step together, so a reload lands on the same step
+    try { const u = new URL(window.location.href); u.searchParams.set("stage", "2"); u.searchParams.set("step", String(next)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ }
   };
   const goStep2 = (id: string) => goStep2No(step2Ids.indexOf(id as Stage2StepId) + 1);
   const next2Open = nextIncompleteStepId(stage2, step2Id);
@@ -328,11 +329,12 @@ export default function QuoteEditorPage() {
   const goStep4No = (n: number) => {
     const next = Math.min(Math.max(n, 1), STAGE4_STEP_IDS.length);
     setStep4No(next);
-    try { const u = new URL(window.location.href); u.searchParams.set("step", String(next)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ }
+    // `stage` goes with `step`: with no ?stage= the page lands on the current stage after a reload and would ignore the step.
+    try { const u = new URL(window.location.href); u.searchParams.set("stage", "4"); u.searchParams.set("step", String(next)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ }
   };
   const next4Open = nextIncompleteStepId(stage4, step4Id);
   // Stage 3 / 5 / 6 guidance, derived from state already held here (the predicates are checkApproval, the stage-5 status and resolveScheduleChoice).
-  const approvalChecklist = deriveApprovalChecklist({ readinessState: rd.state, readinessReasons: rd.reasons, totalExVatCents: totalCents, customerConfirmedCents: q.customer_confirmed_cents, signoffHash: q.estimator_signoff_hash, currentDraftHash: q.draft_hash, dirty });
+  const approvalChecklist = deriveApprovalChecklist({ readinessState: rd.state, readinessReasons: rd.reasons, totalExVatCents: totalCents, customerConfirmedCents: q.customer_confirmed_cents, signoffHash: q.estimator_signoff_hash, currentDraftHash: q.draft_hash, dirty, isManager: roles.has("manager"), signoffExplainedBelow: approveSignoffMissing || approveSignoffStale });
   const acceptanceBanner = deriveAcceptanceBanner(stages[4], final ? gate.status : null);
   const handoverReadiness = deriveHandoverReadiness({ approved: final, acceptanceRequired: gate.requires, accepted: gate.accepted, scheduleOk: resolveScheduleChoice(scheduleChoice).ok, isManager: roles.has("manager") });
   // A stage that is not yet available can be "Preview only" where the page genuinely shows something read-only: Stage 4's customer summary once the quote is READY.
@@ -474,15 +476,15 @@ export default function QuoteEditorPage() {
               </div>
               <p className="mt-4 text-sm text-slate-800" data-testid="step2-contact-status">
                 Quotation contact: {customerFacts.contactName ? <strong>{customerFacts.contactName}</strong> : <span className="text-amber-900">{customerFacts.loaded && customerFacts.available ? "not chosen yet" : "not read yet"}</span>}
-                {" "}{/* A link, not a button: navigation must keep working for a viewer who cannot edit (the fieldset disables buttons). */}
-                <a href="?step=1" onClick={(e) => { e.preventDefault(); goStep("customer"); }} className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Choose the contact in step 1</a>
+                {" "}{/* A link, not a button: navigation must keep working for a viewer who cannot edit (the fieldset disables buttons). A "#" href is an in-page link the unsaved guard ignores. */}
+                <a href="#s1-customer-heading" onClick={(e) => { e.preventDefault(); goStep("customer"); }} className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Choose the contact in step 1</a>
               </p>
               <p className="mt-2 text-xs text-slate-600">The site name and pricing basis are saved with Save draft.</p>
             </Panel>
           </StepPanel>
 
-          <StepPanel railId="s1" stepId="room" number={3} title={STAGE1_STEP_LABEL.room} current={stepId === "room"} showAll={showAllSteps} className={stepPanelCls} headingClassName={showAllSteps ? "order-1" : undefined}>
-            <Panel className={showAllSteps ? "order-3" : wide}>
+          <StepPanel railId="s1" stepId="room" number={3} title={STAGE1_STEP_LABEL.room} current={stepId === "room"} showAll={showAllSteps} className={stepPanelCls} headingClassName={showAllSteps ? "xl:order-1" : undefined}>
+            <Panel className={showAllSteps ? "xl:order-3" : wide}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <PanelTitle>Room inputs — describe ONE room</PanelTitle>
                 <Button variant="secondary" size="sm" onClick={() => edit((d) => { d.config = { ...structuredClone(TOPIGS_GROWER_INPUT), feederVariant: "STANDARD", exclusions: {}, estimatorQuantities: {}, quantityOverrides: {}, quantityOverrideReasons: {} }; })}>Load Topigs sample inputs</Button>
@@ -503,8 +505,8 @@ export default function QuoteEditorPage() {
             </Panel>
           </StepPanel>
 
-          <StepPanel railId="s1" stepId="equipment" number={4} title={STAGE1_STEP_LABEL.equipment} current={stepId === "equipment"} showAll={showAllSteps} className={stepPanelCls} headingClassName={showAllSteps ? "order-2" : undefined}>
-            <Panel className={showAllSteps ? "order-4" : wide}>
+          <StepPanel railId="s1" stepId="equipment" number={4} title={STAGE1_STEP_LABEL.equipment} current={stepId === "equipment"} showAll={showAllSteps} className={stepPanelCls} headingClassName={showAllSteps ? "xl:order-2" : undefined}>
+            <Panel className={showAllSteps ? "xl:order-4" : wide}>
               <PanelTitle>Selections</PanelTitle>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <Select label="CCM feeder variant" helperText={`One feeder, two variants. Capacity ${CCM_FEEDER_CAPACITY_PIGS} pigs per feeder.`} value={cfg.feederVariant ?? "STANDARD"} onChange={(e) => edit((d) => { d.config.feederVariant = e.target.value as "STANDARD" | "WINDOW"; delete d.estimator.confirmedMappings.feeder; })}>
@@ -520,7 +522,7 @@ export default function QuoteEditorPage() {
               </div>
             </Panel>
 
-            <Panel className={`xl:col-span-2${showAllSteps ? " order-5" : ""}`}>
+            <Panel className={`xl:col-span-2${showAllSteps ? " xl:order-5" : ""}`}>
               <PanelTitle>Ventilation — optional inside Grower</PanelTitle>
               <p className="mt-2 max-w-4xl text-sm text-amber-800">{VENTILATION_SCOPE_STATUS}. AS.03 is not yet ingested: no fan, cooling or controller rule is invented — once selected, the estimator enters the quantity after engineering review.</p>
               <ul className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -924,7 +926,7 @@ export default function QuoteEditorPage() {
       {stage === 5 && !hold(5) && (
         <div className="mt-6 space-y-6">
           {!final && <Alert tone="info">Customer acceptance is recorded against the issued, Manager-approved quotation. It becomes available once the quotation has been issued.</Alert>}
-          {final && !gate.requires && <Alert tone="info">This quotation was approved before customer acceptance was introduced, so it is grandfathered: a Project does not depend on a recorded acceptance. A response can still be recorded if the customer gives one.</Alert>}
+          {final && !gate.requires && !acceptanceBanner && <Alert tone="info">This quotation was approved before customer acceptance was introduced, so it is grandfathered: a Project does not depend on a recorded acceptance. A response can still be recorded if the customer gives one.</Alert>}
           {final && acceptanceBanner && <AcceptanceStatusBanner banner={acceptanceBanner} />}
           {final && q.accepted_baseline && <AcceptancePanel quoteId={id} onGate={setGate} />}
         </div>
@@ -952,12 +954,11 @@ export default function QuoteEditorPage() {
 
               <p className="mt-2 text-xs text-slate-600">Customer: {draft.customerName || "—"} · Cin7 customer reference is taken from the latest customer snapshot when the Project is created. Physical SKU mappings are frozen with the baseline; the Project, its billing stages and the Cin7 Sale are managed in the Projects module.</p>
               <div className="mt-5 border-t border-slate-100 pt-5">
-                {!q.project_id && <HandoverChecklist items={handoverReadiness} />}
+                {!q.project_id && <HandoverChecklist items={handoverReadiness} onGoStage={goStage} />}
                 {q.project_id ? (
                   <Link href={`/projects/${q.project_id}`} className="inline-flex h-9 items-center rounded-md bg-indigo-600 px-4 text-sm font-medium text-white hover:bg-indigo-700">Open the Project</Link>
-                ) : gate.requires && !gate.accepted ? (
-                  <Alert tone="info"><b>Project handover is not available yet.</b> {stages[5].summary} A Project for a new quotation is created only after the customer&apos;s acceptance of the issued quotation is recorded (with its evidence) or, if it came by email, verified in <button type="button" className="underline" onClick={() => goStage(5)}>Customer Acceptance</button>. Nothing is created automatically.</Alert>
-                ) : (
+                ) : gate.requires && !gate.accepted ? null /* the checklist above says why (with the link to Stage 5) */
+                : (
                   <>
                   {gate.requires ? <p className="mb-2 text-sm text-slate-600">The Project will use the billing schedule printed on the quotation the customer accepted.</p> : <ScheduleChooser contractCents={q.accepted_baseline.contractCents} onChange={setScheduleChoice} />}
                   <p className="mb-2"><BuildStamp /></p>

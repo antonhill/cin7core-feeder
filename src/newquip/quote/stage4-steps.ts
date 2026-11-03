@@ -15,6 +15,6 @@ export function deriveStage4Steps(i: { hasDocument: boolean; commercial: Commerc
   const sent = i.commercial != null && SENT.has(i.commercial);
   return [
     { id: "issue", label: STAGE4_STEP_LABEL.issue, status: i.hasDocument ? "complete" : "incomplete", note: i.hasDocument ? "A PDF is issued." : "Generate the customer quotation PDF." },
-    { id: "send", label: STAGE4_STEP_LABEL.send, status: !i.hasDocument ? "unavailable" : sent ? "complete" : "incomplete", note: !i.hasDocument ? "Issue the PDF first. Only a Rep can send it." : sent ? "Sent to the customer." : "Only a Rep can send it." },
+    { id: "send", label: STAGE4_STEP_LABEL.send, status: !i.hasDocument ? "unavailable" : sent ? "complete" : "incomplete", note: !i.hasDocument ? "Issue the PDF first. Sent by a Rep." : sent ? "Sent to the customer." : "Sent by a Rep." },
   ];
 }

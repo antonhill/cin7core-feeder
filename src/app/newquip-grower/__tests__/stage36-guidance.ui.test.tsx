@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeDb } from "@/lib/projects/__tests__/fake-db";
@@ -102,7 +102,18 @@ describe("UX-006c Stage 3: the 'before you decide' checklist", () => {
     await open({ stage: "3", roles: ["MANAGER"], row: { state: "ESTIMATOR_REVIEW", customer_confirmed_cents: null, estimator_signoff_hash: "stale" } });
     await screen.findByTestId("approval-checklist", {}, { timeout: 8000 });
     expect(checks()).toMatchObject({ confirmed: "Not met", signoff: "Not met", amount: "Not met" });
-    expect(document.body.textContent).toMatch(/changed after the estimator signed off/);
+    expect(document.body.textContent).toMatch(/no longer matches the current quotation/); // the existing Alert carries it
+  }, 30000);
+  it("the checklist never says Met for everything while Approve is disabled for a non-Manager: a Manager-role row is unmet", async () => {
+    await open({ stage: "3", roles: ["REP"], row: { ...review, estimator_signoff_hash: "CURRENT" } });
+    await screen.findByTestId("approval-checklist", {}, { timeout: 8000 });
+    expect(checks()).toMatchObject({ signoff: "Met", manager: "Not met" });
+  }, 30000);
+  it("the sign-off row points at the existing Alert instead of repeating it (the Alert stays, once)", async () => {
+    await open({ stage: "3", roles: ["MANAGER"], row: review });
+    await screen.findByTestId("approval-checklist", {}, { timeout: 8000 });
+    expect(screen.getAllByText(/Waiting for the Estimator/)).toHaveLength(1);
+    expect(document.querySelector('[data-check="signoff"]')!.textContent).toContain("Explained in the note below.");
   }, 30000);
   it("a Rep/Estimator who is not a Manager sees the same facts read-only with the existing role text and a disabled Approve", async () => {
     await open({ stage: "3", roles: ["REP"], row: { ...review, estimator_signoff_hash: "CURRENT" } });
@@ -153,6 +164,7 @@ describe("UX-006c Stage 4: Issue PDF / Send to customer", () => {
     expect(status("send")).toBe("Not complete");
     await waitFor(() => expect(document.querySelector('[data-step-panel="send"]')).toBeTruthy(), { timeout: 8000 }); // the panel loads after the page-level status read
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(new URL(window.location.href).searchParams.get("stage")).toBe("4"); // a reload lands on this step even when no ?stage= was given
     expect(shown("send")).toBe(true); expect(shown("issue")).toBe(false);
     await waitFor(() => expect(document.activeElement?.textContent).toBe("Step 2 · Send to customer"), { timeout: 8000 });
     expect(new URL(window.location.href).searchParams.get("step")).toBe("2");
@@ -214,6 +226,7 @@ describe("UX-006c Stage 5: status banner", () => {
     await open({ stage: "5", roles: ["REP"], row: { ...FINAL, requires_customer_acceptance: false }, delivery: delivery({ requiresAcceptance: false, status: "APPROVED_INTERNALLY" }) });
     expect((await screen.findByTestId("acceptance-banner", {}, { timeout: 8000 })).textContent).toContain("Not required (grandfathered)");
     shot("s5-grandfathered");
+    expect(document.body.textContent).not.toContain("so it is grandfathered"); // the banner says it once
     cleanup();
     await open({ stage: "5", roles: ["REP"] });
     expect(screen.queryByTestId("acceptance-banner")).toBeNull();
@@ -233,7 +246,9 @@ describe("UX-006c Stage 6: readiness checklist", () => {
     await open({ stage: "6", roles: ["MANAGER"], row: FINAL, delivery: delivery({ status: "SENT_TO_CUSTOMER", latestDocumentId: "d0" }) });
     const c = await screen.findByTestId("handover-checklist", {}, { timeout: 8000 });
     expect(c.querySelector('[data-check="acceptance"] [data-testid^=check-status]')!.textContent).toBe("Not met");
-    expect(screen.getByText(/Project handover is not available yet/)).toBeTruthy();
+    expect(screen.queryByText(/Project handover is not available yet/)).toBeNull(); // the row says it once, with the link
+    fireEvent.click(within(c).getByRole("button", { name: /Customer Acceptance \(Stage 5\)/ }));
+    expect(new URL(window.location.href).searchParams.get("stage")).toBe("5");
     shot("s6-unmet");
   }, 30000);
   it("a non-Manager sees the role item unmet and the existing text", async () => {
@@ -260,6 +275,19 @@ describe("UX-006c stage navigation", () => {
     const label = (n: number) => document.querySelector(`[data-stage="${n}"]`)!.textContent ?? "";
     expect(label(4)).toContain("Preview only"); expect(label(5)).toContain("Not yet available"); expect(label(6)).toContain("Not yet available");
     expect(label(4)).not.toContain("Not yet available");
+  }, 30000);
+  it("selecting a stage from the open list moves focus to the toggle (the list collapses); Escape closes it and returns focus there", async () => {
+    await open({ stage: "3", roles: ["REP"] });
+    const t = screen.getByTestId("stage-nav-toggle");
+    fireEvent.click(t);
+    const five = document.querySelector('[data-stage="5"]') as HTMLElement; five.focus();
+    fireEvent.click(five);
+    expect(document.activeElement).toBe(t);
+    fireEvent.click(t);
+    const two = document.querySelector('[data-stage="2"]') as HTMLElement; two.focus();
+    fireEvent.keyDown(two, { key: "Escape" });
+    expect(t.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(t);
   }, 30000);
   it("on a narrow screen the disclosure reads 'Stage n of 6 · name', toggles aria-expanded, lists all six and selecting one closes it", async () => {
     await open({ stage: "3", roles: ["REP"] });

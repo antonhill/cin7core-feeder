@@ -4,7 +4,7 @@
 export type StepStatus = "complete" | "attention" | "incomplete" | "unavailable" | "review";
 export interface RailStep { id: string; label: string; status: StepStatus; /** Optional one-line explanation shown beside the status. */ note?: string; /** An optional step: while not complete it reads "Optional" rather than "Not complete". Presentation only. */ optional?: boolean }
 
-export const STEP_STATUS_LABEL: Record<StepStatus, string> = { complete: "Complete", attention: "Needs attention", incomplete: "Not complete", unavailable: "Not available", review: "Review" };
+export const STEP_STATUS_LABEL: Record<StepStatus, string> = { complete: "Complete", attention: "Needs attention", incomplete: "Not complete", unavailable: "Not available", review: "Review needed" };
 
 export const completeCount = (steps: readonly RailStep[]): number => steps.filter((s) => s.status === "complete").length;
 
