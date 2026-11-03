@@ -2,7 +2,7 @@
 // the step having been visited, and nothing here blocks moving to another step.
 
 export type StepStatus = "complete" | "attention" | "incomplete" | "unavailable";
-export interface RailStep { id: string; label: string; status: StepStatus; /** Optional one-line explanation shown beside the status. */ note?: string }
+export interface RailStep { id: string; label: string; status: StepStatus; /** Optional one-line explanation shown beside the status. */ note?: string; /** An optional step: while not complete it reads "Optional" rather than "Not complete". Presentation only. */ optional?: boolean }
 
 export const STEP_STATUS_LABEL: Record<StepStatus, string> = { complete: "Complete", attention: "Needs attention", incomplete: "Not complete", unavailable: "Not available" };
 

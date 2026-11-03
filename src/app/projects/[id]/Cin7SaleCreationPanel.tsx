@@ -12,7 +12,7 @@ import { StepRail, StepPanel } from "@/components/ui/StepRail";
 import { nextIncompleteStepId } from "@/components/ui/step-rail-model";
 import { useShowAllSteps } from "@/components/ui/use-show-all-steps";
 import { useUnsavedGuard } from "@/lib/use-unsaved-guard";
-import { SALE_STEP_IDS, SALE_STEP_LABEL, referencesKey, saleRequirements, saleSteps, type SaleStepId } from "@/lib/projects/cin7-sale-steps";
+import { SALE_STEP_IDS, SALE_STEP_LABEL, guidedSteps, referencesKey, requiredStepsComplete, saleRequirements, saleSteps, type SaleStepId } from "@/lib/projects/cin7-sale-steps";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Panel, PanelTitle } from "@/components/ui/Panel";
@@ -66,7 +66,7 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
   const pending = st?.scopeItems.filter((i) => i.mapping.status === "UNMAPPED" && !i.resolution) ?? [];
   const typedRefs = customer !== startCustomer || location !== startLocation || account !== "" || taxRule !== "Standard Rate Sales";
   const typedItems = pending.some((i) => (res[i.id]?.reason ?? "").trim() !== "" || (multi[i.id] ?? []).length > 0);
-  useUnsavedGuard(!!st && !st.creation && (typedRefs || typedItems));
+  useUnsavedGuard(!!st && !st.creation && st.gates.isManager && st.gates.writesEnabled && (typedRefs || typedItems)); // a viewer who cannot create has nothing to lose
 
   // The Cin7 location / account lists are a LIVE Cin7 read (credentials + paged requests). They are only the options of the Create form, so they are fetched only when
   // that form is actually shown: a manager, on a project that has no Sale yet. They were read on every open of the tab, for every project and every variation.
@@ -136,7 +136,8 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
   });
   const railId = `${uid}-sale`;
   const stepNo = SALE_STEP_IDS.indexOf(stepId) + 1;
-  const nextOpen = nextIncompleteStepId(steps, stepId);
+  const nextOpen = nextIncompleteStepId(guidedSteps(steps), stepId);
+  const allDone = requiredStepsComplete(steps);
   const requirements = saleRequirements({ blockerCount: st.blockers.length, unresolvedCount: unresolved.length, ...refsNow, confirmed });
   const panel = (id: SaleStepId, children: React.ReactNode) => <StepPanel railId={railId} stepId={id} number={SALE_STEP_IDS.indexOf(id) + 1} title={SALE_STEP_LABEL[id]} current={stepId === id} showAll={showAll} className="mt-4">{children}</StepPanel>;
 
@@ -154,7 +155,7 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
             <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} /> Show all steps</label>
             {nextOpen
               ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => setStepId(nextOpen as SaleStepId)}>Next incomplete step</Button>
-              : <span className="text-sm text-slate-700" data-testid="all-steps-complete">Every step is complete.</span>}
+              : allDone ? <span className="text-sm text-slate-700" data-testid="all-steps-complete">Every step is complete.</span> : null}
           </div>
         )} />
 
@@ -284,13 +285,18 @@ export function Cin7SaleCreationPanel({ view, run, working, boot }: { view: Proj
         <div className="mt-4 space-y-3">
           <label className="flex items-start gap-2 text-sm text-slate-800"><input type="checkbox" className="mt-1 size-6 shrink-0" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} /> <span>I confirm I want to create one Cin7 Sales Order for this project. This creates a real order in the connected Cin7 instance, and only one can ever be created for a project.</span></label>
           {rereading && <Alert tone="warning">{checking ? "Checking the current Cin7 status. Create stays disabled until the record has been re-read." : "The outcome of the last request could not be confirmed and the status could not be re-read. Reload the page. Create stays disabled until the status has been read."}</Alert>}
-          <Button className="min-h-11" disabled={!canCreate} aria-describedby={!canCreate && createReasons.length > 0 ? `${uid}-sale-create-reason` : undefined} onClick={() => after(() => createCin7SaleAction(projectId, { confirmation: CREATE_CONFIRMATION_TEXT, customerName: customer, location, revenueAccount: account, cin7TaxRule: taxRule }), "sale:create")}>Create Sales Order in Cin7</Button>
-          {!canCreate && createReasons.length > 0 && <DisabledReason id={`${uid}-sale-create-reason`}>Create is disabled: {createReasons.join(" ")}</DisabledReason>}
           {gates.isManager && (
-            <ul className="space-y-0.5 text-sm" aria-label="What Create needs" data-testid="sale-requirements">
-              {requirements.map((q) => <li key={q.id} data-met={q.met ? "true" : "false"} className={q.met ? "text-emerald-800" : "text-slate-700"}><span aria-hidden>{q.met ? "✓ " : "○ "}</span>{q.label}: {q.met ? "done" : "still to do"}</li>)}
+            <ul className="space-y-1 text-base font-medium" aria-label="What Create needs" data-testid="sale-requirements">
+              {requirements.map((q) => (
+                <li key={q.id} data-met={q.met ? "true" : "false"} className={`flex flex-wrap items-center gap-x-3 ${q.met ? "text-emerald-800" : "text-slate-900"}`}>
+                  <span><span aria-hidden>{q.met ? "✓ " : "○ "}</span>{q.label}: {q.met ? "done" : "still to do"}</span>
+                  {!q.met && q.id !== "confirm" && <Button type="button" size="sm" variant="secondary" className="min-h-11" onClick={() => setStepId(q.id as SaleStepId)}>Go to step {SALE_STEP_IDS.indexOf(q.id as SaleStepId) + 1}</Button>}
+                </li>
+              ))}
             </ul>
           )}
+          <Button className="min-h-11" disabled={!canCreate} aria-describedby={!canCreate && createReasons.length > 0 ? `${uid}-sale-create-reason` : undefined} onClick={() => after(() => createCin7SaleAction(projectId, { confirmation: CREATE_CONFIRMATION_TEXT, customerName: customer, location, revenueAccount: account, cin7TaxRule: taxRule }), "sale:create")}>Create Sales Order in Cin7</Button>
+          {!canCreate && createReasons.length > 0 && <p id={`${uid}-sale-create-reason`} data-testid="disabled-reason" className="text-sm leading-snug text-slate-700">Create is disabled: {createReasons.join(" ")}</p>}
           <Feedback k="sale:create" />
         </div>)}
       </>)}

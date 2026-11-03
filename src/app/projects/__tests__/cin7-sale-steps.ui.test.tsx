@@ -55,7 +55,7 @@ describe("steps and status", () => {
     expect(current()).toBe("scope");
     expect(screen.getByTestId("step-status-scope").textContent).toBe("Needs attention");
     expect(screen.getByTestId("step-status-refs").textContent).toBe("Not complete"); // revenue account blank
-    expect(screen.getByTestId("step-status-preflight").textContent).toBe("Not complete");
+    expect(screen.getByTestId("step-status-preflight").textContent).toBe("Optional");
     expect(panelOf("refs").hasAttribute("hidden")).toBe(true);
     expect(panelOf("refs").hasAttribute("inert")).toBe(true);
     expect(screen.getByTestId("step-status-confirm").textContent).toBe("Not complete");
@@ -246,7 +246,7 @@ describe("preflight (existing, read-only) and unsaved work", () => {
     expect(c7.runP0ChecklistAction).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("step-status-preflight").textContent).toBe("Complete");
     fireEvent.change(screen.getByLabelText("Revenue account code"), { target: { value: "300" } });
-    expect(screen.getByTestId("step-status-preflight").textContent).toBe("Not complete");
+    expect(screen.getByTestId("step-status-preflight").textContent).toBe("Optional");
   });
   const unloadPrevented = () => { const e = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
   it("guards typed-but-uncreated references and unsaved per-item reasons; untouched is not dirty", () => {
@@ -266,5 +266,58 @@ describe("preflight (existing, read-only) and unsaved work", () => {
     initial = status({ creation: { id: "c", creation_state: "CREATED", cin7_sale_number: "SO-1", last_error_message: null } }).data;
     render(<Host />);
     expect(unloadPrevented()).toBe(false);
+  });
+});
+
+describe("review fixes (UX-006e)", () => {
+  it("default guided view: Create sits inside the inert 'confirm' panel and is not in the accessible tree while another step is current", () => {
+    initial = status().data;
+    render(<Host />);
+    const create = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === "Create Sales Order in Cin7")!;
+    expect(create.closest("[data-step-panel]")!.getAttribute("data-step-panel")).toBe("confirm");
+    for (const id of ["scope", "refs", "preflight"]) {
+      goto(id);
+      expect(create.closest("[inert]")).not.toBeNull();
+      expect(screen.queryByRole("button", { name: "Create Sales Order in Cin7" })).toBeNull();
+    }
+    goto("confirm");
+    expect(screen.getByRole("button", { name: "Create Sales Order in Cin7" })).toBeTruthy();
+  });
+  it("each unmet requirement links to its step (navigation only, 44px class); met and confirmation items have no link", () => {
+    initial = status({ scopeItems: [item], blockers: [item] }).data;
+    render(<Host />); goto("confirm");
+    const list = screen.getByTestId("sale-requirements");
+    const links = Array.from(list.querySelectorAll("button"));
+    expect(links.map((b) => b.textContent)).toEqual(["Go to step 1", "Go to step 2"]);
+    expect(links.every((b) => b.className.includes("min-h-11"))).toBe(true);
+    fireEvent.click(links[1]);
+    expect(current()).toBe("refs");
+    goto("confirm"); fireEvent.click(screen.getByRole("button", { name: "Go to step 1" }));
+    expect(current()).toBe("scope");
+    expect(callsToActions()).toEqual([0, 0, 0, 0, 0, 0]);
+  });
+  it("the reason sentence is text-sm, keeps its exact copy and is the aria-describedby target", () => {
+    initial = status().data; render(<Host />); goto("confirm");
+    const why = document.getElementById(createBtn().getAttribute("aria-describedby")!)!;
+    expect(why.className).toContain("text-sm");
+    expect(why.textContent).toBe("Create is disabled: Enter the Cin7 location, revenue account. Tick the confirmation above.");
+  });
+  it("Next incomplete step skips the optional pre-flight; 'Every step is complete' only when the required steps are", () => {
+    initial = status().data; render(<Host />); fillAccount();
+    goto("confirm");
+    expect(screen.queryByRole("button", { name: "Next incomplete step" })).toBeNull(); // only the current required step and the optional pre-flight are left
+    expect(screen.queryByTestId("all-steps-complete")).toBeNull(); // not true yet: the Sale is not created
+    goto("scope");
+    fireEvent.click(screen.getByRole("button", { name: "Next incomplete step" }));
+    expect(current()).toBe("confirm");
+  });
+  it("a viewer who cannot create gets no unsaved prompt for typing", () => {
+    const prevented = () => { const e = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
+    initial = status({ gates: { ...gates, isManager: false } }).data; render(<Host />);
+    fireEvent.change(screen.getByLabelText("Cin7 customer name (must already exist)"), { target: { value: "Other" } });
+    expect(prevented()).toBe(false);
+    cleanup(); initial = status({ gates: { ...gates, writesEnabled: false } }).data; render(<Host />);
+    fireEvent.change(screen.getByLabelText("Cin7 customer name (must already exist)"), { target: { value: "Other" } });
+    expect(prevented()).toBe(false);
   });
 });

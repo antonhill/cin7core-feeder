@@ -40,6 +40,11 @@ export function saleRequirements(i: Pick<SaleStepInput, "blockerCount" | "unreso
   ];
 }
 
+/** Steps "Next incomplete step" may jump to: the optional pre-flight never pulls the viewer there (it is skipped, not completed). */
+export const guidedSteps = (steps: readonly RailStep[]): RailStep[] => steps.map((s) => (s.optional && s.status !== "attention" ? { ...s, status: "unavailable" as const } : s));
+/** True only when every REQUIRED step is complete (the optional pre-flight does not count). */
+export const requiredStepsComplete = (steps: readonly RailStep[]): boolean => steps.filter((s) => !s.optional).every((s) => s.status === "complete");
+
 export function saleSteps(i: SaleStepInput): RailStep[] {
   const created = i.creationState !== null;
   const open = i.blockerCount + i.unresolvedCount > 0;
@@ -51,10 +56,10 @@ export function saleSteps(i: SaleStepInput): RailStep[] {
     : missing.length === 0 ? { id: "refs", label: SALE_STEP_LABEL.refs, status: "complete" } : { id: "refs", label: SALE_STEP_LABEL.refs, status: "incomplete", note: `Missing: ${missing.join(", ")}` };
   const stale = i.preflight !== null && i.preflight.inputsKey !== referencesKey(i);
   const preflight: RailStep = created ? { id: "preflight", label: SALE_STEP_LABEL.preflight, status: "unavailable", note: "Sale already requested" }
-    : i.preflight === null ? { id: "preflight", label: SALE_STEP_LABEL.preflight, status: "incomplete", note: "Optional" }
-    : stale ? { id: "preflight", label: SALE_STEP_LABEL.preflight, status: "incomplete", note: "References changed since the last check" }
-    : i.preflight.verdictReady ? { id: "preflight", label: SALE_STEP_LABEL.preflight, status: "complete", note: "Optional" }
-    : { id: "preflight", label: SALE_STEP_LABEL.preflight, status: "attention", note: "Last check: not ready" };
+    : i.preflight === null ? { id: "preflight", label: SALE_STEP_LABEL.preflight, status: "incomplete", optional: true }
+    : stale ? { id: "preflight", label: SALE_STEP_LABEL.preflight, status: "incomplete", optional: true, note: "References changed since the last check" }
+    : i.preflight.verdictReady ? { id: "preflight", label: SALE_STEP_LABEL.preflight, status: "complete", optional: true }
+    : { id: "preflight", label: SALE_STEP_LABEL.preflight, status: "attention", optional: true, note: "Last check: not ready" };
   const confirm: RailStep = created
     ? i.creationState === "RECONCILED" ? { id: "confirm", label: SALE_STEP_LABEL.confirm, status: "complete" } : { id: "confirm", label: SALE_STEP_LABEL.confirm, status: "attention", note: "Not yet verified" }
     : { id: "confirm", label: SALE_STEP_LABEL.confirm, status: "incomplete", note: i.confirmed ? "Confirmation ticked" : undefined };

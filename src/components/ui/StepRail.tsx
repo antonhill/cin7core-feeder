@@ -35,7 +35,7 @@ export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions }:
                 <span aria-hidden className={`flex size-7 shrink-0 items-center justify-center rounded-full border text-sm font-bold ${BADGE_TONE[s.status]}`}>{s.status === "complete" ? "✓" : i + 1}</span>
                 <span className="flex min-w-0 flex-col">
                   <span className="text-sm font-semibold text-slate-900">{s.label}</span>
-                  <span className={`text-xs font-semibold ${TEXT_TONE[s.status]}`} data-testid={`step-status-${s.id}`}>{STEP_STATUS_LABEL[s.status]}</span>
+                  <span className={`text-xs font-semibold ${TEXT_TONE[s.status]}`} data-testid={`step-status-${s.id}`}>{s.optional && s.status === "incomplete" ? "Optional" : STEP_STATUS_LABEL[s.status]}</span>
                   {s.note && <span className="text-xs text-slate-700">{s.note}</span>}
                 </span>
               </button>
