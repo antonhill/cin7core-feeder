@@ -151,6 +151,7 @@ describe("UX-006c Stage 4: Issue PDF / Send to customer", () => {
     await open({ stage: "4", roles: ["REP"], row: FINAL, delivery: delivery({ latestDocumentId: "d0" }), docs: docs(1) });
     await waitFor(() => expect(status("issue")).toBe("Complete"), { timeout: 8000 });
     expect(status("send")).toBe("Not complete");
+    await waitFor(() => expect(document.querySelector('[data-step-panel="send"]')).toBeTruthy(), { timeout: 8000 }); // the panel loads after the page-level status read
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(shown("send")).toBe(true); expect(shown("issue")).toBe(false);
     await waitFor(() => expect(document.activeElement?.textContent).toBe("Step 2 · Send to customer"), { timeout: 8000 });
@@ -165,6 +166,7 @@ describe("UX-006c Stage 4: Issue PDF / Send to customer", () => {
     await open({ stage: "4", roles: ["REP"], row: FINAL, delivery: delivery({ status: "SENT_TO_CUSTOMER", latestDocumentId: "d0", sends: [{ id: "s1", status: "ACCEPTED", at: "2026-01-02T08:00:00Z", sentBy: "rep@nq", to: ["c@farm.co"], cc: [], suppressed: [], alternatives: [], alternativeReason: null, error: null, resendReason: null }] }), docs: docs(1) });
     await waitFor(() => expect(status("send")).toBe("Complete"), { timeout: 8000 });
     expect(status("issue")).toBe("Complete");
+    await waitFor(() => expect(document.querySelector('[data-testid="send-history"]')).toBeTruthy(), { timeout: 8000 });
     expect(document.querySelector('[data-testid="send-history"]')).toBeTruthy(); // mounted although step 1 is the one shown
     expect(shown("send")).toBe(false);
     expect(screen.getByTestId("all-steps-complete")).toBeTruthy();
