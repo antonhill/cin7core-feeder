@@ -23,10 +23,11 @@ import { confirmationLabel, resolveConfirmationContact, type ConfirmationInput }
 import { appendSnapshot, customerFeaturesAvailable, latestSnapshot } from "@/lib/newquip-quotes/customer-store";
 import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactEvaluationFinancials, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
 import { approvalsAvailable, decideDocument, legacyCtx, resyncQuoteApprovals, stagedAvailable, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
+import { BASELINE_EXCEPTION_TITLE, exceptionDecisionText, validateExceptionReason, type BaselineExceptionItem, type BaselineExceptionRequest, type BaselineExceptionView } from "@/newquip/quote/baseline-exception";
 import type { ScheduleChoice } from "@/newquip/quote/billing-schedule";
 import { resolveProjectSchedule } from "@/lib/newquip-quotes/schedule-resolve";
 import {
-  createProjectFromAcceptedQuote, costingOf, createQuote, estimatorSignOff, listQuotes, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator,
+  baselineExceptionOf, createProjectFromAcceptedQuote, costingOf, createQuote, estimatorSignOff, listQuotes, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator,
   type QuoteRecord,
 } from "@/lib/newquip-quotes/quote-store";
 
@@ -96,12 +97,17 @@ export interface QuoteView {
   viewer: { roles: QuoteRole[]; canViewCommercials: boolean };
   /** ESTIMATOR_COSTING_COMPLETE. Present ONLY for a caller who may see cost (Estimator / Manager / observer with cost); never in a Rep payload. `reason` is the first open reason (counts / labels / SKUs, never a value). */
   costing?: { complete: boolean; reason: string | null };
+  /** Whether the Manager must accept a baseline exception to approve (Estimator-priced systems with no Cin7 SKU), and which items. Cost-entitled callers only (labels and pricing route, never a value). */
+  baselineException?: BaselineExceptionView;
 }
 
 async function view(db: ReturnType<typeof createServiceRoleClient>, quote: QuoteRecord, a: Actor): Promise<QuoteView> {
   const canViewCommercials = a.canSeeCost;
   let costing: QuoteView["costing"];
+  let baselineException: QuoteView["baselineException"];
   if (canViewCommercials) {
+    // Only an open quotation can need one; once approved the exception (if any) is read from the sealed baseline.
+    if (quote.state === "ESTIMATOR_REVIEW") { try { baselineException = await baselineExceptionOf(db, a.orgId, quote.draft, evaluationContext(true)); } catch { baselineException = undefined; } }
     try { const c = await costingOf(db, a.orgId, quote.draft, evaluationContext(true)); costing = { complete: c.complete, reason: c.reasons[0] ?? null }; } catch { costing = undefined; }
   }
   return {
@@ -109,6 +115,7 @@ async function view(db: ReturnType<typeof createServiceRoleClient>, quote: Quote
     evaluation: redactEvaluationFinancials(evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)), canViewCommercials),
     viewer: { roles: [...a.roles], canViewCommercials },
     ...(costing ? { costing } : {}),
+    ...(baselineException ? { baselineException } : {}),
   };
 }
 
@@ -301,14 +308,40 @@ export async function returnGrowerQuoteToEstimatorAction(quoteId: string, reason
   });
 }
 
-/** Manager final approval — freezes the accepted baseline. */
-export async function approveGrowerQuoteAction(quoteId: string) {
+/**
+ * Manager final approval — freezes the accepted baseline.
+ *
+ * `baselineException` (optional) is the Manager's explicit "approve with recorded exception" for Estimator-priced systems that have no Cin7 SKU. It is an OPTION OF THIS
+ * ACTION rather than a separate action that parks a pending exception, because a parked exception would need somewhere to live without a migration (the draft would change
+ * its hash and withdraw the Estimator's sign-off) and could outlive the content it was recorded for. Here it is recorded, bound to the version the Manager reviewed, and sealed
+ * into the baseline in ONE step; if any check fails nothing is written. Authorisation (Manager role, reason, version, "an exception really applies") is decided BEFORE the
+ * approval request is touched, so a refused request causes no write at all.
+ */
+export async function approveGrowerQuoteAction(quoteId: string, opts?: { baselineException?: BaselineExceptionRequest }) {
   return step(quoteId, "Manager approved a NewQuip quote and froze the accepted baseline", "newquip.quote_manager_approved", async (a, db) => {
+    const bx = opts?.baselineException ? { reason: String(opts.baselineException.reason ?? ""), expectedRevision: Number(opts.baselineException.expectedRevision), expectedDraftHash: String(opts.baselineException.expectedDraftHash ?? "") } : undefined;
+    let recorded: { text: string; items: BaselineExceptionItem[]; reason: string; revision: number; draftHash: string } | undefined;
+    if (bx) {
+      if (!a.roles.has("manager")) throw new Error("Only a Manager can accept a baseline exception.");
+      const bad = validateExceptionReason(bx.reason);
+      if (bad) throw new Error(bad);
+      const q = await loadQuote(db, a.orgId, quoteId);
+      if (!q) throw new Error("Quote not found.");
+      if (bx.expectedRevision !== q.revision || bx.expectedDraftHash !== q.draft_hash) throw new Error("The quotation changed after the exception was reviewed. Review the current version and accept the exception again.");
+      const need = await baselineExceptionOf(db, a.orgId, q.draft, evaluationContext(true));
+      if (!need.baselineExceptionRequired) throw new Error(need.otherBlockers.length ? `A baseline exception cannot cover everything still unresolved: ${need.otherBlockers[0]}` : "No baseline exception applies to this quotation.");
+      recorded = { text: exceptionDecisionText({ unresolved: need.items, reason: bx.reason.trim() }), items: need.items, reason: bx.reason.trim(), revision: q.revision, draftHash: q.draft_hash };
+    }
     // One approval path: when the Approvals framework is available the decision is recorded there (separation of duties, exact revision, history).
-    if (await stagedAvailable(db)) { await decideDocument(db, ctxOf(a), "QUOTE", quoteId, "APPROVE", { stage: "MANAGER" }); return; }
-    if (await approvalsAvailable(db)) { await decideDocument(db, ctxOf(a, a.roles.has("manager")), "QUOTE", quoteId, "APPROVE"); return; }
+    if (await stagedAvailable(db)) await decideDocument(db, ctxOf(a), "QUOTE", quoteId, "APPROVE", { stage: "MANAGER", ...(bx ? { reason: recorded!.text, baselineException: bx } : {}) });
+    else if (await approvalsAvailable(db)) await decideDocument(db, ctxOf(a, a.roles.has("manager")), "QUOTE", quoteId, "APPROVE", bx ? { reason: recorded!.text, baselineException: bx } : {});
     // Approval evaluates with cost withheld; the INTERNAL margin sheet is frozen from a second, cost-visible evaluation of the same draft.
-    await managerApprove(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), evaluationContext(false));
+    else await managerApprove(db, a.orgId, a.roles, a.email, quoteId, evaluationContext(true), evaluationContext(false), bx ? { baselineException: bx } : undefined);
+    if (!recorded) return;
+    // The exception is now sealed in the baseline. It also gets its own audit record (who, when, which version, which items, why).
+    const detail = { quoteId, revision: recorded.revision, draftHash: recorded.draftHash, unresolved: recorded.items.map((i) => ({ itemKey: i.itemKey, label: i.label, pricedBy: i.pricedBy })), reason: recorded.reason, approvedBy: a.email };
+    await audit(db, a, { action: "newquip.baseline_exception_accepted", summary: `Manager accepted a baseline exception (${BASELINE_EXCEPTION_TITLE}) for ${recorded.items.length} item(s) at revision ${recorded.revision} (local only; no Cin7 write)`, detail });
+    return { baselineException: { items: recorded.items.map((i) => i.itemKey), reason: recorded.reason, revision: recorded.revision, draftHash: recorded.draftHash } };
   });
 }
 

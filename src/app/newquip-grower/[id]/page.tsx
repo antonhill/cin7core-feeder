@@ -43,6 +43,7 @@ import { MarginPanel } from "./MarginPanel";
 import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
 import { CostPanel } from "./CostPanel";
+import { BaselineExceptionBlock, BaselineExceptionNote, BaselineExceptionsSummary } from "./BaselineExceptionBlock";
 import { CustomerPanel } from "./CustomerPanel";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { DeliveryPanel, type DeliveryGate } from "./DeliveryPanel";
@@ -179,6 +180,7 @@ export default function QuoteEditorPage() {
   const approveSignoffMissing = q?.state === "ESTIMATOR_REVIEW" && !q.estimator_signoff_hash;
   const approveSignoffStale = q?.state === "ESTIMATOR_REVIEW" && !!q.estimator_signoff_hash && q.estimator_signoff_hash !== q.draft_hash;
   const approveDescribedBy = [isWorking && `${uid}-approve-busy`, !roles.has("manager") && `${uid}-approve-role`, approveSignoffMissing && `${uid}-approve-signoff`, approveSignoffStale && `${uid}-approve-stale`, dirty && `${uid}-approve-dirty`].filter(Boolean).join(" ") || undefined;
+  const bxRequired = !!view?.baselineException?.baselineExceptionRequired;
   const returnWhy = isWorking ? "Another action is in progress. Please wait." : !returnReason.trim() ? "Enter the reason for returning it to enable this." : undefined;
   const totalCents = budget && !budget.incomplete ? Math.round(budget.totals.subtotalExTax * 100) : null;
 
@@ -611,6 +613,7 @@ export default function QuoteEditorPage() {
         <div className="mt-6 space-y-6">
           <Panel>
             <PanelTitle>Estimator review and handoff</PanelTitle>
+            {roles.has("estimator") && q.state === "ESTIMATOR_REVIEW" && <div className="mt-2"><BaselineExceptionNote view={view?.baselineException} /></div>}
             <p className="mt-1 text-xs text-slate-600">The Rep records the pre-approval price confirmation and sends the quote to the Estimator. The Estimator signs off or returns it. This is not the customer&apos;s formal acceptance, which comes after Manager approval.</p>
             {handoffFacts}
 
@@ -674,8 +677,12 @@ export default function QuoteEditorPage() {
               {q.state === "ESTIMATOR_REVIEW" && (
                 <>
                   {roles.has("manager") && <div className="max-w-xl"><TextField label="Return to rep — reason" value={returnReason} onChange={setReturnReason} hint="Required only when you return the quotation instead of approving it." /></div>}
+                  {view.baselineException && <BaselineExceptionBlock view={view.baselineException} revision={q.revision} draftHash={q.draft_hash} pending={acts.isPending("approve")}
+                    canDecide={!isWorking && roles.has("manager") && !!q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash && !dirty}
+                    blockedWhy={!roles.has("manager") ? "Only a Manager can accept this exception." : !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash ? "Waiting for the Estimator's sign-off on the current quotation." : dirty ? "Save or discard your edits first." : isWorking ? "Another action is in progress. Please wait." : undefined}
+                    onApprove={(request) => act(() => approveGrowerQuoteAction(id, { baselineException: request }), "Approved with a recorded exception. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")} />}
                   <div className="flex flex-wrap items-center gap-3">
-                    <Button variant="primary" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty} aria-describedby={approveDescribedBy}
+                    <Button variant="primary" loading={acts.isPending("approve")} disabled={isWorking || !roles.has("manager") || !q.estimator_signoff_hash || q.estimator_signoff_hash !== q.draft_hash || dirty || bxRequired} aria-describedby={[approveDescribedBy, bxRequired && `${uid}-approve-bx`].filter(Boolean).join(" ") || undefined}
                       onClick={() => act(() => approveGrowerQuoteAction(id), "Approved. The accepted baseline is frozen; the Project can now be created.", "approve", (v) => v.quote.state === "MANAGER_APPROVED_FINAL")}>Manager: final approval</Button>
                     {roles.has("manager") && (<>
                       <Button variant="secondary" aria-describedby={returnWhy ? "return-mgr-why" : undefined} disabled={isWorking || !returnReason.trim()} onClick={() => act(() => returnGrowerQuoteToRepAction(id, returnReason), "Returned to the rep as a new revision.", "approve", (v) => v.quote.state === "REP_DRAFT")}>Return to rep (reject)</Button>
@@ -684,6 +691,7 @@ export default function QuoteEditorPage() {
                       )}
                     </>)}
                   </div>
+                  {bxRequired && <DisabledReason id={`${uid}-approve-bx`}>Plain approval is unavailable: an approval exception is required (see above). Use &quot;Approve with recorded exception&quot;.</DisabledReason>}
                   {isWorking && <DisabledReason id={`${uid}-approve-busy`}>Another action is in progress. Please wait.</DisabledReason>}
                   {roles.has("manager") && <DisabledReason id="return-mgr-why">{returnWhy ? `Return buttons: ${returnWhy.charAt(0).toLowerCase()}${returnWhy.slice(1)}` : undefined}</DisabledReason>}
                   {!roles.has("manager") && <p id={`${uid}-approve-role`} className="text-sm text-slate-700">Final approval needs the manager role (org owner/admin).</p>}
@@ -770,6 +778,7 @@ export default function QuoteEditorPage() {
                   ["Seal (sha256)", `${(q.baseline_hash ?? "").slice(0, 16)}…`],
                 ].map(([k, v]) => <div key={k}><dt className="text-xs text-slate-600">{k}</dt><dd className="mt-0.5 break-words font-medium text-slate-900">{v}</dd></div>)}
               </dl>
+              <BaselineExceptionsSummary exceptions={q.accepted_baseline.exceptions} />
               <p className="mt-3 text-xs text-slate-600">Cin7: <strong>NOT SENT TO CIN7</strong> — the push to Cin7 comes later and is not part of the POC.</p>
 
               <p className="mt-2 text-xs text-slate-600">Customer: {draft.customerName || "—"} · Cin7 customer reference is taken from the latest customer snapshot when the Project is created. Physical SKU mappings are frozen with the baseline; the Project, its billing stages and the Cin7 Sale are managed in the Projects module.</p>
