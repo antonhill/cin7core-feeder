@@ -276,3 +276,28 @@ describe("plain rail never scrolls or clips", () => {
     for (const li of ol.querySelectorAll("li")) expect(li.className).toContain("min-w-0");
   });
 });
+
+describe("grouped rail: each group is a clearly bordered panel (class contract)", () => {
+  const gs: RailStep[] = [
+    { id: "a", label: "A", status: "complete", group: "rep" }, { id: "b", label: "B", status: "incomplete", group: "rep" }, { id: "c", label: "C", status: "incomplete", group: "rep" },
+    { id: "d", label: "D", status: "incomplete", group: "est" },
+  ];
+  const groups: RailGroup[] = [{ id: "rep", label: "Rep preparation" }, { id: "est", label: "Estimator review" }];
+  it("both groups carry the same border, radius, background and padding, so the shared subgrid rows stay aligned", () => {
+    render(<StepRail id="g" ariaLabel="x" steps={gs} currentId="a" onSelect={vi.fn()} groups={groups} />);
+    const a = screen.getByTestId("step-group-rep").className, b = screen.getByTestId("step-group-est").className;
+    expect(a).toBe(b);
+    for (const c of ["rounded-xl", "border", "border-slate-300", "bg-slate-50/60", "p-3", "gap-3"]) expect(a.split(/\s+/)).toContain(c);
+    expect(a).toContain("min-[901px]:grid-rows-subgrid");
+    expect(screen.getByTestId("step-group-rep").getAttribute("role")).toBe("group");
+  });
+  it("cards inside stay white and bordered; groupCounts is unaffected by the panels; a plain rail has no panels", () => {
+    render(<StepRail id="g" ariaLabel="x" steps={gs} currentId="d" onSelect={vi.fn()} groups={groups} />);
+    expect(document.querySelector('[data-testid="step-group-rep"] li > button')!.className).toContain("bg-white");
+    expect(groupCounts(gs, groups).map((c) => `${c.done}/${c.total}`)).toEqual(["1/3", "0/1"]);
+    cleanup();
+    render(<StepRail id="p" ariaLabel="x" steps={steps} currentId="a" onSelect={vi.fn()} />);
+    expect(document.querySelector("[role=group]")).toBeNull();
+    expect(document.getElementById("p-list")!.className).not.toContain("bg-slate-50");
+  });
+});

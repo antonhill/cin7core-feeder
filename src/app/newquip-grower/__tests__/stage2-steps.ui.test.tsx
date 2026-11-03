@@ -86,8 +86,8 @@ type Role = "REP" | "ESTIMATOR" | "MANAGER";
 const g = globalThis as { __QID?: string; __STAGE?: string; __STEP?: string };
 
 /** Opens Stage 2 as `roles`. `commercials` is the viewer's cost visibility (an Estimator/Manager in practice). */
-async function open(o: { roles?: Role[]; commercials?: boolean; state?: string; row?: Record<string, unknown>; step?: string; draftOver?: Record<string, unknown> } = {}) {
-  g.__STAGE = "2"; g.__STEP = o.step;
+async function open(o: { stage?: string; roles?: Role[]; commercials?: boolean; state?: string; row?: Record<string, unknown>; step?: string; draftOver?: Record<string, unknown> } = {}) {
+  g.__STAGE = o.stage ?? "2"; g.__STEP = o.step;
   asRoles(...(o.roles ?? ["REP"]));
   vi.mocked(canSeeCosts).mockResolvedValue(o.commercials ?? false);
   const { id } = await createQuote(db as never, ORG, "rep@nq");
@@ -96,7 +96,7 @@ async function open(o: { roles?: Role[]; commercials?: boolean; state?: string; 
   g.__QID = id;
   const { default: Page } = await import("../[id]/page");
   render(createElement(Page));
-  await waitFor(() => expect(screen.getByTestId("step-rail")).toBeTruthy(), { timeout: 8000 });
+  await waitFor(() => expect(screen.getByTestId(o.stage && o.stage !== "2" ? "stage-nav" : "step-rail")).toBeTruthy(), { timeout: 8000 });
 }
 const rail = () => screen.getByRole("navigation", { name: "Costing and review steps" });
 const ids = () => [...rail().querySelectorAll("ol > li button")].map((b) => b.getAttribute("data-step"));
@@ -263,6 +263,244 @@ describe("UX-006b Stage 2 groups: review fixes", () => {
   it("the mobile summary spells out 'complete' for each group", async () => {
     await open();
     expect(screen.getByTestId("step-rail-toggle").textContent).toContain("Rep preparation 2 of 3 complete · Estimator review 0 of 1 complete");
+  }, 30000);
+});
+
+describe("UX-006b Stage 2: Mark reviewed & continue (client-local cost acknowledgement)", () => {
+  const SUBMITTED = { state: "ESTIMATOR_REVIEW", row: { customer_confirmed_cents: 1000000000, customer_confirmed_by: "A Customer", handoff_by_email: "rep@nq" } };
+  const ackBtn = () => screen.getByRole("button", { name: /Mark reviewed/ });
+  const startedActions = (q: ReturnType<typeof serialQueue>) => q.log.filter((l) => l.startsWith("start ")).length;
+
+  it("an Estimator marks the costing reviewed: the card reads Reviewed (no check), the count moves, the group line does NOT claim a sign-off, and Sign-off or return opens - with no server action, hash or state change", async () => {
+    const q = serialQueue(0);
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    await sleep(1200);
+    const before = startedActions(q);
+    const signBefore = (within(panel("signoff") as HTMLElement).getByRole("button", { name: /Estimator: I double-checked/, hidden: true }) as HTMLButtonElement).disabled;
+    expect(screen.getByTestId("cost-ack").textContent).toContain("It is not the Estimator sign-off.");
+    expect(status("cost")).toBe("Review needed"); expect(gcount("estimator")).toBe("0 of 2 complete");
+    fireEvent.click(ackBtn());
+    expect(shown("signoff")).toBe(true);
+    expect(status("cost")).toBe("Reviewed");
+    expect(rail().querySelector('[data-step="cost"]')!.textContent).not.toContain("✓");
+    expect(rail().querySelector('[data-step="cost"]')!.textContent).toContain("You marked this reviewed - this is not a sign-off");
+    expect(gcount("estimator")).toBe("1 of 2 complete");
+    expect(gstatus("estimator")).toBe("Workflow: Awaiting your review");
+    expect(status("signoff")).toBe("Not complete");
+    await act(async () => { await sleep(150); });
+    expect(startedActions(q)).toBe(before); // nothing was sent to the server
+    expect((within(panel("signoff") as HTMLElement).getByRole("button", { name: /Estimator: I double-checked/, hidden: true }) as HTMLButtonElement).disabled).toBe(signBefore); // the sign-off keeps its own gate
+    fireEvent.click(rail().querySelector('[data-step="lines"]')!);
+    fireEvent.click(screen.getByRole("button", { name: "Next incomplete step" }));
+    expect(shown("signoff")).toBe(true); // after the acknowledgement the next open step is the sign-off
+  }, 60000);
+
+  it("the acknowledgement is in the BOTTOM step bar as the primary button, with its sentence beside it; the plain Next is secondary 'Next without marking reviewed'; after marking, focus moves to the Sign-off heading and a status line is announced", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    const bar = screen.getByTestId("step-buttons");
+    expect(within(bar).getByText(/It is not the Estimator sign-off\./)).toBeTruthy(); // the sentence sits with the button
+    expect(within(bar).getByRole("button", { name: "Next without marking reviewed" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /Mark reviewed/ }).length).toBe(1); // ONE button, no duplicate at the top
+    expect(bar.contains(ackBtn())).toBe(true);
+    const live = screen.getByTestId("cost-ack-live"); // the live region exists EMPTY first so the announcement is reliable
+    expect(live.getAttribute("role")).toBe("status"); expect(live.textContent).toBe("");
+    fireEvent.click(ackBtn());
+    expect(document.activeElement?.textContent).toBe("Step 5 · Sign-off or return");
+    expect(screen.getByTestId("cost-ack-live").textContent).toBe("Cost & margin marked reviewed - this is not a sign-off.");
+    fireEvent.click(rail().querySelector('[data-step="cost"]')!);
+    expect(within(screen.getByTestId("step-buttons")).getByRole("button", { name: "Next: Sign-off or return" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull();
+  }, 60000);
+
+  it("after acknowledging, the Estimator is told what is next - to sign off or return - never 'Nothing is left for you'", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    fireEvent.click(ackBtn());
+    expect(screen.getByTestId("all-steps-complete").textContent).toBe("Next: sign off or return the quotation.");
+  }, 30000);
+
+  it("the button is offered only while the costing is genuinely 'Review needed': not while it needs attention (an incomplete cost override), and not once the quote is final", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    expect(screen.getByRole("button", { name: /Mark reviewed/ })).toBeTruthy(); // review
+    const reason = within(panel("cost") as HTMLElement).getAllByLabelText("Reason")[0] as HTMLInputElement;
+    await act(async () => { fireEvent.change(reason, { target: { value: "Supplier quote" } }); }); // a reason without an amount: the override is incomplete
+    await waitFor(() => expect(status("cost")).toBe("Needs attention"));
+    expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull(); // attention: no acknowledgement
+    cleanup();
+    await open({ roles: ["MANAGER"], commercials: true, state: "MANAGER_APPROVED_FINAL", step: "4" });
+    expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull(); // final
+  }, 60000);
+
+  it("the plain Next on Cost & margin is pure navigation: it moves on without marking anything reviewed", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    fireEvent.click(screen.getByRole("button", { name: "Next without marking reviewed" }));
+    expect(shown("signoff")).toBe(true);
+    expect(status("cost")).toBe("Review needed");
+    expect(gcount("estimator")).toBe("0 of 2 complete");
+  }, 30000);
+
+  it("a Rep and a non-commercial viewer see the ordinary Next (never the relabelled one) and no status line", async () => {
+    await open({ roles: ["REP"], step: "2", ...SUBMITTED });
+    expect(screen.queryByRole("button", { name: /without marking reviewed/ })).toBeNull();
+    expect(screen.queryByTestId("cost-ack-status")).toBeNull();
+  }, 30000);
+
+  it("the acknowledgement is stale after an unsaved edit, and after a save changes the version", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    fireEvent.click(ackBtn());
+    expect(status("cost")).toBe("Reviewed");
+    const box = within(panel("charges") as HTMLElement).getByLabelText(/Exclude Feed saver mat/, { selector: "input" }) as HTMLInputElement;
+    await act(async () => { fireEvent.click(box); });
+    expect(status("cost")).toBe("Review needed"); // unsaved edit
+    await act(async () => { fireEvent.change((within(panel("charges") as HTMLElement).getAllByPlaceholderText("Reason (required)") as HTMLInputElement[]).find((i) => i.value === "")!, { target: { value: "Customer supplies it" } }); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save draft" })); });
+    await waitFor(() => expect(screen.getByText("All changes saved")).toBeTruthy(), { timeout: 8000 });
+    expect(status("cost")).toBe("Review needed"); // the saved version (hash / revision / updated_at / totals) is a different one
+    fireEvent.click(rail().querySelector('[data-step="cost"]')!);
+    expect(screen.getByRole("button", { name: /Mark reviewed/ })).toBeTruthy(); // and it can be given again for the new version
+  }, 60000);
+
+  it("a Manager may acknowledge; a Rep and any non-commercial viewer never see the button, the cost step or any cost text", async () => {
+    await open({ roles: ["MANAGER"], commercials: true, step: "4", ...SUBMITTED });
+    fireEvent.click(ackBtn());
+    expect(status("cost")).toBe("Reviewed");
+    cleanup();
+    await open({ roles: ["REP"], ...SUBMITTED });
+    expect(screen.queryByTestId("cost-ack")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull();
+    expect(document.body.textContent).not.toMatch(/Cost & margin|Reviewed|Internal margins|You marked this reviewed/);
+    cleanup();
+    await open({ roles: ["ESTIMATOR"], commercials: false, ...SUBMITTED });
+    expect(screen.queryByTestId("cost-ack")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/Cost & margin|Internal margins/);
+  }, 90000);
+
+  it("it is offered only while the quote is in Estimator review, only on Cost & margin (or in Show all steps)", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4" }); // still a Rep draft
+    expect(screen.queryByTestId("cost-ack")).toBeNull();
+    cleanup();
+    await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED }); // lands on step 1
+    expect(screen.queryByTestId("cost-ack")).toBeNull();
+    fireEvent.click(rail().querySelector('[data-step="cost"]')!);
+    expect(screen.getByTestId("cost-ack")).toBeTruthy();
+    cleanup();
+    vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "nq-builder-show-all" ? "1" : null), setItem: () => undefined });
+    await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED });
+    expect(screen.getByTestId("cost-ack")).toBeTruthy();
+  }, 90000);
+
+  it("the key is never rendered: no attribute, id or text carries the quote id, hash or cost figures from the acknowledgement", async () => {
+    vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "nq-builder-show-all" ? "1" : null), setItem: () => undefined }); // Show all: the box stays after the click
+    await open({ roles: ["ESTIMATOR"], commercials: true, ...SUBMITTED });
+    fireEvent.click(ackBtn());
+    expect(screen.getByTestId("cost-ack-done")).toBeTruthy();
+    const box = screen.getByTestId("cost-ack");
+    expect(box.outerHTML).not.toMatch(/\|/); // the key is joined with '|'
+    expect(box.outerHTML).not.toContain(g.__QID!);
+  }, 30000);
+});
+
+describe("UX-006b Stage 2: the view follows real workflow transitions and nothing else (#176's pin, on READY fixtures)", () => {
+  const SUB = { state: "ESTIMATOR_REVIEW", row: { customer_confirmed_cents: 1000000000, customer_confirmed_by: "A Customer", handoff_by_email: "rep@nq" } };
+  const viewedStage = () => document.querySelector('[data-testid="stage-nav"] [aria-current="step"]')!.getAttribute("data-stage");
+  // The fake database hands out its rows by reference, so a change must REPLACE the row (as a real database would), or the page's earlier view would change under it.
+  const patchRow = (id: string, patch: (r: Record<string, unknown>) => Record<string, unknown>) => { const arr = db.rows("newquip_quotes") as Array<Record<string, unknown>>; const i = arr.findIndex((r) => r.id === id); arr[i] = { ...arr[i], ...patch(arr[i]) }; };
+  const reread = async (id: string) => actions.getGrowerQuoteAction(id);
+
+  it("Estimator sign-off: the editor STAYS on Stage 2 (sign-off gained does not move the view) and the Estimator group says 'Signed off'", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "5", ...SUB });
+    const id = g.__QID!;
+    vi.spyOn(actions, "signOffGrowerQuoteAction").mockImplementation((async () => { patchRow(id, (r) => ({ estimator_signoff_hash: r.draft_hash, estimator_signoff_by_email: "e@nq", estimator_signoff_at: "2026-11-03T08:00:00Z" })); return reread(id); }) as never);
+    fireEvent.click(await waitFor(() => within(panel("signoff") as HTMLElement).getByRole("button", { name: /Estimator: I double-checked/ })));
+    await waitFor(() => expect(gstatus("estimator")).toBe("Workflow: Signed off"), { timeout: 8000 });
+    expect(viewedStage()).toBe("2");
+    expect(status("signoff")).toBe("Complete");
+  }, 60000);
+
+  it("Rep submit: the quote moves to Estimator review and the Rep stays on Stage 2 reading 'Submitted - awaiting the Estimator'", async () => {
+    vi.spyOn(ca, "getQuoteCustomerAction").mockResolvedValue({ ok: true, data: { available: true, snapshot: { cin7CustomerId: "c1", name: { state: "present", value: "Acme" }, tradingName: { state: "missing" }, billingAddress: null, vatNumber: { state: "missing" }, currency: { state: "missing" }, paymentTerm: { state: "missing" }, contacts: [], chosenContact: { name: "Sean", email: "s@x.co", source: "CIN7_CONTACT", phone: null } }, snapshotId: "s1", seq: 1, issues: [], currency: null, selectedContactIndex: null, confirmationContact: null, editable: true, lockedReason: null, changeReturnsToRep: false, history: [] } } as never);
+    await open({ roles: ["REP"], step: "3" });
+    const id = g.__QID!;
+    vi.spyOn(actions, "sendGrowerQuoteToEstimatorAction").mockImplementation((async () => { patchRow(id, () => ({ state: "ESTIMATOR_REVIEW", customer_confirmed_cents: 1000000000, customer_confirmed_by: "Sean", handoff_by_email: "rep@nq" })); return reread(id); }) as never);
+    const send = await waitFor(() => { const b = within(panel("submit") as HTMLElement).getByRole("button", { name: /Record pre-approval price confirmation/ }) as HTMLButtonElement; expect(b.disabled).toBe(false); return b; }, { timeout: 8000 });
+    fireEvent.click(send);
+    await waitFor(() => expect(gstatus("rep")).toBe("Workflow: Submitted - awaiting the Estimator"), { timeout: 8000 });
+    expect(viewedStage()).toBe("2");
+    expect(status("submit")).toBe("Complete");
+  }, 60000);
+
+  it("Manager approval moves the view on (a real workflow change clears the pin): to the customer quotation stage", async () => {
+    vi.spyOn(da, "getQuoteDeliveryAction").mockResolvedValue({ ok: true, data: { available: false } } as never);
+    await open({ stage: "3", roles: ["MANAGER"], commercials: true, state: "ESTIMATOR_REVIEW", row: { __useDraftHash: true, customer_confirmed_cents: 1000000000, customer_confirmed_by: "A Customer", requires_customer_acceptance: true } });
+    const id = g.__QID!;
+    vi.spyOn(actions, "approveGrowerQuoteAction").mockImplementation((async () => { patchRow(id, () => ({ state: "MANAGER_APPROVED_FINAL", approved_by_email: "m@nq" })); return reread(id); }) as never);
+    const approve = await waitFor(() => { const b = screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement; expect(b.disabled).toBe(false); return b; }, { timeout: 8000 });
+    expect(viewedStage()).toBe("3");
+    fireEvent.click(approve);
+    await waitFor(() => expect(viewedStage()).toBe("4"), { timeout: 8000 });
+  }, 60000);
+
+  for (const roles of [["REP"], ["ESTIMATOR"]] as Role[][]) {
+    it(`${roles[0]}: Save draft keeps the same stage and step (a draft change is not a workflow transition)`, async () => {
+      await open({ roles, commercials: roles[0] === "ESTIMATOR", step: "2" });
+      const box = within(panel("charges") as HTMLElement).getByLabelText(/Exclude Feed saver mat/, { selector: "input" }) as HTMLInputElement;
+      await act(async () => { fireEvent.click(box); });
+      await act(async () => { fireEvent.change((within(panel("charges") as HTMLElement).getAllByPlaceholderText("Reason (required)") as HTMLInputElement[]).find((i) => i.value === "")!, { target: { value: "Customer supplies it" } }); });
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save draft" })); });
+      await waitFor(() => expect(screen.getByText("All changes saved")).toBeTruthy(), { timeout: 8000 });
+      expect(viewedStage()).toBe("2");
+      expect(rail().querySelector('[aria-current="step"]')!.getAttribute("data-step")).toBe("charges");
+    }, 60000);
+  }
+});
+
+describe("UX-006b Stage 2: Load Demo Defaults keeps the viewed step", () => {
+  for (const [name, step, roles, comm] of [["Lines & mappings", "1", ["REP"], false], ["Charges & prices", "2", ["REP"], false], ["Submit to Estimator", "3", ["REP"], false], ["Cost & margin", "4", ["REP", "ESTIMATOR"], true], ["Sign-off or return", "5", ["REP", "ESTIMATOR"], true]] as const) {
+    it(`viewing ${name}: Load Demo Defaults (replace) stays on it`, async () => {
+      await open({ roles: [...roles] as Role[], commercials: comm, step });
+      const which = [...document.querySelectorAll("[data-step-panel]")].find((e) => !e.hasAttribute("hidden"))!.getAttribute("data-step-panel");
+      fireEvent.click(screen.getByRole("button", { name: "Load Demo Defaults" }));
+      const replace = screen.queryByRole("button", { name: "Replace with demo" });
+      if (replace) fireEvent.click(replace);
+      await act(async () => { await sleep(50); });
+      expect(rail().querySelector('[aria-current="step"]')!.getAttribute("data-step")).toBe(which);
+      expect(shown(which!)).toBe(true);
+      expect(new URL(window.location.href).searchParams.get("stage")).toBe("2");
+    }, 30000);
+  }
+  for (const [name, step, comm] of [["Lines & mappings", "1", false], ["Charges & prices", "2", false], ["Submit to Estimator", "3", false], ["Cost & margin", "4", true], ["Sign-off or return", "5", true]] as const) {
+    it(`as an Estimator viewing ${name} in Estimator review: Load Demo Defaults stays put and runs ONLY the preview (no save, send, sign-off, return or approve)`, async () => {
+      const q = serialQueue(0);
+      await open({ roles: ["ESTIMATOR"], commercials: comm, step, state: "ESTIMATOR_REVIEW", row: { customer_confirmed_cents: 1000000000 } });
+      await sleep(1200);
+      const which = [...document.querySelectorAll("[data-step-panel]")].find((e) => !e.hasAttribute("hidden"))!.getAttribute("data-step-panel");
+      q.log.length = 0;
+      fireEvent.click(screen.getByRole("button", { name: "Load Demo Defaults" }));
+      const replace = screen.queryByRole("button", { name: "Replace with demo" });
+      if (replace) fireEvent.click(replace);
+      await act(async () => { await sleep(900); });
+      expect(rail().querySelector('[aria-current="step"]')!.getAttribute("data-step")).toBe(which);
+      expect(new URL(window.location.href).searchParams.get("stage")).toBe("2");
+      const ran = q.log.filter((l) => l.startsWith("start ")).map((l) => l.slice(6));
+      expect(ran.filter((n) => /^(save|send|signOff|return|approve|create|post|record)/i.test(n.replace(/Grower|Quote/g, ""))), ran.join(",")).toEqual([]);
+      expect(ran.every((n) => /^(previewGrowerDraftAction|getQuote|getGrowerQuote|getMapping|getQuoteScope|getQuoteCost|getQuoteCustomer|getQuoteDelivery)/.test(n)), ran.join(",")).toBe(true);
+    }, 30000);
+  }
+  it("a ?step= this viewer does not have (a Rep given step=5) says so politely instead of jumping silently; the note is a status and goes once they navigate", async () => {
+    await open({ roles: ["REP"], step: "5" });
+    expect(screen.getByTestId("step-unavailable").textContent).toBe("That step is not available to you, so the first step is shown.");
+    expect(screen.getByTestId("step-unavailable").getAttribute("role")).toBe("status");
+    expect(document.body.textContent).not.toMatch(/Internal margins|Cost & margin/); // the note names no cost data
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.queryByTestId("step-unavailable")).toBeNull();
+  }, 30000);
+  it("with Show all steps every step stays visible after Load Demo Defaults", async () => {
+    vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "nq-builder-show-all" ? "1" : null), setItem: () => undefined });
+    await open({ roles: ["REP"] });
+    fireEvent.click(screen.getByRole("button", { name: "Load Demo Defaults" }));
+    const replace = screen.queryByRole("button", { name: "Replace with demo" });
+    if (replace) fireEvent.click(replace);
+    await act(async () => { await sleep(50); });
+    for (const s of ["lines", "charges", "submit", "signoff"]) expect(shown(s)).toBe(true);
   }, 30000);
 });
 

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import * as da from "../delivery-actions";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,7 +19,7 @@ let db: FakeDb;
 vi.mock("@/lib/authorization", () => ({ requireModuleAccess: vi.fn() }));
 vi.mock("@/lib/require-org-admin", () => ({ requireOrgAdmin: vi.fn() }));
 vi.mock("@/newquip/require-newquip-poc-org", () => ({ requireNewquipPocOrg: vi.fn() }));
-vi.mock("@/lib/approvals/role-store", () => ({ resolveRoles: vi.fn(), canSeeCosts: vi.fn() }));
+vi.mock("@/lib/approvals/role-store", () => ({ resolveRoles: vi.fn(), canSeeCosts: vi.fn(), rolesAvailable: vi.fn(() => Promise.resolve(false)) }));
 vi.mock("@/supabase/server", () => ({ createServiceRoleClient: () => db }));
 vi.mock("../delivery-actions", () => ({
   getQuoteDeliveryAction: vi.fn(async () => ({ ok: true, data: (globalThis as { __DELIVERY?: unknown }).__DELIVERY })),
@@ -266,6 +267,49 @@ describe("UX-006c Stage 6: readiness checklist", () => {
     cleanup();
     await open({ stage: "6", roles: ["MANAGER"], row: { ...FINAL, project_id: "p1" } });
     expect(screen.queryByTestId("handover-checklist")).toBeNull();
+  }, 60000);
+});
+
+describe("UX-006c interplay with the pinned landing stage", () => {
+  const stageChip = (n: number) => document.querySelector(`[data-stage="${n}"]`)!.textContent ?? "";
+  it("a Rep-only viewer's Stage 2 chip says 'With the Estimator' for a submitted quote; an Estimator's says 'Awaiting your review' (role-relative, same quote)", async () => {
+    await open({ stage: "2", roles: ["REP"], row: { state: "ESTIMATOR_REVIEW", customer_confirmed_cents: 1_000_000_000 } });
+    await waitFor(() => expect(stageChip(2)).toContain("With the Estimator"), { timeout: 8000 });
+    cleanup();
+    await open({ stage: "2", roles: ["REP", "ESTIMATOR"], row: { state: "ESTIMATOR_REVIEW", customer_confirmed_cents: 1_000_000_000 } });
+    await waitFor(() => expect(stageChip(2)).toContain("Awaiting your review"), { timeout: 8000 });
+  }, 60000);
+  it("Preview only and the narrow-screen disclosure still work on the pinned stage", async () => {
+    await open({ stage: "3", roles: ["REP"] });
+    expect(stageChip(4)).toContain("Preview only");
+    const t = screen.getByTestId("stage-nav-toggle");
+    expect(t.textContent).toContain("Stage 3 of 6");
+    fireEvent.click(t); fireEvent.click(document.querySelector('[data-stage="4"]')!);
+    expect(t.textContent).toContain("Stage 4 of 6");
+    expect(document.activeElement).toBe(t);
+  }, 30000);
+  it("after a real workflow transition (the Manager approves) the view moves on to the new current stage", async () => {
+    await open({ stage: "3", roles: ["MANAGER"], row: { state: "ESTIMATOR_REVIEW", customer_confirmed_cents: 1_000_000_000, estimator_signoff_hash: "CURRENT" } });
+    const approve = await screen.findByRole("button", { name: "Manager: final approval" }, { timeout: 8000 });
+    await waitFor(() => expect((approve as HTMLButtonElement).disabled).toBe(false), { timeout: 8000 });
+    expect(document.querySelector('[data-stage="3"]')!.getAttribute("aria-current")).toBe("step");
+    fireEvent.click(approve);
+    await waitFor(() => expect(document.querySelector('[data-stage="4"]')!.getAttribute("aria-current")).toBe("step"), { timeout: 15000 });
+  }, 60000);
+});
+
+describe("UX-006c Stage 4 wiring follows the stable gate callback", () => {
+  it("after a send is recorded (gate: SENT) the Stage 4 rail completes both steps and the view moves 4 -> 5", async () => {
+    vi.mocked(da.sendQuoteToCustomerAction).mockImplementation((async () => {
+      g.__DELIVERY = delivery({ status: "SENT_TO_CUSTOMER", latestDocumentId: "d0", sends: [{ id: "s1", status: "ACCEPTED", at: "2026-01-02T08:00:00Z", sentBy: "rep@nq", to: ["c@farm.co"], cc: [], suppressed: [], alternatives: [], alternativeReason: null, error: null, resendReason: null }] });
+      return { ok: true, data: {} };
+    }) as never);
+    await open({ stage: "4", roles: ["REP"], row: FINAL, delivery: delivery({ latestDocumentId: "d0" }), docs: docs(1), step: "2" });
+    const box = await screen.findByLabelText(/I have opened and reviewed the PDF/, {}, { timeout: 8000 });
+    expect(document.querySelector('[data-stage="4"]')!.getAttribute("aria-current")).toBe("step");
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole("button", { name: "Send quotation to customer" }));
+    await waitFor(() => expect(document.querySelector('[data-stage="5"]')!.getAttribute("aria-current")).toBe("step"), { timeout: 15000 });
   }, 60000);
 });
 

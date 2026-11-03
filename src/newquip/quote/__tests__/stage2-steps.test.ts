@@ -7,7 +7,7 @@ const REP = { rep: true, estimator: false, manager: false };
 const EST = { rep: false, estimator: true, manager: false };
 const MGR = { rep: false, estimator: false, manager: true };
 const ok: Stage2Input = {
-  canViewCommercials: true, editable: true, roles: REP, state: "REP_DRAFT", revision: 1, calcValid: true, lines: [line(), line()],
+  canViewCommercials: true, editable: true, costAcknowledged: false, roles: REP, state: "REP_DRAFT", revision: 1, calcValid: true, lines: [line(), line()],
   readiness: { state: "READY", reasons: [], missingMappings: 0 },
   budget: { incomplete: false, estimatedCost: 1000, marginPct: 25, lines: [{ status: "priced" }], charges: [{ label: "Delivery", status: "entered" }] },
   blankExclusionCount: 0, incompleteCostOverrideCount: 0, blankPriceReasonCount: 0, totalAvailable: true, confirmedRecorded: false, signoff: "none", dirty: false,
@@ -182,6 +182,30 @@ describe("Stage 2 steps and groups (UX-006b)", () => {
     expect(x.steps.find((q) => q.id === "lines")!.note).toBeUndefined(); // complete steps keep their own (empty) note
     expect(JSON.stringify(x)).not.toMatch(/cost|margin/i);
     expect(d({ roles: REP, blankExclusionCount: 1 }).steps.find((q) => q.id === "charges")!.note).toBe("1 excluded item needs a reason"); // the Rep keeps the real note
+  });
+  it("a client-local cost acknowledgement (Estimator/Manager, Estimator review, commercial, no unsaved edits): Reviewed + counted, count moves, the group line does NOT claim a sign-off, next-incomplete goes to sign-off", () => {
+    const acked = { ...sub, roles: EST, costAcknowledged: true };
+    const x = d(acked);
+    expect(x.steps.find((q) => q.id === "cost")).toMatchObject({ status: "review", counted: true, statusLabel: "Reviewed", note: "You marked this reviewed - this is not a sign-off" });
+    expect([x.groups[1].progress, x.groups[1].statusLine]).toEqual(["1 of 2 complete", "Awaiting your review"]);
+    expect(by(acked).signoff).toBe("incomplete"); // the formal sign-off is untouched
+    expect(nextIncompleteStepId(nextCandidates(x, "lines"), "lines")).toBe("signoff");
+    expect(d({ ...acked, roles: MGR }).steps.find((q) => q.id === "cost")!.counted).toBe(true); // a Manager may acknowledge
+    // not acknowledged: Review needed, not counted
+    expect(d({ ...sub, roles: EST }).steps.find((q) => q.id === "cost")).toMatchObject({ status: "review" });
+    expect(d({ ...sub, roles: EST }).steps.find((q) => q.id === "cost")!.counted).toBeUndefined();
+  });
+  it("with a current sign-off the formal sign-off governs: an acknowledgement does not rewrite the Cost note to 'You marked this reviewed'", () => {
+    const x = d({ ...sub, roles: EST, signoff: "current", costAcknowledged: true });
+    expect(x.steps.find((q) => q.id === "cost")).toMatchObject({ counted: true, statusLabel: "Reviewed", note: "Cin7 cost capture is checked in the Cost panel" });
+  });
+  it("an acknowledgement never applies: with unsaved edits, outside Estimator review, to a Rep, or without cost visibility", () => {
+    const acked = { ...sub, roles: EST, costAcknowledged: true };
+    expect(d({ ...acked, dirty: true }).steps.find((q) => q.id === "cost")!.counted).toBeUndefined();
+    expect(d({ ...acked, state: "REP_DRAFT" }).steps.find((q) => q.id === "cost")!.counted).toBeUndefined();
+    expect(d({ ...acked, roles: REP }).steps.find((q) => q.id === "cost")!.counted).toBeUndefined();
+    expect(JSON.stringify(d({ ...acked, canViewCommercials: false }))).not.toMatch(/cost|margin|reviewed/i);
+    expect(d({ ...acked, budget: { ...ok.budget!, incomplete: true } }).steps.find((q) => q.id === "cost")).toMatchObject({ status: "attention" }); // an attention state is not papered over
   });
   it("after a current sign-off the reviewed Cost step counts as done (no Complete label) so the group count and status agree; with unsaved edits it does not", () => {
     const signed = { ...sub, roles: EST, signoff: "current" as const };
