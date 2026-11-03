@@ -193,6 +193,18 @@ describe("UX-006b Stage 2 steps: navigation", () => {
     expect(shown(open2)).toBe(true);
   }, 30000);
 
+  it("switching stage keeps the address bar honest: ?step= follows the stage's own step and is dropped when it is the first", async () => {
+    await open({ roles: ["REP", "ESTIMATOR"], commercials: true });
+    fireEvent.click(within(rail()).getByRole("button", { name: /Cost & margin/ }));
+    expect(new URL(window.location.href).searchParams.get("step")).toBe("3");
+    fireEvent.click(document.querySelector('[data-stage="3"]')!);
+    const u = new URL(window.location.href);
+    expect(u.searchParams.get("stage")).toBe("3"); expect(u.searchParams.has("step")).toBe(false);
+    fireEvent.click(document.querySelector('[data-stage="2"]')!);
+    expect(new URL(window.location.href).searchParams.get("step")).toBe("3"); // Stage 2 remembers its own step
+    expect(shown("cost")).toBe(true);
+  }, 30000);
+
   it("the rail is an ordered list with aria-current and a live announcement", async () => {
     await open();
     expect(rail().querySelector("ol")).toBeTruthy();

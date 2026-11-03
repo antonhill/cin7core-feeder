@@ -269,7 +269,7 @@ export default function QuoteEditorPage() {
   );
   const here = currentStage(stages);
   const stage: StageId = picked ?? here;
-  const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); u.searchParams.set("stage", String(n)); const at = n === 1 ? stepNo : n === 2 ? step2No : 1; if (at > 1) u.searchParams.set("step", String(at)); else u.searchParams.delete("step"); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
+  const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); const at = n === 1 ? stepNo : n === 2 ? step2No : 1; const sp = new URLSearchParams([...u.searchParams].filter(([k]) => k !== "step" && k !== "stage")); sp.set("stage", String(n)); if (at > 1) sp.set("step", String(at)); u.search = sp.toString(); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
 
   const stage1 = deriveStage1Steps({ customerName: draft.customerName, siteName: draft.siteName, penningPigSize: cfg.penningPigSize, calcIssues: ev.calc.issues, readinessReasons: rd.reasons, customer: customerFacts });
   const stepId = STAGE1_STEP_IDS[stepNo - 1];
