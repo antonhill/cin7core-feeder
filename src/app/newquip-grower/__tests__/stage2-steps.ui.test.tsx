@@ -295,19 +295,39 @@ describe("UX-006b Stage 2: Mark reviewed & continue (client-local cost acknowled
     expect(shown("signoff")).toBe(true); // after the acknowledgement the next open step is the sign-off
   }, 60000);
 
-  it("the acknowledgement sits at the TOP (before the cost panels, no hunting); the plain Next on this step reads 'Next without marking reviewed'; after marking, focus moves to the Sign-off heading with a status line, and Next becomes 'Next: Sign-off or return'", async () => {
+  it("the acknowledgement is in the BOTTOM step bar as the primary button, with its sentence beside it; the plain Next is secondary 'Next without marking reviewed'; after marking, focus moves to the Sign-off heading and a status line is announced", async () => {
     await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
-    const box = screen.getByTestId("cost-ack");
-    expect(box.compareDocumentPosition(panel("cost")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // the box comes before the cost step
-    const next = screen.getByTestId("step-buttons").querySelector("button:last-child") as HTMLButtonElement;
-    expect(next.textContent).toBe("Next without marking reviewed");
-    expect(screen.queryByTestId("cost-ack-status")).toBeNull();
+    const bar = screen.getByTestId("step-buttons");
+    expect(within(bar).getByText(/It is not the Estimator sign-off\./)).toBeTruthy(); // the sentence sits with the button
+    expect(within(bar).getByRole("button", { name: "Next without marking reviewed" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /Mark reviewed/ }).length).toBe(1); // ONE button, no duplicate at the top
+    expect(bar.contains(ackBtn())).toBe(true);
+    const live = screen.getByTestId("cost-ack-live"); // the live region exists EMPTY first so the announcement is reliable
+    expect(live.getAttribute("role")).toBe("status"); expect(live.textContent).toBe("");
     fireEvent.click(ackBtn());
     expect(document.activeElement?.textContent).toBe("Step 5 · Sign-off or return");
-    expect(screen.getByTestId("cost-ack-status").getAttribute("role")).toBe("status");
-    expect(screen.getByTestId("cost-ack-status").textContent).toBe("Cost & margin marked reviewed - this is not a sign-off.");
+    expect(screen.getByTestId("cost-ack-live").textContent).toBe("Cost & margin marked reviewed - this is not a sign-off.");
     fireEvent.click(rail().querySelector('[data-step="cost"]')!);
-    expect((screen.getByTestId("step-buttons").querySelector("button:last-child") as HTMLButtonElement).textContent).toBe("Next: Sign-off or return");
+    expect(within(screen.getByTestId("step-buttons")).getByRole("button", { name: "Next: Sign-off or return" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull();
+  }, 60000);
+
+  it("after acknowledging, the Estimator is told what is next - to sign off or return - never 'Nothing is left for you'", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    fireEvent.click(ackBtn());
+    expect(screen.getByTestId("all-steps-complete").textContent).toBe("Next: sign off or return the quotation.");
+  }, 30000);
+
+  it("the button is offered only while the costing is genuinely 'Review needed': not while it needs attention (an incomplete cost override), and not once the quote is final", async () => {
+    await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
+    expect(screen.getByRole("button", { name: /Mark reviewed/ })).toBeTruthy(); // review
+    const reason = within(panel("cost") as HTMLElement).getAllByLabelText("Reason")[0] as HTMLInputElement;
+    await act(async () => { fireEvent.change(reason, { target: { value: "Supplier quote" } }); }); // a reason without an amount: the override is incomplete
+    await waitFor(() => expect(status("cost")).toBe("Needs attention"));
+    expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull(); // attention: no acknowledgement
+    cleanup();
+    await open({ roles: ["MANAGER"], commercials: true, state: "MANAGER_APPROVED_FINAL", step: "4" });
+    expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull(); // final
   }, 60000);
 
   it("the plain Next on Cost & margin is pure navigation: it moves on without marking anything reviewed", async () => {
