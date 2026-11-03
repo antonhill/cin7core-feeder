@@ -18,3 +18,21 @@ export const ledLibraryMapping = (orgId: string) => ({
 /** The Manager's baseline-exception request for the CURRENT stored version of a quotation (what the Manager workspace sends). */
 export const managerExceptionOpts = (q: Pick<QuoteRecord, "revision" | "draft_hash">, reason: string = FIXTURE_EXCEPTION_REASON) =>
   ({ baselineException: { reason, expectedRevision: q.revision, expectedDraftHash: q.draft_hash } });
+
+/**
+ * For downstream fixtures (Project / Sale scope / invoicing) that are ABOUT unresolved physical scope: a baseline whose scope still lists M75, penning and LED as UNMAPPED, as the
+ * golden quotation was sealed before the Manager exception existed. `buildAcceptedBaseline` now refuses to freeze such a quotation without the exception and a mapped LED package, so
+ * this seals it with the golden library and then restores the unresolved scope (and a fresh seal). Only the scope differs from a real seal; nothing downstream reads `exceptions`.
+ */
+import { buildAcceptedBaseline, deepFreeze, hashOf, type BaselineInput } from "@/newquip/quote/baseline";
+import { buildPhysicalScope } from "@/newquip/quote/physical-scope";
+import { applyMappingLibrary, type LibraryMapping } from "@/lib/projects/product-scope";
+import { GOLDEN_LIBRARY } from "./golden-catalogue";
+export function sealWithUnresolvedScope(input: Omit<BaselineInput, "baselineException" | "mappingLibrary">, library?: ReadonlyMap<string, LibraryMapping>) {
+  const { baseline } = buildAcceptedBaseline({ ...input, mappingLibrary: GOLDEN_LIBRARY as never });
+  const b = structuredClone(baseline) as typeof baseline;
+  const scope = buildPhysicalScope(b.commercial.lines);
+  b.physicalScope = library && library.size ? applyMappingLibrary(scope, library, input.approvals.managerApprovedAt) : scope;
+  delete b.exceptions;
+  return { baseline: deepFreeze(b), hash: hashOf(b) };
+}

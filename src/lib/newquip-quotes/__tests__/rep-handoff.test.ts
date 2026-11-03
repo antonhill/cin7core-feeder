@@ -33,7 +33,8 @@ async function stored(d: QuoteDraft): Promise<string> {
 }
 const send = (id: string, amount: number, by = "Joe") => sendToEstimator(db as never, ORG, repOnly as never, "rep@nq", id, ctx, { confirmedAmountCents: amount, confirmedBy: by });
 
-beforeEach(() => { db = new FakeDb(); seedGoldenCatalogue(db as never, ORG); });
+// These tests are ABOUT Estimator-priced systems with no Cin7 SKU, so the golden library mappings that seedGoldenCatalogue adds for other fixtures are removed.
+beforeEach(() => { db = new FakeDb(); seedGoldenCatalogue(db as never, ORG); db.tables.newquip_package_mappings = []; });
 
 describe("Rep handoff does not wait for Estimator-owned work", () => {
   it("a Rep submits with mappings / packages unresolved: state moves, the INDICATIVE total is recorded, the audit fields are set", async () => {
@@ -106,7 +107,10 @@ describe("no commercial approval while mappings, supplier costs or pricing are u
     const id2 = await stored(accepted);
     await send(id2, cents(accepted));
     await estimatorSignOff(db as never, ORG, member, "est@nq", id2, ctx);
-    await managerApprove(db as never, ORG, admin, "m@nq", id2, ctx);
+    // ... but the cost exception waives COST reasons only (UX-006 S3): M75 / penning / LED have no Cin7 SKU, so approval needs the LED mapped and the Manager's recorded exception
+    expect(await err(managerApprove(db as never, ORG, admin, "m@nq", id2, ctx))).toMatch(/3 package\(s\) are not mapped to Cin7 SKUs/);
+    db.rows("newquip_package_mappings").push(ledLibraryMapping(ORG));
+    await managerApprove(db as never, ORG, admin, "m@nq", id2, ctx, undefined, managerExceptionOpts(db.rows("newquip_quotes")[1] as never));
     expect((await loadQuote(db as never, ORG, id2))!.state).toBe("MANAGER_APPROVED_FINAL");
   });
   it("the cost-withheld caller learns only the reason text, never a cost or margin value", async () => {

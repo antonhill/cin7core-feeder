@@ -11,7 +11,8 @@ import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
 import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
-import { buildAcceptedBaseline, baselineMatchesHash, commercialLinesOf } from "@/newquip/quote/baseline";
+import { sealWithUnresolvedScope } from "@/newquip/grower/__tests__/baseline-exception-fixture";
+import { baselineMatchesHash, commercialLinesOf } from "@/newquip/quote/baseline";
 import { buildPhysicalScope } from "@/newquip/quote/physical-scope";
 import { applyMappingLibrary, effectiveScope, scopeFromSnapshot, type LibraryMapping, type ScopeItem } from "../product-scope";
 import { libraryOf, listActiveMappings, saveMappingVersion } from "../package-mapping-store";
@@ -27,7 +28,7 @@ const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(),
 const ev = evaluateDraft(draft, ctx(true));
 const AT = "2026-10-29T08:00:00Z";
 const APPROVALS = { customerConfirmedAt: "t", customerConfirmedCents: 1, customerConfirmedBy: "r", handoffBy: "r", estimatorSignoffBy: "e", estimatorSignoffAt: "t", managerApprovedBy: "m", managerApprovedAt: AT };
-const seal = (mappingLibrary?: ReadonlyMap<string, LibraryMapping>) => buildAcceptedBaseline({ quoteRef: "NQ-Q-0007", revision: 1, draft, evaluation: ev, marginEvaluation: evaluateDraft(draft, ctx(false)), approvals: APPROVALS, mappingLibrary });
+const seal = (mappingLibrary?: ReadonlyMap<string, LibraryMapping>) => sealWithUnresolvedScope({ quoteRef: "NQ-Q-0007", revision: 1, draft, evaluation: ev, marginEvaluation: evaluateDraft(draft, ctx(false)), approvals: APPROVALS }, mappingLibrary);
 
 /** A register as an OLD baseline would hold it: one M75 item resolved by a legacy mapping that marks a BOM component. */
 const describeScopeSource = (m: LibraryMapping): ScopeItem[] => [{ id: "flex_auger:UNMAPPED", sku: null, description: "M75", quantity: 1, unit: "each", productType: "FINISHED_GOOD", origin: { lineRef: "flex_auger:UNMAPPED", label: "M75", packageKey: null, section: null, source: "QUOTE" }, scope: "BASE", sellingUnitCents: null, mapping: { status: "UNMAPPED", reason: "x" },

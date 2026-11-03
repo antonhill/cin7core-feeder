@@ -99,14 +99,16 @@ export interface BaselineMappingGate {
  */
 export function baselineMappingGate(i: { lines: readonly BaselineCommercialLine[]; scope: readonly ScopeItem[]; physicalCosts: Parameters<typeof buildCostEstimate>[1] | undefined; costExceptionAccepted: boolean }): BaselineMappingGate {
   const captured = i.physicalCosts;
-  const eff = captured && Object.keys(captured).length ? effectiveScope(i.scope) : null;
-  const estimate = eff ? buildCostEstimate(eff.lines.map((l) => ({ sku: l.sku, description: l.description, quantity: l.quantity })), captured!, eff.blockers.length ? eff.blockers : []) : undefined;
-  const waivable = estimate ? estimatorPricedUnmapped(i.lines, i.scope) : [];
-  const covered = waivable.filter((w) => (estimate?.unresolvedPackages ?? []).includes(w.blocker));
-  const remaining = [...(estimate?.unresolvedPackages ?? [])];
+  const eff = effectiveScope(i.scope);
+  // The frozen cost estimate exists only once costing has started (unchanged). The UNMAPPED-package rule below does NOT depend on that: an Estimator-priced system with no Cin7 SKU needs the
+  // Manager's recorded exception whether or not costing was ever started and whether or not the Estimator recorded a cost exception.
+  const estimate = captured && Object.keys(captured).length ? buildCostEstimate(eff.lines.map((l) => ({ sku: l.sku, description: l.description, quantity: l.quantity })), captured, eff.blockers) : undefined;
+  const waivable = estimatorPricedUnmapped(i.lines, i.scope);
+  const covered = waivable.filter((w) => eff.blockers.includes(w.blocker));
+  const remaining = [...eff.blockers];
   for (const w of covered) { const at = remaining.indexOf(w.blocker); if (at >= 0) remaining.splice(at, 1); }
   const missingSkus = i.costExceptionAccepted ? [] : (estimate?.missingSkus ?? []);
-  const blocked = !!estimate && (covered.length > 0 || remaining.length > 0 || missingSkus.length > 0);
+  const blocked = covered.length > 0 || remaining.length > 0 || missingSkus.length > 0;
   return {
     estimate, blocked, items: covered.map((w) => w.item), remainingPackages: remaining, missingSkus,
     required: blocked && covered.length > 0 && remaining.length === 0 && missingSkus.length === 0,

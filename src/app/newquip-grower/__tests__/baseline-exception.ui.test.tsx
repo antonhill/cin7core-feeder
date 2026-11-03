@@ -52,6 +52,14 @@ describe("Stage 3 Manager: the approval exception block", () => {
   });
 });
 
+describe("touch targets (class contract: jsdom has no layout, so the classes that give >= 44px are asserted)", () => {
+  it("the acceptance row's label and the primary button are at least 44px (min-h-11)", () => {
+    mount();
+    expect(screen.getByLabelText(/I accept this exception/).closest("label")!.className).toMatch(/\bmin-h-11\b/);
+    expect(btn().className).toMatch(/\bmin-h-11\b/);
+  });
+});
+
 describe("version keyed state, hint and the Estimator's cost exception", () => {
   it("a reason and acceptance entered for one version are cleared when the version changes (cannot submit against a new hash)", () => {
     const onApprove = vi.fn();
