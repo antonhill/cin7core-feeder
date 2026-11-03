@@ -149,3 +149,83 @@ describe("the Cin7 record reader", () => {
     expect(rawFromCin7({ SupplierName: "Acme", FixedCost: 99 }, cur).cost).toBeNull(); // FixedCost is never a fallback
   });
 });
+
+describe("Cin7 single-stock-UOM contract (NQ-Q-0023 UOM_UNCONFIRMED remediation)", () => {
+  // Real Suppliers[] shape, confirmed live 2026-07-23 (see product-supplier-options.test.ts): SupplierID, SupplierName, Cost, Currency, ProductSupplierOptions.
+  const live = { SupplierID: "57f035fa", SupplierName: "ARUMI", Cost: 494.46, Currency: "ZAR", LastSupplied: "2026-11-03T00:00:00", ProductSupplierOptions: [{ Lead: 10, ReorderQuantity: 500, MinimumToReorder: 500, Safety: 20 }], FixedCost: 0, DropShip: false };
+  const fresh = (s: Record<string, unknown> = live, stockUnit: string | null = "Item") => ({ ...rawFromCin7(s, () => null), stockUnit });
+  const noBasis = env({ unitBasis: null });
+
+  it("a fresh record that states no unit, on a product with a stock unit, is per stock unit - no user confirmation needed, and the basis is recorded", () => {
+    expect(rawFromCin7(live, () => null).statedUnitFields).toEqual([]); // ProductSupplierOptions (reorder qty, lead time), FixedCost, DropShip are not unit statements
+    const o = normaliseOption(fresh(), noBasis);
+    expect(o).toMatchObject({ status: "USABLE", zarUnitCents: 49_446, conversionFactor: 1, unitBasisSource: "CIN7_SINGLE_STOCK_UOM", problems: [] });
+  });
+  it("the price is NOT changed by the contract: same cents as a user-confirmed per-stock-unit price", () => {
+    const a = normaliseOption(fresh(), noBasis); const b = normaliseOption({ ...fresh(), statedUnitFields: undefined }, env());
+    expect(a.zarUnitCents).toBe(b.zarUnitCents);
+    expect(b.unitBasisSource).toBe("CONFIRMED_BY_USER");
+  });
+  it("a fresh record whose product has NO stock unit stays UOM_UNCONFIRMED", () => {
+    for (const su of [null, "", "  "]) {
+      const o = normaliseOption(fresh(live, su), noBasis);
+      expect(o).toMatchObject({ status: "UNUSABLE", zarUnitCents: null, unitBasisSource: null });
+      expect(o.problems[0].code).toBe("UOM_UNCONFIRMED");
+    }
+  });
+  it("a record captured before unit fields were tracked (statedUnitFields absent) is NOT assumed - it stays UOM_UNCONFIRMED until recaptured or confirmed", () => {
+    const o = normaliseOption({ ...fresh(), statedUnitFields: undefined }, noBasis);
+    expect(o.problems[0].code).toBe("UOM_UNCONFIRMED");
+  });
+  it("genuine exceptions stay blocked: any unit / pack / conversion field Cin7 returns on the record, even if a user has confirmed 'per stock unit'", () => {
+    for (const extra of [{ PurchaseUnit: "Box" }, { UOM: "Carton" }, { PackSize: 12 }, { ConversionFactor: 6 }, { OrderMultiple: 24 }, { QuantityInPack: 10 }]) {
+      const r = fresh({ ...live, ...extra });
+      expect(r.statedUnitFields?.length).toBe(1);
+      for (const e of [noBasis, env()]) {
+        const o = normaliseOption(r, e);
+        expect(o).toMatchObject({ status: "UNUSABLE", zarUnitCents: null });
+        expect(o.problems[0].code).toBe("UOM_UNCONFIRMED");
+        expect(o.problems[0].message).toContain(Object.keys(extra)[0]);
+      }
+    }
+  });
+  it("empty / null unit-named fields are not statements", () => {
+    expect(rawFromCin7({ ...live, PurchaseUnit: null, UOM: "", PackSize: undefined }, () => null).statedUnitFields).toEqual([]);
+  });
+  it("a stated different purchase unit with no factor, or a bad factor, is still BAD_CONVERSION_FACTOR (not relaxed)", () => {
+    expect(normaliseOption({ ...fresh(), purchaseUnit: "Box" }, noBasis).problems[0].code).toBe("BAD_CONVERSION_FACTOR");
+    expect(normaliseOption({ ...fresh(), conversionFactor: 0 }, noBasis).problems[0].code).toBe("BAD_CONVERSION_FACTOR");
+  });
+  it("a stated factor still divides the cost (genuine pack-size conversion preserved)", () => {
+    const o = normaliseOption({ ...fresh(), purchaseUnit: "Box", conversionFactor: 10 }, noBasis);
+    expect(o).toMatchObject({ status: "USABLE", zarUnitCents: 4_945, unitBasisSource: "STATED_FACTOR" }); // 494.46 / 10 = 49.446 -> 49.45
+  });
+  it("reviewer cases: an unrecognised top-level or NESTED field (BagSize, ProductSupplierOptions[].CartonQty) blocks - the check is an allowlist", () => {
+    expect(rawFromCin7({ ...live, BagSize: 25 }, () => null).statedUnitFields).toEqual(["BagSize"]);
+    expect(rawFromCin7({ ...live, ProductSupplierOptions: [{ Lead: 1, CartonQty: 12 }] }, () => null).statedUnitFields).toEqual(["ProductSupplierOptions.CartonQty"]);
+    expect(rawFromCin7({ ...live, ProductSupplierOptions: "x" }, () => null).statedUnitFields).toEqual(["ProductSupplierOptions"]);
+    expect(normaliseOption(fresh({ ...live, BagSize: 25 }), env()).status).toBe("UNUSABLE");
+  });
+  it("reviewer case: purchaseUnit equal to stockUnit does not bypass a stated unit field", () => {
+    const o = normaliseOption({ ...fresh({ ...live, PackSize: 12 }), purchaseUnit: "Item" }, noBasis);
+    expect(o).toMatchObject({ status: "UNUSABLE" }); expect(o.problems[0].code).toBe("UOM_UNCONFIRMED");
+  });
+  it("a USD price through the single-stock-UOM path converts exactly as before, and survives a JSON round-trip of the stored raw", () => {
+    const r = fresh({ ...live, Cost: 45, Currency: "USD" });
+    const o = normaliseOption(r, env({ unitBasis: null }));
+    expect(o).toMatchObject({ status: "USABLE", zarUnitCents: 78_750, unitBasisSource: "CIN7_SINGLE_STOCK_UOM" });
+    const stored = JSON.parse(JSON.stringify(o)).raw as RawSupplierPrice;
+    expect(normaliseOption(stored, env({ unitBasis: null })).zarUnitCents).toBe(78_750); // [] persists
+    const legacy = JSON.parse(JSON.stringify({ ...r, statedUnitFields: undefined })) as RawSupplierPrice;
+    expect(normaliseOption(legacy, env({ unitBasis: null })).problems[0].code).toBe("UOM_UNCONFIRMED");
+  });
+  it("the 24 NQ-Q-0023 SKUs: each is a single ZAR supplier with stock unit Item and no unit field -> usable at the exact Cin7 price, auto-selected", () => {
+    const prices: Record<string, number> = { "DPL-PVC20X600": 132.36, ERT053: 494.46, HO12011000: 656.2, HO17050750: 213.31, HO21013750: 14000.37, KNQ074: 1039.19, KNQ160: 118.78, KNQ196: 2675.06, KNQBP1010: 99.31, KNQCP005: 145.01, NQ1017: 3.14, NQ1161: 188.05, NQ1227: 269, NQ1380: 169.3, NQ1386: 8.38, NQ2064: 0.46, NQ2066: 2.15, NQ2114: 5400, NQ2784: 27.08, NQ2886: 36, NYNUT: 0.82, PNQ082: 7247.71, QCA00003: 108.36, "SYSH-2750-3": 19444.62 };
+    expect(Object.keys(prices)).toHaveLength(24);
+    for (const [sku, price] of Object.entries(prices)) {
+      const o = normaliseOption(fresh({ ...live, Cost: price }), noBasis);
+      const sel = selectSupplier([o]);
+      expect([sku, sel.status, o.zarUnitCents]).toEqual([sku, "SELECTED", Math.round(price * 100)]);
+    }
+  });
+});
