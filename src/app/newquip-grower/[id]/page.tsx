@@ -116,6 +116,8 @@ export default function QuoteEditorPage() {
   const [stepNo, setStepNo] = useState<number>(() => (parseStage(search.get("stage")) === 2 ? 1 : parseStepParam(search.get("step"), STAGE1_STEP_IDS.length)));
   // Stage 2 has its own step number but SHARES the "Show all steps" preference (one setting for the builder, one storage key).
   const [step2No, setStep2No] = useState<number>(() => (parseStage(search.get("stage")) === 2 ? parseStepParam(search.get("step"), 5) : 1));
+  // "Mark reviewed & continue" on Cost & margin: a CLIENT-LOCAL acknowledgement, never stored and never a sign-off. It holds a key built from the version it was given on; any change makes it stale.
+  const [costAck, setCostAck] = useState<string | null>(null);
   const [showAllSteps, setShowAllSteps] = useShowAllSteps("nq-builder-show-all");
   const [customerFacts, setCustomerFacts] = useState<Stage1CustomerFacts>(NO_CUSTOMER_FACTS);
   const onCustomerFacts = (f: Stage1CustomerFacts) => setCustomerFacts((p) => (p.loaded === f.loaded && p.available === f.available && p.hasSnapshot === f.hasSnapshot && p.hasContact === f.hasContact && p.contactName === f.contactName && p.loadError === f.loadError ? p : f));
@@ -299,6 +301,10 @@ export default function QuoteEditorPage() {
   const step2Ids = stage2StepIds(canCommercials);
   const step2Cur = step2No >= 1 && step2No <= step2Ids.length ? step2No : 1; // a ?step= beyond this viewer's steps (a Rep has three) falls back to the first, as for Stage 1
   const step2Id = step2Ids[step2Cur - 1];
+  // The key names the exact version and costing it was given on (quote, revision, content hash, last update and the live cost and margin). It is never rendered or put in an attribute.
+  const costKey = budget ? [q.id, q.revision, q.draft_hash, q.updated_at, budget.totals.estimatedCost, budget.totals.overallMarginPct].join("|") : null;
+  const costAcknowledged = costKey != null && costAck === costKey && !dirty;
+  const canAckCost = canCommercials && q.state === "ESTIMATOR_REVIEW" && (roles.has("estimator") || roles.has("manager")) && costKey != null;
   const stage2 = deriveStage2Steps({
     canViewCommercials: canCommercials, editable, roles: { rep: roles.has("rep"), estimator: roles.has("estimator"), manager: roles.has("manager") }, revision: q.revision, state: q.state as "REP_DRAFT" | "ESTIMATOR_REVIEW" | "MANAGER_APPROVED_FINAL", calcValid: ev.calc.valid, lines: ev.calc.lines,
     readiness: { state: rd.state, reasons: rd.reasons, missingMappings: rd.counts.missingMappings },
@@ -306,7 +312,7 @@ export default function QuoteEditorPage() {
     blankExclusionCount: blankExclusionKeys.length, incompleteCostOverrideCount: Object.keys(previewCostOverrides(draft.estimator.costOverrides).errors).length,
     blankPriceReasonCount: Object.values(draft.estimator.priceResolutions).filter((r) => r && !r.reason.trim()).length,
     totalAvailable: totalCents != null, confirmedRecorded: q.customer_confirmed_cents != null,
-    dirty, signoff: !q.estimator_signoff_hash ? "none" : q.estimator_signoff_hash === q.draft_hash ? "current" : "stale",
+    costAcknowledged, dirty, signoff: !q.estimator_signoff_hash ? "none" : q.estimator_signoff_hash === q.draft_hash ? "current" : "stale",
   });
   const groupTone = { success: "complete", warning: "attention", danger: "attention", info: "incomplete", neutral: "neutral" } as const;
   const stage2Groups = stage2.groups.map((g) => ({ id: g.id, label: g.label, owner: g.id === "rep" ? "Rep" : "Estimator", statusText: `Workflow: ${g.statusLine}`, tone: groupTone[g.tone] }));
@@ -765,6 +771,15 @@ export default function QuoteEditorPage() {
                 )}
               </StepPanel>
           </fieldset>
+        )}
+
+        {canAckCost && (showAllSteps || step2Id === "cost") && (
+          <div className="mt-4 max-w-3xl rounded-lg border border-slate-200 bg-white p-4" data-testid="cost-ack">
+            <p className="text-sm text-slate-800">This records that you have looked at the costing and margin for this version. It is not the Estimator sign-off.</p>
+            {costAcknowledged
+              ? <p className="mt-2 text-sm font-semibold text-slate-900" data-testid="cost-ack-done">You marked the costing reviewed for this version.</p>
+              : <Button type="button" className="mt-3 min-h-11" onClick={() => { setCostAck(costKey); if (!showAllSteps) goStep2("signoff"); }}>Mark reviewed &amp; continue</Button>}
+          </div>
         )}
 
         <StepPanel railId="s2" stepId="signoff" number={step2Ids.indexOf("signoff") + 1} title={STAGE2_STEP_LABEL.signoff} current={step2Id === "signoff"} showAll={showAllSteps} className="mt-6 space-y-6">
