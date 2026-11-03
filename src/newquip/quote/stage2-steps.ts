@@ -32,6 +32,8 @@ export interface Stage2Input {
   canViewCommercials: boolean;
   /** The viewer's roles. A Manager has oversight of both groups. */
   roles: { rep: boolean; estimator: boolean; manager: boolean };
+  /** The viewer may edit the draft (a Rep or Estimator, quote not final). The Rep's steps are only theirs to do when they can. */
+  editable: boolean;
   state: QuoteStateName;
   revision: number;
   /** The live calculation accepted the Stage 1 inputs; when false there are no lines to decide yet. */
@@ -144,8 +146,10 @@ export function deriveStage2Steps(i: Stage2Input): Stage2Derived {
   const owns = (g: Stage2GroupId) => i.roles.manager || (g === "rep" ? i.roles.rep : i.roles.estimator);
   const shown = (id: Stage2StepId): StepStatus => (all[id].status === "attention" && !owns(STAGE2_STEP_GROUP[id]) ? "incomplete" : all[id].status);
   // Once the Estimator's sign-off on THIS content is current the Review step has been reviewed: it counts as done (no check glyph, the label stays "Review needed").
+  // Another role's unfinished Rep work reads as "Waiting on the Rep" to an Estimator (no cost wording).
+  const note = (id: Stage2StepId): string | undefined => (STAGE2_STEP_GROUP[id] === "rep" && !owns("rep") && !inReview && !final && all[id].status !== "complete" ? "Waiting on the Rep" : all[id].note);
   const reviewed = inReview && i.signoff === "current" && !i.dirty;
-  const steps: Stage2Step[] = stage2StepIds(i.canViewCommercials).map((id) => ({ id, label: STAGE2_STEP_LABEL[id], status: shown(id), group: STAGE2_STEP_GROUP[id], ...(id === "cost" && all.cost.status === "review" && reviewed ? { counted: true } : {}), ...(all[id].note ? { note: all[id].note } : {}) }));
+  const steps: Stage2Step[] = stage2StepIds(i.canViewCommercials).map((id) => ({ id, label: STAGE2_STEP_LABEL[id], status: shown(id), group: STAGE2_STEP_GROUP[id], ...(id === "cost" && all.cost.status === "review" && reviewed ? { counted: true, statusLabel: "Reviewed" } : {}), ...(note(id) ? { note: note(id) } : {}) }));
 
   // ── group status lines (workflow facts only) ──
   const repPrepDone = lines.status === "complete" && charges.status === "complete" && i.readiness.state === "READY";
@@ -159,7 +163,11 @@ export function deriveStage2Steps(i: Stage2Input): Stage2Derived {
 
   let est: { line: string; tone: GroupTone };
   if (final) est = { line: "Approved", tone: "success" };
-  else if (inReview && i.signoff === "current") est = { line: i.dirty ? "Signed off - unsaved edits make it stale" : "Signed off", tone: i.dirty ? "warning" : "success" };
+  else if (inReview && i.signoff === "current") {
+    // The count and the line must agree: with a current sign-off but cost trouble that only a commercial viewer can see, say so (never to anyone else).
+    const costOpen = i.canViewCommercials && all.cost.status === "attention";
+    est = i.dirty ? { line: "Signed off - unsaved edits make it stale", tone: "warning" } : costOpen ? { line: "Signed off - cost attention outstanding", tone: "warning" } : { line: "Signed off", tone: "success" };
+  }
   else if (inReview && i.signoff === "stale") est = { line: "Sign-off out of date: review again", tone: "warning" };
   else if (inReview) est = { line: youEstimate ? "Awaiting your review" : "Awaiting Estimator review", tone: "info" };
   else if (returned) est = { line: "Returned to the Rep", tone: "danger" };
@@ -175,7 +183,7 @@ export function deriveStage2Steps(i: Stage2Input): Stage2Derived {
   // ── what is this viewer's to do ──
   const actionable = new Set<Stage2StepId>();
   // Only the group whose turn it is: the Rep's steps while the quote is a Rep draft (nothing for the Rep once submitted, except being returned), the Estimator's once it is in Estimator review.
-  for (const s of steps) if (owns(s.group) && !all[s.id].waiting && !final && (s.group === "rep" ? !inReview : inReview)) actionable.add(s.id);
+  for (const s of steps) if (owns(s.group) && !all[s.id].waiting && !final && (s.group === "rep" ? !inReview && i.editable : inReview)) actionable.add(s.id);
   return { steps, groups, actionable };
 }
 

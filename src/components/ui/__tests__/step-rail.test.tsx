@@ -228,6 +228,12 @@ describe("StepRail groups", () => {
     expect(document.querySelector('[data-step="a"]')!.textContent).not.toContain("✓");
     expect(nextIncompleteStepId(ss, "b")).toBeNull();
   });
+  it("a step's statusLabel overrides the visible status text only; the status value and other steps are unchanged", () => {
+    const ss: RailStep[] = [{ id: "a", label: "A", status: "review", counted: true, statusLabel: "Reviewed" }, { id: "b", label: "B", status: "review" }];
+    render(<StepRail id="t" ariaLabel="x" steps={ss} currentId="a" onSelect={vi.fn()} />);
+    expect(screen.getByTestId("step-status-a").textContent).toBe("Reviewed");
+    expect(screen.getByTestId("step-status-b").textContent).toBe("Review needed");
+  });
   it("without groups nothing changes: no group regions, and the summary keeps its old form", () => {
     render(<StepRail id="t" ariaLabel="x" steps={steps} currentId="b" onSelect={vi.fn()} />);
     expect(screen.queryByRole("group")).toBeNull();

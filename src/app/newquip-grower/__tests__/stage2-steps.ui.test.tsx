@@ -241,11 +241,13 @@ describe("UX-006b Stage 2 groups: review fixes", () => {
     expect(document.activeElement === document.body || true).toBe(true);
     expect(panel("signoff")!.querySelector("h2")!.textContent).toBe("Step 5 · Sign-off or return");
   }, 30000);
-  it("a signed-off Estimator view: the group says 'Signed off' AND counts 2 of 2; Next incomplete has nothing left; the Cost step keeps its 'Review needed' label", async () => {
+  it("a signed-off Estimator view: the group says 'Signed off' AND counts 2 of 2; Next incomplete has nothing left; the Cost step reads 'Reviewed' (no check)", async () => {
     await open({ roles: ["ESTIMATOR"], commercials: true, state: "ESTIMATOR_REVIEW", row: { __useDraftHash: true, customer_confirmed_cents: 1000000000 } });
     expect(gstatus("estimator")).toBe("Workflow: Signed off");
     expect(gcount("estimator")).toBe("2 of 2 complete");
-    expect(status("cost")).toBe("Review needed");
+    expect(status("cost")).toBe("Reviewed"); // counted: never "Review needed" beside "2 of 2 complete"
+    expect(rail().querySelector('[data-step="cost"]')!.textContent).not.toContain("✓");
+    expect(rail().querySelector('[data-step="cost"]')!.textContent).toContain("Cin7 cost capture is checked in the Cost panel");
     expect(screen.getByTestId("all-steps-complete").textContent).toBe("Nothing is left for you in this stage.");
   }, 30000);
   it("a Rep in Estimator review is not sent back to unfinished Rep steps", async () => {

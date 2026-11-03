@@ -25,7 +25,7 @@ function Card({ step, number, current, onPick, tall }: { step: RailStep; number:
         <span className="flex min-h-full min-w-0 flex-1 flex-col self-stretch">
           <span className="pt-1 text-sm font-semibold leading-5 text-slate-900">{step.label}</span>
           {step.note && <span className="mt-0.5 text-xs text-slate-700">{step.note}</span>}
-          <span className={`mt-auto pt-1 text-xs font-semibold ${TEXT_TONE[step.status]}`} data-testid={`step-status-${step.id}`}>{step.optional && step.status === "incomplete" ? "Optional" : STEP_STATUS_LABEL[step.status]}</span>
+          <span className={`mt-auto pt-1 text-xs font-semibold ${TEXT_TONE[step.status]}`} data-testid={`step-status-${step.id}`}>{step.statusLabel ?? (step.optional && step.status === "incomplete" ? "Optional" : STEP_STATUS_LABEL[step.status])}</span>
         </span>
       </button>
     </li>
