@@ -1,6 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { navStatusLabel } from "@/newquip/quote/stage-nav-model";
 import { computeStages, currentStage, type StageInput } from "@/newquip/quote/stages";
 
 vi.mock("server-only", () => ({}));
@@ -118,5 +119,16 @@ describe("REGRESSION: stages must not revert while the persisted commercial stat
     expect(src).toContain("setGateReady(true)"); expect(src).toContain("Try again");
     // the "Create Project" button must not be offered from the unread defaults
     expect(src.indexOf("stage === 6 && !hold(6)")).toBeGreaterThan(0);
+  });
+});
+
+describe("navStatusLabel: the Stage 1 chip is viewer-relative (UX-006i1)", () => {
+  const stage1 = { id: 1, label: "Configuration", status: "COMPLETE", statusLabel: "Complete", summary: "", next: null } as never;
+  it("a Rep on a Rep draft reads 'Ready to submit'; everyone else, and every other state, still reads 'Complete'", () => {
+    expect(navStatusLabel(stage1, false, { roles: ["rep", "estimator"], state: "REP_DRAFT" })).toBe("Ready to submit");
+    expect(navStatusLabel(stage1, false, { roles: ["estimator"], state: "REP_DRAFT" })).toBe("Complete");
+    expect(navStatusLabel(stage1, false, { roles: ["manager"], state: "REP_DRAFT" })).toBe("Complete");
+    expect(navStatusLabel(stage1, false, { roles: ["rep"], state: "ESTIMATOR_REVIEW" })).toBe("Complete");
+    expect(navStatusLabel(stage1, false)).toBe("Complete");
   });
 });

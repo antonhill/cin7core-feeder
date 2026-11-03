@@ -3,7 +3,7 @@ import { createWorkbookPriceSource } from "../workbook-price-source";
 import { NEWQUIP_MASTER_POC_SNAPSHOT } from "../snapshot";
 import { evaluateDraft } from "../evaluate";
 import { emptyDraft, type QuoteDraft } from "../draft";
-import { DEMO_DEFAULTS, applyDemoDefaults, demoDifferences, hasEntries } from "../demo-defaults";
+import { DEMO_DEFAULTS, applyDemoDefaults, applyMeasurementsSample, applyRecommendedConfiguration, demoDifferences, hasEntries, hasEquipmentEntries, hasMeasurementEntries } from "../demo-defaults";
 import { buildMarginSheet } from "../../quote/margin";
 import { readyDraft } from "./golden";
 
@@ -135,14 +135,41 @@ describe("against yesterday's actual demonstration data", () => {
   });
 });
 
-describe("the button only edits the draft in the editor", () => {
-  it("is shown only to users who can edit, asks one confirmation when entries exist, and calls no server action, save, approval or Cin7 path", async () => {
+describe("the loaders only edit the draft in the editor", () => {
+  it("UX-006i1: the global button is gone; the whole-quote loader is a Preview-only utility (server flag), asks one confirmation when entries exist, and calls no server action, save, approval or Cin7 path", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync(`${__dirname}/../../../app/newquip-grower/[id]/page.tsx`, "utf8");
-    expect(src).toMatch(/\{editable && !confirmDemo && <Button[\s\S]*?Load Demo Defaults<\/Button>\}/);
+    expect(src).not.toMatch(/>Load Demo Defaults</);
+    expect(src).toMatch(/view\.viewer\.previewTools && editable && stage <= 2/);
     expect(src).toMatch(/hasEntries\(draft\) \? setConfirmDemo\(true\) : loadDemo\(\)/);
     const body = /function loadDemo\(\) \{([\s\S]*?)\n  \}/.exec(src)![1];
     expect(body).not.toMatch(/Action\(|save\(|act\(|fetch|cin7|Cin7|approve|createProject/);
     expect(body).toMatch(/applyDemoDefaults\(draft!\)/);
+    const sample = /function runSample\([^)]*\) \{([\s\S]*?)\n  \}/.exec(src)![1]; // the contextual samples
+    expect(sample).not.toMatch(/Action\(|save\(|act\(|fetch|cin7|Cin7|approve|createProject/);
+  });
+});
+
+describe("contextual samples (UX-006i1) fill one step only", () => {
+  const blank = emptyDraft();
+  it("measurements sample changes only the six room fields", () => {
+    const { draft, replaced } = applyMeasurementsSample({ ...blank, siteName: "Farm", config: { ...blank.config, penningPigSize: "LARGE" } });
+    expect(replaced).toBe(true);
+    expect([draft.config.lengthM, draft.config.widthM, draft.config.rooms, draft.config.totalPens, draft.config.hospitalPens, draft.config.pigsPerRoom]).toEqual([49.5, 14.43, 12, 20, 2, 600]);
+    expect(draft.siteName).toBe("Farm"); expect(draft.config.penningPigSize).toBe("LARGE"); expect(draft.estimator).toEqual(blank.estimator);
+    expect(applyMeasurementsSample(draft).replaced).toBe(false); // idempotent
+  });
+  it("recommended configuration changes only the equipment part of config: not rooms, charges, mappings, prices, assumptions or the customer", () => {
+    const start = { ...blank, customerName: "Acme", siteName: "Farm", config: { ...blank.config, lengthM: 61, rooms: 3 } };
+    const { draft } = applyRecommendedConfiguration(start);
+    expect(draft.config.penningPigSize).toBe("SMALL");
+    expect(draft.config.estimatorQuantities).toEqual(DEMO_DEFAULTS.config.estimatorQuantities);
+    expect(draft.config.lengthM).toBe(61); expect(draft.config.rooms).toBe(3);
+    expect(draft.estimator).toEqual(blank.estimator); expect(draft.customerName).toBe("Acme"); expect(draft.siteName).toBe("Farm");
+    expect(hasEquipmentEntries(blank)).toBe(false);
+    expect(hasEquipmentEntries({ ...blank, config: { ...blank.config, penningPigSize: "LARGE" } })).toBe(true);
+    expect(hasEquipmentEntries(draft)).toBe(false); // already the recommendation: nothing would be lost
+    expect(hasMeasurementEntries(blank)).toBe(false);
+    expect(hasMeasurementEntries(start)).toBe(true);
   });
 });

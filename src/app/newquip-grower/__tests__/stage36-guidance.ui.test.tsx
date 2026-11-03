@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import * as da from "../delivery-actions";
+import * as actions from "../actions";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -120,7 +121,7 @@ describe("UX-006c Stage 3: the 'before you decide' checklist", () => {
     await open({ stage: "3", roles: ["REP"], row: { ...review, estimator_signoff_hash: "CURRENT" } });
     await screen.findByTestId("approval-checklist", {}, { timeout: 8000 });
     expect(checks().signoff).toBe("Met");
-    expect(screen.getByText("Final approval needs the manager role (org owner/admin).")).toBeTruthy();
+    expect(screen.getByText("Final approval needs the Manager role.")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement).disabled).toBe(true);
     const text = screen.getByTestId("approval-checklist").textContent ?? "";
     for (const leak of ["margin", "Margin", "cost", "GP"]) expect(text, leak).not.toContain(leak);
@@ -293,6 +294,8 @@ describe("UX-006c interplay with the pinned landing stage", () => {
     const approve = await screen.findByRole("button", { name: "Manager: final approval" }, { timeout: 8000 });
     await waitFor(() => expect((approve as HTMLButtonElement).disabled).toBe(false), { timeout: 8000 });
     expect(document.querySelector('[data-stage="3"]')!.getAttribute("aria-current")).toBe("step");
+    // UX-006 S1a: the real approval now also needs COMPLETE costing, which this fixture does not have; the action is stubbed to the approved state so the test keeps proving that the view follows the transition.
+    vi.spyOn(actions, "approveGrowerQuoteAction").mockImplementation((async () => { const rows = db.rows("newquip_quotes") as Array<Record<string, unknown>>; rows[0].state = "MANAGER_APPROVED_FINAL"; rows[0].approved_by_email = "m@nq"; return actions.getGrowerQuoteAction(g.__QID!); }) as never);
     fireEvent.click(approve);
     await waitFor(() => expect(document.querySelector('[data-stage="4"]')!.getAttribute("aria-current")).toBe("step"), { timeout: 15000 });
   }, 60000);

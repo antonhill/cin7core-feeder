@@ -45,10 +45,10 @@ const as = (admin: boolean) => {
 const quote = () => db.rows("newquip_quotes")[0] as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const acts = () => db.rows("activity_log") as Array<Record<string, any>>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
-type Sup = { id: string; name: string; cost: number | null; currency?: string; last?: string | null };
+type Sup = { id: string; name: string; cost: number | null; currency?: string; last?: string | null; extra?: Record<string, unknown> };
 const product = (sku: string, sups: Sup[]): ProductCostRead => ({
   sku, name: sku, averageCost: 999, uom: "Item", suppliers: [],
-  rawSuppliers: sups.map((s) => ({ SupplierID: s.id, SupplierName: s.name, Cost: s.cost, FixedCost: 12345, LastSupplied: s.last === undefined ? "2026-10-01T00:00:00" : s.last, ...(s.currency ? { Currency: s.currency } : {}) })),
+  rawSuppliers: sups.map((s) => ({ SupplierID: s.id, SupplierName: s.name, Cost: s.cost, FixedCost: 12345, LastSupplied: s.last === undefined ? "2026-10-01T00:00:00" : s.last, ...(s.currency ? { Currency: s.currency } : {}), ...(s.extra ?? {}) })),
 });
 const A = (cost: number | null = 850): Sup => ({ id: "sup-a", name: "Supplier A", cost, currency: "ZAR" });
 const B = (cost: number | null = 45, currency = "USD"): Sup => ({ id: "sup-b", name: "Supplier B", cost, currency });
@@ -144,14 +144,21 @@ describe("capture: every supplier price, in ZAR, evaluated independently", () =>
     const sku = (await scopeSkus())[0];
     expect(await line(sku)).toMatchObject({ status: "LATEST", unitCostCents: 85_000, supplier: "Supplier A", basis: { currency: "ZAR", originalPriceMicro: 850_000_000, selectionMethod: "AUTO_SINGLE", fx: null } });
   });
-  it("without a unit-of-measure confirmation the price is unusable and the reason is shown (no silent per-stock-unit assumption)", async () => {
+  it("a price whose Cin7 record states no unit of its own is per the product's single stock unit: usable with no confirmation, and the basis is recorded", async () => {
     await stock([A(850)]);
+    expect((await cost.captureLatestCostsAction("q1")).error).toBeUndefined();
+    const sku = (await scopeSkus())[0];
+    expect(await line(sku)).toMatchObject({ status: "LATEST", unitCostCents: 85_000, supplier: "Supplier A" });
+    expect((await view()).skuOptions[sku].options[0]).toMatchObject({ status: "USABLE", unitBasisSource: "CIN7_SINGLE_STOCK_UOM", problems: [] });
+  });
+  it("a genuine unit/pack statement on the Cin7 record stays UOM_UNCONFIRMED and a blanket 'per stock unit' confirmation does NOT override it", async () => {
+    await stock([{ ...A(850), extra: { PurchaseUnit: "Box" } }]);
     await cost.captureLatestCostsAction("q1");
     const sku = (await scopeSkus())[0];
     expect(await line(sku)).toMatchObject({ status: "MISSING", unitCostCents: null });
     expect((await view()).skuOptions[sku].options[0].problems[0].code).toBe("UOM_UNCONFIRMED");
-    expect(await confirmUnits()).toMatchObject({ ok: true }); // confirming re-evaluates the captured options without another Cin7 read
-    expect((await line(sku)).unitCostCents).toBe(85_000);
+    expect(await confirmUnits()).toMatchObject({ ok: true });
+    expect(await line(sku)).toMatchObject({ status: "MISSING", unitCostCents: null });
     expect((await cost.confirmUnitBasisAction("q1", "short")).error).toMatch(/short sentence/);
   });
   it("a USD supplier is converted with the recorded rate, keeping the original price, currency, rate, source and time", async () => {
@@ -325,10 +332,10 @@ describe("approval: an incomplete snapshot is refused unless an authorised excep
     expect(quote().state).toBe("MANAGER_APPROVED_FINAL");
     expect(quote().accepted_baseline.physicalCostEstimate).toMatchObject({ incomplete: true, costBasis: { incompleteAccepted: { reason: expect.stringContaining("director"), by: "u@nq" } } });
   });
-  it("a quotation whose costing was never started keeps the existing behaviour (approval is not blocked)", async () => {
-    signed(); await approve();
-    expect(quote().state).toBe("MANAGER_APPROVED_FINAL");
-    expect(quote().accepted_baseline.physicalCostEstimate).toBeUndefined();
+  it("UX-006 correction: a quotation whose costing was never started is NOT approvable (supplier costs unresolved) until costed or an authorised exception is recorded", async () => {
+    signed();
+    await expect(approve()).rejects.toThrow(/Costing is incomplete/);
+    expect(quote().state).toBe("ESTIMATOR_REVIEW");
   });
 });
 

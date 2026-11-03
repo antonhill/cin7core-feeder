@@ -93,16 +93,17 @@ describe("F-12 Solution Builder disabled controls say why", () => {
     expect(described(save)).toMatch(/only a Rep or Estimator can edit and save/);
   }, 30000);
 
-  it("Record pre-approval price confirmation: a non-Rep is told only a Rep can send it", async () => {
-    await open("2", ["ESTIMATOR"], undefined, "Pre-approval price confirmation");
-    const btn = screen.getByRole("button", { name: /Record pre-approval price confirmation/ }) as HTMLButtonElement;
+  // UX-006i1: the Rep's price confirmation + send moved to Stage 1 step 5 and is now labelled "Submit to Estimator" (same action, same gates, same disabled reasons).
+  it("Submit to Estimator: a non-Rep is told only a Rep can send it", async () => {
+    await open("1", ["ESTIMATOR"], undefined, "Charges & assumptions");
+    const btn = (await screen.findByRole("button", { name: "Submit to Estimator", hidden: true }, { timeout: 5000 })) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     expect(described(btn)).toMatch(/Only a Rep can record the price confirmation/);
   }, 30000);
 
-  it("Record pre-approval price confirmation: a Rep with no chosen Cin7 customer is told to select one in Step 1", async () => {
-    await open("2", ["REP", "ESTIMATOR"], undefined, "Pre-approval price confirmation");
-    const btn = screen.getByRole("button", { name: /Record pre-approval price confirmation/ }) as HTMLButtonElement;
+  it("Submit to Estimator: a Rep with no chosen Cin7 customer is told to select one in step 1", async () => {
+    await open("1", ["REP", "ESTIMATOR"], undefined, "Charges & assumptions");
+    const btn = (await screen.findByRole("button", { name: "Submit to Estimator", hidden: true }, { timeout: 5000 })) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     expect(described(btn).length).toBeGreaterThan(10);
   }, 30000);
@@ -131,13 +132,13 @@ describe("F-12 Solution Builder disabled controls say why", () => {
     expect(approve.disabled).toBe(true);
     expect(described(approve)).toMatch(/Waiting for the Estimator/);
     cleanup();
-    await open("3", ["REP"], "ESTIMATOR_REVIEW", "Final approval needs the manager role (org owner/admin).");
+    await open("3", ["REP"], "ESTIMATOR_REVIEW", "Final approval needs the Manager role.");
     const approve2 = screen.getByRole("button", { name: "Manager: final approval" }) as HTMLButtonElement;
-    expect(described(approve2)).toMatch(/needs the manager role/);
+    expect(described(approve2)).toMatch(/needs the Manager role/);
   }, 60000);
 
   it("Stage 1 pig-size options use the shared money format (R 1 300,00 / rm), not hard-coded R1,300", async () => {
-    await open("1", ["REP"], undefined, "Selections");
+    await open("1", ["REP"], undefined, "Equipment selections");
     const labels = Array.from(document.querySelectorAll("option")).map((o) => o.textContent ?? "").filter((t) => /\/ rm/.test(t));
     expect(labels.length).toBe(3);
     expect(labels[0]).toBe("Small — R\u00A01\u00A0300,00 / rm");

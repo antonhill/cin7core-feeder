@@ -1,5 +1,6 @@
 import type { Readiness } from "../grower/readiness";
 import { hasAny, type QuoteRole } from "./roles";
+import { repConfigurationReady, type CostingStatus } from "./readiness-concepts";
 
 // QUOTE WORKFLOW (Sean's confirmed process), pure:
 //   1 Rep prepares the draft with the customer            REP_DRAFT
@@ -48,18 +49,41 @@ export function canEditDraft(roles: ReadonlySet<QuoteRole>, state: QuoteState): 
 export type Check = { ok: true } | { ok: false; error: string };
 const fail = (error: string): Check => ({ ok: false, error });
 
-/** Rep → Estimator: the quote must be complete (so the customer can confirm a real amount) and the confirmation is recorded. */
+/**
+ * Rep → Estimator. Gates on REP_CONFIGURATION_READY (Rep-owned reasons only), NOT on the full READY: product mappings, package confirmations, manual prices and
+ * costs are the Estimator's job AFTER submission. The customer confirms the CURRENT INDICATIVE total (`totalExVatCents`: the priced lines plus Rep-entered charges,
+ * which may legitimately exclude Estimator-unresolved lines). Still fails closed for any Rep-owned blocker.
+ */
 export function checkHandoff(i: { readiness: Readiness; totalExVatCents: number | null; confirmedAmountCents: number; confirmedBy: string }): Check {
-  if (i.readiness.state !== "READY") return fail(`The quote is ${i.readiness.state} — resolve ${i.readiness.reasons[0] ?? "the outstanding items"} before the customer can confirm an amount.`);
-  if (i.totalExVatCents == null || i.totalExVatCents <= 0) return fail("There is no commercial amount for the customer to confirm.");
+  const rep = repConfigurationReady(i.readiness);
+  if (!rep.ready) return fail(`The quote is ${i.readiness.state} (configuration not complete) — resolve ${rep.reasons[0] ?? "the outstanding items"} before the customer can confirm an amount.`);
+  if (i.totalExVatCents == null) return fail("There is no commercial amount for the customer to confirm.");
+  if (i.totalExVatCents <= 0) {
+    return fail(i.readiness.estimatorReasons.length > 0
+      ? "No amount can be confirmed yet: nothing is priced and the remaining items are for the Estimator. Enter the delivery / installation charges and any M75 price that are yours to supply, then confirm the amount."
+      : "There is no commercial amount for the customer to confirm.");
+  }
   if (!i.confirmedBy.trim()) return fail("Record who at the customer confirmed the amount.");
   if (i.confirmedAmountCents !== i.totalExVatCents) return fail("The amount the customer confirmed must equal the quote total (ex VAT).");
   return { ok: true };
 }
 
 /**
- * Manager final approval. Fails closed unless EVERYTHING holds on the exact content being approved:
- *   - readiness is READY; - the estimator signed off THIS content (hash matches);
+ * Estimator sign-off. Fails closed unless the FULL readiness holds (every mapping / package / manual price resolved), costing is complete, and the total is still
+ * the amount the customer confirmed at handoff (the Estimator learns of a changed amount here, not at approval).
+ */
+export function checkSignOff(i: { readiness: Readiness; totalExVatCents: number | null; customerConfirmedCents: number | null; costing: CostingStatus }): Check {
+  if (i.readiness.state !== "READY") return fail(`The quote is ${i.readiness.state}; resolve ${i.readiness.reasons[0] ?? "the outstanding items"} before signing off.`);
+  if (!i.costing.complete) return fail(`Costing is incomplete: ${i.costing.reasons[0] ?? "supplier costs are unresolved"}. Complete it (or record an authorised incomplete-cost exception) before signing off.`);
+  if (i.totalExVatCents == null || i.totalExVatCents <= 0) return fail("There is no contract value to sign off.");
+  if (i.customerConfirmedCents == null || i.customerConfirmedCents !== i.totalExVatCents) return fail(AMOUNT_CHANGED_AT_SIGNOFF);
+  return { ok: true };
+}
+export const AMOUNT_CHANGED_AT_SIGNOFF = "The amount changed since the customer confirmed it. Return it to the Rep to reconfirm.";
+
+/**
+ * Manager final approval (MANAGER_APPROVAL_READY). Fails closed unless EVERYTHING holds on the exact content being approved:
+ *   - readiness is READY and costing is complete; - the estimator signed off THIS content (hash matches);
  *   - the total still equals what the customer confirmed at handoff.
  */
 export function checkApproval(i: {
@@ -68,8 +92,10 @@ export function checkApproval(i: {
   customerConfirmedCents: number | null;
   signoffHash: string | null;
   currentDraftHash: string;
+  costing: CostingStatus;
 }): Check {
   if (i.readiness.state !== "READY") return fail(`The quote is ${i.readiness.state}; it cannot be approved.`);
+  if (!i.costing.complete) return fail(`Costing is incomplete: ${i.costing.reasons[0] ?? "supplier costs are unresolved"}. It cannot be approved.`);
   if (i.totalExVatCents == null || i.totalExVatCents <= 0) return fail("There is no contract value to approve.");
   if (i.customerConfirmedCents == null) return fail("The customer's confirmation was never recorded.");
   if (!i.signoffHash) return fail("The estimator has not signed off this quote.");
@@ -77,3 +103,13 @@ export function checkApproval(i: {
   if (i.customerConfirmedCents !== i.totalExVatCents) return fail("The total changed since the customer confirmed it. Return it to the rep to reconfirm with the customer.");
   return { ok: true };
 }
+
+/** The "Waiting on / Next" cue of the quote list, from fields the list already loads (state, revision, whether the Estimator's sign-off is current). Presentation only. */
+export function waitingOn(q: { state: QuoteState; revision: number; signed_off: boolean }): string {
+  if (q.state === "MANAGER_APPROVED_FINAL") return "Approved";
+  if (q.state === "ESTIMATOR_REVIEW") return q.signed_off ? "Manager: approval" : "Estimator: review & sign-off";
+  return q.revision > 1 ? `Rep: returned (revision ${q.revision}) - make the corrections` : `Rep: preparing (revision ${q.revision})`;
+}
+
+/** MANAGER_APPROVAL_READY as a derived value (never persisted). */
+export const managerApprovalReady = checkApproval;

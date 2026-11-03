@@ -100,6 +100,11 @@ export interface BudgetQuote {
   /** True while any line that should be on the quote is missing a quantity/mapping/price. */
   incomplete: boolean;
   blockers: string[];
+  /**
+   * The subset of `blockers` only an Estimator / Manager can clear (product mapping, package confirmation, supplier quote, missing source price).
+   * Every other blocker (quantity, override reason, charge amounts, M75 price, pig size) is Rep-owned. Additive: `blockers` is unchanged.
+   */
+  estimatorBlockers: string[];
   /** Non-blocking notes (e.g. an unneeded price resolution). */
   warnings: string[];
   charges: BridgeCharge[];
@@ -182,6 +187,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
   const bridge: BridgeLine[] = [];
   const engineLines: QuoteLineInput[] = [];
   const blockers: string[] = [];
+  const estimatorBlockers: string[] = [];
   const warnings: string[] = [];
   let pricedOutputs = 0;
   const withhold = Boolean(opts.withholdCost);
@@ -223,6 +229,7 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
       }
       bridge.push({ ...line, pricedBy: null });
       blockers.push(blocker);
+      estimatorBlockers.push(blocker);
     };
 
     // ---- penning: running metres × the confirmed rate for the pig size ----
@@ -343,11 +350,13 @@ export function buildBudgetQuote(generated: GeneratedLine[], opts: BudgetOptions
   return {
     lines,
     // …nor through the totals.
-    totals: withhold ? { ...totals, estimatedCost: 0, estimatedGP: 0, overallMarginPct: null } : totals,
+    // (marginRevenueExTax, costedLineCount and excludedFromMarginCount are margin-derived: they reveal which lines carry a cost and the costed revenue.)
+    totals: withhold ? { ...totals, estimatedCost: 0, estimatedGP: 0, overallMarginPct: null, marginRevenueExTax: 0, costedLineCount: 0, excludedFromMarginCount: 0 } : totals,
     state,
     pricedLineCount: pricedOutputs,
     incomplete,
     blockers,
+    estimatorBlockers,
     warnings,
     charges,
     quoteType: opts.quoteType,

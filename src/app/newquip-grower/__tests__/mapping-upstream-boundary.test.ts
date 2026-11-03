@@ -8,6 +8,7 @@ import { NEWQUIP_MASTER_POC_SNAPSHOT } from "@/newquip/grower/snapshot";
 import { evaluateDraft } from "@/newquip/grower/evaluate";
 import { emptyDraft } from "@/newquip/grower/draft";
 import { applyDemoDefaults } from "@/newquip/grower/demo-defaults";
+import { withAcceptedIncompleteCosting } from "@/newquip/grower/__tests__/golden";
 import { effectiveScope, scopeFromSnapshot } from "@/lib/projects/product-scope";
 
 vi.mock("server-only", () => ({}));
@@ -22,7 +23,7 @@ import { approveGrowerQuoteAction, createProjectFromGrowerQuoteAction } from "..
 import { getQuoteScopeAction, saveReusableMappingAction } from "../mapping-actions";
 
 const ORG = "org-nq";
-const draft = applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft;
+const draft = withAcceptedIncompleteCosting(applyDemoDefaults({ ...emptyDraft(), customerName: "Test Customer" }).draft);
 const ctx = { priceSource: createWorkbookPriceSource(NEWQUIP_MASTER_POC_SNAPSHOT), withholdCost: true };
 const total = Math.round(evaluateDraft(draft, ctx).budget!.totals.subtotalExTax * 100);
 const map = (org: string, key: string, version: number, lines: Array<{ sku: string; factor: number; role?: string }>, status = "ACTIVE") =>

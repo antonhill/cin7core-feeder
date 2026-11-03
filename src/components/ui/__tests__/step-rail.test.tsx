@@ -147,7 +147,7 @@ describe("useShowAllSteps (per-viewer convenience)", () => {
 
 describe("presentation/derivation modules import no server action or store", () => {
   const files = [
-    "src/components/ui/StepRail.tsx", "src/components/ui/step-rail-model.ts", "src/components/ui/use-show-all-steps.ts", "src/newquip/quote/stage1-steps.ts", "src/newquip/quote/stage2-steps.ts", "src/app/newquip-grower/[id]/Stage1Review.tsx",
+    "src/components/ui/StepRail.tsx", "src/components/ui/step-rail-model.ts", "src/components/ui/use-show-all-steps.ts", "src/newquip/quote/stage1-steps.ts", "src/newquip/quote/stage2-steps.ts", "src/newquip/quote/wizard-contract.ts", "src/app/newquip-grower/[id]/Stage1Review.tsx", "src/app/newquip-grower/[id]/RepConfigSections.tsx",
   ];
   it.each(files)("%s", (f) => {
     const src = readFileSync(`${process.cwd()}/${f}`, "utf8");
@@ -291,5 +291,46 @@ describe("grouped rail: each group is a clearly bordered panel (class contract)"
     render(<StepRail id="p" ariaLabel="x" steps={steps} currentId="a" onSelect={vi.fn()} />);
     expect(document.querySelector("[role=group]")).toBeNull();
     expect(document.getElementById("p-list")!.className).not.toContain("bg-slate-50");
+  });
+});
+
+// UX-006i1 (additive): locked steps from the wizard contract.
+describe("locked steps (wizard contract)", () => {
+  const locked: RailStep[] = [
+    { id: "a", label: "Alpha", status: "complete" },
+    { id: "b", label: "Bravo", status: "incomplete", locked: true, blockedBy: ["Rep: finish Alpha first."] },
+    { id: "c", label: "Charlie", status: "incomplete" },
+  ];
+  it("a locked step is not selectable, stays focusable (aria-disabled), shows its reason as visible text and via aria-describedby, and keeps a 44px target", () => {
+    const onSelect = vi.fn();
+    render(<StepRail id="t" ariaLabel="Test steps" steps={locked} currentId="a" onSelect={onSelect} />);
+    const b = document.querySelector('[data-step="b"]') as HTMLButtonElement;
+    expect(b.getAttribute("aria-disabled")).toBe("true");
+    expect(b.disabled).toBe(false); // focusable so a screen-reader user reaches the reason
+    expect(b.className).toContain("min-h-11");
+    fireEvent.click(b);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(screen.getByTestId("step-blocked-b").textContent).toBe("Rep: finish Alpha first.");
+    expect(document.getElementById(b.getAttribute("aria-describedby")!)?.textContent).toBe("Rep: finish Alpha first.");
+    expect(screen.getByTestId("step-status-b").textContent).toBe("Locked");
+    fireEvent.click(document.querySelector('[data-step="c"]') as HTMLButtonElement);
+    expect(onSelect).toHaveBeenCalledWith("c");
+  });
+  it("existing fields are unchanged for steps that are not locked, and nextIncompleteStepId skips locked steps", () => {
+    render(<StepRail id="t" ariaLabel="Test steps" steps={locked} currentId="a" onSelect={vi.fn()} />);
+    expect(screen.getByTestId("step-status-c").textContent).toBe("Not complete");
+    expect(document.querySelector('[data-step="c"]')!.getAttribute("aria-disabled")).toBeNull();
+    expect(nextIncompleteStepId(locked, "a")).toBe("c");
+  });
+  it("a locked StepPanel keeps its content mounted but hidden; show-all shows only the heading and the reason", () => {
+    const { rerender } = render(<StepPanel railId="t" stepId="b" number={2} title="Bravo" current={false} showAll={false} locked={["Rep: finish Alpha first."]}><input aria-label="inner" /></StepPanel>);
+    const sec = document.querySelector('[data-step-panel="b"]') as HTMLElement;
+    expect(sec.hasAttribute("hidden")).toBe(true);
+    expect(screen.getByLabelText("inner", { selector: "input" })).toBeTruthy(); // mounted
+    rerender(<StepPanel railId="t" stepId="b" number={2} title="Bravo" current={false} showAll locked={["Rep: finish Alpha first."]}><input aria-label="inner" /></StepPanel>);
+    expect(sec.hasAttribute("hidden")).toBe(false);
+    expect(screen.getByTestId("panel-blocked-b").textContent).toContain("Rep: finish Alpha first.");
+    expect(screen.getByLabelText("inner").closest("[hidden]")).not.toBeNull();
+    expect(screen.getByLabelText("inner").closest("[inert]")).not.toBeNull();
   });
 });

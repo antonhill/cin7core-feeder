@@ -91,7 +91,8 @@ const subtotal = () => {
 };
 
 
-const box = (label: RegExp) => screen.getByLabelText(label) as HTMLInputElement;
+// UX-006i1: the quantity / reason inputs now carry real accessible names ("Quantity per room for <item>"), so the tick-boxes are selected by type.
+const box = (label: RegExp) => screen.getByLabelText(label, { selector: 'input[type="checkbox"]' }) as HTMLInputElement;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Captured at import, before any test installs its request queue: the expected figure is computed OUTSIDE the queue under test, so it neither delays nor appears in it.
 const realPreview = actions.previewGrowerDraftAction;
@@ -273,7 +274,7 @@ describe("D3-C Solution Builder: visible selected / excluded states and a stable
     (globalThis as { __QID?: string }).__QID = id;
     const { default: Page } = await import("../[id]/page");
     render(createElement(Page));
-    await waitFor(() => expect(screen.getByText("Selections")).toBeTruthy(), { timeout: 5000 });
+    await waitFor(() => expect(screen.getByText("Equipment selections")).toBeTruthy(), { timeout: 5000 });
     const controller = box(/Thomas-CL1 controller/).closest("label")!;
     expect(controller.textContent).toMatch(/Included/); // the stored draft ticks the controller
     const silo = box(/Silo weighing/).closest("label")!;

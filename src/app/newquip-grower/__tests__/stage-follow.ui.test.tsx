@@ -56,7 +56,8 @@ let emitGate: (g: any) => void = () => undefined;
 vi.mock("../[id]/DeliveryPanel", () => ({ DeliveryPanel: (p: { onGate: (g: any) => void }) => { emitGate = p.onGate; return null; } }));
 vi.mock("../[id]/AcceptancePanel", () => ({ AcceptancePanel: (p: { onGate: (g: any) => void }) => { emitGate = p.onGate; return null; } }));
 let pickCustomer: (n: string) => void = () => undefined;
-vi.mock("../[id]/CustomerPanel", () => ({ CustomerPanel: (p: { onPicked: (n: string) => void }) => { pickCustomer = p.onPicked; return null; } }));
+// UX-006i1: the stub also reports the customer facts the way the real panel does (loaded, snapshot + contact), because the wizard resolves its entry step only once they have settled.
+vi.mock("../[id]/CustomerPanel", () => ({ CustomerPanel: (p: { onPicked: (n: string) => void; onFacts?: (f: any) => void }) => { pickCustomer = p.onPicked; p.onFacts?.({ loaded: true, available: true, hasSnapshot: true, hasContact: true, contactName: "Sean", contactEmail: "s@x.co", customerTitle: "Acme" }); return null; } }));
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const base = emptyDraft();
@@ -122,18 +123,18 @@ describe("UX-006a workflow actions move the view; the user's own Save / demo loa
   it("a Rep's own Save of an unsaved edit stays where it is, even though it withdraws any sign-off", async () => {
     await openQuote(["REP", "ESTIMATOR"], () => undefined, { siteName: "" });
     const before = viewing();
-    fireEvent.click(screen.getByRole("button", { name: /Room measurements/ })); // stage 1 rail
+    fireEvent.click(screen.getByRole("button", { name: /^Site & measurements/ })); // stage 1 rail
     await act(async () => { fireEvent.change(screen.getByLabelText(/^Total pens/), { target: { value: "21" } }); });
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(screen.getByText("All changes saved")).toBeTruthy(), { timeout: 8000 });
     expect(viewing()).toBe(before);
-    expect(document.querySelector('[data-step-panel="room"]')!.hasAttribute("hidden")).toBe(false);
+    expect(document.querySelector('[data-step-panel="site"]')!.hasAttribute("hidden")).toBe(false);
   }, 60000);
   it("a customer change that sends the quotation back to the Rep moves the view even while the draft is unsaved", async () => {
     await openQuote(["REP", "ESTIMATOR"], (r) => { r.state = "ESTIMATOR_REVIEW"; r.customer_confirmed_cents = 1; }, { siteName: "" });
     await waitFor(() => expect(viewing()).toBe("2"));
     fireEvent.click(document.querySelector('[data-stage="1"]')!);
-    fireEvent.click(screen.getByRole("button", { name: /Room measurements/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Site & measurements/ }));
     await act(async () => { fireEvent.change(screen.getByLabelText(/^Total pens/), { target: { value: "22" } }); }); // unsaved edit
     fireEvent.click(document.querySelector('[data-stage="2"]')!);
     expect(viewing()).toBe("2");

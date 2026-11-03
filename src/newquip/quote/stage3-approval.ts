@@ -40,7 +40,7 @@ export function deriveApprovalChecklist(i: ApprovalChecklistInput): ApprovalChec
   const readiness = { state: i.readinessState, reasons: [...i.readinessReasons] } as Parameters<typeof checkApproval>[0]["readiness"];
   const ready = { state: "READY", reasons: [] } as unknown as Parameters<typeof checkApproval>[0]["readiness"];
   const one = (id: ApprovalCheckId, label: string, over: Partial<Parameters<typeof checkApproval>[0]>, fixStage: 1 | 2 | null): ApprovalCheckItem => {
-    const r = checkApproval({ readiness: ready, totalExVatCents: 1, customerConfirmedCents: 1, signoffHash: NEUTRAL, currentDraftHash: NEUTRAL, ...over });
+    const r = checkApproval({ readiness: ready, totalExVatCents: 1, customerConfirmedCents: 1, signoffHash: NEUTRAL, currentDraftHash: NEUTRAL, costing: { complete: true, reasons: [] }, ...over });
     return { id, label, met: r.ok, detail: r.ok ? null : r.error, fixStage };
   };
   const totalOk = i.totalExVatCents != null && i.totalExVatCents > 0;

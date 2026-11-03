@@ -54,7 +54,7 @@ const pr = (p: number) => ({ at: "t", by: "x", reason: "Master workbook has no u
 const draft: any = { ...emptyDraft(), quoteType: "day_to_day", config: { ...config, exclusions: { pvc_door: "Not needed" } },
   estimator: { ...emptyDraft().estimator, confirmedMappings: {"feeder":"PNQ082","pvc_door":"NQ2114","bulk_tank":"SYSH-2750-3","controller":"HO05084000","concrete_slat":"NQ1161","feed_saver_mat":"ERT053"}, confirmedPackages: ["cup_drinker","led_light"], charges: {"delivery":979992,"installation":1200000,"concrete_slat_delivery":250000}, unitPrices: {"flex_auger":45000}, priceResolutions: {pvc_door:pr(3000),led_light:pr(881),controller:pr(3000),cup_drinker:pr(548),concrete_slat:pr(203),feed_saver_mat:pr(919)} } };
 
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 import * as ca from "../customer-actions";
 import * as da from "../delivery-actions";
@@ -131,14 +131,16 @@ describe("UX-006b Stage 2 groups: who has which steps", () => {
     expect(cost.textContent).toContain("Totals"); expect(cost.textContent).toContain("Estimated cost");
   }, 30000);
 
-  it("each step holds its own panels: readiness, line decisions and mappings (1); commercial inputs, prices, exclusions (2); the Rep's price confirmation and send (3); the Estimator's sign-off and return (last)", async () => {
+  it("each step holds its own panels: readiness, line decisions and mappings (1); commercial inputs, prices, exclusions (2); a pointer to the Rep's submit in Stage 1 (3); the Estimator's sign-off and return (last)", async () => {
     await open({ roles: ["REP", "ESTIMATOR"], commercials: true });
     expect(panel("lines")!.textContent).toMatch(/Quote readiness[\s\S]*Line decisions[\s\S]*Product mappings/);
     expect(within(panel("lines") as HTMLElement).getByRole("button", { name: "Confirm source-backed mappings" })).toBeTruthy();
     expect(panel("charges")!.textContent).toMatch(/Commercial inputs[\s\S]*Customer-driven exclusions/);
-    await waitFor(() => expect(within(panel("submit") as HTMLElement).getByRole("button", { name: /Record pre-approval price confirmation/, hidden: true })).toBeTruthy());
+    // UX-006i1: the Rep's submit action moved to Stage 1 step 5; while the quotation is a Rep draft Stage 2's Submit step only points at it (and holds no send button).
+    expect(within(panel("submit") as HTMLElement).getByTestId("submit-pointer").textContent).toContain("Stage 1, step 5");
+    expect(within(panel("submit") as HTMLElement).queryByRole("button", { name: /^Submit to Estimator$|Record pre-approval/, hidden: true })).toBeNull();
     expect(panel("signoff")!.textContent).toContain("Estimator review and handoff");
-    expect(within(panel("signoff") as HTMLElement).queryByRole("button", { name: /Record pre-approval price confirmation/, hidden: true })).toBeNull();
+    expect(within(panel("signoff") as HTMLElement).queryByRole("button", { name: /^Submit to Estimator$|Record pre-approval price confirmation/, hidden: true })).toBeNull();
   }, 30000);
 
   it("the three concepts are labelled apart: 'Calculation' on the readiness chip, 'Workflow' on each group's status line", async () => {
@@ -505,13 +507,13 @@ describe("UX-006b Stage 2: Mark reviewed & continue (client-local cost acknowled
     await open({ roles: ["ESTIMATOR"], commercials: true, step: "4", ...SUBMITTED });
     fireEvent.click(ackBtn());
     expect(status("cost")).toBe("Reviewed");
-    const box = within(panel("charges") as HTMLElement).getByLabelText(/Exclude Feed saver mat/, { selector: "input" }) as HTMLInputElement;
-    await act(async () => { fireEvent.click(box); });
+    // UX-006 S1b: an edit that changes the TOTAL now withdraws the customer's confirmation and returns the quotation to the Rep, so this test edits a text-only field (the assumptions) to keep proving that the acknowledgement is bound to the version.
+    const note = within(panel("charges") as HTMLElement).getByLabelText(/Assumptions/) as HTMLTextAreaElement;
+    await act(async () => { fireEvent.change(note, { target: { value: "Reviewed assumptions text" } }); });
     expect(status("cost")).toBe("Review needed"); // unsaved edit
     fireEvent.click(rail().querySelector('[data-step="cost"]')!);
     expect(screen.queryByRole("button", { name: /Mark reviewed/ })).toBeNull(); // no ineffective continuation while edits are unsaved
     expect(screen.getByTestId("step-buttons").textContent).toContain("Save or discard your unsaved edits before marking the costing reviewed.");
-    await act(async () => { fireEvent.change((within(panel("charges") as HTMLElement).getAllByPlaceholderText("Reason (required)") as HTMLInputElement[]).find((i) => i.value === "")!, { target: { value: "Customer supplies it" } }); });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save draft" })); });
     await waitFor(() => expect(screen.getByText("All changes saved")).toBeTruthy(), { timeout: 8000 });
     expect(status("cost")).toBe("Review needed"); // the saved version (hash / revision / updated_at / totals) is a different one
@@ -576,16 +578,22 @@ describe("UX-006b Stage 2: the view follows real workflow transitions and nothin
     expect(status("signoff")).toBe("Complete");
   }, 60000);
 
-  it("Rep submit: the quote moves to Estimator review and the Rep stays on Stage 2 reading 'Submitted - awaiting the Estimator'", async () => {
+  it("Rep submit (Stage 1 step 5): the quote moves to Estimator review and the Rep stays on Stage 1 reading 'Rep preparation complete - next: Estimator' (read-only, pinned)", async () => {
     vi.spyOn(ca, "getQuoteCustomerAction").mockResolvedValue({ ok: true, data: { available: true, snapshot: { cin7CustomerId: "c1", name: { state: "present", value: "Acme" }, tradingName: { state: "missing" }, billingAddress: null, vatNumber: { state: "missing" }, currency: { state: "missing" }, paymentTerm: { state: "missing" }, contacts: [], chosenContact: { name: "Sean", email: "s@x.co", source: "CIN7_CONTACT", phone: null } }, snapshotId: "s1", seq: 1, issues: [], currency: null, selectedContactIndex: null, confirmationContact: null, editable: true, lockedReason: null, changeReturnsToRep: false, history: [] } } as never);
-    await open({ roles: ["REP"], step: "3" });
+    await open({ stage: "1", roles: ["REP"], step: "5" });
     const id = g.__QID!;
     vi.spyOn(actions, "sendGrowerQuoteToEstimatorAction").mockImplementation((async () => { patchRow(id, () => ({ state: "ESTIMATOR_REVIEW", customer_confirmed_cents: 1000000000, customer_confirmed_by: "Sean", handoff_by_email: "rep@nq" })); return reread(id); }) as never);
-    const send = await waitFor(() => { const b = within(panel("submit") as HTMLElement).getByRole("button", { name: /Record pre-approval price confirmation/ }) as HTMLButtonElement; expect(b.disabled).toBe(false); return b; }, { timeout: 8000 });
+    const sendBtn = await waitFor(() => within(panel("submit") as HTMLElement).getByRole("button", { name: "Submit to Estimator" }) as HTMLButtonElement, { timeout: 8000 });
+    expect(sendBtn.disabled).toBe(true); // one explicit confirmation is needed first
+    fireEvent.click(within(panel("submit") as HTMLElement).getByLabelText(/I confirm that Sean has confirmed the quotation total of/));
+    const send = await waitFor(() => { const b = within(panel("submit") as HTMLElement).getByRole("button", { name: "Submit to Estimator" }) as HTMLButtonElement; expect(b.disabled).toBe(false); return b; }, { timeout: 8000 });
+    expect(screen.getByTestId("submit-effects").textContent).toMatch(/records the customer.s price confirmation.*notifies the Estimator.*moves the quotation to Estimator review.*unsaved edits are saved first/);
     fireEvent.click(send);
-    await waitFor(() => expect(gstatus("rep")).toBe("Workflow: Submitted - awaiting the Estimator"), { timeout: 8000 });
-    expect(viewedStage()).toBe("2");
-    expect(status("submit")).toBe("Complete");
+    await waitFor(() => expect(screen.getByTestId("rep-complete").textContent).toContain("Rep preparation complete - next: Estimator"), { timeout: 8000 });
+    expect(viewedStage()).toBe("1"); // pinned: the Rep reads the completed state instead of being thrown into the Estimator's stage
+    expect(screen.queryByRole("button", { name: "Submit to Estimator" })).toBeNull();
+    expect((screen.getByTestId("stage1-layout") as HTMLFieldSetElement).disabled).toBe(true); // Stage 1 is read-only after submission
+    expect(screen.getByTestId("step-status-submit").textContent).toBe("Complete");
   }, 60000);
 
   it("Manager approval moves the view on (a real workflow change clears the pin): to the customer quotation stage", async () => {
@@ -613,12 +621,16 @@ describe("UX-006b Stage 2: the view follows real workflow transitions and nothin
   }
 });
 
-describe("UX-006b Stage 2: Load Demo Defaults keeps the viewed step", () => {
+// UX-006i1: the global "Load Demo Defaults" was removed from the primary area. The whole-quote loader now lives ONLY in the collapsed "Testing utility (Preview only)", shown when the
+// SERVER-derived previewTools flag is true (VERCEL_ENV=preview); these tests keep proving that loading it never moves the viewed step and runs only the preview.
+const openTools = () => { document.querySelector('[data-testid="preview-tools"]')!.setAttribute("open", ""); return screen.getByRole("button", { name: "Load whole demonstration quote" }); };
+describe("UX-006b Stage 2: the whole-quote loader (Preview utility) keeps the viewed step", () => {
+  beforeEach(() => { vi.stubEnv("VERCEL_ENV", "preview"); });
   for (const [name, step, roles, comm] of [["Lines & mappings", "1", ["REP"], false], ["Charges & prices", "2", ["REP"], false], ["Submit to Estimator", "3", ["REP"], false], ["Cost & margin", "4", ["REP", "ESTIMATOR"], true], ["Sign-off or return", "5", ["REP", "ESTIMATOR"], true]] as const) {
     it(`viewing ${name}: Load Demo Defaults (replace) stays on it`, async () => {
       await open({ roles: [...roles] as Role[], commercials: comm, step });
       const which = [...document.querySelectorAll("[data-step-panel]")].find((e) => !e.hasAttribute("hidden"))!.getAttribute("data-step-panel");
-      fireEvent.click(screen.getByRole("button", { name: "Load Demo Defaults" }));
+      fireEvent.click(openTools());
       const replace = screen.queryByRole("button", { name: "Replace with demo" });
       if (replace) fireEvent.click(replace);
       await act(async () => { await sleep(50); });
@@ -634,7 +646,7 @@ describe("UX-006b Stage 2: Load Demo Defaults keeps the viewed step", () => {
       await sleep(1200);
       const which = [...document.querySelectorAll("[data-step-panel]")].find((e) => !e.hasAttribute("hidden"))!.getAttribute("data-step-panel");
       q.log.length = 0;
-      fireEvent.click(screen.getByRole("button", { name: "Load Demo Defaults" }));
+      fireEvent.click(openTools());
       const replace = screen.queryByRole("button", { name: "Replace with demo" });
       if (replace) fireEvent.click(replace);
       await act(async () => { await sleep(900); });
@@ -656,7 +668,7 @@ describe("UX-006b Stage 2: Load Demo Defaults keeps the viewed step", () => {
   it("with Show all steps every step stays visible after Load Demo Defaults", async () => {
     vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "nq-builder-show-all" ? "1" : null), setItem: () => undefined });
     await open({ roles: ["REP"] });
-    fireEvent.click(screen.getByRole("button", { name: "Load Demo Defaults" }));
+    fireEvent.click(openTools());
     const replace = screen.queryByRole("button", { name: "Replace with demo" });
     if (replace) fireEvent.click(replace);
     await act(async () => { await sleep(50); });
@@ -794,8 +806,9 @@ describe("UX-006b Stage 2 groups: statuses come from data, never from a visit", 
   }, 30000);
 
   it("the existing action buttons keep their gates: the non-Rep cannot send; the Rep cannot sign off", async () => {
-    await open({ roles: ["ESTIMATOR"], commercials: true });
-    const send = await waitFor(() => within(panel("submit") as HTMLElement).getByRole("button", { name: /Record pre-approval price confirmation/, hidden: true }) as HTMLButtonElement);
+    // UX-006i1: the send action is Stage 1 step 5 now; a non-Rep still cannot use it (the same canAct gate and reason).
+    await open({ stage: "1", roles: ["ESTIMATOR"], commercials: true });
+    const send = await waitFor(() => within(panel("submit") as HTMLElement).getByRole("button", { name: "Submit to Estimator", hidden: true }) as HTMLButtonElement);
     expect(send.disabled).toBe(true);
     cleanup();
     await open({ roles: ["REP"], state: "ESTIMATOR_REVIEW" });

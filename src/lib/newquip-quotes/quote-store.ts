@@ -10,7 +10,8 @@ import { buildAcceptedBaseline, baselineMatchesHash, hashOf, type AcceptedBaseli
 import { quoteToProjectBaseline } from "@/newquip/quote/to-project";
 import type { ScheduleStageTemplate } from "@/newquip/quote/billing-schedule";
 import type { ScheduleSource } from "@/newquip/quote/project-template";
-import { authoriseTransition, canEditDraft, checkApproval, checkHandoff, type QuoteState } from "@/newquip/quote/workflow";
+import { authoriseTransition, canEditDraft, checkApproval, checkHandoff, checkSignOff, type QuoteState } from "@/newquip/quote/workflow";
+import { estimatorCostingComplete, type CostingStatus } from "@/newquip/quote/readiness-concepts";
 import type { QuoteRole } from "@/newquip/quote/roles";
 import { createProjectFromBaseline } from "@/lib/projects/project-store";
 import { libraryOf, listActiveMappings } from "@/lib/projects/package-mapping-store";
@@ -57,6 +58,17 @@ export interface QuoteRecord {
 }
 
 const totalCents = (ev: QuoteEvaluation): number | null => (ev.budget && !ev.budget.incomplete ? Math.round(ev.budget.totals.subtotalExTax * 100) : null);
+/** The CURRENT INDICATIVE total (priced lines + Rep-entered charges), also while Estimator-owned items are unresolved. What the Rep's customer confirms at handoff. */
+const indicativeTotalCents = (ev: QuoteEvaluation): number | null => (ev.budget ? Math.round(ev.budget.totals.subtotalExTax * 100) : null);
+
+/**
+ * ESTIMATOR_COSTING_COMPLETE, evaluated server-side with cost VISIBLE even though the workflow evaluation withholds it. Nothing but the boolean and the reason
+ * texts (counts and line labels, never a cost or margin value) leaves this function, so the cost-withheld caller never receives cost.
+ */
+export async function costingOf(db: Db, orgId: string, draft: QuoteDraft, ctx: EvaluationContext): Promise<CostingStatus> {
+  const library = await listActiveMappings(db, orgId);
+  return estimatorCostingComplete(draft, evaluateDraft(draft, { ...ctx, withholdCost: false }), library ? libraryOf(library) : undefined);
+}
 
 // ── reads ───────────────────────────────────────────────────────────────────
 
@@ -98,7 +110,12 @@ export async function createQuote(db: Db, orgId: string, email: string, draft: Q
  * Saves the editable draft. An edit made after the estimator signed off CLEARS the sign-off (it covered different content).
  * An approved quote is never editable.
  */
-export async function saveDraft(db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, quoteId: string, draft: QuoteDraft): Promise<{ draftHash: string; signoffCleared: boolean }> {
+export async function saveDraft(
+  db: Db, orgId: string, roles: ReadonlySet<QuoteRole>, quoteId: string, submitted: QuoteDraft,
+  /** The customer name of the quotation's Cin7 snapshot, when one exists. It is the ONLY source of the customer name then: whatever the client sent is replaced by it. */
+  authoritativeCustomerName?: string | null,
+): Promise<{ draftHash: string; signoffCleared: boolean }> {
+  const draft = authoritativeCustomerName ? { ...submitted, customerName: authoritativeCustomerName } : submitted;
   const q = await mustLoad(db, orgId, quoteId);
   if (!canEditDraft(roles, q.state)) fail(q.state === "MANAGER_APPROVED_FINAL" ? "The accepted quote is final and cannot be edited. Post-acceptance changes must be Variations." : "You do not have permission to edit this quote.");
   const draftHash = hashOf(draft);
@@ -139,6 +156,35 @@ export async function applyCustomerChange(
   return { returnedToRep: inReview, signoffCleared, confirmationCleared };
 }
 
+/**
+ * The CONFIRMED CONTACT (or the confirmed amount) no longer applies. Nulls the live confirmation columns and the estimator's sign-off - exactly the columns returnToRep
+ * nulls; snapshot history, approval events and step logs are untouched - and, from estimator review, returns the quotation to the Rep as a new revision so the customer
+ * must confirm again before it is handed off. A no-op (all false) when no confirmation is recorded. Callers audit it; `effect` is what the UI needs to describe it.
+ */
+export async function invalidateConfirmation(
+  db: Db, orgId: string, quoteId: string,
+  /** What the caller observed (the confirmed amount and revision it decided on). If the quotation no longer matches, e.g. a handoff committed meanwhile, NOTHING is cleared. */
+  expected?: { cents: number | null; revision: number },
+): Promise<{ returnedToRep: boolean; signoffCleared: boolean; confirmationCleared: boolean }> {
+  const q = await mustLoad(db, orgId, quoteId);
+  if (expected && (q.customer_confirmed_cents !== expected.cents || q.revision !== expected.revision)) fail("The quotation changed while withdrawing the confirmation; refresh and try again.");
+  if (q.state === "MANAGER_APPROVED_FINAL") fail("An approved quotation's confirmation is immutable.");
+  const confirmationCleared = q.customer_confirmed_cents != null || q.customer_confirmed_by != null;
+  if (!confirmationCleared) return { returnedToRep: false, signoffCleared: false, confirmationCleared: false };
+  const inReview = q.state === "ESTIMATOR_REVIEW";
+  const signoffCleared = q.estimator_signoff_hash != null;
+  // compare-and-set on state, revision AND the confirmed amount as read: a handoff or edit committed since the load clears nothing
+  const upd = db.from("newquip_quotes").update({
+    customer_confirmed_cents: null, customer_confirmed_by: null, customer_confirmed_at: null, handoff_by_email: null,
+    estimator_signoff_hash: null, estimator_signoff_by_email: null, estimator_signoff_at: null,
+    ...(inReview ? { state: "REP_DRAFT", revision: q.revision + 1 } : {}),
+  }).eq("org_id", orgId).eq("id", quoteId).eq("state", q.state).eq("revision", q.revision);
+  const r = await (q.customer_confirmed_cents != null ? upd.eq("customer_confirmed_cents", q.customer_confirmed_cents) : upd.is("customer_confirmed_cents", null)).select("id");
+  if (r.error) fail(r.error.message);
+  if (!r.data || r.data.length === 0) fail("The quotation changed while withdrawing the confirmation; refresh and try again.");
+  return { returnedToRep: inReview, signoffCleared, confirmationCleared };
+}
+
 // ── workflow ────────────────────────────────────────────────────────────────
 
 /** Rep → Estimator. Records the customer's confirmation of the commercial amount. */
@@ -150,7 +196,7 @@ export async function sendToEstimator(
   const auth = authoriseTransition(roles, q.state, "SEND_TO_ESTIMATOR");
   if (!auth.ok) fail(auth.error);
   const ev = evaluateDraft(q.draft, ctx);
-  const chk = checkHandoff({ readiness: ev.readiness, totalExVatCents: totalCents(ev), confirmedAmountCents: input.confirmedAmountCents, confirmedBy: input.confirmedBy });
+  const chk = checkHandoff({ readiness: ev.readiness, totalExVatCents: indicativeTotalCents(ev), confirmedAmountCents: input.confirmedAmountCents, confirmedBy: input.confirmedBy });
   if (!chk.ok) fail(chk.error);
   const r = await db.from("newquip_quotes").update({
     state: auth.to, customer_confirmed_cents: input.confirmedAmountCents, customer_confirmed_by: input.confirmedBy.trim(),
@@ -197,7 +243,8 @@ export async function estimatorSignOff(db: Db, orgId: string, roles: ReadonlySet
   const auth = authoriseTransition(roles, q.state, "ESTIMATOR_SIGN_OFF");
   if (!auth.ok) fail(auth.error);
   const ev = evaluateDraft(q.draft, ctx);
-  if (ev.readiness.state !== "READY") fail(`The quote is ${ev.readiness.state}; resolve ${ev.readiness.reasons[0] ?? "the outstanding items"} before signing off.`);
+  const chk = checkSignOff({ readiness: ev.readiness, totalExVatCents: totalCents(ev), customerConfirmedCents: q.customer_confirmed_cents, costing: await costingOf(db, orgId, q.draft, ctx) });
+  if (!chk.ok) fail(chk.error);
   // Only items actually in the quotation are checked: a stale mapping on a deselected item is not part of what is being signed off (and the UI offers no way to clear it).
   const inQuote = new Set(ev.calc.lines.filter((l) => l.basis !== "not_selected").map((l) => l.itemKey as string));
   // Mapping integrity is re-checked NOW, not only when the draft was saved: the catalogue may have changed since (a product deactivated or removed). Nothing is stamped on failure.
@@ -222,10 +269,10 @@ export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<Q
   const auth = authoriseTransition(roles, q.state, "MANAGER_APPROVE");
   if (!auth.ok) fail(auth.error);
   const ev = evaluateDraft(q.draft, ctx);
-  const chk = checkApproval({ readiness: ev.readiness, totalExVatCents: totalCents(ev), customerConfirmedCents: q.customer_confirmed_cents, signoffHash: q.estimator_signoff_hash, currentDraftHash: q.draft_hash });
+  const chk = checkApproval({ readiness: ev.readiness, totalExVatCents: totalCents(ev), customerConfirmedCents: q.customer_confirmed_cents, signoffHash: q.estimator_signoff_hash, currentDraftHash: q.draft_hash, costing: await costingOf(db, orgId, q.draft, ctx) });
   if (!chk.ok) fail(chk.error);
   const now = new Date().toISOString();
-  // Reusable mappings active RIGHT NOW are applied to unmapped packages and sealed with their versions. Unresolved items never block approval.
+  // Reusable mappings active RIGHT NOW are applied to unmapped packages and sealed with their versions.
   const library = await listActiveMappings(db, orgId);
   const { baseline, hash } = buildAcceptedBaseline({
     mappingLibrary: library ? libraryOf(library) : undefined,

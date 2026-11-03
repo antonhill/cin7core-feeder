@@ -18,7 +18,7 @@ describe("UX-006c Stage 3 checklist (derived from checkApproval)", () => {
     const items = deriveApprovalChecklist(ok);
     expect(items.map((x) => x.id)).toEqual(["ready", "total", "confirmed", "signoff", "amount", "manager"]);
     expect(approvalChecklistMet(items)).toBe(true);
-    expect(checkApproval({ readiness: { state: "READY", reasons: [] } as never, totalExVatCents: 1_000_000, customerConfirmedCents: 1_000_000, signoffHash: "h1", currentDraftHash: "h1" }).ok).toBe(true);
+    expect(checkApproval({ readiness: { state: "READY", reasons: [] } as never, totalExVatCents: 1_000_000, customerConfirmedCents: 1_000_000, signoffHash: "h1", currentDraftHash: "h1", costing: { complete: true, reasons: [] } }).ok).toBe(true);
   });
   it("each condition goes unmet on its own and carries checkApproval's own message", () => {
     expect(met({ readinessState: "BLOCKED" })).toMatchObject({ ready: false, total: true, confirmed: true, signoff: true, amount: true });
@@ -47,8 +47,8 @@ describe("UX-006c Stage 3 checklist (derived from checkApproval)", () => {
   });
   it("the page's total is rounded exactly as the server rounds the saved total (same expression in both)", () => {
     const expr = "Math.round(budget.totals.subtotalExTax * 100)";
-    expect(readFileSync(join(__dirname, "../../../app/newquip-grower/[id]/page.tsx"), "utf8")).toContain(`budget && !budget.incomplete ? ${expr} : null`);
-    expect(readFileSync(join(__dirname, "../../../lib/newquip-quotes/quote-store.ts"), "utf8")).toContain(`ev.budget && !ev.budget.incomplete ? ${expr.replace("budget.", "ev.budget.")} : null`);
+    expect(readFileSync(join(__dirname, "../../../app/newquip-grower/[id]/page.tsx"), "utf8")).toContain(`budget ? ${expr} : null`);
+    expect(readFileSync(join(__dirname, "../../../lib/newquip-quotes/quote-store.ts"), "utf8")).toContain(`ev.budget ? ${expr.replace("budget.", "ev.budget.")} : null`);
   });
   it("unsaved edits add a sixth, unmet row (approval applies to the saved quotation)", () => {
     const items = deriveApprovalChecklist({ ...ok, dirty: true });
