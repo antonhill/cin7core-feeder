@@ -239,10 +239,19 @@ describe("Cin7 single-stock-UOM contract (NQ-Q-0023 UOM_UNCONFIRMED remediation)
     expect(blocked({ IncludeInPricing: "yes" })).toBe(true);
     expect(blocked({ ProductID: 12 })).toBe(true);
     expect(blocked({ ProductSupplierID: "not-an-id" })).toBe(true);
-    expect(rawFromCin7(liveReal(269, { PurchaseCost: 26.9 }), () => null).statedUnitFields).toEqual(["PurchaseCost (differs from Cost, or not a number)"]);
+    expect(rawFromCin7(liveReal(269, { PurchaseCost: 26.9 }), () => null).statedUnitFields).toEqual(["PurchaseCost=26.9 (Cost=269; accepted only when 0 or equal to Cost)"]);
     expect(blocked({ PackSize: 12 })).toBe(true); // genuine unit/pack/carton/quantity/conversion fields still block alongside the metadata
     expect(blocked({ CartonQty: 6 })).toBe(true);
     expect(blocked({ ConversionFactor: 6 })).toBe(true);
+  });
+  it("reviewer edge cases: odd PurchaseCost / flag / id values block and are reported with their values", () => {
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, -269, [269], { a: 1 }, true]) expect(rawFromCin7(liveReal(269, { PurchaseCost: bad }), () => null).statedUnitFields?.length).toBe(1);
+    expect(rawFromCin7(liveReal(269, { IncludeInPricing: "true" }), () => null).statedUnitFields).toEqual(['IncludeInPricing="true" (expected true/false)']);
+    expect(rawFromCin7(liveReal(269, { ProductID: ["x"] }), () => null).statedUnitFields?.[0]).toContain("expected a GUID string");
+    expect(rawFromCin7(liveReal(269, { PurchaseCost: 269.0000004 }), () => null).statedUnitFields).toEqual([]); // within the 5e-7 tolerance
+    expect(rawFromCin7(liveReal(269, { PurchaseCost: 269.000001 }), () => null).statedUnitFields?.length).toBe(1);
+    const o = normaliseOption({ ...rawFromCin7(liveReal(269, { PurchaseCost: 26.9 }), () => null), stockUnit: "Item" }, noBasis);
+    expect(o.problems[0].message).toContain("PurchaseCost=26.9 (Cost=269");
   });
   it("the 24 NQ-Q-0023 SKUs: each is a single ZAR supplier with stock unit Item and no unit field -> usable at the exact Cin7 price, auto-selected", () => {
     const prices: Record<string, number> = { "DPL-PVC20X600": 132.36, ERT053: 494.46, HO12011000: 656.2, HO17050750: 213.31, HO21013750: 14000.37, KNQ074: 1039.19, KNQ160: 118.78, KNQ196: 2675.06, KNQBP1010: 99.31, KNQCP005: 145.01, NQ1017: 3.14, NQ1161: 188.05, NQ1227: 269, NQ1380: 169.3, NQ1386: 8.38, NQ2064: 0.46, NQ2066: 2.15, NQ2114: 5400, NQ2784: 27.08, NQ2886: 36, NYNUT: 0.82, PNQ082: 7247.71, QCA00003: 108.36, "SYSH-2750-3": 19444.62 };

@@ -224,6 +224,14 @@ function isInertMetadata(key: string, s: Record<string, unknown>): boolean {
   if (key === "PurchaseCost") return typeof v === "number" && Number.isFinite(v) && (v === 0 || (typeof s.Cost === "number" && Math.abs(v - s.Cost) < 0.0000005));
   return false;
 }
+/** A blocked field named WITH its value (prices and ids only; nothing sensitive) so the next capture shows a human what the field actually holds. */
+function describeBlocked(k: string, s: Record<string, unknown>): string {
+  const show = (v: unknown) => { const t = typeof v === "string" ? v : JSON.stringify(v); return t.length > 40 ? `${t.slice(0, 40)}...` : t; };
+  if (k === "PurchaseCost") return `PurchaseCost=${show(s[k])} (Cost=${show(s.Cost)}; accepted only when 0 or equal to Cost)`;
+  if (k === "ProductID" || k === "ProductSupplierID") return `${k}=${show(s[k])} (expected a GUID string)`;
+  if (k === "IncludeInPricing") return `IncludeInPricing=${show(s[k])} (expected true/false)`;
+  return k;
+}
 const has = (v: unknown) => v !== null && v !== undefined && v !== "";
 /**
  * The fields a Cin7 Suppliers[] record carries with a value that are NOT known to be unit-free. Empty = the record states no unit of its own.
@@ -232,7 +240,7 @@ const has = (v: unknown) => v !== null && v !== undefined && v !== "";
  */
 export function statedUnitFields(s: Record<string, unknown>): string[] {
   const out = new Set<string>();
-  for (const k of Object.keys(s)) if (has(s[k]) && !KNOWN_SUPPLIER_KEYS.has(k) && !isInertMetadata(k, s)) out.add(k === "PurchaseCost" ? "PurchaseCost (differs from Cost, or not a number)" : k);
+  for (const k of Object.keys(s)) if (has(s[k]) && !KNOWN_SUPPLIER_KEYS.has(k) && !isInertMetadata(k, s)) out.add(describeBlocked(k, s));
   const opts = s.ProductSupplierOptions;
   if (opts !== null && opts !== undefined && !Array.isArray(opts)) out.add("ProductSupplierOptions");
   else for (const o of (opts as unknown[] | undefined) ?? []) {
