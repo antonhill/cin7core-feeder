@@ -612,7 +612,7 @@ export default function QuoteEditorPage() {
       {error && <div className="mt-4"><Alert tone="danger">{error}</Alert></div>}
       <ActionFeedback state={acts.stateOf("page")} floating />
       {final && <div className="mt-4"><Alert tone="info">This quote is the manager-approved final. Its accepted baseline is frozen; any change after acceptance must be a Variation on the Project.</Alert></div>}
-      <details className="mt-2 text-xs text-slate-600" data-testid="provenance"><summary className="min-h-6 cursor-pointer font-medium text-slate-700">Price source &amp; provenance</summary>
+      <details className="mt-2 text-xs text-slate-600" data-testid="provenance"><summary className="inline-flex min-h-11 cursor-pointer items-center font-medium text-slate-700">Price source &amp; provenance</summary>
         <p className="mt-1">Grower House Template v1 · {QUOTE_TYPE_LABEL[draft.quoteType]} pricing · {budget?.priceSource.label ?? "NewQuip Master workbook – POC controlled snapshot"}</p>
         {budget && <p className="mt-1">{budget.priceSource.notice} Provenance: {budget.priceSource.provenance}</p>}</details>
 
