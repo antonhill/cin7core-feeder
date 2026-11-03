@@ -213,6 +213,7 @@ describe("UX-006b Stage 2 steps: navigation", () => {
     expect(rail().querySelector('[aria-current="step"]')!.textContent).toContain("Handoff");
     expect(document.activeElement?.textContent).toBe("Step 3 · Handoff");
   }, 30000);
+});
 
 describe("UX-006b Stage 2 steps: statuses come from data, never from a visit", () => {
   it("an excluded item with no reason makes the charges step Needs attention (live); giving the reason clears it; visiting alone changes nothing", async () => {
