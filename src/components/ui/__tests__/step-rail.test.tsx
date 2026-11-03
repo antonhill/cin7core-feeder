@@ -65,9 +65,10 @@ describe("StepRail a11y and behaviour", () => {
     fireEvent.click(screen.getByRole("button", { name: /Charlie/ }));
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
   });
-  it("announces 'Step n of N' in a polite status region and targets are at least 44px tall by class", () => {
+  it("has no duplicate live region (aria-current plus the focus move announce the step) and targets are at least 44px tall by class", () => {
     view("c");
-    expect(screen.getByTestId("step-rail-live").textContent).toBe("Step 3 of 4: Charlie");
+    expect(screen.queryByTestId("step-rail-live")).toBeNull();
+    expect(document.querySelector('[role="status"]')).toBeNull();
     expect(document.querySelector("li > button")!.className).toContain("min-h-11");
   });
 });
@@ -91,6 +92,21 @@ describe("StepPanel", () => {
     rerender(panels("b"));
     expect(document.activeElement).toBe(document.getElementById("t-b-heading"));
     expect(document.getElementById("t-b-heading")!.textContent).toBe("Step 2 · Bravo");
+  });
+});
+
+describe("a hidden step stays display:none even with a grid class", () => {
+  it("the panel carries the hidden attribute AND a grid class, and the Tailwind preflight hides [hidden] with !important", () => {
+    render(<StepPanel railId="t" stepId="a" number={1} title="Alpha" current={false} showAll={false} className="col-span-full grid xl:grid-cols-2">x</StepPanel>);
+    const el = document.querySelector('[data-step-panel="a"]')!;
+    expect(el.hasAttribute("hidden")).toBe(true);
+    expect(el.className).toContain("grid");
+    const css = readFileSync(`${process.cwd()}/node_modules/tailwindcss/preflight.css`, "utf8");
+    expect(css).toMatch(/\[hidden\]:where\(:not\(\[hidden='until-found'\]\)\)\s*\{\s*display:\s*none\s*!important/);
+  });
+  it("show-all never hides a step, so a `contents` layout is never applied to a hidden one", () => {
+    render(<StepPanel railId="t" stepId="a" number={1} title="Alpha" current={false} showAll className="contents">x</StepPanel>);
+    expect(document.querySelector('[data-step-panel="a"]')!.hasAttribute("hidden")).toBe(false);
   });
 });
 

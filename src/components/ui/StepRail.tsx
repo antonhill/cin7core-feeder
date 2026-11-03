@@ -43,7 +43,7 @@ export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions }:
           );
         })}
       </ol>
-      <p role="status" className="sr-only" data-testid="step-rail-live">{`Step ${at + 1} of ${steps.length}: ${cur?.label ?? ""}`}</p>
+      {/* No live region: the current step is announced by aria-current and by the focus move to its heading. */}
       {actions}
     </nav>
   );
@@ -53,8 +53,8 @@ export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions }:
  * One step's content. A step that is not shown stays MOUNTED (so its requests and state are untouched) but is `hidden` and `inert`; with "show all" every step is shown.
  * When this step becomes the current one its heading takes focus.
  */
-export function StepPanel({ railId, stepId, number, title, current, showAll, className = "", children }: {
-  railId: string; stepId: string; number: number; title: string; current: boolean; showAll: boolean; className?: string; children: React.ReactNode;
+export function StepPanel({ railId, stepId, number, title, current, showAll, className = "", headingClassName = "col-span-full", children }: {
+  railId: string; stepId: string; number: number; title: string; current: boolean; showAll: boolean; className?: string; /** Layout classes of the heading (default: a full-width row of a grid parent). */ headingClassName?: string; children: React.ReactNode;
 }) {
   const hidden = !current && !showAll;
   const heading = useRef<HTMLHeadingElement>(null);
@@ -65,7 +65,7 @@ export function StepPanel({ railId, stepId, number, title, current, showAll, cla
   }, [current]);
   return (
     <section hidden={hidden} inert={hidden} aria-labelledby={stepHeadingId(railId, stepId)} data-step-panel={stepId} className={className}>
-      <h2 id={stepHeadingId(railId, stepId)} ref={heading} tabIndex={-1} className="col-span-full text-lg font-semibold text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-indigo-600">Step {number} · {title}</h2>
+      <h2 id={stepHeadingId(railId, stepId)} ref={heading} tabIndex={-1} className={`${headingClassName} text-lg font-semibold text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-indigo-600`}>Step {number} · {title}</h2>
       {children}
     </section>
   );

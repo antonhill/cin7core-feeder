@@ -118,7 +118,7 @@ export default function QuoteEditorPage() {
   const [step2No, setStep2No] = useState<number>(() => (parseStage(search.get("stage")) === 2 ? parseStepParam(search.get("step"), 4) : 1));
   const [showAllSteps, setShowAllSteps] = useShowAllSteps("nq-builder-show-all");
   const [customerFacts, setCustomerFacts] = useState<Stage1CustomerFacts>(NO_CUSTOMER_FACTS);
-  const onCustomerFacts = (f: Stage1CustomerFacts) => setCustomerFacts((p) => (p.loaded === f.loaded && p.available === f.available && p.hasSnapshot === f.hasSnapshot && p.hasContact === f.hasContact && p.contactName === f.contactName ? p : f));
+  const onCustomerFacts = (f: Stage1CustomerFacts) => setCustomerFacts((p) => (p.loaded === f.loaded && p.available === f.available && p.hasSnapshot === f.hasSnapshot && p.hasContact === f.hasContact && p.contactName === f.contactName && p.loadError === f.loadError ? p : f));
   const [error, setError] = useState<string | null>(null);
   const [confirmDemo, setConfirmDemo] = useState(false);
   const [demoLoaded, setDemoLoaded] = useState<string[] | null>(null);
@@ -271,7 +271,7 @@ export default function QuoteEditorPage() {
   const stage: StageId = picked ?? here;
   const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); const at = n === 1 ? stepNo : n === 2 ? step2No : 1; const sp = new URLSearchParams([...u.searchParams].filter(([k]) => k !== "step" && k !== "stage")); sp.set("stage", String(n)); if (at > 1) sp.set("step", String(at)); u.search = sp.toString(); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
 
-  const stage1 = deriveStage1Steps({ customerName: draft.customerName, siteName: draft.siteName, penningPigSize: cfg.penningPigSize, calcIssues: ev.calc.issues, readinessReasons: rd.reasons, customer: customerFacts });
+  const stage1 = deriveStage1Steps({ customerName: draft.customerName, siteName: draft.siteName, penningPigSize: cfg.penningPigSize, calcIssues: ev.calc.issues, readinessReasons: rd.reasons, customer: customerFacts, roomValues: { lengthM: cfg.lengthM, widthM: cfg.widthM, rooms: cfg.rooms, totalPens: cfg.totalPens, pigsPerRoom: cfg.pigsPerRoom } });
   const stepId = STAGE1_STEP_IDS[stepNo - 1];
   const goStepNo = (n: number) => {
     const next = Math.min(Math.max(n, 1), STAGE1_STEP_IDS.length);
@@ -280,7 +280,10 @@ export default function QuoteEditorPage() {
   };
   const goStep = (id: string) => goStepNo(STAGE1_STEP_IDS.indexOf(id as Stage1StepId) + 1);
   const nextOpen = nextIncompleteStepId(stage1.steps, stepId);
-  const stepPanelCls = "col-span-full grid min-w-0 items-start gap-6 xl:grid-cols-2";
+  // Guided: each step is its own grid and a single panel spans the full width. Show all: the step sections are `contents`, so every panel joins the fieldset's one grid
+  // and Room inputs | Selections sit side by side again (order-* keeps the headings above their panels). A hidden step is never `contents` (hidden wins via !important).
+  const stepPanelCls = showAllSteps ? "contents" : "col-span-full grid min-w-0 items-start gap-6 xl:grid-cols-2";
+  const wide = showAllSteps ? "" : "col-span-full";
 
   // Stage 2 steps: the same navigation and guidance (never a gate). Statuses come from data already loaded here: the readiness result, the budget, the draft's own validation and the stage gates.
   const canCommercials = view.viewer.canViewCommercials;
@@ -381,7 +384,7 @@ export default function QuoteEditorPage() {
         <>
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button onClick={save} loading={acts.isPending("save")} aria-describedby={saveWhy ? "save-why" : undefined} disabled={isWorking || !editable || !dirty || incompleteOverrides || blankExclusionKeys.length > 0}>Save draft</Button>
-            <span role="status" aria-live="polite" data-testid="save-state">{dirty ? <Status tone="warning">Unsaved changes</Status> : <Status tone="success">All changes saved</Status>}</span>
+            <span role="status" aria-live="polite" data-testid="save-state">{dirty ? <Status tone="warning">Unsaved changes</Status> : editable ? <Status tone="success">All changes saved</Status> : null}</span>
             {editable && !confirmDemo && <Button variant="secondary" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load Demo Defaults</Button>}
             {!editable && <span id="save-why" className="text-sm text-slate-700">{final ? "Read-only: accepted quote." : "You do not have permission to edit: only a Rep or Estimator can edit and save this quotation."}</span>}
           </div>
@@ -429,7 +432,7 @@ export default function QuoteEditorPage() {
           </StepPanel>
 
           <StepPanel railId="s1" stepId="site" number={2} title={STAGE1_STEP_LABEL.site} current={stepId === "site"} showAll={showAllSteps} className={stepPanelCls}>
-            <Panel>
+            <Panel className="col-span-full">
               <PanelTitle>Site name & pricing basis</PanelTitle>
               <div className="mt-4 grid gap-4 md:grid-cols-2">
                 <TextField label="Site / project name" value={draft.siteName} onChange={(v) => edit((d) => { d.siteName = v; })} />
@@ -440,14 +443,15 @@ export default function QuoteEditorPage() {
               </div>
               <p className="mt-4 text-sm text-slate-800" data-testid="step2-contact-status">
                 Quotation contact: {customerFacts.contactName ? <strong>{customerFacts.contactName}</strong> : <span className="text-amber-900">{customerFacts.loaded && customerFacts.available ? "not chosen yet" : "not read yet"}</span>}
-                {" "}<Button type="button" size="sm" variant="secondary" className="min-h-11" onClick={() => goStep("customer")}>Choose the contact in step 1</Button>
+                {" "}{/* A link, not a button: navigation must keep working for a viewer who cannot edit (the fieldset disables buttons). */}
+                <a href="?step=1" onClick={(e) => { e.preventDefault(); goStep("customer"); }} className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Choose the contact in step 1</a>
               </p>
               <p className="mt-2 text-xs text-slate-600">The site name and pricing basis are saved with Save draft.</p>
             </Panel>
           </StepPanel>
 
-          <StepPanel railId="s1" stepId="room" number={3} title={STAGE1_STEP_LABEL.room} current={stepId === "room"} showAll={showAllSteps} className={stepPanelCls}>
-            <Panel>
+          <StepPanel railId="s1" stepId="room" number={3} title={STAGE1_STEP_LABEL.room} current={stepId === "room"} showAll={showAllSteps} className={stepPanelCls} headingClassName={showAllSteps ? "order-1" : undefined}>
+            <Panel className={showAllSteps ? "order-3" : wide}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <PanelTitle>Room inputs — describe ONE room</PanelTitle>
                 <Button variant="secondary" size="sm" onClick={() => edit((d) => { d.config = { ...structuredClone(TOPIGS_GROWER_INPUT), feederVariant: "STANDARD", exclusions: {}, estimatorQuantities: {}, quantityOverrides: {}, quantityOverrideReasons: {} }; })}>Load Topigs sample inputs</Button>
@@ -468,8 +472,8 @@ export default function QuoteEditorPage() {
             </Panel>
           </StepPanel>
 
-          <StepPanel railId="s1" stepId="equipment" number={4} title={STAGE1_STEP_LABEL.equipment} current={stepId === "equipment"} showAll={showAllSteps} className={stepPanelCls}>
-            <Panel>
+          <StepPanel railId="s1" stepId="equipment" number={4} title={STAGE1_STEP_LABEL.equipment} current={stepId === "equipment"} showAll={showAllSteps} className={stepPanelCls} headingClassName={showAllSteps ? "order-2" : undefined}>
+            <Panel className={showAllSteps ? "order-4" : wide}>
               <PanelTitle>Selections</PanelTitle>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <Select label="CCM feeder variant" helperText={`One feeder, two variants. Capacity ${CCM_FEEDER_CAPACITY_PIGS} pigs per feeder.`} value={cfg.feederVariant ?? "STANDARD"} onChange={(e) => edit((d) => { d.config.feederVariant = e.target.value as "STANDARD" | "WINDOW"; delete d.estimator.confirmedMappings.feeder; })}>
@@ -485,7 +489,7 @@ export default function QuoteEditorPage() {
               </div>
             </Panel>
 
-            <Panel className="xl:col-span-2">
+            <Panel className={`xl:col-span-2${showAllSteps ? " order-5" : ""}`}>
               <PanelTitle>Ventilation — optional inside Grower</PanelTitle>
               <p className="mt-2 max-w-4xl text-sm text-amber-800">{VENTILATION_SCOPE_STATUS}. AS.03 is not yet ingested: no fan, cooling or controller rule is invented — once selected, the estimator enters the quantity after engineering review.</p>
               <ul className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
