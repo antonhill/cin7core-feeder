@@ -3,6 +3,7 @@ import { evaluateDraft } from "../../grower/evaluate";
 import type { QuoteDraft } from "../../grower/draft";
 import { readyDraft } from "../../grower/__tests__/golden";
 import { testPriceSource } from "../../grower/__tests__/test-snapshot";
+import { withCapturedSupplierCosts } from "./costing-fixture";
 import { estimatorCostingComplete, estimatorOpenItems, repConfigurationReady } from "../readiness-concepts";
 import { AMOUNT_CHANGED_AT_SIGNOFF, checkApproval, checkHandoff, checkSignOff, managerApprovalReady } from "../workflow";
 
@@ -64,6 +65,18 @@ describe("ESTIMATOR_COSTING_COMPLETE", () => {
     const accepted = readyDraft(); // carries the fixture's recorded incompleteAccepted exception
     expect(estimatorCostingComplete(accepted, evaluateDraft(accepted, vis))).toEqual({ complete: true, reasons: [] });
   });
+  it("Estimator-priced-by-design lines (M75, penning, manual price) are NOT missing costs: with every SKU costed it is complete without an exception", () => {
+    const { draft } = withCapturedSupplierCosts(readyDraft(), vis);
+    expect(draft.estimator.costBasis).toBeUndefined();
+    expect(estimatorCostingComplete(draft, evaluateDraft(draft, vis))).toEqual({ complete: true, reasons: [] });
+  });
+  it("a priced catalogue line or physical SKU with no cost still blocks", () => {
+    const { draft, skus } = withCapturedSupplierCosts(readyDraft(), vis, ["PNQ082"]);
+    expect(skus).toContain("PNQ082");
+    const c = estimatorCostingComplete(draft, evaluateDraft(draft, vis));
+    expect(c.complete).toBe(false);
+    expect(c.reasons.join(" ")).toMatch(/PNQ082/);
+  });
   it("the exception waives COSTS only, never an unresolved mapping", () => {
     const d = readyDraft(); d.estimator.confirmedMappings = {};
     const c = estimatorCostingComplete(d, evaluateDraft(d, vis));
@@ -111,5 +124,13 @@ describe("handoff gates on the Rep configuration, sign-off and approval on the w
     const a = { readiness: base, totalExVatCents: 500, customerConfirmedCents: 500, signoffHash: "h", currentDraftHash: "h", costing: costed };
     expect(managerApprovalReady(a).ok).toBe(true);
     expect(checkApproval({ ...a, costing: uncosted })).toMatchObject({ ok: false, error: expect.stringMatching(/Costing is incomplete/) });
+  });
+});
+
+describe("POC item register wording", () => {
+  it("is neutral for a viewer without cost visibility and unchanged for one with it", async () => {
+    const { pocItemRegisterFor } = await import("../../grower/open-items");
+    expect(JSON.stringify(pocItemRegisterFor(false))).not.toMatch(/landed|\bROE\b|freight|20%/i);
+    expect(JSON.stringify(pocItemRegisterFor(true))).toMatch(/landed/);
   });
 });

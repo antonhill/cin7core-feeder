@@ -35,3 +35,9 @@ export const ROOMS_HELP = "An actual room within a building. All per-room quanti
 
 /** Ventilation scope: optional, engineering review. */
 export const VENTILATION_SCOPE_STATUS = "OPTIONAL — ENGINEERING REVIEW / ESTIMATOR INPUT" as const;
+
+/** The register as a given viewer may see it: without cost visibility the cost-basis wording of item 1 is replaced by a neutral statement (server-side; nothing to hide client-side). */
+export function pocItemRegisterFor(canSeeCost: boolean): PocItem[] {
+  if (canSeeCost) return POC_ITEM_REGISTER;
+  return POC_ITEM_REGISTER.map((i) => (i.n === 1 ? { ...i, treatment: "Project pricing follows the approved project price basis. The workbook Retail price is not applied on top." } : i));
+}

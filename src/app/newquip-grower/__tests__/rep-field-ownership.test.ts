@@ -164,3 +164,16 @@ describe("neutral wording for callers without cost visibility", () => {
     expect(n("Assumes 20% deposit")).toBe("Assumes 20% deposit");
   });
 });
+
+describe("costing status in the quote view", () => {
+  it("is present only for a cost-entitled caller and never in a Rep payload", async () => {
+    const id = await quote();
+    const rep = await actions.getGrowerQuoteAction(id);
+    expect(rep.data).not.toHaveProperty("costing");
+    expect(JSON.stringify(rep.data)).not.toMatch(/"costing"|costingComplete/);
+    asRoles("REP", "ESTIMATOR", "MANAGER");
+    vi.mocked(canSeeCosts).mockResolvedValue(true);
+    const est = await actions.getGrowerQuoteAction(id);
+    expect(est.data!.costing).toEqual({ complete: true, reason: null }); // the fixture carries the recorded exception
+  });
+});

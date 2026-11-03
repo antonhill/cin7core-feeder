@@ -51,13 +51,17 @@ export function estimatorCostingComplete(draft: QuoteDraft, costEvaluation: Quot
     if (eff.lines.length > 0 || eff.blockers.length > 0) {
       const est = buildCostEstimate(eff.lines.map((l) => ({ sku: l.sku, description: l.description, quantity: l.quantity })), draft.estimator.physicalCosts ?? {}, eff.blockers);
       if (est.incomplete) {
-        const parts = [est.missingSkus.length ? `${est.missingSkus.length} SKU(s) have no supplier cost selected` : "", est.unresolvedPackages.length ? `${est.unresolvedPackages.length} package(s) are not mapped to Cin7 SKUs` : ""].filter(Boolean);
-        cost.push(`The cost estimate is incomplete: ${parts.join(" and ")}.`);
+        // Only catalogue / physical SKUs with no supplier cost count. Items with no Cin7 SKU because the Estimator prices them by design (M75, penning, a manual
+        // price) are resolved PRICING, not an unresolved supplier cost; the baseline freeze keeps its own, stricter package rule.
+        if (est.missingSkus.length) cost.push(`The cost estimate is incomplete: ${est.missingSkus.length} SKU(s) have no supplier cost selected (${est.missingSkus.slice(0, 5).join(", ")}${est.missingSkus.length > 5 ? ", ..." : ""}).`);
       }
     }
     try {
       const sheet = buildMarginSheet(b, draft.estimator.costOverrides ?? {});
-      if (sheet.project.incomplete) cost.push(`Project margin not available: ${sheet.project.missingCostLines.length} line(s) have no cost (${sheet.project.missingCostLines.slice(0, 5).join("; ")}${sheet.project.missingCostLines.length > 5 ? "; ..." : ""}).`);
+      // Lines the Estimator prices by design (excluded from margin: M75, penning, manual prices) legitimately carry no cost: they do not count as missing.
+      const byDesign = new Set(b.lines.filter((l) => l.pricedBy === "estimator_input" || l.pricedBy === "penning_rate" || l.pricedBy === "estimator_resolution").map((l) => l.itemKey as string));
+      const missing = sheet.lines.filter((l) => l.costCents === null && !byDesign.has(l.itemKey)).map((l) => l.label);
+      if (missing.length) cost.push(`Project margin not available: ${missing.length} line(s) have no cost (${missing.slice(0, 5).join("; ")}${missing.length > 5 ? "; ..." : ""}).`);
     } catch (e) {
       cost.push(`A cost override is invalid: ${e instanceof Error ? e.message : "unknown error"}`);
     }
