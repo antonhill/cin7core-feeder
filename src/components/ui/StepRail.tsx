@@ -37,7 +37,8 @@ function Card({ railId, step, number, current, onPick, tall, dense = false }: { 
   );
 }
 
-export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, groups, dense = false }: {
+export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, groups, dense = false, moreActions }: {
+  /** Secondary toolbar items (e.g. "Show all steps"): inline beside `actions` from 701px, but tucked inside the collapsed list on a phone. */ moreActions?: React.ReactNode;
   /** Compact cards (Stage 1): used where the rail must not push the first field below the fold. */ dense?: boolean;
   id: string; steps: RailStep[]; currentId: string; onSelect: (stepId: string) => void; ariaLabel: string; actions?: React.ReactNode;
   /** Optional: render the steps as labelled blocks (a step's `group` names its block). Without it the rail is one list, exactly as before. */
@@ -49,7 +50,8 @@ export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, g
   const done = completeCount(steps);
   const attention = steps.filter((s) => s.status === "attention").length;
   const counts = groups ? groupCounts(steps, groups) : null;
-  const summary = counts
+  // Dense (Stage 1): the phone header is just "Step n of N · name" (the count of completed steps is in the list).
+  const summary = dense && !counts ? `Step ${at + 1} of ${steps.length} · ${cur?.label ?? ""}` : counts
     ? `Step ${at + 1} of ${steps.length} · ${cur?.label ?? ""} · ${counts.map((c) => `${c.label} ${c.done} of ${c.total} complete`).join(" · ")}${attention > 0 ? ` · ${attention} need attention` : ""}`
     : `Step ${at + 1} of ${steps.length} · ${cur?.label ?? ""} · ${done} complete${attention > 0 ? ` · ${attention} need attention` : ""}`;
   const pick = (stepId: string) => () => { onSelect(stepId); setOpen(false); };
@@ -93,7 +95,12 @@ export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, g
         </div>
       )}
       {/* No live region: the current step is announced by aria-current and by the focus move to its heading. */}
-      {actions}
+      {moreActions ? (
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+          <div className={`${open ? "flex" : "max-[700px]:hidden min-[701px]:flex"} flex-wrap items-center gap-x-4 gap-y-1`} data-testid="step-rail-more">{moreActions}</div>
+          {actions}
+        </div>
+      ) : actions}
     </nav>
   );
 }
