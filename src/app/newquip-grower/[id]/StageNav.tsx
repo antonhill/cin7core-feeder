@@ -20,7 +20,7 @@ export function StageNav({ stages, current, viewing, onSelect, previewable = [],
   const cur = stages.find((s) => s.id === current);
   const view = stages.find((s) => s.id === viewing);
   return (
-    <div className="mt-6 space-y-3" data-testid="stage-nav">
+    <div className={`${compact ? "mt-3 space-y-2" : "mt-6 space-y-3"}`} data-testid="stage-nav">
       <nav aria-label="Quotation stages" onKeyDown={(e) => { if (e.key === "Escape" && open) { e.stopPropagation(); close(); } }}>
         <button ref={toggle} type="button" aria-expanded={open} aria-controls="stage-nav-list" onClick={() => setOpen((o) => !o)} data-testid="stage-nav-toggle"
           className={`flex min-h-11 w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-left text-sm font-semibold text-slate-900 ${compact ? "" : "min-[701px]:hidden"}`}>
@@ -45,7 +45,7 @@ export function StageNav({ stages, current, viewing, onSelect, previewable = [],
         </ol>
       </nav>
       {cur && (
-        <p className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700" data-testid="next-action">
+        <p className={`rounded-lg border border-slate-200 bg-white px-4 text-sm text-slate-700 ${compact ? "py-1.5" : "py-2"}`} data-testid="next-action">
           <span className="font-semibold text-slate-900">Stage {cur.id} · {cur.label}:</span> {cur.summary}{cur.next ? <> <span className="font-semibold text-indigo-700">Next: {cur.next}</span></> : null}
         </p>
       )}
