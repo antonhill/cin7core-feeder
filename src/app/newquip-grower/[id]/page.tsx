@@ -576,7 +576,7 @@ export default function QuoteEditorPage() {
       {sampleNote && stage === 1 && <p role="status" aria-live="polite" className="mt-2 text-sm text-slate-800" data-testid="sample-note">{sampleNote}</p>}
       {view.viewer.previewTools && editable && stage <= 2 && (
         <details className="mt-3 max-w-4xl rounded-lg border border-dashed border-slate-400 p-3 text-sm" data-testid="preview-tools">
-          <summary className="min-h-6 cursor-pointer font-semibold text-slate-800">Testing utility (Preview only)</summary>
+          <summary className="inline-flex min-h-11 cursor-pointer items-center font-semibold text-slate-800">Testing utility (Preview only)</summary>
           <p className="mt-2 text-slate-700">Replaces the inputs of this draft (the selected customer is kept) with the demonstration quotation. It is not saved, and it never submits, approves, signs off, creates a Project or writes to Cin7. It exists on Preview deployments only.</p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {!confirmDemo && <Button variant="secondary" className="min-h-11" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load whole demonstration quote</Button>}
@@ -776,7 +776,7 @@ export default function QuoteEditorPage() {
                 <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-4">
                   {(Object.keys(CAT_LABEL) as ReadinessCategory[]).map((c) => (
                     <details key={c} className="rounded-lg border border-slate-200 p-3 open:col-span-2 md:open:col-span-2">
-                      <summary className="flex min-h-6 cursor-pointer list-none items-center justify-between gap-2">
+                      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2">
                         <span className="text-xs font-medium text-slate-600">{CAT_LABEL[c]}</span>
                         <Status tone={rd.counts[c] > 0 ? CAT_TONE[c] : "neutral"}>{rd.counts[c]}</Status>
                       </summary>
