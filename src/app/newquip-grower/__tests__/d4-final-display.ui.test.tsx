@@ -24,7 +24,7 @@ describe("C: Search (product mapping picker)", () => {
 });
 
 const body = (over: Partial<CostPanelBodyProps> = {}): CostPanelBodyProps => ({
-  v: { frozen: false, estimate: null, skuOptions: { "A-1": { options: [normaliseOption({ supplierId: "s1", supplierName: "Acme", cost: 5, currency: "ZAR", lastSupplied: null, stockUnit: "Each", statedUnitFields: ["PackSize"] }, { fx: {}, nowIso: "2026-11-03T00:00:00Z", maxRateAgeHours: 72, unitBasis: null })] } }, unitBasis: null, incompleteAccepted: null, canCapture: false, note: "", fx: {}, fxAvailable: true } as never,
+  v: { frozen: false, estimate: null, skuOptions: { "A-1": { options: [normaliseOption({ supplierId: "s1", supplierName: "Acme", cost: 5, currency: "ZAR", lastSupplied: null, stockUnit: null, statedUnitFields: [] }, { fx: {}, nowIso: "2026-11-03T00:00:00Z", maxRateAgeHours: 72, unitBasis: null })] } }, unitBasis: null, incompleteAccepted: null, canCapture: false, note: "", fx: {}, fxAvailable: true } as never,
   loading: false, error: null, note: null, busy: false, manual: null, onCapture: vi.fn(), onRetry: vi.fn(), onClearManual: vi.fn(), onStartManual: vi.fn(), onManualChange: vi.fn(), onSaveManual: vi.fn(),
   onConfirmUnit: vi.fn(), onAcceptIncomplete: vi.fn(), ...over,
 });

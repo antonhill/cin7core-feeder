@@ -8,20 +8,31 @@ export interface UnitException { sku: string; supplier: string; kind: "STATED" |
 export interface UnitStatus {
   /** Options with an established unit basis (stated same unit, stated factor, Cin7's single stock UOM, or confirmed). */
   perStockUnit: number;
+  /** Options with no unit problem at all (including ones unusable for another reason, e.g. no rate): the panel says nothing about their unit. */
+  noUnitProblem: number;
   /** Genuine exceptions: Cin7 states a unit/pack/conversion we cannot interpret, the stock unit is unknown, or the conversion is not known. */
   exceptions: UnitException[];
   /** Options captured before unit information was tracked (statedUnitFields undefined) and blocked on the unit: unknown, needs a recapture. */
   legacySkus: string[];
+  /**
+   * SKUs a "confirmed per stock unit" declaration actually unblocks. supplier-price.ts evaluates, in order: a stated conversion factor, STATED unit fields (blocked),
+   * a purchase unit that differs from the stock unit (blocked), same unit, stock unit known with no stated fields, and only THEN the confirmed basis. So confirmation
+   * resolves exactly a record that states nothing and whose unit is unknown: no stock unit (statedUnitFields []) or a legacy snapshot (undefined). It never resolves
+   * stated unit fields or a bad/unknown conversion.
+   */
+  confirmableSkus: string[];
 }
 
 export function deriveUnitStatus(skuOptions: Record<string, SkuOptionsView>): UnitStatus {
-  const out: UnitStatus = { perStockUnit: 0, exceptions: [], legacySkus: [] };
+  const out: UnitStatus = { perStockUnit: 0, noUnitProblem: 0, exceptions: [], legacySkus: [], confirmableSkus: [] };
   for (const [sku, so] of Object.entries(skuOptions)) {
     for (const o of so.options) {
       const block = o.problems.find((p) => p.blocking && (p.code === "UOM_UNCONFIRMED" || p.code === "BAD_CONVERSION_FACTOR"));
-      if (!block) { if (o.unitBasisSource) out.perStockUnit++; continue; }
+      if (!block) { out.noUnitProblem++; if (o.unitBasisSource) out.perStockUnit++; continue; }
       const stated = o.raw.statedUnitFields;
       const supplier = o.supplierName ?? o.supplierId ?? "(unnamed supplier)";
+      const confirmable = block.code === "UOM_UNCONFIRMED" && (stated === undefined || stated.length === 0);
+      if (confirmable && !out.confirmableSkus.includes(sku)) out.confirmableSkus.push(sku);
       if (block.code === "UOM_UNCONFIRMED" && stated === undefined) { if (!out.legacySkus.includes(sku)) out.legacySkus.push(sku); continue; }
       if (stated && stated.length > 0) out.exceptions.push({ sku, supplier, kind: "STATED", fields: stated, message: block.message });
       else if (block.code === "UOM_UNCONFIRMED") out.exceptions.push({ sku, supplier, kind: "NO_STOCK_UNIT", fields: [], message: block.message });

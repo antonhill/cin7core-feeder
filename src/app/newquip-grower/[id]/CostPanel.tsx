@@ -107,22 +107,20 @@ function Declarations({ v, busy, onConfirmUnit, onAcceptIncomplete }: { v: Quote
     <div className="mt-3 grid gap-3 text-xs md:grid-cols-2">
       <div className="min-w-0 rounded border border-slate-200 p-2">
         <div className="font-medium">Unit of measure</div>
-        {v.unitBasis ? <div className="text-slate-700">Confirmed per stock unit by {v.unitBasis.confirmedBy} ({formatSast(v.unitBasis.confirmedAt)}): {v.unitBasis.reason}</div> : (
-          <>
-            {!us.exceptions.length && !us.legacySkus.length && (us.perStockUnit > 0 ? <div className="text-slate-600">{PER_STOCK_UNIT}</div> : <div className="text-slate-600">{v.frozen ? "No unit-of-measure confirmation was recorded on this frozen estimate." : "No supplier prices have been read yet. The unit of each price is checked when the costs are captured."}</div>)}
-            {us.exceptions.length > 0 && (
-              <div className="text-amber-700" data-testid="uom-exceptions">
-                <div>These supplier prices are unusable because their unit cannot be established:</div>
-                <ul className="list-disc pl-4">{us.exceptions.map((x, i) => <li key={i}>{exceptionText(x)}</li>)}</ul>
-              </div>
-            )}
-            {us.legacySkus.length > 0 && <div className="mt-1 text-amber-700" data-testid="uom-legacy">This cost snapshot was captured before unit information was tracked, so the unit of these prices cannot be established ({us.legacySkus.join(", ")}). Capture the latest Cin7 costs again to apply the current rule.</div>}
-            {(us.exceptions.length > 0 || us.legacySkus.length > 0) && us.perStockUnit > 0 && <details className="mt-1 text-slate-600"><summary className="flex min-h-11 cursor-pointer items-center">{us.perStockUnit} other supplier price{us.perStockUnit === 1 ? " is" : "s are"} per stock unit</summary><div>{PER_STOCK_UNIT}</div></details>}
-            {us.exceptions.length > 0 && onConfirmUnit && !v.frozen && (
-              <><div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end"><div className="min-w-0 max-w-2xl flex-1"><Input label="How do you know? (required)" value={unitReason} onChange={(e) => setUnitReason(e.target.value)} /></div><Button size="sm" variant="secondary" disabled={busy || unitReason.trim().length < 10} aria-describedby={unitWhy ? `${uid}-unit-why` : undefined} onClick={() => onConfirmUnit(unitReason)}>Confirm per stock unit</Button></div>
-              <DisabledReason id={`${uid}-unit-why`}>{unitWhy}</DisabledReason></>
-            )}
-          </>
+        {v.unitBasis && <div className="text-slate-700">Confirmed per stock unit by {v.unitBasis.confirmedBy} ({formatSast(v.unitBasis.confirmedAt)}): {v.unitBasis.reason}</div>}
+        {!v.unitBasis && !us.exceptions.length && !us.legacySkus.length && (us.perStockUnit > 0 ? <div className="text-slate-600">{PER_STOCK_UNIT}</div> : us.noUnitProblem === 0 ? <div className="text-slate-600">{v.frozen ? "No unit-of-measure confirmation was recorded on this frozen estimate." : "No supplier prices have been read yet. The unit of each price is checked when the costs are captured."}</div> : null)}
+        {us.exceptions.length > 0 && (
+          <div className="text-amber-700" data-testid="uom-exceptions">
+            <div>These supplier prices are unusable because their unit cannot be established:</div>
+            <ul className="list-disc pl-4">{us.exceptions.map((x, i) => <li key={i}>{exceptionText(x)}</li>)}</ul>
+          </div>
+        )}
+        {us.exceptions.some((x) => x.kind === "STATED" || x.kind === "OTHER") && <div className="mt-1 text-slate-700" data-testid="uom-not-confirmable">Confirming per stock unit does not unblock a price whose Cin7 record states a unit, pack or conversion. Correct that supplier record in Cin7 and capture the latest costs again, or add a manual estimate for the SKU, or record an incomplete-estimate exception.</div>}
+        {us.legacySkus.length > 0 && <div className="mt-1 text-amber-700" data-testid="uom-legacy">This cost snapshot was captured before unit information was tracked, so the unit of these prices cannot be established ({us.legacySkus.join(", ")}). Capture the latest Cin7 costs again to apply the current rule. Capturing again replaces the recorded costs; nothing is captured automatically.</div>}
+        {!v.unitBasis && (us.exceptions.length > 0 || us.legacySkus.length > 0) && us.perStockUnit > 0 && <details className="mt-1 text-slate-600"><summary className="flex min-h-11 cursor-pointer items-center">{us.perStockUnit} other supplier price{us.perStockUnit === 1 ? " is" : "s are"} per stock unit</summary><div>{PER_STOCK_UNIT}</div></details>}
+        {!v.unitBasis && us.confirmableSkus.length > 0 && onConfirmUnit && !v.frozen && (
+          <><div className="mt-1 text-slate-700" data-testid="uom-confirm-scope">Confirming per stock unit unblocks: {us.confirmableSkus.join(", ")}.</div><div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end"><div className="min-w-0 max-w-2xl flex-1"><Input label="How do you know? (required)" value={unitReason} onChange={(e) => setUnitReason(e.target.value)} /></div><Button size="sm" variant="secondary" disabled={busy || unitReason.trim().length < 10} aria-describedby={unitWhy ? `${uid}-unit-why` : undefined} onClick={() => onConfirmUnit(unitReason)}>Confirm per stock unit</Button></div>
+          <DisabledReason id={`${uid}-unit-why`}>{unitWhy}</DisabledReason></>
         )}
       </div>
       <div className="min-w-0 rounded border border-slate-200 p-2">
