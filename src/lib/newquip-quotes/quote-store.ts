@@ -10,7 +10,8 @@ import { buildAcceptedBaseline, baselineMatchesHash, hashOf, type AcceptedBaseli
 import { quoteToProjectBaseline } from "@/newquip/quote/to-project";
 import type { ScheduleStageTemplate } from "@/newquip/quote/billing-schedule";
 import type { ScheduleSource } from "@/newquip/quote/project-template";
-import { authoriseTransition, canEditDraft, checkApproval, checkHandoff, type QuoteState } from "@/newquip/quote/workflow";
+import { authoriseTransition, canEditDraft, checkApproval, checkHandoff, checkSignOff, type QuoteState } from "@/newquip/quote/workflow";
+import { estimatorCostingComplete, type CostingStatus } from "@/newquip/quote/readiness-concepts";
 import type { QuoteRole } from "@/newquip/quote/roles";
 import { createProjectFromBaseline } from "@/lib/projects/project-store";
 import { libraryOf, listActiveMappings } from "@/lib/projects/package-mapping-store";
@@ -57,6 +58,17 @@ export interface QuoteRecord {
 }
 
 const totalCents = (ev: QuoteEvaluation): number | null => (ev.budget && !ev.budget.incomplete ? Math.round(ev.budget.totals.subtotalExTax * 100) : null);
+/** The CURRENT INDICATIVE total (priced lines + Rep-entered charges), also while Estimator-owned items are unresolved. What the Rep's customer confirms at handoff. */
+const indicativeTotalCents = (ev: QuoteEvaluation): number | null => (ev.budget ? Math.round(ev.budget.totals.subtotalExTax * 100) : null);
+
+/**
+ * ESTIMATOR_COSTING_COMPLETE, evaluated server-side with cost VISIBLE even though the workflow evaluation withholds it. Nothing but the boolean and the reason
+ * texts (counts and line labels, never a cost or margin value) leaves this function, so the cost-withheld caller never receives cost.
+ */
+export async function costingOf(db: Db, orgId: string, draft: QuoteDraft, ctx: EvaluationContext): Promise<CostingStatus> {
+  const library = await listActiveMappings(db, orgId);
+  return estimatorCostingComplete(draft, evaluateDraft(draft, { ...ctx, withholdCost: false }), library ? libraryOf(library) : undefined);
+}
 
 // ── reads ───────────────────────────────────────────────────────────────────
 
@@ -150,7 +162,7 @@ export async function sendToEstimator(
   const auth = authoriseTransition(roles, q.state, "SEND_TO_ESTIMATOR");
   if (!auth.ok) fail(auth.error);
   const ev = evaluateDraft(q.draft, ctx);
-  const chk = checkHandoff({ readiness: ev.readiness, totalExVatCents: totalCents(ev), confirmedAmountCents: input.confirmedAmountCents, confirmedBy: input.confirmedBy });
+  const chk = checkHandoff({ readiness: ev.readiness, totalExVatCents: indicativeTotalCents(ev), confirmedAmountCents: input.confirmedAmountCents, confirmedBy: input.confirmedBy });
   if (!chk.ok) fail(chk.error);
   const r = await db.from("newquip_quotes").update({
     state: auth.to, customer_confirmed_cents: input.confirmedAmountCents, customer_confirmed_by: input.confirmedBy.trim(),
@@ -197,7 +209,8 @@ export async function estimatorSignOff(db: Db, orgId: string, roles: ReadonlySet
   const auth = authoriseTransition(roles, q.state, "ESTIMATOR_SIGN_OFF");
   if (!auth.ok) fail(auth.error);
   const ev = evaluateDraft(q.draft, ctx);
-  if (ev.readiness.state !== "READY") fail(`The quote is ${ev.readiness.state}; resolve ${ev.readiness.reasons[0] ?? "the outstanding items"} before signing off.`);
+  const chk = checkSignOff({ readiness: ev.readiness, totalExVatCents: totalCents(ev), customerConfirmedCents: q.customer_confirmed_cents, costing: await costingOf(db, orgId, q.draft, ctx) });
+  if (!chk.ok) fail(chk.error);
   // Only items actually in the quotation are checked: a stale mapping on a deselected item is not part of what is being signed off (and the UI offers no way to clear it).
   const inQuote = new Set(ev.calc.lines.filter((l) => l.basis !== "not_selected").map((l) => l.itemKey as string));
   // Mapping integrity is re-checked NOW, not only when the draft was saved: the catalogue may have changed since (a product deactivated or removed). Nothing is stamped on failure.
@@ -222,10 +235,10 @@ export async function managerApprove(db: Db, orgId: string, roles: ReadonlySet<Q
   const auth = authoriseTransition(roles, q.state, "MANAGER_APPROVE");
   if (!auth.ok) fail(auth.error);
   const ev = evaluateDraft(q.draft, ctx);
-  const chk = checkApproval({ readiness: ev.readiness, totalExVatCents: totalCents(ev), customerConfirmedCents: q.customer_confirmed_cents, signoffHash: q.estimator_signoff_hash, currentDraftHash: q.draft_hash });
+  const chk = checkApproval({ readiness: ev.readiness, totalExVatCents: totalCents(ev), customerConfirmedCents: q.customer_confirmed_cents, signoffHash: q.estimator_signoff_hash, currentDraftHash: q.draft_hash, costing: await costingOf(db, orgId, q.draft, ctx) });
   if (!chk.ok) fail(chk.error);
   const now = new Date().toISOString();
-  // Reusable mappings active RIGHT NOW are applied to unmapped packages and sealed with their versions. Unresolved items never block approval.
+  // Reusable mappings active RIGHT NOW are applied to unmapped packages and sealed with their versions.
   const library = await listActiveMappings(db, orgId);
   const { baseline, hash } = buildAcceptedBaseline({
     mappingLibrary: library ? libraryOf(library) : undefined,

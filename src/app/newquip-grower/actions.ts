@@ -10,6 +10,7 @@ import { evaluateDraft, type QuoteEvaluation } from "@/newquip/grower/evaluate";
 import { blankExclusions, previewDraftOf } from "@/newquip/grower/preview-draft";
 import type { QuoteDraft } from "@/newquip/grower/draft";
 import { stampPriceResolutions } from "@/newquip/quote/price-resolution";
+import { keepEstimatorOwnedFields } from "@/newquip/quote/draft-ownership";
 import { changedMappings, mappingsChanged, normaliseMappings } from "@/newquip/grower/mapping-integrity";
 import { verifyMappings } from "@/lib/newquip-quotes/mapping-check";
 import { searchCatalogue, type CatalogueResult } from "@/lib/projects/catalogue-search";
@@ -20,12 +21,12 @@ import { demoAuditDetail, resolveActing, type DemoInfo } from "@/lib/demo-mode/c
 import { evaluationContext } from "@/lib/newquip-quotes/context";
 import { confirmationLabel, resolveConfirmationContact, type ConfirmationInput } from "@/lib/newquip-quotes/confirmation-contact";
 import { appendSnapshot, customerFeaturesAvailable, latestSnapshot } from "@/lib/newquip-quotes/customer-store";
-import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
+import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactEvaluationFinancials, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
 import { approvalsAvailable, decideDocument, legacyCtx, resyncQuoteApprovals, stagedAvailable, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
 import type { ScheduleChoice } from "@/newquip/quote/billing-schedule";
 import { resolveProjectSchedule } from "@/lib/newquip-quotes/schedule-resolve";
 import {
-  createProjectFromAcceptedQuote, createQuote, estimatorSignOff, listQuotes, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator,
+  createProjectFromAcceptedQuote, costingOf, createQuote, estimatorSignOff, listQuotes, loadQuote, managerApprove, returnToRep, saveDraft, sendToEstimator,
   type QuoteRecord,
 } from "@/lib/newquip-quotes/quote-store";
 
@@ -93,14 +94,21 @@ export interface QuoteView {
   quote: QuoteRecord;
   evaluation: QuoteEvaluation;
   viewer: { roles: QuoteRole[]; canViewCommercials: boolean };
+  /** ESTIMATOR_COSTING_COMPLETE. Present ONLY for a caller who may see cost (Estimator / Manager / observer with cost); never in a Rep payload. `reason` is the first open reason (counts / labels / SKUs, never a value). */
+  costing?: { complete: boolean; reason: string | null };
 }
 
-function view(quote: QuoteRecord, a: Actor): QuoteView {
+async function view(db: ReturnType<typeof createServiceRoleClient>, quote: QuoteRecord, a: Actor): Promise<QuoteView> {
   const canViewCommercials = a.canSeeCost;
+  let costing: QuoteView["costing"];
+  if (canViewCommercials) {
+    try { const c = await costingOf(db, a.orgId, quote.draft, evaluationContext(true)); costing = { complete: c.complete, reason: c.reasons[0] ?? null }; } catch { costing = undefined; }
+  }
   return {
     quote: redactInternalFinancials(quote, canViewCommercials),
-    evaluation: evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)),
+    evaluation: redactEvaluationFinancials(evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)), canViewCommercials),
     viewer: { roles: [...a.roles], canViewCommercials },
+    ...(costing ? { costing } : {}),
   };
 }
 
@@ -138,7 +146,9 @@ async function sanitiseSubmittedDraft(a: Actor, db: ReturnType<typeof createServ
   await verifyMappings(db, a.orgId, changedMappings(prior?.estimator.confirmedMappings, d.estimator.confirmedMappings), d.config.feederVariant);
   const nowIso = new Date().toISOString();
   d = { ...d, estimator: { ...d.estimator, priceResolutions: stampPriceResolutions(d.estimator.priceResolutions, prior?.estimator.priceResolutions, a.roles, a.email, nowIso) as QuoteDraft["estimator"]["priceResolutions"] } };
-  return keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(d, prior?.estimator.costOverrides, a.canSeeCost, a.email, nowIso), prior?.estimator.physicalCosts), prior?.estimator.costBasis);
+  const stamped = keepServerOwnedCostBasis(keepServerOwnedCosts(stampCostOverrides(d, prior?.estimator.costOverrides, a.canSeeCost, a.email, nowIso), prior?.estimator.physicalCosts), prior?.estimator.costBasis);
+  // Last line of defence (field ownership): a caller without Estimator / Manager authority can never change an Estimator-owned field, whatever the checks above did.
+  return keepEstimatorOwnedFields(stamped, prior, a.roles);
 }
 
 export async function createGrowerQuoteAction(draft?: QuoteDraft): Promise<GrowerActionResult<{ id: string; quoteRef: string }>> {
@@ -157,9 +167,10 @@ export async function createGrowerQuoteAction(draft?: QuoteDraft): Promise<Growe
 export async function getGrowerQuoteAction(quoteId: string): Promise<GrowerActionResult<QuoteView>> {
   try {
     const a = await authorise();
-    const q = await loadQuote(createServiceRoleClient(), a.orgId, quoteId);
+    const db = createServiceRoleClient();
+    const q = await loadQuote(db, a.orgId, quoteId);
     if (!q) return { ok: false, error: "Quote not found." };
-    return { ok: true, data: view(q, a) };
+    return { ok: true, data: await view(db, q, a) };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
@@ -170,7 +181,7 @@ export async function previewGrowerDraftAction(draft: QuoteDraft): Promise<Growe
   try {
     const a = await authorise();
     // Read-only live preview: the same engine as Save, with a ticked-but-unexplained exclusion applied so the click shows its effect. Nothing is stored.
-    return { ok: true, data: evaluateDraft(previewDraftOf(draft), evaluationContext(!a.canSeeCost)) };
+    return { ok: true, data: redactEvaluationFinancials(evaluateDraft(previewDraftOf(draft), evaluationContext(!a.canSeeCost)), a.canSeeCost) };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
@@ -199,7 +210,7 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
     // Changed content invalidates the estimator's sign-off (saveDraft clears it) and any open approval of the older content: the quote goes back to estimator review.
     if (saved.draftHash !== prior?.draft_hash && (await stagedAvailable(db))) await resyncQuoteApprovals(db, ctxOf(a), quoteId, { quiet: true }).catch(() => undefined);
     const q = await loadQuote(db, a.orgId, quoteId);
-    return q ? { ok: true, data: view(q, a) } : { ok: false, error: "Quote not found." };
+    return q ? { ok: true, data: await view(db, q, a) } : { ok: false, error: "Quote not found." };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
@@ -217,7 +228,7 @@ async function step(
     const extra = await run(a, db);
     await audit(db, a, { action, summary: `${summary} (local only; no Cin7 write)`, detail: { quoteId, ...(extra ?? {}) } });
     const q = await loadQuote(db, a.orgId, quoteId);
-    return q ? { ok: true, data: view(q, a) } : { ok: false, error: "Quote not found." };
+    return q ? { ok: true, data: await view(db, q, a) } : { ok: false, error: "Quote not found." };
   } catch (e) {
     return { ok: false, error: errMsg(e) };
   }
