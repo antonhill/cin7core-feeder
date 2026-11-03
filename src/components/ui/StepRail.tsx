@@ -70,7 +70,7 @@ export function StepRail({ id, steps, currentId, onSelect, ariaLabel, actions, g
             const c = counts![gi];
             const tone = g.tone ?? "neutral";
             return (
-              <div key={g.id} role="group" aria-labelledby={`${id}-${g.id}-label`} data-testid={`step-group-${g.id}`} className="flex min-w-0 flex-col gap-2 min-[901px]:row-span-2 min-[901px]:grid min-[901px]:grid-rows-subgrid">
+              <div key={g.id} role="group" aria-labelledby={`${id}-${g.id}-label`} data-testid={`step-group-${g.id}`} className="flex min-w-0 flex-col gap-3 rounded-xl border border-slate-300 bg-slate-50/60 p-3 min-[901px]:row-span-2 min-[901px]:grid min-[901px]:grid-rows-subgrid min-[901px]:gap-y-2">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span id={`${id}-${g.id}-label`} className="text-xs font-bold uppercase tracking-wide text-slate-800">{g.label}</span>
                   {g.owner && <span className="rounded-md border border-slate-300 bg-white px-1.5 py-0.5 text-xs font-semibold text-slate-700" data-testid={`step-group-owner-${g.id}`}>{g.owner}</span>}
