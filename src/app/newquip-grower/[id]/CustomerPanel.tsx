@@ -56,6 +56,8 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
     setLabel(what); setErr(null); setNotice(null);
     try { const r = await fn(); if (r.ok && r.data) { setV(r.data); setDiff(null); } else setErr(r.error ?? "Failed."); } catch { setErr("Something went wrong. Please try again."); } finally { setLabel(null); setPicking(null); }
   };
+  // The search panel always opens and closes EMPTY: no stale query, results or "no customers found" message.
+  const resetSearch = () => { setQ(""); setHits([]); setSearched(null); };
   const search = async () => {
     setErr(null); setLabel("Searching Cin7 customers…"); setHits([]); setSearched(null);
     try { const r = await searchQuoteCustomersForQuoteAction(q); if (r.ok) { setHits(r.data ?? []); setSearched(q.trim()); } else setErr(r.error ?? "Search failed."); }
@@ -95,7 +97,7 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
       {!canChange && <Alert tone="info">{v.lockedReason ?? "The customer cannot be changed here."}</Alert>}
       {canChange && s && !changing && !pending && (
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="secondary" className="min-h-11" disabled={busy} onClick={() => setChanging(true)}>Change customer</Button>
+          <Button type="button" variant="secondary" className="min-h-11" disabled={busy} onClick={() => { resetSearch(); setChanging(true); }}>Change customer</Button>
           <Button type="button" variant="secondary" className="min-h-11" disabled={busy} onClick={() => setPending({ kind: "clear" })}>Clear selection</Button>
         </div>
       )}
@@ -111,7 +113,7 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
           </ul>
           <div className="mt-2 flex gap-2">
             <Button type="button" className="min-h-11" disabled={busy} onClick={confirmPending}>{pending.kind === "replace" ? "Replace customer" : "Clear customer"}</Button>
-            <Button type="button" className="min-h-11" variant="secondary" disabled={busy} onClick={() => { setPending(null); setChanging(false); setHits([]); setQ(""); setSearched(null); }}>Cancel</Button>
+            <Button type="button" className="min-h-11" variant="secondary" disabled={busy} onClick={() => { setPending(null); setChanging(false); resetSearch(); }}>Cancel</Button>
           </div>
         </Alert>
       )}
@@ -120,7 +122,7 @@ export function CustomerPanel({ quoteId, editable, onPicked, onFacts }: { quoteI
           <label className="flex flex-col gap-1 text-sm"><span className="font-medium text-slate-700">Search by name, contact or email</span>
             <input className={inputCls} value={q} onChange={(e) => { setQ(e.target.value); setSearched(null); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (q.trim().length >= 2 && !busy) void search(); } }} /></label>
           <Button type="button" className="min-h-11" variant="secondary" onClick={() => void search()} disabled={busy || q.trim().length < 2} loading={label?.startsWith("Searching") ?? false}>{label?.startsWith("Searching") ? "Searching…" : "Search Cin7 customers"}</Button>
-          {changing && <Button type="button" className="min-h-11" variant="secondary" disabled={busy} onClick={() => { setChanging(false); setHits([]); }}>Keep current customer</Button>}
+          {changing && <Button type="button" className="min-h-11" variant="secondary" disabled={busy} onClick={() => { setChanging(false); resetSearch(); }}>Keep current customer</Button>}
         </div>
       )}
       {showSearch && !pending && q.trim().length < 2 && <p className="text-sm text-slate-700" data-testid="search-min">Type at least 2 characters to search.</p>}
