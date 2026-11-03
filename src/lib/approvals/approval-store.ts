@@ -12,7 +12,8 @@ import { sendEmail } from "@/lib/email/resend";
 import { applyEmailPolicy, approvalBaseUrl, SUPPRESSED_MARK, type EmailEnv } from "./email-policy";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
 import { managerApprove, returnToRep, returnToEstimator, estimatorSignOff, loadQuote } from "@/lib/newquip-quotes/quote-store";
-import { rolesFor } from "@/newquip/quote/roles";
+import { rolesFor, type QuoteRole } from "@/newquip/quote/roles";
+import type { ReturnBy } from "@/lib/newquip-quotes/return-store";
 import { approveClaim, cancelDraftClaim, returnClaimToDraft } from "@/lib/projects/project-store";
 import { approveVariation, rejectVariation } from "@/lib/projects/variation-store";
 import { listVariationStages } from "@/lib/projects/variation-billing-store";
@@ -183,6 +184,8 @@ async function auditDemo(db: Db, ctx: ApprovalCtx, action: string, summary: stri
 }
 
 const newId = () => crypto.randomUUID();
+/** Who is returning a quotation, in the capacity of the stage they decide at (the real owner is the log's actor under Demo Mode). */
+const returnBy = (ctx: ApprovalCtx, role: QuoteRole): ReturnBy => ({ email: ctx.email, role, ownerEmail: ctx.demo?.ownerEmail ?? null });
 
 /** Submits the CURRENT revision of a document. Records the exact digest and amount; identical content already pending is a no-op; changed content supersedes the pending submission. */
 export async function submitForApproval(db: Db, ctx: ApprovalCtx, docType: ApprovalDocType, docId: string, opts: { assignTo?: string | null; now?: Date; actor?: { email: string; name: string }; stage?: ApprovalStage; quiet?: boolean } = {}): Promise<ApprovalRequestRow> {
@@ -258,8 +261,8 @@ async function applyDocumentAction(db: Db, ctx: ApprovalCtx, req: ApprovalReques
   const mgrRoles = rolesFor("admin");
   if (req.doc_type === "QUOTE") {
     if (action === "APPROVE") await managerApprove(db, ctx.orgId, mgrRoles, ctx.email, req.doc_id, evaluationContext(true), evaluationContext(false));
-    else if (action === "RETURN") await returnToRep(db, ctx.orgId, mgrRoles, req.doc_id, reason);
-    else if (action === "REJECT") await returnToRep(db, ctx.orgId, mgrRoles, req.doc_id, `Rejected: ${reason}`); // a quote has no cancelled state: it goes back to the rep, the rejection is recorded
+    else if (action === "RETURN") await returnToRep(db, ctx.orgId, mgrRoles, req.doc_id, reason, returnBy(ctx, "manager"));
+    else if (action === "REJECT") await returnToRep(db, ctx.orgId, mgrRoles, req.doc_id, `Rejected: ${reason}`, returnBy(ctx, "manager")); // a quote has no cancelled state: it goes back to the rep, the rejection is recorded
     return;
   }
   const projectId = req.project_id ?? fail("The submission has no project.");
@@ -563,13 +566,13 @@ async function applyStagedDocumentAction(db: Db, ctx: ApprovalCtx, req: Approval
   const all = rolesFor("admin"); // the engine has already authorised this actor for this stage; the store re-checks state and content
   if ((req.stage ?? "MANAGER") === "ESTIMATOR") {
     if (action === "APPROVE") await estimatorSignOff(db, ctx.orgId, all, ctx.email, req.doc_id, evaluationContext(true));
-    else if (action === "RETURN") await returnToRep(db, ctx.orgId, all, req.doc_id, reason);
-    else if (action === "REJECT") await returnToRep(db, ctx.orgId, all, req.doc_id, `Rejected: ${reason}`);
+    else if (action === "RETURN") await returnToRep(db, ctx.orgId, all, req.doc_id, reason, returnBy(ctx, "estimator"));
+    else if (action === "REJECT") await returnToRep(db, ctx.orgId, all, req.doc_id, `Rejected: ${reason}`, returnBy(ctx, "estimator"));
     return;
   }
   if (action === "APPROVE") await managerApprove(db, ctx.orgId, all, ctx.email, req.doc_id, evaluationContext(true), evaluationContext(false));
-  else if (action === "RETURN") { if (destination === "ESTIMATOR") await returnToEstimator(db, ctx.orgId, all, req.doc_id, reason); else await returnToRep(db, ctx.orgId, all, req.doc_id, reason); }
-  else if (action === "REJECT") await returnToRep(db, ctx.orgId, all, req.doc_id, `Rejected: ${reason}`);
+  else if (action === "RETURN") { if (destination === "ESTIMATOR") await returnToEstimator(db, ctx.orgId, all, req.doc_id, reason, returnBy(ctx, "manager")); else await returnToRep(db, ctx.orgId, all, req.doc_id, reason, returnBy(ctx, "manager")); }
+  else if (action === "REJECT") await returnToRep(db, ctx.orgId, all, req.doc_id, `Rejected: ${reason}`, returnBy(ctx, "manager"));
 }
 
 async function decideStaged(db: Db, ctx: ApprovalCtx, req: ApprovalRequestRow, action: ApprovalAction, input: { reason?: string; override?: boolean; destination?: "ESTIMATOR" | "PREPARER" | null; expectedVersion: number; expectedDigest: string }): Promise<ApprovalRequestRow> {

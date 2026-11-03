@@ -3,6 +3,7 @@
 // NewQuip: Cin7 customer lookup, quotation contact selection and the immutable customer snapshot. Cin7 stays the customer master: the only Cin7 call is a GET of /customer
 // (never a create/update/delete), and nothing is written back. Re-authorised inside EVERY action: the NewQuip org check, then the Rep role (the effective Demo user when
 // Demo Mode is on). A quotation of another organisation is indistinguishable from "not found". Only async functions and erased types are exported.
+import { returnByOf } from "@/lib/newquip-quotes/return-store";
 import { authoriseActor, auditActor, errText, ownerEmailOf, type Actor, type Db } from "./actor";
 import { createServiceRoleClient } from "@/supabase/server";
 import { canEditDraft } from "@/newquip/quote/workflow";
@@ -92,7 +93,7 @@ export async function selectQuoteCustomerAction(quoteId: string, customerName: s
     const to = snap.name.state === "present" ? snap.name.value : customerName;
     const who = { email: a.email, ownerEmail: ownerEmailOf(a) };
     const stored = await appendSnapshot(db, a.orgId, quoteId, snap, who, from ? `Customer changed from ${from} to ${to}` : "Customer selected from Cin7");
-    const effect = await applyCustomerChange(db, a.orgId, quoteId, to, cur != null);
+    const effect = await applyCustomerChange(db, a.orgId, quoteId, to, cur != null, returnByOf(a, "rep"));
     await auditActor(db, a, cur
       ? { action: "newquip.quote_customer_changed", summary: "Replaced the Cin7 customer on a NewQuip quotation (read-only; no Cin7 write)", detail: { quoteId, fromCin7CustomerId: cur.cin7_customer_id, toCin7CustomerId: stored.cin7_customer_id, seq: stored.seq, ...effect } }
       : { action: "newquip.quote_customer_selected", summary: "Selected the Cin7 customer for a NewQuip quotation (read-only; no Cin7 write)", detail: { quoteId, cin7CustomerId: stored.cin7_customer_id, seq: stored.seq, ...effect } });
@@ -111,7 +112,7 @@ export async function clearQuoteCustomerAction(quoteId: string, confirm: boolean
     if (!confirm) throw new Error("Confirm that you want to clear the customer on this quotation.");
     const from = cur.snapshot.name.state === "present" ? cur.snapshot.name.value : cur.cin7_customer_id;
     const marker = await appendClearMarker(db, a.orgId, quoteId, { email: a.email, ownerEmail: ownerEmailOf(a) }, `Customer cleared (was ${from})`);
-    const effect = await applyCustomerChange(db, a.orgId, quoteId, "", true);
+    const effect = await applyCustomerChange(db, a.orgId, quoteId, "", true, returnByOf(a, "rep"));
     await auditActor(db, a, { action: "newquip.quote_customer_cleared", summary: "Cleared the customer on a NewQuip quotation (local only; Cin7 unchanged)", detail: { quoteId, fromCin7CustomerId: cur.cin7_customer_id, seq: marker.seq, ...effect } });
     return { ok: true, data: await viewOf(db, a, quoteId) };
   } catch (e) { return { ok: false, error: errText(e) }; }

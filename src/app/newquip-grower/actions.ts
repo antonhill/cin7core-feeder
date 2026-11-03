@@ -20,6 +20,8 @@ import { canSeeCosts, resolveRoles } from "@/lib/approvals/role-store";
 import { demoAuditDetail, resolveActing, type DemoInfo } from "@/lib/demo-mode/context";
 import { evaluationContext } from "@/lib/newquip-quotes/context";
 import { confirmationLabel, resolveConfirmationContact, type ConfirmationInput } from "@/lib/newquip-quotes/confirmation-contact";
+import { returnByOf, returnInfoOf } from "@/lib/newquip-quotes/return-store";
+import { returnInfoForViewer, type ReturnInfo } from "@/newquip/quote/return-info";
 import { appendSnapshot, customerFeaturesAvailable, latestSnapshot } from "@/lib/newquip-quotes/customer-store";
 import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactEvaluationFinancials, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
 import { approvalsAvailable, decideDocument, legacyCtx, resyncQuoteApprovals, stagedAvailable, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
@@ -96,6 +98,11 @@ export interface QuoteView {
   viewer: { roles: QuoteRole[]; canViewCommercials: boolean };
   /** ESTIMATOR_COSTING_COMPLETE. Present ONLY for a caller who may see cost (Estimator / Manager / observer with cost); never in a Rep payload. `reason` is the first open reason (counts / labels / SKUs, never a value). */
   costing?: { complete: boolean; reason: string | null };
+  /**
+   * WHY THE QUOTATION IS BACK (D5). Non-null only while the quotation is in the place a return/withdrawal sent it to (Rep draft revision >= 2, or Estimator review after a
+   * Manager return): { kind, reason, byEmail, byRole, at, destination, previousCents?, newCents?, source }. Totals are ex VAT; no cost data. A viewer WITHOUT commercial visibility (a Rep) gets a neutral line (reason "With the Estimator for review.", no actor) for destination ESTIMATOR: Manager->Estimator reasons are internal. Always present (null = nothing to show).
+   */
+  returnInfo: ReturnInfo | null;
 }
 
 async function view(db: ReturnType<typeof createServiceRoleClient>, quote: QuoteRecord, a: Actor): Promise<QuoteView> {
@@ -109,6 +116,7 @@ async function view(db: ReturnType<typeof createServiceRoleClient>, quote: Quote
     evaluation: redactEvaluationFinancials(evaluateDraft(quote.draft, evaluationContext(!canViewCommercials)), canViewCommercials),
     viewer: { roles: [...a.roles], canViewCommercials },
     ...(costing ? { costing } : {}),
+    returnInfo: returnInfoForViewer(await returnInfoOf(db, quote.org_id, quote), canViewCommercials),
   };
 }
 
@@ -271,11 +279,11 @@ export async function returnGrowerQuoteToRepAction(quoteId: string, reason: stri
     if (await approvalsAvailable(db)) {
       // A manager returning a submitted quote is a recorded RETURN decision (reason required); an estimator pulling it back withdraws the submission.
       if (a.roles.has("manager")) { await decideDocument(db, ctxOf(a, true), "QUOTE", quoteId, "RETURN", { reason }); return; }
-      await returnToRep(db, a.orgId, a.roles, quoteId, reason);
+      await returnToRep(db, a.orgId, a.roles, quoteId, reason, returnByOf(a));
       await withdrawPendingFor(db, ctxOf(a, false), "QUOTE", quoteId, reason).catch(() => undefined);
       return;
     }
-    await returnToRep(db, a.orgId, a.roles, quoteId, reason);
+    await returnToRep(db, a.orgId, a.roles, quoteId, reason, returnByOf(a));
   });
 }
 
