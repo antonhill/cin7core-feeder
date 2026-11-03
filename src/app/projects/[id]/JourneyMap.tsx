@@ -16,10 +16,11 @@ function StationRow({ s, onOpenTab }: { s: JourneyStation; onOpenTab: (tab: Over
     <li className="space-y-1.5 py-3" data-testid={`journey-${s.id}`} data-status={s.unknown ? "unknown" : s.status}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="text-sm font-semibold text-slate-900">{s.label}</span>
-        <Status tone={s.unknown ? "neutral" : s.soft ? "warning" : TONE[s.status]}>{s.unknown ? JOURNEY_UNKNOWN_LABEL : s.statusLabel ?? JOURNEY_STATUS_LABEL[s.status]}</Status>
+        <Status tone={s.unknown ? "neutral" : s.soft ? "warning" : TONE[s.status]}>{s.unknown ? s.statusLabel ?? JOURNEY_UNKNOWN_LABEL : s.statusLabel ?? JOURNEY_STATUS_LABEL[s.status]}</Status>
         {s.informational && <span className="text-xs italic text-slate-600">(informational)</span>}
       </div>
       <p className="text-xs leading-snug text-slate-700">{s.detail}</p>
+      {s.lines?.map((l) => <p key={l} className="text-xs leading-snug text-slate-700">{l}</p>)}
       {s.needs.map((n) => <p key={n} className="text-xs font-medium leading-snug text-slate-800">{n}</p>)}
       {s.link && (
         <button type="button" aria-label={`${s.link.label}: ${s.label}`} className="inline-flex min-h-11 min-w-11 items-center rounded-md px-1 text-xs font-medium text-indigo-700 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-700" onClick={() => onOpenTab(s.link!.tab)}>

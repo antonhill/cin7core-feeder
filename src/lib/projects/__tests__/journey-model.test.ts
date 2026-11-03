@@ -24,7 +24,7 @@ describe("Project Journey - structure", () => {
     const j = journeyOf(demoInput().scopes);
     expect(j.setup.map((s) => s.id)).toEqual(["setup-details", "setup-schedule", "setup-opening"]);
     expect(j.lanes.map((l) => l.id)).toEqual(["commercial", "physical", "variations"]);
-    expect(j.lanes[0].stations.map((s) => s.label)).toEqual(["Cin7 Sale", "Stage progress", "Progress claims", "Post to Cin7", "Invoice status"]);
+    expect(j.lanes[0].stations.map((s) => s.label)).toEqual(["Cin7 Sale", "Stage progress", "Commercial billing", "Post to Cin7", "Invoice authorisation"]);
     expect(j.lanes[1].stations.map((s) => s.label)).toEqual(["Deliveries", "Fulfilment", "Procurement", "Milestone confirmations"]);
     expect(j.footnote).toBe(JOURNEY_FOOTNOTE);
     const all = JSON.stringify(j).toLowerCase();
@@ -33,7 +33,7 @@ describe("Project Journey - structure", () => {
   it("never names stock fulfilment in an invoicing station or invoicing in a stock station (no dependency between them)", () => {
     const j = journeyOf([base({ claims: [claim("c1", 1, "APPROVED", R(500))], postings: [] })]);
     const text = (ids: string[]) => ids.map((i) => JSON.stringify(st(j, i))).join(" ").toLowerCase();
-    expect(text(["commercial-posting", "commercial-invoices", "commercial-claims"])).not.toMatch(/stock|fulfil|ship|deliver/);
+    expect(text(["commercial-posting", "commercial-authorisation", "commercial-billing"])).not.toMatch(/stock|fulfil|ship|deliver/);
     expect(text(["physical-fulfilment", "physical-procurement", "physical-deliveries"])).not.toMatch(/invoice|claim|billing|post/);
   });
 });
@@ -85,21 +85,23 @@ describe("Project Journey - Commercial lane", () => {
     const below = base({ events: [progress("s1", 5000, 5000)], claims: [claim("c1", 1, "APPROVED", R(800))] });
     expect(st(journeyOf([below]), "commercial-stages")).toMatchObject({ status: "needs_attention" });
   });
-  it("Progress claims: none, drafts/submitted in progress, uncertain = Blocked with its Needs line, all reconciled with nothing left = completed", () => {
-    expect(st(journeyOf([base()]), "commercial-claims").status).toBe("not_started");
-    expect(st(journeyOf([base()]), "commercial-claims").detail).toMatch(/Nothing is claimable/);
-    const open = st(journeyOf([base({ claims: [claim("c1", 1, "DRAFT", R(100)), claim("c2", 2, "READY_FOR_APPROVAL", R(100))] })]), "commercial-claims");
+  it("Commercial billing: none, drafts/submitted in progress, uncertain = Blocked with its Needs line, reconciled postings with every stage billed = completed", () => {
+    expect(st(journeyOf([base()]), "commercial-billing").status).toBe("not_started");
+    expect(st(journeyOf([base()]), "commercial-billing").detail).toMatch(/Nothing is claimable/);
+    const open = st(journeyOf([base({ claims: [claim("c1", 1, "DRAFT", R(100)), claim("c2", 2, "READY_FOR_APPROVAL", R(100))] })]), "commercial-billing");
     expect(open.status).toBe("in_progress");
-    expect(open.detail).toBe("1 in draft, 1 awaiting approval.");
-    const uncertain = st(journeyOf([base({ claims: [claim("c1", 1, "FAILED_UNCERTAIN", R(100))] })]), "commercial-claims");
+    expect(open.detail).toContain("2 claims are still being prepared or awaiting approval");
+    const uncertain = st(journeyOf([base({ claims: [claim("c1", 1, "FAILED_UNCERTAIN", R(100))] })]), "commercial-billing");
     expect(uncertain.status).toBe("blocked");
     expect(uncertain.needs[0]).toMatch(/uncertain claim resolved/);
-    const done = base({ events: [progress("s1", 10000, 10000)], claims: [claim("c1", 1, "RECONCILED", R(1000))], postings: [posting("c1", "RECONCILED", "INV-1", "AUTHORISED", true)] });
-    expect(st(journeyOf([done]), "commercial-claims").status).toBe("completed");
-    const some = base({ events: [progress("s1", 10000, 10000)], claims: [claim("c1", 1, "RECONCILED", R(400))], postings: [posting("c1", "RECONCILED", "INV-1", "AUTHORISED", true)] });
-    expect(st(journeyOf([some]), "commercial-claims").status).toBe("in_progress");
+    const done = base({ events: [progress("s1", 10000, 10000)], claims: [claim("c1", 1, "APPROVED", R(1000))], postings: [posting("c1", "RECONCILED", "INV-1", "AUTHORISED", true)] });
+    expect(st(journeyOf([done]), "commercial-billing")).toMatchObject({ status: "completed", detail: "Commercial billing complete - 1 claim posted and reconciled." });
+    const some = base({ events: [progress("s1", 10000, 10000)], claims: [claim("c1", 1, "APPROVED", R(400))], postings: [posting("c1", "RECONCILED", "INV-1", "AUTHORISED", true)] });
+    const s2 = st(journeyOf([some]), "commercial-billing");
+    expect(s2.status).toBe("in_progress");
+    expect(s2.detail).toContain("ot every stage is fully billed yet");
   });
-  it("Post to Cin7: needs a linked Sale (Blocked when approved claims wait), attention on failure/uncertain, completed when posted", () => {
+  it("Post to Cin7: needs a linked Sale (Blocked when approved claims wait), attention on failure/uncertain/mismatch, in progress until reconciled, completed when every live claim is RECONCILED", () => {
     const approved = [claim("c1", 1, "APPROVED", R(500))];
     const noSale = st(journeyOf([base({ claims: approved, sale: null })]), "commercial-posting");
     expect(noSale.status).toBe("blocked");
@@ -109,26 +111,32 @@ describe("Project Journey - Commercial lane", () => {
     expect(st(journeyOf([base({ claims: approved, postings: [posting("c1", "FAILED_UNCERTAIN", null, null, false)] })]), "commercial-posting").status).toBe("needs_attention");
     expect(st(journeyOf([base({ claims: approved, postings: [posting("c1", "FAILED_CONFIRMED_NO_WRITE", null, null, false)] })]), "commercial-posting").status).toBe("needs_attention");
     expect(st(journeyOf([base({ claims: approved, postings: [posting("c1", "PENDING", null, null, false)] })]), "commercial-posting").status).toBe("in_progress");
-    expect(st(journeyOf([base({ claims: approved, postings: [posting("c1", "CREATED", "INV-1", "DRAFT", false)] })]), "commercial-posting").status).toBe("completed");
+    const created = st(journeyOf([base({ claims: approved, postings: [posting("c1", "CREATED", "INV-1", "DRAFT", false)] })]), "commercial-posting");
+    expect(created).toMatchObject({ status: "in_progress" });
+    expect(created.detail).toContain("1 awaiting reconciliation");
+    const mismatch = st(journeyOf([base({ claims: approved, postings: [{ ...posting("c1", "CREATED", "INV-1", "DRAFT", false), last_error_code: "AMOUNT_MISMATCH" }] })]), "commercial-posting");
+    expect(mismatch.status).toBe("needs_attention");
+    expect(st(journeyOf([base({ claims: approved, postings: [posting("c1", "RECONCILED", "INV-1", "DRAFT", true)] })]), "commercial-posting").status).toBe("completed");
     expect(st(journeyOf([base()]), "commercial-posting").status).toBe("not_started");
   });
-  it("Invoice status reports only the LAST RECORDED status and always says the live status is Not read yet", () => {
-    const one = base({ claims: [claim("c1", 1, "APPROVED", R(500)), claim("c2", 2, "APPROVED", R(300))], postings: [posting("c1", "RECONCILED", "INV-1", "AUTHORISED", true), posting("c2", "CREATED", "INV-2", "DRAFT", false)] });
-    const s = st(journeyOf([one]), "commercial-invoices");
-    expect(s.status).toBe("in_progress");
-    expect(s.detail).toContain("2 invoices recorded, 1 reconciled");
-    expect(s.detail).toContain("Live Cin7 status: Not read yet");
-    const none = st(journeyOf([base()]), "commercial-invoices");
-    expect(none.status).toBe("not_started");
-    expect(none.detail).toContain("Not read yet");
+  it("Invoice authorisation: with nothing verified it is 'Not verified' (never success) and shows the recorded snapshot as a record", () => {
+    const one = base({ claims: [claim("c1", 1, "APPROVED", R(500)), claim("c2", 2, "APPROVED", R(300))], postings: [posting("c1", "RECONCILED", "INV-1", "AUTHORISED", true), posting("c2", "RECONCILED", "INV-2", "DRAFT", true)] });
+    const s = st(journeyOf([one]), "commercial-authorisation");
+    expect(s).toMatchObject({ unknown: true, statusLabel: "Not verified" });
+    expect(s.status).not.toBe("completed");
+    expect(s.detail).toContain("Last recorded");
+    expect(s.detail).toMatch(/1 authorised, 1 draft|1 draft, 1 authorised/);
+    expect(s.detail).toContain("not verified");
+    const none = st(journeyOf([base()]), "commercial-authorisation");
+    expect(none).toMatchObject({ status: "not_started", unknown: false });
   });
 });
 
 describe("Project Journey - review fixes", () => {
-  const fullyBilled = () => ({ events: [progress("s1", 10000, 10000)], claims: [claim("c1", 1, "RECONCILED", R(1000))], postings: [posting("c1", "RECONCILED", "INV-1", "AUTHORISED", true)] });
+  const fullyBilled = () => ({ events: [progress("s1", 10000, 10000)], claims: [claim("c1", 1, "APPROVED", R(1000))], postings: [posting("c1", "RECONCILED", "INV-1", "AUTHORISED", true)] });
   it("BASE progress claims is Completed when the original contract is fully billed and reconciled, even with an approved variation that has no billing scope yet", () => {
     const j = journeyOf([base({ ...fullyBilled(), variations: [variation("V001", "APPROVED")] })]);
-    expect(st(j, "commercial-claims").status).toBe("completed");
+    expect(st(j, "commercial-billing").status).toBe("completed");
     expect(st(j, "commercial-stages").status).toBe("completed");
     expect(st(j, "variation-V001").status).toBe("needs_attention");
   });
@@ -139,13 +147,13 @@ describe("Project Journey - review fixes", () => {
     expect(st(unc, "commercial-posting").detail).toBe("1 invoice with an uncertain outcome: check Cin7 before doing anything.");
     const vs = [variation("V001", "APPROVED")];
     const v = journeyOf([base({ variations: vs }), varScope("V001", { claims: [claim("vc1", 1, "APPROVED", R(500))], postings: [posting("vc1", "FAILED_CONFIRMED_NO_WRITE", null, null, false)] })]);
-    expect(st(v, "variation-V001").detail).toBe("1 invoice not created in Cin7 (can be retried).");
+    expect(st(v, "variation-V001").detail).toContain("not created in Cin7 (can be retried)");
     expect(JSON.stringify([retry, unc, v]).toLowerCase()).not.toContain("failed");
   });
   it("an uncertain claim has the same status (Blocked) in the Commercial lane and for a variation", () => {
     const vs = [variation("V001", "APPROVED")];
     const j = journeyOf([base({ variations: vs, claims: [claim("c1", 1, "FAILED_UNCERTAIN", R(100))] }), varScope("V001", { claims: [claim("vc1", 1, "FAILED_UNCERTAIN", R(100))] })]);
-    expect(st(j, "commercial-claims").status).toBe("blocked");
+    expect(st(j, "commercial-billing").status).toBe("blocked");
     expect(st(j, "variation-V001").status).toBe("blocked");
   });
   it("Deliveries mentions cancelled deliveries and does not subtract them twice (total already excludes them)", () => {
@@ -205,7 +213,7 @@ describe("Project Journey - Physical lane (unknown is never zero)", () => {
     expect(st(journeyOf([base()], load([])), "physical-fulfilment").status).toBe("not_started");
   });
   it("fulfilment does not change with billing and billing does not change with fulfilment", () => {
-    const billed = base({ events: [progress("s1", 10000, 10000)], claims: [claim("c1", 1, "RECONCILED", R(1000))], postings: [posting("c1", "RECONCILED", "INV", "AUTHORISED", true)] });
+    const billed = base({ events: [progress("s1", 10000, 10000)], claims: [claim("c1", 1, "APPROVED", R(1000))], postings: [posting("c1", "RECONCILED", "INV", "AUTHORISED", true)] });
     const a = journeyOf([billed], NOT_READ);
     const b = journeyOf([billed], physOf({ state: "loaded", asOf: null, sections: [physSection([physRow("A", { shipped: 0, remaining: 10, shortfall: 0 })])] }));
     expect(a.lanes[0]).toEqual(b.lanes[0]);
@@ -229,8 +237,8 @@ describe("Project Journey - Variations lane", () => {
   });
   it("a billing project open with no claims is in progress; fully reconciled is completed; uncertain/unbalanced is attention", () => {
     const vs = [variation("V001", "APPROVED")];
-    expect(st(journeyOf([base({ variations: vs }), varScope("V001")]), "variation-V001")).toMatchObject({ status: "in_progress", detail: "Billing project open; no claims raised yet." });
-    const done = varScope("V001", { events: [progress("vs-V001", 10000, 10000)], claims: [claim("vc1", 1, "RECONCILED", R(1000))], postings: [posting("vc1", "RECONCILED", "INV-V", "AUTHORISED", true)] });
+    expect(st(journeyOf([base({ variations: vs }), varScope("V001")]), "variation-V001")).toMatchObject({ status: "in_progress", detail: "Title V001: billing project open; no claims raised yet." });
+    const done = varScope("V001", { events: [progress("vs-V001", 10000, 10000)], claims: [claim("vc1", 1, "APPROVED", R(1000))], postings: [posting("vc1", "RECONCILED", "INV-V", "AUTHORISED", true)] });
     expect(st(journeyOf([base({ variations: vs }), done]), "variation-V001").status).toBe("completed");
     const uncertain = varScope("V001", { claims: [claim("vc1", 1, "FAILED_UNCERTAIN", R(500))] });
     const u = st(journeyOf([base({ variations: vs }), uncertain]), "variation-V001");
@@ -281,5 +289,133 @@ describe("Project Journey - role/cost safety", () => {
     expect(text).not.toContain("12345678");
     expect(text).not.toContain("33.79");
     expect(text.toLowerCase()).not.toMatch(/estimated_cost|margin|gross profit|\bcost\b/);
+  });
+});
+
+// ── UX-006d/g2: the journey follows the POSTING rows and stage ledger, never the claim status (which stays APPROVED after posting). Fixtures are SHAPED like the owner's
+// project (three fully billed stages, four APPROVED claims with RECONCILED postings recorded DRAFT/DRAFT/DRAFT/AUTHORISED, one CANCELLED claim; a variation billed in full
+// with no physical lines) but are synthetic and keyed on nothing.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { VerifiedRef } from "../invoice-authorisation";
+
+const ownerBase = (over: { postings?: ReturnType<typeof posting>[]; claims?: ReturnType<typeof claim>[]; stages?: ReturnType<typeof stage>[]; lines?: Array<{ claim_id: string; stage_id: string; current_claim_cents: number }> } = {}) => {
+  const stages = over.stages ?? [stage("s-dep", 1, "Deposit", R(400)), stage("s-del", 2, "Delivery", R(550)), stage("s-ins", 3, "Installation", R(50))];
+  const claims = over.claims ?? [claim("c1", 1, "APPROVED", R(400)), claim("c2", 2, "CANCELLED_BEFORE_WRITE", R(550)), claim("c3", 3, "APPROVED", R(550)), claim("c4", 4, "APPROVED", R(0.5)), claim("c5", 5, "APPROVED", R(50))];
+  return scope({
+    project: project({ id: "ob", project_reference: "PRJ-O", original_contract_cents: R(1000) }), stages, claims,
+    lines: over.lines ?? [{ claim_id: "c1", stage_id: "s-dep", current_claim_cents: R(400) }, { claim_id: "c2", stage_id: "s-del", current_claim_cents: R(550) }, { claim_id: "c3", stage_id: "s-del", current_claim_cents: R(549.5) }, { claim_id: "c4", stage_id: "s-del", current_claim_cents: R(0.5) }, { claim_id: "c5", stage_id: "s-ins", current_claim_cents: R(50) }],
+    events: stages.map((s) => progress(s.id, 10000, 10000)),
+    postings: over.postings ?? [posting("c1", "RECONCILED", "INV-1", "DRAFT", true), posting("c3", "RECONCILED", "INV-3", "DRAFT", true), posting("c4", "RECONCILED", "INV-4", "DRAFT", true), posting("c5", "RECONCILED", "INV-5", "AUTHORISED", true)],
+    variations: [variation("V001", "APPROVED", { amount_cents: R(500) })], saleNumber: "SO-1",
+  });
+};
+const ownerVariation = (postings = [posting("vc1", "RECONCILED", "INV-V", "DRAFT", true)], committed = R(500)) => scope({
+  project: project({ id: "ov", project_reference: "PRJ-O-V001", original_contract_cents: R(500), billing_scope: "VARIATION", parent_project_id: "ob", variation_id: "id-V001" }),
+  stages: [stage("vs", 1, "Variation", R(500))], events: [progress("vs", 10000, 10000)], claims: [claim("vc1", 1, "APPROVED", committed)], postings, variationCode: "V001", saleNumber: "SO-2",
+});
+const ref = (claimId: string, invoiceNumber: string, currentStatus: string | null, outcome: "SAME" | "CHANGED" = "CHANGED", at = "2026-11-02T10:00:00Z"): VerifiedRef => ({ verifiedAt: at, invoice: { postingId: `p-${claimId}`, claimId, invoiceNumber, recordedStatus: "DRAFT", currentStatus, outcome } });
+const verifyAll = (status = "AUTHORISED"): { verifiedByClaimId: Record<string, VerifiedRef | undefined>; readFailed: boolean } => ({ verifiedByClaimId: { c1: ref("c1", "INV-1", status), c3: ref("c3", "INV-3", status), c4: ref("c4", "INV-4", status), c5: ref("c5", "INV-5", status), vc1: ref("vc1", "INV-V", status) }, readFailed: false });
+const oldRule = (v: OverviewScopeInput["view"]) => v.claims.length > 0 && v.claims.every((c) => ["RECONCILED", "FAILED_CONFIRMED_NO_WRITE", "CANCELLED_BEFORE_WRITE"].includes(c.status)) && v.claims.some((c) => c.status === "RECONCILED");
+
+describe("Project Journey - commercial billing follows postings (owner-shaped)", () => {
+  const owner = () => [ownerBase(), ownerVariation()];
+  it("BASE and V001 are Commercial billing complete; the OLD claim-status rule would have said In progress on the same data", () => {
+    const [b, v] = owner();
+    expect(oldRule(b.view)).toBe(false); // claims are APPROVED, not RECONCILED, after posting: the old station could never complete
+    expect(oldRule(v.view)).toBe(false);
+    const j = journeyOf([b, v]);
+    expect(st(j, "commercial-billing")).toMatchObject({ status: "completed", detail: "Commercial billing complete - 4 claims posted and reconciled." });
+    expect(st(j, "commercial-posting")).toMatchObject({ status: "completed" });
+    expect(st(j, "variation-V001").status).toBe("completed");
+    expect(st(j, "variation-V001").detail).toMatch(/commercial billing complete - .*500.* billed, .*0,00 remaining, 1 invoice reconciled/);
+    expect(JSON.stringify(j.lanes[0]).toLowerCase()).not.toMatch(/physical|fulfil/);
+    expect(st(j, "variation-V001").label).toBe("V001 commercial billing");
+  });
+  it("physical stays independent: billing complete with deliveries unknown / incomplete / nothing read leaves the Physical lane exactly as it was", () => {
+    const unbilled = journeyOf([base()]);
+    const billed = journeyOf(owner());
+    expect(billed.lanes[1]).toEqual(unbilled.lanes[1]);
+    expect(st(billed, "physical-fulfilment")).toMatchObject({ unknown: true });
+    const partlyShipped = physOf({ state: "not_loaded" }, { total: 3, dispatched: 1, inProgress: 2, cancelled: 0, latestActivityAt: null });
+    const j = journeyOf(owner(), partlyShipped);
+    expect(st(j, "commercial-billing").status).toBe("completed");
+    expect(st(j, "physical-deliveries").status).toBe("in_progress");
+    expect(journeyOf(owner(), physOf({ state: "not_loaded" }, null)).lanes[1].stations[0].unknown).toBe(true);
+  });
+  it("invoice authorisation: nothing verified is 'Not verified' with the recorded snapshot (never success), for BASE and the variation line", () => {
+    const j = journeyOf(owner());
+    const a = st(j, "commercial-authorisation");
+    expect(a).toMatchObject({ unknown: true, statusLabel: "Not verified" });
+    expect(a.detail).toMatch(/3 draft, 1 authorised/);
+    expect(a.detail).toMatch(/recorded snapshot, not verified/);
+    expect(st(j, "variation-V001").lines?.[0]).toMatch(/^Invoice authorisation: Not verified\./);
+  });
+  it("invoice authorisation: verified AUTHORISED for ALL live invoices is Completed with the time; mixed shows N of M; a failed read says 'Could not verify'", () => {
+    const j = buildJourney({ scopes: owner(), physical: NOT_READ, verification: verifyAll() });
+    const a = st(j, "commercial-authorisation");
+    expect(a).toMatchObject({ status: "completed", unknown: false, statusLabel: "Authorised (verified)" });
+    expect(a.detail).toContain("Authorised in Cin7 - verified");
+    expect(st(j, "variation-V001").lines?.[0]).toContain("Authorised in Cin7 - verified");
+    const v = verifyAll();
+    v.verifiedByClaimId.c5 = ref("c5", "INV-5", "DRAFT");
+    const mixed = st(buildJourney({ scopes: owner(), physical: NOT_READ, verification: v }), "commercial-authorisation");
+    expect(mixed).toMatchObject({ status: "in_progress" });
+    expect(mixed.detail).toContain("3 of 4 authorised (verified");
+    const failed = st(buildJourney({ scopes: owner(), physical: NOT_READ, verification: { verifiedByClaimId: {}, readFailed: true } }), "commercial-authorisation");
+    expect(failed).toMatchObject({ unknown: true, statusLabel: "Could not verify" });
+    const onlyOne = verifyAll(); delete onlyOne.verifiedByClaimId.c3;
+    expect(st(buildJourney({ scopes: owner(), physical: NOT_READ, verification: onlyOne }), "commercial-authorisation").status).not.toBe("completed");
+    const missing = verifyAll(); missing.verifiedByClaimId.c1 = ref("c1", "INV-1", null, "SAME"); 
+    expect(st(buildJourney({ scopes: owner(), physical: NOT_READ, verification: missing }), "commercial-authorisation").status).not.toBe("completed");
+  });
+  it("a verification that lists only the VARIATION's claim never completes BASE authorisation, and vice versa", () => {
+    const only = { verifiedByClaimId: { vc1: ref("vc1", "INV-V", "AUTHORISED") }, readFailed: false };
+    const j = buildJourney({ scopes: owner(), physical: NOT_READ, verification: only });
+    expect(st(j, "commercial-authorisation").unknown).toBe(true);
+    expect(st(j, "variation-V001").lines?.[0]).toContain("Authorised in Cin7 - verified");
+    const baseOnly = { verifiedByClaimId: Object.fromEntries(Object.entries(verifyAll().verifiedByClaimId).filter(([k]) => k !== "vc1")), readFailed: false };
+    const j2 = buildJourney({ scopes: owner(), physical: NOT_READ, verification: baseOnly });
+    expect(st(j2, "commercial-authorisation").status).toBe("completed");
+    expect(st(j2, "variation-V001").lines?.[0]).toMatch(/Not verified/);
+  });
+  it("partially billed: a stage not fully committed is In progress, not complete, even when every posting is reconciled", () => {
+    const b = ownerBase({ stages: [stage("s-dep", 1, "Deposit", R(400)), stage("s-del", 2, "Delivery", R(550)), stage("s-ins", 3, "Installation", R(50))], claims: [claim("c1", 1, "APPROVED", R(400))], lines: [{ claim_id: "c1", stage_id: "s-dep", current_claim_cents: R(400) }], postings: [posting("c1", "RECONCILED", "INV-1", "DRAFT", true)] });
+    const s = st(journeyOf([b]), "commercial-billing");
+    expect(s.status).toBe("in_progress");
+    expect(s.detail).toContain("ot every stage is fully billed yet");
+    expect(st(journeyOf([b]), "commercial-stages").status).toBe("in_progress");
+  });
+  it("approved-unposted, uncertain and mismatch are each reported honestly (never complete)", () => {
+    const allButOne = [posting("c1", "RECONCILED", "INV-1", "DRAFT", true), posting("c3", "RECONCILED", "INV-3", "DRAFT", true), posting("c4", "RECONCILED", "INV-4", "DRAFT", true)];
+    const unposted = st(journeyOf([ownerBase({ postings: allButOne })]), "commercial-billing");
+    expect(unposted.status).toBe("needs_attention");
+    expect(unposted.detail).toContain("not posted to Cin7 yet");
+    const unc = ownerBase({ claims: [claim("c1", 1, "APPROVED", R(400)), claim("c2", 2, "CANCELLED_BEFORE_WRITE", R(550)), claim("c3", 3, "APPROVED", R(550)), claim("c4", 4, "APPROVED", R(0.5)), claim("c5", 5, "FAILED_UNCERTAIN", R(50))], postings: [...allButOne, posting("c5", "FAILED_UNCERTAIN", null, null, false)] });
+    expect(st(journeyOf([unc]), "commercial-billing").status).toBe("blocked");
+    const mm = ownerBase({ postings: [...allButOne, { ...posting("c5", "CREATED", "INV-5", "DRAFT", false), last_error_code: "AMOUNT_MISMATCH" }] });
+    const m = st(journeyOf([mm]), "commercial-billing");
+    expect(m.status).toBe("needs_attention");
+    expect(m.detail).toContain("recorded amount mismatch");
+    const waiting = ownerBase({ postings: [...allButOne, posting("c5", "CREATED", "INV-5", "AUTHORISED", false)] });
+    expect(st(journeyOf([waiting]), "commercial-billing")).toMatchObject({ status: "in_progress" });
+    expect(st(journeyOf([waiting]), "commercial-billing").detail).toContain("awaiting reconciliation");
+  });
+  it("BASE/VARIATION isolation: a variation's claims never complete BASE, base claims never complete a variation, and V001 never counts for V002", () => {
+    const unbilledBase = base({ variations: [variation("V001", "APPROVED", { amount_cents: R(500) })] });
+    expect(st(journeyOf([unbilledBase, ownerVariation()]), "commercial-billing").status).not.toBe("completed");
+    const unbilledVar = varScope("V001");
+    expect(st(journeyOf([ownerBase(), unbilledVar]), "variation-V001").status).not.toBe("completed");
+    expect(st(journeyOf([ownerBase(), unbilledVar]), "commercial-billing").status).toBe("completed");
+    const two = journeyOf([scope({ ...{ project: project({ id: "ob2", project_reference: "P", original_contract_cents: R(1000) }), stages: [stage("s1", 1, "All", R(1000))] }, variations: [variation("V001", "APPROVED", { amount_cents: R(500) }), variation("V002", "APPROVED", { amount_cents: R(500) })] }), ownerVariation()]);
+    expect(st(two, "variation-V001").status).toBe("completed");
+    expect(st(two, "variation-V002")).toMatchObject({ status: "needs_attention" });
+    expect(st(two, "variation-V002").detail).toMatch(/no billing project/);
+  });
+  it("is pure over loaded data: no hook, context, action, store, database or org identifier in the model's imports or code", () => {
+    const src = readFileSync(join(__dirname, "../overview-model.ts"), "utf8");
+    const imports = src.split("\n").filter((l) => /^\s*import\b/.test(l)).join("\n");
+    expect(imports).not.toMatch(/react|context|actions|-store|supabase|authorization/);
+    expect(src).not.toMatch(/org_id|createServiceRoleClient|useInvoiceVerification/);
   });
 });

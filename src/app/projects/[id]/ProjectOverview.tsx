@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { OverviewSkeleton } from "./LoadingSkeletons";
 import { JourneyMap } from "./JourneyMap";
+import { useInvoiceVerification } from "./invoice-verification-context";
 import { Alert } from "@/components/ui/Alert";
 import { Status } from "@/components/ui/Status";
 import type { BadgeTone } from "@/components/ui/Badge";
@@ -116,6 +117,8 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab, contractShow
   const setPhys = (load: PhysicalLoad) => setPhysRead({ key: refreshKey, load });
   const [physBusy, setPhysBusy] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  // The manual "Verify invoice statuses" result, held in memory by the workspace. Reading it never reads Cin7; outside a workspace nothing is verified.
+  const invoiceVerification = useInvoiceVerification();
 
   useEffect(() => {
     let live = true;
@@ -149,8 +152,10 @@ export function ProjectOverview({ projectId, refreshKey, onOpenTab, contractShow
   // The journey reads only what is already loaded: the overview data and the fulfilment read the user may have asked for. It adds no request.
   const journey = useMemo(() => {
     if (!res?.ok || !res.data || !overview || overview instanceof Error) return null;
-    try { return buildJourney({ scopes: res.data.scopes, physical: overview.physical }); } catch { return null; }
-  }, [res, overview]);
+    const cv = invoiceVerification.verification;
+    const verifiedByClaimId = Object.fromEntries((cv?.invoices ?? []).map((i) => [i.claimId, { verifiedAt: cv!.verifiedAt, invoice: i }]));
+    try { return buildJourney({ scopes: res.data.scopes, physical: overview.physical, verification: { verifiedByClaimId, readFailed: invoiceVerification.error !== null } }); } catch { return null; }
+  }, [res, overview, invoiceVerification.verification, invoiceVerification.error]);
 
   if (res === null) return <OverviewSkeleton />;
   if (!res.ok || overview === null || overview instanceof Error) {

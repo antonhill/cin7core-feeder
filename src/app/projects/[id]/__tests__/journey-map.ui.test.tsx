@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectOverview } from "../ProjectOverview";
+import { InvoiceVerificationProvider, useInvoiceVerification } from "../invoice-verification-context";
+import type { InvoiceVerification } from "@/lib/projects/invoice-verification";
 import { JourneyMap } from "../JourneyMap";
 import { getProjectOverviewDataAction } from "../../overview-actions";
 import { getPhysicalStatusAction } from "../../physical-actions";
@@ -65,6 +67,32 @@ describe("JourneyMap - in the Overview", () => {
   });
 });
 
+describe("JourneyMap - invoice verification context", () => {
+  const Verify = ({ v }: { v: InvoiceVerification }) => { const api = useInvoiceVerification(); return <button type="button" onClick={() => api.set(v, "sig")}>seed verification</button>; };
+  const claimIds = () => demoInput().scopes[0].view.claims.filter((c) => c.cin7Status.invoiceNumber).map((c) => c.id);
+
+  it("without a verification the Overview shows 'Not verified' and makes no Cin7 request on mount", async () => {
+    render(<InvoiceVerificationProvider signature="sig"><ProjectOverview projectId="p-base" refreshKey="k" onOpenTab={vi.fn()} /></InvoiceVerificationProvider>);
+    const a = await screen.findByTestId("journey-commercial-authorisation");
+    expect(a.textContent).toContain("Not verified");
+    expect(a.getAttribute("data-status")).toBe("unknown");
+    expect(physicalAction).not.toHaveBeenCalled();
+    expect(overviewAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("after the manager's verification is stored in the context, the station reads it (and still adds no request)", async () => {
+    const v: InvoiceVerification = { verifiedAt: "2026-11-02T10:00:00Z", saleId: "s", saleNumber: "SO-27", unaccounted: [], unresolvedPostings: 0,
+      invoices: claimIds().map((claimId) => ({ postingId: `p-${claimId}`, claimId, invoiceNumber: `INV-${claimId}`, recordedStatus: "DRAFT", currentStatus: "AUTHORISED", outcome: "CHANGED" as const })) };
+    render(<InvoiceVerificationProvider signature="sig"><Verify v={v} /><ProjectOverview projectId="p-base" refreshKey="k" onOpenTab={vi.fn()} /></InvoiceVerificationProvider>);
+    await screen.findByTestId("journey-commercial-authorisation");
+    fireEvent.click(screen.getByRole("button", { name: "seed verification" }));
+    await waitFor(() => expect(screen.getByTestId("journey-commercial-authorisation").getAttribute("data-status")).toBe("completed"));
+    expect(screen.getByTestId("journey-commercial-authorisation").textContent).toContain("Authorised in Cin7 - verified");
+    expect(overviewAction).toHaveBeenCalledTimes(1);
+    expect(physicalAction).not.toHaveBeenCalled();
+  });
+});
+
 describe("JourneyMap - presentation and accessibility", () => {
   const onOpen = vi.fn();
   const renderJourney = (i = demoInput()) => render(<JourneyMap journey={journeyFor(i)} onOpenTab={onOpen} />);
@@ -89,7 +117,7 @@ describe("JourneyMap - presentation and accessibility", () => {
       expect(b.className).toContain("min-h-11");
       expect(b.className).toContain("min-w-11");
     }
-    fireEvent.click(within(screen.getByTestId("journey-commercial-claims")).getByRole("button", { name: "Open Claims: Progress claims" }));
+    fireEvent.click(within(screen.getByTestId("journey-commercial-billing")).getByRole("button", { name: "Open Claims: Commercial billing" }));
     expect(onOpen).toHaveBeenCalledWith("claims");
   });
 
@@ -128,7 +156,7 @@ describe("JourneyMap - presentation and accessibility", () => {
     renderJourney(i);
     const v = screen.getByTestId("journey-variation-V001");
     expect(v.getAttribute("data-status")).toBe("needs_attention");
-    fireEvent.click(within(v).getByRole("button", { name: "Start V001 billing: V001 Extra" }));
+    fireEvent.click(within(v).getByRole("button", { name: "Start V001 billing: V001 commercial billing" }));
     expect(onOpen).toHaveBeenCalledWith("variations");
   });
 

@@ -14,6 +14,8 @@ import type { ClaimCin7Status } from "./claim-cin7-status";
 import type { MarginFigures } from "./margin-figures";
 import type { PhysicalException, PhysicalRow } from "./physical-status";
 import { commercialBillingFromView, type CommercialBillingResult } from "./commercial-billing-state";
+import { invoiceAuthorisation, type VerifiedRef } from "./invoice-authorisation";
+import { formatSast } from "@/lib/approvals/time";
 import { formatBps, formatCents, type ProjectView, type StageView } from "./project-view";
 
 export type OverviewTab = "stages" | "components" | "claims" | "variations" | "deliveries" | "physical" | "procurement" | "profitability";
@@ -364,6 +366,8 @@ export interface JourneyStation {
   informational?: boolean;
   /** Word shown in place of the status label where the status word would mislead (a rejected variation is closed, not "Completed"). */
   statusLabel?: string;
+  /** Extra lines under the detail (a variation's invoice authorisation). */
+  lines?: string[];
   /** A Blocked station whose block is a plain prerequisite, not a fault: shown in the milder tone, same status word. */
   soft?: boolean;
   /** A value that is never read by this page (evidence-only rows): shown as "Not read yet" but left out of the lane summary counts. */
@@ -377,12 +381,16 @@ export interface JourneyInput {
   scopes: OverviewScopeInput[];
   /** The Overview's own physical block (state, totals, deliveries): `deliveries` null = could not be read. */
   physical: PhysicalOverview;
+  /**
+   * What the manual, read-only "Verify invoice statuses" has verified, as plain data (the caller reads it from the in-memory verification context; this module imports no
+   * hook). Absent = nothing verified. A verification only ever says something about the claims it lists; it is never read from the recorded snapshot.
+   */
+  verification?: { verifiedByClaimId: Record<string, VerifiedRef | undefined>; readFailed: boolean };
 }
 
 export const JOURNEY_FOOTNOTE = "There is no project completion or closure state in the Toolbox, so the journey shows progress only and never marks the project as finished.";
 
 const OPEN_CLAIM = ["DRAFT", "READY_FOR_APPROVAL"];
-const SETTLED_CLAIM = ["RECONCILED", "FAILED_CONFIRMED_NO_WRITE", "CANCELLED_BEFORE_WRITE"];
 const INVOICED_KINDS = ["DRAFT_CREATED", "AUTHORISED", "CREATED_OTHER"];
 /** Retryable (nothing created) and uncertain (check Cin7 first) are different instructions and are never merged into one sentence. */
 const postingProblem = (notCreated: number, uncertain: number): string => [
@@ -409,28 +417,56 @@ function claimFacts(v: ProjectView) {
     notCreated: claims.filter((c) => c.cin7Status.kind === "FAILED").length,
     uncertain: claims.filter((c) => c.cin7Status.kind === "UNCERTAIN").length,
     invoiced: claims.filter((c) => INVOICED_KINDS.includes(c.cin7Status.kind)).length,
-    reconciled: claims.filter((c) => c.cin7Status.reconciled).length,
-    allSettled: claims.length > 0 && claims.every((c) => SETTLED_CLAIM.includes(c.status)) && claims.some((c) => c.status === "RECONCILED"),
   };
 }
 
-function variationStation(code: string, title: string, status: string, amountCents: number, scopeOf: OverviewScopeInput | undefined): JourneyStation {
+const isAuthorised = (s: string | null) => s === "AUTHORISED" || s === "AUTHORIZED";
+const sentence = (reasons: string[]): string => reasons.map((r, i) => (i === 0 ? r.charAt(0).toUpperCase() + r.slice(1) : r)).join("; ") + ".";
+
+/**
+ * Concept B for one scope: is each invoice's AUTHORISATION verified (UAT-028)? Success ONLY when a current verification lists every live invoice of this scope as AUTHORISED.
+ * The recorded snapshot is never success and never current. Reads only this scope's own claims.
+ */
+function invoiceAuthorisationFor(v: ProjectView, verification: JourneyInput["verification"]): { status: JourneyStatus; unknown: boolean; statusLabel?: string; detail: string; total: number } {
+  const invoiced = v.claims.filter((c) => INVOICED_KINDS.includes(c.cin7Status.kind) && !!c.cin7Status.invoiceNumber);
+  const total = invoiced.length;
+  if (total === 0) return { status: "not_started", unknown: false, detail: "No invoices posted yet.", total };
+  const rows = invoiced.map((c) => invoiceAuthorisation(c.cin7Status, verification?.verifiedByClaimId[c.id] ?? null, !!verification?.readFailed));
+  const verified = rows.filter((r) => r.state === "VERIFIED");
+  const authorised = verified.filter((r) => isAuthorised(r.verifiedStatus)).length;
+  const problems = rows.filter((r) => r.state === "NOT_IN_SALE" || r.state === "AMBIGUOUS" || r.state === "IDENTITY_MISMATCH" || r.state === "STATUS_UNREADABLE").length;
+  const at = verified[0]?.verifiedAt ?? rows.find((r) => r.verifiedAt)?.verifiedAt ?? null;
+  if (problems > 0) return { status: "needs_attention", unknown: false, detail: `${plural(problems, "invoice")} could not be matched in Cin7 by the last verification. Open Claims to review.`, total };
+  if (authorised === total) return { status: "completed", unknown: false, statusLabel: "Authorised (verified)", detail: `Authorised in Cin7 - verified ${formatSast(at)}. ${plural(total, "invoice")}.`, total };
+  if (verified.length > 0) return { status: "in_progress", unknown: false, detail: `${authorised} of ${total} authorised (verified ${formatSast(at)}); the rest are still Draft in Cin7.`, total };
+  // Nothing verified for this scope: the recorded snapshot is evidence of the past and is shown as such, never as success.
+  const recorded = rows.map((r) => r.recorded?.status ?? "no status");
+  const counts = [...new Set(recorded)].map((st) => [recorded.filter((x) => x === st).length, st.toLowerCase()] as const).sort((x, y) => y[0] - x[0] || x[1].localeCompare(y[1])).map(([n, st]) => `${n} ${st}`).join(", ");
+  const last = rows.map((r) => r.recorded?.at).filter((x): x is string => !!x).sort().pop() ?? null;
+  const failed = !!verification?.readFailed;
+  return { status: "not_started", unknown: true, statusLabel: failed ? "Could not verify" : "Not verified", detail: `${failed ? "The last verification could not read Cin7. " : ""}Last recorded${last ? ` ${formatSast(last)}` : ""}: ${counts} (recorded snapshot, not verified). Verify in Claims.`, total };
+}
+
+function variationStation(code: string, title: string, status: string, amountCents: number, scopeOf: OverviewScopeInput | undefined, verification: JourneyInput["verification"]): JourneyStation {
   const id = `variation-${code}`;
-  const label = `${code} ${title}`.trim();
+  const label = `${code} commercial billing`;
   const link = { tab: "variations" as const, label: "Open Variations" };
-  if (status === "DRAFT") return station({ id, label, status: "not_started", detail: `Draft, ${formatCents(amountCents)} ex VAT: not yet approved. No billing is possible until it is approved.`, link });
+  if (status === "DRAFT") return station({ id, label, status: "not_started", detail: `${title}: draft, ${formatCents(amountCents)} ex VAT, not yet approved. No billing is possible until it is approved.`, link });
   if (status === "REJECTED") return station({ id, label, status: "not_started", statusLabel: "Rejected", detail: "Rejected: closed. It adds nothing to the contract and has no billing.", link });
   if (status !== "APPROVED") return unknownStation(id, label, `Unrecognised variation status ${status}.`, link);
   if (!scopeOf) return station({ id, label, status: "needs_attention", detail: `Approved (${formatCents(amountCents)} ex VAT) but no billing project exists yet, so it cannot be invoiced.`, link: { tab: "variations", label: `Start ${code} billing` } });
   const v = scopeOf.view;
-  const f = claimFacts(v);
   const c = v.commercial;
+  const bill = commercialBillingFromView(v, "VARIATION", { approvedAmountCents: amountCents, billingStarted: true });
+  const auth = invoiceAuthorisationFor(v, verification);
+  const lines = [`Invoice authorisation: ${auth.unknown ? `${auth.statusLabel}. ${auth.detail}` : auth.detail}`];
+  const open = { tab: "variations" as const, label: `Open ${code} billing` };
   // Same state, same status as the Commercial lane: an uncertain claim blocks new billing.
-  if (c.uncertainClaimBlocking) return station({ id, label, status: "blocked", detail: "A claim's Cin7 outcome is uncertain, which blocks new billing.", needs: ["Needs: the uncertain claim resolved before new billing of its stages."], link: { tab: "variations", label: `Open ${code} billing` } });
-  if (f.notCreated + f.uncertain > 0) return station({ id, label, status: "needs_attention", detail: postingProblem(f.notCreated, f.uncertain), link: { tab: "variations", label: `Open ${code} billing` } });
-  if (!c.scheduleBalanced) return station({ id, label, status: "needs_attention", detail: "The billing schedule does not total the variation.", link: { tab: "variations", label: `Open ${code} billing` } });
-  if (f.allSettled && c.remainingCents === 0) return station({ id, label, status: "completed", detail: `All ${plural(f.claims.length, "claim")} reconciled; nothing left to bill.`, link });
-  return station({ id, label, status: "in_progress", detail: f.claims.length === 0 ? "Billing project open; no claims raised yet." : `${plural(f.claims.length, "claim")} raised, ${f.reconciled} reconciled with Cin7.`, link: { tab: "variations", label: `Open ${code} billing` } });
+  if (c.uncertainClaimBlocking) return station({ id, label, status: "blocked", detail: `${title}: a claim's Cin7 outcome is uncertain, which blocks new billing.`, needs: ["Needs: the uncertain claim resolved before new billing of its stages."], lines, link: open });
+  if (bill.state === "NEEDS_ATTENTION") return station({ id, label, status: "needs_attention", detail: `${title}: ${sentence(bill.reasons)}`, lines, link: open });
+  if (bill.state === "COMPLETE") return station({ id, label, status: "completed", detail: `${title}: commercial billing complete - ${formatCents(amountCents)} billed, ${formatCents(0)} remaining, ${plural(bill.counts.reconciled, "invoice")} reconciled.`, lines, link });
+  if (bill.state === "NOT_STARTED") return station({ id, label, status: "in_progress", detail: `${title}: billing project open; no claims raised yet.`, lines, link: open });
+  return station({ id, label, status: "in_progress", detail: `${title}: ${sentence(bill.reasons)}`, lines, link: open });
 }
 
 export function buildJourney(input: JourneyInput): Journey {
@@ -491,26 +527,31 @@ export function buildJourney(input: JourneyInput): Journey {
       : anyApproved ? station({ id: "commercial-stages", label: "Stage progress", status: "in_progress", detail: `Approved completion ${formatBps(c.approvedCompletionBps)} of the contract.`, link: { tab: "stages", label: "Open Stages" } })
       : station({ id: "commercial-stages", label: "Stage progress", status: "not_started", detail: "No progress approved for billing yet.", link: { tab: "stages", label: "Open Stages" } }));
 
-    if (c.uncertainClaimBlocking) commercial.push(station({ id: "commercial-claims", label: "Progress claims", status: "blocked", detail: "A claim's Cin7 outcome is uncertain, which blocks new billing.", needs: ["Needs: the uncertain claim resolved before new billing of its stages."], link: claimsTab }));
-    else if (f.claims.length === 0) commercial.push(station({ id: "commercial-claims", label: "Progress claims", status: "not_started", detail: c.claimableCents > 0 ? `No claims yet. ${formatCents(c.claimableCents)} ex VAT is claimable now.` : "No claims yet. Nothing is claimable until a manager approves progress.", link: claimsTab }));
-    else if (f.open.length > 0) commercial.push(station({ id: "commercial-claims", label: "Progress claims", status: "in_progress", detail: [f.draft ? `${f.draft} in draft` : "", f.submitted ? `${f.submitted} awaiting approval` : ""].filter(Boolean).join(", ") + ".", link: claimsTab }));
-    else if (f.allSettled && allCommitted) commercial.push(station({ id: "commercial-claims", label: "Progress claims", status: "completed", detail: `All ${plural(f.claims.length, "claim")} reconciled; nothing left to bill.`, link: claimsTab }));
-    else commercial.push(station({ id: "commercial-claims", label: "Progress claims", status: "in_progress", detail: `${plural(f.claims.length, "claim")} raised${c.claimableCents > 0 ? `; ${formatCents(c.claimableCents)} ex VAT claimable now` : ""}.`, link: claimsTab }));
+    // COMMERCIAL billing, from the POSTINGS and the stage ledger (claim status stays APPROVED forever after posting, so a claim-status rule can never complete).
+    const bill = commercialBillingFromView(v, "BASE");
+    const billing = (status: JourneyStatus, detail: string, needs: string[] = []) => station({ id: "commercial-billing", label: "Commercial billing", status, detail, needs, link: claimsTab });
+    if (c.uncertainClaimBlocking) commercial.push(billing("blocked", "A claim's Cin7 outcome is uncertain, which blocks new billing.", ["Needs: the uncertain claim resolved before new billing of its stages."]));
+    else if (bill.state === "COMPLETE") commercial.push(billing("completed", `Commercial billing complete - ${plural(bill.counts.reconciled, "claim")} posted and reconciled.`));
+    else if (bill.state === "NEEDS_ATTENTION") commercial.push(billing("needs_attention", sentence(bill.reasons)));
+    else if (bill.state === "NOT_STARTED") commercial.push(billing("not_started", c.claimableCents > 0 ? `No claims yet. ${formatCents(c.claimableCents)} ex VAT is claimable now.` : "No claims yet. Nothing is claimable until a manager approves progress."));
+    else commercial.push(billing("in_progress", sentence(bill.reasons)));
 
     const needsSale = linked ? [] : ["Needs: a linked Cin7 Sale before a claim can be posted."];
-    if (f.notCreated + f.uncertain > 0) commercial.push(station({ id: "commercial-posting", label: "Post to Cin7", status: "needs_attention", detail: postingProblem(f.notCreated, f.uncertain), needs: needsSale, link: claimsTab }));
-    else if (f.posting > 0) commercial.push(station({ id: "commercial-posting", label: "Post to Cin7", status: "in_progress", detail: `${plural(f.posting, "invoice")} being posted.`, needs: needsSale, link: claimsTab }));
-    else if (f.postable > 0 && !linked) commercial.push(station({ id: "commercial-posting", label: "Post to Cin7", status: "blocked", soft: true, detail: `${plural(f.postable, "approved claim")} cannot be posted.`, needs: needsSale, link: claimsTab }));
-    else if (f.postable > 0) commercial.push(station({ id: "commercial-posting", label: "Post to Cin7", status: "in_progress", detail: `${plural(f.postable, "approved claim")} ready to post.`, link: claimsTab }));
-    else if (f.invoiced > 0) commercial.push(station({ id: "commercial-posting", label: "Post to Cin7", status: "completed", detail: `${plural(f.invoiced, "claim")} posted; none waiting.`, needs: needsSale, link: claimsTab }));
-    else commercial.push(station({ id: "commercial-posting", label: "Post to Cin7", status: "not_started", detail: "No approved claims to post.", needs: needsSale, link: claimsTab }));
+    const post = (status: JourneyStatus, detail: string, needs = needsSale, soft = false) => station({ id: "commercial-posting", label: "Post to Cin7", status, soft: soft || undefined, detail, needs, link: claimsTab });
+    if (f.notCreated + f.uncertain > 0) commercial.push(post("needs_attention", postingProblem(f.notCreated, f.uncertain)));
+    else if (bill.counts.mismatched > 0) commercial.push(post("needs_attention", `${plural(bill.counts.mismatched, "invoice")} posted with a recorded amount mismatch.`));
+    else if (f.posting > 0) commercial.push(post("in_progress", `${plural(f.posting, "invoice")} being posted.`));
+    else if (f.postable > 0 && !linked) commercial.push(post("blocked", `${plural(f.postable, "approved claim")} cannot be posted.`, needsSale, true));
+    else if (f.postable > 0) commercial.push(post("in_progress", `${plural(f.postable, "approved claim")} ready to post.`, []));
+    else if (bill.counts.live > 0 && bill.counts.reconciled === bill.counts.live) commercial.push(post("completed", `${plural(bill.counts.reconciled, "claim")} posted and reconciled; none waiting.`));
+    else if (f.invoiced > 0) commercial.push(post("in_progress", `${plural(f.invoiced, "claim")} posted; ${bill.counts.awaitingReconciliation} awaiting reconciliation.`));
+    else commercial.push(post("not_started", "No approved claims to post."));
 
-    // The invoice status is what the Toolbox LAST recorded when it posted or reconciled; it is never a live read, so that part is always unknown here.
-    const recorded = f.claims.filter((cl) => cl.cin7Status.invoiceNumber !== null).length;
-    commercial.push(station({
-      id: "commercial-invoices", label: "Invoice status", status: recorded === 0 ? "not_started" : f.reconciled === recorded ? "completed" : "in_progress",
-      detail: `${recorded === 0 ? "No invoices recorded" : `${plural(recorded, "invoice")} recorded, ${f.reconciled} reconciled with Cin7`} (last recorded status). Live Cin7 status: ${JOURNEY_UNKNOWN_LABEL}, it is verified in Claims.`, link: claimsTab,
-    }));
+    // Concept B (Cin7 authorisation): success only from a current VERIFICATION of every live invoice; the recorded snapshot is never success.
+    const auth = invoiceAuthorisationFor(v, input.verification);
+    commercial.push(auth.unknown
+      ? { ...unknownStation("commercial-authorisation", "Invoice authorisation", auth.detail, claimsTab), statusLabel: auth.statusLabel }
+      : station({ id: "commercial-authorisation", label: "Invoice authorisation", status: auth.status, statusLabel: auth.statusLabel, detail: auth.detail, link: claimsTab }));
   }
 
   // ── Physical lane (independent of billing) ──────────────────────────────────
@@ -547,7 +588,7 @@ export function buildJourney(input: JourneyInput): Journey {
   physical.push({ ...unknownStation("physical-milestones", "Milestone confirmations", "Evidence only: a confirmation does not release claimable value. The rows are read on the Deliveries tab.", delivTab), permanentUnknown: true });
 
   // ── Variations lane (one station per variation; each reads only its OWN billing scope) ──
-  const variations: JourneyStation[] = (base?.view.variations ?? []).map((vr) => variationStation(vr.code, vr.title, vr.status, vr.amount_cents, input.scopes.find((s) => s.scope === "VARIATION" && s.variationCode === vr.code)));
+  const variations: JourneyStation[] = (base?.view.variations ?? []).map((vr) => variationStation(vr.code, vr.title, vr.status, vr.amount_cents, input.scopes.find((s) => s.scope === "VARIATION" && s.variationCode === vr.code), input.verification));
 
   const lane = (id: JourneyLaneId, title: string, stations: JourneyStation[]): JourneyLane => ({
     id, title, stations,
