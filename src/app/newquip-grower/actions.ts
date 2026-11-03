@@ -195,9 +195,10 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
     const a = await authorise();
     const db = createServiceRoleClient();
     const prior = await loadQuote(db, a.orgId, quoteId);
+    const priorHash = prior?.draft_hash; // read now: a store that updates the row it handed out in place must not change what "before" means
     const saved = await saveDraft(db, a.orgId, a.roles, quoteId, await sanitiseSubmittedDraft(a, db, draft, prior?.draft));
     // Changed content invalidates the estimator's sign-off (saveDraft clears it) and any open approval of the older content: the quote goes back to estimator review.
-    if (saved.draftHash !== prior?.draft_hash && (await stagedAvailable(db))) await resyncQuoteApprovals(db, ctxOf(a), quoteId, { quiet: true }).catch(() => undefined);
+    if (saved.draftHash !== priorHash) await (async () => { if (await stagedAvailable(db)) await resyncQuoteApprovals(db, ctxOf(a), quoteId, { quiet: true }); })().catch(() => undefined); // the draft is saved: a failed sync never fails the save
     const q = await loadQuote(db, a.orgId, quoteId);
     return q ? { ok: true, data: view(q, a) } : { ok: false, error: "Quote not found." };
   } catch (e) {
