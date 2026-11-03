@@ -3,7 +3,7 @@
 import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState, useId } from "react";
+import { useCallback, useEffect, useRef, useState, useId } from "react";
 import { ActionFeedback, useKeyedActions } from "@/components/ui/action-feedback";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { ModuleHeader } from "@/app/ModuleHeader";
@@ -115,6 +115,13 @@ export default function QuoteEditorPage() {
   // Defaults, any edit that makes the quote READY) can never move it. Only an authoritative workflow change (state, revision, project link, delivery status) clears it.
   const [landing, setLanding] = useState<StageId | null>(null);
   const gateSig = useRef<string | null>(null);
+  // The commercial status as the panels and the delivery read report it. A CHANGED signature (issued / sent / answered / verified) is a real workflow transition: the view follows
+  // the quotation to its new current stage. The first read never moves it. Stable identity: the panels list `onGate` in their effect dependencies.
+  const noteGateSig = useCallback((sig: string) => {
+    if (gateSig.current !== null && gateSig.current !== sig) { setPicked(null); setLanding(null); }
+    gateSig.current = sig;
+  }, []);
+  const applyGate = useCallback((g: DeliveryGate) => { noteGateSig(`${g.status}|${g.hasDocument}|${g.linkState}`); setGate(g); }, [noteGateSig]);
   // Stage 1 steps: navigation and guidance only (completion is derived from data, never from a visit). The customer facts are lifted from the CustomerPanel that already loads them.
   const [stepNo, setStepNo] = useState<number>(() => parseStepParam(search.get("step"), STAGE1_STEP_IDS.length));
   const [showAllSteps, setShowAllSteps] = useShowAllSteps("nq-builder-show-all");
@@ -133,9 +140,16 @@ export default function QuoteEditorPage() {
     onError: (d, e) => setFailedFor({ draft: d, message: e instanceof Error ? e.message : "The live recalculation failed." }),
   }));
 
-  function adopt(v: QuoteView) {
-    // A changed workflow state / revision / project link is a real transition: let the view follow the quotation to its new current stage (a draft or readiness change never does).
-    if (view && (v.quote.state !== view.quote.state || v.quote.revision !== view.quote.revision || v.quote.project_id !== view.quote.project_id)) { setPicked(null); setLanding(null); }
+  // A changed workflow state / revision / project link is a real transition: let the view follow the quotation to its new current stage. `workflow` = the result of a workflow
+  // action (act()): a withdrawn Estimator sign-off (e.g. the Manager returning it to the Estimator, same state and revision) counts too. A draft or readiness change never does,
+  // and neither does the user's own Save (workflow false).
+  function followTransition(v: QuoteView, workflow: boolean) {
+    if (!view) return;
+    const signed = (x: QuoteView["quote"]) => !!x.estimator_signoff_hash && x.estimator_signoff_hash === x.draft_hash;
+    if (v.quote.state !== view.quote.state || v.quote.revision !== view.quote.revision || v.quote.project_id !== view.quote.project_id || (workflow && signed(view.quote) && !signed(v.quote))) { setPicked(null); setLanding(null); }
+  }
+  function adopt(v: QuoteView, workflow = false) {
+    followTransition(v, workflow);
     setView(v);
     setDraft(v.quote.draft);
     setEv(v.evaluation);
@@ -156,14 +170,12 @@ export default function QuoteEditorPage() {
       if (!live) return;
       if (!r.ok) { setGateError(r.error ?? "The quotation's delivery status could not be loaded."); return; }
       setGateError(null);
-      const sig = r.data?.available ? `${r.data.status}|${r.data.latestDocumentId != null}|${r.data.links.state}` : "unavailable";
-      if (gateSig.current !== null && gateSig.current !== sig) { setPicked(null); setLanding(null); } // issued / sent / answered: a real transition
-      gateSig.current = sig;
-      if (r.data?.available) setGate({ requires: r.data.requiresAcceptance, accepted: r.data.accepted, status: r.data.status, hasDocument: r.data.latestDocumentId != null, linkState: r.data.links.state });
+      if (r.data?.available) applyGate({ requires: r.data.requiresAcceptance, accepted: r.data.accepted, status: r.data.status, hasDocument: r.data.latestDocumentId != null, linkState: r.data.links.state });
+      else noteGateSig("unavailable");
       setGateReady(true); // read (an unavailable feature before migration 0115 is a legitimate, settled answer)
     }).catch(() => { if (live) setGateError("The quotation's delivery status could not be loaded."); });
     return () => { live = false; };
-  }, [id, finalNow, gateKey, gateTry]);
+  }, [id, finalNow, gateKey, gateTry, applyGate, noteGateSig]);
 
   // Live recalculation (writes nothing): the same server engine as Save, on the unsaved draft, after a short pause in typing.
   useEffect(() => {
@@ -210,7 +222,7 @@ export default function QuoteEditorPage() {
   const onCustomerChanged = (name: string) => {
     void getGrowerQuoteAction(id).then((r) => {
       if (!r.ok || !r.data) return;
-      if (dirty) { setView(r.data); edit((d) => { d.customerName = name; }); } else adopt(r.data);
+      if (dirty) { followTransition(r.data, false); setView(r.data); edit((d) => { d.customerName = name; }); } else adopt(r.data);
     });
   };
   const edit = (fn: (d: QuoteDraft) => void) => { setDraft((p) => { const n = structuredClone(p!); fn(n); return n; }); setDirty(true); };
@@ -227,7 +239,7 @@ export default function QuoteEditorPage() {
         if (!s.ok) return { ok: false, error: s.error ?? "Could not save" } as { ok: boolean; error?: string; data?: QuoteView };
       }
       const r = await fn();
-      if (r.ok && r.data) adopt(r.data);
+      if (r.ok && r.data) adopt(r.data, true);
       return r;
     }, {
       pending: "Working… please wait",
@@ -235,7 +247,7 @@ export default function QuoteEditorPage() {
       reconcile: async () => {
         const v = await getGrowerQuoteAction(id);
         if (!v.ok || !v.data || !confirm) return "unknown";
-        if (confirm(v.data)) { adopt(v.data); return "done"; }
+        if (confirm(v.data)) { adopt(v.data, true); return "done"; }
         return "not_done";
       },
     });
@@ -794,7 +806,7 @@ export default function QuoteEditorPage() {
       {stage === 4 && !hold(4) && (
         <div className="mt-6 space-y-6">
           {!final && <Alert tone="info">The customer quotation can be issued only after the Manager has approved. Below is the customer-facing summary as it stands.</Alert>}
-          {final && q.accepted_baseline && <DeliveryPanel quoteId={id} contractCents={q.accepted_baseline.contractCents} onGate={setGate} section="quotation" />}
+          {final && q.accepted_baseline && <DeliveryPanel quoteId={id} contractCents={q.accepted_baseline.contractCents} onGate={applyGate} section="quotation" />}
         <Panel>
           {!summary ? (
             <Alert tone="warning">The customer summary appears once the quote is complete (READY). Resolve the items on the Estimator review tab.</Alert>
@@ -830,7 +842,7 @@ export default function QuoteEditorPage() {
         <div className="mt-6 space-y-6">
           {!final && <Alert tone="info">Customer acceptance is recorded against the issued, Manager-approved quotation. It becomes available once the quotation has been issued.</Alert>}
           {final && !gate.requires && <Alert tone="info">This quotation was approved before customer acceptance was introduced, so it is grandfathered: a Project does not depend on a recorded acceptance. A response can still be recorded if the customer gives one.</Alert>}
-          {final && q.accepted_baseline && <AcceptancePanel quoteId={id} onGate={setGate} />}
+          {final && q.accepted_baseline && <AcceptancePanel quoteId={id} onGate={applyGate} />}
         </div>
       )}
 
