@@ -1087,11 +1087,9 @@ export default function QuoteEditorPage() {
 
         <StepPanel railId="s2" stepId="signoff" number={visible2.indexOf("signoff") + 1} title={STAGE2_WIZARD_LABEL.signoff} current={step2Id === "signoff"} showAll={showAllSteps} locked={lockedFor2("signoff")} className="mt-6 space-y-6">
           <Panel>
-            <PanelTitle>Sign off or return</PanelTitle>
-            <p className="mt-1 text-xs text-slate-600">The Estimator signs off for the Manager or returns the quote to the Rep. This is not the customer&apos;s formal acceptance, which comes after Manager approval.</p>
-            {handoffFacts}
-            {editWarning && <div className="mt-3"><Alert tone="warning"><span data-testid="edit-clears-signoff-signoff">{editWarning}</span></Alert></div>}
-            <div className="mt-5 space-y-4 border-t border-slate-100 pt-5">
+            <h3 className="sr-only">Sign off or return</h3>
+            {editWarning && <div className="mt-1"><Alert tone="warning"><span data-testid="edit-clears-signoff-signoff">{editWarning}</span></Alert></div>}
+            <div className="mt-1 space-y-4">
               {q.state === "REP_DRAFT" && <p className="text-sm text-slate-800" data-testid="signoff-waiting">Not submitted yet: the Estimator signs off or returns it after the Rep has submitted.</p>}
               {final && <Status tone="success">Signed off and approved</Status>}
               {q.state === "ESTIMATOR_REVIEW" && (q.estimator_signoff_hash && q.estimator_signoff_hash === q.draft_hash ? (
@@ -1124,6 +1122,10 @@ export default function QuoteEditorPage() {
               ))}
             </div>
             <ActionFeedback state={acts.stateOf("signoff")} />
+            <div className="mt-4 border-t border-slate-100 pt-3">
+              <p className="mt-1 text-xs text-slate-600">The Estimator signs off for the Manager or returns the quote to the Rep. This is not the customer&apos;s formal acceptance, which comes after Manager approval.</p>
+              {handoffFacts}
+            </div>
           </Panel>
         </StepPanel>
 
