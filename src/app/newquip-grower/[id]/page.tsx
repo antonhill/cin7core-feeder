@@ -3,7 +3,7 @@
 import { pageContainerClass } from "@/app/PageContainer";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useState, useId } from "react";
+import { useCallback, useEffect, useRef, useState, useId } from "react";
 import { ActionFeedback, useKeyedActions } from "@/components/ui/action-feedback";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { ModuleHeader } from "@/app/ModuleHeader";
@@ -44,6 +44,11 @@ import { BuildStamp } from "@/components/BuildStamp";
 import { ScheduleChooser } from "./ScheduleChooser";
 import { CostPanel } from "./CostPanel";
 import { CustomerPanel } from "./CustomerPanel";
+import { Stage1Review } from "./Stage1Review";
+import { StepRail, StepPanel } from "@/components/ui/StepRail";
+import { useShowAllSteps } from "@/components/ui/use-show-all-steps";
+import { nextIncompleteStepId, parseStepParam } from "@/components/ui/step-rail-model";
+import { deriveStage1Steps, NO_CUSTOMER_FACTS, STAGE1_STEP_IDS, STAGE1_STEP_LABEL, type Stage1CustomerFacts, type Stage1StepId } from "@/newquip/quote/stage1-steps";
 import { ConfirmationPanel } from "./ConfirmationPanel";
 import { DeliveryPanel, type DeliveryGate } from "./DeliveryPanel";
 import { StageNav } from "./StageNav";
@@ -106,6 +111,22 @@ export default function QuoteEditorPage() {
   const [gateError, setGateError] = useState<string | null>(null);
   const [gateTry, setGateTry] = useState(0);
   const [picked, setPicked] = useState<StageId | null>(() => parseStage(search.get("stage")));
+  // Where the user landed. The viewed stage is `picked ?? landing ?? here`: once the quote has loaded the view stays where the user is, so recalculating readiness (Load Demo
+  // Defaults, any edit that makes the quote READY) can never move it. Only an authoritative workflow change (state, revision, project link, delivery status) clears it.
+  const [landing, setLanding] = useState<StageId | null>(null);
+  const gateSig = useRef<string | null>(null);
+  // The commercial status as the panels and the delivery read report it. A CHANGED signature (issued / sent / answered / verified) is a real workflow transition: the view follows
+  // the quotation to its new current stage. The first read never moves it. Stable identity: the panels list `onGate` in their effect dependencies.
+  const noteGateSig = useCallback((sig: string) => {
+    if (gateSig.current !== null && gateSig.current !== sig) { setPicked(null); setLanding(null); }
+    gateSig.current = sig;
+  }, []);
+  const applyGate = useCallback((g: DeliveryGate) => { noteGateSig(`${g.status}|${g.hasDocument}|${g.linkState}`); setGate(g); }, [noteGateSig]);
+  // Stage 1 steps: navigation and guidance only (completion is derived from data, never from a visit). The customer facts are lifted from the CustomerPanel that already loads them.
+  const [stepNo, setStepNo] = useState<number>(() => parseStepParam(search.get("step"), STAGE1_STEP_IDS.length));
+  const [showAllSteps, setShowAllSteps] = useShowAllSteps("nq-builder-show-all");
+  const [customerFacts, setCustomerFacts] = useState<Stage1CustomerFacts>(NO_CUSTOMER_FACTS);
+  const onCustomerFacts = (f: Stage1CustomerFacts) => setCustomerFacts((p) => (p.loaded === f.loaded && p.available === f.available && p.hasSnapshot === f.hasSnapshot && p.hasContact === f.hasContact && p.contactName === f.contactName && p.loadError === f.loadError ? p : f));
   const [error, setError] = useState<string | null>(null);
   const [confirmDemo, setConfirmDemo] = useState(false);
   const [demoLoaded, setDemoLoaded] = useState<string[] | null>(null);
@@ -119,7 +140,16 @@ export default function QuoteEditorPage() {
     onError: (d, e) => setFailedFor({ draft: d, message: e instanceof Error ? e.message : "The live recalculation failed." }),
   }));
 
-  function adopt(v: QuoteView) {
+  // A changed workflow state / revision / project link is a real transition: let the view follow the quotation to its new current stage. `workflow` = the result of a workflow
+  // action (act()): a withdrawn Estimator sign-off (e.g. the Manager returning it to the Estimator, same state and revision) counts too. A draft or readiness change never does,
+  // and neither does the user's own Save (workflow false).
+  function followTransition(v: QuoteView, workflow: boolean) {
+    if (!view) return;
+    const signed = (x: QuoteView["quote"]) => !!x.estimator_signoff_hash && x.estimator_signoff_hash === x.draft_hash;
+    if (v.quote.state !== view.quote.state || v.quote.revision !== view.quote.revision || v.quote.project_id !== view.quote.project_id || (workflow && signed(view.quote) && !signed(v.quote))) { setPicked(null); setLanding(null); }
+  }
+  function adopt(v: QuoteView, workflow = false) {
+    followTransition(v, workflow);
     setView(v);
     setDraft(v.quote.draft);
     setEv(v.evaluation);
@@ -140,11 +170,12 @@ export default function QuoteEditorPage() {
       if (!live) return;
       if (!r.ok) { setGateError(r.error ?? "The quotation's delivery status could not be loaded."); return; }
       setGateError(null);
-      if (r.data?.available) setGate({ requires: r.data.requiresAcceptance, accepted: r.data.accepted, status: r.data.status, hasDocument: r.data.latestDocumentId != null, linkState: r.data.links.state });
+      if (r.data?.available) applyGate({ requires: r.data.requiresAcceptance, accepted: r.data.accepted, status: r.data.status, hasDocument: r.data.latestDocumentId != null, linkState: r.data.links.state });
+      else noteGateSig("unavailable");
       setGateReady(true); // read (an unavailable feature before migration 0115 is a legitimate, settled answer)
     }).catch(() => { if (live) setGateError("The quotation's delivery status could not be loaded."); });
     return () => { live = false; };
-  }, [id, finalNow, gateKey, gateTry]);
+  }, [id, finalNow, gateKey, gateTry, applyGate, noteGateSig]);
 
   // Live recalculation (writes nothing): the same server engine as Save, on the unsaved draft, after a short pause in typing.
   useEffect(() => {
@@ -191,7 +222,7 @@ export default function QuoteEditorPage() {
   const onCustomerChanged = (name: string) => {
     void getGrowerQuoteAction(id).then((r) => {
       if (!r.ok || !r.data) return;
-      if (dirty) { setView(r.data); edit((d) => { d.customerName = name; }); } else adopt(r.data);
+      if (dirty) { followTransition(r.data, false); setView(r.data); edit((d) => { d.customerName = name; }); } else adopt(r.data);
     });
   };
   const edit = (fn: (d: QuoteDraft) => void) => { setDraft((p) => { const n = structuredClone(p!); fn(n); return n; }); setDirty(true); };
@@ -208,7 +239,7 @@ export default function QuoteEditorPage() {
         if (!s.ok) return { ok: false, error: s.error ?? "Could not save" } as { ok: boolean; error?: string; data?: QuoteView };
       }
       const r = await fn();
-      if (r.ok && r.data) adopt(r.data);
+      if (r.ok && r.data) adopt(r.data, true);
       return r;
     }, {
       pending: "Working… please wait",
@@ -216,7 +247,7 @@ export default function QuoteEditorPage() {
       reconcile: async () => {
         const v = await getGrowerQuoteAction(id);
         if (!v.ok || !v.data || !confirm) return "unknown";
-        if (confirm(v.data)) { adopt(v.data); return "done"; }
+        if (confirm(v.data)) { adopt(v.data, true); return "done"; }
         return "not_done";
       },
     });
@@ -255,8 +286,23 @@ export default function QuoteEditorPage() {
     </dl>
   );
   const here = currentStage(stages);
-  const stage: StageId = picked ?? here;
+  if (landing === null && !loadingStages) setLanding(here); // once, when the current stage is first known (React's render-phase initialisation)
+  const stage: StageId = picked ?? landing ?? here;
   const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); u.searchParams.set("stage", String(n)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
+
+  const stage1 = deriveStage1Steps({ customerName: draft.customerName, siteName: draft.siteName, penningPigSize: cfg.penningPigSize, calcIssues: ev.calc.issues, readinessReasons: rd.reasons, customer: customerFacts, roomValues: { lengthM: cfg.lengthM, widthM: cfg.widthM, rooms: cfg.rooms, totalPens: cfg.totalPens, pigsPerRoom: cfg.pigsPerRoom } });
+  const stepId = STAGE1_STEP_IDS[stepNo - 1];
+  const goStepNo = (n: number) => {
+    const next = Math.min(Math.max(n, 1), STAGE1_STEP_IDS.length);
+    setStepNo(next);
+    try { const u = new URL(window.location.href); u.searchParams.set("step", String(next)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ }
+  };
+  const goStep = (id: string) => goStepNo(STAGE1_STEP_IDS.indexOf(id as Stage1StepId) + 1);
+  const nextOpen = nextIncompleteStepId(stage1.steps, stepId);
+  // Guided: each step is its own grid and a single panel spans the full width. Show all: the step sections are `contents`, so every panel joins the fieldset's one grid
+  // and Room inputs | Selections sit side by side again (xl:order-* puts the two headings above their panels at xl only; below xl the one-column source order keeps each heading right before its own panel). A hidden step is never `contents` (hidden wins via !important).
+  const stepPanelCls = showAllSteps ? "contents" : "col-span-full grid min-w-0 items-start gap-6 xl:grid-cols-2";
+  const wide = showAllSteps ? "" : "col-span-full";
 
   return (
     <main className={pageContainerClass("data")}>
@@ -289,11 +335,23 @@ export default function QuoteEditorPage() {
 
       <StageNav stages={stages} current={here} viewing={stage} onSelect={goStage} />
 
+      {stage === 1 && (
+        <StepRail id="s1" ariaLabel="Configuration steps" steps={stage1.steps} currentId={stepId} onSelect={goStep}
+          actions={(
+            <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+              <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm text-slate-800"><input type="checkbox" className="size-6" checked={showAllSteps} onChange={(e) => setShowAllSteps(e.target.checked)} /> Show all steps</label>
+              {nextOpen
+                ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStep(nextOpen)}>Next incomplete step</Button>
+                : <span className="text-sm text-slate-700" data-testid="all-steps-complete">Every step is complete.</span>}
+            </div>
+          )} />
+      )}
+
       {stage <= 2 && (
         <>
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button onClick={save} loading={acts.isPending("save")} aria-describedby={saveWhy ? "save-why" : undefined} disabled={isWorking || !editable || !dirty || incompleteOverrides || blankExclusionKeys.length > 0}>Save draft</Button>
-            {dirty && <Status tone="warning">Unsaved changes</Status>}
+            <span role="status" aria-live="polite" data-testid="save-state">{dirty ? <Status tone="warning">Unsaved changes</Status> : editable ? <Status tone="success">All changes saved</Status> : null}</span>
             {editable && !confirmDemo && <Button variant="secondary" onClick={() => (hasEntries(draft) ? setConfirmDemo(true) : loadDemo())}>Load Demo Defaults</Button>}
             {!editable && <span id="save-why" className="text-sm text-slate-700">{final ? "Read-only: accepted quote." : "You do not have permission to edit: only a Rep or Estimator can edit and save this quotation."}</span>}
           </div>
@@ -326,74 +384,110 @@ export default function QuoteEditorPage() {
 
       {/* ───────────── 1 · CONFIGURATION ───────────── */}
       {stage === 1 && (
+        <>
         <fieldset disabled={!editable} className="mt-4 grid min-w-0 items-start gap-6 border-0 p-0 xl:grid-cols-2" data-testid="stage1-layout">
-          <Panel className="xl:col-span-2">
-            <PanelTitle>Customer & site</PanelTitle>
-            <div className="mt-4 grid gap-4 md:grid-cols-3">
-              <TextField label="Customer" value={draft.customerName} onChange={(v) => edit((d) => { d.customerName = v; })} />
-              <TextField label="Site / project name" value={draft.siteName} onChange={(v) => edit((d) => { d.siteName = v; })} />
-              <Select label="Pricing basis" value={draft.quoteType} onChange={(e) => edit((d) => { d.quoteType = e.target.value as QuoteType; })}>
-                <option value="project">Project — landed cost + 20%</option>
-                <option value="day_to_day">Day-to-day — workbook Retail ex VAT</option>
-              </Select>
-            </div>
-            <CustomerPanel quoteId={id} editable={editable} onPicked={onCustomerChanged} />
-          </Panel>
+          {/* Hidden steps stay mounted (hidden + inert), so the requests made on mount are the same whichever step is shown. */}
+          <StepPanel railId="s1" stepId="customer" number={1} title={STAGE1_STEP_LABEL.customer} current={stepId === "customer"} showAll={showAllSteps} className={stepPanelCls}>
+            <Panel className="xl:col-span-2">
+              <PanelTitle>Customer & quotation contact</PanelTitle>
+              <p className="mt-2 text-xs text-slate-600">Choosing a Cin7 customer or contact below is saved at once. The customer name field is saved with Save draft. The quotation contact is chosen in this step.</p>
+              <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <TextField label="Customer" value={draft.customerName} onChange={(v) => edit((d) => { d.customerName = v; })} />
+              </div>
+              <CustomerPanel quoteId={id} editable={editable} onPicked={onCustomerChanged} onFacts={onCustomerFacts} />
+            </Panel>
+          </StepPanel>
 
-          <Panel>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <PanelTitle>Room inputs — describe ONE room</PanelTitle>
-              <Button variant="secondary" size="sm" onClick={() => edit((d) => { d.config = { ...structuredClone(TOPIGS_GROWER_INPUT), feederVariant: "STANDARD", exclusions: {}, estimatorQuantities: {}, quantityOverrides: {}, quantityOverrideReasons: {} }; })}>Load Topigs sample inputs</Button>
-            </div>
-            <p className="mt-2 text-xs text-slate-600">{ROOMS_HELP}</p>
-            <div className="mt-4 grid gap-4 sm:grid-cols-3">
-              <NumField label="Length" unit="m" value={cfg.lengthM || null} onChange={(v) => edit((d) => { d.config.lengthM = num(v); })} />
-              <NumField label="Width" unit="m" value={cfg.widthM || null} onChange={(v) => edit((d) => { d.config.widthM = num(v); })} />
-              <NumField label="Number of rooms" value={cfg.rooms || null} onChange={(v) => edit((d) => { d.config.rooms = num(v); })} hint="Multiplies every per-room quantity" />
-              <NumField label="Total pens" unit="per room" value={cfg.totalPens || null} onChange={(v) => edit((d) => { d.config.totalPens = num(v); })} />
-              <NumField label="Hospital pens" unit="per room" value={cfg.hospitalPens} onChange={(v) => edit((d) => { d.config.hospitalPens = num(v); })} />
-              <NumField label="Pigs per room" value={cfg.pigsPerRoom || null} onChange={(v) => edit((d) => { d.config.pigsPerRoom = num(v); })} hint="±600 is per room" />
-            </div>
-            <p className="mt-3 text-sm text-slate-600">
-              Room floor area: <strong className="tabular-nums">{ev.calc.derived.floorAreaM2 == null ? "—" : `${Math.round(ev.calc.derived.floorAreaM2 * 1000) / 1000} m²`}</strong>
-              {" "}· minimum lights per room = ceil(area ÷ 25) = <strong>{lineByKey.get("led_light")?.defaultQuantityPerRoom ?? "—"}</strong>
-            </p>
-          </Panel>
+          <StepPanel railId="s1" stepId="site" number={2} title={STAGE1_STEP_LABEL.site} current={stepId === "site"} showAll={showAllSteps} className={stepPanelCls}>
+            <Panel className="col-span-full">
+              <PanelTitle>Site name & pricing basis</PanelTitle>
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <TextField label="Site / project name" value={draft.siteName} onChange={(v) => edit((d) => { d.siteName = v; })} />
+                <Select label="Pricing basis" value={draft.quoteType} onChange={(e) => edit((d) => { d.quoteType = e.target.value as QuoteType; })}>
+                  <option value="project">Project — landed cost + 20%</option>
+                  <option value="day_to_day">Day-to-day — workbook Retail ex VAT</option>
+                </Select>
+              </div>
+              <p className="mt-4 text-sm text-slate-800" data-testid="step2-contact-status">
+                Quotation contact: {customerFacts.contactName ? <strong>{customerFacts.contactName}</strong> : <span className="text-amber-900">{customerFacts.loaded && customerFacts.available ? "not chosen yet" : "not read yet"}</span>}
+                {" "}{/* A link, not a button: navigation must keep working for a viewer who cannot edit (the fieldset disables buttons). A "#" href is an in-page link the unsaved guard ignores. */}
+                <a href="#s1-customer-heading" onClick={(e) => { e.preventDefault(); goStep("customer"); }} className="inline-flex min-h-11 items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Choose the contact in step 1</a>
+              </p>
+              <p className="mt-2 text-xs text-slate-600">The site name and pricing basis are saved with Save draft.</p>
+            </Panel>
+          </StepPanel>
 
-          <Panel>
-            <PanelTitle>Selections</PanelTitle>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <Select label="CCM feeder variant" helperText={`One feeder, two variants. Capacity ${CCM_FEEDER_CAPACITY_PIGS} pigs per feeder.`} value={cfg.feederVariant ?? "STANDARD"} onChange={(e) => edit((d) => { d.config.feederVariant = e.target.value as "STANDARD" | "WINDOW"; delete d.estimator.confirmedMappings.feeder; })}>
-                <option value="STANDARD">Standard — PNQ082</option>
-                <option value="WINDOW">With window — PNQ082-WINDOW</option>
-              </Select>
-              <Select label="Penning pig size" value={cfg.penningPigSize ?? ""} onChange={(e) => edit((d) => { d.config.penningPigSize = (e.target.value || null) as PenningPigSize | null; })}>
-                <option value="">Select…</option>
-                {(Object.keys(PIG_SIZE_LABEL) as PenningPigSize[]).map((k) => <option key={k} value={k}>{PIG_SIZE_LABEL[k]}</option>)}
-              </Select>
-              <NumField label="Penning running metres" unit="per room" value={cfg.penningRunningMetresPerRoom} onChange={(v) => edit((d) => { d.config.penningRunningMetresPerRoom = v; })} hint="Running metres, not m²" />
-              <NumField label="Slatted floor area (context only)" unit="m², one room" value={cfg.slattedFloorAreaM2} onChange={(v) => edit((d) => { d.config.slattedFloorAreaM2 = v; })} hint="Never converted to a slat quantity — the rep enters the quantity" />
-            </div>
-          </Panel>
+          <StepPanel railId="s1" stepId="room" number={3} title={STAGE1_STEP_LABEL.room} current={stepId === "room"} showAll={showAllSteps} className={stepPanelCls} headingClassName={showAllSteps ? "xl:order-1" : undefined}>
+            <Panel className={showAllSteps ? "xl:order-3" : wide}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <PanelTitle>Room inputs — describe ONE room</PanelTitle>
+                <Button variant="secondary" size="sm" onClick={() => edit((d) => { d.config = { ...structuredClone(TOPIGS_GROWER_INPUT), feederVariant: "STANDARD", exclusions: {}, estimatorQuantities: {}, quantityOverrides: {}, quantityOverrideReasons: {} }; })}>Load Topigs sample inputs</Button>
+              </div>
+              <p className="mt-2 text-xs text-slate-600">{ROOMS_HELP}</p>
+              <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                <NumField label="Length" unit="m" value={cfg.lengthM || null} onChange={(v) => edit((d) => { d.config.lengthM = num(v); })} />
+                <NumField label="Width" unit="m" value={cfg.widthM || null} onChange={(v) => edit((d) => { d.config.widthM = num(v); })} />
+                <NumField label="Number of rooms" value={cfg.rooms || null} onChange={(v) => edit((d) => { d.config.rooms = num(v); })} hint="Multiplies every per-room quantity" />
+                <NumField label="Total pens" unit="per room" value={cfg.totalPens || null} onChange={(v) => edit((d) => { d.config.totalPens = num(v); })} />
+                <NumField label="Hospital pens" unit="per room" value={cfg.hospitalPens} onChange={(v) => edit((d) => { d.config.hospitalPens = num(v); })} />
+                <NumField label="Pigs per room" value={cfg.pigsPerRoom || null} onChange={(v) => edit((d) => { d.config.pigsPerRoom = num(v); })} hint="±600 is per room" />
+              </div>
+              <p className="mt-3 text-sm text-slate-600">
+                Room floor area: <strong className="tabular-nums">{ev.calc.derived.floorAreaM2 == null ? "—" : `${Math.round(ev.calc.derived.floorAreaM2 * 1000) / 1000} m²`}</strong>
+                {" "}· minimum lights per room = ceil(area ÷ 25) = <strong>{lineByKey.get("led_light")?.defaultQuantityPerRoom ?? "—"}</strong>
+              </p>
+            </Panel>
+          </StepPanel>
 
-          <Panel className="xl:col-span-2">
-            <PanelTitle>Ventilation — optional inside Grower</PanelTitle>
-            <p className="mt-2 max-w-4xl text-sm text-amber-800">{VENTILATION_SCOPE_STATUS}. AS.03 is not yet ingested: no fan, cooling or controller rule is invented — once selected, the estimator enters the quantity after engineering review.</p>
-            <ul className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              {(Object.keys(OPTIONAL_LABELS) as OptionalItemKey[]).map((k) => {
-                const on = cfg.optionalEquipment[k];
-                return (
-                  <li key={k}>
-                    <label className={`flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm ${on ? "border-indigo-600 bg-indigo-50 text-slate-900" : "border-slate-300 bg-white text-slate-700"}`}>
-                      <span className="flex items-center gap-2"><input type="checkbox" checked={on} onChange={(e) => edit((d) => { d.config.optionalEquipment[k] = e.target.checked; })} /> {OPTIONAL_LABELS[k]}</span>
-                      <span className={`text-xs font-semibold ${on ? "text-indigo-800" : "text-slate-600"}`} aria-hidden>{on ? "✓ Included" : "Not included"}</span>
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
-          </Panel>
+          <StepPanel railId="s1" stepId="equipment" number={4} title={STAGE1_STEP_LABEL.equipment} current={stepId === "equipment"} showAll={showAllSteps} className={stepPanelCls} headingClassName={showAllSteps ? "xl:order-2" : undefined}>
+            <Panel className={showAllSteps ? "xl:order-4" : wide}>
+              <PanelTitle>Selections</PanelTitle>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <Select label="CCM feeder variant" helperText={`One feeder, two variants. Capacity ${CCM_FEEDER_CAPACITY_PIGS} pigs per feeder.`} value={cfg.feederVariant ?? "STANDARD"} onChange={(e) => edit((d) => { d.config.feederVariant = e.target.value as "STANDARD" | "WINDOW"; delete d.estimator.confirmedMappings.feeder; })}>
+                  <option value="STANDARD">Standard — PNQ082</option>
+                  <option value="WINDOW">With window — PNQ082-WINDOW</option>
+                </Select>
+                <Select label="Penning pig size" value={cfg.penningPigSize ?? ""} onChange={(e) => edit((d) => { d.config.penningPigSize = (e.target.value || null) as PenningPigSize | null; })}>
+                  <option value="">Select…</option>
+                  {(Object.keys(PIG_SIZE_LABEL) as PenningPigSize[]).map((k) => <option key={k} value={k}>{PIG_SIZE_LABEL[k]}</option>)}
+                </Select>
+                <NumField label="Penning running metres" unit="per room" value={cfg.penningRunningMetresPerRoom} onChange={(v) => edit((d) => { d.config.penningRunningMetresPerRoom = v; })} hint="Running metres, not m²" />
+                <NumField label="Slatted floor area (context only)" unit="m², one room" value={cfg.slattedFloorAreaM2} onChange={(v) => edit((d) => { d.config.slattedFloorAreaM2 = v; })} hint="Never converted to a slat quantity — the rep enters the quantity" />
+              </div>
+            </Panel>
+
+            <Panel className={`xl:col-span-2${showAllSteps ? " xl:order-5" : ""}`}>
+              <PanelTitle>Ventilation — optional inside Grower</PanelTitle>
+              <p className="mt-2 max-w-4xl text-sm text-amber-800">{VENTILATION_SCOPE_STATUS}. AS.03 is not yet ingested: no fan, cooling or controller rule is invented — once selected, the estimator enters the quantity after engineering review.</p>
+              <ul className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                {(Object.keys(OPTIONAL_LABELS) as OptionalItemKey[]).map((k) => {
+                  const on = cfg.optionalEquipment[k];
+                  return (
+                    <li key={k}>
+                      <label className={`flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm ${on ? "border-indigo-600 bg-indigo-50 text-slate-900" : "border-slate-300 bg-white text-slate-700"}`}>
+                        <span className="flex items-center gap-2"><input type="checkbox" checked={on} onChange={(e) => edit((d) => { d.config.optionalEquipment[k] = e.target.checked; })} /> {OPTIONAL_LABELS[k]}</span>
+                        <span className={`text-xs font-semibold ${on ? "text-indigo-800" : "text-slate-600"}`} aria-hidden>{on ? "✓ Included" : "Not included"}</span>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Panel>
+          </StepPanel>
         </fieldset>
+
+        {/* Step 5 is read-only and outside the form fieldset, so its navigation works for every role. */}
+        <StepPanel railId="s1" stepId="review" number={5} title={STAGE1_STEP_LABEL.review} current={stepId === "review"} showAll={showAllSteps} className="mt-6 grid min-w-0 gap-6">
+          <Stage1Review draft={draft} floorAreaM2={ev.calc.derived.floorAreaM2} totalLabel={totalCents == null ? "—" : fmtCents(totalCents)} derived={stage1} onGoStep={goStep} onContinue={() => goStage(2)} />
+        </StepPanel>
+
+        {!showAllSteps && (
+          <div className="mt-6 flex items-center justify-between gap-3" data-testid="step-buttons">
+            {stepNo > 1 ? <Button type="button" variant="secondary" className="min-h-11" onClick={() => goStepNo(stepNo - 1)}>Back</Button> : <span />}
+            {stepNo < STAGE1_STEP_IDS.length ? <Button type="button" className="min-h-11" onClick={() => goStepNo(stepNo + 1)}>Next</Button> : <span />}
+          </div>
+        )}
+        </>
       )}
 
       {/* ───────────── 2 · ESTIMATOR REVIEW ───────────── */}
@@ -712,7 +806,7 @@ export default function QuoteEditorPage() {
       {stage === 4 && !hold(4) && (
         <div className="mt-6 space-y-6">
           {!final && <Alert tone="info">The customer quotation can be issued only after the Manager has approved. Below is the customer-facing summary as it stands.</Alert>}
-          {final && q.accepted_baseline && <DeliveryPanel quoteId={id} contractCents={q.accepted_baseline.contractCents} onGate={setGate} section="quotation" />}
+          {final && q.accepted_baseline && <DeliveryPanel quoteId={id} contractCents={q.accepted_baseline.contractCents} onGate={applyGate} section="quotation" />}
         <Panel>
           {!summary ? (
             <Alert tone="warning">The customer summary appears once the quote is complete (READY). Resolve the items on the Estimator review tab.</Alert>
@@ -748,7 +842,7 @@ export default function QuoteEditorPage() {
         <div className="mt-6 space-y-6">
           {!final && <Alert tone="info">Customer acceptance is recorded against the issued, Manager-approved quotation. It becomes available once the quotation has been issued.</Alert>}
           {final && !gate.requires && <Alert tone="info">This quotation was approved before customer acceptance was introduced, so it is grandfathered: a Project does not depend on a recorded acceptance. A response can still be recorded if the customer gives one.</Alert>}
-          {final && q.accepted_baseline && <AcceptancePanel quoteId={id} onGate={setGate} />}
+          {final && q.accepted_baseline && <AcceptancePanel quoteId={id} onGate={applyGate} />}
         </div>
       )}
 
