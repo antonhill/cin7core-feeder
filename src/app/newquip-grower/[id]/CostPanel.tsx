@@ -101,7 +101,7 @@ function Declarations({ v, busy, onConfirmUnit, onAcceptIncomplete }: { v: Quote
           <>
             <div className="text-amber-700">Cin7 does not say which unit a supplier price is for. Until someone confirms the prices are per stock unit, they are unusable.</div>
             {onConfirmUnit && !v.frozen && (
-              <><div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end"><div className="min-w-0 flex-1"><Input label="How do you know? (required)" value={unitReason} onChange={(e) => setUnitReason(e.target.value)} /></div><Button size="sm" variant="secondary" disabled={busy || unitReason.trim().length < 10} aria-describedby={unitWhy ? `${uid}-unit-why` : undefined} onClick={() => onConfirmUnit(unitReason)}>Confirm per stock unit</Button></div>
+              <><div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end"><div className="min-w-0 max-w-2xl flex-1"><Input label="How do you know? (required)" value={unitReason} onChange={(e) => setUnitReason(e.target.value)} /></div><Button size="sm" variant="secondary" disabled={busy || unitReason.trim().length < 10} aria-describedby={unitWhy ? `${uid}-unit-why` : undefined} onClick={() => onConfirmUnit(unitReason)}>Confirm per stock unit</Button></div>
               <DisabledReason id={`${uid}-unit-why`}>{unitWhy}</DisabledReason></>
             )}
           </>
@@ -113,7 +113,7 @@ function Declarations({ v, busy, onConfirmUnit, onAcceptIncomplete }: { v: Quote
           <>
             <div className="text-slate-600">Approval is refused while a captured estimate is incomplete, unless an authorised exception is recorded.</div>
             {onAcceptIncomplete && !v.frozen && (
-              <><div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end"><div className="min-w-0 flex-1"><Input label="Exception reason (required)" value={exception} onChange={(e) => setException(e.target.value)} /></div><Button size="sm" variant="secondary" disabled={busy || exception.trim().length < 10} aria-describedby={exceptionWhy ? `${uid}-exception-why` : undefined} onClick={() => onAcceptIncomplete(exception)}>Record exception</Button></div>
+              <><div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-end"><div className="min-w-0 max-w-2xl flex-1"><Input label="Exception reason (required)" value={exception} onChange={(e) => setException(e.target.value)} /></div><Button size="sm" variant="secondary" disabled={busy || exception.trim().length < 10} aria-describedby={exceptionWhy ? `${uid}-exception-why` : undefined} onClick={() => onAcceptIncomplete(exception)}>Record exception</Button></div>
               <DisabledReason id={`${uid}-exception-why`}>{exceptionWhy}</DisabledReason></>
             )}
           </>

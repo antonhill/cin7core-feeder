@@ -109,7 +109,7 @@ export function MarginPanel({ budget, draft, final, frozen, editable, edit }: {
           {sheet && [...sheet.lines.map((l) => ({ key: l.itemKey, label: l.label })), ...(budget.charges.filter((c) => c.amountExTax).map((c) => ({ key: c.key as string, label: c.label })))].map((l) => {
             const cur = draft.estimator.costOverrides?.[l.key as GrowerItemKey];
             return (
-              <div key={l.key} className="grid gap-2 md:grid-cols-[1fr_12rem_1fr] md:items-end">
+              <div key={l.key} className="grid gap-2 md:grid-cols-[minmax(12rem,1fr)_12rem_minmax(0,32rem)] md:items-end">
                 <span className="text-sm text-slate-700">{l.label}</span>
                 <NumField label="Line cost" unit="R ex VAT" value={cur && cur.lineCostCents >= 0 ? cur.lineCostCents / 100 : null} onChange={(v) => setOverride(l.key, { rands: v })} />
                 <TextField label="Reason" value={cur?.reason ?? ""} onChange={(v) => setOverride(l.key, { reason: v })} hint={preview.errors[l.key]} />

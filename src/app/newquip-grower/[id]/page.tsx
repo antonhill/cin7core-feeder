@@ -155,7 +155,7 @@ export default function QuoteEditorPage() {
 
   if (!view || !draft || !ev) {
     return (
-      <main className={pageContainerClass("wide")}>
+      <main className={pageContainerClass("data")}>
         <ModuleHeader variant="workspace" module={SOLUTION_BUILDER_MODULE}>Grower quote</ModuleHeader>
         {error ? <div className="mt-6"><Alert tone="danger">{error}</Alert></div> : <div role="status" aria-live="polite" aria-busy="true" data-testid="quote-loading"><p className="mt-6 text-sm text-slate-600">Loading the quotation…</p><Skeleton className="mt-4 h-14 w-full max-w-4xl" /><Skeleton className="mt-4 h-96 w-full" /></div>}
       </main>
@@ -259,7 +259,7 @@ export default function QuoteEditorPage() {
   const goStage = (n: StageId) => { setPicked(n); try { const u = new URL(window.location.href); u.searchParams.set("stage", String(n)); window.history.replaceState(null, "", u.toString()); } catch { /* the address bar is a convenience */ } };
 
   return (
-    <main className={pageContainerClass("wide")}>
+    <main className={pageContainerClass("data")}>
       <ModuleHeader variant="workspace" module={SOLUTION_BUILDER_MODULE}>
         <Link href="/newquip-grower" className="text-indigo-700 hover:underline">← Solution Builder quotes</Link> · {q.quote_ref} <span className="text-slate-600">rev {q.revision}</span>
       </ModuleHeader>
@@ -326,8 +326,8 @@ export default function QuoteEditorPage() {
 
       {/* ───────────── 1 · CONFIGURATION ───────────── */}
       {stage === 1 && (
-        <fieldset disabled={!editable} className="mt-4 max-w-6xl space-y-6 border-0 p-0">
-          <Panel>
+        <fieldset disabled={!editable} className="mt-4 grid min-w-0 items-start gap-6 border-0 p-0 xl:grid-cols-2" data-testid="stage1-layout">
+          <Panel className="xl:col-span-2">
             <PanelTitle>Customer & site</PanelTitle>
             <div className="mt-4 grid gap-4 md:grid-cols-3">
               <TextField label="Customer" value={draft.customerName} onChange={(v) => edit((d) => { d.customerName = v; })} />
@@ -346,7 +346,7 @@ export default function QuoteEditorPage() {
               <Button variant="secondary" size="sm" onClick={() => edit((d) => { d.config = { ...structuredClone(TOPIGS_GROWER_INPUT), feederVariant: "STANDARD", exclusions: {}, estimatorQuantities: {}, quantityOverrides: {}, quantityOverrideReasons: {} }; })}>Load Topigs sample inputs</Button>
             </div>
             <p className="mt-2 text-xs text-slate-600">{ROOMS_HELP}</p>
-            <div className="mt-4 grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+            <div className="mt-4 grid gap-4 sm:grid-cols-3">
               <NumField label="Length" unit="m" value={cfg.lengthM || null} onChange={(v) => edit((d) => { d.config.lengthM = num(v); })} />
               <NumField label="Width" unit="m" value={cfg.widthM || null} onChange={(v) => edit((d) => { d.config.widthM = num(v); })} />
               <NumField label="Number of rooms" value={cfg.rooms || null} onChange={(v) => edit((d) => { d.config.rooms = num(v); })} hint="Multiplies every per-room quantity" />
@@ -362,7 +362,7 @@ export default function QuoteEditorPage() {
 
           <Panel>
             <PanelTitle>Selections</PanelTitle>
-            <div className="mt-4 grid gap-4 md:grid-cols-3">
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <Select label="CCM feeder variant" helperText={`One feeder, two variants. Capacity ${CCM_FEEDER_CAPACITY_PIGS} pigs per feeder.`} value={cfg.feederVariant ?? "STANDARD"} onChange={(e) => edit((d) => { d.config.feederVariant = e.target.value as "STANDARD" | "WINDOW"; delete d.estimator.confirmedMappings.feeder; })}>
                 <option value="STANDARD">Standard — PNQ082</option>
                 <option value="WINDOW">With window — PNQ082-WINDOW</option>
@@ -376,7 +376,7 @@ export default function QuoteEditorPage() {
             </div>
           </Panel>
 
-          <Panel>
+          <Panel className="xl:col-span-2">
             <PanelTitle>Ventilation — optional inside Grower</PanelTitle>
             <p className="mt-2 max-w-4xl text-sm text-amber-800">{VENTILATION_SCOPE_STATUS}. AS.03 is not yet ingested: no fan, cooling or controller rule is invented — once selected, the estimator enters the quantity after engineering review.</p>
             <ul className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -532,7 +532,7 @@ export default function QuoteEditorPage() {
                 ))}
                 <NumField label="M75 system price" unit="R per system" hint="Estimator input by design. NQ3132 is N/A — supplier quote required; it is not priced separately." value={draft.estimator.unitPrices.flex_auger ?? null} onChange={(v) => edit((d) => { d.estimator.unitPrices = { ...d.estimator.unitPrices, flex_auger: v }; })} />
               </div>
-              <label className="mt-4 flex flex-col gap-1 text-sm">
+              <label className="mt-4 flex max-w-3xl flex-col gap-1 text-sm">
                 <span className="font-medium text-slate-700">Assumptions (frozen with the quote)</span>
                 <textarea value={draft.estimator.assumptions} onChange={(e) => edit((d) => { d.estimator.assumptions = e.target.value; })} rows={3} className="rounded-md border border-slate-300 p-2 text-sm" />
               </label>
@@ -552,7 +552,7 @@ export default function QuoteEditorPage() {
                   const k = b.itemKey as GrowerItemKey;
                   const r = draft.estimator.priceResolutions[k];
                   return (
-                    <div key={b.itemKey} className="grid items-end gap-3 md:grid-cols-[1.4fr_1fr_2fr]">
+                    <div key={b.itemKey} className="grid items-end gap-3 md:grid-cols-[minmax(14rem,1.4fr)_minmax(8rem,1fr)_minmax(0,36rem)]">
                       <div><div className="text-sm font-medium text-slate-900">{b.label}</div><div className="text-xs text-amber-700">{b.reason}</div></div>
                       <NumField label="Unit price" unit="R ex VAT" value={r?.unitPriceExVat ?? null} onChange={(v) => edit((d) => { d.estimator.priceResolutions = { ...d.estimator.priceResolutions, [k]: { unitPriceExVat: v ?? 0, reason: d.estimator.priceResolutions[k]?.reason ?? "" } }; })} />
                       <TextField label="Reason" value={r?.reason ?? ""} onChange={(v) => edit((d) => { d.estimator.priceResolutions = { ...d.estimator.priceResolutions, [k]: { unitPriceExVat: d.estimator.priceResolutions[k]?.unitPriceExVat ?? 0, reason: v } }; })} hint={r && !r.reason.trim() ? "A reason is required before this price is used." : undefined} />
