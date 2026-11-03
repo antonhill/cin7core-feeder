@@ -17,8 +17,8 @@ import type { ClaimCin7Status } from "@/lib/projects/claim-cin7-status";
 // API for consumers (Journey, Variation / Reconciliation screens): useInvoiceVerification() -> { verification (current or null), stale, error, verifiedFor(claimId) }
 // and useInvoiceAuthorisation(recorded) -> the display model for one claim.
 
-interface Stored { result: InvoiceVerification; signature: string }
-interface StoredError { message: string; signature: string }
+interface Stored { result: InvoiceVerification; signature: string; scope: string }
+interface StoredError { message: string; signature: string; scope: string }
 
 export interface InvoiceVerificationApi {
   /** The verification for the CURRENT postings; null when none was run, or when the postings changed since. */
@@ -39,36 +39,39 @@ export interface InvoiceVerificationApi {
   publish(id: string, entry: ChildEntry): void;
   retire(id: string): void;
 }
-interface ChildEntry { verification: InvoiceVerification | null; error: string | null; claimIds: ReadonlyArray<string>; claimSigs: Readonly<Record<string, string>>; mounted: boolean }
+interface ChildEntry {
+  /** Stamped by the receiving provider: the project scope it was published under. */
+  scope?: string; verification: InvoiceVerification | null; error: string | null; claimIds: ReadonlyArray<string>; claimSigs: Readonly<Record<string, string>>; mounted: boolean }
 
 const NOOP: InvoiceVerificationApi = { verification: null, stale: false, error: null, verifiedFor: () => null, errorFor: () => null, set: () => {}, fail: () => {}, clear: () => {}, publish: () => {}, retire: () => {} };
 const Ctx = createContext<InvoiceVerificationApi | null>(null);
 
 /** `signature` = postingsSignature of the postings the workspace is showing now; `claimIds` = this workspace's claims (so a failed read can be attributed to them in a parent). */
-export function InvoiceVerificationProvider({ signature, claimIds = [], claimSigs = {}, children }: { signature: string; claimIds?: ReadonlyArray<string>; claimSigs?: Readonly<Record<string, string>>; children: ReactNode }) {
+export function InvoiceVerificationProvider({ scope = "", signature, claimIds = [], claimSigs = {}, children }: { /** The project id: state stored under another scope is never shown (defence in depth against leaking across projects). */ scope?: string; signature: string; claimIds?: ReadonlyArray<string>; claimSigs?: Readonly<Record<string, string>>; children: ReactNode }) {
   const parent = useContext(Ctx);
   const id = useId();
   const [stored, setStored] = useState<Stored | null>(null);
   const [err, setErr] = useState<StoredError | null>(null);
   const [kids, setKids] = useState<Record<string, ChildEntry>>({});
-  const set = useCallback((result: InvoiceVerification, sig: string) => { setStored({ result, signature: sig }); setErr(null); }, []);
-  const fail = useCallback((message: string, sig: string) => setErr({ message, signature: sig }), []);
+  const set = useCallback((result: InvoiceVerification, sig: string) => { setStored({ result, signature: sig, scope }); setErr(null); }, [scope]);
+  const fail = useCallback((message: string, sig: string) => setErr({ message, signature: sig, scope }), [scope]);
   const clear = useCallback(() => { setStored(null); setErr(null); }, []);
-  const publish = useCallback((cid: string, entry: ChildEntry) => setKids((k) => ({ ...k, [cid]: entry })), []);
+  const publish = useCallback((cid: string, entry: ChildEntry) => setKids((k) => ({ ...k, [cid]: { ...entry, scope } })), [scope]);
   const retire = useCallback((cid: string) => setKids((k) => (k[cid] ? { ...k, [cid]: { ...k[cid], mounted: false, error: null } } : k)), []);
   const claimKey = claimIds.join("|");
   const api = useMemo<InvoiceVerificationApi>(() => {
-    const current = stored && stored.signature === signature ? stored.result : null;
-    const error = err && err.signature === signature ? err.message : null;
+    const current = stored && stored.scope === scope && stored.signature === signature ? stored.result : null;
+    const error = err && err.scope === scope && err.signature === signature ? err.message : null;
     const byClaim = new Map((current?.invoices ?? []).map((i) => [i.claimId, i]));
     const own = new Set(claimKey ? claimKey.split("|") : []);
     return {
-      verification: current, stale: !!stored && !current, error,
+      verification: current, stale: !!stored && stored.scope === scope && !current, error,
       verifiedFor: (claimId, expectedSignature) => {
         const mine = byClaim.get(claimId);
         if (current && mine) return { verifiedAt: current.verifiedAt, invoice: mine };
         let best: VerifiedRef | null = null;
         for (const k of Object.values(kids)) {
+          if (k.scope !== scope) continue;
           const inv = k.verification?.invoices.find((i) => i.claimId === claimId);
           if (!k.verification || !inv) continue;
           // A retained (unmounted) entry needs the caller's signature to match; a mounted one is current by construction but is still checked when a signature is given.
@@ -79,10 +82,10 @@ export function InvoiceVerificationProvider({ signature, claimIds = [], claimSig
         if (best) return best;
         return current ? { verifiedAt: current.verifiedAt, invoice: undefined } : null;
       },
-      errorFor: (claimId) => (own.has(claimId) ? error : Object.values(kids).find((k) => k.mounted && k.error !== null && k.claimIds.includes(claimId))?.error ?? null),
+      errorFor: (claimId) => (own.has(claimId) ? error : Object.values(kids).find((k) => k.scope === scope && k.mounted && k.error !== null && k.claimIds.includes(claimId))?.error ?? null),
       set, fail, clear, publish, retire,
     };
-  }, [stored, err, signature, kids, claimKey, set, fail, clear, publish, retire]);
+  }, [stored, err, scope, signature, kids, claimKey, set, fail, clear, publish, retire]);
   // Publish this workspace's CURRENT (stale-filtered) state to a parent provider; on unmount the parent keeps it (see header) but marks it retired.
   const publishUp = parent?.publish;
   const retireUp = parent?.retire;
