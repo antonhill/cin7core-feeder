@@ -334,6 +334,29 @@ describe("quotations: sign-off is the submission, manager approval seals the bas
   });
 });
 
+describe("UX-006 D-3 (Phase H path): an unauthorised decideDocument changes nothing", () => {
+  it("a non-manager deciding a claim that has no open request creates no request, event or notification; another organisation likewise", async () => {
+    const { db, projectId } = await world();
+    const claimId = await draftClaim(db, projectId);
+    const nonEmpty = () => Object.fromEntries(Object.entries(structuredClone(db.tables)).filter(([, rows]) => rows.length > 0));
+    const before = nonEmpty();
+    await expect(decideDocument(db as never, PM, "CLAIM", claimId, "APPROVE")).rejects.toThrow(/Only a manager/);
+    await expect(decideDocument(db as never, PM, "CLAIM", claimId, "REJECT", { reason: "no thanks" })).rejects.toThrow(/Only a manager/);
+    await expect(decideDocument(db as never, FOREIGN, "CLAIM", claimId, "APPROVE")).rejects.toThrow(/not found/);
+    expect(nonEmpty()).toEqual(before);
+    expect(db.rows("approval_requests")).toHaveLength(0);
+    expect(db.rows("approval_events")).toHaveLength(0);
+    expect(db.rows("project_claims").find((c) => c.id === claimId)!.status).toBe("READY_FOR_APPROVAL");
+  });
+  it("a manager who prepared the document and gives no override is refused before anything is submitted", async () => {
+    const { db, projectId } = await world();
+    const d = await createClaimDraft(db as never, ORG, "mgr@a", projectId); await submitClaimForApproval(db as never, ORG, projectId, d.claimId);
+    await expect(decideDocument(db as never, MGR, "CLAIM", d.claimId, "APPROVE")).rejects.toThrow(/cannot approve it normally/);
+    expect(db.rows("approval_requests")).toHaveLength(0);
+    expect(db.rows("approval_events")).toHaveLength(0);
+  });
+});
+
 describe("integrity: stale revisions, separation of duties, isolation, concurrency, idempotency", () => {
   it("11: a document that changed after submission cannot be approved (fail-before-fix: the digest is the only barrier here)", async () => {
     const { db, projectId } = await world();
