@@ -43,6 +43,13 @@ create index if not exists scorecard_review_events_review_idx on scorecard_revie
 alter table scorecard_review_events enable row level security;
 create policy "org members read scorecard_review_events" on scorecard_review_events for select using (is_org_member(organization_id));
 
+-- Audit trail hardening: Supabase's default privileges would give the browser roles write and TRUNCATE
+-- on every new table. RLS already denies API writes (no write policy), but TRUNCATE bypasses row
+-- triggers, so the append-only guarantee must not rely on RLS alone. Browser roles are read-only;
+-- only the service role (the server actions' database functions) can write.
+revoke all on table scorecard_review_events from anon, authenticated;
+grant select on table scorecard_review_events to authenticated;
+
 -- Append-only: no UPDATE ever; DELETE only when it is the cascade of the parent
 -- review/organization being removed (trigger depth > 1), never a direct delete.
 create or replace function prevent_scorecard_review_event_mutation() returns trigger language plpgsql set search_path = public as $$
