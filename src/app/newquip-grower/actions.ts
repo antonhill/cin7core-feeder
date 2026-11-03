@@ -20,6 +20,8 @@ import { demoAuditDetail, resolveActing, type DemoInfo } from "@/lib/demo-mode/c
 import { evaluationContext } from "@/lib/newquip-quotes/context";
 import { confirmationLabel, resolveConfirmationContact, type ConfirmationInput } from "@/lib/newquip-quotes/confirmation-contact";
 import { appendSnapshot, customerFeaturesAvailable, latestSnapshot } from "@/lib/newquip-quotes/customer-store";
+import { fieldValue } from "@/lib/newquip-quotes/customer-snapshot";
+import { assertConfirmationCurrent } from "@/lib/newquip-quotes/confirmation-guard";
 import { keepServerOwnedCostBasis, keepServerOwnedCosts, redactInternalFinancials, stampCostOverrides } from "@/newquip/quote/margin";
 import { approvalsAvailable, decideDocument, legacyCtx, resyncQuoteApprovals, stagedAvailable, submitForApproval, withdrawPendingFor } from "@/lib/approvals/approval-store";
 import type { ScheduleChoice } from "@/newquip/quote/billing-schedule";
@@ -195,7 +197,9 @@ export async function saveGrowerDraftAction(quoteId: string, draft: QuoteDraft):
     const a = await authorise();
     const db = createServiceRoleClient();
     const prior = await loadQuote(db, a.orgId, quoteId);
-    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, await sanitiseSubmittedDraft(a, db, draft, prior?.draft));
+    // Once the quotation has a Cin7 customer snapshot, the snapshot is the ONLY source of the customer name: a typed or edited name in the submitted draft is replaced by it.
+    const snapName = (await customerFeaturesAvailable(db)) ? fieldValue((await latestSnapshot(db, a.orgId, quoteId))?.snapshot.name ?? { state: "missing" }) : null;
+    const saved = await saveDraft(db, a.orgId, a.roles, quoteId, await sanitiseSubmittedDraft(a, db, draft, prior?.draft), snapName);
     // Changed content invalidates the estimator's sign-off (saveDraft clears it) and any open approval of the older content: the quote goes back to estimator review.
     if (saved.draftHash !== prior?.draft_hash && (await stagedAvailable(db))) await resyncQuoteApprovals(db, ctxOf(a), quoteId, { quiet: true }).catch(() => undefined);
     const q = await loadQuote(db, a.orgId, quoteId);
@@ -293,6 +297,8 @@ export async function returnGrowerQuoteToEstimatorAction(quoteId: string, reason
 /** Manager final approval — freezes the accepted baseline. */
 export async function approveGrowerQuoteAction(quoteId: string) {
   return step(quoteId, "Manager approved a NewQuip quote and froze the accepted baseline", "newquip.quote_manager_approved", async (a, db) => {
+    // A stale confirmation (confirmed contact changed, or total no longer the confirmed amount) can never be approved. Read-only; the role checks below still decide who may approve.
+    if (a.roles.has("manager")) await assertConfirmationCurrent(db, a.orgId, quoteId, evaluationContext(true));
     // One approval path: when the Approvals framework is available the decision is recorded there (separation of duties, exact revision, history).
     if (await stagedAvailable(db)) { await decideDocument(db, ctxOf(a), "QUOTE", quoteId, "APPROVE", { stage: "MANAGER" }); return; }
     if (await approvalsAvailable(db)) { await decideDocument(db, ctxOf(a, a.roles.has("manager")), "QUOTE", quoteId, "APPROVE"); return; }
