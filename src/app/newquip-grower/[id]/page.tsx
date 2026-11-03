@@ -1329,7 +1329,7 @@ export default function QuoteEditorPage() {
                 : (
                   <>
                   {gate.requires ? <p className="mb-2 text-sm text-slate-600">The Project will use the billing schedule printed on the quotation the customer accepted.</p> : <ScheduleChooser contractCents={q.accepted_baseline.contractCents} onChange={setScheduleChoice} />}
-                  {!roles.has("manager") ? <Alert tone="info">A Manager creates the Project from the accepted quotation after verifying the customer&apos;s acceptance. You will be able to open it from here once it exists.</Alert> : <Button loading={acts.isPending("handover")} aria-describedby={isWorking || (!gate.requires && !resolveScheduleChoice(scheduleChoice).ok) ? "handover-why" : undefined} disabled={isWorking || (!gate.requires && !resolveScheduleChoice(scheduleChoice).ok)} onClick={() => void acts.run("handover", async () => {
+                  {!roles.has("manager") ? <Alert tone="info">A Manager creates the Project from the accepted quotation after verifying the customer&apos;s acceptance. You will be able to open it from here once it exists.</Alert> : <Button loading={acts.isPending("handover")} className="min-h-11" aria-describedby={isWorking || (!gate.requires && !resolveScheduleChoice(scheduleChoice).ok) ? "handover-why" : undefined} disabled={isWorking || (!gate.requires && !resolveScheduleChoice(scheduleChoice).ok)} onClick={() => void acts.run("handover", async () => {
                     const r = await createProjectFromGrowerQuoteAction(id, scheduleChoice);
                     if (!r.ok) return r;
                     setError(null);

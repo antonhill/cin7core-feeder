@@ -237,6 +237,16 @@ describe("UX-006c Stage 5: status banner", () => {
 });
 
 describe("UX-006c Stage 6: readiness checklist", () => {
+  it("UX-006: the Stage 6 handover controls (billing schedule select, Create Project button) carry 44px classes, for the Manager and the Rep alike", async () => {
+    for (const roles of [["MANAGER"], ["REP"]] as Role[][]) {
+      await open({ stage: "6", roles, row: { ...FINAL, requires_customer_acceptance: false }, delivery: delivery({ requiresAcceptance: false, status: "APPROVED_INTERNALLY" }) }); // the grandfathered path shows the schedule chooser
+      await screen.findByTestId("handover-checklist", {}, { timeout: 8000 });
+      const sel = screen.getByLabelText("Billing schedule") as HTMLSelectElement;
+      expect(sel.className).toContain("min-h-11");
+      if (roles[0] === "MANAGER") expect(screen.getByRole("button", { name: "Create Project from accepted quote" }).className).toContain("min-h-11");
+      cleanup();
+    }
+  }, 60000);
   it("UX-006i2: Stage 6 says plainly what is next - for the Manager, the Manager's own button; for a Rep, that the Manager creates it; before acceptance, Stage 5", async () => {
     await open({ stage: "6", roles: ["MANAGER"], row: FINAL, delivery: delivery({ status: "CUSTOMER_ACCEPTED", accepted: true, latestDocumentId: "d0" }) });
     expect((await screen.findByTestId("stage6-next", {}, { timeout: 8000 })).textContent).toBe("Next: create the Project from the accepted quotation (the button below).");
