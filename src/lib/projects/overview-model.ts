@@ -12,7 +12,7 @@
 //  * Stock is Cin7's account-wide stock, never presented as reserved for the project.
 import type { MarginFigures } from "./margin-figures";
 import type { PhysicalException, PhysicalRow } from "./physical-status";
-import { formatCents, type ProjectView, type StageView } from "./project-view";
+import { formatBps, formatCents, type ProjectView, type StageView } from "./project-view";
 
 export type OverviewTab = "stages" | "components" | "claims" | "variations" | "deliveries" | "physical" | "procurement" | "profitability";
 export type OverviewLink = { kind: "tab"; tab: OverviewTab } | { kind: "href"; href: string };
@@ -330,4 +330,218 @@ export function buildProjectOverview(i: OverviewInput): ProjectOverview {
     reconciliation: { scopes: recon, invoicedExVatCents: recon.reduce((n, r) => n + r.summary.invoicedExVatCents, 0), cin7Note: CIN7_NOTE, xeroNote: XERO_NOTE },
     exceptions: ex,
   };
+}
+
+// ── Project Journey (UX-006d) ───────────────────────────────────────────────────────────────────────────────
+// A journey map is derived from state the Overview ALREADY holds (the loaded scopes with their ProjectView, the delivery summary counts and, once the user has
+// asked, the Cin7 fulfilment read). It adds no request. Where the state is not loaded the station says so (`unknown`), it never reports zero and never infers.
+// Stations are not steps: nothing here gates anything, and the only "Needs" lines are dependencies the code really enforces. Invoicing and stock fulfilment
+// never refer to each other. There is no project completion state. No cost or margin figure is read or output, so nothing here depends on the viewer's role.
+
+export type JourneyStatus = "not_started" | "in_progress" | "completed" | "needs_attention" | "blocked";
+export const JOURNEY_STATUS_LABEL: Record<JourneyStatus, string> = { not_started: "Not started", in_progress: "In progress", completed: "Completed", needs_attention: "Needs attention", blocked: "Blocked" };
+export const JOURNEY_UNKNOWN_LABEL = "Not read yet";
+export interface JourneyStation {
+  id: string;
+  label: string;
+  status: JourneyStatus;
+  /** True when the state needed is not loaded: the station shows "Not read yet" in place of its status (status is then always not_started). */
+  unknown: boolean;
+  detail: string;
+  /** Real, code-enforced dependencies only. */
+  needs: string[];
+  /** Setup details are informational and never block anything. */
+  informational?: boolean;
+  /** Word shown in place of the status label where the status word would mislead (a rejected variation is closed, not "Completed"). */
+  statusLabel?: string;
+  /** A Blocked station whose block is a plain prerequisite, not a fault: shown in the milder tone, same status word. */
+  soft?: boolean;
+  /** A value that is never read by this page (evidence-only rows): shown as "Not read yet" but left out of the lane summary counts. */
+  permanentUnknown?: boolean;
+  link: { tab: OverviewTab; label: string } | null;
+}
+export type JourneyLaneId = "commercial" | "physical" | "variations";
+export interface JourneyLane { id: JourneyLaneId; title: string; stations: JourneyStation[]; summary: { attention: number; inProgress: number; unknown: number } }
+export interface Journey { setup: JourneyStation[]; lanes: JourneyLane[]; footnote: string }
+export interface JourneyInput {
+  scopes: OverviewScopeInput[];
+  /** The Overview's own physical block (state, totals, deliveries): `deliveries` null = could not be read. */
+  physical: PhysicalOverview;
+}
+
+export const JOURNEY_FOOTNOTE = "There is no project completion or closure state in the Toolbox, so the journey shows progress only and never marks the project as finished.";
+
+const OPEN_CLAIM = ["DRAFT", "READY_FOR_APPROVAL"];
+const SETTLED_CLAIM = ["RECONCILED", "FAILED_CONFIRMED_NO_WRITE", "CANCELLED_BEFORE_WRITE"];
+const INVOICED_KINDS = ["DRAFT_CREATED", "AUTHORISED", "CREATED_OTHER"];
+/** Retryable (nothing created) and uncertain (check Cin7 first) are different instructions and are never merged into one sentence. */
+const postingProblem = (notCreated: number, uncertain: number): string => [
+  notCreated ? `${plural(notCreated, "invoice")} not created in Cin7 (can be retried)` : "",
+  uncertain ? `${plural(uncertain, "invoice")} with an uncertain outcome: check Cin7 before doing anything` : "",
+].filter(Boolean).join("; ") + ".";
+const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+
+function station(s: Omit<JourneyStation, "unknown" | "needs" | "link"> & Partial<Pick<JourneyStation, "unknown" | "needs" | "link">>): JourneyStation {
+  return { unknown: false, needs: [], link: null, ...s };
+}
+const unknownStation = (id: string, label: string, detail: string, link: JourneyStation["link"], needs: string[] = []): JourneyStation => station({ id, label, status: "not_started", unknown: true, detail, link, needs });
+
+/** The claims of one scope as the journey needs them. Pure counts over the loaded rows. */
+function claimFacts(v: ProjectView) {
+  const claims = v.claims;
+  return {
+    claims,
+    open: claims.filter((c) => OPEN_CLAIM.includes(c.status)),
+    draft: claims.filter((c) => c.status === "DRAFT").length,
+    submitted: claims.filter((c) => c.status === "READY_FOR_APPROVAL").length,
+    postable: claims.filter((c) => c.status === "APPROVED" && c.cin7Status.kind === "NOT_POSTED").length,
+    posting: claims.filter((c) => c.cin7Status.kind === "POSTING").length,
+    notCreated: claims.filter((c) => c.cin7Status.kind === "FAILED").length,
+    uncertain: claims.filter((c) => c.cin7Status.kind === "UNCERTAIN").length,
+    invoiced: claims.filter((c) => INVOICED_KINDS.includes(c.cin7Status.kind)).length,
+    reconciled: claims.filter((c) => c.cin7Status.reconciled).length,
+    allSettled: claims.length > 0 && claims.every((c) => SETTLED_CLAIM.includes(c.status)) && claims.some((c) => c.status === "RECONCILED"),
+  };
+}
+
+function variationStation(code: string, title: string, status: string, amountCents: number, scopeOf: OverviewScopeInput | undefined): JourneyStation {
+  const id = `variation-${code}`;
+  const label = `${code} ${title}`.trim();
+  const link = { tab: "variations" as const, label: "Open Variations" };
+  if (status === "DRAFT") return station({ id, label, status: "not_started", detail: `Draft, ${formatCents(amountCents)} ex VAT: not yet approved. No billing is possible until it is approved.`, link });
+  if (status === "REJECTED") return station({ id, label, status: "not_started", statusLabel: "Rejected", detail: "Rejected: closed. It adds nothing to the contract and has no billing.", link });
+  if (status !== "APPROVED") return unknownStation(id, label, `Unrecognised variation status ${status}.`, link);
+  if (!scopeOf) return station({ id, label, status: "needs_attention", detail: `Approved (${formatCents(amountCents)} ex VAT) but no billing project exists yet, so it cannot be invoiced.`, link: { tab: "variations", label: `Start ${code} billing` } });
+  const v = scopeOf.view;
+  const f = claimFacts(v);
+  const c = v.commercial;
+  // Same state, same status as the Commercial lane: an uncertain claim blocks new billing.
+  if (c.uncertainClaimBlocking) return station({ id, label, status: "blocked", detail: "A claim's Cin7 outcome is uncertain, which blocks new billing.", needs: ["Needs: the uncertain claim resolved before new billing of its stages."], link: { tab: "variations", label: `Open ${code} billing` } });
+  if (f.notCreated + f.uncertain > 0) return station({ id, label, status: "needs_attention", detail: postingProblem(f.notCreated, f.uncertain), link: { tab: "variations", label: `Open ${code} billing` } });
+  if (!c.scheduleBalanced) return station({ id, label, status: "needs_attention", detail: "The billing schedule does not total the variation.", link: { tab: "variations", label: `Open ${code} billing` } });
+  if (f.allSettled && c.remainingCents === 0) return station({ id, label, status: "completed", detail: `All ${plural(f.claims.length, "claim")} reconciled; nothing left to bill.`, link });
+  return station({ id, label, status: "in_progress", detail: f.claims.length === 0 ? "Billing project open; no claims raised yet." : `${plural(f.claims.length, "claim")} raised, ${f.reconciled} reconciled with Cin7.`, link: { tab: "variations", label: `Open ${code} billing` } });
+}
+
+export function buildJourney(input: JourneyInput): Journey {
+  const base = input.scopes.find((s) => s.scope === "BASE");
+  const p = input.physical;
+  const claimsTab = { tab: "claims" as const, label: "Open Claims" };
+
+  // ── Setup (informational; none of it blocks anything) ───────────────────────
+  const setup: JourneyStation[] = [];
+  if (!base) {
+    setup.push(unknownStation("setup-details", "Project details", "The project could not be read.", null));
+    setup.push(unknownStation("setup-schedule", "Billing schedule", "The project could not be read.", { tab: "stages", label: "Open Stages" }));
+    setup.push(unknownStation("setup-opening", "Opening commitments", "The project could not be read.", claimsTab));
+  } else {
+    const bv = base.view;
+    const set = [bv.project.project_manager, bv.project.start_date, bv.project.target_completion_date].filter((x) => !!x && String(x).trim() !== "").length;
+    setup.push(station({
+      id: "setup-details", label: "Project details", informational: true, status: set === 0 ? "not_started" : set === 3 ? "completed" : "in_progress",
+      detail: `${set} of 3 set (project manager, start date, target completion). Informational; nothing waits on them.`,
+    }));
+    setup.push(station({
+      id: "setup-schedule", label: "Billing schedule", status: bv.commercial.scheduleBalanced ? "completed" : "needs_attention",
+      detail: bv.commercial.scheduleBalanced ? "The stage values total the contract." : "The stage values do not total the contract.", link: { tab: "stages", label: "Open Stages" },
+    }));
+    const oc = bv.openingCommitments.length;
+    setup.push(station({
+      id: "setup-opening", label: "Opening commitments", status: bv.openingCommitmentsLocked ? "completed" : oc > 0 ? "in_progress" : "not_started", statusLabel: bv.openingCommitmentsLocked ? "Locked" : undefined,
+      detail: bv.openingCommitmentsLocked ? `${oc === 0 ? "None entered" : plural(oc, "commitment") + " entered"}; locked because claims exist.` : oc > 0 ? `${plural(oc, "commitment")} entered.` : "Optional: none entered.",
+      needs: bv.openingCommitmentsLocked ? [] : ["Needs: entered before the first claim; they lock once a claim exists."], link: claimsTab,
+    }));
+  }
+
+  // ── Commercial lane (original contract only; variations have their own lane) ──
+  const commercial: JourneyStation[] = [];
+  if (!base) {
+    for (const [id, label] of [["sale", "Cin7 Sale"], ["stages", "Stage progress"], ["claims", "Progress claims"], ["posting", "Post to Cin7"], ["invoices", "Invoice status"]] as const) commercial.push(unknownStation(`commercial-${id}`, label, "The project could not be read.", claimsTab));
+  } else {
+    const v = base.view;
+    const f = claimFacts(v);
+    const c = v.commercial;
+    const linked = !!base.saleNumber;
+    const blockers = base.scopeBlockers.length;
+
+    commercial.push(linked
+      ? station({ id: "commercial-sale", label: "Cin7 Sale", status: "completed", detail: `Linked to ${base.saleNumber}.`, link: claimsTab })
+      : blockers > 0
+        ? station({ id: "commercial-sale", label: "Cin7 Sale", status: "in_progress", detail: `No Sale linked. ${plural(blockers, "scope item")} not resolved yet.`, needs: [`Needs: all scope items resolved (${blockers} outstanding) before a Sale can be created.`], link: { tab: "components", label: "Open Components / scope" } })
+        // No link says nothing about an attempt in flight (PENDING / uncertain): that row is read only on the Claims tab.
+        : unknownStation("commercial-sale", "Cin7 Sale", "No Sale is linked. Whether a creation attempt is in flight or uncertain is read on the Claims tab.", claimsTab));
+
+    const anyApproved = v.stages.some((s) => s.approvedBps > 0 || s.committedCents > 0);
+    // BASE-only test: the project's remainingCents includes approved variations, so it must not decide a base station.
+    const allCommitted = v.stages.length > 0 && v.stages.every((s) => s.committedCents >= s.valueCents);
+    const below = v.stages.filter((s) => s.belowCommitted).length;
+    commercial.push(below > 0
+      ? station({ id: "commercial-stages", label: "Stage progress", status: "needs_attention", detail: `${plural(below, "stage")} approved below what is already committed.`, link: { tab: "stages", label: "Open Stages" } })
+      : allCommitted ? station({ id: "commercial-stages", label: "Stage progress", status: "completed", detail: "Every stage is fully billed or committed.", link: { tab: "stages", label: "Open Stages" } })
+      : anyApproved ? station({ id: "commercial-stages", label: "Stage progress", status: "in_progress", detail: `Approved completion ${formatBps(c.approvedCompletionBps)} of the contract.`, link: { tab: "stages", label: "Open Stages" } })
+      : station({ id: "commercial-stages", label: "Stage progress", status: "not_started", detail: "No progress approved for billing yet.", link: { tab: "stages", label: "Open Stages" } }));
+
+    if (c.uncertainClaimBlocking) commercial.push(station({ id: "commercial-claims", label: "Progress claims", status: "blocked", detail: "A claim's Cin7 outcome is uncertain, which blocks new billing.", needs: ["Needs: the uncertain claim resolved before new billing of its stages."], link: claimsTab }));
+    else if (f.claims.length === 0) commercial.push(station({ id: "commercial-claims", label: "Progress claims", status: "not_started", detail: c.claimableCents > 0 ? `No claims yet. ${formatCents(c.claimableCents)} ex VAT is claimable now.` : "No claims yet. Nothing is claimable until a manager approves progress.", link: claimsTab }));
+    else if (f.open.length > 0) commercial.push(station({ id: "commercial-claims", label: "Progress claims", status: "in_progress", detail: [f.draft ? `${f.draft} in draft` : "", f.submitted ? `${f.submitted} awaiting approval` : ""].filter(Boolean).join(", ") + ".", link: claimsTab }));
+    else if (f.allSettled && allCommitted) commercial.push(station({ id: "commercial-claims", label: "Progress claims", status: "completed", detail: `All ${plural(f.claims.length, "claim")} reconciled; nothing left to bill.`, link: claimsTab }));
+    else commercial.push(station({ id: "commercial-claims", label: "Progress claims", status: "in_progress", detail: `${plural(f.claims.length, "claim")} raised${c.claimableCents > 0 ? `; ${formatCents(c.claimableCents)} ex VAT claimable now` : ""}.`, link: claimsTab }));
+
+    const needsSale = linked ? [] : ["Needs: a linked Cin7 Sale before a claim can be posted."];
+    if (f.notCreated + f.uncertain > 0) commercial.push(station({ id: "commercial-posting", label: "Post to Cin7", status: "needs_attention", detail: postingProblem(f.notCreated, f.uncertain), needs: needsSale, link: claimsTab }));
+    else if (f.posting > 0) commercial.push(station({ id: "commercial-posting", label: "Post to Cin7", status: "in_progress", detail: `${plural(f.posting, "invoice")} being posted.`, needs: needsSale, link: claimsTab }));
+    else if (f.postable > 0 && !linked) commercial.push(station({ id: "commercial-posting", label: "Post to Cin7", status: "blocked", soft: true, detail: `${plural(f.postable, "approved claim")} cannot be posted.`, needs: needsSale, link: claimsTab }));
+    else if (f.postable > 0) commercial.push(station({ id: "commercial-posting", label: "Post to Cin7", status: "in_progress", detail: `${plural(f.postable, "approved claim")} ready to post.`, link: claimsTab }));
+    else if (f.invoiced > 0) commercial.push(station({ id: "commercial-posting", label: "Post to Cin7", status: "completed", detail: `${plural(f.invoiced, "claim")} posted; none waiting.`, needs: needsSale, link: claimsTab }));
+    else commercial.push(station({ id: "commercial-posting", label: "Post to Cin7", status: "not_started", detail: "No approved claims to post.", needs: needsSale, link: claimsTab }));
+
+    // The invoice status is what the Toolbox LAST recorded when it posted or reconciled; it is never a live read, so that part is always unknown here.
+    const recorded = f.claims.filter((cl) => cl.cin7Status.invoiceNumber !== null).length;
+    commercial.push(station({
+      id: "commercial-invoices", label: "Invoice status", status: recorded === 0 ? "not_started" : f.reconciled === recorded ? "completed" : "in_progress",
+      detail: `${recorded === 0 ? "No invoices recorded" : `${plural(recorded, "invoice")} recorded, ${f.reconciled} reconciled with Cin7`} (last recorded status). Live Cin7 status: ${JOURNEY_UNKNOWN_LABEL}, it is verified in Claims.`, link: claimsTab,
+    }));
+  }
+
+  // ── Physical lane (independent of billing) ──────────────────────────────────
+  const physical: JourneyStation[] = [];
+  const d = p.deliveries;
+  const delivTab = { tab: "deliveries" as const, label: "Open Deliveries" };
+  physical.push(d === null ? unknownStation("physical-deliveries", "Deliveries", "The delivery register could not be read.", delivTab)
+    // `total` already excludes cancelled deliveries (loadDeliverySummary), so a project whose deliveries were all cancelled has total 0 and says so.
+    : d.total === 0 ? station({ id: "physical-deliveries", label: "Deliveries", status: "not_started", detail: d.cancelled > 0 ? `No live deliveries; ${d.cancelled} cancelled.` : "No deliveries recorded.", link: delivTab })
+    : d.dispatched === d.total ? station({ id: "physical-deliveries", label: "Deliveries", status: "completed", detail: `All ${plural(d.total, "delivery", "deliveries")} dispatched${d.cancelled > 0 ? ` (${d.cancelled} cancelled)` : ""}.`, link: delivTab })
+    : station({ id: "physical-deliveries", label: "Deliveries", status: "in_progress", detail: `${d.dispatched} of ${d.total} dispatched${d.cancelled > 0 ? ` (${d.cancelled} cancelled)` : ""}.`, link: delivTab }));
+
+  const fulfilTab = { tab: "physical" as const, label: "Open Products & Stock" };
+  const procTab = { tab: "procurement" as const, label: "Open Procurement" };
+  if (p.state === "not_loaded") {
+    physical.push(unknownStation("physical-fulfilment", "Fulfilment", "Cin7 is read only when you ask. Quantities are unknown, not zero.", fulfilTab));
+    physical.push(unknownStation("physical-procurement", "Procurement", "Stock shortfalls are unknown until Cin7 is read.", procTab));
+  } else if (p.state === "error" || !p.totals) {
+    physical.push(unknownStation("physical-fulfilment", "Fulfilment", "Cin7 fulfilment could not be read.", fulfilTab));
+    physical.push(unknownStation("physical-procurement", "Procurement", "Cin7 fulfilment could not be read.", procTab));
+  } else {
+    const t = p.totals;
+    physical.push(t.skuCount === 0 ? station({ id: "physical-fulfilment", label: "Fulfilment", status: "not_started", detail: "No physical products in scope.", link: fulfilTab })
+      : t.unknownRowCount > 0 ? station({ id: "physical-fulfilment", label: "Fulfilment", status: "in_progress", detail: `${plural(t.unknownRowCount, "product line")} could not be read, so the totals are incomplete.`, link: fulfilTab })
+      : t.remainingUnits === 0 ? station({ id: "physical-fulfilment", label: "Fulfilment", status: "completed", detail: "Everything ordered has shipped (as read from Cin7).", link: fulfilTab })
+      : (t.shippedUnits ?? 0) > 0 ? station({ id: "physical-fulfilment", label: "Fulfilment", status: "in_progress", detail: `${t.shippedUnits} shipped, ${t.remainingUnits} still to ship.`, link: fulfilTab })
+      : station({ id: "physical-fulfilment", label: "Fulfilment", status: "not_started", detail: `Nothing shipped yet; ${t.remainingUnits} to ship.`, link: fulfilTab }));
+    physical.push(t.skuCount === 0 ? station({ id: "physical-procurement", label: "Procurement", status: "not_started", detail: "No physical products in scope.", link: procTab })
+      : t.shortSkuCount > 0 ? station({ id: "physical-procurement", label: "Procurement", status: "needs_attention", detail: `${plural(t.shortSkuCount, "product")} short of stock (whole-account stock).`, link: procTab })
+      : t.unknownRowCount > 0 ? station({ id: "physical-procurement", label: "Procurement", status: "in_progress", detail: "No shortfall found, but some lines could not be read.", link: procTab })
+      : station({ id: "physical-procurement", label: "Procurement", status: "completed", detail: "No stock shortfall at the last Cin7 read (whole-account stock).", link: procTab }));
+  }
+  // Milestone confirmations live in the delivery register rows, which the Overview does not load (only counts).
+  physical.push({ ...unknownStation("physical-milestones", "Milestone confirmations", "Evidence only: a confirmation does not release claimable value. The rows are read on the Deliveries tab.", delivTab), permanentUnknown: true });
+
+  // ── Variations lane (one station per variation; each reads only its OWN billing scope) ──
+  const variations: JourneyStation[] = (base?.view.variations ?? []).map((vr) => variationStation(vr.code, vr.title, vr.status, vr.amount_cents, input.scopes.find((s) => s.scope === "VARIATION" && s.variationCode === vr.code)));
+
+  const lane = (id: JourneyLaneId, title: string, stations: JourneyStation[]): JourneyLane => ({
+    id, title, stations,
+    summary: { attention: stations.filter((s) => !s.unknown && (s.status === "needs_attention" || s.status === "blocked")).length, inProgress: stations.filter((s) => !s.unknown && s.status === "in_progress").length, unknown: stations.filter((s) => s.unknown && !s.permanentUnknown).length },
+  });
+  return { setup, lanes: [lane("commercial", "Commercial", commercial), lane("physical", "Physical", physical), lane("variations", "Variations", variations)], footnote: JOURNEY_FOOTNOTE };
 }
