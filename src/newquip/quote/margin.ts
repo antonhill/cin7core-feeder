@@ -229,3 +229,25 @@ export function redactInternalFinancials<Q extends { draft: { estimator: { costO
   if (q.accepted_baseline) { delete q.accepted_baseline.internalMargin; delete q.accepted_baseline.physicalCostEstimate; if (q.accepted_baseline.estimator) { delete q.accepted_baseline.estimator.physicalCosts; delete q.accepted_baseline.estimator.costOverrides; delete q.accepted_baseline.estimator.costBasis; } }
   return q;
 }
+
+const NEUTRAL_PRICING_BASIS: Record<string, string> = {
+  day_to_day: "Day-to-day pricing: quoted at the standard price list, ex VAT.",
+  project: "Project pricing: quoted at the project price basis, ex VAT.",
+};
+
+/**
+ * Removes the margin-derived SUMMARY keys from an evaluation for a viewer who may not see cost: the costed revenue, the costed line count and the excluded-from-margin
+ * count (they reveal which lines carry a cost and how much revenue is costed). The long-standing withheld fields (estimatedCost / estimatedGP / marginPct, which the
+ * cost-withheld evaluation already nulls or zeroes) are untouched. Defence in depth on top of the evaluation. Unchanged for a cost-entitled viewer.
+ */
+export function redactEvaluationFinancials<E extends { budget: BudgetQuote | null }>(ev: E, canViewCommercials: boolean): E {
+  if (canViewCommercials || !ev.budget) return ev;
+  const out = structuredClone(ev);
+  const totals = out.budget!.totals as unknown as Record<string, unknown>;
+  for (const k of ["marginRevenueExTax", "costedLineCount", "excludedFromMarginCount"]) delete totals[k];
+  // The pricing basis text describes how the selling price is derived from COST ("landed cost + 20%"): a neutral description for anyone who may not see cost.
+  const neutral = NEUTRAL_PRICING_BASIS[out.budget!.quoteType] ?? "Quoted at the approved NewQuip price list.";
+  out.budget!.pricingBasis = neutral;
+  out.budget!.priceSource = { ...out.budget!.priceSource, basis: neutral };
+  return out;
+}
