@@ -86,6 +86,10 @@ const OPTIONAL_LABELS: Record<OptionalItemKey, string> = {
   pad_cooling: "Pad cooling", cone_fans: "Cone fans", manure_plug: "Manure plugs",
 };
 const PRODUCT_CHANGE_REFUSED = "This change needs an Estimator to confirm the new product. Ask the Estimator to open this quotation (Stage 2, step 1) - they can confirm it for you - or undo the change.";
+// The full message is shown ONCE (at the control); everywhere else only this short reference, so the screen never repeats it.
+/** JSON with sorted keys, so two drafts that differ only in key order compare equal. */
+const stable = (v: unknown): string => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : 1))) : x));
+const PRODUCT_CHANGE_SHORT = "1 change needs an Estimator - see Equipment (step 3).";
 const PRODUCT_CHANGE_NOTE = "Changing this needs an Estimator to confirm the product afterwards.";
 
 /** The existing replace-confirmation pattern for the contextual samples: says what is replaced and that nothing is saved. */
@@ -326,7 +330,7 @@ export default function QuoteEditorPage() {
       const r = await saveGrowerDraftAction(id, draft!);
       if (!r.ok || !r.data) {
         // The server's rule stays (only an Estimator or Manager may change a product mapping). Say what it means for the Rep, at the control and here, instead of the raw line.
-        if (/can map a product/i.test(r.error ?? "")) { setMapRefused(true); return { ok: false, error: PRODUCT_CHANGE_REFUSED }; }
+        if (/can map a product/i.test(r.error ?? "")) { setMapRefused(true); return { ok: false, error: PRODUCT_CHANGE_SHORT }; }
         return { ok: false, error: r.error ?? "Could not save" };
       }
       setError(null); setMapRefused(false);
@@ -372,7 +376,14 @@ export default function QuoteEditorPage() {
   const canMap = roles.has("estimator") || roles.has("manager");
   const savedCfg = q.draft.config;
   const productChangePending = !canMap && roles.has("rep") && q.state === "REP_DRAFT" && !!q.draft.estimator.confirmedMappings.feeder && draft.config.feederVariant !== savedCfg.feederVariant;
-  const undoProductChange = () => { setMapRefused(false); edit((d) => { d.config.feederVariant = savedCfg.feederVariant; if (q.draft.estimator.confirmedMappings.feeder) d.estimator.confirmedMappings.feeder = q.draft.estimator.confirmedMappings.feeder; }); };
+  const undoProductChange = () => {
+    // Restore the saved values of the control (client-side only), clear the refusal, and recompute "unsaved" against the saved draft: if nothing else differs the draft is clean again.
+    setMapRefused(false); acts.clear("save");
+    const next = structuredClone(draft!);
+    next.config.feederVariant = savedCfg.feederVariant;
+    if (q.draft.estimator.confirmedMappings.feeder) next.estimator.confirmedMappings.feeder = q.draft.estimator.confirmedMappings.feeder;
+    setDraft(next); setDirty(stable(next) !== stable(q.draft));
+  };
   const stage1 = deriveStage1Steps({ customerName: draft.customerName, siteName: draft.siteName, penningPigSize: cfg.penningPigSize, calcIssues: ev.calc.issues, readinessReasons: rd.reasons, customer: customerFacts, roomValues: { lengthM: cfg.lengthM, widthM: cfg.widthM, rooms: cfg.rooms, totalPens: cfg.totalPens, pigsPerRoom: cfg.pigsPerRoom },
     work: workFacts, productChangePending });
   // The Rep's Stage 1 card and next-action line say what the REP does next (never "Complete" before the submission). Presentation only: computeStages and every gate are unchanged.
@@ -617,7 +628,7 @@ export default function QuoteEditorPage() {
           <div className="mt-2 space-y-1">{editable && <div className={stage === 1 && !dirty ? "sr-only" : ""}><DisabledReason id="save-why">{saveWhy}</DisabledReason></div>}<ActionFeedback state={acts.stateOf("save")} /></div>
           <div className="mt-2 space-y-2">
           {dirty && <p className="max-w-4xl text-sm text-slate-700" data-testid="unsaved-note">{recalculating ? "Recalculating… " : ""}{view.viewer.canViewCommercials ? "The prices, costs, margins and totals" : "The quantities, prices and totals"} are a live preview of your edits and nothing is saved until you press Save draft. Sign-off and approval use the SAVED draft.</p>}
-          {stage === 1 && (productChangePending || mapRefused) && <p role="alert" className="max-w-4xl text-sm font-medium text-amber-900" data-testid="product-change-refused">{PRODUCT_CHANGE_REFUSED}</p>}
+          {stage === 1 && (productChangePending || mapRefused) && <p className="max-w-4xl text-sm font-medium text-amber-900" data-testid="product-change-refused">{PRODUCT_CHANGE_SHORT}</p>}
           {previewFailure && <p className="max-w-4xl text-sm text-red-700">The live recalculation failed ({previewFailure}); the figures shown may be out of date. Edit again or reload.</p>}
           {incompleteOverrides && <p className="max-w-4xl text-sm text-amber-800">Complete or clear the highlighted cost overrides (a reason and an amount) before saving.</p>}
           {blankExclusionKeys.length > 0 && <p className="max-w-4xl text-sm text-amber-800">Enter a reason for each ticked exclusion before saving (the preview already applies it).</p>}

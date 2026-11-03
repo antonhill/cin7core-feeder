@@ -732,13 +732,20 @@ describe("P0: a Rep changing a product-affecting control (the server refuses; pr
     expect(screen.getByTestId("next-action").textContent).toContain("Waiting on the Estimator for 1 product choice");
     fireEvent.click(screen.getByRole("button", { name: "Save draft" })); // the REAL server action refuses a mapping change by a non-mapper
     await waitFor(() => expect(screen.getByTestId("product-change-refused")).toBeTruthy(), { timeout: 8000 });
-    expect(screen.getByTestId("product-change-refused").textContent).toContain("Ask the Estimator to open this quotation (Stage 2, step 1)");
+    const full = () => [...document.querySelectorAll('[role="alert"]')].filter((e) => (e.textContent ?? "").includes("This change needs an Estimator to confirm the new product."));
+    expect(full().length).toBe(1); // the full message appears ONCE (at the control, role=alert) ...
+    expect(full()[0].closest("label, div")!.contains(sel) || document.getElementById(sel.getAttribute("aria-describedby")!)).toBeTruthy();
+    expect(screen.getByTestId("product-change-refused").textContent).toBe("1 change needs an Estimator - see Equipment (step 3)."); // ... elsewhere only a short reference
     expect(document.body.textContent).not.toContain("Only an Estimator or Manager can map a product.");
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Undo this change" }));
     expect(sel.value).toBe("STANDARD");
     expect(status("equipment")).toBe("Complete");
     expect(screen.queryByTestId("product-change-refused")).toBeNull();
+    expect(full().length).toBe(0);
+    expect(document.querySelectorAll('[role="alert"][data-kind="error"]').length).toBe(0); // the stale save error is gone too
+    expect(screen.getByTestId("save-state").textContent).toContain("All changes saved"); // the draft equals the saved one again
+    expect(screen.queryByText("Unsaved changes")).toBeNull();
   }, 60000);
 
   it("an Estimator-capable user changing the variant sees no such warning (they may map)", async () => {
