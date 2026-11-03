@@ -8,7 +8,11 @@
 // Invoiced = Cin7 invoices that exist (posting CREATED or RECONCILED), ex VAT. Unknown stays unknown, never zero.
 import { formatZarCents } from "../format-money";
 
-export interface ReportClaim { claimNumber: string; status: string; subtotalCents: number; totalCents: number; invoiceNumber: string | null }
+export interface ReportClaim {
+  claimNumber: string; status: string; subtotalCents: number; totalCents: number; invoiceNumber: string | null;
+  /** The claim's Cin7 posting facts (the claim status itself stays APPROVED after posting). Optional so older callers still type-check. */
+  postingState?: string | null; reconciled?: boolean; mismatch?: boolean; stalePending?: boolean;
+}
 export interface ReportInvoice { invoiceNumber: string | null; amountExVatCents: number; totalCents: number; state: string }
 export interface ReportScopeInput {
   scope: "BASE" | "VARIATION";

@@ -10,8 +10,10 @@
 //    measures and are never combined into one percentage.
 //  * Cost and margin appear ONLY for a viewer who may see cost, even if cost figures were supplied.
 //  * Stock is Cin7's account-wide stock, never presented as reserved for the project.
+import type { ClaimCin7Status } from "./claim-cin7-status";
 import type { MarginFigures } from "./margin-figures";
 import type { PhysicalException, PhysicalRow } from "./physical-status";
+import { commercialBillingFromView, type CommercialBillingResult } from "./commercial-billing-state";
 import { formatCents, type ProjectView, type StageView } from "./project-view";
 
 export type OverviewTab = "stages" | "components" | "claims" | "variations" | "deliveries" | "physical" | "procurement" | "profitability";
@@ -109,11 +111,17 @@ export interface PhysicalOverview {
 export interface ReconClaim {
   claimNumber: string; claimStatus: string; exVatCents: number;
   cin7Kind: string; cin7Label: string; invoiceNumber: string | null; reconciled: boolean;
+  /** UX-006g1 (additive): the claim id and the recorded posting evidence, so a screen can show a VERIFIED status (invoice-authorisation.ts) instead of the snapshot label. */
+  claimId: string; cin7Status: ClaimCin7Status;
+  /** CREATED invoice with a recorded AMOUNT_MISMATCH (named, never shown as plain "not reconciled yet"). */
+  mismatch: boolean;
 }
 export interface ReconScope {
   projectId: string; scope: "BASE" | "VARIATION"; label: string; saleNumber: string | null; saleLinked: boolean;
   claims: ReconClaim[];
-  summary: { invoiceCount: number; reconciledCount: number; notPostedCount: number; uncertainCount: number; retryableCount: number; invoicedExVatCents: number };
+  summary: { invoiceCount: number; reconciledCount: number; notPostedCount: number; uncertainCount: number; retryableCount: number; invoicedExVatCents: number; mismatchCount: number };
+  /** Commercial billing state of this scope, from the shared derivation (postings + stage ledger, never the claim status). */
+  billing: CommercialBillingResult;
 }
 export interface ExceptionItem {
   id: string;
@@ -160,8 +168,8 @@ function reconScope(s: OverviewScopeInput): ReconScope {
   // Claims that have, or had, a real chance of a Cin7 document: value-reserving ones plus a confirmed failure. Drafts, claims awaiting approval and cancelled drafts are not reconciliation items.
   const relevant = s.view.claims.filter((c) => c.reserves || c.status === "FAILED_CONFIRMED_NO_WRITE");
   const claims: ReconClaim[] = relevant.map((c) => ({
-    claimNumber: claimLabel(c), claimStatus: c.status, exVatCents: c.subtotal_cents,
-    cin7Kind: c.cin7Status.kind, cin7Label: c.cin7Status.kind === "FAILED" ? "Not created in Cin7 - can be retried" : c.cin7Status.label, invoiceNumber: c.cin7Status.invoiceNumber, reconciled: c.cin7Status.reconciled,
+    claimId: c.id, cin7Status: c.cin7Status, claimNumber: claimLabel(c), claimStatus: c.status, exVatCents: c.subtotal_cents,
+    cin7Kind: c.cin7Status.kind, cin7Label: c.cin7Status.kind === "FAILED" ? "Not created in Cin7 - can be retried" : c.cin7Status.label, invoiceNumber: c.cin7Status.invoiceNumber, reconciled: c.cin7Status.reconciled, mismatch: c.cin7Status.mismatch,
   }));
   const live = claims.filter((c) => LIVE_INVOICE.has(c.cin7Kind));
   return {
@@ -173,7 +181,10 @@ function reconScope(s: OverviewScopeInput): ReconScope {
       uncertainCount: claims.filter((c) => c.cin7Kind === "UNCERTAIN").length,
       retryableCount: claims.filter((c) => c.cin7Kind === "FAILED").length,
       invoicedExVatCents: live.reduce((n, c) => n + c.exVatCents, 0),
+      mismatchCount: claims.filter((c) => c.mismatch).length,
     },
+    // The approved variation amount is the billing project's contract (view.commercial.originalContractCents) - the SAME value the Variations panel reads as ScopeSummary.contractCents.
+    billing: commercialBillingFromView(s.view, s.scope, s.scope === "VARIATION" ? { approvedAmountCents: s.view.commercial.originalContractCents, billingStarted: true } : undefined),
   };
 }
 
